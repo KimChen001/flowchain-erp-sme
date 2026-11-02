@@ -38,6 +38,7 @@ const rendererCopy = {
     why: "Why",
     cancel: "Cancel",
     cancelled: "Suggestion dismissed. Nothing was saved.",
+    moreLines: "Show {count} more",
     limitedMode: "AI planning was unavailable, so this answer comes from the standard rules and may not cover every part of your question.",
     overCap: "This workspace reached this month's AI limit, so this answer comes from workspace rules.",
     modelUnavailable: "The AI model did not respond, so this answer comes from the standard rules.",
@@ -65,6 +66,7 @@ const rendererCopy = {
     why: "原因",
     cancel: "取消",
     cancelled: "已取消这条建议，没有保存任何内容。",
+    moreLines: "再显示 {count} 条",
     limitedMode: "AI 规划暂不可用，本回答来自标准规则，可能没有覆盖问题的每个部分。",
     overCap: "本工作区本月 AI 用量已达上限，本回答按工作区规则生成。",
     modelUnavailable: "AI 模型没有响应，本回答来自标准规则。",
@@ -77,7 +79,9 @@ const count = (n: number, one: string, many: string) => n === 1 ? one : fill(man
 
 // Teal text on white (owner palette, 2026-10-03): #0D9488 is too light for text.
 const TEAL_TEXT = "#0F766E";
-const CHIP_STYLE = { background: "#EFF4FF", color: A.blue, border: "1px solid #DBE6FE" };
+// A tint, no border: a sentence full of record numbers stays calm.
+const CHIP_STYLE = { background: "#EFF4FF", color: A.blue };
+const LINE_LIMIT = 3;
 
 type NavigateOptions = { returnTo?: string; entityLabel?: string; source?: string; returnContext?: unknown; query?: Record<string, string> };
 type FocusTarget = { entityType: string; entityId: string; focusArea?: "exception" | "receiving" | "invoice" | "inventory" | "evidence" | "receiving-invoice-variance" };
@@ -89,7 +93,7 @@ function entityType(value = ""): BusinessEntityType | null {
   return candidate in businessEntityRouteRegistry ? candidate as BusinessEntityType : null;
 }
 
-const chipClass = "inline-flex max-w-full items-center rounded-md px-1.5 align-baseline text-[12.5px] font-semibold leading-5";
+const chipClass = "inline-flex max-w-full items-center rounded px-1 align-baseline text-[12.5px] font-semibold leading-5";
 
 // A record as a small chip that opens it; plain text when it has no page.
 function EvidenceLink({ item, children, onNavigate }: { item: AiResponseV2EvidenceItem; children?: ReactNode; onNavigate?: Navigate }) {
@@ -132,16 +136,20 @@ function NavigationAction({ link, primary = false, onNavigate }: { link: AiRespo
   return <button type="button" data-testid="ai-business-navigation-action" data-action-kind="view_business_object" data-business-id={link.entityId || ""} className={buttonClass(primary)} style={buttonStyle(primary)} onClick={() => onNavigate(link.moduleId, focusTarget, { returnTo: "ai", entityLabel: link.label, source: "ai", returnContext: link.returnContext })}>{link.label}<ChevronRight size={13} /></button>;
 }
 
-function Action({ action, primary = false, onNavigate, onReviewActionDraft, language }: { action: AiFocusedAction; primary?: boolean; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; language: Language }) {
+// A line's own draft button is smaller than the answer's actions.
+const compactButtonClass = "inline-flex min-h-8 items-center gap-1 rounded-lg px-2.5 py-1 text-[13px] font-semibold";
+
+function Action({ action, primary = false, compact = false, onNavigate, onReviewActionDraft, language }: { action: AiFocusedAction; primary?: boolean; compact?: boolean; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; language: Language }) {
   if (action.kind === "navigation") return <NavigationAction link={action.link} primary={primary} onNavigate={onNavigate} />;
+  const className = compact ? compactButtonClass : buttonClass(primary);
   if (action.kind === "structured_draft") {
     const target = structuredDraftTarget(action.card.draftType || "", action.card.payload, "ai_assistant");
     if (!onNavigate) return null;
-    return <button type="button" onClick={() => onNavigate(target.moduleId, null, { returnTo: "ai", entityLabel: action.label, source: "ai", query: target.query })} data-testid="ai-structured-draft-action" data-action-kind="create_formal_business_draft" className={buttonClass(primary)} style={buttonStyle(primary)}>{action.label}</button>;
+    return <button type="button" onClick={() => onNavigate(target.moduleId, null, { returnTo: "ai", entityLabel: action.label, source: "ai", query: target.query })} data-testid="ai-structured-draft-action" data-action-kind="create_formal_business_draft" className={className} style={buttonStyle(primary)}>{action.label}</button>;
   }
   const request = reviewRequest(action.card);
   if (!request || !onReviewActionDraft) return null;
-  return <button type="button" onClick={() => onReviewActionDraft(request)} data-testid="ai-action-draft-preview" data-action-kind="generate_text_draft" data-draft-type={action.card.draftType || ""} className={buttonClass(primary)} style={buttonStyle(primary)}>{action.label || rendererCopy[language].textDraft}</button>;
+  return <button type="button" onClick={() => onReviewActionDraft(request)} data-testid="ai-action-draft-preview" data-action-kind="generate_text_draft" data-draft-type={action.card.draftType || ""} className={className} style={buttonStyle(primary)}>{action.label || rendererCopy[language].textDraft}</button>;
 }
 
 // An order the assistant proposes (a purchase request for a named item): a
@@ -274,6 +282,7 @@ function splitHeadline(summary: string, headline: string) {
 
 export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft, onFollowUp, latest = true }: { response: AiResponseV2; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; onFollowUp?: (prompt: string, skillHint?: string) => void; latest?: boolean }) {
   const { language: uiLanguage } = useI18n();
+  const [allLines, setAllLines] = useState(false);
   const language: Language = response?.language === "zh-CN" || response?.language === "en-US" ? response.language : uiLanguage === "zh-CN" ? "zh-CN" : "en-US";
   const copy = rendererCopy[language];
   if (!response || response.version !== "v2") return null;
@@ -300,6 +309,10 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   const citedOnly = items.every((item) => !item.reason && !item.impact && !item.nextStep && !item.draft);
   const lines = compound ? [] : citedOnly ? items.filter((item) => !isShown(item.evidence.entityLabel || item.evidence.label)) : items;
   const compactLines = !citedOnly && lines.every((item) => !item.reason && !item.impact);
+  const shownLines = citedOnly || allLines ? lines : lines.slice(0, LINE_LIMIT);
+  const hiddenLines = lines.length - shownLines.length;
+  const impacts = new Set(lines.map((item) => item.impact));
+  const sharedImpact = !citedOnly && lines.length > 1 && impacts.size === 1 ? [...impacts][0] : "";
   // A record shown as a chip, in the text or on a line, gets no "Open" button too.
   const chipped = new Set([...shown, ...lines.map((item) => item.evidence.entityId)].map((value) => String(value).toUpperCase()));
   const actions = [focused.primaryAction, ...focused.secondaryActions].filter((action): action is AiFocusedAction => Boolean(action))
@@ -330,19 +343,23 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
 
       {compound ? <section data-testid="ai-answer-sections" className="space-y-3">{sections.map((section) => <AnswerSection key={section.id} section={section} evidence={(section.evidenceIds || []).map((id) => evidenceById.get(id)).filter((item): item is AiResponseV2EvidenceItem => Boolean(item))} answerLanguage={response.language} chips={chips} onNavigate={onNavigate} />)}</section> : null}
 
-      {lines.length ? <ul data-testid="ai-focused-primary-items" data-records={citedOnly ? "cited" : "priorities"} className={citedOnly ? "flex flex-wrap gap-x-4 gap-y-1.5" : compactLines ? "space-y-1.5" : "divide-y"} style={citedOnly || compactLines ? undefined : { borderColor: A.gray5 }} aria-label={citedOnly ? copy.records : undefined}>
-        {lines.map((item) => citedOnly
+      {lines.length ? <ul data-testid="ai-focused-primary-items" data-records={citedOnly ? "cited" : "priorities"} className={citedOnly ? "flex flex-wrap gap-x-4 gap-y-1.5" : compactLines ? "space-y-2" : "divide-y"} style={citedOnly || compactLines ? undefined : { borderColor: A.gray5 }} aria-label={citedOnly ? copy.records : undefined}>
+        {shownLines.map((item) => citedOnly
           ? <li key={item.id} data-testid="ai-cited-record" className="text-[13px] leading-6"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink>{item.status ? <span style={{ color: A.sub }}> · {item.status}</span> : null}</li>
           // A line with only its next step (a model-first answer's record): one row.
           : compactLines
-            ? <li key={item.id} data-testid="ai-line-next-step" className="text-[13px] leading-6"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink>{" "}{item.nextStep ? <span lang={response.language || undefined} style={{ color: A.label }}>{withRecordChips(item.nextStep, chips.refs, chips.pattern)}</span> : item.status ? <span style={{ color: A.sub }}>{item.status}</span> : null}{item.draft ? <span className="ml-2 inline-block align-middle"><Action action={item.draft} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /></span> : null}</li>
-          : <li key={item.id} className="py-2.5 first:pt-0 last:pb-0" style={{ borderColor: A.gray5 }}>
+            ? <li key={item.id} data-testid="ai-line-next-step" className="text-[13px] leading-6"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink>{" "}{item.nextStep ? <span lang={response.language || undefined} style={{ color: A.label }}>{withRecordChips(item.nextStep, chips.refs, chips.pattern)}</span> : item.status ? <span style={{ color: A.sub }}>{item.status}</span> : null}{item.draft ? <span className="ml-2 inline-block align-middle"><Action action={item.draft} compact onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /></span> : null}</li>
+          : <li key={item.id} className="py-3 first:pt-0 last:pb-0" style={{ borderColor: A.gray5 }}>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink>{item.status && !item.reason.startsWith(item.status) ? <span className="text-[13px]" style={{ color: A.sub }}>{item.status}</span> : null}</div>
               {item.reason ? <p className="mt-1 text-sm leading-relaxed" lang={response.language || undefined} style={{ color: A.label }}>{withRecordChips(item.reason, chips.refs, chips.pattern)}</p> : null}
-              {item.impact ? <p className="mt-0.5 text-[13px] leading-relaxed" style={{ color: A.sub }}>{fill(copy.impact, { impact: item.impact })}</p> : null}
-              {item.nextStep || item.draft ? <div data-testid="ai-line-next-step" className="mt-1.5 flex flex-wrap items-center gap-2">{item.nextStep ? <span className="text-[13px] font-medium leading-relaxed" lang={response.language || undefined} style={{ color: A.blue }}>{item.nextStep}</span> : null}{item.draft ? <Action action={item.draft} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /> : null}</div> : null}
+              {item.impact && !sharedImpact ? <p className="mt-0.5 text-[13px] leading-relaxed" style={{ color: A.sub }}>{fill(copy.impact, { impact: item.impact })}</p> : null}
+              {item.nextStep || item.draft ? <div data-testid="ai-line-next-step" className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1.5">{item.nextStep ? <span className="text-[13px] font-medium leading-relaxed" lang={response.language || undefined} style={{ color: A.blue }}>{item.nextStep}</span> : null}{item.draft ? <Action action={item.draft} compact onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /> : null}</div> : null}
             </li>)}
       </ul> : null}
+      {/* The same impact on every line is said once. */}
+      {sharedImpact ? <p data-testid="ai-shared-impact" className="text-[13px] leading-relaxed" style={{ color: A.sub }}>{fill(copy.impact, { impact: sharedImpact })}</p> : null}
+      {/* Three lines show; the rest open on request, so a long answer stays readable on a phone. */}
+      {hiddenLines ? <button type="button" data-testid="ai-more-lines" onClick={() => setAllLines(true)} className="text-[13px] font-medium hover:underline" style={{ color: A.blue }}>{fill(copy.moreLines, { count: hiddenLines })}</button> : null}
 
       {proposals.map((card, index) => <OrderProposal key={`${card.draftType}-${card.payload?.itemIdOrSku}-${index}`} card={card} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} />)}
 
