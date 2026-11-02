@@ -4,7 +4,7 @@ import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_READ_TOOL_COLUMNS, runAiReadTool } from './ai-read-tool-runner.mjs'
-import { AI_ASSISTANT_V2_UI_TOOLS, aiUiColumnCode, aiUiToolsFor } from './ai-assistant-v2-ui-tools.mjs'
+import { AI_ASSISTANT_V2_UI_TOOLS, aiUiColumnCode, aiUiSourceHandles, aiUiToolsFor } from './ai-assistant-v2-ui-tools.mjs'
 import { AI_SKILL_SIGNAL_SEVERITY } from './ai-skill-signals.mjs'
 import { safeParsePartProps } from '../../shared/assistant-protocol.mjs'
 import { PURCHASE_SUGGESTION_SOURCES } from '../../shared/purchase-suggestion.mjs'
@@ -63,6 +63,45 @@ test('every UI tool follows the contract: kind ui, a closed input schema, frozen
     assert.equal(typeof entry.build, 'function')
     assert.equal(typeof entry.available, 'function')
   }
+})
+
+test('the display tools are marked, and every source parameter asks for the handle a result gives', () => {
+  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.filter((entry) => entry.display).map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices'])
+  for (const entry of AI_ASSISTANT_V2_UI_TOOLS.filter((item) => item.inputSchema.properties.source)) {
+    assert.match(entry.inputSchema.properties.source.description, /#1/, entry.name)
+    assert.doesNotMatch(entry.inputSchema.properties.source.description, /tool_use id/, entry.name)
+  }
+})
+
+test('a source is the handle a result carries, its tool\'s name for the latest result, or the tool_use id', async () => {
+  const { ctx, call, build } = await workspace()
+  const all = await call('toolu_po', 'list_purchase_orders')
+  await call('toolu_stock', 'stock_position')
+  const overdue = await call('toolu_late', 'list_purchase_orders', { status: 'overdue' })
+  assert.deepEqual([...aiUiSourceHandles(ctx.results)], [['toolu_po', 'list_purchase_orders#1'], ['toolu_stock', 'stock_position#1'], ['toolu_late', 'list_purchase_orders#2']])
+  const rowsOf = (reference) => assertPart(build('show_table', { source: reference, columns: ['orderNumber'] }), 'table').rows.map((row) => row.order.label)
+  const first = all.rows.map((row) => row.orderNumber)
+  const latest = overdue.rows.map((row) => row.orderNumber)
+  assert.notDeepEqual(first, latest)
+  assert.deepEqual(rowsOf('list_purchase_orders#1'), first)
+  assert.deepEqual(rowsOf('functions.list_purchase_orders#1'), first)
+  assert.deepEqual(rowsOf('toolu_po'), first)
+  assert.deepEqual(rowsOf('list_purchase_orders#2'), latest)
+  // The tool's name alone, as chat models write it, means its latest result.
+  assert.deepEqual(rowsOf('list_purchase_orders'), latest)
+  assert.deepEqual(rowsOf('functions.list_purchase_orders'), latest)
+  // The props keep the source as the model gave it.
+  assert.equal(build('show_table', { source: 'list_purchase_orders#1', columns: ['orderNumber'] }).props.source, 'list_purchase_orders#1')
+  // A source no result has: the error lists the ones there are.
+  const missing = build('show_table', { source: 'list_purchase_orders#3', columns: ['orderNumber'] })
+  assertError(missing, 'source_missing')
+  assert.equal(missing.error.message, 'No data result of this answer is called list_purchase_orders#3. Pass source exactly as a result gives it: list_purchase_orders#1, stock_position#1, list_purchase_orders#2.')
+  assertError(build('show_table', { source: 'supplier_performance', columns: ['name'] }), 'source_missing')
+  // Before any data result there is nothing to name.
+  const empty = await workspace()
+  assert.equal(empty.build('show_table', { source: 'list_purchase_orders', columns: ['orderNumber'] }).error.message, 'No data tool has returned a result in this answer yet. Call a data tool first, then pass the source its result gives.')
+  // Other UI tools take the same sources.
+  assertPart(build('show_records', { source: 'stock_position', refs: [{ type: 'item', id: 'ITEM-001' }] }), 'records')
 })
 
 test('the request form is not offered to a user who may not create requests', async () => {

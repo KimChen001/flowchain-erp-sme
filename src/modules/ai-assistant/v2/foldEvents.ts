@@ -5,7 +5,8 @@ import { failureOfStatus, type AssistantV2Event, type AssistantV2Failure, type A
 // §3.7). Pure: the panel folds each event into the message it shows, and the
 // tests fold a recorded stream the same way.
 
-export type AssistantV2TextPart = { id: string; kind: "text"; text: string; flags: FlagSpan[]; replaced?: AssistantV2ReplaceCode };
+// refs: the records of this answer's results the server found the text names.
+export type AssistantV2TextPart = { id: string; kind: "text"; text: string; flags: FlagSpan[]; refs?: PartRef[]; replaced?: AssistantV2ReplaceCode };
 export type AssistantV2UiPart = { id: string; kind: "ui"; component: string; props: unknown; refs: PartRef[] };
 export type AssistantV2Part = AssistantV2TextPart | AssistantV2UiPart;
 // What the answer is doing now: the tool it runs, and what it reads.
@@ -28,6 +29,16 @@ export function emptyAssistantV2Message(): AssistantV2Message {
 }
 
 const sameSpan = (a: FlagSpan, b: FlagSpan) => a.text === b.text && a.kind === b.kind;
+const sameRef = (a: PartRef, b: PartRef) => a.type === b.type && a.id === b.id;
+const isFollowups = (part: AssistantV2Part) => part.kind === "ui" && part.component === "followups";
+
+// The follow-up chips come after every other part and the text: one set per
+// answer, the latest, kept at the end as later parts arrive.
+function chipsLast(parts: AssistantV2Part[]) {
+  const chips = parts.filter(isFollowups);
+  if (!chips.length || (chips.length === 1 && isFollowups(parts[parts.length - 1]))) return parts;
+  return [...parts.filter((part) => !isFollowups(part)), chips[chips.length - 1]];
+}
 
 function withPart(parts: AssistantV2Part[], id: string, update: (part: AssistantV2Part | undefined) => AssistantV2Part | null) {
   const index = parts.findIndex((part) => part.id === id);
@@ -56,21 +67,28 @@ export function foldAssistantV2Event(message: AssistantV2Message, event: Assista
     case "text_delta":
       return {
         ...message,
-        parts: withPart(message.parts, event.partId, (part) => {
+        parts: chipsLast(withPart(message.parts, event.partId, (part) => {
           if (!part) return { id: event.partId, kind: "text", text: event.text, flags: [] };
           // Replaced text is final: a late delta cannot add back what was withheld.
           if (part.kind !== "text" || part.replaced) return null;
           return { ...part, text: part.text + event.text };
-        }),
+        })),
       };
-    case "ui":
-      return { ...message, parts: withPart(message.parts, event.partId, () => ({ id: event.partId, kind: "ui", component: event.component, props: event.props, refs: event.refs || [] })) };
+    case "ui": {
+      const part: AssistantV2UiPart = { id: event.partId, kind: "ui", component: event.component, props: event.props, refs: event.refs || [] };
+      // New follow-up chips replace any earlier set of this answer.
+      const parts = event.component === "followups" ? message.parts.filter((known) => !isFollowups(known) || known.id === event.partId) : message.parts;
+      return { ...message, parts: chipsLast(withPart(parts, event.partId, () => part)) };
+    }
     case "flag":
       return {
         ...message,
         parts: withPart(message.parts, event.partId, (part) => {
-          if (!part || part.kind !== "text" || part.replaced) return null;
-          return { ...part, flags: [...part.flags, ...event.spans.filter((span) => !part.flags.some((known) => sameSpan(known, span)))] };
+          if (!part || part.kind !== "text") return null;
+          const refs = [...(part.refs || []), ...(event.refs || []).filter((ref) => !(part.refs || []).some((known) => sameRef(known, ref)))];
+          // A replaced part keeps no flags, but the records its text still names are chipped.
+          if (part.replaced) return event.refs?.length ? { ...part, refs } : null;
+          return { ...part, flags: [...part.flags, ...event.spans.filter((span) => !part.flags.some((known) => sameSpan(known, span)))], ...(refs.length ? { refs } : {}) };
         }),
       };
     case "replace":
@@ -90,7 +108,7 @@ export function foldAssistantV2Event(message: AssistantV2Message, event: Assista
       const parts = !message.parts.length && !message.notices.length && !message.error && Array.isArray(event.body.parts) && summary
         ? [{ id: "summary", kind: "text" as const, text: summary, flags: [] }]
         : message.parts;
-      return { ...finished, parts, body: event.body };
+      return { ...finished, parts: chipsLast(parts), body: event.body };
     }
     default:
       return message;
@@ -121,7 +139,7 @@ export function rulesAnswerBody(message: AssistantV2Message) {
 
 // The parts as AnswerParts draws them.
 export function answerPartsOf(message: AssistantV2Message): AnswerPart[] {
-  return message.parts.map((part) => part.kind === "text"
-    ? { id: part.id, type: "text", text: part.text, flags: part.flags }
+  return chipsLast(message.parts).map((part) => part.kind === "text"
+    ? { id: part.id, type: "text", text: part.text, flags: part.flags, ...(part.refs?.length ? { refs: part.refs } : {}) }
     : { id: part.id, type: "ui", component: part.component, props: part.props, refs: part.refs });
 }

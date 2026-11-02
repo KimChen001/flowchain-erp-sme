@@ -5,16 +5,24 @@ import { aiSkillVisibility } from './ai-skill-registry.mjs'
 
 // The UI tools of assistant v2 (docs/ai-assistant-v2-design.md §3.6, §4, §4.1,
 // §5.2). The model never writes a figure: it names a data tool result of this
-// answer (its tool_use id) and the columns, refs or keys to show, and the
-// server builds the part's props from that result's rows. A column must be one
-// the data tool declares (AI_READ_TOOL_COLUMNS), a ref must be in the result,
-// and the props must pass the stream protocol, or the model gets an error in
+// answer (its source) and the columns, refs or keys to show, and the server
+// builds the part's props from that result's rows. A column must be one the
+// data tool declares (AI_READ_TOOL_COLUMNS), a ref must be in the result, and
+// the props must pass the stream protocol, or the model gets an error in
 // English to correct its call.
+//
+// A source is the handle the loop puts on each data result the model reads
+// ("list_purchase_orders#1": the tool and its count in this answer). Models
+// on chat completions providers name a call by its tool, not by the call id
+// (measured 2026-11-02 on Sonnet 5.5 and GPT-5.5), so the tool's name alone
+// (its latest result; "functions." in front is ignored) and the tool_use id
+// are taken too.
 //
 // build(input, ctx) with ctx = { results: Map<toolUseId, { tool, output }>,
 // facts, actor, language, threadId, messageId, partId, userNamedSkus } returns
 // { component, props, refs } or { error: { code, message } }. `output` is the
-// data tool's result as the model read it.
+// data tool's result as the model read it. The display tools (display: true)
+// are the ones the loop withdraws after repeated failures.
 
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
@@ -80,18 +88,43 @@ function invalidInput(schema, value, path = 'input') {
   return null
 }
 
-const sourceParam = { type: 'string', minLength: 1, maxLength: 120, description: 'The tool_use id of a data tool call in this answer whose result is shown.' }
+const sourceParam = { type: 'string', minLength: 1, maxLength: 120, description: 'The source of a data tool result of this answer, exactly as the result gives it, for example list_purchase_orders#1.' }
 // A ref as the result gives it; the label is the result's, so the model's is not used.
 const refParam = { type: 'object', properties: { type: { type: 'string', minLength: 1, maxLength: 40 }, id: { type: 'string', minLength: 1, maxLength: 120 }, label: { type: 'string', maxLength: 200 } }, required: ['type', 'id'], additionalProperties: false }
 const titleParam = { type: 'string', minLength: 1, maxLength: 120, description: 'A short heading in the answer\'s language.' }
 const listParam = { type: 'string', minLength: 1, maxLength: 64, description: 'Which list of the result when it has several (for example months or suppliers of spend_analysis). By default the first list that has every column.' }
 
-// The data tool result a UI tool names: one of this answer's, from a data tool.
-function sourceOf(ctx, id) {
-  const entry = ctx?.results instanceof Map ? ctx.results.get(id) : undefined
-  if (!entry) return fail('source_missing', `No tool result has the id ${id} in this answer. Call a data tool first and pass its tool_use id as source.`)
-  if (!AI_READ_TOOL_COLUMNS[entry.tool]) return fail('source_not_data', `${id} is a ${entry.tool} call; source must be a data tool result.`)
-  if (!isObject(entry.output) || entry.output.error) return fail('source_failed', `The ${entry.tool} call ${id} returned no result to show.`)
+// Each data result of this answer by its handle, in the order the results
+// came: the nth result of a tool is "<tool>#n".
+export function aiUiSourceHandles(results) {
+  const handles = new Map()
+  const counts = new Map()
+  for (const [id, entry] of results instanceof Map ? results : []) {
+    if (!AI_READ_TOOL_COLUMNS[entry?.tool]) continue
+    counts.set(entry.tool, (counts.get(entry.tool) || 0) + 1)
+    handles.set(id, `${entry.tool}#${counts.get(entry.tool)}`)
+  }
+  return handles
+}
+
+// The data tool result a UI tool names: one of this answer's, by its handle,
+// its tool_use id or its tool's name (the latest result of that tool).
+function sourceOf(ctx, reference) {
+  const results = ctx?.results instanceof Map ? ctx.results : new Map()
+  const handles = aiUiSourceHandles(results)
+  const name = text(reference).replace(/^functions\./, '')
+  let id = results.has(reference) ? reference : [...handles].find(([, handle]) => handle === name)?.[0]
+  if (id === undefined) id = [...results].filter(([, entry]) => entry?.tool === name).at(-1)?.[0]
+  const entry = id === undefined ? undefined : results.get(id)
+  if (!entry) {
+    const known = [...handles.values()]
+    return fail('source_missing', known.length
+      ? `No data result of this answer is called ${reference}. Pass source exactly as a result gives it: ${known.join(', ')}.`
+      : 'No data tool has returned a result in this answer yet. Call a data tool first, then pass the source its result gives.')
+  }
+  const label = handles.get(id) || reference
+  if (!AI_READ_TOOL_COLUMNS[entry.tool]) return fail('source_not_data', `${reference} is a ${entry.tool} call; source must be a data tool result.`)
+  if (!isObject(entry.output) || entry.output.error) return fail('source_failed', `The ${entry.tool} result ${label} has nothing to show.`)
   return { tool: entry.tool, output: entry.output }
 }
 
@@ -253,13 +286,15 @@ function part(component, props, refs) {
 }
 
 // available(actor): whether the tool is offered to this user at all; build
-// checks again, so a tool offered by mistake still refuses.
-const defineUiTool = ({ name, description, inputSchema, available = () => true, build }) => Object.freeze({
+// checks again, so a tool offered by mistake still refuses. display: the tool
+// shows a result as a table, cards, a chart, tiles or choices.
+const defineUiTool = ({ name, description, inputSchema, available = () => true, display = false, build }) => Object.freeze({
   name,
   kind: 'ui',
   description,
   inputSchema: Object.freeze(inputSchema),
   available,
+  display,
   build(input, ctx) {
     const problem = invalidInput(inputSchema, input)
     return problem ? fail('invalid_input', `${problem}.`) : build(input, ctx)
@@ -270,6 +305,7 @@ const compare = (left, right) => (numberOf(left) !== null && numberOf(right) !==
 
 const showTable = defineUiTool({
   name: 'show_table',
+  display: true,
   description: 'Show rows of a data tool result as a table. Name the result (source) and 1 to 8 of its columns, as the result\'s keys; the server fills every cell from the result. Optional title, sort and limit (20 rows by default).',
   inputSchema: {
     type: 'object',
@@ -368,6 +404,7 @@ function cardOf(tool, { ref, row }, output) {
 
 const showRecords = defineUiTool({
   name: 'show_records',
+  display: true,
   description: 'Show 1 to 6 records of a data tool result as cards: code, label, status, how late or how soon, and one or two of its figures, all from the result. Name each record by the type and id of a ref in that result.',
   inputSchema: {
     type: 'object',
@@ -391,6 +428,7 @@ const showRecords = defineUiTool({
 
 const showChart = defineUiTool({
   name: 'show_chart',
+  display: true,
   description: 'Chart one list of a data tool result: x is the column along the axis and series are 1 to 4 number columns in one unit; amounts must all be in one currency. Use it for a trend or a comparison the user asked to see.',
   inputSchema: {
     type: 'object',
@@ -454,11 +492,12 @@ const showChart = defineUiTool({
 
 const showKpis = defineUiTool({
   name: 'show_kpis',
+  display: true,
   description: 'Show 2 to 6 workspace figures as tiles from a workspace_summary result, by its keys (for example purchaseOrders.overdue). A figure the user may not read shows as not available for their role.',
   inputSchema: {
     type: 'object',
     properties: {
-      source: { ...sourceParam, description: 'The tool_use id of a workspace_summary call in this answer.' },
+      source: { ...sourceParam, description: 'The source of a workspace_summary result of this answer, for example workspace_summary#1.' },
       keys: { type: 'array', minItems: 2, maxItems: 6, items: { type: 'string', minLength: 1, maxLength: 64 }, description: 'Keys of the workspace_summary result.' },
     },
     required: ['source', 'keys'],
@@ -484,6 +523,7 @@ const PROMPT_TYPES = Object.freeze({ pick_item: 'item', pick_supplier: 'supplier
 
 const offerChoices = defineUiTool({
   name: 'offer_choices',
+  display: true,
   description: 'When the question could mean several records, offer 2 to 6 of them from a data tool result as buttons; the user\'s pick comes back as the next turn. promptCode: pick_item (items), pick_supplier (suppliers) or pick_record.',
   inputSchema: {
     type: 'object',
@@ -613,7 +653,7 @@ const suggestPurchaseRequest = defineUiTool({
   inputSchema: {
     type: 'object',
     properties: {
-      source: { ...sourceParam, description: 'The tool_use id of a suggest_purchase_lines call in this answer.' },
+      source: { ...sourceParam, description: 'The source of a suggest_purchase_lines result of this answer, for example suggest_purchase_lines#1.' },
       from: { type: 'string', enum: ['user_named', 'suggestions'] },
       lines: {
         type: 'array',

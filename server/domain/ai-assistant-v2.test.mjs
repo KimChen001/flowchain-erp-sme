@@ -6,6 +6,7 @@ import { createScriptedModelClient } from './ai-assistant-v2-model/scripted.mjs'
 import { AssistantModelError } from './ai-assistant-v2-model/model-error.mjs'
 import { aiSkillText } from './ai-skill-copy.mjs'
 import { ASSISTANT_V2_LIMITS, ASSISTANT_V2_SYSTEM, answerAssistantV2 } from './ai-assistant-v2.mjs'
+import { AI_ASSISTANT_V2_UI_TOOLS } from './ai-assistant-v2-ui-tools.mjs'
 import { safeParseStreamEvent } from '../../shared/assistant-protocol.mjs'
 
 // The assistant v2 loop (docs/ai-assistant-v2-design.md §3.3, §3.7, §3.9,
@@ -203,7 +204,7 @@ test('the tool call limit: calls past it get an error result, in the order the m
   assert.equal(client.requests[1].messages.at(-1).content.at(-1).type, 'text', 'the last-round note follows the results')
 })
 
-test('the cost ceiling and the monthly cap stop the loop after the model call that crosses them', async () => {
+test('the cost ceiling and the monthly cap stop the loop after a model call that crosses them', async () => {
   // 60,000 input and 9,000 output tokens at Sonnet 5.5 prices: 0.21 USD, over the 0.20 ceiling.
   const heavy = { input_tokens: 60000, output_tokens: 9000 }
   const ceiling = await ask([[...say('Let me check.'), ...call('tu_po', 'list_purchase_orders', {}), end(heavy)], [...say('Never sent.'), end()]])
@@ -216,12 +217,147 @@ test('the cost ceiling and the monthly cap stop the loop after the model call th
   assert.equal(ceiling.metered.length, 1)
   assert.equal(ceiling.body.conclusion.summary, 'Let me check.')
   assert.equal(ceiling.thread.messages.at(-1).content[0].is_error, true)
-  // What is left of the monthly cap, from the gateway's reservation: one
-  // call of USAGE costs 3,100 micros.
-  const cap = await ask([OVERDUE, [...say('Never sent.'), end()]], { limits: { capRemainingMicros: 3000 } })
+})
+
+test('each call is priced before it is made: no call that could pass the ceiling or the cap, and the last call that fits answers in prose', async () => {
+  // 40,000 input and 5,000 output tokens at Sonnet 5.5 prices: 0.13 USD,
+  // under the 0.20 ceiling, so the round's tools run. The next call would
+  // send at least those 40,000 tokens again, with up to 4,000 tokens of
+  // output: about 0.12 USD more, which does not fit.
+  const big = { input_tokens: 40000, output_tokens: 5000 }
+  const ceiling = await ask([[...say('Let me check.'), ...call('tu_po', 'list_purchase_orders', {}), end(big)], [...say('Never sent.'), end()]])
+  assertProtocol(ceiling.events)
+  assert.equal(ceiling.client.requests.length, 1)
+  assert.deepEqual(ofType(ceiling.events, 'tool').filter((event) => event.state === 'done').map((event) => event.name), ['list_purchase_orders'])
+  assert.deepEqual(ofType(ceiling.events, 'notice'), [{ type: 'notice', code: 'cost_ceiling' }])
+  assert.equal(ceiling.audit.stopReason, 'cost_ceiling')
+  assert.equal(ceiling.audit.costMicros, 130000)
+  assert.ok(ceiling.audit.costMicros <= ASSISTANT_V2_LIMITS.costCeilingMicros)
+  assert.equal(ceiling.body.conclusion.summary, 'Let me check.')
+  // The same answer with less left of the monthly cap than of the ceiling.
+  const cap = await ask([[...say('Let me check.'), ...call('tu_po', 'list_purchase_orders', {}), end(big)], [...say('Never sent.'), end()]], { limits: { capRemainingMicros: 150000 } })
   assert.deepEqual(ofType(cap.events, 'notice'), [{ type: 'notice', code: 'over_cap_during_answer' }])
   assert.equal(cap.audit.stopReason, 'over_cap_during_answer')
   assert.equal(cap.client.requests.length, 1)
+  // Not even the first call fits: nothing is called.
+  const none = await ask([[...say('Never sent.'), end()]], { limits: { capRemainingMicros: 3000 } })
+  assert.equal(none.client.requests.length, 0)
+  assert.deepEqual(ofType(none.events, 'notice'), [{ type: 'notice', code: 'over_cap_during_answer' }])
+  assert.equal(none.events.at(-1).type, 'answer')
+  // 25,000 input and 1,000 output tokens: 0.06 USD. One more call fits, but
+  // not a call after it, so the next call is the last and answers in prose.
+  const mid = { input_tokens: 25000, output_tokens: 1000 }
+  const last = await ask([[...call('tu_po', 'list_purchase_orders', {}), end(mid)], [...say('PO-001 is the most overdue.'), ...call('tu_more', 'stock_position', {}), end()]])
+  assertProtocol(last.events)
+  assert.equal(last.client.requests.length, 2)
+  assert.equal(last.client.requests[1].messages.at(-1).content.at(-1).text, 'No more tool calls are available for this answer, display tools and suggest_followups included. Answer now from these results, in prose.')
+  assert.equal(last.audit.lastRoundForCost, true)
+  assert.equal(ofType(last.events, 'notice').length, 0)
+  assert.equal(JSON.parse(last.thread.messages.at(-1).content[0].content).error, 'call_limit', 'a call after the last round is refused')
+  assert.equal(last.body.conclusion.summary, 'PO-001 is the most overdue.')
+  // Cheap calls leave the answer its rounds.
+  const cheap = await ask([OVERDUE, [...say('PO-001 is late.'), end()]])
+  assert.equal(cheap.audit.lastRoundForCost, false)
+  assert.equal(cheap.client.requests[1].messages.at(-1).content.at(-1).type, 'tool_result')
+})
+
+test('each data result the model reads starts with its source and gives status words; the stored result keeps its codes', async () => {
+  const { client, thread, events } = await ask([
+    [...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), ...call('tu_stock', 'stock_position', {}), ...call('tu_po_all', 'list_purchase_orders', {}), end()],
+    [...call('tu_table', 'show_table', { source: 'list_purchase_orders#1', columns: ['orderNumber', 'status'] }), ...call('tu_latest', 'show_table', { source: 'functions.list_purchase_orders', columns: ['orderNumber'] }), ...call('tu_id', 'show_records', { source: 'tu_stock', refs: [{ type: 'item', id: 'ITEM-001' }] }), end()],
+    [...say('PO-001 is partially received.'), end()],
+  ], { uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assertProtocol(events)
+  const [overdue, stock, all] = lastToolResults(client.requests[1]).map((block) => JSON.parse(block.content))
+  assert.equal(overdue.source, 'list_purchase_orders#1')
+  assert.equal(stock.source, 'stock_position#1')
+  assert.equal(all.source, 'list_purchase_orders#2')
+  assert.equal(Object.keys(overdue)[0], 'source', 'the source comes first')
+  assert.deepEqual(overdue.rows.map((row) => [row.status, row.statusLabel]), [['partially_received', 'Partially received'], ['issued', 'Issued to the supplier']])
+  assert.equal(stock.rows[0].statusLabel, 'Below safety stock')
+  assert.ok(thread.results.get('tu_po').output.rows.every((row) => !('statusLabel' in row) && !('source' in thread.results.get('tu_po').output)))
+  // The handle, the tool's name (its latest result) and the tool_use id all find their result.
+  const tables = ofType(events, 'ui')
+  assert.deepEqual(tables.map((event) => event.component), ['table', 'table', 'records'])
+  assert.equal(tables[0].props.rows.length, 2)
+  assert.equal(tables[1].props.total, all.total)
+  assert.deepEqual(tables[2].props.cards.map((card) => card.ref.label), ['LDM-001'])
+  // A Chinese answer gets the words in Chinese.
+  const zh = await ask([OVERDUE, [...say('PO-001 部分收货。'), end()]], { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } })
+  assert.deepEqual(JSON.parse(lastToolResults(zh.client.requests[1])[0].content).rows.map((row) => row.statusLabel), ['部分收货', '已发给供应商'])
+})
+
+test('a failed display says how to fix it; a second failure withdraws the display tools for the rest of the answer', async () => {
+  const { client, events, audit, body } = await ask([
+    OVERDUE,
+    [...call('tu_bad', 'show_table', { source: 'tu_po_missing', columns: ['orderNumber'] }), end()],
+    [...call('tu_bad2', 'show_table', { source: 'list_purchase_orders#1', columns: ['price'] }), end()],
+    [...say('PO-001 and PO-008 are overdue.'), ...call('tu_bad3', 'show_records', { source: 'list_purchase_orders#1', refs: [{ type: 'purchase_order', id: 'PO-001' }] }), end()],
+  ], { uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assertProtocol(events)
+  assert.equal(client.requests.length, 4)
+  const first = JSON.parse(lastToolResults(client.requests[2])[0].content)
+  assert.equal(first.error, 'source_missing')
+  assert.deepEqual(first.details, [
+    'No data result of this answer is called tu_po_missing. Pass source exactly as a result gives it: list_purchase_orders#1.',
+    'Correct this call once, or answer in prose. After another failed display no display tool is available for this answer.',
+  ])
+  const second = JSON.parse(lastToolResults(client.requests[3])[0].content)
+  assert.equal(second.error, 'unknown_column')
+  assert.equal(second.details.at(-1), 'No display tool is available for the rest of this answer.')
+  assert.match(client.requests[3].messages.at(-1).content.at(-1).text, /^No display tool \(show_table, show_records, show_chart, show_kpis, offer_choices\) is available for the rest of this answer\. Answer in prose/)
+  // The tool list the model was first sent stays (the cached prefix); the
+  // withdrawn tools are named beside it.
+  assert.deepEqual(client.requests[3].tools, client.requests[0].tools)
+  assert.equal(client.requests[2].withdrawnTools, undefined)
+  assert.deepEqual(client.requests[3].withdrawnTools, ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices'])
+  // A display called after that is refused without a further model call, and
+  // the answer ends with its text.
+  assert.deepEqual(audit.uiTools.map((row) => row.status), ['source_missing', 'unknown_column', 'display_off'])
+  assert.equal(audit.displayFailures, 2)
+  assert.equal(audit.stopReason, 'end_turn')
+  assert.equal(ofType(events, 'ui').length, 0)
+  assert.equal(ofType(events, 'error').length, 0)
+  assert.equal(body.conclusion.summary, 'PO-001 and PO-008 are overdue.')
+})
+
+test('one set of follow-up chips per answer: a later call replaces the earlier, and the chips come after every other part', async () => {
+  const { events, body, client } = await ask([
+    [...say('Checking the orders.'), ...call('tu_chips', 'suggest_followups', { questions: ['Which supplier is late?'] }), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [...say('PO-001 is the most overdue.'), ...call('tu_chips2', 'suggest_followups', { questions: ['Show PO-001'] }), end()],
+    [...say('Ask me about either order.'), end()],
+  ], { uiTools: [followups] })
+  assertProtocol(events)
+  const chips = ofType(events, 'ui')
+  assert.deepEqual(chips.map((event) => [event.partId, event.props.questions[0]]), [['p2', 'Which supplier is late?'], ['p2', 'Show PO-001']])
+  assert.deepEqual(body.parts, [{ id: 'p1', type: 'text' }, { id: 'p3', type: 'text' }, { id: 'p4', type: 'text' }, { id: 'p2', type: 'ui', component: 'followups' }])
+  assert.deepEqual(JSON.parse(lastToolResults(client.requests[2])[0].content), { shown: 'followups', partId: 'p2' })
+})
+
+test('the records a text names come with its flag, from this answer\'s results only', async () => {
+  const { events } = await ask([OVERDUE, [...say('PO-001 and PO-008 are overdue; PO-002 is due soon. Acme Components supplies both.'), end()]])
+  assertProtocol(events)
+  const [flag] = ofType(events, 'flag')
+  assert.deepEqual(flag.refs, [{ type: 'purchase_order', id: 'PO-001', label: 'PO-001' }, { type: 'purchase_order', id: 'PO-008', label: 'PO-008' }])
+  assert.deepEqual(flag.spans, [{ text: 'PO-002', kind: 'record', reason: 'not_in_results' }])
+  // A text that names no record of the results has no refs.
+  const plain = await ask([OVERDUE, [...say('Two orders are overdue.'), end()]])
+  assert.equal('refs' in ofType(plain.events, 'flag')[0], false)
+  // A part with a record withheld still names the others.
+  const withheld = await ask([OVERDUE, [...say('PO-001 is late, and so is PO-777 of Tenant B.'), end()]])
+  assert.deepEqual(ofType(withheld.events, 'flag')[0].refs.map((ref) => ref.id), ['PO-001'])
+  // A part replaced for a claim names none.
+  const claim = await ask([OVERDUE, [...say('I submitted PO-001 for you.'), end()]])
+  assert.equal(ofType(claim.events, 'replace')[0].code, 'unbacked_action_claim')
+  assert.equal('refs' in ofType(claim.events, 'flag')[0], false)
+})
+
+test('the system prompt asks for the source handle, status words, one set of chips and no talk of tools', () => {
+  assert.match(ASSISTANT_V2_SYSTEM, /starts with its source, such as "list_purchase_orders#1": pass that as source/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Never mention tools, displays, sources, ids, errors or retries to the user/)
+  assert.match(ASSISTANT_V2_SYSTEM, /never as its code: where a result gives a label beside the code \(statusLabel/)
+  assert.match(ASSISTANT_V2_SYSTEM, /suggest_followups, called once/)
+  assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /tool_use id/)
 })
 
 test('stopping mid-stream ends the answer at once: no more events, calls or metering', async () => {

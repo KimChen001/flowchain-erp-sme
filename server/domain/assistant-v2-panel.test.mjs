@@ -130,7 +130,8 @@ test('ui parts keep their order, a resent part is swapped in place, notices are 
     event({ type: 'error', code: 'provider_failed', retryable: true }),
     event({ type: 'answer', status: 200, body: { answerSource: 'assistant_v2', parts: [] } }),
   ])
-  assert.deepEqual(message.parts.map((part) => part.id), ['p1', 'p2', 'p3', 'p4'])
+  // The follow-up chips stay after every other part and the text.
+  assert.deepEqual(message.parts.map((part) => part.id), ['p1', 'p2', 'p4', 'p3'])
   assert.equal(message.parts[1].props.title, 'Second')
   assert.deepEqual(message.notices, ['over_cap_during_answer'])
   assert.deepEqual(message.error, { code: 'provider_failed', retryable: true })
@@ -160,6 +161,40 @@ test('ui parts keep their order, a resent part is swapped in place, notices are 
   const stopped = client.finishAssistantV2Message(partial, { notice: 'cancelled' })
   assert.deepEqual([stopped.done, stopped.toolStatus, stopped.notices, stopped.parts.length], [true, null, ['cancelled'], 1])
   assert.deepEqual(client.finishAssistantV2Message(partial, { error: { code: 'timeout', retryable: true } }).error, { code: 'timeout', retryable: true })
+})
+
+test('one set of follow-up chips per answer, after every other part, and the records a flag names', () => {
+  const chips = (partId, question) => event({ type: 'ui', partId, component: 'followups', schemaVersion: 1, props: { questions: [question] }, refs: [] })
+  const po = (id) => ({ type: 'purchase_order', id, label: id })
+  const message = fold([
+    event({ type: 'text_delta', partId: 'p1', text: 'PO-020 and PO-021 are overdue.' }),
+    chips('p2', 'Which supplier?'),
+    event({ type: 'flag', partId: 'p1', spans: [], refs: [po('PO-020'), po('PO-021')] }),
+    event({ type: 'text_delta', partId: 'p3', text: 'PO-021 is older.' }),
+    // A second set, under another part id, replaces the first.
+    chips('p4', 'Show PO-021'),
+    event({ type: 'text_delta', partId: 'p5', text: 'Ask me more.' }),
+    event({ type: 'flag', partId: 'p3', spans: [], refs: [po('PO-021')] }),
+    event({ type: 'flag', partId: 'p3', spans: [], refs: [po('PO-021')] }),
+  ])
+  assert.deepEqual(message.parts.map((part) => part.id), ['p1', 'p3', 'p5', 'p4'])
+  assert.deepEqual(message.parts.at(-1).props.questions, ['Show PO-021'])
+  assert.deepEqual(message.parts[0].refs, [po('PO-020'), po('PO-021')])
+  assert.deepEqual(message.parts[1].refs, [po('PO-021')], 'a ref is kept once')
+  assert.equal(message.parts[2].refs, undefined)
+  assert.deepEqual(client.answerPartsOf(message).map((part) => [part.id, part.refs?.length ?? 0]), [['p1', 2], ['p3', 1], ['p5', 0], ['p4', 0]])
+  // A replaced part takes the refs of what it still says, never flags.
+  const replaced = fold([
+    event({ type: 'text_delta', partId: 'p1', text: 'PO-020 is late, and so is PO-777.' }),
+    event({ type: 'replace', partId: 'p1', text: 'PO-020 is late, and so is [not shown].', code: 'foreign_record' }),
+    event({ type: 'flag', partId: 'p1', spans: [{ text: '4', kind: 'number', reason: 'not_in_results' }], refs: [po('PO-020')] }),
+  ])
+  assert.deepEqual(replaced.parts, [{ id: 'p1', kind: 'text', text: 'PO-020 is late, and so is [not shown].', flags: [], replaced: 'foreign_record', refs: [po('PO-020')] }])
+  // Rendered, the text chips the records and the chips come last.
+  const markup = client.render({ message })
+  assert.equal(count(markup, /data-business-id="PO-020"/g), 1)
+  assert.ok(markup.indexOf('Ask me more.') < markup.indexOf('Show PO-021'))
+  assert.doesNotMatch(markup, /Which supplier\?/)
 })
 
 test('a stream line that cannot be read is skipped, not fatal', () => {

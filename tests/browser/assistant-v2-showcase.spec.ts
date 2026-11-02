@@ -107,7 +107,13 @@ test("S2: the overdue orders stream in as a table with a record chip per order",
   await expect(chips.first()).toHaveText("LOCAL-DEMO-PO-020");
   await expect(chips.first()).toHaveAttribute("data-business-id", "LOCAL-DEMO-PO-020");
   await expect(table.locator(":visible", { hasText: "Precision Fastener Works" }).first()).toBeVisible();
+  // The order the text names, from this answer's results, is a record chip too.
+  const textChips = answer.getByTestId("ai-v2-text").locator('[data-testid="ai-record-chip"]');
+  await expect(textChips).toHaveCount(1);
+  await expect(textChips.first()).toHaveAttribute("data-business-id", "LOCAL-DEMO-PO-020");
   await expect(answer.getByTestId("ai-follow-up-chip")).toHaveCount(2);
+  // The follow-up chips come after the text and the table.
+  await expect(answer.locator("[data-component]").last()).toHaveAttribute("data-component", "followups");
   expect(await chineseLines(panel)).toEqual([]);
 
   // A chip opens the order; docked beside the page, the assistant stays open.

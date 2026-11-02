@@ -37,15 +37,18 @@ const RENDERERS: Record<string, (part: Extract<AnswerPart, { type: "ui" }>, prop
   followups: (_part, props, context) => context.latest ? <FollowupChips props={props} language={context.language} onFollowUp={context.onFollowUp} /> : null,
 };
 
-// An answer's parts in the order they streamed. Text is chipped only for the
-// records the server named in this answer (the thread's refs and every UI
-// part's refs); an unknown or malformed part is ignored.
+// An answer's parts in the order they streamed, the follow-up chips last.
+// Text is chipped only for the records the server named in this answer (the
+// thread's refs, every UI part's refs and those it found each text names); an
+// unknown or malformed part is ignored.
 export function AnswerParts({ parts, refs = [], latest = true, ...context }: Omit<Context, "refs" | "latest"> & { parts: AnswerPart[]; refs?: PartRef[]; latest?: boolean }) {
-  const known = [...refs, ...parts.flatMap((part) => part.type === "ui" ? part.refs || [] : [])];
+  const known = [...refs, ...parts.flatMap((part) => part.refs || [])];
   const full: Context = { ...context, refs: known, latest };
+  const chips = parts.filter((part) => part.type === "ui" && part.component === "followups").slice(-1);
+  const ordered = [...parts.filter((part) => !(part.type === "ui" && part.component === "followups")), ...chips];
   return (
     <div data-testid="ai-v2-answer" className="space-y-3">
-      {parts.map((part) => {
+      {ordered.map((part) => {
         if (part.type === "text") return part.text ? <StreamingText key={part.id} text={part.text} flags={part.flags} refs={known} language={full.language} onNavigate={full.onNavigate} /> : null;
         const render = RENDERERS[part.component];
         if (!render) return null;

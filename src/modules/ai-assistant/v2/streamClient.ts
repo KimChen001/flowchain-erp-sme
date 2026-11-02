@@ -29,7 +29,7 @@ export type AssistantV2Event =
   | { type: "tool"; id: string; name: string; state: "running" | "done" | "error"; rows?: number }
   | { type: "text_delta"; partId: string; text: string }
   | { type: "ui"; partId: string; component: string; schemaVersion: number; props: unknown; refs: PartRef[] }
-  | { type: "flag"; partId: string; spans: FlagSpan[] }
+  | { type: "flag"; partId: string; spans: FlagSpan[]; refs?: PartRef[] }
   | { type: "replace"; partId: string; text: string; code: AssistantV2ReplaceCode }
   | { type: "notice"; code: AssistantV2NoticeCode }
   | { type: "error"; code: string; retryable: boolean }

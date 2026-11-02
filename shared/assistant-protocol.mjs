@@ -185,7 +185,9 @@ export const streamEventSchema = z.union([
   z.object({ ...envelope, type: z.literal('tool'), id, name: code, state: z.enum(TOOL_STATES), rows: z.number().int().nonnegative().optional() }),
   z.object({ ...envelope, type: z.literal('text_delta'), partId, text: z.string().max(4000) }),
   ...uiEvents,
-  z.object({ ...envelope, type: z.literal('flag'), partId, spans: z.array(z.object({ text: z.string().min(1).max(200), kind: z.enum(FLAG_KINDS), reason: code })).max(50) }),
+  // The check of a completed text part: the spans it could not match, and the
+  // records of this answer's results the text names (the panel chips those).
+  z.object({ ...envelope, type: z.literal('flag'), partId, spans: z.array(z.object({ text: z.string().min(1).max(200), kind: z.enum(FLAG_KINDS), reason: code })).max(50), refs: z.array(refSchema).max(60).optional() }),
   z.object({ ...envelope, type: z.literal('replace'), partId, text: z.string().max(4000), code: z.enum(REPLACE_CODES) }),
   z.object({ ...envelope, type: z.literal('notice'), code: z.enum(NOTICE_CODES) }),
   z.object({ ...envelope, type: z.literal('error'), code, retryable: z.boolean() }),

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { PART_SCHEMA_VERSION, safeParseStreamEvent } from '../../shared/assistant-protocol.mjs'
+import { PART_SCHEMA_VERSION, refSchema, safeParseStreamEvent } from '../../shared/assistant-protocol.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
-import { aiSkillQuestionLanguage, aiSkillText } from './ai-skill-copy.mjs'
+import { AI_SKILL_COPY, aiSkillQuestionLanguage, aiSkillText } from './ai-skill-copy.mjs'
 import { validateAiToolArgs } from './ai-read-tool-contract.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { aiGroundingRecordNumbers, aiGroundingSources, checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
@@ -12,6 +12,7 @@ import { AssistantModelError } from './ai-assistant-v2-model/model-error.mjs'
 import { aiModelFirstHidden, aiModelFirstProgressSources, aiModelFirstTurns, presentAiModelFirstAnswer } from './ai-model-first.mjs'
 import { anthropicMessagesUsage } from './ai-runtime-provider-specific-adapters-v2.mjs'
 import { aiCallCostMicros, aiUsagePrices, recordAiProviderCall } from './ai-usage-meter.mjs'
+import { aiUiSourceHandles } from './ai-assistant-v2-ui-tools.mjs'
 
 // The assistant v2 loop (docs/ai-assistant-v2-design.md §3.3, §3.6, §3.7,
 // §3.9, §3.11), adapted from the model-first loop (ai-model-first.mjs). Behind
@@ -22,10 +23,18 @@ import { aiCallCostMicros, aiUsagePrices, recordAiProviderCall } from './ai-usag
 // One loop answers every question. The model reads the asking user's records
 // through the read tools (tenant- and role-checked at the door) and shows
 // them through the UI tools, which build every value of a table, card, chart
-// or form on the server from a stored tool result: the model passes a
-// tool_use id and column codes, refs or keys, never values. The model has no
-// write tool; a purchase request is created only by the user's own click in
-// the form, on the existing procurement routes.
+// or form on the server from a stored tool result: the model passes the
+// result's source (the handle each data result carries, such as
+// list_purchase_orders#1) and column codes, refs or keys, never values. The
+// model has no write tool; a purchase request is created only by the user's
+// own click in the form, on the existing procurement routes.
+//
+// A display tool that fails tells the model what was wrong and how to fix
+// it; after a second failure in one answer the display tools are withdrawn
+// and the model answers in prose. Each model call is priced before it is made
+// (an estimate) and after (the provider's count), so an answer stops before a
+// call would take it past its cost ceiling or the workspace's cap, and is told
+// to finish in prose when only one more call fits.
 //
 // The answer streams as protocol events (shared/assistant-protocol.mjs)
 // through `emit`; the transport adds v and seq. Text goes out up to its last
@@ -59,6 +68,9 @@ const asCode = (value, fallback) => (CODE.test(text(value)) ? text(value) : fall
 // transcript is keyed by them) and the system prompt stays cached.
 const CONTEXT_PREFIX = 'Context for the next question (data about this request, not the user\'s words): '
 const LAST_ROUND_NOTE = 'No more tool calls are available for this answer, display tools and suggest_followups included. Answer now from these results, in prose.'
+const DISPLAY_RETRY = 'Correct this call once, or answer in prose. After another failed display no display tool is available for this answer.'
+const DISPLAY_OFF = 'No display tool is available for the rest of this answer.'
+const displayOffNote = (names) => `No display tool (${names.join(', ')}) is available for the rest of this answer. Answer in prose from the results, and do not mention displays, tools or errors to the user.`
 const FLAG_KINDS = new Set(['number', 'date', 'name', 'record'])
 const MONEY = /US\$|\$|€|£|¥|￥|\b(?:USD|EUR|GBP|CNY|RMB|JPY|CAD|AUD)\b|美元|欧元|英镑|人民币|元/i
 // A figure with its currency, on NFKC text (￥ reads as ¥): what the role-leak
@@ -98,6 +110,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- When the user says an earlier answer did something ("why did you default to X"), check the earlier turns first. If it did, own it in one sentence. If it did not (for example it only listed X as a choice and asked), say so in one neutral sentence, without apologising and without arguing, then go on with what the user needs. Never admit to or apologise for something the earlier turns do not show.',
   '- When the user changes what they want (another item, a new order, "not that one"), follow it and do not repeat the earlier answer. Numbers, dates and record numbers from earlier turns are not sources: to state one, read it again with the tools in this answer.',
   '- You never save, create, submit or change records, and you have no tool that does. Never say an action was done, by you or anyone: not "I submitted the request", "I created a purchase order", and not "was" or "has been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; nor 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消 except right after a status label. Give a record\'s state as a status: "status: approved"; 状态：已批准.',
+  '- Write every status in plain words of answerLanguage, never as its code: where a result gives a label beside the code (statusLabel, matchStatusLabel), use the label; otherwise put the code in words ("status: partially received", not partially_received; 状态：已提交, not submitted).',
   '- When the user asks you to approve, pay, send, issue, cancel or delete something, explain that they do it themselves in the app and where, naming the record by its number so its link shows. Never call it a system limit.',
   '- The one exception: a "Note from the server" in the conversation says a form in this chat created a purchase request, which the user did with their own click. You may then say that they created it, naming its number, with the status the note gives.',
   '- When the user wants to order or reorder, call suggest_purchase_lines, then suggest_purchase_request with that result as source. It opens a purchase request form in the answer: the user reviews the lines, creates a draft request and submits it for approval with their own clicks. Pass from user_named with the SKUs the user named (and a quantity, supplier or date only when the user typed it); otherwise pass from suggestions, which leaves every line unticked: never choose an item for the user. Say what the form is for ("I\'ve filled in a request form for you to review"), never that a request exists. If suggest_purchase_request is not offered, the user\'s role cannot create purchase requests; say so and that a buyer can.',
@@ -112,9 +125,10 @@ export const ASSISTANT_V2_SYSTEM = [
   '',
   'The answer:',
   '- Answer briefly in prose, in answerLanguage (the language of the question), plainly, as a helpful colleague, to the user as "you" (你). Lead with the answer, then the few facts behind it. About 120 words at most, unless the user asks for a draft or a summary. No headings.',
-  '- Show lists and figures with the display tools instead of typing them: show_table for rows, show_records for a few records, show_chart for figures across months or suppliers, show_kpis for the workspace summary. Pass the tool_use id of the data tool\'s result as source, with the column codes, refs or keys to show; never type the values into the tool or repeat the whole list in prose.',
+  '- Show lists and figures with the display tools instead of typing them: show_table for rows, show_records for a few records, show_chart for figures across months or suppliers, show_kpis for the workspace summary. Every data result starts with its source, such as "list_purchase_orders#1": pass that as source, with the column codes, refs or keys to show; never type the values into the tool or repeat the whole list in prose. If a display fails, fix the call once as its error says, or answer in prose.',
   '- Name the records you rely on by their numbers as the tools give them; the app turns them into links.',
-  '- End every answer with suggest_followups: one to three short questions the user may want to ask next, in answerLanguage.',
+  '- End every answer with suggest_followups, called once: one to three short questions the user may want to ask next, in answerLanguage.',
+  '- Never mention tools, displays, sources, ids, errors or retries to the user. If a display did not work, give the answer in prose as if nothing had happened.',
 ].join('\n')
 
 // The SKUs the user named in the question, as the facts hold them: only these
@@ -199,9 +213,37 @@ function rowCount(result) {
   return list ? list.length : undefined
 }
 
+// The status codes the assistant's copy words, by the kind of record and the
+// field: the model reads the words beside the code (statusLabel), in the
+// answer's language, so it writes "Partially received", not
+// partially_received. The labels are status labels ("Issued to the supplier",
+// 审批通过，待发出), never the wording the action-claim checks look for. The
+// stored result keeps its codes; only what the model reads gets the labels.
+const STATUS_COPY = Object.freeze({ purchase_order: { status: 'po_status' }, item: { status: 'stock_status' }, supplier_invoice: { matchStatus: 'match' } })
+function withStatusLabels(value, language) {
+  if (Array.isArray(value)) return value.map((entry) => withStatusLabels(entry, language))
+  if (!value || typeof value !== 'object') return value
+  const copy = STATUS_COPY[value.ref?.type] || {}
+  const out = {}
+  for (const [key, entry] of Object.entries(value)) {
+    out[key] = key === 'ref' ? entry : withStatusLabels(entry, language)
+    const label = copy[key] && typeof entry === 'string' ? `${copy[key]}.${entry}` : ''
+    if (AI_SKILL_COPY[label]) out[`${key}Label`] = aiSkillText(label, language)
+  }
+  return out
+}
+
+// About how many tokens a text holds: three ASCII characters a token, and a
+// token for any other character (Chinese), which errs high for JSON.
+function tokensIn(value) {
+  let ascii = 0
+  for (let at = 0; at < value.length; at += 1) if (value.charCodeAt(at) < 128) ascii += 1
+  return Math.ceil(ascii / 3) + (value.length - ascii)
+}
+
 function toolContent(outcome, maxChars) {
   const content = JSON.stringify(outcome.ok
-    ? outcome.result
+    ? outcome.view ?? outcome.result
     : { error: outcome.error, ...(outcome.details ? { details: outcome.details } : {}), ...(outcome.candidates ? { candidates: outcome.candidates } : {}), ...(outcome.order ? { order: outcome.order } : {}) })
   return content.length > maxChars ? JSON.stringify({ error: 'result_too_large', details: ['Ask for fewer rows with limit, or narrow the filter.'] }) : content
 }
@@ -253,7 +295,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     try { emit?.(event) } catch { /* the answer goes on */ }
   }
 
-  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null, providerFailed: null }
+  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null, providerFailed: null, displayFailures: 0, lastRoundForCost: false }
   const parts = []
   const results = []
   const refs = []
@@ -263,6 +305,20 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
   const turnStart = thread.messages.length
   const earlier = thread.messages.slice(0, turnStart)
   let callCount = 0
+  // The display tools withdrawn for the rest of this answer, and whether the
+  // next call is the last (no tool is admitted after it).
+  const withdrawn = new Set()
+  let finalRound = false
+  // What this answer may still spend: its own ceiling, or less when that is
+  // all that is left of the workspace's monthly cap.
+  const capBinds = limits.capRemainingMicros !== null && limits.capRemainingMicros !== undefined && limits.capRemainingMicros < limits.costCeilingMicros
+  const budgetMicros = capBinds ? limits.capRemainingMicros : limits.costCeilingMicros
+  const budgetCode = capBinds ? 'over_cap_during_answer' : 'cost_ceiling'
+  // The last completed call, for the next one's estimate: the prompt as the
+  // provider counted it, whether the provider cached it, how many messages it
+  // was sent, and the largest output of a call so far.
+  let lastCall = null
+  let largestOutput = 0
 
   try {
     send({ type: 'start', threadId, messageId, model, language })
@@ -311,6 +367,17 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     const canDraft = Boolean(aiSkillVisibility(context.actor).canDraft)
     const ui = new Map(array(uiTools).filter((tool) => tool?.kind === 'ui' && !dataNames.has(tool.name) && (canDraft || tool.name !== 'suggest_purchase_request')).map((tool) => [tool.name, tool]))
     const tools = [...dataTools, ...[...ui.values()].map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }))]
+    const displayNames = [...ui.values()].filter((tool) => tool.display).map((tool) => tool.name)
+
+    // The next call's cost before it is made: the prompt as the last call was
+    // counted plus what was added since (the first call: the system prompt,
+    // the tools and the thread), read from the cache when the provider cached
+    // the last one, and `outputTokens` of output.
+    const nextCallMicros = (outputTokens) => {
+      const added = tokensIn(JSON.stringify(thread.messages.slice(lastCall ? lastCall.messages : 0)))
+      const prompt = lastCall ? lastCall.prompt : tokensIn(ASSISTANT_V2_SYSTEM) + tokensIn(JSON.stringify(tools))
+      return aiCallCostMicros({ inputTokens: prompt + added, outputTokens, cacheReadTokens: lastCall?.cached ? prompt : 0, cacheWriteTokens: lastCall?.cached ? added : 0 }, prices)
+    }
 
     // The statuses of the records this answer's tools returned, by number.
     const statuses = () => {
@@ -378,16 +445,31 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       else release(part, upTo)
     }
 
+    // The records of this answer's data results that a text names by their
+    // number (a ref's label or id with a digit in it, written whole), for the
+    // panel's record chips. A number no result holds is never among them.
+    const namedRefs = (value) => {
+      const written = value.normalize('NFKC').toLowerCase()
+      const names = (entry) => /\d/.test(entry) && new RegExp(`(?<![\\p{L}\\p{N}-])${escape(fold(entry))}(?![\\p{L}\\p{N}-])`, 'u').test(written)
+      return refs.filter((ref) => refSchema.safeParse(ref).success && [ref.label, ref.id].some((entry) => text(entry) && names(text(entry)))).map(({ type, id, label }) => ({ type, id, label })).slice(0, 60)
+    }
+    const flagEvent = (part, spans) => {
+      const named = part.replaced ? [] : namedRefs(part.text)
+      return { type: 'flag', partId: part.id, spans, ...(named.length ? { refs: named } : {}) }
+    }
+
     // A text part is complete: check it against this answer's results. A
-    // hard finding replaces it; otherwise its held rest is sent, then flags.
+    // hard finding replaces it; otherwise its held rest is sent, then flags
+    // and the records it names.
     const checkText = (part) => {
       if (!text(part.text)) { release(part, part.text.length); return }
       const check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results, refs, question, conversation, facts, today: context.today })
       if (check.problems.some((row) => row.kind === 'action_claim') || unbackedSelfClaim(part.text) || passiveClaims(part.text)) {
         part.text = aiSkillText('assistant_v2.replace.action_claim', language)
         stats.replaces.push('unbacked_action_claim')
+        part.replaced = true
         send({ type: 'replace', partId: part.id, text: part.text, code: 'unbacked_action_claim' })
-        send({ type: 'flag', partId: part.id, spans: [] })
+        send(flagEvent(part, []))
         return
       }
       const withheld = []
@@ -409,7 +491,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: withheld.some((row) => row.code === 'foreign_record') ? 'foreign_record' : 'hidden_value' })
       } else release(part, part.text.length)
       stats.flags += spans.length
-      send({ type: 'flag', partId: part.id, spans: spans.slice(0, 50) })
+      send(flagEvent(part, spans.slice(0, 50)))
     }
 
     let openText = null
@@ -434,8 +516,10 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         return { ok: false, error: 'tool_failed' }
       }
       if (built?.error) return { ok: false, error: asCode(built.error.code, 'invalid_arguments'), details: [clip(built.error.message, 300)].filter(Boolean) }
-      const event = { type: 'ui', partId, component: built?.component, schemaVersion: PART_SCHEMA_VERSION, props: built?.props, refs: array(built?.refs) }
-      if (!safeParseStreamEvent({ v: 2, seq: 0, ...event }).success) return { ok: false, error: 'invalid_part', details: ['The part could not be built from that source; check the source id and the codes.'] }
+      // One set of follow-up chips per answer: a later one takes the earlier one's part.
+      const chips = built?.component === 'followups' ? parts.find((part) => part.component === 'followups') : null
+      const event = { type: 'ui', partId: chips ? chips.id : partId, component: built?.component, schemaVersion: PART_SCHEMA_VERSION, props: built?.props, refs: array(built?.refs) }
+      if (!safeParseStreamEvent({ v: 2, seq: 0, ...event }).success) return { ok: false, error: 'invalid_part', details: ['The part could not be built from that source; check the source and the codes.'] }
       // The hard scans over the props before they are sent. The follow-up
       // questions are the model's own words, so they get the claim check too
       // (questions about a state, "which were approved?", are no claim).
@@ -443,7 +527,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       const leaks = strings.some((value) => (amountsHidden && MONEY_FIGURE.test(value.normalize('NFKC'))) || aiGroundingRecordNumbers(value).some((token) => !isNamed(token) && foreign(token)))
       const claims = event.component === 'followups' && strings.some((value) => selfClaim(value) || aiAnswerActionClaims(value).some((found) => /^(?:I|we)\b/i.test(found)))
       if (leaks || claims) return { ok: false, error: 'invalid_part', details: [claims ? 'A follow-up question read as if something had been done; ask questions only.' : 'The part named an amount this role cannot see or a record no result holds; leave it out.'] }
-      return { ok: true, event, result: { shown: event.component, partId } }
+      return { ok: true, event, result: { shown: event.component, partId: event.partId } }
     }
 
     // Every tool_use of an assistant message gets a result in the next user
@@ -462,30 +546,56 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       if (aborted) break
       if (timedOut) { stop('timeout'); send({ type: 'error', code: 'timeout', retryable: true }); break }
       if (stats.usage.input + stats.usage.output >= limits.tokens) { stop('usage_limit'); send({ type: 'error', code: 'usage_limit', retryable: false }); break }
+      // The cost check before every call: this call, estimated at its full
+      // output, must fit in what the answer may still spend.
+      if (stats.costMicros + nextCallMicros(limits.outputTokens) > budgetMicros) {
+        stop(budgetCode)
+        send({ type: 'notice', code: budgetCode })
+        break
+      }
       if (afterTools) send({ type: 'progress', step: 'writing' })
       const outcomes = new Map()
       const pending = []
       const admitted = new Set()
+      const withdrawnBefore = withdrawn.size
       // Calls are admitted in the order the model wrote them, up to the
       // answer's round and call limits; a UI tool is built at once, so its
       // part shows where the model called it relative to the text.
       const admit = async (call) => {
         if (outcomes.has(call.id) || admitted.has(call.id)) return
-        if (stats.rounds >= limits.rounds || callCount >= limits.toolCalls) {
+        const tool = ui.get(call.name)
+        if (finalRound || stats.rounds >= limits.rounds || callCount >= limits.toolCalls) {
           outcomes.set(call.id, { ok: false, error: 'call_limit', details: ['No more tool calls are available for this answer.'] })
           send({ type: 'tool', id: call.id, name: asCode(call.name, 'unknown_tool'), state: 'error' })
           return
         }
+        // A display tool after they were withdrawn: refused, not counted.
+        if (tool?.display && withdrawn.has(tool.name)) {
+          outcomes.set(call.id, { ok: false, error: 'display_off', details: [DISPLAY_OFF] })
+          stats.ui.push({ tool: call.name, status: 'display_off' })
+          send({ type: 'tool', id: call.id, name: call.name, state: 'error' })
+          return
+        }
         callCount += 1
         admitted.add(call.id)
-        const tool = ui.get(call.name)
         if (!tool) { pending.push(call); return }
         const outcome = await runUiTool(tool, call)
+        // A failed display says what was wrong and how to fix it; the second
+        // failure in this answer withdraws the display tools.
+        if (tool.display && !outcome.ok) {
+          stats.displayFailures += 1
+          if (stats.displayFailures === 1) outcome.details = [...array(outcome.details), DISPLAY_RETRY]
+          else {
+            for (const name of displayNames) withdrawn.add(name)
+            outcome.details = [...array(outcome.details), DISPLAY_OFF]
+          }
+        }
         outcomes.set(call.id, outcome)
         stats.ui.push({ tool: call.name, status: outcome.ok ? 'ok' : outcome.error, ...(outcome.ok ? { component: outcome.event.component } : {}) })
         if (aborted) return
         if (outcome.ok) {
-          parts.push({ id: outcome.event.partId, type: 'ui', component: outcome.event.component })
+          // A later set of follow-up chips replaces the earlier one in place.
+          if (!parts.some((part) => part.id === outcome.event.partId)) parts.push({ id: outcome.event.partId, type: 'ui', component: outcome.event.component })
           for (const ref of outcome.event.refs) if (!shownRefs.some((row) => row.type === ref.type && row.id === ref.id)) shownRefs.push(ref)
           send(outcome.event)
         }
@@ -493,8 +603,11 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       }
 
       let end = null
+      // The tool list stays as the first call sent it (the cached prefix);
+      // withdrawn tools are named beside it for a client that can drop them.
+      const sentMessages = thread.messages.length
       try {
-        for await (const event of modelClient.stream({ system: ASSISTANT_V2_SYSTEM, messages: thread.messages, tools, maxTokens: limits.outputTokens }, controller.signal)) {
+        for await (const event of modelClient.stream({ system: ASSISTANT_V2_SYSTEM, messages: thread.messages, tools, maxTokens: limits.outputTokens, ...(withdrawn.size ? { withdrawnTools: [...withdrawn] } : {}) }, controller.signal)) {
           if (aborted || timedOut) break
           if (event.type === 'text_delta' && event.text) {
             if (!openText) {
@@ -561,6 +674,8 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       stats.usage.cacheRead += usage.cacheReadTokens
       stats.usage.cacheWrite += usage.cacheWriteTokens
       stats.costMicros += aiCallCostMicros(usage, prices)
+      lastCall = usage.inputTokens > 0 ? { prompt: usage.inputTokens, cached: usage.cacheReadTokens + usage.cacheWriteTokens > 0, messages: sentMessages } : null
+      largestOutput = Math.max(largestOutput, usage.outputTokens)
       await recordAiProviderCall({ ok: true, usage })
       closeText()
       const content = array(end.content)
@@ -611,6 +726,12 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         }
         send({ type: 'tool', id: call.id, name: asCode(call.name, 'unknown_tool'), state: outcome.ok ? 'done' : 'error', ...(outcome.ok && rowCount(outcome.result) !== undefined ? { rows: rowCount(outcome.result) } : {}) })
       }
+      // What the model reads of each result: its source first, for the UI
+      // tools, and the words beside the status codes.
+      const handles = aiUiSourceHandles(answerResults)
+      for (const [call, outcome] of ran) {
+        if (outcome.ok && handles.has(call.id) && outcome.result && typeof outcome.result === 'object' && !Array.isArray(outcome.result)) outcome.view = { source: handles.get(call.id), ...withStatusLabels(outcome.result, language) }
+      }
       if (aborted) { closeToolUses(toolUses, outcomes, 'stopped'); break }
       if (!admitted.size) {
         // The model kept calling tools after the last round: stop here. Only
@@ -623,9 +744,17 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         break
       }
       stats.rounds += 1
-      const last = stats.rounds >= limits.rounds || callCount >= limits.toolCalls
       closeToolUses(toolUses, outcomes, 'stopped')
-      if (last) thread.messages.at(-1).content.push({ type: 'text', text: LAST_ROUND_NOTE })
+      // The next call is the last when the limits say so, or when a call
+      // after it could not fit in what the answer may still spend.
+      const typical = Math.min(limits.outputTokens, Math.max(1000, largestOutput))
+      const lastForCost = stats.costMicros + nextCallMicros(typical) + nextCallMicros(limits.outputTokens) > budgetMicros
+      const note = thread.messages.at(-1).content
+      if (stats.rounds >= limits.rounds || callCount >= limits.toolCalls || lastForCost) {
+        finalRound = true
+        stats.lastRoundForCost ||= lastForCost
+        note.push({ type: 'text', text: LAST_ROUND_NOTE })
+      } else if (withdrawn.size && !withdrawnBefore) note.push({ type: 'text', text: displayOffNote(displayNames) })
       afterTools = true
     }
 
@@ -650,7 +779,8 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       skill: { ...response.skill, id: 'assistant_v2', version: ASSISTANT_V2_VERSION },
       threadId,
       messageId,
-      parts: parts.map((part) => ({ id: part.id, type: part.type, ...(part.component ? { component: part.component } : {}) })),
+      // The follow-up chips come last, after every other part and the text.
+      parts: [...parts.filter((part) => part.component !== 'followups'), ...parts.filter((part) => part.component === 'followups')].map((part) => ({ id: part.id, type: part.type, ...(part.component ? { component: part.component } : {}) })),
       // As the JSON transport reports it (the gateway's modelAccessSend): a
       // failed provider call makes the answer's model access unavailable.
       aiModelAccess: stats.providerFailed ? { status: 'unavailable', ...(stats.providerFailed === 'budget' ? { reason: 'budget' } : {}) } : { status: 'on' },
@@ -675,6 +805,8 @@ function auditBlock({ stats, model, aborted, started }) {
     tools: stats.calls.map((call) => ({ tool: call.tool, status: call.status })),
     uiTools: stats.ui.map((call) => ({ tool: asCode(call.tool, 'unknown_tool'), status: asCode(call.status, 'error'), ...(call.component ? { component: call.component } : {}) })),
     flags: stats.flags,
+    displayFailures: stats.displayFailures,
+    lastRoundForCost: stats.lastRoundForCost,
     replaces: [...stats.replaces],
     refusal: stats.refusal,
     aborted,
