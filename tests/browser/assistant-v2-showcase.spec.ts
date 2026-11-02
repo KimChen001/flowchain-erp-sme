@@ -70,6 +70,26 @@ async function ask(panel: Locator, question: string) {
   return answers.last();
 }
 
+type RequestRow = { id: string; status: string; version?: number };
+
+// A run that fails after Create would leave the request open, and a retry on
+// the same database would then see LDM-002 as already requested. Cancel what
+// this run created so the retry starts from the same state. A click still in
+// flight can move the version under us, so a conflict reads the request again.
+async function cancelCreatedRequests(request: APIRequestContext, session: Session, before: Array<{ id: string }>) {
+  const rows = await apiJson<RequestRow[]>(request, session, "/api/procurement/requests");
+  for (const { id } of rows.filter((row) => !before.some((old) => old.id === row.id))) {
+    const path = `/api/procurement/requests/${encodeURIComponent(id)}`;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const current = await apiJson<RequestRow>(request, session, path);
+      if (!["draft", "submitted"].includes(current.status)) break;
+      const cancelled = await request.post(`${path}/cancel`, { headers: auth(session), data: { expectedVersion: current.version } });
+      if (cancelled.ok()) break;
+      await new Promise((settle) => setTimeout(settle, 200));
+    }
+  }
+}
+
 const chineseLines = async (locator: Locator) => (await locator.innerText()).split(/\n+/).map((line) => line.trim()).filter((line) => CJK.test(line));
 
 test("S2: the overdue orders stream in as a table with a record chip per order", async ({ page }) => {
@@ -101,6 +121,14 @@ test("S4: the form ticks nothing, creates one draft request, submits and cancels
   const session = await signIn(page);
   const panel = await openAssistant(page, session);
   const requestsBefore = await apiJson<Array<{ id: string }>>(page.request, session, "/api/procurement/requests");
+  try {
+    await runS4(page, session, panel, requestsBefore);
+  } finally {
+    await cancelCreatedRequests(page.request, session, requestsBefore);
+  }
+});
+
+async function runS4(page: Page, session: Session, panel: Locator, requestsBefore: Array<{ id: string }>) {
 
   const answer = await ask(panel, S4);
   await expect(answer).toHaveAttribute("data-done", "true", { timeout: 15_000 });
@@ -141,12 +169,18 @@ test("S4: the form ticks nothing, creates one draft request, submits and cancels
   const requestId = created[0].id;
   await expect(receipt).toContainText(requestId);
   expect(posts.length).toBeGreaterThanOrEqual(1);
-  for (const body of posts) expect(JSON.parse(body).idempotencyKey).toBe(`ai-form:${formId}`);
+  for (const body of posts) {
+    const sent = JSON.parse(body);
+    expect(sent.idempotencyKey).toBe(`ai-form:${formId}`);
+    expect(sent.suggestionTrail?.origin).toBe("ai_assistant");
+  }
 
-  // Submit is its own click, and says the approvers were emailed.
+  // Submit is its own click. Approval emails are off in this run, so the
+  // receipt only says when approvers get an email; the email itself is not
+  // checked here.
   await receipt.getByTestId("ai-v2-pr-submit").click();
   await expect(receipt).toHaveAttribute("data-status", "submitted");
-  await expect(receipt.getByTestId("ai-v2-pr-emailed")).toBeVisible();
+  await expect(receipt.getByTestId("ai-v2-pr-emailed")).toHaveText("Approvers get an email when approval emails are turned on for this workspace.");
   await receipt.getByTestId("ai-v2-pr-cancel").click();
   await expect(receipt).toHaveAttribute("data-status", "cancelled");
   const cancelled = (await apiJson<Array<{ id: string; status: string }>>(page.request, session, "/api/procurement/requests")).find((row) => row.id === requestId);
@@ -164,7 +198,7 @@ test("S4: the form ticks nothing, creates one draft request, submits and cancels
   await expect(followUp.getByTestId("ai-v2-table")).toBeVisible();
   await expect.poll(async () => (await latestAssistantAudit(page.request, session))?.formNotes).toBe(1);
   expect(await chineseLines(panel)).toEqual([]);
-});
+}
 
 test("Stop ends a streaming answer and nothing more is spent on it", async ({ page }) => {
   const session = await signIn(page);

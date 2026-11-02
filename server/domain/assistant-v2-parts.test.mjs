@@ -334,7 +334,7 @@ test('an item added from the search reads the reference price the item suppliers
   assert.deepEqual([body.lines[0].estimatedUnitPrice, body.lines[0].estimatedAmount, body.lines[0].currency], [0.42, 4.2, 'USD'])
 })
 
-test('the receipt has Submit as its one primary button, and submitting says the approvers were emailed', async () => {
+test('the receipt has Submit as its one primary button, and submitting says when approvers get an email', async () => {
   const client = await loadClient()
   const draft = client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 1, status: 'draft' } })
   assert.match(draft, /data-testid="ai-v2-pr-receipt" data-status="draft"/)
@@ -345,7 +345,9 @@ test('the receipt has Submit as its one primary button, and submitting says the 
   assert.doesNotMatch(draft, /data-testid="ai-v2-pr-create"/)
   const submitted = client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 2, status: 'submitted' } })
   assert.equal(count(submitted, /data-primary="true"/g), 0)
-  assert.match(submitted, /Approvers have been emailed\./)
+  // The submit answer cannot tell whether an email went out (approval emails
+  // may be off), so the note states the condition rather than claiming it.
+  assert.match(submitted, /<p data-testid="ai-v2-pr-emailed"[^>]*>Approvers get an email when approval emails are turned on for this workspace\.</)
   assert.match(submitted, /data-testid="ai-v2-pr-withdraw"[^>]*>Withdraw</)
   assert.doesNotMatch(submitted, /Submit for approval/)
   assert.match(client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 1, status: 'draft' }, language: 'zh-CN' }), /提交审批（将邮件通知审批人）/)
