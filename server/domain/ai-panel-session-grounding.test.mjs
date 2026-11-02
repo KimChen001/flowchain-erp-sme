@@ -47,14 +47,19 @@ test('R111 panel has explicit minimize restore outside click and cleanup behavio
   assert.match(panelSource, /event\.key === "Escape"/)
   assert.match(panelSource, /panelRef\.current\?\.contains\(target\)/)
   assert.match(panelSource, /aria-label=\{language === "zh-CN" \? "最小化 AI 助手" : "Minimize AI assistant"\}/)
-  assert.match(panelSource, /aria-label=\{open \? \(language === "zh-CN" \? "最小化 AI 助手" : "Minimize AI assistant"\) : \(language === "zh-CN" \? "展开 AI 助手" : "Open AI assistant"\)\}/)
+  // The launcher shows only while the assistant is closed (panel design, 2026-11-01).
+  assert.match(panelSource, /\{!open && \(\s*<button\s+ref=\{restoreButtonRef\}/)
+  assert.match(panelSource, /aria-label=\{language === "zh-CN" \? "展开 AI 助手" : "Open AI assistant"\}/)
+  // Docked beside the page, a click on the page leaves it open.
+  assert.match(panelSource, /if \(docked\) return;/)
 })
 
 test('R111 minimize and navigation preserve messages input evidence and actions', () => {
   assert.match(panelSource, /const minimizeAssistant = \(\) => setOpen\(false\);/)
   assert.match(panelSource, /const minimizeAfterNavigate: AiNavigate = \(moduleId, focusTarget, options\) => \{/)
-  assert.match(panelSource, /onNavigate\?\.\(moduleId, focusTarget \|\| null, \{ source: "ai", returnTo: activeContext\?\.route \|\| moduleId, \.\.\.options \}\);\s*minimizeAssistant\(\)/)
-  assert.match(panelSource, /<AiResponseCards cards=\{message\.cards\} onNavigate=\{minimizeAfterNavigate\}/)
+  // Covering the page it closes after opening a record; docked it stays beside it.
+  assert.match(panelSource, /onNavigate\?\.\(moduleId, focusTarget \|\| null, \{ source: "ai", returnTo: activeContext\?\.route \|\| moduleId, \.\.\.options \}\);\s*if \(!docked\) minimizeAssistant\(\)/)
+  assert.match(panelSource, /<AiResponseCards cards=\{message\.cards\} latest=\{index === lastAssistantIndex\} onNavigate=\{minimizeAfterNavigate\}/)
   assert.doesNotMatch(panelSource, /useEffect\(\(\) => \{[\s\S]*?setMessages\(\[\]\)[\s\S]*?\}, \[moduleId\]\)/)
 })
 
