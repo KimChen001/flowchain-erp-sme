@@ -16,11 +16,11 @@ const V2_ONLY = AI_ASSISTANT_V2_TOOLS.map((tool) => tool.name).filter((name) => 
 
 // The fixture workspace read as assistant v2 reads it: with the open purchase
 // requests. `change` edits the fixture records before they are read.
-async function v2({ roleKey = 'workspace-administrator', supplierLinks = [link()], change = null, actor = null } = {}) {
+async function v2({ roleKey = 'workspace-administrator', supplierLinks = [link()], change = null, actor = null, ctx = {} } = {}) {
   const scenario = aiSkillScenario({ roleKey, supplierLinks })
   change?.(scenario.data)
   if (actor) actor(scenario.ctx.aiSkillActor)
-  const context = await loadAiSkillContext(scenario.ctx)
+  const context = await loadAiSkillContext({ ...scenario.ctx, ...ctx })
   const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
   const run = async (name, args = {}) => runAiReadTool(name, args, { facts, context, assistantV2: true })
   return { scenario, context, facts, run }
@@ -49,6 +49,22 @@ test('the v2 tools are offered to assistant v2 only; the model-first loop keeps 
   assert.deepEqual(old.rows.map((row) => row.request), ['PR-001'])
   assert.equal((await runAiReadTool('list_purchase_requests', { status: 'draft' }, { facts, context })).error, 'invalid_arguments')
   assert.deepEqual((await run('list_purchase_requests', { status: 'draft' })).result.rows.map((row) => row.request), ['PR-002'])
+})
+
+test('on facts read without the open requests, v2 keeps the model-first request list and refuses to suggest lines', async () => {
+  const scenario = aiSkillScenario({ supplierLinks: [link()] })
+  scenario.data.items[0].reorderPoint = 200
+  scenario.data.balances[0].reorderPoint = 200
+  const context = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(context)
+  const offered = aiReadToolsFor(facts, context, { assistantV2: true }).filter((tool) => tool.name === 'list_purchase_requests')
+  assert.equal(offered.length, 1)
+  assert.ok(!offered[0].assistantV2Only, 'the model-first list stays')
+  assert.deepEqual((await runAiReadTool('list_purchase_requests', {}, { facts, context, assistantV2: true })).result.rows.map((row) => row.request), ['PR-001'])
+  assert.deepEqual(await runAiReadTool('suggest_purchase_lines', {}, { facts, context, assistantV2: true }), { ok: false, error: 'open_purchase_requests_not_read' })
+  // Not offered at all is not allowed; never offered anywhere is unknown.
+  assert.deepEqual(await runAiReadTool('list_purchase_requests', {}, { facts: null, context, assistantV2: true }), { ok: false, error: 'not_allowed' })
+  assert.deepEqual(await runAiReadTool('made_up', {}, { facts, context, assistantV2: true }), { ok: false, error: 'unknown_tool' })
 })
 
 test('the open purchase requests are read only when asked for, so the existing facts stay as they are', async () => {
@@ -103,6 +119,16 @@ test('attention_list wraps today\'s priorities and the open problems, ranked by 
   assert.deepEqual(overdue.rows.map((row) => row.label), ['PO-001', 'PO-008'])
   assert.equal(overdue.total, 2)
   assert.equal((await run('attention_list', { types: ['made_up'] })).error, 'invalid_arguments')
+})
+
+test('attention_list counts a draft request as cover, as suggest_purchase_lines does, and the skills still do not', async () => {
+  const { facts, run } = await v2({ change: (data) => { highReorderPoint(data); data.purchaseRequests[1].lines = [{ id: 'PRL-002', sku: 'LDM-001', itemId: 'ITEM-001', quantity: 60, unit: 'pcs' }] } })
+  const stock = (await run('attention_list', { focus: 'LDM-001', limit: 10 })).result.rows.find((row) => row.ref.type === 'item')
+  const [suggested] = (await run('suggest_purchase_lines', { skus: ['LDM-001'] })).result.rows
+  assert.deepEqual([stock.details.pendingRequests, stock.details.covered], [110, true])
+  assert.deepEqual([suggested.openRequests, Boolean(suggested.covered)], [110, true])
+  const engine = runTodayPriorities(facts, { top: Infinity }).items.find((item) => item.entityType === 'item' && item.entityId === 'ITEM-001')
+  assert.equal(engine.data.pendingRequests, 50)
 })
 
 test('attention_list narrows to a purchase order, a SKU or a supplier, and refuses a record it cannot find', async () => {
@@ -199,6 +225,43 @@ test('suggest_purchase_lines returns the items the user named, and leaves the su
   assert.deepEqual(await run('suggest_purchase_lines', { skus: ['NOPE-1'] }), { ok: false, error: 'not_found', details: ['NOPE-1'] })
 })
 
+test('suggest_purchase_lines never suggests an item that is not active, and says so for a named one', async () => {
+  for (const inactive of [(item) => { item.status = 'inactive' }, (item) => { item.metadata = { inventoryItem: false } }]) {
+    const { run } = await v2({ change: (data) => { highReorderPoint(data); inactive(data.items[0]) } })
+    const suggested = (await run('suggest_purchase_lines')).result
+    assert.deepEqual([suggested.rows, suggested.total], [[], 0])
+    const [named] = (await run('suggest_purchase_lines', { skus: ['LDM-001'] })).result.rows
+    assert.deepEqual(named.suggestedQuantity, { value: null, source: 'item_inactive' })
+    assert.equal(named.covered, null)
+  }
+})
+
+test('suggest_purchase_lines gives no quantity for a named item with no stock row', async () => {
+  const { run } = await v2({ change: (data) => { data.items[2].reorderPoint = 50; data.items[2].safetyStock = 20 } })
+  const [row] = (await run('suggest_purchase_lines', { skus: ['LDM-009'] })).result.rows
+  assert.deepEqual(row.item, { id: 'ITEM-009', sku: 'LDM-009', name: 'Spare Gasket', unit: null })
+  assert.deepEqual([row.onHand, row.available, row.reorderPoint, row.target, row.gap, row.covered], [null, null, null, null, null, null])
+  assert.deepEqual(row.suggestedQuantity, { value: null, source: 'no_stock_position' })
+})
+
+test('suggest_purchase_lines names as cover only the requests whose lines count towards it', async () => {
+  // PR-001 for 110 pcs covers the gap; the draft's line in boxes adds nothing.
+  const { run } = await v2({ change: (data) => { highReorderPoint(data); data.purchaseRequests[0].lines[0].quantity = 110; data.purchaseRequests[1].lines = [{ id: 'PRL-002', sku: 'LDM-001', itemId: 'ITEM-001', quantity: 9, unit: 'box' }] } })
+  const [row] = (await run('suggest_purchase_lines')).result.rows
+  assert.equal(row.openRequests, 110)
+  assert.deepEqual(row.covered.by.map((entry) => entry.label), ['PR-001', 'PO-001', 'PO-008'])
+})
+
+test('suggest_purchase_lines reads the suppliers of the items it returns only', async () => {
+  const { scenario, run } = await v2({ supplierLinks: [link(), { id: 'ITEM-002::SUP-001', payload: { itemId: 'ITEM-002', supplierId: 'SUP-001', preferred: true, active: true, approved: true, leadTimeDays: 5 } }], change: (data) => { highReorderPoint(data); data.items[1].reorderPoint = 500; data.balances[1].reorderPoint = 500 } })
+  assert.equal((await run('suggest_purchase_lines')).result.total, 2)
+  scenario.calls.prisma.length = 0
+  const one = (await run('suggest_purchase_lines', { limit: 1 })).result
+  assert.deepEqual([one.rows.length, one.total, one.more], [1, 2, 1])
+  assert.equal(scenario.calls.prisma.filter(([model]) => model === 'runtimeRecord').length, 1)
+  assert.equal(scenario.calls.prisma.filter(([model]) => model === 'item').length, 1)
+})
+
 test('suggest_purchase_lines hides prices and suppliers from roles that may not see them', async () => {
   // A read-only viewer may not see prices: the reference price is null.
   const viewer = await v2({ roleKey: 'read-only-viewer', change: highReorderPoint })
@@ -257,22 +320,63 @@ test('reorder_list returns the preferred supplier\'s lead time, id and minimum o
   assert.equal((await runAiReadTool('reorder_list', { supplier: 'Nobody Ltd' }, { facts, context })).error, 'supplier_not_found')
 })
 
+// The services the read tools call, recorded, so every declared table has rows.
+const RECORDED_SERVICES = {
+  receivables: {
+    listReceivables: async () => ({ total: 1, items: [{ id: 'AR-1', obligationNumber: 'AR-0001', customerInvoiceNumber: 'CI-0001', customerName: 'Redwood Retail', outstandingAmount: '100.00', paidAmount: '0.00', originalAmount: '100.00', currency: 'USD', dueDate: '2026-10-10', status: 'open', disputeStatus: 'none' }] }),
+    aging: async () => ({ asOf: '2026-09-29', groups: [{ currency: 'USD', current: '100.00', '1_30': '0.00', '31_60': '0.00', '61_90': '0.00', '90_plus': '0.00', total: '100.00', count: 1 }] }),
+  },
+  contracts: { list: async () => ({ contracts: [{ id: 'CON-1', number: 'CON-0001', title: 'Flow controllers 2026', externalReference: 'ACME-MSA-7', type: 'supply', state: 'active', startDate: '2026-01-01', endDate: '2026-12-31', signedOn: '2025-12-15', noticeDays: 60, totalValue: '125000.0000', currency: 'USD', supplierId: 'SUP-001', supplierName: 'Acme Components' }] }) },
+  priceHistory: {
+    read: async () => ({ histories: [{ unit: 'pcs', currency: 'USD', status: 'ok', earlier: [{ unitPrice: '100', currency: 'USD', unit: 'pcs', orderedQuantity: 50, date: '2026-09-08', orderNumber: 'PO-001', supplierName: 'Acme Components', purchaseOrderId: 'PO-001' }] }] }),
+    lastOrders: async () => ({ lastOrders: [{ supplierId: 'SUP-001', orderNumber: 'PO-008', day: '2026-09-13', purchaseOrderId: 'PO-008' }] }),
+  },
+  knowledge: {
+    list: async () => ({ items: [{ id: 'DOC-1', title: 'Purchasing Policy', language: 'en-US' }] }),
+    documents: async () => [{ pageContent: 'Escalate to the buyer manager when a supplier is 3 business days past the promised date.', metadata: { id: 'DOC-1-0', documentId: 'DOC-1', title: 'Purchasing Policy', heading: 'Follow-up and escalation', position: 0, language: 'en-US', contentHash: 'h1' } }],
+  },
+}
+
 test('every data tool declares its columns, and each declared column is in its result', async () => {
   const names = new Set([...AI_READ_TOOLS, ...AI_ASSISTANT_V2_TOOLS].map((tool) => tool.name))
   assert.deepEqual([...names].sort(), Object.keys(AI_READ_TOOL_COLUMNS).sort())
-  const { facts, context, run } = await v2({ change: highReorderPoint })
-  const args = { get_purchase_order: { order: 'PO-001' }, calculate: { operation: 'percent', values: [1, 2] }, stock_projection: { sku: 'LDM-001' }, late_order_impact: { orders: ['PO-001'] } }
-  const at = (value, path) => (path ? path.split('.').reduce((entry, key) => (entry === null || entry === undefined ? undefined : entry[key]), value) : value)
-  let checked = 0
+  const scenario = aiSkillScenario()
+  const items = scenario.data.items.map((row) => ({ ...row, status: 'active', reorderPoint: row.sku === 'LDM-001' ? 200 : row.reorderPoint }))
+  const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
+  const reorderList = { read: async (input) => buildReorderList({ allocationRows: input.allocationRows, items, supplierLinks: [link()], suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }) }
+  const { facts, context, run } = await v2({ change: highReorderPoint, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList } } })
+  // The calls that fill each table; a tool not named here is called once
+  // without arguments.
+  const calls = {
+    get_purchase_order: [{ order: 'PO-001' }, { order: 'PO-002' }],
+    list_supplier_invoices: [{ kind: 'differences' }],
+    spend_analysis: [{}, { view: 'trend' }, { supplier: 'Acme Components' }],
+    supplier_performance: [{ suppliers: ['Acme Components'] }],
+    stock_projection: [{ sku: 'LDM-001' }],
+    late_order_impact: [{ orders: ['PO-001'] }],
+    calculate: [{ operation: 'percent', values: [1, 2] }],
+    search_records: [{ query: 'LDM' }],
+    list_receivables: [{}, { view: 'aging' }],
+    price_history: [{ sku: 'LDM-001' }],
+    search_documents: [{ query: 'supplier past the promised date escalate' }],
+  }
+  // A nested column under a null value (a rate with too few deliveries) is
+  // there, and null.
+  const at = (value, path) => (path ? path.split('.').reduce((entry, key) => (entry === null || entry === undefined ? entry : entry[key]), value) : value)
+  const checked = new Set()
   for (const tool of aiReadToolsFor(facts, context, { assistantV2: true })) {
-    const output = await run(tool.name, args[tool.name] || {})
-    if (!output.ok) continue
-    for (const [path, columns] of Object.entries(AI_READ_TOOL_COLUMNS[tool.name])) {
-      const rows = path ? at(output.result, path) : [output.result]
-      if (!Array.isArray(rows) || !rows.length) continue
-      for (const column of columns) assert.ok(rows.some((row) => at(row, column) !== undefined), `${tool.name} ${path} has ${column}`)
-      checked += 1
+    for (const args of calls[tool.name] || [{}]) {
+      const output = await run(tool.name, args)
+      assert.ok(output.ok, `${tool.name} ${JSON.stringify(args)}: ${output.error}`)
+      for (const [path, columns] of Object.entries(AI_READ_TOOL_COLUMNS[tool.name])) {
+        const rows = path ? at(output.result, path) : [output.result]
+        if (!Array.isArray(rows) || !rows.length) continue
+        for (const column of columns) assert.ok(rows.some((row) => at(row, column) !== undefined), `${tool.name} ${path} has ${column}`)
+        checked.add(`${tool.name} ${path}`)
+      }
     }
   }
-  assert.ok(checked >= 15, `checked ${checked} tables`)
+  // Every declared table, of every tool, had rows to check.
+  const declared = Object.entries(AI_READ_TOOL_COLUMNS).flatMap(([name, tables]) => Object.keys(tables).map((path) => `${name} ${path}`))
+  assert.deepEqual([...checked].sort(), declared.sort())
 })

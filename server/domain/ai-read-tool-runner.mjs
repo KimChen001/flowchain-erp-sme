@@ -16,13 +16,19 @@ import { AI_ASSISTANT_V2_TOOLS } from './ai-assistant-v2-data-tools.mjs'
 // One registry serves two loops. The model-first loop is offered every tool
 // not marked assistantV2Only, as before. Assistant v2 (assistantV2: true,
 // docs/ai-assistant-v2-design.md §3.6) is also offered those, and a v2 tool
-// with the name of a model-first tool takes its place (list_purchase_requests
-// in every open status).
+// with the name of a model-first tool takes its place wherever the facts
+// serve it (list_purchase_requests in every open status). On facts read
+// without the open requests the model-first tool stays, so v2 is never left
+// without one.
 const REGISTRY = Object.freeze([...AI_READ_TOOLS, ...AI_ASSISTANT_V2_TOOLS])
 const MODEL_FIRST_TOOLS = REGISTRY.filter((tool) => !tool.assistantV2Only)
-const replacedInV2 = new Set(AI_ASSISTANT_V2_TOOLS.map((tool) => tool.name))
-const ASSISTANT_V2_TOOLS = REGISTRY.filter((tool) => tool.assistantV2Only || !replacedInV2.has(tool.name))
-const registryFor = (assistantV2) => (assistantV2 ? ASSISTANT_V2_TOOLS : MODEL_FIRST_TOOLS)
+
+function toolsFor(facts, context, assistantV2) {
+  if (!facts) return []
+  if (!assistantV2) return MODEL_FIRST_TOOLS.filter((tool) => tool.available(facts, context))
+  const v2 = new Set(AI_ASSISTANT_V2_TOOLS.filter((tool) => tool.available(facts, context)).map((tool) => tool.name))
+  return REGISTRY.filter((tool) => (tool.assistantV2Only ? v2.has(tool.name) : !v2.has(tool.name) && tool.available(facts, context)))
+}
 
 // The columns of every data tool's result, for the UI tools that render a
 // result by reference (show_table, show_records, show_kpis; design §3.6): per
@@ -58,8 +64,7 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
 })
 
 export function aiReadToolsFor(facts, context = null, { assistantV2 = false } = {}) {
-  if (!facts) return []
-  return registryFor(assistantV2).filter((tool) => tool.available(facts, context))
+  return toolsFor(facts, context, assistantV2)
 }
 
 // The tool definitions for a provider: Anthropic's Messages API
@@ -75,9 +80,8 @@ export function aiReadToolDefinitions(facts, { format = 'anthropic', context = n
 // { ok: false, error, details? }. An error is handed back to the model as the
 // tool's result, so it can correct the call or say what it could not read.
 export async function runAiReadTool(name, args, { facts, context = null, assistantV2 = false } = {}) {
-  const tool = registryFor(assistantV2).find((entry) => entry.name === name)
-  if (!tool) return { ok: false, error: 'unknown_tool' }
-  if (!facts || !tool.available(facts, context)) return { ok: false, error: 'not_allowed' }
+  const tool = toolsFor(facts, context, assistantV2).find((entry) => entry.name === name)
+  if (!tool) return { ok: false, error: (assistantV2 ? REGISTRY : MODEL_FIRST_TOOLS).some((entry) => entry.name === name) ? 'not_allowed' : 'unknown_tool' }
   const checked = validateAiToolArgs(tool.schema, args)
   if (!checked.ok) return { ok: false, error: 'invalid_arguments', details: checked.errors }
   try {

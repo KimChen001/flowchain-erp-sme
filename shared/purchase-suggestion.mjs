@@ -26,6 +26,10 @@ export const PURCHASE_SUGGESTION_SOURCES = Object.freeze({
   notNeeded: 'not_needed',
   leadTime: 'lead_time',
   leadTimeNotRecorded: 'lead_time_not_recorded',
+  // Items the quantity rule is not run on: one that is not active cannot be
+  // requested, and one with no stock row has no position to measure.
+  itemInactive: 'item_inactive',
+  noStockPosition: 'no_stock_position',
 })
 export const OPEN_PURCHASE_REQUEST_STATUSES = Object.freeze(['draft', 'submitted', 'approved'])
 
@@ -34,17 +38,22 @@ const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(text(value)) && !Number.isNa
 const count = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? 0 : Number(value))
 const positive = (value) => (count(value) > 0 ? count(value) : null)
 
-// The quantity of an item on open purchase requests: every line for it on a
-// draft, submitted or approved request, in the item's unit (a line in
-// another unit is never added). requests: { status, lines: [{ sku, itemId,
-// quantity, unit }] }.
-export function openRequestQuantity(requests, { sku = '', itemId = '', unit = '' } = {}) {
+// Whether a purchase request line counts towards an item: a line for it, in
+// the item's unit (a line in another unit is never added).
+export function requestLineCountsFor(line, { sku = '', itemId = '', unit = '' } = {}) {
+  const same = (text(sku) && text(line?.sku) === text(sku)) || (text(itemId) && text(line?.itemId) === text(itemId))
+  return Boolean(same) && (!text(line.unit) || !text(unit) || text(line.unit).toLowerCase() === text(unit).toLowerCase())
+}
+
+// The quantity of an item on open purchase requests: every line that counts
+// for it on a draft, submitted or approved request. requests: { status,
+// lines: [{ sku, itemId, quantity, unit }] }.
+export function openRequestQuantity(requests, item = {}) {
   let total = 0
   for (const request of Array.isArray(requests) ? requests : []) {
     if (!OPEN_PURCHASE_REQUEST_STATUSES.includes(text(request?.status))) continue
     for (const line of Array.isArray(request.lines) ? request.lines : []) {
-      const same = (text(sku) && text(line.sku) === text(sku)) || (text(itemId) && text(line.itemId) === text(itemId))
-      if (same && (!text(line.unit) || !text(unit) || text(line.unit).toLowerCase() === text(unit).toLowerCase())) total += count(line.quantity)
+      if (requestLineCountsFor(line, item)) total += count(line.quantity)
     }
   }
   return total

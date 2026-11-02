@@ -5,9 +5,9 @@ import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { AI_SKILL_SIGNAL_TYPES, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { listItemSupplierRecords, mapItemSupplierRecord } from './master-data-commands.mjs'
 import { maskReferencePrice, masterDataReadAccessFor } from './master-data-read-access.mjs'
-import { itemStockUnit, requestMinimumOf } from './reorder-list.mjs'
+import { isActiveItem, itemStockUnit, requestMinimumOf } from './reorder-list.mjs'
 import { planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
-import { OPEN_PURCHASE_REQUEST_STATUSES, openRequestQuantity, suggestNeedByDate, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
+import { OPEN_PURCHASE_REQUEST_STATUSES, PURCHASE_SUGGESTION_SOURCES, openRequestQuantity, requestLineCountsFor, suggestNeedByDate, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
 
 // The data tools only assistant v2 is offered (docs/ai-assistant-v2-design.md
 // §5.1): the attention list, the records missing data, the purchase request
@@ -15,8 +15,9 @@ import { OPEN_PURCHASE_REQUEST_STATUSES, openRequestQuantity, suggestNeedByDate,
 // the asking user's facts like the other read tools, and the suggestions also
 // read the items' approved suppliers in the user's workspace. They need the
 // facts read with { openPurchaseRequests: true } (ai-skill-readers.mjs), so a
-// draft request counts as cover. Rows are ranked by date, never by a score,
-// and contact details are never returned.
+// draft request counts as cover; the suggestions refuse facts read without
+// them for a user who may read requests. Rows are ranked by date, never by a
+// score, and contact details are never returned.
 
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
@@ -24,6 +25,14 @@ const fold = (value) => text(value).toLowerCase()
 const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `How many rows to return, ${AI_TOOL_LIMITS.rows} by default.` }
 const stockRow = (facts, sku) => array(facts.inventory?.rows).find((row) => fold(row.sku) === fold(sku)) || null
+const openRequestsRead = (facts) => Array.isArray(facts.purchaseRequests?.open)
+
+// The shared quantity rule over a stock row (shared/purchase-suggestion.mjs):
+// open purchase requests in any open status count as cover.
+const openRequestsOf = (facts, row) => openRequestQuantity(facts.purchaseRequests?.open, { sku: row.sku, itemId: row.itemId, unit: row.unit })
+const quantityOf = (facts, row, minimum = 0) => suggestPurchaseQuantity({
+  reorderPoint: row.reorderPoint, safetyStock: row.safetyStock, openDemand: row.openSalesDemand, available: row.available, incoming: row.incomingApprovedPo, openRequests: openRequestsOf(facts, row), minimum,
+})
 
 // A record the question narrows the attention list to: a purchase order by
 // its number, an item by its SKU, or a supplier the user may read.
@@ -40,8 +49,19 @@ function attentionFocus(facts, query) {
 // ids stay out. A free-text value (an RFQ title) is cut to the text limit.
 const ATTENTION_DETAILS = ['sku', 'remaining', 'unit', 'available', 'demand', 'shortage', 'incoming', 'safety', 'reorder', 'pendingRequests', 'covered', 'variance', 'currency', 'rejected', 'quantity', 'priority', 'requiredDate', 'responses', 'title', 'count', 'notSent']
 const ATTENTION_TYPES = [...AI_SKILL_SIGNAL_TYPES, 'supplier_exposure']
-function attentionRow(item, rank) {
-  const data = isObject(item.data) ? item.data : {}
+
+// The skills' engines count only submitted requests as cover. With the open
+// requests read, an item's request cover is worked out as
+// suggest_purchase_lines works it out, so the two tools never disagree about
+// a draft; the engines, and so the skills and their answers, stay as they are.
+function requestCoverOf(facts, item) {
+  if (item.entityType !== 'item' || !openRequestsRead(facts)) return {}
+  const row = array(facts.inventory?.rows).find((entry) => entry.itemId === item.entityId || entry.sku === item.label)
+  return row ? { pendingRequests: openRequestsOf(facts, row), covered: quantityOf(facts, row).covered } : {}
+}
+
+function attentionRow(facts, item, rank) {
+  const data = isObject(item.data) ? { ...item.data, ...requestCoverOf(facts, item) } : {}
   const details = Object.fromEntries(ATTENTION_DETAILS
     .filter((key) => data[key] !== undefined && (data[key] === null || typeof data[key] !== 'object'))
     .map((key) => [key, typeof data[key] === 'string' ? data[key].slice(0, AI_TOOL_LIMITS.text) : data[key]]))
@@ -55,7 +75,7 @@ function attentionRow(item, rank) {
 
 const attentionList = defineAiTool({
   name: 'attention_list',
-  description: 'What needs attention, ranked by date and never by a score. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it.',
+  description: 'What needs attention, ranked by date and never by a score. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it. On a stock row, pendingRequests and covered count the open purchase requests in any status, drafts included.',
   parameters: {
     kind: { type: 'string', enum: ['today', 'problems'], description: 'today by default.' },
     focus: { type: 'string', description: 'A purchase order number, a SKU, or a supplier name or code.' },
@@ -78,7 +98,7 @@ const attentionList = defineAiTool({
       asOf: facts.asOf,
       kind,
       ...(focus ? { focus: { label: focus.label, ref: aiToolRef(focus.entityType, focus.entityId, focus.label) } } : {}),
-      rows: items.slice(0, limit).map((item, index) => attentionRow(item, index + 1)),
+      rows: items.slice(0, limit).map((item, index) => attentionRow(facts, item, index + 1)),
       total: items.length,
       more: Math.max(0, items.length - limit),
     }
@@ -116,7 +136,7 @@ const listOpenPurchaseRequests = defineAiTool({
     sku: { type: 'string', description: 'Only requests with a line for this SKU.' },
     limit: limitParam,
   },
-  available: (facts) => Array.isArray(facts.purchaseRequests?.open),
+  available: openRequestsRead,
   assistantV2Only: true,
   run(args, { facts }) {
     const status = args.status || 'all'
@@ -167,23 +187,27 @@ function approvedSourcesOf(item, records, suppliersById) {
     })
 }
 
-// The items as stored (for the purchase unit and the default warehouse) and
-// their approved sources, every read in the user's workspace. Reference
-// prices are masked as the master data routes mask them.
-async function itemSources(context, itemIds) {
+// The items as stored, by id: their status, purchase unit and default
+// warehouse. One read in the user's workspace.
+async function storedItems({ prisma, tenantId }, itemIds) {
+  if (!itemIds.length) return new Map()
+  const items = await prisma.item.findMany({ where: { tenantId, id: { in: itemIds } }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, metadata: true, status: true } })
+  return new Map(array(items).map((row) => [text(row.id), row]))
+}
+
+// The approved sources of the items returned, by item id, every read in the
+// user's workspace. Only the rows returned are read (the named SKUs or up to
+// the limit), so each item's links are read by its own key. Reference prices
+// are masked as the master data routes mask them.
+async function itemSources(context, items) {
   const { prisma, tenantId } = context
-  const [items, links, suppliers] = await Promise.all([
-    prisma.item.findMany({ where: { tenantId, id: { in: itemIds } }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, metadata: true, status: true } }),
-    Promise.all(itemIds.map((itemId) => listItemSupplierRecords(prisma, tenantId, { itemId }))),
-    prisma.supplier.findMany({ where: { tenantId }, select: { id: true, code: true, name: true, status: true, metadata: true } }),
+  const [links, suppliers] = await Promise.all([
+    Promise.all(items.map((item) => listItemSupplierRecords(prisma, tenantId, { itemId: text(item.id) }))),
+    items.length ? prisma.supplier.findMany({ where: { tenantId }, select: { id: true, code: true, name: true, status: true, metadata: true } }) : [],
   ])
   const access = masterDataReadAccessFor(context.actor)
   const suppliersById = new Map(array(suppliers).map((row) => [text(row.id), row]))
-  const byItem = new Map()
-  itemIds.forEach((itemId, index) => {
-    const item = array(items).find((row) => text(row.id) === itemId)
-    if (item) byItem.set(itemId, { item, sources: approvedSourcesOf(item, array(links[index]), suppliersById).map((row) => maskReferencePrice(row, access)) })
-  })
+  const byItem = new Map(items.map((item, index) => [text(item.id), approvedSourcesOf(item, array(links[index]), suppliersById).map((row) => maskReferencePrice(row, access))]))
   return { byItem, prices: access.prices }
 }
 
@@ -192,11 +216,12 @@ const SUPPLIER_SOURCE = Object.freeze({ 'item_supplier:preferred': 'preferred_su
 const MAX_SUGGESTED = 8
 const PROJECTION_WEEKS = 12
 
-// The open requests and purchase orders that bring an item, each with its
-// ref, so the record links and the grounding check find them.
+// The open requests and purchase orders that bring an item (a request only
+// when one of its lines counts towards the cover), each with its ref, so the
+// record links and the grounding check find them.
 function coverRecords(facts, row) {
   const requests = array(facts.purchaseRequests?.open)
-    .filter((request) => OPEN_PURCHASE_REQUEST_STATUSES.includes(request.status) && request.lines.some((line) => line.sku === row.sku || (row.itemId && line.itemId === row.itemId)))
+    .filter((request) => OPEN_PURCHASE_REQUEST_STATUSES.includes(request.status) && request.lines.some((line) => requestLineCountsFor(line, row)))
     .map((request) => ({ label: request.id, status: request.status, ref: aiToolRef('purchase_request', request.id, request.id) }))
   const orders = array(row.purchaseOrderIds)
     .map((id) => array(facts.purchaseOrders?.index).find((po) => po.id === id))
@@ -207,7 +232,7 @@ function coverRecords(facts, row) {
 
 const suggestPurchaseLines = defineAiTool({
   name: 'suggest_purchase_lines',
-  description: 'Purchase request lines worked out by the server, for the in-chat purchase request form: per item its on-hand stock, safety stock and reorder point, the suggested quantity (the gap between the highest of the reorder point, safety stock and open sales demand and what is available, incoming on purchase orders and on open purchase requests, raised to the supplier\'s minimum order), the supplier (the preferred, or the only approved one), the need-by date (today plus the supplier\'s lead time, with a warning when stock runs short sooner) and the reference price. Items already covered by open requests or orders come back as covered. Name SKUs for those items; with none, the items below their stock levels, up to 8. The user chooses which lines to request.',
+  description: 'Purchase request lines worked out by the server, for the in-chat purchase request form: per item its on-hand stock, safety stock and reorder point, the suggested quantity (the gap between the highest of the reorder point, safety stock and open sales demand and what is available, incoming on purchase orders and on open purchase requests, raised to the supplier\'s minimum order), the supplier (the preferred, or the only approved one), the need-by date (today plus the supplier\'s lead time, with a warning when stock runs short sooner) and the reference price. Items already covered by open requests or orders come back as covered. An item that is not active, or has no stock row, gets no quantity (source item_inactive or no_stock_position). Name SKUs for those items; with none, the items below their stock levels, up to 8. The user chooses which lines to request.',
   parameters: {
     skus: { type: 'array', items: { type: 'string' }, maxItems: AI_TOOL_LIMITS.items, description: 'The SKUs the user named.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_SUGGESTED, description: `How many items to suggest when none is named, ${MAX_SUGGESTED} by default.` },
@@ -215,6 +240,9 @@ const suggestPurchaseLines = defineAiTool({
   available: (facts, context) => Boolean(facts.inventory) && Boolean(context?.actor && context.prisma),
   assistantV2Only: true,
   async run(args, { facts, context }) {
+    // Facts read without the open requests would count no request as cover:
+    // a reader of requests never gets suggestions that ignore them.
+    if (facts.purchaseRequests && !openRequestsRead(facts)) return { error: 'open_purchase_requests_not_read' }
     const named = array(args.skus).length > 0
     let rows = []
     if (named) {
@@ -230,29 +258,43 @@ const suggestPurchaseLines = defineAiTool({
       const ranked = rankAiSkillItemsByDate(buildAiSkillSignals(facts)).filter((item) => STOCK_SIGNALS.has(item.type))
       rows = ranked.map((item) => array(facts.inventory.rows).find((row) => row.itemId === item.entityId || row.sku === item.label)).filter(Boolean)
     }
-    const { byItem, prices } = await itemSources(context, [...new Set(rows.map((row) => text(row.itemId)).filter(Boolean))])
+    const stored = await storedItems(context, [...new Set(rows.map((row) => text(row.itemId)).filter(Boolean))])
+    const itemOf = (row) => stored.get(text(row.itemId)) || null
+    // Suggested without names: only active items that need ordering or are
+    // covered, as the reorder list and the purchase request command take
+    // them. The supplier's minimum only raises a positive gap, so this is
+    // known before any supplier is read. A named item is always returned, so
+    // the answer can say why nothing is suggested.
+    const listed = named ? rows : rows.filter((row) => {
+      const quantity = quantityOf(facts, row)
+      return isActiveItem(itemOf(row)) && (quantity.quantity.value !== null || quantity.covered)
+    })
+    const limit = named ? listed.length : args.limit || MAX_SUGGESTED
+    const shown = listed.slice(0, limit)
+    const { byItem, prices } = await itemSources(context, [...new Set(shown.map(itemOf).filter(Boolean))])
     const suppliersVisible = Array.isArray(facts.suppliers)
-    const suggestions = rows.map((row) => {
-      const stored = byItem.get(text(row.itemId)) || { item: null, sources: [] }
-      const meta = isObject(stored.item?.metadata) ? stored.item.metadata : {}
-      const plan = planPurchaseRequestPrefill({ query: { itemId: row.itemId, origin: 'ai_assistant' }, item: { itemId: row.itemId, defaultWarehouseId: text(meta.defaultWarehouseId || meta.warehouseId) }, suppliers: stored.sources, today: facts.today })
-      const chosen = stored.sources.find((source) => source.id === plan.values.supplierId) || null
-      const minimum = chosen && stored.item ? requestMinimumOf(stored.item, chosen, itemStockUnit(stored.item)) : 0
-      const openRequests = openRequestQuantity(facts.purchaseRequests?.open, { sku: row.sku, itemId: row.itemId, unit: row.unit })
-      const quantity = suggestPurchaseQuantity({
-        reorderPoint: row.reorderPoint, safetyStock: row.safetyStock, openDemand: row.openSalesDemand, available: row.available, incoming: row.incomingApprovedPo, openRequests, minimum,
-      })
+    const suggestions = shown.map((row) => {
+      const item = itemOf(row)
+      const sources = byItem.get(text(row.itemId)) || []
+      const meta = isObject(item?.metadata) ? item.metadata : {}
+      const plan = planPurchaseRequestPrefill({ query: { itemId: row.itemId, origin: 'ai_assistant' }, item: { itemId: row.itemId, defaultWarehouseId: text(meta.defaultWarehouseId || meta.warehouseId) }, suppliers: sources, today: facts.today })
+      const chosen = sources.find((source) => source.id === plan.values.supplierId) || null
+      const minimum = chosen && item ? requestMinimumOf(item, chosen, itemStockUnit(item)) : 0
+      const quantity = quantityOf(facts, row, minimum)
+      // The rule is not run on an item that cannot be requested, nor on one
+      // with no stock row, whose stock and levels are not known.
+      const notRun = item && !isActiveItem(item) ? PURCHASE_SUGGESTION_SOURCES.itemInactive : row.noStock ? PURCHASE_SUGGESTION_SOURCES.noStockPosition : null
       const lead = chosen?.leadTimeDays ?? null
       const weeks = lead === null ? 4 : Math.min(PROJECTION_WEEKS, Math.max(1, Math.ceil((lead + 1) / 7)))
       const projection = row.noStock ? null : aiStockProjection(facts, { sku: row.sku, weeks })
       const needBy = suggestNeedByDate({ today: facts.today, leadTimeDays: lead, firstShortWeek: projection?.firstWeekShort })
-      const covered = quantity.covered ? { by: coverRecords(facts, row) } : null
+      const covered = !notRun && quantity.covered ? { by: coverRecords(facts, row) } : null
       return {
         item: { id: text(row.itemId) || null, sku: row.sku, name: row.itemName || null, unit: row.unit || null },
         onHand: row.onHand ?? null, available: row.available ?? null, safetyStock: row.safetyStock ?? null, reorderPoint: row.reorderPoint ?? null,
-        openSalesDemand: row.openSalesDemand ?? null, incoming: row.incomingApprovedPo ?? null, openRequests,
-        target: quantity.target, gap: quantity.gap,
-        suggestedQuantity: quantity.quantity,
+        openSalesDemand: row.openSalesDemand ?? null, incoming: row.incomingApprovedPo ?? null, openRequests: openRequestsOf(facts, row),
+        target: row.noStock ? null : quantity.target, gap: row.noStock ? null : quantity.gap,
+        suggestedQuantity: notRun ? { value: null, source: notRun } : quantity.quantity,
         supplier: suppliersVisible && chosen ? { id: chosen.id, name: chosen.name, source: SUPPLIER_SOURCE[plan.fields.supplierId?.ref] || 'approved_supplier' } : null,
         supplierChoices: suppliersVisible ? plan.supplierChoices.map((choice) => ({ id: choice.id, name: choice.name })) : [],
         needByDate: { value: needBy.value, source: needBy.source, leadTimeDays: needBy.leadTimeDays, warning: needBy.warning },
@@ -262,18 +304,14 @@ const suggestPurchaseLines = defineAiTool({
         ref: aiToolRef('item', row.itemId || row.sku, row.sku),
       }
     })
-    // Suggested without names: only what needs ordering or is covered; a
-    // named item is always returned, so the answer can say it is not needed.
-    const listed = named ? suggestions : suggestions.filter((row) => row.suggestedQuantity.value !== null || row.covered)
-    const limit = named ? listed.length : args.limit || MAX_SUGGESTED
     return {
       asOf: facts.asOf,
       today: facts.today,
       from: named ? 'named' : 'suggestions',
       pricesHidden: !prices,
       suppliersHidden: !suppliersVisible,
-      purchaseRequestsRead: Array.isArray(facts.purchaseRequests?.open),
-      rows: listed.slice(0, limit),
+      purchaseRequestsRead: openRequestsRead(facts),
+      rows: suggestions,
       total: listed.length,
       more: Math.max(0, listed.length - limit),
     }
