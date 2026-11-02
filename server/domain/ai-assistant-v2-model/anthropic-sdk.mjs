@@ -36,8 +36,11 @@ export function assistantV2SdkBaseUrl(endpoint) {
 // Tools come first in the cached prefix, then the system prompt; both carry a
 // breakpoint, and the top-level one caches the growing conversation, so each
 // round reads the earlier rounds from the cache. The tools are sorted by name
-// so a role's tool list always renders the same bytes. No sampling setting is
-// sent: current models reject them.
+// so a role's tool list always renders the same bytes, and withdrawn tools
+// stay in it: removing one would miss the cache and fail Sonnet 5.5's check
+// of its earlier thinking blocks against the tool list; the loop refuses
+// their calls and tells the model instead. No sampling setting is sent:
+// current models reject them.
 export function buildAssistantV2MessagesRequest({ system, messages, tools = [], maxTokens } = {}, { model, effort, thinking } = {}) {
   const sorted = [...tools].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   return {
