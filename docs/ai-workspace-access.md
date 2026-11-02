@@ -41,7 +41,7 @@ separate step, once the owner has provided the key and a budget.
 | `FLOWCHAIN_AI_PROVIDER_MODEL` | — | `claude-haiku-4-5` |
 | `FLOWCHAIN_AI_PROVIDER_API_KEY` | — | The owner's Anthropic key. Set it as a secret, never in a file in the repository. |
 | `FLOWCHAIN_AI_RUNTIME_MODE` | `local` | `provider_assisted` |
-| `FLOWCHAIN_AI_ASSISTANT_MODE` | off | `model_first`: free-text questions go to the model-first tool loop (below). |
+| `FLOWCHAIN_AI_ASSISTANT_MODE` | on where a provider is set | Questions go to the model-first tool loop (below). `rules` (or `off`) switches it off: the rules answer as before. |
 | `FLOWCHAIN_AI_ASSISTANT_REASONING_EFFORT` | `low` (native), `none` (chat completions) | How much the loop's model reasons: `none`, `low`, `medium` or `high`. |
 | `FLOWCHAIN_AI_ASSISTANT_TIMEOUT_MS`, `FLOWCHAIN_AI_ASSISTANT_TOKEN_BUDGET` | `20000`, `80000` | One answer's time (at most 30 s) and tokens read and written. |
 
@@ -67,18 +67,21 @@ Check a configuration without calling the provider: `npm run check:ai-provider-e
 
 ## The model-first assistant
 
-Step S2 of `docs/ai-model-first-design.md` (decisions M1–M7, 2026-10-28), off
-unless `FLOWCHAIN_AI_ASSISTANT_MODE=model_first`, and only where the switch above
-lets the workspace call a model.
-- **Entry.** A free-text question goes to a tool loop. The deterministic guards
-  answer first and keep their answers: an instruction to act, a question about
-  the outside world, injection phrasing (overriding the rules, other tenants or
-  workspaces, SQL) and a greeting. Prompt chips keep their skills. An order
+Step S2 of `docs/ai-model-first-design.md` (decisions M1–M7, 2026-10-28). On
+by default wherever a provider that can run the loop is set (owner decision
+2026-11-01), unless `FLOWCHAIN_AI_ASSISTANT_MODE=rules`, and only where the
+switch above lets the workspace call a model.
+- **Entry.** A question goes to a tool loop. The deterministic guards answer
+  first and keep their answers: an instruction to act, a question about the
+  outside world, injection phrasing (overriding the rules, other tenants or
+  workspaces, SQL) and a greeting. The panel's suggestion cards and follow-up
+  chips go to the loop too; their skill hint picks the skill only when the
+  rules answer. An order
   request ("帮我起草一份PO") goes to the loop, which reads it with the
   conversation so far. Document and mixed questions go to the loop too, which searches the
   documents with `search_documents`; where that tool is not offered (no database
   storage) the knowledge path answers them as before, and it is also the
-  fallback, without a model, when the loop gives no checked answer. A contract
+  first fallback, without a model, when the loop gives no answer. A contract
   question goes to the loop when `list_contracts` is offered (the contracts
   module is on and the user may read contracts); otherwise the rules answer it
   as before.
@@ -98,8 +101,13 @@ lets the workspace call a model.
   date, record number and known supplier, customer or item name in the answer
   must be in this answer's tool results (or the question, or `calculate`), and
   every cited record one a tool returned. On a failure the model gets one retry
-  with the list; after a second, the rules answer, with no model call, and say
-  so. The audit row keeps the kinds and counts, never the text.
+  with the list. After a second (or when a limit runs out, or the model
+  refuses), the answer says it could not give a checked answer and offers to
+  try again; no rules answer stands in for the model's (owner decision
+  2026-11-01). Only when the model cannot be used (the provider fails, the
+  answer runs out of time, or the provider's budget is spent) do the rules
+  answer, with no model call, and say so. The audit row keeps the kinds and
+  counts, never the text.
 - **Providers.** `anthropic_messages` (the trial): tools with `tool_choice:
   auto`, low effort, the answer as structured output, the system prompt, tools
   and conversation cached; no sampling settings, which current Claude models

@@ -142,7 +142,7 @@ test('a role that cannot read purchase orders is not offered the spend analysis'
 
 test('the planner may call the spend analysis with a view; the period comes from the question', async () => {
   const env = {
-    FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_AI_AGENT_MODE: 'plan', FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted', FLOWCHAIN_AI_PROVIDER_KIND: 'parley_chat',
+    FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_AI_AGENT_MODE: 'plan', FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted', FLOWCHAIN_AI_ASSISTANT_MODE: 'rules', FLOWCHAIN_AI_PROVIDER_KIND: 'parley_chat',
     FLOWCHAIN_AI_PROVIDER_ENDPOINT: 'http://127.0.0.1:9/spend-test', FLOWCHAIN_AI_PROVIDER_API_KEY: 'placeholder', FLOWCHAIN_AI_PROVIDER_MODEL: 'placeholder-model', FLOWCHAIN_AI_AGENT_TIMEOUT_MS: '150',
   }
   const provider = () => ({ ok: true, toolCalls: [{ name: 'spend_analysis', arguments: JSON.stringify({ mode: 'trend' }) }] })

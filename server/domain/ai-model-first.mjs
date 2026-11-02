@@ -14,8 +14,9 @@ import { aiCallCostMicros, aiUsagePrices } from './ai-usage-meter.mjs'
 import { attachAiSkillNextSteps } from './ai-skill-next-steps.mjs'
 
 // The model-first assistant, step S2 (docs/ai-model-first-design.md §3,
-// decisions M1–M7 approved by the owner on 2026-10-28). Behind
-// FLOWCHAIN_AI_ASSISTANT_MODE=model_first, off by default.
+// decisions M1–M7 approved by the owner on 2026-10-28). On by default where a
+// provider is set (owner decision 2026-11-01); FLOWCHAIN_AI_ASSISTANT_MODE=rules
+// turns it off.
 //
 // A free-text question, in a workspace whose model access allows it
 // (withAiWorkspaceAccess), goes to a tool loop: the model reads the asking
@@ -24,14 +25,15 @@ import { attachAiSkillNextSteps } from './ai-skill-next-steps.mjs'
 // on. The server checks every figure, date, record number and known name
 // against this answer's tool results (ai-model-first-grounding.mjs); on a
 // failure the model gets one retry with the problems listed, and after a
-// second failure the rules answer instead, with a notice. Nothing here
-// writes: there is no write tool, and the answer only proposes.
+// second failure the answer says it could not give a checked answer (no rules
+// answer stands in for it). When the model cannot be used (down, too slow, out
+// of budget) the rules answer, with a notice. Nothing here writes: there is no
+// write tool, and the answer only proposes.
 //
 // The deterministic guards run first and keep their own answers: an
 // instruction to act, a question about the outside world, injection phrasing
-// ("ignore previous instructions", every tenant), a greeting, contracts and an
-// order request. The prompt chips keep their skills: they are buttons with a
-// fixed meaning, instant and free.
+// ("ignore previous instructions", every tenant) and a greeting. The panel's
+// suggestion cards and follow-up chips go to the loop like typed questions.
 //
 // Step S3: the loop reports its steps (what it reads, then writing and
 // checking), which the gateway streams to the panel's progress line
@@ -54,9 +56,19 @@ const bounded = (value, fallback, max) => {
   return Number.isFinite(number) && number > 0 ? Math.min(number, max) : fallback
 }
 
+// On wherever a provider that can run the loop is set (owner decision
+// 2026-11-01: users get the model's answers, the rules only when the model
+// cannot be used). FLOWCHAIN_AI_ASSISTANT_MODE=rules (or off) turns it off.
+const RULES_MODES = new Set(['rules', 'off'])
 export function aiModelFirstEnabled(env = {}) {
-  return text(env.FLOWCHAIN_AI_ASSISTANT_MODE).toLowerCase() === 'model_first' && Boolean(aiModelFirstProviderFormat(env))
+  return !RULES_MODES.has(text(env.FLOWCHAIN_AI_ASSISTANT_MODE).toLowerCase()) && Boolean(aiModelFirstProviderFormat(env))
 }
+
+// The loop's reasons for giving no answer that mean the model could not be
+// used (down, too slow, or out of budget): the rules answer then, with a
+// notice. Any other reason (the check failed twice, a limit ran out, the
+// model refused) gets aiModelFirstUncheckedAnswer instead.
+export const AI_MODEL_FIRST_UNAVAILABLE_REASONS = Object.freeze(['provider_error', 'timeout', 'budget'])
 
 export function aiModelFirstLimits(env = {}) {
   return {
@@ -85,16 +97,15 @@ export const aiModelFirstInjection = (message) => INJECTION.some((pattern) => pa
 // row): { eligible, reason, requires }. `requires`: the tools the question
 // needs; without them the loop steps aside and the rules answer as before (a
 // contract question without the contracts module gets the rules' answer that
-// says where contracts are kept).
+// says where contracts are kept). A card or chip is the loop's too: its skill
+// hint picks the skill only when the rules answer.
 export function aiModelFirstEntry(body = {}) {
   const message = text(body.message || body.question)
-  if (text(body.skillHint)) return { eligible: false, reason: 'chip' }
   if (aiModelFirstInjection(message)) return { eligible: false, reason: 'injection' }
   if (detectAiActionRequest(message)) return { eligible: false, reason: 'refusal' }
   const route = routeSkill({ message, focusTarget: body.focusTarget }) || {}
   if (route.refusal) return { eligible: false, reason: 'refusal' }
   if (route.outOfDomain) return { eligible: false, reason: 'outside_world' }
-  if (route.explicit) return { eligible: false, reason: 'chip' }
   if (route.greeting) return { eligible: false, reason: 'greeting' }
   // An order request ("帮我起草一份PO", "order 200 valves") is the loop's: it
   // asks for what the user did not say, and proposes a purchase request.
@@ -395,6 +406,45 @@ export function presentAiModelFirstAnswer({ answer, refs, stats, facts, language
   // Each cited record that needs attention says what to do next, as the
   // skills' answer lines do (owner decision 2, 2026-10-03).
   return attachAiSkillNextSteps(response, facts, { drafts: false })
+}
+
+// The answer when the loop gave none it could check (the check failed twice,
+// a limit ran out, the model refused): it says so, cites nothing and offers
+// to ask again. No rules answer stands in for it (owner decision 2026-11-01).
+export function aiModelFirstUncheckedAnswer({ query, language, facts }) {
+  const message = String(query ?? '').trim()
+  return {
+    version: 'v2',
+    responseId: `ai-model-first-unchecked-${randomUUID()}`,
+    query: message,
+    intent: 'model_first_unchecked',
+    language,
+    answerSource: 'workspace_model_unchecked',
+    skill: { id: 'model_first', version: AI_MODEL_FIRST_VERSION, asOf: facts?.asOf || null, timezone: facts?.timezone || null },
+    checked: [],
+    checkedLabel: '',
+    figures: [],
+    scope: { module: 'workspace', dataScopeLabel: aiSkillText('scope.label', language) },
+    conclusion: { title: aiSkillText('model_first.unchecked.title', language), summary: aiSkillText('model_first.unchecked.summary', language), severity: 'warning', confidence: 'low' },
+    keyEvidence: [],
+    contextCards: [],
+    realEvidenceCount: 0,
+    contextCardCount: 0,
+    limitationCount: 0,
+    businessImpact: [],
+    recommendedActions: [],
+    navigationLinks: [],
+    dataLimitations: [],
+    reviewCards: [],
+    followUpQuestions: [],
+    followUpSuggestions: message ? [{ label: aiSkillText('model_first.unchecked.retry', language), prompt: message }] : [],
+    contextBreadcrumbs: [],
+    safetyBoundaries: [aiSkillText('answer.review_boundary', language)],
+    sourceSummary: [],
+    readinessSignals: [],
+    generatedAt: facts?.generatedAt || new Date().toISOString(),
+    dataScopeLabel: aiSkillText('scope.label', language),
+  }
 }
 
 // The audit block: codes and counts only (agent mode decision 9), never the

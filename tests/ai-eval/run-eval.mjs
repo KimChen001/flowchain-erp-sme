@@ -344,7 +344,9 @@ function readProviderEnv(path, { agent = false, modelFirst = false } = {}) {
   }
   let host = ''
   try { host = new URL(settings.FLOWCHAIN_AI_PROVIDER_ENDPOINT).hostname.toLowerCase() } catch { usageError('--provider-env: the file has no valid FLOWCHAIN_AI_PROVIDER_ENDPOINT.') }
-  return { host, agent, modelFirst, env: { ...settings, FLOWCHAIN_AI_INTENT_ROUTING: 'true', ...(agent ? { FLOWCHAIN_AI_AGENT_MODE: 'plan' } : {}), ...(modelFirst ? { FLOWCHAIN_AI_ASSISTANT_MODE: 'model_first' } : {}), FLOWCHAIN_AI_EVAL_ALLOW_HOST: host } }
+  // Model-first is on by default where a provider is set, so the routing and
+  // agent lanes switch it off explicitly.
+  return { host, agent, modelFirst, env: { ...settings, FLOWCHAIN_AI_INTENT_ROUTING: 'true', ...(agent ? { FLOWCHAIN_AI_AGENT_MODE: 'plan' } : {}), FLOWCHAIN_AI_ASSISTANT_MODE: modelFirst ? 'model_first' : 'rules', FLOWCHAIN_AI_EVAL_ALLOW_HOST: host } }
 }
 const providerEnvPath = argument('provider-env')
 if (providerEnvPath && updateBaseline) usageError('--update-baseline needs an offline run; drop --provider-env.')

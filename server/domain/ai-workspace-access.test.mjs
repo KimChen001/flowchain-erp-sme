@@ -12,6 +12,8 @@ import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes
 // is ever sent anywhere.
 const PROVIDER = {
   FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted',
+  // The rules paths: model-first is on by default where a provider is set.
+  FLOWCHAIN_AI_ASSISTANT_MODE: 'rules',
   FLOWCHAIN_AI_PROVIDER_KIND: 'anthropic_chat',
   FLOWCHAIN_AI_PROVIDER_ENDPOINT: 'http://127.0.0.1:9/v1/chat/completions',
   FLOWCHAIN_AI_PROVIDER_API_KEY: 'placeholder',

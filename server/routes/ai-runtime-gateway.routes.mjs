@@ -1,7 +1,7 @@
 import { aiSkillDraftBasis } from '../domain/ai-skill-drafts.mjs'
 import { withoutUnavailableProductLinks } from '../../shared/unavailable-product-routes.mjs'
 import { modelFreeEnv, withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
-import { aiModelFirstEnabled, aiModelFirstEntry, answerAiModelFirst } from '../domain/ai-model-first.mjs'
+import { AI_MODEL_FIRST_UNAVAILABLE_REASONS, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstUncheckedAnswer, answerAiModelFirst } from '../domain/ai-model-first.mjs'
 import { aiProviderFailures } from '../domain/ai-usage-meter.mjs'
 import { aiAgentKnowledge, handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
 import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
@@ -105,11 +105,14 @@ function modelAccessSend(send, overCap) {
   }
 }
 
-// A model-first answer that could not be given (the check failed twice, or a
-// limit ran out) is answered by the rules, and says so. A failed provider call
-// is noted by modelAccessSend, more specifically.
-function modelFirstFallbackSend(send) {
-  return (res, status, payload) => send(res, status, isAnswer(status, payload) && !payload.aiModelAccess ? { ...payload, aiModelAccess: { status: 'unavailable', reason: 'unchecked' } } : payload)
+// An answer after the loop gave none says why: the model could not be used
+// (down or too slow, or out of budget), or its answer could not be checked
+// (the documents' answer then). A failed provider call is noted by
+// modelAccessSend, more specifically.
+function modelFirstFallbackSend(send, reason) {
+  const access = reason === 'budget' ? { status: 'unavailable', reason: 'budget' }
+    : AI_MODEL_FIRST_UNAVAILABLE_REASONS.includes(reason) ? { status: 'unavailable' } : { status: 'unavailable', reason: 'unchecked' }
+  return (res, status, payload) => send(res, status, isAnswer(status, payload) && !payload.aiModelAccess ? { ...payload, aiModelAccess: access } : payload)
 }
 
 async function handleGatewayRequest(requestCtx) {
@@ -168,14 +171,18 @@ async function handleGatewayRequest(requestCtx) {
         send(res, validation.status, errorBody(tooLong ? 'AI_QUESTION_TOO_LONG' : 'AI_QUESTION_TOO_SHORT', body))
         return true
       }
-      // Model-first (docs/ai-model-first-design.md §3): a free-text question
-      // the guards let through is answered by the tool loop. When it gives no
-      // checked answer, the knowledge path, then the rules answer below, with
-      // no model call and a notice; a guarded question goes there directly. A
-      // question that needs a tool this user is not offered (search_documents
-      // without database storage, list_contracts without the contracts
-      // module) goes to the knowledge path or the rules as before, with no
-      // notice. Either way the audit row carries the loop's codes and counts.
+      // Model-first (docs/ai-model-first-design.md §3): a question the guards
+      // let through is answered by the tool loop. When the model cannot be
+      // used (down, too slow, out of budget), the knowledge path, then the
+      // rules answer below, with no model call and a notice. When the model
+      // answered but the answer could not be checked, the knowledge path, then
+      // an answer that says so: no rules answer stands in for the model's
+      // (owner decision 2026-11-01). A guarded question goes to the knowledge
+      // path or the rules directly. A question that needs a tool this user is
+      // not offered (search_documents without database storage,
+      // list_contracts without the contracts module) goes to the knowledge
+      // path or the rules as before, with no notice. Either way the audit row
+      // carries the loop's codes and counts.
       if (modelFirstEntry?.eligible) {
         // The languages of the documents the user may read (null without any).
         const documents = await (ctx.aiAgentKnowledge !== undefined ? ctx.aiAgentKnowledge : aiAgentKnowledge(ctx).catch(() => null))
@@ -187,11 +194,18 @@ async function handleGatewayRequest(requestCtx) {
           send(res, 200, modelFirst.searchedDocuments ? modelFirst.response : await addKnowledgeContext(ctx, body, modelFirst.response))
           return true
         }
+        const loopSend = send
         ctx = modelFirst.skipped
           ? { ...ctx, aiModelFirstAudit: modelFirst.audit }
-          : { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: modelFirstFallbackSend(ctx.send), aiModelFirstAudit: modelFirst.audit }
+          : { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: modelFirstFallbackSend(ctx.send, modelFirst.reason), aiModelFirstAudit: modelFirst.audit }
         send = ctx.send
         if (await answerFromDocuments()) return true
+        if (!modelFirst.skipped && !AI_MODEL_FIRST_UNAVAILABLE_REASONS.includes(modelFirst.reason)) {
+          const unchecked = aiModelFirstUncheckedAnswer({ query: body.message || body.question, language: body.answerLanguage, facts: modelFirst.facts })
+          await recordAiSkillAudit(ctx, { response: unchecked, facts: modelFirst.facts, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, modelFirst: modelFirst.audit })
+          loopSend(res, 200, unchecked)
+          return true
+        }
       }
       // Agent planning (P2) on: a question with several parts that the
       // business query path would take goes to the planner first, which has

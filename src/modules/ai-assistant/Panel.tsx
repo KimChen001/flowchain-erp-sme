@@ -801,14 +801,14 @@ export default function FloatingAiAssistant({
     setProgress(null);
     setInput("");
     setMessages((current) => [...current, { role: "user", content: message }]);
-    // A chip answers from its skill and keeps the 12 s limit. A typed question
-    // may go to the model-first loop, which takes up to 20 s before the rules
-    // answer instead.
+    // A typed question, a card or a chip may go to the model-first loop (owner
+    // decision 2026-11-01), which takes up to 20 s before the rules answer
+    // instead.
     const timeout = window.setTimeout(() => {
       timeoutHit = true;
       abortReasonRef.current = "timeout";
       controller.abort();
-    }, skillHint ? 12000 : 25000);
+    }, 25000);
 
     try {
       const safeConversationContext = buildSafeConversationContext(messages, context, sessionGrounding, language);
@@ -829,9 +829,8 @@ export default function FloatingAiAssistant({
         },
         sessionGrounding,
         returnTo: "ai-assistant",
-        // A typed question may go to the model-first loop, which says what it
-        // reads while it answers; a chip answers at once from its skill.
-      }, controller.signal, skillHint ? undefined : (event) => { if (requestSeqRef.current === requestId) setProgress(event); });
+        // The model-first loop says what it reads while it answers.
+      }, controller.signal, (event) => { if (requestSeqRef.current === requestId) setProgress(event); });
       const rawContent = response.runtimeModeLabel || "";
       const content = "";
       if (looksLikeRawJson(rawContent)) console.debug("AI assistant raw content suppressed", rawContent);

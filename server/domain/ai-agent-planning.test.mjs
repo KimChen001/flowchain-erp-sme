@@ -14,6 +14,8 @@ const AGENT_ENV = {
   FLOWCHAIN_AI_AGENT_MODE: 'plan',
   FLOWCHAIN_AI_INTENT_ROUTING: 'true',
   FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted',
+  // The rules paths: model-first is on by default where a provider is set.
+  FLOWCHAIN_AI_ASSISTANT_MODE: 'rules',
   FLOWCHAIN_AI_PROVIDER_KIND: 'parley_chat',
   FLOWCHAIN_AI_PROVIDER_ENDPOINT: 'http://127.0.0.1:9/agent-test',
   FLOWCHAIN_AI_PROVIDER_API_KEY: 'placeholder',

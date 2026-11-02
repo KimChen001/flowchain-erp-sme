@@ -181,6 +181,8 @@ test("every line that needs attention states its next step and offers its draft 
 });
 
 test("a failed or slow answer shows an English recovery message", async ({ page }) => {
+  // The slow case waits out the client's 25 second limit.
+  test.setTimeout(90_000);
   await signIn(page);
   const panel = await openAssistant(page);
   await page.route("**/api/ai-runtime/respond", (route) => route.fulfill({ status: 503, json: { code: "AI_SKILL_UNAVAILABLE", error: "The assistant could not read your workspace data just now. Please try again." } }));
@@ -192,10 +194,10 @@ test("a failed or slow answer shows an English recovery message", async ({ page 
 
   await page.unroute("**/api/ai-runtime/respond");
   await newConversation(panel, "New conversation");
-  // No answer within the client's 12 second limit.
+  // No answer within the client's 25 second limit (a card may reach the model-first loop too).
   await page.route("**/api/ai-runtime/respond", () => new Promise(() => {}));
   await panel.getByTestId("ai-empty-prompt-chip").first().click();
-  await expect(panel.getByTestId("ai-message-assistant").last()).toContainText("took too long to answer", { timeout: 20_000 });
+  await expect(panel.getByTestId("ai-message-assistant").last()).toContainText("took too long to answer", { timeout: 40_000 });
   expect(await chineseLines(panel)).toEqual([]);
 });
 
@@ -264,12 +266,13 @@ test("a typed question shows what the assistant reads, then its checked answer w
   await expect(answer.getByTestId("ai-trust-line").locator("summary")).toHaveText(/Figures checked\s*· 1 source/);
   await expect(progress).toHaveCount(0);
   expect(await chineseLines(panel)).toEqual([]);
-  // A chip keeps the plain JSON answer.
+  // A card asks the same way: the model-first loop may answer it too (owner decision 2026-11-01).
   await newConversation(panel, "New conversation");
-  await askChip(panel, "What should I handle first today?");
+  await panel.getByTestId("ai-empty-prompt-chip").filter({ hasText: "What should I handle first today?" }).click();
+  await expect.poll(async () => (await stream.accepts()).length).toBe(2);
   const accepts = await stream.accepts();
   expect(accepts[0]).toContain("application/x-ndjson");
-  expect(accepts[1]).not.toContain("application/x-ndjson");
+  expect(accepts[1]).toContain("application/x-ndjson");
 });
 
 test("the record link of a model-first answer opens the contract", async ({ page }) => {

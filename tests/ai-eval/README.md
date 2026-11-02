@@ -436,9 +436,13 @@ FLOWCHAIN_ENABLE_CONTRACTS=true npm run test:ai:eval -- --provider-env=<env file
 
 - **What it switches on.** `--model-first` sets
   `FLOWCHAIN_AI_ASSISTANT_MODE=model_first` on the servers and also takes the
-  loop's own `FLOWCHAIN_AI_ASSISTANT_*` settings from the file. Every free-text
-  question the guards let through goes to the tool loop; chips, refusals,
-  injection, greetings and order requests keep their rules answers.
+  loop's own `FLOWCHAIN_AI_ASSISTANT_*` settings from the file. Every question
+  the guards let through goes to the tool loop, chips included; refusals,
+  injection and greetings keep their rules answers. The other provider lanes
+  set `FLOWCHAIN_AI_ASSISTANT_MODE=rules`, since model-first is on by default
+  wherever a provider is set. A loop answer that fails the check twice is now
+  an answer saying so (`model_first_unchecked`), not the rules answer; the
+  report still counts it as a fallback.
 - **What it reports,** from each answer's audit row (its `modelFirst` block:
   codes and counts only):
   - how many answers the loop gave, how many were guarded, skipped (a tool the

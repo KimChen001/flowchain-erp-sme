@@ -76,6 +76,10 @@ const entries = {
   'answer.source_model_first': ['Written by AI from your records; figures checked', '由 AI 根据你的记录撰写，数字已核对'],
   // A purchase request the model-first assistant proposed: the reason line of the prefilled form.
   'model_first.request.reason': ['Requested in the assistant. Review it before you submit.', '在 AI 助手中提出，提交前请核对。'],
+  // The model's answer failed the check twice (or ran out of rounds): it is not shown, and no rules answer stands in for it (owner decision 2026-11-01).
+  'model_first.unchecked.title': ["I couldn't give you a checked answer this time", '这次没能给出核对过的答案'],
+  'model_first.unchecked.summary': ['I only show answers whose figures match your records, and this one did not. Nothing was changed. Try again, or ask more narrowly, for example with a record number, a supplier or a date range.', '我只给出数字能和你的记录对上的答案，这次没有对上。没有修改任何数据。可以再试一次，或问得具体一点，比如带上单号、供应商或日期范围。'],
+  'model_first.unchecked.retry': ['Try again', '再试一次'],
   'answer.checked': ['Checked: {sources}', '已检查：{sources}'],
   'answer.review_boundary': ['This answer does not send, approve or change anything.', '本回答不会发送、批准或修改任何内容。'],
   // A question with several parts, answered part by part (ai-skill-compound.mjs).
