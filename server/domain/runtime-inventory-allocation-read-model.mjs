@@ -104,7 +104,9 @@ export function buildRuntimeInventoryAllocation(context) {
   const availability = [...keys].map(sku => {
     const inventoryRows = rows(context.inventoryItems).filter(row => itemKey(row) === sku)
     const skuDemand = demandLines.filter(line => line.sku === sku && salesOrderIsOpen(line.order))
-    const salesOrders = [...new Set(skuDemand.map(line => line.order))]
+    // The orders that still need this SKU: a line shipped in full is history,
+    // not demand (a line with an unknown quantity stays, so it is reported).
+    const salesOrders = [...new Set(skuDemand.filter(({ ordered, fulfilled }) => ordered === null || fulfilled === null || ordered > fulfilled).map(line => line.order))]
     const committedPos = rows(context.purchaseOrders).filter(po => isPurchaseOrderReceivable(po.status))
     const master = rows(context.items).find(row => itemKey(row) === sku)
     const stockUnit = stockUnitOf(recordedUnits, sku, master)

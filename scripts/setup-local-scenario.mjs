@@ -8,6 +8,9 @@ import { applyPromisedDateChanges, recordOriginalPromises } from '../server/doma
 import { resolveProvisionedActor } from '../server/domain/pilot-identity.mjs'
 import { authorize } from '../server/auth/authorization-service.mjs'
 import { contractsEnabled } from '../server/domain/contract-policy.mjs'
+import { createOutboundPostingCommandService } from '../server/domain/outbound-posting-command-service.mjs'
+import { createInventoryOperationsCommandService } from '../server/domain/inventory-operations-command-service.mjs'
+import { listItemSupplierRecords, saveItemSupplier } from '../server/domain/master-data-commands.mjs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
@@ -22,7 +25,17 @@ import { resolve } from 'node:path'
 // inventory movements agree. Posted receipts are inventory history: once they
 // exist the scenario keeps its first seed day and refuses a different one.
 // No payables, payments or journal entries are created.
-export const LOCAL_SCENARIO_VERSION = 7
+//
+// Since version 8 the workspace also has 12 weeks of customer orders, each
+// shipped in full on its order day, so the reorder list has demand to work
+// from (see the shipment history below). Its stock starts with one opening stock
+// entry, posted through the inventory adjustment commands on the day the
+// workspace went live; the orders are reserved, drafted and posted through the
+// outbound commands as of their shipping time, in date order with the
+// receipts, so stock never goes below zero. On-hand quantities at the seed day
+// are the same as before: the opening stock is version 7's opening stock plus
+// everything the history ships.
+export const LOCAL_SCENARIO_VERSION = 8
 const WAREHOUSE = 'LOCAL-DEMO-WH-001'
 const BUYERS = ['Kim', 'Dana Whitfield']
 const RECEIVER = 'Luis Ortega'
@@ -131,6 +144,131 @@ const contracts = [
     signed: -68, start: -65, end: 300, renewal: 'by_agreement', noticeDays: 0, paymentTermsId: null },
 ]
 
+// The shipment history. Every weekday of the 12 whole weeks before the seed
+// day (offsets -84 to -1, so each weekday occurs 12 times whatever the seed
+// day is, and a reorder list read up to six days after seeding still sees all
+// of it) one customer orders: Redwood Retail on Mondays and Thursdays,
+// Bluebird Distribution on Tuesdays and Fridays, Metro Service Group on
+// Wednesdays. Each order is shipped in full the same afternoon.
+//
+// Each item has its own demand shape: the weekdays it can be ordered, the
+// chance it is on such an order, the mean quantity and the spread of the
+// log-normal noise, with demand growing about 20% over the 12 weeks.
+//   LDM-002  smooth: on almost every order, little spread (about 10 a day)
+//   LDM-001  regular: on most orders, some spread
+//   LDM-004  lumpy: on some of Bluebird's orders, in very uneven quantities
+//   LDM-006  intermittent: on about one Redwood order in three, in steady quantities
+// The draws come from one fixed random seed, in week, weekday and item order,
+// so every seed day gets the same orders on its own dates.
+const HISTORY_WEEKS = 12
+const HISTORY_RANDOM_SEED = 20261103
+const REDWOOD = 'LOCAL-DEMO-CUS-001'
+const BLUEBIRD = 'LOCAL-DEMO-CUS-002'
+const METRO = 'LOCAL-DEMO-CUS-003'
+const customerNames = { [REDWOOD]: customerName, [BLUEBIRD]: 'Bluebird Distribution', [METRO]: 'Metro Service Group' }
+// [weekday (0 is Sunday), customer, ordered at, shipped at]
+const customerOrderDays = [
+  [1, REDWOOD, '09:40', '15:30'],
+  [2, BLUEBIRD, '08:50', '14:00'],
+  [3, METRO, '10:15', '16:00'],
+  [4, REDWOOD, '09:40', '15:30'],
+  [5, BLUEBIRD, '08:50', '14:00'],
+]
+// [SKU, weekdays, chance on an order, mean quantity, log-normal spread]
+const demandShapes = [
+  ['LDM-001', [1, 3, 4, 5], 0.85, 10, 0.3],
+  ['LDM-002', [1, 2, 3, 4, 5], 0.95, 16, 0.15],
+  ['LDM-003', [1, 2, 4], 0.7, 40, 0.3],
+  ['LDM-004', [2, 5], 0.65, 1100, 0.9],
+  ['LDM-005', [2, 3, 5], 0.75, 280, 0.55],
+  ['LDM-006', [1, 4], 0.42, 22, 0.12],
+]
+// Cartons ship by 5 boxes, fasteners by 100 pieces, cable by 25 feet, labels by 2 rolls.
+const orderMultiples = { 'LDM-003': 5, 'LDM-004': 100, 'LDM-005': 25, 'LDM-006': 2 }
+const salesPrices = { 'LDM-001': 180, 'LDM-002': 115, 'LDM-003': 21, 'LDM-004': 0.85, 'LDM-005': 3.4, 'LDM-006': 29 }
+
+// Opening stock, counted the day the workspace went live, before the oldest
+// purchase order: version 7's opening stock plus what the history ships.
+const OPENING_DAY = -160
+const OPENING_ADJUSTMENT = 'LOCAL-DEMO-ADJ-OPENING'
+const openingBeforeHistory = { 'LDM-001': 8, 'LDM-002': 60 }
+
+// The preferred source of each item, with the terms a buyer recorded on the
+// item-supplier link: lead time in days, minimum order quantity in the stock
+// unit and reference price. Saved once through the item supplier command; a
+// link already there is never changed.
+const supplierTerms = [
+  ['LDM-001', ACME, 14, 25, 100],
+  ['LDM-002', ACME, 14, 20, 100],
+  ['LDM-003', SUMMIT, 12, 100, 12.5],
+  ['LDM-004', ATLAS, 14, 2000, 0.4],
+  ['LDM-005', ACME, 10, 500, 1.85],
+  ['LDM-006', SUMMIT, 10, 50, 17.5],
+]
+
+// A small seeded generator (mulberry32): the same seed gives the same numbers
+// on every machine.
+function seededRandom(seed) {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6D2B79F5) >>> 0
+    let value = state
+    value = Math.imul(value ^ (value >>> 15), value | 1)
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61)
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+// The history's orders, without dates: { week, weekday, customerId, orderedAt,
+// shippedAt, lines: [{ sku, quantity }] }. Three draws per item that can be
+// on the order, whether it is used or not, so one item never shifts another's
+// numbers.
+function scenarioShipmentHistory() {
+  const random = seededRandom(HISTORY_RANDOM_SEED)
+  const orders = []
+  for (let week = 0; week < HISTORY_WEEKS; week += 1) {
+    const growth = 0.9 + (0.2 * week) / (HISTORY_WEEKS - 1)
+    for (const [weekday, customerId, orderedAt, shippedAt] of customerOrderDays) {
+      const lines = []
+      for (const [sku, weekdays, chance, mean, spread] of demandShapes) {
+        if (!weekdays.includes(weekday)) continue
+        const included = random() < chance
+        const normal = Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random())
+        const multiple = orderMultiples[sku] || 1
+        const quantity = Math.max(multiple, Math.round((mean * growth * Math.exp(spread * normal - (spread * spread) / 2)) / multiple) * multiple)
+        if (included) lines.push({ sku, quantity })
+      }
+      if (!lines.length) throw new Error(`The shipment history drew an empty order in week ${week}; change its random seed.`)
+      orders.push({ week, weekday, customerId, orderedAt, shippedAt, lines })
+    }
+  }
+  return orders
+}
+
+// The history's orders on the seed day's calendar, oldest first, numbered from
+// LOCAL-DEMO-SO-101 with one shipment each.
+function scenarioSalesHistory(calendar) {
+  const first = -7 * HISTORY_WEEKS
+  const firstWeekday = calendar.day(first).getUTCDay()
+  return scenarioShipmentHistory()
+    .map((order) => ({ ...order, offset: first + 7 * order.week + ((order.weekday - firstWeekday + 7) % 7) }))
+    .sort((a, b) => a.offset - b.offset || a.shippedAt.localeCompare(b.shippedAt))
+    .map((order, index) => {
+      const number = 101 + index
+      return { ...order, id: `LOCAL-DEMO-SO-${number}`, shipmentNumber: `LOCAL-DEMO-SHP-${number}`, lines: order.lines.map((line, lineIndex) => ({ ...line, id: `LOCAL-DEMO-SOL-${number}-${lineIndex + 1}` })) }
+    })
+}
+
+const historyOrderCount = HISTORY_WEEKS * customerOrderDays.length
+
+// Opening stock per SKU: what the walkthrough held before the history, plus
+// everything the history ships.
+function scenarioOpeningStock() {
+  const opening = Object.fromEntries(Object.keys(items).map((sku) => [sku, openingBeforeHistory[sku] || 0]))
+  for (const order of scenarioShipmentHistory()) for (const line of order.lines) opening[line.sku] += line.quantity
+  return opening
+}
+
 const pad = (value) => String(value).padStart(3, '0')
 const money = (value) => Math.round(value * 100) / 100
 const sentStatuses = new Set([S.ISSUED, S.PARTIALLY_RECEIVED, S.FULLY_RECEIVED])
@@ -142,8 +280,10 @@ export const LOCAL_SCENARIO_COUNTS = Object.freeze({
   purchaseOrders: purchaseOrders.length,
   receivingDocuments: purchaseOrders.reduce((sum, po) => sum + (po.receipts?.length || 0), 0),
   supplierInvoices: purchaseOrders.filter((po) => po.invoice).length,
-  inventoryBalances: 2,
-  salesOrders: 1,
+  inventoryBalances: Object.keys(items).length,
+  salesOrders: 1 + historyOrderCount,
+  shipments: historyOrderCount,
+  itemSupplierLinks: supplierTerms.length,
   suppliersWithTransactions: new Set(purchaseOrders.map((po) => po.supplier)).size,
 })
 
@@ -211,20 +351,79 @@ async function scenarioSeedDay(prisma, tenantId, requested, timeZone) {
   return anchored
 }
 
-// The workspace user who posts the walkthrough receipts: the first active user,
-// by email, whose roles grant receiving.post. pilot:setup provisions the roles.
-async function receivingActor(prisma, tenantId) {
+// The workspace user who posts the walkthrough's documents: the first active
+// user, by email, whose roles grant every permission given. pilot:setup
+// provisions the roles.
+async function scenarioActor(prisma, tenantId, permissions, documents) {
   const users = await prisma.user.findMany({ where: { tenantId, status: 'active' }, orderBy: { email: 'asc' } })
   for (const user of users) {
     const identity = { authenticated: true, tenantId, userId: user.id, role: user.role, name: user.name, source: 'local_walkthrough_scenario' }
     try {
       const actor = await resolveProvisionedActor(prisma, identity)
-      if (authorize({ actor, permission: 'receiving.post', tenantId }).allowed) return identity
+      if (permissions.every((permission) => authorize({ actor, permission, tenantId }).allowed)) return identity
     } catch {
       // A user without a complete role assignment cannot post; try the next one.
     }
   }
-  throw new Error('No active workspace user may post receipts. Run pilot:setup before pilot:setup:scenario.')
+  throw new Error(`No active workspace user may post ${documents}. Run pilot:setup before pilot:setup:scenario.`)
+}
+
+const HISTORY_PERMISSIONS = ['inventory.adjustment.create', 'inventory.adjustment.approve', 'inventory.adjustment.post', 'shipment.prepare', 'shipment.post']
+
+// Opening stock, once, through the inventory adjustment commands as of the
+// day the workspace went live, onto the items' empty stock records at A-01.
+// Resumes a run that stopped between the steps.
+async function postOpeningStock(prisma, { tenantId, calendar, identity, env }) {
+  const service = createInventoryOperationsCommandService({ prisma, env, now: () => calendar.at(OPENING_DAY, '07:30') })
+  const key = (step) => `local-walkthrough-scenario:opening-stock:${step}`
+  let adjustment = await prisma.inventoryAdjustmentDocument.findFirst({ where: { tenantId, adjustmentNumber: OPENING_ADJUSTMENT } })
+  if (!adjustment) {
+    const lines = Object.entries(scenarioOpeningStock()).map(([sku, quantity], index) => ({ inventoryBalanceId: `LOCAL-DEMO-BAL-${pad(index + 1)}`, adjustmentQuantity: String(quantity) }))
+    const created = await service.createAdjustment({ idempotencyKey: key('create'), adjustmentNumber: OPENING_ADJUSTMENT, reasonCode: 'opening_balance', notes: 'Stock counted when the workspace went live.', lines }, { identity })
+    adjustment = created.adjustment
+  }
+  if (adjustment.workflowStatus === 'draft') adjustment = (await service.readyAdjustment(adjustment.id, { idempotencyKey: key('ready'), expectedAdjustmentVersion: adjustment.version }, { identity })).adjustment
+  if (adjustment.postingStatus === 'unposted') await service.postAdjustment(adjustment.id, { idempotencyKey: key('post'), expectedAdjustmentVersion: adjustment.version }, { identity })
+}
+
+// One history order, shipped in full from A-01 as of its shipping time:
+// reserve, draft the shipment, post it. Each step is skipped once it is done.
+async function shipHistoryOrder(prisma, order, { tenantId, calendar, identity, env }) {
+  const posted = await prisma.shipmentDocument.findFirst({ where: { tenantId, shipmentNumber: order.shipmentNumber } })
+  if (posted?.postingStatus === 'posted') return false
+  const service = createOutboundPostingCommandService({ prisma, env, now: () => calendar.at(order.offset, order.shippedAt) })
+  const key = (step) => `local-walkthrough-scenario:${step}:${order.id}`
+  let salesOrder = await prisma.salesOrder.findUniqueOrThrow({ where: { id: order.id }, include: { reservations: true } })
+  if (!salesOrder.reservations.length) {
+    await service.reserveSalesOrderInventory({
+      idempotencyKey: key('reserve'), salesOrderId: order.id, expectedOrderVersion: salesOrder.version,
+      allocations: order.lines.map((line) => ({ salesOrderLineId: line.id, warehouseId: WAREHOUSE, location: 'A-01', quantity: String(line.quantity) })),
+    }, { identity })
+    salesOrder = await prisma.salesOrder.findUniqueOrThrow({ where: { id: order.id }, include: { reservations: true } })
+  }
+  let shipment = posted
+  if (!shipment) {
+    const reservationOf = new Map(salesOrder.reservations.map((row) => [row.salesOrderLineId, row]))
+    await service.createShipmentDraft({
+      idempotencyKey: key('draft'), salesOrderId: order.id, shipmentNumber: order.shipmentNumber, expectedOrderVersion: salesOrder.version,
+      lines: order.lines.map((line) => ({ salesOrderLineId: line.id, allocations: [{ reservationId: reservationOf.get(line.id).id, quantity: String(line.quantity) }] })),
+    }, { identity })
+    shipment = await prisma.shipmentDocument.findFirstOrThrow({ where: { tenantId, shipmentNumber: order.shipmentNumber } })
+  }
+  await service.postShipment({ idempotencyKey: key('post'), shipmentId: shipment.id, expectedShipmentVersion: shipment.version }, { identity })
+  return true
+}
+
+// The preferred-source terms, through the item supplier command. An item that
+// already has a link to the supplier keeps it as it is.
+async function saveSupplierTerms(prisma, { tenantId, actorId }) {
+  let saved = 0
+  for (const [sku, supplierId, leadTimeDays, minimumOrderQuantity, referencePrice] of supplierTerms) {
+    if ((await listItemSupplierRecords(prisma, tenantId, { itemId: items[sku].id, supplierId })).length) continue
+    await saveItemSupplier(prisma, items[sku].id, null, { supplierId, preferred: true, leadTimeDays, minimumOrderQuantity, referencePrice, currency: 'USD' }, actorId, { tenantId })
+    saved += 1
+  }
+  return saved
 }
 
 export async function seedLocalScenario(prisma, env = process.env, options = {}) {
@@ -237,8 +436,18 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
   const timeZone = tenant.timezone || 'America/New_York'
   const calendar = scenarioCalendar(await scenarioSeedDay(prisma, tenantId, options.asOf ?? env.FLOWCHAIN_SCENARIO_AS_OF, timeZone), timeZone)
   const { day, isoDay, at } = calendar
-  const receiver = await receivingActor(prisma, tenantId)
+  const receiver = await scenarioActor(prisma, tenantId, ['receiving.post'], 'receipts')
   const metadata = { localDemo: true, localDemoScenarioVersion: LOCAL_SCENARIO_VERSION, scenarioAsOf: calendar.seedDay }
+  // The shipment history needs the opening stock entry first, and opening
+  // stock goes only onto stock records with no history. A workspace seeded
+  // before version 8 has posted receipts and no opening stock entry, so it
+  // keeps its stock as it is and gets no shipment history; seed a fresh
+  // database (walkthrough:local -- --reset) to have one.
+  const withHistory = Boolean(await prisma.inventoryAdjustmentDocument.findFirst({ where: { tenantId, adjustmentNumber: OPENING_ADJUSTMENT }, select: { id: true } }))
+    || !await prisma.receivingDocument.findFirst({ where: { tenantId, id: { startsWith: 'LOCAL-DEMO-GRN-' }, postingStatus: { not: 'unposted' } }, select: { id: true } })
+  const salesHistory = withHistory ? scenarioSalesHistory(calendar) : []
+  const historyEnv = { ...env, FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: 'true', FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: 'true' }
+  const shipper = withHistory ? await scenarioActor(prisma, tenantId, HISTORY_PERMISSIONS, 'opening stock and shipments') : null
 
   // Upsert one scenario row. A row whose version has moved was changed by a
   // business command (a posting, or a change during a walkthrough), so it is
@@ -298,23 +507,28 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
       }
     }
 
-    // Opening stock before the walkthrough receipts, which posting adds to.
-    // Quantities are created once and then belong to inventory; the planning
-    // thresholds keep LDM-001 short after its 20 received pieces.
-    for (const [id, sku, onHandQuantity, safetyStock, reorderPoint, riskLevel] of [
-      ['LOCAL-DEMO-BAL-001', 'LDM-001', 8, 30, 40, 'shortage'],
-      ['LOCAL-DEMO-BAL-002', 'LDM-002', 60, 15, 15, 'normal'],
-    ]) {
-      await tx.inventoryBalance.upsert({
-        where: { id },
-        create: {
-          id, tenantId, itemId: items[sku].id, sku, itemName: items[sku].name, warehouseId: WAREHOUSE,
-          warehouseKey: WAREHOUSE, location: 'A-01', locationKey: 'a-01',
-          onHandQuantity, availableQuantity: onHandQuantity, reservedQuantity: 0,
-          safetyStock, reorderPoint, unit: 'pcs', status: 'active',
-          riskLevel, metadata,
+    // One stock record per item at A-01, which opening stock and the
+    // walkthrough receipts add to, with the item's own safety stock and
+    // reorder point, so the record and the item agree. Created once, empty,
+    // for the opening stock entry (before version 8 LDM-001 and LDM-002 held
+    // their opening stock directly and the others were created by their first
+    // receipt); quantities then belong to inventory. The thresholds keep
+    // LDM-001 short after its 20 received pieces.
+    for (const [index, sku] of Object.keys(items).entries()) {
+      const id = `LOCAL-DEMO-BAL-${pad(index + 1)}`
+      const item = await tx.item.findUniqueOrThrow({ where: { id: items[sku].id }, select: { safetyStock: true, reorderPoint: true } })
+      const thresholds = { itemName: items[sku].name, safetyStock: item.safetyStock, reorderPoint: item.reorderPoint, riskLevel: sku === 'LDM-001' ? 'shortage' : 'normal' }
+      const existing = await tx.inventoryBalance.findUnique({ where: { tenantId_sku_warehouseKey_locationKey: { tenantId, sku, warehouseKey: WAREHOUSE, locationKey: 'a-01' } }, select: { id: true } })
+      if (existing) {
+        await tx.inventoryBalance.update({ where: { id: existing.id }, data: { ...thresholds, ...(existing.id === id ? { metadata } : {}) } })
+        continue
+      }
+      const onHandQuantity = withHistory ? 0 : openingBeforeHistory[sku] || 0
+      await tx.inventoryBalance.create({
+        data: {
+          id, tenantId, itemId: items[sku].id, sku, warehouseId: WAREHOUSE, warehouseKey: WAREHOUSE, location: 'A-01', locationKey: 'a-01',
+          onHandQuantity, availableQuantity: onHandQuantity, reservedQuantity: 0, unit: items[sku].unit, status: 'active', metadata, ...thresholds,
         },
-        update: { itemName: items[sku].name, safetyStock, reorderPoint, riskLevel, metadata },
       })
     }
 
@@ -388,24 +602,49 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
       }
     }
 
-    if (await put('salesOrder', 'LOCAL-DEMO-SO-001', { tenantId, orderNumber: 'LOCAL-DEMO-SO-001', customerId: 'LOCAL-DEMO-CUS-001', customerName, workflowStatus: 'confirmed', reservationStatus: 'not_reserved', fulfillmentStatus: 'not_fulfilled', promisedDate: day(5), currency: 'USD', metadata, createdAt: at(-4, '11:00') })) {
-      await put('salesOrderLine', 'LOCAL-DEMO-SOL-001', { salesOrderId: 'LOCAL-DEMO-SO-001', itemId: items['LDM-001'].id, sku: 'LDM-001', itemName: items['LDM-001'].name, orderedQuantity: 35, unit: 'pcs', unitPrice: 180, amount: 6300, metadata })
+    // The history's orders, confirmed, as an order is before its stock is
+    // reserved; shipping them below moves them on. Each records the random
+    // seed its quantities were drawn from.
+    for (const order of salesHistory) {
+      if (await put('salesOrder', order.id, { tenantId, orderNumber: order.id, customerId: order.customerId, customerName: customerNames[order.customerId], workflowStatus: 'confirmed', reservationStatus: 'not_reserved', fulfillmentStatus: 'not_fulfilled', promisedDate: day(order.offset), currency: 'USD', metadata: { ...metadata, historyRandomSeed: HISTORY_RANDOM_SEED }, createdAt: at(order.offset, order.orderedAt) })) {
+        for (const line of order.lines) {
+          const item = items[line.sku]
+          await put('salesOrderLine', line.id, { salesOrderId: order.id, itemId: item.id, sku: line.sku, itemName: item.name, orderedQuantity: line.quantity, unit: item.unit, unitPrice: salesPrices[line.sku], amount: money(line.quantity * salesPrices[line.sku]), metadata })
+        }
+      }
     }
     const unposted = await tx.receivingDocument.findMany({ where: { tenantId, id: { startsWith: 'LOCAL-DEMO-GRN-' }, postingStatus: 'unposted' }, select: { id: true, arrivedAt: true } })
     return unposted.sort((a, b) => a.arrivedAt - b.arrivedAt || a.id.localeCompare(b.id))
   }, { timeout: 60000 })
 
-  // 2. Post each unposted receipt, oldest first, as of its arrival. Accepted
-  // quantities go to stock and to the purchase order; rejected quantities stay
-  // on the receipt. A posted receipt is never posted again.
-  for (const receipt of unpostedReceipts) {
-    const service = createReceivingPostingCommandService({ prisma, env, now: () => receipt.arrivedAt })
-    await service.postReceiving({ receivingDocumentId: receipt.id, idempotencyKey: `local-walkthrough-scenario:post:${receipt.id}`, expectedVersion: 0 }, { identity: receiver })
+  // 2. Opening stock, then each unposted receipt and each history shipment in
+  // date order: receipts as of their arrival, shipments as of their shipping
+  // time. Accepted quantities go to stock and to the purchase order; rejected
+  // quantities stay on the receipt. A posted receipt or shipment is never
+  // posted again.
+  if (withHistory) await postOpeningStock(prisma, { tenantId, calendar, identity: shipper, env: historyEnv })
+  const timeline = [
+    ...unpostedReceipts.map((receipt) => ({ at: receipt.arrivedAt, receipt })),
+    ...salesHistory.map((order) => ({ at: at(order.offset, order.shippedAt), order })),
+  ].sort((a, b) => a.at - b.at)
+  let postedShipments = 0
+  for (const event of timeline) {
+    if (event.order) {
+      if (await shipHistoryOrder(prisma, event.order, { tenantId, calendar, identity: shipper, env: historyEnv })) postedShipments += 1
+      continue
+    }
+    const service = createReceivingPostingCommandService({ prisma, env, now: () => event.receipt.arrivedAt })
+    await service.postReceiving({ receivingDocumentId: event.receipt.id, idempotencyKey: `local-walkthrough-scenario:post:${event.receipt.id}`, expectedVersion: 0 }, { identity: receiver })
   }
 
-  // 3. Supplier invoices for the posted receipts, in committed statuses.
+  // 3. The open sales order, written after the history so it is the most
+  // recently changed order, at the top of the sales order list. Supplier
+  // invoices for the posted receipts, in committed statuses.
   await prisma.$transaction(async tx => {
     const put = putWith(tx)
+    if (await put('salesOrder', 'LOCAL-DEMO-SO-001', { tenantId, orderNumber: 'LOCAL-DEMO-SO-001', customerId: 'LOCAL-DEMO-CUS-001', customerName, workflowStatus: 'confirmed', reservationStatus: 'not_reserved', fulfillmentStatus: 'not_fulfilled', promisedDate: day(5), currency: 'USD', metadata, createdAt: at(-4, '11:00') })) {
+      await put('salesOrderLine', 'LOCAL-DEMO-SOL-001', { salesOrderId: 'LOCAL-DEMO-SO-001', itemId: items['LDM-001'].id, sku: 'LDM-001', itemName: items['LDM-001'].name, orderedQuantity: 35, unit: 'pcs', unitPrice: 180, amount: 6300, metadata })
+    }
     for (const po of purchaseOrders.filter((row) => row.invoice)) {
       const id = `LOCAL-DEMO-PO-${pad(po.n)}`
       const item = items[po.sku]
@@ -442,7 +681,18 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
   }, { timeout: 60000 })
   // 4. Contracts, when the contracts capability is on.
   const seededContracts = contractsEnabled(env) ? await seedLocalContracts(prisma, { tenantId, calendar, actorId: receiver.userId, metadata }) : null
-  return { ...LOCAL_SCENARIO_COUNTS, ...(seededContracts === null ? {} : { contracts: seededContracts }), postedReceipts: unpostedReceipts.length, asOf: calendar.seedDay, timeZone }
+  // 5. The preferred sources' lead times, minimum order quantities and prices.
+  await saveSupplierTerms(prisma, { tenantId, actorId: receiver.userId })
+  return {
+    ...LOCAL_SCENARIO_COUNTS,
+    ...(withHistory ? {} : { salesOrders: 1, shipments: 0 }),
+    ...(seededContracts === null ? {} : { contracts: seededContracts }),
+    postedReceipts: unpostedReceipts.length,
+    postedShipments,
+    shipmentHistory: withHistory ? 'kept' : 'not_added',
+    asOf: calendar.seedDay,
+    timeZone,
+  }
 }
 
 // The walkthrough's contracts, as the contract commands would leave them
@@ -491,6 +741,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   try {
     const counts = await seedLocalScenario(prisma, process.env, asOf ? { asOf } : {})
     console.log(`Local walkthrough scenario v${LOCAL_SCENARIO_VERSION} ready: ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(' ')}`)
+    if (counts.shipmentHistory === 'not_added') console.log('This workspace was seeded before version 8 and keeps its stock as it is, without the shipment history. Seed a fresh database (npm run walkthrough:local -- --reset) to have 90 days of demand.')
   } finally {
     await disconnectPrismaClient()
   }

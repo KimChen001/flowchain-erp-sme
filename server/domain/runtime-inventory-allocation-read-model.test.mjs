@@ -58,6 +58,9 @@ test('line demand subtracts fulfilment per line and sums lines of the same SKU a
   assert.equal(b.shortage, 0)
   assert.deepEqual(b.salesOrderIds, ['SO-1', 'SO-2'])
   assert.deepEqual(b.evidence.filter(row => row.entityType === 'sales_order').map(row => row.entityId), ['SO-1', 'SO-2'])
+  // SO-1 shipped all of SKU-A: it no longer needs SKU-A, so it is not listed there.
+  assert.deepEqual(a.salesOrderIds, [])
+  assert.deepEqual(a.evidence.filter(row => row.entityType === 'sales_order'), [])
 })
 
 test('a line with an unknown quantity is reported for that SKU only', () => {
