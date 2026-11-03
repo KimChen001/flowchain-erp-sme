@@ -197,6 +197,11 @@ function statusChip(status: string) {
   return <Chip label={copy(status)} color={statusTone(status) === "danger" ? A.red : statusTone(status) === "warning" ? A.orange : statusTone(status) === "success" ? A.green : A.blue} bg={statusTone(status) === "danger" ? "#fff1f0" : statusTone(status) === "warning" ? "#fff8f0" : statusTone(status) === "success" ? "#f0faf4" : "#f0f6ff"} />;
 }
 
+// A line made in the app has a random internal id (a UUID), which means
+// nothing to a person, so its card is headed by its position instead; a
+// readable line number (LOCAL-DEMO-PO-001-LINE-001) is shown as it is.
+const INTERNAL_LINE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvidenceRow[]; currency?: string; priceHistory?: (poLineId: string) => React.ReactNode }) {
   const copy = useWorkspaceCopy();
   if (!rows.length) {
@@ -242,7 +247,7 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
           <article key={line.poLineId} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <div className="text-xs font-semibold tabular-nums" style={{ color: A.blue }}>{copy("采购行")} {line.lineNumber}</div>
+                <div className="text-xs font-semibold tabular-nums" style={{ color: A.blue }}>{INTERNAL_LINE_ID.test(line.poLineId) ? `${copy("采购行")} ${line.lineNumber}` : line.poLineId}</div>
                 <div className="mt-1 text-sm font-semibold" style={{ color: A.label }}>{line.sku} · {line.itemName}</div>
                 {line.supplierOverride ? <div className="mt-1"><SupplierOverrideFlag override={line.supplierOverride} testId="po-line-supplier-override" /></div> : null}
               </div>
