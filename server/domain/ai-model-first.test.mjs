@@ -6,7 +6,7 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { runAiReadTool } from './ai-read-tool-runner.mjs'
 import { aiCallCostMicros, aiUsagePrices, runWithAiUsageScope } from './ai-usage-meter.mjs'
 import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
-import { AI_MODEL_FIRST_LIMITS, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstHidden, aiModelFirstTurns, parseAiModelFirstAnswer, presentAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
+import { AI_MODEL_FIRST_LIMITS, aiModelFirstAnnouncesLookup, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstHidden, aiModelFirstTurns, parseAiModelFirstAnswer, presentAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 import { buildReorderList } from './reorder-list.mjs'
 
@@ -784,12 +784,34 @@ test('an order answered without reading anything is sent back once to act', asyn
   assert.equal((await runAiModelFirstLoop(loop(general, { facts, context, today, question: 'What is a three-way match?' }))).stats.nudged, undefined)
 })
 
-test('reorder_list says which incoming lines it counts and why; stock_position says its own basis', async () => {
-  const { facts, context } = await reorderFacts()
-  const list = (await runAiReadTool('reorder_list', { sku: 'LDM-001' }, { facts, context })).result
-  assert.match(list.basis, /incoming counts only the open purchase order lines due on or before the item's orderByDate/)
-  for (const line of list.rows[0].incomingLines) assert.equal(line.notCountedBecause, line.counted === false ? 'due_after_order_by' : undefined)
-  assert.match((await runAiReadTool('stock_position', { sku: 'LDM-001' }, { facts, context })).result.basis, /For whether, when and how much to order, use reorder_list/)
+test('stock_position says its basis is not the reorder list; the prompt makes the reorder list the call', async () => {
+  const { facts, context, today } = await reorderFacts()
+  assert.match((await runAiReadTool('stock_position', { sku: 'LDM-001' }, { facts, context })).result.basis, /It is not the reorder list: for whether, when and how much to order, use reorder_list/)
+  const stub = scripted([final({ title: 't', answer: 'a', records: [] })])
+  await runAiModelFirstLoop(loop(stub, { facts, context, today }))
+  const system = stub.requests[0].body.system[0].text
+  assert.match(system, /never reverse a reorder list answer because of them/)
+  assert.match(system, /read it again in this answer with the tool that gave it/)
+  // The procedure replaced "Never assume the item, the quantity or the supplier".
+  assert.doesNotMatch(system, /Never assume the item, the quantity or the supplier/)
+})
+
+test('an answer that announces a lookup instead of doing it is sent back once', async () => {
+  const { facts, context, today } = await reorderFacts()
+  assert.equal(aiModelFirstAnnouncesLookup(JSON.stringify({ title: '稍等', answer: '我需要先重新核对 LDM-001 的数据，再为你打开采购申请。' })), true)
+  assert.equal(aiModelFirstAnnouncesLookup(JSON.stringify({ title: 'Checking', answer: "Let me check PO-020's receipts first." })), true)
+  assert.equal(aiModelFirstAnnouncesLookup(JSON.stringify({ title: 'LDM-001 低于安全库存', answer: '- 我已核对补货清单：今天要下单。' })), false)
+  assert.equal(aiModelFirstAnnouncesLookup(JSON.stringify({ title: 'Which supplier?', answer: 'Tell me the supplier and I can open the request.' })), false)
+  const stub = scripted([
+    toolUse([['list_purchase_orders', { status: 'overdue' }]]),
+    final({ title: 'Checking', answer: "Let me check PO-001's receipts first.", records: [] }),
+    final({ title: 'PO-001 is 4 days late', answer: '- PO-001 is 4 days overdue.', records: [] }),
+  ])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts, context, today }))
+  assert.equal(outcome.status, 'answered')
+  assert.equal(outcome.stats.nudged, true)
+  assert.match(stub.requests[2].body.messages.at(-1).content[0].text, /it says you will check or look something up/)
+  assert.equal(outcome.answer.title, 'PO-001 is 4 days late')
 })
 
 test('an approved purchase order not yet issued says to send it and mark it issued', async () => {

@@ -112,9 +112,10 @@ const getPurchaseOrder = defineAiTool({
   },
 })
 
-// The inventory page's terms, said with every result (see REORDER_BASIS in
-// ai-read-service-tools.mjs for why).
-const STOCK_BASIS = 'incomingOnPurchaseOrders counts every open approved purchase order line, whatever its due date. status compares available to promise (available + incoming - unreserved demand) with the reorder point, so an item can be ok here and still be on the reorder list to order now, when some of its incoming lines are due after its order-by date. For whether, when and how much to order, use reorder_list.'
+// The inventory page's terms, said with every result: its status is not the
+// reorder list's rule, and on 2026-11-03 the model took stock_position's "ok"
+// as reversing the reorder list's "order now".
+const STOCK_BASIS = 'incomingOnPurchaseOrders counts every open approved purchase order line. status compares available stock with safety stock, then available to promise (available + incoming - unreserved demand) with the reorder point. It is not the reorder list: for whether, when and how much to order, use reorder_list.'
 const stockPosition = defineAiTool({
   name: 'stock_position',
   description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders, available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status. One SKU, the SKUs at risk, or all.',
