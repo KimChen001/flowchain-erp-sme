@@ -541,6 +541,17 @@ test('through the gateway: after two failed checks the rules answer, with no fur
   assert.deepEqual({ status: row.status, reason: row.reason, outcome: row.grounding.outcome, first: row.grounding.first }, { status: 'fallback', reason: 'grounding', outcome: 'failed', first: { record: 1, number: 1 } })
 })
 
+test('through the gateway: after a failed model answer to an order, the rules form waits for a click', async () => {
+  const stub = scripted([final({ title: 'Late', answer: 'PO-777 is 99 days overdue.', records: [] })])
+  const { ctx, sent } = gatewayContext({ message: '帮我给 Acme Components 建一个 200 件 LDM-001 的采购申请', fetchImpl: stub.fetchImpl })
+  await handleAiRuntimeGatewayRoute(ctx)
+  const { payload } = sent.at(-1)
+  assert.deepEqual(payload.aiModelAccess, { status: 'unavailable', reason: 'unchecked' })
+  const forms = payload.reviewCards.filter((card) => card.draftType === 'purchase_request_draft')
+  assert.ok(forms.length > 0)
+  assert.ok(forms.every((card) => card.autoOpen === false))
+})
+
 test('through the gateway: a provider that fails gives the rules answer with the model-unavailable notice', async () => {
   const { ctx, sent, audits } = gatewayContext({ message: 'Which purchase orders are overdue?', fetchImpl: scripted([{ httpStatus: 503 }]).fetchImpl })
   await handleAiRuntimeGatewayRoute(ctx)

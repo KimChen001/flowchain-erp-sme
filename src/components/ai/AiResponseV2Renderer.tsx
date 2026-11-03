@@ -325,9 +325,13 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   const items = focused.primaryItems.map((item) => ({ ...item, draft: lineDraft(item.draft) }));
   // A line with something of its own to say (a reason, an impact, a next step
   // or a draft) is listed with it. Records the answer only cites are listed
-  // when the text does not name them already.
-  const citedOnly = items.every((item) => !item.reason && !item.impact && !item.nextStep && !item.draft);
-  const lines = compound ? [] : citedOnly ? items.filter((item) => !isShown(item.evidence.entityLabel || item.evidence.label)) : items;
+  // when the text does not name them already; in a model-first answer that
+  // holds beside lines with a next step too (owner, 2026-11-03: no record
+  // listed twice).
+  const saysSomething = (item: (typeof items)[number]) => Boolean(item.reason || item.impact || item.nextStep || item.draft);
+  const notInText = (item: (typeof items)[number]) => !isShown(item.evidence.entityLabel || item.evidence.label);
+  const citedOnly = items.every((item) => !saysSomething(item));
+  const lines = compound ? [] : citedOnly ? items.filter(notInText) : response.answerSource === "workspace_model" ? items.filter((item) => saysSomething(item) || notInText(item)) : items;
   const compactLines = !citedOnly && lines.every((item) => !item.reason && !item.impact);
   const shownLines = citedOnly || allLines ? lines : lines.slice(0, LINE_LIMIT);
   const hiddenLines = lines.length - shownLines.length;

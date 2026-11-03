@@ -271,6 +271,12 @@ test('a list of items may be a table; the basis folds under the one trust line w
   assert.ok(markup.indexOf('data-testid="ai-answer-checked"') > markup.indexOf('data-testid="ai-trust-line"'))
   assert.match(trust, /查看依据/)
   assert.match(trust, /data-testid="ai-answer-basis"[^]*?<li>在途只计入最晚下单日前到货的采购单行。<\/li>/)
+  // A record named in the text is not listed again, even beside a line with a next step.
+  const stepped = client.render({ ...response, keyEvidence: [record('LDM-002'), { ...record('LDM-001'), nextStep: '下一步：跟进 PO-001。' }, record('LDM-006')] })
+  const list = stepped.match(/<ul data-testid="ai-focused-primary-items"[^]*?<\/ul>/)[0]
+  assert.match(list, /data-business-id="LDM-001"[^]*?下一步：跟进 PO-001。/)
+  assert.match(list, /data-business-id="LDM-006"/)
+  assert.doesNotMatch(list, /LDM-002/)
   // Without a trust line (the help answer) the checked line stays above the answer.
   assert.match(client.render({ ...response, answerSourceLabel: '', keyEvidence: [], answerBasis: [], skill: { id: 'capability_overview' } }), /data-testid="ai-answer-checked"/)
 })
