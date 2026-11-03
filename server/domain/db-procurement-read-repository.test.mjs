@@ -200,6 +200,23 @@ test('database procurement list and summary paths keep the bounded snapshot beha
   assert.equal(summary.threeWayMatchCount, 1)
 })
 
+test('the request list names each requester by name; a user it cannot find keeps the id', async () => {
+  const records = createRecords()
+  records.purchaseRequests = [
+    { ...records.purchaseRequests[0], id: 'PR-DB-1', metadata: { requesterId: 'USR-1' } },
+    { ...records.purchaseRequests[0], id: 'PR-DB-2', requester: 'USR-GONE', metadata: {} },
+  ]
+  const prisma = createPrisma(records)
+  const userReads = []
+  prisma.user = { findMany: async (query) => { userReads.push(query); return [{ id: 'USR-1', name: 'Avery Buyer' }].filter((row) => query.where.tenantId === tenantId && query.where.id.in.includes(row.id)) } }
+  const snapshot = await createDbProcurementReadRepository({ env, prisma }).snapshot({ tenantId })
+  const byId = Object.fromEntries(snapshot.purchaseRequests.map((row) => [row.id, row]))
+  assert.deepEqual([byId['PR-DB-1'].requesterId, byId['PR-DB-1'].requesterName], ['USR-1', 'Avery Buyer'])
+  assert.deepEqual([byId['PR-DB-2'].requesterId, byId['PR-DB-2'].requesterName], ['USR-GONE', undefined])
+  // One read, in the asking workspace only.
+  assert.deepEqual(userReads.map((query) => query.where), [{ tenantId, id: { in: ['USR-1', 'USR-GONE'] } }])
+})
+
 test('direct dispatch covers every canonical type with exact bounded Prisma queries', async (t) => {
   assert.deepEqual(new Set(DIRECT_PROCUREMENT_DOCUMENT_TYPES), new Set(['pr', 'rfq', 'po', 'grn', 'invoice', 'threeWayMatch']))
   const cases = [

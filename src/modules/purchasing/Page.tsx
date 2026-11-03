@@ -108,6 +108,8 @@ type ProcurementRuntimeFacts = {
 type PoEvidenceRow = {
   currency?: string;
   poLineId: string;
+  // The line's position on the PO, shown instead of its internal id.
+  lineNumber: number;
   sourcePrLine: string;
   sourceRfqLine: string;
   sku: string;
@@ -240,7 +242,7 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
           <article key={line.poLineId} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <div className="text-xs font-semibold tabular-nums" style={{ color: A.blue }}>{line.poLineId}</div>
+                <div className="text-xs font-semibold tabular-nums" style={{ color: A.blue }}>{copy("采购行")} {line.lineNumber}</div>
                 <div className="mt-1 text-sm font-semibold" style={{ color: A.label }}>{line.sku} · {line.itemName}</div>
                 {line.supplierOverride ? <div className="mt-1"><SupplierOverrideFlag override={line.supplierOverride} testId="po-line-supplier-override" /></div> : null}
               </div>
@@ -382,9 +384,10 @@ function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): PoE
     const unitPrice = unitPriceForLine(line, po, facts);
     return {
       poLineId: line.poLineId,
+      lineNumber: index + 1,
       currency: line.currency || po.currency,
       sourcePrLine: po.sourceRequest ? `${po.sourceRequest}-L${String(index + 1).padStart(3, "0")}` : "来源 PR Line 待补齐",
-      sourceRfqLine: po.sourceRfq ? `${po.sourceRfq}-L${String(index + 1).padStart(3, "0")}` : "来源 RFQ Line 待补齐",
+      sourceRfqLine: po.sourceRfq ? `${po.sourceRfq}-L${String(index + 1).padStart(3, "0")}` : po.sourceRequest ? "未经询价" : "来源 RFQ Line 待补齐",
       sku: safeText(line.sku, po.sourceSku || "SKU 待补齐"),
       itemName: safeText(line.itemName, po.sourceName || "物料名称待补齐"),
       quantity: ordered,
@@ -842,7 +845,8 @@ export default function PurchasingOrdersPage({
               { label: "PO 编号", value: selectedPO.po, tone: "info" },
               { label: "状态", value: selectedPO.status, tone: statusTone(selectedPO.status) },
               { label: "来源 PR", value: selectedPO.sourceRequest || "来源 PR 待补齐", tone: selectedPO.sourceRequest ? "info" : "warning" },
-              { label: "来源 RFQ", value: selectedPO.sourceRfq || "来源 RFQ 待补齐", tone: selectedPO.sourceRfq ? "info" : "warning" },
+              // A PO made straight from a purchase request had no RFQ, which is not a gap.
+              { label: "来源 RFQ", value: selectedPO.sourceRfq || (selectedPO.sourceRequest ? "未经询价，由采购申请创建" : "来源 RFQ 待补齐"), tone: selectedPO.sourceRfq || selectedPO.sourceRequest ? "info" : "warning" },
               { label: "供应商", value: selectedPO.supplier },
               { label: "采购负责人", value: selectedPO.owner },
               { label: "创建日期", value: selectedPO.created },

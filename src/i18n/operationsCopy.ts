@@ -104,6 +104,7 @@ export const operationsEnglish: Record<string, string> = {
   '暂无可导出的数据': 'No data to export', '当前结果已导出': 'Current results exported',
   '返回来源 PR': 'Back to source PR', '返回来源 RFQ': 'Back to source RFQ', '返回采购订单': 'Back to purchase orders',
   '来源 PR 待补齐': 'Source PR missing', '来源 RFQ 待补齐': 'Source RFQ missing',
+  '未经询价，由采购申请创建': 'No RFQ: created from a purchase request', '未经询价': 'No RFQ',
   '延迟 / 未收齐风险': 'Delay / incomplete receipt risk', '需关注': 'Needs attention', '未触发': 'Not triggered',
   '· 建议：': ' · Suggested action: ', '当前 PO 暂无收货记录。': 'No receiving records for this PO.',
   '是否影响发票匹配': 'Invoice matching impact', '关联 Invoice Line': 'Linked invoice line', '行级备注': 'Line notes',
