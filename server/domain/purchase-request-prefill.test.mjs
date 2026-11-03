@@ -29,6 +29,18 @@ test('an assistant handoff fills the line from the record and master data, each 
   })
 })
 
+test('the assistant says whether its quantity and reason came from the user or the reorder list', () => {
+  const refs = (query) => {
+    const plan = planPurchaseRequestPrefill({ ...base, query: { itemId: 'item-1', quantity: '50', reason: 'Top up safety stock', origin: 'ai_assistant', ...query } })
+    return [plan.fields.quantity.ref, plan.fields.internalLineComment.ref]
+  }
+  assert.deepEqual(refs({ quantityFrom: 'user', reasonFrom: 'user' }), ['assistant:quantity', 'assistant:your_reason'])
+  assert.deepEqual(refs({ quantityFrom: 'reorder_list', reasonFrom: 'reorder_list' }), ['assistant:reorder_quantity', 'assistant:reorder_reason'])
+  // Without them, or with a value it does not know, the labels stay as before.
+  assert.deepEqual(refs({}), ['assistant:gap', 'assistant:reason'])
+  assert.deepEqual(refs({ quantityFrom: 'model', reasonFrom: 'model' }), ['assistant:gap', 'assistant:reason'])
+})
+
 test('a named supplier wins, and the quantity rises to its minimum order quantity', () => {
   const plan = planPurchaseRequestPrefill({ ...base, query: { itemId: 'item-1', quantity: '20', suppliers: 'SUP-O,sup-pref', origin: 'ai' } })
   assert.equal(plan.values.supplierId, 'sup-other')

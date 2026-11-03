@@ -18,6 +18,10 @@ const SOURCE_LABELS: Record<PrefillSource, readonly [string, string]> = {
 // Known references get a precise label; any other keeps the source's label.
 const REF_LABELS: Record<string, readonly [string, string]> = {
   "assistant:gap": ["From the stock check", "来自库存检查"],
+  "assistant:quantity": ["Quantity you gave the assistant", "你在助手中给出的数量"],
+  "assistant:reorder_quantity": ["Suggested by the reorder list", "补货清单建议的数量"],
+  "assistant:your_reason": ["Your reason, from the assistant", "你在助手中给出的原因"],
+  "assistant:reorder_reason": ["Basis from the reorder list", "补货清单的依据"],
   "assistant:reason": ["Reason from the assistant", "来自助手的原因"],
   "assistant:due": ["Date from the assistant", "来自助手的日期"],
   "assistant:supplier": ["Supplier from the assistant", "来自助手的供应商"],

@@ -3,6 +3,7 @@ import { runLateOrderImpact } from './ai-skill-late-order-impact.mjs'
 import { runSpendAnalysis } from './ai-skill-spend-analysis.mjs'
 import { aiSkillPrepareComparison, runSupplierComparison } from './ai-skill-supplier-comparison.mjs'
 import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
+import { aiSkillPurchaseOrderNotSent } from './ai-skill-signals.mjs'
 
 // The read tools of the model-first assistant (docs/ai-model-first-design.md
 // §4). Each reads the asking user's facts (readAiSkillFacts), which hold only
@@ -25,10 +26,15 @@ const periodOf = (value) => (value && value !== 'all' ? { kind: value } : null)
 const byDue = (a, b) => (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99') || text(a.orderNumber).localeCompare(text(b.orderNumber))
 const supplierError = (found) => ({ error: found.error, candidates: found.candidates || [] })
 
+// An approved order not yet issued: the supplier does not have it, so its next
+// step is to send it and mark it issued, before any receiving (decision V5).
+// On 2026-11-03 the model skipped that step for a PO just created.
+const NOT_ISSUED_NEXT_STEP = 'Not yet issued: the supplier does not have this order. Next step: the user sends the PO document to the supplier (print or save it), then marks it issued on the purchase order page. Receiving comes after that.'
 const orderRow = (row) => ({
   orderNumber: row.orderNumber, supplier: row.supplier, status: row.status, dueDate: row.dueDate || null,
   overdueDays: row.overdueDays || 0, ordered: row.ordered ?? null, received: row.received ?? null, remaining: row.remaining ?? null, unit: row.unit || null,
   amount: row.amount ?? null, currency: row.currency || null, open: Boolean(row.isOpen), skus: array(row.skus),
+  ...(aiSkillPurchaseOrderNotSent(row) ? { issuedToSupplier: false, nextStep: NOT_ISSUED_NEXT_STEP } : {}),
   ref: aiToolRef('purchase_order', row.id, row.orderNumber),
 })
 // How many of the matching orders each supplier has, counted over every
@@ -106,6 +112,9 @@ const getPurchaseOrder = defineAiTool({
   },
 })
 
+// The inventory page's terms, said with every result (see REORDER_BASIS in
+// ai-read-service-tools.mjs for why).
+const STOCK_BASIS = 'incomingOnPurchaseOrders counts every open approved purchase order line, whatever its due date. status compares available to promise (available + incoming - unreserved demand) with the reorder point, so an item can be ok here and still be on the reorder list to order now, when some of its incoming lines are due after its order-by date. For whether, when and how much to order, use reorder_list.'
 const stockPosition = defineAiTool({
   name: 'stock_position',
   description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders, available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status. One SKU, the SKUs at risk, or all.',
@@ -125,6 +134,7 @@ const stockPosition = defineAiTool({
     rows = [...rows].sort((a, b) => text(a.sku).localeCompare(text(b.sku)))
     return {
       asOf: facts.asOf,
+      basis: STOCK_BASIS,
       atRiskCount: facts.inventory.atRiskCount,
       ...aiToolList(rows.map((row) => ({
         sku: row.sku, itemName: row.itemName, unit: row.unit, onHand: row.onHand, reserved: row.reserved, available: row.available,

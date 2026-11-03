@@ -59,9 +59,13 @@ const DATE_PATTERNS = [
   { pattern: new RegExp(`\\b${MONTH}\\s+(\\d{4})(?!\\d)`, 'gi'), read: (m) => ({ year: +m[2], month: MONTHS[m[1].slice(0, 3).toLowerCase()], day: null }) },
   { pattern: /(?<![\d/])(\d{1,2})\/(\d{1,2})\/(\d{4})(?![\d/])/g, read: (m) => ({ year: +m[3], month: +m[1], day: +m[2] }) },
 ]
-// A month and day written 10/28 is a date only when the tool results hold
-// one; otherwise its parts are checked as numbers ("4/5 deliveries").
+// A month and day written 10/28 or 11-07 is a date only when the tool results
+// hold one; otherwise its parts are checked as numbers ("4/5 deliveries",
+// "3-5 days"). On 2026-11-03 the reorder answer wrote order-by days as 11-07
+// and 12-27, and each was read as the numbers 07 and 27, so a correct answer
+// fell back to the rules.
 const SLASH_DAY = /(?<![\d/.])(\d{1,2})\/(\d{1,2})(?![\d/])/g
+const DASH_DAY = /(?<![\w./-])(\d{1,2})-(\d{1,2})(?![\w/-]|\.\d)/g
 const CURRENCY_WORDS = [
   [/^(?:US\$|\$|USD|美元)$/i, ['USD', 'CAD', 'AUD', 'NZD', 'SGD', 'HKD']], [/^(?:€|EUR|欧元)$/i, ['EUR']], [/^(?:£|GBP|英镑)$/i, ['GBP']],
   [/^(?:¥|￥|CNY|RMB|元|人民币)$/i, ['CNY', 'JPY']], [/^(?:JPY|日元)$/i, ['JPY']], [/^(?:CAD)$/i, ['CAD']], [/^(?:AUD)$/i, ['AUD']],
@@ -242,11 +246,13 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
       return blank(match[0])
     })
   }
-  rest = rest.replace(SLASH_DAY, (whole, month, day) => {
-    if (+month > 12 || +day > 31 || !dayKnown({ year: null, month: +month, day: +day })) return whole
-    checked.date += 1
-    return blank(whole)
-  })
+  for (const pattern of [SLASH_DAY, DASH_DAY]) {
+    rest = rest.replace(pattern, (whole, month, day) => {
+      if (+month > 12 || +day > 31 || !dayKnown({ year: null, month: +month, day: +day })) return whole
+      checked.date += 1
+      return blank(whole)
+    })
+  }
   // Numbers, with what they measure.
   const givenNumbers = [...String(question ?? '').normalize('NFKC').matchAll(/\d+(?:,\d{3})*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, '')))
   for (const match of rest.matchAll(NUMBER)) {

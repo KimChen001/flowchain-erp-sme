@@ -253,6 +253,28 @@ test('answer text splits into paragraphs, numbered lists and bulleted lists', as
   assert.match(render('（1）甲\n（2）乙'), /<ol start="1"[^>]*><li>甲<\/li><li>乙<\/li><\/ol>/)
 })
 
+test('a list of items may be a table; the basis folds under the one trust line with what was checked', async () => {
+  const client = await loadClient()
+  const record = (id) => ({ id: `item:${id}`, entityType: 'item', entityId: id, entityLabel: id, label: id, sourceLabel: '你的工作区' })
+  const response = {
+    version: 'v2', language: 'zh-CN', query: '哪些要补货', answerSource: 'workspace_model', answerSourceLabel: '由 AI 根据你的记录撰写，数字已核对', checkedLabel: '已检查：库存余额',
+    conclusion: { title: '只有 LDM-002 今天要下单', summary: '| 物料 | 最晚下单日 | 建议 |\n| --- | --- | --- |\n| LDM-002 | 2026-11-03 | 50 pcs |\n| LDM-001 | 2026-11-14 | — |\n要我为 LDM-002 开采购申请吗？', severity: 'info', confidence: 'medium' },
+    answerBasis: ['在途只计入最晚下单日前到货的采购单行。'],
+    keyEvidence: [record('LDM-002'), record('LDM-001')], dataLimitations: [], reviewCards: [], navigationLinks: [], followUpSuggestions: [],
+  }
+  const markup = client.render(response)
+  assert.match(markup, /<table data-testid="ai-answer-table"[^]*?<th[^>]*>物料<\/th>[^]*?<td[^>]*><span><button[^>]*data-business-id="LDM-002"[^]*?<td[^>]*>2026-11-03<\/td>/)
+  assert.equal((markup.match(/<tr>/g) || []).length, 3)
+  assert.match(markup, /<p>要我为 <span><button[^>]*>LDM-002<\/button><\/span> 开采购申请吗？<\/p>/)
+  // One meta line: what was checked and the basis are inside the trust line.
+  const trust = markup.slice(markup.indexOf('data-testid="ai-trust-line"'))
+  assert.ok(markup.indexOf('data-testid="ai-answer-checked"') > markup.indexOf('data-testid="ai-trust-line"'))
+  assert.match(trust, /查看依据/)
+  assert.match(trust, /data-testid="ai-answer-basis"[^]*?<li>在途只计入最晚下单日前到货的采购单行。<\/li>/)
+  // Without a trust line (the help answer) the checked line stays above the answer.
+  assert.match(client.render({ ...response, answerSourceLabel: '', keyEvidence: [], answerBasis: [], skill: { id: 'capability_overview' } }), /data-testid="ai-answer-checked"/)
+})
+
 test("follow-up chips follow the answer's language, not the interface language", async () => {
   const client = await loadClient()
   const message = (language) => ({ role: 'assistant', content: '', cards: [{ type: 'ai_response_v2', data: { version: 'v2', intent: 'model_first', language, keyEvidence: [{ id: 'e1', entityType: 'purchase_order', entityId: 'PO-012', label: 'PO-012' }], navigationLinks: [], followUpSuggestions: [] } }] })

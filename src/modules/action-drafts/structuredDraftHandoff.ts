@@ -24,7 +24,11 @@ export function structuredDraftTarget(type: string, payload: Record<string, unkn
     itemId: payload.itemIdOrSku,
     sku: payload.itemIdOrSku,
     quantity: payload.quantity,
+    // Where the assistant's quantity and reason came from (the user, or the
+    // reorder list), so the form labels each field.
+    quantityFrom: payload.quantity ? payload.quantitySource : undefined,
     reason: payload.reason,
+    reasonFrom: payload.reason ? payload.reasonSource : undefined,
     suppliers: Array.isArray(payload.supplierCandidates) ? payload.supplierCandidates.join(",") : payload.supplierCandidates || payload.supplierId,
     due: payload.quotationDeadline || payload.requestedDeliveryDate,
     origin: prefillOrigin(source),

@@ -81,6 +81,12 @@ const NAMED_RECORDS = new Set(['supplier', 'customer', 'warehouse'])
 // The preferred supplier's lead time and minimum order come from the item's
 // supplier link (preferredSupplierFor in reorder-list.mjs), so they are read
 // from the row's supplier, never from the row itself.
+//
+// What the list counts, said with every result: stock_position counts every
+// open order line as incoming, so the two can disagree about the same item
+// (on 2026-11-03 the model took stock_position's "ok" for LDM-002 as reversing
+// the list's "order now"). The model is asked to name the basis instead.
+export const REORDER_BASIS = 'position = onHand - reserved + incoming. incoming counts only the open purchase order lines due on or before the item\'s orderByDate; a line due later arrives after the item must be ordered, so it is listed with counted: false and is not in incoming. requestQuantity is the shortfall below the reorder point, raised to the supplier\'s minimum order quantity (raisedToMinimum). This is FlowChain\'s reorder rule: use it for whether, when and how much to order.'
 const reorderList = defineAiTool({
   name: 'reorder_list',
   description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, the quantity it suggests (raised to the minimum when the shortfall is smaller) and flags on lines it could not count. Filter by SKU or supplier. Transfers between warehouses are not considered.',
@@ -119,11 +125,15 @@ const reorderList = defineAiTool({
       requestQuantity: row.purchaseRequest?.quantity ?? null,
       raisedToMinimum: Boolean(row.purchaseRequest?.raisedToMinimum),
       flags: array(row.flags).map((flag) => primitives(flag, ['code', 'orderNumber', 'unit', 'dueDay', 'count'])),
-      incomingLines: array(row.incomingLines).map((line) => primitives(line, ['orderNumber', 'remaining', 'dueDay', 'counted'])),
+      // Each open line with whether the position counts it, and why not.
+      incomingLines: array(row.incomingLines).map((line) => ({
+        ...primitives(line, ['orderNumber', 'remaining', 'dueDay', 'counted']),
+        ...(line.counted === false ? { notCountedBecause: 'due_after_order_by' } : {}),
+      })),
       ref: aiToolRef('item', row.itemId || row.purchaseRequest?.itemId || row.sku, row.sku),
     }))
     rows.sort((a, b) => text(a.orderByDate || '9999').localeCompare(text(b.orderByDate || '9999')) || text(a.sku).localeCompare(text(b.sku)))
-    return { asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), ...aiToolList(rows, args.limit) }
+    return { asOf: facts.asOf, basis: REORDER_BASIS, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), ...aiToolList(rows, args.limit) }
   },
 })
 

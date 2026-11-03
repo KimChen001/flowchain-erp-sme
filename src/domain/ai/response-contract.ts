@@ -216,6 +216,8 @@ export type AiResponseV2 = {
   answerSourceLabel?: string;
   checked?: string[];
   checkedLabel?: string;
+  // A model-first answer's bases and caveats, shown folded under its trust line.
+  answerBasis?: string[];
   skill?: { id: string; version: string; asOf?: string | null; timezone?: string | null; signalVersion?: string };
   // Set when the workspace reached this month's AI limit (over_cap), or when a
   // model call for this answer failed (unavailable; reason budget when the
