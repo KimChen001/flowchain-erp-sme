@@ -63,6 +63,18 @@ test('line demand subtracts fulfilment per line and sums lines of the same SKU a
   assert.deepEqual(a.evidence.filter(row => row.entityType === 'sales_order'), [])
 })
 
+test('a SKU whose orders are all shipped still reads its reservation from the sales lines', () => {
+  // The stock record carries no reserved quantity, so reserved comes from the
+  // order lines: 0 here, not unknown, although no order is listed for the SKU.
+  const model = buildRuntimeInventoryAllocation(context({
+    inventoryItems: [{ sku: 'SKU-A', itemId: 'ITEM-SKU-A', onHandQuantity: 100 }],
+    salesOrders: [salesOrder('SO-SHIPPED', [soLine('SKU-A', 10, 0, 10)], { workflowStatus: 'shipped' })],
+  }))
+  const a = getRuntimeSkuAvailability(model, 'SKU-A')
+  assert.deepEqual([a.reserved, a.available, a.stockStatus, a.salesOrderIds], [0, 100, 'ok', []])
+  assert.deepEqual(a.dataLimitations, [])
+})
+
 test('a line with an unknown quantity is reported for that SKU only', () => {
   const model = buildRuntimeInventoryAllocation(context({
     inventoryItems: [balance('SKU-A', 10), balance('SKU-B', 10)],

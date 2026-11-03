@@ -334,19 +334,25 @@ export function scenarioCalendar(asOf, timeZone) {
 
 const INVOICE_MATCH_STATUS = Object.freeze({ submitted: 'pending', matched: 'matched', approved: 'matched', exception: 'variance' })
 
-// The seed day. Before any receipt is posted it is the requested day (or today);
-// afterwards it is the day stored on the posted receipts, because their
-// inventory movements are dated history that a re-seed cannot move.
+// The seed day. Before any stock history is posted it is the requested day (or
+// today); afterwards it is the day the history was posted for, because its
+// inventory movements are dated history that a re-seed cannot move: the day
+// stored on the posted receipts, or, when a run stopped after the opening stock
+// and before the first receipt, the opening stock's posting day plus 160 days.
 async function scenarioSeedDay(prisma, tenantId, requested, timeZone) {
   const posted = await prisma.receivingDocument.findFirst({
     where: { tenantId, id: { startsWith: 'LOCAL-DEMO-GRN-' }, postingStatus: { not: 'unposted' } },
     select: { metadata: true },
   })
-  const anchored = posted?.metadata?.scenarioAsOf
+  let anchored = posted?.metadata?.scenarioAsOf
+  if (!anchored) {
+    const opening = await prisma.inventoryAdjustmentDocument.findFirst({ where: { tenantId, adjustmentNumber: OPENING_ADJUSTMENT, postingStatus: { not: 'unposted' } }, select: { postedAt: true } })
+    if (opening?.postedAt) anchored = scenarioCalendar(localCalendarDay(opening.postedAt, timeZone), timeZone).isoDay(-OPENING_DAY)
+  }
   const hasRequest = requested !== undefined && requested !== null && requested !== ''
   if (!anchored) return parseAsOf(hasRequest ? requested : new Date(), timeZone)
   if (hasRequest && parseAsOf(requested, timeZone) !== anchored) {
-    throw new Error(`The walkthrough scenario was seeded for ${anchored} and its receipts are posted to inventory, so it cannot be re-dated to ${parseAsOf(requested, timeZone)}. Seed a fresh database to use another day.`)
+    throw new Error(`The walkthrough scenario was seeded for ${anchored} and its stock history is posted to inventory, so it cannot be re-dated to ${parseAsOf(requested, timeZone)}. Seed a fresh database to use another day.`)
   }
   return anchored
 }
@@ -387,13 +393,19 @@ async function postOpeningStock(prisma, { tenantId, calendar, identity, env }) {
 }
 
 // One history order, shipped in full from A-01 as of its shipping time:
-// reserve, draft the shipment, post it. Each step is skipped once it is done.
+// reserve, draft the shipment, post it. A run that stopped between the steps
+// is resumed; anything else a person has changed since (a posted, reversed or
+// cancelled shipment, an order on hold or cancelled, a released reservation)
+// is left as it is.
 async function shipHistoryOrder(prisma, order, { tenantId, calendar, identity, env }) {
   const posted = await prisma.shipmentDocument.findFirst({ where: { tenantId, shipmentNumber: order.shipmentNumber } })
-  if (posted?.postingStatus === 'posted') return false
+  if (posted && (posted.postingStatus !== 'unposted' || posted.workflowStatus === 'cancelled')) return false
   const service = createOutboundPostingCommandService({ prisma, env, now: () => calendar.at(order.offset, order.shippedAt) })
   const key = (step) => `local-walkthrough-scenario:${step}:${order.id}`
   let salesOrder = await prisma.salesOrder.findUniqueOrThrow({ where: { id: order.id }, include: { reservations: true } })
+  if (salesOrder.workflowStatus !== 'confirmed') return false
+  const reservedInFull = (line) => salesOrder.reservations.some((row) => row.salesOrderLineId === line.id && Number(row.reservedQuantity) === line.quantity && Number(row.consumedQuantity) === 0 && Number(row.releasedQuantity) === 0)
+  if (salesOrder.reservations.length && !order.lines.every(reservedInFull)) return false
   if (!salesOrder.reservations.length) {
     await service.reserveSalesOrderInventory({
       idempotencyKey: key('reserve'), salesOrderId: order.id, expectedOrderVersion: salesOrder.version,
@@ -741,7 +753,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   try {
     const counts = await seedLocalScenario(prisma, process.env, asOf ? { asOf } : {})
     console.log(`Local walkthrough scenario v${LOCAL_SCENARIO_VERSION} ready: ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(' ')}`)
-    if (counts.shipmentHistory === 'not_added') console.log('This workspace was seeded before version 8 and keeps its stock as it is, without the shipment history. Seed a fresh database (npm run walkthrough:local -- --reset) to have 90 days of demand.')
+    if (counts.shipmentHistory === 'not_added') console.log('This workspace was seeded before version 8 and keeps its stock as it is, without the shipment history. Seed a fresh database (npm run walkthrough:local -- --reset) to have the shipment history.')
   } finally {
     await disconnectPrismaClient()
   }

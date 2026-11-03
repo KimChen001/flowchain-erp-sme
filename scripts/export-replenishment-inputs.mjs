@@ -59,7 +59,35 @@ function lastPurchasePrice(lines, supplierId = null) {
   }
 }
 
+// Shipped quantity per workspace day of the window, from posted shipment
+// lines ({ unit, quantity, postedAt }), added as the reorder list's daily
+// demand adds it: a line in another unit than the stock unit is counted apart
+// and never added, and without a stock unit, lines in more than one unit are
+// not added to each other at all (unitsMixed lists their units).
+export function shippedByWorkspaceDay({ lines = [], stockUnit = '', days = [], timeZone = DEFAULT_TENANT_TIMEZONE }) {
+  const byDay = new Map(days.map((day) => [day, 0]))
+  const inWindow = lines.filter((line) => byDay.has(instantCalendarDay(line.postedAt, timeZone)))
+  const lineUnits = [...new Map(inWindow.filter((line) => text(line.unit)).map((line) => [text(line.unit).toLowerCase(), text(line.unit)])).values()]
+  const unitsMixed = !text(stockUnit) && lineUnits.length > 1 ? lineUnits : []
+  let otherUnitLines = 0
+  for (const line of inWindow) {
+    if (text(line.unit) && text(stockUnit) && !sameUnit(line.unit, stockUnit)) { otherUnitLines += 1; continue }
+    if (unitsMixed.length) continue
+    const day = instantCalendarDay(line.postedAt, timeZone)
+    byDay.set(day, round(byDay.get(day) + Number(line.quantity)))
+  }
+  return { byDay, otherUnitLines, unitsMixed }
+}
+
+// A calendar day that exists, in YYYY-MM-DD format.
+export function isCalendarDay(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text(value))) return false
+  const parsed = new Date(`${value}T12:00:00Z`)
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
+
 export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, env = process.env, now = new Date() } = {}) {
+  if (asOf && !isCalendarDay(asOf)) throw new Error(`The as-of day must be a calendar day in YYYY-MM-DD format, not "${asOf}".`)
   return prisma.$transaction(async (tx) => {
     await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY')
     const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true, currency: true, timezone: true } })
@@ -71,7 +99,12 @@ export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, e
 
     const context = await readBusinessContext({ repositories: createDatabaseRepositoryRegistry({ env, prisma: tx }), identity: { tenantId } })
     const availability = buildRuntimeInventoryAllocation(context).availability
-    const reorderList = await createReorderListReadService({ prisma: tx }).read({ tenantId, today, timeZone, allocationRows: availability })
+    const reorderList = await createReorderListReadService({ prisma: tx }).read({
+      tenantId, today, timeZone, allocationRows: availability,
+      // As the reorder list route does: the context's reads the list depends
+      // on (stock, sales orders, purchase orders) report their truncation.
+      truncatedSubjects: (context.truncatedSubjects || []).filter((entry) => ['inventory_items', 'sales_orders', 'purchase_orders'].includes(entry?.subject)),
+    })
     const [items, suppliers, links, shipmentLines, purchaseLines] = await Promise.all([
       tx.item.findMany({ where: { tenantId }, orderBy: { sku: 'asc' }, select: { id: true, sku: true, name: true, unit: true, status: true, metadata: true, reorderPoint: true, safetyStock: true, preferredSupplierId: true } }),
       tx.supplier.findMany({ where: { tenantId }, select: { id: true, code: true, name: true, status: true } }),
@@ -104,16 +137,12 @@ export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, e
     for (const item of items.filter(isActiveItem)) {
       const unit = itemStockUnit(item)
       const stock = availabilityBySku.get(item.sku)
-      // Shipped quantity per workspace day, in the stock unit only: a line in
-      // another unit is counted apart and never added, as the reorder list does.
-      const shippedByDay = new Map(days.map((day) => [day, 0]))
-      let otherUnitLines = 0
-      for (const line of shipmentLines.filter((row) => row.itemId === item.id)) {
-        const day = instantCalendarDay(line.shipment.postedAt, timeZone)
-        if (!shippedByDay.has(day)) continue
-        if (text(line.unit) && unit && !sameUnit(line.unit, unit)) { otherUnitLines += 1; continue }
-        shippedByDay.set(day, round(shippedByDay.get(day) + Number(line.postedQuantity)))
-      }
+      const { byDay: shippedByDay, otherUnitLines, unitsMixed } = shippedByWorkspaceDay({
+        lines: shipmentLines.filter((row) => row.itemId === item.id).map((row) => ({ unit: row.unit, quantity: Number(row.postedQuantity), postedAt: row.shipment.postedAt })),
+        stockUnit: unit,
+        days,
+        timeZone,
+      })
       const supplier = preferredSupplierFor(item, links, suppliersById)
       const link = supplier ? links.find((row) => row.payload?.itemId === item.id && row.payload?.supplierId === supplier.id) : null
       const committedLines = purchaseLines.filter((row) => row.itemId === item.id && isCommittedPurchaseOrder(row.purchaseOrder))
@@ -167,6 +196,8 @@ export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, e
           shippedQuantity: round(shipped.reduce((sum, value) => sum + value, 0)),
           shipmentDays: nonZero.length,
           otherUnitLines,
+          // Without a stock unit: the units the lines are in, none of them added.
+          unitsMixed,
           // The reorder list's average: shipped / 90, only with at least 8 shipment days.
           averageDailyDemand: reorderRow?.demand.averageDailyDemand ?? null,
           // Demand shape over the window's weekdays: average interval between
@@ -232,7 +263,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
     : process.env
   if (!text(env.DATABASE_URL)) throw new Error('Set DATABASE_URL, or pass --walkthrough-dir=<folder>.')
   const asOf = option('as-of')
-  if (asOf && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) throw new Error('--as-of must be a day in YYYY-MM-DD format.')
+  if (asOf && !isCalendarDay(asOf)) throw new Error(`--as-of must be a calendar day in YYYY-MM-DD format, not "${asOf}".`)
   const prisma = await createPrismaClient(env)
   try {
     const inputs = await readReplenishmentInputs(prisma, { tenantId: text(env.FLOWCHAIN_DEFAULT_TENANT_ID) || 'tenant-flowchain-local', asOf: asOf || null, env })

@@ -155,7 +155,7 @@ export function buildRuntimeInventoryAllocation(context) {
     if (hasInventoryReserved) {
       reserved = explicitReserved.every(value => value !== null) ? sumKnown(explicitReserved) : null
       if (reserved === null) dataLimitations.push(limitation('reserved_quantity_incomplete', sku))
-    } else if (salesOrders.length) {
+    } else if (skuDemand.length) {
       reserved = salesReserved.every(value => value !== null) ? sumKnown(salesReserved) : null
       if (reserved === null) dataLimitations.push(limitation('sales_reservation_quantity_missing', sku))
     } else {
