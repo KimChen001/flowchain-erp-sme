@@ -156,7 +156,8 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await page.goto("/app/sales/orders");
   await expect(page.getByTestId("outbound-order-list")).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-SO-001", { exact: true })).toBeVisible();
-  await expect(page.getByText("Redwood Retail", { exact: true })).toBeVisible();
+  // Redwood Retail also has shipped orders in the walkthrough's history.
+  await expect(page.getByRole("row").filter({ hasText: "LOCAL-DEMO-SO-001" })).toContainText("Redwood Retail");
   await expect(page.getByRole("link", { name: "新建销售订单" })).toHaveCount(0);
   await capture(page, "05-sales-orders-readonly");
 
@@ -173,19 +174,23 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByTestId("create-sales-order")).toHaveCount(0);
   await capture(page, "07-sales-order-create-blocked");
 
-  // Walkthrough receipts are posted: LDM-001 is 8 opening pieces plus 20 received
-  // on LOCAL-DEMO-GRN-001, under a safety stock of 30 and reorder point of 40;
-  // LDM-002 is 60 plus 60 and 30 received.
+  // Walkthrough receipts and shipments are posted: LDM-001 ends at 8 pieces
+  // plus 20 received on LOCAL-DEMO-GRN-001, under a safety stock of 30 and
+  // reorder point of 40; LDM-002 at 60 plus 60 and 30 received. The opening
+  // stock also covers what the shipment history took out.
   await page.goto("/app/inventory/stock");
   await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("28");
   await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("30 / 40");
   await expect(page.getByTestId("inventory-item-LDM-002")).toContainText("150");
   await capture(page, "08-inventory-stock");
 
+  // LDM-002's 150 available are at or under its reorder point of 245 too;
+  // the other items are above theirs.
   await page.goto("/app/inventory/warnings");
   await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("需补货");
   await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("30 / 40");
-  await expect(page.getByTestId("inventory-item-LDM-002")).toHaveCount(0);
+  await expect(page.getByTestId("inventory-item-LDM-002")).toContainText("75 / 245");
+  await expect(page.getByTestId("inventory-item-LDM-003")).toHaveCount(0);
   await capture(page, "09-inventory-warnings");
 
   await page.goto("/app/procurement/workbench");
@@ -205,13 +210,17 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByText("LOCAL-DEMO-PO-030", { exact: true })).toHaveCount(0);
   await capture(page, "10-procurement-workbench");
 
-  // Each posted walkthrough receipt has a receipt movement.
+  // Each posted walkthrough receipt has a receipt movement. The page lists the
+  // latest movements, the walkthrough's daily shipments among them, so the
+  // recent receipts are checked: LDM-001's and the two LDM-004 receipts of the
+  // last two days.
   await page.goto("/app/inventory/movements");
   // The movement names its receipt and shows the quantity without the stored scale.
-  const receipt = page.getByRole("row").filter({ hasText: "LDM-001" });
-  await expect(receipt).toContainText("LOCAL-DEMO-GRN-001");
+  const receipt = page.getByRole("row").filter({ hasText: "LOCAL-DEMO-GRN-001" });
+  await expect(receipt).toContainText("LDM-001");
   await expect(receipt.getByRole("cell", { name: "20", exact: true })).toBeVisible();
-  await expect(page.getByRole("row").filter({ hasText: "LDM-004" })).toHaveCount(4);
+  for (const recent of ["LOCAL-DEMO-GRN-012", "LOCAL-DEMO-GRN-013"]) await expect(page.getByRole("row").filter({ hasText: recent })).toContainText("LDM-004");
+  await expect(page.getByRole("row").filter({ hasText: "LDM-004" }).first()).toBeVisible();
   await expect(page.getByText(/STATIC-|SKU-01100/)).toHaveCount(0);
 
   for (const route of ["lots", "serials", "exceptions"]) {
