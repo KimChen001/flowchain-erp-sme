@@ -96,6 +96,7 @@ export const operationsEnglish: Record<string, string> = {
   '查看收货记录和匹配影响': 'Review receiving records and matching impact', 'GRN / Receipt Line 待补齐': 'GRN / receipt line missing',
   '已票未收': 'Invoiced, not received', '暂缓付款复核': 'Hold payment for review',
   'GRN Line 待补齐': 'GRN line missing', 'Invoice Line 待补齐': 'Invoice line missing',
+  '尚未收货': 'Not received yet', '尚未开票': 'Not invoiced yet', '发给供应商并标记为下达': 'Send it to the supplier, then mark it issued',
   '当前仅基于工作区内 PR、RFQ、PO、GRN 和发票记录判断。': 'Assessment uses only workspace PR, RFQ, PO, GRN, and invoice records.',
   '部分收货记录或发票记录可能尚未完整读取。': 'Some receiving or invoice records may be incomplete.',
   '当前不执行真实收货、库存过账、发票过账或付款。': 'This review does not post receipts, inventory, invoices, or payments.',

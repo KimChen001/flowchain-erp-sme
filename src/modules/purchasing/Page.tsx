@@ -353,6 +353,9 @@ function matchStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
 
 function nextStepForPo(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
   if (["cancelled", "已取消"].includes(po.status)) return "订单已取消，无需收货";
+  // Approved but not issued: the supplier does not have it yet, so nothing
+  // can arrive; it is sent first (decision V5).
+  if (String(po.status) === "approved") return "发给供应商并标记为下达";
   if (receivedStatus(po, facts) === "未收货") return "等待收货";
   const status = matchStatus(po, facts);
   if (status === "缺少收货") return "等待收货";
@@ -439,7 +442,7 @@ function buildGrnRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): GrnEvi
         status: grn.status,
         qcStatus: toNumber(line.rejectedQty) > 0 || grn.failed > 0 ? "质检异常" : grn.status === "质检中" ? "质检中" : "通过",
         invoiceImpact: relatedInvoiceLine ? "影响发票匹配" : "等待发票匹配",
-        invoiceLine: relatedInvoiceLine?.invoiceLine.lineId || "关联 Invoice Line 待补齐",
+        invoiceLine: relatedInvoiceLine?.invoiceLine.lineId || "尚未开票",
         note: toNumber(line.rejectedQty) > 0 ? "拒收数量需要采购与财务协同复核" : "查看收货记录和匹配影响",
       };
     });
@@ -516,8 +519,8 @@ function buildMatchRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): Matc
     const invoice = invoiceRows.find((row) => row.poLineId === line.poLineId);
     const base = {
       poLineId: line.poLineId,
-      grnLineId: grn?.grnLineId || "GRN Line 待补齐",
-      invoiceLineId: invoice?.invoiceLineId || "Invoice Line 待补齐",
+      grnLineId: grn?.grnLineId || "尚未收货",
+      invoiceLineId: invoice?.invoiceLineId || "尚未开票",
       poQty: line.quantity,
       receivedQty: grn?.receivedQty ?? line.receivedQty,
       invoiceQty: invoice?.quantity ?? 0,
@@ -657,6 +660,12 @@ export default function PurchasingOrdersPage({
   // Earlier PO prices for each line's item, unit and currency, in one
   // request. The server leaves this PO out and, once it is issued, every PO
   // dated after it. Display only.
+  // The receipt and match tables name an app-made line by its position, as its card does.
+  const poLineLabel = (id: string) => {
+    if (!INTERNAL_LINE_ID.test(id)) return id;
+    const position = poLinesOf(selectedPO).findIndex((line) => line.poLineId === id);
+    return position >= 0 ? `${copy("采购行")} ${position + 1}` : copy("采购行");
+  };
   const poLineHistoryKeys = new Map((viewMode === "detail" && selectedPO?.lines ? selectedPO.lines : []).map((line) => [line.poLineId, priceHistoryKey({ itemId: line.itemId, unit: line.unit, currency: line.currency || selectedPO?.currency })]));
   const poPriceHistory = usePriceHistory([...poLineHistoryKeys.values()], { excludePurchaseOrderId: selectedPO?.po });
   const sourceOptions = Array.from(new Set(orders.map((order) => order.source || "manual"))).sort();
@@ -909,7 +918,7 @@ export default function PurchasingOrdersPage({
               { key: "grn", label: "GRN / Receipt 编号", render: (line) => <span style={{ color: A.blue }}>{String(line.grn)}</span> },
               { key: "grnLineId", label: "GRN Line 编号" },
               { key: "po", label: "PO 编号" },
-              { key: "poLineId", label: "PO Line 编号" },
+              { key: "poLineId", label: "PO Line 编号", render: (line) => poLineLabel(String(line.poLineId)) },
               { key: "supplier", label: "Supplier" },
               { key: "sku", label: "SKU" },
               { key: "receivedQty", label: "收货数量", align: "right", render: (line) => Number(line.receivedQty).toLocaleString() },
@@ -940,7 +949,7 @@ export default function PurchasingOrdersPage({
               { key: "invoiceLineId", label: "Invoice Line 编号" },
               { key: "supplier", label: "Supplier" },
               { key: "po", label: "PO 编号" },
-              { key: "poLineId", label: "PO Line 编号" },
+              { key: "poLineId", label: "PO Line 编号", render: (line) => poLineLabel(String(line.poLineId)) },
               { key: "grnLineId", label: "GRN / Receipt Line" },
               { key: "sku", label: "SKU" },
               { key: "quantity", label: "开票数量", align: "right", render: (line) => Number(line.quantity).toLocaleString() },
@@ -963,7 +972,7 @@ export default function PurchasingOrdersPage({
           <DocumentLinesTable
             rows={matchRows}
             columns={[
-              { key: "poLineId", label: "PO Line" },
+              { key: "poLineId", label: "PO Line", render: (line) => poLineLabel(String(line.poLineId)) },
               { key: "grnLineId", label: "GRN / Receipt Line" },
               { key: "invoiceLineId", label: "Invoice Line" },
               { key: "poQty", label: "PO 数量", align: "right", render: (line) => Number(line.poQty).toLocaleString() },
