@@ -62,7 +62,7 @@ const supplierTiers = [
 // so every place a reorder point is read agrees.
 const items = [
   ['LOCAL-DEMO-ITEM-001', 'LDM-001', 'Flow Controller', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001', { safetyStock: 30, reorderPoint: 40 }],
-  ['LOCAL-DEMO-ITEM-002', 'LDM-002', 'Temperature Sensor', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001', { safetyStock: 60, reorderPoint: 210 }],
+  ['LOCAL-DEMO-ITEM-002', 'LDM-002', 'Temperature Sensor', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001', { safetyStock: 75, reorderPoint: 245 }],
   ['LOCAL-DEMO-ITEM-003', 'LDM-003', 'Shipping Carton', 'Packaging materials', 'box', 'LOCAL-DEMO-SUP-002', { safetyStock: 50, reorderPoint: 180 }],
   ['LOCAL-DEMO-ITEM-004', 'LDM-004', 'Stainless Steel Fastener', 'Industrial supplies', 'pcs', 'LOCAL-DEMO-SUP-003', { safetyStock: 2400, reorderPoint: 5000 }],
   ['LOCAL-DEMO-ITEM-005', 'LDM-005', 'Shielded Control Cable', 'Electronic components', 'ft', 'LOCAL-DEMO-SUP-001', { safetyStock: 400, reorderPoint: 1200 }],

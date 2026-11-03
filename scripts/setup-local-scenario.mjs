@@ -199,7 +199,7 @@ const openingBeforeHistory = { 'LDM-001': 8, 'LDM-002': 60 }
 // link already there is never changed.
 const supplierTerms = [
   ['LDM-001', ACME, 14, 25, 100],
-  ['LDM-002', ACME, 14, 20, 100],
+  ['LDM-002', ACME, 17, 50, 100],
   ['LDM-003', SUMMIT, 12, 100, 12.5],
   ['LDM-004', ATLAS, 14, 2000, 0.4],
   ['LDM-005', ACME, 10, 500, 1.85],
