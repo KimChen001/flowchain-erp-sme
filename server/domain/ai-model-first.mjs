@@ -147,7 +147,7 @@ export const AI_MODEL_FIRST_SYSTEM = [
   'The answer (shown in a narrow chat panel, so keep it clean):',
   '- Write in answerLanguage, plainly, as a helpful colleague, to the user as "you" (你).',
   '- title: the conclusion in one line, at most 12 words (30 characters in Chinese). It is shown in bold above the answer, so the answer does not repeat it.',
-  '- answer: at most 3 short lines starting with "- ", each one fact or one step, with only the figures the conclusion needs. For several items (the reorder list, a list of orders) use a compact Markdown table instead: a header row, a separator row, one row per item, at most 4 short columns and 8 rows. No headings and no long paragraphs. A question back to the user goes last, on its own line. A draft or a summary the user asked for may be longer.',
+  '- answer: one text. The fixed replies above (not visible, not found, cannot answer) are written exactly as given, as one plain sentence. Otherwise at most 3 short lines starting with "- ", each one fact or one step, with only the figures the conclusion needs; do not number or label lines ("差异 1：", "1)"). For several items (the reorder list, a list of orders) use a compact Markdown table instead: a header row, a separator row, one row per item, at most 4 short columns and 8 rows. No headings and no long paragraphs. A question back to the user goes last, on its own line. A draft or a summary the user asked for may be longer.',
   '- basis: up to 4 short lines with what stands behind the answer: what a figure counts, why a line is left out, the period, a caveat. They are shown folded under the sources line, not in the answer, so do not repeat them there.',
   '- Write dates as the tools give them (2026-11-07) or in the answer language\'s own words (11月7日, Nov 7); never as 11-07 or 11/07. Write every record number in full, exactly as the tools give it (LDM-003, never 003): they become links.',
   '- followUps: up to 2 short questions the user may want to ask next, in answerLanguage, at most 8 words each (16 characters in Chinese).',
@@ -225,16 +225,21 @@ function retryMessage(problems, { readNothing = false } = {}) {
 export function parseAiModelFirstAnswer(raw) {
   const value = text(raw)
   const candidates = [value, value.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1], value.slice(value.indexOf('{'), value.lastIndexOf('}') + 1)]
-  const lines = (list, count, max) => array(list).filter((row) => typeof row === 'string' && text(row)).slice(0, count).map((row) => clip(row, max))
+  const lines = (list, count, max) => (typeof list === 'string' ? [list] : array(list)).filter((row) => typeof row === 'string' && text(row)).slice(0, count).map((row) => clip(row, max))
   for (const candidate of candidates) {
     if (!text(candidate)) continue
     try {
       const parsed = JSON.parse(candidate)
-      if (parsed && typeof parsed === 'object' && typeof parsed.answer === 'string') {
+      // The answer as one text; the model sometimes sends its lines as a list.
+      const body = typeof parsed?.answer === 'string' ? parsed.answer : Array.isArray(parsed?.answer) && parsed.answer.every((row) => typeof row === 'string') ? parsed.answer.join('\n') : null
+      if (parsed && typeof parsed === 'object' && body !== null) {
         const basis = lines(parsed.basis, AI_MODEL_FIRST_LIMITS.basis, 240)
         const followUps = lines(parsed.followUps, AI_MODEL_FIRST_LIMITS.followUps, 60)
+        // A one-line answer is not a list: "- Your role can't see…" reads as
+        // the fixed reply it is, so the same question gets the same answer.
+        const single = text(body).split('\n').filter((row) => text(row))
         return {
-          title: text(parsed.title), answer: text(parsed.answer),
+          title: text(parsed.title), answer: single.length === 1 ? text(single[0]).replace(/^[-*•]\s+/, '') : text(body),
           ...(basis.length ? { basis } : {}), ...(followUps.length ? { followUps } : {}),
           records: array(parsed.records).filter((row) => row && typeof row === 'object').slice(0, AI_MODEL_FIRST_LIMITS.records).map((row) => ({ type: text(row.type), id: text(row.id) })),
         }

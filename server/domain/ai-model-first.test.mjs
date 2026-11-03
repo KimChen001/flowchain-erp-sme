@@ -846,4 +846,10 @@ test('the grounding check reads 11-07 as a date only when a tool result holds th
   // The basis and the follow-up chips are parsed, at most 4 and 2.
   const parsed = parseAiModelFirstAnswer(JSON.stringify({ title: 't', answer: 'a', basis: ['b'], followUps: ['c', 'd', 'e'], records: [] }))
   assert.deepEqual([parsed.basis, parsed.followUps], [['b'], ['c', 'd']])
+  // Lines sent as a list are one answer; a one-line answer is not a list, so a
+  // fixed reply reads the same however the model marks it (existence oracle).
+  assert.equal(parseAiModelFirstAnswer(JSON.stringify({ title: 't', answer: ['- a', '- b'], records: [] })).answer, '- a\n- b')
+  const hidden = "Your role can't see purchase orders, so I can't answer this. Someone whose role can see purchase orders can help."
+  assert.equal(parseAiModelFirstAnswer(JSON.stringify({ title: 'Not visible to your role', answer: `- ${hidden}`, records: [] })).answer, hidden)
+  assert.equal(parseAiModelFirstAnswer(JSON.stringify({ title: 't', answer: '- one\n- two', records: [] })).answer, '- one\n- two')
 })
