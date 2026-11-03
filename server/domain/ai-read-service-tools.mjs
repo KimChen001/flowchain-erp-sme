@@ -83,7 +83,7 @@ const NAMED_RECORDS = new Set(['supplier', 'customer', 'warehouse'])
 // from the row's supplier, never from the row itself.
 const reorderList = defineAiTool({
   name: 'reorder_list',
-  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, the quantity it suggests (raised to the minimum when the shortfall is smaller) and flags on lines it could not count. Filter by SKU or supplier. Transfers between warehouses are not considered.',
+  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Flags name late lines and lines it could not count. Filter by SKU or supplier. Transfers between warehouses are not considered.',
   parameters: {
     sku: { type: 'string', description: 'Only this SKU.' },
     supplier: { type: 'string', description: 'Only items whose preferred supplier is this one: a name or code.' },
@@ -119,7 +119,7 @@ const reorderList = defineAiTool({
       requestQuantity: row.purchaseRequest?.quantity ?? null,
       raisedToMinimum: Boolean(row.purchaseRequest?.raisedToMinimum),
       flags: array(row.flags).map((flag) => primitives(flag, ['code', 'orderNumber', 'unit', 'dueDay', 'count'])),
-      incomingLines: array(row.incomingLines).map((line) => primitives(line, ['orderNumber', 'remaining', 'dueDay', 'counted'])),
+      incomingLines: array(row.incomingLines).map((line) => primitives(line, ['orderNumber', 'remaining', 'dueDay', 'late'])),
       ref: aiToolRef('item', row.itemId || row.purchaseRequest?.itemId || row.sku, row.sku),
     }))
     rows.sort((a, b) => text(a.orderByDate || '9999').localeCompare(text(b.orderByDate || '9999')) || text(a.sku).localeCompare(text(b.sku)))

@@ -81,10 +81,9 @@ function flagText(flag: Flag, t: ReturnType<typeof useReorderListCopy>) {
   const hidden = !flag.orderNumber;
   const byCode: Record<string, () => string> = {
     po_line_other_unit: () => t(hidden ? "poOtherUnitHidden" : "poOtherUnit", { po: flag.orderNumber || "", unit: flag.unit || "" }),
-    po_line_due_after_order_by: () => t(hidden ? "poAfterOrderByHidden" : "poAfterOrderBy", { po: flag.orderNumber || "", day: flag.dueDay || "" }),
+    po_line_late: () => t(hidden ? "poLateHidden" : "poLate", { po: flag.orderNumber || "", day: flag.dueDay || "" }),
     po_line_no_due_day: () => t(hidden ? "poNoDueDayHidden" : "poNoDueDay", { po: flag.orderNumber || "" }),
     po_line_unit_not_recorded: () => t("poUnitNotRecorded"),
-    all_incoming_counted: () => t("allIncomingCounted"),
     shipment_other_unit: () => t.count("shipmentOtherUnit", flag.count ?? 0, { unit: flag.unit || "" }),
     shipment_unit_not_recorded: () => t.count("shipmentUnitNotRecorded", flag.count ?? 0),
     purchase_unit_differs: () => t("purchaseUnitDiffers", { unit: flag.unit || "" }),
