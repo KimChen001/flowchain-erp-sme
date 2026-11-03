@@ -369,7 +369,7 @@ function poTimeline(po: PurchaseOrder, facts: ProcurementRuntimeFacts): Timeline
   const invoice = invoiceStatus(po, facts);
   const match = matchStatus(po, facts);
   return [
-    { label: "来源确认", status: po.sourceRequest || po.sourceRfq ? "done" : "warning", helper: po.sourceRequest || po.sourceRfq || "来源待补齐" },
+    { label: "来源确认", status: "done", helper: po.sourceRequest || po.sourceRfq || "直接创建（无采购申请或询价）" },
     { label: "PO 已建立", status: "done", helper: po.created },
     { label: "收货证据", status: receipt === "未收货" ? "pending" : receipt === "异常处理" ? "warning" : "done", helper: receipt },
     { label: "发票证据", status: invoice === "未开票" ? "pending" : invoice === "发票差异" ? "warning" : "done", helper: invoice },
@@ -391,8 +391,8 @@ function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): PoE
       poLineId: line.poLineId,
       lineNumber: index + 1,
       currency: line.currency || po.currency,
-      sourcePrLine: po.sourceRequest ? `${po.sourceRequest}-L${String(index + 1).padStart(3, "0")}` : "来源 PR Line 待补齐",
-      sourceRfqLine: po.sourceRfq ? `${po.sourceRfq}-L${String(index + 1).padStart(3, "0")}` : po.sourceRequest ? "未经询价" : "来源 RFQ Line 待补齐",
+      sourcePrLine: po.sourceRequest ? `${po.sourceRequest}-L${String(index + 1).padStart(3, "0")}` : "无采购申请",
+      sourceRfqLine: po.sourceRfq ? `${po.sourceRfq}-L${String(index + 1).padStart(3, "0")}` : "未经询价",
       sku: safeText(line.sku, po.sourceSku || "SKU 待补齐"),
       itemName: safeText(line.itemName, po.sourceName || "物料名称待补齐"),
       quantity: ordered,
@@ -849,9 +849,9 @@ export default function PurchasingOrdersPage({
             fields={[
               { label: "PO 编号", value: selectedPO.po, tone: "info" },
               { label: "状态", value: selectedPO.status, tone: statusTone(selectedPO.status) },
-              { label: "来源 PR", value: selectedPO.sourceRequest || "来源 PR 待补齐", tone: selectedPO.sourceRequest ? "info" : "warning" },
-              // A PO made straight from a purchase request had no RFQ, which is not a gap.
-              { label: "来源 RFQ", value: selectedPO.sourceRfq || (selectedPO.sourceRequest ? "未经询价，由采购申请创建" : "来源 RFQ 待补齐"), tone: selectedPO.sourceRfq || selectedPO.sourceRequest ? "info" : "warning" },
+              { label: "来源 PR", value: selectedPO.sourceRequest || "未从采购申请创建", tone: "info" },
+              // A PO need not come from a request or an RFQ: neither is a gap (owner, 2026-11-03).
+              { label: "来源 RFQ", value: selectedPO.sourceRfq || (selectedPO.sourceRequest ? "未经询价，由采购申请创建" : "未经询价"), tone: "info" },
               { label: "供应商", value: selectedPO.supplier },
               { label: "采购负责人", value: selectedPO.owner },
               { label: "创建日期", value: selectedPO.created },
