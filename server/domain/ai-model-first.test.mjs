@@ -831,6 +831,9 @@ test('an approved purchase order not yet issued says to send it and mark it issu
   assert.deepEqual([order.status, order.issuedToSupplier], ['approved', false])
   assert.match(order.nextStep, /sends the PO document to the supplier .* then marks it issued/)
   assert.equal((await runAiReadTool('get_purchase_order', { order: 'PO-008' }, { facts, context })).result.order.issuedToSupplier, undefined)
+  // "In the last 7 days" is grounded: the tools say their window.
+  assert.equal((await runAiReadTool('list_receipts', { kind: 'recent' }, { facts, context })).result.recentWindowDays, 7)
+  assert.equal((await runAiReadTool('list_supplier_invoices', {}, { facts, context })).result.summary.recentWindowDays, 7)
   const answer = { title: 'PO-009 待发给供应商', answer: '- 下一步：把 PO-009 发给供应商，然后在订单页面标记为下达。', basis: ['PO-009 状态：approved。'], followUps: ['PO-009 什么时候到？'], records: [{ type: 'purchase_order', id: 'PO-009' }] }
   const response = presentAiModelFirstAnswer({ answer, refs: [order.ref], stats: { calls: [{ tool: 'get_purchase_order', status: 'ok' }] }, facts, language: 'zh-CN', query: 'q' })
   assert.equal(response.keyEvidence[0].nextStep, '下一步：把 PO-009 发给供应商（打印或另存订单文件后自行发送），再在订单页面标记为下达。')
