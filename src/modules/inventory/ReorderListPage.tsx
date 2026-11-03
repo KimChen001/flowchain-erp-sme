@@ -75,6 +75,8 @@ function formatDay(day: string, locale: string) {
   }
 }
 
+// Daily demand is an average: one decimal reads better than four ("10.0444").
+const oneDecimal = (value: number | null | undefined) => (value === null || value === undefined ? value : Math.round(value * 10) / 10);
 const withUnit = (value: number | null | undefined, unit: string | null) => (value === null || value === undefined ? "—" : `${formatQuantity(value)}${unit ? ` ${unit}` : ""}`);
 
 function flagText(flag: Flag, t: ReturnType<typeof useReorderListCopy>) {
@@ -255,7 +257,7 @@ export default function ReorderListPage() {
                         <td className="px-3 py-3" data-testid="reorder-demand">
                           {row.demand.enough ? (
                             <>
-                              <div>{withUnit(row.demand.averageDailyDemand, row.unit)}</div>
+                              <div>{withUnit(oneDecimal(row.demand.averageDailyDemand), row.unit)}</div>
                               <div style={{ color: A.sub }}>{t.count("demandDays", row.demand.shipmentDays, { window: row.demand.windowDays })}</div>
                             </>
                           ) : (
