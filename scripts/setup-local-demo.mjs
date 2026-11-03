@@ -57,12 +57,15 @@ const supplierTiers = [
 // walkthrough keeps Flow Controller short with a reorder point of 40 under
 // about 5 pieces a day of demand over a 14-day lead time. The others are about
 // the walkthrough's daily demand times the preferred source's lead time plus
-// the safety stock (scripts/setup-local-scenario.mjs). The same values go to
+// the safety stock (scripts/setup-local-scenario.mjs). Temperature Sensor's
+// reorder point of 270 (about 10 a day over Acme's 17 days, plus 100) is set
+// so the walkthrough has one item to order now: 150 on hand and 115 on order
+// are 5 short of it, raised to Acme's minimum order of 50. The same values go to
 // the item's metadata and, in the walkthrough scenario, to its stock record,
 // so every place a reorder point is read agrees.
 const items = [
   ['LOCAL-DEMO-ITEM-001', 'LDM-001', 'Flow Controller', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001', { safetyStock: 30, reorderPoint: 40 }],
-  ['LOCAL-DEMO-ITEM-002', 'LDM-002', 'Temperature Sensor', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001', { safetyStock: 75, reorderPoint: 245 }],
+  ['LOCAL-DEMO-ITEM-002', 'LDM-002', 'Temperature Sensor', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001', { safetyStock: 100, reorderPoint: 270 }],
   ['LOCAL-DEMO-ITEM-003', 'LDM-003', 'Shipping Carton', 'Packaging materials', 'box', 'LOCAL-DEMO-SUP-002', { safetyStock: 50, reorderPoint: 180 }],
   ['LOCAL-DEMO-ITEM-004', 'LDM-004', 'Stainless Steel Fastener', 'Industrial supplies', 'pcs', 'LOCAL-DEMO-SUP-003', { safetyStock: 2400, reorderPoint: 5000 }],
   ['LOCAL-DEMO-ITEM-005', 'LDM-005', 'Shielded Control Cable', 'Electronic components', 'ft', 'LOCAL-DEMO-SUP-001', { safetyStock: 400, reorderPoint: 1200 }],
