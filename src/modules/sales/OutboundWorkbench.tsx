@@ -617,8 +617,8 @@ function OrderList() {
                   <td className={tdNowrapClass}>{row.currency}</td>
                   <td className={tdNumericClass}>{row.totalLines}</td>
                   <td className={tdNumericClass}>
-                    {row.orderedQuantity} / {row.reservedQuantity} /{" "}
-                    {row.fulfilledQuantity}
+                    {formatQuantity(row.orderedQuantity)} / {formatQuantity(row.reservedQuantity)} /{" "}
+                    {formatQuantity(row.fulfilledQuantity)}
                   </td>
                   <td className={tdNowrapClass}>{stamp(row.updatedAt)}</td>
                   <td className={tdActionClass}>
