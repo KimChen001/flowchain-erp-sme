@@ -17,7 +17,7 @@ import { statusCodeLabel } from "../../i18n/statusLabels";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { createClientTemporaryId } from "../../lib/client-id";
 import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
-import { addCalendarDays, buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
+import { addCalendarDays, buildSuggestionTrail, planNonCatalogPrefill, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
 import { SupplierChoices } from "../../components/procurement/SupplierChoices";
 import { SupplierOverrideCount, SupplierOverrideFlag, SupplierOverrideReason, hasSupplierOverride, supplierOverrideIssueText, type SupplierOverride } from "../../components/procurement/SupplierOverrideReason";
 import { overrideNeeded, validateSupplierOverride } from "../../../shared/supplier-override-reasons.mjs";
@@ -99,7 +99,7 @@ type PR = {
 type FieldError = { field?: string; code?: string; message?: string };
 const OVERRIDE_FIELD = /^lines\.(\d+)\.supplierOverride\.(reasonCode|note)$/;
 // The line fields a handoff (the assistant's purchase request draft) can fill.
-type PrefillLineField = "itemId" | "supplierId" | "quantity" | "estimatedUnitPrice" | "targetWarehouseId" | "needByDate" | "internalLineComment";
+type PrefillLineField = "itemId" | "itemNameSnapshot" | "unitSnapshot" | "supplierId" | "quantity" | "estimatedUnitPrice" | "targetWarehouseId" | "needByDate" | "internalLineComment";
 type LinePrefill = { origin: PrefillOrigin; intent: string | null; lineId: string; fields: Partial<Record<PrefillLineField, PrefillEntry>>; supplierChoices: SupplierChoice[] };
 // Today in the workspace timezone (America/New_York when unknown), not UTC.
 const today = (timeZone?: string) => todayInTimeZone(timeZone);
@@ -128,7 +128,8 @@ const makeLine = (date = today()): Line => ({
 const PR_STATUSES = ["draft", "submitted", "approved", "converted", "rejected", "withdrawn", "cancelled"];
 // A link that opens the form: "New purchase request", or a handoff that
 // fills it (the assistant, the reorder list).
-const opensForm = (params: URLSearchParams) => params.get("mode") === "create" || Boolean(params.get("itemId") || params.get("sku"));
+const opensForm = (params: URLSearchParams) =>
+  params.get("mode") === "create" || params.get("lineType") === "non_catalog" || Boolean(params.get("itemId") || params.get("sku"));
 const COPY = {
   drafts: ["Drafts", "草稿"],
   draftsNote: ["Saved, not yet submitted", "已保存，尚未提交"],
@@ -214,6 +215,8 @@ export default function CanonicalProcurementPanel({
   const [editing, setEditing] = useState<PR | null>(null),
     [errors, setErrors] = useState<FieldError[]>([]),
     [saving, setSaving] = useState(false),
+    // The list and the selectors have loaded: the list's loading row, and a
+    // non-catalog handoff matching its unit and supplier, wait on it.
     [loaded, setLoaded] = useState(false);
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
   const statusLabel = (status: string) => statusCodeLabel(status, language) || copy(status);
@@ -265,7 +268,6 @@ export default function CanonicalProcurementPanel({
         request<{ company: { currency: string } }>("/api/settings-runtime").catch(() => null),
       ]);
       setRows(prs);
-      setLoaded(true);
       setItems(catalog.items);
       setSuppliers(
         selector.suppliers.map((s) => ({
@@ -283,6 +285,7 @@ export default function CanonicalProcurementPanel({
       setUnits(unitSelector.options);
       setCommodities(commoditySelector.options);
       setWarehouses(warehouseSelector.options);
+      setLoaded(true);
       setLoadError("");
     } catch (error: any) {
       setLoadError(error.message || "采购申请数据加载失败");
@@ -298,7 +301,30 @@ export default function CanonicalProcurementPanel({
   // from, and nothing is saved until the user saves.
   useEffect(() => {
     const handoff = location.key;
-    if (prefilled.current === handoff || !items.length) return;
+    if (prefilled.current === handoff) return;
+    // An item the workspace does not have (owner, 2026-11-04): one "Other"
+    // line with only what the user wrote, each field marked as theirs. The
+    // person adds the category and price, and saves.
+    if (searchParams.get("lineType") === "non_catalog") {
+      if (!loaded) return;
+      prefilled.current = handoff;
+      const plan = planNonCatalogPrefill({ query: Object.fromEntries(searchParams.entries()), units, suppliers, defaultDate });
+      const line: Line = {
+        ...makeLine(defaultDate),
+        sourceType: "non_catalog_item",
+        itemNameSnapshot: plan.values.itemNameSnapshot,
+        quantity: plan.values.quantity,
+        unitSnapshot: plan.values.unitSnapshot,
+        supplierId: plan.values.supplierId,
+        currency,
+        needByDate: plan.values.needByDate,
+        internalLineComment: plan.values.internalLineComment,
+      };
+      setLines([line]);
+      setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: [] });
+      return;
+    }
+    if (!items.length) return;
     const requestedItem = searchParams.get("itemId") || searchParams.get("sku");
     if (!requestedItem) return;
     const item = items.find(
@@ -354,7 +380,7 @@ export default function CanonicalProcurementPanel({
         setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: plan.supplierChoices });
       })
       .catch((error) => toast.error(copy(error.message || "供应商关系读取失败")));
-  }, [items, searchParams, location.key]);
+  }, [items, loaded, searchParams, location.key]);
   const prefillChip = (line: Line, field: PrefillLineField) =>
     prefill && line.lineId === prefill.lineId ? (
       <PrefillSourceChip entry={prefill.fields[field]} current={line[field] ?? ""} testId={`prefill-source-${field}`} />
@@ -1102,6 +1128,7 @@ export default function CanonicalProcurementPanel({
                     }
                     style={line.sourceType === "catalog_item" ? { ...inputStyle, background: A.gray6 } : inputStyle}
                   />
+                  {prefillChip(line, "itemNameSnapshot")}
                 </Field>
               </div>
               <div className="md:col-span-3 xl:col-span-2">
@@ -1188,6 +1215,7 @@ export default function CanonicalProcurementPanel({
                 <>
                   <Field label={copy("单位")}>
                     {line.sourceType === "catalog_item" ? <input readOnly value={line.unitSnapshot || ""} style={{ ...inputStyle, background: A.gray6 }} /> : <select value={line.unitSnapshot || ""} onChange={(e) => patchLine(index, { unitSnapshot: e.target.value })} style={inputStyle}><option value="">{copy("选择单位")}</option>{units.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
+                    {prefillChip(line, "unitSnapshot")}
                   </Field>
                   <Field label={copy("数量")}>
                     <input
