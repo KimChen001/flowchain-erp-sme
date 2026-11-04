@@ -507,12 +507,15 @@ test('prompt caching on the chat path: the system message carries the marker on 
   assert.equal(assistantV2ChatUsage({}), null)
 })
 
-test('withdrawn tools are left out of a chat request and stay in a Messages request', () => {
+test('withdrawn tools are left out of an uncached chat request and stay in a cached one and in a Messages request', () => {
   const chat = buildAssistantV2ChatRequest(request({ withdrawnTools: ['attention_list'] }), { model: 'deepseek-v4.1-flash', effort: 'none' })
   assert.deepEqual(chat.tools.map((tool) => tool.function.name), ['stock_on_hand'])
   const none = buildAssistantV2ChatRequest(request({ withdrawnTools: ['attention_list', 'stock_on_hand'] }), { model: 'deepseek-v4.1-flash', effort: 'none' })
   assert.equal('tools' in none, false)
   assert.equal('tool_choice' in none, false)
+  // The tools are part of the cached prefix: the list stays as it was.
+  const cached = buildAssistantV2ChatRequest(request({ withdrawnTools: ['attention_list'] }), { model: 'claude-sonnet-5-5', effort: 'none', cache: true })
+  assert.deepEqual(cached.tools, buildAssistantV2ChatRequest(request(), { model: 'claude-sonnet-5-5', effort: 'none', cache: true }).tools)
   const messages = buildAssistantV2MessagesRequest(request({ withdrawnTools: ['attention_list'] }), { model: 'claude-sonnet-5-5', effort: 'low' })
   assert.deepEqual(messages.tools.map((tool) => tool.name), ['attention_list', 'stock_on_hand'])
 })
@@ -678,4 +681,6 @@ test('a scripted pause holds the replay until its time is up or the call is stop
 test('a scripted turn built from tool events ends in tool use', () => {
   const [, , end] = completeScriptedTurn([{ type: 'tool_use_start', id: 't1', name: 'attention_list' }, { type: 'tool_use_end', id: 't1', name: 'attention_list', input: null }])
   assert.deepEqual(end, { type: 'message_end', stopReason: 'tool_use', usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, content: [{ type: 'tool_use', id: 't1', name: 'attention_list', input: {} }] })
+  // A turn may report no usage at all, as a stream without its usage chunk does.
+  assert.equal(completeScriptedTurn([{ type: 'text_delta', text: 'Done.' }, { type: 'message_end', usage: null }]).at(-1).usage, null)
 })

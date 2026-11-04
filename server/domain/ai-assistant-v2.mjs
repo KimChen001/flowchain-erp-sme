@@ -32,9 +32,11 @@ import { aiUiSourceHandles } from './ai-assistant-v2-ui-tools.mjs'
 // A display tool that fails tells the model what was wrong and how to fix
 // it; after a second failure in one answer the display tools are withdrawn
 // and the model answers in prose. Each model call is priced before it is made
-// (an estimate) and after (the provider's count), so an answer stops before a
-// call would take it past its cost ceiling or the workspace's cap, and is told
-// to finish in prose when only one more call fits.
+// (an estimate) and after (the provider's count, or the estimate when the
+// provider sent none), so an answer stops before a call would take it past
+// its cost ceiling or the workspace's cap, and is told to finish in prose
+// when only one more call fits. A long thread is sent its latest turns only,
+// as many as leave room for two calls.
 //
 // The answer streams as protocol events (shared/assistant-protocol.mjs)
 // through `emit`; the transport adds v and seq. Text goes out up to its last
@@ -295,7 +297,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     try { emit?.(event) } catch { /* the answer goes on */ }
   }
 
-  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null, providerFailed: null, displayFailures: 0, lastRoundForCost: false }
+  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null, providerFailed: null, displayFailures: 0, lastRoundForCost: false, usageEstimated: 0, turnsLeftOut: 0 }
   const parts = []
   const results = []
   const refs = []
@@ -315,8 +317,9 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
   const budgetMicros = capBinds ? limits.capRemainingMicros : limits.costCeilingMicros
   const budgetCode = capBinds ? 'over_cap_during_answer' : 'cost_ceiling'
   // The last completed call, for the next one's estimate: the prompt as the
-  // provider counted it, whether the provider cached it, how many messages it
-  // was sent, and the largest output of a call so far.
+  // provider counted it, how much of it the provider cached (read or
+  // written), how many messages of the thread it was sent, and the largest
+  // output of a call so far.
   let lastCall = null
   let largestOutput = 0
 
@@ -369,15 +372,35 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     const tools = [...dataTools, ...[...ui.values()].map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }))]
     const displayNames = [...ui.values()].filter((tool) => tool.display).map((tool) => tool.name)
 
-    // The next call's cost before it is made: the prompt as the last call was
+    // The transcript the model is sent: this turn and the latest earlier
+    // turns, as many as leave the first call, at its full output and with
+    // nothing cached, at most half of what the answer may spend, so a second
+    // call fits beside it. The oldest turns are left out first; the thread
+    // keeps them until its own limits drop them. A turn starts where the
+    // user's messages follow the end of the one before (an answer or tool
+    // results).
+    const baseTokens = tokensIn(ASSISTANT_V2_SYSTEM) + tokensIn(JSON.stringify(tools))
+    const sizes = thread.messages.map((message) => tokensIn(JSON.stringify(message)))
+    const turnStarts = [...thread.messages.keys()].filter((at) => at <= turnStart && (at === 0
+      || (thread.messages[at].role === 'user' && !isToolResults(thread.messages[at]) && (thread.messages[at - 1].role === 'assistant' || isToolResults(thread.messages[at - 1])))))
+    const fits = (from) => aiCallCostMicros({ inputTokens: baseTokens + sizes.slice(from).reduce((sum, size) => sum + size, 0), outputTokens: limits.outputTokens }, prices) <= budgetMicros / 2
+    const sendFrom = turnStarts.find(fits) ?? turnStarts.at(-1)
+    stats.turnsLeftOut = turnStarts.filter((at) => at < sendFrom).length
+    const sent = () => (sendFrom ? thread.messages.slice(sendFrom) : thread.messages)
+
+    // The next call before it is made: the prompt as the last call was
     // counted plus what was added since (the first call: the system prompt,
-    // the tools and the thread), read from the cache when the provider cached
-    // the last one, and `outputTokens` of output.
-    const nextCallMicros = (outputTokens) => {
-      const added = tokensIn(JSON.stringify(thread.messages.slice(lastCall ? lastCall.messages : 0)))
-      const prompt = lastCall ? lastCall.prompt : tokensIn(ASSISTANT_V2_SYSTEM) + tokensIn(JSON.stringify(tools))
-      return aiCallCostMicros({ inputTokens: prompt + added, outputTokens, cacheReadTokens: lastCall?.cached ? prompt : 0, cacheWriteTokens: lastCall?.cached ? added : 0 }, prices)
+    // the tools and the transcript sent), with `outputTokens` of output. Only
+    // what the provider cached of the last prompt is priced as a cache read
+    // (the chat completions client caches the tools and the system prompt
+    // alone, the SDK client the conversation too); the rest is priced in
+    // full, and what was added as a cache write when the provider caches.
+    const nextCallUsage = (outputTokens) => {
+      const added = tokensIn(JSON.stringify(thread.messages.slice(lastCall ? lastCall.messages : sendFrom)))
+      if (!lastCall) return { inputTokens: baseTokens + added, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0 }
+      return { inputTokens: lastCall.prompt + added, outputTokens, cacheReadTokens: lastCall.cached, cacheWriteTokens: lastCall.cached ? added : 0 }
     }
+    const nextCallMicros = (outputTokens) => aiCallCostMicros(nextCallUsage(outputTokens), prices)
 
     // The statuses of the records this answer's tools returned, by number.
     const statuses = () => {
@@ -447,15 +470,30 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
 
     // The records of this answer's data results that a text names by their
     // number (a ref's label or id with a digit in it, written whole), for the
-    // panel's record chips. A number no result holds is never among them.
+    // panel's record chips. Whole means no Latin letter, digit or hyphen next
+    // to it, as the panel matches it, so a number written against Chinese
+    // text (PO-001已逾期) counts. A number no result holds is never among them.
     const namedRefs = (value) => {
-      const written = value.normalize('NFKC').toLowerCase()
-      const names = (entry) => /\d/.test(entry) && new RegExp(`(?<![\\p{L}\\p{N}-])${escape(fold(entry))}(?![\\p{L}\\p{N}-])`, 'u').test(written)
+      const written = fold(value)
+      const names = (entry) => /\d/.test(entry) && new RegExp(`(?<![a-z0-9-])${escape(fold(entry))}(?![a-z0-9-])`).test(written)
       return refs.filter((ref) => refSchema.safeParse(ref).success && [ref.label, ref.id].some((entry) => text(entry) && names(text(entry)))).map(({ type, id, label }) => ({ type, id, label })).slice(0, 60)
     }
     const flagEvent = (part, spans) => {
       const named = part.replaced ? [] : namedRefs(part.text)
+      part.named = named
       return { type: 'flag', partId: part.id, spans, ...(named.length ? { refs: named } : {}) }
+    }
+    // After a round's results: the records a text already checked names that
+    // only now have a result ("Let me look up PO-001." before the lookup), as
+    // a further flag of that part with those refs alone.
+    const flagLateRefs = () => {
+      for (const part of parts) {
+        if (part.type !== 'text' || !part.named || part.replaced) continue
+        const added = namedRefs(part.text).filter((ref) => !part.named.some((known) => known.type === ref.type && known.id === ref.id))
+        if (!added.length) continue
+        part.named = [...part.named, ...added]
+        send({ type: 'flag', partId: part.id, spans: [], refs: added })
+      }
     }
 
     // A text part is complete: check it against this answer's results. A
@@ -548,7 +586,8 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       if (stats.usage.input + stats.usage.output >= limits.tokens) { stop('usage_limit'); send({ type: 'error', code: 'usage_limit', retryable: false }); break }
       // The cost check before every call: this call, estimated at its full
       // output, must fit in what the answer may still spend.
-      if (stats.costMicros + nextCallMicros(limits.outputTokens) > budgetMicros) {
+      const expected = nextCallUsage(limits.outputTokens)
+      if (stats.costMicros + aiCallCostMicros(expected, prices) > budgetMicros) {
         stop(budgetCode)
         send({ type: 'notice', code: budgetCode })
         break
@@ -607,7 +646,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // withdrawn tools are named beside it for a client that can drop them.
       const sentMessages = thread.messages.length
       try {
-        for await (const event of modelClient.stream({ system: ASSISTANT_V2_SYSTEM, messages: thread.messages, tools, maxTokens: limits.outputTokens, ...(withdrawn.size ? { withdrawnTools: [...withdrawn] } : {}) }, controller.signal)) {
+        for await (const event of modelClient.stream({ system: ASSISTANT_V2_SYSTEM, messages: sent(), tools, maxTokens: limits.outputTokens, ...(withdrawn.size ? { withdrawnTools: [...withdrawn] } : {}) }, controller.signal)) {
           if (aborted || timedOut) break
           if (event.type === 'text_delta' && event.text) {
             if (!openText) {
@@ -666,19 +705,24 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       }
 
       // A completed call: counted and metered, and its content appended to
-      // the transcript unchanged, thinking blocks included.
+      // the transcript unchanged, thinking blocks included. A call the
+      // provider reported no usage for (a stream without its usage chunk) is
+      // metered by estimate: the prompt as priced before the call, uncached,
+      // and the output counted from what it wrote.
       stats.modelCalls += 1
-      const usage = anthropicMessagesUsage({ usage: end.usage }) || { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
+      const content = array(end.content)
+      const reported = anthropicMessagesUsage({ usage: end.usage })
+      if (!reported) stats.usageEstimated += 1
+      const usage = reported || { inputTokens: expected.inputTokens, outputTokens: tokensIn(JSON.stringify(content)), cacheReadTokens: 0, cacheWriteTokens: 0 }
       stats.usage.input += usage.inputTokens
       stats.usage.output += usage.outputTokens
       stats.usage.cacheRead += usage.cacheReadTokens
       stats.usage.cacheWrite += usage.cacheWriteTokens
       stats.costMicros += aiCallCostMicros(usage, prices)
-      lastCall = usage.inputTokens > 0 ? { prompt: usage.inputTokens, cached: usage.cacheReadTokens + usage.cacheWriteTokens > 0, messages: sentMessages } : null
+      lastCall = usage.inputTokens > 0 ? { prompt: usage.inputTokens, cached: Math.min(usage.inputTokens, usage.cacheReadTokens + usage.cacheWriteTokens), messages: sentMessages } : null
       largestOutput = Math.max(largestOutput, usage.outputTokens)
       await recordAiProviderCall({ ok: true, usage })
       closeText()
-      const content = array(end.content)
       thread.messages.push({ role: 'assistant', content })
       const toolUses = content.filter((block) => block?.type === 'tool_use')
 
@@ -726,6 +770,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         }
         send({ type: 'tool', id: call.id, name: asCode(call.name, 'unknown_tool'), state: outcome.ok ? 'done' : 'error', ...(outcome.ok && rowCount(outcome.result) !== undefined ? { rows: rowCount(outcome.result) } : {}) })
       }
+      if (ran.some(([, outcome]) => outcome.ok)) flagLateRefs()
       // What the model reads of each result: its source first, for the UI
       // tools, and the words beside the status codes.
       const handles = aiUiSourceHandles(answerResults)
@@ -733,7 +778,11 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         if (outcome.ok && handles.has(call.id) && outcome.result && typeof outcome.result === 'object' && !Array.isArray(outcome.result)) outcome.view = { source: handles.get(call.id), ...withStatusLabels(outcome.result, language) }
       }
       if (aborted) { closeToolUses(toolUses, outcomes, 'stopped'); break }
-      if (!admitted.size) {
+      // A round whose calls were all display tools refused because they were
+      // withdrawn is still a round: the model gets the refusals and one more
+      // call, its last, to answer in prose.
+      const displaysRefused = !admitted.size && toolUses.every((block) => outcomes.get(block.id)?.error === 'display_off')
+      if (!admitted.size && !displaysRefused) {
         // The model kept calling tools after the last round: stop here. Only
         // display calls (the follow-up chips the prompt asks for) after text
         // end a complete answer, without an error.
@@ -745,12 +794,13 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       }
       stats.rounds += 1
       closeToolUses(toolUses, outcomes, 'stopped')
-      // The next call is the last when the limits say so, or when a call
-      // after it could not fit in what the answer may still spend.
+      // The next call is the last when the limits say so, when a call after
+      // it could not fit in what the answer may still spend, or when the
+      // model called only withdrawn display tools.
       const typical = Math.min(limits.outputTokens, Math.max(1000, largestOutput))
       const lastForCost = stats.costMicros + nextCallMicros(typical) + nextCallMicros(limits.outputTokens) > budgetMicros
       const note = thread.messages.at(-1).content
-      if (stats.rounds >= limits.rounds || callCount >= limits.toolCalls || lastForCost) {
+      if (stats.rounds >= limits.rounds || callCount >= limits.toolCalls || lastForCost || displaysRefused) {
         finalRound = true
         stats.lastRoundForCost ||= lastForCost
         note.push({ type: 'text', text: LAST_ROUND_NOTE })
@@ -807,6 +857,8 @@ function auditBlock({ stats, model, aborted, started }) {
     flags: stats.flags,
     displayFailures: stats.displayFailures,
     lastRoundForCost: stats.lastRoundForCost,
+    usageEstimated: stats.usageEstimated,
+    turnsLeftOut: stats.turnsLeftOut,
     replaces: [...stats.replaces],
     refusal: stats.refusal,
     aborted,

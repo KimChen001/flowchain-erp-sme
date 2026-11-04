@@ -108,7 +108,9 @@ export function aiUiSourceHandles(results) {
 }
 
 // The data tool result a UI tool names: one of this answer's, by its handle,
-// its tool_use id or its tool's name (the latest result of that tool).
+// its tool_use id or its tool's name (the latest result of that tool). The
+// part's source is the call it resolved to (its tool_use id), which also
+// stands for it in a form's suggestion trail; a handle is numbered per answer.
 function sourceOf(ctx, reference) {
   const results = ctx?.results instanceof Map ? ctx.results : new Map()
   const handles = aiUiSourceHandles(results)
@@ -125,7 +127,7 @@ function sourceOf(ctx, reference) {
   const label = handles.get(id) || reference
   if (!AI_READ_TOOL_COLUMNS[entry.tool]) return fail('source_not_data', `${reference} is a ${entry.tool} call; source must be a data tool result.`)
   if (!isObject(entry.output) || entry.output.error) return fail('source_failed', `The ${entry.tool} result ${label} has nothing to show.`)
-  return { tool: entry.tool, output: entry.output }
+  return { id, tool: entry.tool, output: entry.output }
 }
 
 // A column's code in the parts: the client's existing label where one fits,
@@ -353,7 +355,7 @@ const showTable = defineUiTool({
     }
     // A list cut by the data tool says how many it had in all.
     const total = Math.max(rows.length, table.path === 'rows' && Number.isInteger(output.total) ? output.total : 0)
-    const props = { ...(input.title ? { title: input.title } : {}), source: input.source, columns, rows: cells, total, more: total > shown.length }
+    const props = { ...(input.title ? { title: input.title } : {}), source: source.id, columns, rows: cells, total, more: total > shown.length }
     return part('table', props, [...shown.map((row) => refOf(row.ref)), ...cells.flatMap((row) => Object.values(row).map(refOf))])
   },
 })
@@ -422,7 +424,7 @@ const showRecords = defineUiTool({
     const found = pickRefs(source, input.refs, input.source)
     if (found.error) return found
     const cards = found.picked.map((holder) => cardOf(source.tool, holder, source.output))
-    return part('records', { source: input.source, ...(input.emphasis ? { emphasis: input.emphasis } : {}), cards }, cards.map((card) => card.ref))
+    return part('records', { source: source.id, ...(input.emphasis ? { emphasis: input.emphasis } : {}), cards }, cards.map((card) => card.ref))
   },
 })
 
@@ -485,7 +487,7 @@ const showChart = defineUiTool({
     const currency = unit === 'money' ? [...currencies][0] || currencyCode(output.currency) : null
     if (unit === 'money' && !currency) return fail('currency_missing', `${input.source} does not say the currency of its amounts.`)
     const x = { code: aiUiColumnCode(xKey), values: rows.map((row) => { const value = valueAt(row, xKey); return isDay(value) ? value.slice(0, 10) : missing(value) ? '' : String(value).slice(0, 60) }) }
-    const props = { source: input.source, kind: input.kind, ...(input.title ? { title: input.title } : {}), x, series, unit, ...(currency ? { currency } : {}) }
+    const props = { source: source.id, kind: input.kind, ...(input.title ? { title: input.title } : {}), x, series, unit, ...(currency ? { currency } : {}) }
     return part('chart', props, rows.map((row) => refOf(row.ref)))
   },
 })
@@ -515,7 +517,7 @@ const showKpis = defineUiTool({
       const value = at(source.output, key)
       return isNumber(value) ? { code: aiUiColumnCode(key), value, unit: 'count' } : { code: aiUiColumnCode(key), value: null, unit: 'count', hidden: true }
     })
-    return part('kpis', { source: input.source, tiles }, [])
+    return part('kpis', { source: source.id, tiles }, [])
   },
 })
 
@@ -543,7 +545,7 @@ const offerChoices = defineUiTool({
     const options = found.picked.map((holder) => holder.ref)
     const type = PROMPT_TYPES[input.promptCode]
     if (type && options.some((ref) => ref.type !== type)) return fail('wrong_ref_type', `${input.promptCode} offers ${type} records only.`)
-    return part('choices', { source: input.source, promptCode: input.promptCode, options }, options)
+    return part('choices', { source: source.id, promptCode: input.promptCode, options }, options)
   },
 })
 
@@ -706,7 +708,7 @@ const suggestPurchaseRequest = defineUiTool({
       if (isNamed) named.push(built)
       else suggested.push(built)
     }
-    const props = { formId: `${ctx.threadId}:${ctx.messageId}:${ctx.partId}`, source: input.source, suggested, lines: named, canCreate: true }
+    const props = { formId: `${ctx.threadId}:${ctx.messageId}:${ctx.partId}`, source: source.id, suggested, lines: named, canCreate: true }
     const refs = requestable.flatMap((row) => [refOf(row.ref), ...array(row.covered?.by).map((entry) => refOf(entry.ref))])
     return part('pr_form', props, refs)
   },

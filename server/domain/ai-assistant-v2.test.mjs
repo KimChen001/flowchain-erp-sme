@@ -1,8 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { aiCallCostMicros, aiUsagePrices, runWithAiUsageScope } from './ai-usage-meter.mjs'
 import { createScriptedModelClient } from './ai-assistant-v2-model/scripted.mjs'
+import { createChatCompletionsModelClient } from './ai-assistant-v2-model/chat-completions.mjs'
 import { AssistantModelError } from './ai-assistant-v2-model/model-error.mjs'
 import { aiSkillText } from './ai-skill-copy.mjs'
 import { ASSISTANT_V2_LIMITS, ASSISTANT_V2_SYSTEM, answerAssistantV2 } from './ai-assistant-v2.mjs'
@@ -20,6 +22,7 @@ const say = (...pieces) => pieces.map((piece) => ({ type: 'text_delta', text: pi
 const call = (id, name, input) => [{ type: 'tool_use_start', id, name }, { type: 'tool_use_end', id, name, input }]
 const end = (usage = USAGE) => ({ type: 'message_end', usage })
 const OVERDUE = [...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()]
+const LAST_ROUND_NOTE = 'No more tool calls are available for this answer, display tools and suggest_followups included. Answer now from these results, in prose.'
 
 // A UI tool as the UI tools module defines one: cards for the records the
 // model picks from an earlier result of this answer, by reference.
@@ -171,7 +174,7 @@ test('the round limit: after the last round the model must answer, and a further
   ], { limits: { rounds: 2 } })
   assertProtocol(events)
   assert.equal(client.requests.length, 3)
-  assert.equal(client.requests[2].messages.at(-1).content.at(-1).text, 'No more tool calls are available for this answer, display tools and suggest_followups included. Answer now from these results, in prose.')
+  assert.equal(client.requests[2].messages.at(-1).content.at(-1).text, LAST_ROUND_NOTE)
   assert.equal(audit.rounds, 2)
   assert.equal(audit.stopReason, 'limits')
   assert.deepEqual(ofType(events, 'error'), [{ type: 'error', code: 'limits', retryable: false }])
@@ -250,7 +253,7 @@ test('each call is priced before it is made: no call that could pass the ceiling
   const last = await ask([[...call('tu_po', 'list_purchase_orders', {}), end(mid)], [...say('PO-001 is the most overdue.'), ...call('tu_more', 'stock_position', {}), end()]])
   assertProtocol(last.events)
   assert.equal(last.client.requests.length, 2)
-  assert.equal(last.client.requests[1].messages.at(-1).content.at(-1).text, 'No more tool calls are available for this answer, display tools and suggest_followups included. Answer now from these results, in prose.')
+  assert.equal(last.client.requests[1].messages.at(-1).content.at(-1).text, LAST_ROUND_NOTE)
   assert.equal(last.audit.lastRoundForCost, true)
   assert.equal(ofType(last.events, 'notice').length, 0)
   assert.equal(JSON.parse(last.thread.messages.at(-1).content[0].content).error, 'call_limit', 'a call after the last round is refused')
@@ -259,6 +262,118 @@ test('each call is priced before it is made: no call that could pass the ceiling
   const cheap = await ask([OVERDUE, [...say('PO-001 is late.'), end()]])
   assert.equal(cheap.audit.lastRoundForCost, false)
   assert.equal(cheap.client.requests[1].messages.at(-1).content.at(-1).type, 'tool_result')
+})
+
+test('the estimate prices as cached only what the provider cached of the last prompt', async () => {
+  // Usage as Parley reports a Claude call on the chat path, where only the
+  // tools and the system prompt are cached: 12,000 tokens read, 60,000 not
+  // (0.125 USD). The next call sends those 60,000 again at the full price,
+  // with up to 4,000 tokens of output: it does not fit.
+  const chat = await ask([
+    [...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end({ input_tokens: 60000, cache_read_input_tokens: 12000, output_tokens: 300 })],
+    [...say('Never sent.'), end({ input_tokens: 61000, cache_read_input_tokens: 12000, output_tokens: 2500 })],
+  ])
+  assertProtocol(chat.events)
+  assert.equal(chat.client.requests.length, 1)
+  assert.deepEqual(ofType(chat.events, 'notice'), [{ type: 'notice', code: 'cost_ceiling' }])
+  assert.equal(chat.audit.costMicros, 125400)
+  // A later question of a thread on the chat path, 40,000 tokens a call with
+  // a quarter of them cached: one more call fits, not two, so the next call
+  // is the last and answers in prose, within the ceiling.
+  const later = await ask([
+    [...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end({ input_tokens: 30000, cache_read_input_tokens: 10000, output_tokens: 300 })],
+    [...say('PO-001 is the most overdue.'), end({ input_tokens: 31000, cache_read_input_tokens: 10000, output_tokens: 1500 })],
+  ])
+  assert.equal(later.client.requests.length, 2)
+  assert.equal(later.audit.lastRoundForCost, true)
+  assert.equal(later.client.requests[1].messages.at(-1).content.at(-1).text, LAST_ROUND_NOTE)
+  assert.ok(later.audit.costMicros <= ASSISTANT_V2_LIMITS.costCeilingMicros)
+  // The same prompt cached whole, as the SDK client caches the conversation,
+  // leaves the answer its rounds.
+  const sdk = await ask([
+    [...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end({ input_tokens: 500, cache_read_input_tokens: 30000, cache_creation_input_tokens: 9500, output_tokens: 300 })],
+    [...say('PO-001 is the most overdue.'), end()],
+  ])
+  assert.equal(sdk.audit.lastRoundForCost, false)
+  assert.equal(sdk.client.requests[1].messages.at(-1).content.at(-1).type, 'tool_result')
+})
+
+test('a call the provider reports no usage for is metered by estimate, so the ceiling still holds', async () => {
+  // Scripted: every call ends without usage, as a stream without its usage chunk.
+  const none = { type: 'message_end', usage: null }
+  const scripted = await ask([[...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), none], [...say('PO-001 is late.'), none]])
+  assert.equal(scripted.audit.usageEstimated, 2)
+  assert.ok(scripted.audit.costMicros > 0)
+  assert.equal(scripted.metered.length, 2)
+  assert.ok(scripted.metered.every((usage) => usage.inputTokens > 1000 && usage.outputTokens > 0))
+  assert.ok(scripted.metered[1].inputTokens > scripted.metered[0].inputTokens, 'the second call sends the first call\'s result too')
+
+  // The chat completions client against a localhost stub that streams tool
+  // calls with no usage chunk, until the last-round note asks for prose.
+  const requests = []
+  const server = http.createServer(async (req, res) => {
+    let raw = ''
+    for await (const chunk of req) raw += chunk
+    const body = JSON.parse(raw)
+    requests.push(body)
+    const last = body.messages.at(-1)
+    const delta = last.role === 'user' && /No more tool calls/.test(last.content)
+      ? { content: 'PO-001 is the most overdue.' }
+      : { tool_calls: [{ index: 0, id: `call_${requests.length}`, type: 'function', function: { name: 'list_purchase_orders', arguments: '{}' } }] }
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`)
+    res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: delta.content ? 'stop' : 'tool_calls' }] })}\n\n`)
+    res.end('data: [DONE]\n\n')
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const client = createChatCompletionsModelClient({
+      FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted', FLOWCHAIN_AI_PROVIDER_KIND: 'deepseek_chat', FLOWCHAIN_AI_PROVIDER_ENDPOINT: `http://127.0.0.1:${server.address().port}/v1/chat/completions`,
+      FLOWCHAIN_AI_PROVIDER_API_KEY: 'placeholder-key', FLOWCHAIN_AI_PROVIDER_MODEL: 'claude-sonnet-5-5',
+    })
+    const ceiling = 100000
+    const chat = await ask(null, { client, limits: { costCeilingMicros: ceiling } })
+    assertProtocol(chat.events)
+    assert.ok(requests.length < ASSISTANT_V2_LIMITS.rounds, 'the cost stopped the answer, not the round limit')
+    assert.equal(chat.audit.usageEstimated, requests.length)
+    assert.ok(chat.audit.costMicros > 0 && chat.audit.costMicros <= ceiling, String(chat.audit.costMicros))
+    assert.equal(chat.audit.lastRoundForCost, true)
+    assert.ok(chat.metered.every((usage) => usage.inputTokens > 0))
+    assert.equal(chat.body.conclusion.summary, 'PO-001 is the most overdue.')
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
+test('a long thread is sent its latest turns only, as many as leave room for two calls', async () => {
+  // Ten earlier turns, each with a list result of 24,000 characters.
+  const rows = Array.from({ length: 160 }, (_, at) => ({ orderNumber: `PO-${String(at).padStart(4, '0')}`, supplier: 'Acme Components Limited', status: 'issued', expectedDate: '2026-10-01' }))
+  const big = JSON.stringify({ source: 'list_purchase_orders#1', rows }).slice(0, 24000)
+  const messages = []
+  for (let turn = 0; turn < 10; turn += 1) {
+    messages.push(
+      { role: 'user', content: [{ type: 'text', text: 'Which orders are open?' }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: `tu_${turn}`, name: 'list_purchase_orders', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: `tu_${turn}`, content: big }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'Here they are.' }] },
+    )
+  }
+  const { client, events, audit, body, thread } = await ask([[...say('PO-001 is overdue.'), end()]], { thread: { messages, results: new Map() } })
+  assertProtocol(events)
+  assert.equal(client.requests.length, 1)
+  assert.equal(ofType(events, 'notice').length, 0)
+  assert.equal(body.conclusion.summary, 'PO-001 is overdue.')
+  const sent = client.requests[0].messages
+  assert.ok(audit.turnsLeftOut > 0 && audit.turnsLeftOut < 10, String(audit.turnsLeftOut))
+  assert.equal(sent.length, (10 - audit.turnsLeftOut) * 4 + 2)
+  assert.deepEqual(sent[0].content, [{ type: 'text', text: 'Which orders are open?' }], 'the transcript starts at a turn')
+  assert.equal(sent.at(-1).content[0].text, 'Which purchase orders are overdue?')
+  // The thread keeps every turn; only what is sent is shorter.
+  assert.equal(thread.messages.length, 40 + 3)
+  // A short thread is sent whole.
+  const short = await ask([[...say('PO-001 is overdue.'), end()]], { thread: { messages: messages.slice(0, 4), results: new Map() } })
+  assert.equal(short.audit.turnsLeftOut, 0)
+  assert.equal(short.client.requests[0].messages.length, 6)
 })
 
 test('each data result the model reads starts with its source and gives status words; the stored result keeps its codes', async () => {
@@ -293,9 +408,10 @@ test('a failed display says how to fix it; a second failure withdraws the displa
     [...call('tu_bad', 'show_table', { source: 'tu_po_missing', columns: ['orderNumber'] }), end()],
     [...call('tu_bad2', 'show_table', { source: 'list_purchase_orders#1', columns: ['price'] }), end()],
     [...say('PO-001 and PO-008 are overdue.'), ...call('tu_bad3', 'show_records', { source: 'list_purchase_orders#1', refs: [{ type: 'purchase_order', id: 'PO-001' }] }), end()],
+    [...say('PO-001 is the older of the two.'), end()],
   ], { uiTools: AI_ASSISTANT_V2_UI_TOOLS })
   assertProtocol(events)
-  assert.equal(client.requests.length, 4)
+  assert.equal(client.requests.length, 5)
   const first = JSON.parse(lastToolResults(client.requests[2])[0].content)
   assert.equal(first.error, 'source_missing')
   assert.deepEqual(first.details, [
@@ -311,14 +427,38 @@ test('a failed display says how to fix it; a second failure withdraws the displa
   assert.deepEqual(client.requests[3].tools, client.requests[0].tools)
   assert.equal(client.requests[2].withdrawnTools, undefined)
   assert.deepEqual(client.requests[3].withdrawnTools, ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices'])
-  // A display called after that is refused without a further model call, and
-  // the answer ends with its text.
+  // A display called after that is refused, not counted, and the model gets
+  // the refusal and one more call, its last, to answer in prose.
+  assert.deepEqual(JSON.parse(lastToolResults(client.requests[4])[0].content), { error: 'display_off', details: ['No display tool is available for the rest of this answer.'] })
+  assert.equal(client.requests[4].messages.at(-1).content.at(-1).text, LAST_ROUND_NOTE)
   assert.deepEqual(audit.uiTools.map((row) => row.status), ['source_missing', 'unknown_column', 'display_off'])
   assert.equal(audit.displayFailures, 2)
   assert.equal(audit.stopReason, 'end_turn')
   assert.equal(ofType(events, 'ui').length, 0)
   assert.equal(ofType(events, 'error').length, 0)
-  assert.equal(body.conclusion.summary, 'PO-001 and PO-008 are overdue.')
+  assert.equal(body.conclusion.summary, 'PO-001 and PO-008 are overdue.\n\nPO-001 is the older of the two.')
+
+  // The model retries a display after the withdrawal with no text written
+  // yet: the round of refused displays still gets its last call, and the
+  // prose is the answer, with no error.
+  const retried = [
+    OVERDUE,
+    [...call('tu_bad', 'show_table', { source: 'nope', columns: ['orderNumber'] }), end()],
+    [...call('tu_bad2', 'show_table', { source: 'list_purchase_orders#1', columns: ['price'] }), end()],
+    [...call('tu_bad3', 'show_table', { source: 'list_purchase_orders#1', columns: ['orderNumber'] }), end()],
+  ]
+  const silent = await ask([...retried, [...say('PO-001 and PO-008 are overdue.'), end()]], { uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assertProtocol(silent.events)
+  assert.equal(silent.client.requests.length, 5)
+  assert.equal(silent.client.requests[4].messages.at(-1).content.at(-1).text, LAST_ROUND_NOTE)
+  assert.equal(silent.audit.stopReason, 'end_turn')
+  assert.equal(ofType(silent.events, 'error').length, 0)
+  assert.equal(silent.body.conclusion.summary, 'PO-001 and PO-008 are overdue.')
+  // A call after that last call still ends the answer with the limits error.
+  const stubborn = await ask([...retried, [...call('tu_bad4', 'show_table', { source: 'list_purchase_orders#1', columns: ['orderNumber'] }), end()]], { uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assert.equal(stubborn.client.requests.length, 5)
+  assert.equal(JSON.parse(stubborn.thread.messages.at(-1).content[0].content).error, 'call_limit')
+  assert.deepEqual(ofType(stubborn.events, 'error'), [{ type: 'error', code: 'limits', retryable: false }])
 })
 
 test('one set of follow-up chips per answer: a later call replaces the earlier, and the chips come after every other part', async () => {
@@ -350,6 +490,23 @@ test('the records a text names come with its flag, from this answer\'s results o
   const claim = await ask([OVERDUE, [...say('I submitted PO-001 for you.'), end()]])
   assert.equal(ofType(claim.events, 'replace')[0].code, 'unbacked_action_claim')
   assert.equal('refs' in ofType(claim.events, 'flag')[0], false)
+  // Chinese text written against the number still names it, as the panel
+  // matches it; a longer number is not the shorter one.
+  const zh = { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } }
+  for (const [answer, named] of [['PO-001已逾期4天，PO-008也逾期了。', ['PO-001', 'PO-008']], ['采购订单PO-001部分收货。', ['PO-001']], ['PO-001 已逾期。', ['PO-001']]]) {
+    const { events } = await ask([OVERDUE, [...say(answer), end()]], zh)
+    assert.deepEqual(ofType(events, 'flag')[0].refs.map((ref) => ref.id), named, answer)
+  }
+  const longer = await ask([OVERDUE, [...say('PO-0011不在逾期列表中。'), end()]], { ...zh, question: '哪些采购订单逾期了？PO-0011呢？' })
+  assert.equal(ofType(longer.events, 'replace').length, 0)
+  assert.equal('refs' in ofType(longer.events, 'flag')[0], false)
+  // A number written before its result arrives gets its chip once the result
+  // is in: a further flag of that part, with those refs alone.
+  const early = await ask([[...say('Let me look up PO-001.'), ...call('tu_one', 'get_purchase_order', { order: 'PO-001' }), end()], [...say('It is partially received.'), end()]], { question: 'What is the status of PO-001?' })
+  assertProtocol(early.events)
+  assert.deepEqual(ofType(early.events, 'flag').filter((event) => event.partId === 'p1').map((event) => [event.spans.length, (event.refs || []).map((ref) => ref.id)]), [[0, []], [0, ['PO-001']]])
+  const order = early.events.map((event) => `${event.type}:${event.partId || event.name || event.step || ''}`)
+  assert.ok(order.indexOf('flag:p1', order.indexOf('tool:get_purchase_order')) < order.indexOf('text_delta:p2'), 'the late flag comes before the next text')
 })
 
 test('the system prompt asks for the source handle, status words, one set of chips and no talk of tools', () => {

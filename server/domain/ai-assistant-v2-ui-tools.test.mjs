@@ -8,6 +8,7 @@ import { AI_ASSISTANT_V2_UI_TOOLS, aiUiColumnCode, aiUiSourceHandles, aiUiToolsF
 import { AI_SKILL_SIGNAL_SEVERITY } from './ai-skill-signals.mjs'
 import { safeParsePartProps } from '../../shared/assistant-protocol.mjs'
 import { PURCHASE_SUGGESTION_SOURCES } from '../../shared/purchase-suggestion.mjs'
+import { sanitizeSuggestionTrail } from '../../shared/prefill-suggestions.mjs'
 import { readFileSync } from 'node:fs'
 
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
@@ -90,8 +91,9 @@ test('a source is the handle a result carries, its tool\'s name for the latest r
   // The tool's name alone, as chat models write it, means its latest result.
   assert.deepEqual(rowsOf('list_purchase_orders'), latest)
   assert.deepEqual(rowsOf('functions.list_purchase_orders'), latest)
-  // The props keep the source as the model gave it.
-  assert.equal(build('show_table', { source: 'list_purchase_orders#1', columns: ['orderNumber'] }).props.source, 'list_purchase_orders#1')
+  // The props name the call the source resolved to, whichever way the model named it.
+  assert.equal(build('show_table', { source: 'list_purchase_orders#1', columns: ['orderNumber'] }).props.source, 'toolu_po')
+  assert.equal(build('show_table', { source: 'functions.list_purchase_orders', columns: ['orderNumber'] }).props.source, 'toolu_late')
   // A source no result has: the error lists the ones there are.
   const missing = build('show_table', { source: 'list_purchase_orders#3', columns: ['orderNumber'] })
   assertError(missing, 'source_missing')
@@ -316,6 +318,12 @@ test('suggest_purchase_request maps the server suggestion into the form and tick
     covered: null,
     checked: false,
   }])
+  // Named by its handle, the form's source is still the call it came from,
+  // which a saved form's suggestion trail keeps as the ref of its fields.
+  const byHandle = assertPart(build('suggest_purchase_request', { source: 'suggest_purchase_lines#1', from: 'suggestions' }), 'pr_form')
+  assert.equal(byHandle.source, 'toolu_lines')
+  const trail = sanitizeSuggestionTrail({ origin: 'ai_assistant', fields: [{ field: 'lines.0.quantity', source: 'record', ref: byHandle.source, outcome: 'accepted' }] })
+  assert.equal(trail.fields[0].ref, 'toolu_lines')
 })
 
 test('suggest_purchase_request ticks a named item and keeps the user\'s own values for it only', async () => {

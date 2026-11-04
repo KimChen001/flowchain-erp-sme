@@ -79,13 +79,14 @@ function turnContent(events) {
 }
 
 // A turn's events with a complete message_end, copied so a caller cannot
-// change the recording.
+// change the recording. A message_end whose usage is null keeps it, as a
+// provider that reports none sends it.
 export function completeScriptedTurn(turn) {
   const events = structuredClone(turn).filter((event) => event.type !== 'message_end')
   const end = turn.find((event) => event.type === 'message_end') || {}
   const content = end.content ? structuredClone(end.content) : turnContent(events)
   const stopReason = end.stopReason || (content.some((block) => block.type === 'tool_use') ? 'tool_use' : 'end_turn')
-  return [...events, { type: 'message_end', stopReason, usage: { ...ZERO_USAGE, ...end.usage }, content }]
+  return [...events, { type: 'message_end', stopReason, usage: end.usage === null ? null : { ...ZERO_USAGE, ...end.usage }, content }]
 }
 
 // The scripted model client: each stream call replays its turn and records
@@ -120,7 +121,7 @@ const sse = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...d
 // meets partial JSON.
 function messagesStream(turn, model, id) {
   const end = completeScriptedTurn(turn).at(-1)
-  const { output_tokens: outputTokens, ...inputUsage } = end.usage
+  const { output_tokens: outputTokens, ...inputUsage } = end.usage || ZERO_USAGE
   const frames = [sse('message_start', { message: { id, type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage: { ...inputUsage, output_tokens: 1 } } })]
   end.content.forEach((block, index) => {
     if (block.type === 'text') {

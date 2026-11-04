@@ -84,11 +84,13 @@ function chatMessages(system, messages, cache) {
   return out
 }
 
-// `withdrawnTools`: tools the loop no longer offers in this answer. Unlike the
-// Messages API, where the list is part of the cached prefix and the thinking
-// blocks are checked against it, the list can shrink here, so they are left out.
+// `withdrawnTools`: tools the loop no longer offers in this answer. Without
+// caching they are left out. With caching they stay, as in a Messages
+// request: the tools come before the system prompt in the cached prefix, so a
+// shorter list would write the prefix again at the cache write price, and the
+// loop refuses their calls itself.
 export function buildAssistantV2ChatRequest({ system, messages, tools = [], maxTokens, withdrawnTools = [] } = {}, { model, effort, stream = false, cache = false } = {}) {
-  const withdrawn = new Set(array(withdrawnTools))
+  const withdrawn = new Set(cache ? [] : array(withdrawnTools))
   const offered = tools.filter((tool) => !withdrawn.has(tool.name))
   return {
     model,
