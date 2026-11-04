@@ -1,3 +1,4 @@
+import { QUESTION_LIMITS, SETUP_FORM_ROWS } from '../../shared/assistant-protocol.mjs'
 import { AI_TOOL_LIMITS, aiToolList, aiToolPurchaseOrder, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
 import { aiStockProjection } from './ai-read-tools.mjs'
 import { runHighestRisk } from './ai-skill-highest-risk.mjs'
@@ -362,7 +363,7 @@ const suggestPurchaseLines = defineAiTool({
       const needBy = suggestNeedByDate({ today: facts.today, leadTimeDays: lead, firstShortWeek: projection?.firstWeekShort })
       const covered = !notRun && quantity.covered ? { by: coverRecords(facts, row) } : null
       return {
-        item: { id: text(row.itemId) || null, sku: row.sku, name: row.itemName || null, unit: row.unit || null },
+        item: { id: text(row.itemId) || null, sku: row.sku, name: row.itemName || null, unit: row.unit || (item ? itemStockUnit(item) : '') || null },
         onHand: row.onHand ?? null, available: row.available ?? null, safetyStock: row.safetyStock ?? null, reorderPoint: row.reorderPoint ?? null,
         openSalesDemand: row.openSalesDemand ?? null, incoming: row.incomingApprovedPo ?? null, openRequests: openRequestsOf(facts, row),
         target: row.noStock ? null : quantity.target, gap: row.noStock ? null : quantity.gap,
@@ -439,6 +440,9 @@ const setupStatus = defineAiTool({
       importOn: checklist.steps.some((step) => String(step.href || '').startsWith('/app/master-data/import')),
       steps: checklist.steps.map((step) => ({ id: step.id, done: step.done, count: step.count, blocked: step.blocked, href: step.href })),
       gaps,
+      // What the chat takes at once, so an answer that tells the user how
+      // much to paste states figures a result holds.
+      limits: { pasteCharacters: QUESTION_LIMITS.assistantV2, setupCardRows: SETUP_FORM_ROWS },
     }
   },
 })

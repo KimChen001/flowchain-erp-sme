@@ -389,7 +389,7 @@ test('suggest_purchase_request keeps a covered item unticked with what covers it
   const [row] = props.lines
   assert.equal(row.checked, false)
   assert.deepEqual(row.covered, { ref: output.rows[0].covered.by[0].ref })
-  assert.deepEqual(row.suggestedQuantity, { value: null, source: 'user_named' })
+  assert.deepEqual(row.suggestedQuantity, { value: null, source: 'none' })
   const built = build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001' }] })
   for (const entry of output.rows[0].covered.by) assert.ok(built.refs.some((ref) => ref.id === entry.ref.id))
 })

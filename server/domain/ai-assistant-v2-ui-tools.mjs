@@ -576,7 +576,7 @@ const MAX_FORM_LINES = 8
 
 function suggestedQuantity(row) {
   const { value, source } = isObject(row.suggestedQuantity) ? row.suggestedQuantity : {}
-  if (!isNumber(value) || value <= 0 || !QUANTITY_SOURCE[source]) return { value: null, source: 'user_named' }
+  if (!isNumber(value) || value <= 0 || !QUANTITY_SOURCE[source]) return { value: null, source: 'none' }
   const raised = source === PURCHASE_SUGGESTION_SOURCES.raisedToMoq || source === PURCHASE_SUGGESTION_SOURCES.coverDaysRaisedToMoq
   const days = Number.isInteger(row.cover?.days) && row.cover.days > 0 ? row.cover.days : null
   return { value, source: QUANTITY_SOURCE[source], ...(raised ? { minimum: value } : {}), ...(days && QUANTITY_SOURCE[source].startsWith('cover_days') ? { coverDays: days } : {}) }
