@@ -281,6 +281,25 @@ test('a list of items may be a table; the basis folds under the one trust line w
   assert.match(client.render({ ...response, answerSourceLabel: '', keyEvidence: [], answerBasis: [], skill: { id: 'capability_overview' } }), /data-testid="ai-answer-checked"/)
 })
 
+test('an item the answer offers to order is a choice that asks for it, not a link to its page', async () => {
+  const client = await loadClient()
+  const record = (id) => ({ id: `item:${id}`, entityType: 'item', entityId: `ITEM-${id}`, entityLabel: id, label: id, sourceLabel: '你的工作区' })
+  const markup = client.render({
+    version: 'v2', language: 'zh-CN', query: '帮我起草一份PR', answerSource: 'workspace_model', answerSourceLabel: '由 AI 根据你的记录撰写，数字已核对',
+    conclusion: { title: '要为哪个物料开采购申请？', summary: '| 物料 | 最晚下单日 |\n| --- | --- |\n| LDM-002 | 2026-11-03 |\n要为 LDM-002 开采购申请吗？LDM-001 已有在途订单。', severity: 'info', confidence: 'medium' },
+    keyEvidence: [record('LDM-002'), record('LDM-001')], dataLimitations: [], reviewCards: [], navigationLinks: [],
+    followUpSuggestions: [{ label: '为 LDM-002 开采购申请', prompt: '为 LDM-002 开采购申请' }], orderChoices: [{ sku: 'LDM-002', prompt: '为 LDM-002 开采购申请' }],
+  })
+  assert.equal((markup.match(/data-testid="ai-order-choice"[^>]*data-business-id="LDM-002"/g) || []).length, 2)
+  assert.match(markup, /title="为 LDM-002 起草采购申请"/)
+  const text = markup.match(/<div data-testid="ai-answer-text"[^]*?<\/section>/)[0]
+  assert.doesNotMatch(text, /data-action-kind="view_evidence" data-business-id="ITEM-LDM-002"/)
+  // An item that is not offered keeps its link; the offered one keeps its
+  // "view item" link under the sources line.
+  assert.match(text, /data-action-kind="view_evidence" data-business-id="ITEM-LDM-001"/)
+  assert.match(markup.slice(markup.indexOf('data-testid="ai-trust-line"')), /data-action-kind="view_evidence" data-business-id="ITEM-LDM-002"/)
+})
+
 test("follow-up chips follow the answer's language, not the interface language", async () => {
   const client = await loadClient()
   const message = (language) => ({ role: 'assistant', content: '', cards: [{ type: 'ai_response_v2', data: { version: 'v2', intent: 'model_first', language, keyEvidence: [{ id: 'e1', entityType: 'purchase_order', entityId: 'PO-012', label: 'PO-012' }], navigationLinks: [], followUpSuggestions: [] } }] })

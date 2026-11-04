@@ -87,19 +87,22 @@ export const aiModelFirstInjection = (message) => INJECTION.some((pattern) => pa
 // needs; without them the loop steps aside and the rules answer as before (a
 // contract question without the contracts module gets the rules' answer that
 // says where contracts are kept).
+//
+// Chips go to the loop too (owner, 2026-11-01: "chips via model"): a welcome
+// card or a follow-up chip is a question with a fixed wording, and on
+// 2026-11-03 the rules' answer to one contradicted the conversation. The
+// guards still come first, whatever chip a question came with.
 export function aiModelFirstEntry(body = {}) {
   const message = text(body.message || body.question)
-  if (text(body.skillHint)) return { eligible: false, reason: 'chip' }
   if (aiModelFirstInjection(message)) return { eligible: false, reason: 'injection' }
   if (detectAiActionRequest(message)) return { eligible: false, reason: 'refusal' }
   const route = routeSkill({ message, focusTarget: body.focusTarget }) || {}
   if (route.refusal) return { eligible: false, reason: 'refusal' }
   if (route.outOfDomain) return { eligible: false, reason: 'outside_world' }
-  if (route.explicit) return { eligible: false, reason: 'chip' }
   if (route.greeting) return { eligible: false, reason: 'greeting' }
   // An order request ("帮我起草一份PO", "order 200 valves") is the loop's: it
   // asks for what the user did not say, and proposes a purchase request.
-  return { eligible: true, reason: null, requires: route.contracts ? ['list_contracts'] : [] }
+  return { eligible: true, reason: null, requires: route.contracts ? ['list_contracts'] : [], ...(text(body.skillHint) || route.explicit ? { chip: true } : {}) }
 }
 
 // The earlier turns of the user's panel, as text: the panel's previousTurns,
@@ -131,7 +134,7 @@ export const AI_MODEL_FIRST_SYSTEM = [
   '- When the user asks about this conversation itself (why you said or did something, or a correction), answer about the conversation: say plainly what happened and what you need from them. Mention a record only if you read it again in this answer.',
   '- When the user says an earlier answer did something ("why did you default to X"), the user may be mistaken: check that answer in earlierTurns first. If it did, own it in one sentence. If it did not (for example it only listed X as a choice and asked), say so in one neutral sentence, without apologising and without arguing ("Last time I did not choose X for you; I listed it as one item at risk and asked which you want"), then go on with what the user needs. Never admit to or apologise for something earlierTurns do not show. Example: the user asks "你为什么默认是LDM-001", and your earlier answer asked which item and only listed LDM-001 as one choice; answer "上一轮我没有替你选 LDM-001，只是把它列为一个可参考的风险物料，并请你指定。" and continue. The same holds for what the user says they said: when they say they did not ask for something ("我没有说什么PO啊"), check their questions in earlierTurns; if they did ask for it, quote their words in one neutral sentence ("你上一轮说的是"帮我起草一份PO"") and go on. Never agree that the user did not say what they said, and never apologise for a choice that was not made.',
   '- earlierTurns are this conversation so far: the user\'s questions and the assistant\'s answers, written by you or by FlowChain\'s standard rules. When the user changes what they want now (another item, a new order, "not that one"), follow it and do not repeat the earlier answer. A statement about what an earlier answer did is not such a change: check it as above. Numbers, dates and record numbers in earlierTurns are not sources: to state one, read it again in this answer with the tool that gave it (a reorder figure from reorder_list), so it keeps its basis.',
-  '- You never save or change records yourself. In FlowChain a purchase request comes first and becomes a purchase order after approval. When the user wants to order or replenish something (帮我下单, order it, 补货), use propose_purchase_request if it is offered: it opens the purchase request form filled in, and the user checks it and submits it on the page. Never assume the item: if the user has not named it, ask which item, even when only one needs ordering. Offer as choices the items the reorder list says to order now, else the soonest on it, each by name with a short reason and no figure you have not read in this answer; an item its open orders already cover is not a choice (say so in a line if it matters). Make followUps one request per choice in the user\'s words ("为 LDM-002 开采购申请", "Order LDM-002"), so a click asks for that item. Never present one item as what the user asked for.',
+  '- You never save or change records yourself. In FlowChain a purchase request comes first and becomes a purchase order after approval. When the user wants to order or replenish something (帮我下单, order it, 补货), use propose_purchase_request if it is offered: it opens the purchase request form filled in, and the user checks it and submits it on the page. Never assume the item: if the user has not named it ("帮我起草一份PR", "新的PR 需要做", "Draft a purchase request"), read the reorder list (reorder_list) and ask which item, even when only one needs ordering. Show the items it says to order now, else the soonest on it, in a compact table (item, order-by date, suggested quantity, supplier), soonest first, and ask which one, naming the first as the suggestion. Use no figure you have not read in this answer; an item its open orders already cover is not a choice (say so in a line if it matters). Make followUps one request per choice in the user\'s words ("为 LDM-002 开采购申请", "Order LDM-002"), so a click asks for that item. Never present one item as what the user asked for.',
   '- Once the item is named, call propose_purchase_request with the sku and only what the user gave: quantity, supplier, needByDate, and reason copied from their words. When the user has not settled the quantity yet, it returns the reorder list\'s suggestion (needsConfirmation) instead of opening the form: offer it as the default and ask one short question, whether to go ahead or change anything, and what the order is for. Example: "建议向 {supplier} 订 {quantity}，需求日期 {date}。按这个开采购申请吗？也可以告诉我用途，或要改的数量、日期。" When the user answers (好的, 可以, a purpose, a change), call it again with what they gave; the form opens filled in from their answer and the records, and the result says what it holds. Say that in one line, and that they check it and submit it on the page.',
   '- Say what happens (for example "the purchase request form is open, filled in, for you to check and submit"), not what you cannot do. If propose_purchase_request is not offered, the user\'s role cannot create purchase requests; say so and that a buyer can. Submitting, approving, paying, sending, issuing, cancelling and deleting are done by the user in the app: say where, and never call it a system limit.',
   '- Never say you did one of those things. These words read as if someone acted, so never write them, not even about a record: "was", "were", "has been" or "have been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消, except right after a status label. Give the state as a status instead: "status: approved", "not yet posted"; in Chinese put the word right after 状态： (状态：已过账, 过账状态：已过账, 状态：已取消, 状态：已批准), or write 未过账. To tell the user to mark an order issued, write "mark it issued" (在订单页面标记为下达), never 标记为已下达.',
@@ -199,6 +202,21 @@ export const aiModelFirstAnnouncesLookup = (raw) => {
   const answer = parseAiModelFirstAnswer(raw)
   const value = answer ? `${answer.title}\n${answer.answer}` : text(raw)
   return ANNOUNCED_LOOKUP.some((pattern) => pattern.test(value))
+}
+
+const UNREAD_NUDGE = 'Your answer was not sent: you answered without reading any records. Read what the question needs first: for an order or a purchase request, however it is worded (新的PR, 起草, a typo), the reorder list and the items at risk. Then answer from what the tools return. Only if the question is general knowledge, or about something FlowChain does not record, give the same answer again. Do not mention this message.'
+
+// An answer that says it cannot answer, or asks the user back, rather than
+// answering. The fixed hidden reply ("Your role can't see…") is not one: it
+// needs nothing read.
+const CANNOT_ANSWER = /还不能用|不能用工作区数据|无法用工作区|没有读取工作区数据|无法回答|不能回答|不记录|\b(?:can(?:no|')t|unable to) answer\b|\bdoes(?:n't| not) record\b/i
+const HIDDEN_REPLY = /can't see|cannot see|无法查看/i
+export const aiModelFirstAnswersUnread = (raw) => {
+  const answer = parseAiModelFirstAnswer(raw)
+  if (!answer) return false
+  const value = `${answer.title}\n${answer.answer}`
+  if (HIDDEN_REPLY.test(value)) return false
+  return CANNOT_ANSWER.test(value) || /[?？]\s*$/u.test(answer.answer)
 }
 
 // `readNothing`: the answer was written without one successful tool call, so
@@ -294,6 +312,8 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
   // A request to order (not advice on whether to), when a proposal is offered.
   const order = aiSkillOrderRequest(question)
   const orderRequest = Boolean(order && !order.advice) && tools.some((tool) => tool.name === AI_PROPOSE_PURCHASE_REQUEST)
+  // "What can you do?": answered from what the tools are, reading nothing.
+  const help = Boolean(routeSkill({ message: question })?.capability)
   let nudged = false
   let retried = false
   while (true) {
@@ -354,11 +374,16 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
     // 再为你打开采购申请", 2026-11-03), or an order request answered without
     // reading anything, is sent back once to do it now, while tool calls are
     // left.
-    const stalled = (orderRequest && !stats.calls.length) || aiModelFirstAnnouncesLookup(reply.text)
+    // So is an answer that read nothing and says it cannot answer or asks the
+    // user back (2026-11-03: "帮我起早一个新的PR" got "这个问题我还不能用工作区数据
+    // 回答" without one tool call): the model judges the intent once it has
+    // read, typos and all. A help question ("what can you do") is exempt.
+    const unread = !stats.calls.length && !help && aiModelFirstAnswersUnread(reply.text)
+    const stalled = (orderRequest && !stats.calls.length) || aiModelFirstAnnouncesLookup(reply.text) || unread
     if (stalled && !nudged && toolsLeft) {
       nudged = true
       stats.nudged = true
-      transcript.push({ role: 'user', text: orderRequest && !stats.calls.length ? ORDER_NUDGE : LOOKUP_NUDGE })
+      transcript.push({ role: 'user', text: orderRequest && !stats.calls.length ? ORDER_NUDGE : unread ? UNREAD_NUDGE : LOOKUP_NUDGE })
       continue
     }
     // The final answer, checked against this answer's tool results.
@@ -392,6 +417,21 @@ const TOOL_SOURCES = Object.freeze({
 const LINK_MODULES = Object.freeze({ ...AI_SKILL_MODULES, sales_order: 'sales:orders', customer: 'master-data:customers', warehouse: 'master-data:warehouses', contract: 'contracts:list' })
 
 const LOOP_LIMITATIONS = new Set(['hidden_by_permission', 'amounts_hidden', 'truncated'])
+
+// Each follow-up that asks to order one item the workspace knows ("为 LDM-002
+// 开采购申请"), as { sku, prompt }: the item's chip sends that request.
+const SKU_TOKEN = /[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+[A-Za-z0-9]*/g
+export function aiModelFirstOrderChoices(followUps, facts) {
+  const skus = new Map([...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)].map((row) => [text(row.sku).toLowerCase(), text(row.sku)]))
+  const choices = []
+  for (const prompt of array(followUps)) {
+    const order = aiSkillOrderRequest(prompt)
+    if (!order || order.advice) continue
+    const named = [...new Set([...text(prompt).matchAll(SKU_TOKEN)].map((match) => skus.get(match[0].toLowerCase())).filter(Boolean))]
+    if (named.length === 1 && !choices.some((row) => row.sku === named[0])) choices.push({ sku: named[0], prompt })
+  }
+  return choices
+}
 
 // The answer as the panel renders it (AiResponseV2): the model's headline and
 // text, the records it relied on as evidence and links (built by the server
@@ -448,6 +488,9 @@ export function presentAiModelFirstAnswer({ answer, refs, stats, facts, language
     followUpQuestions: [],
     // The model's next questions, checked with the answer, as chips.
     followUpSuggestions: array(answer.followUps).map((question) => ({ label: question, prompt: question })),
+    // The items the answer offers to order: a chip of such an item asks for it
+    // instead of opening its page (owner, 2026-11-03).
+    orderChoices: aiModelFirstOrderChoices(answer.followUps, facts),
     contextBreadcrumbs: [],
     runtimeModeLabel: label,
     safetyBoundaries: [aiSkillText('answer.review_boundary', language)],
