@@ -431,3 +431,24 @@ test('supplier invoices without a stored variance type get stable codes, not Chi
   assert.equal(invoice('INV-DB-3').varianceType, 'price_variance')
   assert.equal(invoice('INV-DB-3').lines[0].varianceType, '价格差异')
 })
+
+test('purchase requests carry the requester name of a workspace user, and keep a recorded name otherwise', async () => {
+  const records = createRecords()
+  records.purchaseRequests = [
+    { ...records.purchaseRequests[0], id: 'PR-USER', requester: 'USR-1', metadata: { requesterId: 'USR-1' } },
+    { ...records.purchaseRequests[0], id: 'PR-NAME', requester: 'Buyer A', metadata: {} },
+  ]
+  const prisma = createPrisma(records)
+  const userQueries = []
+  prisma.user = {
+    findMany: async (query) => {
+      userQueries.push(query)
+      return [{ id: 'USR-1', name: 'Kim Chen' }, { id: 'USR-OTHER-TENANT', name: 'Nobody' }].filter((user) => query.where.id.in.includes(user.id))
+    },
+  }
+  const snapshot = await createDbProcurementReadRepository({ env, prisma }).snapshot({ tenantId })
+  assert.deepEqual(userQueries.map((query) => query.where), [{ tenantId, id: { in: ['USR-1', 'Buyer A'] } }])
+  assert.equal(snapshot.purchaseRequests.find((row) => row.id === 'PR-USER').requesterName, 'Kim Chen')
+  assert.equal(snapshot.purchaseRequests.find((row) => row.id === 'PR-NAME').requesterName, '')
+  assert.equal(snapshot.purchaseRequests.find((row) => row.id === 'PR-NAME').requester, 'Buyer A')
+})

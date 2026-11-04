@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertTriangle, ArrowRight } from "lucide-react";
-import { A, Card, Chip } from "../../components/ui";
+import { Link, useSearchParams } from "react-router";
+import { AlertCircle, AlertTriangle, ArrowRight, CheckCircle2, Inbox, Plus, ShieldCheck } from "lucide-react";
+import { A, Card, Field, inputStyle } from "../../components/ui";
+import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
+import { EntityLink } from "../../components/business/EntityLink";
+import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
 
@@ -137,6 +142,41 @@ export function FinanceLanding() {
   );
 }
 
+const LIST_COPY = {
+  invoiceTitle: ["Supplier invoice list", "采购发票列表"],
+  payableTitle: ["Payables list", "应付款列表"],
+  creditTitle: ["Supplier credit list", "供应商贷项列表"],
+  matchTitle: ["Match exception list", "匹配异常列表"],
+  awaitingMatch: ["Awaiting match", "待匹配"],
+  awaitingMatchNote: ["Submitted, not yet matched to the PO and receipt", "已提交，尚未与采购订单和收货核对"],
+  exceptions: ["Match exceptions", "匹配异常"],
+  exceptionsNote: ["Price or quantity differs from the PO or receipt", "价格或数量与采购订单、收货不一致"],
+  matched: ["Matched, to approve", "已匹配待批准"],
+  matchedNote: ["Matched and waiting for approval", "已匹配，等待批准"],
+  approved: ["Approved", "已批准"],
+  approvedNote: ["Approved and handed to payables", "已批准并转入应付"],
+  searchTitle: ["Supplier invoice search", "采购发票查询"],
+  searchSubtitle: ["Search supplier invoices by number, supplier, purchase order, status and variance.", "按发票编号、供应商、采购订单、状态和差异查询采购发票。"],
+  search: ["Search", "搜索"],
+  searchPlaceholder: ["Invoice number, supplier or PO", "发票编号、供应商或采购订单"],
+  supplier: ["Supplier", "供应商"],
+  allSuppliers: ["All suppliers", "全部供应商"],
+  allStatuses: ["All statuses", "全部状态"],
+  variance: ["Variance", "差异"],
+  anyVariance: ["Any", "全部"],
+  withVariance: ["With a variance", "有差异"],
+  noVariance: ["No variance", "无差异"],
+  poReceipt: ["PO / receipt", "采购订单 / 收货单"],
+  invoiceDate: ["Invoice date", "发票日期"],
+  due: ["Due", "到期"],
+  next: ["Next", "下一步"],
+  view: ["View", "查看"],
+  actions: ["Actions", "操作"],
+  noMatch: ["No supplier invoices match these filters", "没有符合筛选条件的采购发票"],
+} as const;
+
+const day = (value: unknown) => String(value || "").slice(0, 10);
+
 function FinanceList({
   endpoint,
   capability,
@@ -146,122 +186,231 @@ function FinanceList({
   capability: string;
   kind: "invoice" | "payable" | "credit" | "match";
 }) {
-  const { t, locale } = useI18n();
+  const { t, locale, language } = useI18n();
+  const tr = (key: keyof typeof LIST_COPY) => LIST_COPY[key][language === "en-US" ? 0 : 1];
+  const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<ListPayload | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => {
-    void apiJson<ListPayload>(`${endpoint}?${query()}`)
+  const [search, setSearch] = useState("");
+  const [supplier, setSupplier] = useState("");
+  // An address with matchStatus=variance (the purchase order cards) starts on invoices with a variance.
+  const [variance, setVariance] = useState(() => searchParams.get("matchStatus") === "variance" ? "with" : "");
+  // Supplier invoices are filtered here, so the metric cards count every
+  // invoice; the other lists keep the server's filter from the address.
+  const invoices = kind === "invoice";
+  const load = () => {
+    setError("");
+    void apiJson<ListPayload>(invoices ? endpoint : `${endpoint}?${query()}`)
       .then(setData)
       .catch((reason) =>
         setError(reason instanceof Error ? reason.message : t("finance.loadFailed")),
       );
-  }, [endpoint]);
+  };
+  useEffect(load, [endpoint]);
   if (error) return <Warning>{error}</Warning>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const enabled = data.capabilities?.[capability]?.enabled;
+  const statusOf = (row: Record<string, any>) => String(value(row, "status", "matchStatus") || "");
+  const statusText = (status: string) => tokenKeys[status] ? t(tokenKeys[status]) : status || "—";
+  // Action codes, labelled; `skip` leaves codes out (Cancel is not a next step).
+  const actionsOf = (row: Record<string, any>, skip: string[] = []) =>
+    (value(row, "availableActions") || []).filter((action: string) => !skip.includes(action)).map((action: string) => tokenKeys[action] ? t(tokenKeys[action]) : action) as string[];
+  const status = searchParams.get("status") || "";
+  const setStatus = (next: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (next) params.set("status", next); else params.delete("status");
+    setSearchParams(params, { replace: true });
+  };
+  const hasVariance = (row: Record<string, any>) => Number(row.varianceAmount || 0) !== 0 || row.matchStatus === "variance";
+  const needle = search.trim().toLowerCase();
+  const rows = !invoices ? data.items : data.items.filter((row) =>
+    (!status || row.status === status)
+    && (!supplier || row.supplierName === supplier)
+    && (!variance || (variance === "with" ? hasVariance(row) : !hasVariance(row)))
+    && (!needle || [row.invoiceNumber, row.id, row.supplierName, row.relatedPoId].some((entry) => String(entry || "").toLowerCase().includes(needle))));
+  const count = (code: string) => data.items.filter((row) => row.status === code).length;
+  const statuses = [...new Set(data.items.map(statusOf).filter(Boolean))];
+  const suppliers = [...new Set(data.items.map((row) => String(row.supplierName || "")).filter(Boolean))].sort();
+  const title = tr(kind === "invoice" ? "invoiceTitle" : kind === "payable" ? "payableTitle" : kind === "credit" ? "creditTitle" : "matchTitle");
+  const reset = () => {
+    setSearch("");
+    setSupplier("");
+    setVariance("");
+    setSearchParams({}, { replace: true });
+  };
   return (
-    <div className="space-y-4" data-testid={`operational-finance-${kind}-list`}>
+    <div className="space-y-5" data-testid={`operational-finance-${kind}-list`}>
       {!enabled && <Warning>{t("finance.capabilityDisabled")}</Warning>}
-      {kind === "invoice" && enabled && (
-        <div className="flex justify-end">
-          <a data-testid="supplier-invoice-new" href="/app/procurement/bills/new" className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-white" style={{ background: A.blue }}>{t("finance.newSupplierInvoice")}</a>
-        </div>
-      )}
       {kind === "payable" && <Warning>{t("finance.notPaid")}</Warning>}
       {kind === "credit" && <Warning>{t("finance.noRefund")}</Warning>}
-      <Card className="overflow-x-auto">
-        <div className="border-b px-4 py-3 text-xs text-slate-500">
-          {t("finance.authoritative")} · {data.total}
-        </div>
-        <table className="w-full min-w-[850px] text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-slate-500">
-              <th className="px-4 py-3">{t("finance.invoiceNumber")}</th>
-              <th className="px-4 py-3">{t("finance.source")}</th>
-              <th className="px-4 py-3">{t("finance.amount")}</th>
-              <th className="px-4 py-3">{t("finance.status")}</th>
-              <th className="px-4 py-3">{t("finance.actions")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.items.map((row) => {
-              const id = String(value(row, "id") || "");
-              const label = String(
-                (kind === "match"
-                  ? value(row, "exceptionType", "matchNumber")
-                  : value(
-                      row,
-                      "invoiceNumber",
-                      "obligationNumber",
-                      "creditMemoNumber",
-                    )) || id,
-              );
-              const source = String(
-                (kind === "match"
-                  ? value(row, "invoiceNumber", "supplierInvoiceId")
-                  : value(
-                      row,
-                      "supplierName",
-                      "supplierInvoiceNumber",
-                      "returnPostingNumber",
-                      "supplierInvoiceId",
-                    )) || "—",
-              );
-              const amount = value(
-                row,
-                "totalAmount",
-                "outstandingAmount",
-                "varianceValue",
-              );
-              const rawStatus = String(
-                value(row, "status", "matchStatus") || "",
-              );
-              const statusLabel = tokenKeys[rawStatus]
-                ? t(tokenKeys[rawStatus])
-                : rawStatus || "—";
-              const actionLabels = (value(row, "availableActions") || []).map(
-                (action: string) =>
-                  tokenKeys[action] ? t(tokenKeys[action]) : action,
-              );
-              return (
-                <tr className="border-b border-slate-50" key={id}>
-                  <td className="px-4 py-3 font-medium">
-                    {kind === "invoice" && id ? <a className="text-blue-600 hover:underline" href={`/app/procurement/bills/${encodeURIComponent(id)}`}>{label}</a>
-                      : kind === "payable" && row.supplierInvoiceId ? <a className="text-blue-600 hover:underline" href={`/app/procurement/bills/${encodeURIComponent(String(row.supplierInvoiceId))}`}>{label}</a>
-                      : label}
-                  </td>
-                  <td className="px-4 py-3">{source}</td>
-                  <td className="px-4 py-3">
-                    {money(amount, value(row, "currency"), locale)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Chip
-                      label={statusLabel}
-                      color={A.blue}
-                      bg="#eff6ff"
-                    />
-                    {row.awaitingReceipt && (
-                      <span className="ml-1" data-testid="bill-awaiting-receipt">
-                        <Chip label={t("finance.awaitingReceipt")} color="#b45309" bg="#fffbeb" />
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-xs">
-                    {actionLabels.join(" · ") || "—"}
-                  </td>
+      {invoices && (
+        <>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <ActionableMetricCard label={tr("awaitingMatch")} value={String(count("submitted"))} description={tr("awaitingMatchNote")} to="/app/procurement/bills?status=submitted" icon={Inbox} color={A.orange} />
+            <ActionableMetricCard label={tr("exceptions")} value={String(count("exception"))} description={tr("exceptionsNote")} to="/app/procurement/bills?status=exception" icon={AlertCircle} color={A.red} />
+            <ActionableMetricCard label={tr("matched")} value={String(count("matched"))} description={tr("matchedNote")} to="/app/procurement/bills?status=matched" icon={ShieldCheck} color={A.blue} />
+            <ActionableMetricCard label={tr("approved")} value={String(count("approved"))} description={tr("approvedNote")} to="/app/procurement/bills?status=approved" icon={CheckCircle2} color={A.purple} />
+          </div>
+          <ListSearchCard
+            title={tr("searchTitle")}
+            subtitle={tr("searchSubtitle")}
+            actions={<>
+              <ResetButton onClick={reset} />
+              <RefreshButton onClick={load} />
+              {enabled && <Link data-testid="supplier-invoice-new" to="/app/procurement/bills/new" className={listButtonClass.primary}><Plus size={13} />{t("finance.newSupplierInvoice")}</Link>}
+            </>}
+          >
+            <Field label={tr("search")}>
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tr("searchPlaceholder")} style={inputStyle} />
+            </Field>
+            <Field label={tr("supplier")}>
+              <select value={supplier} onChange={(event) => setSupplier(event.target.value)} style={inputStyle}>
+                <option value="">{tr("allSuppliers")}</option>
+                {suppliers.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </Field>
+            <Field label={t("finance.status")}>
+              <select value={status} onChange={(event) => setStatus(event.target.value)} style={inputStyle}>
+                <option value="">{tr("allStatuses")}</option>
+                {statuses.map((code) => <option key={code} value={code}>{statusText(code)}</option>)}
+              </select>
+            </Field>
+            <Field label={tr("variance")}>
+              <select value={variance} onChange={(event) => setVariance(event.target.value)} style={inputStyle}>
+                <option value="">{tr("anyVariance")}</option>
+                <option value="with">{tr("withVariance")}</option>
+                <option value="none">{tr("noVariance")}</option>
+              </select>
+            </Field>
+          </ListSearchCard>
+        </>
+      )}
+      <ListCard title={title} total={data.items.length} shown={rows.length}>
+        <div className={tableScrollClass}>
+          {invoices ? (
+            <table className={`w-full min-w-[1080px] text-left ${tableBodyTextClass}`}>
+              <thead>
+                <tr style={listHeadRowStyle}>
+                  <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>{t("finance.invoiceNumber")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{tr("supplier")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{tr("poReceipt")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{tr("invoiceDate")}</th>
+                  <th className={thRightClass} style={{ color: A.gray1 }}>{t("finance.amount")}</th>
+                  <th className={thRightClass} style={{ color: A.gray1 }}>{tr("variance")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{t("finance.status")}</th>
+                  <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{tr("actions")}</th>
                 </tr>
-              );
-            })}
-            {!data.items.length && (
-              <tr>
-                <td className="px-4 py-10 text-center text-slate-500" colSpan={5}>
-                  {t("common.empty")}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </Card>
+              </thead>
+              <tbody>
+                {rows.length === 0 && <ListStateRow colSpan={8} state="empty" title={data.items.length ? tr("noMatch") : t("common.empty")} />}
+                {rows.map((row, index) => {
+                  const id = String(row.id || "");
+                  const rawStatus = statusOf(row);
+                  const next = actionsOf(row, ["cancel"]);
+                  const varianceAmount = Number(row.varianceAmount || 0);
+                  return (
+                    <tr className={listRowClass} style={listRowStyle(index, rows.length)} key={id}>
+                      <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                        <EntityLink kind="supplier_invoice" id={id} className={tableLinkClass}>{String(row.invoiceNumber || id)}</EntityLink>
+                      </td>
+                      <td className={`${tdNameClass} max-w-[200px] truncate`} title={row.supplierName}>{row.supplierName || "—"}</td>
+                      <td className={tdNowrapClass}>
+                        {row.relatedPoId ? <EntityLink kind="purchase_order" id={row.relatedPoId} className="font-medium">{row.relatedPoId}</EntityLink> : <span style={{ color: A.gray2 }}>—</span>}
+                        <div className="text-[11px]" style={{ color: A.sub }}>{row.relatedGrnId ? <EntityLink kind="receiving_doc" id={row.relatedGrnId} className="text-[11px] font-normal">{row.relatedGrnId}</EntityLink> : "—"}</div>
+                      </td>
+                      <td className={tdNowrapClass}>
+                        <div>{day(row.invoiceDate) || "—"}</div>
+                        {row.dueDate && <div className="text-[11px]" style={{ color: A.sub }}>{tr("due")} {day(row.dueDate)}</div>}
+                      </td>
+                      <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row.totalAmount, row.currency, locale)}</td>
+                      <td className={tdNumericRightClass} style={{ color: varianceAmount ? "#b91c1c" : A.sub }}>{varianceAmount ? money(row.varianceAmount, row.currency, locale) : "—"}</td>
+                      <td className={tdNowrapClass}>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <StatusChip label={statusText(rawStatus)} tone={statusToneOf(rawStatus)} />
+                          {row.awaitingReceipt && (
+                            <span data-testid="bill-awaiting-receipt">
+                              <StatusChip label={t("finance.awaitingReceipt")} tone="warning" />
+                            </span>
+                          )}
+                        </div>
+                        {next.length > 0 && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("next")}: {next.join(" · ")}</div>}
+                      </td>
+                      <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
+                        <EntityLink kind="supplier_invoice" id={id} className={`${rowActionClass.primary} !no-underline`}>{tr("view")}</EntityLink>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <table className={`w-full min-w-[850px] text-left ${tableBodyTextClass}`}>
+              <thead>
+                <tr style={listHeadRowStyle}>
+                  <th className={thClass} style={{ color: A.gray1 }}>{t("finance.invoiceNumber")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{t("finance.source")}</th>
+                  <th className={thRightClass} style={{ color: A.gray1 }}>{t("finance.amount")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{t("finance.status")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{t("finance.actions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => {
+                  const id = String(value(row, "id") || "");
+                  const label = String(
+                    (kind === "match"
+                      ? value(row, "exceptionType", "matchNumber")
+                      : value(
+                          row,
+                          "invoiceNumber",
+                          "obligationNumber",
+                          "creditMemoNumber",
+                        )) || id,
+                  );
+                  const source = String(
+                    (kind === "match"
+                      ? value(row, "invoiceNumber", "supplierInvoiceId")
+                      : value(
+                          row,
+                          "supplierName",
+                          "supplierInvoiceNumber",
+                          "returnPostingNumber",
+                          "supplierInvoiceId",
+                        )) || "—",
+                  );
+                  const amount = value(
+                    row,
+                    "totalAmount",
+                    "outstandingAmount",
+                    "varianceValue",
+                  );
+                  const rawStatus = statusOf(row);
+                  return (
+                    <tr className={listRowClass} style={listRowStyle(index, rows.length)} key={id}>
+                      <td className={tdIdClass}>
+                        {kind === "payable" && row.supplierInvoiceId
+                          ? <EntityLink kind="supplier_invoice" id={String(row.supplierInvoiceId)} className={tableLinkClass}>{label}</EntityLink>
+                          : label}
+                      </td>
+                      <td className={tdNameClass}>{source}</td>
+                      <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>
+                        {money(amount, value(row, "currency"), locale)}
+                      </td>
+                      <td className={tdNowrapClass}>
+                        <StatusChip label={statusText(rawStatus)} tone={statusToneOf(rawStatus)} />
+                      </td>
+                      <td className={tdNowrapClass} style={{ color: A.sub }}>
+                        {actionsOf(row).join(" · ") || "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!rows.length && <ListStateRow colSpan={5} state="empty" title={t("common.empty")} />}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </ListCard>
     </div>
   );
 }

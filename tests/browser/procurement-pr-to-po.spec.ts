@@ -15,8 +15,9 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   const api = async (path: string) => (await request.get(path, { headers: { Authorization: `Bearer ${session.token}` } })).json()
 
   await page.goto('/app/procurement/requests')
+  await page.getByRole('button', { name: 'New purchase request' }).click()
   await page.getByLabel('SKU 1').selectOption('browser-pr-item')
-  const supplier = page.getByLabel('Suppliers 1')
+  const supplier = page.getByLabel('Supplier 1')
   await expect(supplier.locator('option[value="browser-supplier"]')).toHaveCount(1)
   await expect(supplier).toHaveValue('browser-supplier')
   await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('4.25')
@@ -75,7 +76,7 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   // The next request for the item shows this PO's price (4.10) as the last
   // PO price, labelled as an ordered price, and the estimated price stays the
   // supplier's reference price (4.25): nothing is filled in from history.
-  await page.goto('/app/procurement/requests')
+  await page.goto('/app/procurement/requests?mode=create')
   await page.getByLabel('SKU 1').selectOption('browser-pr-item')
   await expect(page.getByTestId('pr-line-price-history-1-latest')).toContainText(`Last PO price USD 4.10 / EA · ${po.id}`)
   await expect(page.getByTestId('pr-line-price-history-1-note')).toContainText('not invoiced or paid prices')
@@ -98,7 +99,7 @@ test('a purchase request opened from the assistant arrives prefilled, labels eac
   await page.goto(`/app/procurement/requests?mode=create&itemId=browser-pr-item&sku=browser-pr-item&quantity=17&reason=${encodeURIComponent(reason)}&origin=ai_assistant`)
   await expect(page.getByTestId('prefill-banner')).toContainText('Prefilled from the assistant')
   await expect(page.getByLabel('SKU 1')).toHaveValue('browser-pr-item')
-  await expect(page.getByLabel('Suppliers 1')).toHaveValue('browser-supplier')
+  await expect(page.getByLabel('Supplier 1')).toHaveValue('browser-supplier')
   await expect(field(page, 'Quantity').locator('input')).toHaveValue('17')
   await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('4.25')
   await expect(field(page, 'Destination warehouse or service location').locator('select')).toHaveValue('browser-warehouse')
@@ -165,7 +166,7 @@ test('with several approved sources and none preferred, the supplier stays empty
 
   await page.goto(`/app/procurement/requests?mode=create&itemId=${encodeURIComponent(ids.nonePreferred)}&quantity=5&origin=ai_assistant`)
   await expect(page.getByLabel('SKU 1')).toHaveValue(ids.nonePreferred)
-  await expect(page.getByLabel('Suppliers 1')).toHaveValue('')
+  await expect(page.getByLabel('Supplier 1')).toHaveValue('')
   await expect(page.getByTestId('prefill-source-supplierId')).toHaveText('Choose a supplier: several approved sources, none preferred')
   // Nothing of a supplier nobody chose: no reference price, no lead-time date.
   await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('')
@@ -180,7 +181,7 @@ test('with several approved sources and none preferred, the supplier stays empty
   await expect(options.nth(1)).toContainText('No PO yet')
   // Choosing one sets the supplier only.
   await options.nth(1).click()
-  await expect(page.getByLabel('Suppliers 1')).toHaveValue(ids.bolt)
+  await expect(page.getByLabel('Supplier 1')).toHaveValue(ids.bolt)
   await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('')
   await expect(page.getByTestId('supplier-override-reason-1')).toHaveCount(0)
 
@@ -208,16 +209,16 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   const ids = await supplierChoiceData(request, headers)
   const before = new Set((await api('/api/procurement/requests')).map((pr: { id: string }) => pr.id))
 
-  await page.goto('/app/procurement/requests')
+  await page.goto('/app/procurement/requests?mode=create')
   await page.getByLabel('SKU 1').selectOption(ids.withPreferred)
-  await expect(page.getByLabel('Suppliers 1')).toHaveValue(ids.acme)
+  await expect(page.getByLabel('Supplier 1')).toHaveValue(ids.acme)
   await expect(page.getByTestId('supplier-override-reason-1')).toHaveCount(0)
   // The preferred supplier's 5-day lead time sets the need-by date, so the
   // order is not due the day it is placed (walkthrough 2026-10-07).
   const defaultDay = await page.getByLabel('Default required date').inputValue()
   const inFiveDays = new Date(Date.parse(`${defaultDay}T12:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10)
   await expect(field(page, 'Required date').locator('input').first()).toHaveValue(inFiveDays)
-  await page.getByLabel('Suppliers 1').selectOption(ids.bolt)
+  await page.getByLabel('Supplier 1').selectOption(ids.bolt)
   const picker = page.getByTestId('supplier-override-reason-1')
   await expect(picker).toContainText(`Why not the preferred supplier (Acme ${ids.stamp})?`)
   await page.getByLabel('Estimated unit price 1').fill('3.20')
@@ -234,9 +235,9 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   // A reason belongs to the supplier it was given for: switching away and
   // back asks again.
   await picker.getByTestId('supplier-override-reason-1-code').selectOption('stock_now')
-  await page.getByLabel('Suppliers 1').selectOption(ids.acme)
+  await page.getByLabel('Supplier 1').selectOption(ids.acme)
   await expect(picker).toHaveCount(0)
-  await page.getByLabel('Suppliers 1').selectOption(ids.bolt)
+  await page.getByLabel('Supplier 1').selectOption(ids.bolt)
   await expect(picker.getByTestId('supplier-override-reason-1-code')).toHaveValue('')
   await picker.getByTestId('supplier-override-reason-1-code').selectOption('lead_time')
   await picker.getByTestId('supplier-override-reason-1-note').fill('Acme is out until November')
@@ -278,9 +279,9 @@ test.describe('a browser on UTC just after midnight UTC', () => {
     const workspaceDay = new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(at)
     const inFiveDays = new Date(Date.parse(`${workspaceDay}T12:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10)
 
-    await page.goto('/app/procurement/requests')
+    await page.goto('/app/procurement/requests?mode=create')
     await page.getByLabel('SKU 1').selectOption(ids.withPreferred)
-    await expect(page.getByLabel('Suppliers 1')).toHaveValue(ids.acme)
+    await expect(page.getByLabel('Supplier 1')).toHaveValue(ids.acme)
     await expect(page.getByLabel('Default required date')).toHaveValue(workspaceDay)
     await expect(field(page, 'Required date').locator('input').first()).toHaveValue(inFiveDays)
   })

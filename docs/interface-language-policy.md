@@ -53,6 +53,16 @@ names, or supplier names in place. Translate their presentation where appropriat
   "Prefilled from…" banner and each field's source label in English and Chinese
   (`src/components/prefill/PrefillSource.tsx`). A reason the assistant wrote is kept in
   the language it was written in, as stored business text.
+- The six Purchasing tabs (workbench, purchase requests, RFQs, purchase orders,
+  supplier invoices, three-way match) share one list layout
+  (`src/components/ui/listLayout.tsx`): metric cards, a search card, a list card and
+  status chips, with English and Chinese copy. Server status text such as the match
+  status is shown through the workspace dictionary. Checked in both languages on
+  2026-11-03 with the walkthrough data.
+- Shared form labels (`Field`), metric cards (`KpiCard`, `ActionableMetricCard`),
+  section headers and dialogs translate with the interface language from the i18n
+  context. They used to read `<html lang>`, which changes one render later, so a
+  Chinese page could keep English labels until something else re-rendered.
 - The draft review shows supplier message drafts (recipient, subject, message, open
   lines, "Open in email") with English and Chinese labels. The message text is the
   assistant's, in the answer language.

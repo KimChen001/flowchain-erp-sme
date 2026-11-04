@@ -770,8 +770,18 @@ async function loadProcurementSnapshot(client, filters = {}) {
     client.procurementFollowup.findMany({ where, orderBy: [{ createdAt: 'desc' }], take }),
   ])
 
+  // A request records its requester's user id; lists show the person's name.
+  const requesterIds = [...new Set(purchaseRequests.map((record) => text(metadata(record).requesterId || record.requester)).filter(Boolean))]
+  const people = requesterIds.length && typeof client.user?.findMany === 'function'
+    ? await client.user.findMany({ where: { ...where, id: { in: requesterIds } }, select: { id: true, name: true } })
+    : []
+  const nameOf = new Map(people.map((person) => [person.id, text(person.name)]))
+
   return {
-    purchaseRequests: purchaseRequests.map(mapPurchaseRequest),
+    purchaseRequests: purchaseRequests.map((record) => {
+      const request = mapPurchaseRequest(record)
+      return { ...request, requesterName: nameOf.get(request.requesterId) || '' }
+    }),
     rfqs: rfqs.map((rfq) => mapRfq(rfq, supplierQuotations)),
     purchaseOrders: purchaseOrders.map(mapPurchaseOrder),
     receivingDocs: receivingDocuments.map(mapReceivingDocument),
