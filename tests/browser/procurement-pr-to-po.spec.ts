@@ -108,6 +108,10 @@ test('a purchase request opened from the assistant arrives prefilled, labels eac
   await expect(page.getByTestId('prefill-source-estimatedUnitPrice')).toHaveText('Reference price')
   await expect(page.getByTestId('prefill-source-targetWarehouseId')).toHaveText('Item default warehouse')
   await expect(page.getByTestId('prefill-source-internalLineComment')).toHaveText('Reason from the assistant')
+  // The header's default date is the line's date, not today (2026-11-04).
+  const lineDay = await field(page, 'Required date').locator('input').first().inputValue()
+  expect(lineDay).toMatch(/^d{4}-d{2}-d{2}$/)
+  await expect(page.getByLabel('Default required date')).toHaveValue(lineDay)
   // Opening the form saves nothing.
   expect((await api('/api/procurement/requests')).filter((pr: { id: string }) => !before.has(pr.id))).toHaveLength(0)
 

@@ -33,6 +33,7 @@ export type AiRuntimeRequestV2 = {
     lastResponseId?: string;
     returnContext?: Record<string, unknown> | null;
     previousTurns?: Array<{ question: string; answer: string }>;
+    previousPendingOrder?: { sku: string; quantity?: number } | null;
   };
   sessionGrounding?: unknown;
   returnTo?: string;
