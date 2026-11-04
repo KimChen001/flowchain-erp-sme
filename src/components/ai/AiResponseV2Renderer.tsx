@@ -28,6 +28,7 @@ const rendererCopy = {
     note: "1 note",
     viewBasis: "View basis",
     basis: "Basis",
+    draftFor: "Draft a purchase request for {sku}",
     records: "Records",
     limitations: "Data limitations",
     impactDetails: "Business impact",
@@ -58,6 +59,7 @@ const rendererCopy = {
     note: "1 条说明",
     viewBasis: "查看依据",
     basis: "依据",
+    draftFor: "为 {sku} 起草采购申请",
     records: "相关记录",
     limitations: "数据限制",
     impactDetails: "业务影响",
@@ -187,8 +189,18 @@ const RECORD_CODE = /^(?=[^\s]*\d)(?=[^\s]*[A-Za-z])[A-Za-z0-9][A-Za-z0-9._/-]{2
 type RecordRef = { code: string; render: (code: string) => ReactNode };
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 
-function recordRefs(response: AiResponseV2, onNavigate?: Navigate) {
+// An item the answer offers to order is a choice, not a link: its chip asks
+// for a request for it, as its follow-up chip does (owner, 2026-11-03: a click
+// on the item opened its page).
+function OrderChoiceChip({ code, prompt, onFollowUp, language }: { code: string; prompt: string; onFollowUp?: (prompt: string) => void; language: Language }) {
+  return <button type="button" data-testid="ai-order-choice" data-action-kind="draft_choice" data-business-id={code} title={fill(rendererCopy[language].draftFor, { sku: code })} disabled={!onFollowUp} className={`${chipClass} hover:underline`} style={CHIP_STYLE} onClick={() => onFollowUp?.(prompt)}>{code}</button>;
+}
+
+function recordRefs(response: AiResponseV2, onNavigate?: Navigate, onFollowUp?: (prompt: string) => void, language: Language = "en-US") {
   const refs = new Map<string, RecordRef>();
+  for (const choice of response.orderChoices || []) {
+    if (choice?.sku && choice.prompt && !refs.has(choice.sku.toUpperCase())) refs.set(choice.sku.toUpperCase(), { code: choice.sku, render: (text) => <OrderChoiceChip code={text} prompt={choice.prompt} onFollowUp={onFollowUp} language={language} /> });
+  }
   for (const item of response.keyEvidence || []) {
     const code = item.entityLabel || item.label || "";
     if (RECORD_CODE.test(code) && !refs.has(code.toUpperCase())) refs.set(code.toUpperCase(), { code, render: (text) => <EvidenceLink item={item} onNavigate={onNavigate}>{text}</EvidenceLink> });
@@ -308,7 +320,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   if (!response || response.version !== "v2") return null;
   if (response.rag) return <RagAnswerCard rag={response.rag} title={response.conclusion.title} summary={response.conclusion.summary} />;
   const focused = toAiFocusedResponse(response, language);
-  const refs = recordRefs(response, onNavigate);
+  const refs = recordRefs(response, onNavigate, onFollowUp, language);
   const chips: Chips = { refs, pattern: recordPattern(refs) };
   // A compound answer shows a section per part in place of the summary and
   // the priorities, which repeat the sections.
