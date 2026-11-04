@@ -92,6 +92,7 @@
 
 ## Domain Notes
 
+- [Supply chain intelligence: shortages, replenishment, supplier choice and supplier risk](supply-chain-intelligence-design.md): proposal of 2026-11-02; one projection engine for run-out and order-by dates, measured lead time, a supplier comparison without a total score, sanctions screening and hazard alerts as evidence a person reviews, and a daily note; decisions SC-1–SC-20 open
 - [Global business search](global-business-search-v1.md)
 - [Supplier operational search](supplier-operational-search-v1.md)
 - [SRM supplier API migration notes](srm-supplier-api-migration-notes.md)
