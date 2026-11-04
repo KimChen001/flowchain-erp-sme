@@ -59,13 +59,16 @@ test('walkthrough scenario allocation: per-line demand, partially received POs a
 
     // Item master thresholds are read from the Item columns: LDM-001 has safety
     // stock 30 and reorder point 40, so 28 available is below the safety stock,
-    // and the unmet 7 of demand makes the risk high. The other items use 10 / 20.
+    // and the unmet 7 of demand makes the risk high. LDM-002 has safety stock
+    // 100 and reorder point 270, which its 265 ATP is below: the reorder list
+    // orders it now.
     assert.equal(ldm1.safetyStock, 30)
     assert.equal(ldm1.reorderPoint, 40)
     assert.equal(ldm1.stockStatus, 'below_safety_stock')
     assert.equal(ldm1.riskLevel, 'high')
-    assert.equal(ldm2.safetyStock, 10)
-    assert.equal(ldm2.stockStatus, 'ok')
+    assert.equal(ldm2.safetyStock, 100)
+    assert.equal(ldm2.reorderPoint, 270)
+    assert.equal(ldm2.stockStatus, 'below_reorder_point')
     const report = buildRuntimeGovernedReport(await readBusinessContext({ repositories: createDatabaseRepositoryRegistry({ env: process.env, prisma }), identity: { tenantId } }), { subject: 'inventory' })
     // Every item has posted receipts and no demand except LDM-001. ATP is on hand
     // plus in transit:
@@ -76,7 +79,7 @@ test('walkthrough scenario allocation: per-line demand, partially received POs a
     //   LDM-006  120 (110 + 10; the 10 rejected on GRN-005 are not stock) + 80 (PO-016)                  = 200
     assert.deepEqual(report.details.filter(row => row.id.startsWith('LDM-00')).map(row => [row.id, row.availableToPromise, row.stockStatus, row.status]).sort(), [
       ['LDM-001', 63, 'below_safety_stock', 'high'],
-      ['LDM-002', 265, 'ok', 'low'],
+      ['LDM-002', 265, 'below_reorder_point', 'low'],
       ['LDM-003', 1750, 'ok', 'low'],
       ['LDM-004', 40000, 'ok', 'low'],
       ['LDM-005', 7900, 'ok', 'low'],

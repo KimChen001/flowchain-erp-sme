@@ -12,10 +12,12 @@ import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay } from './tenant-calendar-d
 //                    item, so a reader who sees only some warehouses gets the
 //                    items listed as not checked, never a part of the stock
 //                    (with incoming for every warehouse) set against it.
-//   incoming         the remaining quantity of committed purchase order lines
-//                    in the item's stock unit (the allocation model's
-//                    incomingLines). A line due after the order-by day is left
-//                    out, and the day computed again until it stops moving.
+//   incoming         the remaining quantity of every committed purchase order
+//                    line in the item's stock unit (the allocation model's
+//                    incomingLines), whatever its due day: the inventory
+//                    position of a reorder point policy. A line past its due
+//                    day still counts and is flagged late, for the buyer to
+//                    confirm with the supplier; so is one with no due day.
 //   reorder point    the item's recorded reorder point only. Missing or 0 is
 //                    "not recorded", and the item is not checked.
 //   stock unit       the unit recorded on the item. Without one the item is
@@ -173,33 +175,21 @@ function judgeItem({ item, allocation, demand, reorderPoint, stockUnit, today, s
   }
   const poRef = (line) => (showPurchaseOrders ? text(line.orderNumber || line.purchaseOrderId) || null : null)
   const reorderPointUnits = toUnits(reorderPoint)
-  const stockUnits = toUnits(onHand) - toUnits(reserved)
-  let counted = lines
-  let result
-  for (;;) {
-    const positionUnits = stockUnits + counted.reduce((sum, line) => sum + toUnits(Number(line.remaining)), 0)
-    result = orderByDay({ positionUnits, reorderPointUnits, shippedUnits: demand.shippedUnits, today })
-    if (!result) return { aboveReorderPointWithoutHistory: true }
-    result.positionUnits = positionUnits
-    if (demand.shippedUnits === null) break
-    // The order-by day can only move earlier as lines drop out, so this ends
-    // within as many rounds as there are lines.
-    const kept = counted.filter((line) => !line.dueDay || line.dueDay <= result.orderByDate)
-    if (kept.length === counted.length) break
-    counted = kept
-  }
-  const countedIds = new Set(counted.map((line) => line.lineId))
+  const incomingUnits = lines.reduce((sum, line) => sum + toUnits(Number(line.remaining)), 0)
+  const positionUnits = toUnits(onHand) - toUnits(reserved) + incomingUnits
+  const result = orderByDay({ positionUnits, reorderPointUnits, shippedUnits: demand.shippedUnits, today })
+  if (!result) return { aboveReorderPointWithoutHistory: true }
+  const late = (line) => Boolean(line.dueDay) && line.dueDay < today
   const flags = [
     ...rows(allocation.incomingExcluded).map((line) => ({ code: 'po_line_other_unit', orderNumber: poRef(line), unit: text(line.unit) })),
-    ...lines.filter((line) => !countedIds.has(line.lineId)).map((line) => ({ code: 'po_line_due_after_order_by', orderNumber: poRef(line), dueDay: line.dueDay })),
-    ...counted.filter((line) => !line.dueDay).map((line) => ({ code: 'po_line_no_due_day', orderNumber: poRef(line) })),
+    ...lines.filter(late).map((line) => ({ code: 'po_line_late', orderNumber: poRef(line), dueDay: line.dueDay })),
+    ...lines.filter((line) => !line.dueDay).map((line) => ({ code: 'po_line_no_due_day', orderNumber: poRef(line) })),
     ...(rows(allocation.dataLimitations).some((code) => String(code).startsWith('po_line_unit_not_recorded:')) ? [{ code: 'po_line_unit_not_recorded' }] : []),
-    ...(demand.shippedUnits === null && lines.length ? [{ code: 'all_incoming_counted' }] : []),
     ...demand.otherUnits.map((entry) => ({ code: 'shipment_other_unit', unit: entry.unit, count: entry.lineCount })),
     ...(demand.unitNotRecorded ? [{ code: 'shipment_unit_not_recorded', count: demand.unitNotRecorded }] : []),
   ]
-  const position = fromUnits(result.positionUnits)
-  const shortfall = fromUnits(Math.max(0, reorderPointUnits - result.positionUnits))
+  const position = fromUnits(positionUnits)
+  const shortfall = fromUnits(Math.max(0, reorderPointUnits - positionUnits))
   // The purchase request line is in the item's purchase unit; the shortfall is
   // in its stock unit. When they differ (or either is unknown) the person
   // enters the quantity.
@@ -220,8 +210,8 @@ function judgeItem({ item, allocation, demand, reorderPoint, stockUnit, today, s
       daysUntilOrderBy: result.daysUntilOrderBy,
       onHand,
       reserved,
-      incoming: fromUnits(counted.reduce((sum, line) => sum + toUnits(Number(line.remaining)), 0)),
-      incomingLines: lines.map((line) => ({ orderNumber: poRef(line), remaining: Number(line.remaining), dueDay: line.dueDay || null, counted: countedIds.has(line.lineId) })),
+      incoming: fromUnits(incomingUnits),
+      incomingLines: lines.map((line) => ({ orderNumber: poRef(line), remaining: Number(line.remaining), dueDay: line.dueDay || null, late: late(line) })),
       position,
       reorderPoint,
       shortfall,

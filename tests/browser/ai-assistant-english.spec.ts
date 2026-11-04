@@ -181,6 +181,8 @@ test("every line that needs attention states its next step and offers its draft 
 });
 
 test("a failed or slow answer shows an English recovery message", async ({ page }) => {
+  // It waits out the client's 25 second limit.
+  test.setTimeout(90_000);
   await signIn(page);
   const panel = await openAssistant(page);
   await page.route("**/api/ai-runtime/respond", (route) => route.fulfill({ status: 503, json: { code: "AI_SKILL_UNAVAILABLE", error: "The assistant could not read your workspace data just now. Please try again." } }));
@@ -192,10 +194,10 @@ test("a failed or slow answer shows an English recovery message", async ({ page 
 
   await page.unroute("**/api/ai-runtime/respond");
   await newConversation(panel, "New conversation");
-  // No answer within the client's 12 second limit.
+  // No answer within the client's 25 second limit (a chip may go to the model too).
   await page.route("**/api/ai-runtime/respond", () => new Promise(() => {}));
   await panel.getByTestId("ai-empty-prompt-chip").first().click();
-  await expect(panel.getByTestId("ai-message-assistant").last()).toContainText("took too long to answer", { timeout: 20_000 });
+  await expect(panel.getByTestId("ai-message-assistant").last()).toContainText("took too long to answer", { timeout: 35_000 });
   expect(await chineseLines(panel)).toEqual([]);
 });
 

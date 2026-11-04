@@ -314,6 +314,10 @@ test('reorder_list returns the preferred supplier\'s lead time, id and minimum o
   assert.equal(row.shortfall, 102)
   assert.deepEqual([row.requestQuantity, row.raisedToMinimum], [150, true])
   assert.ok(Array.isArray(row.flags) && row.flags.every((flag) => typeof flag.code === 'string'))
+  // Every open line counts in the position, late or not, and says whether it is late.
+  assert.ok(row.incomingLines.length && row.incomingLines.every((line) => typeof line.late === 'boolean'))
+  assert.equal(row.position, row.onHand - row.reserved + row.incomingLines.reduce((sum, line) => sum + line.remaining, 0))
+  assert.deepEqual(row.flags.filter((flag) => flag.code === 'po_line_late').map((flag) => flag.orderNumber), row.incomingLines.filter((line) => line.late).map((line) => line.orderNumber))
   assert.deepEqual((await runAiReadTool('reorder_list', { sku: 'ldm-001' }, { facts, context })).result.rows.map((entry) => entry.sku), ['LDM-001'])
   assert.deepEqual((await runAiReadTool('reorder_list', { supplier: 'acme' }, { facts, context })).result.rows.map((entry) => entry.sku), ['LDM-001'])
   assert.deepEqual((await runAiReadTool('reorder_list', { supplier: 'Summit Packaging' }, { facts, context })).result.rows, [])

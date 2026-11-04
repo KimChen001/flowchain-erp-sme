@@ -84,6 +84,9 @@ const entries = {
   'assistant_v2.notice.rate_limited': ['You have asked many questions in a short time. Wait a few minutes, then ask again.', '短时间内提问较多，请几分钟后再问。'],
   // A purchase request the model-first assistant proposed: the reason line of the prefilled form.
   'model_first.request.reason': ['Requested in the assistant. Review it before you submit.', '在 AI 助手中提出，提交前请核对。'],
+  // The reason line when the user gave none: the reorder list's basis for the quantity.
+  'model_first.request.reason_reorder': ['Reorder list: order by {date}; {quantity} {unit} brings the stock position back to the reorder point.', '补货清单：最晚下单日 {date}；{quantity} {unit}可补回再订货点。'],
+  'model_first.request.reason_reorder_minimum': ['Reorder list: order by {date}; shortfall {shortfall} {unit}, raised to the supplier minimum of {quantity} {unit}.', '补货清单：最晚下单日 {date}；缺口 {shortfall} {unit}，按供应商最小起订量提到 {quantity} {unit}。'],
   'answer.checked': ['Checked: {sources}', '已检查：{sources}'],
   'answer.review_boundary': ['This answer does not send, approve or change anything.', '本回答不会发送、批准或修改任何内容。'],
   // A question with several parts, answered part by part (ai-skill-compound.mjs).
@@ -246,6 +249,8 @@ const entries = {
   'next.po_followup': ['Next: ask {supplier} to confirm a delivery date.', '下一步：请 {supplier} 确认交货日期。'],
   'next.chase_po': ['Next: chase {po}, which brings this item.', '下一步：跟进带来该物料的 {po}。'],
   'next.send_po': ['Next: send {po} to the supplier; it has not been issued yet.', '下一步：把 {po} 发给供应商，它尚未发出。'],
+  // An approved order the answer names that is not due soon: send it, then mark it issued on its page.
+  'next.issue_po': ['Next: send {po} to the supplier (print or save the PO document), then mark it issued on its page.', '下一步：把 {po} 发给供应商（打印或另存订单文件后自行发送），再在订单页面标记为下达。'],
   'next.not_due': ['Next: no follow-up yet; it is due {date} and not overdue.', '下一步：暂不需要跟进，{date} 到期，尚未逾期。'],
   'next.on_order': ['Next: no follow-up yet; it is on order on {po}, due {date}.', '下一步：暂不需要跟进，已在 {po} 订购，{date} 到期。'],
   'next.on_order_no_date': ['Next: no follow-up yet; it is on order on {po}.', '下一步：暂不需要跟进，已在 {po} 订购。'],

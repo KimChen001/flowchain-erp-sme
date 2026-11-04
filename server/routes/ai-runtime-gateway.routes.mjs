@@ -111,8 +111,13 @@ function modelAccessSend(send, overCap) {
 // A model-first answer that could not be given (the check failed twice, or a
 // limit ran out) is answered by the rules, and says so. A failed provider call
 // is noted by modelAccessSend, more specifically.
+// After a failed model answer the rules answer, with a notice. Their order
+// form does not open by itself: it may differ from what the conversation
+// agreed (on 2026-11-03 a fallback opened 95 pcs after the assistant had
+// offered the reorder list's 50), so it waits for the user's click.
 function modelFirstFallbackSend(send) {
-  return (res, status, payload) => send(res, status, isAnswer(status, payload) && !payload.aiModelAccess ? { ...payload, aiModelAccess: { status: 'unavailable', reason: 'unchecked' } } : payload)
+  const closed = (cards) => (Array.isArray(cards) ? cards.map((card) => (card?.autoOpen ? { ...card, autoOpen: false } : card)) : cards)
+  return (res, status, payload) => send(res, status, isAnswer(status, payload) && !payload.aiModelAccess ? { ...payload, reviewCards: closed(payload.reviewCards), aiModelAccess: { status: 'unavailable', reason: 'unchecked' } } : payload)
 }
 
 // A question assistant v2 handed back is answered by the rules, and says why:

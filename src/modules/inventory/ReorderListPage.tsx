@@ -75,16 +75,17 @@ function formatDay(day: string, locale: string) {
   }
 }
 
+// Daily demand is an average: one decimal reads better than four ("10.0444").
+const oneDecimal = (value: number | null | undefined) => (value === null || value === undefined ? value : Math.round(value * 10) / 10);
 const withUnit = (value: number | null | undefined, unit: string | null) => (value === null || value === undefined ? "—" : `${formatQuantity(value)}${unit ? ` ${unit}` : ""}`);
 
 function flagText(flag: Flag, t: ReturnType<typeof useReorderListCopy>) {
   const hidden = !flag.orderNumber;
   const byCode: Record<string, () => string> = {
     po_line_other_unit: () => t(hidden ? "poOtherUnitHidden" : "poOtherUnit", { po: flag.orderNumber || "", unit: flag.unit || "" }),
-    po_line_due_after_order_by: () => t(hidden ? "poAfterOrderByHidden" : "poAfterOrderBy", { po: flag.orderNumber || "", day: flag.dueDay || "" }),
+    po_line_late: () => t(hidden ? "poLateHidden" : "poLate", { po: flag.orderNumber || "", day: flag.dueDay || "" }),
     po_line_no_due_day: () => t(hidden ? "poNoDueDayHidden" : "poNoDueDay", { po: flag.orderNumber || "" }),
     po_line_unit_not_recorded: () => t("poUnitNotRecorded"),
-    all_incoming_counted: () => t("allIncomingCounted"),
     shipment_other_unit: () => t.count("shipmentOtherUnit", flag.count ?? 0, { unit: flag.unit || "" }),
     shipment_unit_not_recorded: () => t.count("shipmentUnitNotRecorded", flag.count ?? 0),
     purchase_unit_differs: () => t("purchaseUnitDiffers", { unit: flag.unit || "" }),
@@ -256,7 +257,7 @@ export default function ReorderListPage() {
                         <td className="px-3 py-3" data-testid="reorder-demand">
                           {row.demand.enough ? (
                             <>
-                              <div>{withUnit(row.demand.averageDailyDemand, row.unit)}</div>
+                              <div>{withUnit(oneDecimal(row.demand.averageDailyDemand), row.unit)}</div>
                               <div style={{ color: A.sub }}>{t.count("demandDays", row.demand.shipmentDays, { window: row.demand.windowDays })}</div>
                             </>
                           ) : (
