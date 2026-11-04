@@ -120,6 +120,7 @@ model Tenant {
   customFieldRevisions                  CustomFieldRevision[]
   customFieldOptions                    CustomFieldOption[]
   intakeSchemaSnapshots                 IntakeSchemaSnapshot[]
+  documentNumberSequences               DocumentNumberSequence[]
 }
 
 enum IntakeSourceType {
@@ -3602,4 +3603,17 @@ model AiUsageMonthly {
   tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@id([tenantId, month])
+}
+
+// Document number sequences (shared/document-numbering.mjs): the last number
+// given out per workspace, document type and month (YYYYMM, workspace time).
+model DocumentNumberSequence {
+  tenantId     String
+  documentType String
+  period       String
+  lastValue    Int
+  updatedAt    DateTime @default(now()) @updatedAt
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@id([tenantId, documentType, period])
 }

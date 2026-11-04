@@ -1,4 +1,5 @@
 import { documentSettingsSeed, normalizeDocumentSettings, validateDocumentSettings } from '../../shared/business-documents.mjs'
+import { DOCUMENT_NUMBER_PREFIX_PATTERN, DOCUMENT_NUMBER_TYPES, defaultNumberingRules } from '../../shared/document-numbering.mjs'
 
 export const SUPPORTED_LANGUAGES = ['en-US', 'zh-CN']
 export const SUPPORTED_LOCALES = ['zh-CN', 'en-US']
@@ -12,19 +13,10 @@ export const SUPPORTED_TIMEZONES = [
 export const SUPPORTED_CURRENCIES = ['CNY', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD']
 
 export const operationalSettingsSeed = {
+  // Document numbers: PREFIX-YYYYMM-NNNN per workspace, type and month
+  // (shared/document-numbering.mjs). Only the prefix is a setting.
   numbering: {
-    rules: [
-      ['NUM-PO', 'Purchase Order', 'PO'],
-      ['NUM-GRN', 'Receiving Document', 'GRN'],
-      ['NUM-RR', 'Return Request', 'RR'],
-      ['NUM-RA', 'Return Authorization', 'RA'],
-      ['NUM-RP', 'Return Posting', 'RP'],
-      ['NUM-SI', 'Supplier Invoice', 'SI'],
-      ['NUM-CI', 'Customer Invoice', 'CI'],
-      ['NUM-CM', 'Credit Memo / Credit Note', 'CM'],
-    ].map(([id, document, prefix]) => ({
-      id, document, prefix, datePattern: 'YYYYMM', separator: '-', sequenceLength: 4, nextSequence: 1,
-    })),
+    rules: defaultNumberingRules(),
   },
   review: {
     policies: [
@@ -87,7 +79,7 @@ export const operationalSettingsSeed = {
 // Nothing reads the other sections yet, so the settings UI shows them
 // read-only as "Not in effect yet" and keeps their stored values.
 export const REVIEW_TOLERANCE_FIELDS = ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance']
-export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: [], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
+export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: ['prefix'], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
 const TOLERANCE_PATTERN = /^\d+(\.\d{1,4})?$/
 
 const clone = value => structuredClone(value)
@@ -128,10 +120,20 @@ export function effectiveLanguage(user, tenant) {
   return normalizeLanguagePreference(user?.languagePreference) || (SUPPORTED_LANGUAGES.includes(tenant?.defaultLanguage) ? tenant.defaultLanguage : 'en-US')
 }
 
+// One rule per document type in the catalog, with the workspace's saved
+// prefix where it is valid; the date pattern, separator and length are fixed.
+function mergeNumberingRules(stored) {
+  const saved = new Map((Array.isArray(stored) ? stored : []).map(rule => [text(rule?.id), rule]))
+  return defaultNumberingRules().map(rule => {
+    const prefix = text(saved.get(rule.id)?.prefix).toUpperCase()
+    return { ...rule, prefix: DOCUMENT_NUMBER_PREFIX_PATTERN.test(prefix) ? prefix : rule.prefix }
+  })
+}
+
 export function mergeOperationalSettings(value) {
   const current = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   return {
-    numbering: { ...clone(operationalSettingsSeed.numbering), ...(current.numbering || {}), rules: Array.isArray(current.numbering?.rules) ? clone(current.numbering.rules) : clone(operationalSettingsSeed.numbering.rules) },
+    numbering: { rules: mergeNumberingRules(current.numbering?.rules) },
     review: { ...clone(operationalSettingsSeed.review), ...(current.review || {}), policies: Array.isArray(current.review?.policies) ? clone(current.review.policies) : clone(operationalSettingsSeed.review.policies) },
     modules: { ...clone(operationalSettingsSeed.modules), ...(current.modules || {}), items: Array.isArray(current.modules?.items) ? clone(current.modules.items) : clone(operationalSettingsSeed.modules.items) },
     ai: { ...clone(operationalSettingsSeed.ai), ...(current.ai || {}), capabilities: Array.isArray(current.ai?.capabilities) ? clone(current.ai.capabilities) : clone(operationalSettingsSeed.ai.capabilities) },
@@ -163,8 +165,15 @@ export function validateOperationalSection(section, value, options = {}) {
   if (section === 'documents') return validateDocumentSettings(value, options)
   if (section === 'numbering') {
     const rules = Array.isArray(value.rules) ? value.rules : []
-    const signatures = rules.map(rule => `${text(rule.prefix).toUpperCase()}|${text(rule.datePattern)}|${text(rule.separator)}`)
-    if (!rules.length || new Set(signatures).size !== signatures.length) throw Object.assign(new Error('Numbering rules are empty or conflicting.'), { code: 'NUMBERING_RULE_CONFLICT', status: 409 })
+    const known = new Set(DOCUMENT_NUMBER_TYPES.map(entry => entry.ruleId))
+    for (const rule of rules) {
+      if (!known.has(text(rule?.id))) throw Object.assign(new Error('Unknown numbering rule.'), { code: 'NUMBERING_RULE_UNKNOWN', status: 400, details: { id: text(rule?.id) } })
+      if (!DOCUMENT_NUMBER_PREFIX_PATTERN.test(text(rule?.prefix).toUpperCase())) throw Object.assign(new Error('A prefix is 1 to 8 letters or digits.'), { code: 'NUMBERING_PREFIX_INVALID', status: 400, details: { id: text(rule.id) } })
+    }
+    const merged = mergeNumberingRules(rules)
+    const prefixes = merged.map(rule => rule.prefix)
+    if (!rules.length || new Set(prefixes).size !== prefixes.length) throw Object.assign(new Error('Numbering rules are empty or conflicting.'), { code: 'NUMBERING_RULE_CONFLICT', status: 409 })
+    return { rules: merged }
   }
   if (section === 'review' && !Array.isArray(value.policies)) throw Object.assign(new Error('Review policies are required.'), { code: 'REVIEW_POLICY_VALIDATION_FAILED', status: 400 })
   if (section === 'review') {
