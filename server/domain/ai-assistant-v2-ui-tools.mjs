@@ -1,4 +1,4 @@
-import { CHART_KINDS, CHOICE_PROMPTS, RECORD_EMPHASES, SETUP_FORM_ROWS, SETUP_STEP_IDS, refSchema, safeParsePartProps } from '../../shared/assistant-protocol.mjs'
+import { CHART_KINDS, CHOICE_PROMPTS, NEW_SUPPLIER_LINK, RECORD_EMPHASES, SETUP_FORM_ROWS, SETUP_STEP_IDS, refSchema, safeParsePartProps } from '../../shared/assistant-protocol.mjs'
 import { PURCHASE_SUGGESTION_SOURCES, suggestNeedByDate } from '../../shared/purchase-suggestion.mjs'
 import { can } from '../auth/authorization-service.mjs'
 import { AI_READ_TOOL_COLUMNS } from './ai-read-tool-runner.mjs'
@@ -32,7 +32,9 @@ import { findPaymentTerm } from './standard-payment-terms.mjs'
 // pasted. Each value must be in the user's own words of this conversation
 // (userText); the server reads the workspace's records for duplicates and
 // marks what is wrong with each row, and nothing is created until the user
-// clicks Create in the card.
+// clicks Create in the card. The request form takes the same check for the
+// price, currency and lead time of a supplier the user named that the item
+// has not approved yet, which the form adds when the user clicks Create.
 
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
@@ -615,9 +617,76 @@ function approvedSuppliers(row, output, price) {
 
 const matchSupplier = (suppliers, wanted) => suppliers.find((supplier) => fold(supplier.id) === fold(wanted) || fold(supplier.name) === fold(wanted))
 
+// The workspace's suppliers as stored: id, code, name, whether active, and
+// the currency it records (null when none).
+function storedSupplier(row) {
+  const meta = isObject(row.metadata) ? row.metadata : {}
+  return { id: text(row.id), code: text(row.code), name: text(row.name), active: fold(row.status || 'active') === 'active', currency: currencyCode(text(meta.defaultCurrency || meta.currency).toUpperCase()) }
+}
+
+// Every supplier of the user's workspace (master data is readable by every
+// signed-in role), or null when they cannot be read.
+async function workspaceSuppliers({ prisma, tenantId } = {}) {
+  if (typeof prisma?.supplier?.findMany !== 'function' || !tenantId) return null
+  try {
+    return array(await prisma.supplier.findMany({ where: { tenantId }, select: { id: true, code: true, name: true, status: true, metadata: true }, take: 5000 })).map(storedSupplier)
+  } catch {
+    return null
+  }
+}
+
+// A supplier the user named, among the workspace's: by id, code or name, else
+// the one active supplier whose name holds the words the user wrote
+// ("Northstar" for Northstar Electronics); several such are left to the user.
+function findWorkspaceSupplier(records, wanted) {
+  const key = said(wanted)
+  const exact = records.filter((row) => [row.id, row.code, row.name].some((value) => value && said(value) === key))
+  if (exact.length) return { found: exact.find((row) => row.active) || exact[0] }
+  if (key.length < 3) return {}
+  const partial = records.filter((row) => row.active && row.name && ` ${said(row.name)} `.includes(` ${key} `))
+  return partial.length === 1 ? { found: partial[0] } : partial.length ? { several: partial.slice(0, 5) } : {}
+}
+
+// The price, currency and lead time the user typed for a supplier the form
+// adds to the item: each must be in the user's own words.
+function typedTerms(line, words) {
+  const untyped = []
+  if (isNumber(line.unitPrice) && !words.number(line.unitPrice)) untyped.push(`unitPrice ${line.unitPrice}`)
+  if (isNumber(line.leadTimeDays) && !words.number(line.leadTimeDays)) untyped.push(`leadTimeDays ${line.leadTimeDays}`)
+  const currency = missing(line.currency) ? null : text(line.currency).toUpperCase()
+  if (currency && (!KNOWN_CURRENCIES.has(currency) || !words.currency(currency))) untyped.push(`currency "${line.currency}"`)
+  if (untyped.length) return fail('not_typed', `Not in the user's words: ${untyped.join(', ')}. Pass a price, currency or lead time only as the user wrote it, or leave it out; the user can enter it in the form.`)
+  return { unitPrice: isNumber(line.unitPrice) ? line.unitPrice : null, leadTimeDays: Number.isInteger(line.leadTimeDays) ? line.leadTimeDays : null, currency }
+}
+
+// A supplier the user named that the result does not list as approved for
+// the item. One of the workspace's active suppliers comes back as one more
+// option with link "new" when the user may add approved suppliers to items:
+// the form adds it when the user clicks Create. Otherwise the model is told
+// why it cannot be used. An approved supplier named by its code or a shorter
+// name is that supplier.
+function unlistedSupplier(row, approved, line, scope) {
+  const sku = row.item.sku
+  const listed = approved.map((entry) => entry.name).join(', ') || 'none'
+  const unknown = (why) => fail('supplier_not_listed', `${line.supplier} is not among the approved suppliers the result lists for ${sku} (${listed})${why}. Leave supplier out; the user can choose in the form.`)
+  if (!scope.records) return unknown('')
+  const { found, several } = findWorkspaceSupplier(scope.records, line.supplier)
+  if (several) return fail('supplier_unclear', `${line.supplier} could be any of ${several.map((entry) => entry.name).join(', ')}. Ask the user which one they mean, or pass its full name.`)
+  if (!found) return unknown(', nor a supplier of this workspace')
+  if (!found.active) return unknown(`; ${found.name} is inactive in this workspace`)
+  const known = approved.find((entry) => entry.id === found.id)
+  if (known) return { picked: known }
+  const name = (found.name || found.code || found.id).slice(0, 200)
+  if (!scope.mayLink) return fail('supplier_not_approved', `${name} is a supplier of this workspace but not an approved supplier of ${sku} (approved: ${listed}), and this user's role cannot add one. Say that a colleague with master data access can add ${name} as an approved supplier of ${sku}, then leave supplier out to show the form with the approved suppliers, or show no form.`)
+  const terms = typedTerms(line, scope.words)
+  if (terms.error) return terms
+  return { picked: { id: found.id, name, preferred: false, leadTimeDays: terms.leadTimeDays, unitPrice: terms.unitPrice, currency: terms.currency || found.currency || scope.workspaceCurrency || null, link: NEW_SUPPLIER_LINK } }
+}
+
 // One form row. The model's quantity, supplier and date count only for an
-// item the user named; otherwise every value is the server's.
-function formRow(row, output, { named, line }) {
+// item the user named; otherwise every value is the server's. scope: what a
+// supplier the item has not approved is checked against (unlistedSupplier).
+function formRow(row, output, { named, line, scope }) {
   const price = referencePrice(row, output)
   const suppliers = approvedSuppliers(row, output, price)
   const chosen = isObject(row.supplier) && !output.suppliersHidden ? row.supplier : null
@@ -627,13 +696,20 @@ function formRow(row, output, { named, line }) {
   let shortWeekOf = isDay(row.needByDate?.warning?.weekOf) ? row.needByDate.warning.weekOf : null
   let leadDate = row.needByDate?.source === PURCHASE_SUGGESTION_SOURCES.leadTime && isDay(row.needByDate.value) ? row.needByDate.value : null
   if (named && line?.supplier) {
-    const picked = matchSupplier(suppliers, line.supplier)
-    if (!picked) return fail('supplier_not_listed', `${line.supplier} is not among the approved suppliers the result lists for ${row.item.sku} (${suppliers.map((entry) => entry.name).join(', ') || 'none'}). Leave supplier out; the user can choose in the form.`)
-    supplier = { id: picked.id, name: picked.name, source: 'user_named' }
+    let picked = matchSupplier(suppliers, line.supplier)
+    if (!picked) {
+      const unlisted = unlistedSupplier(row, suppliers, line, scope)
+      if (unlisted.error) return unlisted
+      picked = unlisted.picked
+      if (picked.link) suppliers.push(picked)
+    }
+    supplier = { id: picked.id, name: picked.name, source: 'user_named', ...(picked.link ? { link: picked.link } : {}) }
     if (!chosen || picked.id !== chosen.id) {
       // That supplier's own price and lead time; the need-by date follows its
-      // lead time as the form does when the user changes the supplier.
-      estimatedUnitPrice = picked.unitPrice !== null && picked.unitPrice !== undefined ? { value: picked.unitPrice, currency: picked.currency, source: 'reference_price' } : { value: null, currency: null, source: price.source === 'masked' ? 'masked' : 'missing' }
+      // lead time as the form does when the user changes the supplier. A
+      // supplier the form adds has no reference price yet: the user enters
+      // the price in the form (any price they typed is on its option).
+      estimatedUnitPrice = !picked.link && picked.unitPrice !== null && picked.unitPrice !== undefined ? { value: picked.unitPrice, currency: picked.currency, source: 'reference_price' } : { value: null, currency: null, source: price.source === 'masked' && !picked.link ? 'masked' : 'missing' }
       const moved = suggestNeedByDate({ today: output.today, leadTimeDays: picked.leadTimeDays ?? null, firstShortWeek: shortWeekOf })
       lead = moved.leadTimeDays
       leadDate = moved.source === PURCHASE_SUGGESTION_SOURCES.leadTime ? moved.value : null
@@ -665,7 +741,7 @@ function formRow(row, output, { named, line }) {
 
 const suggestPurchaseRequest = defineUiTool({
   name: 'suggest_purchase_request',
-  description: 'Show the in-chat purchase request form from a suggest_purchase_lines result (source). from user_named: the items the user named in this question, listed in lines. from agreed: the items the user agreed to, named or proposed earlier in this conversation, listed in lines, or no lines for every item of the latest form. from suggestions: the suggested items (all, or those listed in lines), for the user to choose. Quantity, supplier and need-by date in a line are used only for an item the user named or agreed to, and only when the user gave or changed them; otherwise the server fills every value. Named and agreed items are ticked (unless open orders already cover them); the user ticks the rest and creates the draft with their own click.',
+  description: 'Show the in-chat purchase request form from a suggest_purchase_lines result (source). from user_named: the items the user named in this question, listed in lines. from agreed: the items the user agreed to, named or proposed earlier in this conversation, listed in lines, or no lines for every item of the latest form. from suggestions: the suggested items (all, or those listed in lines), for the user to choose. Quantity, supplier and need-by date in a line are used only for an item the user named or agreed to, and only when the user gave or changed them; otherwise the server fills every value. Named and agreed items are ticked (unless open orders already cover them); the user ticks the rest and creates the draft with their own click. A supplier the user named that is not yet an approved supplier of the item, but is an active supplier of the workspace, goes on the line when the user may add approved suppliers: when the user clicks Create, the form adds it as an approved supplier of the item, then creates the request. Pass unitPrice, currency and leadTimeDays only for such a supplier and only as the user typed them; the user can also enter them in the form.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -680,8 +756,11 @@ const suggestPurchaseRequest = defineUiTool({
           properties: {
             sku: { type: 'string', minLength: 1, maxLength: 120 },
             quantity: { type: 'number', exclusiveMinimum: 0, description: 'Only a quantity the user typed or changed.' },
-            supplier: { type: 'string', minLength: 1, maxLength: 200, description: 'Only a supplier the user named: its name or id.' },
+            supplier: { type: 'string', minLength: 1, maxLength: 200, description: 'Only a supplier the user named: its name, code or id.' },
             needByDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', minLength: 10, maxLength: 10, description: 'Only a date the user gave, YYYY-MM-DD.' },
+            unitPrice: { type: 'number', minimum: 0, maximum: 1000000000, description: 'Only a unit price the user typed for a supplier that is not yet approved for the item.' },
+            currency: { type: 'string', pattern: '^[A-Za-z]{3}$', minLength: 3, maxLength: 3, description: 'Only a currency the user gave with that price (code or sign), as a 3-letter code.' },
+            leadTimeDays: { type: 'integer', minimum: 0, maximum: 3650, description: 'Only a lead time in days the user typed for that supplier.' },
           },
           required: ['sku'],
           additionalProperties: false,
@@ -725,18 +804,34 @@ const suggestPurchaseRequest = defineUiTool({
     if (!requestable.length) return fail('nothing_to_request', `No item in ${input.source} can be requested (inactive or none). Say so instead of showing the form.`)
     if (requestable.length > MAX_FORM_LINES) return fail('too_many_lines', `The form takes up to ${MAX_FORM_LINES} items; list the SKUs to show in lines.`)
     const userNamed = new Set(array(ctx.userNamedSkus).map(fold))
-    const named = []
-    const suggested = []
-    for (const row of requestable) {
-      const isNamed = agreed ? agreed.has(fold(row.item.sku)) : userNamed.has(fold(row.item.sku))
-      const built = formRow(row, output, { named: isNamed, line: linesBySku.get(fold(row.item.sku)) })
-      if (built.error) return built
-      if (isNamed) named.push(built)
-      else suggested.push(built)
+    const entries = requestable.map((row) => ({ row, isNamed: agreed ? agreed.has(fold(row.item.sku)) : userNamed.has(fold(row.item.sku)), line: linesBySku.get(fold(row.item.sku)) }))
+    // Adding an approved supplier to an item is what the item supplier route
+    // allows (master-data.routes.mjs WRITE_RULES); a role that cannot see
+    // suppliers in the assistant is not offered it.
+    const mayLink = canLinkItemSuppliers(ctx.actor) && !output.suppliersHidden
+    const workspaceCurrency = currencyCode(text(ctx.workspaceCurrency).toUpperCase())
+    const finish = (records) => {
+      const scope = { records, mayLink, words: userWords(ctx.userText), workspaceCurrency }
+      const named = []
+      const suggested = []
+      for (const { row, isNamed, line } of entries) {
+        const built = formRow(row, output, { named: isNamed, line, scope })
+        if (built.error) return built
+        if (isNamed) named.push(built)
+        else suggested.push(built)
+      }
+      const props = {
+        formId: `${ctx.threadId}:${ctx.messageId}:${ctx.partId}`, source: source.id, suggested, lines: named, canCreate: true,
+        canLinkSuppliers: mayLink, ...(mayLink && workspaceCurrency ? { workspaceCurrency } : {}),
+      }
+      const added = [...named, ...suggested].filter((row) => row.supplier?.link).map((row) => refOf({ type: 'supplier', id: row.supplier.id, label: row.supplier.name.slice(0, 120) }))
+      const refs = [...requestable.flatMap((row) => [refOf(row.ref), ...array(row.covered?.by).map((entry) => refOf(entry.ref))]), ...added]
+      return part('pr_form', props, refs)
     }
-    const props = { formId: `${ctx.threadId}:${ctx.messageId}:${ctx.partId}`, source: source.id, suggested, lines: named, canCreate: true }
-    const refs = requestable.flatMap((row) => [refOf(row.ref), ...array(row.covered?.by).map((entry) => refOf(entry.ref))])
-    return part('pr_form', props, refs)
+    // The workspace's suppliers are read only when the user named one that the
+    // result does not list as approved for its item.
+    const unlisted = !output.suppliersHidden && entries.some(({ row, isNamed, line }) => isNamed && line?.supplier && !matchSupplier(approvedSuppliers(row, output, referencePrice(row, output)), line.supplier))
+    return unlisted ? workspaceSuppliers(ctx).then(finish) : finish(null)
   },
 })
 
@@ -777,9 +872,11 @@ const showSetupSteps = defineUiTool({
 })
 
 const allowedTo = (actor, permission) => Boolean(actor?.tenantId) && can({ actor, permission, tenantId: actor.tenantId })
-// The permissions of the Suppliers and Items pages' writes (master-data.routes.mjs WRITE_RULES).
+// The permissions of the Suppliers and Items pages' writes, and of an item's
+// supplier links, which share the item's (master-data.routes.mjs WRITE_RULES).
 const canAddSuppliers = (actor) => allowedTo(actor, 'master_data.supplier.manage')
 const canAddItems = (actor) => allowedTo(actor, 'master_data.item.manage')
+const canLinkItemSuppliers = (actor) => allowedTo(actor, 'master_data.item.manage')
 
 // The user's words as values are found in them: NFKC, case and spacing folded.
 const said = (value) => text(value).normalize('NFKC').toLowerCase().replace(/\s+/g, ' ')
@@ -838,10 +935,7 @@ async function setupRecords(ctx, items) {
     prisma.paymentTerm.findMany({ where: { tenantId }, select: { code: true, name: true }, orderBy: [{ code: 'asc' }] }),
   ])
   return {
-    suppliers: array(suppliers).map((row) => {
-      const meta = isObject(row.metadata) ? row.metadata : {}
-      return { id: text(row.id), code: text(row.code), name: text(row.name), active: fold(row.status || 'active') === 'active', currency: currencyCode(text(meta.defaultCurrency || meta.currency).toUpperCase()) }
-    }),
+    suppliers: array(suppliers).map(storedSupplier),
     items: array(stored).map((row) => ({ id: text(row.id), sku: text(row.sku), name: text(row.name) })),
     terms: array(terms).map((row) => ({ code: text(row.code), name: text(row.name) })).filter((row) => row.code),
   }
