@@ -517,6 +517,10 @@ test('the system prompt asks for the source handle, status words, one set of chi
   assert.match(ASSISTANT_V2_SYSTEM, /Never mention tools, displays, sources, ids, errors or retries to the user/)
   assert.match(ASSISTANT_V2_SYSTEM, /never as its code: where a result gives a label beside the code \(statusLabel/)
   assert.match(ASSISTANT_V2_SYSTEM, /suggest_followups, called once/)
+  // Chips only when there is a next step (2026-11-04), never beside a question to the user.
+  assert.match(ASSISTANT_V2_SYSTEM, /When the answer has a clear next step, end it with suggest_followups/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Leave the chips out when the answer itself asks the user something/)
+  assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /End every answer with suggest_followups/)
   assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /tool_use id/)
 })
 
