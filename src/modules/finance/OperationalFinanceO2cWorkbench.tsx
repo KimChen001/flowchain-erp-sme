@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertTriangle, FilePlus2, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FilePlus2, FileText, MessageSquareWarning, RefreshCw, Send, Wallet } from "lucide-react";
 import { Link } from "react-router";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { StatusChip, TwoStepAction, useFinanceStatusLabel } from "./FinanceControls";
 import { PaymentRecords } from "./PaymentRecords";
 import { useI18n } from "../../i18n/I18n";
-import { A, Card } from "../../components/ui";
+import { A, Card, Field, inputStyle } from "../../components/ui";
+import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
+import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass } from "../../components/ui/listLayout";
+import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { addCalendarDays } from "../../lib/prefill";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
@@ -17,7 +20,7 @@ import { PREVIEW_CUSTOMER_INVOICE_STATUSES, PRINTABLE_CUSTOMER_INVOICE_STATUSES 
 // The invoice statuses whose document is worth opening: issued (to send) and
 // approved (to check before issuing).
 const documentStatuses: readonly string[] = [...PREVIEW_CUSTOMER_INVOICE_STATUSES, ...PRINTABLE_CUSTOMER_INVOICE_STATUSES];
-import { formatCalendarDay } from "../../lib/format";
+import { formatCalendarDay, todayInTimeZone } from "../../lib/format";
 
 type Capability = { enabled?: boolean; maturity?: string; reason?: string };
 type Invoice = {
@@ -158,152 +161,239 @@ function Notice({ children }: { children: ReactNode }) {
   );
 }
 
-function Filters() {
-  const { t } = useI18n();
+const LIST_COPY = {
+  search: ["Search", "搜索"],
+  searchPlaceholder: ["Number or customer, then Enter", "单号或客户，按回车查询"],
+  currency: ["Currency", "币种"],
+  allCurrencies: ["All currencies", "全部币种"],
+  status: ["Status", "状态"],
+  allStatuses: ["All statuses", "全部状态"],
+  invoiceSearch: ["Customer invoice search", "销售发票查询"],
+  invoiceSearchSubtitle: ["Invoices raised from posted shipments, by number, customer, currency and status.", "按单号、客户、币种和状态查询由已过账发货生成的发票。"],
+  invoiceList: ["Customer invoice list", "销售发票列表"],
+  receivableSearch: ["Receivable search", "应收查询"],
+  receivableSearchSubtitle: ["What customers owe on issued invoices. Recording a payment here does not move money.", "客户在已开票发票上的欠款。在此记录收款不会发生资金划转。"],
+  receivableList: ["Receivable list", "应收列表"],
+  creditSearch: ["Credit note search", "贷项通知单查询"],
+  creditSearchSubtitle: ["Credits raised from posted customer returns.", "由已过账的客户退货生成的贷项。"],
+  creditList: ["Credit note list", "贷项通知单列表"],
+  toApprove: ["To approve", "待批准"],
+  toApproveNote: ["Draft or submitted invoices", "草稿或已提交的发票"],
+  toIssue: ["Approved, to issue", "已批准待开具"],
+  toIssueNote: ["Approved and not yet sent", "已批准但尚未开具"],
+  issued: ["Issued", "已开具"],
+  issuedNote: ["Sent to the customer", "已发给客户"],
+  overdueInvoices: ["Past due", "已逾期"],
+  overdueInvoicesNote: ["Issued invoices past their due date", "已过到期日的已开具发票"],
+  openReceivables: ["Open receivables", "未结应收"],
+  openReceivablesNote: ["Not yet paid in full", "尚未全额收款"],
+  overdue: ["Overdue", "已逾期"],
+  overdueNote: ["Past the due date and still open", "已过到期日且仍未结清"],
+  disputed: ["Disputed", "有争议"],
+  disputedNote: ["The customer has raised a dispute", "客户提出了争议"],
+  settled: ["Paid", "已结清"],
+  settledNote: ["Paid in full", "已全额收款"],
+  number: ["Invoice number", "发票编号"],
+  creditNumber: ["Credit note", "贷项通知单"],
+  customer: ["Customer", "客户"],
+  shipment: ["Shipment", "发货单"],
+  dueDate: ["Due date", "到期日"],
+  amount: ["Amount", "金额"],
+  outstanding: ["Outstanding", "未收金额"],
+  returnPosting: ["Return posting", "退货过账"],
+  invoice: ["Invoice", "发票"],
+  actions: ["Actions", "操作"],
+  view: ["View", "查看"],
+  next: ["Next", "下一步"],
+  noMatch: ["Nothing matches these filters", "没有符合筛选条件的记录"],
+  agingTitle: ["Receivables aging", "应收账龄"],
+  agingCaption: ["Aged by due date in the workspace timezone ({timezone}). Each currency is aged on its own; nothing is converted.", "按到期日、以工作区时区（{timezone}）计算账龄。各币种分别统计，不做折算。"],
+  agingCurrency: ["Currency", "币种"],
+  agingCount: ["Receivables", "应收笔数"],
+  current: ["Current", "未到期"],
+  days1: ["1–30 days", "1–30 天"],
+  days31: ["31–60 days", "31–60 天"],
+  days61: ["61–90 days", "61–90 天"],
+  days90: ["Over 90 days", "90 天以上"],
+  total: ["Total", "合计"],
+} as const;
+
+function useListCopyO2c() {
+  const { language } = useI18n();
+  return (key: keyof typeof LIST_COPY, values: Record<string, string> = {}) =>
+    LIST_COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => values[name] ?? "");
+}
+
+// The address carries the filters, as the overview cards' links do; the list
+// reloads on popstate.
+const setQuery = (updates: Record<string, string>) => {
+  const next = new URLSearchParams(window.location.search);
+  for (const [key, value] of Object.entries(updates)) value ? next.set(key, value) : next.delete(key);
+  const query = next.toString();
+  window.history.pushState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+};
+
+function Filters({ title, subtitle, statuses, currencies, onRefresh, actions }: {
+  title: string;
+  subtitle: string;
+  statuses: string[];
+  currencies: string[];
+  onRefresh: () => void;
+  actions?: ReactNode;
+}) {
+  const tr = useListCopyO2c();
   const statusLabel = useFinanceStatusLabel();
   const params = new URLSearchParams(window.location.search);
-  const set = (key: string, value: string) => {
-    const next = new URLSearchParams(window.location.search);
-    value ? next.set(key, value) : next.delete(key);
-    window.history.pushState({}, "", `${window.location.pathname}?${next}`);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  };
+  const [search, setSearch] = useState(params.get("search") || "");
+  const currency = params.get("currency") || "";
+  const status = params.get("status") || "";
+  const shownCurrencies = [...new Set([...currencies, currency].filter(Boolean))].sort();
   return (
-    <div className="flex flex-wrap gap-2">
-      <input
-        aria-label={t("top.search")}
-        className={`${field} w-56`}
-        defaultValue={params.get("search") || ""}
-        placeholder={t("top.search")}
-        onKeyDown={(event) => {
-          if (event.key === "Enter")
-            set("search", (event.target as HTMLInputElement).value);
-        }}
-      />
-      <input
-        aria-label={t("finance.currency")}
-        className={`${field} w-28 uppercase`}
-        defaultValue={params.get("currency") || ""}
-        placeholder={t("finance.currency")}
-        maxLength={3}
-        onBlur={(event) => set("currency", event.target.value.toUpperCase())}
-      />
-      <select
-        aria-label={t("finance.status")}
-        className={field}
-        value={params.get("status") || ""}
-        onChange={(event) => set("status", event.target.value)}
-      >
-        <option value="">{t("finance.status")}</option>
-        {["draft", "submitted", "approved", "issued", "open", "overdue", "disputed"].map(
-          (status) => (
-            <option value={status} key={status}>
-              {statusLabel(status)}
-            </option>
-          ),
-        )}
-      </select>
-    </div>
+    <ListSearchCard
+      title={title}
+      subtitle={subtitle}
+      actions={<>
+        <ResetButton onClick={() => { setSearch(""); setQuery({ search: "", currency: "", status: "", disputeStatus: "" }); }} />
+        <RefreshButton onClick={onRefresh} />
+        {actions}
+      </>}
+    >
+      <Field label={tr("search")}>
+        <input
+          aria-label={tr("search")}
+          value={search}
+          placeholder={tr("searchPlaceholder")}
+          onChange={(event) => setSearch(event.target.value)}
+          onKeyDown={(event) => { if (event.key === "Enter") setQuery({ search }); }}
+          onBlur={() => { if (search !== (params.get("search") || "")) setQuery({ search }); }}
+          style={inputStyle}
+        />
+      </Field>
+      <Field label={tr("currency")}>
+        <select aria-label={tr("currency")} value={currency} onChange={(event) => setQuery({ currency: event.target.value })} style={inputStyle}>
+          <option value="">{tr("allCurrencies")}</option>
+          {shownCurrencies.map((code) => <option key={code} value={code}>{code}</option>)}
+        </select>
+      </Field>
+      <Field label={tr("status")}>
+        <select aria-label={tr("status")} value={status} onChange={(event) => setQuery({ status: event.target.value })} style={inputStyle}>
+          <option value="">{tr("allStatuses")}</option>
+          {statuses.map((code) => <option value={code} key={code}>{statusLabel(code)}</option>)}
+        </select>
+      </Field>
+    </ListSearchCard>
   );
 }
 
-function InvoiceList() {
-  const { t, locale } = useI18n();
-  const [data, setData] = useState<ListPayload<Invoice> | null>(null);
+// A list read with the address's filters, plus the unfiltered list for the
+// metric cards when a filter is set.
+function useFinanceList<T>(endpoint: string) {
+  const { t } = useI18n();
+  const [data, setData] = useState<ListPayload<T> | null>(null);
+  const [all, setAll] = useState<T[] | null>(null);
   const [error, setError] = useState("");
-  const load = () => {
+  const load = useCallback(() => {
     setError("");
-    void apiJson<ListPayload<Invoice>>(
-      `/api/finance/customer-invoices?${queryString()}`,
-    )
-      .then(setData)
-      .catch((reason) =>
-        setError(reason instanceof Error ? reason.message : t("finance.loadFailed")),
-      );
-  };
-  useEffect(load, []);
+    const query = queryString();
+    void apiJson<ListPayload<T>>(`${endpoint}?${query}`)
+      .then((payload) => {
+        setData(payload);
+        if (!query) setAll(payload.items);
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : t("finance.loadFailed")));
+    if (query) void apiJson<ListPayload<T>>(endpoint).then((payload) => setAll(payload.items)).catch(() => setAll(null));
+  }, [endpoint]);
+  useEffect(load, [load]);
+  // The filters change the query string and announce it with popstate.
   useEffect(() => {
     window.addEventListener("popstate", load);
     return () => window.removeEventListener("popstate", load);
-  }, []);
+  }, [load]);
+  return { data, all, error, load };
+}
+
+const headClass = (align: "left" | "right" = "left", first = false) =>
+  `${align === "right" ? thRightClass : thClass} ${first ? "sticky left-0 z-20 bg-white" : ""}`;
+
+function InvoiceList() {
+  const { t, locale, timezone } = useI18n();
+  const tr = useListCopyO2c();
+  const { data, all, error, load } = useFinanceList<Invoice>("/api/finance/customer-invoices");
   if (error) return <Notice>{error}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const enabled =
     data.capabilities["customer-invoice"]?.enabled && canPrepare();
+  const today = todayInTimeZone(timezone);
+  const counted = all || data.items;
+  const count = (test: (row: Invoice) => boolean) => String(counted.filter(test).length);
   return (
-    <div className="space-y-4" data-testid="customer-invoice-workbench">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Filters />
-        <a
-          href="/app/sales/invoices/new"
-          aria-disabled={!enabled}
-          className={`${button} text-white ${!enabled ? "pointer-events-none opacity-50" : ""}`}
-          style={{ background: A.blue }}
-        >
-          <FilePlus2 size={15} />
-          {t("finance.newCustomerInvoice")}
-        </a>
+    <div className="space-y-5" data-testid="customer-invoice-workbench">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <ActionableMetricCard label={tr("toApprove")} value={count((row) => ["draft", "submitted"].includes(row.status))} description={tr("toApproveNote")} to="/app/sales/invoices?status=submitted" icon={FileText} color={A.orange} />
+        <ActionableMetricCard label={tr("toIssue")} value={count((row) => row.status === "approved")} description={tr("toIssueNote")} to="/app/sales/invoices?status=approved" icon={Send} color={A.blue} />
+        <ActionableMetricCard label={tr("issued")} value={count((row) => row.status === "issued")} description={tr("issuedNote")} to="/app/sales/invoices?status=issued" icon={CheckCircle2} color={A.purple} />
+        <ActionableMetricCard label={tr("overdueInvoices")} value={count((row) => row.status === "issued" && Boolean(row.dueDate) && row.dueDate.slice(0, 10) < today)} description={tr("overdueInvoicesNote")} to="/app/finance/receivables?status=overdue" icon={AlertTriangle} color={A.red} />
       </div>
+      <Filters
+        title={tr("invoiceSearch")}
+        subtitle={tr("invoiceSearchSubtitle")}
+        statuses={["draft", "submitted", "approved", "issued", "voided"]}
+        currencies={counted.map((row) => row.currency)}
+        onRefresh={load}
+        actions={(
+          <a
+            href="/app/sales/invoices/new"
+            aria-disabled={!enabled}
+            className={`${listButtonClass.primary} ${!enabled ? "pointer-events-none opacity-50" : ""}`}
+          >
+            <FilePlus2 size={13} />
+            {t("finance.newCustomerInvoice")}
+          </a>
+        )}
+      />
       {!enabled && <Notice>{t("finance.capabilityDisabled")}</Notice>}
-      <Card className="overflow-hidden">
-        <div className="border-b border-slate-100 px-5 py-3 text-xs text-slate-500">
-          {t("finance.authoritative")} · {data.total}
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
+      <ListCard title={tr("invoiceList")} total={counted.length} shown={data.items.length}>
+        <div className={tableScrollClass}>
+          <table className={`w-full min-w-[980px] text-left ${tableBodyTextClass}`}>
             <thead>
-              <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
-                {[
-                  t("finance.invoiceNumber"),
-                  t("finance.customer"),
-                  t("finance.source"),
-                  t("finance.dueDate"),
-                  t("finance.amount"),
-                  t("finance.status"),
-                  t("finance.actions"),
-                ].map((label) => (
-                  <th className="px-4 py-3 font-medium" key={label}>
-                    {label}
-                  </th>
-                ))}
+              <tr style={listHeadRowStyle}>
+                <th className={headClass("left", true)} style={{ color: A.gray1 }}>{tr("number")}</th>
+                <th className={headClass()} style={{ color: A.gray1 }}>{tr("customer")}</th>
+                <th className={headClass()} style={{ color: A.gray1 }}>{tr("shipment")}</th>
+                <th className={headClass()} style={{ color: A.gray1 }}>{tr("dueDate")}</th>
+                <th className={headClass("right")} style={{ color: A.gray1 }}>{tr("amount")}</th>
+                <th className={headClass()} style={{ color: A.gray1 }}>{tr("status")}</th>
+                <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{tr("actions")}</th>
               </tr>
             </thead>
             <tbody>
-              {data.items.map((row) => (
-                <tr className="border-b border-slate-50" key={row.id}>
-                  <td className="px-4 py-3">
-                    <a
-                      className="font-medium text-blue-700"
-                      href={`/app/sales/invoices/${encodeURIComponent(row.id)}`}
-                    >
-                      {row.invoiceNumber}
-                    </a>
-                  </td>
-                  <td className="px-4 py-3">{row.customerName}</td>
-                  <td className="px-4 py-3">{row.shipmentNumber || row.shipmentId}</td>
-                  <td className="px-4 py-3">{formatCalendarDay(row.dueDate, locale)}</td>
-                  <td className="px-4 py-3 font-medium">
-                    {money(row.totalAmount, row.currency, locale)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusChip status={row.status} />
-                  </td>
-                  <td className="px-4 py-3 text-xs">
-                    {row.availableActions.map((action) => t(`finance.action.${action}` as Parameters<typeof t>[0])).join(" · ") || "—"}
-                  </td>
-                </tr>
-              ))}
-              {!data.items.length && (
-                <tr>
-                  <td className="px-4 py-10 text-center text-slate-500" colSpan={7}>
-                    {t("common.empty")}
-                  </td>
-                </tr>
-              )}
+              {!data.items.length && <ListStateRow colSpan={7} state="empty" title={queryString() ? tr("noMatch") : t("common.empty")} />}
+              {data.items.map((row, index) => {
+                const next = row.availableActions.filter((action) => action !== "cancel").map((action) => t(`finance.action.${action}` as Parameters<typeof t>[0]));
+                return (
+                  <tr className={listRowClass} style={listRowStyle(index, data.items.length)} key={row.id}>
+                    <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                      <Link className={`${tableLinkClass} text-blue-600`} to={`/app/sales/invoices/${encodeURIComponent(row.id)}`}>{row.invoiceNumber}</Link>
+                    </td>
+                    <td className={`${tdNameClass} max-w-[220px] truncate`} title={row.customerName}>{row.customerName}</td>
+                    <td className={tdNowrapClass} style={{ color: A.sub }}>{row.shipmentNumber || row.shipmentId}</td>
+                    <td className={tdNowrapClass} style={{ color: A.sub }}>{formatCalendarDay(row.dueDate, locale)}</td>
+                    <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row.totalAmount, row.currency, locale)}</td>
+                    <td className={tdNowrapClass}>
+                      <StatusChip status={row.status} />
+                      {next.length > 0 && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("next")}: {next.join(" · ")}</div>}
+                    </td>
+                    <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
+                      <Link className={rowActionClass.primary} to={`/app/sales/invoices/${encodeURIComponent(row.id)}`}>{tr("view")}</Link>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
-      </Card>
+      </ListCard>
     </div>
   );
 }
@@ -317,84 +407,90 @@ const RECEIVABLE_ACTION_KEYS: Record<string, TranslationKey> = {
 };
 
 function Receivables() {
-  const { t, locale } = useI18n();
-  const [data, setData] = useState<ListPayload<Receivable> | null>(null);
-  const [error, setError] = useState("");
-  const load = () => {
-    setError("");
-    void apiJson<ListPayload<Receivable>>(
-      `/api/finance/receivables?${queryString()}`,
-    )
-      .then(setData)
-      .catch((reason) => setError(reason instanceof Error ? reason.message : t("finance.loadFailed")));
-  };
-  useEffect(load, []);
-  // The filters change the query string and announce it with popstate.
-  useEffect(() => {
-    window.addEventListener("popstate", load);
-    return () => window.removeEventListener("popstate", load);
-  }, []);
+  const { t, locale, timezone } = useI18n();
+  const tr = useListCopyO2c();
+  const { data, all, error, load } = useFinanceList<Receivable>("/api/finance/receivables");
   if (error) return <Notice>{error}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
+  const today = todayInTimeZone(timezone);
+  const counted = all || data.items;
+  const open = (row: Receivable) => !["settled", "cancelled", "voided"].includes(row.status);
+  const pastDue = (row: Receivable) => open(row) && Boolean(row.dueDate) && row.dueDate.slice(0, 10) < today;
+  const count = (test: (row: Receivable) => boolean) => String(counted.filter(test).length);
   return (
-    <div className="space-y-4" data-testid="receivables-workbench">
+    <div className="space-y-5" data-testid="receivables-workbench">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <ActionableMetricCard label={tr("openReceivables")} value={count(open)} description={tr("openReceivablesNote")} to="/app/finance/receivables?status=open" icon={Wallet} color={A.blue} />
+        <ActionableMetricCard label={tr("overdue")} value={count(pastDue)} description={tr("overdueNote")} to="/app/finance/receivables?status=overdue" icon={AlertTriangle} color={A.red} />
+        <ActionableMetricCard label={tr("disputed")} value={count((row) => row.disputeStatus === "open")} description={tr("disputedNote")} to="/app/finance/receivables?disputeStatus=open" icon={MessageSquareWarning} color={A.orange} />
+        <ActionableMetricCard label={tr("settled")} value={count((row) => row.status === "settled")} description={tr("settledNote")} to="/app/finance/receivables?status=settled" icon={CheckCircle2} color={A.purple} />
+      </div>
+      <Filters
+        title={tr("receivableSearch")}
+        subtitle={tr("receivableSearchSubtitle")}
+        statuses={["open", "overdue", "disputed", "partially_settled", "settled"]}
+        currencies={counted.map((row) => row.currency)}
+        onRefresh={load}
+      />
       <Notice>{t("finance.noCollection")}</Notice>
-      <Filters />
-      <Card className="overflow-x-auto">
-        <table className="w-full min-w-[920px] text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-slate-500">
-              {[
-                t("finance.invoiceNumber"),
-                t("finance.customer"),
-                t("finance.dueDate"),
-                t("finance.amount"),
-                t("finance.status"),
-                t("finance.actions"),
-              ].map((label) => (
-                <th className="px-4 py-3 font-medium" key={label}>{label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {data.items.map((row) => (
-              <tr className="border-b border-slate-50" key={row.id}>
-                <td className="px-4 py-3">
-                  {row.customerInvoiceId
-                    ? <Link className="font-medium text-blue-600 hover:underline" to={`/app/sales/invoices/${encodeURIComponent(row.customerInvoiceId)}`}>{row.customerInvoiceNumber || row.obligationNumber}</Link>
-                    : row.customerInvoiceNumber || row.obligationNumber}
-                </td>
-                <td className="px-4 py-3">{row.customerName || "—"}</td>
-                <td className="px-4 py-3">{formatCalendarDay(row.dueDate, locale)}</td>
-                <td className="px-4 py-3 font-medium">
-                  {money(row.outstandingAmount, row.currency, locale)}
-                </td>
-                <td className="px-4 py-3">
-                  <StatusChip status={row.status} />
-                  {row.disputeStatus === "open" && <span className="ml-1 text-xs text-amber-700">{t("finance.status.disputed")}</span>}
-                  {row.externalSettlementReference && (
-                    <div className="mt-1 text-xs text-amber-700">
-                      {t("finance.externalUnverified")}
-                    </div>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  {row.availableActions.map((action) => RECEIVABLE_ACTION_KEYS[action] ? t(RECEIVABLE_ACTION_KEYS[action]) : action).join(" · ") || "—"}
-                </td>
+      <ListCard title={tr("receivableList")} total={counted.length} shown={data.items.length}>
+        <div className={tableScrollClass}>
+          <table className={`w-full min-w-[960px] text-left ${tableBodyTextClass}`}>
+            <thead>
+              <tr style={listHeadRowStyle}>
+                <th className={headClass("left", true)} style={{ color: A.gray1 }}>{tr("number")}</th>
+                <th className={headClass()} style={{ color: A.gray1 }}>{tr("customer")}</th>
+                <th className={headClass()} style={{ color: A.gray1 }}>{tr("dueDate")}</th>
+                <th className={headClass("right")} style={{ color: A.gray1 }}>{tr("outstanding")}</th>
+                <th className={headClass()} style={{ color: A.gray1 }}>{tr("status")}</th>
+                <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{tr("actions")}</th>
               </tr>
-            ))}
-            {!data.items.length && (
-              <tr><td className="px-4 py-10 text-center text-slate-500" colSpan={6}>{t("common.empty")}</td></tr>
-            )}
-          </tbody>
-        </table>
-      </Card>
+            </thead>
+            <tbody>
+              {!data.items.length && <ListStateRow colSpan={6} state="empty" title={queryString() ? tr("noMatch") : t("common.empty")} />}
+              {data.items.map((row, index) => {
+                const next = row.availableActions.map((action) => RECEIVABLE_ACTION_KEYS[action] ? t(RECEIVABLE_ACTION_KEYS[action]) : action);
+                const invoicePath = row.customerInvoiceId ? `/app/sales/invoices/${encodeURIComponent(row.customerInvoiceId)}` : "";
+                return (
+                  <tr className={listRowClass} style={listRowStyle(index, data.items.length)} key={row.id}>
+                    <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                      {invoicePath
+                        ? <Link className={`${tableLinkClass} text-blue-600`} to={invoicePath}>{row.customerInvoiceNumber || row.obligationNumber}</Link>
+                        : row.customerInvoiceNumber || row.obligationNumber}
+                      {row.customerInvoiceNumber && row.obligationNumber && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{row.obligationNumber}</div>}
+                    </td>
+                    <td className={`${tdNameClass} max-w-[220px] truncate`} title={row.customerName}>{row.customerName || "—"}</td>
+                    <td className={tdNowrapClass} style={{ color: pastDue(row) ? "#b91c1c" : A.sub }}>{formatCalendarDay(row.dueDate, locale)}</td>
+                    <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row.outstandingAmount, row.currency, locale)}</td>
+                    <td className={tdNowrapClass}>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <StatusChip status={pastDue(row) && row.status === "open" ? "overdue" : row.status} />
+                        {row.disputeStatus === "open" && <StatusChip status="disputed" />}
+                      </div>
+                      {row.externalSettlementReference && (
+                        <div className="mt-1 text-[11px] text-amber-700">
+                          {t("finance.externalUnverified")}
+                        </div>
+                      )}
+                      {next.length > 0 && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("next")}: {next.join(" · ")}</div>}
+                    </td>
+                    <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
+                      {invoicePath ? <Link className={rowActionClass.primary} to={invoicePath}>{tr("view")}</Link> : <span style={{ color: A.gray2 }}>—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </ListCard>
     </div>
   );
 }
 
 function Aging() {
   const { t, locale } = useI18n();
+  const tr = useListCopyO2c();
   const [data, setData] = useState<AgingPayload | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -404,81 +500,125 @@ function Aging() {
   }, []);
   if (error) return <Notice>{error}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
+  const buckets = [
+    [tr("current"), "current"],
+    [tr("days1"), "1_30"],
+    [tr("days31"), "31_60"],
+    [tr("days61"), "61_90"],
+    [tr("days90"), "90_plus"],
+  ] as const;
   return (
-    <div className="space-y-4" data-testid="receivables-aging">
+    <div className="space-y-5" data-testid="receivables-aging">
       {data.currencyAggregationStatus === "multi_currency_unconverted" && (
         <Notice>{t("finance.unconverted")}</Notice>
       )}
-      <div className="text-xs text-slate-500">
-        {t("finance.authoritative")} · {data.timezone} · FX: {data.fxConverted ? "yes" : "no"}
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        {data.groups.map((group) => (
-          <Card className="p-5" key={group.currency}>
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-semibold">{group.currency}</h3>
-              <strong>{money(group.total, group.currency, locale)}</strong>
-            </div>
-            <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
-              {[
-                ["Current", group.current],
-                ["1–30", group["1_30"]],
-                ["31–60", group["31_60"]],
-                ["61–90", group["61_90"]],
-                ["90+", group["90_plus"]],
-              ].map(([label, value]) => (
-                <div className="rounded-lg bg-slate-50 p-3" key={label}>
-                  <div className="text-xs text-slate-500">{label}</div>
-                  <div className="mt-1 font-medium">{value}</div>
-                </div>
+      <ListCard title={tr("agingTitle")}>
+        <div className="px-5 pt-3 text-xs" style={{ color: A.sub }}>{tr("agingCaption", { timezone: data.timezone })}</div>
+        <div className={tableScrollClass}>
+          <table className={`w-full min-w-[900px] text-left ${tableBodyTextClass}`}>
+            <thead>
+              <tr style={listHeadRowStyle}>
+                <th className={headClass("left", true)} style={{ color: A.gray1 }}>{tr("agingCurrency")}</th>
+                <th className={headClass("right")} style={{ color: A.gray1 }}>{tr("agingCount")}</th>
+                {buckets.map(([label]) => <th key={label} className={headClass("right")} style={{ color: A.gray1 }}>{label}</th>)}
+                <th className={headClass("right")} style={{ color: A.gray1 }}>{tr("total")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!data.groups.length && <ListStateRow colSpan={8} state="empty" title={t("common.empty")} />}
+              {data.groups.map((group, index) => (
+                <tr className={listRowClass} style={listRowStyle(index, data.groups.length)} key={group.currency}>
+                  <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{group.currency}</td>
+                  <td className={tdNumericRightClass}>{group.count}</td>
+                  {buckets.map(([label, key]) => (
+                    <td key={label} className={tdNumericRightClass} style={{ color: Number(group[key]) ? (key === "current" ? A.label : "#b91c1c") : A.gray2 }}>
+                      {money(group[key], group.currency, locale)}
+                    </td>
+                  ))}
+                  <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(group.total, group.currency, locale)}</td>
+                </tr>
               ))}
-            </div>
-          </Card>
-        ))}
-        {!data.groups.length && <Card className="p-10 text-center">{t("common.empty")}</Card>}
-      </div>
+            </tbody>
+          </table>
+        </div>
+      </ListCard>
     </div>
   );
 }
 
 function CreditNotes() {
   const { t, locale } = useI18n();
+  const tr = useListCopyO2c();
   const statusLabel = useFinanceStatusLabel();
   const [data, setData] = useState<ListPayload<CreditNote> | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => {
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const load = useCallback(() => {
+    setError("");
     void apiJson<ListPayload<CreditNote>>(
       `/api/finance/customer-credit-notes?${queryString()}`,
     )
       .then(setData)
       .catch((reason) => setError(reason instanceof Error ? reason.message : t("finance.loadFailed")));
   }, []);
+  useEffect(load, [load]);
   if (error) return <Notice>{error}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
+  const needle = search.trim().toLowerCase();
+  const shown = data.items.filter((row) =>
+    (!status || row.status === status)
+    && (!needle || [row.creditNoteNumber, row.customerInvoiceNumber, row.customerName, row.returnPostingNumber].some((value) => String(value || "").toLowerCase().includes(needle))));
   return (
-    <div className="space-y-4" data-testid="customer-credit-notes">
+    <div className="space-y-5" data-testid="customer-credit-notes">
+      <ListSearchCard
+        title={tr("creditSearch")}
+        subtitle={tr("creditSearchSubtitle")}
+        actions={<>
+          <ResetButton onClick={() => { setSearch(""); setStatus(""); }} />
+          <RefreshButton onClick={load} />
+        </>}
+      >
+        <Field label={tr("search")}>
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tr("searchPlaceholder")} style={inputStyle} />
+        </Field>
+        <Field label={tr("status")}>
+          <select value={status} onChange={(event) => setStatus(event.target.value)} style={inputStyle}>
+            <option value="">{tr("allStatuses")}</option>
+            {[...new Set(data.items.map((row) => row.status))].map((code) => <option key={code} value={code}>{statusLabel(code)}</option>)}
+          </select>
+        </Field>
+      </ListSearchCard>
       <Notice>{t("finance.noRefund")}</Notice>
-      <Card className="overflow-x-auto">
-        <table className="w-full min-w-[850px] text-sm">
-          <thead><tr className="border-b text-left text-xs text-slate-500">
-            {[t("finance.invoiceNumber"), t("finance.customer"), t("finance.source"), t("finance.amount"), t("finance.status")].map((label) => (
-              <th className="px-4 py-3 font-medium" key={label}>{label}</th>
-            ))}
-          </tr></thead>
-          <tbody>
-            {data.items.map((row) => (
-              <tr className="border-b border-slate-50" key={row.id}>
-                <td className="px-4 py-3">{row.creditNoteNumber}<div className="text-xs text-slate-500">{row.customerInvoiceNumber}</div></td>
-                <td className="px-4 py-3">{row.customerName}</td>
-                <td className="px-4 py-3">{row.returnPostingNumber || "—"}</td>
-                <td className="px-4 py-3 font-medium">{money(row.totalAmount, row.currency, locale)}</td>
-                <td className="px-4 py-3">{statusLabel(row.status)}</td>
+      <ListCard title={tr("creditList")} total={data.items.length} shown={shown.length}>
+        <div className={tableScrollClass}>
+          <table className={`w-full min-w-[900px] text-left ${tableBodyTextClass}`}>
+            <thead>
+              <tr style={listHeadRowStyle}>
+                <th className={headClass("left", true)} style={{ color: A.gray1 }}>{tr("creditNumber")}</th>
+                <th className={headClass()} style={{ color: A.gray1 }}>{tr("invoice")}</th>
+                <th className={headClass()} style={{ color: A.gray1 }}>{tr("customer")}</th>
+                <th className={headClass()} style={{ color: A.gray1 }}>{tr("returnPosting")}</th>
+                <th className={headClass("right")} style={{ color: A.gray1 }}>{tr("amount")}</th>
+                <th className={headClass()} style={{ color: A.gray1 }}>{tr("status")}</th>
               </tr>
-            ))}
-            {!data.items.length && <tr><td className="px-4 py-10 text-center text-slate-500" colSpan={5}>{t("common.empty")}</td></tr>}
-          </tbody>
-        </table>
-      </Card>
+            </thead>
+            <tbody>
+              {!shown.length && <ListStateRow colSpan={6} state="empty" title={data.items.length ? tr("noMatch") : t("common.empty")} />}
+              {shown.map((row, index) => (
+                <tr className={listRowClass} style={listRowStyle(index, shown.length)} key={row.id}>
+                  <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.creditNoteNumber}</td>
+                  <td className={tdNowrapClass} style={{ color: A.sub }}>{row.customerInvoiceNumber || "—"}</td>
+                  <td className={`${tdNameClass} max-w-[220px] truncate`} title={row.customerName}>{row.customerName}</td>
+                  <td className={tdNowrapClass} style={{ color: A.sub }}>{row.returnPostingNumber || "—"}</td>
+                  <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row.totalAmount, row.currency, locale)}</td>
+                  <td className={tdNowrapClass}><StatusChip status={row.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </ListCard>
     </div>
   );
 }

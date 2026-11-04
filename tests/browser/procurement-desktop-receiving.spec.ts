@@ -66,10 +66,10 @@ test('a manager receives an issued purchase order on the desktop and posts the r
   expect(receipts[0]).toMatchObject({ workflowStatus: 'ready_for_receiving', postingStatus: 'posted', acceptedQuantity: '5.0000', rejectedQuantity: '1.0000' })
 
   await page.goto('/app/procurement/receiving')
-  const row = page.getByTestId('receiving-record-list').locator('article', { hasText: receipts[0].documentNumber })
+  const row = page.getByTestId('receiving-record-list').locator('tr', { hasText: receipts[0].documentNumber })
   await expect(row).toBeVisible()
   await expect(row.getByTestId('receipt-posting-status')).toHaveText('Posted')
-  await expect(row).toContainText('BROWSER-WH · Browser Warehouse')
+  await expect(row).toContainText('Browser Warehouse')
 
   // The supplier drops the last 3. A receipt started by mistake is cancelled,
   // then the PO is closed and offers no more receiving.
