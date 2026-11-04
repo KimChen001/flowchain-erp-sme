@@ -210,7 +210,8 @@ for (const path of [
     const { options } = await (await page.request.get("/api/master-data/warehouses/select", { headers: await authHeaders(page) })).json();
     const warehouse = options.find((option: { id: string }) => option.id === "LOCAL-DEMO-WH-001").label;
     await page.goto(path);
-    await expect(page.getByText(warehouse).first()).toBeVisible();
+    // Not an <option>: the inventory pages also list it in the Warehouse filter.
+    await expect(page.getByText(warehouse).and(page.locator(":not(option)")).first()).toBeVisible();
     await expect(page.locator("main").first()).not.toContainText("LOCAL-DEMO-WH-001");
   });
 }
