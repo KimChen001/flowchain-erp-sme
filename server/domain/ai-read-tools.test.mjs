@@ -111,6 +111,32 @@ test('calculate does the arithmetic an answer derives', async () => {
   assert.equal((await runAiReadTool('calculate', { operation: 'ratio', values: [1, 0] }, { facts })).error, 'division_by_zero')
 })
 
+// A plan's costs are quantity times price, and a longer answer needs several
+// figures: one call carries them (2026-11-04).
+test('calculate multiplies, and takes several calculations in one call', async () => {
+  const facts = await factsFor()
+  const calc = async (args) => runAiReadTool('calculate', args, { facts })
+  assert.deepEqual((await calc({ operation: 'product', values: [1677, 18.75] })).result, { result: 31443.75 })
+  const batch = (await calc({ calculations: [
+    { label: 'LDM-002 cost', operation: 'product', values: [1677, 18.75] },
+    { label: 'Total', operation: 'sum', values: [31443.75, 946.9] },
+    { label: 'Need-by', operation: 'add_days', dates: ['2026-11-04'], values: [14] },
+    { label: 'Bad', operation: 'ratio', values: [1, 0] },
+    { label: 'Wrong', operation: 'multiply', values: [1, 2] },
+    { label: 'Strings', operation: 'sum', values: ['1', 2] },
+  ] })).result
+  assert.deepEqual(batch.results, [
+    { label: 'LDM-002 cost', operation: 'product', result: 31443.75 },
+    { label: 'Total', operation: 'sum', result: 32390.65 },
+    { label: 'Need-by', operation: 'add_days', result: '2026-11-18' },
+    { label: 'Bad', operation: 'ratio', error: 'division_by_zero' },
+    { label: 'Wrong', operation: null, error: 'invalid_arguments', details: ['operation must be one of sum, difference, product, ratio, percent, percent_change, average, days_between, add_days'] },
+    { label: 'Strings', operation: 'sum', error: 'invalid_arguments', details: ['values must be up to 50 numbers'] },
+  ])
+  // Neither one calculation nor a list: an error the model can correct.
+  assert.equal((await calc({})).error, 'invalid_arguments')
+})
+
 test('a role gets only the tools and the fields it may read', async () => {
   // Finance reads supplier invoices, not purchase orders or stock.
   const finance = await factsFor('finance-specialist')
