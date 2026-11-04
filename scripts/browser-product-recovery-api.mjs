@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { backfillTenantAuthorization } from "../server/auth/authorization-backfill.mjs";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
-import { saveItemSupplier } from "../server/domain/master-data-commands.mjs";
+import { listItemSupplierRecords, saveItemSupplier } from "../server/domain/master-data-commands.mjs";
 import { localDemoSupplier, seedLocalDemo } from "./setup-local-demo.mjs";
 import { seedLocalScenario } from "./setup-local-scenario.mjs";
 
@@ -386,8 +386,12 @@ async function seedAssistantV2Showcase(client) {
   for (const [sku, levels] of [["LDM-002", { safetyStock: 1500, reorderPoint: 2000 }], ["LDM-006", { safetyStock: 1200, reorderPoint: 1500 }]]) {
     await client.item.updateMany({ where: { tenantId, sku }, data: levels });
   }
+  // The walkthrough seed may already link the supplier; that link is updated.
   for (const [sku, supplierId, referencePrice, leadTimeDays] of [["LDM-001", "LOCAL-DEMO-SUP-001", 42.5, 14], ["LDM-002", "LOCAL-DEMO-SUP-001", 18.75, 14], ["LDM-006", "LOCAL-DEMO-SUP-002", 0.85, 10]]) {
-    await saveItemSupplier(client, sku, null, { supplierId, preferred: true, referencePrice, leadTimeDays, currency: "USD" }, adminActorId, { tenantId });
+    const item = await client.item.findFirst({ where: { tenantId, sku } });
+    const [link] = item ? await listItemSupplierRecords(client, tenantId, { itemId: item.id, supplierId }) : [];
+    const values = { preferred: true, referencePrice, leadTimeDays, currency: "USD" };
+    await saveItemSupplier(client, sku, link?.id ?? null, link ? { ...values, expectedVersion: Number(link.payload?.version || 1) } : { ...values, supplierId }, adminActorId, { tenantId });
   }
 }
 
