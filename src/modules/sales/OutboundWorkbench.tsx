@@ -4,9 +4,14 @@ import {
   AlertTriangle,
   CheckCircle2,
   Loader2,
+  PackageOpen,
+  PauseCircle,
+  Plus,
   RefreshCw,
   ShieldCheck,
+  ShoppingCart,
   Sparkles,
+  Truck,
 } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
@@ -22,6 +27,8 @@ import { BusinessEntityLink } from "../../components/business/BusinessEntityLink
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { CreateInvoiceAction } from "../../components/business/BillingEntryActions";
 import {
+  tableBodyTextClass,
+  tableLinkClass,
   tableMinSmClass,
   tableScrollClass,
   tdActionClass,
@@ -29,8 +36,13 @@ import {
   tdNameClass,
   tdNowrapClass,
   tdNumericClass,
+  tdNumericRightClass,
   thClass,
+  thRightClass,
 } from "../../components/ui/workbenchTable";
+import { A, Field, inputStyle } from "../../components/ui";
+import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
+import { ListCard, ListSearchCard, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 
 // The interface language for this render. OutboundWorkbench, the root of every
 // page here, sets it from the i18n context before its children render. The
@@ -369,9 +381,7 @@ const Section = ({
   </section>
 );
 const Badge = ({ value }: { value: string }) => (
-  <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-    {status(value)}
-  </span>
+  <StatusChip label={status(value)} tone={statusToneOf(value)} />
 );
 const Button = ({
   children,
@@ -440,7 +450,8 @@ function OrderList() {
       dataSource: string;
       capabilities: { salesOrderLifecycle: LifecycleCapability };
     } | null>(null),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [counts, setCounts] = useState<Record<string, number | null>>({});
   const value = (name: string, fallback = "") => params.get(name) || fallback;
   const page = Math.max(1, Number(value("page", "1")) || 1),
     pageSize = 20;
@@ -483,128 +494,138 @@ function OrderList() {
   useEffect(() => {
     void load();
   }, [load]);
+  // The cards count every order on the server; the list shows one page.
+  useEffect(() => {
+    const read = (key: string, filter: string) =>
+      apiJson<{ total: number }>(`/api/sales/orders?pageSize=1&${filter}`)
+        .then((result) => [key, result.total] as const)
+        .catch(() => [key, null] as const);
+    void Promise.all(Object.entries(ORDER_CARDS).map(([key, card]) => read(key, card.filter)))
+      .then((entries) => setCounts(Object.fromEntries(entries)));
+  }, []);
   const totalPages = Math.max(1, Math.ceil((data?.total || 0) / pageSize));
-  const select = "rounded-lg border px-3 py-2 text-sm";
+  const filtered = ["search", "workflowStatus", "reservationStatus", "fulfillmentStatus", "currency"].some((name) => params.get(name));
   return (
-    <div className="space-y-4" data-testid="outbound-order-list">
+    <div className="space-y-5" data-testid="outbound-order-list">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Object.entries(ORDER_CARDS).map(([key, card]) => (
+          <ActionableMetricCard
+            key={key}
+            label={say(...card.label)}
+            value={counts[key] === undefined || counts[key] === null ? "—" : String(counts[key])}
+            description={say(...card.note)}
+            to={`/app/sales/orders${card.filter ? `?${card.filter}` : ""}`}
+            icon={card.icon}
+            color={card.color}
+          />
+        ))}
+      </div>
       {data && !data.capabilities.salesOrderLifecycle.enabled && (
-        <div role="status" className="rounded-lg bg-slate-100 p-3 text-slate-700">
+        <div role="status" className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
           {copy("销售订单当前为只读；订单、库存预留和履约事实来自 PostgreSQL。")}
         </div>
       )}
       {error && (
-        <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
+        <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
           {copy(error)}
         </div>
       )}
-      <Section title={copy("销售订单查询")}>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-slate-500">
-            {copy("查询订单、客户、库存预留、履约状态和承诺日期。")}
-          </p>
+      <ListSearchCard
+        title={copy("销售订单查询")}
+        subtitle={copy("查询订单、客户、库存预留、履约状态和承诺日期。")}
+        actions={<>
+          <ResetButton onClick={() => setParams({})} />
+          <RefreshButton onClick={() => void load()} />
           {data?.capabilities.salesOrderLifecycle.enabled && (
-            <Link
-              to="/app/sales/orders/new"
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white"
-            >
+            <Link to="/app/sales/orders/new" className={listButtonClass.primary}>
+              <Plus size={13} />
               {copy("新建销售订单")}
             </Link>
           )}
-        </div>
-        <div className="mb-3 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
-          <label className="text-xs">
-            {copy("搜索")}
-            <input
-              aria-label={copy("搜索销售订单")}
-              value={value("search")}
-              onChange={(e) => update({ search: e.target.value, page: 1 })}
-              className={`${select} mt-1 w-full`}
-              placeholder={copy("订单号或客户")}
-            />
-          </label>
-          <Filter
-            label={copy("流程状态")}
-            value={value("workflowStatus")}
-            onChange={(v) => update({ workflowStatus: v, page: 1 })}
-            values={["draft", "confirmed", "on_hold"]}
+        </>}
+      >
+        <Field label={copy("搜索")}>
+          <input
+            aria-label={copy("搜索销售订单")}
+            value={value("search")}
+            onChange={(e) => update({ search: e.target.value, page: 1 })}
+            style={inputStyle}
+            placeholder={copy("订单号或客户")}
           />
-          <Filter
-            label={copy("预留状态")}
-            value={value("reservationStatus")}
-            onChange={(v) => update({ reservationStatus: v, page: 1 })}
-            values={["not_reserved", "partially_reserved", "fully_reserved"]}
-          />
-          <Filter
-            label={copy("履约状态")}
-            value={value("fulfillmentStatus")}
-            onChange={(v) => update({ fulfillmentStatus: v, page: 1 })}
-            values={["not_fulfilled", "partially_fulfilled", "fully_fulfilled"]}
-          />
-          <label className="text-xs">
-            {copy("币种")}
-            <select
-              aria-label={copy("币种筛选")}
-              className={`${select} mt-1 w-full`}
-              value={value("currency")}
-              onChange={(e) => update({ currency: e.target.value, page: 1 })}
-            >
-              <option value="">{copy("全部")}</option>
-              {orderedCurrencyCodes(workspace.currency, ["USD", "EUR", "CNY"]).map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs">
-            {copy("排序")}
-            <select
-              aria-label={copy("订单排序")}
-              className={`${select} mt-1 w-full`}
-              value={`${value("sort", "updatedAt")}:${value("direction", "desc")}`}
-              onChange={(e) => {
-                const [sort, direction] = e.target.value.split(":");
-                update({ sort, direction, page: 1 });
-              }}
-            >
-              <option value="updatedAt:desc">{copy("更新时间（新到旧）")}</option>
-              <option value="updatedAt:asc">{copy("更新时间（旧到新）")}</option>
-              <option value="promisedDate:asc">{copy("承诺日期（升序）")}</option>
-              <option value="promisedDate:desc">{copy("承诺日期（降序）")}</option>
-              <option value="orderNumber:asc">{copy("订单号（升序）")}</option>
-              <option value="orderNumber:desc">{copy("订单号（降序）")}</option>
-            </select>
-          </label>
-        </div>
+        </Field>
+        <Filter
+          label={copy("流程状态")}
+          value={value("workflowStatus")}
+          onChange={(v) => update({ workflowStatus: v, page: 1 })}
+          values={["draft", "confirmed", "on_hold"]}
+        />
+        <Filter
+          label={copy("预留状态")}
+          value={value("reservationStatus")}
+          onChange={(v) => update({ reservationStatus: v, page: 1 })}
+          values={["not_reserved", "partially_reserved", "fully_reserved"]}
+        />
+        <Filter
+          label={copy("履约状态")}
+          value={value("fulfillmentStatus")}
+          onChange={(v) => update({ fulfillmentStatus: v, page: 1 })}
+          values={["not_fulfilled", "partially_fulfilled", "fully_fulfilled"]}
+        />
+        <Field label={copy("币种")}>
+          <select
+            aria-label={copy("币种筛选")}
+            style={inputStyle}
+            value={value("currency")}
+            onChange={(e) => update({ currency: e.target.value, page: 1 })}
+          >
+            <option value="">{copy("全部")}</option>
+            {orderedCurrencyCodes(workspace.currency, ["USD", "EUR", "CNY"]).map((x) => (
+              <option key={x}>{x}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label={copy("排序")}>
+          <select
+            aria-label={copy("订单排序")}
+            style={inputStyle}
+            value={`${value("sort", "updatedAt")}:${value("direction", "desc")}`}
+            onChange={(e) => {
+              const [sort, direction] = e.target.value.split(":");
+              update({ sort, direction, page: 1 });
+            }}
+          >
+            <option value="updatedAt:desc">{copy("更新时间（新到旧）")}</option>
+            <option value="updatedAt:asc">{copy("更新时间（旧到新）")}</option>
+            <option value="promisedDate:asc">{copy("承诺日期（升序）")}</option>
+            <option value="promisedDate:desc">{copy("承诺日期（降序）")}</option>
+            <option value="orderNumber:asc">{copy("订单号（升序）")}</option>
+            <option value="orderNumber:desc">{copy("订单号（降序）")}</option>
+          </select>
+        </Field>
+      </ListSearchCard>
+      <ListCard title={say("Sales order list", "销售订单列表")} total={data?.total} shown={data?.orders.length}>
         <div className={tableScrollClass}>
-          <table className={tableMinSmClass}>
+          <table className={`w-full min-w-[1040px] text-left ${tableBodyTextClass}`}>
             <thead>
-              <tr className="border-b">
-                {[
-                  copy("订单号"),
-                  copy("客户"),
-                  copy("流程"),
-                  copy("预留状态"),
-                  copy("履约状态"),
-                  copy("币种"),
-                  copy("行数"),
-                  copy("订购 / 预留 / 履约"),
-                  copy("更新时间"),
-                  copy("操作"),
-                ].map((x) => (
-                  <th className={thClass} key={x}>
-                    {x}
-                  </th>
+              <tr style={listHeadRowStyle}>
+                <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>{copy("订单号")}</th>
+                {[copy("客户"), copy("流程"), copy("预留状态"), copy("履约状态")].map((x) => (
+                  <th className={thClass} style={{ color: A.gray1 }} key={x}>{x}</th>
                 ))}
+                <th className={thRightClass} style={{ color: A.gray1 }}>{copy("订购 / 预留 / 履约")}</th>
+                <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{copy("操作")}</th>
               </tr>
             </thead>
             <tbody>
-              {data?.orders.map((row) => (
-                <tr key={row.id} className="border-b">
-                  <td className={tdIdClass}>
-                    <BusinessEntityLink entityType="sales_order" entityId={row.id}>
+              {data?.orders.map((row, index) => (
+                <tr key={row.id} className={listRowClass} style={listRowStyle(index, data.orders.length)}>
+                  <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                    <BusinessEntityLink entityType="sales_order" entityId={row.id} className={tableLinkClass}>
                       {row.orderNumber}
                     </BusinessEntityLink>
+                    <div className="text-[11px] font-normal" style={{ color: A.sub }}>{copy("更新时间")} {stamp(row.updatedAt)}</div>
                   </td>
-                  <td className={tdNameClass}>{row.customerName}</td>
+                  <td className={`${tdNameClass} max-w-[220px] truncate`} title={row.customerName}>{row.customerName}</td>
                   <td className={tdNowrapClass}>
                     <Badge value={row.workflowStatus} />
                   </td>
@@ -614,16 +635,16 @@ function OrderList() {
                   <td className={tdNowrapClass}>
                     <Badge value={row.fulfillmentStatus} />
                   </td>
-                  <td className={tdNowrapClass}>{row.currency}</td>
-                  <td className={tdNumericClass}>{row.totalLines}</td>
-                  <td className={tdNumericClass}>
-                    {formatQuantity(row.orderedQuantity)} / {formatQuantity(row.reservedQuantity)} /{" "}
-                    {formatQuantity(row.fulfilledQuantity)}
+                  <td className={tdNumericRightClass}>
+                    <span className="font-semibold" style={{ color: A.label }}>{formatQuantity(row.orderedQuantity)}</span>
+                    <span style={{ color: A.sub }}> / {formatQuantity(row.reservedQuantity)} / {formatQuantity(row.fulfilledQuantity)}</span>
+                    <div className="text-[11px]" style={{ color: A.sub }}>
+                      {say(`${row.totalLines} ${row.totalLines === 1 ? "line" : "lines"} · ${row.currency}`, `${row.totalLines} 行 · ${row.currency}`)}
+                    </div>
                   </td>
-                  <td className={tdNowrapClass}>{stamp(row.updatedAt)}</td>
-                  <td className={tdActionClass}>
+                  <td className={`${tdActionClass} sticky right-0 z-10 !min-w-0 bg-white`}>
                     <Link
-                      className="inline-flex rounded-md bg-blue-50 px-3 py-1.5 font-medium text-blue-700 hover:bg-blue-100"
+                      className={rowActionClass.primary}
                       to={`/app/sales/orders/${encodeURIComponent(row.id)}`}
                     >
                       {copy("查看")}
@@ -633,43 +654,48 @@ function OrderList() {
               ))}
             </tbody>
           </table>
+          {/* Outside the table body: an empty or failed read leaves no rows. */}
           {data && data.orders.length === 0 && (
-            <div className="p-8 text-center text-sm text-slate-500">
+            <div className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>
               {copy("暂无符合当前筛选条件的正式销售订单。")}
-              <button
-                className="ml-2 text-blue-700 underline"
-                onClick={() => setParams({})}
-              >
-                {copy("清除筛选")}
-              </button>
+              {filtered && (
+                <button
+                  className="ml-2 font-semibold text-blue-600"
+                  onClick={() => setParams({})}
+                >
+                  {copy("清除筛选")}
+                </button>
+              )}
             </div>
           )}
         </div>
-        <div className="mt-3 flex items-center justify-between text-sm">
-          <span>
-            {englishUi() ? `Page ${data?.page || page} of ${totalPages} · ${data?.total || 0} results` : `第 ${data?.page || page} / ${totalPages} 页 · 共 ${data?.total || 0} 条`}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              tone="secondary"
-              disabled={page <= 1}
-              onClick={() => update({ page: page - 1 })}
-            >
-              {copy("上一页")}
-            </Button>
-            <Button
-              tone="secondary"
-              disabled={page >= totalPages}
-              onClick={() => update({ page: page + 1 })}
-            >
-              {copy("下一页")}
-            </Button>
+        {data && data.total > 0 && (
+          <div className="flex items-center justify-between px-5 py-3 text-xs" style={{ borderTop: "0.5px solid rgba(0,0,0,0.06)", color: A.sub }}>
+            <span>
+              {englishUi() ? `Page ${data?.page || page} of ${totalPages} · ${data?.total || 0} results` : `第 ${data?.page || page} / ${totalPages} 页 · 共 ${data?.total || 0} 条`}
+            </span>
+            <div className="flex gap-2">
+              <button type="button" className={listButtonClass.secondary} disabled={page <= 1} onClick={() => update({ page: page - 1 })}>
+                {copy("上一页")}
+              </button>
+              <button type="button" className={listButtonClass.secondary} disabled={page >= totalPages} onClick={() => update({ page: page + 1 })}>
+                {copy("下一页")}
+              </button>
+            </div>
           </div>
-        </div>
-      </Section>
+        )}
+      </ListCard>
     </div>
   );
 }
+
+// The four counts above the list, each a filter of the list.
+const ORDER_CARDS: Record<string, { label: [string, string]; note: [string, string]; filter: string; icon: React.ElementType; color: string }> = {
+  all: { label: ["Sales orders", "销售订单"], note: ["Every order in this workspace", "当前工作区的全部订单"], filter: "", icon: ShoppingCart, color: A.blue },
+  toFulfill: { label: ["To fulfill", "待履约"], note: ["Confirmed, nothing shipped yet", "已确认，尚未发货"], filter: "workflowStatus=confirmed&fulfillmentStatus=not_fulfilled", icon: PackageOpen, color: A.orange },
+  partial: { label: ["Partly fulfilled", "部分履约"], note: ["Some lines shipped, some open", "部分已发货，部分未发"], filter: "fulfillmentStatus=partially_fulfilled", icon: Truck, color: A.purple },
+  onHold: { label: ["On hold", "暂停"], note: ["Paused until released", "暂停中，待恢复"], filter: "workflowStatus=on_hold", icon: PauseCircle, color: A.red },
+};
 
 function Filter({
   label,
@@ -683,11 +709,10 @@ function Filter({
   values: string[];
 }) {
   return (
-    <label className="text-xs">
-      {label}
+    <Field label={label}>
       <select
         aria-label={label}
-        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+        style={inputStyle}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
@@ -698,7 +723,7 @@ function Filter({
           </option>
         ))}
       </select>
-    </label>
+    </Field>
   );
 }
 

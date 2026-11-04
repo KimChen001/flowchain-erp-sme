@@ -11,7 +11,12 @@ import { BusinessDocumentForm } from "../../components/business/BusinessDocument
 import { Link, useLocation, useSearchParams } from "react-router";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
+import { rowActionClass } from "../../components/ui/listLayout";
 import {
+  tableBodyTextClass,
+  tableLinkClass,
+  tdNumericRightClass,
+  thRightClass,
   tableMinMdClass,
   tableBaseClass,
   tableScrollClass,
@@ -301,42 +306,50 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
               <SectionHeader title={copy("交付风险查询")} />
               <p className="mt-1 text-xs" style={{ color: A.sub }}>{copy("逐行查看订单缺口、承诺日期、风险原因和可核验履约事实。")}</p>
             </div>
-            <span className="text-xs" style={{ color: A.sub }}>{riskOrders.length} {copy("条风险订单")}</span>
+            <span className="text-xs" style={{ color: A.sub }}>{say(`${riskOrders.length} ${riskOrders.length === 1 ? "order" : "orders"} at risk`, `${riskOrders.length} 条风险订单`)}</span>
           </div>
           <div className={tableScrollClass}>
-            <table className={tableMinMdClass}>
+            <table className={`w-full min-w-[1080px] text-left ${tableBodyTextClass}`}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${A.border}` }}>
-                  {[copy("销售订单"), copy("客户"), copy("SKU / 物料"), copy("订购"), copy("已预留"), copy("已履约"), copy("缺口"), copy("承诺日期"), copy("风险"), copy("风险原因"), copy("操作")].map((header) => (
-                    <th key={header} className={thClass}>{header}</th>
+                  <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>{say("Sales order", "销售订单")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{copy("SKU / 物料")}</th>
+                  <th className={thRightClass} style={{ color: A.gray1 }}>{copy("订购 / 预留 / 履约")}</th>
+                  <th className={thRightClass} style={{ color: A.gray1 }}>{copy("缺口")}</th>
+                  {[copy("承诺日期"), copy("风险"), copy("风险原因")].map((header) => (
+                    <th key={header} className={thClass} style={{ color: A.gray1 }}>{header}</th>
                   ))}
+                  <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{copy("操作")}</th>
                 </tr>
               </thead>
               <tbody>
                 {riskOrders.map((order) => (
                   <tr key={order.salesOrderId} style={{ borderBottom: `1px solid ${A.border}` }}>
-                    <td className={tdIdClass}><EntityLink kind="sales_order" id={order.salesOrderId}>{order.salesOrderId}</EntityLink></td>
-                    <td className={tdNameClass}>{customerLabel(order)}</td>
+                    <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                      <EntityLink kind="sales_order" id={order.salesOrderId} className={tableLinkClass}>{order.salesOrderId}</EntityLink>
+                      <div className="max-w-[200px] truncate text-[11px] font-normal" style={{ color: A.sub }}>{customerLabel(order)}</div>
+                    </td>
                     <td className={tdNameClass}>
                       <EntityLink kind="item" id={order.itemId}>{order.sku}</EntityLink>
                       <div className="max-w-[180px] truncate text-xs" style={{ color: A.sub }}>{itemLabel(order)}</div>
                     </td>
-                    <td className={tdNumericClass}>{qty(order.orderedQty)}</td>
-                    <td className={tdNumericClass}>{qty(order.reservedQty)}</td>
-                    <td className={tdNumericClass}>{qty(order.fulfilledQty)}</td>
-                    <td className={`${tdNumericClass} font-semibold`} style={{ color: order.shortageQty > 0 ? A.red : A.gray2 }}>{qty(order.shortageQty)}</td>
+                    <td className={tdNumericRightClass}>
+                      <span className="font-semibold" style={{ color: A.label }}>{qty(order.orderedQty)}</span>
+                      <span style={{ color: A.sub }}> / {qty(order.reservedQty)} / {qty(order.fulfilledQty)}</span>
+                    </td>
+                    <td className={`${tdNumericRightClass} font-semibold`} style={{ color: order.shortageQty > 0 ? A.red : A.gray2 }}>{qty(order.shortageQty)}</td>
                     <td className={tdNowrapClass}>{order.promisedDate || copy("待确认")}</td>
                     <td className={tdNowrapClass}><Chip label={copy(order.deliveryRiskLabel)} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
-                    <td className="max-w-[320px] px-4 py-3">
+                    <td className="min-w-[220px] max-w-[300px] px-4 py-3">
                       <div className="line-clamp-2 text-xs" style={{ color: A.gray1 }}>{copy(order.deliveryRiskReason)}</div>
                       {order.dataLimitations.length > 0 && (
                         <div className="mt-1 line-clamp-2 text-[11px]" style={{ color: A.orange }}>{copy("数据限制：")}{order.dataLimitations.map(code => copy(limitationLabel(code))).join("; ")}</div>
                       )}
                     </td>
-                    <td className={tdActionClass}>
-                      <div className="flex gap-2">
-                        <Link to={`/app/sales/orders/${encodeURIComponent(order.salesOrderId)}`} className="rounded-md bg-blue-50 px-3 py-1.5 font-medium text-blue-700">{copy("查看订单")}</Link>
-                        <Link to={`/app/sales/evidence?orderId=${encodeURIComponent(order.salesOrderId)}`} className="rounded-md bg-slate-100 px-3 py-1.5 font-medium text-slate-700">{copy("查看证据")}</Link>
+                    <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
+                      <div className="flex flex-col items-start gap-1">
+                        <Link to={`/app/sales/orders/${encodeURIComponent(order.salesOrderId)}`} className={rowActionClass.primary}>{copy("查看订单")}</Link>
+                        <Link to={`/app/sales/evidence?orderId=${encodeURIComponent(order.salesOrderId)}`} className={rowActionClass.neutral}>{copy("查看证据")}</Link>
                       </div>
                     </td>
                   </tr>
