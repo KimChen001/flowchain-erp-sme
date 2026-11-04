@@ -739,6 +739,47 @@ test('the thread carries to the next turn: the transcript, the results and the i
   assert.match(restarted.client.requests[0].messages[0].content[0].text, /"earlierTurns":\[\{"question":"Which orders are late\?","answer":"PO-001 and PO-008."\}\]/)
 })
 
+// The 2026-11-04 new-user test: "Yes, go ahead with all of them" after a form
+// left every line unticked. The items of the latest form are now agreed to;
+// a SKU written next to Chinese characters counts as named.
+test('a yes to the latest form ticks its items on the next form; a SKU next to CJK is named', async () => {
+  const thread = { messages: [], results: new Map() }
+  const form = (events) => ofType(events, 'ui').find((event) => event.component === 'pr_form')?.props
+  const first = await ask([
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'] }), end()],
+    [...call('tu_form', 'suggest_purchase_request', { source: 'tu_lines', from: 'suggestions' }), end()],
+    [...say("I've filled in a request form for you to review."), end()],
+  ], { thread, question: 'What should I reorder?', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  const offered = form(first.events)
+  assert.ok(offered, JSON.stringify(types(first.events)))
+  assert.deepEqual(offered.lines, [])
+  assert.ok(offered.suggested.every((row) => row.checked === false))
+  assert.deepEqual(thread.lastFormSkus, offered.suggested.map((row) => row.item.sku.toLowerCase()))
+  const second = await ask([
+    [...call('tu_lines2', 'suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'] }), end()],
+    [...call('tu_form2', 'suggest_purchase_request', { source: 'tu_lines2', from: 'agreed' }), end()],
+    [...say('Check the lines and click Create draft to save it.'), end()],
+  ], { thread, question: 'Yes, go ahead with all of them.', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  const agreed = form(second.events)
+  assert.ok(agreed, JSON.stringify(types(second.events)))
+  assert.deepEqual(agreed.lines.map((row) => row.item.sku), offered.suggested.map((row) => row.item.sku))
+  assert.ok(agreed.lines.every((row) => row.checked === !row.covered))
+  // A claim of agreement to an item this conversation never offered or named fails.
+  const stranger = await ask([
+    [...call('tu_lines3', 'suggest_purchase_lines', { skus: ['LDM-001'] }), end()],
+    [...call('tu_form3', 'suggest_purchase_request', { source: 'tu_lines3', from: 'agreed', lines: [{ sku: 'LDM-001' }] }), end()],
+    [...say('Here.'), end()],
+  ], { question: 'Yes please.', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assert.equal(form(stranger.events), undefined)
+  assert.ok(stranger.audit.uiTools.some((row) => row.tool === 'suggest_purchase_request' && row.status !== 'ok'), JSON.stringify(stranger.audit.uiTools))
+  const chinese = await ask([
+    [...call('tu_lines4', 'suggest_purchase_lines', { skus: ['LDM-001'] }), end()],
+    [...call('tu_form4', 'suggest_purchase_request', { source: 'tu_lines4', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 50 }] }), end()],
+    [...say('好的。'), end()],
+  ], { question: '给LDM-001下单50个', body: { answerLanguage: 'zh-CN' }, uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assert.deepEqual(form(chinese.events).lines.map((row) => [row.item.sku, row.suggestedQuantity.value]), [['LDM-001', 50]])
+})
+
 test('answering writes no business record: every read goes through the read-only stand-ins', async () => {
   const { scenario, audit } = await ask([
     [...call('tu_lines', 'suggest_purchase_lines', {}), ...call('tu_prs', 'list_purchase_requests', { status: 'all' }), ...call('tu_po', 'list_purchase_orders', {}), end()],

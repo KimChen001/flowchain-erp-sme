@@ -22,6 +22,10 @@ export const PURCHASE_SUGGESTION_SOURCES = Object.freeze({
   userTyped: 'user_typed',
   reorderGap: 'reorder_gap',
   raisedToMoq: 'raised_to_moq',
+  // Sized to cover a period from recorded daily demand (coverDays of the
+  // assistant's suggest_purchase_lines), and that raised to the minimum order.
+  coverDays: 'cover_days',
+  coverDaysRaisedToMoq: 'cover_days_raised_to_moq',
   coveredByOpenOrders: 'covered_by_open_orders',
   notNeeded: 'not_needed',
   leadTime: 'lead_time',
