@@ -74,6 +74,14 @@ const entries = {
   'answer.source_agent': ['Answered from your workspace data. Worded by AI; figures checked.', '基于当前工作区数据回答，由 AI 组织语言，数字已核对'],
   // Model-first: the model read the records through tools and wrote the answer; the server checked every figure, date and name against what the tools returned (docs/ai-model-first-design.md §3).
   'answer.source_model_first': ['Written by AI from your records; figures checked', '由 AI 根据你的记录撰写，数字已核对'],
+  // Assistant v2: the model wrote the answer from the records it read; figures it could not match are underlined, not checked (docs/ai-assistant-v2-design.md §3.9).
+  'answer.source_assistant_v2': ['Written by AI from your records', '由 AI 根据你的记录撰写'],
+  // Assistant v2's hard replacements (§3.9): a part that read as if the assistant acted, and a value the role may not see.
+  'assistant_v2.replace.action_claim': ['This part of the answer is not shown because it read as if something had been done for you. The assistant changes nothing: open the record to see its status and act there.', '这部分回答读起来像是已替你执行了操作，因此不显示。助手不会修改任何内容：请打开相关记录查看状态，并在那里操作。'],
+  'assistant_v2.replace.withheld': ['[not shown]', '[不显示]'],
+  // Assistant v2's refusals before the model (§3.2), for a client that reads the folded answer; the panel words the notice code itself.
+  'assistant_v2.notice.injection_refused': ['This question asks the assistant to ignore its rules, so it was not answered.', '该问题要求助手忽略它的规则，因此没有回答。'],
+  'assistant_v2.notice.rate_limited': ['You have asked many questions in a short time. Wait a few minutes, then ask again.', '短时间内提问较多，请几分钟后再问。'],
   // A purchase request the model-first assistant proposed: the reason line of the prefilled form.
   'model_first.request.reason': ['Requested in the assistant. Review it before you submit.', '在 AI 助手中提出，提交前请核对。'],
   // The reason line when the user gave none: the reorder list's basis for the quantity.

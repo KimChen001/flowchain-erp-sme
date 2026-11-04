@@ -126,6 +126,8 @@ test('the protocol accepts the design example and every event type, and lists th
   const envelope = { v: 2, seq: 3 }
   for (const event of [
     { ...envelope, type: 'flag', partId: 'p1', spans: [{ text: '600', kind: 'number', reason: 'not_in_tool_results' }] },
+    // The records the text names, as the server found them in this answer's results.
+    { ...envelope, type: 'flag', partId: 'p1', spans: [], refs: [{ type: 'purchase_order', id: 'PO-020', label: 'PO-020' }] },
     { ...envelope, type: 'replace', partId: 'p1', text: 'Nothing was approved.', code: 'unbacked_action_claim' },
     { ...envelope, type: 'notice', code: 'over_cap_during_answer' },
     { ...envelope, type: 'error', code: 'withheld', retryable: false },
@@ -165,6 +167,8 @@ test('the protocol rejects malformed events and props', () => {
     { ...form, props: { ...form.props, suggested: [{ ...form.props.suggested[0], estimatedUnitPrice: { value: 0.42, currency: 'USD', source: 'missing' } }] } },
     { ...form, props: { ...form.props, suggested: [{ ...form.props.suggested[0], estimatedUnitPrice: { value: null, currency: null, source: 'reference_price' } }] } },
     { ...form, refs: [{ type: 'item', id: 'itm_42' }] },
+    { v: 2, seq: 1, type: 'flag', partId: 'p1', spans: [], refs: [{ type: 'purchase_order', id: 'PO-020' }] },
+    { v: 2, seq: 1, type: 'flag', partId: 'p1', spans: [], refs: 'PO-020' },
   ]
   for (const event of malformed) assert.equal(safeParseStreamEvent(event).success, false, JSON.stringify(event).slice(0, 120))
   assert.equal(safeParseStreamLine('{"v":2,').success, false)
@@ -334,7 +338,7 @@ test('an item added from the search reads the reference price the item suppliers
   assert.deepEqual([body.lines[0].estimatedUnitPrice, body.lines[0].estimatedAmount, body.lines[0].currency], [0.42, 4.2, 'USD'])
 })
 
-test('the receipt has Submit as its one primary button, and submitting says the approvers were emailed', async () => {
+test('the receipt has Submit as its one primary button, and submitting says when approvers get an email', async () => {
   const client = await loadClient()
   const draft = client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 1, status: 'draft' } })
   assert.match(draft, /data-testid="ai-v2-pr-receipt" data-status="draft"/)
@@ -345,7 +349,9 @@ test('the receipt has Submit as its one primary button, and submitting says the 
   assert.doesNotMatch(draft, /data-testid="ai-v2-pr-create"/)
   const submitted = client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 2, status: 'submitted' } })
   assert.equal(count(submitted, /data-primary="true"/g), 0)
-  assert.match(submitted, /Approvers have been emailed\./)
+  // The submit answer cannot tell whether an email went out (approval emails
+  // may be off), so the note states the condition rather than claiming it.
+  assert.match(submitted, /<p data-testid="ai-v2-pr-emailed"[^>]*>Approvers get an email when approval emails are turned on for this workspace\.</)
   assert.match(submitted, /data-testid="ai-v2-pr-withdraw"[^>]*>Withdraw</)
   assert.doesNotMatch(submitted, /Submit for approval/)
   assert.match(client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 1, status: 'draft' }, language: 'zh-CN' }), /提交审批（将邮件通知审批人）/)
@@ -395,4 +401,22 @@ test('the answer renders parts in order, chips text from the parts\' refs, and i
   assert.doesNotMatch(markup, /Supplier manual|anything/)
   // Next questions only under the latest answer.
   assert.doesNotMatch(client.answer({ parts, latest: false }), /data-testid="ai-v2-followups"/)
+})
+
+test('a text part chips the records the server found it names, and the follow-up chips render last, once', async () => {
+  const client = await loadClient()
+  const chips = (id, question) => ui(id, 'followups', { questions: [question] })
+  const markup = client.answer({ parts: [
+    { id: 'p1', type: 'text', text: 'PO-020 and PO-021 are overdue; PO-999 is not in your records.', refs: [ref('purchase_order', 'PO-020'), ref('purchase_order', 'PO-021')] },
+    chips('p2', 'Which supplier is it?'),
+    { id: 'p3', type: 'text', text: 'PO-021 is the older one.' },
+    chips('p4', 'Show PO-020'),
+  ] })
+  assert.equal(count(markup, /data-business-id="PO-020"/g), 1)
+  // One chip per record and text part: PO-021 again in the later part.
+  assert.equal(count(markup, /data-business-id="PO-021"/g), 2)
+  assert.doesNotMatch(markup, /data-business-id="PO-999"/)
+  assert.equal(count(markup, /data-testid="ai-v2-followups"/g), 1)
+  assert.doesNotMatch(markup, /Which supplier is it\?/)
+  assert.ok(markup.lastIndexOf('PO-021 is the older one.') < markup.indexOf('data-testid="ai-v2-followups"'), 'the chips come after the text')
 })

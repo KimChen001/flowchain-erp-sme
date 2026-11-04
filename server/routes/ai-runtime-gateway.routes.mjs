@@ -15,6 +15,8 @@ import { aiSkillQuestionLanguage } from '../domain/ai-skill-copy.mjs'
 import { aiKnowledgeAuditBlock, recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
 import { reportReadAccess, scopeBusinessContext } from '../domain/report-read-access.mjs'
 import { aiRuntimeProgressStream } from './ai-runtime-stream.mjs'
+import { assistantV2Enabled, assistantV2ModelClient } from '../domain/ai-assistant-v2-controls.mjs'
+import { answerWithAssistantV2 } from './ai-assistant-v2-gateway.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
 // was asked in Chinese. The client maps the codes to its own recovery text.
@@ -87,11 +89,12 @@ export async function loadAiRuntimeFacts(repositories = {}, tenantId = '', acces
 // answer for which a model call failed (the provider down, slow, or out of
 // budget): it came from the rules, and may read less naturally or miss a part.
 // A typed question whose client accepts NDJSON gets the tool loop's progress
-// as it runs, then the answer (ai-runtime-stream.mjs).
+// as it runs, then the answer (ai-runtime-stream.mjs); with assistant v2 on,
+// the answer itself streams as it is written.
 export async function handleAiRuntimeGatewayRoute(ctx) {
   if (!ctx.url?.pathname?.startsWith('/api/ai-runtime/')) return false
-  const stream = ctx.url.pathname === '/api/ai-runtime/respond' ? aiRuntimeProgressStream(ctx.req, ctx.res, ctx.send) : { send: ctx.send, progress: null }
-  return withAiWorkspaceAccess({ ...ctx, send: stream.send }, (scoped) => handleGatewayRequest({ ...scoped, send: modelAccessSend(scoped.send, scoped.aiModelAccess === 'over_cap'), aiProgress: stream.progress }))
+  const stream = ctx.url.pathname === '/api/ai-runtime/respond' ? aiRuntimeProgressStream(ctx.req, ctx.res, ctx.send) : { send: ctx.send, progress: null, event: null }
+  return withAiWorkspaceAccess({ ...ctx, send: stream.send }, (scoped) => handleGatewayRequest({ ...scoped, send: modelAccessSend(scoped.send, scoped.aiModelAccess === 'over_cap'), aiProgress: stream.progress, aiStreamEvent: stream.event }))
 }
 
 const isAnswer = (status, payload) => status === 200 && payload && typeof payload === 'object' && !Array.isArray(payload) && payload.version === 'v2'
@@ -117,6 +120,13 @@ function modelFirstFallbackSend(send) {
   return (res, status, payload) => send(res, status, isAnswer(status, payload) && !payload.aiModelAccess ? { ...payload, reviewCards: closed(payload.reviewCards), aiModelAccess: { status: 'unavailable', reason: 'unchecked' } } : payload)
 }
 
+// A question assistant v2 handed back is answered by the rules, and says why:
+// the month's remaining budget could not cover an answer (over_cap), or the
+// provider failed before any text was shown (unavailable).
+function assistantV2FallbackSend(send, fallback) {
+  return (res, status, payload) => send(res, status, isAnswer(status, payload) && !payload.aiModelAccess ? { ...payload, aiModelAccess: { status: fallback } } : payload)
+}
+
 async function handleGatewayRequest(requestCtx) {
   let ctx = requestCtx
   if (await handleKnowledgeRoute(ctx)) return true
@@ -124,7 +134,9 @@ async function handleGatewayRequest(requestCtx) {
   let send = ctx.send
 
   if (req.method === 'GET' && url.pathname === '/api/ai-runtime/readiness') {
-    send(res, 200, buildAiRuntimeReadinessV2(db, process.env))
+    // assistantV2: whether this user's questions go to assistant v2, so the
+    // panel streams them.
+    send(res, 200, { ...buildAiRuntimeReadinessV2(db, process.env), assistantV2: assistantV2Enabled(ctx) })
     return true
   }
 
@@ -142,7 +154,26 @@ async function handleGatewayRequest(requestCtx) {
     if (body && typeof body === 'object' && !Array.isArray(body)) {
       body = { ...body, interfaceLanguage: body.answerLanguage, answerLanguage: aiSkillQuestionLanguage(String(body.message || body.question || '').slice(0, 1201), body.answerLanguage) }
     }
+    // Reject empty or oversized questions before any tenant data is read.
+    const rejectInvalid = (validation) => {
+      const tooLong = String(body.message || body.question || '').trim().length > 1200
+      send(res, validation.status, errorBody(tooLong ? 'AI_QUESTION_TOO_LONG' : 'AI_QUESTION_TOO_SHORT', body))
+      return true
+    }
     try {
+      // Assistant v2 (docs/ai-assistant-v2-design.md §3.2): when it is on for
+      // this request, only the length check and its own guards run before the
+      // model. The rules below answer only a question it hands back, without
+      // a model and with a notice that says why.
+      const assistantV2 = assistantV2ModelClient(ctx)
+      if (assistantV2) {
+        const validation = validateAiRuntimeRequest(body)
+        if (!validation.ok) return rejectInvalid(validation)
+        const outcome = await answerWithAssistantV2(ctx, body, { client: assistantV2, started })
+        if (outcome.handled) return true
+        ctx = { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: assistantV2FallbackSend(ctx.send, outcome.fallback), aiAssistantV2Audit: outcome.audit }
+        send = ctx.send
+      }
       // An instruction to approve, pay, send, cancel or delete goes straight
       // to the skill runtime's refusal: the knowledge and business query
       // paths would otherwise answer it (a payment or supplier word sends it
@@ -166,13 +197,8 @@ async function handleGatewayRequest(requestCtx) {
         return true
       }
       if (!actionRequest && !modelFirstEntry?.eligible && await answerFromDocuments()) return true
-      // Reject empty or oversized questions before any tenant data is read.
       const validation = validateAiRuntimeRequest(body)
-      if (!validation.ok) {
-        const tooLong = String(body.message || body.question || '').trim().length > 1200
-        send(res, validation.status, errorBody(tooLong ? 'AI_QUESTION_TOO_LONG' : 'AI_QUESTION_TOO_SHORT', body))
-        return true
-      }
+      if (!validation.ok) return rejectInvalid(validation)
       // Model-first (docs/ai-model-first-design.md §3): a free-text question
       // the guards let through is answered by the tool loop. When it gives no
       // checked answer, the knowledge path, then the rules answer below, with

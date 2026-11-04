@@ -43,6 +43,7 @@ separate step, once the owner has provided the key and a budget.
 | `FLOWCHAIN_AI_RUNTIME_MODE` | `local` | `provider_assisted` |
 | `FLOWCHAIN_AI_ASSISTANT_MODE` | off | `model_first`: free-text questions go to the model-first tool loop (below). |
 | `FLOWCHAIN_AI_ASSISTANT_REASONING_EFFORT` | `low` (native), `none` (chat completions) | How much the loop's model reasons: `none`, `low`, `medium` or `high`. |
+| `FLOWCHAIN_AI_ASSISTANT_CHAT_CACHE` | on for a Claude model on Parley, otherwise off | Assistant v2 on chat completions: `on` marks the system prompt for the provider's prompt cache (Anthropic's `cache_control`), `off` never does. Verified on Parley only. |
 | `FLOWCHAIN_AI_ASSISTANT_TIMEOUT_MS`, `FLOWCHAIN_AI_ASSISTANT_TOKEN_BUDGET` | `20000`, `80000` | One answer's time (at most 30 s) and tokens read and written. |
 
 Check a configuration without calling the provider: `npm run check:ai-provider-env`.
