@@ -3,7 +3,8 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-const cli = join(resolve(import.meta.dirname, ".."), "node_modules", "playwright", "cli.js");
+const root = resolve(import.meta.dirname, "..");
+const cli = join(root, "node_modules", "playwright", "cli.js");
 function run(specs, extraEnv = {}) {
   return new Promise((resolveRun) => {
     const child = spawn(process.execPath, [cli, "test", ...[specs].flat()], {
@@ -60,6 +61,13 @@ await phase("supplier performance", ["tests/browser/supplier-performance-english
 await phase("po document", "tests/browser/purchase-order-document.spec.ts");
 // The assistant answers the walkthrough prompt chips in English from workspace data.
 await phase("english assistant", "tests/browser/ai-assistant-english.spec.ts");
+// Assistant v2 on the walkthrough data with the reorder showcase seed: the
+// recorded model turns replayed, the in-chat form on the procurement routes.
+await phase("assistant v2 showcase", "tests/browser/assistant-v2-showcase.spec.ts", {
+  PLAYWRIGHT_ASSISTANT_V2: "true",
+  FLOWCHAIN_AI_ASSISTANT_MODE: "assistant_v2",
+  FLOWCHAIN_AI_ASSISTANT_SCRIPTED: join(root, "tests", "browser", "fixtures", "assistant-v2", "showcase-turns.json"),
+});
 // Shell, routing, capability and authorization checks on the walkthrough data.
 await phase("shell and routing", [
   "tests/browser/frontend-route-governance.spec.ts",

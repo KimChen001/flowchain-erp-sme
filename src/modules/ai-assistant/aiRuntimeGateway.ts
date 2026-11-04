@@ -58,6 +58,11 @@ export type AiRuntimeReadinessV2 = {
   dataLimitations: Array<Record<string, unknown>>;
   generatedAt: string;
   dataScopeLabel: string;
+  // True only when assistant v2 answers this user (docs/ai-assistant-v2-design.md §3.2).
+  assistantV2?: boolean;
+  // With v2 on: the first-day checklist, as Today shows it; null when it
+  // could not be read.
+  setup?: { open: boolean; firstStepsOpen: boolean } | null;
 };
 
 export function focusTargetFromActiveContext(activeContext?: ActiveContext | null) {

@@ -14,13 +14,18 @@ export const PROTOCOL_VERSION = 2
 export const PART_SCHEMA_VERSION = 1
 
 export const STREAM_EVENT_TYPES = Object.freeze(['start', 'progress', 'tool', 'text_delta', 'ui', 'flag', 'replace', 'notice', 'error', 'answer'])
-export const UI_COMPONENTS = Object.freeze(['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations'])
+export const UI_COMPONENTS = Object.freeze(['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form'])
 export const ANSWER_LANGUAGES = Object.freeze(['en-US', 'zh-CN'])
 export const PROGRESS_STEPS = Object.freeze(['reading', 'writing', 'checking'])
 export const TOOL_STATES = Object.freeze(['running', 'done', 'error'])
 export const FLAG_KINDS = Object.freeze(['number', 'date', 'name', 'record'])
 export const REPLACE_CODES = Object.freeze(['unbacked_action_claim', 'foreign_record', 'hidden_value'])
-export const NOTICE_CODES = Object.freeze(['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused'])
+// too_long_for_rules: assistant v2 handed a question back to the rules (over
+// the cap, or the provider down) that is longer than the rules can read.
+export const NOTICE_CODES = Object.freeze(['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused', 'too_long_for_rules'])
+// The longest question each path reads, in characters: assistant v2 takes
+// rows pasted from a spreadsheet; the rules and the model-first loop do not.
+export const QUESTION_LIMITS = Object.freeze({ rules: 1200, assistantV2: 8000 })
 export const RECORD_EMPHASES = Object.freeze(['overdue', 'pending', 'info'])
 export const CHART_KINDS = Object.freeze(['line', 'bar', 'stacked_bar'])
 export const VALUE_UNITS = Object.freeze(['count', 'quantity', 'money', 'percent', 'days'])
@@ -28,7 +33,7 @@ export const CHOICE_PROMPTS = Object.freeze(['pick_item', 'pick_supplier', 'pick
 export const RELATIVE_DATE_KINDS = Object.freeze(['overdue', 'due', 'waiting', 'on'])
 export const STATUS_TONES = Object.freeze(['danger', 'warning', 'success', 'info', 'neutral'])
 // Where a suggested quantity came from (shared quantity engine, V2-5).
-export const QUANTITY_SOURCES = Object.freeze(['user_named', 'reorder_gap', 'reorder_gap_raised_to_moq'])
+export const QUANTITY_SOURCES = Object.freeze(['user_named', 'reorder_gap', 'reorder_gap_raised_to_moq', 'cover_days', 'cover_days_raised_to_moq', 'none'])
 export const SUPPLIER_SOURCES = Object.freeze(['preferred', 'only_approved', 'user_named'])
 export const NEED_BY_SOURCES = Object.freeze(['lead_time', 'user_named', 'today'])
 export const PRICE_SOURCES = Object.freeze(['reference_price', 'masked', 'missing'])
@@ -110,12 +115,19 @@ const citationsProps = z.object({
   passages: z.array(z.object({ id, title: z.string().max(200), excerpt: z.string().max(1200), documentId: id.optional() })).min(1).max(5),
 })
 
+// A supplier the line may use. link "new": an active supplier of the
+// workspace that is not yet an approved supplier of the item; the form adds
+// it as one (approved, not preferred) when the user clicks Create. Its lead
+// time and price are then the ones the user typed, or null.
+export const NEW_SUPPLIER_LINK = 'new'
+const supplierLink = z.literal(NEW_SUPPLIER_LINK)
 const approvedSupplier = z.object({
   id, name: label, preferred: z.boolean(),
   leadTimeDays: z.number().int().nonnegative().nullable().optional(),
   // The supplier's master-data reference price; null when missing or hidden for the role.
   unitPrice: amount.nonnegative().nullable().optional(),
   currency: currency.nullable().optional(),
+  link: supplierLink.optional(),
 })
 
 // One line of the in-chat purchase request form (§4.1). Every value comes
@@ -125,8 +137,8 @@ export const prFormRowSchema = z.object({
   onHand: amount.nullable().optional(),
   safetyStock: amount.nullable().optional(),
   reorderPoint: amount.nullable().optional(),
-  suggestedQuantity: z.object({ value: amount.positive().nullable(), source: z.enum(QUANTITY_SOURCES), minimum: amount.positive().nullable().optional() }),
-  supplier: z.object({ id, name: label, source: z.enum(SUPPLIER_SOURCES) }).nullable(),
+  suggestedQuantity: z.object({ value: amount.positive().nullable(), source: z.enum(QUANTITY_SOURCES), minimum: amount.positive().nullable().optional(), coverDays: z.number().int().positive().optional() }),
+  supplier: z.object({ id, name: label, source: z.enum(SUPPLIER_SOURCES), link: supplierLink.optional() }).nullable(),
   suppliers: z.array(approvedSupplier).max(20).optional(),
   needByDate: z.object({ value: day, source: z.enum(NEED_BY_SOURCES), leadTimeDays: z.number().int().nonnegative().nullable().optional(), shortWeekOf: day.nullable().optional() }),
   orderByDate: day.nullable().optional(),
@@ -147,7 +159,88 @@ const prFormProps = z.object({
   lines: z.array(prFormRowSchema).max(8),
   canCreate: z.boolean(),
   departmentId: id.optional(),
+  // The user may add approved suppliers to items (master_data.item.manage):
+  // the form then offers the workspace's other active suppliers, and the
+  // currency a new supplier's price defaults to when it records none.
+  canLinkSuppliers: z.boolean().optional(),
+  workspaceCurrency: currency.optional(),
 })
+
+// The first-day checklist, as Today shows it (server/domain/today-work.mjs):
+// each step done by a real count, and the page that does it while the user
+// may (the import page for bulk data when import is on).
+export const SETUP_STEP_IDS = Object.freeze(['items', 'suppliers', 'customers', 'opening_stock', 'teammates'])
+export const SETUP_STEP_BLOCKS = Object.freeze(['permission', 'unavailable'])
+const setupStepsProps = z.object({
+  source: id.optional(),
+  steps: z.array(z.object({ id: z.enum(SETUP_STEP_IDS), done: z.boolean(), count: z.number().int().nonnegative(), blocked: z.enum(SETUP_STEP_BLOCKS).optional(), route: route.optional() })).min(1).max(SETUP_STEP_IDS.length),
+  done: z.number().int().nonnegative(),
+  total: z.number().int().positive(),
+  // Items still missing what the reorder suggestions need; absent when the
+  // role cannot read inventory.
+  gaps: z.object({ checked: z.number().int().nonnegative(), unit: z.number().int().nonnegative(), preferredSupplier: z.number().int().nonnegative(), thresholds: z.number().int().nonnegative() }).optional(),
+})
+
+// The in-chat setup card (suggest_setup_records): new suppliers and items the
+// user typed or pasted, each value with where it came from, and what the
+// server found wrong with each row. Nothing is created until the user clicks.
+//   user_typed  the value is in the user's own words
+//   not_given   the user did not give it
+//   generated   a supplier code the card makes up from codeSeed
+//   default     the price currency: the supplier's, else the workspace's
+export const SETUP_VALUE_SOURCES = Object.freeze(['user_typed', 'not_given', 'generated', 'default'])
+export const SETUP_PROBLEMS = Object.freeze([
+  'required', 'duplicate_existing', 'duplicate_in_card', 'invalid', 'negative', 'whole_number', 'email_invalid',
+  'payment_terms_unknown', 'supplier_unknown', 'supplier_inactive', 'needs_supplier', 'currency_invalid', 'not_allowed',
+])
+export const SETUP_FORM_ROWS = 25
+const setupSource = z.enum(SETUP_VALUE_SOURCES)
+const setupText = (max) => z.object({ value: z.string().max(max).nullable(), source: setupSource })
+const setupNumber = z.object({ value: amount.nullable(), source: setupSource })
+// blocking: the row cannot be created as it is; otherwise a warning (an item
+// named like one that exists). ref: the existing record it collides with.
+const setupProblem = z.object({ field: code, code: z.enum(SETUP_PROBLEMS), blocking: z.boolean(), ref: refSchema.optional() })
+const supplierKey = z.string().regex(/^s\d{1,2}$/)
+export const setupSupplierRowSchema = z.object({
+  key: supplierKey,
+  name: setupText(200),
+  code: setupText(64),
+  contact: setupText(200),
+  email: setupText(200),
+  phone: setupText(60),
+  // value: the workspace payment term's code; typed: what the user wrote.
+  paymentTerms: z.object({ value: z.string().max(64).nullable(), label: z.string().max(120).nullable(), typed: z.string().max(60).nullable(), source: setupSource }),
+  problems: z.array(setupProblem).max(20),
+})
+export const setupItemRowSchema = z.object({
+  key: z.string().regex(/^i\d{1,2}$/),
+  sku: setupText(64),
+  name: setupText(200),
+  unit: setupText(20),
+  category: setupText(100),
+  safetyStock: setupNumber,
+  reorderPoint: setupNumber,
+  referencePrice: setupNumber,
+  leadTimeDays: setupNumber,
+  currency: z.object({ value: currency.nullable(), source: setupSource }),
+  // An existing supplier (supplierId) or a supplier row of this card (rowKey).
+  preferredSupplier: z.object({ supplierId: id.nullable(), rowKey: supplierKey.nullable(), name: z.string().max(200).nullable(), typed: z.string().max(200).nullable(), source: setupSource })
+    .refine((value) => !(value.supplierId && value.rowKey), { message: 'one supplier at most', path: ['rowKey'] }),
+  problems: z.array(setupProblem).max(20),
+})
+const setupFormProps = z.object({
+  formId: z.string().min(1).max(160),
+  suppliers: z.array(setupSupplierRowSchema).max(SETUP_FORM_ROWS),
+  items: z.array(setupItemRowSchema).max(SETUP_FORM_ROWS),
+  // The next free supplier code: prefix and number, which the card pads to width.
+  codeSeed: z.object({ prefix: z.string().regex(/^[A-Z]{1,8}-$/), next: z.number().int().positive(), width: z.number().int().min(1).max(6) }),
+  paymentTerms: z.array(z.object({ code: z.string().min(1).max(64), label: z.string().min(1).max(120) })).max(30),
+  // Existing active suppliers an item may name as its preferred one.
+  supplierOptions: z.array(z.object({ id, name: label, currency: currency.nullable().optional() })).max(50),
+  workspaceCurrency: currency,
+  canCreateSuppliers: z.boolean(),
+  canCreateItems: z.boolean(),
+}).refine((props) => props.suppliers.length + props.items.length >= 1 && props.suppliers.length + props.items.length <= SETUP_FORM_ROWS, { message: `1 to ${SETUP_FORM_ROWS} rows`, path: ['items'] })
 
 export const partPropsSchemas = Object.freeze({
   table: tableProps,
@@ -158,6 +251,8 @@ export const partPropsSchemas = Object.freeze({
   pr_form: prFormProps,
   followups: followupsProps,
   citations: citationsProps,
+  setup_steps: setupStepsProps,
+  setup_form: setupFormProps,
 })
 
 const envelope = { v: z.literal(PROTOCOL_VERSION), seq: z.number().int().nonnegative() }
@@ -185,7 +280,9 @@ export const streamEventSchema = z.union([
   z.object({ ...envelope, type: z.literal('tool'), id, name: code, state: z.enum(TOOL_STATES), rows: z.number().int().nonnegative().optional() }),
   z.object({ ...envelope, type: z.literal('text_delta'), partId, text: z.string().max(4000) }),
   ...uiEvents,
-  z.object({ ...envelope, type: z.literal('flag'), partId, spans: z.array(z.object({ text: z.string().min(1).max(200), kind: z.enum(FLAG_KINDS), reason: code })).max(50) }),
+  // The check of a completed text part: the spans it could not match, and the
+  // records of this answer's results the text names (the panel chips those).
+  z.object({ ...envelope, type: z.literal('flag'), partId, spans: z.array(z.object({ text: z.string().min(1).max(200), kind: z.enum(FLAG_KINDS), reason: code })).max(50), refs: z.array(refSchema).max(60).optional() }),
   z.object({ ...envelope, type: z.literal('replace'), partId, text: z.string().max(4000), code: z.enum(REPLACE_CODES) }),
   z.object({ ...envelope, type: z.literal('notice'), code: z.enum(NOTICE_CODES) }),
   z.object({ ...envelope, type: z.literal('error'), code, retryable: z.boolean() }),

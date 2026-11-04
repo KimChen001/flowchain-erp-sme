@@ -61,6 +61,7 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   attention_list: { rows: ['rank', 'type', 'severity', 'label', 'whenKind', 'days', 'date', 'supplier'] },
   records_missing_data: { rows: ['type', 'label', 'source', 'missing'] },
   suggest_purchase_lines: { rows: ['item.sku', 'item.name', 'item.unit', 'onHand', 'safetyStock', 'reorderPoint', 'suggestedQuantity.value', 'suggestedQuantity.source', 'supplier.name', 'needByDate.value', 'estimatedUnitPrice.value', 'estimatedUnitPrice.currency'] },
+  setup_status: { steps: ['id', 'done', 'count'] },
 })
 
 export function aiReadToolsFor(facts, context = null, { assistantV2 = false } = {}) {

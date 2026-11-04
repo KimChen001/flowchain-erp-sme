@@ -1,12 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { execFile } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AssistantModelError, createAssistantV2ModelClient } from './ai-assistant-v2-model/index.mjs'
 import { assistantV2SdkBaseUrl, buildAssistantV2MessagesRequest, createAnthropicSdkModelClient } from './ai-assistant-v2-model/anthropic-sdk.mjs'
-import { createChatCompletionsModelClient, isLocalOnlyProviderEndpoint } from './ai-assistant-v2-model/chat-completions.mjs'
+import { assistantV2ChatCaching, assistantV2ChatUsage, buildAssistantV2ChatRequest, createChatCompletionsModelClient, isLocalOnlyProviderEndpoint } from './ai-assistant-v2-model/chat-completions.mjs'
 import { completeScriptedTurn, createScriptedModelClient, scriptedTurnFor, startScriptedMessagesServer } from './ai-assistant-v2-model/scripted.mjs'
 
 // The assistant v2 model seam (docs/ai-assistant-v2-design.md §3.4): the SDK
@@ -326,6 +327,231 @@ test('a stop or a dropped connection while the chat reply arrives is not bad out
   }
 })
 
+// A localhost chat completions server that streams: reply(body, index) gives
+// { status, frames } for an event stream (each frame one data line, written
+// with a pause between frames), { status, body } for a whole JSON reply, or
+// { drop } to write frames and then cut the connection.
+async function chatStreamStub(reply) {
+  const requests = []
+  const sockets = new Set()
+  const server = http.createServer(async (req, res) => {
+    let raw = ''
+    for await (const chunk of req) raw += chunk
+    const record = { headers: req.headers, body: JSON.parse(raw), closed: false }
+    requests.push(record)
+    res.on('close', () => { record.closed = true })
+    const answer = reply(record.body, requests.length - 1)
+    if (answer.body !== undefined) {
+      res.writeHead(answer.status || 200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(answer.body))
+      return
+    }
+    res.writeHead(answer.status || 200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+    for (const frame of answer.frames) {
+      if (record.closed) return
+      res.write(typeof frame === 'string' ? frame : `data: ${JSON.stringify(frame)}\n\n`)
+      await new Promise((resolve) => setTimeout(resolve, answer.delayMs ?? 1))
+    }
+    if (answer.drop) res.destroy()
+    else res.end()
+  })
+  server.on('connection', (socket) => sockets.add(socket))
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return {
+    endpoint: `http://127.0.0.1:${server.address().port}/v1/chat/completions`,
+    requests,
+    close: () => new Promise((resolve) => { for (const socket of sockets) socket.destroy(); server.close(resolve) }),
+  }
+}
+const chunk = (delta, extra = {}) => ({ id: 'chatcmpl-1', object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason: null }], ...extra })
+const finish = (reason) => ({ id: 'chatcmpl-1', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: reason }] })
+// Usage as Parley reports it for a Claude model: the cache reads and writes
+// beside prompt_tokens, and all of them in total_tokens.
+const PARLEY_USAGE = { prompt_tokens: 4, completion_tokens: 59, total_tokens: 2870, prompt_tokens_details: { cache_read_input_tokens: 2807, cache_write_input_tokens: 0 } }
+const TOOL_STREAM = [
+  chunk({ role: 'assistant', content: 'Let me ' }),
+  chunk({ content: 'check.' }),
+  chunk({ tool_calls: [{ index: 0, id: 'call_a', type: 'function', function: { name: 'stock_on_hand', arguments: '' } }] }),
+  chunk({ tool_calls: [{ index: 0, function: { arguments: '{"sku":' } }] }),
+  chunk({ tool_calls: [{ index: 0, function: { arguments: '"BOLT-M8"}' } }] }),
+  chunk({ tool_calls: [{ index: 1, id: 'call_b', type: 'function', function: { name: 'attention_list', arguments: '{}' } }] }),
+  finish('tool_calls'),
+  { id: 'chatcmpl-1', object: 'chat.completion.chunk', choices: [], usage: PARLEY_USAGE },
+  'data: [DONE]\n\n',
+]
+
+test('the chat completions client streams: text by delta, tool calls from their pieces, usage from the stream', async () => {
+  const stub = await chatStreamStub(() => ({ frames: TOOL_STREAM }))
+  try {
+    const client = createChatCompletionsModelClient(chatEnv(stub.endpoint))
+    const events = await collect(client.stream(request(), new AbortController().signal))
+    const [sent] = stub.requests
+    assert.equal(sent.body.stream, true)
+    assert.deepEqual(sent.body.stream_options, { include_usage: true })
+    assert.deepEqual(events.map((event) => event.type), [
+      'text_delta', 'text_delta', 'tool_use_start', 'tool_input_delta', 'tool_input_delta', 'tool_use_start', 'tool_input_delta',
+      'tool_use_end', 'tool_use_end', 'message_end',
+    ])
+    assert.deepEqual(events.filter((event) => event.type === 'text_delta').map((event) => event.text), ['Let me ', 'check.'])
+    assert.deepEqual(events[2], { type: 'tool_use_start', id: 'call_a', name: 'stock_on_hand' })
+    assert.deepEqual(events.filter((event) => event.type === 'tool_input_delta' && event.id === 'call_a').map((event) => event.partialJson), ['{"sku":', '"BOLT-M8"}'])
+    assert.deepEqual(events[7], { type: 'tool_use_end', id: 'call_a', name: 'stock_on_hand', input: { sku: 'BOLT-M8' } })
+    assert.deepEqual(events[8], { type: 'tool_use_end', id: 'call_b', name: 'attention_list', input: {} })
+    const end = events.at(-1)
+    assert.equal(end.stopReason, 'tool_use')
+    assert.deepEqual(end.content, [
+      { type: 'text', text: 'Let me check.' },
+      { type: 'tool_use', id: 'call_a', name: 'stock_on_hand', input: { sku: 'BOLT-M8' } },
+      { type: 'tool_use', id: 'call_b', name: 'attention_list', input: {} },
+    ])
+    assert.deepEqual(end.usage, { input_tokens: 4, output_tokens: 59, cache_read_input_tokens: 2807, cache_creation_input_tokens: 0 })
+
+    // Text alone, cut by the output limit, and no usage in the stream.
+    const short = await chatStreamStub(() => ({ frames: [chunk({ content: 'Partial' }), finish('length'), 'data: [DONE]\n\n'] }))
+    try {
+      const partial = await collect(createChatCompletionsModelClient(chatEnv(short.endpoint)).stream(request(), undefined))
+      assert.deepEqual(partial.map((event) => event.type), ['text_delta', 'message_end'])
+      assert.deepEqual([partial.at(-1).stopReason, partial.at(-1).usage, partial.at(-1).content], ['max_tokens', null, [{ type: 'text', text: 'Partial' }]])
+    } finally {
+      await short.close()
+    }
+  } finally {
+    await stub.close()
+  }
+})
+
+test('a provider that refuses to stream is asked again without it, and is not asked to stream again', async () => {
+  const whole = { choices: [{ finish_reason: 'stop', message: { content: 'Twelve are left.' } }], usage: { prompt_tokens: 900, completion_tokens: 5, total_tokens: 905 } }
+  const stub = await chatStreamStub((body) => (body.stream ? { status: 400, body: { error: { message: 'stream is not supported' } } } : { body: whole }))
+  try {
+    const client = createChatCompletionsModelClient(chatEnv(stub.endpoint))
+    const events = await collect(client.stream(request(), undefined))
+    assert.deepEqual(events.map((event) => event.type), ['text_delta', 'message_end'])
+    assert.equal(events[0].text, 'Twelve are left.')
+    assert.deepEqual(stub.requests.map((entry) => Boolean(entry.body.stream)), [true, false])
+    assert.equal('stream_options' in stub.requests[1].body, false)
+    // A later answer on the same endpoint goes straight to the whole reply.
+    await collect(createChatCompletionsModelClient(chatEnv(stub.endpoint)).stream(request(), undefined))
+    assert.deepEqual(stub.requests.map((entry) => Boolean(entry.body.stream)), [true, false, false])
+  } finally {
+    await stub.close()
+  }
+  // A request refused either way is the provider's error, and streaming is
+  // tried again next time.
+  const broken = await chatStreamStub(() => ({ status: 400, body: { error: { message: 'bad request' } } }))
+  try {
+    await assert.rejects(collect(createChatCompletionsModelClient(chatEnv(broken.endpoint)).stream(request(), undefined)), (error) => error instanceof AssistantModelError && error.status === 400)
+    await assert.rejects(collect(createChatCompletionsModelClient(chatEnv(broken.endpoint)).stream(request(), undefined)), (error) => error.status === 400)
+    assert.deepEqual(broken.requests.map((entry) => Boolean(entry.body.stream)), [true, false, true, false])
+  } finally {
+    await broken.close()
+  }
+})
+
+test('a streamed reply that breaks off, reports an error or is stopped fails the same way as the other clients', async () => {
+  // The connection drops mid-stream: a network error.
+  const dropped = await chatStreamStub(() => ({ frames: [chunk({ content: 'Let me ' })], drop: true }))
+  try {
+    await assert.rejects(collect(createChatCompletionsModelClient(chatEnv(dropped.endpoint)).stream(request(), undefined)), (error) => error instanceof AssistantModelError && error.reason === 'network_error')
+  } finally {
+    await dropped.close()
+  }
+  // The stream ends with neither a finish reason nor [DONE]: bad output.
+  const cut = await chatStreamStub(() => ({ frames: [chunk({ content: 'Let me ' })] }))
+  try {
+    await assert.rejects(collect(createChatCompletionsModelClient(chatEnv(cut.endpoint)).stream(request(), undefined)), (error) => error instanceof AssistantModelError && error.reason === 'malformed_output')
+  } finally {
+    await cut.close()
+  }
+  // An error the provider sends inside the stream.
+  const overloaded = await chatStreamStub(() => ({ frames: [chunk({ content: 'Let me ' }), { error: { type: 'overloaded_error', message: 'Overloaded' } }] }))
+  try {
+    await assert.rejects(collect(createChatCompletionsModelClient(chatEnv(overloaded.endpoint)).stream(request(), undefined)), (error) => error instanceof AssistantModelError && error.reason === 'non_success_status' && error.errorType === 'overloaded_error')
+  } finally {
+    await overloaded.close()
+  }
+  // A stop after the first event: nothing more reaches the loop, and the
+  // connection is closed before the rest is sent.
+  const slow = await chatStreamStub(() => ({ frames: TOOL_STREAM, delayMs: 40 }))
+  try {
+    const controller = new AbortController()
+    const seen = []
+    await assert.rejects(async () => {
+      for await (const event of createChatCompletionsModelClient(chatEnv(slow.endpoint)).stream(request(), controller.signal)) {
+        seen.push(event)
+        controller.abort()
+      }
+    }, (error) => error.name === 'AbortError')
+    assert.deepEqual(seen.map((event) => event.type), ['text_delta'])
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(slow.requests[0].closed, true)
+  } finally {
+    await slow.close()
+  }
+})
+
+test('prompt caching on the chat path: the system message carries the marker on Parley for Claude models', () => {
+  const parley = 'https://parley.api.mit.edu/v1/chat/completions'
+  assert.equal(assistantV2ChatCaching({}, { endpoint: parley, model: 'claude-sonnet-5-5' }), true)
+  assert.equal(assistantV2ChatCaching({}, { endpoint: parley, model: 'gpt-5.5' }), false)
+  assert.equal(assistantV2ChatCaching({}, { endpoint: 'https://opencode.ai/zen/go/v1/chat/completions', model: 'claude-haiku-5-5' }), false)
+  assert.equal(assistantV2ChatCaching({ FLOWCHAIN_AI_ASSISTANT_CHAT_CACHE: 'on' }, { endpoint: 'http://127.0.0.1:9/v1/chat/completions', model: 'claude-haiku-5-5' }), true)
+  assert.equal(assistantV2ChatCaching({ FLOWCHAIN_AI_ASSISTANT_CHAT_CACHE: 'off' }, { endpoint: parley, model: 'claude-sonnet-5-5' }), false)
+  const cached = buildAssistantV2ChatRequest(request(), { model: 'claude-sonnet-5-5', effort: 'none', cache: true })
+  assert.deepEqual(cached.messages[0], { role: 'system', content: [{ type: 'text', text: 'You are the FlowChain assistant.', cache_control: { type: 'ephemeral' } }] })
+  assert.deepEqual(buildAssistantV2ChatRequest(request(), { model: 'deepseek-v4.1-flash', effort: 'none' }).messages[0], { role: 'system', content: 'You are the FlowChain assistant.' })
+  // Cache reads and writes in either convention, priced apart from the rest.
+  assert.deepEqual(assistantV2ChatUsage({ usage: PARLEY_USAGE }), { input_tokens: 4, output_tokens: 59, cache_read_input_tokens: 2807, cache_creation_input_tokens: 0 })
+  assert.deepEqual(assistantV2ChatUsage({ usage: { prompt_tokens: 4, completion_tokens: 59, total_tokens: 2870, prompt_tokens_details: { cache_read_input_tokens: 0, cache_write_input_tokens: 2807 } } }), { input_tokens: 4, output_tokens: 59, cache_read_input_tokens: 0, cache_creation_input_tokens: 2807 })
+  assert.deepEqual(assistantV2ChatUsage({ usage: { prompt_tokens: 900, completion_tokens: 30, total_tokens: 930, prompt_tokens_details: { cached_tokens: 600 } } }), { input_tokens: 300, output_tokens: 30, cache_read_input_tokens: 600, cache_creation_input_tokens: 0 })
+  assert.equal(assistantV2ChatUsage({}), null)
+})
+
+test('withdrawn tools are left out of an uncached chat request and stay in a cached one and in a Messages request', () => {
+  const chat = buildAssistantV2ChatRequest(request({ withdrawnTools: ['attention_list'] }), { model: 'deepseek-v4.1-flash', effort: 'none' })
+  assert.deepEqual(chat.tools.map((tool) => tool.function.name), ['stock_on_hand'])
+  const none = buildAssistantV2ChatRequest(request({ withdrawnTools: ['attention_list', 'stock_on_hand'] }), { model: 'deepseek-v4.1-flash', effort: 'none' })
+  assert.equal('tools' in none, false)
+  assert.equal('tool_choice' in none, false)
+  // The tools are part of the cached prefix: the list stays as it was.
+  const cached = buildAssistantV2ChatRequest(request({ withdrawnTools: ['attention_list'] }), { model: 'claude-sonnet-5-5', effort: 'none', cache: true })
+  assert.deepEqual(cached.tools, buildAssistantV2ChatRequest(request(), { model: 'claude-sonnet-5-5', effort: 'none', cache: true }).tools)
+  const messages = buildAssistantV2MessagesRequest(request({ withdrawnTools: ['attention_list'] }), { model: 'claude-sonnet-5-5', effort: 'low' })
+  assert.deepEqual(messages.tools.map((tool) => tool.name), ['attention_list', 'stock_on_hand'])
+})
+
+test('the model check script calls inside a usage scope, so a provider that routes by session gets its header', async () => {
+  // OpenCode Go refuses a call without x-opencode-session (400 MissingSessionID).
+  const stub = await chatStreamStub((body, index) => {
+    if (!stub.requests[index].headers['x-opencode-session']) return { status: 400, body: { error: { type: 'MissingSessionID' } } }
+    return body.messages.some((message) => message.role === 'tool')
+      ? { frames: [chunk({ content: 'It is 2 November.' }), finish('stop'), 'data: [DONE]\n\n'] }
+      : { frames: [chunk({ tool_calls: [{ index: 0, id: 'call_clock', type: 'function', function: { name: 'workspace_clock', arguments: '{}' } }] }), finish('tool_calls'), 'data: [DONE]\n\n'] }
+  })
+  const directory = mkdtempSync(join(tmpdir(), 'flowchain-model-check-'))
+  const envFile = join(directory, 'provider.env')
+  writeFileSync(envFile, [
+    'FLOWCHAIN_AI_RUNTIME_MODE=provider_assisted', 'FLOWCHAIN_AI_PROVIDER_KIND=deepseek_chat', `FLOWCHAIN_AI_PROVIDER_ENDPOINT=${stub.endpoint}`,
+    `FLOWCHAIN_AI_PROVIDER_API_KEY=${KEY}`, 'FLOWCHAIN_AI_PROVIDER_MODEL=claude-haiku-5-5', 'FLOWCHAIN_AI_PROVIDER_SESSION_HEADER=x-opencode-session',
+  ].join('\n'))
+  try {
+    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('FLOWCHAIN_')))
+    const script = new URL('../../scripts/assistant-v2-model-check.mjs', import.meta.url)
+    const output = await new Promise((resolve, reject) => execFile(process.execPath, [script.pathname.replace(/^\/([A-Za-z]:)/, '$1'), `--provider-env=${envFile}`], { env, timeout: 30000 }, (error, stdout, stderr) => (error ? reject(new Error(`${error.message}\n${stdout}\n${stderr}`)) : resolve(stdout))))
+    assert.match(output, /Client: chat_completions, model claude-haiku-5-5/)
+    assert.match(output, /Call 1: .*stop reason tool_use/)
+    assert.match(output, /Call 2: .*stop reason end_turn/)
+    assert.doesNotMatch(output, new RegExp(`${KEY}|127\\.0\\.0\\.1`), 'never the key or the endpoint')
+    const sessions = stub.requests.map((entry) => entry.headers['x-opencode-session'])
+    assert.equal(sessions.length, 2)
+    assert.ok(sessions.every((value) => /^[0-9a-f-]{36}$/.test(value)))
+    assert.equal(sessions[0], sessions[1], 'one session for the run')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+    await stub.close()
+  }
+})
+
 test('OpenCode Go and Parley endpoints are refused in production', () => {
   assert.equal(isLocalOnlyProviderEndpoint('https://parley.api.mit.edu/v1/chat/completions'), true)
   assert.equal(isLocalOnlyProviderEndpoint('https://opencode.ai/zen/go/v1/chat/completions'), true)
@@ -431,7 +657,30 @@ test('a script keyed by question picks each turn from the request, whatever clie
   }
 })
 
+test('a scripted pause holds the replay until its time is up or the call is stopped', async () => {
+  const turn = [{ type: 'text_delta', text: 'Here is ' }, { type: 'pause', ms: 30 }, { type: 'text_delta', text: 'the rest.' }]
+  const started = Date.now()
+  const events = await collect(createScriptedModelClient([turn]).stream(request(), undefined))
+  assert.ok(Date.now() - started >= 25)
+  assert.deepEqual(events.map((event) => event.type), ['text_delta', 'text_delta', 'message_end'])
+  assert.deepEqual(events.at(-1).content, [{ type: 'text', text: 'Here is the rest.' }])
+
+  const stopped = new AbortController()
+  const seen = []
+  const held = Date.now()
+  await assert.rejects(async () => {
+    for await (const event of createScriptedModelClient([[turn[0], { type: 'pause', ms: 50000 }, turn[2]]]).stream(request(), stopped.signal)) {
+      seen.push(event)
+      setTimeout(() => stopped.abort(), 10)
+    }
+  }, (error) => error.name === 'AbortError')
+  assert.ok(Date.now() - held < 5000)
+  assert.deepEqual(seen, [turn[0]])
+})
+
 test('a scripted turn built from tool events ends in tool use', () => {
   const [, , end] = completeScriptedTurn([{ type: 'tool_use_start', id: 't1', name: 'attention_list' }, { type: 'tool_use_end', id: 't1', name: 'attention_list', input: null }])
   assert.deepEqual(end, { type: 'message_end', stopReason: 'tool_use', usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, content: [{ type: 'tool_use', id: 't1', name: 'attention_list', input: {} }] })
+  // A turn may report no usage at all, as a stream without its usage chunk does.
+  assert.equal(completeScriptedTurn([{ type: 'text_delta', text: 'Done.' }, { type: 'message_end', usage: null }]).at(-1).usage, null)
 })

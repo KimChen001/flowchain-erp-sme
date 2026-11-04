@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { loadEnv } from "../config/env.mjs";
 import { resolveBuildIdentity, validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import { validateDatabasePersistenceConfig } from "../persistence/persistence-config.mjs";
+import { assertAiAssistantV2Deployment } from "../domain/ai-workspace-access.mjs";
 import { withSecurityHeaders } from "./security-headers.mjs";
 import { createHttpRequestHandler } from "./http-request-handler.mjs";
 import { requestLogEnabled, withRequestLogging } from "./request-logging.mjs";
@@ -756,6 +757,7 @@ export function createScmServer({
 } = {}) {
   validateProductionRuntimeConfig(process.env);
   validateDatabasePersistenceConfig(process.env);
+  assertAiAssistantV2Deployment(process.env);
   // Sessions are rows in PostgreSQL, so they outlive this process.
   const sessionStore = createWorkspaceSessionStore({ env: process.env });
   // Sign-in links and approval emails share one provider (or the override).
