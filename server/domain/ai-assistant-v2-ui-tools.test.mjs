@@ -415,7 +415,89 @@ test('suggest_purchase_request sends no price when it is masked or missing, and 
   const picked = assertPart(open.build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', supplier: 'Summit Packaging' }] }), 'pr_form').lines[0]
   assert.deepEqual(picked.supplier, { id: 'SUP-002', name: 'Summit Packaging', source: 'user_named' })
   assert.equal(picked.estimatedUnitPrice.value, null)
-  assertError(open.build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', supplier: 'Globex' }] }), 'supplier_not_listed')
+  // A supplier not listed is looked up among the workspace's, so the answer comes later.
+  assertError(await open.build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', supplier: 'Globex' }] }), 'supplier_not_listed')
+})
+
+// "Order 200 of LDM-001 from Northstar Electronics" (2026-11-04): Northstar is
+// an active supplier of the workspace, but LDM-001 has not approved it.
+const northstar = (data) => {
+  highReorderPoint(data)
+  data.suppliers.push(
+    { id: 'SUP-003', supplierCode: 'NS-01', name: 'Northstar Electronics', supplierName: 'Northstar Electronics', status: 'active' },
+    { id: 'SUP-004', supplierCode: 'NS-02', name: 'Northstar Logistics', supplierName: 'Northstar Logistics', status: 'active' },
+    { id: 'SUP-005', supplierCode: 'OLD-1', name: 'Oldfield Parts', supplierName: 'Oldfield Parts', status: 'inactive' },
+  )
+}
+const ACME_OPTION = { id: 'SUP-001', name: 'Acme Components', preferred: true, leadTimeDays: 12, unitPrice: 95, currency: 'USD' }
+
+test('suggest_purchase_request puts a named supplier the item has not approved on the line, marked new, for a user who may add it', async () => {
+  const userText = 'order 200 of LDM-001 from Northstar Electronics'
+  const { ctx, call, build } = await workspace({ change: northstar, userNamedSkus: ['LDM-001'], userText })
+  await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  const built = await build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 200, supplier: 'Northstar Electronics' }] })
+  const props = assertPart(built, 'pr_form')
+  const [line] = props.lines
+  assert.deepEqual(line.supplier, { id: 'SUP-003', name: 'Northstar Electronics', source: 'user_named', link: 'new' })
+  assert.deepEqual(line.suppliers, [ACME_OPTION, { id: 'SUP-003', name: 'Northstar Electronics', preferred: false, leadTimeDays: null, unitPrice: null, currency: 'USD', link: 'new' }])
+  // No price or lead time the user did not give: the need-by date falls back to today.
+  assert.deepEqual(line.estimatedUnitPrice, { value: null, currency: null, source: 'missing' })
+  assert.deepEqual(line.needByDate, { value: ctx.facts.today, source: 'today', leadTimeDays: null, shortWeekOf: null })
+  assert.deepEqual([line.suggestedQuantity, line.checked], [{ value: 200, source: 'user_named' }, true])
+  assert.deepEqual([props.canLinkSuppliers, props.workspaceCurrency], [true, 'USD'])
+  assert.ok(built.refs.some((ref) => ref.type === 'supplier' && ref.id === 'SUP-003' && ref.label === 'Northstar Electronics'))
+  // By its code too; an approved supplier named by a shorter name is that supplier, not a new one.
+  const byCode = assertPart(await build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', supplier: 'ns-01' }] }), 'pr_form')
+  assert.deepEqual(byCode.lines[0].supplier, { id: 'SUP-003', name: 'Northstar Electronics', source: 'user_named', link: 'new' })
+  const acme = assertPart(await build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', supplier: 'Acme' }] }), 'pr_form')
+  assert.deepEqual(acme.lines[0].supplier, { id: 'SUP-001', name: 'Acme Components', source: 'user_named' })
+  assert.deepEqual(acme.lines[0].suppliers, [ACME_OPTION])
+  // A shorter name two suppliers share is the user's to settle; an inactive one cannot be ordered from.
+  assertError(await build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', supplier: 'Northstar' }] }), 'supplier_unclear')
+  const inactive = await build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', supplier: 'Oldfield Parts' }] })
+  assertError(inactive, 'supplier_not_listed')
+  assert.match(inactive.error.message, /Oldfield Parts is inactive in this workspace/)
+  // A supplier named in an item the user did not name is not looked up.
+  const unnamed = await workspace({ change: northstar, userText })
+  await unnamed.call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  const plain = assertPart(unnamed.build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', supplier: 'Northstar Electronics' }] }), 'pr_form')
+  assert.deepEqual(plain.suggested[0].supplier, { id: 'SUP-001', name: 'Acme Components', source: 'preferred' })
+})
+
+test('a new supplier carries the price, currency and lead time the user typed, and only those', async () => {
+  const typed = await workspace({ change: northstar, userNamedSkus: ['LDM-001'], userText: 'Order 200 of LDM-001 from Northstar Electronics at €4.20 each, lead time 9 days' })
+  await typed.call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  const line = { sku: 'LDM-001', quantity: 200, supplier: 'Northstar Electronics', unitPrice: 4.2, currency: 'EUR', leadTimeDays: 9 }
+  const [row] = assertPart(await typed.build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [line] }), 'pr_form').lines
+  assert.deepEqual(row.suppliers.at(-1), { id: 'SUP-003', name: 'Northstar Electronics', preferred: false, leadTimeDays: 9, unitPrice: 4.2, currency: 'EUR', link: 'new' })
+  // The price is the user's to confirm in the form, not a reference price.
+  assert.deepEqual(row.estimatedUnitPrice, { value: null, currency: null, source: 'missing' })
+  const nineDays = new Date(Date.parse(`${typed.ctx.facts.today}T00:00:00Z`) + 9 * 86400000).toISOString().slice(0, 10)
+  assert.deepEqual(row.needByDate, { value: nineDays, source: 'lead_time', leadTimeDays: 9, shortWeekOf: null })
+  // A figure the user did not write goes back to the model.
+  const made = await typed.build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ ...line, unitPrice: 3.9, currency: 'USD' }] })
+  assertError(made, 'not_typed')
+  assert.match(made.error.message, /unitPrice 3\.9, currency "USD"/)
+})
+
+test('a user who may not add approved suppliers is told to ask a colleague, and an unknown supplier still lists the approved ones', async () => {
+  const noLinks = await workspace({ change: northstar, userNamedSkus: ['LDM-001'], userText: 'order 200 of LDM-001 from Northstar Electronics', actor: (actor) => actor.permissionCodes.delete('master_data.item.manage') })
+  await noLinks.call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  const refused = await noLinks.build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 200, supplier: 'Northstar Electronics' }] })
+  assertError(refused, 'supplier_not_approved')
+  assert.match(refused.error.message, /not an approved supplier of LDM-001 \(approved: Acme Components\)/)
+  assert.match(refused.error.message, /a colleague with master data access can add Northstar Electronics as an approved supplier of LDM-001/)
+  // Without that permission the form offers no other supplier.
+  const props = assertPart(noLinks.build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 200 }] }), 'pr_form')
+  assert.deepEqual([props.canLinkSuppliers, props.workspaceCurrency], [false, undefined])
+  const admin = await workspace({ change: northstar, userNamedSkus: ['LDM-001'], userText: 'order 200 of LDM-001 from Globex' })
+  await admin.call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  const unknown = await admin.build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', supplier: 'Globex' }] })
+  assertError(unknown, 'supplier_not_listed')
+  assert.equal(unknown.error.message, 'Globex is not among the approved suppliers the result lists for LDM-001 (Acme Components), nor a supplier of this workspace. Leave supplier out; the user can choose in the form.')
+  // When the workspace's suppliers cannot be read, the approved ones are all there is.
+  const offline = await tool('suggest_purchase_request').build({ source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', supplier: 'Northstar Electronics' }] }, { ...admin.ctx, prisma: null })
+  assertError(offline, 'supplier_not_listed')
 })
 
 test('suggest_purchase_request carries the short-week warning on the need-by date', async () => {

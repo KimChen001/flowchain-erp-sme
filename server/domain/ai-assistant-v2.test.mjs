@@ -910,6 +910,28 @@ test('a yes to the latest form ticks its items on the next form; a SKU next to C
   assert.deepEqual(form(chinese.events).lines.map((row) => [row.item.sku, row.suggestedQuantity.value]), [['LDM-001', 50]])
 })
 
+// "Order 200 of LDM-001 from Northstar Electronics" (2026-11-04): the fixture's
+// Summit Packaging is an active supplier that LDM-001 has not approved.
+test('a supplier the item has not approved goes on the form for Create to add, and the answer says so', async () => {
+  const { events, audit, body, scenario } = await ask([
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] }), end()],
+    [...call('tu_form', 'suggest_purchase_request', { source: 'tu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 200, supplier: 'Summit Packaging' }] }), end()],
+    [...say("I've filled in a request form for you to review. Summit Packaging isn't an approved supplier for LDM-001 yet; clicking Create adds it. Enter its price in the form."), end()],
+  ], { question: 'Order 200 of LDM-001 from Summit Packaging', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assertProtocol(events)
+  const form = ofType(events, 'ui').find((event) => event.component === 'pr_form')
+  assert.ok(form, JSON.stringify(audit.uiTools))
+  assert.deepEqual(form.props.lines[0].supplier, { id: 'SUP-002', name: 'Summit Packaging', source: 'user_named', link: 'new' })
+  assert.deepEqual([form.props.lines[0].suggestedQuantity.value, form.props.canLinkSuppliers], [200, true])
+  assert.ok(form.refs.some((ref) => ref.type === 'supplier' && ref.id === 'SUP-002'))
+  // Saying what Create will do is no claim, and nothing is written while answering.
+  assert.equal(ofType(events, 'replace').length, 0)
+  assert.match(body.conclusion.summary, /clicking Create adds it/)
+  assert.ok(scenario.calls.prisma.every(([, method]) => !/^(create|update|upsert|delete)/.test(method)))
+  assert.match(ASSISTANT_V2_SYSTEM, /when the user clicks Create the form adds it as an approved supplier of the item, then creates the request/)
+  assert.match(ASSISTANT_V2_SYSTEM, /a colleague with master data access can add the supplier/)
+})
+
 test('answering writes no business record: every read goes through the read-only stand-ins', async () => {
   const { scenario, audit } = await ask([
     [...call('tu_lines', 'suggest_purchase_lines', {}), ...call('tu_prs', 'list_purchase_requests', { status: 'all' }), ...call('tu_po', 'list_purchase_orders', {}), end()],

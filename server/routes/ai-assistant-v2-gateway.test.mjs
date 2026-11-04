@@ -533,6 +533,34 @@ test('the cost reservation holds: answers running together share the remaining b
   assert.equal(gate.heldMicros('tenant-ai-skills'), 0, 'released when the answer ended')
 })
 
+// The form added Northstar as an approved supplier of LDM-002 before it
+// created the request (2026-11-04); the assistant then could only say "the
+// form should have added it". The note now says so when the audit shows it.
+test('the form note names a supplier the same click added to a requested item', async () => {
+  const created = new Date('2026-11-04T15:00:00Z')
+  const prisma = (scenario) => {
+    const base = readOnlyPrisma(scenario.data)
+    const extra = {
+      purchaseRequest: { findFirst: async ({ where }) => (where.id === 'PR-0231' ? { id: 'PR-0231', status: 'draft', requester: 'workspace-administrator-user' } : null) },
+      purchaseRequestLine: { findMany: async ({ where }) => (where.purchaseRequestId === 'PR-0231' ? [{ itemId: 'ITEM-002', sku: 'LDM-002' }] : []) },
+      auditLog: {
+        findFirst: async ({ where }) => (where.entityId === 'PR-0231' ? { actorId: 'workspace-administrator-user', createdAt: created, metadata: { idempotencyKey: 'ai-form:thr_link:msg_1:p2', suggestions: { origin: 'ai_assistant' } } } : null),
+        findMany: async ({ where }) => (where.entityType === 'item_supplier' && where.actorId === 'workspace-administrator-user' && where.createdAt.gte <= new Date(created.getTime() - 5000) ? [{ entityId: 'ISR-NEW' }] : []),
+      },
+      runtimeRecord: { findMany: async () => [{ id: 'ISR-OLD', payload: { itemId: 'ITEM-002', supplierId: 'SUP-001' } }, { id: 'ISR-NEW', payload: { itemId: 'ITEM-002', supplierId: 'SUP-005' } }] },
+      supplier: { findFirst: async ({ where }) => (where.id === 'SUP-005' ? { name: 'Northstar Electronics', code: 'SUP-005' } : null) },
+    }
+    return new Proxy({}, { get: (_target, model) => extra[model] || base[model] })
+  }
+  const client = createScriptedModelClient({ 'Did it work?': [[...say('Yes, you created PR-0231.'), end()]] })
+  const { ask } = setup({ client, prisma })
+  await ask({ threadId: 'thr_link', message: 'Did it work?', formResults: [{ formId: 'thr_link:msg_1:p2', purchaseRequestId: 'PR-0231' }] })
+  const sent = JSON.stringify(client.requests[0].messages)
+  assert.match(sent, /form thr_link:msg_1:p2 created PR-0231 \(draft\)\. The same click added Northstar Electronics as an approved supplier of LDM-002\./)
+  // A link that was there before (no create audit of this user) is not named.
+  assert.doesNotMatch(sent, /SUP-001|Acme/)
+})
+
 test('a confirmed form note backs saying that request was created; any other claim is still replaced', async () => {
   const prisma = (scenario) => {
     const base = readOnlyPrisma(scenario.data)

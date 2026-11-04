@@ -115,12 +115,19 @@ const citationsProps = z.object({
   passages: z.array(z.object({ id, title: z.string().max(200), excerpt: z.string().max(1200), documentId: id.optional() })).min(1).max(5),
 })
 
+// A supplier the line may use. link "new": an active supplier of the
+// workspace that is not yet an approved supplier of the item; the form adds
+// it as one (approved, not preferred) when the user clicks Create. Its lead
+// time and price are then the ones the user typed, or null.
+export const NEW_SUPPLIER_LINK = 'new'
+const supplierLink = z.literal(NEW_SUPPLIER_LINK)
 const approvedSupplier = z.object({
   id, name: label, preferred: z.boolean(),
   leadTimeDays: z.number().int().nonnegative().nullable().optional(),
   // The supplier's master-data reference price; null when missing or hidden for the role.
   unitPrice: amount.nonnegative().nullable().optional(),
   currency: currency.nullable().optional(),
+  link: supplierLink.optional(),
 })
 
 // One line of the in-chat purchase request form (§4.1). Every value comes
@@ -131,7 +138,7 @@ export const prFormRowSchema = z.object({
   safetyStock: amount.nullable().optional(),
   reorderPoint: amount.nullable().optional(),
   suggestedQuantity: z.object({ value: amount.positive().nullable(), source: z.enum(QUANTITY_SOURCES), minimum: amount.positive().nullable().optional(), coverDays: z.number().int().positive().optional() }),
-  supplier: z.object({ id, name: label, source: z.enum(SUPPLIER_SOURCES) }).nullable(),
+  supplier: z.object({ id, name: label, source: z.enum(SUPPLIER_SOURCES), link: supplierLink.optional() }).nullable(),
   suppliers: z.array(approvedSupplier).max(20).optional(),
   needByDate: z.object({ value: day, source: z.enum(NEED_BY_SOURCES), leadTimeDays: z.number().int().nonnegative().nullable().optional(), shortWeekOf: day.nullable().optional() }),
   orderByDate: day.nullable().optional(),
@@ -152,6 +159,11 @@ const prFormProps = z.object({
   lines: z.array(prFormRowSchema).max(8),
   canCreate: z.boolean(),
   departmentId: id.optional(),
+  // The user may add approved suppliers to items (master_data.item.manage):
+  // the form then offers the workspace's other active suppliers, and the
+  // currency a new supplier's price defaults to when it records none.
+  canLinkSuppliers: z.boolean().optional(),
+  workspaceCurrency: currency.optional(),
 })
 
 // The first-day checklist, as Today shows it (server/domain/today-work.mjs):

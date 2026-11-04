@@ -22,7 +22,7 @@ async function loadClient() {
     import { renderToStaticMarkup } from 'react-dom/server'
     import { AnswerParts } from './src/modules/ai-assistant/v2/parts/AnswerParts.tsx'
     import { StreamingText } from './src/modules/ai-assistant/v2/parts/StreamingText.tsx'
-    import { PurchaseRequestFormPart, addedFormRow, draftRequestBody, initialFormLines } from './src/modules/ai-assistant/v2/parts/PurchaseRequestFormPart.tsx'
+    import { PurchaseRequestFormPart, addedFormRow, createFormRequest, draftRequestBody, initialFormLines, newSupplierLinkBody, newSupplierOption } from './src/modules/ai-assistant/v2/parts/PurchaseRequestFormPart.tsx'
     const navigate = () => {}
     export const text = (props) => renderToStaticMarkup(createElement(StreamingText, { onNavigate: navigate, ...props }))
     export const answer = (props) => renderToStaticMarkup(createElement(AnswerParts, { threadId: 'thr_7f2c', messageId: 'msg_19', onNavigate: navigate, onFollowUp: () => {}, onChoose: () => {}, ...props }))
@@ -31,7 +31,7 @@ async function loadClient() {
     import { SetupRecordsPart, createSetupRecords, initialSetupDrafts, itemBody, itemIssues, itemSupplierBody, setupCreatedRecords, supplierBody, supplierIssues } from './src/modules/ai-assistant/v2/parts/SetupRecordsPart.tsx'
     export const steps = (props) => renderToStaticMarkup(createElement(SetupStepsPart, { onNavigate: navigate, ...props }))
     export const setupCard = (props) => renderToStaticMarkup(createElement(SetupRecordsPart, { partId: 'p3', onNavigate: navigate, ...props }))
-    export { addedFormRow, draftRequestBody, initialFormLines, createSetupRecords, initialSetupDrafts, itemBody, itemIssues, itemSupplierBody, setupCreatedRecords, supplierBody, supplierIssues }
+    export { addedFormRow, createFormRequest, draftRequestBody, initialFormLines, newSupplierLinkBody, newSupplierOption, createSetupRecords, initialSetupDrafts, itemBody, itemIssues, itemSupplierBody, setupCreatedRecords, supplierBody, supplierIssues }
   `
   const result = await build({
     stdin: { contents: entry, resolveDir: root, loader: 'tsx', sourcefile: 'assistant-v2-parts-entry.tsx' },
@@ -408,6 +408,126 @@ test('create posts the classic form body with one key per form and an assistant 
   const namedProps = formProps({ suggested: [], lines: [row({ checked: true, supplier: { id: 'sup_3', name: 'Acme Packaging', source: 'user_named' } })] })
   const namedBody = client.draftRequestBody(client.initialFormLines(namedProps, 'p2'), namedProps, { threadId: 'thr_7f2c', messageId: 'msg_19', partId: 'p2' })
   assert.equal(sanitizeSuggestionTrail(namedBody.suggestionTrail).fields.some((field) => field.field === 'lines.0.supplierId'), false)
+})
+
+// "Order 200 of SKU-1007 from Northstar Electronics": a supplier of the
+// workspace the item has not approved yet, which Create adds (2026-11-04).
+const ACME = { id: 'sup_3', name: 'Acme Packaging', preferred: true, leadTimeDays: 14, unitPrice: 0.42, currency: 'USD' }
+const NORTHSTAR = { id: 'sup_9', name: 'Northstar Electronics', preferred: false, leadTimeDays: null, unitPrice: null, currency: 'USD', link: 'new' }
+const newSupplierProps = (over = {}, rowOver = {}) => formProps({
+  suggested: [],
+  lines: [row({
+    checked: true, suggestedQuantity: { value: 200, source: 'user_named' },
+    supplier: { id: 'sup_9', name: 'Northstar Electronics', source: 'user_named', link: 'new' }, suppliers: [ACME, NORTHSTAR],
+    needByDate: { value: '2026-11-04', source: 'today', leadTimeDays: null, shortWeekOf: null }, estimatedUnitPrice: { value: null, currency: null, source: 'missing' },
+    ...rowOver,
+  })],
+  canLinkSuppliers: true, workspaceCurrency: 'USD',
+  ...over,
+})
+const IDS = { threadId: 'thr_7f2c', messageId: 'msg_19', partId: 'p2' }
+
+test('a supplier the item has not approved says Create adds it, and asks for its price and why not the preferred one', async () => {
+  const client = await loadClient()
+  const props = newSupplierProps()
+  assert.ok(safeParsePartProps('pr_form', props).success)
+  // The marker is only "new".
+  assert.equal(safeParsePartProps('pr_form', newSupplierProps({}, { supplier: { id: 'sup_9', name: 'Northstar Electronics', source: 'user_named', link: 'approved' } })).success, false)
+  const markup = client.form({ props })
+  assert.doesNotMatch(markup, CJK)
+  assert.match(markup, /data-testid="ai-v2-pr-new-supplier" data-linked="false"[^>]*>.*Northstar Electronics isn&#x27;t an approved supplier for SKU-1007 yet\. Create adds it\.</)
+  assert.match(markup, /<option value="sup_9" selected="">Northstar Electronics \(not yet approved\)<\/option>/)
+  assert.match(markup, /<option value="__other_supplier__">Another supplier…<\/option>/)
+  // Its price, currency and lead time are the user's to give; the currency starts as the workspace's.
+  assert.match(markup, /data-testid="ai-v2-pr-new-terms"/)
+  assert.match(markup, /Currency<\/span><input type="text" maxLength="3"[^>]*value="USD"/)
+  assert.doesNotMatch(markup, /data-testid="ai-v2-pr-price-unavailable"/)
+  // SKU-1007 prefers Acme Packaging, so the reason is asked here: the full form cannot pick Northstar.
+  assert.match(markup, /data-testid="ai-v2-pr-reason"[^]*Why not the preferred supplier \(Acme Packaging\)\?/)
+  assert.match(markup, /data-testid="ai-v2-pr-create" data-primary="true" disabled=""/)
+  assert.match(markup, /data-testid="ai-v2-pr-blocked"[^]*Enter a unit price and a 3-letter currency for each supplier Create adds/)
+  const chinese = client.form({ props, language: 'zh-CN' })
+  for (const text of ['Northstar Electronics 还不是 SKU-1007 的批准供应商。点击创建时会将其添加为批准供应商。', 'Northstar Electronics（尚未批准）', '其他供应商…', '为什么不选首选供应商（Acme Packaging）？', '币种']) assert.ok(chinese.includes(text), text)
+  // A role that may not add approved suppliers is not offered another one.
+  assert.doesNotMatch(client.form({ props: formProps({ suggested: [], lines: [row({ checked: true })] }) }), /Another supplier/)
+  // Given in the chat, the price fills in; an item with no preferred supplier needs no reason.
+  const priced = client.form({ props: newSupplierProps({}, { suppliers: [{ ...ACME, preferred: false }, { ...NORTHSTAR, unitPrice: 4.2, leadTimeDays: 9 }] }) })
+  assert.match(priced, /type="number"[^>]*value="4\.2"/)
+  assert.doesNotMatch(priced, /data-testid="ai-v2-pr-reason"/)
+  assert.doesNotMatch(priced, /data-testid="ai-v2-pr-create" data-primary="true" disabled=""/)
+})
+
+test('Create adds the new supplier to the item first, then creates the request with its price and reason', async () => {
+  const client = await loadClient()
+  const props = newSupplierProps()
+  const [first] = client.initialFormLines(props, 'p2')
+  const ticked = [{ ...first, terms: { price: '4.2', currency: 'usd', leadTime: '9' }, override: { reasonCode: 'lead_time', note: '' } }]
+  const posts = []
+  const post = async (url, body) => {
+    posts.push([url, body])
+    return url === '/api/procurement/requests' ? { id: 'PR-0300', version: 1, status: 'draft' } : { relationship: { relationshipId: 'ISR-1' } }
+  }
+  const outcome = await client.createFormRequest({ ticked, props, ids: IDS, post })
+  assert.deepEqual(posts.map(([url]) => url), ['/api/master-data/items/itm_42/suppliers', '/api/procurement/requests'])
+  // Approved, not preferred, with what the user gave, as the setup card links an item.
+  assert.deepEqual(posts[0][1], { supplierId: 'sup_9', preferred: false, approved: true, active: true, leadTimeDays: 9, referencePrice: 4.2, currency: 'USD' })
+  assert.deepEqual(client.newSupplierLinkBody(ticked[0]), posts[0][1])
+  // The request as the form always posts it, with the supplier, its price and the reason.
+  const body = posts[1][1]
+  assert.deepEqual(body, client.draftRequestBody(ticked, props, IDS))
+  assert.deepEqual([body.lines[0].supplierId, body.lines[0].quantity, body.lines[0].estimatedUnitPrice, body.lines[0].estimatedAmount, body.lines[0].currency], ['sup_9', 200, 4.2, 840, 'USD'])
+  assert.deepEqual(body.lines[0].supplierOverride, { reasonCode: 'lead_time', note: null })
+  assert.equal(body.idempotencyKey, 'ai-form:thr_7f2c:msg_19:p2')
+  // A supplier the user named is theirs, not a suggestion; the trail keeps what was suggested.
+  const trail = sanitizeSuggestionTrail(body.suggestionTrail)
+  assert.equal(trail.fields.some((field) => field.field === 'lines.0.supplierId' || field.field === 'lines.0.estimatedUnitPrice'), false)
+  assert.deepEqual(trail.fields.find((field) => field.field === 'lines.0.needByDate'), { field: 'lines.0.needByDate', source: 'default', ref: 'toolu_01', outcome: 'accepted' })
+  assert.deepEqual(outcome, { status: 'created', linked: { [first.key]: 'sup_9' }, created: { id: 'PR-0300', version: 1, status: 'draft' } })
+  // A retry after a failed request does not add the supplier again.
+  posts.length = 0
+  await client.createFormRequest({ ticked, props, ids: IDS, post, linked: outcome.linked })
+  assert.deepEqual(posts.map(([url]) => url), ['/api/procurement/requests'])
+  // A link already there is fine: the request goes on.
+  posts.length = 0
+  const conflict = await client.createFormRequest({ ticked, props, ids: IDS, post: async (url, body) => { if (url !== '/api/procurement/requests') { posts.push([url]); throw Object.assign(new Error('linked'), { status: 409, code: 'RELATIONSHIP_EXISTS' }) } return post(url, body) } })
+  assert.equal(conflict.status, 'created')
+  assert.deepEqual(posts.map(([url]) => url), ['/api/master-data/items/itm_42/suppliers', '/api/procurement/requests'])
+  // An approved supplier creates the request alone, as before.
+  posts.length = 0
+  const plainProps = formProps({ suggested: [], lines: [row({ checked: true })] })
+  await client.createFormRequest({ ticked: client.initialFormLines(plainProps, 'p2'), props: plainProps, ids: IDS, post })
+  assert.deepEqual(posts.map(([url]) => url), ['/api/procurement/requests'])
+  assert.equal(posts[0][1].lines[0].supplierOverride, null)
+})
+
+test('a supplier picked from "Another supplier…" is added the same way, and a failed link stops the create', async () => {
+  const client = await loadClient()
+  const props = formProps({ suggested: [], lines: [row({ checked: true, suggestedQuantity: { value: 50, source: 'user_named' }, suppliers: [ACME] })], canLinkSuppliers: true, workspaceCurrency: 'USD' })
+  // From the Suppliers list: its own currency, else the workspace's.
+  const option = client.newSupplierOption({ id: 'sup_9', supplierName: 'Northstar Electronics', status: 'active', defaultCurrency: null }, 'USD')
+  assert.deepEqual(option, NORTHSTAR)
+  assert.equal(client.newSupplierOption({ id: 'sup_8', name: 'Rhine Parts', defaultCurrency: 'eur' }, 'USD').currency, 'EUR')
+  const [first] = client.initialFormLines(props, 'p2')
+  const line = { ...first, added: [option], supplierId: 'sup_9', terms: { price: '3', currency: 'USD', leadTime: '' }, override: { reasonCode: 'other', note: 'Acme is out of stock' } }
+  const posts = []
+  const failing = async (url, body) => {
+    posts.push([url, body])
+    if (url !== '/api/procurement/requests') throw Object.assign(new Error('denied'), { status: 403, code: 'PERMISSION_DENIED' })
+    return { id: 'PR-0301', version: 1, status: 'draft' }
+  }
+  const failed = await client.createFormRequest({ ticked: [line], props, ids: IDS, post: failing })
+  // Nothing is created without the link, and the line it failed on is named.
+  assert.deepEqual(posts.map(([url]) => url), ['/api/master-data/items/itm_42/suppliers'])
+  assert.deepEqual(posts[0][1], { supplierId: 'sup_9', preferred: false, approved: true, active: true, leadTimeDays: null, referencePrice: 3, currency: 'USD' })
+  assert.deepEqual([failed.status, failed.key, failed.linked, failed.failure.code], ['link_failed', first.key, {}, 'PERMISSION_DENIED'])
+  // With the link made, the request carries the supplier the user changed to, with the reason.
+  posts.length = 0
+  const done = await client.createFormRequest({ ticked: [line], props, ids: IDS, post: async (url, body) => { posts.push([url, body]); return url === '/api/procurement/requests' ? { id: 'PR-0301', version: 1, status: 'draft' } : {} } })
+  assert.equal(done.status, 'created')
+  const body = posts[1][1]
+  assert.deepEqual([body.lines[0].supplierId, body.lines[0].estimatedUnitPrice, body.lines[0].supplierOverride], ['sup_9', 3, { reasonCode: 'other', note: 'Acme is out of stock' }])
+  // The suggested supplier was changed: the trail says so, as for any other supplier.
+  assert.equal(sanitizeSuggestionTrail(body.suggestionTrail).fields.find((field) => field.field === 'lines.0.supplierId').outcome, 'edited')
 })
 
 test('the answer renders parts in order, chips text from the parts\' refs, and ignores unknown or malformed parts', async () => {

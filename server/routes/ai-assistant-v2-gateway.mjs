@@ -7,6 +7,7 @@ import { createAssistantV2CostLedger, createAssistantV2RateLimiter } from '../do
 import { assistantV2PermissionFingerprint, createAssistantV2ThreadStore } from '../domain/ai-assistant-v2-threads.mjs'
 import { aiInjectionDetected } from '../domain/ai-injection-guard.mjs'
 import { readFirstRunSetup } from '../domain/first-run-setup.mjs'
+import { listItemSupplierRecords } from '../domain/master-data-commands.mjs'
 import { reportReadAccessFor } from '../domain/report-read-access.mjs'
 import { loadAiSkillContext } from '../domain/ai-skill-context.mjs'
 import { recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
@@ -128,20 +129,58 @@ async function addFormNotes({ context, session, threadId, userId, formResults })
     try {
       const [request, created] = await Promise.all([
         context.prisma.purchaseRequest.findFirst({ where: { id: requestId, tenantId: context.tenantId }, select: { id: true, status: true, requester: true } }),
-        context.prisma.auditLog.findFirst({ where: { tenantId: context.tenantId, entityType: 'PurchaseRequest', entityId: requestId, action: 'purchase_request_created' }, select: { actorId: true, metadata: true } }),
+        context.prisma.auditLog.findFirst({ where: { tenantId: context.tenantId, entityType: 'PurchaseRequest', entityId: requestId, action: 'purchase_request_created' }, select: { actorId: true, metadata: true, createdAt: true } }),
       ])
       const metadata = created?.metadata && typeof created.metadata === 'object' ? created.metadata : {}
       const origin = metadata.suggestions?.origin
       if (!request || text(request.requester) !== userId || text(created?.actorId) !== userId) continue
       if (metadata.idempotencyKey !== `ai-form:${formId}` || (origin !== undefined && origin !== 'ai_assistant')) continue
       const status = STATUS.test(text(request.status).toLowerCase()) ? text(request.status).toLowerCase() : 'unknown'
-      session.note(formId, { purchaseRequestId: request.id, status }, { role: 'user', content: [{ type: 'text', text: `Note from the server, not the user's words: form ${formId} created ${request.id} (${status}).` }] })
+      const linked = await suppliersAddedWith({ context, requestId: request.id, createdAt: created?.createdAt, userId })
+      const also = linked.length ? ` The same click added ${linked.join('; ')}.` : ''
+      session.note(formId, { purchaseRequestId: request.id, status }, { role: 'user', content: [{ type: 'text', text: `Note from the server, not the user's words: form ${formId} created ${request.id} (${status}).${also}` }] })
       added += 1
     } catch {
       // An unreadable report adds no note; the answer goes on.
     }
   }
   return added
+}
+
+// The suppliers the form's click made approved suppliers of the request's
+// items before it created the request (a supplier the item had not approved):
+// each item-supplier link of a requested item that this user created in the
+// minutes before the request, by its create audit row. The note names them,
+// so the model may say they were added. Nothing when it cannot be read.
+const LINK_BEFORE_REQUEST_MS = 10 * 60 * 1000
+async function suppliersAddedWith({ context, requestId, createdAt, userId }) {
+  try {
+    const at = createdAt ? new Date(createdAt).getTime() : Number.NaN
+    if (!Number.isFinite(at)) return []
+    const lines = await context.prisma.purchaseRequestLine.findMany({ where: { purchaseRequestId: requestId }, select: { itemId: true, sku: true } })
+    const items = new Map(lines.filter((line) => text(line.itemId)).map((line) => [text(line.itemId), text(line.sku)]))
+    if (!items.size) return []
+    const audits = await context.prisma.auditLog.findMany({
+      where: { tenantId: context.tenantId, entityType: 'item_supplier', action: 'create', actorId: userId, createdAt: { gte: new Date(at - LINK_BEFORE_REQUEST_MS), lte: new Date(at + 60 * 1000) } },
+      select: { entityId: true },
+      take: 20,
+    })
+    const ids = new Set(audits.map((row) => text(row.entityId)))
+    if (!ids.size) return []
+    const added = []
+    for (const [itemId, sku] of [...items].slice(0, 8)) {
+      for (const link of await listItemSupplierRecords(context.prisma, context.tenantId, { itemId })) {
+        if (!ids.has(text(link.id))) continue
+        const supplierId = text(link.payload?.supplierId)
+        const supplier = supplierId ? await context.prisma.supplier.findFirst({ where: { id: supplierId, tenantId: context.tenantId }, select: { name: true, code: true } }) : null
+        const name = noteName(supplier?.name) || noteName(supplier?.code)
+        if (name) added.push(`${name} as an approved supplier of ${noteName(sku) || itemId}`)
+      }
+    }
+    return added
+  } catch {
+    return []
+  }
 }
 
 // The first-day checklist for the panel's empty state, as Today builds it
