@@ -195,7 +195,6 @@ if (!realPostgres) {
       ctx = identity(ids.tenantId, ids.managerId);
     const created = await service.createTransfer(
       {
-        transferNumber: `TR-${randomUUID()}`,
         idempotencyKey: "transfer-create",
         lines: [
           {
@@ -324,7 +323,6 @@ if (!realPostgres) {
       ctx = identity(ids.tenantId, ids.managerId);
     const created = await service.createTransfer(
       {
-        transferNumber: `TR-AGG-${randomUUID()}`,
         idempotencyKey: "transfer-aggregate-create",
         lines: ["3", "4"].map((quantity) => ({
           itemId: ids.itemId,
@@ -406,7 +404,6 @@ if (!realPostgres) {
 
     const insufficient = await service.createTransfer(
       {
-        transferNumber: `TR-AGG-FAIL-${randomUUID()}`,
         idempotencyKey: "transfer-aggregate-fail-create",
         lines: ["5", "4"].map((quantity) => ({
           itemId: ids.itemId,
@@ -455,7 +452,6 @@ if (!realPostgres) {
       ctx = identity(ids.tenantId, ids.managerId);
     const created = await service.createTransfer(
       {
-        transferNumber: `TR-NET-${randomUUID()}`,
         idempotencyKey: "transfer-net-create",
         lines: [
           {
@@ -519,7 +515,6 @@ if (!realPostgres) {
       ctx = identity(ids.tenantId, ids.managerId);
     const created = await service.createTransfer(
       {
-        transferNumber: `TR-INTEGRITY-${randomUUID()}`,
         idempotencyKey: "transfer-integrity-create",
         lines: [
           {
@@ -618,7 +613,6 @@ if (!realPostgres) {
       manager = identity(ids.tenantId, ids.managerId);
     const created = await service.createCount(
       {
-        countNumber: `CC-${randomUUID()}`,
         warehouseId: ids.warehouseA,
         blindCount: true,
         balanceIds: [ids.balanceA],
@@ -743,7 +737,6 @@ if (!realPostgres) {
       ctx = identity(ids.tenantId, ids.managerId);
     const created = await service.createCount(
       {
-        countNumber: `CC-STALE-${randomUUID()}`,
         warehouseId: ids.warehouseA,
         blindCount: false,
         balanceIds: [ids.balanceA],
@@ -821,7 +814,6 @@ if (!realPostgres) {
       manager = identity(ids.tenantId, ids.managerId);
     const created = await service.createAdjustment(
       {
-        adjustmentNumber: `ADJ-${randomUUID()}`,
         reasonCode: "damage",
         notes: "Damaged stock",
         idempotencyKey: "adjust-create",
@@ -907,7 +899,6 @@ if (!realPostgres) {
       ctx = identity(ids.tenantId, ids.managerId);
     const created = await service.createAdjustment(
       {
-        adjustmentNumber: `ADJ-AGG-${randomUUID()}`,
         reasonCode: "data_correction",
         notes: "Aggregate duplicate balance lines",
         idempotencyKey: "adjust-aggregate-create",
@@ -971,7 +962,6 @@ if (!realPostgres) {
 
     const zero = await service.createAdjustment(
       {
-        adjustmentNumber: `ADJ-ZERO-${randomUUID()}`,
         reasonCode: "data_correction",
         notes: "Net-zero duplicate balance lines",
         idempotencyKey: "adjust-zero-create",
@@ -1024,7 +1014,6 @@ if (!realPostgres) {
       ctx = identity(ids.tenantId, ids.managerId);
     const created = await service.createAdjustment(
       {
-        adjustmentNumber: `ADJ-INTEGRITY-${randomUUID()}`,
         reasonCode: "damage",
         notes: "Integrity test",
         idempotencyKey: "adjust-integrity-create",
@@ -1098,7 +1087,6 @@ if (!realPostgres) {
       () =>
         disabled.createAdjustment(
           {
-            adjustmentNumber: "DISABLED",
             reasonCode: "damage",
             idempotencyKey: "disabled",
             lines: [
@@ -1112,7 +1100,6 @@ if (!realPostgres) {
     const service = createInventoryOperationsCommandService({ prisma, env });
     const readable = await service.createTransfer(
       {
-        transferNumber: `TR-CAP-${randomUUID()}`,
         idempotencyKey: "capability-read-create",
         lines: [
           {
@@ -1155,7 +1142,6 @@ if (!realPostgres) {
       () =>
         service.createCount(
           {
-            countNumber: "VIEWER",
             warehouseId: ids.warehouseA,
             balanceIds: [ids.balanceA],
             idempotencyKey: "viewer",
@@ -1198,7 +1184,6 @@ if (!realPostgres) {
   async function readyNewAdjustment(service, ctx, tag, body) {
     const created = await service.createAdjustment(
       {
-        adjustmentNumber: `ADJ-${tag}-${randomUUID()}`,
         idempotencyKey: `${tag}-create`,
         ...body,
       },
@@ -1226,7 +1211,6 @@ if (!realPostgres) {
       manager = identity(ids.tenantId, ids.managerId);
     const created = await service.createAdjustment(
       {
-        adjustmentNumber: `ADJ-OPEN-${randomUUID()}`,
         reasonCode: "opening_balance",
         notes: "Go-live stock",
         idempotencyKey: "opening-create",
@@ -1401,7 +1385,6 @@ if (!realPostgres) {
     const attempt = (tag, reasonCode, line) =>
       service.createAdjustment(
         {
-          adjustmentNumber: `ADJ-${tag}-${randomUUID()}`,
           reasonCode,
           notes: tag,
           idempotencyKey: `${tag}-create`,
@@ -1520,7 +1503,6 @@ if (!realPostgres) {
   async function postNewTransfer(service, ctx, tag, from, to, quantity) {
     const created = await service.createTransfer(
       {
-        transferNumber: `TR-${tag}-${randomUUID()}`,
         idempotencyKey: `${tag}-create`,
         lines: [
           {
@@ -1587,7 +1569,6 @@ if (!realPostgres) {
       () =>
         service.createAdjustment(
           {
-            adjustmentNumber: `ADJ-again-${randomUUID()}`,
             reasonCode: "opening_balance",
             idempotencyKey: "opening-again-create",
             lines: [openingLine(ids)],
@@ -1645,7 +1626,6 @@ if (!realPostgres) {
     });
     const transfer = await service.createTransfer(
       {
-        transferNumber: `TR-RETIRED-${randomUUID()}`,
         idempotencyKey: "retired-transfer-create",
         lines: [
           {
@@ -1767,7 +1747,6 @@ if (!realPostgres) {
       ctx = identity(ids.tenantId, ids.managerId);
     const created = await service.createTransfer(
       {
-        transferNumber: `TR-NEW-${randomUUID()}`,
         idempotencyKey: "transfer-new-create",
         lines: [
           {
@@ -1862,7 +1841,6 @@ if (!realPostgres) {
     const service = createInventoryOperationsCommandService({ prisma, env });
     const transfer = await service.createTransfer(
       {
-        transferNumber: `TR-SHORT-${randomUUID()}`,
         idempotencyKey: "transfer-short-create",
         lines: [
           {
@@ -1937,6 +1915,147 @@ if (!realPostgres) {
         })
       ).inventoryBalanceId,
       null,
+    );
+  });
+
+  // Document numbers (shared/document-numbering.mjs, owner decisions
+  // 2026-11-04): the server numbers each new transfer, count and adjustment
+  // PREFIX-YYYYMM-NNNN in the workspace's month, and ignores a number the
+  // client sends.
+  const numbered = {
+    transfer: {
+      prefix: "TR",
+      model: "stockTransferDocument",
+      field: "transferNumber",
+      create: async (service, ids, ctx, idempotencyKey, extra = {}) =>
+        (
+          await service.createTransfer(
+            {
+              idempotencyKey,
+              lines: [
+                {
+                  itemId: ids.itemId,
+                  quantity: "1",
+                  source: { warehouseId: ids.warehouseA, location: "A-01" },
+                  destination: { warehouseId: ids.warehouseB, location: "B-01" },
+                },
+              ],
+              ...extra,
+            },
+            ctx,
+          )
+        ).transfer,
+    },
+    count: {
+      prefix: "CC",
+      model: "cycleCountSession",
+      field: "countNumber",
+      create: async (service, ids, ctx, idempotencyKey, extra = {}) =>
+        (
+          await service.createCount(
+            {
+              idempotencyKey,
+              warehouseId: ids.warehouseA,
+              balanceIds: [ids.balanceA],
+              blindCount: true,
+              ...extra,
+            },
+            ctx,
+          )
+        ).session,
+    },
+    adjustment: {
+      prefix: "ADJ",
+      model: "inventoryAdjustmentDocument",
+      field: "adjustmentNumber",
+      create: async (service, ids, ctx, idempotencyKey, extra = {}) =>
+        (
+          await service.createAdjustment(
+            {
+              idempotencyKey,
+              reasonCode: "damage",
+              lines: [
+                { inventoryBalanceId: ids.balanceA, adjustmentQuantity: "-1" },
+              ],
+              ...extra,
+            },
+            ctx,
+          )
+        ).adjustment,
+    },
+  };
+
+  for (const [kind, spec] of Object.entries(numbered)) {
+    test(`a new ${kind} is numbered by the server: a sent number is ignored, numbers run on, the month is the workspace's`, async () => {
+      const ids = await seed(),
+        ctx = identity(ids.tenantId, ids.managerId);
+      await prisma.tenant.update({
+        where: { id: ids.tenantId },
+        data: { timezone: "America/New_York" },
+      });
+      // 03:30 UTC on 1 December 2026 is still 30 November in New York.
+      const service = createInventoryOperationsCommandService({
+        prisma,
+        env,
+        now: () => new Date("2026-12-01T03:30:00Z"),
+      });
+      const typed = `${spec.prefix}-TYPED-1`;
+      const first = await spec.create(service, ids, ctx, `${kind}-number-1`, {
+        [spec.field]: typed,
+      });
+      const second = await spec.create(service, ids, ctx, `${kind}-number-2`);
+      assert.deepEqual(
+        [first[spec.field], second[spec.field]],
+        [`${spec.prefix}-202611-0001`, `${spec.prefix}-202611-0002`],
+      );
+      assert.equal(
+        await prisma[spec.model].count({
+          where: { tenantId: ids.tenantId, [spec.field]: typed },
+        }),
+        0,
+      );
+      // A retry with the same key replays the first result and uses no number.
+      const replayed = await spec.create(service, ids, ctx, `${kind}-number-2`);
+      assert.equal(replayed[spec.field], second[spec.field]);
+      // In Shanghai the same moment is already December: a new sequence.
+      await prisma.tenant.update({
+        where: { id: ids.tenantId },
+        data: { timezone: "Asia/Shanghai" },
+      });
+      const december = await spec.create(service, ids, ctx, `${kind}-number-3`);
+      assert.equal(december[spec.field], `${spec.prefix}-202612-0001`);
+      // Another workspace starts its own sequence.
+      const other = await seed();
+      const elsewhere = await spec.create(
+        createInventoryOperationsCommandService({
+          prisma,
+          env,
+          now: () => new Date("2026-11-15T15:00:00Z"),
+        }),
+        other,
+        identity(other.tenantId, other.managerId),
+        `${kind}-number-other`,
+      );
+      assert.equal(elsewhere[spec.field], `${spec.prefix}-202611-0001`);
+    });
+  }
+
+  test("transfers saved at the same time all succeed with consecutive numbers", async () => {
+    const ids = await seed(),
+      ctx = identity(ids.tenantId, ids.managerId),
+      service = createInventoryOperationsCommandService({
+        prisma,
+        env,
+        now: () => new Date("2026-11-15T15:00:00Z"),
+      });
+    const created = await Promise.all(
+      [1, 2, 3].map((index) =>
+        numbered.transfer.create(service, ids, ctx, `transfer-together-${index}`),
+      ),
+    );
+    assert.deepEqual(
+      created.map((row) => row.transferNumber).sort(),
+      ["TR-202611-0001", "TR-202611-0002", "TR-202611-0003"],
     );
   });
 }

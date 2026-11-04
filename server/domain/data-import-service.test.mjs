@@ -385,11 +385,11 @@ test('opening stock drafts follow the rows sent: a fixed row and a cancelled dra
   const inputs = []
   const commands = {
     createInventoryAdjustment: async (input) => {
-      // The real command refuses a reused key with other lines, and a used number.
+      // The real command refuses a reused key with other lines and assigns
+      // the next adjustment number itself.
       if (inputs.some((entry) => entry.idempotencyKey === input.idempotencyKey)) throw Object.assign(new Error('The idempotency key was already used with a different payload.'), { status: 409, code: 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD' })
-      if (inputs.some((entry) => entry.adjustmentNumber === input.adjustmentNumber)) throw Object.assign(new Error('Number in use.'), { status: 409, code: 'ADJUSTMENT_NUMBER_CONFLICT' })
       inputs.push(input)
-      const adjustment = { id: `ADJ-NEW-${inputs.length}`, tenantId: TENANT, adjustmentNumber: input.adjustmentNumber, reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: 'draft' }
+      const adjustment = { id: `ADJ-NEW-${inputs.length}`, tenantId: TENANT, adjustmentNumber: `ADJ-202611-${String(inputs.length).padStart(4, '0')}`, reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: 'draft' }
       for (const line of input.lines) {
         const item = prisma.data.item.find((row) => row.id === line.itemId)
         prisma.data.inventoryAdjustmentLine.push({ sku: item.sku, warehouseId: line.warehouseId, locationKey: line.location.toLowerCase(), adjustment })
@@ -412,7 +412,10 @@ test('opening stock drafts follow the rows sent: a fixed row and a cancelled dra
   assert.deepEqual(second.checked.rows.map((row) => row.action), ['skip_existing', 'create'])
   assert.deepEqual(second.result.rows.map((row) => row.outcome), ['skipped_existing', 'created'])
   assert.deepEqual(inputs.map((input) => input.lines.map((line) => line.itemId)), [['ITEM-1'], ['ITEM-LATER']])
-  assert.notEqual(inputs[0].adjustmentNumber, inputs[1].adjustmentNumber)
+  // No number is sent: the adjustment command assigns it.
+  assert.ok(inputs.every((input) => !Object.prototype.hasOwnProperty.call(input, 'adjustmentNumber')))
+  assert.notEqual(inputs[0].idempotencyKey, inputs[1].idempotencyKey)
+  assert.deepEqual(second.result.documents.map((document) => document.number), ['ADJ-202611-0001', 'ADJ-202611-0002'])
   // The same rows again: the stored result is replayed while its drafts stand.
   assert.equal((await commitChecked()).result.idempotentReplay, true)
   // Both drafts are cancelled: the same file makes a new draft rather than

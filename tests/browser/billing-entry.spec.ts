@@ -119,20 +119,23 @@ test("an invoice opened from its shipment is submitted, approved and issued on s
   await page.goto("/app/sales/invoices/new?shipment=finance-browser-shipment-USD");
   await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("finance-browser-shipment-USD");
   await expect(page.getByTestId("customer-invoice-line").first().locator("input").first()).toHaveValue("10");
-  await page.getByTestId("customer-invoice-number").fill("UI-INV-FROM-SHIP");
+  // No number to type: the server assigns CI-YYYYMM-NNNN when the draft is saved.
+  await expect(page.getByTestId("customer-invoice-number-on-save")).toHaveText(/Invoice number: assigned when you save|发票编号：保存时自动生成/);
   await page.getByTestId("customer-invoice-due").fill("2026-11-15");
   await page.getByTestId("customer-invoice-preview").click();
   await expect(page.getByTestId("customer-invoice-create")).toBeEnabled();
   await page.getByTestId("customer-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/sales\/invoices\/[0-9a-f-]{36}$/);
   const detail = page.getByTestId("customer-invoice-detail");
-  await expect(detail).toContainText("UI-INV-FROM-SHIP");
+  const numberHeading = detail.getByRole("heading", { name: /^CI-\d{6}-\d{4,}$/ });
+  await expect(numberHeading).toBeVisible();
+  const invoiceNumber = (await numberHeading.innerText()).trim();
   await expect(page.getByTestId("customer-invoice-sources")).toContainText("SHIP-FIN-BROWSER-USD");
   await run(page, "customer-invoice-submit");
   await run(page, "customer-invoice-approve");
   await run(page, "customer-invoice-issue");
   // Issuing opens the receivable; nothing here collects money.
-  await expect(page.getByTestId("customer-invoice-receivable")).toContainText("AR-UI-INV-FROM-SHIP");
+  await expect(page.getByTestId("customer-invoice-receivable")).toContainText(`AR-${invoiceNumber}`);
   await expect(page.getByTestId("customer-invoice-actions").getByRole("button")).toHaveCount(0);
 });
 

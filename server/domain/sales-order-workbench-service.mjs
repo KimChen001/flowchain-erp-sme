@@ -5,12 +5,18 @@ import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { outboundRequestHash } from './outbound-posting-command-service.mjs'
 import { outboundDecimalString as fixed, outboundDecimalUnits as units } from './outbound-transaction-policy.mjs'
 import { CUSTOMER_NAMESPACE } from './master-data-commands.mjs'
+import { allocateDocumentNumber } from './document-numbering.mjs'
 
 export class SalesWorkbenchError extends Error {
   constructor(code, message, status = 400, details) { super(message); this.name = 'SalesWorkbenchError'; this.code = code; this.status = status; this.details = details }
 }
 const fail = (code, message, status = 400, details) => { throw new SalesWorkbenchError(code, message, status, details) }
 const text = (value) => String(value ?? '').trim()
+// A serialization failure or deadlock, however Prisma and the pg adapter report it.
+const isConcurrencyConflict = (error) => error?.code === 'P2034'
+  || ['40001', '40P01'].includes(error?.cause?.originalCode) || ['40001', '40P01'].includes(error?.cause?.code)
+  || (error?.code === 'P2010' && /40001|40P01/.test(JSON.stringify(error?.meta || {})))
+  || /serializ|deadlock|write conflict|40001|40P01/i.test(text(error?.message))
 const iso = (value) => value ? new Date(value).toISOString() : null
 const quantity = (value) => { try { const result = units(value); if (result <= 0n) throw new Error(); return fixed(result) } catch { fail('SALES_ORDER_VALIDATION_FAILED', 'Line quantity must be positive with at most four decimal places.', 422) } }
 const price = (value) => {
@@ -92,35 +98,51 @@ export function createSalesOrderWorkbenchService({ prisma, idFactory = randomUUI
       return { ...row.resultPayload, idempotentReplay: true }
     }
     const existing = replay(await prisma.businessCommandExecution.findUnique({ where })); if (existing) return existing
-    try {
-      return await prisma.$transaction(async (tx) => {
-        const inside = replay(await tx.businessCommandExecution.findUnique({ where })); if (inside) return inside
-        const execution = await tx.businessCommandExecution.create({ data: { id: idFactory(), tenantId: actor.tenantId, commandType, idempotencyKey: key, requestHash, status: 'pending' } })
-        const result = await work(tx, actor, execution)
-        await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: 'sales_order_workbench', module: 'sales_outbound', action: commandType, entityType: 'SalesOrder', entityId: result.order.id, summary: result.summary, metadata: { commandType, commandExecutionId: execution.id, idempotencyKey: key } } })
-        const response = { entityType: 'SalesOrder', entityId: result.order.id, order: publicOrder(result.order), commandExecutionId: execution.id }
-        await tx.businessCommandExecution.update({ where: { id: execution.id }, data: { status: 'completed', entityType: 'SalesOrder', entityId: result.order.id, resultPayload: response, completedAt: now() } })
-        return { ...response, idempotentReplay: false }
-      }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 })
-    } catch (error) {
-      if (error instanceof SalesWorkbenchError || error?.name === 'PilotIdentityError') throw error
-      if (error?.code === 'P2002') {
-        const concurrent = replay(await prisma.businessCommandExecution.findUnique({ where })); if (concurrent) return concurrent
-        if (/orderNumber|SalesOrder_tenantId_orderNumber/i.test(JSON.stringify(error?.meta || error))) fail('SALES_ORDER_NUMBER_CONFLICT', 'Sales order number is already in use for this workspace.', 409)
+    // A create takes the next order number from the workspace's sequence row,
+    // so two orders saved at the same moment meet there; the one that loses
+    // under serializable isolation runs again rather than failing.
+    const retries = commandType === 'create_sales_order_draft' ? 2 : 0
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await prisma.$transaction(async (tx) => {
+          const inside = replay(await tx.businessCommandExecution.findUnique({ where })); if (inside) return inside
+          const execution = await tx.businessCommandExecution.create({ data: { id: idFactory(), tenantId: actor.tenantId, commandType, idempotencyKey: key, requestHash, status: 'pending' } })
+          const result = await work(tx, actor, execution)
+          await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: 'sales_order_workbench', module: 'sales_outbound', action: commandType, entityType: 'SalesOrder', entityId: result.order.id, summary: result.summary, metadata: { commandType, commandExecutionId: execution.id, idempotencyKey: key } } })
+          const response = { entityType: 'SalesOrder', entityId: result.order.id, order: publicOrder(result.order), commandExecutionId: execution.id }
+          await tx.businessCommandExecution.update({ where: { id: execution.id }, data: { status: 'completed', entityType: 'SalesOrder', entityId: result.order.id, resultPayload: response, completedAt: now() } })
+          return { ...response, idempotentReplay: false }
+        }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 })
+      } catch (error) {
+        if (error instanceof SalesWorkbenchError || error?.name === 'PilotIdentityError') throw error
+        if (error?.code === 'P2002') {
+          const concurrent = replay(await prisma.businessCommandExecution.findUnique({ where })); if (concurrent) return concurrent
+        }
+        if (isConcurrencyConflict(error)) {
+          if (attempt < retries) { await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 25)); continue }
+          fail('OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT', 'Sales order changed in another transaction. Refresh and retry.', 409)
+        }
+        throw error
       }
-      if (error?.code === 'P2034' || /serialization|deadlock/i.test(text(error?.message))) fail('OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT', 'Sales order changed in another transaction. Refresh and retry.', 409)
-      throw error
     }
   }
 
+  // The order number is the workspace's next SO-YYYYMM-NNNN, assigned here in
+  // the creating transaction. A number the client sends is ignored and is not
+  // part of the request fingerprint.
   async function createOrder(input, context) {
-    const payload = { orderNumber: text(input.orderNumber), customerName: text(input.customerName), customerId: text(input.customerId) || null, promisedDate: input.promisedDate || null, currency: text(input.currency).toUpperCase(), lines: input.lines || [] }
-    if (!payload.orderNumber || !(payload.customerName || payload.customerId) || !/^[A-Z]{3}$/.test(payload.currency)) fail('SALES_ORDER_VALIDATION_FAILED', 'Order number, customer, and a three-letter currency code are required.', 422)
+    const payload = { customerName: text(input.customerName), customerId: text(input.customerId) || null, promisedDate: input.promisedDate || null, currency: text(input.currency).toUpperCase(), lines: input.lines || [] }
+    if (!(payload.customerName || payload.customerId) || !/^[A-Z]{3}$/.test(payload.currency)) fail('SALES_ORDER_VALIDATION_FAILED', 'Customer and a three-letter currency code are required.', 422)
     return execute('create_sales_order_draft', input.idempotencyKey, payload, context, async (tx, actor) => {
-      if (await tx.salesOrder.findFirst({ where: { tenantId: actor.tenantId, orderNumber: payload.orderNumber }, select: { id: true } })) fail('SALES_ORDER_NUMBER_CONFLICT', 'Sales order number is already in use for this workspace.', 409)
       const customer = payload.customerId ? await chosenCustomer(tx, actor.tenantId, payload.customerId) : null
       const lines = await authoritativeLines(tx, actor.tenantId, payload.lines)
-      const order = await tx.salesOrder.create({ data: { id: idFactory(), tenantId: actor.tenantId, orderNumber: payload.orderNumber, customerName: customer?.name || payload.customerName, customerId: customer?.id || null, promisedDate: payload.promisedDate ? new Date(payload.promisedDate) : null, currency: payload.currency, workflowStatus: 'draft', reservationStatus: 'not_reserved', fulfillmentStatus: 'not_fulfilled', lines: { create: lines } }, include: { lines: { orderBy: { id: 'asc' } } } })
+      const orderNumber = await allocateDocumentNumber(tx, {
+        tenantId: actor.tenantId,
+        documentType: 'sales_order',
+        at: now(),
+        isTaken: async (number) => Boolean(await tx.salesOrder.findFirst({ where: { tenantId: actor.tenantId, orderNumber: number }, select: { id: true } })),
+      })
+      const order = await tx.salesOrder.create({ data: { id: idFactory(), tenantId: actor.tenantId, orderNumber, customerName: customer?.name || payload.customerName, customerId: customer?.id || null, promisedDate: payload.promisedDate ? new Date(payload.promisedDate) : null, currency: payload.currency, workflowStatus: 'draft', reservationStatus: 'not_reserved', fulfillmentStatus: 'not_fulfilled', lines: { create: lines } }, include: { lines: { orderBy: { id: 'asc' } } } })
       return { order, summary: `Sales order ${order.orderNumber} draft created.` }
     })
   }

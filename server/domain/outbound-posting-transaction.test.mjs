@@ -117,7 +117,6 @@ if (!realPostgres) {
       [["CUST-RW-ID", "CUST-RW", "Redwood Plumbing", "USD", "NET30"]],
     );
     const order = (customerId, extra = {}) => ({
-      orderNumber: `SO-CUST-${randomUUID()}`,
       customerId,
       customerName: "redwood plumbng",
       currency: "USD",
@@ -160,7 +159,6 @@ if (!realPostgres) {
       service = createSalesOrderWorkbenchService({ prisma });
     const created = await service.createOrder(
       {
-        orderNumber: `SO-LIFECYCLE-${randomUUID()}`,
         customerName: "Lifecycle Customer",
         currency: "USD",
         idempotencyKey: "lifecycle-create",
@@ -169,6 +167,7 @@ if (!realPostgres) {
       ctx,
     );
     assert.equal(created.order.workflowStatus, "draft");
+    assert.match(created.order.orderNumber, /^SO-\d{6}-\d{4,}$/);
     assert.deepEqual(
       [
         created.order.lines[0].sku,
@@ -331,13 +330,91 @@ if (!realPostgres) {
     );
   });
 
+  // Document numbering (owner decisions 2026-11-04): the server gives each
+  // sales order SO-YYYYMM-NNNN and each shipment draft DN-YYYYMM-NNNN, the
+  // sequence per workspace, type and workspace month. A client number is ignored.
+  test("sales orders are numbered SO-YYYYMM-NNNN by the server in the workspace month; a client number is ignored", async () => {
+    const base = await seed(),
+      ctx = identity(base.tenantId, base.actorId);
+    // 03:30 UTC on Dec 1 is still Nov 30 in New York, the workspace timezone.
+    let at = new Date("2026-12-01T03:30:00.000Z");
+    const service = createSalesOrderWorkbenchService({ prisma, now: () => at });
+    const order = (key, extra = {}) => ({
+      customerName: "Numbered Customer",
+      currency: "USD",
+      idempotencyKey: key,
+      lines: [{ itemId: base.itemId, quantity: "1" }],
+      ...extra,
+    });
+    const first = await service.createOrder(order("number-first", { orderNumber: "CLIENT-SO-1" }), ctx);
+    const second = await service.createOrder(order("number-second", { orderNumber: "CLIENT-SO-1" }), ctx);
+    assert.deepEqual([first.order.orderNumber, second.order.orderNumber], ["SO-202611-0001", "SO-202611-0002"]);
+    assert.equal(await prisma.salesOrder.count({ where: { tenantId: base.tenantId, orderNumber: "CLIENT-SO-1" } }), 0);
+    assert.equal((await prisma.salesOrder.findUnique({ where: { id: second.order.id } })).orderNumber, "SO-202611-0002");
+    // A different client number on a replay changes nothing.
+    const replay = await service.createOrder(order("number-first", { orderNumber: "CLIENT-SO-OTHER" }), ctx);
+    assert.deepEqual([replay.idempotentReplay, replay.order.orderNumber], [true, "SO-202611-0001"]);
+    // The same moment in a Shanghai workspace is already December; a number
+    // the workspace already has (typed before this rule) is skipped.
+    await prisma.tenant.update({ where: { id: base.tenantId }, data: { timezone: "Asia/Shanghai" } });
+    const december = await service.createOrder(order("number-december"), ctx);
+    assert.equal(december.order.orderNumber, "SO-202612-0001");
+    await prisma.salesOrder.create({ data: { id: `typed-${base.tenantId}`, tenantId: base.tenantId, orderNumber: "SO-202612-0002", customerName: "Typed Before", currency: "USD" } });
+    at = new Date("2026-12-15T15:00:00.000Z");
+    assert.equal((await service.createOrder(order("number-skip"), ctx)).order.orderNumber, "SO-202612-0003");
+  });
+
+  test("two sales orders saved at the same moment get consecutive numbers", async () => {
+    const base = await seed(),
+      ctx = identity(base.tenantId, base.actorId);
+    const clientA = await createPrismaClient(env),
+      clientB = await createPrismaClient(env);
+    try {
+      const at = () => new Date("2026-11-04T15:00:00.000Z");
+      const create = (client, key) =>
+        createSalesOrderWorkbenchService({ prisma: client, now: at }).createOrder(
+          { customerName: "Race Customer", currency: "USD", idempotencyKey: key, lines: [{ itemId: base.itemId, quantity: "1" }] },
+          ctx,
+        );
+      const results = await Promise.allSettled([create(clientA, "race-a"), create(clientB, "race-b")]);
+      assert.deepEqual(results.map((result) => result.status), ["fulfilled", "fulfilled"], JSON.stringify(results.map((result) => result.reason?.code || result.reason?.message)));
+      assert.deepEqual(results.map((result) => result.value.order.orderNumber).sort(), ["SO-202611-0001", "SO-202611-0002"]);
+    } finally {
+      await clientA.$disconnect();
+      await clientB.$disconnect();
+    }
+  });
+
+  test("shipment drafts are numbered DN-YYYYMM-NNNN by the server in the workspace month; a client number is ignored", async () => {
+    const ids = await seed(),
+      ctx = identity(ids.tenantId, ids.actorId);
+    const at = new Date("2026-12-01T03:30:00.000Z");
+    const service = createOutboundPostingCommandService({ prisma, env, now: () => at });
+    const reserved = await service.reserveSalesOrderInventory(reserveInput(ids, "3", "number-reserve"), ctx);
+    const reservationId = reserved.reservations[0].id;
+    const lines = [{ salesOrderLineId: ids.salesOrderLineId, allocations: [{ reservationId, quantity: "1" }] }];
+    // The preview has no number to show.
+    const preview = await createOutboundQueryService({ prisma, capabilities: enabledQueryCapabilities })
+      .previewShipmentDraft({ salesOrderId: ids.salesOrderId, shipmentNumber: "CLIENT-DN-1", lines }, ctx);
+    assert.equal(preview.allowed, true);
+    assert.equal(preview.normalizedPlan.shipmentNumber, undefined);
+    const draft = (version, key) =>
+      service.createShipmentDraft({ salesOrderId: ids.salesOrderId, shipmentNumber: "CLIENT-DN-1", expectedOrderVersion: version, idempotencyKey: key, lines }, ctx);
+    const first = await draft(1, "number-draft-1");
+    const second = await draft(2, "number-draft-2");
+    assert.deepEqual([first.shipment.shipmentNumber, second.shipment.shipmentNumber], ["DN-202611-0001", "DN-202611-0002"]);
+    assert.equal(await prisma.shipmentDocument.count({ where: { tenantId: ids.tenantId, shipmentNumber: "CLIENT-DN-1" } }), 0);
+    assert.equal((await prisma.shipmentDocument.findUnique({ where: { id: second.entityId } })).shipmentNumber, "DN-202611-0002");
+    await prisma.tenant.update({ where: { id: ids.tenantId }, data: { timezone: "Asia/Shanghai" } });
+    assert.equal((await draft(3, "number-draft-3")).shipment.shipmentNumber, "DN-202612-0001");
+  });
+
   test("multi-line draft replacement requires a complete replace_all line identity contract", async () => {
     const base = await seed(),
       ctx = identity(base.tenantId, base.actorId),
       service = createSalesOrderWorkbenchService({ prisma });
     const created = await service.createOrder(
       {
-        orderNumber: `SO-MULTI-DRAFT-${randomUUID()}`,
         customerName: "Multi Draft",
         currency: "CNY",
         idempotencyKey: "multi-draft-create",
@@ -355,7 +432,6 @@ if (!realPostgres) {
       );
     const foreign = await service.createOrder(
       {
-        orderNumber: `SO-FOREIGN-DRAFT-${randomUUID()}`,
         customerName: "Foreign Draft",
         currency: "CNY",
         idempotencyKey: "foreign-draft-create",
@@ -673,7 +749,6 @@ if (!realPostgres) {
     const drafted = await service.createShipmentDraft(
       {
         salesOrderId: ids.salesOrderId,
-        shipmentNumber: "SHIP-MAIN",
         expectedOrderVersion: 1,
         idempotencyKey: "draft-main",
         lines: [
@@ -879,7 +954,6 @@ if (!realPostgres) {
     const drafted = await service.createShipmentDraft(
       {
         salesOrderId: ids.salesOrderId,
-        shipmentNumber: `HOLD-${randomUUID()}`,
         expectedOrderVersion: 1,
         idempotencyKey: "hold-draft",
         lines: [
@@ -1145,7 +1219,6 @@ if (!realPostgres) {
     const shipmentA = await service.createShipmentDraft(
       {
         salesOrderId: ids.salesOrderId,
-        shipmentNumber: `VISIBLE-${suffix}`,
         expectedOrderVersion: 1,
         idempotencyKey: "scope-draft-a",
         lines: [
@@ -1160,7 +1233,6 @@ if (!realPostgres) {
     const shipmentB = await service.createShipmentDraft(
       {
         salesOrderId: ids.salesOrderId,
-        shipmentNumber: `HIDDEN-${suffix}`,
         expectedOrderVersion: 2,
         idempotencyKey: "scope-draft-b",
         lines: [
@@ -1529,27 +1601,40 @@ if (!realPostgres) {
       },
       ctx,
     );
-    await assert.rejects(
-      () =>
-        service.createShipmentDraft(
+    // A number the client sends is ignored: the same one twice gives two
+    // drafts, each with the next server number (DN-YYYYMM-NNNN).
+    const second = await service.createShipmentDraft(
+      {
+        salesOrderId: ids.salesOrderId,
+        shipmentNumber: "SHIP-CANCEL",
+        expectedOrderVersion: 3,
+        idempotencyKey: "draft-duplicate-number",
+        lines: [
           {
-            salesOrderId: ids.salesOrderId,
-            shipmentNumber: "SHIP-CANCEL",
-            expectedOrderVersion: 3,
-            idempotencyKey: "draft-duplicate-number",
-            lines: [
-              {
-                salesOrderLineId: ids.salesOrderLineId,
-                allocations: [
-                  { reservationId: first.reservations[0].id, quantity: "1" },
-                ],
-              },
+            salesOrderLineId: ids.salesOrderLineId,
+            allocations: [
+              { reservationId: first.reservations[0].id, quantity: "1" },
             ],
           },
-          ctx,
-        ),
-      (error) =>
-        error.code === "SHIPMENT_NUMBER_CONFLICT" && error.status === 409,
+        ],
+      },
+      ctx,
+    );
+    assert.match(draft.shipment.shipmentNumber, /^DN-\d{6}-\d{4,}$/);
+    assert.match(second.shipment.shipmentNumber, /^DN-\d{6}-\d{4,}$/);
+    assert.notEqual(second.shipment.shipmentNumber, draft.shipment.shipmentNumber);
+    assert.equal(
+      await prisma.shipmentDocument.count({ where: { tenantId: ids.tenantId, shipmentNumber: "SHIP-CANCEL" } }),
+      0,
+    );
+    await service.cancelShipmentDraft(
+      {
+        shipmentId: second.shipment.id,
+        expectedShipmentVersion: 0,
+        idempotencyKey: "cancel-second-draft",
+        reason: "Draft abandoned",
+      },
+      ctx,
     );
     assert.equal(
       fixed(
@@ -1788,7 +1873,6 @@ if (!realPostgres) {
     const drafted = await service.createShipmentDraft(
       {
         salesOrderId: ids.salesOrderId,
-        shipmentNumber: `TAMPER-${randomUUID()}`,
         expectedOrderVersion: 1,
         idempotencyKey: "tamper-draft",
         lines: [
@@ -1964,7 +2048,6 @@ if (!realPostgres) {
         command(clientA).createShipmentDraft(
           {
             salesOrderId: ids.salesOrderId,
-            shipmentNumber: "SHIP-RACE-A",
             expectedOrderVersion: 1,
             idempotencyKey: "draft-race-a",
             lines: [
@@ -1979,7 +2062,6 @@ if (!realPostgres) {
         command(clientB).createShipmentDraft(
           {
             salesOrderId: ids.salesOrderId,
-            shipmentNumber: "SHIP-RACE-B",
             expectedOrderVersion: 1,
             idempotencyKey: "draft-race-b",
             lines: [
@@ -2069,7 +2151,6 @@ if (!realPostgres) {
       const draft = await command(clientA).createShipmentDraft(
         {
           salesOrderId: ids.salesOrderId,
-          shipmentNumber: "SHIP-POST-RELEASE",
           expectedOrderVersion: 1,
           idempotencyKey: "draft-post-release",
           lines: [
@@ -2266,7 +2347,7 @@ if (!realPostgres) {
     const who = identity(ids.tenantId, ids.actorId);
     const reserved = await command().reserveSalesOrderInventory(reserveInput(ids, "6.0000"), who);
     const reservationId = reserved.reservations[0].id;
-    const draft = await command().createShipmentDraft({ salesOrderId: ids.salesOrderId, shipmentNumber: `SHIP-${randomUUID()}`, expectedOrderVersion: reserved.salesOrder.version, idempotencyKey: `draft-${randomUUID()}`, lines: [{ salesOrderLineId: ids.salesOrderLineId, allocations: [{ reservationId, quantity: "2.0000" }] }] }, who);
+    const draft = await command().createShipmentDraft({ salesOrderId: ids.salesOrderId, expectedOrderVersion: reserved.salesOrder.version, idempotencyKey: `draft-${randomUUID()}`, lines: [{ salesOrderLineId: ids.salesOrderLineId, allocations: [{ reservationId, quantity: "2.0000" }] }] }, who);
     const before = await prisma.inventoryBalance.findUnique({ where: { id: ids.balanceId } });
     assert.deepEqual([fixed(before.reservedQuantity), fixed(before.availableQuantity)], ["6.0000", "4.0000"]);
 
@@ -2308,7 +2389,7 @@ if (!realPostgres) {
     const workbench = () => createOutboundWorkbenchReadService({ prisma, capabilities: enabledWorkbenchCapabilities }).orderWorkbench(ids.salesOrderId, who);
     assert.equal((await workbench()).availableActions.canCancel, true);
     const reserved = await command().reserveSalesOrderInventory(reserveInput(ids, "6.0000"), who);
-    const draft = await command().createShipmentDraft({ salesOrderId: ids.salesOrderId, shipmentNumber: `SHIP-${randomUUID()}`, expectedOrderVersion: reserved.salesOrder.version, idempotencyKey: `draft-${randomUUID()}`, lines: [{ salesOrderLineId: ids.salesOrderLineId, allocations: [{ reservationId: reserved.reservations[0].id, quantity: "2.0000" }] }] }, who);
+    const draft = await command().createShipmentDraft({ salesOrderId: ids.salesOrderId, expectedOrderVersion: reserved.salesOrder.version, idempotencyKey: `draft-${randomUUID()}`, lines: [{ salesOrderLineId: ids.salesOrderLineId, allocations: [{ reservationId: reserved.reservations[0].id, quantity: "2.0000" }] }] }, who);
     await command().postShipment({ shipmentId: draft.entityId, expectedShipmentVersion: draft.shipment.version, idempotencyKey: `post-${randomUUID()}` }, who);
     const preview = await command().previewSalesOrderCancellation({ salesOrderId: ids.salesOrderId }, who);
     assert.equal(preview.allowed, false);

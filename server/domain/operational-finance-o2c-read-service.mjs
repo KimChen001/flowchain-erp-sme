@@ -11,16 +11,6 @@ import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from "./tenant-calendar-da
 // and its code.
 const termKey = (value) => String(value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
-// The next invoice number after the workspace's highest INV-<number>, or
-// INV-1001 for the first. Only a suggestion: the person can type another.
-export function nextInvoiceNumber(numbers) {
-  const highest = numbers.reduce((max, value) => {
-    const match = /^INV-(\d{1,9})$/i.exec(String(value ?? "").trim());
-    return match ? Math.max(max, Number(match[1])) : max;
-  }, 1000);
-  return `INV-${highest + 1}`;
-}
-
 // A customer's payment terms are recorded as text. They count when they name
 // one of the workspace's payment terms by code or name; otherwise the due
 // date is left to the person.
@@ -541,11 +531,12 @@ export function createOperationalFinanceO2cReadService({
     if (!["finance.customer_invoice.create", "finance.customer_credit.create"].some((permission) => can({ actor: current, permission, tenantId: current.tenantId })))
       return { postedShipments: [], customerInvoices: [], customerReturnPostings: [], capabilities };
     const amountsVisible = amountsVisibleFor(current);
-    const [tenant, customerRecords, paymentTerms, invoiceNumbers] = await Promise.all([
+    // No invoice number is suggested: the server assigns it when the draft is
+    // created (CI-YYYYMM-NNNN).
+    const [tenant, customerRecords, paymentTerms] = await Promise.all([
       prisma.tenant.findUnique({ where: { id: current.tenantId }, select: { timezone: true } }),
       prisma.runtimeRecord.findMany({ where: { tenantId: current.tenantId, namespace: CUSTOMER_NAMESPACE }, select: { payload: true }, take: 2000 }),
       prisma.paymentTerm.findMany({ where: { tenantId: current.tenantId }, select: { code: true, name: true, days: true } }),
-      prisma.customerInvoice.findMany({ where: { tenantId: current.tenantId, invoiceNumber: { startsWith: "INV-" } }, select: { invoiceNumber: true } }),
     ]);
     const customerTerms = new Map(customerRecords.map((record) => [String(record.payload?.id ?? ""), customerPaymentTerm(record.payload?.paymentTerms, paymentTerms)]));
     const [shipments, invoices, returnPostings] = await Promise.all([
@@ -609,7 +600,6 @@ export function createOperationalFinanceO2cReadService({
       ),
       // The invoice date is the workspace's calendar day, not the browser's.
       today: tenantCalendarDay(now(), tenant?.timezone || "America/New_York"),
-      suggestedInvoiceNumber: nextInvoiceNumber(invoiceNumbers.map((row) => row.invoiceNumber)),
       customerReturnPostings: returnPostings.map((row) => ({
         id: row.id,
         postingNumber: row.postingNumber,

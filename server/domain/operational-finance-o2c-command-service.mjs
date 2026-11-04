@@ -12,6 +12,7 @@ import {
 } from "./operational-finance-policy.mjs";
 import { overdueBefore } from "./operational-finance-o2c-read-service.mjs";
 import { DEFAULT_TENANT_TIMEZONE } from "./tenant-calendar-day.mjs";
+import { allocateDocumentNumber } from "./document-numbering.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const workspaceTimezone = async (client, tenantId) =>
@@ -255,8 +256,10 @@ const receivableActionPlan = (action, row, input, asOf, timezone) => {
     paymentExecution: false,
   };
 };
+// The invoice number is assigned by the server when the draft is created
+// (CI-YYYYMM-NNNN); a number the client sends is ignored and is not part of
+// the request fingerprint.
 const normalizedInvoice = (input = {}) => ({
-  invoiceNumber: text(input.invoiceNumber),
   shipmentId: text(input.shipmentId),
   currency: text(input.currency).toUpperCase(),
   invoiceDate: text(input.invoiceDate),
@@ -306,11 +309,14 @@ export function createOperationalFinanceO2cCommandService({
       requestHash,
     );
     if (outside) return outside;
+    // Includes a conflict on the document number sequence row (a raw query),
+    // which two invoices created at the same moment meet.
     const isTransientSerializationConflict = (error) => Boolean(
       error?.code === "P2034" ||
       error?.cause?.originalCode === "40001" ||
       error?.cause?.code === "40001" ||
-      /serialization|deadlock|write conflict/i.test(text(error?.message)),
+      (error?.code === "P2010" && /40001|40P01/.test(JSON.stringify(error?.meta || {}))) ||
+      /serializ|deadlock|write conflict/i.test(text(error?.message)),
     );
     let retryCount = 0;
     while (true) {
@@ -404,11 +410,23 @@ export function createOperationalFinanceO2cCommandService({
             consumeExisting: false,
           }),
         );
+        const invoiceNumber = await allocateDocumentNumber(tx, {
+          tenantId: actor.tenantId,
+          documentType: "customer_invoice",
+          at: now(),
+          isTaken: async (number) =>
+            Boolean(
+              await tx.customerInvoice.findFirst({
+                where: { tenantId: actor.tenantId, invoiceNumber: number },
+                select: { id: true },
+              }),
+            ),
+        });
         const row = await tx.customerInvoice.create({
           data: {
             id: idFactory(),
             tenantId: actor.tenantId,
-            invoiceNumber: preview.invoice.invoiceNumber,
+            invoiceNumber,
             salesOrderId: preview.source.salesOrderId,
             shipmentId: preview.source.shipmentId,
             customerId: preview.source.customerId,

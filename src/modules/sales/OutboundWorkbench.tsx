@@ -408,8 +408,6 @@ const codeMessages: Record<string, string> = {
   // Shown both as a preview blocking issue and as a command error.
   "SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE":
     "已有客户发票对此发货开票，不能再冲销。如需收回货物，请使用客户退货和贷项通知单。",
-  "SHIPMENT_NUMBER_CONFLICT": "发货单号已存在，请更换号码。",
-  "SALES_ORDER_NUMBER_CONFLICT": "销售订单号已存在，请更换号码。",
   "SALES_ORDER_INVALID_STATE": "当前订单状态不允许此操作。",
   "SALES_ORDER_ITEM_INVALID": "订单物料与当前工作区主数据不一致。",
 };
@@ -996,7 +994,6 @@ function OrderLinesField({
 function OrderEntry() {
   const nav = useNavigate(),
     [entry, setEntry] = useState<EntryData | null>(null),
-    [orderNumber, setOrderNumber] = useState(`SO-${Date.now()}`),
     [customerId, setCustomerId] = useState(""),
     [currency, setCurrency] = useState(""),
     [promised, setPromised] = useState(""),
@@ -1023,8 +1020,8 @@ function OrderEntry() {
   }
   async function save() {
     if (inFlight.current) return;
+    // No order number: the server assigns SO-YYYYMM-NNNN when the draft is saved.
     const body = {
-      orderNumber,
       customerId,
       currency,
       promisedDate: promisedValue(promised),
@@ -1089,15 +1086,12 @@ function OrderEntry() {
             onChange={chooseCustomer}
             ariaLabel={say("Customer", "客户")}
           />
-          <label className="text-sm">
-            {copy("订单号")}
-            <input
-              aria-label={copy("订单号")}
-              className="mt-1 w-full rounded-lg border p-2"
-              value={orderNumber}
-              onChange={(e) => setOrderNumber(e.target.value)}
-            />
-          </label>
+          <p
+            className="self-end rounded-lg bg-slate-50 p-2 text-sm text-slate-600"
+            data-testid="sales-order-number-on-save"
+          >
+            {say("Order number: assigned when you save", "订单编号：保存时自动生成")}
+          </p>
           <label className="text-sm">
             {copy("币种")}
             <input
@@ -1160,13 +1154,14 @@ function OrderDetail({ id }: { id: string }) {
     [selectedReservationId, setSelectedReservationId] = useState(""),
     [quantity, setQuantity] = useState("1.0000"),
     [reason, setReason] = useState(() => copy("业务调整")),
-    [shipmentNumber, setShipmentNumber] = useState(`SHIP-${Date.now()}`),
     [editCustomerId, setEditCustomerId] = useState(""),
     [editPromised, setEditPromised] = useState(""),
     [editLines, setEditLines] = useState<DraftLine[]>([]),
     [editEntry, setEditEntry] = useState<EntryData | null>(null),
     [cancelReason, setCancelReason] = useState(""),
     [cancelPreview, setCancelPreview] = useState<CancellationPreview | null>(null),
+    // The number the server gave the shipment draft just saved.
+    [createdShipmentNumber, setCreatedShipmentNumber] = useState(""),
     [saving, setSaving] = useState(false);
   const lifecycleIntents = useRef<Record<string, string>>({}),
     inFlight = useRef(false);
@@ -1197,6 +1192,7 @@ function OrderDetail({ id }: { id: string }) {
     );
   function start(next: string) {
     setIntent(next);
+    setCreatedShipmentNumber("");
     setIntentKey(key());
     setSelectedLineId("");
     setSelectedBalanceId("");
@@ -1376,7 +1372,6 @@ function OrderDetail({ id }: { id: string }) {
     ) {
       path = `shipments/preview`;
       body = {
-        shipmentNumber,
         lines: [
           {
             salesOrderLineId: selectedLine.id,
@@ -1427,8 +1422,8 @@ function OrderDetail({ id }: { id: string }) {
           },
         ];
       } else if (intent === "shipment" && selectedLine && releasable) {
+        // The server assigns the shipment number (DN-YYYYMM-NNNN) on save.
         path = "shipments";
-        body.shipmentNumber = shipmentNumber;
         body.lines = [
           {
             salesOrderLineId: selectedLine.id,
@@ -1436,10 +1431,14 @@ function OrderDetail({ id }: { id: string }) {
           },
         ];
       } else return;
-      await apiJson(`/api/sales/orders/${encodeURIComponent(id)}/${path}`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const result = await apiJson<{ shipment?: { shipmentNumber?: string } }>(
+        `/api/sales/orders/${encodeURIComponent(id)}/${path}`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      );
+      setCreatedShipmentNumber(path === "shipments" ? result?.shipment?.shipmentNumber || "" : "");
       setIntent("");
       setPreview(null);
       await refresh();
@@ -1660,6 +1659,15 @@ function OrderDetail({ id }: { id: string }) {
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
           {copy(error)}
+        </div>
+      )}
+      {createdShipmentNumber && (
+        <div
+          role="status"
+          className="rounded-lg bg-green-50 p-3 text-green-800"
+          data-testid="shipment-created-number"
+        >
+          {say(`Delivery ${createdShipmentNumber} created.`, `已创建发货单 ${createdShipmentNumber}。`)}
         </div>
       )}
       {data.scopeCoverage.status === "partial" && (
@@ -2165,19 +2173,12 @@ function OrderDetail({ id }: { id: string }) {
                 />
               </label>
               {intent === "shipment" && (
-                <label className="mt-3 block text-sm">
-                  {copy("发货单号")}
-                  <input
-                    aria-label={copy("发货单号")}
-                    className="mt-1 w-full rounded-lg border p-2"
-                    value={shipmentNumber}
-                    onChange={(e) => {
-                      setShipmentNumber(e.target.value);
-                      setPreview(null);
-                      setIntentKey(key());
-                    }}
-                  />
-                </label>
+                <p
+                  className="mt-3 rounded-lg bg-slate-50 p-2 text-sm text-slate-600"
+                  data-testid="shipment-number-on-save"
+                >
+                  {say("Delivery number: assigned when you save", "发货单号：保存时自动生成")}
+                </p>
               )}
               {intent === "release" && (
                 <label className="mt-3 block text-sm">

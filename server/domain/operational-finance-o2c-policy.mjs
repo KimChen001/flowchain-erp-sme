@@ -64,10 +64,8 @@ export async function buildCustomerInvoicePlan({
   const shipmentId = text(input.shipmentId);
   const currency = text(input.currency).toUpperCase();
   const requestedLines = Array.isArray(input.lines) ? input.lines : [];
-  if (!text(input.invoiceNumber))
-    blockingIssues.push(
-      issue("CUSTOMER_INVOICE_NUMBER_REQUIRED", "Invoice number is required."),
-    );
+  // No invoice number is required: the server assigns it when the draft is
+  // created. A recheck of a saved invoice passes the number it already has.
   if (!shipmentId)
     blockingIssues.push(
       issue("POSTED_SHIPMENT_REQUIRED", "A posted shipment is required."),
@@ -264,7 +262,7 @@ export async function buildCustomerInvoicePlan({
       customerName: shipment.salesOrder.customerName,
     },
     invoice: {
-      invoiceNumber: text(input.invoiceNumber),
+      invoiceNumber: text(input.invoiceNumber) || null,
       currency,
       invoiceDate: text(input.invoiceDate),
       dueDate: text(input.dueDate),

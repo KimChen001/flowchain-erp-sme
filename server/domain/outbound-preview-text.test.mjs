@@ -27,7 +27,8 @@ const reserve = {
 const draft = {
   operation: 'create_shipment_draft',
   allowed: true,
-  normalizedPlan: { shipmentNumber: 'SHIP-1001', lines: [{ salesOrderLineId: 'line-1', requestedQuantity: '10.0000', allocations: [{ reservationId: 'res-1', quantity: '10.0000' }] }] },
+  // No shipment number: the server assigns it when the draft is saved.
+  normalizedPlan: { lines: [{ salesOrderLineId: 'line-1', requestedQuantity: '10.0000', allocations: [{ reservationId: 'res-1', quantity: '10.0000' }] }] },
   balanceImpacts: [],
   reservationImpacts: [{ reservationId: 'res-1', quantity: '10.0000' }],
 }
@@ -44,7 +45,7 @@ test('reserve, delivery draft and post previews read as plain English sentences'
     'Reserves 10 EA of VALVE-100 at Main Warehouse / A-01. Available stock there goes down by 10.',
   ])
   assert.deepEqual(outboundPreviewSentences('en-US', draft, lookup), [
-    'Creates delivery SHIP-1001 for 10 EA of VALVE-100 from Main Warehouse / A-01. Stock does not change until the shipment is posted.',
+    'Creates a delivery for 10 EA of VALVE-100 from Main Warehouse / A-01. Stock does not change until the shipment is posted.',
   ])
   assert.deepEqual(outboundPreviewSentences('en-US', post, lookup), [
     'Ships 10 EA of VALVE-100 from Main Warehouse / A-01. On hand and reserved both go down by 10.',
@@ -53,7 +54,7 @@ test('reserve, delivery draft and post previews read as plain English sentences'
 
 test('the same previews in Chinese, with the same SKU, unit, warehouse and quantity', () => {
   assert.deepEqual(outboundPreviewSentences('zh-CN', reserve, lookup), ['在 Main Warehouse / A-01 预留 VALVE-100 10 EA。该库位可用量减少 10。'])
-  assert.deepEqual(outboundPreviewSentences('zh-CN', draft, lookup), ['创建发货单 SHIP-1001：从 Main Warehouse / A-01 发出 VALVE-100 10 EA。发货过账前库存不变。'])
+  assert.deepEqual(outboundPreviewSentences('zh-CN', draft, lookup), ['创建发货单：从 Main Warehouse / A-01 发出 VALVE-100 10 EA。发货过账前库存不变。'])
   assert.deepEqual(outboundPreviewSentences('zh-CN', post, lookup), ['从 Main Warehouse / A-01 发出 VALVE-100 10 EA。在库量和预留量各减少 10。'])
 })
 

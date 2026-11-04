@@ -18,7 +18,6 @@ async function seedPo(prisma, suffix, orderedQuantity, receivedQuantity = "0.000
 
 const draftInput = (source, suffix, acceptedQuantity) => ({
   poId: source.poId,
-  documentNumber: `GRN-DEC-${suffix}`,
   warehouseId,
   idempotencyKey: `decimal-create-${suffix}`,
   lines: [{ purchaseOrderLineId: source.lineId, acceptedQuantity, rejectedQuantity: "0", damagedQuantity: "0", warehouseId, location: "A-01" }],
@@ -68,8 +67,9 @@ test("mobile receiving and canonical posting share exact four-decimal quantity s
 
     await t.test("five-decimal input is rejected instead of silently rounded", async () => {
       const source = await seedPo(prisma, "precision", "1.0000");
+      const before = await prisma.receivingDocument.count({ where: { tenantId } });
       await assert.rejects(() => mobile.createReceivingDraft(draftInput(source, "precision", "0.00001"), context), (error) => error.code === "RECEIVING_VALIDATION_FAILED" && error.status === 422);
-      assert.equal(await prisma.receivingDocument.count({ where: { documentNumber: "GRN-DEC-precision" } }), 0);
+      assert.equal(await prisma.receivingDocument.count({ where: { tenantId } }), before);
     });
   } finally {
     await prisma.$disconnect();

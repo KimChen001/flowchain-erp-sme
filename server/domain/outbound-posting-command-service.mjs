@@ -13,6 +13,7 @@ import {
   outboundReservationStatus,
   outboundText as text,
 } from './outbound-transaction-policy.mjs'
+import { allocateDocumentNumber } from './document-numbering.mjs'
 
 export const OUTBOUND_COMMAND_TYPES = Object.freeze({
   reserve: 'reserve_sales_order_inventory',
@@ -82,8 +83,10 @@ function normalizeInput(commandType, input = {}) {
     salesOrderId: required(input.salesOrderId, 'salesOrderId'), expectedOrderVersion: expectedVersion(input.expectedOrderVersion, 'expectedOrderVersion'), reason: required(input.reason, 'reason'),
     releases: (input.releases || []).map((entry) => ({ reservationId: required(entry.reservationId, 'reservationId'), quantity: quantity(entry.quantity), expectedReservationVersion: expectedVersion(entry.expectedReservationVersion, 'expectedReservationVersion') })),
   }
+  // The shipment number is assigned by the server (DN-YYYYMM-NNNN); a number
+  // the client sends is ignored and is not part of the request fingerprint.
   else if (commandType === OUTBOUND_COMMAND_TYPES.draft) payload = {
-    salesOrderId: required(input.salesOrderId, 'salesOrderId'), shipmentNumber: required(input.shipmentNumber, 'shipmentNumber'), expectedOrderVersion: expectedVersion(input.expectedOrderVersion, 'expectedOrderVersion'),
+    salesOrderId: required(input.salesOrderId, 'salesOrderId'), expectedOrderVersion: expectedVersion(input.expectedOrderVersion, 'expectedOrderVersion'),
     lines: (input.lines || []).map((line) => ({ salesOrderLineId: required(line.salesOrderLineId, 'salesOrderLineId'), allocations: (line.allocations || []).map((entry) => ({ reservationId: required(entry.reservationId, 'reservationId'), quantity: quantity(entry.quantity) })) })),
   }
   else if (commandType === OUTBOUND_COMMAND_TYPES.cancel) payload = { shipmentId: required(input.shipmentId, 'shipmentId'), expectedShipmentVersion: expectedVersion(input.expectedShipmentVersion, 'expectedShipmentVersion'), reason: required(input.reason, 'reason') }
@@ -101,9 +104,12 @@ function replay(execution, hash) {
   return { ...execution.resultPayload, idempotentReplay: true }
 }
 
-const isConcurrencyError = (error) => error?.code === 'P2034' || (error?.code === 'P2010' && /40001|40P01|serialization|deadlock/i.test(JSON.stringify(error?.meta || error))) || /serialization|deadlock|write conflict/i.test(text(error?.message))
+const isConcurrencyError = (error) => error?.code === 'P2034' || (error?.code === 'P2010' && /40001|40P01|serialization|deadlock/i.test(JSON.stringify(error?.meta || error))) || ['40001', '40P01'].includes(error?.cause?.originalCode) || /serializ|deadlock|write conflict/i.test(text(error?.message))
 const isUniqueError = (error) => error?.code === 'P2002'
-const isShipmentNumberConflict = (error) => isUniqueError(error) && /shipmentNumber|ShipmentDocument_tenantId_shipmentNumber/i.test(JSON.stringify(error?.meta || error))
+// A shipment draft takes the next number from the workspace's sequence row,
+// so two drafts saved at the same moment meet there; the loser under
+// serializable isolation runs again instead of failing.
+const COMMAND_RETRIES = Object.freeze({ [OUTBOUND_COMMAND_TYPES.draft]: 2 })
 
 async function lockIds(tx, table, tenantId, ids) {
   for (const id of [...new Set(ids.map(text).filter(Boolean))].sort()) {
@@ -240,30 +246,35 @@ export function createOutboundPostingCommandService({ prisma, env = process.env,
     const existing = await prisma.businessCommandExecution.findUnique({ where: executionWhere(scope.tenantId, commandType, normalized.idempotencyKey) })
     const existingReplay = replay(existing, normalized.requestHash)
     if (existingReplay) return existingReplay
-    try {
-      return await prisma.$transaction(async (tx) => {
-        const actor = await resolveProvisionedActor(tx, scope.identity)
-        assertAuthorized({ actor, permission: commandPermissions[commandType], tenantId: actor.tenantId })
-        const inside = await tx.businessCommandExecution.findUnique({ where: executionWhere(scope.tenantId, commandType, normalized.idempotencyKey) })
-        const insideReplay = replay(inside, normalized.requestHash)
-        if (insideReplay) return insideReplay
-        const execution = await tx.businessCommandExecution.create({ data: { id: idFactory(), tenantId: scope.tenantId, commandType, idempotencyKey: normalized.idempotencyKey, requestHash: normalized.requestHash, status: 'pending' } })
-        await tx.$queryRawUnsafe('SELECT "id" FROM "BusinessCommandExecution" WHERE "id" = $1 FOR UPDATE', execution.id)
-        const result = await work(tx, actor, normalized.payload, normalized, execution)
-        await faultInjector('before_command_complete', { tx, commandType, result })
-        await tx.businessCommandExecution.update({ where: { id: execution.id }, data: { status: 'completed', entityType: result.entityType, entityId: result.entityId, resultPayload: result, completedAt: now() } })
-        return { ...result, idempotentReplay: false }
-      }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 })
-    } catch (error) {
-      if (error instanceof OutboundCommandError || error?.name === 'PilotIdentityError') throw error
-      if (isUniqueError(error)) {
-        const concurrent = await prisma.businessCommandExecution.findUnique({ where: executionWhere(scope.tenantId, commandType, normalized.idempotencyKey) })
-        const result = replay(concurrent, normalized.requestHash)
-        if (result) return result
-        if (isShipmentNumberConflict(error)) fail('SHIPMENT_NUMBER_CONFLICT', 'Shipment number is already in use for this workspace.', 409)
+    const retries = COMMAND_RETRIES[commandType] || 0
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await prisma.$transaction(async (tx) => {
+          const actor = await resolveProvisionedActor(tx, scope.identity)
+          assertAuthorized({ actor, permission: commandPermissions[commandType], tenantId: actor.tenantId })
+          const inside = await tx.businessCommandExecution.findUnique({ where: executionWhere(scope.tenantId, commandType, normalized.idempotencyKey) })
+          const insideReplay = replay(inside, normalized.requestHash)
+          if (insideReplay) return insideReplay
+          const execution = await tx.businessCommandExecution.create({ data: { id: idFactory(), tenantId: scope.tenantId, commandType, idempotencyKey: normalized.idempotencyKey, requestHash: normalized.requestHash, status: 'pending' } })
+          await tx.$queryRawUnsafe('SELECT "id" FROM "BusinessCommandExecution" WHERE "id" = $1 FOR UPDATE', execution.id)
+          const result = await work(tx, actor, normalized.payload, normalized, execution)
+          await faultInjector('before_command_complete', { tx, commandType, result })
+          await tx.businessCommandExecution.update({ where: { id: execution.id }, data: { status: 'completed', entityType: result.entityType, entityId: result.entityId, resultPayload: result, completedAt: now() } })
+          return { ...result, idempotentReplay: false }
+        }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 })
+      } catch (error) {
+        if (error instanceof OutboundCommandError || error?.name === 'PilotIdentityError') throw error
+        if (isUniqueError(error)) {
+          const concurrent = await prisma.businessCommandExecution.findUnique({ where: executionWhere(scope.tenantId, commandType, normalized.idempotencyKey) })
+          const result = replay(concurrent, normalized.requestHash)
+          if (result) return result
+        }
+        if (isConcurrencyError(error)) {
+          if (attempt < retries) { await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 25)); continue }
+          fail('OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT', 'Outbound inventory changed in another transaction. Retry with fresh state.', 409)
+        }
+        throw error
       }
-      if (isConcurrencyError(error)) fail('OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT', 'Outbound inventory changed in another transaction. Retry with fresh state.', 409)
-      throw error
     }
   }
 
@@ -329,7 +340,13 @@ export function createOutboundPostingCommandService({ prisma, env = process.env,
       if (!await lockIds(tx, 'InventoryReservation', actor.tenantId, reservationIds)) fail('RESERVATION_NOT_FOUND', 'Reservation was not found.', 404)
       const plan = enforce(await buildShipmentDraftPlan({ prisma: tx, tenantId: actor.tenantId, ...payload }))
       assertWarehouseAccess(actor, plan.reservationImpacts.map((entry) => entry.reservation.warehouseId), 'operate')
-      const shipment = await tx.shipmentDocument.create({ data: { id: idFactory(), tenantId: actor.tenantId, shipmentNumber: payload.shipmentNumber, salesOrderId: order.id, workflowStatus: 'ready', postingStatus: 'unposted' } })
+      const shipmentNumber = await allocateDocumentNumber(tx, {
+        tenantId: actor.tenantId,
+        documentType: 'shipment',
+        at: now(),
+        isTaken: async (number) => Boolean(await tx.shipmentDocument.findFirst({ where: { tenantId: actor.tenantId, shipmentNumber: number }, select: { id: true } })),
+      })
+      const shipment = await tx.shipmentDocument.create({ data: { id: idFactory(), tenantId: actor.tenantId, shipmentNumber, salesOrderId: order.id, workflowStatus: 'ready', postingStatus: 'unposted' } })
       const allocations = []
       for (const linePlan of plan.quantityPlans) {
         const shipmentLine = await tx.shipmentLine.create({ data: { id: idFactory(), shipmentId: shipment.id, salesOrderLineId: linePlan.salesOrderLineId, itemId: linePlan.orderLine.itemId, sku: linePlan.orderLine.sku, requestedQuantity: decimalString(linePlan.requestedQuantityUnits), postedQuantity: '0', unit: linePlan.orderLine.unit } })

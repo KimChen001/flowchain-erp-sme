@@ -190,7 +190,12 @@ const salesPrices = { 'LDM-001': 180, 'LDM-002': 115, 'LDM-003': 21, 'LDM-004': 
 // Opening stock, counted the day the workspace went live, before the oldest
 // purchase order: version 7's opening stock plus what the history ships.
 const OPENING_DAY = -160
+// The opening stock entry is created through the adjustment command, which
+// numbers it ADJ-YYYYMM-NNNN, so the scenario finds it by the command's
+// idempotency key; a workspace seeded before server numbering has it under
+// the scenario's own number.
 const OPENING_ADJUSTMENT = 'LOCAL-DEMO-ADJ-OPENING'
+const OPENING_STOCK_KEY = 'local-walkthrough-scenario:opening-stock'
 const openingBeforeHistory = { 'LDM-001': 8, 'LDM-002': 60 }
 
 // The preferred source of each item, with the terms a buyer recorded on the
@@ -246,7 +251,9 @@ function scenarioShipmentHistory() {
 }
 
 // The history's orders on the seed day's calendar, oldest first, numbered from
-// LOCAL-DEMO-SO-101 with one shipment each.
+// LOCAL-DEMO-SO-101 with one shipment each. The shipments are created through
+// the outbound command, so the server numbers them DN-YYYYMM-NNNN by the
+// month they shipped in.
 function scenarioSalesHistory(calendar) {
   const first = -7 * HISTORY_WEEKS
   const firstWeekday = calendar.day(first).getUTCDay()
@@ -255,7 +262,7 @@ function scenarioSalesHistory(calendar) {
     .sort((a, b) => a.offset - b.offset || a.shippedAt.localeCompare(b.shippedAt))
     .map((order, index) => {
       const number = 101 + index
-      return { ...order, id: `LOCAL-DEMO-SO-${number}`, shipmentNumber: `LOCAL-DEMO-SHP-${number}`, lines: order.lines.map((line, lineIndex) => ({ ...line, id: `LOCAL-DEMO-SOL-${number}-${lineIndex + 1}` })) }
+      return { ...order, id: `LOCAL-DEMO-SO-${number}`, lines: order.lines.map((line, lineIndex) => ({ ...line, id: `LOCAL-DEMO-SOL-${number}-${lineIndex + 1}` })) }
     })
 }
 
@@ -346,7 +353,7 @@ async function scenarioSeedDay(prisma, tenantId, requested, timeZone) {
   })
   let anchored = posted?.metadata?.scenarioAsOf
   if (!anchored) {
-    const opening = await prisma.inventoryAdjustmentDocument.findFirst({ where: { tenantId, adjustmentNumber: OPENING_ADJUSTMENT, postingStatus: { not: 'unposted' } }, select: { postedAt: true } })
+    const opening = await openingStockEntry(prisma, tenantId, { postingStatus: { not: 'unposted' } }, { postedAt: true })
     if (opening?.postedAt) anchored = scenarioCalendar(localCalendarDay(opening.postedAt, timeZone), timeZone).isoDay(-OPENING_DAY)
   }
   const hasRequest = requested !== undefined && requested !== null && requested !== ''
@@ -376,16 +383,26 @@ async function scenarioActor(prisma, tenantId, permissions, documents) {
 
 const HISTORY_PERMISSIONS = ['inventory.adjustment.create', 'inventory.adjustment.approve', 'inventory.adjustment.post', 'shipment.prepare', 'shipment.post']
 
+// The opening stock entry (see OPENING_STOCK_KEY), or null before it exists.
+async function openingStockEntry(prisma, tenantId, where = {}, select = undefined) {
+  const created = await prisma.businessCommandExecution.findUnique({
+    where: { tenantId_commandType_idempotencyKey: { tenantId, commandType: 'create_inventory_adjustment', idempotencyKey: `${OPENING_STOCK_KEY}:create` } },
+    select: { entityId: true },
+  })
+  const which = [{ adjustmentNumber: OPENING_ADJUSTMENT }, ...(created?.entityId ? [{ id: created.entityId }] : [])]
+  return prisma.inventoryAdjustmentDocument.findFirst({ where: { tenantId, ...where, OR: which }, ...(select ? { select } : {}) })
+}
+
 // Opening stock, once, through the inventory adjustment commands as of the
 // day the workspace went live, onto the items' empty stock records at A-01.
 // Resumes a run that stopped between the steps.
 async function postOpeningStock(prisma, { tenantId, calendar, identity, env }) {
   const service = createInventoryOperationsCommandService({ prisma, env, now: () => calendar.at(OPENING_DAY, '07:30') })
-  const key = (step) => `local-walkthrough-scenario:opening-stock:${step}`
-  let adjustment = await prisma.inventoryAdjustmentDocument.findFirst({ where: { tenantId, adjustmentNumber: OPENING_ADJUSTMENT } })
+  const key = (step) => `${OPENING_STOCK_KEY}:${step}`
+  let adjustment = await openingStockEntry(prisma, tenantId)
   if (!adjustment) {
     const lines = Object.entries(scenarioOpeningStock()).map(([sku, quantity], index) => ({ inventoryBalanceId: `LOCAL-DEMO-BAL-${pad(index + 1)}`, adjustmentQuantity: String(quantity) }))
-    const created = await service.createAdjustment({ idempotencyKey: key('create'), adjustmentNumber: OPENING_ADJUSTMENT, reasonCode: 'opening_balance', notes: 'Stock counted when the workspace went live.', lines }, { identity })
+    const created = await service.createAdjustment({ idempotencyKey: key('create'), reasonCode: 'opening_balance', notes: 'Stock counted when the workspace went live.', lines }, { identity })
     adjustment = created.adjustment
   }
   if (adjustment.workflowStatus === 'draft') adjustment = (await service.readyAdjustment(adjustment.id, { idempotencyKey: key('ready'), expectedAdjustmentVersion: adjustment.version }, { identity })).adjustment
@@ -398,7 +415,8 @@ async function postOpeningStock(prisma, { tenantId, calendar, identity, env }) {
 // cancelled shipment, an order on hold or cancelled, a released reservation)
 // is left as it is.
 async function shipHistoryOrder(prisma, order, { tenantId, calendar, identity, env }) {
-  const posted = await prisma.shipmentDocument.findFirst({ where: { tenantId, shipmentNumber: order.shipmentNumber } })
+  // The order's one shipment, found by the order (the server numbers it).
+  const posted = await prisma.shipmentDocument.findFirst({ where: { tenantId, salesOrderId: order.id }, orderBy: { createdAt: 'asc' } })
   if (posted && (posted.postingStatus !== 'unposted' || posted.workflowStatus === 'cancelled')) return false
   const service = createOutboundPostingCommandService({ prisma, env, now: () => calendar.at(order.offset, order.shippedAt) })
   const key = (step) => `local-walkthrough-scenario:${step}:${order.id}`
@@ -416,11 +434,11 @@ async function shipHistoryOrder(prisma, order, { tenantId, calendar, identity, e
   let shipment = posted
   if (!shipment) {
     const reservationOf = new Map(salesOrder.reservations.map((row) => [row.salesOrderLineId, row]))
-    await service.createShipmentDraft({
-      idempotencyKey: key('draft'), salesOrderId: order.id, shipmentNumber: order.shipmentNumber, expectedOrderVersion: salesOrder.version,
+    const created = await service.createShipmentDraft({
+      idempotencyKey: key('draft'), salesOrderId: order.id, expectedOrderVersion: salesOrder.version,
       lines: order.lines.map((line) => ({ salesOrderLineId: line.id, allocations: [{ reservationId: reservationOf.get(line.id).id, quantity: String(line.quantity) }] })),
     }, { identity })
-    shipment = await prisma.shipmentDocument.findFirstOrThrow({ where: { tenantId, shipmentNumber: order.shipmentNumber } })
+    shipment = await prisma.shipmentDocument.findUniqueOrThrow({ where: { id: created.shipment.id } })
   }
   await service.postShipment({ idempotencyKey: key('post'), shipmentId: shipment.id, expectedShipmentVersion: shipment.version }, { identity })
   return true
@@ -455,7 +473,7 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
   // before version 8 has posted receipts and no opening stock entry, so it
   // keeps its stock as it is and gets no shipment history; seed a fresh
   // database (walkthrough:local -- --reset) to have one.
-  const withHistory = Boolean(await prisma.inventoryAdjustmentDocument.findFirst({ where: { tenantId, adjustmentNumber: OPENING_ADJUSTMENT }, select: { id: true } }))
+  const withHistory = Boolean(await openingStockEntry(prisma, tenantId, {}, { id: true }))
     || !await prisma.receivingDocument.findFirst({ where: { tenantId, id: { startsWith: 'LOCAL-DEMO-GRN-' }, postingStatus: { not: 'unposted' } }, select: { id: true } })
   const salesHistory = withHistory ? scenarioSalesHistory(calendar) : []
   const historyEnv = { ...env, FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: 'true', FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: 'true' }

@@ -724,16 +724,15 @@ export function createDataImportService({
       groups.get(entry.warehouseId).push(entry)
     }
     for (const [warehouseId, group] of groups) {
-      const warehouse = group[0].details
       const rowNumbers = group.map((entry) => entry.row.rowNumber)
       // Keyed by the chunk's execution and the lines sent: a chunk resumed
       // after a crash finds its draft again, while a later run of the same
       // file (other rows, or after the first draft was cancelled) makes a
-      // new one.
+      // new one. The draft's number is the workspace's next adjustment
+      // number, assigned by the adjustment command.
       const lines = group.map((entry) => [entry.row.rowNumber, entry.input])
       const groupKey = sha256(`${executionId}|${warehouseId}|${JSON.stringify(lines)}`)
       const input = {
-        adjustmentNumber: `OB-${groupKey.slice(0, 10).toUpperCase()}-${text(warehouse.warehouseCode).slice(0, 24)}`,
         reasonCode: 'opening_balance',
         notes: `Opening stock imported from a file (SHA-256 ${fileSha256.slice(0, 12)}), rows ${Math.min(...rowNumbers)}–${Math.max(...rowNumbers)}.`,
         idempotencyKey: `data-import:opening:${groupKey}`,
@@ -742,7 +741,7 @@ export function createDataImportService({
       try {
         const created = await run.createInventoryAdjustment(input, { identity })
         const adjustment = created.adjustment || {}
-        const document = { type: 'inventory_adjustment', id: adjustment.id || created.entityId, number: adjustment.adjustmentNumber || input.adjustmentNumber, workflowStatus: adjustment.workflowStatus || 'draft' }
+        const document = { type: 'inventory_adjustment', id: adjustment.id || created.entityId, number: adjustment.adjustmentNumber || null, workflowStatus: adjustment.workflowStatus || 'draft' }
         for (const entry of group) results.set(entry.row.rowNumber, { outcome: 'created', document })
       } catch (error) {
         if (!knownError(error)) throw error

@@ -180,6 +180,8 @@ async function shipment(prisma, suffix, currency = "CNY") {
   return { orderId, orderLineId, shipmentId, shipmentLineId, currency };
 }
 
+// The invoice number a client sends is ignored: the server assigns
+// CI-YYYYMM-NNNN when the draft is created.
 const invoiceInput = (source, suffix, quantity = "4.0000") => ({
   invoiceNumber: `CUS-INV-${suffix}`,
   shipmentId: source.shipmentId,
@@ -342,6 +344,10 @@ test(
       const payload = invoiceInput(cny, "CNY");
       const preview = await command.previewCustomerInvoice(payload, specialist);
       assert.equal(preview.allowed, true);
+      // The preview has no number yet; without one it is still allowed.
+      assert.equal(preview.invoice.invoiceNumber, null);
+      const { invoiceNumber: _typed, ...unnumbered } = payload;
+      assert.equal((await command.previewCustomerInvoice(unnumbered, specialist)).allowed, true);
       assert.equal(preview.invoice.totalAmount, "52.0000");
       assert.equal(preview.source.shipmentId, cny.shipmentId);
       assert.equal(preview.fxConverted, false);
@@ -355,6 +361,8 @@ test(
       );
       const issued = await issueInvoice(command, payload, "CNY");
       assert.equal(issued.invoice.status, "issued");
+      // July 17 in the workspace (New York): the first invoice of July.
+      assert.equal(issued.invoice.invoiceNumber, "CI-202607-0001");
       assert.equal(issued.receivable.status, "open");
       assert.equal(issued.receivable.outstandingAmount, "52");
       assert.equal(issued.receivable.settlementVerified, false);
@@ -387,6 +395,7 @@ test(
         },
         specialist,
       );
+      assert.equal(excessDraft.invoice.invoiceNumber, "CI-202607-0002");
       await assert.rejects(
         command.submitCustomerInvoice(
           excessDraft.invoice.id,
@@ -495,7 +504,8 @@ test(
       assert.equal(referenced.receivable.settlementVerified, false);
 
       const usd = await shipment(prisma, "USD", "USD");
-      await issueInvoice(command, invoiceInput(usd, "USD"), "USD");
+      const usdNumber = (await issueInvoice(command, invoiceInput(usd, "USD"), "USD")).invoice.invoiceNumber;
+      assert.equal(usdNumber, "CI-202607-0003");
       // The viewer reads the aging buckets but not their amounts.
       const hiddenAging = await read.aging({}, viewer);
       assert.deepEqual(hiddenAging.currencies, ["CNY", "USD"]);
@@ -547,26 +557,27 @@ test(
       // The landing count and the list filter it links to must agree, and a
       // receivable not yet due stays out of both.
       const notDue = await shipment(prisma, "NOT-DUE", "CNY");
-      await issueInvoice(
+      const notDueNumber = (await issueInvoice(
         command,
         { ...invoiceInput(notDue, "NOT-DUE"), dueDate: "2026-08-10T00:00:00.000Z" },
         "NOT-DUE",
-      );
+      )).invoice.invoiceNumber;
+      const cnyNumber = issued.invoice.invoiceNumber;
       const overdueLanding = await read.landing(viewer);
       assert.equal(overdueLanding.cards.overdueReceivables, 2);
       const overdueList = await read.listReceivables({ status: "overdue" }, viewer);
       assert.equal(overdueList.total, overdueLanding.cards.overdueReceivables);
       assert.deepEqual(
         overdueList.items.map((row) => row.customerInvoiceNumber).sort(),
-        ["CUS-INV-CNY", "CUS-INV-USD"],
+        [cnyNumber, usdNumber],
       );
       const openList = await read.listReceivables({ status: "open" }, viewer);
       assert.deepEqual(
         openList.items.map((row) => row.customerInvoiceNumber).sort(),
-        ["CUS-INV-NOT-DUE", "CUS-INV-USD"],
+        [usdNumber, notDueNumber],
       );
       const disputedList = await read.listReceivables({ disputeStatus: "resolved" }, viewer);
-      assert.deepEqual(disputedList.items.map((row) => row.customerInvoiceNumber), ["CUS-INV-CNY"]);
+      assert.deepEqual(disputedList.items.map((row) => row.customerInvoiceNumber), [cnyNumber]);
 
       // A shipment billed by a submitted-or-later invoice cannot be reversed;
       // one with only a draft invoice, or none, is not held.
@@ -576,7 +587,7 @@ test(
       const billed = await buildShipmentReversalPlan({ prisma, tenantId, shipmentId: cny.shipmentId, reason: "Correction" });
       const block = billed.blockingIssues.find((issue) => issue.code === "SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE");
       assert.equal(block.status, 409);
-      assert.equal(block.details.invoiceNumber, "CUS-INV-CNY");
+      assert.equal(block.details.invoiceNumber, cnyNumber);
       assert.equal(block.details.invoiceStatus, "issued");
       const draftOnly = await shipment(prisma, "DRAFT-ONLY", "CNY");
       await command.createCustomerInvoice(
@@ -601,6 +612,24 @@ test(
         },
       );
       assert.equal(otherRead.total, 0);
+
+      // Numbering: no invoice carries the number its client sent, the drafts
+      // run in order through the month, and the month is the workspace's.
+      assert.equal(await prisma.customerInvoice.count({ where: { tenantId, invoiceNumber: { startsWith: "CUS-INV-" } } }), 0);
+      assert.deepEqual(
+        (await prisma.customerInvoice.findMany({ where: { tenantId }, orderBy: { invoiceNumber: "asc" }, select: { invoiceNumber: true } })).map((row) => row.invoiceNumber),
+        ["CI-202607-0001", "CI-202607-0002", "CI-202607-0003", "CI-202607-0004", "CI-202607-0005"],
+      );
+      // 03:30 UTC on Aug 1 is still July 31 in New York.
+      const monthEnd = createOperationalFinanceO2cCommandService({ prisma, env, now: () => new Date("2026-08-01T03:30:00.000Z") });
+      const lateJuly = await shipment(prisma, "LATE-JULY", "CNY");
+      const lateJulyDraft = await monthEnd.createCustomerInvoice({ ...invoiceInput(lateJuly, "LATE-JULY"), idempotencyKey: "create-LATE-JULY" }, specialist);
+      assert.equal(lateJulyDraft.invoice.invoiceNumber, "CI-202607-0006");
+      assert.equal((await prisma.customerInvoice.findUnique({ where: { id: lateJulyDraft.invoice.id } })).invoiceNumber, "CI-202607-0006");
+      await prisma.tenant.update({ where: { id: tenantId }, data: { timezone: "Asia/Shanghai" } });
+      const august = await shipment(prisma, "AUGUST", "CNY");
+      const augustDraft = await monthEnd.createCustomerInvoice({ ...invoiceInput(august, "AUGUST"), idempotencyKey: "create-AUGUST" }, specialist);
+      assert.equal(augustDraft.invoice.invoiceNumber, "CI-202608-0001");
     } finally {
       await prisma.$disconnect();
     }

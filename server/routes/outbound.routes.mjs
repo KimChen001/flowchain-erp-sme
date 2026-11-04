@@ -83,7 +83,7 @@ export async function handleOutboundRoute(ctx) {
     const body = await ctx.readBody(ctx.req)
     if (reservePreview) ctx.send(ctx.res, 200, await query.previewSalesOrderReservation({ salesOrderId: decodeURIComponent(reservePreview[1]), allocations: body.allocations || [] }, context))
     else if (releasePreview) ctx.send(ctx.res, 200, await query.previewReservationRelease({ salesOrderId: decodeURIComponent(releasePreview[1]), reason: body.reason, releases: body.releases || [] }, context))
-    else if (draftPreview) ctx.send(ctx.res, 200, await query.previewShipmentDraft({ salesOrderId: decodeURIComponent(draftPreview[1]), shipmentNumber: body.shipmentNumber, lines: body.lines || [] }, context))
+    else if (draftPreview) ctx.send(ctx.res, 200, await query.previewShipmentDraft({ salesOrderId: decodeURIComponent(draftPreview[1]), lines: body.lines || [] }, context))
     else if (cancelPreview) ctx.send(ctx.res, 200, await query.previewShipmentCancellation({ shipmentId: decodeURIComponent(cancelPreview[1]), reason: body.reason }, context))
     else if (postPreview) ctx.send(ctx.res, 200, await query.previewShipmentPosting({ shipmentId: decodeURIComponent(postPreview[1]) }, context))
     else if (reversePreview) ctx.send(ctx.res, 200, await query.previewShipmentReversal({ shipmentId: decodeURIComponent(reversePreview[1]), reason: body.reason }, context))
@@ -91,7 +91,8 @@ export async function handleOutboundRoute(ctx) {
       const idempotencyKey = String(body.idempotencyKey || ctx.req.headers?.['idempotency-key'] || '').trim()
       if (reserve) ctx.send(ctx.res, 200, await command.reserveSalesOrderInventory({ salesOrderId: decodeURIComponent(reserve[1]), expectedOrderVersion: body.expectedOrderVersion, allocations: body.allocations || [], idempotencyKey }, { identity: ctx.identity }))
       else if (release) ctx.send(ctx.res, 200, await command.releaseSalesOrderReservation({ salesOrderId: decodeURIComponent(release[1]), expectedOrderVersion: body.expectedOrderVersion, releases: body.releases || [], reason: body.reason, idempotencyKey }, { identity: ctx.identity }))
-      else if (draft) ctx.send(ctx.res, 201, await command.createShipmentDraft({ salesOrderId: decodeURIComponent(draft[1]), shipmentNumber: body.shipmentNumber, expectedOrderVersion: body.expectedOrderVersion, lines: body.lines || [], idempotencyKey }, { identity: ctx.identity }))
+      // The shipment number is assigned by the server; one in the body is ignored.
+      else if (draft) ctx.send(ctx.res, 201, await command.createShipmentDraft({ salesOrderId: decodeURIComponent(draft[1]), expectedOrderVersion: body.expectedOrderVersion, lines: body.lines || [], idempotencyKey }, { identity: ctx.identity }))
       else if (cancel) ctx.send(ctx.res, 200, await command.cancelShipmentDraft({ shipmentId: decodeURIComponent(cancel[1]), expectedShipmentVersion: body.expectedShipmentVersion, reason: body.reason, idempotencyKey }, { identity: ctx.identity }))
       else if (post) ctx.send(ctx.res, 200, await command.postShipment({ shipmentId: decodeURIComponent(post[1]), expectedShipmentVersion: body.expectedShipmentVersion, idempotencyKey }, { identity: ctx.identity }))
       else if (reverse) ctx.send(ctx.res, 200, await command.reverseShipment({ shipmentId: decodeURIComponent(reverse[1]), expectedShipmentVersion: body.expectedShipmentVersion, reason: body.reason, idempotencyKey }, { identity: ctx.identity }))

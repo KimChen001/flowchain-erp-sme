@@ -2,7 +2,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { sanitizeSuggestionTrail } from '../../shared/prefill-suggestions.mjs'
 import { assertAuthorized } from '../auth/authorization-service.mjs'
 import { escapeLikePattern } from '../persistence/like-pattern.mjs'
+import { isTransactionConflict } from '../persistence/transaction-conflict.mjs'
+import { allocateDocumentNumber } from './document-numbering.mjs'
 import { assertWarehouseAccess, hasWarehouseAccess, resolveProvisionedActor } from './pilot-identity.mjs'
+import { isPrismaConcurrencyError } from './prisma-concurrency-error.mjs'
 import { ReceivingCommandError } from './receiving-posting-command-service.mjs'
 import { isPurchaseOrderReceivable, RECEIVABLE_PURCHASE_ORDER_INPUTS, RECEIVING_POSTING_STATUS, RECEIVING_WORKFLOW_STATUS } from './procurement-status-authority.mjs'
 import { receivingDecimalString, receivingDecimalUnits } from './receiving-transaction-policy.mjs'
@@ -122,7 +125,11 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
 
   // Replays a completed command, refuses a reused key with another payload,
   // and records the new command in the same transaction as its effects.
-  async function idempotent({ tenantId, commandType, key, requestHash, entityId }, work) {
+  // `attempts` above one runs a transaction that lost a serialization
+  // conflict again: every create in a workspace advances the same receipt
+  // number sequence (document-numbering.mjs), so two receipts saved at once
+  // conflict and the later one takes the next number on its next attempt.
+  async function idempotent({ tenantId, commandType, key, requestHash, entityId, attempts = 1 }, work) {
     const where = { tenantId_commandType_idempotencyKey: { tenantId, commandType, idempotencyKey: key } }
     const replay = (row) => {
       if (!row) return null
@@ -130,22 +137,30 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
       if (row.status !== 'completed' || !row.resultPayload) fail('RECEIVING_COMMAND_IN_PROGRESS', 'The command is already in progress.', 409)
       return { ...row.resultPayload, idempotentReplay: true }
     }
-    const prior = replay(await prisma.businessCommandExecution.findUnique({ where }))
-    if (prior) return prior
-    try {
-      return await prisma.$transaction(async (tx) => {
-        const execution = await tx.businessCommandExecution.create({ data: { id: idFactory(), tenantId, commandType, idempotencyKey: key, requestHash, status: 'pending', entityType: 'ReceivingDocument', entityId: entityId || null } })
-        const { result, entityId: resultEntityId } = await work(tx, execution)
-        await tx.businessCommandExecution.update({ where: { id: execution.id }, data: { status: 'completed', entityId: resultEntityId, resultPayload: result, completedAt: now() } })
-        return { ...result, idempotentReplay: false }
-      }, { isolationLevel: 'Serializable' })
-    } catch (error) {
-      if (error?.code === 'P2002') {
-        const committed = replay(await prisma.businessCommandExecution.findUnique({ where }))
-        if (committed) return committed
+    for (let attempt = 1; ; attempt += 1) {
+      const prior = replay(await prisma.businessCommandExecution.findUnique({ where }))
+      if (prior) return prior
+      try {
+        return await prisma.$transaction(async (tx) => {
+          const execution = await tx.businessCommandExecution.create({ data: { id: idFactory(), tenantId, commandType, idempotencyKey: key, requestHash, status: 'pending', entityType: 'ReceivingDocument', entityId: entityId || null } })
+          const { result, entityId: resultEntityId } = await work(tx, execution)
+          await tx.businessCommandExecution.update({ where: { id: execution.id }, data: { status: 'completed', entityId: resultEntityId, resultPayload: result, completedAt: now() } })
+          return { ...result, idempotentReplay: false }
+        }, { isolationLevel: 'Serializable' })
+      } catch (error) {
+        if (error?.code === 'P2002') {
+          const committed = replay(await prisma.businessCommandExecution.findUnique({ where }))
+          if (committed) return committed
+        }
+        if (isTransactionConflict(error) || isPrismaConcurrencyError(error)) {
+          if (attempt < attempts) {
+            await new Promise((resolve) => setTimeout(resolve, 20 * attempt + Math.floor(Math.random() * 20)))
+            continue
+          }
+          fail('RECEIVING_CONCURRENT_POSTING_CONFLICT', 'Receiving was changed by another transaction.', 409)
+        }
+        throw error
       }
-      if (error?.code === 'P2034') fail('RECEIVING_CONCURRENT_POSTING_CONFLICT', 'Receiving was changed by another transaction.', 409)
-      throw error
     }
   }
 
@@ -168,6 +183,8 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
   } })
 
   // A receipt starts from a PO that is approved, issued or partially received.
+  // Its number is the workspace's next receipt number (GRN-YYYYMM-NNNN),
+  // assigned here; a number the client sends is ignored.
   async function createDraft(input = {}, context, channel = RECEIVING_DRAFT_CHANNELS.desktop) {
     const actor = await authorizedActor(prisma, context, channel)
     const warehouseId = text(input.warehouseId)
@@ -179,14 +196,18 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
     const key = text(input.idempotencyKey)
     if (!key) fail('IDEMPOTENCY_KEY_REQUIRED', 'idempotencyKey is required.', 422)
     const commandType = `${channel.commandPrefix}.create`
-    return idempotent({ tenantId: actor.tenantId, commandType, key, requestHash: digest(input) }, async (tx, execution) => {
+    return idempotent({ tenantId: actor.tenantId, commandType, key, requestHash: digest(input), attempts: 5 }, async (tx, execution) => {
       const po = await tx.purchaseOrder.findFirst({ where: { id: text(input.poId), tenantId: actor.tenantId }, include: { lines: true } })
       if (!po) fail('PURCHASE_ORDER_NOT_FOUND', 'Purchase order was not found.', 404)
       if (!isPurchaseOrderReceivable(po.status)) fail('RECEIVING_PURCHASE_ORDER_NOT_RECEIVABLE', `A ${po.status} purchase order cannot be received.`, 409, { purchaseOrderId: po.id, currentStatus: po.status })
       await assertActiveWarehouses(tx, actor.tenantId, warehouseIds)
       const lines = buildLines(po, input.lines, warehouseId, idFactory)
+      const documentNumber = await allocateDocumentNumber(tx, {
+        tenantId: actor.tenantId, documentType: 'receiving_document', at: now(),
+        isTaken: async (number) => Boolean(await tx.receivingDocument.findFirst({ where: { tenantId: actor.tenantId, documentNumber: number }, select: { id: true } })),
+      })
       const document = await tx.receivingDocument.create({ data: {
-        id: idFactory(), tenantId: actor.tenantId, documentNumber: text(input.documentNumber) || `GRN-${now().getTime()}`,
+        id: idFactory(), tenantId: actor.tenantId, documentNumber,
         poId: po.id, supplierId: po.supplierId, supplierName: po.supplierName, status: 'receiving',
         workflowStatus: RECEIVING_WORKFLOW_STATUS.DRAFT, postingStatus: RECEIVING_POSTING_STATUS.UNPOSTED,
         warehouseId, receiver: actor.user.name, arrivedAt: arrivalTime(input.arrivedAt, now()), currency: po.currency,

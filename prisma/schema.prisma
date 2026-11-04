@@ -3613,7 +3613,7 @@ model DocumentNumberSequence {
   period       String
   lastValue    Int
   updatedAt    DateTime @default(now()) @updatedAt
-  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@id([tenantId, documentType, period])
 }

@@ -119,8 +119,8 @@ async function issueCustomerInvoice(
     tax = "0.0000",
   }: any,
 ) {
+  // No invoice number: the server assigns CI-YYYYMM-NNNN when the draft is created.
   const payload = {
-    invoiceNumber: `CUS-INV-BROWSER-${suffix}`,
     shipmentId,
     currency,
     invoiceDate: "2026-07-01T00:00:00.000Z",
@@ -312,7 +312,9 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   );
   expect(cny.issued.receivable.status).toBe("open");
   expect(cny.issued.receivable.settlementVerified).toBe(false);
-  await issueCustomerInvoice(request, specialist.token, manager.token, {
+  const cnyNumber: string = cny.created.invoice.invoiceNumber;
+  expect(cnyNumber).toMatch(/^CI-\d{6}-\d{4,}$/);
+  const usd = await issueCustomerInvoice(request, specialist.token, manager.token, {
     suffix: "USD",
     shipmentId: "finance-browser-shipment-USD",
     shipmentLineId: "finance-browser-shipment-line-USD",
@@ -320,6 +322,7 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
     quantity: "2.0000",
     totalAmount: "25.0000",
   });
+  const usdNumber: string = usd.created.invoice.invoiceNumber;
 
   const customerDetail = await api(
     request,
@@ -373,7 +376,6 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
     "post",
     "/api/finance/customer-invoices",
     {
-      invoiceNumber: "CUS-INV-BROWSER-UI",
       shipmentId: "finance-browser-shipment-CNY",
       currency: "CNY",
       invoiceDate: "2026-07-01T00:00:00.000Z",
@@ -389,8 +391,9 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
       idempotencyKey: "browser-create-customer-ui",
     },
   );
+  const uiNumber: string = uiDraft.invoice.invoiceNumber;
   await page.goto(`/app/finance/customer-invoices/${uiDraft.entityId}`);
-  await expect(page.getByTestId("customer-invoice-detail")).toContainText("CUS-INV-BROWSER-UI");
+  await expect(page.getByTestId("customer-invoice-detail")).toContainText(uiNumber);
   // Submit, approve and issue only change the invoice's status: one click
   // each (owner decision D4), and the step is done when its button goes.
   // A run that fails after an allowed preview (here a forced 409, as when
@@ -420,7 +423,7 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
     `/api/finance/customer-invoices/${uiDraft.entityId}`,
   );
   expect(uiIssued.status).toBe("issued");
-  expect(uiIssued.receivable.obligationNumber).toBe("AR-CUS-INV-BROWSER-UI");
+  expect(uiIssued.receivable.obligationNumber).toBe(`AR-${uiNumber}`);
 
   await page.goto("/app/finance/overview");
   await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
@@ -428,7 +431,7 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   // card's link must list them although none has the stored status overdue.
   await page.getByRole("link", { name: /逾期应收义务|Overdue receivables/ }).click();
   await expect(page).toHaveURL(/\/app\/finance\/receivables\?status=overdue$/);
-  for (const number of ["CUS-INV-BROWSER-CNY", "CUS-INV-BROWSER-USD", "CUS-INV-BROWSER-UI"])
+  for (const number of [cnyNumber, usdNumber, uiNumber])
     await expect(page.getByTestId("receivables-workbench")).toContainText(number);
   await page.goto("/app/finance/overview");
   await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
@@ -465,7 +468,7 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   );
   await page.goto("/app/sales/invoices");
   await expect(page.getByTestId("customer-invoice-workbench")).toContainText(
-    "CUS-INV-BROWSER-CNY",
+    cnyNumber,
   );
   await page.goto("/app/finance/aging");
   await expect(page.getByTestId("receivables-aging")).toContainText(
@@ -509,7 +512,6 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   const viewerWrite = await request.post("/api/finance/customer-invoices", {
     headers: { Authorization: `Bearer ${viewer.token}` },
     data: {
-      invoiceNumber: "VIEWER-DENIED",
       shipmentId: "finance-browser-shipment-CNY",
       currency: "CNY",
       invoiceDate: "2026-07-01T00:00:00.000Z",

@@ -7,6 +7,7 @@ import { fetchAiWorkspaceStatus, fetchSettingsAudit, fetchSettingsRuntime, saveS
 import WorkspaceSettings from './WorkspaceSettings';
 import { useI18n } from '../../i18n/I18n';
 import CustomFieldsSettings from './CustomFieldsSettings';
+import { DOCUMENT_NUMBER_PREFIX_PATTERN, DOCUMENT_NUMBER_TYPES, formatDocumentNumber, numberingPeriod } from '../../../shared/document-numbering.mjs';
 
 type View = keyof SettingsRuntime | 'audit';
 type NavigateFn = (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null) => void;
@@ -27,7 +28,7 @@ const splitRoles = (value: string) => value.split(/[、,，]\s*/).map((role) => 
 const sectionDescriptions: Record<View, { en: string; zh: string }> = {
   company: { en: 'Basic information for this workspace.', zh: '维护当前业务空间的基础信息。' },
   roles: { en: 'Manage members, roles and whether they are active.', zh: '管理访问成员、角色和启用状态。' },
-  numbering: { en: 'Set document prefixes, date segments and sequence numbers.', zh: '设置单据前缀、日期段和流水号。' },
+  numbering: { en: 'Each document FlowChain issues is numbered prefix-year-month-sequence when it is saved. Set the prefixes here.', zh: 'FlowChain 开出的每张单据在保存时按“前缀-年月-流水号”自动编号。可在此设置前缀。' },
   review: { en: 'Purchase order approval and invoice matching tolerances are in effect. The other review settings are not in effect yet.', zh: '采购订单审批和发票匹配容差已生效；其他复核设置尚未生效。' },
   modules: { en: 'Choose enabled modules, their order, the default entry and which roles see them.', zh: '配置启用模块、顺序、默认入口和角色可见性。' },
   ai: { en: 'Set each AI capability to allowed, allowed after review, or not allowed.', zh: '按能力设置允许、复核或禁止等级。' },
@@ -40,7 +41,7 @@ const sectionDescriptions: Record<View, { en: string; zh: string }> = {
 // saving never reports success for a setting that changes nothing. In the AI
 // section only the AI features switch is in effect; its capability levels
 // stay read-only.
-const NOT_IN_EFFECT_SECTIONS: View[] = ['numbering', 'modules', 'advanced'];
+const NOT_IN_EFFECT_SECTIONS: View[] = ['modules', 'advanced'];
 
 const TOLERANCE_FIELDS = [
   { key: 'quantityTolerance', label: 'settings.tolerance.quantity', help: 'settings.tolerance.quantityHelp' },
@@ -81,23 +82,48 @@ function Header({ view, dirty, saving, invalid, onSave, onCancel }: { view: View
   </div>;
 }
 
-function previewNumber(rule: SettingsRuntime['numbering']['rules'][number]) {
-  const date = rule.datePattern === 'YYYYMMDD' ? '20260711' : rule.datePattern === 'YYYYMM' ? '202607' : '';
-  return [rule.prefix.toUpperCase(), date, String(rule.nextSequence).padStart(rule.sequenceLength, '0')].filter(Boolean).join(rule.separator);
-}
-
-function Numbering({ value, onChange }: { value: SettingsRuntime['numbering']; onChange: (v: SettingsRuntime['numbering']) => void }) {
-  const { t } = useI18n();
-  const update = (id: string, patch: Partial<(typeof value.rules)[number]>) => onChange({ rules: value.rules.map(rule => rule.id === id ? { ...rule, ...patch } : rule) });
-  const signatures = value.rules.map(r => `${r.prefix.toUpperCase()}|${r.datePattern}|${r.separator}`);
-  return <div className="space-y-3">{value.rules.map((rule, index) => { const conflict = signatures.indexOf(signatures[index]) !== index; return <div key={rule.id} className="grid gap-3 rounded-xl border border-slate-200 p-4 md:grid-cols-7">
-    <label className="text-xs md:col-span-2">{t('settings.document')}<input className={`${fieldClass} mt-1`} value={rule.document} onChange={e => update(rule.id, { document: e.target.value })} /></label>
-    <label className="text-xs">{t('settings.prefix')}<input className={`${fieldClass} mt-1`} value={rule.prefix} onChange={e => update(rule.id, { prefix: e.target.value.replace(/[^a-z0-9]/gi, '').slice(0, 8) })} /></label>
-    <label className="text-xs">{t('settings.datePattern')}<select className={`${fieldClass} mt-1`} value={rule.datePattern} onChange={e => update(rule.id, { datePattern: e.target.value })}><option>YYYYMM</option><option>YYYYMMDD</option><option value="">{t('settings.noDate')}</option></select></label>
-    <label className="text-xs">{t('settings.separator')}<input className={`${fieldClass} mt-1`} value={rule.separator} maxLength={1} onChange={e => update(rule.id, { separator: e.target.value })} /></label>
-    <label className="text-xs">{t('settings.sequenceLength')}<input type="number" min={2} max={8} className={`${fieldClass} mt-1`} value={rule.sequenceLength} onChange={e => update(rule.id, { sequenceLength: Number(e.target.value) })} /></label>
-    <div className="text-xs"><span>{t('settings.preview')}</span><div className="mt-1 rounded-lg bg-slate-50 px-3 py-2 font-mono">{previewNumber(rule)}</div>{conflict && <span className="mt-1 block text-red-600">{t('settings.conflict')}</span>}</div>
-  </div>; })}</div>;
+// Document numbers (shared/document-numbering.mjs): PREFIX-YYYYMM-NNNN per
+// workspace, type and month, assigned when a document is saved. Only the
+// prefix is a setting; a type not numbered yet says so.
+function Numbering({ value, onChange, timezone }: { value: SettingsRuntime['numbering']; onChange: (v: SettingsRuntime['numbering']) => void; timezone?: string }) {
+  const { t, language } = useI18n();
+  const say = (en: string, zh: string) => (language === 'en-US' ? en : zh);
+  const period = numberingPeriod(new Date(), timezone);
+  const update = (id: string, prefix: string) => onChange({ rules: value.rules.map(rule => rule.id === id ? { ...rule, prefix } : rule) });
+  const prefixes = value.rules.map(rule => rule.prefix.toUpperCase());
+  const byRule = new Map<string, (typeof DOCUMENT_NUMBER_TYPES)[number]>(DOCUMENT_NUMBER_TYPES.map(entry => [entry.ruleId, entry]));
+  return <div className="space-y-3" data-testid="settings-numbering-rules">
+    <div role="note" className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs leading-5 text-blue-900">
+      {say('Numbers are assigned by FlowChain when a document is saved and cannot be edited. The sequence restarts each month (workspace time) and grows past four digits when needed. Existing documents keep their numbers; a changed prefix applies to new documents. Supplier invoices keep the supplier\'s own invoice number.', '单据保存时由 FlowChain 自动编号，不能手动修改。流水号每月（按工作区时间）重新开始，超过四位时自动增加位数。已有单据保留原编号；修改前缀只影响之后新建的单据。采购发票沿用供应商自己的发票号。')}
+    </div>
+    <div className="overflow-x-auto rounded-xl border border-slate-200">
+      <table className="w-full min-w-[640px] text-left text-sm">
+        <thead><tr className="border-b border-slate-100 text-xs" style={{ color: A.gray1 }}>
+          <th className="px-4 py-3 font-medium">{t('settings.document')}</th>
+          <th className="px-4 py-3 font-medium">{t('settings.prefix')}</th>
+          <th className="px-4 py-3 font-medium">{say('Format this month', '本月编号格式')}</th>
+          <th className="px-4 py-3 font-medium">{say('Status', '状态')}</th>
+        </tr></thead>
+        <tbody>{value.rules.map((rule, index) => {
+          const entry = byRule.get(rule.id);
+          const conflict = prefixes.indexOf(prefixes[index]) !== index;
+          const invalid = !DOCUMENT_NUMBER_PREFIX_PATTERN.test(rule.prefix.toUpperCase());
+          return <tr key={rule.id} className="border-t border-slate-100" data-testid={`settings-numbering-rule-${rule.id}`}>
+            <td className="px-4 py-3 font-medium" style={{ color: A.label }}>{entry ? say(entry.document, entry.zh) : rule.document}</td>
+            <td className="px-4 py-3">
+              <input aria-label={say(`Prefix for ${entry?.document || rule.document}`, `${entry?.zh || rule.document}前缀`)} className={`${fieldClass} w-28 font-mono uppercase`} value={rule.prefix} onChange={e => update(rule.id, e.target.value.replace(/[^a-z0-9]/gi, '').slice(0, 8).toUpperCase())} />
+              {conflict && <span className="mt-1 block text-xs text-red-600">{t('settings.conflict')}</span>}
+              {invalid && <span className="mt-1 block text-xs text-red-600">{say('1 to 8 letters or digits.', '1 到 8 位字母或数字。')}</span>}
+            </td>
+            <td className="px-4 py-3 font-mono text-xs" style={{ color: A.gray1 }}>{invalid ? '—' : formatDocumentNumber(rule.prefix.toUpperCase(), period, 1)}</td>
+            <td className="px-4 py-3">{entry?.applied
+              ? <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700">{t('settings.inEffect')}</span>
+              : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600" title={say('This document type keeps its current numbers until its numbering is switched over.', '此类单据切换编号规则前，暂时沿用现有编号方式。')}>{t('settings.notInEffect')}</span>}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>
+  </div>;
 }
 
 function Review({ value, onChange }: { value: SettingsRuntime['review']; onChange: (v: SettingsRuntime['review']) => void }) {
@@ -178,7 +204,7 @@ function Audit() {
 }
 
 export default function SettingsPage({ initialView }: { initialView?: string; onNavigate: NavigateFn }) {
-  const { t, locale } = useI18n();
+  const { t, locale, timezone } = useI18n();
   if (initialView === 'custom-fields') return <CustomFieldsSettings />;
   if (['profile', 'company', 'roles', 'warehouse-access', 'readiness'].includes(initialView || '')) return <WorkspaceSettings view={initialView || 'profile'} />;
   const view = ((initialView === 'boundaries' ? 'advanced' : initialView) || 'company') as View;
@@ -190,10 +216,12 @@ export default function SettingsPage({ initialView }: { initialView?: string; on
   const section = view as keyof SettingsRuntime;
   const dirty = JSON.stringify(data[section]) !== JSON.stringify(draft[section]);
   const readOnly = NOT_IN_EFFECT_SECTIONS.includes(view);
-  const invalid = view === 'review' && TOLERANCE_FIELDS.some(field => toleranceError(field.key, draft.review[field.key]) !== null);
+  const numberingPrefixes = draft.numbering.rules.map(rule => rule.prefix.toUpperCase());
+  const invalid = (view === 'review' && TOLERANCE_FIELDS.some(field => toleranceError(field.key, draft.review[field.key]) !== null))
+    || (view === 'numbering' && (new Set(numberingPrefixes).size !== numberingPrefixes.length || numberingPrefixes.some(prefix => !DOCUMENT_NUMBER_PREFIX_PATTERN.test(prefix))));
   const change = <K extends keyof SettingsRuntime>(next: SettingsRuntime[K]) => { setDraft({ ...draft, [section]: next }); setNotice(''); };
   const save = async () => { setSaving(true); setNotice(''); try { const result = await saveSettingsSection(section, draft[section]); setData({ ...data, [section]: result.settings }); setDraft({ ...draft, [section]: result.settings }); setNotice(t('settings.savedAt', { time: new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date()) })); if (section === 'modules') { localStorage.setItem('flowchain:module-settings', JSON.stringify(result.settings)); window.dispatchEvent(new Event('flowchain:module-settings')); } } catch { setNotice(t('settings.saveFailed')); } finally { setSaving(false); } };
   return <Card className="p-5" data-testid={`settings-${view}`}><Header view={view} dirty={dirty} saving={saving} invalid={invalid} onSave={readOnly ? undefined : save} onCancel={() => setDraft(data)} />{notice && <div role="status" className={`mb-4 rounded-lg p-3 text-sm ${notice.startsWith(t('settings.saved').slice(0, 3)) ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'}`}>{notice}</div>}
-    {view === 'numbering' && <NotInEffect><Numbering value={draft.numbering} onChange={change} /></NotInEffect>}{view === 'review' && <Review value={draft.review} onChange={change} />}{view === 'modules' && <NotInEffect><Modules value={draft.modules} onChange={change} /></NotInEffect>}{view === 'ai' && <><AiModelSwitch value={draft.ai} onChange={change} /><NotInEffect><AiGovernance value={draft.ai} onChange={change} /></NotInEffect></>}{view === 'advanced' && <NotInEffect><Advanced value={draft.advanced} onChange={change} /></NotInEffect>}
+    {view === 'numbering' && <Numbering value={draft.numbering} onChange={change} timezone={timezone} />}{view === 'review' && <Review value={draft.review} onChange={change} />}{view === 'modules' && <NotInEffect><Modules value={draft.modules} onChange={change} /></NotInEffect>}{view === 'ai' && <><AiModelSwitch value={draft.ai} onChange={change} /><NotInEffect><AiGovernance value={draft.ai} onChange={change} /></NotInEffect></>}{view === 'advanced' && <NotInEffect><Advanced value={draft.advanced} onChange={change} /></NotInEffect>}
     <div className="mt-5 flex items-center gap-2 border-t border-slate-100 pt-4 text-xs text-slate-500"><ShieldCheck size={14} />{t('settings.auditHint')}</div></Card>;
 }

@@ -56,7 +56,9 @@ test('a stopped walkthrough seed resumes on its first day, and history a person 
 
     // A person reverses a history shipment. The next seed leaves it reversed
     // and posts nothing again.
-    const shipment = await prisma.shipmentDocument.findFirst({ where: { tenantId, shipmentNumber: 'LOCAL-DEMO-SHP-130' } })
+    const shipment = await prisma.shipmentDocument.findFirst({ where: { tenantId, salesOrderId: 'LOCAL-DEMO-SO-130' } })
+    // History shipments are numbered by the server, DN-YYYYMM-NNNN in the month they shipped.
+    assert.match(shipment.shipmentNumber, /^DN-\d{6}-\d{4,}$/)
     await createOutboundPostingCommandService({ prisma, env: { ...env, FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: 'true' } })
       .reverseShipment({ shipmentId: shipment.id, expectedShipmentVersion: shipment.version, reason: 'Customer refused the delivery', idempotencyKey: 'walkthrough-resume-test:reverse' }, { identity: admin })
     const counts = async () => ({

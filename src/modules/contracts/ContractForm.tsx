@@ -196,6 +196,8 @@ export function ContractForm({ contract = null, initialSupplierId = "", onSaved,
           {/* A new contract's page already carries its title. */}
           {editing && <h2 className="mb-1 text-lg font-semibold" style={{ color: A.label }}>{`${t("Edit contract")} ${contract!.number}`}</h2>}
           <p className="text-sm" style={{ color: A.sub }}>{t("Record a signed agreement. It is saved as a draft; activate it once the signed date and start date are in.")}</p>
+          {/* The server numbers a new contract (CT-YYYYMM-NNNN) when it is saved; the number on the signed document goes in Their reference. */}
+          {!editing && <p className="mt-1 text-sm" style={{ color: A.sub }} data-testid="contract-number-on-save">{t("The contract number is assigned when you save. Put the number on the signed document in Their reference.")}</p>}
           <p className="mt-2 text-xs" style={{ color: A.sub }}>* {t("Required fields")}</p>
         </div>
       </div>

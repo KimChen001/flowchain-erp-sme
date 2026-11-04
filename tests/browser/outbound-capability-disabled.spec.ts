@@ -54,7 +54,6 @@ test("disabled outbound capability makes list and direct entry read-only", async
   const create = await request.post("/api/sales/orders", {
     headers: { Authorization: `Bearer ${session.token}` },
     data: {
-      orderNumber: "SO-DISABLED-BROWSER",
       customerName: "Disabled",
       currency: "CNY",
       idempotencyKey: "disabled-browser-create",
