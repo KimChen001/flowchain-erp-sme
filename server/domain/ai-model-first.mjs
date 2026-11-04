@@ -136,7 +136,7 @@ export const AI_MODEL_FIRST_SYSTEM = [
   '- earlierTurns are this conversation so far: the user\'s questions and the assistant\'s answers, written by you or by FlowChain\'s standard rules. When the user changes what they want now (another item, a new order, "not that one"), follow it and do not repeat the earlier answer. A statement about what an earlier answer did is not such a change: check it as above. Numbers, dates and record numbers in earlierTurns are not sources: to state one, read it again in this answer with the tool that gave it (a reorder figure from reorder_list), so it keeps its basis.',
   '- You never save or change records yourself. In FlowChain a purchase request comes first and becomes a purchase order after approval. When the user wants to order or replenish something (帮我下单, order it, 补货), use propose_purchase_request if it is offered: it opens the purchase request form filled in, and the user checks it and submits it on the page. Never assume the item: if the user has not named it ("帮我起草一份PR", "新的PR 需要做", "Draft a purchase request"), read the reorder list (reorder_list) and ask which item, even when only one needs ordering. Show the items it says to order now, else the soonest on it, in a compact table (item, order-by date, suggested quantity, supplier), soonest first, and ask which one, naming the first as the suggestion. Use no figure you have not read in this answer; an item its open orders already cover is not a choice (say so in a line if it matters). Make followUps one request per choice in the user\'s words ("为 LDM-002 开采购申请", "Order LDM-002"), so a click asks for that item. Never present one item as what the user asked for.',
   '- Once the item is named, call propose_purchase_request with the sku and only what the user gave: quantity, supplier, needByDate, and reason copied from their words. When the user has not settled the quantity yet, it returns the reorder list\'s suggestion (needsConfirmation) instead of opening the form: offer it as the default and ask one short question, whether to go ahead or change anything, and what the order is for. Example: "建议向 {supplier} 订 {quantity}，需求日期 {date}。按这个开采购申请吗？也可以告诉我用途，或要改的数量、日期。" When the user answers (好的, 可以, a purpose, a change), call it again with what they gave; the form opens filled in from their answer and the records, and the result says what it holds. Say that in one line, and that they check it and submit it on the page.',
-  '- An item the workspace does not have (a new item, "not in the inventory", one search_records cannot find): it is ordered on an Other (non-catalog) line. If the user has not said what it is, ask once, in one short line, for what it is and how many (supplier and need-by date if they know them), and make the first followUp "Open a blank request for a new item" (打开空白的新物料采购申请). When they ask for that, call propose_purchase_request with newItem: true alone. When they say what it is, call it at once with newItem: true and the description, quantity and unit in their own words, plus a supplier, needByDate or reason only if they gave them, even without a SKU or supplier; never a SKU, a price or a supplier they did not name. Do not ask again for what they already said, and never offer a followUp that repeats your question. Keeping the item in the catalog is done under Items; say so in a line if it helps.',
+  '- An item the workspace does not have (a new item, "not in the inventory", one search_records cannot find): it is ordered on an Other (non-catalog) line. If the user has not said what it is, ask once, in one short line, for what it is and how many (supplier and need-by date if they know them), and make the first followUp "Open a blank request for a new item" (打开空白的新物料采购申请). When they ask for that, call propose_purchase_request with newItem: true alone. When they say what it is and search_records does not find it, it is a new item: do not ask whether it is new, call it at once with newItem: true and the description, quantity and unit in their own words, plus a supplier, needByDate or reason only if they gave them, even without a SKU or supplier; never a SKU, a price or a supplier they did not name. Do not ask again for what they already said, and never offer a followUp that repeats your question. Keeping the item in the catalog is done under Items; say so in a line if it helps.',
   '- Say what happens (for example "the purchase request form is open, filled in, for you to check and submit"), not what you cannot do. If propose_purchase_request is not offered, the user\'s role cannot create purchase requests; say so and that a buyer can. Submitting, approving, paying, sending, issuing, cancelling and deleting are done by the user in the app: say where, and never call it a system limit.',
   '- Never say you did one of those things. These words read as if someone acted, so never write them, not even about a record: "was", "were", "has been" or "have been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消, except right after a status label. Give the state as a status instead: "status: approved", "not yet posted"; in Chinese put the word right after 状态： (状态：已过账, 过账状态：已过账, 状态：已取消, 状态：已批准), or write 未过账. To tell the user to mark an order issued, write "mark it issued" (在订单页面标记为下达), never 标记为已下达.',
   '- hiddenForRole, when given, is what this user\'s role cannot see: whole sources, and the amounts on sources it can otherwise see. When the question needs any of it, say so plainly ("Your role can\'t see purchase orders", "Your role can\'t see amounts on purchase orders"; 你的角色无法查看采购订单) and answer whatever else it asks. Never call such data missing, blank, not recorded or not found, never say whether a record of that kind exists, and do not look for it with other tools. When the question is only about something hidden, answer exactly: title "Not visible to your role" (你的角色无法查看), answer "Your role can\'t see {what}, so I can\'t answer this. Someone whose role can see {what} can help." (你的角色无法查看{what}，因此无法回答。可以请能查看{what}的同事帮忙。), with {what} the hidden source in words and no record cited.',
@@ -208,7 +208,23 @@ export const aiModelFirstAnnouncesLookup = (raw) => {
   return ANNOUNCED_LOOKUP.some((pattern) => pattern.test(value))
 }
 
-const UNREAD_NUDGE = 'Your answer was not sent: you answered without reading any records. Read what the question needs first: for an order or a purchase request, however it is worded (新的PR, 起草, a typo), the reorder list and the items at risk. Then answer from what the tools return. Only if the question is general knowledge, or about something FlowChain does not record, give the same answer again. Do not mention this message.'
+const OPEN_NUDGE = 'Your answer was not sent: nothing was opened. If the user named an item the workspace has, call propose_purchase_request with its sku now; if it is one the workspace does not have (search_records found nothing) or they asked for a blank request, call it with newItem: true and the description, quantity and unit in their own words. Ask only if you cannot tell what the item is. Do not mention this message.'
+
+// An answer that says it opens, or has opened, a request ("I'll open a blank
+// purchase request form", 已为你打开采购申请): with no proposal asked for, it
+// would open nothing.
+const ANNOUNCED_OPENING = [
+  /\b(?:I(?:'ll|'ve| will| have| am)|let me)\s+(?:now\s+|just\s+)?(?:open(?:ed|ing)?|opened)\b/i,
+  /(?:我|已)(?:会|将|来|已|这就|马上)*(?:为你|帮你|给你)?(?:打开|开了|开好)/,
+]
+// A question back ("which item? I'll open it then") opens nothing yet by design.
+export const aiModelFirstAnnouncesOpening = (raw) => {
+  const answer = parseAiModelFirstAnswer(raw)
+  const value = answer ? `${answer.title}\n${answer.answer}` : text(raw)
+  return ANNOUNCED_OPENING.some((pattern) => pattern.test(value)) && !/[?？]\s*$/u.test(answer ? answer.answer : value)
+}
+
+const UNREAD_NUDGE ='Your answer was not sent: you answered without reading any records. Read what the question needs first: for an order or a purchase request, however it is worded (新的PR, 起草, a typo), the reorder list and the items at risk. Then answer from what the tools return. Only if the question is general knowledge, or about something FlowChain does not record, give the same answer again. Do not mention this message.'
 
 // An answer that says it cannot answer, or asks the user back, rather than
 // answering. The fixed hidden reply ("Your role can't see…") is not one: it
@@ -318,6 +334,7 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
   const orderRequest = Boolean(order && !order.advice) && tools.some((tool) => tool.name === AI_PROPOSE_PURCHASE_REQUEST)
   // "What can you do?": answered from what the tools are, reading nothing.
   const help = Boolean(routeSkill({ message: question })?.capability)
+  const canPropose = tools.some((tool) => tool.name === AI_PROPOSE_PURCHASE_REQUEST)
   let nudged = false
   let retried = false
   while (true) {
@@ -383,11 +400,16 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
     // 回答" without one tool call): the model judges the intent once it has
     // read, typos and all. A help question ("what can you do") is exempt.
     const unread = !stats.calls.length && !help && aiModelFirstAnswersUnread(reply.text)
-    const stalled = (orderRequest && !stats.calls.length) || aiModelFirstAnnouncesLookup(reply.text) || unread
+    // An answer that says it opens a request while no proposal was asked for,
+    // or an order with a quantity ("Order 50 units of 'safety gloves'") that
+    // ends without one (2026-11-04: the model asked whether the item was new).
+    const proposed = stats.calls.some((call) => call.tool === AI_PROPOSE_PURCHASE_REQUEST)
+    const unopened = canPropose && !proposed && (aiModelFirstAnnouncesOpening(reply.text) || (orderRequest && order.quantity !== null && stats.calls.length > 0))
+    const stalled = (orderRequest && !stats.calls.length) || aiModelFirstAnnouncesLookup(reply.text) || unread || unopened
     if (stalled && !nudged && toolsLeft) {
       nudged = true
       stats.nudged = true
-      transcript.push({ role: 'user', text: orderRequest && !stats.calls.length ? ORDER_NUDGE : unread ? UNREAD_NUDGE : LOOKUP_NUDGE })
+      transcript.push({ role: 'user', text: orderRequest && !stats.calls.length ? ORDER_NUDGE : unopened ? OPEN_NUDGE : unread ? UNREAD_NUDGE : LOOKUP_NUDGE })
       continue
     }
     // The final answer, checked against this answer's tool results.

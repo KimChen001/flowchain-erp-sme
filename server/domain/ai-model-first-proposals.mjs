@@ -35,6 +35,8 @@ const squeeze = (value) => fold(value).replace(/[\s\p{P}\p{S}]+/gu, '')
 const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(text(value))
 const PROHIBITED = ['send', 'approve', 'pay', 'issue', 'cancel', 'delete']
 const REASON_MAX = 200
+// A request for an empty new-item line: "Open a blank request for a new item", 空白申请.
+const BLANK_REQUEST = /\bblank\b|\bempty\b|空白|空的/i
 // "Order it as suggested": no need to confirm the suggestion first.
 const GO_AHEAD = /直接|按建议|照建议|就按|按补货清单|as suggested|the suggested|right away|go ahead|just open/i
 
@@ -125,6 +127,12 @@ function runNewItemProposal(args, { facts, words, question, turns, language }) {
   const asked = askedWords({ question, turns })
   const own = (value) => squeeze(value).length >= 2 && squeeze(asked).includes(squeeze(value))
   const description = text(args.description).slice(0, 200)
+  // A blank line only when the user asked for one (the chip "Open a blank
+  // request for a new item"); otherwise the user is asked once what it is.
+  const blankAsked = BLANK_REQUEST.test(text(question)) || (AGREE.test(text(question)) && BLANK_REQUEST.test(text(array(turns).at(-1)?.answer)))
+  if (!description && !blankAsked) {
+    return { ok: true, result: { opens: null, needsDetails: true, note: 'Nothing opened: the user has not said what the new item is. Ask once, in one short line, what it is and how many (and the supplier and need-by date if they know them), and make the first followUp "Open a blank request for a new item".' } }
+  }
   if (description && !own(description)) return { ok: false, error: 'description_not_users', details: ["Copy the user's own words for the item, or ask what it is."] }
   const known = description ? [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)].find((row) => fold(row.itemName) === fold(description) || fold(row.sku) === fold(description)) : null
   if (known) return { ok: false, error: 'catalog_item', details: [`The workspace has this item as ${known.sku}: propose it by its sku instead.`] }
