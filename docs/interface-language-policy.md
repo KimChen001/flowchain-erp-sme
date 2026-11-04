@@ -79,6 +79,11 @@ names, or supplier names in place. Translate their presentation where appropriat
   Receipt timeline events the page does not recognise still show the server's English
   text, and the review dialog's before → after quantities stay as recorded. Checked in
   both languages on 2026-11-04.
+- The three-way match by line (PO detail and match detail), the draft purchase request
+  actions (Edit, Submit for approval), the purchase order chooser on a new receipt
+  opened without an order, and the sales order facts (total, lines, promised date) and
+  folded empty sections have English and Chinese copy. Checked in both languages on
+  2026-11-04.
 - Dates on a Chinese page keep the workspace locale (en-US gives "Nov 2, 2026"):
   the interface language does not change date or number formats.
 - Shared form labels (`Field`), metric cards (`KpiCard`, `ActionableMetricCard`),

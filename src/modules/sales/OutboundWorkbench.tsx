@@ -18,7 +18,7 @@ import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { outboundEnglish } from "./outboundCopy";
 import { outboundPreviewSentences, type OutboundPreviewLookup } from "./outboundPreviewText";
-import { formatQuantity } from "../../lib/format";
+import { formatCalendarDay, formatLocaleAmount, formatQuantity } from "../../lib/format";
 import { movementTypeLabel } from "../../i18n/statusLabels";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
@@ -300,6 +300,36 @@ const shortId = (id?: string | null) => {
   return value.length > 12 ? `${value.slice(0, 8)}…` : value || "—";
 };
 const hasQuantity = (value?: string | null) => Number(value) > 0;
+// A stored four-decimal value ("12.5000") as an exact count of ten-thousandths;
+// null when there is no value.
+const decimalUnits = (value?: string | null) => {
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(String(value ?? "").trim());
+  if (!match) return null;
+  const units = BigInt(match[2]) * 10000n + BigInt(`${match[3] || ""}0000`.slice(0, 4));
+  return match[1] ? -units : units;
+};
+const unitsText = (units: bigint) => {
+  const absolute = units < 0n ? -units : units;
+  return `${units < 0n ? "-" : ""}${absolute / 10000n}.${String(absolute % 10000n).padStart(4, "0")}`;
+};
+// The order total from its lines: ordered quantity times unit price, summed
+// exactly and rounded to cents only for display. A line without a unit price
+// is counted as unpriced, never as zero.
+function orderTotal(lines: Line[]) {
+  let total = 0n,
+    priced = 0;
+  for (const line of lines) {
+    const price = decimalUnits(line.unitPrice),
+      quantity = decimalUnits(line.orderedQuantity);
+    if (price === null || quantity === null) continue;
+    total += price * quantity;
+    priced += 1;
+  }
+  // price × quantity is in 1e-8 units; 1e6 of them make a cent.
+  const absolute = total < 0n ? -total : total,
+    cents = (absolute + 500000n) / 1000000n;
+  return { amount: (total < 0n ? -1 : 1) * (Number(cents) / 100), priced, unpriced: lines.length - priced };
+}
 // A warehouse by its name and its location, e.g. "Main Warehouse / A-01".
 function usePlace() {
   const warehouseName = useWarehouseNames();
@@ -399,6 +429,33 @@ const Section = ({
     <h2 className="mb-3 text-sm font-semibold text-slate-800">{title}</h2>
     {children}
   </section>
+);
+// One of the order's key facts in the header: a label, its value and an
+// optional note under it.
+const HeaderFact = ({
+  label,
+  children,
+  note,
+  tone = "default",
+  testId,
+}: {
+  label: string;
+  children: React.ReactNode;
+  note?: React.ReactNode;
+  tone?: "default" | "warning" | "muted";
+  testId?: string;
+}) => (
+  <div className="min-w-0" data-testid={testId}>
+    <dt className="text-xs text-slate-500">{label}</dt>
+    <dd
+      className={`mt-0.5 break-words text-sm tabular-nums ${
+        tone === "warning" ? "font-semibold text-amber-700" : tone === "muted" ? "text-slate-400" : "font-semibold text-slate-800"
+      }`}
+    >
+      {children}
+    </dd>
+    {note ? <dd className="mt-0.5 text-xs text-slate-500">{note}</dd> : null}
+  </div>
 );
 const Badge = ({ value }: { value: string }) => (
   <StatusChip label={status(value)} tone={statusToneOf(value)} />
@@ -1091,6 +1148,7 @@ function OrderDetail({ id }: { id: string }) {
   const warehouseName = useWarehouseNames();
   const place = usePlace();
   const stamp = useStamp();
+  const { locale } = useI18n();
   const [data, setData] = useState<Workbench | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
@@ -1478,6 +1536,125 @@ function OrderDetail({ id }: { id: string }) {
           ? "reserve"
           : "";
   const toneFor = (action: string) => (action === primaryAction ? "primary" : "secondary");
+  // The order total and quantities for the header, from the lines as read.
+  const total = orderTotal(data.lines),
+    money = (value: number) =>
+      formatLocaleAmount(value, data.order.currency, locale, { maximumFractionDigits: 2 }),
+    lineUnits = [...new Set(data.lines.map((line) => line.unit).filter(Boolean))],
+    orderedUnits = data.lines.reduce((sum, line) => sum + (decimalUnits(line.orderedQuantity) ?? 0n), 0n),
+    orderedText = formatQuantity(unitsText(orderedUnits));
+  // Reservations, shipments, movements and evidence: a section with records is
+  // shown in full; the empty ones share one short line where the first of them
+  // would be, with the order's next step when the page knows it.
+  const recordSections = [
+    { id: "reservations", empty: !data.reservations.length, name: say("reservations", "预留记录") },
+    { id: "shipments", empty: !data.shipments.length, name: say("shipments", "发货单") },
+    { id: "movements", empty: !data.movements.length, name: say("inventory movements", "库存流水") },
+    { id: "evidence", empty: !data.evidence.length, name: say("evidence events", "证据事件") },
+  ];
+  const emptySections = recordSections.filter((section) => section.empty),
+    emptyNames = emptySections.map((section) => section.name),
+    emptyList =
+      emptyNames.length < 2
+        ? emptyNames.join("")
+        : say(
+            `${emptyNames.slice(0, -1).join(", ")} or ${emptyNames[emptyNames.length - 1]}`,
+            `${emptyNames.slice(0, -1).join("、")}和${emptyNames[emptyNames.length - 1]}`,
+          );
+  const emptyNextStep = (() => {
+    const workflow = data.order.workflowStatus;
+    if (!emptySections.length) return "";
+    if (workflow === "cancelled") return say("The order was cancelled.", "订单已取消。");
+    if (a.canConfirm) return say(`Next: ${copy("确认订单")}.`, `下一步：${copy("确认订单")}。`);
+    if (workflow === "draft") return say("Stock can be reserved once the order is confirmed.", "订单确认后才能预留库存。");
+    if (workflow === "on_hold")
+      return say("The order is on hold. Resume it before reserving or shipping.", "订单已暂停，恢复后才能预留或发货。");
+    if (!data.reservations.length) {
+      if (a.canReserve) return say(`Next: ${copy("预留库存")}.`, `下一步：${copy("预留库存")}。`);
+      if (((a.blockingReasonCodes as string[]) || []).includes("WAREHOUSE_SCOPE_DENIED"))
+        return copy(codeMessages.WAREHOUSE_SCOPE_DENIED);
+      if (data.availability.every((row) => !hasQuantity(row.totalAvailable)))
+        return say("No stock is available to reserve.", "暂无可预留的库存。");
+      return "";
+    }
+    if (!data.shipments.length && a.canCreateShipment)
+      return say(`Next: ${copy("创建发货草稿")}.`, `下一步：${copy("创建发货草稿")}。`);
+    if (
+      !data.movements.length &&
+      data.shipments.some((x) => x.workflowStatus !== "cancelled" && x.postingStatus === "unposted")
+    )
+      return say("Stock moves when a shipment is posted.", "发货单过账后才会产生库存流水。");
+    return "";
+  })();
+  const sectionBody: Record<string, () => React.ReactNode> = {
+    reservations: () => (
+      <Section id="reservations" title={copy("预留记录")} key="reservations">
+        <Table
+          rows={data.reservations.map((x) => [
+            shortId(x.id),
+            warehouseName(x.warehouseId),
+            x.location || copy("默认库位"),
+            formatQuantity(x.reservedQuantity),
+            formatQuantity(x.allocatedQuantity),
+            formatQuantity(x.consumedQuantity),
+            formatQuantity(x.releasedQuantity),
+            formatQuantity(x.allocatableQuantity),
+            status(x.status),
+          ])}
+          numeric={[3, 4, 5, 6, 7]}
+          headers={[
+            copy("预留 ID"),
+            copy("仓库"),
+            copy("库位"),
+            copy("预留量"),
+            copy("已分配"),
+            copy("已消耗"),
+            copy("已释放"),
+            copy("可释放"),
+            copy("状态"),
+          ]}
+        />
+      </Section>
+    ),
+    shipments: () => (
+      <Section id="shipments" title={copy("发货单")} key="shipments">
+        <div className="space-y-2">
+          {data.shipments.map((x) => (
+            <Link
+              data-testid={`shipment-${x.id}`}
+              className="flex justify-between rounded-lg border p-3 text-sm text-blue-700"
+              to={`/app/sales/shipments/${encodeURIComponent(x.id)}`}
+              key={x.id}
+            >
+              <span>{x.shipmentNumber}</span>
+              <span>{status(shipmentStatus(x))}</span>
+            </Link>
+          ))}
+        </div>
+      </Section>
+    ),
+    movements: () => (
+      <Section id="movements" title={copy("库存流水")} key="movements">
+        <Table
+          rows={data.movements.map((x) => [
+            shortId(x.id),
+            x.sku,
+            warehouseName(x.warehouseId),
+            formatQuantity(x.quantityIn),
+            formatQuantity(x.quantityOut),
+            movementTypeLabel(x.movementType, activeLanguage),
+          ])}
+          numeric={[3, 4]}
+          headers={[copy("流水 ID"), "SKU", copy("仓库"), copy("入"), copy("出"), copy("类型")]}
+        />
+      </Section>
+    ),
+    evidence: () => (
+      <Section id="evidence" title={copy("订单证据与时间线")} key="evidence">
+        <Timeline rows={data.evidence} resolve={timelinePart} />
+      </Section>
+    ),
+  };
   return (
     <div className="space-y-4" data-testid="outbound-order-workbench">
       {error && (
@@ -1507,11 +1684,7 @@ function OrderDetail({ id }: { id: string }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold">{data.order.orderNumber}</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              {/* The order version is an internal edit counter, so it is not shown. */}
-              {data.order.customerName} · {data.order.currency} · {stamp(data.order.updatedAt)}
-            </p>
-            <div className="mt-2 flex gap-2">
+            <div className="mt-2 flex flex-wrap gap-2">
               <Badge value={data.order.workflowStatus} />
               <Badge value={data.order.reservationStatus} />
               <Badge value={data.order.fulfillmentStatus} />
@@ -1594,6 +1767,52 @@ function OrderDetail({ id }: { id: string }) {
             </Button>
           </div>
         </div>
+        {/* The order version is an internal edit counter, so it is not shown. */}
+        <dl
+          data-testid="sales-order-facts"
+          className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 border-t pt-4 md:grid-cols-3 xl:grid-cols-5"
+        >
+          <HeaderFact label={say("Customer", "客户")}>{data.order.customerName || "—"}</HeaderFact>
+          <HeaderFact
+            testId="sales-order-total"
+            label={say(`Order total (${data.order.currency})`, `订单总额（${data.order.currency}）`)}
+            tone={data.lines.length && total.unpriced ? "warning" : "default"}
+            note={
+              !data.lines.length
+                ? ""
+                : !total.priced
+                  ? say("No line has a unit price yet.", "订单行尚无单价。")
+                  : total.unpriced
+                    ? say(
+                        `${total.unpriced} of ${data.lines.length} lines ${total.unpriced === 1 ? "has" : "have"} no unit price · Priced lines ${money(total.amount)}`,
+                        `${data.lines.length} 行中有 ${total.unpriced} 行没有单价 · 已定价行 ${money(total.amount)}`,
+                      )
+                    : say("Ordered quantity × unit price", "订购数量 × 单价")
+            }
+          >
+            {!data.lines.length
+              ? "—"
+              : !total.priced
+                ? say("Not priced", "未定价")
+                : total.unpriced
+                  ? say("Incomplete", "不完整")
+                  : money(total.amount)}
+          </HeaderFact>
+          <HeaderFact
+            label={say("Lines", "订单行")}
+            note={
+              lineUnits.length === 1
+                ? say(`${orderedText} ${lineUnits[0]} ordered`, `订购 ${orderedText} ${lineUnits[0]}`)
+                : ""
+            }
+          >
+            {say(`${data.lines.length} ${data.lines.length === 1 ? "line" : "lines"}`, `${data.lines.length} 行`)}
+          </HeaderFact>
+          <HeaderFact label={say("Promised date", "承诺交期")} tone={data.order.promisedDate ? "default" : "muted"}>
+            {data.order.promisedDate ? formatCalendarDay(data.order.promisedDate, locale) : say("Not set", "未设置")}
+          </HeaderFact>
+          <HeaderFact label={say("Last updated", "更新时间")}>{stamp(data.order.updatedAt)}</HeaderFact>
+        </dl>
       </section>
       <Section title={copy("关联记录")}>
         <div className="flex flex-wrap gap-2">
@@ -1686,85 +1905,55 @@ function OrderDetail({ id }: { id: string }) {
             </tbody>
           </table>
         </div>
-        {data.availability
-          .flatMap((x) => x.balances)
-          .map((b) => (
+        {/* Each stock balance for a line: where it is, its quantities and
+            what this user may do with it. */}
+        {data.availability.flatMap((x) =>
+          x.balances.map((b) => (
             <div
               data-testid="availability-balance"
-              className="mt-2 grid grid-cols-6 gap-2 rounded-lg bg-slate-50 p-2 text-xs"
-              key={b.id}
+              className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-slate-50 px-4 py-2 text-xs md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.6fr)_repeat(3,minmax(0,0.8fr))_minmax(0,2fr)]"
+              key={`${x.salesOrderLineId}-${b.id}`}
             >
-              <span>{warehouseName(b.warehouseId)}</span>
-              <span>{b.location || copy("默认库位")}</span>
-              <span>{copy("现有 {n}").replace("{n}", formatQuantity(b.onHandQuantity))}</span>
-              <span>{copy("预留 {n}").replace("{n}", formatQuantity(b.reservedQuantity))}</span>
-              <span>{copy("可用 {n}").replace("{n}", formatQuantity(b.availableQuantity))}</span>
-              <span>{copy(b.selectable ? "可操作" : "只读")}</span>
+              <span className="font-medium text-slate-700">
+                {data.lines.find((line) => line.id === x.salesOrderLineId)?.sku || "—"}
+              </span>
+              <span>{place(b.warehouseId, b.location)}</span>
+              <span className="tabular-nums">{copy("现有 {n}").replace("{n}", formatQuantity(b.onHandQuantity))}</span>
+              <span className="tabular-nums">{copy("预留 {n}").replace("{n}", formatQuantity(b.reservedQuantity))}</span>
+              <span className="tabular-nums">{copy("可用 {n}").replace("{n}", formatQuantity(b.availableQuantity))}</span>
+              <span className={b.selectable ? "text-slate-700" : "text-slate-500"}>
+                {!b.selectable
+                  ? say("View only: no access to this warehouse", "只读：无此仓库的操作权限")
+                  : ((a.blockingReasonCodes as string[]) || []).includes("PERMISSION_DENIED")
+                    ? say("View only: your role cannot reserve or ship", "只读：当前角色不能预留或发货")
+                    : say("You can reserve and ship from here", "可从此处预留和发货")}
+              </span>
             </div>
-          ))}
+          )),
+        )}
       </Section>
-      <Section id="reservations" title={copy("预留记录")}>
-        <Table
-          rows={data.reservations.map((x) => [
-            shortId(x.id),
-            warehouseName(x.warehouseId),
-            x.location || copy("默认库位"),
-            formatQuantity(x.reservedQuantity),
-            formatQuantity(x.allocatedQuantity),
-            formatQuantity(x.consumedQuantity),
-            formatQuantity(x.releasedQuantity),
-            formatQuantity(x.allocatableQuantity),
-            status(x.status),
-          ])}
-          numeric={[3, 4, 5, 6, 7]}
-          headers={[
-            copy("预留 ID"),
-            copy("仓库"),
-            copy("库位"),
-            copy("预留量"),
-            copy("已分配"),
-            copy("已消耗"),
-            copy("已释放"),
-            copy("可释放"),
-            copy("状态"),
-          ]}
-        />
-      </Section>
-      <Section id="shipments" title={copy("发货单")}>
-        <div className="space-y-2">
-          {data.shipments.map((x) => (
-            <Link
-              data-testid={`shipment-${x.id}`}
-              className="flex justify-between rounded-lg border p-3 text-sm text-blue-700"
-              to={`/app/sales/shipments/${encodeURIComponent(x.id)}`}
-              key={x.id}
-            >
-              <span>{x.shipmentNumber}</span>
-              <span>{status(shipmentStatus(x))}</span>
-            </Link>
-          ))}
-          {!data.shipments.length && (
-            <p className="text-sm text-slate-500">{copy("暂无发货单。")}</p>
-          )}
-        </div>
-      </Section>
-      <Section id="movements" title={copy("库存流水")}>
-        <Table
-          rows={data.movements.map((x) => [
-            shortId(x.id),
-            x.sku,
-            warehouseName(x.warehouseId),
-            formatQuantity(x.quantityIn),
-            formatQuantity(x.quantityOut),
-            movementTypeLabel(x.movementType, activeLanguage),
-          ])}
-          numeric={[3, 4]}
-          headers={[copy("流水 ID"), "SKU", copy("仓库"), copy("入"), copy("出"), copy("类型")]}
-        />
-      </Section>
-      <Section id="evidence" title={copy("订单证据与时间线")}>
-        <Timeline rows={data.evidence} resolve={timelinePart} />
-      </Section>
+      {recordSections.map((section) =>
+        !section.empty ? (
+          sectionBody[section.id]()
+        ) : section === emptySections[0] ? (
+          <section
+            key="empty-records"
+            data-testid="sales-order-empty-records"
+            className="rounded-xl border bg-white px-4 py-3 shadow-sm"
+          >
+            {/* The empty sections keep their anchors, so a link to one lands here. */}
+            {emptySections.map((empty) => (
+              <span id={empty.id} className="block scroll-mt-20" key={empty.id} />
+            ))}
+            <p className="text-sm text-slate-500">
+              <span className="font-medium text-slate-700">
+                {say(`No ${emptyList} yet.`, `暂无${emptyList}。`)}
+              </span>
+              {emptyNextStep ? `${englishUi() ? " " : ""}${emptyNextStep}` : ""}
+            </p>
+          </section>
+        ) : null,
+      )}
       <Section id="reconciliation" title={copy("履约一致性检查")}>
         <div className="mb-2 flex items-center gap-2">
           {data.reconciliation.status === "mismatch" ? <AlertTriangle size={17} className="text-red-600" /> : <CheckCircle2 size={17} className="text-teal-600" />}
@@ -1938,7 +2127,7 @@ function OrderDetail({ id }: { id: string }) {
                         {copy("现有 {n}").replace("{n}", formatQuantity(x.onHandQuantity))} /{" "}
                         {copy("预留 {n}").replace("{n}", formatQuantity(x.reservedQuantity))} /{" "}
                         {copy("可用 {n}").replace("{n}", formatQuantity(x.availableQuantity))}
-                        {x.selectable ? "" : ` · ${copy("只读")}`}
+                        {x.selectable ? "" : ` · ${say("No access to this warehouse", "无此仓库的操作权限")}`}
                       </option>
                     ))}
                   </select>

@@ -169,21 +169,31 @@ type InvoiceEvidenceRow = {
   risk: string;
 };
 
+// One PO line against everything invoiced on it. Amounts are net of tax.
 type MatchEvidenceRow = {
   poLineId: string;
   grnLineId: string;
   invoiceLineId: string;
+  // Invoice lines on this PO line beyond the first.
+  moreInvoiceLines: number;
   poQty: number;
   receivedQty: number;
   invoiceQty: number;
   poUnitPrice: number;
   invoiceUnitPrice: number;
-  poAmount: number;
+  // The invoiced quantity at the PO unit price.
+  expectedAmount: number;
   invoiceAmount: number;
+  taxAmount: number;
+  // Invoiced beyond what was received (accepted); 0 when within it.
   qtyVariance: number;
+  // (Invoice unit price - PO unit price) x invoiced quantity.
   priceVariance: number;
+  // Invoiced amount - expected amount.
   amountVariance: number;
+  // Ordered but not received yet: shown for information, never a variance.
   receivingGap: number;
+  // Received but not invoiced yet: not a variance either.
   invoiceGap: number;
   status: string;
   suggestedAction: string;
@@ -542,51 +552,78 @@ function buildInvoiceRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): In
   });
 }
 
+// Below a cent (or a ten-thousandth of a unit) a difference is rounding.
+const MATCH_MONEY_EPSILON = 0.005;
+const MATCH_QTY_EPSILON = 0.00005;
+
+// The match checks only what was invoiced: its price against the PO, and its
+// quantity against what was received. An open receiving gap (ordered, not yet
+// received) and a received quantity not yet invoiced are not variances.
 function matchStatusForLine(row: Omit<MatchEvidenceRow, "status" | "suggestedAction">) {
   // "尚未收货" / "尚未开票" are the placeholders for a line with no receipt or invoice yet.
-  if (!row.grnLineId || row.grnLineId.includes("待补齐") || row.grnLineId === "尚未收货") return "缺少收货";
-  if (!row.invoiceLineId || row.invoiceLineId.includes("待补齐") || row.invoiceLineId === "尚未开票") return row.receivedQty > 0 ? "已收未票" : "缺少发票";
-  if (row.receivedQty < row.invoiceQty) return "已票未收";
-  if (row.poQty !== row.receivedQty || row.receivedQty !== row.invoiceQty) return "数量差异";
-  if (Math.abs(row.priceVariance) > 0.01) return "价格差异";
-  if (Math.abs(row.amountVariance) > 1) return "金额差异";
+  const received = row.receivedQty > MATCH_QTY_EPSILON;
+  const hasReceipt = Boolean(row.grnLineId) && !row.grnLineId.includes("待补齐") && row.grnLineId !== "尚未收货";
+  const invoiced = row.invoiceQty > MATCH_QTY_EPSILON || (Boolean(row.invoiceLineId) && !row.invoiceLineId.includes("待补齐") && row.invoiceLineId !== "尚未开票");
+  if (!invoiced) return received ? "已收未票" : hasReceipt ? "缺少发票" : "缺少收货";
+  if (row.qtyVariance > MATCH_QTY_EPSILON) return received ? "数量差异" : "已票未收";
+  if (Math.abs(row.priceVariance) >= MATCH_MONEY_EPSILON) return "价格差异";
+  if (Math.abs(row.amountVariance) >= MATCH_MONEY_EPSILON) return "金额差异";
   return "已匹配";
 }
 
-function suggestedActionForStatus(status: string) {
+function suggestedActionForStatus(status: string, invoiceGap = 0) {
   if (status === "缺少收货") return "等待收货";
   if (status === "缺少发票" || status === "已收未票") return "等待发票";
-  if (status === "已票未收") return "复核收货记录";
+  if (status === "已票未收" || status === "数量差异") return "复核收货记录";
   if (status === "价格差异" || status === "金额差异") return "复核供应商发票";
-  if (status === "数量差异") return "生成内部差异说明草稿";
-  return "暂缓付款复核";
+  // Matched so far; the rest of what was received is still to be invoiced.
+  if (status === "已匹配" && invoiceGap > MATCH_QTY_EPSILON) return "等待发票";
+  return "财务协同复核";
 }
+
+const MISSING_PO_LINE = "PO Line 待补齐";
 
 function buildMatchRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): MatchEvidenceRow[] {
   const grnRows = buildGrnRows(po, facts);
   const invoiceRows = buildInvoiceRows(po, facts);
-  return buildPoLineRows(po, facts).map((line) => {
-    const grn = grnRows.find((row) => row.poLineId === line.poLineId);
-    const invoice = invoiceRows.find((row) => row.poLineId === line.poLineId);
+  const poLines = buildPoLineRows(po, facts);
+  // An invoice line without a PO line reference counts on the PO line with its
+  // SKU when only one has it, else on the only line of a single-line PO.
+  const onLine = (row: InvoiceEvidenceRow, line: PoEvidenceRow) => {
+    if (row.poLineId !== MISSING_PO_LINE) return row.poLineId === line.poLineId;
+    const bySku = poLines.filter((candidate) => candidate.sku === row.sku);
+    return bySku.length === 1 ? bySku[0] === line : poLines.length === 1;
+  };
+  return poLines.map((line) => {
+    const grnLines = grnRows.filter((row) => row.poLineId === line.poLineId);
+    const invoiceLines = invoiceRows.filter((row) => onLine(row, line));
+    // Received is what was accepted on the PO line; the receipt lines only
+    // stand in when the PO line has none recorded.
+    const receivedQty = line.receivedQty > 0 || !grnLines.length ? line.receivedQty : grnLines.reduce((sum, row) => sum + row.receivedQty, 0);
+    const invoiceQty = invoiceLines.reduce((sum, row) => sum + row.quantity, 0);
+    const invoiceAmount = invoiceLines.reduce((sum, row) => sum + row.invoiceAmount, 0);
+    const expectedAmount = invoiceQty * line.unitPrice;
     const base = {
       poLineId: line.poLineId,
-      grnLineId: grn?.grnLineId || "尚未收货",
-      invoiceLineId: invoice?.invoiceLineId || "尚未开票",
+      grnLineId: grnLines[0]?.grnLineId || "尚未收货",
+      invoiceLineId: invoiceLines[0]?.invoiceLineId || "尚未开票",
+      moreInvoiceLines: Math.max(0, invoiceLines.length - 1),
       poQty: line.quantity,
-      receivedQty: grn?.receivedQty ?? line.receivedQty,
-      invoiceQty: invoice?.quantity ?? 0,
+      receivedQty,
+      invoiceQty,
       poUnitPrice: line.unitPrice,
-      invoiceUnitPrice: invoice?.unitPrice ?? 0,
-      poAmount: line.lineAmount,
-      invoiceAmount: invoice?.invoiceAmount ?? 0,
-      qtyVariance: (invoice?.quantity ?? 0) - (grn?.receivedQty ?? line.receivedQty),
-      priceVariance: (invoice?.unitPrice ?? 0) - line.unitPrice,
-      amountVariance: (invoice?.invoiceAmount ?? 0) - line.lineAmount,
-      receivingGap: Math.max(0, line.quantity - (grn?.receivedQty ?? line.receivedQty)),
-      invoiceGap: Math.max(0, (grn?.receivedQty ?? line.receivedQty) - (invoice?.quantity ?? 0)),
+      invoiceUnitPrice: invoiceLines.length === 1 ? invoiceLines[0].unitPrice : invoiceQty ? invoiceAmount / invoiceQty : 0,
+      expectedAmount,
+      invoiceAmount,
+      taxAmount: invoiceLines.reduce((sum, row) => sum + row.taxAmount, 0),
+      qtyVariance: Math.max(0, invoiceQty - receivedQty),
+      priceVariance: invoiceLines.reduce((sum, row) => sum + (row.unitPrice - line.unitPrice) * row.quantity, 0),
+      amountVariance: invoiceAmount - expectedAmount,
+      receivingGap: Math.max(0, line.quantity - receivedQty),
+      invoiceGap: Math.max(0, receivedQty - invoiceQty),
     };
     const status = matchStatusForLine(base);
-    return { ...base, status, suggestedAction: suggestedActionForStatus(status) };
+    return { ...base, status, suggestedAction: suggestedActionForStatus(status, base.invoiceGap) };
   });
 }
 
@@ -1055,34 +1092,42 @@ export default function PurchasingOrdersPage({
     ];
     // Price and amount differences only mean something once the line is invoiced.
     const invoiced = (row: MatchEvidenceRow) => row.invoiceQty > 0 || !["尚未开票", ""].includes(row.invoiceLineId);
+    const matchMoney = (value: number) => fmt(hideAmounts ? null : value);
+    // A variance with its sign: +$200.00 over the PO price, -$50.00 under it.
+    const signedMoney = (value: number) => (hideAmounts ? fmt(null) : `${value >= MATCH_MONEY_EPSILON ? "+" : ""}${fmt(Math.abs(value) < MATCH_MONEY_EPSILON ? 0 : value)}`);
     const matchColumns: EvidenceColumn<MatchEvidenceRow>[] = [
-      { key: "poLine", label: say("PO line", "采购订单行"), width: 230, render: (row) => <>
+      { key: "poLine", label: say("PO line", "采购订单行"), width: 220, render: (row) => <>
         <div className="whitespace-nowrap">{lineLabel(row.poLineId)}</div>
         <Sub><span className="whitespace-nowrap">{say("Receipt: ", "收货：")}{copy(row.grnLineId)}</span></Sub>
-        <Sub><span className="whitespace-nowrap">{say("Invoice: ", "发票：")}{copy(row.invoiceLineId)}</span></Sub>
+        <Sub><span className="whitespace-nowrap">{say("Invoice: ", "发票：")}{copy(row.invoiceLineId)}{row.moreInvoiceLines ? say(` +${formatNumber(row.moreInvoiceLines)} more`, ` 等 ${formatNumber(row.moreInvoiceLines + 1)} 行`) : ""}</span></Sub>
       </> },
-      { key: "poQty", label: copy("订购数量"), width: 90, align: "right", render: (row) => formatNumber(row.poQty) },
-      { key: "receivedQty", label: copy("已收数量"), width: 100, align: "right", render: (row) => <>
+      { key: "poQty", label: copy("订购数量"), width: 80, align: "right", render: (row) => formatNumber(row.poQty) },
+      { key: "receivedQty", label: copy("已收数量"), width: 110, align: "right", render: (row) => <>
         {formatNumber(row.receivedQty)}
-        {row.receivingGap > 0 ? <Sub>{say(`${formatNumber(row.receivingGap)} to receive`, `待收 ${formatNumber(row.receivingGap)}`)}</Sub> : null}
+        {/* Still to receive on the order: information, not a match variance. */}
+        {row.receivingGap > 0 ? <Sub>{say(`${formatNumber(row.receivingGap)} still to receive`, `仍待收货 ${formatNumber(row.receivingGap)}`)}</Sub> : null}
       </> },
-      { key: "invoiceQty", label: copy("开票数量"), width: 100, align: "right", render: (row) => <>
+      { key: "invoiceQty", label: copy("开票数量"), width: 120, align: "right", render: (row) => <>
         {formatNumber(row.invoiceQty)}
-        {row.invoiceGap > 0 ? <Sub>{say(`${formatNumber(row.invoiceGap)} to invoice`, `待开票 ${formatNumber(row.invoiceGap)}`)}</Sub> : null}
+        {row.qtyVariance > 0
+          ? <Sub>{say(`${formatNumber(row.qtyVariance)} more than received`, `超出已收 ${formatNumber(row.qtyVariance)}`)}</Sub>
+          : row.invoiceGap > 0 && invoiced(row) ? <Sub>{say(`${formatNumber(row.invoiceGap)} received, not invoiced`, `已收未开票 ${formatNumber(row.invoiceGap)}`)}</Sub> : null}
       </> },
       { key: "unitPrice", label: copy("单价"), width: 130, align: "right", render: (row) => <>
-        <div className="whitespace-nowrap">{say("PO", "订单")} {fmt(row.poUnitPrice)}</div>
-        <Sub><span className="whitespace-nowrap">{say("Invoice", "发票")} {invoiced(row) ? fmt(row.invoiceUnitPrice) : "—"}</span></Sub>
+        <div className="whitespace-nowrap">{say("PO", "订单")} {matchMoney(row.poUnitPrice)}</div>
+        <Sub><span className="whitespace-nowrap">{say("Invoice", "发票")} {invoiced(row) ? matchMoney(row.invoiceUnitPrice) : "—"}</span></Sub>
       </> },
-      { key: "amount", label: copy("金额"), width: 140, align: "right", render: (row) => <>
-        <div className="whitespace-nowrap">{say("PO", "订单")} {fmt(row.poAmount)}</div>
-        <Sub><span className="whitespace-nowrap">{say("Invoice", "发票")} {invoiced(row) ? fmt(row.invoiceAmount) : "—"}</span></Sub>
-      </> },
-      { key: "amountVariance", label: copy("金额差异"), width: 130, align: "right", render: (row) => invoiced(row) ? <>
-        <div className="whitespace-nowrap font-medium">{fmt(row.amountVariance)}</div>
-        <Sub><span className="whitespace-nowrap">{say("Unit price", "单价")} {fmt(row.priceVariance)}</span></Sub>
+      // The invoiced quantity at the PO price against what was invoiced, net of tax.
+      { key: "amount", label: say("Amount (net)", "金额（不含税）"), width: 160, align: "right", render: (row) => invoiced(row) ? <>
+        <div className="whitespace-nowrap">{say("Expected", "应开")} {matchMoney(row.expectedAmount)}</div>
+        <Sub><span className="whitespace-nowrap">{say("Invoiced", "发票")} {matchMoney(row.invoiceAmount)}</span></Sub>
+        {row.taxAmount ? <Sub><span className="whitespace-nowrap">{copy("税额")} {matchMoney(row.taxAmount)}</span></Sub> : null}
       </> : "—" },
-      { key: "status", label: copy("匹配状态"), width: 180, render: (row) => <>
+      { key: "amountVariance", label: copy("金额差异"), width: 140, align: "right", render: (row) => invoiced(row) ? <>
+        <div className="whitespace-nowrap font-medium">{signedMoney(row.amountVariance)}</div>
+        {Math.abs(row.priceVariance) >= MATCH_MONEY_EPSILON ? <Sub><span className="whitespace-nowrap">{say("Price", "价格")} {signedMoney(row.priceVariance)}</span></Sub> : null}
+      </> : "—" },
+      { key: "status", label: copy("匹配状态"), width: 170, render: (row) => <>
         {statusChip(row.status)}
         <Sub>{copy(row.suggestedAction)}</Sub>
       </> },
@@ -1192,7 +1237,7 @@ export default function PurchasingOrdersPage({
           />
         </div>
         <div>
-          <SectionTitle title={copy("三单匹配")} right={<span className="text-xs" style={{ color: A.sub }}>{say("One row per PO line", "按采购订单行逐行核对")}</span>} />
+          <SectionTitle title={copy("三单匹配")} right={<span className="text-xs" style={{ color: A.sub }}>{say("One row per PO line: invoiced vs PO price and received quantity", "按采购订单行核对：开票对照订单价与已收数量")}</span>} />
           <EvidenceTable
             testId="po-match-lines"
             rows={matchRows}

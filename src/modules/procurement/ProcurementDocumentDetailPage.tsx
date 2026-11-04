@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Card } from "../../components/ui";
-import { StatusChip, statusToneOf } from "../../components/ui/listLayout";
+import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { tableBodyTextClass, tableScrollClass, tdClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { formatCalendarDay, formatInstantDay } from "../business-documents/documentFormat";
 import { ApiError } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
@@ -42,6 +43,22 @@ const zh: Record<string, string> = {
   "Your session has expired, so the linked three-way match cannot be read.": "登录状态已失效，无法读取关联三单匹配。",
   "You do not have permission to view the linked three-way match.": "当前用户没有查看关联三单匹配的权限。",
   "The linked three-way match cannot be read right now. Refresh to try again.": "关联三单匹配暂时无法读取，可刷新后重试。",
+  // The line-by-line match.
+  "Match by line": "按行匹配",
+  "Each invoice line against its purchase order line: the invoiced quantity at the PO price, and the quantity received. Amounts exclude tax.": "逐行对照发票行与采购订单行：开票数量按订单单价计算，并与已收数量核对。金额不含税。",
+  "PO line / item": "采购订单行 / 物料", "Ordered": "订购", "Received": "已收", "Invoiced": "开票",
+  "PO price": "订单单价", "Invoice price": "发票单价", "Expected": "应开金额", "Invoiced (net)": "发票金额（不含税）", "Variance": "差异",
+  "Invoice line": "发票行",
+  "{qty} still to receive": "仍待收货 {qty}", "{qty} more than received": "超出已收 {qty}", "{qty} received, not invoiced": "已收未开票 {qty}",
+  "Price variance {amount}": "价格差异 {amount}", "Quantity over received {amount}": "超收开票 {amount}",
+  "Matched": "已匹配", "Price variance": "价格差异", "Amount variance": "金额差异", "Invoiced more than received": "开票数量超出已收",
+  "Price and quantity variance": "价格与数量差异", "PO line not found": "未找到采购订单行",
+  "Expected at PO prices": "按订单价应开金额", "Invoiced, net of tax": "发票金额（不含税）", "Tax": "税额", "Invoice total": "发票总额（含税）",
+  "Still to receive on the purchase order: {qty}": "采购订单仍待收货：{qty}", "Ordered but not received yet; not a match variance.": "已订购但尚未收货，不计入匹配差异。",
+  "One or more invoice lines differ from the purchase order price or the quantity received. Review the variance before proceeding.": "有发票行与采购订单单价或已收数量不一致，请复核差异后再处理。",
+  "The variance recorded on the invoice is {amount}; the lines above add up to a different amount.": "发票上记录的差异金额为 {amount}，与上方各行合计不一致。",
+  "Line detail is not available for this match, so only the recorded invoice amount and variance are shown. The purchase order total is not compared with the invoice.": "该匹配暂无行明细，因此仅显示发票记录的金额和差异，不将采购订单总额与发票比较。",
+  "Amounts are hidden for your role.": "您的角色无法查看金额。",
 };
 
 function useDetailCopy() {
@@ -79,12 +96,196 @@ function money(value: number | undefined, currency: string | undefined, locale: 
     : { maximumFractionDigits: 2 }).format(Number(value));
 }
 
+// One invoice line against its PO line, as the read model returns it. Amounts
+// are net of tax and null when the role cannot see them.
+type MatchLine = {
+  invoiceLineId?: string;
+  poLineId?: string;
+  grnLineId?: string;
+  sku?: string;
+  itemName?: string;
+  unit?: string;
+  orderedQty?: number | null;
+  receivedQty?: number | null;
+  invoicedQty?: number | null;
+  receivingGapQty?: number | null;
+  quantityVariance?: number | null;
+  uninvoicedReceivedQty?: number | null;
+  poUnitPrice?: number | null;
+  invoiceUnitPrice?: number | null;
+  expectedAmount?: number | null;
+  invoiceLineAmount?: number | null;
+  taxAmount?: number | null;
+  priceVariance?: number | null;
+  varianceAmount?: number | null;
+  quantityVarianceAmount?: number | null;
+  status?: string;
+};
+type MatchDocument = ProcurementDocument & {
+  // Absent when the server predates the line-by-line match.
+  lines?: MatchLine[];
+  expectedAmount?: number | null;
+  invoiceNetAmount?: number | null;
+  taxAmount?: number | null;
+  lineVarianceAmount?: number | null;
+  lineVarianceTotal?: number | null;
+  quantityVarianceAmount?: number | null;
+  receivingGapQty?: number | null;
+  lineMatchStatus?: string;
+  restrictedFields?: string[];
+};
+
+// Line status codes from the read model, with their label and tone.
+const LINE_STATUS: Record<string, { label: string; tone: StatusTone }> = {
+  matched: { label: "Matched", tone: "success" },
+  price_variance: { label: "Price variance", tone: "danger" },
+  amount_variance: { label: "Amount variance", tone: "danger" },
+  quantity_variance: { label: "Invoiced more than received", tone: "danger" },
+  price_and_quantity_variance: { label: "Price and quantity variance", tone: "danger" },
+  po_line_unavailable: { label: "PO line not found", tone: "warning" },
+};
+
+const MONEY_EPSILON = 0.005;
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="rounded-lg bg-slate-50 p-3">
       <dt className="text-xs" style={{ color: A.sub }}>{label}</dt>
       <dd className="mt-1 text-sm font-medium">{children}</dd>
     </div>
+  );
+}
+
+type Copy = (value: string, params?: Record<string, string>) => string;
+
+// The match line by line, with a summary that adds up: expected at PO prices
+// plus the variance is the invoiced net amount, plus tax the invoice total.
+function LineMatch({ match, invoiceTotal, currency, copy, locale }: {
+  match: MatchDocument;
+  invoiceTotal: number | undefined;
+  currency: string | undefined;
+  copy: Copy;
+  locale: string;
+}) {
+  const { formatNumber } = useI18n();
+  const lines = match.lines || [];
+  const amount = (value: number | null | undefined) => money(finite(value) ? value : undefined, currency, locale);
+  // A variance with its sign: +$200.00 over the PO, -$50.00 under it.
+  const signed = (value: number | null | undefined) => !finite(value)
+    ? "—"
+    : `${value >= MONEY_EPSILON ? "+" : ""}${amount(Math.abs(value) < MONEY_EPSILON ? 0 : value)}`;
+  const qty = (value: number | null | undefined) => (finite(value) ? formatNumber(value) : "—");
+  const priceVariance = lines.reduce((sum, line) => sum + (finite(line.priceVariance) ? line.priceVariance : 0), 0);
+  const summary: Array<{ label: string; value: string; strong?: boolean; helper?: string; testId: string }> = [
+    { label: copy("Expected at PO prices"), value: amount(match.expectedAmount), testId: "match-expected" },
+    {
+      label: copy("Variance"),
+      value: signed(match.lineVarianceAmount),
+      helper: finite(match.lineVarianceAmount) && Math.abs(priceVariance) >= MONEY_EPSILON ? copy("Price variance {amount}", { amount: signed(priceVariance) }) : undefined,
+      testId: "match-variance",
+    },
+    { label: copy("Invoiced, net of tax"), value: amount(match.invoiceNetAmount), strong: true, testId: "match-invoiced-net" },
+    ...(match.taxAmount !== undefined && match.taxAmount !== null ? [{ label: copy("Tax"), value: amount(match.taxAmount), testId: "match-tax" }] : []),
+    ...(finite(invoiceTotal) || match.restrictedFields?.includes("amounts") ? [{ label: copy("Invoice total"), value: amount(invoiceTotal), strong: true, testId: "match-invoice-total" }] : []),
+  ];
+  const gap = finite(match.receivingGapQty) ? match.receivingGapQty : 0;
+
+  return (
+    <section className="mt-5" data-testid="three-way-match-lines">
+      <div className="text-sm font-semibold">{copy("Match by line")}</div>
+      <p className="mt-1 text-xs" style={{ color: A.sub }}>
+        {copy("Each invoice line against its purchase order line: the invoiced quantity at the PO price, and the quantity received. Amounts exclude tax.")}
+      </p>
+      <div className={`mt-3 rounded-lg border ${tableScrollClass}`}>
+        <table className={`w-full ${tableBodyTextClass}`}>
+          <thead>
+            <tr style={listHeadRowStyle}>
+              <th scope="col" className={thClass} style={{ color: A.gray1 }}>{copy("PO line / item")}</th>
+              <th scope="col" className={thRightClass} style={{ color: A.gray1 }}>{copy("Ordered")}</th>
+              <th scope="col" className={thRightClass} style={{ color: A.gray1 }}>{copy("Received")}</th>
+              <th scope="col" className={thRightClass} style={{ color: A.gray1 }}>{copy("Invoiced")}</th>
+              <th scope="col" className={thRightClass} style={{ color: A.gray1 }}>{copy("PO price")}</th>
+              <th scope="col" className={thRightClass} style={{ color: A.gray1 }}>{copy("Invoice price")}</th>
+              <th scope="col" className={thRightClass} style={{ color: A.gray1 }}>{copy("Expected")}</th>
+              <th scope="col" className={thRightClass} style={{ color: A.gray1 }}>{copy("Invoiced (net)")}</th>
+              <th scope="col" className={thRightClass} style={{ color: A.gray1 }}>{copy("Variance")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((line, index) => {
+              const status = LINE_STATUS[line.status || ""];
+              const lineGap = finite(line.receivingGapQty) ? line.receivingGapQty : 0;
+              const over = finite(line.quantityVariance) ? line.quantityVariance : 0;
+              const notInvoiced = finite(line.uninvoicedReceivedQty) ? line.uninvoicedReceivedQty : 0;
+              const subClass = "mt-0.5 text-[11px] font-normal leading-4";
+              return (
+                <tr key={line.invoiceLineId || index} className={listRowClass} style={listRowStyle(index, lines.length)} data-testid="three-way-match-line">
+                  <td className={`${tdClass} align-top`}>
+                    <div className="whitespace-nowrap font-medium">{line.poLineId || "—"}</div>
+                    <div className={subClass} style={{ color: A.sub }}>{[line.sku, line.itemName, line.unit ? copy(line.unit) : ""].filter(Boolean).join(" · ") || "—"}</div>
+                    {line.invoiceLineId ? <div className={`${subClass} whitespace-nowrap`} style={{ color: A.sub }}>{copy("Invoice line")} {line.invoiceLineId}</div> : null}
+                  </td>
+                  <td className={`${tdNumericRightClass} align-top`}>{qty(line.orderedQty)}</td>
+                  <td className={`${tdNumericRightClass} align-top`}>
+                    {qty(line.receivedQty)}
+                    {/* Still to receive on the PO: information, not a match variance. */}
+                    {lineGap > 0 ? <div className={subClass} style={{ color: A.sub }}>{copy("{qty} still to receive", { qty: formatNumber(lineGap) })}</div> : null}
+                  </td>
+                  <td className={`${tdNumericRightClass} align-top`}>
+                    {qty(line.invoicedQty)}
+                    {over > 0
+                      ? <div className={`${subClass} text-red-700`}>{copy("{qty} more than received", { qty: formatNumber(over) })}</div>
+                      : notInvoiced > 0 ? <div className={subClass} style={{ color: A.sub }}>{copy("{qty} received, not invoiced", { qty: formatNumber(notInvoiced) })}</div> : null}
+                  </td>
+                  <td className={`${tdNumericRightClass} align-top`}>{amount(line.poUnitPrice)}</td>
+                  <td className={`${tdNumericRightClass} align-top`}>{amount(line.invoiceUnitPrice)}</td>
+                  <td className={`${tdNumericRightClass} align-top`}>
+                    {amount(line.expectedAmount)}
+                    <div className={subClass} style={{ color: A.sub }}>{qty(line.invoicedQty)} × {amount(line.poUnitPrice)}</div>
+                  </td>
+                  <td className={`${tdNumericRightClass} align-top`}>
+                    {amount(line.invoiceLineAmount)}
+                    {finite(line.taxAmount) && line.taxAmount ? <div className={subClass} style={{ color: A.sub }}>{copy("Tax")} {amount(line.taxAmount)}</div> : null}
+                  </td>
+                  <td className={`${tdNumericRightClass} align-top font-medium`}>
+                    {signed(line.varianceAmount)}
+                    {finite(line.quantityVarianceAmount) && line.quantityVarianceAmount >= MONEY_EPSILON
+                      ? <div className={subClass} style={{ color: A.sub }}>{copy("Quantity over received {amount}", { amount: amount(line.quantityVarianceAmount) })}</div>
+                      : null}
+                    <div className="mt-1 flex justify-end font-normal" data-testid="three-way-match-line-status">
+                      {status ? <StatusChip label={copy(status.label)} tone={status.tone} /> : line.status ? <StatusChip label={copy(line.status)} tone={statusToneOf(line.status)} /> : null}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+        <div className="text-xs" style={{ color: A.sub }}>
+          {gap > 0 ? (
+            <div className="rounded-lg bg-slate-50 p-3" data-testid="match-receiving-gap">
+              <div className="font-medium" style={{ color: A.label }}>{copy("Still to receive on the purchase order: {qty}", { qty: formatNumber(gap) })}</div>
+              <div className="mt-1">{copy("Ordered but not received yet; not a match variance.")}</div>
+            </div>
+          ) : null}
+        </div>
+        <dl className="rounded-lg bg-slate-50 p-3 text-sm" data-testid="three-way-match-summary">
+          {summary.map((row) => (
+            <div key={row.testId} className={`flex items-baseline justify-between gap-4 py-1 ${row.strong ? "border-t border-slate-200 font-semibold" : ""}`} data-testid={row.testId}>
+              <dt className={row.strong ? "" : "text-xs"} style={row.strong ? undefined : { color: A.sub }}>
+                {row.label}
+                {row.helper ? <div className="text-[11px] font-normal" style={{ color: A.sub }}>{row.helper}</div> : null}
+              </dt>
+              <dd className="whitespace-nowrap text-right tabular-nums">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </section>
   );
 }
 
@@ -148,11 +349,26 @@ export function ProcurementDocumentDetailPage({
   const poId = record?.relatedPo || record?.poId || record?.po;
   const grnId = record?.relatedGrn || record?.grnId;
   const invoiceId = isInvoice ? record?.id : record?.invoiceId;
-  const blockingReason =
+  // The match, read line by line when the server returns its lines. Without
+  // them (an older server, or an invoice with no lines) the page shows the
+  // recorded invoice amount and variance only, never the whole PO total
+  // against a partial invoice.
+  const match = (isInvoice ? relatedMatch : record) as MatchDocument | null;
+  const matchLines = Array.isArray(match?.lines) && match.lines.length ? match.lines : null;
+  const invoiceTotal = isInvoice ? record?.amount ?? record?.invoiceAmount : record?.invoiceAmount ?? record?.amount;
+  const recordedVariance = record?.varianceAmount;
+  const varianceDisagrees = Boolean(matchLines) && finite(recordedVariance) && finite(match?.lineVarianceTotal)
+    && Math.abs(Math.abs(recordedVariance) - match.lineVarianceTotal) >= MONEY_EPSILON;
+  const storedReason =
     record?.blockingReason ||
     record?.exceptionReason ||
     relatedMatch?.blockingReason ||
     relatedMatch?.exceptionReason;
+  // With lines, the reason comes from them; the stored reason speaks of PO and
+  // invoice totals.
+  const blockingReason = matchLines
+    ? match?.lineMatchStatus === "variance" ? "One or more invoice lines differ from the purchase order price or the quantity received. Review the variance before proceeding." : ""
+    : storedReason;
 
   return (
     <div className="space-y-4" data-testid={`procurement-${kind}-detail`}>
@@ -235,9 +451,8 @@ export function ProcurementDocumentDetailPage({
               ) : (
                 <Fact label={copy("Match status")}>{statusChip(status === "—" ? undefined : status)}</Fact>
               )}
-              <Fact label={copy("PO amount")}>{money(record.poAmount ?? relatedMatch?.poAmount, record.currency, locale)}</Fact>
-              <Fact label={copy("Invoice amount")}>{money(record.amount ?? record.invoiceAmount, record.currency, locale)}</Fact>
-              <Fact label={copy("Variance amount")}>{money(record.varianceAmount, record.currency, locale)}</Fact>
+              {!matchLines && <Fact label={copy("Invoice amount")}>{money(invoiceTotal, record.currency, locale)}</Fact>}
+              {!matchLines && <Fact label={copy("Variance amount")}>{money(recordedVariance, record.currency, locale)}</Fact>}
               <Fact label={copy("Currency")}>{record.currency || "—"}</Fact>
               {isInvoice && <Fact label={copy("Invoice date")}>{day(record.invoiceDate, locale, timezone)}</Fact>}
               {isInvoice && <Fact label={copy("Due date")}>{day(record.dueDate, locale, timezone)}</Fact>}
@@ -247,6 +462,21 @@ export function ProcurementDocumentDetailPage({
               <div className="mt-4 rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-900">
                 {copy(blockingReason)}
               </div>
+            )}
+            {matchLines && match ? (
+              <LineMatch match={match} invoiceTotal={invoiceTotal} currency={match.currency || record.currency} copy={copy} locale={locale} />
+            ) : match ? (
+              <div className="mt-4 rounded-lg bg-slate-50 px-3 py-3 text-xs" style={{ color: A.sub }} data-testid="three-way-match-no-lines">
+                {copy("Line detail is not available for this match, so only the recorded invoice amount and variance are shown. The purchase order total is not compared with the invoice.")}
+              </div>
+            ) : null}
+            {varianceDisagrees && (
+              <div className="mt-3 rounded-lg bg-slate-50 px-3 py-3 text-xs" style={{ color: A.sub }} data-testid="three-way-match-recorded-variance">
+                {copy("The variance recorded on the invoice is {amount}; the lines above add up to a different amount.", { amount: money(recordedVariance, record.currency, locale) })}
+              </div>
+            )}
+            {match?.restrictedFields?.includes("amounts") && (
+              <div className="mt-3 text-xs" style={{ color: A.sub }}>{copy("Amounts are hidden for your role.")}</div>
             )}
             {relatedMatchNotice && (
               <div className="mt-4 rounded-lg bg-slate-50 px-3 py-3 text-xs" style={{ color: A.sub }} data-testid="related-match-read-limitation">
