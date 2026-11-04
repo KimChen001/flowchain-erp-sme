@@ -517,6 +517,10 @@ test('the system prompt asks for the source handle, status words, one set of chi
   assert.match(ASSISTANT_V2_SYSTEM, /Never mention tools, displays, sources, ids, errors or retries to the user/)
   assert.match(ASSISTANT_V2_SYSTEM, /never as its code: where a result gives a label beside the code \(statusLabel/)
   assert.match(ASSISTANT_V2_SYSTEM, /suggest_followups, called once/)
+  // Chips only when there is a next step (2026-11-04), never beside a question to the user.
+  assert.match(ASSISTANT_V2_SYSTEM, /When the answer has a clear next step, end it with suggest_followups/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Leave the chips out when the answer itself asks the user something/)
+  assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /End every answer with suggest_followups/)
   assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /tool_use id/)
 })
 
@@ -628,6 +632,26 @@ test('the follow-up chips after the text end the answer without another model ca
   ], { uiTools: [followups] })
   assert.equal(early.client.requests.length, 2)
   assert.match(ofType(early.events, 'text_delta').map((event) => event.text).join(''), /PO-001 is overdue/)
+})
+
+// A month's plan written out twice (2026-11-04): text, then a round of parts
+// with the chips, then another call that wrote the plan again.
+test('a round of shown parts with the chips, after the text, ends the answer', async () => {
+  const { client, body } = await ask([
+    OVERDUE,
+    [...say('PO-001 and PO-008 are overdue.'), ...call('tu_cards', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), ...call('tu_chips', 'suggest_followups', { questions: ['Which supplier is it?'] }), end()],
+    [...say('PO-001 and PO-008 are overdue.'), end()],
+  ], { uiTools: [showRecords, followups] })
+  assert.equal(client.requests.length, 2)
+  assert.deepEqual(body.parts.map((part) => part.type), ['text', 'ui', 'ui'])
+  // A part that failed keeps the answer going, so the model can correct it.
+  const failed = await ask([
+    OVERDUE,
+    [...say('PO-001 is overdue.'), ...call('tu_cards', 'show_records', { source: 'tu_none', refs: ['PO-001'] }), ...call('tu_chips', 'suggest_followups', { questions: ['Which supplier is it?'] }), end()],
+    [...call('tu_cards2', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()],
+    [...say('Here it is.'), end()],
+  ], { uiTools: [showRecords, followups] })
+  assert.ok(failed.client.requests.length >= 3)
 })
 
 test('a figure the results do not hold is flagged, not dropped', async () => {

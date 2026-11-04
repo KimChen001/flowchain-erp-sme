@@ -244,6 +244,27 @@ test('the text keeps lists, bold and code, and drops images and links to other s
   assert.doesNotMatch(client.text({ text: 'Three items are **below' }), /\*\*/)
 })
 
+// A longer answer may split into parts under short headings (2026-11-04).
+test('a heading line is a section title, not a plain line with its hashes', async () => {
+  const client = await loadClient()
+  const markup = client.text({ text: '## Order now\n- LDM-002: 1,735\n\n### 下一步\nCheck the form.' })
+  assert.match(markup, /<p data-testid="ai-v2-text-heading" class="pt-1 font-semibold">Order now<\/p>/)
+  assert.match(markup, /<p data-testid="ai-v2-text-heading" class="pt-1 font-semibold">下一步<\/p>/)
+  assert.match(markup, /<li>LDM-002: 1,735<\/li>/)
+  assert.doesNotMatch(markup, />#+ /)
+})
+
+// A typed table shows as a table, not a run of pipes (2026-11-04).
+test('a pipe table in the text is a table with its first row as the header', async () => {
+  const client = await loadClient()
+  const markup = client.text({ text: 'The plan:\n\n| SKU | Order |\n|---|---:|\n| LDM-002 | **1,677** |\n| LDM-006 | 1,114 |\n\nCheck it.' })
+  assert.match(markup, /<table data-testid="ai-v2-text-table"/)
+  assert.match(markup, /<th[^>]*>SKU<\/th><th[^>]*>Order<\/th>/)
+  assert.match(markup, /<td[^>]*>LDM-002<\/td><td[^>]*><strong class="font-semibold">1,677<\/strong><\/td>/)
+  assert.doesNotMatch(markup, /\||---/)
+  assert.match(markup, /<p>Check it\.<\/p>/)
+})
+
 test('the form ticks nothing for the user, and a covered row needs "Order anyway"', async () => {
   const client = await loadClient()
   const markup = client.form({ props: formProps() })

@@ -139,10 +139,10 @@ export const ASSISTANT_V2_SYSTEM = [
   '- Never say a supplier or item was created, added or saved, and never speak of one as a record of the workspace, until a "Note from the server" says the user created it. Then say that they created it ("You created supplier Acme Packaging (SUP-001)"), with the names and codes the note gives.',
   '',
   'The answer:',
-  '- Answer briefly in prose, in answerLanguage (the language of the question), plainly, as a helpful colleague, to the user as "you" (你). Lead with the answer, then the few facts behind it. About 120 words at most, unless the user asks for a draft or a summary. No headings.',
-  '- Show lists and figures with the display tools instead of typing them: show_table for rows, show_records for a few records, show_chart for figures across months or suppliers, show_kpis for the workspace summary. Every data result starts with its source, such as "list_purchase_orders#1": pass that as source, with the column codes, refs or keys to show; never type the values into the tool or repeat the whole list in prose. If a display fails, fix the call once as its error says, or answer in prose.',
+  '- Answer in answerLanguage (the language of the question), plainly, as a helpful colleague, to the user as "you" (你). Lead with the answer, then the facts behind it. Fit the length to the question: a simple question gets a few sentences; a plan, a comparison, a walk-through or an explanation for someone new gets the room it needs, in short numbered steps or bullets with bold lead-ins. A long answer with separate parts may start each part with a short "## " heading. Explain a term in plain words the first time a new user meets it. Do not pad: no repeated facts and no closing summary of what you just said.',
+  '- Show lists and figures with the display tools instead of typing them: show_table for rows, show_records for a few records, show_chart for figures across months or suppliers, show_kpis for the workspace summary. Every data result starts with its source, such as "list_purchase_orders#1": pass that as source, with the column codes, refs or keys to show; never type the values into the tool or repeat the whole list in prose, and never type a table of them into the text. If a display fails, fix the call once as its error says, or answer in prose.',
   '- Name the records you rely on by their numbers as the tools give them; the app turns them into links.',
-  '- End every answer with suggest_followups, called once: one to three short questions the user may want to ask next, in answerLanguage.',
+  '- When the answer has a clear next step, end it with suggest_followups, called once: one to three short next steps in answerLanguage, worded as the user would ask or tell you, about their own records ("Draft a request for LDM-002", "Show Acme\'s late orders"); an action before a question about a concept. In a new or nearly empty workspace the next steps are setup steps. Leave the chips out when the answer itself asks the user something (offer the records to pick from with offer_choices instead), when it only confirms or declines, and when nothing useful follows.',
   '- Never mention tools, displays, sources, ids, errors or retries to the user. If a display did not work, give the answer in prose as if nothing had happened.',
 ].join('\n')
 
@@ -834,10 +834,12 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       }
       stats.rounds += 1
       closeToolUses(toolUses, outcomes, 'stopped')
-      // A round of only the follow-up chips, after the answer's text, ends
-      // the answer: another call has nothing to add but the answer again
-      // (2026-11-04: the same text twice in 2 of 23 answers).
-      if (toolUses.every((block) => block.name === 'suggest_followups' && outcomes.get(block.id)?.ok) && parts.some((part) => part.type === 'text' && text(part.text))) { stop('end_turn'); break }
+      // A round of only UI parts that all showed, the follow-up chips among
+      // them, after the answer's text, ends the answer: another call has
+      // nothing to add but the answer again (2026-11-04: the same text twice
+      // in 2 of 23 answers, and a month's plan written out twice after its
+      // form and chips).
+      if (toolUses.some((block) => block.name === 'suggest_followups') && toolUses.every((block) => ui.has(block.name) && outcomes.get(block.id)?.ok) && parts.some((part) => part.type === 'text' && text(part.text))) { stop('end_turn'); break }
       // The next call is the last when the limits say so, when a call after
       // it could not fit in what the answer may still spend, or when the
       // model called only withdrawn display tools.
