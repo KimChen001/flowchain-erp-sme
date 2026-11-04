@@ -146,31 +146,26 @@ function Landing({ entry }: { entry: Entry }) {
   const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   return (
     <div className="space-y-4" data-testid="inventory-operations-landing">
-      <div>
-        <h2 className="text-lg font-semibold">{copy("库存操作")}</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          {copy("正式 PostgreSQL 调拨、循环盘点与库存调整工作台。")}
-        </p>
-      </div>
+      <p className="text-xs text-slate-500">{copy("在仓库之间调拨库存、做循环盘点、按原因调整库存数量。")}</p>
       <ReadOnly entry={entry} />
       <div className="grid gap-4 md:grid-cols-3">
         {[
           [
             "/app/inventory/transfers",
             copy("库存调拨"),
-            copy("原子式来源扣减与目标增加，支持安全冲销。"),
+            copy("把库存从一个仓库或库位移到另一个；过账后可以冲销。"),
           ],
-          ["/app/inventory/counts", copy("循环盘点"), copy("快照、盲盘、复核与差异过账。")],
+          ["/app/inventory/counts", copy("循环盘点"), copy("按快照盲盘，复核后把差异过账到库存。")],
           [
             "/app/inventory/adjustments",
             copy("库存调整"),
-            copy("受控原因、预览、过账与冲销。"),
+            copy("选择原因修改库存数量；过账前可预览，过账后可冲销。"),
           ],
         ].map(([to, title, description]) => (
           <Link
             key={to}
             to={to}
-            className="rounded-xl border border-slate-200 bg-white p-5"
+            className="rounded-xl border border-slate-200 bg-white p-5 transition-colors hover:border-blue-200 hover:bg-blue-50/30"
           >
             <h3 className="font-semibold">{title}</h3>
             <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>

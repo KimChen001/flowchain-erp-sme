@@ -1076,7 +1076,7 @@ export default function CanonicalProcurementPanel({
                   style={inputStyle}
                 >
                   <option value="catalog_item">{copy("目录物料")}</option>
-                  <option value="non_catalog_item">{copy("Other / 非目录")}</option>
+                  <option value="non_catalog_item">{copy("其他（非目录物料）")}</option>
                 </select>
               </Field>
               <Field label={copy("计价方式")}>
@@ -1097,7 +1097,7 @@ export default function CanonicalProcurementPanel({
                 </select>
               </Field>
               <div className="md:col-span-1 xl:col-span-2">
-                <Field label="SKU / Other">
+                <Field label="SKU / 其他">
                   {line.sourceType === "catalog_item" ? (
                     <select
                       aria-label={`SKU ${index + 1}`}

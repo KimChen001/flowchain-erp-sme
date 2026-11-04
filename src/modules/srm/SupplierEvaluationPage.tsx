@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
-import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, thClass } from "../../components/ui/workbenchTable";
+import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
@@ -222,7 +222,7 @@ export default function SupplierEvaluationPage() {
                   <th className={`${thClass} sticky left-0 z-20 bg-white align-bottom`} style={{ color: A.gray1 }}>{t("Supplier code")}</th>
                   <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Supplier name")}</th>
                   <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Business owner")}</th>
-                  {METRIC_HEADERS.map((label) => <th key={label} className={`${thClass} align-bottom !whitespace-normal min-w-[96px] max-w-[132px]`} style={{ color: A.gray1 }}>{t(label)}</th>)}
+                  {METRIC_HEADERS.map((label) => <th key={label} className={`${thClass} align-bottom !whitespace-normal min-w-[84px] max-w-[120px] text-right`} style={{ color: A.gray1 }}>{t(label)}</th>)}
                   <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Tier")}</th>
                   {canEdit && <th className={`${thClass} sticky right-0 z-20 bg-white align-bottom`} style={{ color: A.gray1 }}>{t("Actions")}</th>}
                 </tr>
@@ -241,11 +241,11 @@ export default function SupplierEvaluationPage() {
                           {row.status !== "active" && <div className="mt-0.5"><Chip label={t(STATUS_LABEL[row.status])} color={A.gray1} bg={A.gray6} /></div>}
                         </td>
                         <td className={tdNowrapClass} style={{ color: A.sub }}>{row.businessOwner?.name || "—"}</td>
-                        <td className={tdNowrapClass}>{spendCell(insight)}</td>
-                        <td className={tdNowrapClass}>{count(insight?.openPos)}</td>
-                        <td className={tdNowrapClass}>{count(insight?.overduePos)}</td>
-                        <td className={tdNowrapClass}>{onTimeCell(insight)}</td>
-                        <td className={tdNowrapClass}>{count(insight?.openIssues)}</td>
+                        <td className={tdNumericRightClass}>{spendCell(insight)}</td>
+                        <td className={tdNumericRightClass}>{count(insight?.openPos)}</td>
+                        <td className={tdNumericRightClass}>{count(insight?.overduePos)}</td>
+                        <td className={tdNumericRightClass}>{onTimeCell(insight)}</td>
+                        <td className={tdNumericRightClass}>{count(insight?.openIssues)}</td>
                         <td className={tdNowrapClass} title={row.tierReason || undefined}><TierChip tier={row.tier} short /></td>
                         {canEdit && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                           <button type="button" data-testid="supplier-evaluation-set-tier" aria-expanded={editing === row.id} onClick={() => setEditing(editing === row.id ? null : row.id)} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">

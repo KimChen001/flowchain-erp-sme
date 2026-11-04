@@ -65,6 +65,11 @@ names, or supplier names in place. Translate their presentation where appropriat
   credit memos. Supplier credit memos have their own notice: they do not record a
   refund from the supplier. Finance status chips use the shared tones, so overdue
   and disputed read red.
+- Order fulfillment lines and sales order evidence use the same layout, with English
+  and Chinese copy for their cards, filters, columns and empty states; the column
+  "关联 GRN / Invoice" became "Status and documents" / "履约状态与单据". The inventory
+  operations landing and the evidence data limitation for warehouse-scoped readers have
+  plain wording in both languages. Checked in both languages on 2026-11-04.
 - Dates on a Chinese page keep the workspace locale (en-US gives "Nov 2, 2026"):
   the interface language does not change date or number formats.
 - Shared form labels (`Field`), metric cards (`KpiCard`, `ActionableMetricCard`),

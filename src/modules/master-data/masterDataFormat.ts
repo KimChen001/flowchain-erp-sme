@@ -47,7 +47,7 @@ const zh: Record<string, string> = {
   "No preferred supplier": "无首选供应商", "Active items without a supplier to order from": "没有可下单供应商的启用物料",
   "Item search": "物料查询", "Search items by SKU, name, status, type and category.": "按 SKU、名称、状态、类型和分类查询物料。",
   "Reset": "重置", "Export results": "导出当前结果", "Search": "搜索", "Type": "类型", "Filter by type": "按类型筛选",
-  "All types": "全部类型", "Filter by category": "按分类筛选", "All categories": "全部分类", "Item list": "物料列表",
+  "All types": "全部类型", "Setup gap": "资料缺口", "Filter by setup gap": "按资料缺口筛选", "Filter by category": "按分类筛选", "All categories": "全部分类", "Item list": "物料列表",
   "{total} items, {shown} shown": "共 {total} 个物料，当前显示 {shown} 个", "MOQ": "最小起订量", "Preferred supplier": "首选供应商",
   "No items match these filters": "没有符合筛选条件的物料",
   "Create an item or import a file of items to get started.": "新建物料或导入物料文件即可开始。",

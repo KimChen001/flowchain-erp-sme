@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState, type ElementType } from "react";
 import { AlertTriangle, FileWarning, PackageX, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
-import { A, Card, Field, KpiCard, inputStyle } from "../../components/ui";
+import { useSearchParams } from "react-router";
+import { A, Card, Field, inputStyle } from "../../components/ui";
+import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
+import { RefreshButton, ResetButton } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
@@ -40,7 +43,14 @@ export default function SupplierRisksPage() {
   const [error, setError] = useState(false);
   const [tick, setTick] = useState(0);
   const [query, setQuery] = useState("");
-  const [type, setType] = useState<"" | SupplierIssueType>("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedType = searchParams.get("type") as SupplierIssueType | null;
+  const type: "" | SupplierIssueType = requestedType && KINDS.some((kind) => kind.type === requestedType) ? requestedType : "";
+  const setType = (value: "" | SupplierIssueType) => {
+    const params = new URLSearchParams(searchParams);
+    if (value) params.set("type", value); else params.delete("type");
+    setSearchParams(params, { replace: true });
+  };
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -68,11 +78,12 @@ export default function SupplierRisksPage() {
     <div className="space-y-5" data-testid="supplier-risks-page">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {KINDS.map((kind) => (
-          <KpiCard
+          <ActionableMetricCard
             key={kind.type}
             label={t(kind.label)}
             value={!data || !data.issues || !visible(kind) ? "—" : String(issues.filter((row) => row.type === kind.type).length)}
-            sub={data && (!data.issues || !visible(kind)) ? t("Hidden for your role") : t(kind.sub)}
+            description={data && (!data.issues || !visible(kind)) ? t("Hidden for your role") : t(kind.sub)}
+            to={`/app/master-data/supplier-risks?type=${kind.type}`}
             icon={kind.icon}
             color={kind.color}
           />
@@ -86,8 +97,8 @@ export default function SupplierRisksPage() {
             <div className="mt-1 text-xs" style={{ color: A.sub }}>{t("Search open issues by supplier and issue type.")}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={resetFilters} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>{t("Reset")}</button>
-            <button type="button" onClick={() => setTick((value) => value + 1)} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>{t("Refresh")}</button>
+            <ResetButton onClick={resetFilters} />
+            <RefreshButton onClick={() => setTick((value) => value + 1)} />
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
