@@ -200,6 +200,23 @@ test('database procurement list and summary paths keep the bounded snapshot beha
   assert.equal(summary.threeWayMatchCount, 1)
 })
 
+test('the request list names each requester by name; a user it cannot find keeps the id', async () => {
+  const records = createRecords()
+  records.purchaseRequests = [
+    { ...records.purchaseRequests[0], id: 'PR-DB-1', metadata: { requesterId: 'USR-1' } },
+    { ...records.purchaseRequests[0], id: 'PR-DB-2', requester: 'USR-GONE', metadata: {} },
+  ]
+  const prisma = createPrisma(records)
+  const userReads = []
+  prisma.user = { findMany: async (query) => { userReads.push(query); return [{ id: 'USR-1', name: 'Avery Buyer' }].filter((row) => query.where.tenantId === tenantId && query.where.id.in.includes(row.id)) } }
+  const snapshot = await createDbProcurementReadRepository({ env, prisma }).snapshot({ tenantId })
+  const byId = Object.fromEntries(snapshot.purchaseRequests.map((row) => [row.id, row]))
+  assert.deepEqual([byId['PR-DB-1'].requesterId, byId['PR-DB-1'].requesterName], ['USR-1', 'Avery Buyer'])
+  assert.deepEqual([byId['PR-DB-2'].requesterId, byId['PR-DB-2'].requesterName], ['USR-GONE', undefined])
+  // One read, in the asking workspace only.
+  assert.deepEqual(userReads.map((query) => query.where), [{ tenantId, id: { in: ['USR-1', 'USR-GONE'] } }])
+})
+
 test('direct dispatch covers every canonical type with exact bounded Prisma queries', async (t) => {
   assert.deepEqual(new Set(DIRECT_PROCUREMENT_DOCUMENT_TYPES), new Set(['pr', 'rfq', 'po', 'grn', 'invoice', 'threeWayMatch']))
   const cases = [
@@ -430,25 +447,4 @@ test('supplier invoices without a stored variance type get stable codes, not Chi
   // A stored value, code or legacy, is returned as it was stored.
   assert.equal(invoice('INV-DB-3').varianceType, 'price_variance')
   assert.equal(invoice('INV-DB-3').lines[0].varianceType, '价格差异')
-})
-
-test('purchase requests carry the requester name of a workspace user, and keep a recorded name otherwise', async () => {
-  const records = createRecords()
-  records.purchaseRequests = [
-    { ...records.purchaseRequests[0], id: 'PR-USER', requester: 'USR-1', metadata: { requesterId: 'USR-1' } },
-    { ...records.purchaseRequests[0], id: 'PR-NAME', requester: 'Buyer A', metadata: {} },
-  ]
-  const prisma = createPrisma(records)
-  const userQueries = []
-  prisma.user = {
-    findMany: async (query) => {
-      userQueries.push(query)
-      return [{ id: 'USR-1', name: 'Kim Chen' }, { id: 'USR-OTHER-TENANT', name: 'Nobody' }].filter((user) => query.where.id.in.includes(user.id))
-    },
-  }
-  const snapshot = await createDbProcurementReadRepository({ env, prisma }).snapshot({ tenantId })
-  assert.deepEqual(userQueries.map((query) => query.where), [{ tenantId, id: { in: ['USR-1', 'Buyer A'] } }])
-  assert.equal(snapshot.purchaseRequests.find((row) => row.id === 'PR-USER').requesterName, 'Kim Chen')
-  assert.equal(snapshot.purchaseRequests.find((row) => row.id === 'PR-NAME').requesterName, '')
-  assert.equal(snapshot.purchaseRequests.find((row) => row.id === 'PR-NAME').requester, 'Buyer A')
 })

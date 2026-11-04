@@ -184,12 +184,12 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByTestId("inventory-item-LDM-002")).toContainText("150");
   await capture(page, "08-inventory-stock");
 
-  // LDM-002's 150 available are at or under its reorder point of 245 too;
+  // LDM-002's 150 available are at or under its reorder point of 270 too;
   // the other items are above theirs.
   await page.goto("/app/inventory/warnings");
   await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("需补货");
   await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("30 / 40");
-  await expect(page.getByTestId("inventory-item-LDM-002")).toContainText("75 / 245");
+  await expect(page.getByTestId("inventory-item-LDM-002")).toContainText("100 / 270");
   await expect(page.getByTestId("inventory-item-LDM-003")).toHaveCount(0);
   await capture(page, "09-inventory-warnings");
 

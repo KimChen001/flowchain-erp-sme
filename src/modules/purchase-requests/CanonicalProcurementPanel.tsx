@@ -84,15 +84,15 @@ type PR = {
   status: string;
   version: number;
   requesterId: string;
+  // The requester's name; the id only when the user is not known.
+  requesterName?: string;
   departmentId: string;
   defaultCurrency: string;
   defaultNeedByDate: string;
   totalAmount: number;
   lines: Line[];
   linkedPurchaseOrderIds?: string[];
-  // The requester's name when the server knows the user; older requests
-  // recorded a name in `requester`.
-  requesterName?: string;
+  // Older requests recorded a name here rather than a user id.
   requester?: string;
   createdAt?: string;
 };
