@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { addCalendarDays, orderSupplierChoices, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
+import { addCalendarDays, orderSupplierChoices, planNonCatalogPrefill, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
 import { mapItemSupplierRecord } from './master-data-commands.mjs'
 
 const item = { itemId: 'item-1', defaultWarehouseId: 'wh-main' }
@@ -237,4 +237,23 @@ test('the source list says "PO", and a PO received without being issued says so,
 test('calendar days cross month and year ends', () => {
   assert.equal(addCalendarDays('2026-12-28', 7), '2027-01-04')
   assert.equal(addCalendarDays('2028-02-27', 2), '2028-02-29')
+})
+
+test('a non-catalog handoff fills an Other line from the user\'s words only, each field marked as theirs', () => {
+  const units = [{ id: 'pcs', code: 'pcs', label: 'Pieces' }, { id: 'pair', code: 'pair', label: 'Pairs' }]
+  const suppliers = [{ id: 'sup-1', supplierCode: 'ACME', name: 'Acme Components' }]
+  const plan = planNonCatalogPrefill({ query: { lineType: 'non_catalog', description: 'safety gloves, size L', quantity: '50', unit: 'Pairs', suppliers: 'sup-1', due: '2026-11-20', reason: 'for the warehouse', reasonFrom: 'user', origin: 'ai_assistant' }, units, suppliers, defaultDate: '2026-11-04' })
+  assert.deepEqual(plan.values, { itemNameSnapshot: 'safety gloves, size L', quantity: '50', unitSnapshot: 'pair', supplierId: 'sup-1', needByDate: '2026-11-20', internalLineComment: 'for the warehouse' })
+  assert.deepEqual(Object.fromEntries(Object.entries(plan.fields).map(([field, entry]) => [field, entry.ref])), {
+    itemNameSnapshot: 'assistant:your_description', quantity: 'assistant:quantity', unitSnapshot: 'assistant:your_unit',
+    supplierId: 'assistant:your_supplier', needByDate: 'assistant:your_date', internalLineComment: 'assistant:your_reason',
+  })
+  // No SKU, price or category, ever.
+  assert.equal(['itemId', 'estimatedUnitPrice', 'commodityId'].some((field) => field in plan.values || field in plan.fields), false)
+  // A unit or supplier the workspace does not have is left for the person.
+  const loose = planNonCatalogPrefill({ query: { lineType: 'non_catalog', description: 'safety gloves', unit: 'dozen', suppliers: 'Glove World', origin: 'ai_assistant' }, units, suppliers, defaultDate: '2026-11-04' })
+  assert.deepEqual([loose.values.unitSnapshot, loose.values.supplierId, loose.values.quantity, loose.values.needByDate], ['', '', '', '2026-11-04'])
+  assert.deepEqual(Object.keys(loose.fields), ['itemNameSnapshot'])
+  // A blank request opens an empty line.
+  assert.deepEqual(planNonCatalogPrefill({ query: { lineType: 'non_catalog', origin: 'ai_assistant' }, units, suppliers, defaultDate: '2026-11-04' }).fields, {})
 })

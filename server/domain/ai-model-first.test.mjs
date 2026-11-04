@@ -6,7 +6,7 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { runAiReadTool } from './ai-read-tool-runner.mjs'
 import { aiCallCostMicros, aiUsagePrices, runWithAiUsageScope } from './ai-usage-meter.mjs'
 import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
-import { AI_MODEL_FIRST_LIMITS, aiModelFirstAnnouncesLookup, aiModelFirstAnswersUnread, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstHidden, aiModelFirstTurns, parseAiModelFirstAnswer, presentAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
+import { AI_MODEL_FIRST_LIMITS, aiModelFirstAnnouncesLookup, aiModelFirstAnnouncesOpening, aiModelFirstAnswersUnread, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstHidden, aiModelFirstTurns, parseAiModelFirstAnswer, presentAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 import { buildReorderList } from './reorder-list.mjs'
 
@@ -900,4 +900,76 @@ test('a vague order answer makes each offered item a choice that asks for it', a
   const stub = scripted([final({ title: 't', answer: 'a', records: [] })])
   await runAiModelFirstLoop(loop(stub, { facts, today: '2026-09-29' }))
   assert.match(stub.requests[0].body.system[0].text, /in a compact table \(item, order-by date, suggested quantity, supplier\), soonest first, and ask which one, naming the first as the suggestion/)
+})
+
+// Ordering an item the workspace does not have (owner, 2026-11-04): it looped
+// on "tell me the SKU and supplier". The proposal opens one Other line from the
+// user's words, or a blank one.
+test('a new item opens one Other line from the user\'s own words, never a SKU, price or unnamed supplier', async () => {
+  const { facts, context, today } = await factsFor()
+  const done = final({ title: 'The request is open', answer: '- Check it and submit it on the page.', records: [] })
+  const question = "Order 50 units of 'safety gloves, size L' for the warehouse"
+  const stub = scripted([toolUse([['propose_purchase_request', { newItem: true, description: 'safety gloves, size L', quantity: 50, unit: 'units', reason: 'for the warehouse', supplier: 'Glove World' }]]), done])
+  const opened = await runAiModelFirstLoop(loop(stub, { facts, context, today, question }))
+  const [proposal] = opened.proposals
+  assert.deepEqual([proposal.nonCatalog, proposal.sku, proposal.description, proposal.quantity, proposal.unit, proposal.reason, proposal.supplierId], [true, null, 'safety gloves, size L', 50, 'units', 'for the warehouse', null])
+  const result = toolResult(stub, 1, 'propose_purchase_request')
+  assert.equal(result.line, 'other_non_catalog')
+  assert.match(result.note, /not one the workspace has, or the user did not name it/)
+  const card = presentAiModelFirstAnswer({ answer: opened.answer, refs: [], stats: opened.stats, facts, language: 'en-US', query: question, proposals: opened.proposals }).reviewCards[0]
+  assert.deepEqual(card.payload, { nonCatalog: true, description: 'safety gloves, size L', quantity: 50, quantitySource: 'user', unit: 'units', reason: 'for the warehouse', reasonSource: 'user', language: 'en-US' })
+  assert.equal(card.title, 'Request 50 units of safety gloves, size L (not in the catalog)')
+  assert.equal(card.autoOpen, true)
+  // A supplier the user named and the workspace has is kept.
+  const named = scripted([toolUse([['propose_purchase_request', { newItem: true, description: 'safety gloves', quantity: 20, supplier: 'Acme Components' }]]), done])
+  assert.equal((await runAiModelFirstLoop(loop(named, { facts, context, today, question: 'Order 20 safety gloves from Acme Components' }))).proposals[0].supplierId, 'SUP-001')
+  // "Open a blank request for a new item": one empty Other line.
+  const blank = scripted([toolUse([['propose_purchase_request', { newItem: true }]]), done])
+  const empty = await runAiModelFirstLoop(loop(blank, { facts, context, today, question: 'Open a blank request for a new item' }))
+  const blankCard = presentAiModelFirstAnswer({ answer: empty.answer, refs: [], stats: empty.stats, facts, language: 'zh-CN', query: 'q', proposals: empty.proposals }).reviewCards[0]
+  assert.deepEqual(blankCard.payload, { nonCatalog: true, language: 'zh-CN' })
+  assert.equal(blankCard.allowedNextStep, '打开空白的新物料采购申请')
+  // A description the user did not write, or an item the workspace has, is refused.
+  const invented = scripted([toolUse([['propose_purchase_request', { newItem: true, description: 'nitrile gloves' }]]), done])
+  assert.deepEqual((await runAiModelFirstLoop(loop(invented, { facts, context, today, question: 'I need some new items' }))).stats.calls.map((call) => call.status), ['description_not_users'])
+  const catalog = scripted([toolUse([['propose_purchase_request', { newItem: true, description: 'Flow Controller', quantity: 5 }]]), done])
+  assert.deepEqual((await runAiModelFirstLoop(loop(catalog, { facts, context, today, question: 'Order 5 Flow Controller' }))).stats.calls.map((call) => call.status), ['catalog_item'])
+  // The prompt asks once and offers only a chip that moves forward.
+  assert.match(stub.requests[0].body.system[0].text, /never offer a followUp that repeats your question/)
+})
+
+test('a new item is asked about once, and an answer that opens nothing is sent back to open it', async () => {
+  const { facts, context, today } = await factsFor()
+  const ask = { title: 'What is the new item?', answer: 'Tell me what it is and how many, and I will fill in a request. You can also open a blank one.', followUps: ['Open a blank request for a new item'], records: [] }
+  // Asked for new items without saying which: nothing opens; the model asks once.
+  const vague = scripted([toolUse([['propose_purchase_request', { newItem: true }]]), final(ask)])
+  const asked = await runAiModelFirstLoop(loop(vague, { facts, context, today, question: 'how about order some new items that are not in the inventory?' }))
+  assert.deepEqual(asked.proposals, [])
+  assert.equal(toolResult(vague, 1, 'propose_purchase_request').needsDetails, true)
+  // A yes to an offered blank request opens one.
+  const turns = aiModelFirstTurns({ previousTurns: [{ question: 'how about order some new items that are not in the inventory?', answer: `${ask.title} — ${ask.answer} Open a blank request for a new item?` }] })
+  const yes = scripted([toolUse([['propose_purchase_request', { newItem: true }]]), final({ title: 'A blank request is open', answer: '- Fill it in and submit it on the page.', records: [] })])
+  assert.equal((await runAiModelFirstLoop(loop(yes, { facts, context, today, turns, question: 'OK' }))).proposals[0].nonCatalog, true)
+  // "I'll open a blank form" with nothing proposed is sent back once to open it.
+  const promised = final({ title: 'Blank request ready', answer: "- I'll open a blank purchase request form with one Other line for you to fill in.", records: [] })
+  const opened = final({ title: 'A blank request is open', answer: '- Fill it in and submit it on the page.', records: [] })
+  const stub = scripted([promised, toolUse([['propose_purchase_request', { newItem: true }]]), opened])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts, context, today, question: 'Open a blank request for a new item' }))
+  assert.equal(outcome.stats.nudged, true)
+  assert.match(stub.requests[1].body.messages.at(-1).content[0].text, /nothing was opened/)
+  assert.equal(outcome.proposals[0].nonCatalog, true)
+  // An order with a quantity that searched and then asked "is it new?" is sent back too.
+  const question = "Order 50 units of 'safety gloves, size L' for the warehouse"
+  const hesitant = scripted([
+    toolUse([['search_records', { query: 'safety gloves' }]]),
+    final({ title: 'Is this a new item?', answer: "- I couldn't find safety gloves. Is it a new item?", records: [] }),
+    toolUse([['propose_purchase_request', { newItem: true, description: 'safety gloves, size L', quantity: 50, unit: 'units' }]]),
+    opened,
+  ])
+  const gloves = await runAiModelFirstLoop(loop(hesitant, { facts, context, today, question }))
+  assert.equal(gloves.stats.nudged, true)
+  assert.deepEqual([gloves.proposals[0].description, gloves.proposals[0].quantity], ['safety gloves, size L', 50])
+  // "Which item? I will open it then" opens nothing yet by design.
+  assert.equal(aiModelFirstAnnouncesOpening(JSON.stringify({ title: 'Which item?', answer: 'Which one should I open a request for?' })), false)
+  assert.equal(aiModelFirstAnnouncesOpening(JSON.stringify({ title: 'Ready', answer: "I've opened the request for you." })), true)
 })

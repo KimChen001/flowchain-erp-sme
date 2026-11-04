@@ -305,6 +305,13 @@ const entries = {
   'order.card.title_no_quantity': ['Request {sku}', '申请采购 {sku}'],
   'order.action.open': ['Open request: {quantity} of {sku}', '打开采购申请：{sku} {quantity}'],
   'order.action.open_no_quantity': ['Open a request for {sku}', '打开 {sku} 的采购申请'],
+  // An item the workspace does not have: one Other (non-catalog) line from the user's words.
+  'order.card.new_item_quantity': ['Request {quantity} of {description} (not in the catalog)', '申请采购 {description} {quantity}（非目录）'],
+  'order.card.new_item_named': ['Request {description} (not in the catalog)', '申请采购 {description}（非目录）'],
+  'order.card.new_item_blank': ['Request a new item (not in the catalog)', '申请采购新物料（非目录）'],
+  'order.action.new_item_quantity': ['Open request: {quantity} of {description}', '打开采购申请：{description} {quantity}'],
+  'order.action.new_item_named': ['Open request: {description}', '打开采购申请：{description}'],
+  'order.action.new_item_blank': ['Open a blank request for a new item', '打开空白的新物料采购申请'],
   'order.action.anyway': ['Open a request for {sku} anyway', '仍然新建 {sku} 的采购申请'],
   'order.action.blank': ['Open a blank purchase request', '新建空白采购申请'],
   'order.action.follow_up': ['Draft a follow-up on {po}', '起草 {po} 的跟进消息'],

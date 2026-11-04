@@ -312,3 +312,16 @@ test("follow-up chips follow the answer's language, not the interface language",
   const { language: _language, ...unlabelled } = message('en-US').cards[0].data
   assert.ok(client.getAiFollowUpChips({ ...message('en-US'), cards: [{ type: 'ai_response_v2', data: unlabelled }] }, 'en-US').every((chip) => !CJK.test(chip.label)))
 })
+
+test('a new-item proposal is a confirm card whose button opens one Other line', async () => {
+  const client = await loadClient()
+  const card = { previewOnly: true, reviewRequired: true, requiresHumanReview: true, prohibitedActions: ['send'], draftType: 'purchase_request_draft', title: 'Request 50 pairs of safety gloves, size L (not in the catalog)', allowedNextStep: 'Open request: 50 pairs of safety gloves, size L', description: 'for the warehouse', autoOpen: true,
+    payload: { nonCatalog: true, description: 'safety gloves, size L', quantity: 50, quantitySource: 'user', unit: 'pairs', reason: 'for the warehouse', reasonSource: 'user', language: 'en-US' } }
+  const markup = client.render({ version: 'v2', language: 'en-US', answerSource: 'workspace_model', conclusion: { title: 'The request is open', summary: 'Check it and submit it on the page.', severity: 'info' }, keyEvidence: [], dataLimitations: [], reviewCards: [card], navigationLinks: [] })
+  assert.match(markup, /safety gloves, size L \(not in the catalog\)/)
+  assert.match(markup, /Open request: 50 pairs of safety gloves, size L/)
+  const target = client.structuredDraftTarget('purchase_request_draft', card.payload, 'ai_assistant')
+  assert.deepEqual(target, { moduleId: 'procurement:requests', query: { mode: 'create', lineType: 'non_catalog', description: 'safety gloves, size L', unit: 'pairs', quantity: '50', quantityFrom: 'user', reason: 'for the warehouse', reasonFrom: 'user', origin: 'ai_assistant' } })
+  // It opens by itself, as a catalog proposal does.
+  assert.equal(client.autoOpenDraftCard([card]), card)
+})

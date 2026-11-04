@@ -13,7 +13,7 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { tableLinkClass } from "../../components/ui/workbenchTable";
 import { createClientTemporaryId } from "../../lib/client-id";
 import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
-import { addCalendarDays, buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
+import { addCalendarDays, buildSuggestionTrail, planNonCatalogPrefill, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
 import { SupplierChoices } from "../../components/procurement/SupplierChoices";
 import { SupplierOverrideCount, SupplierOverrideFlag, SupplierOverrideReason, hasSupplierOverride, supplierOverrideIssueText, type SupplierOverride } from "../../components/procurement/SupplierOverrideReason";
 import { overrideNeeded, validateSupplierOverride } from "../../../shared/supplier-override-reasons.mjs";
@@ -92,7 +92,7 @@ type PR = {
 type FieldError = { field?: string; code?: string; message?: string };
 const OVERRIDE_FIELD = /^lines\.(\d+)\.supplierOverride\.(reasonCode|note)$/;
 // The line fields a handoff (the assistant's purchase request draft) can fill.
-type PrefillLineField = "itemId" | "supplierId" | "quantity" | "estimatedUnitPrice" | "targetWarehouseId" | "needByDate" | "internalLineComment";
+type PrefillLineField = "itemId" | "itemNameSnapshot" | "unitSnapshot" | "supplierId" | "quantity" | "estimatedUnitPrice" | "targetWarehouseId" | "needByDate" | "internalLineComment";
 type LinePrefill = { origin: PrefillOrigin; intent: string | null; lineId: string; fields: Partial<Record<PrefillLineField, PrefillEntry>>; supplierChoices: SupplierChoice[] };
 // Today in the workspace timezone (America/New_York when unknown), not UTC.
 const today = (timeZone?: string) => todayInTimeZone(timeZone);
@@ -165,7 +165,9 @@ export default function CanonicalProcurementPanel({
     [loadError, setLoadError] = useState("");
   const [editing, setEditing] = useState<PR | null>(null),
     [errors, setErrors] = useState<FieldError[]>([]),
-    [saving, setSaving] = useState(false);
+    [saving, setSaving] = useState(false),
+    // The selectors a non-catalog handoff matches its unit and supplier against.
+    [loaded, setLoaded] = useState(false);
   const currencyInitialized = useRef(false);
   // The default date is first set before the workspace timezone loads, on the
   // browser's own day. Once the timezone is known, a default nobody changed,
@@ -217,6 +219,7 @@ export default function CanonicalProcurementPanel({
       setUnits(unitSelector.options);
       setCommodities(commoditySelector.options);
       setWarehouses(warehouseSelector.options);
+      setLoaded(true);
       setLoadError("");
     } catch (error: any) {
       setLoadError(error.message || "采购申请数据加载失败");
@@ -232,7 +235,30 @@ export default function CanonicalProcurementPanel({
   // from, and nothing is saved until the user saves.
   useEffect(() => {
     const handoff = location.key;
-    if (prefilled.current === handoff || !items.length) return;
+    if (prefilled.current === handoff) return;
+    // An item the workspace does not have (owner, 2026-11-04): one "Other"
+    // line with only what the user wrote, each field marked as theirs. The
+    // person adds the category and price, and saves.
+    if (searchParams.get("lineType") === "non_catalog") {
+      if (!loaded) return;
+      prefilled.current = handoff;
+      const plan = planNonCatalogPrefill({ query: Object.fromEntries(searchParams.entries()), units, suppliers, defaultDate });
+      const line: Line = {
+        ...makeLine(defaultDate),
+        sourceType: "non_catalog_item",
+        itemNameSnapshot: plan.values.itemNameSnapshot,
+        quantity: plan.values.quantity,
+        unitSnapshot: plan.values.unitSnapshot,
+        supplierId: plan.values.supplierId,
+        currency,
+        needByDate: plan.values.needByDate,
+        internalLineComment: plan.values.internalLineComment,
+      };
+      setLines([line]);
+      setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: [] });
+      return;
+    }
+    if (!items.length) return;
     const requestedItem = searchParams.get("itemId") || searchParams.get("sku");
     if (!requestedItem) return;
     const item = items.find(
@@ -288,7 +314,7 @@ export default function CanonicalProcurementPanel({
         setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: plan.supplierChoices });
       })
       .catch((error) => toast.error(copy(error.message || "供应商关系读取失败")));
-  }, [items, searchParams, location.key]);
+  }, [items, loaded, searchParams, location.key]);
   const prefillChip = (line: Line, field: PrefillLineField) =>
     prefill && line.lineId === prefill.lineId ? (
       <PrefillSourceChip entry={prefill.fields[field]} current={line[field] ?? ""} testId={`prefill-source-${field}`} />
@@ -879,6 +905,7 @@ export default function CanonicalProcurementPanel({
                     }
                     style={inputStyle}
                   />
+                  {prefillChip(line, "itemNameSnapshot")}
                 </Field>
                 <Field label={copy("品类")}>
                   {line.sourceType === "catalog_item" ? <input readOnly value={line.commodityId} style={inputStyle} /> : <select value={line.commodityId} onChange={(e) => patchLine(index, { commodityId: e.target.value })} style={inputStyle}><option value="">{copy("选择品类")}</option>{commodities.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
@@ -889,6 +916,7 @@ export default function CanonicalProcurementPanel({
                   <>
                     <Field label={copy("单位")}>
                       {line.sourceType === "catalog_item" ? <input readOnly value={line.unitSnapshot || ""} style={inputStyle} /> : <select value={line.unitSnapshot || ""} onChange={(e) => patchLine(index, { unitSnapshot: e.target.value })} style={inputStyle}><option value="">{copy("选择单位")}</option>{units.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
+                      {prefillChip(line, "unitSnapshot")}
                     </Field>
                     <Field label={copy("数量")}>
                       <input

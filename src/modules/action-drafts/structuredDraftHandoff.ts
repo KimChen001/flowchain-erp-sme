@@ -21,6 +21,10 @@ export function autoOpenDraftCard<T extends { autoOpen?: boolean; draftType?: st
 export function structuredDraftTarget(type: string, payload: Record<string, unknown> = {}, source?: string | null) {
   const query = Object.fromEntries(Object.entries({
     mode: "create",
+    // An item the workspace does not have: one "Other" line from the user's words.
+    lineType: payload.nonCatalog ? "non_catalog" : undefined,
+    description: payload.nonCatalog ? payload.description : undefined,
+    unit: payload.nonCatalog ? payload.unit : undefined,
     itemId: payload.itemIdOrSku,
     sku: payload.itemIdOrSku,
     quantity: payload.quantity,

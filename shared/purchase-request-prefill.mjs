@@ -58,6 +58,54 @@ export function orderSupplierChoices(suppliers = [], lastOrders = null) {
   })
 }
 
+// A non-catalog line ("Other") from a handoff: the assistant, when the user
+// asks for an item the workspace does not have (owner, 2026-11-04). Only what
+// the user wrote fills it, each field marked as theirs: the description, the
+// quantity, a unit or supplier only when it is one the workspace has, a date
+// and a reason. No SKU, price or category is ever filled, and a blank request
+// (no description) opens the line empty.
+// query: lineType=non_catalog, description, quantity, unit, suppliers, due,
+// reason, reasonFrom, origin. units: the unit options ({ id, code, label });
+// suppliers: the supplier options ({ id, name, supplierCode }).
+export function planNonCatalogPrefill({ query = {}, units = [], suppliers = [], defaultDate } = {}) {
+  const origin = prefillOrigin(query.origin)
+  const prefix = HANDOFF_REF_PREFIX[origin]
+  const tag = (ref) => (prefix ? { ref: `${prefix}:${ref}` } : {})
+  const fields = {}
+  const values = { itemNameSnapshot: '', quantity: '', unitSnapshot: '', supplierId: '', needByDate: text(defaultDate), internalLineComment: '' }
+  const named = (rows, keys, wanted) => (wanted ? rows.find((row) => keys.some((key) => text(row[key]).toLowerCase() === wanted)) : undefined)
+  const description = text(query.description).slice(0, 200)
+  if (description) {
+    values.itemNameSnapshot = description
+    fields.itemNameSnapshot = { source: 'record', ...tag('your_description'), value: description }
+  }
+  const quantity = positive(query.quantity)
+  if (quantity !== null) {
+    values.quantity = String(quantity)
+    fields.quantity = { source: 'record', ...tag('quantity'), value: values.quantity }
+  }
+  const unit = named(units, ['id', 'code', 'label'], text(query.unit).toLowerCase())
+  if (unit) {
+    values.unitSnapshot = text(unit.id)
+    fields.unitSnapshot = { source: 'record', ...tag('your_unit'), value: values.unitSnapshot }
+  }
+  const supplier = named(suppliers, ['id', 'supplierCode', 'name', 'supplierName'], (text(query.suppliers).split(',')[0] || '').trim().toLowerCase())
+  if (supplier) {
+    values.supplierId = text(supplier.id)
+    fields.supplierId = { source: 'record', ...tag('your_supplier'), value: values.supplierId }
+  }
+  if (isDay(text(query.due))) {
+    values.needByDate = text(query.due)
+    fields.needByDate = { source: 'record', ...tag('your_date'), value: values.needByDate }
+  }
+  const reason = text(query.reason).slice(0, 500)
+  if (reason) {
+    values.internalLineComment = reason
+    fields.internalLineComment = { source: 'template', ...tag(REASON_REFS[text(query.reasonFrom)] || 'reason'), value: reason }
+  }
+  return { origin, intent: null, values, fields, supplierChoices: [] }
+}
+
 // query: itemId, sku, quantity, reason, due, suppliers, origin, intent.
 // suppliers: the item's approved sources, preferred first, as the item
 // supplier API returns them (prices already masked for the reader).
