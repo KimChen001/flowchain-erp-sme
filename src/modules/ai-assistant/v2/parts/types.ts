@@ -62,7 +62,11 @@ export type KpiTilesProps = {
 export type ChoicesProps = { source?: string; promptCode: "pick_item" | "pick_supplier" | "pick_record"; options: PartRef[] };
 export type FollowupsProps = { questions: string[] };
 
-export type ApprovedSupplier = { id: string; name: string; preferred: boolean; leadTimeDays?: number | null; unitPrice?: number | null; currency?: string | null };
+// link "new": an active supplier of the workspace the item has not approved
+// yet; Create adds it as an approved supplier of the item first. Its lead
+// time and price are then the ones the user typed, or null.
+export type SupplierLink = "new";
+export type ApprovedSupplier = { id: string; name: string; preferred: boolean; leadTimeDays?: number | null; unitPrice?: number | null; currency?: string | null; link?: SupplierLink };
 export type PriceValue = { value: number | null; currency: string | null; source: "reference_price" | "masked" | "missing" };
 export type PrFormRow = {
   item: { id: string; sku: string; name: string; unit?: string | null };
@@ -70,7 +74,7 @@ export type PrFormRow = {
   safetyStock?: number | null;
   reorderPoint?: number | null;
   suggestedQuantity: { value: number | null; source: "user_named" | "reorder_gap" | "reorder_gap_raised_to_moq" | "cover_days" | "cover_days_raised_to_moq" | "none"; minimum?: number | null; coverDays?: number };
-  supplier: { id: string; name: string; source: "preferred" | "only_approved" | "user_named" } | null;
+  supplier: { id: string; name: string; source: "preferred" | "only_approved" | "user_named"; link?: SupplierLink } | null;
   suppliers?: ApprovedSupplier[];
   needByDate: { value: string; source: "lead_time" | "user_named" | "today"; leadTimeDays?: number | null; shortWeekOf?: string | null };
   orderByDate?: string | null;
@@ -86,6 +90,11 @@ export type PrFormProps = {
   lines: PrFormRow[];
   canCreate: boolean;
   departmentId?: string;
+  // The user may add approved suppliers to items: the form offers the
+  // workspace's other active suppliers, priced by default in workspaceCurrency
+  // when a supplier records no currency.
+  canLinkSuppliers?: boolean;
+  workspaceCurrency?: string;
 };
 // The request a form created, as the procurement routes return it.
 export type PrReceipt = { id: string; version: number; status: string };
