@@ -101,7 +101,7 @@ const COPY = {
   warehouses: ["Warehouses", "仓库"],
   warehousesNote: ["Warehouses holding stock you can see", "你可查看且有库存的仓库"],
   searchBalances: ["Inventory search", "库存查询"],
-  searchBalancesSubtitle: ["Only posted stock is shown. Search by SKU or item, warehouse and stock status.", "只显示已过账的库存。可按 SKU 或物料、仓库和库存状态查询。"],
+  searchBalancesSubtitle: ["Only posted stock is shown. Search by SKU or item, warehouse and stock status.", "仅显示已过账的库存记录。可按 SKU 或物料、仓库和库存状态查询。"],
   searchWarnings: ["Warning search", "预警查询"],
   searchWarningsSubtitle: ["Stock below safety stock or at the reorder point, judged over every location of the item.", "按物料在所有库位的合计可用量，判断是否低于安全库存或达到再订货点。"],
   searchMovements: ["Movement search", "流水查询"],
@@ -581,8 +581,8 @@ export default function InventoryPage({
                         {warehouseName(row.warehouseId) || "—"}
                         <div className="text-[11px]" style={{ color: A.sub }}>{row.location || "—"}</div>
                       </td>
-                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityIn || 0) ? "#0f766e" : A.gray2 }}>{Number(row.quantityIn || 0) ? `+${formatQuantity(row.quantityIn)}` : "—"}</td>
-                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityOut || 0) ? A.label : A.gray2 }}>{Number(row.quantityOut || 0) ? `−${formatQuantity(row.quantityOut)}` : "—"}</td>
+                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityIn || 0) ? "#0f766e" : A.gray2 }}>{Number(row.quantityIn || 0) ? formatQuantity(row.quantityIn) : "—"}</td>
+                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityOut || 0) ? A.label : A.gray2 }}>{Number(row.quantityOut || 0) ? formatQuantity(row.quantityOut) : "—"}</td>
                       <td className={tdNowrapClass} style={{ color: A.sub }}>{formatDateTimeInTimeZone(row.date, locale, timezone)}</td>
                       <td className={tdNowrapClass}><StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} /></td>
                     </tr>
