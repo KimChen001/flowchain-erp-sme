@@ -25,7 +25,8 @@ const list = buildReorderList({
     { sku: "RL-A", onHand: 110, reserved: 10, incomingLines: [{ purchaseOrderId: "PO-0039", orderNumber: "PO-0039", lineId: "L1", remaining: 30, dueDay: "2026-10-08" }], incomingExcluded: [{ purchaseOrderId: "PO-0040", orderNumber: "PO-0040", lineId: "L2", unit: "CASE", remaining: 5 }], dataLimitations: [] },
     { sku: "RL-B", onHand: 1, reserved: 0, incomingLines: [], incomingExcluded: [], dataLimitations: [] },
     { sku: "RL-C", onHand: 5, reserved: 0, incomingLines: [], incomingExcluded: [], dataLimitations: [] },
-    { sku: "RL-D", onHand: 400, reserved: 0, incomingLines: [], incomingExcluded: [], dataLimitations: [] },
+    // PO-0038 was due before today: still counted, and flagged late.
+    { sku: "RL-D", onHand: 400, reserved: 0, incomingLines: [{ purchaseOrderId: "PO-0038", orderNumber: "PO-0038", lineId: "L3", remaining: 5, dueDay: "2026-10-01" }], incomingExcluded: [], dataLimitations: [] },
     { sku: "RL-E", onHand: 0, reserved: 0, incomingLines: [], incomingExcluded: [], dataLimitations: [] },
   ],
   shipmentLines: [...shipments("ITEM-A", 8, 9), ...shipments("ITEM-D", 8, 9), { itemId: "ITEM-A", unit: "CASE", quantity: 1, postedAt: "2026-10-01T15:00:00Z" }],
@@ -53,7 +54,7 @@ test("the reorder list ranks by order-by date and prints every input, in English
   const pageRoot = page.getByTestId("reorder-list-page");
   await expect(pageRoot.getByRole("heading", { name: "Reorder list" })).toBeVisible();
   await expect(page.getByTestId("reorder-list-scope")).toContainText("All warehouses; transfers not considered");
-  await expect(page.getByTestId("reorder-list-horizon")).toContainText("due after an item's order-by date are not counted");
+  await expect(page.getByTestId("reorder-list-horizon")).toContainText("Every open purchase order line counts as incoming, whatever its due date");
   await expect(page.getByTestId("reorder-list-no-reorder-point")).toContainText("1 item has no reorder point and is not checked");
   // Each item without a reorder point links to its own record.
   await expect(page.getByTestId("reorder-list-no-reorder-point").getByRole("link", { name: "RL-B" })).toHaveAttribute("href", "/app/master-data/items/ITEM-B");
@@ -88,6 +89,8 @@ test("the reorder list ranks by order-by date and prints every input, in English
   await expect(d.getByTestId("reorder-supplier")).toContainText("MOQ 2 CASE");
   await expect(d.getByTestId("reorder-supplier")).toContainText("Lead time 1 day");
   await expect(d.getByTestId("reorder-flags")).toContainText("Purchase unit differs (CASE); enter the quantity");
+  await expect(d.getByTestId("reorder-flags")).toContainText("PO-0038 was due 2026-10-01: late, counted; confirm with the supplier");
+  await expect(d).toContainText("405 pcs");
   await expect(pageRoot).not.toContainText(/[㐀-鿿]/);
 
   // The supplier filter keeps only that supplier's items.
@@ -126,6 +129,8 @@ test("the reorder list is available in Chinese and says when nothing needs order
   await open(page, "zh-CN");
   await expect(page.getByTestId("reorder-list-page").getByRole("heading", { name: "补货清单" })).toBeVisible();
   await expect(page.getByTestId("reorder-row-RL-C")).toContainText("立即下单");
+  await expect(page.getByTestId("reorder-list-horizon")).toContainText("所有未到货的采购订单行都计入在途");
+  await expect(page.getByTestId("reorder-row-RL-D").getByTestId("reorder-flags")).toContainText("PO-0038 应于 2026-10-01 到货，已逾期，已计入；请与供应商确认");
   await page.unrouteAll();
   await open(page, "en-US", { ...list, rows: [], suppliers: [], summary: { ...list.summary, listed: 0, orderNow: 0 } });
   await expect(page.getByTestId("reorder-list-empty")).toContainText("No items to reorder yet");

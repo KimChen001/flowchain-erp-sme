@@ -162,8 +162,9 @@ export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, e
         available: stock?.available ?? null,
         openPurchaseOrderQuantity: stock ? round(incomingLines.reduce((sum, line) => sum + Number(line.remaining), 0)) : null,
         // Each committed line with what is still to receive, the day it is
-        // due, its price, and whether the reorder list counts it in the stock
-        // position (a line due after the item's order-by day is left out).
+        // due and whether that day has passed, its price, and whether the
+        // reorder list counts it in the stock position: every open line, late
+        // or not (null when the list has no row for the item).
         openPurchaseOrderLines: incomingLines.map((line, index) => {
           const recorded = purchaseLineById.get(line.lineId)
           return {
@@ -172,10 +173,11 @@ export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, e
             status: recorded?.purchaseOrder.status || null,
             remaining: Number(line.remaining),
             dueDay: line.dueDay || null,
+            late: Boolean(line.dueDay) && line.dueDay < today,
             unitPrice: number(recorded?.unitPrice),
             currency: recorded?.purchaseOrder.currency || null,
             // The reorder list lists the same lines in the same order.
-            countedInPosition: reorderRow?.incomingLines[index]?.counted ?? null,
+            countedInPosition: reorderRow?.incomingLines[index] ? true : null,
           }
         }),
         // As recorded on the item; null when none is (the reorder list does not check the item then).
@@ -235,6 +237,7 @@ export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, e
       demandWindow: { firstDay: windowStart, lastDay: addCalendarDays(today, -1), days: DEMAND_WINDOW_DAYS, minShipmentDays: MIN_SHIPMENT_DAYS },
       notes: [
         'Quantities are in each item\'s stock unit. Open purchase order quantity is the unreceived remainder of committed lines (approved, issued, partially received) in that unit.',
+        'The reorder list\'s stock position is on hand - reserved + every open purchase order line, whatever its due day. A line past its due day is marked late and still counts.',
         'Minimum order quantity and lead time are what the item-supplier link records; null means not recorded.',
         'Last purchase price is the most recent committed purchase order line by order date, in the order\'s currency.',
         'Transfers are not considered; stock is summed over every warehouse.',

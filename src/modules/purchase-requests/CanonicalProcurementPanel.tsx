@@ -80,6 +80,8 @@ type PR = {
   status: string;
   version: number;
   requesterId: string;
+  // The requester's name; the id only when the user is not known.
+  requesterName?: string;
   departmentId: string;
   defaultCurrency: string;
   defaultNeedByDate: string;
@@ -598,7 +600,7 @@ export default function CanonicalProcurementPanel({
             <div>
               <h1 className="text-lg font-semibold">{selected.id}</h1>
               <p className="mt-1 text-xs" style={{ color: A.sub }}>
-                {copy(selected.status)} · v{selected.version} · {selected.requesterId}
+                {copy(selected.status)} · v{selected.version} · {selected.requesterName || selected.requesterId}
               </p>
             </div>
             <strong>
@@ -1032,7 +1034,7 @@ export default function CanonicalProcurementPanel({
                         {pr.id}
                       </EntityLink>
                     </td>
-                    <td className="p-3">{pr.requesterId}</td>
+                    <td className="p-3">{pr.requesterName || pr.requesterId}</td>
                     <td className="p-3">
                       {copy(pr.status)}
                       <SupplierOverrideCount count={pr.lines.filter((line) => hasSupplierOverride(line.supplierOverride)).length} testId="pr-row-supplier-overrides" />
