@@ -46,12 +46,16 @@ export const AI_PROPOSE_PURCHASE_REQUEST = 'propose_purchase_request'
 // "with a different quantity"): on 2026-11-04 it opened the form at the
 // suggested quantity. The answer asks for the value instead.
 // The live chip read "为 LDM-002 开采购申请，数量另改".
-export const AI_NEEDS_VALUE = /(?:改|换|调整|修改|变更|另定|另改|自定义?)[^，。,.;；?？!！\d]{0,12}?(?:数量|日期)|数量(?:另改|另定|再定|待定|另行|自定|我来定)|(?:其他|别的|不同(?:的)?)(?:数量|日期)|\b(?:different|another|other|custom|new) (?:quantity|amount|date)\b|\b(?:change|adjust) the (?:quantity|amount|date)\b/i
+// Live on 2026-11-04 also: "Change the LDM-002 quantity before opening" and
+// "为 LDM-002 把数量改为其他数字".
+export const AI_NEEDS_VALUE = /(?:改|换|调整|修改|变更|另定|另改|自定义?)[^，。,.;；?？!！\d]{0,12}?(?:数量|日期)|(?:数量|日期)[^，。,.;；?？!！\d]{0,6}?(?:改|换|调整|修改|变更|另定|再定|待定|另行|自定|我来定)|(?:其他|别的|不同(?:的)?|另一个)(?:数量|日期|数字|数)|\b(?:different|another|other|custom|new|own) (?:quantity|amount|qty|number|date)\b|\b(?:change|adjust|edit|set|modify|update|pick|choose)\b[^.?!\d]{0,24}?\b(?:quantity|amount|qty|date)\b/i
+// Wording that keeps the value ("数量不用改", "don't change the quantity").
+const KEEPS_VALUE = /(?:不用|不必|无需|不需要|别|不)(?:再)?(?:改|换|调整|修改|变)|数量不变|\b(?:don['’]?t|do not|no need to|without)\s+(?:change|adjust|edit|modify)|\bkeep the (?:quantity|amount|date)\b/i
 // Such a request without the value: the digits of a SKU or a record number
-// ("LDM-002") are not one.
+// ("LDM-002") are not one, and the space it leaves is one space.
 export function aiNeedsValue(value) {
-  const said = text(value).replace(/[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-?\d+[A-Za-z0-9]*/g, ' ')
-  return AI_NEEDS_VALUE.test(said) && !/\d/.test(said)
+  const said = text(value).replace(/[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-?\d+[A-Za-z0-9]*/g, ' ').replace(/\s+/g, ' ')
+  return AI_NEEDS_VALUE.test(said) && !KEEPS_VALUE.test(said) && !/\d/.test(said)
 }
 
 // The tool, for a user who may draft (the rules' own test, facts.visibility).
@@ -192,14 +196,26 @@ export async function runAiProposal(name, args = {}, { facts, words = '', questi
   const item = itemOf(facts, args.sku)
   if (!item) return { ok: false, error: 'not_found', details: ['No item with this SKU is readable. Search for it or ask the user.'] }
   if (!mentions(words, item.sku)) return { ok: false, error: 'item_not_named', details: ['The user has not named or chosen this item. Ask which item they want, offering the items at risk or on the reorder list as choices.'] }
-  // "为 LDM-002 改数量后开采购申请" with no number: ask how many, open nothing
-  // (2026-11-04: the chip opened the form at the suggested quantity).
-  if (aiNeedsValue(question)) {
-    return { ok: true, result: { opens: null, needsValue: true, sku: item.sku, note: 'Nothing opened: the user wants a different quantity or date but gave no number. Ask for it in one short line ("How many?" / "要订多少？") and open nothing.' } }
-  }
   const row = await reorderRowOf(item.sku, { facts, context })
   const suggested = row?.requestQuantity > 0 ? row.requestQuantity : null
   const leadDate = Number.isInteger(row?.leadTimeDays) && isDay(today) ? addCalendarDays(today, row.leadTimeDays) : null
+  // "为 LDM-002 改数量后开采购申请" with no number: ask how many, open nothing
+  // (2026-11-04: the chip opened the form at the suggested quantity). The
+  // suggestion comes back too, so an answer that names it as the reference
+  // is checked against this result.
+  if (aiNeedsValue(question)) {
+    return {
+      ok: true,
+      result: {
+        opens: null,
+        needsValue: true,
+        sku: item.sku,
+        ...(suggested !== null ? { suggestion: { quantity: suggested, unit: row.unit || item.unit || null, supplier: row.supplier || null, needByDate: leadDate, orderByDate: row.orderByDate ?? null } } : {}),
+        note: 'Nothing opened: the user wants a different quantity or date but gave no number. Ask for it in one short line ("How many?" / "要订多少？") and open nothing. You may name the suggestion as the reference.',
+        ref: aiToolRef('item', item.itemId || item.sku, item.sku),
+      },
+    }
+  }
   const notes = []
 
   // Clarify, then fill: a request to order an item the reorder list suggests a

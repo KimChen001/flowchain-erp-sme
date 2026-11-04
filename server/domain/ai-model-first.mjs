@@ -135,7 +135,7 @@ export const AI_MODEL_FIRST_SYSTEM = [
   '- When the user says an earlier answer did something ("why did you default to X"), the user may be mistaken: check that answer in earlierTurns first. If it did, own it in one sentence. If it did not (for example it only listed X as a choice and asked), say so in one neutral sentence, without apologising and without arguing ("Last time I did not choose X for you; I listed it as one item at risk and asked which you want"), then go on with what the user needs. Never admit to or apologise for something earlierTurns do not show. Example: the user asks "你为什么默认是LDM-001", and your earlier answer asked which item and only listed LDM-001 as one choice; answer "上一轮我没有替你选 LDM-001，只是把它列为一个可参考的风险物料，并请你指定。" and continue. The same holds for what the user says they said: when they say they did not ask for something ("我没有说什么PO啊"), check their questions in earlierTurns; if they did ask for it, quote their words in one neutral sentence ("你上一轮说的是"帮我起草一份PO"") and go on. userSaidEarlier, when given, is that question, found for you: quote it. Never agree that the user did not say what they said, never call it your wording, and never apologise for a choice that was not made.',
   '- earlierTurns are this conversation so far: the user\'s questions and the assistant\'s answers, written by you or by FlowChain\'s standard rules. When the user changes what they want now (another item, a new order, "not that one"), follow it and do not repeat the earlier answer. A statement about what an earlier answer did is not such a change: check it as above. Numbers, dates and record numbers in earlierTurns are not sources: to state one, read it again in this answer with the tool that gave it (a reorder figure from reorder_list), so it keeps its basis.',
   '- You never save or change records yourself. In FlowChain a purchase request comes first and becomes a purchase order after approval. When the user wants to order or replenish something (帮我下单, order it, 补货), use propose_purchase_request if it is offered: it opens the purchase request form filled in, and the user checks it and submits it on the page. Never assume the item: if the user has not named it ("帮我起草一份PR", "新的PR 需要做", "Draft a purchase request"), read the reorder list (reorder_list) and ask which item, even when only one needs ordering. Show the items it says to order now (orderNow), else the soonest on it, in a compact table (item, order-by date, suggested quantity, supplier), soonest first, and ask which one, naming the first as the suggestion. Items not due yet are not choices and not table rows (one line may say when the next is due), unless the user named them or asked about them. Use no figure you have not read in this answer; an item its open orders already cover is not a choice (say so in a line if it matters). Make followUps one request per choice in the user\'s words ("为 LDM-002 开采购申请", "Order LDM-002"), so a click asks for that item. Never present one item as what the user asked for.',
-  '- Once the item is named, call propose_purchase_request with the sku and only what the user gave: quantity, supplier, needByDate, and reason copied from their words. When the user has not settled the quantity yet, it returns the reorder list\'s suggestion (needsConfirmation) instead of opening the form: offer it as the default and ask one short question, whether to go ahead or change anything, and what the order is for. Example: "建议向 {supplier} 订 {quantity}，需求日期 {needByDate}。按这个开采购申请吗？也可以告诉我用途，或要改的数量、日期。" The need-by date (需求日期) is needByDate, today plus the lead time; orderByDate is the last day to order (最晚下单日); never give one as the other. When the user answers (好的, 可以, a purpose such as "备货，给下周的客户订单用", a change), call it again with what they gave; the form opens filled in from their answer and the records, and the result says what it holds. Say that in one line, and that they check it and submit it on the page. pendingOrder, when given, is the order your previous answer offered: a reply with a purpose, a reason, a yes or a change confirms it, unless it clearly asks about something else; one extra line may cover anything else their words touch. Never make a followUp that needs a value a click cannot carry ("改数量后开采购申请", "with a different quantity"): ask for the value in the answer instead.',
+  '- Once the item is named, call propose_purchase_request with the sku and only what the user gave: quantity, supplier, needByDate, and reason copied from their words. When the user has not settled the quantity yet, it returns the reorder list\'s suggestion (needsConfirmation) instead of opening the form: offer it as the default and ask one short question, whether to go ahead or change anything, and what the order is for. Example: "建议向 {supplier} 订 {quantity}，需求日期 {needByDate}。按这个开采购申请吗？也可以告诉我用途，或要改的数量、日期。" The need-by date (需求日期) is needByDate, today plus the lead time; orderByDate is the last day to order (最晚下单日); never give one as the other. When the user answers (好的, 可以, a purpose such as "备货，给下周的客户订单用", a change), call it again with what they gave; the form opens filled in from their answer and the records, and the result says what it holds. Say that in one line, and that they check it and submit it on the page. pendingOrder, when given, is the order your previous answer offered: a reply with a purpose, a reason, a yes or a change confirms it, unless it clearly asks about something else; one extra line may cover anything else their words touch. Never make a followUp that needs a value a click cannot carry ("改数量后开采购申请", "with a different quantity"), nor one with a quantity or date that neither the user nor a tool gave ("改订 100 pcs"): ask for the value in the answer instead.',
   '- An item the workspace does not have (a new item, "not in the inventory", one search_records cannot find): it is ordered on an Other (non-catalog) line. If the user has not said what it is, ask once, in one short line, for what it is and how many (supplier and need-by date if they know them), and make the first followUp "Open a blank request for a new item" (打开空白的新物料采购申请). When they ask for that, call propose_purchase_request with newItem: true alone. When they say what it is and search_records does not find it, it is a new item: do not ask whether it is new, call it at once with newItem: true and the description, quantity and unit in their own words, plus a supplier, needByDate or reason only if they gave them, even without a SKU or supplier; never a SKU, a price or a supplier they did not name. Do not ask again for what they already said, and never offer a followUp that repeats your question. Keeping the item in the catalog is done under Items; say so in a line if it helps.',
   '- Say what happens (for example "the purchase request form is open, filled in, for you to check and submit"), not what you cannot do. If propose_purchase_request is not offered, the user\'s role cannot create purchase requests; say so and that a buyer can. Submitting, approving, paying, sending, issuing, cancelling and deleting are done by the user in the app: say where, and never call it a system limit.',
   '- Never say you did one of those things. These words read as if someone acted, so never write them, not even about a record: "was", "were", "has been" or "have been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消, except right after a status label. Give the state as a status instead: "status: approved", "not yet posted"; in Chinese put the word right after 状态： (状态：已过账, 过账状态：已过账, 状态：已取消, 状态：已批准), or write 未过账. To tell the user to mark an order issued, write "mark it issued" (在订单页面标记为下达), never 标记为已下达.',
@@ -359,6 +359,8 @@ export function parseAiModelFirstAnswer(raw) {
 
 // Everything the panel shows of an answer, as one text for the grounding
 // check: the basis and the follow-up chips are checked as the answer is.
+// What makes a chip a guess: a value no tool returned and the user did not give.
+const GUESSED_IN_CHIP = new Set(['number', 'date', 'record'])
 const checkedAnswer = (answer) => ({ ...answer, answer: [answer.answer, ...array(answer.basis), ...array(answer.followUps)].join('\n') })
 
 const toolContent = (outcome) => {
@@ -496,12 +498,17 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
     }
     // The final answer, checked against this answer's tool results.
     if (!retried) progress({ step: 'checking' })
-    const answer = parseAiModelFirstAnswer(reply.text)
+    const conversation = turns.map((turn) => `${turn.question}\n${turn.answer}`).join('\n')
+    const parsed = parseAiModelFirstAnswer(reply.text)
+    // A chip with a figure, date or record number no tool returned ("LDM-002
+    // 改订 100 pcs", "把需求日期改为 2026-11-14") is a guess put in the user's
+    // mouth: the chip is dropped, not the answer (2026-11-04: such chips,
+    // kept on the retry, sent two answers back to the rules).
+    const answer = parsed && { ...parsed, followUps: array(parsed.followUps).filter((chip) => !checkAiModelFirstGrounding({ answer: { title: '', answer: chip }, results, refs, question, conversation, facts, today }).problems.some((problem) => GUESSED_IN_CHIP.has(problem.kind))) }
     // Two facts the model got wrong on 2026-11-04, checked in code and sent
     // back once each: conceding that the user did not say what they said, and
     // giving the last day to order as the need-by date.
-    if (answer && saidEarlier && !checkedSaid && CONCESSION.test(`${answer.title}
-${answer.answer}`)) {
+    if (answer && saidEarlier && !checkedSaid && CONCESSION.test(`${answer.title}\n${answer.answer}`)) {
       checkedSaid = true
       stats.corrected = [...(stats.corrected || []), 'premise']
       transcript.push({ role: 'user', text: SAID_RETRY(saidEarlier) })
@@ -515,7 +522,7 @@ ${answer.answer}`)) {
       continue
     }
     const check = answer
-      ? checkAiModelFirstGrounding({ answer: checkedAnswer(answer), results, refs, question, conversation: turns.map((turn) => `${turn.question}\n${turn.answer}`).join('\n'), facts, today, limitClaims: tools.some((tool) => tool.name === AI_PROPOSE_PURCHASE_REQUEST) })
+      ? checkAiModelFirstGrounding({ answer: checkedAnswer(answer), results, refs, question, conversation, facts, today, limitClaims: tools.some((tool) => tool.name === AI_PROPOSE_PURCHASE_REQUEST) })
       : { ok: false, problems: [{ kind: 'format', value: 'answer' }], counts: { format: 1 }, checked: null }
     if (!retried) { stats.grounding.first = check.counts; stats.grounding.checked = check.checked }
     else stats.grounding.retry = check.counts
@@ -603,9 +610,6 @@ export function aiModelFirstOrderChoices(followUps, facts) {
   return choices
 }
 
-// The answer as the panel renders it (AiResponseV2): the model's headline and
-// text, the records it relied on as evidence and links (built by the server
-// from the refs the tools returned), and the label.
 // The answer's text, with two things the model got wrong on 2026-11-04 set
 // right in code. Only removing lines or adding the user's own words, so
 // nothing unchecked is added:
@@ -630,8 +634,28 @@ export function aiModelFirstShownAnswer({ answer, query = '', turns = [], result
   return shown
 }
 
+// The answer as the panel renders it (AiResponseV2): the model's headline and
+// text, the records it relied on as evidence and links (built by the server
+// from the refs the tools returned), and the label.
 export function presentAiModelFirstAnswer({ answer, refs, stats, facts, language, query, proposals = [], results = [], turns = [], pendingOrder = null }) {
-  const cited = aiModelFirstCitedRefs(answer.records, refs)
+  // The chips, without one that needs a value a click cannot carry ("a
+  // different quantity") or that offers an item not due (2026-11-04).
+  const followUps = aiModelFirstFollowUps(answer.followUps, { results, facts, question: query, turns })
+  const orderChoices = aiModelFirstOrderChoices(followUps, facts)
+  const shown = aiModelFirstShownAnswer({ answer, query, turns, results, facts, proposals, language })
+  // An answer about ordering: what it offers is in its text, its choices and
+  // its form (2026-11-04).
+  const ordering = proposals.length > 0 || orderChoices.length > 0 || Boolean(pendingOrder) || stats.calls.some((call) => call.tool === 'reorder_list' || call.tool === AI_PROPOSE_PURCHASE_REQUEST)
+  const offered = new Set([
+    ...[...`${text(answer.title)}\n${shown}`.matchAll(SKU_TOKEN)].map((match) => match[0].toLowerCase()),
+    ...orderChoices.map((choice) => text(choice.sku).toLowerCase()),
+    ...proposals.map((proposal) => text(proposal.sku).toLowerCase()),
+    text(pendingOrder?.sku).toLowerCase(),
+  ].filter(Boolean))
+  // There, an item named nowhere in it is no bare record chip: "Draft a
+  // purchase request" left "LDM-001 LDM-006" under the answer, and a click
+  // opened the item's page (the owner's complaint of 2026-11-03).
+  const cited = aiModelFirstCitedRefs(answer.records, refs).filter((ref) => !ordering || ref.type !== 'item' || offered.has(text(ref.label).toLowerCase()))
   // A cited document names the sections this answer's searches returned from
   // it (the last part of each heading), so the reader sees where to look.
   const sections = new Map()
@@ -650,10 +674,6 @@ export function presentAiModelFirstAnswer({ answer, refs, stats, facts, language
   }))
   const checked = [...new Set(stats.calls.filter((call) => call.status === 'ok').map((call) => TOOL_SOURCES[call.tool]).filter(Boolean))]
   const label = aiSkillText('answer.source_model_first', language)
-  // The chips, without one that needs a value a click cannot carry ("a
-  // different quantity") or that offers an item not due (2026-11-04).
-  const followUps = aiModelFirstFollowUps(answer.followUps, { results, facts, question: query, turns })
-  const orderChoices = aiModelFirstOrderChoices(followUps, facts)
   // What the role cannot see, and lists cut short, said by the server as the
   // skills' answers say it, whatever the model wrote.
   const dataLimitations = aiSkillLimitations(facts || {}, language).filter((row) => LOOP_LIMITATIONS.has(row.code))
@@ -670,7 +690,7 @@ export function presentAiModelFirstAnswer({ answer, refs, stats, facts, language
     checkedLabel: checked.length ? aiSkillText('answer.checked', language, { sources: aiSkillList(checked.map((source) => aiSkillText(`source.${source}`, language)), language) }) : '',
     figures: [],
     scope: { module: 'workspace', timeRange: facts?.asOf || undefined, dataScopeLabel: aiSkillText('scope.label', language) },
-    conclusion: { title: answer.title || answer.answer.split(/(?<=[.!?。！？])\s*/u)[0].slice(0, 80), summary: aiModelFirstShownAnswer({ answer, query, turns, results, facts, proposals, language }), severity: 'info', confidence: 'medium' },
+    conclusion: { title: answer.title || answer.answer.split(/(?<=[.!?。！？])\s*/u)[0].slice(0, 80), summary: shown, severity: 'info', confidence: 'medium' },
     // What stands behind the answer, shown folded under its sources line.
     answerBasis: array(answer.basis),
     keyEvidence,
@@ -709,7 +729,6 @@ export function presentAiModelFirstAnswer({ answer, refs, stats, facts, language
   // In an answer about ordering, an item's "chase the PO that brings it"
   // repeated the item's chip and read against "order it now" (2026-11-04):
   // items keep no next step there; an overdue order stays in the text.
-  const ordering = proposals.length > 0 || orderChoices.length > 0 || Boolean(pendingOrder) || stats.calls.some((call) => call.tool === 'reorder_list' || call.tool === AI_PROPOSE_PURCHASE_REQUEST)
   return {
     ...withSteps,
     keyEvidence: withSteps.keyEvidence.map((item) => {

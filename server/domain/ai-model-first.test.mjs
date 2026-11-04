@@ -1127,3 +1127,65 @@ test('the live "different quantity" chip wordings need a value; a reply that ask
   assert.equal(outcome.stats.nudged, undefined)
   assert.equal(stub.requests.length, 2)
 })
+
+// The live check of #254 (2026-11-04).
+test('more "different quantity" wordings need a value; wording that keeps it does not', () => {
+  for (const chip of ['Change the LDM-002 quantity before opening', 'Change the LDM-002 quantity', '为 LDM-002 把数量改为其他数字', 'LDM-002 用另一个数', 'Edit the LDM-002 quantity first', 'Open the request for LDM-002 with a different quantity', 'LDM-002 的数量我要换一下']) assert.equal(aiNeedsValue(chip), true, chip)
+  for (const chip of ['数量不用改，直接开 LDM-002 的采购申请', "Don't change the LDM-002 quantity, open it", 'Keep the quantity and open LDM-002', 'Set the LDM-002 quantity to 80', 'What quantity does the reorder list suggest for LDM-002?']) assert.equal(aiNeedsValue(chip), false, chip)
+})
+
+test('the needs-value answer has the suggestion to name as its reference', async () => {
+  const { facts, context, today } = await reorderFacts()
+  const stub = scripted([toolUse([['propose_purchase_request', { sku: 'LDM-001' }]]), final({ title: '要订多少？', answer: '- 补货清单建议 150 pcs，需求日期 2026-10-11。要订多少？', records: [{ type: 'item', id: 'LDM-001' }] })])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts, context, today, language: 'zh-CN', question: 'Open the request for LDM-001 with a different quantity', pendingOrder: { sku: 'LDM-001', quantity: 150 } }))
+  assert.equal(outcome.status, 'answered')
+  assert.equal(outcome.stats.grounding.outcome, 'passed')
+  assert.deepEqual(outcome.proposals, [])
+  const result = toolResult(stub, 1, 'propose_purchase_request')
+  assert.deepEqual([result.needsValue, result.suggestion.quantity, result.suggestion.needByDate], [true, 150, '2026-10-11'])
+})
+
+test('in an answer about ordering, an item named nowhere in it is no bare record chip', async () => {
+  const { facts } = await factsFor()
+  const refOf = (sku) => { const item = facts.inventory.rows.find((row) => row.sku === sku); return { type: 'item', id: item.itemId || item.sku, label: sku } }
+  const refs = ['LDM-001', 'LDM-002', 'LDM-003'].map(refOf)
+  const answer = { title: '要订哪个物料？', answer: '- LDM-002 今天该下单。', followUps: ['为 LDM-002 开采购申请'], records: refs.map((ref) => ({ type: 'item', id: ref.label })) }
+  const ordering = presentAiModelFirstAnswer({ answer, refs, stats: { calls: [{ tool: 'reorder_list', status: 'ok' }] }, facts, language: 'zh-CN', query: 'Draft a purchase request' })
+  assert.deepEqual(ordering.keyEvidence.map((row) => row.entityLabel), ['LDM-002'])
+  assert.deepEqual(ordering.navigationLinks.map((row) => row.entityType), ['item'])
+  // Any other answer keeps every record it cited.
+  const plain = presentAiModelFirstAnswer({ answer: { ...answer, followUps: ['LDM-002 的在途订单有哪些？'] }, refs, stats: { calls: [] }, facts, language: 'zh-CN', query: 'LDM-002 的库存怎么样？' })
+  assert.deepEqual(plain.keyEvidence.map((row) => row.entityLabel), ['LDM-001', 'LDM-002', 'LDM-003'])
+})
+
+test('a reorder row not due has no need-by date', async () => {
+  const scenario = aiSkillScenario()
+  const items = scenario.data.items.map((row) => ({ ...row, status: 'active', reorderPoint: row.sku === 'LDM-001' ? 200 : row.reorderPoint }))
+  const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
+  const supplierLinks = [{ id: 'ITEM-001::SUP-001', payload: { itemId: 'ITEM-001', supplierId: 'SUP-001', preferred: true, active: true, approved: true, leadTimeDays: 12, minimumOrderQuantity: 150, referencePrice: 95, currency: 'USD' } }]
+  const build = (input) => buildReorderList({ allocationRows: input.allocationRows, items, supplierLinks, suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders })
+  const notDue = { read: async (input) => { const list = await build(input); return { ...list, rows: list.rows.map((row) => ({ ...row, orderNow: false })) } } }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList: notDue } })
+  const facts = await readAiSkillFacts(context)
+  const row = (await runAiReadTool('reorder_list', {}, { facts, context })).result.rows[0]
+  assert.deepEqual([row.sku, row.orderNow, row.needByDate], ['LDM-001', false, null])
+})
+
+test('a chip with a quantity or date nobody gave is dropped, and the answer stands', async () => {
+  const { facts, context, today } = await reorderFacts()
+  const stub = scripted([
+    toolUse([['reorder_list', { sku: 'LDM-001' }]]),
+    final({ title: '要订多少？', answer: '- 补货清单建议 150 pcs。要订多少？', followUps: ['LDM-001 改订 300 pcs', '按建议的 150 pcs 开采购申请'], records: [] }),
+  ])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts, context, today, language: 'zh-CN', question: '为 LDM-001 改数量后开采购申请' }))
+  assert.equal(outcome.status, 'answered')
+  assert.equal(outcome.stats.grounding.outcome, 'passed')
+  assert.deepEqual(outcome.answer.followUps, ['按建议的 150 pcs 开采购申请'])
+  assert.equal(stub.requests.length, 2)
+  const dated = scripted([
+    toolUse([['reorder_list', { sku: 'LDM-001' }]]),
+    final({ title: '已建议', answer: '- 补货清单建议 150 pcs。', followUps: ['把 LDM-001 的需求日期改为 2026-12-14'], records: [] }),
+  ])
+  const datedOutcome = await runAiModelFirstLoop(loop(dated, { facts, context, today, language: 'zh-CN', question: 'LDM-001 补货清单建议订多少？' }))
+  assert.deepEqual([datedOutcome.status, datedOutcome.answer.followUps], ['answered', []])
+})

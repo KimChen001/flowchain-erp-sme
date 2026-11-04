@@ -236,7 +236,7 @@ export default function CanonicalProcurementPanel({
   // A filled-in request keeps the header's default date on its line's date:
   // on 2026-11-04 the header said today while the line said 11-21.
   const followLineDate = (day: string) => {
-    if (/^d{4}-d{2}-d{2}$/.test(day)) setDefaultDate(day);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) setDefaultDate(day);
   };
   useEffect(() => {
     const handoff = location.key;

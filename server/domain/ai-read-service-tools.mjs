@@ -84,7 +84,7 @@ const NAMED_RECORDS = new Set(['supplier', 'customer', 'warehouse'])
 // from the row's supplier, never from the row itself.
 const reorderList = defineAiTool({
   name: 'reorder_list',
-  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Flags name late lines and lines it could not count. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate is when the goods would arrive if ordered today, today plus the lead time (需求日期). Filter by SKU or supplier. Transfers between warehouses are not considered.',
+  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Flags name late lines and lines it could not count. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. Transfers between warehouses are not considered.',
   parameters: {
     sku: { type: 'string', description: 'Only this SKU.' },
     supplier: { type: 'string', description: 'Only items whose preferred supplier is this one: a name or code.' },
@@ -118,7 +118,9 @@ const reorderList = defineAiTool({
       // When an order placed today would arrive (the request's need-by date),
       // beside orderByDate, the last day to order: on 2026-11-04 an answer
       // gave the order-by day as the need-by day.
-      needByDate: Number.isInteger(row.supplier?.leadTimeDays) && /^\d{4}-\d{2}-\d{2}$/.test(text(facts.today)) ? addCalendarDays(facts.today, row.supplier.leadTimeDays) : null,
+      // Only on a row to order now: for one not due, today plus the lead time
+      // fell before its order-by day plus the lead time and read as wrong.
+      needByDate: row.orderNow === true && Number.isInteger(row.supplier?.leadTimeDays) && /^\d{4}-\d{2}-\d{2}$/.test(text(facts.today)) ? addCalendarDays(facts.today, row.supplier.leadTimeDays) : null,
       minimumOrderQuantity: row.supplier?.minimumOrderQuantity ?? null,
       moqUnit: row.supplier?.moqUnit ?? null,
       requestQuantity: row.purchaseRequest?.quantity ?? null,
