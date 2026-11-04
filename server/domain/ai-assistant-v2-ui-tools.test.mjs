@@ -24,14 +24,14 @@ const at = (value, path) => path.split('.').reduce((entry, key) => (entry === nu
 
 // The fixture workspace as assistant v2 reads it, and a UI tool context whose
 // results are real data tool outputs: call(id, name, args) runs one and keeps it.
-async function workspace({ roleKey = 'workspace-administrator', supplierLinks = [link()], change = highReorderPoint, actor = null, userNamedSkus = [], userText = '', env = null } = {}) {
+async function workspace({ roleKey = 'workspace-administrator', supplierLinks = [link()], change = highReorderPoint, actor = null, userNamedSkus = [], userText = '', env = null, agreeable = null, lastFormSkus = [] } = {}) {
   const scenario = aiSkillScenario({ roleKey, supplierLinks })
   change?.(scenario.data)
   if (actor) actor(scenario.ctx.aiSkillActor)
   const context = await loadAiSkillContext(env ? { ...scenario.ctx, env } : scenario.ctx)
   const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
   const results = new Map()
-  const ctx = { results, facts, actor: context.actor, language: 'en-US', threadId: 'thr_7f2c', messageId: 'msg_19', partId: 'p2', userNamedSkus, userText, prisma: context.prisma, tenantId: context.tenantId, workspaceCurrency: context.tenant.currency }
+  const ctx = { results, facts, actor: context.actor, language: 'en-US', threadId: 'thr_7f2c', messageId: 'msg_19', partId: 'p2', userNamedSkus, userText, prisma: context.prisma, tenantId: context.tenantId, workspaceCurrency: context.tenant.currency, agreeable, lastFormSkus }
   const call = async (id, name, args = {}) => {
     const run = await runAiReadTool(name, args, { facts, context, assistantV2: true })
     assert.ok(run.ok, `${name}: ${run.error}`)
@@ -348,6 +348,37 @@ test('suggest_purchase_request ticks a named item and keeps the user\'s own valu
   await unnamed.call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
   const plain = assertPart(unnamed.build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 150 }] }), 'pr_form')
   assert.deepEqual([plain.lines.length, plain.suggested[0].checked, plain.suggested[0].suggestedQuantity.value], [0, false, 100])
+})
+
+// "Yes, all of them" after a form (2026-11-04): the items the user agreed to
+// arrive ticked; an item never named nor offered in the conversation does not.
+test('suggest_purchase_request ticks the items the user agreed to, and only those the conversation offered', async () => {
+  const offered = new Set(['ldm-001', 'ldm-002'])
+  const agreeable = (sku) => offered.has(String(sku).toLowerCase())
+  const all = await workspace({ agreeable, lastFormSkus: ['ldm-001', 'ldm-002'] })
+  await all.call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'] })
+  // No lines: every item of the latest form, ticked, with the server's values.
+  const props = assertPart(all.build('suggest_purchase_request', { source: 'toolu_lines', from: 'agreed' }), 'pr_form')
+  assert.deepEqual(props.lines.map((row) => [row.item.sku, row.checked]), [['LDM-001', true], ['LDM-002', true]])
+  assert.deepEqual(props.suggested, [])
+  assert.equal(props.lines[0].suggestedQuantity.source, 'reorder_gap_raised_to_moq')
+  // Listed lines: those only, with a quantity the user changed.
+  const some = assertPart(all.build('suggest_purchase_request', { source: 'toolu_lines', from: 'agreed', lines: [{ sku: 'LDM-002', quantity: 40 }] }), 'pr_form')
+  assert.deepEqual(some.lines.map((row) => [row.item.sku, row.checked, row.suggestedQuantity.value]), [['LDM-002', true, 40]])
+  // An item the conversation never offered is not ticked by a claim of agreement.
+  const narrow = await workspace({ agreeable: (sku) => String(sku).toLowerCase() === 'ldm-001', lastFormSkus: ['ldm-001'] })
+  await narrow.call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'] })
+  assertError(narrow.build('suggest_purchase_request', { source: 'toolu_lines', from: 'agreed', lines: [{ sku: 'LDM-002' }] }), 'not_agreed')
+  const latest = assertPart(narrow.build('suggest_purchase_request', { source: 'toolu_lines', from: 'agreed' }), 'pr_form')
+  assert.deepEqual(latest.lines.map((row) => row.item.sku), ['LDM-001'])
+  // No earlier form: nothing to agree to.
+  const first = await workspace()
+  await first.call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  assertError(first.build('suggest_purchase_request', { source: 'toolu_lines', from: 'agreed' }), 'nothing_agreed')
+  // The latest form's items must be in the source.
+  const other = await workspace({ agreeable, lastFormSkus: ['ldm-002'] })
+  await other.call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  assertError(other.build('suggest_purchase_request', { source: 'toolu_lines', from: 'agreed' }), 'foreign_sku')
 })
 
 test('suggest_purchase_request keeps a covered item unticked with what covers it, even when named', async () => {

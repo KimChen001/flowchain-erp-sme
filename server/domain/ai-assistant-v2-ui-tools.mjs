@@ -566,6 +566,8 @@ const offerChoices = defineUiTool({
 const QUANTITY_SOURCE = Object.freeze({
   [PURCHASE_SUGGESTION_SOURCES.reorderGap]: 'reorder_gap',
   [PURCHASE_SUGGESTION_SOURCES.raisedToMoq]: 'reorder_gap_raised_to_moq',
+  [PURCHASE_SUGGESTION_SOURCES.coverDays]: 'cover_days',
+  [PURCHASE_SUGGESTION_SOURCES.coverDaysRaisedToMoq]: 'cover_days_raised_to_moq',
   [PURCHASE_SUGGESTION_SOURCES.userTyped]: 'user_named',
 })
 const SUPPLIER_SOURCE = Object.freeze({ preferred_supplier: 'preferred', only_approved_supplier: 'only_approved' })
@@ -575,7 +577,9 @@ const MAX_FORM_LINES = 8
 function suggestedQuantity(row) {
   const { value, source } = isObject(row.suggestedQuantity) ? row.suggestedQuantity : {}
   if (!isNumber(value) || value <= 0 || !QUANTITY_SOURCE[source]) return { value: null, source: 'user_named' }
-  return { value, source: QUANTITY_SOURCE[source], ...(source === PURCHASE_SUGGESTION_SOURCES.raisedToMoq ? { minimum: value } : {}) }
+  const raised = source === PURCHASE_SUGGESTION_SOURCES.raisedToMoq || source === PURCHASE_SUGGESTION_SOURCES.coverDaysRaisedToMoq
+  const days = Number.isInteger(row.cover?.days) && row.cover.days > 0 ? row.cover.days : null
+  return { value, source: QUANTITY_SOURCE[source], ...(raised ? { minimum: value } : {}), ...(days && QUANTITY_SOURCE[source].startsWith('cover_days') ? { coverDays: days } : {}) }
 }
 
 // A reference price as the form takes it: never a model value, and never an
@@ -661,12 +665,12 @@ function formRow(row, output, { named, line }) {
 
 const suggestPurchaseRequest = defineUiTool({
   name: 'suggest_purchase_request',
-  description: 'Show the in-chat purchase request form from a suggest_purchase_lines result (source). from user_named: the items the user named, listed in lines; from suggestions: the suggested items (all, or those listed in lines). Quantity, supplier and need-by date in a line are used only when the user typed them for an item they named; otherwise the server fills every value. Only items the user named are ticked; the user ticks the rest and creates the draft with their own click.',
+  description: 'Show the in-chat purchase request form from a suggest_purchase_lines result (source). from user_named: the items the user named in this question, listed in lines. from agreed: the items the user agreed to, named or proposed earlier in this conversation, listed in lines, or no lines for every item of the latest form. from suggestions: the suggested items (all, or those listed in lines), for the user to choose. Quantity, supplier and need-by date in a line are used only for an item the user named or agreed to, and only when the user gave or changed them; otherwise the server fills every value. Named and agreed items are ticked (unless open orders already cover them); the user ticks the rest and creates the draft with their own click.',
   inputSchema: {
     type: 'object',
     properties: {
       source: { ...sourceParam, description: 'The source of a suggest_purchase_lines result of this answer, for example suggest_purchase_lines#1.' },
-      from: { type: 'string', enum: ['user_named', 'suggestions'] },
+      from: { type: 'string', enum: ['user_named', 'agreed', 'suggestions'] },
       lines: {
         type: 'array',
         minItems: 0,
@@ -675,7 +679,7 @@ const suggestPurchaseRequest = defineUiTool({
           type: 'object',
           properties: {
             sku: { type: 'string', minLength: 1, maxLength: 120 },
-            quantity: { type: 'number', exclusiveMinimum: 0, description: 'Only a quantity the user typed.' },
+            quantity: { type: 'number', exclusiveMinimum: 0, description: 'Only a quantity the user typed or changed.' },
             supplier: { type: 'string', minLength: 1, maxLength: 200, description: 'Only a supplier the user named: its name or id.' },
             needByDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', minLength: 10, maxLength: 10, description: 'Only a date the user gave, YYYY-MM-DD.' },
           },
@@ -697,13 +701,25 @@ const suggestPurchaseRequest = defineUiTool({
     const { output } = source
     const lines = array(input.lines)
     if (input.from === 'user_named' && !lines.length) return fail('invalid_input', 'from user_named needs the named items in lines.')
+    // from agreed (decision V2-4 as revised on 2026-11-04): the items the
+    // user said yes to. Each listed one was named in this conversation or
+    // offered on an earlier form; no lines means every item of the latest form.
+    let agreed = null
+    if (input.from === 'agreed') {
+      const asked = lines.length ? lines.map((line) => line.sku) : array(ctx.lastFormSkus)
+      if (!asked.length) return fail('nothing_agreed', 'No earlier form in this conversation to agree to. Pass from user_named with the SKUs the user named, or from suggestions.')
+      const strangers = lines.filter((line) => !(typeof ctx.agreeable === 'function' && ctx.agreeable(line.sku))).map((line) => line.sku)
+      if (strangers.length) return fail('not_agreed', `${strangers.join(', ')} was neither named in this conversation nor offered on an earlier form. Pass from suggestions to leave it unticked, or ask the user.`)
+      agreed = new Set(asked.map(fold))
+    }
     if (lines.some((line) => !missing(line.needByDate) && !isDay(line.needByDate))) return fail('invalid_input', 'needByDate must be a real day.')
     const rows = array(output.rows)
     const bySku = new Map(rows.map((row) => [fold(row.item?.sku), row]))
     const unknown = lines.filter((line) => !bySku.has(fold(line.sku))).map((line) => line.sku)
     if (unknown.length) return fail('foreign_sku', `${unknown.join(', ')} is not in the result of ${input.source} (${rows.map((row) => row.item.sku).join(', ') || 'no rows'}). Call suggest_purchase_lines with those SKUs first.`)
     const linesBySku = new Map(lines.map((line) => [fold(line.sku), line]))
-    const chosen = lines.length ? [...new Set(lines.map((line) => bySku.get(fold(line.sku))))] : rows
+    const chosen = lines.length ? [...new Set(lines.map((line) => bySku.get(fold(line.sku))))] : agreed ? rows.filter((row) => agreed.has(fold(row.item?.sku))) : rows
+    if (agreed && !lines.length && !chosen.length) return fail('foreign_sku', `The latest form's items (${[...agreed].join(', ')}) are not in the result of ${input.source}. Call suggest_purchase_lines with those SKUs first.`)
     // An item that is not active cannot be requested; the answer says why.
     const requestable = chosen.filter((row) => row.suggestedQuantity?.source !== PURCHASE_SUGGESTION_SOURCES.itemInactive)
     if (!requestable.length) return fail('nothing_to_request', `No item in ${input.source} can be requested (inactive or none). Say so instead of showing the form.`)
@@ -712,7 +728,7 @@ const suggestPurchaseRequest = defineUiTool({
     const named = []
     const suggested = []
     for (const row of requestable) {
-      const isNamed = userNamed.has(fold(row.item.sku))
+      const isNamed = agreed ? agreed.has(fold(row.item.sku)) : userNamed.has(fold(row.item.sku))
       const built = formRow(row, output, { named: isNamed, line: linesBySku.get(fold(row.item.sku)) })
       if (built.error) return built
       if (isNamed) named.push(built)
