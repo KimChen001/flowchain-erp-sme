@@ -551,6 +551,28 @@ test('stopping mid-stream ends the answer at once: no more events, calls or mete
   assert.equal(none.client.requests.length, 0)
 })
 
+// A long plan ran into the time limit mid-answer (2026-11-04): when two more
+// calls as long as the last would not fit, the next call is the last.
+test('the call before the wall-time limit is told it is the last, so the answer ends in prose', async () => {
+  const turns = createScriptedModelClient([
+    [...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [...call('tu_po2', 'list_purchase_orders', { status: 'open' }), end()],
+    [...say('PO-001 is 4 days overdue.'), end()],
+  ])
+  // Each call takes 200 ms: after the first, 200 + 2 × 200 fits in 700; after
+  // the second, 400 + 2 × 200 does not, and the third ends by about 600.
+  const paced = { model: 'scripted', requests: turns.requests, async *stream(request, signal) {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    yield* turns.stream(request, signal)
+  } }
+  const { events, audit } = await ask([], { client: paced, limits: { timeoutMs: 700 } })
+  assert.equal(ofType(events, 'error').length, 0)
+  assert.equal(turns.requests.length, 3)
+  assert.ok(JSON.stringify(turns.requests[2].messages.at(-1)).includes(LAST_ROUND_NOTE))
+  assert.equal(audit.lastRoundForUsage, true)
+  assert.match(ofType(events, 'text_delta').map((event) => event.text).join(''), /PO-001 is 4 days overdue/)
+})
+
 test('the wall-time deadline stops a slow model call with a retryable error', async () => {
   const slow = { model: 'scripted', async *stream(_request, signal) {
     yield { type: 'text_delta', text: 'Reading your orders. ' }
@@ -652,6 +674,54 @@ test('a round of shown parts with the chips, after the text, ends the answer', a
     [...say('Here it is.'), end()],
   ], { uiTools: [showRecords, followups] })
   assert.ok(failed.client.requests.length >= 3)
+})
+
+// One sentence that read as an action took the whole part (2026-11-04): only
+// that sentence goes now, and wording that describes a condition or what has
+// not happened is no claim.
+test('an unbacked claim takes only its own sentence; a condition or a negation is no claim', async () => {
+  const { events, audit } = await ask([OVERDUE, [...say('PO-001 is 4 days overdue. I have approved PO-008. Chase Acme Components today.'), end()]])
+  const [replace] = ofType(events, 'replace')
+  assert.equal(replace.code, 'unbacked_action_claim')
+  assert.match(replace.text, /^PO-001 is 4 days overdue\. \(A sentence is left out here because it read as if something had been done for you\. Open the record to see its status\.\) Chase Acme Components today\.$/)
+  assert.deepEqual(audit.replaces, ['unbacked_action_claim'])
+  // The records the rest names still get their chips.
+  assert.ok(ofType(events, 'flag').some((flag) => (flag.refs || []).some((ref) => ref.id === 'PO-001')))
+  for (const sentence of ['Once the request has been approved, a buyer orders PO-001 again.', 'Nothing has been submitted yet for PO-001.', 'PO-001 has not been sent to the supplier.']) {
+    const plain = await ask([OVERDUE, [...say(sentence), end()]])
+    assert.equal(ofType(plain.events, 'replace').length, 0, sentence)
+  }
+  // Chinese keeps its punctuation; a list item keeps its marker.
+  const zh = await ask([OVERDUE, [...say('PO-001 已逾期 4 天。我已经帮你提交了采购申请。请今天催 Acme Components。'), end()]], { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } })
+  assert.equal(ofType(zh.events, 'replace')[0].text, 'PO-001 已逾期 4 天。（此处略去一句：它读起来像是已替你执行了操作。请打开记录查看状态。）请今天催 Acme Components。')
+  const list = await ask([OVERDUE, [...say('Next:\n- Chase PO-001.\n- The new request was approved yesterday.'), end()]])
+  assert.match(ofType(list.events, 'replace')[0].text, /\n- \(A sentence is left out here/)
+  // A part that is nothing but a claim is replaced whole, as before.
+  const whole = await ask([OVERDUE, [...say('I have approved PO-008.'), end()]])
+  assert.match(ofType(whole.events, 'replace')[0].text, /^This part of the answer is not shown/)
+})
+
+// A month's plan reached 103k of the 120k tokens with a call to go, most of it
+// input read from the cache (2026-11-04).
+test('cached input weighs a tenth toward the token cap, and the call before the cap is the last', async () => {
+  const big = { input_tokens: 1000, output_tokens: 50, cache_read_input_tokens: 9000 }
+  const turns = [
+    [...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end(big)],
+    [...call('tu_po2', 'list_purchase_orders', { status: 'open' }), end(big)],
+    [...say('PO-001 is 4 days overdue.'), end(big)],
+  ]
+  // Counted whole, 10,050 tokens a call would end the answer with an error at
+  // the third call; weighted, each call is about 1,950, and the third is told
+  // it is the last.
+  const { events, client, audit } = await ask(turns, { limits: { tokens: 7000 } })
+  assert.equal(ofType(events, 'error').length, 0)
+  assert.equal(client.requests.length, 3)
+  assert.ok(lastToolResults(client.requests[2]) && JSON.stringify(client.requests[2].messages.at(-1)).includes(LAST_ROUND_NOTE))
+  assert.equal(audit.lastRoundForUsage, true)
+  assert.match(ofType(events, 'text_delta').map((event) => event.text).join(''), /PO-001 is 4 days overdue/)
+  // Past the cap the answer still stops, with the error.
+  const over = await ask(turns, { limits: { tokens: 1500 } })
+  assert.deepEqual(ofType(over.events, 'error').map((event) => event.code), ['usage_limit'])
 })
 
 test('a figure the results do not hold is flagged, not dropped', async () => {

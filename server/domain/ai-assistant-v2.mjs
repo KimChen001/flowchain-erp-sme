@@ -53,12 +53,16 @@ export const ASSISTANT_V2_VERSION = '2026-11-02'
 // gateway's cost reservation; null when no cap applies. `question`: up to
 // 8,000 characters, so a user can paste rows from a spreadsheet.
 export const ASSISTANT_V2_LIMITS = Object.freeze({
-  rounds: 6, toolCalls: 12, timeoutMs: 45000, tokens: 120000, outputTokens: 4000, costCeilingMicros: 200000, capRemainingMicros: null,
+  rounds: 6, toolCalls: 12, timeoutMs: 75000, tokens: 120000, outputTokens: 4000, costCeilingMicros: 200000, capRemainingMicros: null,
   question: QUESTION_LIMITS.assistantV2, resultChars: 24000, records: 8,
 })
 
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
+// Input read from the cache weighs a tenth toward the token cap, as it is
+// priced; the provider's input count includes it.
+const CACHED_TOKEN_WEIGHT = 0.1
+const weightedTokens = (input, cacheRead, output) => Math.max(0, (input || 0) - (cacheRead || 0)) + Math.ceil(Math.max(0, cacheRead || 0) * CACHED_TOKEN_WEIGHT) + (output || 0)
 const clip = (value, max) => text(value).slice(0, max)
 const fold = (value) => text(value).normalize('NFKC').toLowerCase()
 const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -203,6 +207,48 @@ function sentenceAround(value, index) {
   return value.slice(start, end)
 }
 
+// A claim's wording that only describes a condition or what has not happened
+// ("Once the request has been approved, a buyer orders it", "Nothing has been
+// submitted yet", 还没有提交) claims no action: read in the claim's own sentence,
+// before the claim.
+const CONDITIONAL = /\b(?:once|when|after|if|until|before|as soon as)\b|(?:一旦|等到|如果|在[^。！？；]{0,12}之后)/i
+const NEGATED = /\b(?:not|no|nothing|none|never|neither|nor)\b|n['’]t\b|(?:还没|尚未|没有|未曾|并未)/i
+function describedOnly(value, index) {
+  let start = index
+  while (start > 0 && !SENTENCE_BREAK.test(value[start - 1])) start -= 1
+  const before = value.slice(start, index)
+  return CONDITIONAL.test(before) || NEGATED.test(before)
+}
+
+// The text with each sentence that holds one of the claims at `indexes`
+// replaced by `note` (once per sentence; a list marker stays), and whether
+// anything but those sentences is left.
+const LIST_MARK = /^\s*(?:[-*+•]|\d{1,3}[.)])\s+/
+function withoutSentences(value, indexes, note) {
+  const spans = []
+  for (const index of indexes) {
+    let start = index
+    while (start > 0 && !SENTENCE_BREAK.test(value[start - 1])) start -= 1
+    let end = index
+    while (end < value.length && !SENTENCE_BREAK.test(value[end])) end += 1
+    if (end < value.length && value[end] !== '\n') end += 1
+    while (start < end && (value[start] === ' ' || value[start] === '\t')) start += 1
+    const mark = value.slice(start, end).match(LIST_MARK)
+    if (mark) start += mark[0].length
+    if (!spans.some(([from, to]) => from === start && to === end)) spans.push([start, end])
+  }
+  spans.sort((a, b) => b[0] - a[0])
+  let out = value
+  let rest = value
+  for (const [from, to] of spans) {
+    // A space after an English note when a word follows it; none in Chinese.
+    const space = /[!-~]$/.test(note) && /[A-Za-z0-9]/.test(value[to] || '') ? ' ' : ''
+    out = `${out.slice(0, from)}${note}${space}${out.slice(to)}`
+    rest = `${rest.slice(0, from)}${rest.slice(to)}`
+  }
+  return { text: out, rest: rest.replace(/[\s\-*+•.。,，;；:：]/gu, '').length > 1 }
+}
+
 // Text streams up to the last word or clause break, so a figure or a record
 // number is never sent in pieces before the scans have seen it whole.
 const BREAK = /[\s。！？；，、：]/u
@@ -312,7 +358,12 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     try { emit?.(event) } catch { /* the answer goes on */ }
   }
 
-  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null, providerFailed: null, displayFailures: 0, lastRoundForCost: false, usageEstimated: 0, turnsLeftOut: 0 }
+  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null, providerFailed: null, displayFailures: 0, lastRoundForCost: false, lastRoundForUsage: false, usageEstimated: 0, turnsLeftOut: 0 }
+  // The tokens an answer has used toward its cap: input read from the cache
+  // weighs a tenth, as it is priced (the cost ceiling bounds the spend).
+  const tokensUsed = () => weightedTokens(stats.usage.input, stats.usage.cacheRead, stats.usage.output)
+  let lastCallTokens = 0
+  let lastCallMs = 0
   const parts = []
   const results = []
   const refs = []
@@ -460,29 +511,38 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     // created, and submitted once the note's status is past draft.
     const noted = new Map(array(formNotes).filter((note) => text(note?.purchaseRequestId)).map((note) => [fold(note.purchaseRequestId), fold(note.status)]))
     const notedStep = (number, step) => noted.has(fold(number)) && (step === 'create' || !['draft', 'unknown'].includes(noted.get(fold(number))))
-    const passiveClaims = (value) => {
-      const normal = value.normalize('NFKC')
+    // Where a passive claim stands unbacked: the index of each.
+    const passiveClaimsAt = (normal) => {
       const found = [...normal.matchAll(new RegExp(PASSIVE_CLAIM.source, 'gi'))]
-      if (!found.length) return false
+      if (!found.length) return []
       const index = statuses()
-      return found.some((match) => {
+      return found.filter((match) => {
         const numbers = aiGroundingRecordNumbers(sentenceAround(normal, match.index))
         return !numbers.length || !numbers.every((number) => {
           const states = index.get(fold(number))
           return (states && (match[1].toLowerCase() !== 'submitted' || (states.length > 0 && !states.includes('draft')))) || notedStep(number, claimStep(match[1]))
         })
-      })
+      }).map((match) => match.index)
     }
     const selfClaim = (value) => SELF_CLAIMS.some((pattern) => pattern.test(value.normalize('NFKC')))
     // A self claim stands only when its sentence names records and a form
     // note backs the step for each of them.
-    const unbackedSelfClaim = (value) => {
-      const normal = value.normalize('NFKC')
-      return SELF_CLAIMS.some((pattern) => [...normal.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))].some((match) => {
-        const step = claimStep(match[0])
-        const numbers = aiGroundingRecordNumbers(sentenceAround(normal, match.index))
-        return !step || !numbers.length || !numbers.every((number) => notedStep(number, step))
-      }))
+    const unbackedSelfClaimsAt = (normal) => SELF_CLAIMS.flatMap((pattern) => [...normal.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))].filter((match) => {
+      const step = claimStep(match[0])
+      const numbers = aiGroundingRecordNumbers(sentenceAround(normal, match.index))
+      return !step || !numbers.length || !numbers.every((number) => notedStep(number, step))
+    }).map((match) => match.index))
+    // Every unbacked claim of a text, by where it starts in the NFKC text: the
+    // shared list's (the check found the phrase; each place it stands), the
+    // passive ones and the assistant's own, less the ones that only describe
+    // a condition or what has not happened.
+    const claimsAt = (normal, check) => {
+      const at = [...passiveClaimsAt(normal), ...unbackedSelfClaimsAt(normal)]
+      for (const row of check.problems) {
+        if (row.kind !== 'action_claim') continue
+        for (let from = normal.indexOf(row.value); from >= 0; from = normal.indexOf(row.value, from + 1)) at.push(from)
+      }
+      return [...new Set(at)].filter((index) => !describedOnly(normal, index)).sort((a, b) => a - b)
     }
     const amountsHidden = Boolean(hidden?.amountsOn?.length)
     // The hard scans, conservative, on text not yet sent: wording that may
@@ -541,13 +601,29 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     const checkText = (part) => {
       if (!text(part.text)) { release(part, part.text.length); return }
       const check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today })
-      if (check.problems.some((row) => row.kind === 'action_claim') || unbackedSelfClaim(part.text) || passiveClaims(part.text)) {
-        part.text = aiSkillText('assistant_v2.replace.action_claim', language)
+      // A sentence that claims an action no record backs is left out, with a
+      // short note in its place; the rest of the part stays (2026-11-04: the
+      // whole part went for one sentence). A part that is nothing but such
+      // sentences is replaced as a whole.
+      const normalText = part.text.normalize('NFKC')
+      const claimed = claimsAt(normalText, check)
+      if (claimed.length) {
         stats.replaces.push('unbacked_action_claim')
-        part.replaced = true
-        send({ type: 'replace', partId: part.id, text: part.text, code: 'unbacked_action_claim' })
-        send(flagEvent(part, []))
-        return
+        // The claims were found on the NFKC text; the sentences go from the
+        // text as written when that is the same length (it keeps 。，), else
+        // from the NFKC text.
+        const base = normalText.length === part.text.length ? part.text : normalText
+        const trimmed = withoutSentences(base, claimed, aiSkillText('assistant_v2.replace.action_claim_sentence', language))
+        if (!trimmed.rest) {
+          part.text = aiSkillText('assistant_v2.replace.action_claim', language)
+          part.replaced = true
+          send({ type: 'replace', partId: part.id, text: part.text, code: 'unbacked_action_claim' })
+          send(flagEvent(part, []))
+          return
+        }
+        part.text = trimmed.text
+        part.sent = part.text.length
+        send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: 'unbacked_action_claim' })
       }
       const withheld = []
       const spans = []
@@ -623,7 +699,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     while (true) {
       if (aborted) break
       if (timedOut) { stop('timeout'); send({ type: 'error', code: 'timeout', retryable: true }); break }
-      if (stats.usage.input + stats.usage.output >= limits.tokens) { stop('usage_limit'); send({ type: 'error', code: 'usage_limit', retryable: false }); break }
+      if (tokensUsed() >= limits.tokens) { stop('usage_limit'); send({ type: 'error', code: 'usage_limit', retryable: false }); break }
       // The cost check before every call: this call, estimated at its full
       // output, must fit in what the answer may still spend.
       const expected = nextCallUsage(limits.outputTokens)
@@ -685,6 +761,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // The tool list stays as the first call sent it (the cached prefix);
       // withdrawn tools are named beside it for a client that can drop them.
       const sentMessages = thread.messages.length
+      const callStarted = Date.now()
       try {
         for await (const event of modelClient.stream({ system: ASSISTANT_V2_SYSTEM, messages: sent(), tools, maxTokens: limits.outputTokens, ...(withdrawn.size ? { withdrawnTools: [...withdrawn] } : {}) }, controller.signal)) {
           if (aborted || timedOut) break
@@ -750,6 +827,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // metered by estimate: the prompt as priced before the call, uncached,
       // and the output counted from what it wrote.
       stats.modelCalls += 1
+      lastCallMs = Date.now() - callStarted
       const content = array(end.content)
       const reported = anthropicMessagesUsage({ usage: end.usage })
       if (!reported) stats.usageEstimated += 1
@@ -758,6 +836,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       stats.usage.output += usage.outputTokens
       stats.usage.cacheRead += usage.cacheReadTokens
       stats.usage.cacheWrite += usage.cacheWriteTokens
+      lastCallTokens = weightedTokens(usage.inputTokens, usage.cacheReadTokens, usage.outputTokens)
       stats.costMicros += aiCallCostMicros(usage, prices)
       lastCall = usage.inputTokens > 0 ? { prompt: usage.inputTokens, cached: Math.min(usage.inputTokens, usage.cacheReadTokens + usage.cacheWriteTokens), messages: sentMessages } : null
       largestOutput = Math.max(largestOutput, usage.outputTokens)
@@ -845,10 +924,20 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // model called only withdrawn display tools.
       const typical = Math.min(limits.outputTokens, Math.max(1000, largestOutput))
       const lastForCost = stats.costMicros + nextCallMicros(typical) + nextCallMicros(limits.outputTokens) > budgetMicros
+      // The same for the token cap: two more calls the size of the last
+      // must fit, or the next is the last (2026-11-04: a month's plan reached
+      // 103k of the 120k with one call to go, which would have ended in an
+      // error instead of an answer).
+      const lastForTokens = tokensUsed() + 2 * lastCallTokens > limits.tokens
+      // And for the wall time: two more calls as long as the last must fit
+      // (2026-11-04: a long plan ran into the time limit mid-answer and ended
+      // with an error).
+      const lastForTime = Date.now() - started + 2 * lastCallMs > limits.timeoutMs
       const note = thread.messages.at(-1).content
-      if (stats.rounds >= limits.rounds || callCount >= limits.toolCalls || lastForCost || displaysRefused) {
+      if (stats.rounds >= limits.rounds || callCount >= limits.toolCalls || lastForCost || lastForTokens || lastForTime || displaysRefused) {
         finalRound = true
         stats.lastRoundForCost ||= lastForCost
+        stats.lastRoundForUsage ||= lastForTokens || lastForTime
         note.push({ type: 'text', text: LAST_ROUND_NOTE })
       } else if (withdrawn.size && !withdrawnBefore) note.push({ type: 'text', text: displayOffNote(displayNames) })
       afterTools = true
@@ -903,6 +992,7 @@ function auditBlock({ stats, model, aborted, started }) {
     flags: stats.flags,
     displayFailures: stats.displayFailures,
     lastRoundForCost: stats.lastRoundForCost,
+    lastRoundForUsage: stats.lastRoundForUsage,
     usageEstimated: stats.usageEstimated,
     turnsLeftOut: stats.turnsLeftOut,
     replaces: [...stats.replaces],
