@@ -6,8 +6,9 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { runAiReadTool } from './ai-read-tool-runner.mjs'
 import { aiCallCostMicros, aiUsagePrices, runWithAiUsageScope } from './ai-usage-meter.mjs'
 import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
-import { AI_MODEL_FIRST_LIMITS, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstHidden, aiModelFirstTurns, parseAiModelFirstAnswer, presentAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
+import { AI_MODEL_FIRST_LIMITS, aiModelFirstAnnouncesLookup, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstHidden, aiModelFirstTurns, parseAiModelFirstAnswer, presentAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
+import { buildReorderList } from './reorder-list.mjs'
 
 // The model-first loop (docs/ai-model-first-design.md §3) against a scripted
 // provider: each test lists the provider's replies in order, and the
@@ -540,6 +541,17 @@ test('through the gateway: after two failed checks the rules answer, with no fur
   assert.deepEqual({ status: row.status, reason: row.reason, outcome: row.grounding.outcome, first: row.grounding.first }, { status: 'fallback', reason: 'grounding', outcome: 'failed', first: { record: 1, number: 1 } })
 })
 
+test('through the gateway: after a failed model answer to an order, the rules form waits for a click', async () => {
+  const stub = scripted([final({ title: 'Late', answer: 'PO-777 is 99 days overdue.', records: [] })])
+  const { ctx, sent } = gatewayContext({ message: '帮我给 Acme Components 建一个 200 件 LDM-001 的采购申请', fetchImpl: stub.fetchImpl })
+  await handleAiRuntimeGatewayRoute(ctx)
+  const { payload } = sent.at(-1)
+  assert.deepEqual(payload.aiModelAccess, { status: 'unavailable', reason: 'unchecked' })
+  const forms = payload.reviewCards.filter((card) => card.draftType === 'purchase_request_draft')
+  assert.ok(forms.length > 0)
+  assert.ok(forms.every((card) => card.autoOpen === false))
+})
+
 test('through the gateway: a provider that fails gives the rules answer with the model-unavailable notice', async () => {
   const { ctx, sent, audits } = gatewayContext({ message: 'Which purchase orders are overdue?', fetchImpl: scripted([{ httpStatus: 503 }]).fetchImpl })
   await handleAiRuntimeGatewayRoute(ctx)
@@ -706,4 +718,141 @@ test('off by default: without the mode the gateway answers as before', async () 
   await handleAiRuntimeGatewayRoute(ctx)
   assert.equal(stub.requests.length, 0)
   assert.notEqual(sent.at(-1).payload.intent, 'model_first')
+})
+
+// The live run of 2026-11-03 ("reorder → order → PO"): the fixture's LDM-001
+// on the reorder list, at a reorder point of 200 with Acme preferred (lead
+// time 12 days, minimum order 150), so the list suggests 150 for a shortfall
+// of 102.
+async function reorderFacts() {
+  const scenario = aiSkillScenario()
+  const items = scenario.data.items.map((row) => ({ ...row, status: 'active', reorderPoint: row.sku === 'LDM-001' ? 200 : row.reorderPoint }))
+  const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
+  const supplierLinks = [{ id: 'ITEM-001::SUP-001', payload: { itemId: 'ITEM-001', supplierId: 'SUP-001', preferred: true, active: true, approved: true, leadTimeDays: 12, minimumOrderQuantity: 150, referencePrice: 95, currency: 'USD' } }]
+  const reorderList = { read: async (input) => buildReorderList({ allocationRows: input.allocationRows, items, supplierLinks, suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }) }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  return { facts: await readAiSkillFacts(context), context, today: context.today }
+}
+const toolResult = (stub, index, name) => JSON.parse(stub.requests[index].body.messages.at(-1).content.find((part) => part.type === 'tool_result' && part.tool_use_id.endsWith(name)).content)
+
+test('an order with no quantity is offered the reorder list\'s suggestion first; the answer opens the form filled in', async () => {
+  const { facts, context, today } = await reorderFacts()
+  const offer = { title: '建议向 Acme Components 订 150 pcs', answer: '- 需求日期 2026-10-11。\n按这个开采购申请吗？也可以告诉我用途。', records: [{ type: 'item', id: 'LDM-001' }] }
+  // The first request: the suggestion to offer, and no form yet.
+  const first = scripted([toolUse([['propose_purchase_request', { sku: 'LDM-001', quantity: 150 }]]), final(offer)])
+  const asked = await runAiModelFirstLoop(loop(first, { facts, context, today, language: 'zh-CN', question: '好，帮我给 LDM-001 下单' }))
+  assert.equal(asked.status, 'answered')
+  assert.deepEqual(asked.proposals, [])
+  const suggestion = toolResult(first, 1, 'propose_purchase_request')
+  assert.equal(suggestion.needsConfirmation, true)
+  assert.deepEqual([suggestion.suggestion.quantity, suggestion.suggestion.supplier, suggestion.suggestion.needByDate, suggestion.suggestion.shortfall], [150, 'Acme Components', '2026-10-11', 102])
+  assert.equal(asked.stats.grounding.outcome, 'passed')
+  // The answer: the suggestion and the user's purpose fill the form.
+  const turns = aiModelFirstTurns({ previousTurns: [{ question: '好，帮我给 LDM-001 下单', answer: `${offer.title} — ${offer.answer}` }] })
+  const answer = { title: '已打开 LDM-001 的采购申请', answer: '- 150 pcs，Acme Components，需求日期 2026-10-11。\n请在页面上核对后提交。', records: [{ type: 'item', id: 'LDM-001' }] }
+  const second = scripted([toolUse([['propose_purchase_request', { sku: 'LDM-001', quantity: 150, reason: '用于补安全库存' }]]), final(answer)])
+  const opened = await runAiModelFirstLoop(loop(second, { facts, context, today, turns, language: 'zh-CN', question: '可以，用于补安全库存' }))
+  assert.equal(opened.status, 'answered')
+  const [proposal] = opened.proposals
+  assert.deepEqual([proposal.quantity, proposal.quantitySource, proposal.supplierId, proposal.supplierSource, proposal.needByDate, proposal.needBySource, proposal.reason, proposal.reasonSource], [150, 'reorder_list', 'SUP-001', 'preferred', '2026-10-11', 'lead_time', '用于补安全库存', 'user'])
+  const card = presentAiModelFirstAnswer({ answer: opened.answer, refs: opened.refs, stats: opened.stats, facts, language: 'zh-CN', query: 'q', proposals: opened.proposals }).reviewCards[0]
+  // The page fills the preferred supplier and the lead-time date itself, labelled so; the card shows them.
+  assert.deepEqual(card.payload, { itemIdOrSku: 'LDM-001', quantity: 150, unit: 'pcs', quantitySource: 'reorder_list', supplierName: 'Acme Components', needByDate: '2026-10-11', reason: '用于补安全库存', reasonSource: 'user', language: 'zh-CN' })
+  assert.equal(card.description, '用于补安全库存')
+  assert.equal(card.autoOpen, true)
+})
+
+test('an order "as suggested" opens at once; the request itself is not a reason, and a date the user gave is kept', async () => {
+  const { facts, context, today } = await reorderFacts()
+  const done = final({ title: 'LDM-001 的采购申请已打开', answer: '- 请在页面上核对后提交。', records: [] })
+  const direct = scripted([toolUse([['propose_purchase_request', { sku: 'LDM-001', reason: '帮我给 LDM-001 下单' }]]), done])
+  const opened = await runAiModelFirstLoop(loop(direct, { facts, context, today, language: 'zh-CN', question: '帮我给 LDM-001 下单，直接按建议开' }))
+  const [proposal] = opened.proposals
+  assert.deepEqual([proposal.quantity, proposal.reasonSource], [150, 'reorder_list'])
+  assert.equal(proposal.reason, '补货清单：最晚下单日 2026-09-29；缺口 102 pcs，按供应商最小起订量提到 150 pcs。')
+  // A quantity and a date the user wrote are the user's.
+  const dated = scripted([toolUse([['propose_purchase_request', { sku: 'LDM-001', quantity: 120, needByDate: '2026-10-20' }]]), done])
+  const own = (await runAiModelFirstLoop(loop(dated, { facts, context, today, language: 'zh-CN', question: '给 LDM-001 开一张 120 件的采购申请，10月20日前到' }))).proposals[0]
+  assert.deepEqual([own.quantity, own.quantitySource, own.needByDate, own.needBySource], [120, 'user', '2026-10-20', 'user'])
+  const card = presentAiModelFirstAnswer({ answer: { title: 't', answer: 'a', records: [] }, refs: [], stats: { calls: [] }, facts, language: 'zh-CN', query: 'q', proposals: [own] }).reviewCards[0]
+  assert.equal(card.payload.requestedDeliveryDate, '2026-10-20')
+  // A date the user did not write is not taken: the lead-time date stays.
+  const guessed = scripted([toolUse([['propose_purchase_request', { sku: 'LDM-001', quantity: 120, needByDate: '2026-12-01' }]]), done])
+  assert.equal((await runAiModelFirstLoop(loop(guessed, { facts, context, today, language: 'zh-CN', question: '给 LDM-001 开一张 120 件的采购申请' }))).proposals[0].needBySource, 'lead_time')
+})
+
+test('an order answered without reading anything is sent back once to act', async () => {
+  const { facts, context, today } = await reorderFacts()
+  const stall = final({ title: '稍等', answer: '我需要先重新核对 LDM-001 的数据，再为你打开采购申请。', records: [] })
+  const stub = scripted([stall, toolUse([['reorder_list', { sku: 'LDM-001' }]]), final({ title: '建议向 Acme Components 订 150 pcs', answer: '- 按这个开采购申请吗？', records: [] })])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts, context, today, language: 'zh-CN', question: '好，帮我给 LDM-001 下单' }))
+  assert.equal(outcome.status, 'answered')
+  assert.equal(outcome.stats.nudged, true)
+  assert.match(stub.requests[1].body.messages.at(-1).content[0].text, /the user asked to order, and you have read nothing/)
+  assert.equal(outcome.answer.title, '建议向 Acme Components 订 150 pcs')
+  // A question that is not an order is never sent back for reading nothing.
+  const general = scripted([final({ title: 'A three-way match', answer: 'It compares the order, the receipt and the invoice; this is general practice.', records: [] })])
+  assert.equal((await runAiModelFirstLoop(loop(general, { facts, context, today, question: 'What is a three-way match?' }))).stats.nudged, undefined)
+})
+
+test('stock_position says its basis is not the reorder list; the prompt makes the reorder list the call', async () => {
+  const { facts, context, today } = await reorderFacts()
+  assert.match((await runAiReadTool('stock_position', { sku: 'LDM-001' }, { facts, context })).result.basis, /It is not the reorder list: for whether, when and how much to order, use reorder_list/)
+  const stub = scripted([final({ title: 't', answer: 'a', records: [] })])
+  await runAiModelFirstLoop(loop(stub, { facts, context, today }))
+  const system = stub.requests[0].body.system[0].text
+  assert.match(system, /never reverse a reorder list answer because of them/)
+  assert.match(system, /read it again in this answer with the tool that gave it/)
+  // The procedure replaced "Never assume the item, the quantity or the supplier".
+  assert.doesNotMatch(system, /Never assume the item, the quantity or the supplier/)
+})
+
+test('an answer that announces a lookup instead of doing it is sent back once', async () => {
+  const { facts, context, today } = await reorderFacts()
+  assert.equal(aiModelFirstAnnouncesLookup(JSON.stringify({ title: '稍等', answer: '我需要先重新核对 LDM-001 的数据，再为你打开采购申请。' })), true)
+  assert.equal(aiModelFirstAnnouncesLookup(JSON.stringify({ title: 'Checking', answer: "Let me check PO-020's receipts first." })), true)
+  assert.equal(aiModelFirstAnnouncesLookup(JSON.stringify({ title: 'LDM-001 低于安全库存', answer: '- 我已核对补货清单：今天要下单。' })), false)
+  assert.equal(aiModelFirstAnnouncesLookup(JSON.stringify({ title: 'Which supplier?', answer: 'Tell me the supplier and I can open the request.' })), false)
+  const stub = scripted([
+    toolUse([['list_purchase_orders', { status: 'overdue' }]]),
+    final({ title: 'Checking', answer: "Let me check PO-001's receipts first.", records: [] }),
+    final({ title: 'PO-001 is 4 days late', answer: '- PO-001 is 4 days overdue.', records: [] }),
+  ])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts, context, today }))
+  assert.equal(outcome.status, 'answered')
+  assert.equal(outcome.stats.nudged, true)
+  assert.match(stub.requests[2].body.messages.at(-1).content[0].text, /it says you will check or look something up/)
+  assert.equal(outcome.answer.title, 'PO-001 is 4 days late')
+})
+
+test('an approved purchase order not yet issued says to send it and mark it issued', async () => {
+  const { facts, context } = await factsFor()
+  const order = (await runAiReadTool('get_purchase_order', { order: 'PO-009' }, { facts, context })).result.order
+  assert.deepEqual([order.status, order.issuedToSupplier], ['approved', false])
+  assert.match(order.nextStep, /sends the PO document to the supplier .* then marks it issued/)
+  assert.equal((await runAiReadTool('get_purchase_order', { order: 'PO-008' }, { facts, context })).result.order.issuedToSupplier, undefined)
+  // "In the last 7 days" is grounded: the tools say their window.
+  assert.equal((await runAiReadTool('list_receipts', { kind: 'recent' }, { facts, context })).result.recentWindowDays, 7)
+  assert.equal((await runAiReadTool('list_supplier_invoices', {}, { facts, context })).result.summary.recentWindowDays, 7)
+  const answer = { title: 'PO-009 待发给供应商', answer: '- 下一步：把 PO-009 发给供应商，然后在订单页面标记为下达。', basis: ['PO-009 状态：approved。'], followUps: ['PO-009 什么时候到？'], records: [{ type: 'purchase_order', id: 'PO-009' }] }
+  const response = presentAiModelFirstAnswer({ answer, refs: [order.ref], stats: { calls: [{ tool: 'get_purchase_order', status: 'ok' }] }, facts, language: 'zh-CN', query: 'q' })
+  assert.equal(response.keyEvidence[0].nextStep, '下一步：把 PO-009 发给供应商（打印或另存订单文件后自行发送），再在订单页面标记为下达。')
+  assert.deepEqual(response.answerBasis, ['PO-009 状态：approved。'])
+  assert.deepEqual(response.followUpSuggestions, [{ label: 'PO-009 什么时候到？', prompt: 'PO-009 什么时候到？' }])
+})
+
+test('the grounding check reads 11-07 as a date only when a tool result holds that day', () => {
+  const results = [{ rows: [{ sku: 'LDM-002', orderByDate: '2026-11-03', incomingLines: [{ orderNumber: 'PO-002', dueDay: '2026-11-07' }] }] }]
+  const check = (text) => checkAiModelFirstGrounding({ answer: { title: 't', answer: text, records: [] }, results, question: '', today: '2026-11-03' })
+  assert.equal(check('PO-002 要到 11-07 才到货，晚于今天（11-03）的下单日。').ok, true)
+  assert.deepEqual(check('PO-002 要到 11-17 才到货。').problems, [{ kind: 'number', value: '11' }, { kind: 'number', value: '17' }])
+  // The basis and the follow-up chips are parsed, at most 4 and 2.
+  const parsed = parseAiModelFirstAnswer(JSON.stringify({ title: 't', answer: 'a', basis: ['b'], followUps: ['c', 'd', 'e'], records: [] }))
+  assert.deepEqual([parsed.basis, parsed.followUps], [['b'], ['c', 'd']])
+  // Lines sent as a list are one answer; a one-line answer is not a list, so a
+  // fixed reply reads the same however the model marks it (existence oracle).
+  assert.equal(parseAiModelFirstAnswer(JSON.stringify({ title: 't', answer: ['- a', '- b'], records: [] })).answer, '- a\n- b')
+  const hidden = "Your role can't see purchase orders, so I can't answer this. Someone whose role can see purchase orders can help."
+  assert.equal(parseAiModelFirstAnswer(JSON.stringify({ title: 'Not visible to your role', answer: `- ${hidden}`, records: [] })).answer, hidden)
+  assert.equal(parseAiModelFirstAnswer(JSON.stringify({ title: 't', answer: '- one\n- two', records: [] })).answer, '- one\n- two')
 })
