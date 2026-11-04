@@ -70,6 +70,15 @@ names, or supplier names in place. Translate their presentation where appropriat
   "关联 GRN / Invoice" became "Status and documents" / "履约状态与单据". The inventory
   operations landing and the evidence data limitation for warehouse-scoped readers have
   plain wording in both languages. Checked in both languages on 2026-11-04.
+- Detail pages and forms: the receipt detail (labels, cards, lines, related records,
+  timeline, review dialog), the purchase order detail (receipt, invoice and match
+  tables, overview, progress), the RFQ detail (revisions, data boundaries without
+  internal terms), the three-way match detail, the item and supplier detail, the
+  sales order form and detail, and the transfer, count and adjustment forms have
+  English and Chinese copy, with dates and quantities in the workspace format.
+  Receipt timeline events the page does not recognise still show the server's English
+  text, and the review dialog's before → after quantities stay as recorded. Checked in
+  both languages on 2026-11-04.
 - Dates on a Chinese page keep the workspace locale (en-US gives "Nov 2, 2026"):
   the interface language does not change date or number formats.
 - Shared form labels (`Field`), metric cards (`KpiCard`, `ActionableMetricCard`),

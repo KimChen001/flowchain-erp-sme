@@ -312,6 +312,26 @@ function usePlace() {
 const reconciliationRuleLabels: Record<string, string> = {
   "available = onHand - reserved": "可用量 = 在库量 - 预留量",
   "reserved + fulfilled <= ordered": "预留量 + 已履约量不超过订购量",
+  "reservation quantities reconcile": "预留的消耗、释放与分配不超过预留量",
+  "posted quantity = posting movements - reversals": "发货过账数量与库存流水一致",
+};
+// What a check compared, in plain words. The server's two quantities are
+// shown as they are; only the wording around them depends on the rule.
+const reconciliationFacts = (check: { rule: string; calculated: string; recorded: string }) => {
+  const c = formatQuantity(check.calculated),
+    r = formatQuantity(check.recorded);
+  switch (check.rule) {
+    case "available = onHand - reserved":
+      return say(`On hand minus reserved: ${c} · Recorded as available: ${r}`, `在库减预留：${c} · 记录的可用量：${r}`);
+    case "reserved + fulfilled <= ordered":
+      return say(`Reserved and shipped: ${c} of ${r} ordered`, `已预留和已发货：${c}，订购 ${r}`);
+    case "reservation quantities reconcile":
+      return say(`Used, released and allocated: ${c} of ${r} reserved`, `已消耗、已释放和已分配：${c}，预留 ${r}`);
+    case "posted quantity = posting movements - reversals":
+      return say(`Shipped by stock movements: ${c} · Posted on the shipment: ${r}`, `库存流水出库：${c} · 发货单过账：${r}`);
+    default:
+      return say(`Worked out: ${c} · Recorded: ${r}`, `计算结果：${c} · 记录：${r}`);
+  }
 };
 const reconciliationRuleLabel = (value: string) =>
   reconciliationRuleLabels[value] ? copy(reconciliationRuleLabels[value]) : value;
@@ -390,6 +410,7 @@ const Button = ({
   testId,
   ariaLabel,
   tone = "primary",
+  dense = false,
 }: {
   children: React.ReactNode;
   disabled?: boolean;
@@ -397,13 +418,17 @@ const Button = ({
   testId?: string;
   ariaLabel?: string;
   tone?: "primary" | "secondary" | "danger";
+  dense?: boolean;
 }) => (
   <button
+    type="button"
     data-testid={testId}
     aria-label={ariaLabel}
     disabled={disabled}
     onClick={onClick}
-    className={`${tone === "primary" ? "bg-blue-600 text-white" : tone === "danger" ? "bg-red-600 text-white" : "bg-slate-100 text-slate-800"} rounded-lg px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50`}
+    className={dense && tone !== "danger"
+      ? `${tone === "primary" ? listButtonClass.primary : listButtonClass.secondary} disabled:cursor-not-allowed disabled:opacity-50`
+      : `${tone === "primary" ? "bg-blue-600 text-white" : tone === "danger" ? "bg-red-600 text-white" : "bg-slate-100 text-slate-800"} rounded-lg px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50`}
   >
     {children}
   </button>
@@ -977,8 +1002,7 @@ function OrderEntry() {
     );
   if (!capability.enabled)
     return (
-      <div className="mx-auto max-w-3xl space-y-4" data-testid="sales-order-entry-readonly">
-        <h1 className="text-xl font-semibold">{copy("新建销售订单")}</h1>
+      <div className="max-w-4xl space-y-4" data-testid="sales-order-entry-readonly">
         <div role="status" className="rounded-lg bg-slate-100 p-4 text-slate-700">
           {copy("当前销售订单写入能力未启用，页面保持只读。")}
         </div>
@@ -988,13 +1012,13 @@ function OrderEntry() {
       </div>
     );
   return (
-    <div className="mx-auto max-w-3xl space-y-4" data-testid="sales-order-entry">
-      <div>
-        <h1 className="text-xl font-semibold">{copy("新建销售订单草稿")}</h1>
-        <p className="text-sm text-slate-500">
-          {copy("SKU、物料名称与单位由 PostgreSQL Item 主数据快照。")}
-        </p>
-      </div>
+    <div className="max-w-4xl space-y-4" data-testid="sales-order-entry">
+      <p className="text-sm text-slate-500">
+        {say(
+          "Saved as a draft. The SKU, item name and unit are taken from Items when you save.",
+          "保存为草稿。保存时会从物料资料带入 SKU、物料名称和单位。",
+        )}
+      </p>
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
           {copy(error)}
@@ -1046,7 +1070,7 @@ function OrderEntry() {
       </Section>
       <Section title={say("Lines", "订单行")}>
         <OrderLinesField items={entry.items} lines={lines} currency={currency} onChange={setLines} />
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           <Button
             testId="create-sales-order"
             disabled={saving || !customerId || !currency.trim() || !linesReady(lines)}
@@ -1443,6 +1467,17 @@ function OrderDetail({ id }: { id: string }) {
       .replace("{c}", formatQuantity(x.consumedQuantity))
       .replace("{l}", formatQuantity(x.releasedQuantity))
       .replace("{v}", formatQuantity(x.allocatableQuantity))}`;
+  // One primary action in the header: the next step for the order.
+  const primaryAction = a.canConfirm
+    ? "confirm"
+    : a.canResume
+      ? "resume"
+      : a.canCreateShipment
+        ? "shipment"
+        : a.canReserve
+          ? "reserve"
+          : "";
+  const toneFor = (action: string) => (action === primaryAction ? "primary" : "secondary");
   return (
     <div className="space-y-4" data-testid="outbound-order-workbench">
       {error && (
@@ -1469,7 +1504,7 @@ function OrderDetail({ id }: { id: string }) {
         </div>
       )}
       <section className="rounded-xl border bg-white p-5">
-        <div className="flex flex-wrap justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold">{data.order.orderNumber}</h1>
             <p className="mt-1 text-sm text-slate-500">
@@ -1482,9 +1517,10 @@ function OrderDetail({ id }: { id: string }) {
               <Badge value={data.order.fulfillmentStatus} />
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {a.canEditDraft && (
               <Button
+                dense
                 tone="secondary"
                 testId="open-edit"
                 disabled={saving}
@@ -1495,6 +1531,8 @@ function OrderDetail({ id }: { id: string }) {
             )}
             {a.canConfirm && (
               <Button
+                dense
+                tone={toneFor("confirm")}
                 disabled={saving}
                 testId="confirm-sales-order"
                 onClick={() => void lifecycle("confirm")}
@@ -1504,6 +1542,7 @@ function OrderDetail({ id }: { id: string }) {
             )}
             {a.canHold && (
               <Button
+                dense
                 tone="secondary"
                 disabled={saving}
                 onClick={() => void lifecycle("hold")}
@@ -1513,6 +1552,8 @@ function OrderDetail({ id }: { id: string }) {
             )}
             {a.canResume && (
               <Button
+                dense
+                tone={toneFor("resume")}
                 disabled={saving}
                 onClick={() => void lifecycle("resume")}
               >
@@ -1520,22 +1561,24 @@ function OrderDetail({ id }: { id: string }) {
               </Button>
             )}
             {a.canCancel && (
-              <Button tone="secondary" testId="open-cancel-order" onClick={() => { start("cancel"); setCancelReason(""); setCancelPreview(null); }}>
+              <Button dense tone="secondary" testId="open-cancel-order" onClick={() => { start("cancel"); setCancelReason(""); setCancelPreview(null); }}>
                 {say("Cancel order", "取消订单")}
               </Button>
             )}
             {a.canReserve && (
-              <Button testId="open-reserve" onClick={() => start("reserve")}>
+              <Button dense tone={toneFor("reserve")} testId="open-reserve" onClick={() => start("reserve")}>
                 {copy("预留库存")}
               </Button>
             )}
             {a.canRelease && (
-              <Button tone="secondary" onClick={() => start("release")}>
+              <Button dense tone="secondary" onClick={() => start("release")}>
                 {copy("释放预留")}
               </Button>
             )}
             {a.canCreateShipment && (
               <Button
+                dense
+                tone={toneFor("shipment")}
                 testId="open-shipment-draft"
                 onClick={() => start("shipment")}
               >
@@ -1546,8 +1589,8 @@ function OrderDetail({ id }: { id: string }) {
             {data.shipments.some((shipment) => shipment.postingStatus === "posted") && (
               <CreateInvoiceAction salesOrderId={id} />
             )}
-            <Button tone="secondary" onClick={() => void refresh()} ariaLabel={copy("刷新销售订单")}>
-              <RefreshCw size={15} />
+            <Button dense tone="secondary" onClick={() => void refresh()} ariaLabel={copy("刷新销售订单")}>
+              <RefreshCw size={13} />
             </Button>
           </div>
         </div>
@@ -1580,9 +1623,9 @@ function OrderDetail({ id }: { id: string }) {
       </Section>
       <Section title={copy("订单行与库存可用性")}>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
+          <table className={`w-full min-w-[900px] ${tableBodyTextClass}`}>
             <thead>
-              <tr>
+              <tr style={listHeadRowStyle}>
                 {[
                   copy("SKU / 物料"),
                   copy("订购"),
@@ -1593,21 +1636,21 @@ function OrderDetail({ id }: { id: string }) {
                   copy("现有量"),
                   copy("库存预留"),
                   copy("可用量"),
-                ].map((x) => (
-                  <th className="p-2 text-left" key={x}>
+                ].map((x, index) => (
+                  <th className={index === 0 ? thClass : thRightClass} style={{ color: A.sub }} key={x}>
                     {x}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {data.lines.map((line) => {
+              {data.lines.map((line, lineIndex) => {
                 const av = data.availability.find(
                   (x) => x.salesOrderLineId === line.id,
                 );
                 return (
-                  <tr className="border-t" key={line.id}>
-                    <td className="p-2">
+                  <tr className={listRowClass} style={listRowStyle(lineIndex, data.lines.length)} key={line.id}>
+                    <td className="px-4 py-3">
                       <BusinessEntityLink entityType="item" entityId={line.itemId}>
                         {line.sku}
                       </BusinessEntityLink>
@@ -1633,7 +1676,7 @@ function OrderDetail({ id }: { id: string }) {
                       av?.totalReserved,
                       av?.totalAvailable,
                     ].map((v, i) => (
-                      <td className="p-2 tabular-nums" key={i}>
+                      <td className={tdNumericRightClass} key={i}>
                         {v == null ? (i === 3 || i === 4 ? copy("受限") : "—") : formatQuantity(v)}
                       </td>
                     ))}
@@ -1673,6 +1716,7 @@ function OrderDetail({ id }: { id: string }) {
             formatQuantity(x.allocatableQuantity),
             status(x.status),
           ])}
+          numeric={[3, 4, 5, 6, 7]}
           headers={[
             copy("预留 ID"),
             copy("仓库"),
@@ -1714,6 +1758,7 @@ function OrderDetail({ id }: { id: string }) {
             formatQuantity(x.quantityOut),
             movementTypeLabel(x.movementType, activeLanguage),
           ])}
+          numeric={[3, 4]}
           headers={[copy("流水 ID"), "SKU", copy("仓库"), copy("入"), copy("出"), copy("类型")]}
         />
       </Section>
@@ -1722,7 +1767,7 @@ function OrderDetail({ id }: { id: string }) {
       </Section>
       <Section id="reconciliation" title={copy("履约一致性检查")}>
         <div className="mb-2 flex items-center gap-2">
-          <CheckCircle2 size={17} />
+          {data.reconciliation.status === "mismatch" ? <AlertTriangle size={17} className="text-red-600" /> : <CheckCircle2 size={17} className="text-teal-600" />}
           <Badge value={data.reconciliation.status} />
         </div>
         {data.reconciliation.reasonCode === "PARTIAL_WAREHOUSE_SCOPE" && (
@@ -1732,13 +1777,12 @@ function OrderDetail({ id }: { id: string }) {
         )}
         {data.reconciliation.checks.map((x) => (
           <div
-            className="border-t py-2 text-xs"
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t py-2 text-xs"
             key={`${x.affectedEntity.type}-${x.affectedEntity.id}`}
           >
-            {reconciliationRuleLabel(x.rule)} · {status(x.status)} ·{" "}
-            {copy("计算 {calculated} / 记录 {recorded}")
-              .replace("{calculated}", formatQuantity(x.calculated))
-              .replace("{recorded}", formatQuantity(x.recorded))}
+            <span className="font-medium text-slate-800">{reconciliationRuleLabel(x.rule)}</span>
+            <Badge value={x.status} />
+            <span className="tabular-nums text-slate-500">{reconciliationFacts(x)}</span>
           </div>
         ))}
       </Section>
@@ -2279,17 +2323,19 @@ function ShipmentDetail({ id }: { id: string }) {
 function Table({
   headers,
   rows,
+  numeric = [],
 }: {
   headers: string[];
   rows: Array<Array<string | number>>;
+  numeric?: number[];
 }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-sm">
+    <div className={tableScrollClass}>
+      <table className={`w-full min-w-[760px] ${tableBodyTextClass}`}>
         <thead>
-          <tr className="border-b text-left text-xs text-slate-500">
-            {headers.map((x) => (
-              <th className="p-2" key={x}>
+          <tr style={{ ...listHeadRowStyle, color: A.sub }}>
+            {headers.map((x, j) => (
+              <th className={numeric.includes(j) ? thRightClass : thClass} key={x}>
                 {x}
               </th>
             ))}
@@ -2297,9 +2343,9 @@ function Table({
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr className="border-b" key={i}>
+            <tr className={listRowClass} style={listRowStyle(i, rows.length)} key={i}>
               {row.map((x, j) => (
-                <td className="p-2 tabular-nums" key={j}>
+                <td className={numeric.includes(j) ? tdNumericRightClass : tdNumericClass} key={j}>
                   {x}
                 </td>
               ))}

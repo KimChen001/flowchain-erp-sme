@@ -52,6 +52,10 @@ type AdjustmentLine = {
 
 const field =
   "h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-400";
+// Create-form inputs fill their grid cell and may shrink, so a line's fields
+// never run under each other.
+const formField = `${field} w-full min-w-0`;
+const formLabel = "grid min-w-0 gap-1 text-xs";
 const button =
   "rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40";
 const secondary =
@@ -324,134 +328,133 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
       setError(reason instanceof Error ? reason.message : copy("创建失败"));
     }
   };
+  const warehouseOptions = entry.warehouses
+    .filter((row) => row.canOperate)
+    .map((row) => (
+      <option key={row.id} value={row.id}>
+        {row.code} · {row.name}
+      </option>
+    ));
+  // The page title comes from the module shell, so the form has no heading.
   return (
     <div className="space-y-4" data-testid="transfer-create">
-      <h2 className="text-lg font-semibold">{copy("新建库存调拨")}</h2>
       <ReadOnly entry={entry} />
       <Card className="space-y-4 p-5">
-        <label className="grid gap-1 text-xs">
+        <label className={`${formLabel} max-w-md`}>
           {copy("调拨单号")}
           <input
-            className={field}
+            className={formField}
             value={number}
             onChange={(event) => setNumber(event.target.value)}
           />
         </label>
         {lines.map((line, index) => (
-          <div
-            key={index}
-            className="grid gap-3 rounded-lg border p-4 md:grid-cols-6"
-          >
-            <label className="grid gap-1 text-xs">
-              {copy("物料")}
-              <select
-                aria-label={copy("调拨物料 {n}", { n: index + 1 })}
-                className={field}
-                value={line.itemId}
-                onChange={(event) =>
-                  update(index, { itemId: event.target.value })
-                }
-              >
-                <option value="">{copy("请选择")}</option>
-                {entry.items.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.sku} · {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1 text-xs">
-              {copy("数量")}
-              <input
-                aria-label={copy("调拨数量 {n}", { n: index + 1 })}
-                className={field}
-                value={line.quantity}
-                onChange={(event) =>
-                  update(index, { quantity: event.target.value })
-                }
-              />
-            </label>
-            <label className="grid gap-1 text-xs">
-              {copy("来源仓库")}
-              <select
-                aria-label={copy("来源仓库 {n}", { n: index + 1 })}
-                className={field}
-                value={line.sourceWarehouseId}
-                onChange={(event) =>
-                  update(index, { sourceWarehouseId: event.target.value })
-                }
-              >
-                <option value="">{copy("请选择")}</option>
-                {entry.warehouses
-                  .filter((row) => row.canOperate)
-                  .map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.code}
+          <div key={index} className="space-y-3 rounded-lg border p-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className={`${formLabel} sm:col-span-2`}>
+                {copy("物料")}
+                <select
+                  aria-label={copy("调拨物料 {n}", { n: index + 1 })}
+                  className={formField}
+                  value={line.itemId}
+                  onChange={(event) =>
+                    update(index, { itemId: event.target.value })
+                  }
+                >
+                  <option value="">{copy("请选择")}</option>
+                  {entry.items.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.sku} · {item.name}
                     </option>
                   ))}
-              </select>
-            </label>
-            <label className="grid gap-1 text-xs">
-              {copy("来源库位")}
-              <input
-                aria-label={copy("来源库位 {n}", { n: index + 1 })}
-                className={field}
-                value={line.sourceLocation}
-                onChange={(event) =>
-                  update(index, { sourceLocation: event.target.value })
-                }
-              />
-            </label>
-            <label className="grid gap-1 text-xs">
-              {copy("目标仓库")}
-              <select
-                aria-label={copy("目标仓库 {n}", { n: index + 1 })}
-                className={field}
-                value={line.destinationWarehouseId}
-                onChange={(event) =>
-                  update(index, { destinationWarehouseId: event.target.value })
-                }
-              >
-                <option value="">{copy("请选择")}</option>
-                {entry.warehouses
-                  .filter((row) => row.canOperate)
-                  .map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.code}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <label className="grid gap-1 text-xs">
-              {copy("目标库位")}
-              <input
-                aria-label={copy("目标库位 {n}", { n: index + 1 })}
-                className={field}
-                value={line.destinationLocation}
-                onChange={(event) =>
-                  update(index, { destinationLocation: event.target.value })
-                }
-              />
-            </label>
-            {lines.length > 1 && (
-              <button
-                className={secondary}
-                onClick={() =>
-                  setLines((rows) =>
-                    rows.filter((_, rowIndex) => rowIndex !== index),
-                  )
-                }
-              >
-                {copy("删除行")}
-              </button>
-            )}
+                </select>
+              </label>
+              <label className={formLabel}>
+                {copy("数量")}
+                <input
+                  aria-label={copy("调拨数量 {n}", { n: index + 1 })}
+                  className={`${formField} text-right tabular-nums`}
+                  inputMode="decimal"
+                  value={line.quantity}
+                  onChange={(event) =>
+                    update(index, { quantity: event.target.value })
+                  }
+                />
+              </label>
+              {lines.length > 1 && (
+                <button
+                  type="button"
+                  className={`${secondary} h-10 self-end justify-self-start`}
+                  onClick={() =>
+                    setLines((rows) =>
+                      rows.filter((_, rowIndex) => rowIndex !== index),
+                    )
+                  }
+                >
+                  {copy("删除行")}
+                </button>
+              )}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className={formLabel}>
+                {copy("来源仓库")}
+                <select
+                  aria-label={copy("来源仓库 {n}", { n: index + 1 })}
+                  className={formField}
+                  value={line.sourceWarehouseId}
+                  onChange={(event) =>
+                    update(index, { sourceWarehouseId: event.target.value })
+                  }
+                >
+                  <option value="">{copy("请选择")}</option>
+                  {warehouseOptions}
+                </select>
+              </label>
+              <label className={formLabel}>
+                {copy("来源库位")}
+                <input
+                  aria-label={copy("来源库位 {n}", { n: index + 1 })}
+                  className={formField}
+                  value={line.sourceLocation}
+                  onChange={(event) =>
+                    update(index, { sourceLocation: event.target.value })
+                  }
+                />
+              </label>
+              <label className={formLabel}>
+                {copy("目标仓库")}
+                <select
+                  aria-label={copy("目标仓库 {n}", { n: index + 1 })}
+                  className={formField}
+                  value={line.destinationWarehouseId}
+                  onChange={(event) =>
+                    update(index, { destinationWarehouseId: event.target.value })
+                  }
+                >
+                  <option value="">{copy("请选择")}</option>
+                  {warehouseOptions}
+                </select>
+              </label>
+              <label className={formLabel}>
+                {copy("目标库位")}
+                <input
+                  aria-label={copy("目标库位 {n}", { n: index + 1 })}
+                  className={formField}
+                  value={line.destinationLocation}
+                  onChange={(event) =>
+                    update(index, { destinationLocation: event.target.value })
+                  }
+                />
+              </label>
+            </div>
           </div>
         ))}
         <p className="text-xs text-slate-600">
           {copy("If the target location has no stock record yet, posting creates it.")}
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
+            type="button"
             className={secondary}
             onClick={() =>
               setLines((rows) => [
@@ -470,6 +473,7 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
             {copy("添加行")}
           </button>
           <button
+            type="button"
             data-testid="create-transfer"
             className={button}
             disabled={!enabled(entry)}
@@ -477,6 +481,7 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
           >
             {copy("保存草稿")}
           </button>
+          <CancelLink to="/app/inventory/transfers" />
         </div>
         {error && (
           <p role="alert" className="text-sm text-red-600">
@@ -485,6 +490,16 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
         )}
       </Card>
     </div>
+  );
+}
+
+// Leaves a new document without saving it, back to its list.
+function CancelLink({ to }: { to: string }) {
+  const { copy } = useInventoryOperationsCopy();
+  return (
+    <Link className={`${secondary} inline-flex items-center`} to={to}>
+      {copy("Cancel")}
+    </Link>
   );
 }
 
@@ -518,23 +533,22 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
   };
   return (
     <div className="space-y-4" data-testid="count-create">
-      <h2 className="text-lg font-semibold">{copy("新建循环盘点")}</h2>
       <ReadOnly entry={entry} />
       <Card className="space-y-4 p-5">
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="grid gap-1 text-xs">
+          <label className={formLabel}>
             {copy("盘点单号")}
             <input
-              className={field}
+              className={formField}
               value={number}
               onChange={(event) => setNumber(event.target.value)}
             />
           </label>
-          <label className="grid gap-1 text-xs">
+          <label className={formLabel}>
             {copy("仓库")}
             <select
               aria-label={copy("盘点仓库")}
-              className={field}
+              className={formField}
               value={warehouseId}
               onChange={(event) => {
                 setWarehouseId(event.target.value);
@@ -551,7 +565,7 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
                 ))}
             </select>
           </label>
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex h-10 items-center gap-2 self-end text-sm">
             <input
               type="checkbox"
               checked={blind}
@@ -583,14 +597,18 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
             </label>
           ))}
         </div>
-        <button
-          data-testid="create-count"
-          className={button}
-          disabled={!enabled(entry)}
-          onClick={() => void submit()}
-        >
-          {copy("建立盘点快照")}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            data-testid="create-count"
+            className={button}
+            disabled={!enabled(entry)}
+            onClick={() => void submit()}
+          >
+            {copy("建立盘点快照")}
+          </button>
+          <CancelLink to="/app/inventory/counts" />
+        </div>
         {error && (
           <p role="alert" className="text-sm text-red-600">
             {error}
@@ -705,23 +723,22 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
   };
   return (
     <div className="space-y-4" data-testid="adjustment-create">
-      <h2 className="text-lg font-semibold">{copy("新建库存调整")}</h2>
       <ReadOnly entry={entry} />
       <Card className="space-y-4 p-5">
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="grid gap-1 text-xs">
+          <label className={formLabel}>
             {copy("调整单号")}
             <input
-              className={field}
+              className={formField}
               value={number}
               onChange={(event) => setNumber(event.target.value)}
             />
           </label>
-          <label className="grid gap-1 text-xs">
+          <label className={formLabel}>
             {copy("原因")}
             <select
               aria-label={copy("调整原因")}
-              className={field}
+              className={formField}
               value={reasonCode}
               onChange={(event) => setReason(event.target.value)}
             >
@@ -738,11 +755,11 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
               ))}
             </select>
           </label>
-          <label className="grid gap-1 text-xs">
+          <label className={formLabel}>
             {copy("备注")}
             <input
               aria-label={copy("调整备注")}
-              className={field}
+              className={formField}
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
             />
@@ -772,15 +789,15 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
           return (
             <div
               key={index}
-              className="grid gap-3 rounded-lg border p-4 md:grid-cols-2"
+              className="grid gap-3 rounded-lg border p-4 md:grid-cols-2 lg:grid-cols-4"
             >
               {reasonCode === "found_stock" && (
-                <label className="grid gap-1 text-xs md:col-span-2">
+                <label className={`${formLabel} md:col-span-2`}>
                   {copy("Stock record for line {n}", { n })}
                   <select
                     aria-label={copy("Stock record for line {n}", { n })}
                     data-testid={`adjustment-line-mode-${n}`}
-                    className={field}
+                    className={formField}
                     value={line.mode}
                     onChange={(event) =>
                       update(index, {
@@ -796,11 +813,11 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                 </label>
               )}
               {line.mode === "existing" ? (
-                <label className="grid gap-1 text-xs">
+                <label className={`${formLabel} md:col-start-1 lg:col-span-3`}>
                   {copy("库存余额")}
                   <select
                     aria-label={copy("调整余额 {n}", { n })}
-                    className={field}
+                    className={formField}
                     value={line.inventoryBalanceId}
                     onChange={(event) =>
                       update(index, { inventoryBalanceId: event.target.value })
@@ -818,12 +835,12 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                   </select>
                 </label>
               ) : (
-                <div className="grid gap-3 md:grid-cols-3">
-                  <label className="grid gap-1 text-xs">
+                <div className="grid min-w-0 gap-3 sm:grid-cols-3 md:col-span-2 lg:col-span-3">
+                  <label className={formLabel}>
                     {copy("物料")}
                     <select
                       aria-label={copy("Adjustment item {n}", { n })}
-                      className={field}
+                      className={formField}
                       value={line.itemId}
                       onChange={(event) =>
                         update(index, { itemId: event.target.value })
@@ -838,11 +855,11 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                       ))}
                     </select>
                   </label>
-                  <label className="grid gap-1 text-xs">
+                  <label className={formLabel}>
                     {copy("仓库")}
                     <select
                       aria-label={copy("Adjustment warehouse {n}", { n })}
-                      className={field}
+                      className={formField}
                       value={line.warehouseId}
                       onChange={(event) =>
                         update(index, { warehouseId: event.target.value })
@@ -856,11 +873,11 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                       ))}
                     </select>
                   </label>
-                  <label className="grid gap-1 text-xs">
+                  <label className={formLabel}>
                     {copy("Location")}
                     <input
                       aria-label={copy("Adjustment location {n}", { n })}
-                      className={field}
+                      className={formField}
                       list={`adjustment-locations-${n}`}
                       value={line.location}
                       onChange={(event) =>
@@ -875,11 +892,12 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                   </label>
                 </div>
               )}
-              <label className="grid gap-1 text-xs">
+              <label className={formLabel}>
                 {copy("调整数量")}
                 <input
                   aria-label={copy("调整数量 {n}", { n })}
-                  className={field}
+                  inputMode="decimal"
+                  className={`${formField} text-right tabular-nums`}
                   value={line.adjustmentQuantity}
                   onChange={(event) =>
                     update(index, { adjustmentQuantity: event.target.value })
@@ -888,7 +906,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
               </label>
               {match && reasonCode === "found_stock" && (
                 <p
-                  className="text-xs text-amber-700 md:col-span-2"
+                  className="col-span-full text-xs text-amber-700"
                   data-testid={`adjustment-line-existing-${n}`}
                 >
                   {copy("This item already has a stock record here. Choose it under Existing stock record.")}
@@ -896,7 +914,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
               )}
               {match && reasonCode === "opening_balance" && (
                 <p
-                  className="text-xs text-amber-700 md:col-span-2"
+                  className="col-span-full text-xs text-amber-700"
                   data-testid={`adjustment-line-existing-${n}`}
                 >
                   {Number(match.onHandQuantity) !== 0
@@ -912,21 +930,25 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                 </p>
               )}
               {line.mode === "existing" && (
-                <p className="text-xs text-amber-700 md:col-span-2">
-                  {copy("减少库存不会影响已预留数量；调整后 On Hand 不得低于 Reserved。")}
+                <p className="col-span-full text-xs text-amber-700">
+                  {copy("减少库存不会影响已预留数量；调整后在库数量不得低于已预留数量。")}
                 </p>
               )}
             </div>
           );
         })}
-        <button
-          data-testid="create-adjustment"
-          className={button}
-          disabled={!enabled(entry)}
-          onClick={() => void submit()}
-        >
-          {copy("保存草稿")}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            data-testid="create-adjustment"
+            className={button}
+            disabled={!enabled(entry)}
+            onClick={() => void submit()}
+          >
+            {copy("保存草稿")}
+          </button>
+          <CancelLink to="/app/inventory/adjustments" />
+        </div>
         {error && (
           <p role="alert" className="text-sm text-red-600">
             {error}

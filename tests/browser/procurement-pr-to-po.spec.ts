@@ -65,7 +65,8 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   // holds only that. (The panel is briefly absent while the page reloads, so
   // waiting for it to vanish passed only when a poll hit that moment.)
   await expect(page.getByTestId('po-workflow-actions').getByRole('button')).toHaveText(['Close PO'])
-  await expect(issuedField).toContainText(/\d{4}-\d{2}-\d{2}/)
+  // The issue date in the workspace date format (en-US: "Nov 4, 2026").
+  await expect(issuedField).toContainText(/[A-Z][a-z]{2} \d{1,2}, \d{4}/)
 
   const issued = await api(`/api/procurement/orders/${encodeURIComponent(po.id)}`)
   expect(issued.status).toBe('issued')

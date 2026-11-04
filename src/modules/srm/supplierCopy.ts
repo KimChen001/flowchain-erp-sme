@@ -18,10 +18,11 @@ const zh: Record<string, string> = {
   'Could not load the workspace payment terms. The stored term is kept.': '无法读取工作区付款条款，已保留现有条款。',
   'Leave empty when the term is not agreed yet.': '尚未约定付款条款时请留空。',
   'Back to suppliers': '返回供应商列表', 'Edit': '编辑', 'Supplied items': '可供应物料', 'Select SKU': '选择 SKU', 'Reference price': '参考价格',
-  'Add supplied item': '新增供应商关系', 'No supplied items yet': '暂无可供应物料', 'Set as preferred': '设为首选', 'Yes': '是', 'No': '否',
+  'Add supplied item': '添加可供应物料', 'No supplied items yet': '暂无可供应物料', 'Set as preferred': '设为首选', 'Yes': '是', 'No': '否',
   'Purchase records': '采购记录', 'No purchase records available': '暂无采购交易记录', 'Risks and exceptions': '风险与异常', 'No risks or exceptions available': '暂无风险或异常',
   'Supplied-item links are currently unavailable.': '可供应物料关联暂不可用。',
-  'Preferred': '首选', 'Approved': '已批准', 'Lead Time': '交期', 'MOQ': '最小起订量',
+  'Preferred': '首选', 'Approved': '已批准', 'Lead time (days)': '交期（天）', 'MOQ': '最小起订量',
+  'Earlier PO prices': '以往采购价',
   // Supplier tiers and business owners.
   'Tier 1 Strategic': '一级 · 战略', 'Tier 2 Core': '二级 · 核心', 'Tier 3 Transactional': '三级 · 一般', 'Not tiered': '未分级',
   'Tier 1': '一级', 'Tier 2': '二级', 'Tier 3': '三级', 'Tier': '层级', 'All': '全部', 'Managed by me': '我负责的', 'Supplier list': '供应商列表',

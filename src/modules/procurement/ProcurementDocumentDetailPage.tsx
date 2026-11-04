@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Card } from "../../components/ui";
+import { StatusChip, statusToneOf } from "../../components/ui/listLayout";
+import { formatCalendarDay, formatInstantDay } from "../business-documents/documentFormat";
 import { ApiError } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -22,34 +24,42 @@ function readFailureState(error: unknown): Exclude<ReadState, "loading" | "loade
 // English source copy with its Chinese translation.
 const zh: Record<string, string> = {
   "Supplier invoice details": "供应商发票详情", "Three-way match details": "三单匹配详情",
-  "Read-only view of this workspace's purchasing records. Approval, matching and posting are not available here.": "只读展示当前工作区 PostgreSQL 采购单据事实，不提供审批、匹配或过账操作。",
+  "Read-only view of this workspace's purchasing records. Approval, matching and posting are not available here.": "只读查看当前工作区的采购单据，此处不能审批、匹配或过账。",
   "Refresh": "刷新", "Loading…": "正在读取…", "Retry": "重试",
-  "This document was not found in the current workspace, or you cannot see it.": "当前工作区未找到该采购文档，或该文档对当前租户不可见",
-  "Document number: {id}": "文档编号：{id}",
-  "Your session has expired or is missing": "登录状态已失效或缺少有效会话",
-  "Sign in again to read this document.": "请重新登录后读取该采购文档；页面未使用静态数据替代。",
-  "You do not have permission to view this document": "当前用户没有查看该文档的权限",
-  "Missing permission is not shown as empty data, and no substitute records are returned.": "权限不足不会被显示成普通空数据，也不会返回替代业务记录。",
-  "This document cannot be read right now. Try again.": "采购文档暂时无法读取，可重试",
-  "The service or network could not be reached. Try again in a moment.": "服务或网络读取失败；未使用静态数据替代失败的业务读取。",
+  "This document was not found in the current workspace, or you cannot see it.": "当前工作区未找到该单据，或您无权查看。",
+  "Document number: {id}": "单据编号：{id}",
+  "Your session has expired or is missing": "登录已失效",
+  "Sign in again to read this document.": "请重新登录后查看该单据。",
+  "You do not have permission to view this document": "您没有查看该单据的权限",
+  "Ask an administrator for access if you need to see it.": "如需查看，请联系管理员开通权限。",
+  "This document cannot be read right now. Try again.": "该单据暂时无法读取，请重试。",
+  "The service or network could not be reached. Try again in a moment.": "暂时无法连接服务，请稍后重试。",
   "No linked supplier": "未关联供应商", "Supplier": "供应商", "Purchase order": "采购订单", "Receipt": "收货单",
   "Supplier invoice": "供应商发票", "Three-way match": "三单匹配", "Invoice status": "发票状态", "Match status": "匹配状态",
-  "PO amount": "PO 金额", "Invoice amount": "发票金额", "Variance amount": "差异金额", "Currency": "币种",
+  "PO amount": "采购订单金额", "Invoice amount": "发票金额", "Variance amount": "差异金额", "Currency": "币种",
   "Invoice date": "发票日期", "Due date": "到期日",
-  "The linked three-way match does not exist or is not visible to this workspace.": "关联三单匹配当前不存在或对当前租户不可见。",
+  "The linked three-way match does not exist or is not visible to this workspace.": "关联的三单匹配不存在，或在当前工作区不可见。",
   "Your session has expired, so the linked three-way match cannot be read.": "登录状态已失效，无法读取关联三单匹配。",
   "You do not have permission to view the linked three-way match.": "当前用户没有查看关联三单匹配的权限。",
   "The linked three-way match cannot be read right now. Refresh to try again.": "关联三单匹配暂时无法读取，可刷新后重试。",
 };
 
 function useDetailCopy() {
-  const { language, locale } = useI18n();
+  const { language, locale, timezone } = useI18n();
   const copy = (value: string, params: Record<string, string> = {}) => {
-    // Status tokens and server text come in Chinese; workspaceCopy maps the ones it knows.
-    const text = language === "en-US" ? (zh[value] ? value : workspaceCopy(value, language)) : zh[value] || value;
+    // Status tokens and server text come in Chinese or as codes; workspaceCopy
+    // maps the ones it knows (a status code gets its label in either language).
+    const text = language === "en-US" ? (zh[value] ? value : workspaceCopy(value, language)) : zh[value] || workspaceCopy(value, language);
     return Object.entries(params).reduce((result, [key, param]) => result.replaceAll(`{${key}}`, param), text);
   };
-  return { copy, locale };
+  return { copy, locale, timezone };
+}
+
+// A recorded calendar day prints as that day; an instant prints as the day it
+// falls on in the workspace timezone. Both in the workspace locale.
+function day(value: string | undefined, locale: string, timezone: string) {
+  if (!value) return "—";
+  return /^\d{4}-\d{2}-\d{2}$/.test(value.trim()) ? formatCalendarDay(value, locale) : formatInstantDay(value, locale, timezone);
 }
 
 function readFailureMessage(error: unknown) {
@@ -89,7 +99,9 @@ export function ProcurementDocumentDetailPage({
   const [relatedMatch, setRelatedMatch] = useState<ProcurementDocument | null>(null);
   const [relatedMatchNotice, setRelatedMatchNotice] = useState("");
   const [state, setState] = useState<ReadState>("loading");
-  const { copy, locale } = useDetailCopy();
+  const { copy, locale, timezone } = useDetailCopy();
+  // Statuses keep their recorded value; the chip shows its label and tone.
+  const statusChip = (value?: string) => value ? <StatusChip label={copy(value)} tone={statusToneOf(value)} /> : "—";
 
   const load = useCallback(async () => {
     if (!documentId) {
@@ -173,7 +185,7 @@ export function ProcurementDocumentDetailPage({
         ) : state === "forbidden" ? (
           <div className="py-16 text-center" data-testid="procurement-document-forbidden">
             <div className="text-sm font-semibold">{copy("You do not have permission to view this document")}</div>
-            <div className="mt-2 text-xs" style={{ color: A.sub }}>{copy("Missing permission is not shown as empty data, and no substitute records are returned.")}</div>
+            <div className="mt-2 text-xs" style={{ color: A.sub }}>{copy("Ask an administrator for access if you need to see it.")}</div>
           </div>
         ) : state === "error" ? (
           <div className="py-16 text-center" data-testid="procurement-document-read-error">
@@ -192,7 +204,7 @@ export function ProcurementDocumentDetailPage({
                 <h2 className="text-xl font-semibold">{record.id || documentId}</h2>
                 <p className="mt-1 text-sm" style={{ color: A.sub }}>{record.supplierName || copy("No linked supplier")}</p>
               </div>
-              <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold">{copy(status)}</span>
+              {statusChip(status === "—" ? undefined : status)}
             </div>
 
             <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -217,18 +229,18 @@ export function ProcurementDocumentDetailPage({
               )}
               {isInvoice ? (
                 <>
-                  <Fact label={copy("Invoice status")}>{record.invoiceStatus ? copy(record.invoiceStatus) : "—"}</Fact>
-                  <Fact label={copy("Match status")}>{record.matchStatus ? copy(record.matchStatus) : "—"}</Fact>
+                  <Fact label={copy("Invoice status")}>{statusChip(record.invoiceStatus)}</Fact>
+                  <Fact label={copy("Match status")}>{statusChip(record.matchStatus)}</Fact>
                 </>
               ) : (
-                <Fact label={copy("Match status")}>{copy(status)}</Fact>
+                <Fact label={copy("Match status")}>{statusChip(status === "—" ? undefined : status)}</Fact>
               )}
               <Fact label={copy("PO amount")}>{money(record.poAmount ?? relatedMatch?.poAmount, record.currency, locale)}</Fact>
               <Fact label={copy("Invoice amount")}>{money(record.amount ?? record.invoiceAmount, record.currency, locale)}</Fact>
               <Fact label={copy("Variance amount")}>{money(record.varianceAmount, record.currency, locale)}</Fact>
               <Fact label={copy("Currency")}>{record.currency || "—"}</Fact>
-              {isInvoice && <Fact label={copy("Invoice date")}>{record.invoiceDate || "—"}</Fact>}
-              {isInvoice && <Fact label={copy("Due date")}>{record.dueDate || "—"}</Fact>}
+              {isInvoice && <Fact label={copy("Invoice date")}>{day(record.invoiceDate, locale, timezone)}</Fact>}
+              {isInvoice && <Fact label={copy("Due date")}>{day(record.dueDate, locale, timezone)}</Fact>}
             </dl>
 
             {blockingReason && (

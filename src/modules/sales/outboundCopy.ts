@@ -2,7 +2,9 @@
 // labels only: never apply this mapping to stored business values.
 export const outboundEnglish: Record<string, string> = {
   "可用量 = 在库量 - 预留量": "Available = on hand − reserved",
-  "预留量 + 已履约量不超过订购量": "Reserved + fulfilled does not exceed ordered",
+  "预留量 + 已履约量不超过订购量": "Reserved + shipped does not exceed ordered",
+  "预留的消耗、释放与分配不超过预留量": "Used, released and allocated stay within the reservation",
+  "发货过账数量与库存流水一致": "Posted shipment quantities match the stock movements",
   "网络连接失败，请检查连接后重试。": "Could not connect. Check your connection and try again.",
   "登录已失效，请重新登录后读取销售订单。": "Your session has expired. Sign in again to load sales orders.",
   "当前账号没有读取销售订单的权限。": "Your account cannot view sales orders.",
@@ -25,8 +27,6 @@ export const outboundEnglish: Record<string, string> = {
   "当前订单状态不允许此操作。": "The order's current status does not allow this action.",
   "订单物料与当前工作区主数据不一致。": "The order's items do not match this workspace's item master.",
   "返回销售订单列表": "Back to sales orders",
-  "新建销售订单草稿": "New sales order draft",
-  "SKU、物料名称与单位由 PostgreSQL Item 主数据快照。": "SKU, item name, and unit are copied from the item master.",
   "保存中…": "Saving…",
   "业务调整": "Business adjustment",
   "正在读取正式订单…": "Loading the order…",
@@ -81,7 +81,6 @@ export const outboundEnglish: Record<string, string> = {
   "可用 {n}": "Available {n}",
   "可操作": "Can operate",
   "只读": "Read only",
-  "计算 {calculated} / 记录 {recorded}": "calculated {calculated} / recorded {recorded}",
   "命令记录": "Command",
   "幂等键": "Idempotency key",
   "暂停订单": "Put on hold",

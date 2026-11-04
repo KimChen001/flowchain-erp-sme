@@ -53,6 +53,8 @@ const zh: Record<string, string> = {
   "Create an item or import a file of items to get started.": "新建物料或导入物料文件即可开始。",
   "Uncategorized": "未分类", "Not set: the reorder list does not check this item": "未设置：补货清单不会检查该物料",
   "View": "查看", "Material": "物料", "Purchase unit": "采购单位",
+  // The item detail footer.
+  "Created: {by} · {at}": "创建：{by} · {at}", "Updated: {by} · {at}": "更新：{by} · {at}",
   "Safety stock / reorder point": "安全库存 / 再订货点", "Lead time": "提前期", "{count} days": "{count} 天",
   // The reference lists (customers, warehouses, tax codes, payment terms, print templates).
   "All statuses": "全部状态", "All QA statuses": "全部 QA 状态", "All document types": "全部单据类型",

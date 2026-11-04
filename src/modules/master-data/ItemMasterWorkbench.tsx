@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Plus, Truck } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
@@ -21,6 +21,8 @@ import { useMasterDataWriteAccess } from "./writeAccess";
 import { DataImportLink } from "./DataImportLink";
 import { exportMasterDataCsv } from "./export";
 import { NOT_PROVIDED, useMasterDataCopy } from "./masterDataCopy";
+import { useI18n } from "../../i18n/I18n";
+import { useWarehouseNames } from "../../lib/useWarehouseNames";
 
 export type MasterItem = {
   itemId: string;
@@ -158,6 +160,8 @@ export default function ItemMasterWorkbench({
   onNavigate?: (routeId: string, focus?: unknown) => void;
 }) {
   const { copy, language, locale } = useMasterDataCopy();
+  const { formatDateTime } = useI18n();
+  const warehouseName = useWarehouseNames();
   // Creating and editing items needs master_data.item.manage.
   const canEdit = useMasterDataWriteAccess().items;
   const [items, setItems] = useState<MasterItem[]>([]);
@@ -337,10 +341,26 @@ export default function ItemMasterWorkbench({
         </div>
       </Card>
     );
+  // A detail value as a person reads it: the type and unit labels, the
+  // warehouse name and workspace-formatted numbers. Stored values are unchanged.
+  const detailValue = (item: MasterItem, key: keyof MasterItem) => {
+    const value = item[key];
+    if (value === null || value === undefined || value === "") return NOT_PROVIDED;
+    if (key === "itemType") return typeLabel(String(value));
+    if (key === "baseUnit" || key === "purchaseUnit") return unitLabel(String(value));
+    if (key === "defaultWarehouseId") return warehouseName(String(value)) || NOT_PROVIDED;
+    if (typeof value === "number") return quantity(value);
+    return String(value);
+  };
+  // Audit times in the workspace locale and timezone.
+  const auditTime = (value: string) => {
+    if (!value || Number.isNaN(new Date(value).getTime())) return NOT_PROVIDED;
+    return formatDateTime(value);
+  };
   if (selected)
     return (
       <Card className="p-5">
-        <div className="flex justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <button
               className="text-xs text-blue-600"
@@ -357,9 +377,11 @@ export default function ItemMasterWorkbench({
           </div>
           {canEdit && (
             <button
+              type="button"
               onClick={() => setEditing(selected)}
-              className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
+              className={listButtonClass.primary}
             >
+              <Pencil size={13} />
               {copy("编辑 SKU")}
             </button>
           )}
@@ -369,15 +391,15 @@ export default function ItemMasterWorkbench({
             <div key={key} className="rounded-lg bg-slate-50 p-3">
               <div className="text-[11px] text-slate-500">{copy(label)}</div>
               <div className="mt-1 text-xs font-medium">
-                {String(selected[key] ?? "—") || "—"}
+                {detailValue(selected, key)}
               </div>
             </div>
           ))}
         </div>
         <div className="mt-4 text-xs text-slate-500">
-          {language === "en-US" ? "Created: " : "创建："}{selected.createdBy} · {selected.createdAt}
+          {copy("Created: {by} · {at}", { by: selected.createdBy, at: auditTime(selected.createdAt) })}
           <br />
-          {language === "en-US" ? "Updated: " : "更新："}{selected.updatedBy} · {selected.updatedAt}
+          {copy("Updated: {by} · {at}", { by: selected.updatedBy, at: auditTime(selected.updatedAt) })}
         </div>
       </Card>
     );

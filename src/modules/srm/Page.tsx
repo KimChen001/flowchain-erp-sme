@@ -6,12 +6,12 @@ import { SupplierTierPanel, TierChip, type Tier, type TierHistoryRow } from "./S
 import type { SupplierInsight, SupplierInsights } from "./supplierInsights";
 import { sortSuppliersBy, useSupplierMetricCells } from "./supplierMetrics";
 import { useEffect, useState, useRef } from "react";
-import { Pencil, Plus, RefreshCw, Search } from "lucide-react";
+import { ArrowLeft, Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
-import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass } from "../../components/ui/workbenchTable";
-import { rowActionClass } from "../../components/ui/listLayout";
+import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -163,7 +163,7 @@ export default function SupplierMasterPage({
   onNavigate?: (moduleId: string, focus?: unknown) => void;
   onActiveContextChange?: (context: any) => void;
 }) {
-  const { language } = useI18n();
+  const { language, formatNumber } = useI18n();
   const { count, spendCell, onTimeCell } = useSupplierMetricCells();
   const copy = (label: string) => supplierCopy(workspaceCopy(label, language), language);
   const listSeparator = language === "en-US" ? ", " : "、";
@@ -435,27 +435,32 @@ export default function SupplierMasterPage({
   if (selected)
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <button
+            type="button"
+            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
             onClick={() => {
               setSelected(null);
               onActiveContextChange?.(null);
             }}
           >
+            <ArrowLeft size={13} />
             {copy("返回供应商列表")}</button>
           {writes.suppliers && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
+                type="button"
                 onClick={() => startEdit(selected)}
-                className="inline-flex items-center gap-1 rounded border px-3 py-2 text-xs"
+                className={listButtonClass.secondary}
               >
-                <Pencil size={14} />
+                <Pencil size={13} />
                 {copy("编辑")}</button>
               <button
+                type="button"
                 onClick={() => toggle(selected)}
-                className="rounded border px-3 py-2 text-xs"
+                className={listButtonClass.secondary}
               >
-                {copy(selected.status === "active" ? "停用" : "启用")}
+                {copy(selected.status === "active" ? "Set inactive" : "Set active")}
               </button>
             </div>
           )}
@@ -473,43 +478,65 @@ export default function SupplierMasterPage({
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-lg font-semibold">{selected.supplierName}</h1>
             <TierChip tier={selected.tier} />
+            <StatusChip label={copy(statusLabel[selected.status])} tone={selected.status === "active" ? "success" : "neutral"} />
           </div>
           <div className="mt-1 text-xs" style={{ color: A.sub }}>
-            {selected.supplierCode} · {copy(statusLabel[selected.status])}
+            {selected.supplierCode}
           </div>
-          <div className="mt-5 grid gap-4 md:grid-cols-3">
-            {[
-              [
-                "基本信息",
-                `${selected.shortName || "-"} · ${selected.businessType || "-"} · ${(selected.categories || []).join(listSeparator) || "-"}`,
-              ],
-              [
-                "联系与地址",
-                `${selected.contactName || "-"} · ${selected.telephone || "-"} · ${selected.email || "-"} · ${selected.address || "-"}`,
-              ],
-              [
-                "商业条款",
-                `${selected.defaultCurrency || copy("Not recorded")} · ${copy("Payment terms")}: ${selected.paymentTermsId ? termName(selected.paymentTermsId) : copy("Not recorded")} · ${selected.settlementMethod || "-"}`,
-              ],
-              [
-                "财税与银行",
-                `${selected.creditCode || "-"} · ${selected.taxIdentificationNumber || "-"} · ${selected.bankName || "-"} · ${selected.bankAccountNumber || "-"}`,
-              ],
-            ].map(([title, value]) => (
-              <section key={copy(title)}>
-                <h2 className="text-xs font-semibold">{copy(title)}</h2>
-                <p className="mt-2 text-xs leading-5" style={{ color: A.sub }}>
-                  {value}
-                </p>
-              </section>
-            ))}
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {([
+              ["基本信息", [
+                ["Short name", selected.shortName],
+                ["Business type", selected.businessType],
+                ["Categories", (selected.categories || []).join(listSeparator)],
+              ]],
+              ["联系与地址", [
+                ["Contact name", selected.contactName],
+                ["Phone", selected.telephone],
+                ["Email", selected.email],
+                ["Address", selected.address],
+                ["Postal / ZIP code", selected.postalCode],
+              ]],
+              ["商业条款", [
+                ["Default currency", selected.defaultCurrency],
+                ["Payment terms", selected.paymentTermsId ? termName(selected.paymentTermsId) : ""],
+                ["Settlement method", selected.settlementMethod],
+              ]],
+              ["财税与银行", [
+                ["Business registration ID", selected.creditCode],
+                ["Tax ID", selected.taxIdentificationNumber],
+                ["Bank name", selected.bankName],
+                ["Account holder", selected.bankAccountName],
+                ["Account number", selected.bankAccountNumber],
+              ]],
+            ] as Array<[string, Array<[string, string]>]>).map(([title, facts]) => {
+              // Empty fields are left out; a section with none says so once.
+              const recorded = facts.filter(([, value]) => String(value || "").trim());
+              return (
+                <section key={copy(title)}>
+                  <h2 className="text-xs font-semibold">{copy(title)}</h2>
+                  {recorded.length ? (
+                    <dl className="mt-2 space-y-1 text-xs leading-5">
+                      {recorded.map(([label, value]) => (
+                        <div key={label} className="flex flex-wrap gap-x-2">
+                          <dt style={{ color: A.sub }}>{copy(label)}</dt>
+                          <dd className="min-w-0 break-words">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : (
+                    <p className="mt-2 text-xs leading-5" style={{ color: A.sub }}>{copy("Not recorded")}</p>
+                  )}
+                </section>
+              );
+            })}
           </div>
         </Card>
         <SupplierTierPanel supplier={selected} canEdit={writes.suppliers} onChanged={async () => { await openDetail(selected.id); await load(); }} />
         <Card className="p-5">
           <h2 className="text-sm font-semibold">{copy("可供应物料")}</h2>
           {relationshipLimitation && <p role="alert" className="mt-2 text-xs text-amber-700">{copy("Supplied-item links are currently unavailable.")}</p>}
-          {writes.items && <div className="mt-3 grid gap-2 md:grid-cols-4">
+          {writes.items && <div className="mt-3 grid items-start gap-2 md:grid-cols-[minmax(0,2fr)_auto_minmax(0,1fr)_auto]">
             <select
               aria-label={copy("选择 SKU")}
               value={relationForm.itemId}
@@ -529,7 +556,7 @@ export default function SupplierMasterPage({
                   </option>
                 ))}
             </select>
-            <label className="text-xs">
+            <label className="inline-flex h-9 items-center gap-2 whitespace-nowrap text-xs">
               <input
                 type="checkbox"
                 checked={relationForm.preferred}
@@ -539,8 +566,8 @@ export default function SupplierMasterPage({
                     preferred: e.target.checked,
                   })
                 }
-              />{" "}
-              Preferred
+              />
+              {copy("Preferred")}
             </label>
             <div>
               <input
@@ -558,72 +585,87 @@ export default function SupplierMasterPage({
               {relationFormHistoryKey && <PriceHistoryFacts history={relationshipHistory.histories.get(relationFormHistoryKey)} state={relationshipHistory.state} testId="supplied-item-form-price-history" />}
             </div>
             <button
+              type="button"
               onClick={addRelationship}
-              className="rounded bg-blue-600 px-3 py-2 text-xs text-white"
+              className={`${listButtonClass.primary} h-9 justify-center`}
             >
-              {copy("新增供应商关系")}</button>
+              <Plus size={13} />
+              {copy("Add supplied item")}</button>
           </div>}
           {relationships.length === 0 ? (
             <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
               {copy("暂无可供应物料")}</div>
           ) : (
-            <table className="mt-3 w-full text-xs">
+            <div className={`mt-3 ${tableScrollClass}`}>
+            <table className={`w-full ${tableBodyTextClass}`}>
               <thead>
-                <tr>
-                  {[
-                    "SKU",
-                    "Preferred",
-                    "Approved",
-                    "Lead Time",
-                    "MOQ",
-                    "参考价格",
-                    "状态",
-                    ...(writes.items ? ["操作"] : []),
-                  ].map((h) => (
-                    <th key={copy(h)} className="p-2 text-left">
+                <tr style={listHeadRowStyle}>
+                  {([
+                    ["SKU", false],
+                    ["Preferred", false],
+                    ["Approved", false],
+                    ["Lead time (days)", true],
+                    ["MOQ", true],
+                    ["参考价格", true],
+                    ...(relationshipHistory.state === "hidden" ? [] : [["Earlier PO prices", false]]),
+                    ["状态", false],
+                    ...(writes.items ? [["操作", false]] : []),
+                  ] as Array<[string, boolean]>).map(([h, numeric]) => (
+                    <th key={h} className={numeric ? thRightClass : thClass} style={{ color: A.sub }}>
                       {copy(h)}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {relationships.map((r) => (
-                  <tr key={r.relationshipId} className="border-t">
-                    <td className="p-2">
-                      <EntityLink kind="item" id={r.itemId} className="text-blue-600">
+                {relationships.map((r, index) => (
+                  <tr key={r.relationshipId} className={listRowClass} style={listRowStyle(index, relationships.length)}>
+                    <td className={`${tdClass} min-w-[160px]`}>
+                      <EntityLink kind="item" id={r.itemId} className={tableLinkClass}>
                         {r.item?.sku || r.itemId} · {r.item?.itemName || ""}
                       </EntityLink>
                     </td>
-                    <td className="p-2">{copy(r.preferred ? "是" : "否")}</td>
-                    <td className="p-2">{copy(r.approved ? "是" : "否")}</td>
-                    <td className="p-2">{r.leadTimeDays ?? "—"}</td>
-                    <td className="p-2">{r.minimumOrderQuantity ?? "—"}</td>
-                    <td className="p-2">
-                      {r.currency} {r.referencePrice}
-                      {relationshipHistoryKey(r) && <PriceHistoryFacts compact history={relationshipHistory.histories.get(relationshipHistoryKey(r))} state={relationshipHistory.state} testId={`supplied-item-price-history-${r.itemId}`} />}
+                    <td className={tdNowrapClass}>{copy(r.preferred ? "是" : "否")}</td>
+                    <td className={tdNowrapClass}>{copy(r.approved ? "是" : "否")}</td>
+                    <td className={tdNumericRightClass}>{r.leadTimeDays == null ? "—" : formatNumber(r.leadTimeDays)}</td>
+                    <td className={tdNumericRightClass}>{r.minimumOrderQuantity == null ? "—" : formatNumber(r.minimumOrderQuantity)}</td>
+                    <td className={tdNumericRightClass}>{r.currency} {r.referencePrice}</td>
+                    {relationshipHistory.state === "hidden" ? null : (
+                      <td className={`${tdClass} min-w-[200px]`}>
+                        {relationshipHistoryKey(r) && <PriceHistoryFacts compact history={relationshipHistory.histories.get(relationshipHistoryKey(r))} state={relationshipHistory.state} testId={`supplied-item-price-history-${r.itemId}`} />}
+                      </td>
+                    )}
+                    <td className={tdNowrapClass}>
+                      <StatusChip label={copy(r.active ? "启用" : "停用")} tone={r.active ? "success" : "neutral"} />
                     </td>
-                    <td className="p-2">{copy(r.active ? "启用" : "停用")}</td>
-                    {writes.items && <td className="p-2 space-x-2">
-                      {!r.preferred && (
+                    {writes.items && <td className={tdNowrapClass}>
+                      <div className="flex gap-1.5">
+                        {!r.preferred && (
+                          <button
+                            type="button"
+                            className={rowActionClass.primary}
+                            onClick={() =>
+                              updateRelationship(r, { preferred: true })
+                            }
+                          >
+                            {copy("设为首选")}</button>
+                        )}
                         <button
+                          type="button"
+                          className={rowActionClass.neutral}
                           onClick={() =>
-                            updateRelationship(r, { preferred: true })
+                            updateRelationship(r, { active: !r.active })
                           }
                         >
-                          {copy("设为首选")}</button>
-                      )}
-                      <button
-                        onClick={() =>
-                          updateRelationship(r, { active: !r.active })
-                        }
-                      >
-                        {copy(r.active ? "停用" : "启用")}
-                      </button>
+                          {copy(r.active ? "Set inactive" : "Set active")}
+                        </button>
+                      </div>
                     </td>}
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </Card>
         <SupplierActivityCards

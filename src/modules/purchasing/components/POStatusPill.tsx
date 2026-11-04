@@ -21,6 +21,12 @@ const poStatusCodeMeta: Record<string, POStatus> = {
   partially_received: "部分到货", fully_received: "已完成", completed: "已完成", rejected: "已驳回", cancelled: "已取消",
 };
 
+// The tone of a PO status, for other places that show it (the detail header).
+export function poStatusToneOf(status?: string | null): StatusTone {
+  const value = String(status || "");
+  return poStatusTone[(poStatusCodeMeta[value] || value) as POStatus] ?? "neutral";
+}
+
 export function POStatusPill({ status }: { status: string }) {
   const { language } = useI18n();
   const displayStatus = status || "未知";
@@ -28,6 +34,6 @@ export function POStatusPill({ status }: { status: string }) {
   const visibleStatus = translatedStatus !== displayStatus
     ? translatedStatus
     : displayStatus.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-  const tone = poStatusTone[(poStatusCodeMeta[displayStatus] || displayStatus) as POStatus] ?? "neutral";
+  const tone = poStatusToneOf(displayStatus);
   return <StatusChip label={visibleStatus} tone={tone} />;
 }
