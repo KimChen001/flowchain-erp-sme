@@ -24,14 +24,14 @@ const at = (value, path) => path.split('.').reduce((entry, key) => (entry === nu
 
 // The fixture workspace as assistant v2 reads it, and a UI tool context whose
 // results are real data tool outputs: call(id, name, args) runs one and keeps it.
-async function workspace({ roleKey = 'workspace-administrator', supplierLinks = [link()], change = highReorderPoint, actor = null, userNamedSkus = [] } = {}) {
+async function workspace({ roleKey = 'workspace-administrator', supplierLinks = [link()], change = highReorderPoint, actor = null, userNamedSkus = [], userText = '', env = null } = {}) {
   const scenario = aiSkillScenario({ roleKey, supplierLinks })
   change?.(scenario.data)
   if (actor) actor(scenario.ctx.aiSkillActor)
-  const context = await loadAiSkillContext(scenario.ctx)
+  const context = await loadAiSkillContext(env ? { ...scenario.ctx, env } : scenario.ctx)
   const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
   const results = new Map()
-  const ctx = { results, facts, actor: context.actor, language: 'en-US', threadId: 'thr_7f2c', messageId: 'msg_19', partId: 'p2', userNamedSkus }
+  const ctx = { results, facts, actor: context.actor, language: 'en-US', threadId: 'thr_7f2c', messageId: 'msg_19', partId: 'p2', userNamedSkus, userText, prisma: context.prisma, tenantId: context.tenantId, workspaceCurrency: context.tenant.currency }
   const call = async (id, name, args = {}) => {
     const run = await runAiReadTool(name, args, { facts, context, assistantV2: true })
     assert.ok(run.ok, `${name}: ${run.error}`)
@@ -54,7 +54,7 @@ function assertPart(built, component) {
 const assertError = (built, code) => assert.equal(built.error?.code, code, JSON.stringify(built))
 
 test('every UI tool follows the contract: kind ui, a closed input schema, frozen', () => {
-  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'suggest_purchase_request', 'suggest_followups'])
+  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'suggest_purchase_request', 'show_setup_steps', 'suggest_setup_records', 'suggest_followups'])
   assert.ok(Object.isFrozen(AI_ASSISTANT_V2_UI_TOOLS))
   for (const entry of AI_ASSISTANT_V2_UI_TOOLS) {
     assert.ok(Object.isFrozen(entry))
@@ -67,7 +67,7 @@ test('every UI tool follows the contract: kind ui, a closed input schema, frozen
 })
 
 test('the display tools are marked, and every source parameter asks for the handle a result gives', () => {
-  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.filter((entry) => entry.display).map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices'])
+  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.filter((entry) => entry.display).map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps'])
   for (const entry of AI_ASSISTANT_V2_UI_TOOLS.filter((item) => item.inputSchema.properties.source)) {
     assert.match(entry.inputSchema.properties.source.description, /#1/, entry.name)
     assert.doesNotMatch(entry.inputSchema.properties.source.description, /tool_use id/, entry.name)
@@ -540,4 +540,121 @@ test('suggest_purchase_request lists every approved supplier and keeps another o
   const fiveDays = new Date(Date.parse(`${ctx.facts.today}T00:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10)
   assert.deepEqual(picked.needByDate, { value: fiveDays, source: 'lead_time', leadTimeDays: 5, shortWeekOf: null })
   assert.equal(picked.checked, true)
+})
+
+test('show_setup_steps shows the checklist of a setup_status result, linking only open steps the user may do', async () => {
+  const { call, build } = await workspace({ env: { FLOWCHAIN_ENABLE_DATA_IMPORT: 'true', FLOWCHAIN_PERSISTENCE_MODE: 'database' } })
+  await call('toolu_setup', 'setup_status')
+  const props = assertPart(build('show_setup_steps', { source: 'setup_status#1' }), 'setup_steps')
+  assert.deepEqual(props.steps.map((step) => [step.id, step.done, step.count, step.route || null]), [
+    ['items', true, 3, null], ['suppliers', true, 2, null], ['customers', false, 0, { moduleId: 'master-data:import', query: { type: 'customers' } }],
+    ['opening_stock', true, 2, null], ['teammates', false, 0, { moduleId: 'settings:roles' }],
+  ])
+  assert.deepEqual([props.done, props.total, props.source], [3, 5, 'toolu_setup'])
+  assert.deepEqual(props.gaps, { checked: 3, unit: 1, preferredSupplier: 1, thresholds: 1 })
+  await call('toolu_po', 'list_purchase_orders')
+  assertError(build('show_setup_steps', { source: 'list_purchase_orders#1' }), 'wrong_source')
+  // A step the role may not do shows without a link.
+  const viewer = await workspace({ roleKey: 'read-only-viewer' })
+  await viewer.call('toolu_setup', 'setup_status')
+  const blocked = assertPart(viewer.build('show_setup_steps', { source: 'setup_status' }), 'setup_steps')
+  assert.ok(blocked.steps.every((step) => !step.route && step.blocked === 'permission'))
+})
+
+// Rows a user pasted, and the card's input for them as the model passes it.
+const PASTED = [
+  'Please add these suppliers:',
+  'Northwind Metals, contact Dana Lee, sales@northwind.example, +1 555 0100, Net 30',
+  'Acme Components',
+  'Blue Fastener Co, code BF-01, terms Net 90',
+  'And these items:',
+  'BOLT-M8 Hex bolt M8, box, safety stock 20, reorder point 40, from Northwind Metals at 12.50 USD, lead time 7 days',
+  'LDM-001 Flow Controller',
+  'NUT-M8 Hex nut M8, box, from Acme Components',
+  'WASHER-10 Washer, pcs, price 3',
+  'PIN-4 Cotter pin, pcs, from Nobody Ltd',
+].join('\n')
+const SETUP_INPUT = {
+  suppliers: [
+    { name: 'Northwind Metals', contact: 'Dana Lee', email: 'sales@northwind.example', phone: '+1 555 0100', paymentTerms: 'Net 30' },
+    { name: 'Acme Components' },
+    { name: 'Blue Fastener Co', code: 'BF-01', paymentTerms: 'Net 90' },
+  ],
+  items: [
+    { sku: 'BOLT-M8', name: 'Hex bolt M8', unit: 'box', safetyStock: 20, reorderPoint: 40, preferredSupplier: 'Northwind Metals', referencePrice: 12.5, currency: 'USD', leadTimeDays: 7 },
+    { sku: 'LDM-001', name: 'Flow Controller' },
+    { sku: 'NUT-M8', name: 'Hex nut M8', unit: 'box', preferredSupplier: 'Acme Components' },
+    { sku: 'WASHER-10', name: 'Washer', unit: 'pcs', referencePrice: 3 },
+    { sku: 'PIN-4', name: 'Cotter pin', unit: 'pcs', preferredSupplier: 'Nobody Ltd' },
+  ],
+}
+const problemsOf = (row) => row.problems.map((entry) => `${entry.field}:${entry.code}:${entry.blocking ? 'block' : 'warn'}${entry.ref ? `:${entry.ref.id}` : ''}`)
+
+test('suggest_setup_records shows the rows the user gave with where each value came from, and marks what is wrong with each', async () => {
+  const { build } = await workspace({ userText: PASTED })
+  const built = await build('suggest_setup_records', SETUP_INPUT)
+  const props = assertPart(built, 'setup_form')
+  assert.equal(props.formId, 'thr_7f2c:msg_19:p2')
+  const [northwind, acme, blue] = props.suppliers
+  assert.deepEqual([northwind.name, northwind.code, northwind.email, northwind.paymentTerms], [
+    { value: 'Northwind Metals', source: 'user_typed' }, { value: null, source: 'generated' }, { value: 'sales@northwind.example', source: 'user_typed' },
+    { value: 'NET30', label: 'Net 30', typed: 'Net 30', source: 'user_typed' },
+  ])
+  assert.deepEqual(problemsOf(northwind), [])
+  // An existing supplier by name blocks its row; a payment term the workspace lacks is only a warning.
+  assert.deepEqual(problemsOf(acme), ['name:duplicate_existing:block:SUP-001'])
+  assert.deepEqual(blue.code, { value: 'BF-01', source: 'user_typed' })
+  assert.deepEqual(problemsOf(blue), ['payment_terms:payment_terms_unknown:warn'])
+  assert.deepEqual(blue.paymentTerms, { value: null, label: null, typed: 'Net 90', source: 'user_typed' })
+  // The next free code comes after the workspace's SUP-001 and SUP-002.
+  assert.deepEqual(props.codeSeed, { prefix: 'SUP-', next: 3, width: 3 })
+  const [bolt, ldm, nut, washer, pin] = props.items
+  assert.deepEqual(bolt.preferredSupplier, { supplierId: null, rowKey: 's1', name: 'Northwind Metals', typed: 'Northwind Metals', source: 'user_typed' })
+  assert.deepEqual([bolt.referencePrice, bolt.leadTimeDays, bolt.currency, bolt.category], [{ value: 12.5, source: 'user_typed' }, { value: 7, source: 'user_typed' }, { value: 'USD', source: 'user_typed' }, { value: null, source: 'not_given' }])
+  assert.deepEqual(problemsOf(bolt), [])
+  // A SKU in use blocks; the same name only warns; a unit is asked for, never assumed.
+  assert.deepEqual(problemsOf(ldm), ['sku:duplicate_existing:block:ITEM-001', 'name:duplicate_existing:warn:ITEM-001', 'unit:required:block'])
+  assert.deepEqual(ldm.unit, { value: null, source: 'not_given' })
+  // A supplier the card repeats is the existing one; its price would be in the workspace currency.
+  assert.deepEqual(nut.preferredSupplier, { supplierId: 'SUP-001', rowKey: null, name: 'Acme Components', typed: 'Acme Components', source: 'user_typed' })
+  assert.deepEqual(nut.currency, { value: 'USD', source: 'default' })
+  assert.deepEqual(problemsOf(washer), ['reference_price:needs_supplier:block'])
+  assert.deepEqual(problemsOf(pin), ['preferred_supplier:supplier_unknown:block'])
+  assert.deepEqual(props.paymentTerms, [{ code: 'DUE', label: 'Due on receipt' }, { code: 'NET30', label: 'Net 30' }])
+  assert.deepEqual(props.supplierOptions.map((option) => option.id), ['SUP-001', 'SUP-002'])
+  assert.deepEqual([props.workspaceCurrency, props.canCreateSuppliers, props.canCreateItems], ['USD', true, true])
+  assert.deepEqual(built.refs.map((entry) => `${entry.type}:${entry.id}`), ['supplier:SUP-001', 'item:ITEM-001'])
+})
+
+test('suggest_setup_records takes only values in the words the user wrote, at most 25 rows, and checks numbers and duplicates in the card', async () => {
+  const { build } = await workspace({ userText: PASTED })
+  const made = await build('suggest_setup_records', { items: [{ sku: 'BOLT-M9', name: 'Hex bolt M8', unit: 'box', reorderPoint: 45 }] })
+  assertError(made, 'not_typed')
+  assert.match(made.error.message, /items\[0\]\.sku "BOLT-M9", items\[0\]\.reorderPoint 45/)
+  assertError(await build('suggest_setup_records', { suppliers: [{ name: 'Northwind Metals', paymentTerms: 'Net 45' }] }), 'not_typed')
+  assertError(await build('suggest_setup_records', {}), 'invalid_input')
+  const many = Array.from({ length: 13 }, () => ({ name: 'Northwind Metals' }))
+  assertError(await build('suggest_setup_records', { suppliers: many, items: many.map(() => ({ sku: 'NUT-M8', name: 'Hex nut M8' })) }), 'too_many_rows')
+  // A currency sign stands for its code.
+  const signed = await workspace({ userText: 'HOSE-1 Garden hose, pcs, $4.20 from Acme Components, safety stock -5, lead time 2.5 days, and HOSE-1 again' })
+  const props = assertPart(await signed.build('suggest_setup_records', { items: [
+    { sku: 'HOSE-1', name: 'Garden hose', unit: 'pcs', referencePrice: 4.2, currency: 'USD', preferredSupplier: 'Acme Components', safetyStock: -5, leadTimeDays: 2.5 },
+    { sku: 'hose-1', name: 'Garden hose', unit: 'pcs' },
+  ] }), 'setup_form')
+  assert.deepEqual(problemsOf(props.items[0]), ['safety_stock:negative:block', 'lead_time_days:whole_number:block'])
+  assert.deepEqual(problemsOf(props.items[1]), ['sku:duplicate_in_card:block', 'name:duplicate_in_card:warn'])
+})
+
+test('the setup card is offered only to a role that may add suppliers or items, and only for what it may add', async () => {
+  const viewer = await workspace({ roleKey: 'read-only-viewer', userText: PASTED })
+  assert.ok(!aiUiToolsFor(viewer.ctx.actor).some((entry) => entry.name === 'suggest_setup_records'))
+  assertError(await viewer.build('suggest_setup_records', SETUP_INPUT), 'not_allowed')
+  const itemsOnly = await workspace({ userText: PASTED, actor: (actor) => actor.permissionCodes.delete('master_data.supplier.manage') })
+  assert.ok(aiUiToolsFor(itemsOnly.ctx.actor).some((entry) => entry.name === 'suggest_setup_records'))
+  assertError(await itemsOnly.build('suggest_setup_records', SETUP_INPUT), 'not_allowed')
+  const props = assertPart(await itemsOnly.build('suggest_setup_records', { items: SETUP_INPUT.items.slice(2, 3) }), 'setup_form')
+  assert.deepEqual([props.canCreateSuppliers, props.canCreateItems], [false, true])
+  // Without the workspace's records nothing is shown.
+  const offline = await workspace({ userText: PASTED })
+  assertError(await tool('suggest_setup_records').build(SETUP_INPUT, { ...offline.ctx, prisma: null }), 'setup_unavailable')
 })

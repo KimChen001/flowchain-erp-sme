@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import { ASSISTANT_V2_LIMITS, answerAssistantV2 } from '../domain/ai-assistant-v2.mjs'
+import { QUESTION_LIMITS, SETUP_FORM_ROWS } from '../../shared/assistant-protocol.mjs'
+import { ASSISTANT_V2_LIMITS, SERVER_NOTE_PREFIX, answerAssistantV2 } from '../domain/ai-assistant-v2.mjs'
 import { AI_ASSISTANT_V2_UI_TOOLS } from '../domain/ai-assistant-v2-ui-tools.mjs'
 import { AssistantModelError } from '../domain/ai-assistant-v2-model/model-error.mjs'
 import { createAssistantV2CostLedger, createAssistantV2RateLimiter } from '../domain/ai-assistant-v2-controls.mjs'
 import { assistantV2PermissionFingerprint, createAssistantV2ThreadStore } from '../domain/ai-assistant-v2-threads.mjs'
 import { aiInjectionDetected } from '../domain/ai-injection-guard.mjs'
+import { readFirstRunSetup } from '../domain/first-run-setup.mjs'
+import { reportReadAccessFor } from '../domain/report-read-access.mjs'
 import { loadAiSkillContext } from '../domain/ai-skill-context.mjs'
 import { recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
 import { aiSkillText } from '../domain/ai-skill-copy.mjs'
@@ -32,7 +35,10 @@ import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
 // carries the loop's block.
 //
 // Returns { handled: true } when it answered, else { handled: false,
-// fallback: 'over_cap' | 'unavailable', audit }.
+// fallback: 'over_cap' | 'unavailable', audit }. A question longer than the
+// rules read (QUESTION_LIMITS.rules: assistant v2 takes pasted rows up to
+// QUESTION_LIMITS.assistantV2) is never handed back: it gets the
+// too_long_for_rules notice instead, with its audit row.
 
 const THREADS = createAssistantV2ThreadStore()
 const RATE_LIMITER = createAssistantV2RateLimiter()
@@ -45,8 +51,21 @@ const FORM_ID = /^[\w:-]{1,160}$/
 const RECORD_ID = /^[\w-]{1,80}$/
 const STATUS = /^[a-z_]{1,40}$/
 const FORM_RESULTS = 5
+const SETUP_TYPES = Object.freeze(['supplier', 'item'])
+// A record a setup card reports counts only while its creation is this recent:
+// as long as a thread lives.
+const SETUP_NOTE_WINDOW_MS = 2 * 60 * 60 * 1000
 
 const text = (value) => String(value ?? '').trim()
+
+// The length check of a question assistant v2 answers: 2 to 8,000 characters,
+// so rows pasted from a spreadsheet fit. The rules keep their 1,200.
+export function validateAssistantV2Question(body = {}) {
+  const length = text(body.message || body.question).length
+  if (length > QUESTION_LIMITS.assistantV2) return { ok: false, status: 400, tooLong: true }
+  if (length < 2) return { ok: false, status: 400, tooLong: false }
+  return { ok: true, status: 200 }
+}
 
 // The open record's fields go into the model's context as they are sent.
 const activeContextInjected = (active) => Boolean(active && typeof active === 'object')
@@ -99,6 +118,11 @@ async function addFormNotes({ context, session, threadId, userId, formResults })
   let added = 0
   for (const entry of formResults.slice(0, FORM_RESULTS)) {
     const formId = text(entry?.formId)
+    // A setup card reports the suppliers and items it created instead.
+    if (Array.isArray(entry?.created)) {
+      if (FORM_ID.test(formId) && formId.startsWith(`${threadId}:`)) added += await addSetupNote({ context, session, formId, userId, created: entry.created })
+      continue
+    }
     const requestId = text(entry?.purchaseRequestId)
     if (!FORM_ID.test(formId) || !formId.startsWith(`${threadId}:`) || !RECORD_ID.test(requestId) || session.forms.has(formId)) continue
     try {
@@ -120,6 +144,68 @@ async function addFormNotes({ context, session, threadId, userId, formResults })
   return added
 }
 
+// The first-day checklist for the panel's empty state, as Today builds it
+// (first-run-setup.mjs): open, and whether its first steps (items,
+// suppliers) are still open, when the panel offers setup starters. null when
+// it cannot be read; the panel then shows its usual starters.
+export async function assistantV2SetupState(ctx) {
+  try {
+    const context = await loadAiSkillContext(ctx)
+    if (!context.prisma) return null
+    const checklist = await readFirstRunSetup(context.prisma, { tenantId: context.tenantId, now: context.now, access: reportReadAccessFor(context.actor), env: ctx.env || process.env })
+    const open = (id) => checklist.steps.some((step) => step.id === id && !step.done)
+    return { open: checklist.done < checklist.total, firstStepsOpen: open('items') || open('suppliers') }
+  } catch {
+    return null
+  }
+}
+
+// A name as a note gives it: one line, clipped, and left out when it reads
+// as an instruction (a name typed into the card never passed the guard).
+const noteName = (value) => {
+  const name = text(value).replace(/\s+/g, ' ').slice(0, 120)
+  return name && !aiInjectionDetected(name) ? name : ''
+}
+
+// What a setup card created, as reported by the client: each supplier or item
+// that exists in this workspace and that this user created (the create audit
+// row the Suppliers and Items pages' commands write) while a thread can live.
+// Each record is noted once, so a card that creates more after a retry adds
+// only the new ones. The note names them, so the model may say "you created".
+async function addSetupNote({ context, session, formId, userId, created }) {
+  const wanted = []
+  for (const entry of created.slice(0, SETUP_FORM_ROWS)) {
+    const type = text(entry?.type)
+    const id = text(entry?.id)
+    const key = `${formId}|${type}:${id}`
+    if (!SETUP_TYPES.includes(type) || !RECORD_ID.test(id) || session.forms.has(key) || wanted.some((row) => row.key === key)) continue
+    wanted.push({ type, id, key })
+  }
+  const since = Date.now() - SETUP_NOTE_WINDOW_MS
+  const confirmed = []
+  for (const row of wanted) {
+    try {
+      const [record, creation] = await Promise.all([
+        row.type === 'supplier'
+          ? context.prisma.supplier.findFirst({ where: { id: row.id, tenantId: context.tenantId }, select: { id: true, code: true, name: true } })
+          : context.prisma.item.findFirst({ where: { id: row.id, tenantId: context.tenantId }, select: { id: true, sku: true, name: true } }),
+        context.prisma.auditLog.findFirst({ where: { tenantId: context.tenantId, entityType: row.type, entityId: row.id, action: 'create' }, select: { actorId: true, createdAt: true } }),
+      ])
+      const at = creation?.createdAt ? new Date(creation.createdAt).getTime() : Number.NaN
+      if (!record || text(creation?.actorId) !== userId || !(at >= since)) continue
+      const [code, name] = row.type === 'supplier' ? [noteName(record.code), noteName(record.name)] : [noteName(record.sku), noteName(record.name)]
+      confirmed.push({ ...row, words: row.type === 'supplier' ? `supplier ${name || code || record.id}${code && name ? ` (code ${code})` : ''}` : `item ${code || record.id}${name ? ` (${name})` : ''}` })
+    } catch {
+      // An unreadable record adds nothing to the note.
+    }
+  }
+  if (!confirmed.length) return 0
+  const form = { setup: true, records: confirmed.map(({ type, id }) => ({ type, id })) }
+  for (const row of confirmed.slice(1)) session.forms.set(row.key, form)
+  session.note(confirmed[0].key, form, { role: 'user', content: [{ type: 'text', text: `${SERVER_NOTE_PREFIX}, not the user's words: with form ${formId} the user created ${confirmed.map((row) => row.words).join(', ')}.` }] })
+  return confirmed.length
+}
+
 export async function answerWithAssistantV2(ctx, body, { client, started = Date.now() } = {}) {
   const { res } = ctx
   const send = ctx.send
@@ -137,6 +223,18 @@ export async function answerWithAssistantV2(ctx, body, { client, started = Date.
     } else send(res, 200, answer)
     return { handled: true }
   }
+  // The rules answer a question handed back, unless it is longer than they
+  // read: then the notice says so, and the audit row says why it came back.
+  const handBack = async (fallback, block) => {
+    if (message.length <= QUESTION_LIMITS.rules) return { handled: false, fallback, audit: block }
+    const answer = noticeAnswer('too_long_for_rules', language, message)
+    await audit(answer, { ...block, tooLongForRules: true })
+    if (emit) {
+      emit({ type: 'notice', code: 'too_long_for_rules' })
+      emit({ type: 'answer', status: 200, body: answer })
+    } else send(res, 200, answer)
+    return { handled: true }
+  }
 
   if (aiInjectionDetected(message) || activeContextInjected(body.activeContext)) return refuse('injection_refused', 'injection')
   const { conversationContext, dropped: droppedTurns } = withoutInjectedTurns(body.conversationContext)
@@ -148,7 +246,7 @@ export async function answerWithAssistantV2(ctx, body, { client, started = Date.
   if (!(ctx.aiAssistantV2RateLimiter || RATE_LIMITER).allow(`${context.tenantId}:${userId}`)) return refuse('rate_limited', 'rate_limited')
 
   const reservation = (ctx.aiAssistantV2CostLedger || COST_LEDGER).reserve(context.tenantId, ctx.aiWorkspaceAccess)
-  if (!reservation.ok) return { handled: false, fallback: 'over_cap', audit: { status: 'fallback', reason: 'over_cap', actionRequest } }
+  if (!reservation.ok) return handBack('over_cap', { status: 'fallback', reason: 'over_cap', actionRequest })
 
   const threadId = THREAD_ID.test(text(body.threadId)) ? text(body.threadId) : `thr_${randomUUID().replace(/-/g, '').slice(0, 24)}`
   const session = (ctx.aiAssistantV2Threads || THREADS).open({ tenantId: context.tenantId, userId, threadId, fingerprint: assistantV2PermissionFingerprint(context.actor) })
@@ -178,7 +276,7 @@ export async function answerWithAssistantV2(ctx, body, { client, started = Date.
       })
     } catch (error) {
       if (!(error instanceof AssistantModelError)) throw error
-      return { handled: false, fallback: 'unavailable', audit: { status: 'fallback', reason: 'provider_error', actionRequest, ...(error.audit || {}) } }
+      return await handBack('unavailable', { status: 'fallback', reason: 'provider_error', actionRequest, ...(error.audit || {}) })
     }
     await audit(result.body, { status: gone ? 'cancelled' : backstop ? 'timeout' : 'answered', formNotes: notes, actionRequest, droppedTurns, ...result.audit })
     if (gone) return { handled: true }

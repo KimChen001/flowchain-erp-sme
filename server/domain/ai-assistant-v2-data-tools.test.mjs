@@ -8,6 +8,9 @@ import { AI_ASSISTANT_V2_TOOLS } from './ai-assistant-v2-data-tools.mjs'
 import { AI_READ_TOOL_COLUMNS, aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { buildReorderList } from './reorder-list.mjs'
+import { buildFirstRunChecklist } from './today-work.mjs'
+import { firstRunSetupOptions, readFirstRunSetupCounts } from './first-run-setup.mjs'
+import { reportReadAccessFor } from './report-read-access.mjs'
 
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
 // order of 100 and a reference price of 95 USD.
@@ -383,4 +386,41 @@ test('every data tool declares its columns, and each declared column is in its r
   // Every declared table, of every tool, had rows to check.
   const declared = Object.entries(AI_READ_TOOL_COLUMNS).flatMap(([name, tables]) => Object.keys(tables).map((path) => `${name} ${path}`))
   assert.deepEqual([...checked].sort(), declared.sort())
+})
+
+test('setup_status reports the first-day checklist exactly as Today builds it, with the item gaps', async () => {
+  const env = { FLOWCHAIN_ENABLE_DATA_IMPORT: 'true', FLOWCHAIN_PERSISTENCE_MODE: 'database' }
+  const { context, run } = await v2({ ctx: { env } })
+  const result = (await run('setup_status')).result
+  // The fixture: 3 items, 2 suppliers, 2 items in stock, no customers, one user.
+  assert.deepEqual(result.steps.map((step) => [step.id, step.done, step.count]), [['items', true, 3], ['suppliers', true, 2], ['customers', false, 0], ['opening_stock', true, 2], ['teammates', false, 0]])
+  assert.deepEqual([result.open, result.done, result.total, result.importOn], [true, 3, 5, true])
+  // An administrator may do every step; with import on, each step opens the import page for its type.
+  assert.deepEqual(result.steps.map((step) => [step.blocked, step.href]), [
+    [null, '/app/master-data/import?type=items'], [null, '/app/master-data/import?type=suppliers'], [null, '/app/master-data/import?type=customers'],
+    [null, '/app/master-data/import?type=opening-stock'], [null, '/app/settings/roles'],
+  ])
+  // The same counts and options give Today's checklist, step for step.
+  const today = buildFirstRunChecklist(await readFirstRunSetupCounts(context.prisma, { tenantId: context.tenantId, now: context.now }), firstRunSetupOptions(reportReadAccessFor(context.actor), env))
+  assert.deepEqual(result.steps, today.steps)
+  // LDM-009 has no unit, preferred supplier or threshold: what records_missing_data reports.
+  assert.deepEqual(result.gaps, { checked: 3, unit: 1, preferredSupplier: 1, thresholds: 1 })
+  assert.deepEqual(aiReadToolRefs(result), [])
+})
+
+test('setup_status: without import a step opens its own page; a role that may not do a step gets no link; a read failure is an error', async () => {
+  const plain = (await (await v2()).run('setup_status')).result
+  assert.deepEqual(plain.steps.map((step) => step.href), ['/app/master-data/items', '/app/master-data/suppliers', '/app/master-data/customers', null, '/app/settings/roles'])
+  assert.equal(plain.steps.find((step) => step.id === 'opening_stock').blocked, 'unavailable')
+  assert.equal(plain.importOn, false)
+  const viewer = (await (await v2({ roleKey: 'read-only-viewer' })).run('setup_status')).result
+  assert.ok(viewer.steps.every((step) => step.href === null && step.blocked === 'permission'))
+  // Every step done: the checklist is closed but still reported.
+  // One model of the stand-in database answered differently.
+  const swapped = (prisma, model, methods) => new Proxy({}, { get: (_target, key) => (key === model ? new Proxy({}, { get: (_inner, method) => methods[method] || prisma[model][method] }) : prisma[key]) })
+  const done = await v2({ change: (data) => { data.customers = [{ id: 'CUST-1' }] } })
+  const all = (await runAiReadTool('setup_status', {}, { facts: done.facts, context: { ...done.context, prisma: swapped(done.context.prisma, 'user', { count: async () => 2 }) }, assistantV2: true })).result
+  assert.deepEqual([all.open, all.done], [false, 5])
+  const broken = await v2()
+  assert.deepEqual(await runAiReadTool('setup_status', {}, { facts: broken.facts, context: { ...broken.context, prisma: swapped(broken.context.prisma, 'supplier', { count: async () => { throw new Error('down') } }) }, assistantV2: true }), { ok: false, error: 'setup_counts_unavailable' })
 })

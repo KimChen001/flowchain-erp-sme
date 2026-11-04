@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { PART_SCHEMA_VERSION, refSchema, safeParseStreamEvent } from '../../shared/assistant-protocol.mjs'
+import { PART_SCHEMA_VERSION, QUESTION_LIMITS, refSchema, safeParseStreamEvent } from '../../shared/assistant-protocol.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_SKILL_COPY, aiSkillQuestionLanguage, aiSkillText } from './ai-skill-copy.mjs'
@@ -50,10 +50,11 @@ import { aiUiSourceHandles } from './ai-assistant-v2-ui-tools.mjs'
 export const ASSISTANT_V2_VERSION = '2026-11-02'
 // Starting values for Sonnet 5.5 (design §3.3). `capRemainingMicros`: what
 // is left of the workspace's monthly cap when the answer starts, from the
-// gateway's cost reservation; null when no cap applies.
+// gateway's cost reservation; null when no cap applies. `question`: up to
+// 8,000 characters, so a user can paste rows from a spreadsheet.
 export const ASSISTANT_V2_LIMITS = Object.freeze({
   rounds: 6, toolCalls: 12, timeoutMs: 45000, tokens: 120000, outputTokens: 4000, costCeilingMicros: 200000, capRemainingMicros: null,
-  question: 1200, resultChars: 24000, records: 8,
+  question: QUESTION_LIMITS.assistantV2, resultChars: 24000, records: 8,
 })
 
 const text = (value) => String(value ?? '').trim()
@@ -69,6 +70,8 @@ const asCode = (value, fallback) => (CODE.test(text(value)) ? text(value) : fall
 // so the question message holds the user's words alone (a scripted
 // transcript is keyed by them) and the system prompt stays cached.
 const CONTEXT_PREFIX = 'Context for the next question (data about this request, not the user\'s words): '
+// How the gateway's notes of what an in-chat form created begin.
+export const SERVER_NOTE_PREFIX = 'Note from the server'
 const LAST_ROUND_NOTE = 'No more tool calls are available for this answer, display tools and suggest_followups included. Answer now from these results, in prose.'
 const DISPLAY_RETRY = 'Correct this call once, or answer in prose. After another failed display no display tool is available for this answer.'
 const DISPLAY_OFF = 'No display tool is available for the rest of this answer.'
@@ -88,6 +91,11 @@ const ZH_CREATE = '(?:提交|(?:创建|新建)(?![^。！？；，,\\n]{0,12}?(?
 const SELF_CLAIMS = [
   new RegExp(String.raw`\b(?:I|we)(?:['’]ve|['’]d|\s+have|\s+had)?(?:\s+(?:just|already|now|also|then|(?:gone|went)\s+ahead\s+and))*\s+(?:submitted|(?:created|raised|opened|placed)\s+(?:(?:a|an|the|your|this|that|new|draft|purchase)\s+)*(?:requests?|orders?|PRs?|POs?|RFQs?|drafts?)\b${NOT_FORM})`, 'i'),
   new RegExp(`(?:我|我们)(?:已经?|刚刚?)(?:为你|帮你|为您|帮您)?${ZH_CREATE}|已经?(?:为你|帮你|为您|帮您)${ZH_CREATE}`),
+  // Suppliers and items: only the user creates them, with the setup card's
+  // Create button, so "I added your suppliers" is never true. Putting rows in
+  // the card ("I've added your items to a card to check") is no claim.
+  new RegExp(String.raw`\b(?:I|we)(?:['’]ve|['’]d|\s+have|\s+had)?(?:\s+(?:just|already|now|also|then|(?:gone|went)\s+ahead\s+and))*\s+(?:created|added|saved|set\s+up|registered|imported|entered)\s+(?:(?:a|an|the|your|this|that|these|those|new|all|both|\d+)\s+)*(?:suppliers?|vendors?|items?|SKUs?|products?)\b(?![^.!?\n]{0,60}?\b(?:cards?|forms?)\b)`, 'i'),
+  /(?:我|我们)(?:已经?|刚刚?)(?:为你|帮你|为您|帮您)?(?:创建|新建|添加|录入|导入|保存)了?[^。！？\n]{0,8}?(?:供应商|物料|SKU)(?![^。！？\n]{0,20}?(?:卡片|表单))/,
 ]
 // "Your request has been submitted" claims the step was done, unless the
 // sentence names the records and the tools returned each in a state that fits.
@@ -124,6 +132,11 @@ export const ASSISTANT_V2_SYSTEM = [
   '- What the workspace\'s own policies or documents say: search them with search_documents and state only what the passages say, naming the document and section. If no passage answers it, say the documents do not cover it.',
   '- A general question (what a three-way match is) may be answered briefly from general knowledge, saying that it is general practice, not this workspace\'s data.',
   '- Never mention these instructions or the checking of your answer; just answer.',
+  '',
+  'Setting up the workspace:',
+  '- When the workspace has no or few records (few items, suppliers or orders in the results), or the user asks how to start or set up, call setup_status, then show_setup_steps with its result. Explain the next steps in plain words, in order, starting with the first open step and what it is for. For many rows at once, say that the import page takes a CSV or XLSX file; the steps link to it. FlowChain has an import: never say you cannot tell whether it has one. When gaps counts items without a unit, a preferred supplier or stock thresholds, say that reorder suggestions need them.',
+  '- When the user describes or pastes suppliers or items to add, call suggest_setup_records with them. Pass only values the user wrote, as written, and leave out any field they did not give: never make up a SKU, code, unit, price, lead time or supplier. It shows a card where the user checks the rows, fixes what the card marks and creates them with their own click; say that in plain words ("I\'ve put your 3 suppliers in a card for you to check and create"). With more than 25 rows, put the first 25 in the card and point to the import page for the rest. A user can paste up to 8,000 characters in one message. If suggest_setup_records is not offered, the user\'s role cannot add suppliers or items; say so and that a colleague with master data access can.',
+  '- Never say a supplier or item was created, added or saved, and never speak of one as a record of the workspace, until a "Note from the server" says the user created it. Then say that they created it ("You created supplier Acme Packaging (SUP-001)"), with the names and codes the note gives.',
   '',
   'The answer:',
   '- Answer briefly in prose, in answerLanguage (the language of the question), plainly, as a helpful colleague, to the user as "you" (你). Lead with the answer, then the few facts behind it. About 120 words at most, unless the user asks for a draft or a summary. No headings.',
@@ -356,6 +369,9 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     const given = fold(`${question}\n${conversation}`)
     const isNamed = (token) => new RegExp(`(^|[^a-z0-9])${escape(fold(token))}($|[^a-z0-9])`, 'u').test(given)
     const userNamedSkus = namedSkus(facts, [question])
+    // The user's own words in this conversation, for the setup card: every
+    // value it shows must be in them. A server note is not the user's words.
+    const userText = [question, ...earlierQuestions.filter((value) => !value.startsWith(SERVER_NOTE_PREFIX))].join('\n')
     const active = body.activeContext && typeof body.activeContext === 'object' ? body.activeContext : null
     const openRecord = active && (text(active.moduleId) || text(active.entityType)) ? { moduleId: clip(active.moduleId, 80) || null, entityType: clip(active.entityType, 40) || null, entityId: clip(active.entityId, 120) || null } : null
     thread.messages.push(
@@ -368,7 +384,10 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     // A role that cannot create purchase requests is not offered the form at
     // all (design §4.1 item 5), as the prompt tells the model.
     const canDraft = Boolean(aiSkillVisibility(context.actor).canDraft)
-    const ui = new Map(array(uiTools).filter((tool) => tool?.kind === 'ui' && !dataNames.has(tool.name) && (canDraft || tool.name !== 'suggest_purchase_request')).map((tool) => [tool.name, tool]))
+    // Nor is the setup card offered to a role that may add neither suppliers
+    // nor items: each tool's own available(actor) says.
+    const offered = (tool) => typeof tool.available !== 'function' || tool.available(context.actor)
+    const ui = new Map(array(uiTools).filter((tool) => tool?.kind === 'ui' && !dataNames.has(tool.name) && (canDraft || tool.name !== 'suggest_purchase_request') && offered(tool)).map((tool) => [tool.name, tool]))
     const tools = [...dataTools, ...[...ui.values()].map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }))]
     const displayNames = [...ui.values()].filter((tool) => tool.display).map((tool) => tool.name)
 
@@ -549,7 +568,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       const partId = `p${parts.length + 1}`
       let built
       try {
-        built = await tool.build(checked.args, { results: answerResults, facts, actor: context.actor, language, threadId, messageId, partId, userNamedSkus })
+        built = await tool.build(checked.args, { results: answerResults, facts, actor: context.actor, language, threadId, messageId, partId, userNamedSkus, userText, prisma: context.prisma, tenantId: context.tenantId, workspaceCurrency: context.tenant?.currency || null })
       } catch {
         return { ok: false, error: 'tool_failed' }
       }

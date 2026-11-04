@@ -16,7 +16,8 @@ import { aiKnowledgeAuditBlock, recordAiSkillAudit } from '../domain/ai-skill-au
 import { reportReadAccess, scopeBusinessContext } from '../domain/report-read-access.mjs'
 import { aiRuntimeProgressStream } from './ai-runtime-stream.mjs'
 import { assistantV2Enabled, assistantV2ModelClient } from '../domain/ai-assistant-v2-controls.mjs'
-import { answerWithAssistantV2 } from './ai-assistant-v2-gateway.mjs'
+import { QUESTION_LIMITS } from '../../shared/assistant-protocol.mjs'
+import { answerWithAssistantV2, assistantV2SetupState, validateAssistantV2Question } from './ai-assistant-v2-gateway.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
 // was asked in Chinese. The client maps the codes to its own recovery text.
@@ -135,8 +136,10 @@ async function handleGatewayRequest(requestCtx) {
 
   if (req.method === 'GET' && url.pathname === '/api/ai-runtime/readiness') {
     // assistantV2: whether this user's questions go to assistant v2, so the
-    // panel streams them.
-    send(res, 200, { ...buildAiRuntimeReadinessV2(db, process.env), assistantV2: assistantV2Enabled(ctx) })
+    // panel streams them; with it, setup: the first-day checklist's state, so
+    // the panel's empty state offers setup starters while it is open.
+    const assistantV2 = assistantV2Enabled(ctx)
+    send(res, 200, { ...buildAiRuntimeReadinessV2(db, process.env), assistantV2, ...(assistantV2 ? { setup: await assistantV2SetupState(ctx) } : {}) })
     return true
   }
 
@@ -155,8 +158,8 @@ async function handleGatewayRequest(requestCtx) {
       body = { ...body, interfaceLanguage: body.answerLanguage, answerLanguage: aiSkillQuestionLanguage(String(body.message || body.question || '').slice(0, 1201), body.answerLanguage) }
     }
     // Reject empty or oversized questions before any tenant data is read.
-    const rejectInvalid = (validation) => {
-      const tooLong = String(body.message || body.question || '').trim().length > 1200
+    const rejectInvalid = (validation, limit = QUESTION_LIMITS.rules) => {
+      const tooLong = String(body.message || body.question || '').trim().length > limit
       send(res, validation.status, errorBody(tooLong ? 'AI_QUESTION_TOO_LONG' : 'AI_QUESTION_TOO_SHORT', body))
       return true
     }
@@ -164,11 +167,12 @@ async function handleGatewayRequest(requestCtx) {
       // Assistant v2 (docs/ai-assistant-v2-design.md §3.2): when it is on for
       // this request, only the length check and its own guards run before the
       // model. The rules below answer only a question it hands back, without
-      // a model and with a notice that says why.
+      // a model and with a notice that says why. Its questions may be longer
+      // (QUESTION_LIMITS.assistantV2), so a user can paste rows.
       const assistantV2 = assistantV2ModelClient(ctx)
       if (assistantV2) {
-        const validation = validateAiRuntimeRequest(body)
-        if (!validation.ok) return rejectInvalid(validation)
+        const validation = validateAssistantV2Question(body)
+        if (!validation.ok) return rejectInvalid(validation, QUESTION_LIMITS.assistantV2)
         const outcome = await answerWithAssistantV2(ctx, body, { client: assistantV2, started })
         if (outcome.handled) return true
         ctx = { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: assistantV2FallbackSend(ctx.send, outcome.fallback), aiAssistantV2Audit: outcome.audit }
