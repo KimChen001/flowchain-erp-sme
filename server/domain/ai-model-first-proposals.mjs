@@ -45,13 +45,15 @@ export function aiProposalToolDefinitions(facts) {
   if (!facts?.visibility?.canDraft || !facts.inventory) return []
   return [{
     name: AI_PROPOSE_PURCHASE_REQUEST,
-    description: 'Opens the purchase request form in the panel, filled in, for the user to check and submit on the page; nothing is saved or submitted here. In FlowChain a purchase request comes first and becomes a purchase order after approval. Use it only for an item the user named, in this question or an earlier one, or chose from items you offered; if they did not say which item, ask, offering the items at risk or on the reorder list. Leave out what the user did not give: without a quantity the form takes the reorder list\'s suggested quantity, without a supplier the item\'s preferred supplier, without a date today plus the supplier\'s lead time, and without a reason the reorder list\'s basis. When the user asked to order and has not settled the quantity, it opens nothing and returns the suggestion to offer first (needsConfirmation). Otherwise the result says what the form holds and where each value came from. If open purchase orders already cover the item, say so first and propose only if the user still wants more.',
+    description: 'Opens the purchase request form in the panel, filled in, for the user to check and submit on the page; nothing is saved or submitted here. In FlowChain a purchase request comes first and becomes a purchase order after approval. Use it only for an item the user named, in this question or an earlier one, or chose from items you offered; if they did not say which item, ask, offering the items at risk or on the reorder list. Leave out what the user did not give: without a quantity the form takes the reorder list\'s suggested quantity, without a supplier the item\'s preferred supplier, without a date today plus the supplier\'s lead time, and without a reason the reorder list\'s basis. When the user asked to order and has not settled the quantity, it opens nothing and returns the suggestion to offer first (needsConfirmation). Otherwise the result says what the form holds and where each value came from. If open purchase orders already cover the item, say so first and propose only if the user still wants more. For an item the workspace does not have, give newItem: true instead of a sku, with the description, quantity and unit in the user\'s own words: it opens one Other (non-catalog) line; with newItem alone it opens that line blank. Never give a SKU, a price or a supplier the user did not name for a new item.',
     input_schema: {
       type: 'object',
       additionalProperties: false,
-      required: ['sku'],
       properties: {
         sku: { type: 'string', maxLength: 80, description: 'The item\'s SKU.' },
+        newItem: { type: 'boolean', description: 'true for an item the workspace does not have: an Other (non-catalog) line, in place of sku.' },
+        description: { type: 'string', maxLength: 200, description: 'For a new item: what it is, copied from the user\'s words.' },
+        unit: { type: 'string', maxLength: 20, description: 'For a new item: the unit the user gave (pcs, box, pairs).' },
         quantity: { type: 'number', description: 'The quantity the user asked for.' },
         supplier: { type: 'string', maxLength: 120, description: 'The supplier the user named.' },
         needByDate: { type: 'string', maxLength: 10, description: 'YYYY-MM-DD: the date the user asked for.' },
@@ -112,6 +114,52 @@ function userDate(day, asked) {
   return [...aiGroundingSources([{ excerpt: asked }]).days].some((known) => known === day || (known.startsWith('????') && known.endsWith(day.slice(4))))
 }
 
+// An item the workspace does not have (owner, 2026-11-04: ordering a new item
+// looped on "tell me the SKU and supplier"). It opens one Other (non-catalog)
+// line from the user's own words only: the description, the quantity and unit
+// they wrote, a supplier only when they named one the workspace has, their
+// date and their reason. Never a SKU, a price or a category: the person adds
+// those. With no description the line opens blank. Adding the item to the
+// catalog is done under Items, not here.
+function runNewItemProposal(args, { facts, words, question, turns, language }) {
+  const asked = askedWords({ question, turns })
+  const own = (value) => squeeze(value).length >= 2 && squeeze(asked).includes(squeeze(value))
+  const description = text(args.description).slice(0, 200)
+  if (description && !own(description)) return { ok: false, error: 'description_not_users', details: ["Copy the user's own words for the item, or ask what it is."] }
+  const known = description ? [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)].find((row) => fold(row.itemName) === fold(description) || fold(row.sku) === fold(description)) : null
+  if (known) return { ok: false, error: 'catalog_item', details: [`The workspace has this item as ${known.sku}: propose it by its sku instead.`] }
+  const notes = []
+  const given = typeof args.quantity === 'number' && Number.isFinite(args.quantity) && args.quantity > 0 ? args.quantity : null
+  const quantity = given !== null && mentions(words, String(given)) ? given : null
+  if (given !== null && quantity === null) notes.push(`${given} is not a quantity the user gave, so the line opens without one.`)
+  const unit = text(args.unit) && fold(asked).includes(fold(args.unit)) ? text(args.unit).slice(0, 20) : null
+  let supplier = null
+  if (text(args.supplier)) {
+    const found = aiToolSupplier(facts, args.supplier)
+    if (found.supplier && (mentions(words, found.supplier.name) || mentions(words, found.supplier.code) || mentions(words, args.supplier))) supplier = { id: found.supplier.id, name: found.supplier.name }
+    else notes.push('That supplier is not one the workspace has, or the user did not name it, so the line opens without a supplier.')
+  }
+  const needByDate = userDate(text(args.needByDate), asked) ? text(args.needByDate) : null
+  const said = text(args.reason).slice(0, REASON_MAX)
+  const reason = said && own(said) && !aiSkillOrderRequest(said) ? said : ''
+  const result = {
+    opens: 'purchase_request_form',
+    line: 'other_non_catalog',
+    description: description || null,
+    quantity,
+    unit,
+    supplier: supplier?.name || null,
+    needByDate,
+    reason: reason || null,
+    note: [
+      description ? 'One Other (non-catalog) line with what the user gave, each field marked as theirs.' : 'A blank Other (non-catalog) line for the user to fill in.',
+      'No SKU, price or category is filled: the user adds them on the page and submits it; nothing is saved until then. To keep the item in the catalog, it is added under Items.',
+      ...notes,
+    ].join(' '),
+  }
+  return { ok: true, result, proposal: { kind: 'purchase_request', nonCatalog: true, sku: null, description: description || null, unit, quantity, quantitySource: quantity ? 'user' : null, supplierId: supplier?.id || null, supplierName: supplier?.name || null, supplierSource: supplier ? 'user' : null, needByDate, needBySource: needByDate ? 'user' : null, reason, reasonSource: reason ? 'user' : null } }
+}
+
 // Runs a proposal call. Returns { ok: true, result, proposal } (the proposal
 // becomes the answer's card) or { ok: false, error, details }. `words`: what
 // the user gave (aiProposalUserWords); `question` and `turns` give the user's
@@ -119,7 +167,8 @@ function userDate(day, asked) {
 // `today` is the workspace day.
 export async function runAiProposal(name, args = {}, { facts, words = '', question = '', turns = [], context = null, language = 'en-US', today = null } = {}) {
   if (name !== AI_PROPOSE_PURCHASE_REQUEST || !aiProposalToolDefinitions(facts).length) return { ok: false, error: 'not_allowed' }
-  if (!args || typeof args !== 'object' || typeof args.sku !== 'string' || !text(args.sku)) return { ok: false, error: 'invalid_arguments', details: ['sku is required'] }
+  if (args && typeof args === 'object' && args.newItem === true && !text(args.sku)) return runNewItemProposal(args, { facts, words, question, turns, language })
+  if (!args || typeof args !== 'object' || typeof args.sku !== 'string' || !text(args.sku)) return { ok: false, error: 'invalid_arguments', details: ['sku is required, or newItem: true for an item the workspace does not have'] }
   const item = itemOf(facts, args.sku)
   if (!item) return { ok: false, error: 'not_found', details: ['No item with this SKU is readable. Search for it or ask the user.'] }
   if (!mentions(words, item.sku)) return { ok: false, error: 'item_not_named', details: ['The user has not named or chosen this item. Ask which item they want, offering the items at risk or on the reorder list as choices.'] }
@@ -213,6 +262,7 @@ export async function runAiProposal(name, args = {}, { facts, words = '', questi
 // user gave; it fills the preferred supplier and the lead-time date itself,
 // labelled as such, so those are shown on the card only.
 export function aiProposalCard(proposal, facts, language, { autoOpen }) {
+  if (proposal.nonCatalog) return newItemCard(proposal, facts, language, { autoOpen })
   const fmt = aiSkillFormatter(facts || {}, language)
   const values = { sku: proposal.sku, quantity: proposal.quantity ? fmt.quantity(proposal.quantity, proposal.unit) : '' }
   const title = aiSkillText(values.quantity ? 'order.card.title' : 'order.card.title_no_quantity', language, values)
@@ -234,6 +284,34 @@ export function aiProposalCard(proposal, facts, language, { autoOpen }) {
       language,
     },
     originEvidence: [{ entityType: 'item', entityId: proposal.itemId || proposal.sku }],
+    autoOpen,
+  }
+}
+
+// The card for an item the workspace does not have: it opens the request page
+// with one Other line from the user's words (lineType non_catalog).
+function newItemCard(proposal, facts, language, { autoOpen }) {
+  const fmt = aiSkillFormatter(facts || {}, language)
+  const values = { description: text(proposal.description), quantity: proposal.quantity ? fmt.quantity(proposal.quantity, proposal.unit) : '' }
+  const key = !values.description ? 'blank' : values.quantity ? 'quantity' : 'named'
+  const title = aiSkillText(`order.card.new_item_${key}`, language, values)
+  const reason = text(proposal.reason) || aiSkillText('model_first.request.reason', language)
+  return {
+    previewOnly: true, reviewRequired: true, requiresHumanReview: true, prohibitedActions: PROHIBITED,
+    allowedNextStep: aiSkillText(`order.action.new_item_${key}`, language, values),
+    title, draftTitle: title, description: reason,
+    draftType: 'purchase_request_draft', targetModule: AI_SKILL_MODULES.purchase_request, targetEntityType: 'item', targetEntityId: 'non_catalog',
+    payload: {
+      nonCatalog: true,
+      ...(values.description ? { description: values.description } : {}),
+      ...(proposal.quantity ? { quantity: proposal.quantity, quantitySource: 'user' } : {}),
+      ...(proposal.unit ? { unit: proposal.unit } : {}),
+      ...(proposal.supplierId ? { supplierId: proposal.supplierId, supplierName: proposal.supplierName } : {}),
+      ...(proposal.needByDate ? { needByDate: proposal.needByDate, requestedDeliveryDate: proposal.needByDate } : {}),
+      ...(proposal.reason ? { reason: proposal.reason, reasonSource: 'user' } : {}),
+      language,
+    },
+    originEvidence: [],
     autoOpen,
   }
 }

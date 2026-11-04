@@ -29,6 +29,8 @@ const rendererCopy = {
     viewBasis: "View basis",
     basis: "Basis",
     draftFor: "Draft a purchase request for {sku}",
+    newItem: "{description} (not in the catalog)",
+    notNamed: "New item",
     records: "Records",
     limitations: "Data limitations",
     impactDetails: "Business impact",
@@ -60,6 +62,8 @@ const rendererCopy = {
     viewBasis: "查看依据",
     basis: "依据",
     draftFor: "为 {sku} 起草采购申请",
+    newItem: "{description}（非目录）",
+    notNamed: "新物料",
     records: "相关记录",
     limitations: "数据限制",
     impactDetails: "业务影响",
@@ -162,7 +166,7 @@ function Action({ action, primary = false, compact = false, onNavigate, onReview
 // card to confirm on. Its button opens the request form, filled in, where the
 // user submits; nothing is saved from the assistant.
 export function isAiOrderProposal(card: AiResponseV2ReviewCard) {
-  return card.draftType === "purchase_request_draft" && typeof card.autoOpen === "boolean" && Boolean(card.payload?.itemIdOrSku);
+  return card.draftType === "purchase_request_draft" && typeof card.autoOpen === "boolean" && Boolean(card.payload?.itemIdOrSku || card.payload?.nonCatalog);
 }
 
 function OrderProposal({ card, onNavigate, onReviewActionDraft, language }: { card: AiResponseV2ReviewCard; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; language: Language }) {
@@ -173,7 +177,7 @@ function OrderProposal({ card, onNavigate, onReviewActionDraft, language }: { ca
   const text = (value: unknown) => typeof value === "string" || typeof value === "number" ? String(value) : "";
   const quantity = typeof payload.quantity === "number" ? payload.quantity.toLocaleString("en-US") : text(payload.quantity);
   const fields = [
-    { label: copy.item, value: text(payload.itemIdOrSku) },
+    { label: copy.item, value: payload.nonCatalog ? fill(copy.newItem, { description: text(payload.description) || copy.notNamed }) : text(payload.itemIdOrSku) },
     { label: copy.quantity, value: [quantity, text(payload.unit)].filter(Boolean).join(" ") },
     { label: copy.supplier, value: text(payload.supplierName) },
     { label: copy.needBy, value: text(payload.needByDate) },
