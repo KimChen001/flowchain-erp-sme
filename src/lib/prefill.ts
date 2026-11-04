@@ -1,7 +1,7 @@
 // Typed access to the shared prefill rules (shared/prefill-suggestions.mjs),
 // which the server applies to the same trail.
 import { buildSuggestionTrail as buildTrail, prefillOrigin as originOf } from "../../shared/prefill-suggestions.mjs";
-import { addCalendarDays as addDays, planPurchaseRequestPrefill as planRequest } from "../../shared/purchase-request-prefill.mjs";
+import { addCalendarDays as addDays, planNonCatalogPrefill as planNonCatalog, planPurchaseRequestPrefill as planRequest } from "../../shared/purchase-request-prefill.mjs";
 
 export type PrefillSource = "record" | "default" | "template" | "history" | "workspace_history" | "model";
 export type PrefillOutcome = "accepted" | "edited" | "cleared";
@@ -24,6 +24,8 @@ export function buildSuggestionTrail(input: { origin?: unknown; prefills?: Recor
 }
 
 export type PurchaseRequestPrefillField = "itemId" | "supplierId" | "quantity" | "estimatedUnitPrice" | "targetWarehouseId" | "needByDate" | "internalLineComment";
+// The fields of a non-catalog ("Other") line the user's own words fill.
+export type NonCatalogPrefillField = "itemNameSnapshot" | "quantity" | "unitSnapshot" | "supplierId" | "needByDate" | "internalLineComment";
 // The last issued PO of the item with one supplier, as a workspace day.
 export type SupplierLastOrder = { purchaseOrderId: string; orderNumber: string; day: string; dateSource: "issue_date" | "order_date" | "order_date_not_issued" | string };
 // An approved source for a person to choose, when none is preferred. lastOrder
@@ -49,4 +51,15 @@ export function planPurchaseRequestPrefill(input: {
   lastOrders?: Record<string, SupplierLastOrder> | Map<string, SupplierLastOrder> | null;
 }): PurchaseRequestPrefillPlan {
   return planRequest(input);
+}
+
+// One non-catalog ("Other") line from the assistant: only what the user wrote,
+// each field marked as theirs; no SKU, price or category.
+export function planNonCatalogPrefill(input: {
+  query: Record<string, string>;
+  units: { id: string; code?: string; label?: string }[];
+  suppliers: { id: string; supplierCode?: string; name?: string; supplierName?: string }[];
+  defaultDate: string;
+}): { origin: PrefillOrigin; intent: null; values: Record<NonCatalogPrefillField, string>; fields: Partial<Record<NonCatalogPrefillField, PrefillEntry>>; supplierChoices: SupplierChoice[] } {
+  return planNonCatalog(input);
 }

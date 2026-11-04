@@ -26,6 +26,11 @@ const rendererCopy = {
     source: "1 source",
     notes: "{count} notes",
     note: "1 note",
+    viewBasis: "View basis",
+    basis: "Basis",
+    draftFor: "Draft a purchase request for {sku}",
+    newItem: "{description} (not in the catalog)",
+    notNamed: "New item",
     records: "Records",
     limitations: "Data limitations",
     impactDetails: "Business impact",
@@ -54,6 +59,11 @@ const rendererCopy = {
     source: "1 条来源",
     notes: "{count} 条说明",
     note: "1 条说明",
+    viewBasis: "查看依据",
+    basis: "依据",
+    draftFor: "为 {sku} 起草采购申请",
+    newItem: "{description}（非目录）",
+    notNamed: "新物料",
     records: "相关记录",
     limitations: "数据限制",
     impactDetails: "业务影响",
@@ -156,7 +166,7 @@ function Action({ action, primary = false, compact = false, onNavigate, onReview
 // card to confirm on. Its button opens the request form, filled in, where the
 // user submits; nothing is saved from the assistant.
 export function isAiOrderProposal(card: AiResponseV2ReviewCard) {
-  return card.draftType === "purchase_request_draft" && typeof card.autoOpen === "boolean" && Boolean(card.payload?.itemIdOrSku);
+  return card.draftType === "purchase_request_draft" && typeof card.autoOpen === "boolean" && Boolean(card.payload?.itemIdOrSku || card.payload?.nonCatalog);
 }
 
 function OrderProposal({ card, onNavigate, onReviewActionDraft, language }: { card: AiResponseV2ReviewCard; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; language: Language }) {
@@ -167,7 +177,7 @@ function OrderProposal({ card, onNavigate, onReviewActionDraft, language }: { ca
   const text = (value: unknown) => typeof value === "string" || typeof value === "number" ? String(value) : "";
   const quantity = typeof payload.quantity === "number" ? payload.quantity.toLocaleString("en-US") : text(payload.quantity);
   const fields = [
-    { label: copy.item, value: text(payload.itemIdOrSku) },
+    { label: copy.item, value: payload.nonCatalog ? fill(copy.newItem, { description: text(payload.description) || copy.notNamed }) : text(payload.itemIdOrSku) },
     { label: copy.quantity, value: [quantity, text(payload.unit)].filter(Boolean).join(" ") },
     { label: copy.supplier, value: text(payload.supplierName) },
     { label: copy.needBy, value: text(payload.needByDate) },
@@ -183,8 +193,18 @@ const RECORD_CODE = /^(?=[^\s]*\d)(?=[^\s]*[A-Za-z])[A-Za-z0-9][A-Za-z0-9._/-]{2
 type RecordRef = { code: string; render: (code: string) => ReactNode };
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 
-function recordRefs(response: AiResponseV2, onNavigate?: Navigate) {
+// An item the answer offers to order is a choice, not a link: its chip asks
+// for a request for it, as its follow-up chip does (owner, 2026-11-03: a click
+// on the item opened its page).
+function OrderChoiceChip({ code, prompt, onFollowUp, language }: { code: string; prompt: string; onFollowUp?: (prompt: string) => void; language: Language }) {
+  return <button type="button" data-testid="ai-order-choice" data-action-kind="draft_choice" data-business-id={code} title={fill(rendererCopy[language].draftFor, { sku: code })} disabled={!onFollowUp} className={`${chipClass} hover:underline`} style={CHIP_STYLE} onClick={() => onFollowUp?.(prompt)}>{code}</button>;
+}
+
+function recordRefs(response: AiResponseV2, onNavigate?: Navigate, onFollowUp?: (prompt: string) => void, language: Language = "en-US") {
   const refs = new Map<string, RecordRef>();
+  for (const choice of response.orderChoices || []) {
+    if (choice?.sku && choice.prompt && !refs.has(choice.sku.toUpperCase())) refs.set(choice.sku.toUpperCase(), { code: choice.sku, render: (text) => <OrderChoiceChip code={text} prompt={choice.prompt} onFollowUp={onFollowUp} language={language} /> });
+  }
   for (const item of response.keyEvidence || []) {
     const code = item.entityLabel || item.label || "";
     if (RECORD_CODE.test(code) && !refs.has(code.toUpperCase())) refs.set(code.toUpperCase(), { code, render: (text) => <EvidenceLink item={item} onNavigate={onNavigate}>{text}</EvidenceLink> });
@@ -223,12 +243,26 @@ function withRecordChips(text: string, refs: Map<string, RecordRef>, pattern: Re
 // The answer's own text as written: its line breaks kept, and its numbered or
 // bulleted lines shown as a list ("1.", "1、", "（1）", "-", "•").
 const LIST_LINE = /^(?:(\d{1,2})(?:[.)．]\s+|、\s*)|[（(](\d{1,2})[)）]\s*|[-•*·]\s+)/u;
-type TextBlock = { kind: "p" | "ol" | "ul"; start: number; lines: string[] };
+// A Markdown table (a list of items, owner 2026-11-03): a header row, a
+// separator row of dashes, then one row per item. Each row's cells.
+const TABLE_ROW = /^\|.*\|$/;
+const TABLE_RULE = /^\|(?:\s*:?-{2,}:?\s*\|)+$/;
+const tableCells = (line: string) => line.replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+type TextBlock = { kind: "p" | "ol" | "ul"; start: number; lines: string[] } | { kind: "table"; start: number; lines: string[]; head: string[]; rows: string[][] };
 export function answerTextBlocks(text: string): TextBlock[] {
   const blocks: TextBlock[] = [];
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
+  const rows = text.split(/\r?\n/).map((raw) => raw.trim());
+  for (let index = 0; index < rows.length; index += 1) {
+    const line = rows[index];
     if (!line) continue;
+    if (TABLE_ROW.test(line) && TABLE_RULE.test(rows[index + 1] || "")) {
+      const head = tableCells(line);
+      const body: string[][] = [];
+      for (index += 2; index < rows.length && TABLE_ROW.test(rows[index]); index += 1) body.push(tableCells(rows[index]));
+      index -= 1;
+      blocks.push({ kind: "table", start: 1, lines: [], head, rows: body });
+      continue;
+    }
     const match = line.match(LIST_LINE);
     const number = match ? Number(match[1] || match[2] || 0) : 0;
     const kind = match ? (number ? "ol" : "ul") : "p";
@@ -246,7 +280,9 @@ function AnswerText({ text, lang, chips }: { text: string; lang?: string; chips:
   const line = (value: string) => withRecordChips(value, chips.refs, chips.pattern);
   return (
     <div data-testid="ai-answer-text" lang={lang} className="space-y-2 text-sm leading-relaxed" style={{ color: A.label }}>
-      {answerTextBlocks(text).map((block, index) => block.kind === "p"
+      {answerTextBlocks(text).map((block, index) => block.kind === "table"
+        ? <div key={index} className="overflow-x-auto"><table data-testid="ai-answer-table" className="w-full text-[13px] leading-5"><thead><tr>{block.head.map((cell, column) => <th key={column} className="whitespace-nowrap px-2 py-1 text-left font-medium first:pl-0" style={{ color: A.sub, borderBottom: `1px solid ${A.gray4}` }}>{line(cell)}</th>)}</tr></thead><tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>{block.head.map((_, column) => <td key={column} className="px-2 py-1 align-top tabular-nums first:pl-0" style={{ borderBottom: `1px solid ${A.gray5}` }}>{line(row[column] || "")}</td>)}</tr>)}</tbody></table></div>
+        : block.kind === "p"
         ? <p key={index}>{line(block.lines[0])}</p>
         : block.kind === "ol"
           ? <ol key={index} start={block.start} className="list-decimal space-y-1 pl-5">{block.lines.map((value, row) => <li key={row}>{line(value)}</li>)}</ol>
@@ -288,7 +324,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   if (!response || response.version !== "v2") return null;
   if (response.rag) return <RagAnswerCard rag={response.rag} title={response.conclusion.title} summary={response.conclusion.summary} />;
   const focused = toAiFocusedResponse(response, language);
-  const refs = recordRefs(response, onNavigate);
+  const refs = recordRefs(response, onNavigate, onFollowUp, language);
   const chips: Chips = { refs, pattern: recordPattern(refs) };
   // A compound answer shows a section per part in place of the summary and
   // the priorities, which repeat the sections.
@@ -305,9 +341,13 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   const items = focused.primaryItems.map((item) => ({ ...item, draft: lineDraft(item.draft) }));
   // A line with something of its own to say (a reason, an impact, a next step
   // or a draft) is listed with it. Records the answer only cites are listed
-  // when the text does not name them already.
-  const citedOnly = items.every((item) => !item.reason && !item.impact && !item.nextStep && !item.draft);
-  const lines = compound ? [] : citedOnly ? items.filter((item) => !isShown(item.evidence.entityLabel || item.evidence.label)) : items;
+  // when the text does not name them already; in a model-first answer that
+  // holds beside lines with a next step too (owner, 2026-11-03: no record
+  // listed twice).
+  const saysSomething = (item: (typeof items)[number]) => Boolean(item.reason || item.impact || item.nextStep || item.draft);
+  const notInText = (item: (typeof items)[number]) => !isShown(item.evidence.entityLabel || item.evidence.label);
+  const citedOnly = items.every((item) => !saysSomething(item));
+  const lines = compound ? [] : citedOnly ? items.filter(notInText) : response.answerSource === "workspace_model" ? items.filter((item) => saysSomething(item) || notInText(item)) : items;
   const compactLines = !citedOnly && lines.every((item) => !item.reason && !item.impact);
   const shownLines = citedOnly || allLines ? lines : lines.slice(0, LINE_LIMIT);
   const hiddenLines = lines.length - shownLines.length;
@@ -324,10 +364,16 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   // One source for every record ("Your workspace data") is said once, not on each.
   const sources = new Set(focused.evidence.map((item) => item.sourceLabel || ""));
   const sharedSource = focused.evidence.length > 1 && sources.size === 1 ? [...sources][0] : "";
-  const trust = !capability && (response.answerSourceLabel || sourceCount || noteCount || focused.businessImpact.length || response.contextCards?.length);
+  // What stands behind a model-first answer (its bases and caveats), folded
+  // under the trust line rather than written into the answer.
+  const basis = (response.answerBasis || []).filter((line) => typeof line === "string" && line.trim());
+  const trust = !capability && (response.answerSourceLabel || sourceCount || noteCount || basis.length || focused.businessImpact.length || response.contextCards?.length);
+  // One meta line (owner, 2026-11-03): what was checked goes inside the trust
+  // line when there is one, and stands above the answer only when there is not.
+  const checkedLine = response.checkedLabel ? <p data-testid="ai-answer-checked" className="flex items-start gap-1.5 text-[13px] leading-5" style={{ color: A.sub }}><Search size={13} className="mt-[3px] shrink-0" aria-hidden />{response.checkedLabel}</p> : null;
   return (
     <div data-testid="ai-response-v2" data-answer-mode={focused.answerMode} data-answer-source={response.answerSource || undefined} className="space-y-3">
-      {response.checkedLabel ? <p data-testid="ai-answer-checked" className="flex items-start gap-1.5 text-[13px] leading-5" style={{ color: A.sub }}><Search size={13} className="mt-[3px] shrink-0" aria-hidden />{response.checkedLabel}</p> : null}
+      {trust ? null : checkedLine}
       {/* A model call failed (the provider down, slow or out of budget), or agent planning was tried and failed: the rules answered. One line, the most specific. */}
       {response.aiModelAccess?.status === "unavailable"
         ? <p data-testid="ai-model-unavailable" role="status" className="rounded-lg px-2.5 py-1.5 text-[13px]" style={{ background: "#FFF7ED", color: "#9A3412" }}>{response.aiModelAccess.reason === "budget" ? copy.modelBudget : response.aiModelAccess.reason === "unchecked" ? copy.modelUnchecked : copy.modelUnavailable}</p>
@@ -377,9 +423,12 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
           <span className="font-medium" style={{ color: TEAL_TEXT }}>{modelAnswer ? copy.figuresChecked : copy.fromRecords}</span>
           {sourceCount ? <span style={{ color: A.sub }}>· {count(sourceCount, copy.source, copy.sources)}</span> : null}
           {noteCount ? <span style={{ color: A.sub }}>· {count(noteCount, copy.note, copy.notes)}</span> : null}
+          {basis.length ? <span style={{ color: A.blue }}>· {copy.viewBasis}</span> : null}
           <ChevronDown size={13} className="transition-transform group-open:rotate-180" style={{ color: A.gray2 }} aria-hidden />
         </summary>
         <div className="mt-2 space-y-3 rounded-xl p-3 text-[13px] leading-relaxed" style={{ background: A.gray6, border: `1px solid ${A.gray4}` }}>
+          {basis.length ? <div data-testid="ai-answer-basis" lang={response.language || undefined} className="space-y-1"><div className="font-semibold" style={{ color: A.label }}>{copy.basis}</div><ul className="list-disc space-y-0.5 pl-4" style={{ color: A.label }}>{basis.map((line, index) => <li key={index}>{withRecordChips(line, chips.refs, chips.pattern)}</li>)}</ul></div> : null}
+          {checkedLine}
           {response.answerSourceLabel ? <p data-testid="ai-answer-source" style={{ color: A.sub }}>{response.answerSourceLabel}</p> : null}
           {focused.evidence.length ? <div data-testid="ai-evidence-details" className="space-y-1.5">{focused.evidence.map((item) => <div key={item.id}><EvidenceLink item={item} onNavigate={onNavigate} /><span style={{ color: A.sub }}>{[item.status, item.value, sharedSource ? "" : item.sourceLabel].filter((value) => value !== undefined && value !== null && value !== "").map((value) => ` · ${value}`).join("")}</span></div>)}{sharedSource ? <div style={{ color: A.sub }}>{sharedSource}</div> : null}</div> : null}
           {focused.limitations.length ? <div data-testid="ai-limitations-details" className="space-y-1"><div className="font-semibold" style={{ color: A.label }}>{copy.limitations}</div>{focused.limitations.map((item, index) => <div key={item.code || `${item.label}-${index}`}><span className="font-medium" style={{ color: A.label }}>{item.label}</span>{item.description ? <span style={{ color: A.sub }}> · {item.description}</span> : null}{item.consequence ? <div style={{ color: A.sub }}>{item.consequence}</div> : null}</div>)}</div> : null}
