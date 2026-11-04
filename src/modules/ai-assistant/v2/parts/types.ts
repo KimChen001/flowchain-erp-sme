@@ -69,7 +69,7 @@ export type PrFormRow = {
   onHand?: number | null;
   safetyStock?: number | null;
   reorderPoint?: number | null;
-  suggestedQuantity: { value: number | null; source: "user_named" | "reorder_gap" | "reorder_gap_raised_to_moq" | "cover_days" | "cover_days_raised_to_moq"; minimum?: number | null; coverDays?: number };
+  suggestedQuantity: { value: number | null; source: "user_named" | "reorder_gap" | "reorder_gap_raised_to_moq" | "cover_days" | "cover_days_raised_to_moq" | "none"; minimum?: number | null; coverDays?: number };
   supplier: { id: string; name: string; source: "preferred" | "only_approved" | "user_named" } | null;
   suppliers?: ApprovedSupplier[];
   needByDate: { value: string; source: "lead_time" | "user_named" | "today"; leadTimeDays?: number | null; shortWeekOf?: string | null };

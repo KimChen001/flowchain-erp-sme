@@ -461,7 +461,7 @@ test('a failed display says how to fix it; a second failure withdraws the displa
   assert.deepEqual(ofType(stubborn.events, 'error'), [{ type: 'error', code: 'limits', retryable: false }])
 })
 
-test('one set of follow-up chips per answer: a later call replaces the earlier, and the chips come after every other part', async () => {
+test('one set of follow-up chips per answer: a later call replaces the earlier, the chips come after every other part, and chips after text end the answer', async () => {
   const { events, body, client } = await ask([
     [...say('Checking the orders.'), ...call('tu_chips', 'suggest_followups', { questions: ['Which supplier is late?'] }), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
     [...say('PO-001 is the most overdue.'), ...call('tu_chips2', 'suggest_followups', { questions: ['Show PO-001'] }), end()],
@@ -470,8 +470,11 @@ test('one set of follow-up chips per answer: a later call replaces the earlier, 
   assertProtocol(events)
   const chips = ofType(events, 'ui')
   assert.deepEqual(chips.map((event) => [event.partId, event.props.questions[0]]), [['p2', 'Which supplier is late?'], ['p2', 'Show PO-001']])
-  assert.deepEqual(body.parts, [{ id: 'p1', type: 'text' }, { id: 'p3', type: 'text' }, { id: 'p4', type: 'text' }, { id: 'p2', type: 'ui', component: 'followups' }])
-  assert.deepEqual(JSON.parse(lastToolResults(client.requests[2])[0].content), { shown: 'followups', partId: 'p2' })
+  // The second round was text and the chips only: the answer ends there, and
+  // the third turn is never asked for.
+  assert.deepEqual(body.parts, [{ id: 'p1', type: 'text' }, { id: 'p3', type: 'text' }, { id: 'p2', type: 'ui', component: 'followups' }])
+  assert.equal(client.requests.length, 2)
+  assert.deepEqual(JSON.parse(lastToolResults(client.requests[1]).find((block) => block.tool_use_id === 'tu_chips').content), { shown: 'followups', partId: 'p2' })
 })
 
 test('the records a text names come with its flag, from this answer\'s results only', async () => {
@@ -592,6 +595,39 @@ test('a provider failure before anything is shown leaves the answer to the rules
   const broken = { model: 'scripted', async *stream() { yield { type: 'text_delta', text: 'PO-001 ' }; throw new TypeError('loop bug') } }
   await assert.rejects(runWithAiUsageScope((usage) => { metered.push(usage) }, () => answerAssistantV2({ ...aiSkillScenario({}).ctx, env: ENV }, { message: 'Which orders are late?' }, { modelClient: broken })), (error) => error instanceof TypeError && !error.audit)
   assert.deepEqual(metered, [])
+})
+
+// The 2026-11-04 new-user test: 5 of 23 answers flagged a correct figure the
+// user had already seen in an earlier answer, or had typed themselves.
+test('a figure from an earlier result or an earlier question of the conversation is not flagged', async () => {
+  const thread = { messages: [], results: new Map() }
+  await ask([OVERDUE, [...say('PO-001 is 4 days overdue.'), end()]], { thread, question: 'Which purchase orders are overdue? We sell about 12 a day.' })
+  const { events } = await ask([[...say('PO-001 is still 4 days overdue, and at 12 a day that matters; 37 is a guess.'), end()]], { thread, question: 'What does that mean for me?' })
+  const spans = ofType(events, 'flag').flatMap((flag) => flag.spans)
+  assert.deepEqual(spans, [{ text: '37', kind: 'number', reason: 'not_in_results' }])
+  // Without the earlier turn the same words are flagged.
+  const fresh = await ask([[...say('PO-001 is still 4 days overdue, and at 12 a day that matters.'), end()]], { question: 'What does that mean for me?' })
+  assert.deepEqual(ofType(fresh.events, 'flag').flatMap((flag) => flag.spans.filter((span) => span.kind === 'number').map((span) => span.text)).sort(), ['12', '4 days'].sort())
+})
+
+// The same answer twice (2026-11-04, 2 of 23 answers): text, then the chips,
+// then another call that wrote the text again.
+test('the follow-up chips after the text end the answer without another model call', async () => {
+  const { events, client, audit } = await ask([
+    [...say('PO-001 is 4 days overdue.'), ...call('tu_chips', 'suggest_followups', { questions: ['Which supplier is it?'] }), end()],
+    [...say('PO-001 is 4 days overdue.'), end()],
+  ], { uiTools: [followups] })
+  assert.equal(client.requests.length, 1)
+  assert.equal(ofType(events, 'text_delta').map((event) => event.text).join(''), 'PO-001 is 4 days overdue.')
+  assert.equal(ofType(events, 'ui').filter((event) => event.component === 'followups').length, 1)
+  assert.equal(audit.stopReason, 'end_turn')
+  // Chips before any text do not end it: the answer is still to come.
+  const early = await ask([
+    [...call('tu_chips', 'suggest_followups', { questions: ['Which supplier is it?'] }), end()],
+    [...say('PO-001 is overdue.'), end()],
+  ], { uiTools: [followups] })
+  assert.equal(early.client.requests.length, 2)
+  assert.match(ofType(early.events, 'text_delta').map((event) => event.text).join(''), /PO-001 is overdue/)
 })
 
 test('a figure the results do not hold is flagged, not dropped', async () => {

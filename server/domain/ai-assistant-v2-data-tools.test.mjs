@@ -232,6 +232,14 @@ test('suggest_purchase_lines with coverDays reads no demand for a reader of only
   assert.deepEqual([row.cover.basis, row.cover.averageDailyDemand], ['warehouse_scope', null])
 })
 
+// Stock rows that record no unit (the showcase's) left every form line with
+// unit null; the item's own stock unit stands in.
+test('suggest_purchase_lines gives the item\'s stock unit when the stock row records none', async () => {
+  const { run } = await v2({ change: (data) => { highReorderPoint(data); data.balances[0].unit = null } })
+  const [row] = (await run('suggest_purchase_lines', { skus: ['LDM-001'] })).result.rows
+  assert.equal(row.item.unit, 'pcs')
+})
+
 test('suggest_purchase_lines counts a draft request as cover and names what covers the item', async () => {
   const { facts, run } = await v2({ change: (data) => { highReorderPoint(data); data.purchaseRequests[1].lines = [{ id: 'PRL-002', sku: 'LDM-001', itemId: 'ITEM-001', quantity: 60, unit: 'pcs' }] } })
   // The skills still count only the submitted request.
@@ -447,6 +455,8 @@ test('setup_status reports the first-day checklist exactly as Today builds it, w
   assert.deepEqual(result.steps, today.steps)
   // LDM-009 has no unit, preferred supplier or threshold: what records_missing_data reports.
   assert.deepEqual(result.gaps, { checked: 3, unit: 1, preferredSupplier: 1, thresholds: 1 })
+  // How much the chat takes at once, so an answer can state it from a result.
+  assert.deepEqual(result.limits, { pasteCharacters: 8000, setupCardRows: 25 })
   assert.deepEqual(aiReadToolRefs(result), [])
 })
 
