@@ -89,3 +89,62 @@ export type PrFormProps = {
 };
 // The request a form created, as the procurement routes return it.
 export type PrReceipt = { id: string; version: number; status: string };
+
+// The first-day checklist (setup_steps), as Today shows it.
+export type SetupStepId = "items" | "suppliers" | "customers" | "opening_stock" | "teammates";
+export type SetupStep = { id: SetupStepId; done: boolean; count: number; blocked?: "permission" | "unavailable"; route?: AppRoute };
+export type SetupStepsProps = {
+  source?: string;
+  steps: SetupStep[];
+  done: number;
+  total: number;
+  gaps?: { checked: number; unit: number; preferredSupplier: number; thresholds: number };
+};
+
+// The setup card (setup_form): rows the user typed or pasted, each value with
+// where it came from and what the server found wrong with the row.
+export type SetupValueSource = "user_typed" | "not_given" | "generated" | "default";
+export type SetupText = { value: string | null; source: SetupValueSource };
+export type SetupNumber = { value: number | null; source: SetupValueSource };
+export type SetupProblem = { field: string; code: string; blocking: boolean; ref?: PartRef };
+export type SetupSupplierRow = {
+  key: string;
+  name: SetupText;
+  code: SetupText;
+  contact: SetupText;
+  email: SetupText;
+  phone: SetupText;
+  paymentTerms: { value: string | null; label: string | null; typed: string | null; source: SetupValueSource };
+  problems: SetupProblem[];
+};
+export type SetupItemRow = {
+  key: string;
+  sku: SetupText;
+  name: SetupText;
+  unit: SetupText;
+  category: SetupText;
+  safetyStock: SetupNumber;
+  reorderPoint: SetupNumber;
+  referencePrice: SetupNumber;
+  leadTimeDays: SetupNumber;
+  currency: { value: string | null; source: SetupValueSource };
+  preferredSupplier: { supplierId: string | null; rowKey: string | null; name: string | null; typed: string | null; source: SetupValueSource };
+  problems: SetupProblem[];
+};
+export type SetupFormProps = {
+  formId: string;
+  suppliers: SetupSupplierRow[];
+  items: SetupItemRow[];
+  codeSeed: { prefix: string; next: number; width: number };
+  paymentTerms: { code: string; label: string }[];
+  supplierOptions: { id: string; name: string; currency?: string | null }[];
+  workspaceCurrency: string;
+  canCreateSuppliers: boolean;
+  canCreateItems: boolean;
+};
+// What one row of a setup card came to: the record it created (an item also
+// with its supplier link, when it has a supplier), or why it failed.
+export type SetupRowResult =
+  | { status: "created"; type: "supplier" | "item"; id: string; label: string; linked?: boolean; linkError?: string }
+  | { status: "failed"; error: string };
+export type SetupReceipt = { results: Record<string, SetupRowResult> };
