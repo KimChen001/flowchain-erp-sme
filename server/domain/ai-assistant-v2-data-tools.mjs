@@ -3,16 +3,18 @@ import { aiStockProjection } from './ai-read-tools.mjs'
 import { runHighestRisk } from './ai-skill-highest-risk.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { AI_SKILL_SIGNAL_TYPES, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
+import { readFirstRunSetup } from './first-run-setup.mjs'
 import { listItemSupplierRecords, mapItemSupplierRecord } from './master-data-commands.mjs'
-import { maskReferencePrice, masterDataReadAccessFor } from './master-data-read-access.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
+import { maskReferencePrice, masterDataReadAccessFor } from './master-data-read-access.mjs'
 import { DEMAND_WINDOW_DAYS, dailyDemand, isActiveItem, itemStockUnit, requestMinimumOf } from './reorder-list.mjs'
 import { addCalendarDays, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
 import { OPEN_PURCHASE_REQUEST_STATUSES, PURCHASE_SUGGESTION_SOURCES, openRequestQuantity, requestLineCountsFor, suggestNeedByDate, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
 
 // The data tools only assistant v2 is offered (docs/ai-assistant-v2-design.md
 // §5.1): the attention list, the records missing data, the purchase request
-// lines it suggests, and the purchase requests in any open status. They read
+// lines it suggests, the purchase requests in any open status, and the
+// first-day setup checklist (setup_status, counts only). They read
 // the asking user's facts like the other read tools, and the suggestions also
 // read the items' approved suppliers in the user's workspace. They need the
 // facts read with { openPurchaseRequests: true } (ai-skill-readers.mjs), so a
@@ -404,4 +406,41 @@ const suggestPurchaseLines = defineAiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests])
+// What records_missing_data reports an item lacks, as the setup gaps count it.
+const SETUP_GAPS = Object.freeze({ unit: 'unit', preferredSupplier: 'preferred_supplier', thresholds: 'stock_threshold' })
+
+// The first-day checklist exactly as Today builds it (first-run-setup.mjs:
+// the same counts, the same steps and the same pages for the same reader),
+// with every step also once all are done, and the gaps of the items already
+// there, from the facts records_missing_data reads. Counts only: no record
+// is named, so the checklist is offered to every reader, as Today shows it.
+const setupStatus = defineAiTool({
+  name: 'setup_status',
+  description: 'The workspace\'s first-day setup checklist, the same one the Today page shows, in order: items, suppliers, customers, opening_stock, teammates. Per step: done, count (records so far), blocked (permission: this user cannot do it; unavailable: no page for it here) and href, the page in the app that does it; with import turned on that is the import page, which takes a CSV or XLSX file for many rows at once. open is false once every step is done. gaps counts the items that still lack a unit, a preferred supplier or stock thresholds (a reorder point or safety stock), which reorder suggestions need; null when the user cannot read inventory.',
+  available: (_facts, context) => Boolean(context?.actor && context.prisma && context.tenantId),
+  assistantV2Only: true,
+  async run(_args, { facts, context }) {
+    let checklist
+    try {
+      checklist = await readFirstRunSetup(context.prisma, { tenantId: context.tenantId, now: context.now, access: reportReadAccessFor(context.actor), env: context.routeContext?.env || process.env })
+    } catch {
+      return { error: 'setup_counts_unavailable' }
+    }
+    const checked = facts.recordsChecked?.items
+    const items = array(facts.records).filter((record) => record.source === 'items')
+    const gaps = Number.isInteger(checked)
+      ? { checked, ...Object.fromEntries(Object.entries(SETUP_GAPS).map(([key, field]) => [key, items.filter((record) => record.missing.includes(field)).length])) }
+      : null
+    return {
+      asOf: facts.asOf,
+      open: checklist.done < checklist.total,
+      done: checklist.done,
+      total: checklist.total,
+      importOn: checklist.steps.some((step) => String(step.href || '').startsWith('/app/master-data/import')),
+      steps: checklist.steps.map((step) => ({ id: step.id, done: step.done, count: step.count, blocked: step.blocked, href: step.href })),
+      gaps,
+    }
+  },
+})
+
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus])

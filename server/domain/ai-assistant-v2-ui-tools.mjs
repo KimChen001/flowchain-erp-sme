@@ -1,7 +1,9 @@
-import { CHART_KINDS, CHOICE_PROMPTS, RECORD_EMPHASES, refSchema, safeParsePartProps } from '../../shared/assistant-protocol.mjs'
+import { CHART_KINDS, CHOICE_PROMPTS, RECORD_EMPHASES, SETUP_FORM_ROWS, SETUP_STEP_IDS, refSchema, safeParsePartProps } from '../../shared/assistant-protocol.mjs'
 import { PURCHASE_SUGGESTION_SOURCES, suggestNeedByDate } from '../../shared/purchase-suggestion.mjs'
+import { can } from '../auth/authorization-service.mjs'
 import { AI_READ_TOOL_COLUMNS } from './ai-read-tool-runner.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
+import { findPaymentTerm } from './standard-payment-terms.mjs'
 
 // The UI tools of assistant v2 (docs/ai-assistant-v2-design.md §3.6, §4, §4.1,
 // §5.2). The model never writes a figure: it names a data tool result of this
@@ -19,10 +21,18 @@ import { aiSkillVisibility } from './ai-skill-registry.mjs'
 // are taken too.
 //
 // build(input, ctx) with ctx = { results: Map<toolUseId, { tool, output }>,
-// facts, actor, language, threadId, messageId, partId, userNamedSkus } returns
+// facts, actor, language, threadId, messageId, partId, userNamedSkus,
+// userText, prisma, tenantId, workspaceCurrency } returns (or resolves to)
 // { component, props, refs } or { error: { code, message } }. `output` is the
 // data tool's result as the model read it. The display tools (display: true)
 // are the ones the loop withdraws after repeated failures.
+//
+// One UI tool takes values from the user rather than from a result: the setup
+// card (suggest_setup_records) shows the suppliers and items the user typed or
+// pasted. Each value must be in the user's own words of this conversation
+// (userText); the server reads the workspace's records for duplicates and
+// marks what is wrong with each row, and nothing is created until the user
+// clicks Create in the card.
 
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
@@ -730,6 +740,308 @@ const suggestPurchaseRequest = defineUiTool({
   },
 })
 
+// ---------------------------------------------------------------- setup
+
+// A page of the app as the parts route to it: /app/master-data/import?type=items
+// is the route master-data:import with { type: 'items' } (src/app/routeRegistry.tsx).
+function routeOfHref(href) {
+  const match = text(href).match(/^\/app\/([a-z0-9-]+(?:\/[a-z0-9-]+)*)(?:\?([^#]*))?$/)
+  if (!match) return null
+  const query = Object.fromEntries(new URLSearchParams(match[2] || ''))
+  return { moduleId: match[1].split('/').join(':'), ...(Object.keys(query).length ? { query } : {}) }
+}
+
+const showSetupSteps = defineUiTool({
+  name: 'show_setup_steps',
+  display: true,
+  description: 'Show the setup checklist of a setup_status result: the steps in order, which are done, and for each open step the user may do, a link to its page (the import page, for many rows at once, when import is on). Use it when you explain how to set up the workspace.',
+  inputSchema: {
+    type: 'object',
+    properties: { source: { ...sourceParam, description: 'The source of a setup_status result of this answer, for example setup_status#1.' } },
+    required: ['source'],
+    additionalProperties: false,
+  },
+  build(input, ctx) {
+    const source = sourceOf(ctx, input.source)
+    if (source.error) return source
+    if (source.tool !== 'setup_status') return fail('wrong_source', `show_setup_steps takes a setup_status result; ${input.source} is ${source.tool}.`)
+    const { output } = source
+    const steps = array(output.steps).filter((step) => SETUP_STEP_IDS.includes(step?.id)).map((step) => {
+      // A link only where the user can act: an open step they may do.
+      const route = step.done || step.blocked ? null : routeOfHref(step.href)
+      return { id: step.id, done: Boolean(step.done), count: Number.isInteger(step.count) && step.count >= 0 ? step.count : 0, ...(step.blocked ? { blocked: step.blocked } : {}), ...(route ? { route } : {}) }
+    })
+    const gaps = isObject(output.gaps) ? { checked: output.gaps.checked, unit: output.gaps.unit, preferredSupplier: output.gaps.preferredSupplier, thresholds: output.gaps.thresholds } : null
+    return part('setup_steps', { source: source.id, steps, done: output.done, total: output.total, ...(gaps ? { gaps } : {}) }, [])
+  },
+})
+
+const allowedTo = (actor, permission) => Boolean(actor?.tenantId) && can({ actor, permission, tenantId: actor.tenantId })
+// The permissions of the Suppliers and Items pages' writes (master-data.routes.mjs WRITE_RULES).
+const canAddSuppliers = (actor) => allowedTo(actor, 'master_data.supplier.manage')
+const canAddItems = (actor) => allowedTo(actor, 'master_data.item.manage')
+
+// The user's words as values are found in them: NFKC, case and spacing folded.
+const said = (value) => text(value).normalize('NFKC').toLowerCase().replace(/\s+/g, ' ')
+const CURRENCY_SIGNS = Object.freeze([[/US\$|\$/, ['USD']], [/€/, ['EUR']], [/£/, ['GBP']], [/¥|￥/, ['CNY', 'JPY']], [/元|人民币|RMB/i, ['CNY']], [/円/, ['JPY']]])
+const KNOWN_CURRENCIES = new Set(Intl.supportedValuesOf('currency'))
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+// Whether a value the model passed is in what the user wrote: a text as
+// written (any case or spacing), a number written with or without thousands
+// separators (its sign aside: a negative one is the row's problem), a
+// currency by its code or its sign.
+function userWords(userText) {
+  const words = said(userText)
+  const numbers = new Set([...String(userText ?? '').normalize('NFKC').matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, ''))).filter(Number.isFinite))
+  return {
+    text: (value) => Boolean(said(value)) && words.includes(said(value)),
+    number: (value) => numbers.has(Math.abs(value)),
+    currency: (value) => words.includes(value.toLowerCase()) || CURRENCY_SIGNS.some(([sign, codes]) => codes.includes(value.toUpperCase()) && sign.test(String(userText ?? ''))),
+  }
+}
+
+const SUPPLIER_FIELDS = Object.freeze({ name: 200, code: 64, contact: 200, email: 200, phone: 60, paymentTerms: 60 })
+const ITEM_TEXT_FIELDS = Object.freeze({ sku: 64, name: 200, unit: 20, category: 100, preferredSupplier: 200 })
+const ITEM_NUMBER_FIELDS = Object.freeze({ safetyStock: 'safety_stock', reorderPoint: 'reorder_point', referencePrice: 'reference_price', leadTimeDays: 'lead_time_days' })
+const SUPPLIER_CODE = /^SUP-(\d+)$/i
+
+// The values of a row the user did not write, as "suppliers[0].email".
+function untypedValues(rows, kind, fields, words) {
+  const found = []
+  for (const [index, row] of rows.entries()) {
+    for (const field of Object.keys(fields)) if (row[field] !== undefined && !words.text(row[field])) found.push(`${kind}[${index}].${field} "${text(row[field]).slice(0, 40)}"`)
+    if (kind === 'items') {
+      for (const field of Object.keys(ITEM_NUMBER_FIELDS)) if (isNumber(row[field]) && !words.number(row[field])) found.push(`items[${index}].${field} ${row[field]}`)
+      if (row.currency !== undefined && !words.currency(row.currency)) found.push(`items[${index}].currency "${row.currency}"`)
+    }
+  }
+  return found
+}
+
+const given = (row, field, max) => (row[field] === undefined || !text(row[field]) ? { value: null, source: 'not_given' } : { value: text(row[field]).slice(0, max), source: 'user_typed' })
+const givenNumber = (row, field) => (isNumber(row[field]) ? { value: row[field], source: 'user_typed' } : { value: null, source: 'not_given' })
+const problem = (field, code, blocking = true, ref = null) => ({ field, code, blocking, ...(ref ? { ref } : {}) })
+const supplierRef = (row) => refOf({ type: 'supplier', id: row.id, label: (row.name || row.code || row.id).slice(0, 120) })
+const itemRef = (row) => refOf({ type: 'item', id: row.id, label: row.sku.slice(0, 120) })
+
+// The workspace's records the card is checked against, every read in the
+// user's workspace: its suppliers (for duplicates, preferred suppliers and the
+// next free code), the items with a SKU or name of the card, and its payment terms.
+async function setupRecords(ctx, items) {
+  const { prisma, tenantId } = ctx
+  const skus = items.map((row) => text(row.sku)).filter(Boolean)
+  const names = items.map((row) => text(row.name)).filter(Boolean)
+  const [suppliers, stored, terms] = await Promise.all([
+    prisma.supplier.findMany({ where: { tenantId }, select: { id: true, code: true, name: true, status: true, metadata: true }, take: 5000 }),
+    items.length ? prisma.item.findMany({ where: { tenantId, OR: [{ sku: { in: skus, mode: 'insensitive' } }, { name: { in: names, mode: 'insensitive' } }] }, select: { id: true, sku: true, name: true } }) : [],
+    prisma.paymentTerm.findMany({ where: { tenantId }, select: { code: true, name: true }, orderBy: [{ code: 'asc' }] }),
+  ])
+  return {
+    suppliers: array(suppliers).map((row) => {
+      const meta = isObject(row.metadata) ? row.metadata : {}
+      return { id: text(row.id), code: text(row.code), name: text(row.name), active: fold(row.status || 'active') === 'active', currency: currencyCode(text(meta.defaultCurrency || meta.currency).toUpperCase()) }
+    }),
+    items: array(stored).map((row) => ({ id: text(row.id), sku: text(row.sku), name: text(row.name) })),
+    terms: array(terms).map((row) => ({ code: text(row.code), name: text(row.name) })).filter((row) => row.code),
+  }
+}
+
+// The next free supplier code: past every SUP-number in the workspace and in
+// the card, so a code the card makes up never collides with one there.
+function codeSeedOf(existing, typed) {
+  const numbers = [...existing, ...typed].map((code) => text(code).match(SUPPLIER_CODE)?.[1]).filter(Boolean)
+  const width = Math.min(6, Math.max(3, ...numbers.map((digits) => digits.length)))
+  return { prefix: 'SUP-', next: Math.max(0, ...numbers.map(Number)) + 1, width }
+}
+
+function supplierRows(input, records) {
+  const rows = []
+  for (const [index, row] of input.entries()) {
+    const problems = []
+    const name = given(row, 'name', SUPPLIER_FIELDS.name)
+    const code = row.code !== undefined && text(row.code) ? given(row, 'code', SUPPLIER_FIELDS.code) : { value: null, source: 'generated' }
+    const email = given(row, 'email', SUPPLIER_FIELDS.email)
+    if (!name.value) problems.push(problem('name', 'required'))
+    else {
+      const existing = records.suppliers.find((entry) => fold(entry.name) === fold(name.value))
+      if (existing) problems.push(problem('name', 'duplicate_existing', true, supplierRef(existing)))
+      else if (rows.some((other) => fold(other.name.value) === fold(name.value))) problems.push(problem('name', 'duplicate_in_card'))
+    }
+    if (code.value) {
+      const existing = records.suppliers.find((entry) => entry.code && fold(entry.code) === fold(code.value))
+      if (existing) problems.push(problem('code', 'duplicate_existing', true, supplierRef(existing)))
+      else if (rows.some((other) => other.code.value && fold(other.code.value) === fold(code.value))) problems.push(problem('code', 'duplicate_in_card'))
+    }
+    if (email.value && !EMAIL.test(email.value)) problems.push(problem('email', 'email_invalid'))
+    let paymentTerms = { value: null, label: null, typed: null, source: 'not_given' }
+    if (row.paymentTerms !== undefined && text(row.paymentTerms)) {
+      // Only one of the workspace's terms, by code or name ("Net 30" is NET30).
+      const term = findPaymentTerm(records.terms, row.paymentTerms)
+      paymentTerms = { value: term?.code ?? null, label: term ? term.name || term.code : null, typed: text(row.paymentTerms).slice(0, 60), source: 'user_typed' }
+      // Not one of them: the user picks one in the card or leaves it empty.
+      if (!term) problems.push(problem('payment_terms', 'payment_terms_unknown', false))
+    }
+    rows.push({ key: `s${index + 1}`, name, code, contact: given(row, 'contact', SUPPLIER_FIELDS.contact), email, phone: given(row, 'phone', SUPPLIER_FIELDS.phone), paymentTerms, problems })
+  }
+  return rows
+}
+
+function itemRows(input, records, cardSuppliers, workspaceCurrency) {
+  const rows = []
+  for (const [index, row] of input.entries()) {
+    const problems = []
+    const sku = given(row, 'sku', ITEM_TEXT_FIELDS.sku)
+    const name = given(row, 'name', ITEM_TEXT_FIELDS.name)
+    const unit = given(row, 'unit', ITEM_TEXT_FIELDS.unit)
+    if (!sku.value) problems.push(problem('sku', 'required'))
+    else if (sku.value.length > 64 || /\s/.test(sku.value)) problems.push(problem('sku', 'invalid'))
+    else {
+      const existing = records.items.find((entry) => fold(entry.sku) === fold(sku.value))
+      if (existing) problems.push(problem('sku', 'duplicate_existing', true, itemRef(existing)))
+      else if (rows.some((other) => fold(other.sku.value) === fold(sku.value))) problems.push(problem('sku', 'duplicate_in_card'))
+    }
+    if (!name.value) problems.push(problem('name', 'required'))
+    else {
+      // Two items may share a name (sizes, colours): a warning, not a block.
+      const existing = records.items.find((entry) => fold(entry.name) === fold(name.value))
+      if (existing) problems.push(problem('name', 'duplicate_existing', false, itemRef(existing)))
+      else if (rows.some((other) => fold(other.name.value) === fold(name.value))) problems.push(problem('name', 'duplicate_in_card', false))
+    }
+    // A unit is asked for, never assumed: the Items page would store pcs.
+    if (!unit.value) problems.push(problem('unit', 'required'))
+    const numbers = Object.fromEntries(Object.keys(ITEM_NUMBER_FIELDS).map((field) => [field, givenNumber(row, field)]))
+    for (const [field, code] of Object.entries(ITEM_NUMBER_FIELDS)) {
+      const value = numbers[field].value
+      if (value === null) continue
+      if (value < 0) problems.push(problem(code, 'negative'))
+      else if (field === 'leadTimeDays' && !Number.isInteger(value)) problems.push(problem(code, 'whole_number'))
+    }
+    // The preferred supplier: one of this card's rows, else an existing one.
+    let preferredSupplier = { supplierId: null, rowKey: null, name: null, typed: null, source: 'not_given' }
+    let supplierCurrency = null
+    if (row.preferredSupplier !== undefined && text(row.preferredSupplier)) {
+      const wanted = fold(row.preferredSupplier)
+      const typed = text(row.preferredSupplier).slice(0, 200)
+      // A card row that repeats an existing supplier is not the one meant.
+      const card = cardSuppliers.find((entry) => !entry.problems.some((found) => found.code === 'duplicate_existing') && (fold(entry.name.value) === wanted || (entry.code.value && fold(entry.code.value) === wanted)))
+      const existing = card ? null : records.suppliers.find((entry) => fold(entry.name) === wanted || (entry.code && fold(entry.code) === wanted) || fold(entry.id) === wanted)
+      if (card) {
+        preferredSupplier = { supplierId: null, rowKey: card.key, name: card.name.value, typed, source: 'user_typed' }
+        supplierCurrency = workspaceCurrency
+      } else if (existing && existing.active) {
+        preferredSupplier = { supplierId: existing.id, rowKey: null, name: existing.name || existing.code, typed, source: 'user_typed' }
+        supplierCurrency = existing.currency || workspaceCurrency
+      } else {
+        preferredSupplier = { supplierId: null, rowKey: null, name: null, typed, source: 'user_typed' }
+        problems.push(existing ? problem('preferred_supplier', 'supplier_inactive', true, supplierRef(existing)) : problem('preferred_supplier', 'supplier_unknown'))
+      }
+    }
+    const hasSupplier = row.preferredSupplier !== undefined && text(row.preferredSupplier)
+    // A price and a lead time belong to the item's link with its supplier.
+    if (!hasSupplier && (numbers.referencePrice.value !== null || numbers.leadTimeDays.value !== null)) problems.push(problem(numbers.referencePrice.value !== null ? 'reference_price' : 'lead_time_days', 'needs_supplier'))
+    let currency = supplierCurrency ? { value: supplierCurrency, source: 'default' } : { value: null, source: 'not_given' }
+    if (row.currency !== undefined && text(row.currency)) {
+      const typed = text(row.currency).toUpperCase()
+      if (KNOWN_CURRENCIES.has(typed)) currency = { value: typed, source: 'user_typed' }
+      else problems.push(problem('currency', 'currency_invalid'))
+    }
+    rows.push({
+      key: `i${index + 1}`, sku, name, unit, category: given(row, 'category', ITEM_TEXT_FIELDS.category),
+      safetyStock: numbers.safetyStock, reorderPoint: numbers.reorderPoint, referencePrice: numbers.referencePrice, leadTimeDays: numbers.leadTimeDays,
+      currency, preferredSupplier, problems,
+    })
+  }
+  return rows
+}
+
+const setupText = (max, description) => ({ type: 'string', minLength: 1, maxLength: max, description })
+const suggestSetupRecords = defineUiTool({
+  name: 'suggest_setup_records',
+  description: `Show the setup card: new suppliers and/or new items the user described or pasted, for them to review, edit and create with their own click. Pass only values the user typed, as they wrote them, and leave out any field they did not give; the server checks every value against the user's words, and refuses a value that is not there. Up to ${SETUP_FORM_ROWS} rows in all. The server marks duplicates of existing records, missing units, unknown payment terms or suppliers and other problems on each row; the user fixes them in the card. A supplier with no code gets the next free code. An item's preferredSupplier is an existing supplier or one in the same card, by name or code; its referencePrice and leadTimeDays are that supplier's.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      suppliers: {
+        type: 'array', minItems: 0, maxItems: SETUP_FORM_ROWS,
+        items: {
+          type: 'object',
+          properties: {
+            name: setupText(SUPPLIER_FIELDS.name), code: setupText(SUPPLIER_FIELDS.code, 'Only a code the user gave.'), contact: setupText(SUPPLIER_FIELDS.contact, 'Contact person.'),
+            email: setupText(SUPPLIER_FIELDS.email), phone: setupText(SUPPLIER_FIELDS.phone), paymentTerms: setupText(SUPPLIER_FIELDS.paymentTerms, 'As the user wrote it, for example Net 30.'),
+          },
+          required: ['name'],
+          additionalProperties: false,
+        },
+      },
+      items: {
+        type: 'array', minItems: 0, maxItems: SETUP_FORM_ROWS,
+        items: {
+          type: 'object',
+          properties: {
+            sku: setupText(ITEM_TEXT_FIELDS.sku), name: setupText(ITEM_TEXT_FIELDS.name), unit: setupText(ITEM_TEXT_FIELDS.unit, 'Unit of measure, for example pcs or box.'), category: setupText(ITEM_TEXT_FIELDS.category),
+            safetyStock: { type: 'number' }, reorderPoint: { type: 'number' },
+            preferredSupplier: setupText(ITEM_TEXT_FIELDS.preferredSupplier, 'Name or code of an existing supplier or of one in this card.'),
+            referencePrice: { type: 'number', description: 'Unit price from the preferred supplier.' },
+            currency: { type: 'string', minLength: 1, maxLength: 3, description: 'Only a currency the user gave (code or sign), as a 3-letter code.' },
+            leadTimeDays: { type: 'number', description: 'Lead time in days from the preferred supplier.' },
+          },
+          required: ['sku', 'name'],
+          additionalProperties: false,
+        },
+      },
+    },
+    additionalProperties: false,
+  },
+  // Offered to someone who may add suppliers or items, as the request form is
+  // offered only to someone who may create requests.
+  available: (actor) => canAddSuppliers(actor) || canAddItems(actor),
+  async build(input, ctx) {
+    const actor = ctx?.actor
+    const suppliersIn = array(input.suppliers)
+    const itemsIn = array(input.items)
+    const mayAddSuppliers = canAddSuppliers(actor)
+    const mayAddItems = canAddItems(actor)
+    if (!mayAddSuppliers && !mayAddItems) return fail('not_allowed', 'The user may not add suppliers or items; say so and that someone with master data access can.')
+    if (!suppliersIn.length && !itemsIn.length) return fail('invalid_input', 'Pass at least one supplier or item.')
+    if (suppliersIn.length + itemsIn.length > SETUP_FORM_ROWS) return fail('too_many_rows', `The card takes up to ${SETUP_FORM_ROWS} rows in all; pass the first ${SETUP_FORM_ROWS} and point the user to the import page for the rest.`)
+    if (suppliersIn.length && !mayAddSuppliers) return fail('not_allowed', 'The user may not add suppliers; leave suppliers out and say that someone with supplier access can add them.')
+    if (itemsIn.length && !mayAddItems) return fail('not_allowed', 'The user may not add items; leave items out and say that someone with item access can add them.')
+    const words = userWords(ctx.userText)
+    const untyped = [...untypedValues(suppliersIn, 'suppliers', SUPPLIER_FIELDS, words), ...untypedValues(itemsIn, 'items', ITEM_TEXT_FIELDS, words)]
+    if (untyped.length) return fail('not_typed', `Not in the user's words: ${untyped.slice(0, 5).join(', ')}${untyped.length > 5 ? ` and ${untyped.length - 5} more` : ''}. Pass values only as the user wrote them, and leave out a field they did not give.`)
+    if (!ctx.prisma || !ctx.tenantId) return fail('setup_unavailable', 'The workspace records cannot be read just now; answer in prose and point to the import page.')
+    let records
+    try {
+      records = await setupRecords(ctx, itemsIn)
+    } catch {
+      return fail('setup_unavailable', 'The workspace records cannot be read just now; answer in prose and point to the import page.')
+    }
+    const workspaceCurrency = currencyCode(text(ctx.workspaceCurrency).toUpperCase()) || 'USD'
+    const suppliers = supplierRows(suppliersIn, records)
+    const items = itemRows(itemsIn, records, suppliers, workspaceCurrency)
+    const named = new Set(items.map((row) => row.preferredSupplier.supplierId).filter(Boolean))
+    // The suppliers an item may be linked to: those the card names first, then by name.
+    const supplierOptions = records.suppliers.filter((row) => row.active && row.name)
+      .sort((a, b) => Number(named.has(b.id)) - Number(named.has(a.id)) || a.name.localeCompare(b.name))
+      .slice(0, 50)
+      .map((row) => ({ id: row.id, name: row.name.slice(0, 200), currency: row.currency }))
+    const props = {
+      formId: `${ctx.threadId}:${ctx.messageId}:${ctx.partId}`,
+      suppliers,
+      items,
+      codeSeed: codeSeedOf(records.suppliers.map((row) => row.code), suppliers.map((row) => row.code.value)),
+      paymentTerms: records.terms.slice(0, 30).map((term) => ({ code: term.code.slice(0, 64), label: (term.name || term.code).slice(0, 120) })),
+      supplierOptions,
+      workspaceCurrency,
+      canCreateSuppliers: mayAddSuppliers,
+      canCreateItems: mayAddItems,
+    }
+    const refs = [...suppliers, ...items].flatMap((row) => row.problems.map((entry) => entry.ref)).filter(Boolean)
+    return part('setup_form', props, refs)
+  },
+})
+
 const FOLLOWUP_LENGTH = 90
 
 const suggestFollowups = defineUiTool({
@@ -750,10 +1062,11 @@ const suggestFollowups = defineUiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_UI_TOOLS = Object.freeze([showTable, showRecords, showChart, showKpis, offerChoices, suggestPurchaseRequest, suggestFollowups])
+export const AI_ASSISTANT_V2_UI_TOOLS = Object.freeze([showTable, showRecords, showChart, showKpis, offerChoices, suggestPurchaseRequest, showSetupSteps, suggestSetupRecords, suggestFollowups])
 
 // The UI tools the model is offered for this user (design §4.1: the request
-// form is not offered to a user who may not create requests).
+// form is not offered to a user who may not create requests, nor the setup
+// card to one who may add neither suppliers nor items).
 export function aiUiToolsFor(actor) {
   return AI_ASSISTANT_V2_UI_TOOLS.filter((entry) => entry.available(actor))
 }

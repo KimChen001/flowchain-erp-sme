@@ -421,12 +421,12 @@ test('a failed display says how to fix it; a second failure withdraws the displa
   const second = JSON.parse(lastToolResults(client.requests[3])[0].content)
   assert.equal(second.error, 'unknown_column')
   assert.equal(second.details.at(-1), 'No display tool is available for the rest of this answer.')
-  assert.match(client.requests[3].messages.at(-1).content.at(-1).text, /^No display tool \(show_table, show_records, show_chart, show_kpis, offer_choices\) is available for the rest of this answer\. Answer in prose/)
+  assert.match(client.requests[3].messages.at(-1).content.at(-1).text, /^No display tool \(show_table, show_records, show_chart, show_kpis, offer_choices, show_setup_steps\) is available for the rest of this answer\. Answer in prose/)
   // The tool list the model was first sent stays (the cached prefix); the
   // withdrawn tools are named beside it.
   assert.deepEqual(client.requests[3].tools, client.requests[0].tools)
   assert.equal(client.requests[2].withdrawnTools, undefined)
-  assert.deepEqual(client.requests[3].withdrawnTools, ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices'])
+  assert.deepEqual(client.requests[3].withdrawnTools, ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps'])
   // A display called after that is refused, not counted, and the model gets
   // the refusal and one more call, its last, to answer in prose.
   assert.deepEqual(JSON.parse(lastToolResults(client.requests[4])[0].content), { error: 'display_off', details: ['No display tool is available for the rest of this answer.'] })
@@ -789,4 +789,55 @@ test('answering writes no business record: every read goes through the read-only
   const writes = /^(create|update|upsert|delete|\$execute|\$transaction)/
   assert.ok(scenario.calls.prisma.every(([, method]) => !writes.test(method)))
   assert.ok(scenario.calls.repositories.every(([name]) => /\.(list|snapshot)/.test(name)), JSON.stringify(scenario.calls.repositories))
+})
+
+test('pasted rows reach the model whole, and the setup card is built from them in the loop for a role that may add records', async () => {
+  const rows = Array.from({ length: 40 }, (_, index) => `PART-${100 + index} Bracket ${index + 1}, pcs, reorder point ${10 + index}`)
+  const question = `Add these items:\n${rows.join('\n')}`
+  assert.ok(question.length > 1200 && question.length <= ASSISTANT_V2_LIMITS.question)
+  assert.equal(ASSISTANT_V2_LIMITS.question, 8000)
+  const items = [0, 1, 2].map((index) => ({ sku: `PART-${100 + index}`, name: `Bracket ${index + 1}`, unit: 'pcs', reorderPoint: 10 + index }))
+  const { events, client, audit } = await ask([
+    [...say('I\'ve put your first items in a card for you to check and create.'), ...call('tu_card', 'suggest_setup_records', { items }), end()],
+    [...say('Create them when they look right.'), end()],
+  ], { question, uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assertProtocol(events)
+  assert.equal(client.requests[0].messages[1].content[0].text, question)
+  const [card] = ofType(events, 'ui')
+  assert.equal(card.component, 'setup_form')
+  assert.deepEqual(card.props.items.map((row) => [row.sku.value, row.reorderPoint.value, row.problems.length]), [['PART-100', 10, 0], ['PART-101', 11, 0], ['PART-102', 12, 0]])
+  assert.equal(card.props.formId.split(':')[0], 'thr_test')
+  assert.equal(ofType(events, 'replace').length, 0)
+  assert.deepEqual(audit.uiTools, [{ tool: 'suggest_setup_records', status: 'ok', component: 'setup_form' }])
+  const offered = (request) => request.tools.map((entry) => entry.name)
+  for (const name of ['setup_status', 'show_setup_steps', 'suggest_setup_records']) assert.ok(offered(client.requests[0]).includes(name), name)
+  // A value the user did not write goes back to the model to correct.
+  const made = await ask([
+    [...call('tu_card', 'suggest_setup_records', { items: [{ sku: 'PART-999', name: 'Bracket', unit: 'pcs' }] }), end()],
+    [...say('Which items should I add?'), end()],
+  ], { question, uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assert.equal(JSON.parse(lastToolResults(made.client.requests[1])[0].content).error, 'not_typed')
+  // A role that may add neither suppliers nor items is not offered the card.
+  const viewer = await ask([[...say('Someone with master data access can add them.'), end()]], { roleKey: 'read-only-viewer', question, uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assert.ok(!offered(viewer.client.requests[0]).includes('suggest_setup_records'))
+  assert.ok(offered(viewer.client.requests[0]).includes('setup_status'))
+})
+
+test('saying a supplier or item was created is replaced; putting rows in a card for the user is no claim', async () => {
+  for (const claim of ['I added your 3 suppliers.', 'I have created the items BOLT-M8 and NUT-M8 for you.', 'We\'ve set up your suppliers.', '我已为你添加了供应商。', '我已创建物料 BOLT-M8。']) {
+    const { events } = await ask([[...say(claim), end()]], { question: 'Add supplier Northwind Metals and item BOLT-M8 and NUT-M8' })
+    assert.deepEqual(ofType(events, 'replace').map((event) => event.code), ['unbacked_action_claim'], claim)
+  }
+  for (const card of ['I\'ve added your suppliers to a card for you to check.', 'I\'ve put your 3 suppliers in a card for you to check and create.', '我已把你的供应商放进卡片，请核对后创建。', '我已为你添加了供应商到卡片中，请核对。']) {
+    const { events, body } = await ask([[...say(card), end()]], { question: 'Add supplier Northwind Metals' })
+    assert.equal(ofType(events, 'replace').length, 0, card)
+    assert.equal(body.conclusion.summary, card)
+  }
+})
+
+test('the system prompt sets the setup rules apart, after the purchase request rule', () => {
+  const setup = ASSISTANT_V2_SYSTEM.indexOf('Setting up the workspace:')
+  assert.ok(setup > ASSISTANT_V2_SYSTEM.indexOf('call suggest_purchase_lines, then suggest_purchase_request'))
+  assert.ok(setup < ASSISTANT_V2_SYSTEM.indexOf('The answer:'))
+  for (const rule of [/call setup_status, then show_setup_steps/, /FlowChain has an import: never say you cannot tell whether it has one/, /call suggest_setup_records with them\. Pass only values the user wrote/, /Never say a supplier or item was created, added or saved/, /up to 8,000 characters/]) assert.match(ASSISTANT_V2_SYSTEM, rule)
 })

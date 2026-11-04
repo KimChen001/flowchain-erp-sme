@@ -343,7 +343,7 @@ test('notices and errors are worded by code, Retry only on the latest retryable 
   assert.doesNotMatch(unknown, />[^<]*provider_failed/)
   const signedOut = client.render({ message: client.finishAssistantV2Message(client.emptyAssistantV2Message(), { error: { code: 'signed_out', retryable: false } }) })
   assert.doesNotMatch(signedOut, /data-testid="ai-v2-retry"/)
-  for (const code of ['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused']) {
+  for (const code of ['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused', 'too_long_for_rules']) {
     const notice = client.render({ message: fold([event({ type: 'notice', code })]) })
     assert.match(notice, new RegExp(`data-code="${code}"[^>]*>[A-Z][^<]+\\.<`), code)
     assert.doesNotMatch(notice, CJK, code)
@@ -371,4 +371,30 @@ test('a created request keeps its receipt by form id, and a rules answer renders
   assert.match(classic, /data-answer-source="workspace_rules"/)
   assert.match(classic, /Two purchase orders are overdue/)
   assert.doesNotMatch(classic, /data-testid="ai-v2-answer"/)
+})
+
+test('a setup card keeps what it created by form id, and the setup tool has a status line', () => {
+  const props = {
+    formId: 'thr_7f2c:msg_21:p1',
+    suppliers: [{ key: 's1', name: { value: 'Northwind Metals', source: 'user_typed' }, code: { value: null, source: 'generated' }, contact: { value: null, source: 'not_given' }, email: { value: null, source: 'not_given' }, phone: { value: null, source: 'not_given' }, paymentTerms: { value: null, label: null, typed: null, source: 'not_given' }, problems: [] }],
+    items: [],
+    codeSeed: { prefix: 'SUP-', next: 1, width: 3 },
+    paymentTerms: [],
+    supplierOptions: [],
+    workspaceCurrency: 'USD',
+    canCreateSuppliers: true,
+    canCreateItems: true,
+  }
+  const message = fold([
+    event({ type: 'start', threadId: 'thr_7f2c', messageId: 'msg_21', model: 'claude-sonnet-5-5', language: 'en-US' }),
+    event({ type: 'ui', partId: 'p1', component: 'setup_form', schemaVersion: 1, props, refs: [] }),
+  ])
+  assert.match(client.render({ message }), /data-testid="ai-v2-setup-form"[^]*value="SUP-001"/)
+  const receipt = { results: { s1: { status: 'created', type: 'supplier', id: 'SUP-9', label: 'Northwind Metals' } } }
+  const created = client.render({ message, setupReceipts: { 'thr_7f2c:msg_21:p1': receipt } })
+  assert.match(created, /data-testid="ai-v2-setup-row-created"[^]*data-business-id="SUP-9"/)
+  assert.match(created, /data-testid="ai-v2-setup-done"/)
+  assert.doesNotMatch(client.render({ message, setupReceipts: { 'thr_7f2c:msg_20:p1': receipt } }), /data-testid="ai-v2-setup-row-created"/)
+  const reading = fold([event({ type: 'start', threadId: 'thr_7f2c', messageId: 'msg_22', model: 'claude-sonnet-5-5', language: 'en-US' }), event({ type: 'tool', id: 'toolu_03', name: 'setup_status', state: 'running' })])
+  assert.match(client.render({ message: reading }), /Checking your workspace setup…/)
 })

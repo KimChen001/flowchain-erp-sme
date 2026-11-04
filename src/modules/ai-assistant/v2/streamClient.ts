@@ -7,9 +7,12 @@ import type { AnswerLanguage, FlagSpan, PartRef } from "./parts/types";
 // server keeps the thread's tool results and never reads history from here.
 
 export type AssistantV2ActiveContext = { moduleId: string; entityType: string | null; entityId: string | null };
-// A request an in-chat form created, reported once with the next question;
-// the server checks it before it adds a note to the thread.
-export type AssistantV2FormResult = { formId: string; purchaseRequestId: string };
+// A request an in-chat form created, or the suppliers and items a setup card
+// created, reported once with the next question; the server checks them
+// before it adds a note to the thread.
+export type AssistantV2FormResult =
+  | { formId: string; purchaseRequestId: string }
+  | { formId: string; created: { type: "supplier" | "item"; id: string }[] };
 export type AssistantV2Request = {
   threadId: string;
   message: string;
@@ -18,7 +21,7 @@ export type AssistantV2Request = {
   formResults?: AssistantV2FormResult[];
 };
 
-export type AssistantV2NoticeCode = "over_cap" | "over_cap_during_answer" | "cost_ceiling" | "unavailable" | "rate_limited" | "injection_refused" | "cancelled" | "refused";
+export type AssistantV2NoticeCode = "over_cap" | "over_cap_during_answer" | "cost_ceiling" | "unavailable" | "rate_limited" | "injection_refused" | "cancelled" | "refused" | "too_long_for_rules";
 export type AssistantV2ReplaceCode = "unbacked_action_claim" | "foreign_record" | "hidden_value";
 export type AssistantV2Progress = { step: "reading" | "writing" | "checking"; sources?: string[] };
 

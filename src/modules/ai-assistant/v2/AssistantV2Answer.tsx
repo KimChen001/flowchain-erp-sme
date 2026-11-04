@@ -8,7 +8,7 @@ import { aiProgressLine } from "../presentation";
 import { answerPartsOf, rulesAnswerBody, type AssistantV2Message } from "./foldEvents";
 import { AnswerParts } from "./parts/AnswerParts";
 import { isRef, toneStyle, usePartCopy, type Navigate, type PartCopy } from "./parts/partKit";
-import type { PartRef, PrReceipt } from "./parts/types";
+import type { PartRef, PrReceipt, SetupReceipt } from "./parts/types";
 
 // The live line while an answer is read: the tool it runs, else what it
 // reads; the tool's name is shown only through its label.
@@ -36,6 +36,8 @@ export function AssistantV2Answer({
   latest,
   receipts,
   onReceipt,
+  setupReceipts = {},
+  onSetupReceipt,
   onNavigate,
   onFollowUp,
   onRetry,
@@ -47,6 +49,9 @@ export function AssistantV2Answer({
   latest: boolean;
   receipts: Record<string, PrReceipt>;
   onReceipt?: (formId: string, receipt: PrReceipt) => void;
+  // Setup card receipts by form id, kept by the panel like the request receipts.
+  setupReceipts?: Record<string, SetupReceipt>;
+  onSetupReceipt?: (formId: string, receipt: SetupReceipt) => void;
   onNavigate?: Navigate;
   onFollowUp?: (question: string) => void;
   onRetry?: () => void;
@@ -57,6 +62,8 @@ export function AssistantV2Answer({
   const parts = answerPartsOf(message);
   const formIds = Object.fromEntries(parts.flatMap((part) => part.type === "ui" && part.component === "pr_form" ? [[part.id, formIdOf(part.props)]] : []));
   const partReceipts = Object.fromEntries(Object.entries(formIds).flatMap(([partId, formId]) => receipts[formId] ? [[partId, receipts[formId]]] : []));
+  const setupFormIds = Object.fromEntries(parts.flatMap((part) => part.type === "ui" && part.component === "setup_form" ? [[part.id, formIdOf(part.props)]] : []));
+  const partSetupReceipts = Object.fromEntries(Object.entries(setupFormIds).flatMap(([partId, formId]) => setupReceipts[formId] ? [[partId, setupReceipts[formId]]] : []));
   const evidence = Array.isArray(message.body?.keyEvidence) ? (message.body.keyEvidence as unknown[]).filter(isRef) as PartRef[] : [];
   const errorKey = `ai.v2.answerError.${message.error?.code || "generic"}`;
   const showStatus = !message.done && (!parts.length || message.toolStatus?.tool?.state === "running");
@@ -78,6 +85,8 @@ export function AssistantV2Answer({
           onChoose={onFollowUp ? (ref) => onFollowUp(ref.label) : undefined}
           receipts={partReceipts}
           onReceipt={onReceipt ? (partId, receipt) => { if (formIds[partId]) onReceipt(formIds[partId], receipt); } : undefined}
+          setupReceipts={partSetupReceipts}
+          onSetupReceipt={onSetupReceipt ? (partId, receipt) => { if (setupFormIds[partId]) onSetupReceipt(setupFormIds[partId], receipt); } : undefined}
         />
       )}
       {showStatus ? (

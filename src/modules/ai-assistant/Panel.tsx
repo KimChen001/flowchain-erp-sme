@@ -1,19 +1,21 @@
 import { KnowledgeLibrary } from "./KnowledgeLibrary";
 import { translate, useI18n } from "../../i18n/I18n";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { BookOpen, Clock3, FilePlus2, ListChecks, Loader2, Maximize2, MessageSquareText, Minimize2, MoreHorizontal, RotateCcw, Send, Square, SquarePen, Sparkles, X, type LucideIcon } from "lucide-react";
+import { BookOpen, Clock3, FilePlus2, ListChecks, Loader2, Maximize2, MessageSquareText, Minimize2, MoreHorizontal, RotateCcw, Send, Square, SquarePen, Sparkles, Truck, Upload, X, type LucideIcon } from "lucide-react";
+import { QUESTION_LIMITS } from "../../../shared/assistant-protocol.mjs";
 import type { CanonicalFocusTarget } from "../../lib/evidenceLinks";
 import { A } from "../../components/ui";
 import { AiResponseV2Renderer } from "../../components/ai/AiResponseV2Renderer";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import type { AiResponseV2 } from "../../domain/ai/response-contract";
 import { autoOpenDraftCard, structuredDraftTarget } from "../action-drafts/structuredDraftHandoff";
-import { fetchAiRuntimeReadiness, focusTargetFromActiveContext, postAiRuntimeResponse, type AiRuntimeProgress } from "./aiRuntimeGateway";
+import { fetchAiRuntimeReadiness, focusTargetFromActiveContext, postAiRuntimeResponse, type AiRuntimeProgress, type AiRuntimeReadinessV2 } from "./aiRuntimeGateway";
 import { ApiError } from "../../lib/api-client";
 import { aiProgressLine, looksLikeRawJson, sanitizeAiMessage } from "./presentation";
 import { AssistantV2Answer } from "./v2/AssistantV2Answer";
 import { emptyAssistantV2Message, finishAssistantV2Message, foldAssistantV2Event, type AssistantV2Message } from "./v2/foldEvents";
-import type { PrReceipt } from "./v2/parts/types";
+import type { PrReceipt, SetupReceipt } from "./v2/parts/types";
+import { setupCreatedRecords } from "./v2/parts/SetupRecordsPart";
 import { assistantV2Failure, newThreadId, streamAssistantV2, type AssistantV2FormResult } from "./v2/streamClient";
 
 export type ActiveContext = {
@@ -113,6 +115,12 @@ export const AI_EMPTY_STATE_PROMPT_CHIPS = [
 // question goes to the company documents.
 const EMPTY_STATE_SKILL_HINTS = ["today_priorities", "purchase_orders", "", ""];
 const EMPTY_STATE_ICONS: LucideIcon[] = [ListChecks, Clock3, FilePlus2, BookOpen];
+
+// With assistant v2 on and the first-day checklist open on its first steps
+// (no items or no suppliers yet), the welcome cards start the setup instead.
+// They go to the model as typed, like any question.
+const SETUP_STARTERS = ["ai.v2.starter.setup", "ai.v2.starter.suppliers", "ai.v2.starter.reorder", "ai.v2.starter.import"] as const;
+const SETUP_STARTER_ICONS: LucideIcon[] = [ListChecks, Truck, FilePlus2, Upload];
 const PO_SKILL_HINTS = ["today_priorities", "records_needing_data", "highest_risk_items", "prepare_action_draft"];
 const SKU_SKILL_HINTS = ["today_priorities", "inventory_availability", "highest_risk_items", "prepare_action_draft"];
 
@@ -700,13 +708,21 @@ export default function FloatingAiAssistant({
   const [formReceipts, setFormReceipts] = useState<Record<string, PrReceipt>>({});
   const reportedFormsRef = useRef(new Set<string>());
   const pendingFormResultsRef = useRef<AssistantV2FormResult[]>([]);
+  // Setup card receipts by form id, and the records already reported.
+  const [setupReceipts, setSetupReceipts] = useState<Record<string, SetupReceipt>>({});
+  const reportedSetupRef = useRef(new Set<string>());
+  // What readiness last said: whether v2 answers, and the setup checklist.
+  const [readiness, setReadiness] = useState<Pick<AiRuntimeReadinessV2, "assistantV2" | "setup"> | null>(null);
 
   useEffect(() => {
     if (openSignal) setOpen(true);
   }, [openSignal]);
 
   function assistantPath() {
-    readinessRef.current ??= fetchAiRuntimeReadiness().then((readiness): AssistantPath => readiness.assistantV2 === true ? "v2" : "v1", (): AssistantPath => "v1");
+    readinessRef.current ??= fetchAiRuntimeReadiness().then((ready): AssistantPath => {
+      setReadiness({ assistantV2: ready.assistantV2, setup: ready.setup ?? null });
+      return ready.assistantV2 === true ? "v2" : "v1";
+    }, (): AssistantPath => "v1");
     return readinessRef.current;
   }
 
@@ -795,9 +811,18 @@ export default function FloatingAiAssistant({
   const recordPrompts = currentContext?.entityType === "purchase_order" ? PO_EMPTY_PROMPTS[language]
     : currentContext?.entityType === "item" ? SKU_EMPTY_PROMPTS[language] : [];
   const recordHints = currentContext?.entityType === "purchase_order" ? PO_SKILL_HINTS : SKU_SKILL_HINTS;
-  const emptyPrompts = recordPrompts.length ? [...recordPrompts.slice(0, 2), ...workspacePrompts.slice(0, 2)] : workspacePrompts;
-  const emptyPromptSkillHints = recordPrompts.length ? [...recordHints.slice(0, 2), ...EMPTY_STATE_SKILL_HINTS.slice(0, 2)] : EMPTY_STATE_SKILL_HINTS;
-  const emptyPromptIcons = recordPrompts.length ? [MessageSquareText, MessageSquareText, ...EMPTY_STATE_ICONS.slice(0, 2)] : EMPTY_STATE_ICONS;
+  const setupStarters = !recordPrompts.length && readiness?.assistantV2 === true && Boolean(readiness.setup?.open && readiness.setup.firstStepsOpen);
+  const emptyPrompts = setupStarters ? SETUP_STARTERS.map((key) => translate(language, key))
+    : recordPrompts.length ? [...recordPrompts.slice(0, 2), ...workspacePrompts.slice(0, 2)] : workspacePrompts;
+  const emptyPromptSkillHints = setupStarters ? SETUP_STARTERS.map(() => "")
+    : recordPrompts.length ? [...recordHints.slice(0, 2), ...EMPTY_STATE_SKILL_HINTS.slice(0, 2)] : EMPTY_STATE_SKILL_HINTS;
+  const emptyPromptIcons = setupStarters ? SETUP_STARTER_ICONS
+    : recordPrompts.length ? [MessageSquareText, MessageSquareText, ...EMPTY_STATE_ICONS.slice(0, 2)] : EMPTY_STATE_ICONS;
+  // The longest question the conversation's path reads: assistant v2 takes
+  // pasted rows, the rules do not. Longer text stays in the box, unsent.
+  const questionLimit = (conversationPath ?? (readiness?.assistantV2 === true ? "v2" : "v1")) === "v2" ? QUESTION_LIMITS.assistantV2 : QUESTION_LIMITS.rules;
+  const inputLength = input.trim().length;
+  const inputTooLong = inputLength > questionLimit;
   const currentRequestLabel = requestScopeLabel(messages.filter((message) => message.role === "user").at(-1)?.content || input, language);
   // The header names the conversation by its first question once there is one.
   const firstQuestion = messages.find((message) => message.role === "user")?.content || "";
@@ -822,6 +847,10 @@ export default function FloatingAiAssistant({
     setFormReceipts({});
     reportedFormsRef.current = new Set();
     pendingFormResultsRef.current = [];
+    setSetupReceipts({});
+    reportedSetupRef.current = new Set();
+    // The checklist may have moved on (records created in this conversation).
+    if (readinessRef.current) void fetchAiRuntimeReadiness().then((ready) => setReadiness({ assistantV2: ready.assistantV2, setup: ready.setup ?? null }), () => undefined);
   }
 
   function cancelRequest() {
@@ -846,9 +875,19 @@ export default function FloatingAiAssistant({
     setFormReceipts((current) => ({ ...current, [formId]: receipt }));
   }
 
+  // A setup card's records, each reported once, with the next question.
+  function recordSetupReceipt(formId: string, receipt: SetupReceipt) {
+    const fresh = setupCreatedRecords(receipt).filter((record) => !reportedSetupRef.current.has(`${formId}|${record.type}:${record.id}`));
+    for (const record of fresh) reportedSetupRef.current.add(`${formId}|${record.type}:${record.id}`);
+    if (fresh.length) pendingFormResultsRef.current = [...pendingFormResultsRef.current, { formId, created: fresh }];
+    setSetupReceipts((current) => ({ ...current, [formId]: receipt }));
+  }
+
   async function askAi(text: string, skillHint?: string) {
     const message = text.trim();
     if (!message || requestInFlightRef.current) return;
+    // Over the path's limit the question stays in the box with its count.
+    if (message.length > questionLimit) return;
     let path = conversationPathRef.current;
     if (!path) {
       const pending = pendingAskRef.current + 1;
@@ -1077,6 +1116,7 @@ export default function FloatingAiAssistant({
                         onClick={() => askAi(prompt, emptyPromptSkillHints[index] || undefined)}
                         disabled={asking}
                         data-testid="ai-empty-prompt-chip"
+                        data-starter={setupStarters ? "setup" : "workspace"}
                         className="flex min-h-[92px] flex-col items-start gap-2.5 rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <span className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: "#EFF4FF" }}><Icon size={15} style={{ color: A.blue }} aria-hidden /></span>
@@ -1104,6 +1144,8 @@ export default function FloatingAiAssistant({
                       latest={index === lastAssistantIndex}
                       receipts={formReceipts}
                       onReceipt={recordFormReceipt}
+                      setupReceipts={setupReceipts}
+                      onSetupReceipt={recordSetupReceipt}
                       onNavigate={minimizeAfterNavigate}
                       onFollowUp={askAi}
                       onRetry={message.question ? () => askAi(message.question || "") : undefined}
@@ -1169,7 +1211,7 @@ export default function FloatingAiAssistant({
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
-                    if (!asking) askAi(input);
+                    if (!asking && !inputTooLong) askAi(input);
                   }
                 }}
                 disabled={asking}
@@ -1183,7 +1225,7 @@ export default function FloatingAiAssistant({
                 <button
                   type="button"
                   onClick={() => asking ? cancelRequest() : askAi(input)}
-                  disabled={!asking && !input.trim()}
+                  disabled={!asking && (!input.trim() || inputTooLong)}
                   data-testid={asking && assistantV2 ? "ai-assistant-stop" : "ai-assistant-send"}
                   className="flex h-8 w-8 items-center justify-center rounded-lg text-white disabled:cursor-not-allowed"
                   style={{ background: asking || input.trim() ? A.blue : A.gray3 }}
@@ -1194,6 +1236,11 @@ export default function FloatingAiAssistant({
                 </button>
               </div>
             </div>
+            {inputTooLong ? (
+              <p data-testid="ai-input-too-long" role="status" className="mt-1 px-1 text-[12px]" style={{ color: "#9A3412" }}>
+                {translate(language, "ai.v2.input.tooLong", { count: inputLength.toLocaleString(language), limit: questionLimit.toLocaleString(language) })}
+              </p>
+            ) : null}
           </div>
         </aside>
       )}

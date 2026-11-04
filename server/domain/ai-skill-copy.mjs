@@ -82,6 +82,7 @@ const entries = {
   // Assistant v2's refusals before the model (§3.2), for a client that reads the folded answer; the panel words the notice code itself.
   'assistant_v2.notice.injection_refused': ['This question asks the assistant to ignore its rules, so it was not answered.', '该问题要求助手忽略它的规则，因此没有回答。'],
   'assistant_v2.notice.rate_limited': ['You have asked many questions in a short time. Wait a few minutes, then ask again.', '短时间内提问较多，请几分钟后再问。'],
+  'assistant_v2.notice.too_long_for_rules': ['The assistant model cannot answer just now, and without it a question can have at most 1,200 characters. Try again later, shorten the question, or use the import page for many rows.', '助手模型暂时无法回答；没有模型时，问题最多 1,200 个字符。请稍后再试、缩短问题，或使用导入页面一次导入多行。'],
   // A purchase request the model-first assistant proposed: the reason line of the prefilled form.
   'model_first.request.reason': ['Requested in the assistant. Review it before you submit.', '在 AI 助手中提出，提交前请核对。'],
   // The reason line when the user gave none: the reorder list's basis for the quantity.

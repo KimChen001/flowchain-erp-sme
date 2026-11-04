@@ -106,13 +106,19 @@ const WRITE_METHODS = new Set(['create', 'createMany', 'createManyAndReturn', 'u
 export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', currency: 'USD', timezone: 'America/New_York' }) {
   const answers = {
     tenant: { findUnique: ({ where }) => where.id === AI_SKILL_TENANT ? tenant : null },
-    item: { findMany: ({ where, take }) => data.items.filter(() => where.tenantId === AI_SKILL_TENANT).slice(0, take) },
-    inventoryBalance: { findMany: ({ where, take }) => data.balances.filter(() => where.tenantId === AI_SKILL_TENANT).slice(0, take) },
+    // count: the first-day checklist's counts (first-run-setup.mjs); the
+    // fixture has one active user and no customers or invitations.
+    item: { findMany: ({ where, take }) => data.items.filter(() => where.tenantId === AI_SKILL_TENANT).slice(0, take), count: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? data.items.length : 0) },
+    inventoryBalance: { findMany: ({ where, take }) => data.balances.filter(() => where.tenantId === AI_SKILL_TENANT).slice(0, take), count: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? data.balances.filter((row) => Number(row.onHandQuantity) > 0).length : 0) },
+    user: { count: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? 1 : 0) },
+    workspaceInvitation: { count: () => 0 },
+    // The workspace's payment terms, for the setup card.
+    paymentTerm: { findMany: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? array(data.paymentTerms) : []) },
     rfqSupplierParticipation: { findMany: ({ where }) => data.participations.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
     rfqAwardDecision: { findMany: ({ where }) => data.awards.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
     // Item-supplier links (master-data-commands.mjs listItemSupplierRecords),
     // for the preferred supplier's minimum order.
-    runtimeRecord: { findMany: ({ where }) => where.tenantId === AI_SKILL_TENANT ? array(data.supplierLinks) : [] },
+    runtimeRecord: { findMany: ({ where }) => where.tenantId === AI_SKILL_TENANT ? array(data.supplierLinks) : [], count: ({ where }) => (where.tenantId === AI_SKILL_TENANT && where.namespace === 'master-data.customers' ? array(data.customers).length : 0) },
     // Posted shipment lines for recorded daily demand (coverDays), and the
     // workspace's warehouses for a reader's scope; none unless a test adds them.
     shipmentLine: { findMany: ({ where }) => where.shipment?.tenantId !== AI_SKILL_TENANT ? [] : array(data.shipmentLines).filter((line) => !where.itemId?.in || where.itemId.in.includes(line.itemId)) },
@@ -123,7 +129,7 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     receivingDocument: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.receipts.filter((row) => where.poId.in.includes(row.poId) && (!where.postingStatus || row.postingStatus === where.postingStatus)) },
     supplierInvoice: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.supplierInvoices.filter((row) => typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : true).map((row) => ({ ...row, lines: row.lines || [], matchRuns: [] })) },
     // Suppliers, read by both the minimum order and the scorecard.
-    supplier: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.suppliers.filter((row) => !where.id || row.id === where.id).map((row) => ({ id: row.id, code: row.supplierCode || row.id, name: row.name, status: row.status || 'active' })) },
+    supplier: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.suppliers.filter((row) => !where.id || row.id === where.id).map((row) => ({ id: row.id, code: row.supplierCode || row.id, name: row.name, status: row.status || 'active' })), count: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? data.suppliers.length : 0) },
   }
   return new Proxy({}, {
     get(_target, model) {
@@ -166,7 +172,7 @@ export function aiSkillRepositories(data, calls = [], { truncated = [] } = {}) {
 // supplierLinks: item-supplier link records ({ payload: { itemId, supplierId,
 // preferred, minimumOrderQuantity, ... } }), none by default.
 export function aiSkillScenario({ seedDay = '2026-09-29', roleKey = 'workspace-administrator', truncated = [], tenant, supplierLinks = [] } = {}) {
-  const data = { ...records(seedDay), supplierLinks }
+  const data = { ...records(seedDay), supplierLinks, paymentTerms: [{ code: 'DUE', name: 'Due on receipt' }, { code: 'NET30', name: 'Net 30' }] }
   const calls = { prisma: [], repositories: [] }
   const actor = aiSkillActor(roleKey)
   const ctx = {
