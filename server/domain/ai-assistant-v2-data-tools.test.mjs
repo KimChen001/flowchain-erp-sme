@@ -187,6 +187,48 @@ test('suggest_purchase_lines raises the gap to the minimum order and fills suppl
   assert.deepEqual((await cancelled.run('suggest_purchase_lines')).result.rows[0].suggestedQuantity, { value: 102, source: 'reorder_gap' })
 })
 
+// LDM-001 ships 50 a day on 18 days of September: 900 over the 90-day window,
+// 10 a day. Lead time 12 days.
+const shipping = (data) => {
+  data.shipmentLines = Array.from({ length: 18 }, (_, index) => ({ itemId: 'ITEM-001', unit: 'pcs', postedQuantity: 50, shipment: { postedAt: new Date(`2026-09-${String(index + 1).padStart(2, '0')}T16:00:00Z`) } }))
+}
+
+// A reader of every warehouse, as the reorder list asks.
+const everyWarehouse = (actor) => { actor.allWarehouses = true }
+
+// "Order what we need for the next 2 weeks" (2026-11-04) had no answer.
+test('suggest_purchase_lines with coverDays sizes a line from recorded demand and says the basis', async () => {
+  const { run } = await v2({ change: shipping, actor: everyWarehouse })
+  const result = (await run('suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'], coverDays: 14 })).result
+  assert.equal(result.coverDays, 14)
+  const [ldm1, ldm2] = result.rows
+  // 10 a day × (12 + 14) + 30 safety = 290; 290 - 28 available - 70 incoming - 50 requested = 142.
+  assert.deepEqual(ldm1.cover, { days: 14, basis: 'recorded_demand', averageDailyDemand: 10, demandWindowDays: 90, shipmentDays: 18, leadTimeDays: 12, target: 290 })
+  assert.deepEqual(ldm1.suggestedQuantity, { value: 142, source: 'cover_days' })
+  // No shipments: the reorder point rule stands, and the row says why.
+  assert.equal(ldm2.cover.basis, 'not_enough_shipment_history')
+  assert.equal(ldm2.cover.target, null)
+  assert.notEqual(ldm2.suggestedQuantity.source, 'cover_days')
+  // A short period raised to the supplier's minimum order of 100.
+  const short = (await run('suggest_purchase_lines', { skus: ['LDM-001'], coverDays: 3 })).result.rows[0]
+  assert.deepEqual([short.cover.target, short.suggestedQuantity], [180, { value: 100, source: 'cover_days_raised_to_moq' }])
+  // Without names, an item with recorded demand is suggested though it is above
+  // its reorder point once the request is counted.
+  const plain = await v2({ change: shipping, actor: everyWarehouse })
+  const listed = (await plain.run('suggest_purchase_lines', { coverDays: 30 })).result
+  assert.deepEqual(listed.rows.map((row) => [row.item.sku, row.suggestedQuantity.source]), [['LDM-001', 'cover_days']])
+  // Without coverDays nothing changes.
+  const before = (await plain.run('suggest_purchase_lines', { skus: ['LDM-001'] })).result.rows[0]
+  assert.equal(before.cover, undefined)
+  assert.equal(before.suggestedQuantity.source, 'covered_by_open_orders')
+})
+
+test('suggest_purchase_lines with coverDays reads no demand for a reader of only some warehouses', async () => {
+  const { run } = await v2({ change: (data) => { shipping(data); data.warehouses = [{ id: 'WH-1' }, { id: 'WH-2' }] }, ctx: { routeContext: { reportReadAccess: { warehouseIds: ['WH-1'] } } } })
+  const [row] = (await run('suggest_purchase_lines', { skus: ['LDM-001'], coverDays: 14 })).result.rows
+  assert.deepEqual([row.cover.basis, row.cover.averageDailyDemand], ['warehouse_scope', null])
+})
+
 test('suggest_purchase_lines counts a draft request as cover and names what covers the item', async () => {
   const { facts, run } = await v2({ change: (data) => { highReorderPoint(data); data.purchaseRequests[1].lines = [{ id: 'PRL-002', sku: 'LDM-001', itemId: 'ITEM-001', quantity: 60, unit: 'pcs' }] } })
   // The skills still count only the submitted request.

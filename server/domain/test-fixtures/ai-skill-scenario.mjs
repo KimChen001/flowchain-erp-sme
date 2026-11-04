@@ -113,6 +113,10 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     // Item-supplier links (master-data-commands.mjs listItemSupplierRecords),
     // for the preferred supplier's minimum order.
     runtimeRecord: { findMany: ({ where }) => where.tenantId === AI_SKILL_TENANT ? array(data.supplierLinks) : [] },
+    // Posted shipment lines for recorded daily demand (coverDays), and the
+    // workspace's warehouses for a reader's scope; none unless a test adds them.
+    shipmentLine: { findMany: ({ where }) => where.shipment?.tenantId !== AI_SKILL_TENANT ? [] : array(data.shipmentLines).filter((line) => !where.itemId?.in || where.itemId.in.includes(line.itemId)) },
+    warehouse: { findMany: ({ where }) => where.tenantId === AI_SKILL_TENANT ? array(data.warehouses) : [] },
     // The supplier scorecard's reads (supplier-scorecard.mjs), by supplier and
     // status as it asks; the fixture lines record no original promise.
     purchaseOrder: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.purchaseOrders.filter((row) => !where.status?.notIn?.includes(row.status) && (typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : Boolean(row.supplierId))) },
