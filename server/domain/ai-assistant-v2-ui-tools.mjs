@@ -1,6 +1,11 @@
-import { CHART_KINDS, CHOICE_PROMPTS, NEW_SUPPLIER_LINK, RECORD_EMPHASES, SETUP_FORM_ROWS, SETUP_STEP_IDS, refSchema, safeParsePartProps } from '../../shared/assistant-protocol.mjs'
+import { CHART_KINDS, CHOICE_PROMPTS, NEW_SUPPLIER_LINK, RECORD_ACTION_TYPES, RECORD_EMPHASES, SETUP_FORM_ROWS, SETUP_STEP_IDS, refSchema, safeParsePartProps } from '../../shared/assistant-protocol.mjs'
+import { RECORD_ACTION_RULES, recordActionsNow } from '../../shared/assistant-record-actions.mjs'
 import { PURCHASE_SUGGESTION_SOURCES, suggestNeedByDate } from '../../shared/purchase-suggestion.mjs'
 import { can } from '../auth/authorization-service.mjs'
+import { mapPurchaseRequest } from '../repositories/db-procurement-read-repository.mjs'
+import { PURCHASE_REQUEST_PERMISSIONS } from '../services/procurement-request-command-service.mjs'
+import { PURCHASE_ORDER_COMMANDS } from './procurement-db-command-service.mjs'
+import { PROCUREMENT_PATH_POLICY, PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS, RFQ_STATUS, recommendProcurementPath } from './procurement-workflow.mjs'
 import { AI_READ_TOOL_COLUMNS } from './ai-read-tool-runner.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
 import { findPaymentTerm } from './standard-payment-terms.mjs'
@@ -1136,6 +1141,179 @@ const suggestSetupRecords = defineUiTool({
   },
 })
 
+// ---------------------------------------------------------------- record actions
+
+// The record card (offer_record_actions): the steps on a purchase request or
+// purchase order this user may take now, each done with the user's own click
+// in the card (and a second, confirming click for anything past submitting a
+// draft) through the procurement routes, with the user's session. The
+// assistant never takes a step (owner decision of 2026-11-04: approving and
+// turning a request into an order may happen in the chat, but a person always
+// presses the button). The steps' permissions are the routes' own
+// (PURCHASE_REQUEST_PERMISSIONS, PURCHASE_ORDER_COMMANDS) and the status each
+// starts from is the commands' (RECORD_ACTION_RULES, which a test pins to
+// them); only its requester submits a request. The card is built from the
+// record as stored in the user's workspace, never from the model's words.
+const RECORD_STEP_PERMISSIONS = Object.freeze({
+  purchase_request: Object.freeze({
+    submit: PURCHASE_REQUEST_PERMISSIONS.submit,
+    approve: PURCHASE_REQUEST_PERMISSIONS.approve,
+    reject: PURCHASE_REQUEST_PERMISSIONS.reject,
+    create_rfq: PURCHASE_REQUEST_PERMISSIONS.createRfq,
+    create_po: PURCHASE_REQUEST_PERMISSIONS.createPurchaseOrders,
+  }),
+  purchase_order: Object.freeze({
+    approve: PURCHASE_ORDER_COMMANDS.approve.permission,
+    issue: PURCHASE_ORDER_COMMANDS.issue.permission,
+  }),
+})
+const RECORD_LINES_SHOWN = 3
+const mayTakeRecordSteps = (actor) => Object.values(RECORD_STEP_PERMISSIONS).some((steps) => Object.values(steps).some((permission) => allowedTo(actor, permission)))
+const actorUserId = (actor) => text(actor?.user?.id || actor?.userId)
+// A stored decimal (Prisma's Decimal, a string or a number) as a number, or null.
+const decimalOf = (value) => {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(typeof value === 'object' ? String(value) : value)
+  return Number.isFinite(number) ? number : null
+}
+const metaOf = (row) => (isObject(row?.metadata) ? row.metadata : {})
+
+// The record as stored in the user's workspace, with its lines; for an
+// approved request also whether a purchase order or an open RFQ already
+// comes from it (the routes then refuse another, assertNoActiveDownstream).
+async function storedActionRecord({ prisma, tenantId }, ref) {
+  const include = { lines: { orderBy: { id: 'asc' } } }
+  if (ref.type === 'purchase_order') {
+    const row = await prisma.purchaseOrder.findFirst({ where: { id: ref.id, tenantId }, include })
+    return row ? { row, downstream: false } : null
+  }
+  const row = await prisma.purchaseRequest.findFirst({ where: { id: ref.id, tenantId }, include })
+  if (!row) return null
+  if (row.status !== PURCHASE_REQUEST_STATUS.APPROVED) return { row, downstream: false }
+  const [order, rfq] = await Promise.all([
+    prisma.purchaseOrder.findFirst({ where: { tenantId, sourceRequestId: row.id, status: { not: PURCHASE_ORDER_STATUS.CANCELLED } }, select: { id: true } }),
+    prisma.rfq.findFirst({ where: { tenantId, sourceRequestId: row.id, status: { notIn: [RFQ_STATUS.CANCELLED, RFQ_STATUS.CLOSED] } }, select: { id: true } }),
+  ])
+  return { row, downstream: Boolean(order || rfq) }
+}
+
+// The path the recommendation route gives the request once approved
+// (recommendProcurementPath with the route's policy), with its reasons as
+// codes. The amount threshold is left out for a role that cannot see amounts.
+function recordPath(row, amountsVisible) {
+  const { recommendation, policySnapshot: snapshot } = recommendProcurementPath({ ...mapPurchaseRequest(row), status: PURCHASE_REQUEST_STATUS.APPROVED }, PROCUREMENT_PATH_POLICY, {}, {})
+  const reasons = [
+    !snapshot.supplierSelected && 'supplier_not_selected',
+    !snapshot.validPriceAvailable && 'price_missing',
+    snapshot.rfqRequiredByPolicy && amountsVisible && 'amount_over_rfq_threshold',
+    (snapshot.newSupplier || snapshot.newItem || snapshot.highRiskSupplier) && 'new_or_high_risk',
+  ].filter(Boolean)
+  return { recommendation: recommendation === 'rfq' ? 'rfq' : 'direct_po', reasons: recommendation === 'rfq' ? reasons : ['direct_po_ok'] }
+}
+
+// Who can take the step this user cannot, for the model to say.
+const RECORD_STEP_WHO = Object.freeze({
+  submit: 'its requester, with a role that may create purchase requests (a buyer or manager)',
+  approve: 'a manager or administrator whose role may approve',
+  reject: 'a manager or administrator whose role may approve',
+  create_rfq: 'a buyer or manager whose role may create purchase orders',
+  create_po: 'a buyer or manager whose role may create purchase orders',
+  issue: 'a buyer or manager whose role may create purchase orders',
+})
+
+// Why the card offers nothing, worded for the model: the record's status and
+// who can take its next step, or that it has none.
+function nothingToOffer(type, status, label, { steps, downstream, poBlocked }) {
+  const waiting = Object.entries(RECORD_ACTION_RULES[type]).filter(([, from]) => from === status).map(([step]) => step)
+  const kind = type === 'purchase_request' ? 'purchase request' : 'purchase order'
+  if (!waiting.length) return fail('nothing_to_offer', `${label} is ${status.replace(/_/g, ' ')}; no step of this ${kind} can be taken in the chat. Give its status and link it; do not show a card.`)
+  if (downstream) return fail('nothing_to_offer', `A purchase order or an open RFQ already comes from ${label}. Say so and link the request; do not show a card.`)
+  if (poBlocked && waiting.every((step) => step === 'create_po' || step === 'create_rfq') && steps.includes('create_po')) return fail('nothing_to_offer', `Every line of ${label} needs a supplier, a currency and a delivery warehouse before a purchase order can be created. Say that the user completes the request on its page first; link it.`)
+  const who = [...new Set(waiting.filter((step) => step !== 'create_rfq').map((step) => RECORD_STEP_WHO[step]))].join(', or ')
+  return fail('not_allowed', `${label} is ${status.replace(/_/g, ' ')}. This user cannot take its next step; it is for ${who}. Say who can, naming ${label} so its link shows; do not show a card.`)
+}
+
+const offerRecordActions = defineUiTool({
+  name: 'offer_record_actions',
+  description: 'Show a card for one purchase request or purchase order from a data tool result of this answer (source and its ref), with the steps this user may take on it now: submit a draft request for approval (its requester), approve or reject a submitted request, turn an approved request into a purchase order or request quotes (RFQ) for it, approve a purchase order or mark it issued. The user takes each step with their own click and a confirm in the card; nothing happens until they do. The server reads the record as stored and offers only what the user\'s role and the record\'s status allow; when there is nothing the user may do, the tool says who can.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      source: { ...sourceParam, description: 'The source of a data tool result of this answer that holds the record, for example list_purchase_requests#1.' },
+      ref: { ...refParam, description: 'The ref of the purchase request or purchase order in that result.' },
+    },
+    required: ['source', 'ref'],
+    additionalProperties: false,
+  },
+  // Offered to a role that may take at least one of the steps.
+  available: (actor) => mayTakeRecordSteps(actor),
+  async build(input, ctx) {
+    const actor = ctx?.actor
+    if (!mayTakeRecordSteps(actor)) return fail('not_allowed', 'This user\'s role can take no step on purchase requests or purchase orders. Say that a buyer submits and orders requests and a manager approves them, and link the record; do not show a card.')
+    if (!RECORD_ACTION_TYPES.includes(input.ref.type)) return fail('wrong_ref_type', `offer_record_actions takes a purchase_request or purchase_order ref; ${input.ref.type} is neither.`)
+    const source = sourceOf(ctx, input.source)
+    if (source.error) return source
+    const found = pickRefs(source, [input.ref], input.source)
+    if (found.error) return found
+    const [{ ref }] = found.picked
+    if (!ctx.prisma || !ctx.tenantId) return fail('record_unavailable', `${ref.label} cannot be read just now; link it and say the user can act on its page.`)
+    let stored
+    try {
+      stored = await storedActionRecord(ctx, ref)
+    } catch {
+      return fail('record_unavailable', `${ref.label} cannot be read just now; link it and say the user can act on its page.`)
+    }
+    if (!stored) return fail('record_unavailable', `${ref.label} is not a record of this workspace the user can act on. Say so; do not show a card.`)
+    const { row, downstream } = stored
+    const type = ref.type
+    const status = fold(row.status)
+    if (!isCode(status)) return fail('record_unavailable', `${ref.label} has no status the card can read; link it instead.`)
+    const amountsVisible = Boolean(aiSkillVisibility(actor).amounts.purchase_order_amounts)
+    const requester = type === 'purchase_request' && text(row.requester) === actorUserId(actor)
+    // Every step the user's role permits here, whatever the status: the card
+    // offers again from these after each click.
+    const steps = Object.entries(RECORD_STEP_PERMISSIONS[type])
+      .filter(([step, permission]) => allowedTo(actor, permission) && (step !== 'submit' || requester) && !(downstream && (step === 'create_po' || step === 'create_rfq')))
+      .map(([step]) => step)
+    const lines = array(row.lines)
+    const sourcing = type === 'purchase_request' && steps.some((step) => step === 'create_po' || step === 'create_rfq')
+    const path = sourcing ? recordPath(row, amountsVisible) : null
+    // What createPurchaseOrdersFromPurchaseRequest refuses (DIRECT_PO_NOT_ALLOWED).
+    const poBlocked = sourcing && (!lines.length || lines.some((line) => ['supplierId', 'currency', 'targetWarehouseId'].some((field) => !text(metaOf(line)[field])))) ? 'lines_incomplete' : null
+    const actions = recordActionsNow({ type, status, allowed: steps, path, poBlocked })
+    if (!actions.length) return nothingToOffer(type, status, ref.label, { steps: Object.keys(RECORD_STEP_PERMISSIONS[type]).filter((step) => allowedTo(actor, RECORD_STEP_PERMISSIONS[type][step])), downstream, poBlocked })
+    const suppliers = [...new Set([text(row.supplierName), ...lines.map((line) => text(metaOf(line).supplierSnapshot?.supplierName))].filter(Boolean))].slice(0, 3).map((name) => name.slice(0, 200))
+    const amount = decimalOf(row.amount)
+    const currency = currencyCode(text(row.currency).toUpperCase())
+    const version = type === 'purchase_order' ? Number(row.version ?? 0) : Number(metaOf(row).version ?? 0)
+    const record = {
+      ref,
+      type,
+      status,
+      version: Number.isInteger(version) && version >= 0 ? version : 0,
+      suppliers,
+      lines: lines.slice(0, RECORD_LINES_SHOWN).map((line) => ({
+        sku: text(line.sku).slice(0, 120) || null,
+        name: text(line.itemName).slice(0, 200),
+        quantity: decimalOf(type === 'purchase_order' ? line.orderedQuantity : line.quantity),
+        unit: text(line.unit).slice(0, 20) || null,
+      })),
+      lineCount: lines.length,
+      ...(amountsVisible && amount !== null && currency ? { amount: { amount, currency } } : {}),
+    }
+    const props = {
+      cardId: `${ctx.threadId}:${ctx.messageId}:${ctx.partId}`,
+      source: source.id,
+      record,
+      allowed: steps,
+      actions,
+      ...(path ? { path } : {}),
+      ...(poBlocked ? { poBlocked } : {}),
+    }
+    return part('record_actions', props, [ref])
+  },
+})
+
 const FOLLOWUP_LENGTH = 90
 
 const suggestFollowups = defineUiTool({
@@ -1156,7 +1334,7 @@ const suggestFollowups = defineUiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_UI_TOOLS = Object.freeze([showTable, showRecords, showChart, showKpis, offerChoices, suggestPurchaseRequest, showSetupSteps, suggestSetupRecords, suggestFollowups])
+export const AI_ASSISTANT_V2_UI_TOOLS = Object.freeze([showTable, showRecords, showChart, showKpis, offerChoices, suggestPurchaseRequest, showSetupSteps, suggestSetupRecords, offerRecordActions, suggestFollowups])
 
 // The UI tools the model is offered for this user (design §4.1: the request
 // form is not offered to a user who may not create requests, nor the setup
