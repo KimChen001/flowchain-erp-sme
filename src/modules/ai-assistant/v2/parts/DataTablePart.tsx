@@ -78,18 +78,21 @@ export function DataTablePart({ props, language, onNavigate }: { props: TablePro
           </tbody>
         </table>
       </div>
-      <ul className="space-y-2 @lg:hidden">
-        {rows.map((row, index) => (
-          <li key={index} data-testid="ai-v2-table-card" className="rounded-xl px-3 py-2 text-[13px]" style={cardStyle}>
-            <div className="font-medium" style={{ color: A.label }}><Cell cell={row[lead.code] ?? null} kind={lead.kind} copy={copy} onNavigate={onNavigate} /></div>
-            {rest.length ? <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
-              {rest.map((column) => [
-                <dt key={`${column.code}-label`} style={{ color: A.sub }}>{label(column.code)}</dt>,
-                <dd key={`${column.code}-value`} className={NUMERIC.includes(column.kind) ? "tabular-nums" : ""} style={{ color: A.label }}><Cell cell={row[column.code] ?? null} kind={column.kind} copy={copy} onNavigate={onNavigate} /></dd>,
-              ])}
-            </dl> : null}
-          </li>
-        ))}
+      {/* In the narrow panel: the record and its status on one line, the rest of its row on the next. */}
+      <ul className="divide-y rounded-xl px-3 py-1 @lg:hidden" style={cardStyle}>
+        {rows.map((row, index) => {
+          const present = rest.filter((column) => row[column.code] !== null && row[column.code] !== undefined && row[column.code] !== "");
+          const statuses = present.filter((column) => column.kind === "status");
+          const filled = present.filter((column) => column.kind !== "status");
+          return (
+            <li key={index} data-testid="ai-v2-table-card" className="py-1.5 text-[13px] leading-5" style={{ borderColor: A.gray5 }}>
+              <div className="flex flex-wrap items-center gap-x-2 font-medium" style={{ color: A.label }}><Cell cell={row[lead.code] ?? null} kind={lead.kind} copy={copy} onNavigate={onNavigate} />{statuses.map((column) => <Cell key={column.code} cell={row[column.code] ?? null} kind={column.kind} copy={copy} onNavigate={onNavigate} />)}</div>
+              {filled.length ? <div style={{ color: A.sub }}>{filled.map((column, position) => (
+                <span key={column.code}>{position ? " · " : ""}<span className={column.kind === "text" || column.kind === "ref" ? "" : "whitespace-nowrap"}>{column.kind === "text" || column.kind === "ref" ? null : <>{label(column.code)} </>}<span className={NUMERIC.includes(column.kind) ? "tabular-nums" : ""} style={{ color: A.label }}><Cell cell={row[column.code] ?? null} kind={column.kind} copy={copy} onNavigate={onNavigate} /></span></span></span>
+              ))}</div> : null}
+            </li>
+          );
+        })}
       </ul>
       {showAll ? <button type="button" data-testid="ai-v2-show-all" onClick={() => onNavigate?.(showAll.moduleId, null, { returnTo: "ai", source: "ai", query: showAll.query })} className="text-[13px] font-medium hover:underline" style={{ color: A.blue }}>{copy.t("ai.v2.showAll", { count: copy.number(props.total) })}</button> : null}
     </section>

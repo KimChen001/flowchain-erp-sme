@@ -724,6 +724,16 @@ test('cached input weighs a tenth toward the token cap, and the call before the 
   assert.deepEqual(ofType(over.events, 'error').map((event) => event.code), ['usage_limit'])
 })
 
+// show_table failed with unknown_column on its first try in most answers
+// (2026-11-04): the model now reads the table's column codes beside the result.
+test('a data result the model reads names the columns show_table takes from it', async () => {
+  const { client } = await ask([OVERDUE, [...say('PO-001 is 4 days overdue.'), end()]])
+  const [result] = lastToolResults(client.requests[1])
+  const read = JSON.parse(result.content)
+  assert.deepEqual(read.tableColumns.rows.slice(0, 5), ['order', 'supplier', 'status', 'due_date', 'days_overdue'])
+  assert.ok(read.source)
+})
+
 test('a figure the results do not hold is flagged, not dropped', async () => {
   const { events, body, audit } = await ask([OVERDUE, [...say('PO-001 is 4 days overdue; 37 orders are open, the oldest from Globex Supply.'), end()]])
   const flag = ofType(events, 'flag')[0]
