@@ -14,7 +14,7 @@ export const PROTOCOL_VERSION = 2
 export const PART_SCHEMA_VERSION = 1
 
 export const STREAM_EVENT_TYPES = Object.freeze(['start', 'progress', 'tool', 'text_delta', 'ui', 'flag', 'replace', 'notice', 'error', 'answer'])
-export const UI_COMPONENTS = Object.freeze(['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form'])
+export const UI_COMPONENTS = Object.freeze(['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form', 'record_actions'])
 export const ANSWER_LANGUAGES = Object.freeze(['en-US', 'zh-CN'])
 export const PROGRESS_STEPS = Object.freeze(['reading', 'writing', 'checking'])
 export const TOOL_STATES = Object.freeze(['running', 'done', 'error'])
@@ -242,6 +242,38 @@ const setupFormProps = z.object({
   canCreateItems: z.boolean(),
 }).refine((props) => props.suppliers.length + props.items.length >= 1 && props.suppliers.length + props.items.length <= SETUP_FORM_ROWS, { message: `1 to ${SETUP_FORM_ROWS} rows`, path: ['items'] })
 
+// The record card (offer_record_actions): a purchase request or purchase
+// order as stored, and the steps on it this user may take with their own
+// click. allowed: every step the user's role (and, to submit a request, being
+// its requester) permits on this record; actions: those its status admits now
+// (shared/assistant-record-actions.mjs), which the card works out again after
+// each click. path: the route's direct-PO-or-RFQ recommendation for an
+// approved request. poBlocked: why a purchase order cannot be created from it
+// yet. amount: only for a role that may see purchase amounts.
+export const RECORD_ACTION_TYPES = Object.freeze(['purchase_request', 'purchase_order'])
+export const RECORD_ACTION_CODES = Object.freeze(['submit', 'approve', 'reject', 'create_rfq', 'create_po', 'issue'])
+export const PATH_RECOMMENDATIONS = Object.freeze(['direct_po', 'rfq'])
+export const PATH_REASONS = Object.freeze(['direct_po_ok', 'supplier_not_selected', 'price_missing', 'amount_over_rfq_threshold', 'new_or_high_risk'])
+export const PO_BLOCKS = Object.freeze(['lines_incomplete'])
+const recordActionsProps = z.object({
+  cardId: z.string().min(1).max(160),
+  source: id.optional(),
+  record: z.object({
+    ref: refSchema,
+    type: z.enum(RECORD_ACTION_TYPES),
+    status: code,
+    version: z.number().int().nonnegative(),
+    suppliers: z.array(label).max(3),
+    lines: z.array(z.object({ sku: z.string().min(1).max(120).nullable(), name: z.string().max(200), quantity: amount.nullable(), unit: z.string().max(20).nullable() })).max(3),
+    lineCount: z.number().int().nonnegative(),
+    amount: money.optional(),
+  }),
+  allowed: z.array(z.enum(RECORD_ACTION_CODES)).min(1).max(RECORD_ACTION_CODES.length),
+  actions: z.array(z.enum(RECORD_ACTION_CODES)).min(1).max(RECORD_ACTION_CODES.length),
+  path: z.object({ recommendation: z.enum(PATH_RECOMMENDATIONS), reasons: z.array(z.enum(PATH_REASONS)).max(PATH_REASONS.length) }).optional(),
+  poBlocked: z.enum(PO_BLOCKS).optional(),
+}).refine((props) => props.actions.every((action) => props.allowed.includes(action)), { message: 'an action the user is not allowed', path: ['actions'] })
+
 export const partPropsSchemas = Object.freeze({
   table: tableProps,
   records: recordsProps,
@@ -253,6 +285,7 @@ export const partPropsSchemas = Object.freeze({
   citations: citationsProps,
   setup_steps: setupStepsProps,
   setup_form: setupFormProps,
+  record_actions: recordActionsProps,
 })
 
 const envelope = { v: z.literal(PROTOCOL_VERSION), seq: z.number().int().nonnegative() }

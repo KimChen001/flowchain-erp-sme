@@ -32,6 +32,9 @@ async function loadClient() {
     export const steps = (props) => renderToStaticMarkup(createElement(SetupStepsPart, { onNavigate: navigate, ...props }))
     export const setupCard = (props) => renderToStaticMarkup(createElement(SetupRecordsPart, { partId: 'p3', onNavigate: navigate, ...props }))
     export { addedFormRow, createFormRequest, draftRequestBody, initialFormLines, newSupplierLinkBody, newSupplierOption, createSetupRecords, initialSetupDrafts, itemBody, itemIssues, itemSupplierBody, setupCreatedRecords, supplierBody, supplierIssues }
+    import { RecordActionsPart, cardActions, recordActionErrorText, runRecordAction } from './src/modules/ai-assistant/v2/parts/RecordActionsPart.tsx'
+    export const recordCard = (props) => renderToStaticMarkup(createElement(RecordActionsPart, { onNavigate: navigate, ...props }))
+    export { cardActions, recordActionErrorText, runRecordAction }
   `
   const result = await build({
     stdin: { contents: entry, resolveDir: root, loader: 'tsx', sourcefile: 'assistant-v2-parts-entry.tsx' },
@@ -126,7 +129,7 @@ test('the protocol accepts the design example and every event type, and lists th
     assert.ok(result.success, `${line.slice(0, 60)}: ${result.success ? '' : JSON.stringify(result.error.issues)}`)
   }
   assert.deepEqual([...STREAM_EVENT_TYPES], ['start', 'progress', 'tool', 'text_delta', 'ui', 'flag', 'replace', 'notice', 'error', 'answer'])
-  assert.deepEqual([...UI_COMPONENTS], ['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form'])
+  assert.deepEqual([...UI_COMPONENTS], ['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form', 'record_actions'])
   const envelope = { v: 2, seq: 3 }
   for (const event of [
     { ...envelope, type: 'flag', partId: 'p1', spans: [{ text: '600', kind: 'number', reason: 'not_in_tool_results' }] },
@@ -729,4 +732,125 @@ test('the answer renders the setup parts in place', async () => {
   const markup = client.answer({ parts: [ui('p1', 'setup_steps', stepsProps), ui('p2', 'setup_form', setupProps(), [ref('supplier', 'SUP-001', 'Acme Components')])], language: 'en-US' })
   assert.deepEqual([...markup.matchAll(/data-part-id="(p\d)" data-component="([a-z_]+)"/g)].map((match) => `${match[1]}:${match[2]}`), ['p1:setup_steps', 'p2:setup_form'])
   assert.doesNotMatch(markup, CJK)
+})
+
+// ---------------------------------------------------------------- record card
+
+const CARD = 'thr_7f2c:msg_19:p2'
+const cardRecord = (over = {}) => ({
+  ref: ref('purchase_request', 'PR-0231'), type: 'purchase_request', status: 'submitted', version: 3, suppliers: ['Northstar Electronics'],
+  lines: [{ sku: 'LDM-002', name: 'Temperature Sensor', quantity: 300, unit: 'pcs' }], lineCount: 1, amount: { amount: 1200, currency: 'USD' }, ...over,
+})
+const cardProps = (over = {}) => ({
+  cardId: CARD, source: 'toolu_01', record: cardRecord(), allowed: ['approve', 'reject', 'create_rfq', 'create_po'], actions: ['approve', 'reject'],
+  path: { recommendation: 'direct_po', reasons: ['direct_po_ok'] }, ...over,
+})
+const buttons = (markup) => [...markup.matchAll(/data-testid="ai-v2-record-action" data-action="([a-z_]+)"[^>]*>([^<]+)</g)].map((match) => `${match[1]}:${match[2]}`)
+
+test('the record card passes the protocol, and never offers a step the user is not allowed', () => {
+  assert.ok(safeParsePartProps('record_actions', cardProps()).success)
+  assert.ok(!safeParsePartProps('record_actions', cardProps({ actions: ['issue'] })).success)
+  assert.ok(!safeParsePartProps('record_actions', cardProps({ actions: [] })).success)
+  assert.ok(!safeParsePartProps('record_actions', cardProps({ record: cardRecord({ type: 'supplier_invoice' }) })).success)
+  assert.ok(!safeParsePartProps('record_actions', cardProps({ path: { recommendation: 'manual_review', reasons: [] } })).success)
+})
+
+test('the record card shows each step as a button, and a step past submitting asks a second, inline Confirm that says what will happen', async () => {
+  const client = await loadClient()
+  const idle = client.recordCard({ props: cardProps(), language: 'en-US' })
+  assert.deepEqual(buttons(idle), ['approve:Approve', 'reject:Reject'])
+  assert.doesNotMatch(idle, /data-testid="ai-v2-record-confirm"/)
+  assert.match(idle, /data-business-id="PR-0231"/)
+  assert.match(idle, /data-testid="ai-v2-record-details"[^>]*>300 pcs of LDM-002 · Northstar Electronics · [^<]*1,200\.00</)
+  assert.doesNotMatch(idle, CJK)
+  const approve = client.recordCard({ props: cardProps(), language: 'en-US', initialConfirm: 'approve' })
+  assert.match(approve, /data-testid="ai-v2-record-confirm" data-action="approve"[^]*Approve PR-0231 for 300 pcs of LDM-002 from Northstar Electronics\?[^]*data-testid="ai-v2-record-confirm-button"[^>]*>Confirm approval</)
+  assert.deepEqual(buttons(approve), [])
+  assert.match(approve, /data-testid="ai-v2-record-back"/)
+  // Rejecting asks for the reason, and its Confirm waits for one.
+  const reject = client.recordCard({ props: cardProps(), language: 'en-US', initialConfirm: 'reject' })
+  assert.match(reject, /Reject PR-0231 for 300 pcs of LDM-002 from Northstar Electronics\? The requester sees your reason\./)
+  assert.match(reject, /data-testid="ai-v2-record-reason"/)
+  assert.match(reject, /data-testid="ai-v2-record-confirm-button"[^>]*disabled=""/)
+  // An approved request: the route's path recommendation, quotes first when it says so.
+  const approved = cardProps({ record: cardRecord({ status: 'approved', lineCount: 2 }), actions: ['create_rfq', 'create_po'], path: { recommendation: 'rfq', reasons: ['amount_over_rfq_threshold'] } })
+  const order = client.recordCard({ props: approved, language: 'en-US' })
+  assert.deepEqual(buttons(order), ['create_rfq:Request quotes (RFQ)', 'create_po:Create purchase order'])
+  assert.match(order, /data-testid="ai-v2-record-path" data-recommendation="rfq"[^>]*>Recommended: request quotes first[^]*the amount is at or above the quote threshold/)
+  assert.match(client.recordCard({ props: approved, language: 'en-US', initialConfirm: 'create_po' }), /Turn PR-0231 into a purchase order for 2 lines from Northstar Electronics\?/)
+  assert.match(client.recordCard({ props: approved, language: 'en-US', initialConfirm: 'create_rfq' }), /Request quotes for PR-0231 \(2 lines\)\? This creates a draft RFQ; nothing is sent to suppliers until you open it\./)
+  // An order: mark it issued says FlowChain sends nothing.
+  const issue = cardProps({ record: cardRecord({ ref: ref('purchase_order', 'PO-009'), type: 'purchase_order', status: 'approved', suppliers: ['Summit Packaging'] }), allowed: ['issue'], actions: ['issue'], path: undefined })
+  assert.match(client.recordCard({ props: issue, language: 'en-US', initialConfirm: 'issue' }), /Mark PO-009 \(300 pcs of LDM-002 from Summit Packaging\) as issued\? FlowChain records the issue; you send the PO to the supplier\./)
+  // Submitting a draft is one click, as in the request form; its Confirm never shows.
+  const draft = cardProps({ record: cardRecord({ status: 'draft' }), allowed: ['submit'], actions: ['submit'], path: undefined })
+  assert.deepEqual(buttons(client.recordCard({ props: draft, language: 'en-US', initialConfirm: 'submit' })), ['submit:Submit for approval'])
+  // Chinese follows the answer.
+  const zh = client.recordCard({ props: cardProps(), language: 'zh-CN', initialConfirm: 'approve' })
+  assert.match(zh, /批准 PR-0231（LDM-002 300 pcs，供应商 Northstar Electronics）？[^]*确认批准/)
+})
+
+test('a step posts its route with the record\'s version and the card\'s key; a replay or a conflict reads the record again; an error is worded by its code', async () => {
+  const client = await loadClient()
+  const record = cardRecord()
+  const posts = []
+  const gets = []
+  const get = async (url) => { gets.push(url); return { id: 'PR-0231', status: 'converted', version: 5 } }
+  const run = (action, state, answer, extra = {}) => client.runRecordAction({ record: extra.record || record, cardId: CARD, state, action, reason: extra.reason, get, post: async (url, body) => { posts.push([url, body]); if (answer instanceof Error) throw answer; return answer } })
+
+  const approved = await run('approve', { status: 'submitted', version: 3 }, { id: 'PR-0231', status: 'approved', version: 4 })
+  assert.deepEqual(posts.at(-1), ['/api/procurement/requests/PR-0231/approve', { expectedVersion: 3, idempotencyKey: `ai-action:${CARD}:approve:v3` }])
+  assert.deepEqual(approved, { status: 'done', record: { status: 'approved', version: 4 }, step: { actionId: `${CARD}:approve:v3`, action: 'approve', created: [] } })
+  await run('reject', { status: 'submitted', version: 3 }, { id: 'PR-0231', status: 'rejected', version: 4 }, { reason: '  Over budget ' })
+  assert.deepEqual(posts.at(-1), ['/api/procurement/requests/PR-0231/reject', { expectedVersion: 3, idempotencyKey: `ai-action:${CARD}:reject:v3`, reason: 'Over budget' }])
+  await run('submit', { status: 'draft', version: 1 }, { id: 'PR-0231', status: 'submitted', version: 2 })
+  assert.deepEqual(posts.at(-1), ['/api/procurement/requests/PR-0231/submit', { expectedVersion: 1, idempotencyKey: `ai-action:${CARD}:submit:v1` }])
+  // Ordering: the direct purchase order route; the orders it made come back as chips.
+  const ordered = await run('create_po', { status: 'approved', version: 4 }, { purchaseRequestId: 'PR-0231', purchaseRequest: { id: 'PR-0231', status: 'converted', version: 5 }, createdPurchaseOrders: [{ id: 'PO-7A1B2C3D', orderNumber: 'PO-7A1B2C3D', status: 'approved' }] })
+  assert.deepEqual(posts.at(-1), ['/api/procurement/requests/PR-0231/direct-purchase-order', { expectedVersion: 4, idempotencyKey: `ai-action:${CARD}:create_po:v4` }])
+  assert.deepEqual(ordered.step.created, [ref('purchase_order', 'PO-7A1B2C3D')])
+  assert.deepEqual(ordered.record, { status: 'converted', version: 5 })
+  const quoted = await run('create_rfq', { status: 'approved', version: 4 }, { purchaseRequest: { id: 'PR-0231', status: 'approved', version: 5 }, rfq: { id: 'RFQ-3C4D5E6F', status: 'draft' } })
+  assert.equal(posts.at(-1)[0], '/api/procurement/requests/PR-0231/rfqs')
+  assert.deepEqual([quoted.step.created, quoted.record], [[ref('rfq', 'RFQ-3C4D5E6F')], { status: 'approved', version: 5 }])
+  const order = cardRecord({ ref: ref('purchase_order', 'PO-009'), type: 'purchase_order', status: 'approved', version: 4 })
+  const issued = await run('issue', { status: 'approved', version: 4 }, { entityId: 'PO-009', status: 'issued', entityVersion: 5, purchaseOrder: { id: 'PO-009', status: 'issued', version: 5 } }, { record: order })
+  assert.deepEqual(posts.at(-1), ['/api/procurement/orders/PO-009/issue', { expectedVersion: 4, idempotencyKey: `ai-action:${CARD}:issue:v4` }])
+  assert.deepEqual(issued.record, { status: 'issued', version: 5 })
+  // A second click, or a retry after a lost answer, replays the step: the record is read again.
+  const replay = await run('approve', { status: 'submitted', version: 3 }, { id: 'PR-0231', status: 'approved', version: 4, idempotentReplay: true })
+  assert.deepEqual([replay.status, replay.record, gets.at(-1)], ['done', { status: 'converted', version: 5 }, '/api/procurement/requests/PR-0231'])
+  // Changed since the card was shown: read again, nothing taken.
+  const changed = await run('approve', { status: 'submitted', version: 3 }, Object.assign(new Error('changed'), { code: 'VERSION_CONFLICT', status: 409 }))
+  assert.deepEqual(changed, { status: 'changed', record: { status: 'converted', version: 5 }, code: 'VERSION_CONFLICT' })
+  // Any other error is worded from its code, never the server's message.
+  const denied = await run('approve', { status: 'submitted', version: 3 }, Object.assign(new Error('Keine Berechtigung'), { code: 'AUTHORIZATION_PERMISSION_DENIED', status: 403 }))
+  assert.deepEqual(denied, { status: 'failed', code: 'AUTHORIZATION_PERMISSION_DENIED' })
+  assert.equal(client.recordActionErrorText(denied.code, 'en-US'), 'Your role cannot take this step.')
+  assert.equal(client.recordActionErrorText(denied.code, 'zh-CN'), '你的角色无权执行此操作。')
+  assert.equal(client.recordActionErrorText('REJECT_REASON_REQUIRED', 'en-US'), 'Enter a reason to reject.')
+  assert.equal(client.recordActionErrorText('SOMETHING_NEW', 'en-US'), 'This step did not work. Try again, or open the record.')
+  assert.equal(client.recordActionErrorText('', 'en-US'), 'This step did not work. Try again, or open the record.')
+})
+
+test('after a step the card offers what the new status allows, and shows what it did when the answer is shown again', async () => {
+  const client = await loadClient()
+  const props = cardProps()
+  // Approved: the next step is ordering it, by the route's recommendation; once ordered, nothing more.
+  assert.deepEqual(client.cardActions(props, { status: 'approved', version: 4 }, false), ['create_po'])
+  assert.deepEqual(client.cardActions({ ...props, path: { recommendation: 'rfq', reasons: [] } }, { status: 'approved', version: 4 }, false), ['create_rfq', 'create_po'])
+  assert.deepEqual(client.cardActions(props, { status: 'approved', version: 5 }, true), [])
+  assert.deepEqual(client.cardActions({ ...props, allowed: ['approve', 'reject'] }, { status: 'approved', version: 4 }, false), [])
+  const receipt = { type: 'purchase_request', id: 'PR-0231', status: 'converted', version: 5, steps: [
+    { actionId: `${CARD}:approve:v3`, action: 'approve', created: [] },
+    { actionId: `${CARD}:create_po:v4`, action: 'create_po', created: [ref('purchase_order', 'PO-7A1B2C3D')] },
+  ] }
+  const markup = client.recordCard({ props, language: 'en-US', receipt })
+  assert.match(markup, /data-testid="ai-v2-record-actions" data-card-id="thr_7f2c:msg_19:p2" data-status="converted"/)
+  assert.deepEqual([...markup.matchAll(/data-testid="ai-v2-record-done" data-action="([a-z_]+)"/g)].map((match) => match[1]), ['approve', 'create_po'])
+  assert.match(markup, /You created the purchase order:[^]*data-business-id="PO-7A1B2C3D"/)
+  assert.deepEqual(buttons(markup), [])
+  // The answer renders the card in place.
+  const answer = client.answer({ parts: [ui('p2', 'record_actions', props, [ref('purchase_request', 'PR-0231')])], language: 'en-US' })
+  assert.match(answer, /data-part-id="p2" data-component="record_actions"[^]*data-testid="ai-v2-record-actions"/)
 })
