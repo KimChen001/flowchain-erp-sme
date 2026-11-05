@@ -2,6 +2,7 @@ import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
 import { findManyWithinLimit, requireTenantId } from '../repositories/repository-read-scope.mjs'
 import { listItemSupplierRecords } from './master-data-commands.mjs'
 import { DEMAND_WINDOW_DAYS, buildReorderList } from './reorder-list.mjs'
+import { attachReorderPointSuggestions } from './reorder-point-suggestion.mjs'
 
 // Reads what the reorder list needs from the workspace's records, scoped to
 // its tenant: items as stored (the recorded reorder point, never the balance
@@ -13,6 +14,11 @@ import { DEMAND_WINDOW_DAYS, buildReorderList } from './reorder-list.mjs'
 // with a reorder point listed as not checked: the reorder point is one figure
 // for the whole item, and incoming purchase orders name no warehouse, so no
 // part of the stock is set against it. Nothing else is read for that reader.
+//
+// Each row also carries a suggested reorder point from the same shipment
+// lines and the preferred supplier's lead time (reorder-point-suggestion.mjs),
+// with its inputs. It never changes the row: the list is dated by the
+// recorded reorder point until a person changes it on the item.
 
 const ITEM_LIMIT = 2000
 const SHIPMENT_LINE_LIMIT = 20000
@@ -51,7 +57,7 @@ export function createReorderListReadService({ prisma }) {
         postedAt: line.shipment?.postedAt?.toISOString?.() || null,
         quantity: Number(line.postedQuantity),
       }))
-      const list = buildReorderList({
+      const list = attachReorderPointSuggestions(buildReorderList({
         allocationRows: scopeIds ? [] : allocationRows,
         items,
         shipmentLines,
@@ -61,7 +67,7 @@ export function createReorderListReadService({ prisma }) {
         timeZone,
         scope: { warehouseIds: scopeIds, totalWarehouses: warehouses.length },
         showPurchaseOrders,
-      })
+      }), shipmentLines)
       return {
         ...list,
         dataLimitations: ['transfers_not_considered', ...[...truncated.values()].map((entry) => `truncated:${entry.subject}`)],

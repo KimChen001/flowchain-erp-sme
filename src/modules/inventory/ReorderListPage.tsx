@@ -1,20 +1,37 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { ClipboardList, RefreshCw } from "lucide-react";
-import { A, Card, Chip } from "../../components/ui";
+import { A, Card, Chip, Modal, inputStyle } from "../../components/ui";
 import { apiJson } from "../../lib/api-client";
 import { formatQuantity } from "../../lib/format";
 import { useI18n } from "../../i18n/I18n";
+import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { useReorderListCopy, type ReorderListCopyKey } from "./reorderListCopy";
 
 // The items to reorder, ranked by the day each one's stock position is
 // expected to reach its recorded reorder point (GET /api/inventory/reorder-list,
 // server/domain/reorder-list.mjs). Every row prints its inputs so a person can
-// check the date. The only action opens a prefilled purchase request; nothing
-// is ordered from here.
+// check the date. One action opens a prefilled purchase request; nothing is
+// ordered from here. Beside the recorded reorder point each row shows a
+// suggested one (server/domain/reorder-point-suggestion.mjs); a person with
+// item rights may set it on the item after confirming, and nothing else
+// changes it.
 
 type Flag = { code: string; orderNumber?: string | null; unit?: string; dueDay?: string; count?: number };
 type Supplier = { id: string; code: string; name: string; leadTimeDays: number | null; minimumOrderQuantity: number | null; moqUnit: string | null };
+type Suggestion = {
+  suggestedReorderPoint: number | null;
+  reason: "stock_unit_not_recorded" | "not_enough_history" | "lead_time_not_recorded" | null;
+  coverDays: number | null;
+  leadTimeDays: number | null;
+  reviewDays: number;
+  historyDays: number;
+  windowCount: number;
+  rank: number;
+  shipmentDays: number;
+  minShipmentDays: number;
+  recordedBelow: boolean;
+};
 type ReorderRow = {
   itemId: string;
   sku: string;
@@ -33,6 +50,7 @@ type ReorderRow = {
   supplier: Supplier | null;
   flags: Flag[];
   purchaseRequest: { itemId: string; supplierId: string | null; quantity: number | null; raisedToMinimum?: boolean };
+  reorderPointSuggestion?: Suggestion;
 };
 type ItemRef = { itemId: string; sku: string; itemName: string };
 type NotChecked = ItemRef & { reason: "stock_incomplete" | "stock_unit_not_recorded" | "warehouse_scope" };
@@ -105,12 +123,102 @@ function purchaseRequestHref(row: ReorderRow, reason: string) {
 
 const itemHref = (itemId: string) => `/app/master-data/items/${encodeURIComponent(itemId)}`;
 
+type Copy = ReturnType<typeof useReorderListCopy>;
+const NO_SUGGESTION: Record<string, ReorderListCopyKey> = {
+  stock_unit_not_recorded: "noSuggestionUnit",
+  lead_time_not_recorded: "noSuggestionLeadTime",
+  not_enough_history: "noSuggestionHistory",
+};
+
+// The suggested reorder point under the recorded one, with a one-line why,
+// highlighted when the recorded value is below it. The button only opens the
+// confirm dialog.
+function SuggestedReorderPoint({ row, t, canSet, onSet }: { row: ReorderRow; t: Copy; canSet: boolean; onSet: () => void }) {
+  const suggestion = row.reorderPointSuggestion;
+  if (!suggestion) return null;
+  if (suggestion.suggestedReorderPoint === null) {
+    return <div className="mt-1" style={{ color: A.sub }} data-testid="reorder-suggestion">{t(NO_SUGGESTION[suggestion.reason || ""] || "noSuggestionHistory", { min: suggestion.minShipmentDays })}</div>;
+  }
+  const detail = t("suggestionDetail", { lead: suggestion.leadTimeDays ?? 0, review: suggestion.reviewDays, days: suggestion.coverDays ?? 0, windows: suggestion.windowCount, rank: suggestion.rank, history: suggestion.historyDays });
+  return (
+    <div className="mt-1 max-w-[190px] space-y-0.5" data-testid="reorder-suggestion" title={detail}>
+      <div className="font-semibold" style={{ color: suggestion.recordedBelow ? A.orange : A.label }}>{t("suggested", { value: withUnit(suggestion.suggestedReorderPoint, row.unit) })}</div>
+      {suggestion.recordedBelow && <span className="inline-block" data-testid="reorder-below-suggestion"><Chip label={t("belowSuggestion")} color={A.orange} bg="#fff4e8" /></span>}
+      <div style={{ color: A.sub }}>{t("suggestionWhy", { days: suggestion.coverDays ?? 0 })}</div>
+      {canSet && suggestion.suggestedReorderPoint > 0 && suggestion.suggestedReorderPoint !== row.reorderPoint && (
+        <button type="button" onClick={onSet} data-testid={`reorder-set-point-${row.sku}`} className="mt-1 whitespace-nowrap rounded-md px-2 py-1 font-semibold" style={{ background: "#f0f6ff", color: A.blue }}>
+          {t("setReorderPoint")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Confirm, then set the item's reorder point through the item update command
+// (PATCH /api/master-data/items/:id: versioned and audited). Only the reorder
+// point changes; the stock unit the list read is sent back as it is, so an
+// item whose unit is recorded only in its metadata keeps it.
+function SetReorderPointDialog({ row, t, onClose, onSaved }: { row: ReorderRow; t: Copy; onClose: () => void; onSaved: (value: number) => void }) {
+  const suggestion = row.reorderPointSuggestion as Suggestion;
+  const [value, setValue] = useState(String(suggestion.suggestedReorderPoint ?? ""));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const save = async () => {
+    const next = Number(value);
+    if (!value.trim() || !Number.isFinite(next) || next <= 0) {
+      setError(t("dialogInvalid"));
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const path = `/api/master-data/items/${encodeURIComponent(row.itemId)}`;
+      const { item } = await apiJson<{ item: { version?: number } }>(path);
+      await apiJson(path, { method: "PATCH", body: JSON.stringify({ reorderPoint: next, baseUnit: row.unit, expectedVersion: item?.version ?? 1 }) });
+      onSaved(next);
+    } catch (cause: any) {
+      setError(t("dialogError", { message: cause?.message || "" }));
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={480}
+      title={t("dialogTitle", { sku: row.sku })}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="rounded-md px-3 py-2 text-xs">{t("dialogCancel")}</button>
+          <button type="button" onClick={save} disabled={saving} data-testid="reorder-set-point-confirm" className="rounded-md px-3 py-2 text-xs font-semibold text-white disabled:opacity-60" style={{ background: A.blue }}>
+            {saving ? t("dialogSaving") : t("dialogConfirm")}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3 text-xs leading-5" data-testid="reorder-set-point-dialog">
+        <p>{t("dialogCurrent", { value: withUnit(row.reorderPoint, row.unit) })}</p>
+        <p>{t("dialogSuggested", { value: withUnit(suggestion.suggestedReorderPoint, row.unit), days: suggestion.coverDays ?? 0, lead: suggestion.leadTimeDays ?? 0, review: suggestion.reviewDays, history: suggestion.historyDays })}</p>
+        <label className="block">
+          <span className="font-semibold">{t("dialogField", { unit: row.unit })}</span>
+          <input type="number" min="0" step="any" value={value} onChange={(event) => setValue(event.target.value)} className="mt-1" style={inputStyle} data-testid="reorder-set-point-value" />
+        </label>
+        <p style={{ color: A.sub }}>{t("dialogNote")}</p>
+        {error && <p role="alert" style={{ color: A.red }}>{error}</p>}
+      </div>
+    </Modal>
+  );
+}
+
 export default function ReorderListPage() {
   const t = useReorderListCopy();
   const { locale } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [list, setList] = useState<ReorderList | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error" | "unavailable">("loading");
+  const [setting, setSetting] = useState<ReorderRow | null>(null);
+  const [saved, setSaved] = useState("");
+  const canSetReorderPoint = useMasterDataWriteAccess().items;
   const supplierFilter = searchParams.get("supplier") || "";
 
   const load = () => {
@@ -168,6 +276,10 @@ export default function ReorderListPage() {
             <p style={{ color: A.sub }}>{t("rule", { window: list.rule.windowDays, min: list.rule.minShipmentDays })}</p>
             <p style={{ color: A.sub }} data-testid="reorder-list-horizon">{t("horizon")}</p>
             <p style={{ color: A.sub }}>{t("units")}</p>
+            {list.rows.some((row) => row.reorderPointSuggestion) && (
+              <p style={{ color: A.sub }} data-testid="reorder-list-suggestion-rule">{t("suggestionRule", { review: list.rows.find((row) => row.reorderPointSuggestion)?.reorderPointSuggestion?.reviewDays ?? 7, window: list.rule.windowDays })}</p>
+            )}
+            {saved && <p data-testid="reorder-list-saved" style={{ color: A.green }}>{saved}</p>}
             {truncated.length > 0 && (
               <p data-testid="reorder-list-truncated" style={{ color: A.orange }}>{t("truncated", { subjects: truncated.join(", ") })}</p>
             )}
@@ -253,7 +365,10 @@ export default function ReorderListPage() {
                         <td className="px-3 py-3">{withUnit(row.reserved, row.unit)}</td>
                         <td className="px-3 py-3">{withUnit(row.incoming, row.unit)}</td>
                         <td className="px-3 py-3 font-semibold">{withUnit(row.position, row.unit)}</td>
-                        <td className="px-3 py-3">{withUnit(row.reorderPoint, row.unit)}</td>
+                        <td className="px-3 py-3" data-testid="reorder-point">
+                          <div>{withUnit(row.reorderPoint, row.unit)}</div>
+                          <SuggestedReorderPoint row={row} t={t} canSet={canSetReorderPoint} onSet={() => setSetting(row)} />
+                        </td>
                         <td className="px-3 py-3" data-testid="reorder-demand">
                           {row.demand.enough ? (
                             <>
@@ -324,6 +439,19 @@ export default function ReorderListPage() {
             );
           })}
         </>
+      )}
+
+      {setting && (
+        <SetReorderPointDialog
+          row={setting}
+          t={t}
+          onClose={() => setSetting(null)}
+          onSaved={(value) => {
+            setSaved(t("savedNotice", { sku: setting.sku, value: withUnit(value, setting.unit) }));
+            setSetting(null);
+            load();
+          }}
+        />
       )}
     </div>
   );

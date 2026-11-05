@@ -314,6 +314,14 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
       assert.deepEqual([item.onHand, item.reserved, item.reorderList.orderByDate, item.preferredSupplier.minimumOrderQuantity], [row.onHand, row.reserved, row.orderByDate, row.supplier.minimumOrderQuantity], item.sku)
       assert.equal(item.reorderList.qRule, item.sku === 'LDM-002' ? 50 : 0, item.sku)
       assert.ok(item.lastPurchasePrice.unitPrice > 0 && item.preferredSupplier.referencePrice > 0, item.sku)
+      // The suggested reorder point: the export's is the reorder list's, and
+      // both are the 75th smallest of the 90 circular sums of (lead time + 7)
+      // days of the exported daily series, rounded up.
+      const cover = item.preferredSupplier.leadTimeDays + 7
+      const shipped = item.dailyShipped.map((day) => day.quantity)
+      const sums = shipped.map((_, start) => Array.from({ length: cover }, (__, offset) => shipped[(start + offset) % 90]).reduce((sum, value) => sum + value, 0)).sort((x, y) => x - y)
+      assert.deepEqual([item.suggestedReorderPoint, item.reorderPointSuggestion.coverDays, item.reorderPointSuggestion.reason], [Math.ceil(sums[74]), cover, null], item.sku)
+      assert.equal(row.reorderPointSuggestion.suggestedReorderPoint, item.suggestedReorderPoint, item.sku)
     }
     assert.deepEqual(Object.fromEntries(inputs.items.map((item) => [item.sku, [item.reorderPoint, item.safetyStock]])), Object.fromEntries(items.map((item) => [item.sku, [Number(item.reorderPoint), Number(item.safetyStock)]])))
     const exportedFlowController = inputs.items[0]

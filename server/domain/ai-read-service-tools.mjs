@@ -79,6 +79,15 @@ const searchRecords = defineAiTool({
 // named by their number, and items by their SKU.
 const NAMED_RECORDS = new Set(['supplier', 'customer', 'warehouse'])
 
+// A row's suggested reorder point with what it rests on, in words the
+// assistant can repeat; reason says why there is none.
+const suggestionFacts = (suggestion) => ({
+  ...primitives(suggestion, ['recordedBelow', 'coverDays', 'leadTimeDays', 'reviewDays', 'shipmentDays', 'reason']),
+  basis: suggestion.suggestedReorderPoint === null
+    ? 'No suggestion; reason says why.'
+    : `Enough for the next ${suggestion.coverDays} days (lead time ${suggestion.leadTimeDays} + ${suggestion.reviewDays} review days) in 5 of 6 past ${suggestion.coverDays}-day stretches of the last ${suggestion.historyDays} days of shipments. A suggestion only; nothing changes until a person sets the reorder point on the item.`,
+})
+
 // The preferred supplier's lead time and minimum order come from the item's
 // supplier link (preferredSupplierFor in reorder-list.mjs), so they are read
 // from the row's supplier, never from the row itself.
@@ -127,6 +136,11 @@ const reorderList = defineAiTool({
       raisedToMinimum: Boolean(row.purchaseRequest?.raisedToMinimum),
       flags: array(row.flags).map((flag) => primitives(flag, ['code', 'orderNumber', 'unit', 'dueDay', 'count'])),
       incomingLines: array(row.incomingLines).map((line) => primitives(line, ['orderNumber', 'remaining', 'dueDay', 'late'])),
+      // The suggested reorder point the page shows beside the recorded one
+      // (reorder-point-suggestion.mjs). A suggestion only: the row is dated
+      // by the recorded reorder point until a person changes it on the item.
+      suggestedReorderPoint: row.reorderPointSuggestion?.suggestedReorderPoint ?? null,
+      reorderPointSuggestion: row.reorderPointSuggestion ? suggestionFacts(row.reorderPointSuggestion) : null,
       ref: aiToolRef('item', row.itemId || row.purchaseRequest?.itemId || row.sku, row.sku),
     }))
     rows.sort((a, b) => text(a.orderByDate || '9999').localeCompare(text(b.orderByDate || '9999')) || text(a.sku).localeCompare(text(b.sku)))
