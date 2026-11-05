@@ -573,6 +573,18 @@ test('show_records keeps the currency of every amount, whichever tool the record
   assert.equal(bare.figures, undefined)
 })
 
+// An overdue list came back without its order numbers (2026-11-04): a
+// table of records always leads with the column that names the record.
+test('show_table puts the record column first when the model leaves it out', async () => {
+  const { call, build } = await workspace()
+  await call('toolu_po', 'list_purchase_orders', { status: 'overdue' })
+  const props = assertPart(build('show_table', { source: 'toolu_po', columns: ['supplier', 'due_date', 'days_overdue'] }), 'table')
+  assert.deepEqual(props.columns.map((column) => [column.code, column.kind]).slice(0, 2), [['order', 'ref'], ['supplier', 'text']])
+  // Named by the model: nothing is added.
+  const named = assertPart(build('show_table', { source: 'toolu_po', columns: ['order', 'days_overdue'] }), 'table')
+  assert.deepEqual(named.columns.map((column) => column.code), ['order', 'days_overdue'])
+})
+
 test('supplier_risks rows keep their date in cards and tables', async () => {
   const { call, build } = await workspace()
   const risks = await call('toolu_risks', 'supplier_risks')

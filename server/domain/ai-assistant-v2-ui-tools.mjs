@@ -231,6 +231,16 @@ const declaredOf = (tool) => Object.entries(AI_READ_TOOL_COLUMNS[tool])
 const keyIn = (keys, name) => keys.find((key) => key === name || aiUiColumnCode(key) === name || snakeCase(key) === name)
 const describeColumns = (tool) => declaredOf(tool).map(([path, keys]) => `${path || 'result'}: ${keys.join(', ')}`).join('; ')
 
+// The columns show_table takes from a data tool's result, by list, as the
+// model reads them beside the result: the table's first call no longer
+// guesses a column (2026-11-04: show_table failed with unknown_column on its
+// first try in most answers, and the retry cost a round). Null for a tool
+// that declares none.
+export function aiUiTableColumns(tool) {
+  if (!AI_READ_TOOL_COLUMNS[tool]) return null
+  return Object.fromEntries(declaredOf(tool).map(([path, keys]) => [path || 'result', keys.map(aiUiColumnCode)]))
+}
+
 // The list of the result the columns come from, and their keys there. A list
 // the result does not hold (spend_analysis for one supplier has items only)
 // is never read as empty: the lists it holds are tried first, and the model is
@@ -351,7 +361,17 @@ const showTable = defineUiTool({
       })
     }
     const shown = rows.slice(0, input.limit ?? TABLE_ROWS)
-    const keys = [...new Set(input.columns.map((name) => keyIn(table.keys, name)))]
+    let keys = [...new Set(input.columns.map((name) => keyIn(table.keys, name)))]
+    // A table of records leads with the record: when the model left its
+    // column out (2026-11-04: an overdue list without its order numbers), the
+    // list's first column, the one that names the record, comes first.
+    const listKeys = declaredOf(tool).find(([path]) => (path || '') === (table.path || ''))?.[1] || []
+    const namesRecord = (key) => shown.some((row) => {
+      if (!isObject(row?.ref)) return false
+      const value = valueAt(row, key)
+      return isObject(value) ? value.id === row.ref.id : [row.ref.label, row.ref.id].includes(value)
+    })
+    if (listKeys[0] && !keys.includes(listKeys[0]) && !keys.some(namesRecord) && namesRecord(listKeys[0])) keys = [listKeys[0], ...keys].slice(0, 8)
     const columns = []
     const cells = shown.map(() => ({}))
     for (const key of keys) {
@@ -419,7 +439,7 @@ function cardOf(tool, { ref, row }, output) {
 const showRecords = defineUiTool({
   name: 'show_records',
   display: true,
-  description: 'Show 1 to 6 records of a data tool result as cards: code, label, status, how late or how soon, and one or two of its figures, all from the result. Name each record by the type and id of a ref in that result.',
+  description: 'Show 1 to 3 records of a data tool result as cards (for 4 or more use show_table): code, label, status, how late or how soon, and one or two of its figures, all from the result. Name each record by the type and id of a ref in that result.',
   inputSchema: {
     type: 'object',
     properties: {

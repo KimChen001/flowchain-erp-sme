@@ -197,6 +197,23 @@ test('one set of follow-up chips per answer, after every other part, and the rec
   assert.doesNotMatch(markup, /Which supplier\?/)
 })
 
+// The conclusion sat under eight rows of orders (2026-11-04): an answer
+// that showed a table before it wrote anything leads with its first text.
+test('an answer that opens with a display leads with its first text; the chips stay last', () => {
+  const chips = event({ type: 'ui', partId: 'p3', component: 'followups', schemaVersion: 1, props: { questions: ['Which supplier?'] }, refs: [] })
+  const table = event({ type: 'ui', partId: 'p1', component: 'table', schemaVersion: 1, props: { title: 'Overdue', columns: [{ code: 'order', kind: 'text' }], rows: [], total: 0, more: false }, refs: [] })
+  const message = fold([
+    table,
+    event({ type: 'text_delta', partId: 'p2', text: '8 purchase orders are overdue.' }),
+    chips,
+    event({ type: 'text_delta', partId: 'p4', text: 'Chase Acme first.' }),
+  ])
+  assert.deepEqual(client.answerPartsOf(message).map((part) => part.id), ['p2', 'p1', 'p4', 'p3'])
+  // Text already first: nothing moves.
+  const plain = fold([event({ type: 'text_delta', partId: 'p1', text: 'Two are late.' }), { ...table, partId: 'p2' }])
+  assert.deepEqual(client.answerPartsOf(plain).map((part) => part.id), ['p1', 'p2'])
+})
+
 test('a stream line that cannot be read is skipped, not fatal', () => {
   for (const line of ['', '   ', 'not json', '{"v":2,"seq":1,"type":"text_delta"}', '{"v":2,"seq":1,"type":"mystery"}', '{"v":3,"seq":1,"type":"notice","code":"cancelled"}', '[1,2]', '{"type":"notice","code":"cancelled"}']) {
     assert.equal(client.parseAssistantV2Line(line), null, line)

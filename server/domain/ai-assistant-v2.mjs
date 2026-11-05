@@ -12,7 +12,7 @@ import { AssistantModelError } from './ai-assistant-v2-model/model-error.mjs'
 import { aiModelFirstHidden, aiModelFirstProgressSources, aiModelFirstTurns, presentAiModelFirstAnswer } from './ai-model-first.mjs'
 import { anthropicMessagesUsage } from './ai-runtime-provider-specific-adapters-v2.mjs'
 import { aiCallCostMicros, aiUsagePrices, recordAiProviderCall } from './ai-usage-meter.mjs'
-import { aiUiSourceHandles } from './ai-assistant-v2-ui-tools.mjs'
+import { aiUiSourceHandles, aiUiTableColumns } from './ai-assistant-v2-ui-tools.mjs'
 
 // The assistant v2 loop (docs/ai-assistant-v2-design.md §3.3, §3.6, §3.7,
 // §3.9, §3.11), adapted from the model-first loop (ai-model-first.mjs). Behind
@@ -145,7 +145,8 @@ export const ASSISTANT_V2_SYSTEM = [
   '',
   'The answer:',
   '- Answer in answerLanguage (the language of the question), plainly, as a helpful colleague, to the user as "you" (你). Lead with the answer, then the facts behind it. Fit the length to the question: a simple question gets a few sentences; a plan, a comparison, a walk-through or an explanation for someone new gets the room it needs, in short numbered steps or bullets with bold lead-ins. A long answer with separate parts may start each part with a short "## " heading. Explain a term in plain words the first time a new user meets it. Do not pad: no repeated facts and no closing summary of what you just said.',
-  '- Show lists and figures with the display tools instead of typing them: show_table for rows, show_records for a few records, show_chart for figures across months or suppliers, show_kpis for the workspace summary. Every data result starts with its source, such as "list_purchase_orders#1": pass that as source, with the column codes, refs or keys to show; never type the values into the tool or repeat the whole list in prose, and never type a table of them into the text. If a display fails, fix the call once as its error says, or answer in prose.',
+  '- Show lists and figures with the display tools instead of typing them: show_table for rows (four records or more always go in a table), show_records for one to three records, show_chart for figures across months or suppliers, show_kpis for the workspace summary. Every data result starts with its source, such as "list_purchase_orders#1": pass that as source, with the column codes (the ones that answer the question, at most four besides the record), refs or keys to show; never type the values into the tool or repeat the whole list in prose, and never type a table of them into the text. If a display fails, fix the call once as its error says, or answer in prose.',
+  '- Every answer has at least one sentence of text that answers the question ("8 orders are overdue; PO-020 is the oldest, 15 days late."); a display never stands alone.',
   '- Name the records you rely on by their numbers as the tools give them; the app turns them into links.',
   '- When the answer has a clear next step, end it with suggest_followups, called once: one to three short next steps in answerLanguage, worded as the user would ask or tell you, about their own records ("Draft a request for LDM-002", "Show Acme\'s late orders"); an action before a question about a concept. In a new or nearly empty workspace the next steps are setup steps. Leave the chips out when the answer itself asks the user something (offer the records to pick from with offer_choices instead), when it only confirms or declines, and when nothing useful follows.',
   '- Never mention tools, displays, sources, ids, errors or retries to the user. If a display did not work, give the answer in prose as if nothing had happened.',
@@ -895,7 +896,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // tools, and the words beside the status codes.
       const handles = aiUiSourceHandles(answerResults)
       for (const [call, outcome] of ran) {
-        if (outcome.ok && handles.has(call.id) && outcome.result && typeof outcome.result === 'object' && !Array.isArray(outcome.result)) outcome.view = { source: handles.get(call.id), ...withStatusLabels(outcome.result, language) }
+        if (outcome.ok && handles.has(call.id) && outcome.result && typeof outcome.result === 'object' && !Array.isArray(outcome.result)) outcome.view = { source: handles.get(call.id), ...(aiUiTableColumns(call.name) ? { tableColumns: aiUiTableColumns(call.name) } : {}), ...withStatusLabels(outcome.result, language) }
       }
       if (aborted) { closeToolUses(toolUses, outcomes, 'stopped'); break }
       // A round whose calls were all display tools refused because they were
