@@ -564,6 +564,20 @@ test('OpenCode Go and Parley endpoints are refused in production', () => {
   assert.equal(createAssistantV2ModelClient(providerEnv('https://api.anthropic.com/v1/messages', { NODE_ENV: 'production' })).kind, 'anthropic_messages')
 })
 
+// 2026-11-04: the owner chose MIT Parley for the trial servers. Only the
+// deployment's own setting lets it run in production; OpenCode never does.
+test('Parley runs in production only when the deployment allows it, and OpenCode never does', () => {
+  const parley = chatEnv('https://parley.api.mit.edu/v1/chat/completions', { FLOWCHAIN_AI_PROVIDER_KIND: 'parley_chat', NODE_ENV: 'production' })
+  assert.equal(createAssistantV2ModelClient({ ...parley, FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION: 'true' }).kind, 'chat_completions')
+  for (const value of [undefined, '', 'false', '1', 'yes']) {
+    assert.throws(() => createAssistantV2ModelClient({ ...parley, FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION: value }), (error) => error.reason === 'local_only_provider', `value ${value}`)
+  }
+  const opencode = chatEnv('https://opencode.ai/zen/go/v1/chat/completions', { NODE_ENV: 'production', FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION: 'true' })
+  assert.throws(() => createAssistantV2ModelClient(opencode), (error) => error.reason === 'local_only_provider')
+  const opencodeNative = providerEnv('https://opencode.ai/zen/go/v1/messages', { NODE_ENV: 'production', FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION: 'true' })
+  assert.throws(() => createAssistantV2ModelClient(opencodeNative), (error) => error.reason === 'local_only_provider')
+})
+
 test('the environment chooses the client', () => {
   const dir = mkdtempSync(join(tmpdir(), 'flowchain-assistant-v2-model-'))
   try {
