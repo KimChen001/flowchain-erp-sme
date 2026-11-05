@@ -51,8 +51,8 @@ const TONE_STYLE: Record<StatusTone, { background: string; color: string }> = {
   neutral: { background: A.gray6, color: A.sub },
 };
 const CODE_TONE: Record<string, StatusTone> = {
-  overdue: "danger", rejected: "danger", exception: "danger", mismatch: "danger", disputed: "danger", failed: "danger", out_of_stock: "danger", shortage_risk: "danger",
-  pending: "warning", pending_approval: "warning", submitted: "warning", held: "warning", on_hold: "warning", below_safety_stock: "warning", below_reorder_point: "warning", partially_received: "warning", variance: "warning",
+  overdue: "danger", rejected: "danger", exception: "danger", mismatch: "danger", disputed: "danger", failed: "danger", out_of_stock: "danger", shortage_risk: "danger", risk: "danger",
+  pending: "warning", warning: "warning", due: "warning", pending_approval: "warning", submitted: "warning", held: "warning", on_hold: "warning", below_safety_stock: "warning", below_reorder_point: "warning", partially_received: "warning", variance: "warning",
   approved: "success", received: "success", fully_received: "success", matched: "success", completed: "success", posted: "success", passed: "success", available: "success",
   draft: "neutral", cancelled: "neutral", canceled: "neutral", closed: "neutral", withdrawn: "neutral", inactive: "neutral",
 };

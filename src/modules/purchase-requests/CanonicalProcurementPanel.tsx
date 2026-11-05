@@ -322,6 +322,11 @@ export default function CanonicalProcurementPanel({
   // the quantity and reason the assistant computed, and the master data
   // defaults for that item. Every filled field shows where its value came
   // from, and nothing is saved until the user saves.
+  // A filled-in request keeps the header's default date on its line's date:
+  // on 2026-11-04 the header said today while the line said 11-21.
+  const followLineDate = (day: string) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) setDefaultDate(day);
+  };
   useEffect(() => {
     const handoff = location.key;
     if (prefilled.current === handoff) return;
@@ -344,6 +349,7 @@ export default function CanonicalProcurementPanel({
         internalLineComment: plan.values.internalLineComment,
       };
       setLines([line]);
+      followLineDate(line.needByDate);
       setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: [] });
       return;
     }
@@ -400,6 +406,7 @@ export default function CanonicalProcurementPanel({
           internalLineComment: plan.values.internalLineComment,
         };
         setLines([line]);
+        followLineDate(line.needByDate);
         setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: plan.supplierChoices });
       })
       .catch((error) => toast.error(copy(error.message || "供应商关系读取失败")));
@@ -423,8 +430,13 @@ export default function CanonicalProcurementPanel({
     if (supplier?.leadTimeDays === null || supplier?.leadTimeDays === undefined || !Number.isInteger(days) || days < 0) return;
     const leadDate = addCalendarDays(today(timezone), days);
     setLines((current) =>
-      current.map((line, i) => (i === index && line.needByDate === defaultDate ? { ...line, needByDate: leadDate } : line)),
+      current.map((line, i) => (i === index && line.needByDate === defaultDate && !keepsUserDate(line) ? { ...line, needByDate: leadDate } : line)),
     );
+  };
+  // The date the user named in a request the assistant filled in.
+  const keepsUserDate = (line: Line) => {
+    const entry = prefill && line.lineId === prefill.lineId ? prefill.fields.needByDate : undefined;
+    return entry?.source === "record" && entry.value === line.needByDate;
   };
   const selectItem = async (index: number, value: string) => {
     const item = items.find((row) => (row.itemId || row.id) === value);

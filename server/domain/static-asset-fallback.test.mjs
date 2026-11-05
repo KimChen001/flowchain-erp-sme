@@ -1,7 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import http from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
 import { createScmServer } from '../bootstrap/scm-server.mjs'
+
+// The built SPA's index.html in a folder of its own, so this test passes in a
+// checkout with no dist/ (no `npm run build` before `npm test`).
+async function fixtureDist() {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'flowchain-dist-'))
+  await mkdir(path.join(dir, 'assets'))
+  await writeFile(path.join(dir, 'index.html'), '<!doctype html><html><head><title>FlowChain</title></head><body><div id="root"></div></body></html>\n')
+  return dir
+}
 
 async function listen(server) {
   await new Promise((resolve, reject) => {
@@ -30,7 +42,8 @@ async function request(port, method, pathname) {
 test('SPA routes fall back to index while missing static assets return real 404 responses', async () => {
   const previousDatabaseUrl = process.env.DATABASE_URL
   process.env.DATABASE_URL = 'postgresql://user:pass@127.0.0.1:5432/flowchain_static_asset_test'
-  const server = createScmServer()
+  const staticDir = await fixtureDist()
+  const server = createScmServer({ staticDir })
   try {
     const port = await listen(server)
     for (const method of ['GET', 'HEAD']) {
@@ -53,6 +66,7 @@ test('SPA routes fall back to index while missing static assets return real 404 
     }
   } finally {
     await close(server)
+    await rm(staticDir, { recursive: true, force: true })
     if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL
     else process.env.DATABASE_URL = previousDatabaseUrl
   }

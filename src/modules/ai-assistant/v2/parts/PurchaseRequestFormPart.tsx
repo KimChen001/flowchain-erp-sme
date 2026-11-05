@@ -1,9 +1,10 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle, Plus, X } from "lucide-react";
-import { overrideNeeded } from "../../../../../shared/supplier-override-reasons.mjs";
+import { SUPPLIER_OVERRIDE_REASONS, overrideNeeded, validateSupplierOverride } from "../../../../../shared/supplier-override-reasons.mjs";
 import { A } from "../../../../components/ui";
 import { businessEntityRouteRegistry } from "../../../../components/business/businessEntityRoutes";
-import { isTranslationKey } from "../../../../i18n/I18n";
+import { SUPPLIER_OVERRIDE_COPY, supplierOverrideReasonLabel } from "../../../../components/procurement/SupplierOverrideReason";
+import { isTranslationKey, type TranslationKey } from "../../../../i18n/I18n";
 import { ApiError, apiJson } from "../../../../lib/api-client";
 import { todayInTimeZone } from "../../../../lib/format";
 import { addCalendarDays, buildSuggestionTrail, type PrefillEntry } from "../../../../lib/prefill";
@@ -17,7 +18,15 @@ import type { ApprovedSupplier, PriceValue, PrFormProps, PrFormRow, PrReceipt } 
 // ticked for the user unless they named the item. The user's own session
 // creates the draft through the same route as the classic form, and
 // submitting is a second, separate click because it emails the approvers.
+//
+// A supplier the item has not approved yet (link "new": one the user named,
+// or picked from "Another supplier…" when their role may add approved
+// suppliers) is added to the item as an approved supplier by the same click,
+// before the request is created, with the price, currency and lead time the
+// user gives on the line.
 
+// The price, currency and lead time of a line's new supplier, as typed.
+export type LinkTerms = { price: string; currency: string; leadTime: string };
 export type FormLine = {
   key: string;
   origin: "suggested" | "named" | "added";
@@ -28,16 +37,33 @@ export type FormLine = {
   supplierId: string;
   needByDate: string;
   needByEdited: boolean;
+  // Suppliers the user picked from "Another supplier…", each new to the item.
+  added: ApprovedSupplier[];
+  picking: boolean;
+  terms: LinkTerms;
+  // Why a new supplier is used instead of the item's preferred one.
+  override: { reasonCode: string; note: string };
 };
-type Block = "quantity" | "supplier" | "override" | "price";
+type Block = "quantity" | "supplier" | "override" | "reason" | "terms" | "price";
 type CatalogItem = { itemId?: string; id?: string; sku: string; itemName?: string; name?: string; purchaseUnit?: string; baseUnit?: string; defaultWarehouseId?: string };
 export type ItemSupplier = { id: string; name?: string; supplierName?: string; preferred?: boolean; referencePrice?: number | string | null; currency?: string | null; leadTimeDays?: number | string | null; restrictedFields?: string[] };
+// A supplier as the Suppliers list sends it (GET /api/master-data/suppliers).
+export type WorkspaceSupplier = { id: string; name?: string; supplierName?: string; status?: string; defaultCurrency?: string | null };
 
 const TEAL_TEXT = "#0F766E";
 const ORANGE = toneStyle("warning");
 const REQUEST_ROUTE = businessEntityRouteRegistry.purchase_request.listRouteId;
+const OTHER_SUPPLIER = "__other_supplier__";
+const NO_REASON = { reasonCode: "", note: "" };
+
+const termsFrom = (option?: ApprovedSupplier | null): LinkTerms => ({
+  price: option?.unitPrice === null || option?.unitPrice === undefined ? "" : String(option.unitPrice),
+  currency: option?.currency || "",
+  leadTime: option?.leadTimeDays === null || option?.leadTimeDays === undefined ? "" : String(option.leadTimeDays),
+});
 
 function lineOf(row: PrFormRow, origin: FormLine["origin"], partId: string): FormLine {
+  const supplierId = row.supplier?.id || "";
   return {
     // Stable per form and item, so a retried create sends the same payload.
     key: `ai-${partId}-${row.item.id}`,
@@ -46,34 +72,78 @@ function lineOf(row: PrFormRow, origin: FormLine["origin"], partId: string): For
     checked: origin !== "suggested" && row.checked && !row.covered,
     allowCovered: false,
     quantity: row.suggestedQuantity.value === null ? "" : String(row.suggestedQuantity.value),
-    supplierId: row.supplier?.id || "",
+    supplierId,
     needByDate: row.needByDate.value,
     needByEdited: false,
+    added: [],
+    picking: false,
+    // Any price, currency or lead time the user gave for a new supplier in the chat.
+    terms: termsFrom(row.suppliers?.find((option) => option.id === supplierId && option.link === "new")),
+    override: NO_REASON,
   };
 }
 
-const supplierOptions = (row: PrFormRow): ApprovedSupplier[] =>
-  row.suppliers?.length ? row.suppliers : row.supplier ? [{ id: row.supplier.id, name: row.supplier.name, preferred: row.supplier.source === "preferred", leadTimeDays: row.needByDate.leadTimeDays ?? null }] : [];
+const rowOptions = (row: PrFormRow): ApprovedSupplier[] =>
+  row.suppliers?.length ? row.suppliers : row.supplier ? [{ id: row.supplier.id, name: row.supplier.name, preferred: row.supplier.source === "preferred", leadTimeDays: row.needByDate.leadTimeDays ?? null, ...(row.supplier.link ? { link: row.supplier.link } : {}) }] : [];
 
-// The master-data reference price of the line's supplier; never a model value.
+// The suppliers a line may use: the item's (with one the user named that it
+// has not approved yet), then those picked from "Another supplier…".
+function supplierOptions(line: FormLine): ApprovedSupplier[] {
+  const options = rowOptions(line.row);
+  return [...options, ...line.added.filter((added) => !options.some((option) => option.id === added.id))];
+}
+
+const optionOf = (line: FormLine) => supplierOptions(line).find((supplier) => supplier.id === line.supplierId);
+// The line's supplier is not an approved supplier of the item yet: Create adds it.
+const isNewSupplier = (line: FormLine) => optionOf(line)?.link === "new";
+
+// A new supplier's terms as the link and the request take them: a price of
+// zero or more in a 3-letter currency, and a lead time in whole days or none.
+function linkTermsOf(line: FormLine) {
+  const priceText = line.terms.price.trim();
+  const leadText = line.terms.leadTime.trim();
+  const price = priceText ? Number(priceText) : null;
+  const lead = leadText ? Number(leadText) : null;
+  const currency = line.terms.currency.trim().toUpperCase();
+  const leadValid = lead === null || (Number.isInteger(lead) && lead >= 0);
+  const valid = price !== null && Number.isFinite(price) && price >= 0 && /^[A-Z]{3}$/.test(currency) && leadValid;
+  return { valid, price: valid ? price : null, currency: valid ? currency : null, leadTimeDays: leadValid ? lead : null };
+}
+
+// The master-data reference price of the line's supplier, never a model
+// value; for a supplier Create adds, the price the user gives.
 function priceOf(line: FormLine): PriceValue {
   const { row } = line;
+  const option = optionOf(line);
+  if (option?.link === "new") {
+    const terms = linkTermsOf(line);
+    return terms.valid ? { value: terms.price, currency: terms.currency, source: "reference_price" } : { value: null, currency: null, source: "missing" };
+  }
   if (row.supplier && line.supplierId === row.supplier.id) return row.estimatedUnitPrice;
-  const option = supplierOptions(row).find((supplier) => supplier.id === line.supplierId);
   if (!option || option.unitPrice === null || option.unitPrice === undefined) return { value: null, currency: null, source: row.estimatedUnitPrice.source === "masked" ? "masked" : "missing" };
   return { value: option.unitPrice, currency: option.currency || row.estimatedUnitPrice.currency, source: "reference_price" };
 }
 
 function leadTimeOf(line: FormLine) {
-  const option = supplierOptions(line.row).find((supplier) => supplier.id === line.supplierId);
+  const option = optionOf(line);
+  if (option?.link === "new") return linkTermsOf(line).leadTimeDays;
   return option?.leadTimeDays ?? (line.row.supplier?.id === line.supplierId ? line.row.needByDate.leadTimeDays ?? null : null);
 }
+
+const preferredOf = (line: FormLine) => supplierOptions(line).filter((supplier) => supplier.preferred);
+const needsReason = (line: FormLine) => overrideNeeded({ supplierId: line.supplierId, preferredIds: preferredOf(line).map((supplier) => supplier.id) });
 
 function blockOf(line: FormLine): Block | null {
   if (!(Number(line.quantity) > 0)) return "quantity";
   if (!line.supplierId) return "supplier";
+  if (isNewSupplier(line)) {
+    if (!linkTermsOf(line).valid) return "terms";
+    // The full form cannot pick a supplier the item has not approved, so the reason is asked here.
+    if (needsReason(line) && !validateSupplierOverride(line.override, true).value) return "reason";
+    return null;
+  }
   // A supplier other than the preferred one needs a reason, which only the full form asks for.
-  if (overrideNeeded({ supplierId: line.supplierId, preferredIds: supplierOptions(line.row).filter((supplier) => supplier.preferred).map((supplier) => supplier.id) })) return "override";
+  if (needsReason(line)) return "override";
   if (priceOf(line).value === null) return "price";
   return null;
 }
@@ -124,7 +194,8 @@ export function draftRequestBody(ticked: FormLine[], props: PrFormProps, ids: { 
       serviceStartDate: "",
       serviceEndDate: "",
       internalLineComment: "",
-      supplierOverride: null,
+      // The reason asked on a line whose new supplier skips the preferred one.
+      supplierOverride: isNewSupplier(line) && needsReason(line) ? validateSupplierOverride(line.override, true).value : null,
     };
   });
   return {
@@ -138,10 +209,66 @@ export function draftRequestBody(ticked: FormLine[], props: PrFormProps, ids: { 
   };
 }
 
+// A new supplier's link to the line's item, as the setup card adds one
+// (SetupRecordsPart.tsx itemSupplierBody) but not preferred: approved and
+// active, with the price, currency and lead time the user gave.
+export function newSupplierLinkBody(line: FormLine) {
+  const terms = linkTermsOf(line);
+  return { supplierId: line.supplierId, preferred: false, approved: true, active: true, leadTimeDays: terms.leadTimeDays, referencePrice: terms.price, currency: terms.currency };
+}
+
+type Post = (url: string, body: unknown) => Promise<unknown>;
+type Linked = Record<string, string>;
+export type FormCreateOutcome =
+  | { status: "link_failed"; linked: Linked; key: string; failure: unknown }
+  | { status: "request_failed"; linked: Linked; failure: unknown }
+  | { status: "created"; linked: Linked; created: PrReceipt & { idempotentReplay?: boolean } };
+
+const failureCode = (failure: unknown) => (failure && typeof failure === "object" && "code" in failure ? String((failure as { code?: unknown }).code || "") : "");
+
+// One click on Create: first each ticked line's new supplier, added to its
+// item through the item supplier route (a link already there is fine), then
+// the request exactly as without one. A link that fails stops the click, so
+// no request is created without it. linked: the lines whose supplier this
+// form already added (line key to supplier id), which a retry skips.
+export async function createFormRequest({ ticked, props, ids, post, linked = {} }: {
+  ticked: FormLine[];
+  props: PrFormProps;
+  ids: { threadId: string; messageId: string; partId: string };
+  post: Post;
+  linked?: Linked;
+}): Promise<FormCreateOutcome> {
+  const done: Linked = { ...linked };
+  for (const line of ticked) {
+    if (!isNewSupplier(line) || done[line.key] === line.supplierId) continue;
+    try {
+      await post(`/api/master-data/items/${encodeURIComponent(line.row.item.id)}/suppliers`, newSupplierLinkBody(line));
+    } catch (failure) {
+      if (failureCode(failure) !== "RELATIONSHIP_EXISTS") return { status: "link_failed", linked: done, key: line.key, failure };
+    }
+    done[line.key] = line.supplierId;
+  }
+  try {
+    const created = await post("/api/procurement/requests", draftRequestBody(ticked, props, ids)) as PrReceipt & { idempotentReplay?: boolean };
+    return { status: "created", linked: done, created };
+  } catch (failure) {
+    return { status: "request_failed", linked: done, failure };
+  }
+}
+
 function errorText(error: unknown, copy: PartCopy) {
   // Server messages are not shown: the domain's are Chinese-only. Codes are worded here.
   const key = `ai.v2.error.${error instanceof ApiError ? error.code || "" : ""}`;
   return isTranslationKey(key) ? copy.t(key) : copy.t("ai.v2.error.generic");
+}
+
+// Why a new supplier was not added, worded from its codes (a field's first), as the setup card words them.
+function linkErrorText(error: unknown, copy: PartCopy, name: string, sku: string) {
+  const head = copy.t("ai.v2.form.newSupplier.failed", { name, sku });
+  if (!(error instanceof ApiError)) return head;
+  const detail = error.details.map((entry) => String(entry?.code || "")).find((code) => code && isTranslationKey(`ai.v2.setup.error.${code}`));
+  const key = [detail ? `ai.v2.setup.error.${detail}` : "", error.code ? `ai.v2.setup.error.${error.code}` : "", error.code ? `ai.v2.error.${error.code}` : ""].find((entry) => entry && isTranslationKey(entry));
+  return key ? `${head} ${copy.t(key as TranslationKey)}` : head;
 }
 
 const chipStyle = { background: "#F0FDFA", color: TEAL_TEXT };
@@ -239,6 +366,55 @@ export function addedFormRow(item: CatalogItem, sources: ItemSupplier[], today: 
   };
 }
 
+// A supplier from the Suppliers list as a line's new option: priced in its
+// own currency, else the workspace's, with no lead time or price until the
+// user gives them.
+export function newSupplierOption(supplier: WorkspaceSupplier, workspaceCurrency?: string | null): ApprovedSupplier {
+  const own = String(supplier.defaultCurrency || "").trim().toUpperCase();
+  return {
+    id: supplier.id,
+    name: supplier.name || supplier.supplierName || supplier.id,
+    preferred: false,
+    leadTimeDays: null,
+    unitPrice: null,
+    currency: /^[A-Z]{3}$/.test(own) ? own : workspaceCurrency || null,
+    link: "new",
+  };
+}
+
+// "Another supplier…": the workspace's active suppliers the line does not
+// offer yet, from the Suppliers list every signed-in role may read.
+function OtherSupplierPicker({ copy, exclude, onPick, onCancel }: { copy: PartCopy; exclude: Set<string>; onPick: (supplier: WorkspaceSupplier) => void; onCancel: () => void }) {
+  const [suppliers, setSuppliers] = useState<WorkspaceSupplier[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    apiJson<{ suppliers: WorkspaceSupplier[] }>("/api/master-data/suppliers?status=active")
+      .then((result) => { if (live) setSuppliers((result.suppliers || []).filter((supplier) => supplier.id && String(supplier.status || "active").toLowerCase() === "active")); })
+      .catch(() => { if (live) setFailed(true); });
+    return () => { live = false; };
+  }, []);
+  const choices = (suppliers || []).filter((supplier) => !exclude.has(supplier.id));
+  const label = copy.t("ai.v2.form.otherSupplier.label");
+  return (
+    <div data-testid="ai-v2-pr-other-supplier" className="space-y-1">
+      <span className="block text-[12px]" style={{ color: A.sub }}>{label}</span>
+      <span className="flex flex-wrap items-center gap-2">
+        {failed ? <span role="alert" style={{ color: toneStyle("danger").color }}>{copy.t("ai.v2.form.otherSupplier.failed")}</span>
+          : !suppliers ? <span style={{ color: A.sub }}>{copy.t("ai.v2.form.otherSupplier.loading")}</span>
+          : !choices.length ? <span style={{ color: A.sub }}>{copy.t("ai.v2.form.otherSupplier.empty")}</span>
+          : (
+            <select value="" aria-label={label} onChange={(event) => { const picked = choices.find((supplier) => supplier.id === event.target.value); if (picked) onPick(picked); }} className={`${inputClass} max-w-[16rem]`} style={inputStyle}>
+              <option value="">{copy.t("ai.v2.form.pickSupplier")}</option>
+              {choices.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name || supplier.supplierName || supplier.id}</option>)}
+            </select>
+          )}
+        <button type="button" onClick={onCancel} className={linkClass} style={{ color: A.blue }}>{copy.t("ai.v2.form.otherSupplier.cancel")}</button>
+      </span>
+    </div>
+  );
+}
+
 async function addedRow(item: CatalogItem, timezone: string): Promise<PrFormRow> {
   const itemId = item.itemId || item.id || "";
   let sources: ItemSupplier[] = [];
@@ -267,14 +443,31 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
   const [receipt, setReceipt] = useState<PrReceipt | null>(initialReceipt);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // The new suppliers this form added (line key to supplier id), and why one could not be added.
+  const [linked, setLinked] = useState<Record<string, string>>({});
+  const [linkErrors, setLinkErrors] = useState<Record<string, string>>({});
 
   const update = (key: string, patch: Partial<FormLine>) => setLines((current) => current.map((line) => line.key === key ? { ...line, ...patch } : line));
-  const chooseSupplier = (line: FormLine, supplierId: string) => {
-    const lead = supplierOptions(line.row).find((supplier) => supplier.id === supplierId)?.leadTimeDays;
-    // A date the user asked for or changed is kept; otherwise it follows the new supplier's lead time.
-    const followsLead = !line.needByEdited && line.row.needByDate.source !== "user_named" && lead !== null && lead !== undefined;
-    const needByDate = followsLead ? addCalendarDays(todayInTimeZone(copy.timezone), lead) : line.needByDate;
-    update(line.key, { supplierId, needByDate });
+  // A date the user asked for or changed is kept; otherwise it follows the supplier's lead time.
+  const needByFor = (line: FormLine, lead: number | null | undefined) =>
+    !line.needByEdited && line.row.needByDate.source !== "user_named" && lead !== null && lead !== undefined ? addCalendarDays(todayInTimeZone(copy.timezone), lead) : line.needByDate;
+  const chooseSupplier = (line: FormLine, supplierId: string, extra: ApprovedSupplier[] = line.added) => {
+    const option = supplierOptions({ ...line, added: extra }).find((supplier) => supplier.id === supplierId);
+    const fresh = option?.link === "new";
+    const terms = fresh && supplierId !== line.supplierId ? termsFrom(option) : line.terms;
+    const lead = fresh ? linkTermsOf({ ...line, terms }).leadTimeDays : option?.leadTimeDays;
+    // Another supplier asks again why it is not the preferred one, as the full form does.
+    update(line.key, { supplierId, added: extra, picking: false, terms, override: supplierId === line.supplierId ? line.override : NO_REASON, needByDate: needByFor(line, lead) });
+  };
+  const pickOther = (line: FormLine, supplier: WorkspaceSupplier) => {
+    const option = newSupplierOption(supplier, props.workspaceCurrency);
+    chooseSupplier(line, option.id, [...line.added.filter((entry) => entry.id !== option.id), option]);
+  };
+  const setTerms = (line: FormLine, patch: Partial<LinkTerms>) => {
+    const terms = { ...line.terms, ...patch };
+    // A lead time the user enters moves the need-by date as a supplier's recorded one does.
+    const lead = patch.leadTime !== undefined && terms.leadTime.trim() ? linkTermsOf({ ...line, terms }).leadTimeDays : null;
+    update(line.key, { terms, needByDate: needByFor(line, lead) });
   };
   const addItem = async (item: CatalogItem) => {
     const row = await addedRow(item, copy.timezone);
@@ -303,8 +496,20 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
     if (createDisabled) return;
     setBusy(true);
     setError("");
+    setLinkErrors({});
     try {
-      const created = await apiJson<PrReceipt & { idempotentReplay?: boolean }>("/api/procurement/requests", { method: "POST", body: JSON.stringify(draftRequestBody(ticked, props, { threadId, messageId, partId })) });
+      const outcome = await createFormRequest({ ticked, props, ids: { threadId, messageId, partId }, linked, post: (url, body) => apiJson(url, { method: "POST", body: JSON.stringify(body) }) });
+      setLinked(outcome.linked);
+      if (outcome.status === "link_failed") {
+        const line = ticked.find((entry) => entry.key === outcome.key);
+        setLinkErrors({ [outcome.key]: linkErrorText(outcome.failure, copy, (line && optionOf(line)?.name) || "", line?.row.item.sku || "") });
+        return;
+      }
+      if (outcome.status === "request_failed") {
+        setError(errorText(outcome.failure, copy));
+        return;
+      }
+      const { created } = outcome;
       // A replay returns the request as it was first created; it may have been submitted or cancelled since.
       const current = created.idempotentReplay ? await apiJson<PrReceipt>(`/api/procurement/requests/${encodeURIComponent(created.id)}`) : created;
       record({ id: current.id || created.id, number: current.number || created.number, version: current.version, status: current.status || "draft" });
@@ -372,13 +577,19 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
           const covered = Boolean(row.covered) && !line.allowCovered;
           const price = priceOf(line);
           const lead = leadTimeOf(line);
-          const options = supplierOptions(row);
+          const options = supplierOptions(line);
           const unit = row.item.unit || "";
+          const chosen = optionOf(line);
+          const fresh = chosen?.link === "new";
+          const preferred = preferredOf(line);
+          const reasonCopy = SUPPLIER_OVERRIDE_COPY[copy.language];
+          const reasonQuestion = (preferred.length > 1 ? reasonCopy.questionMany : reasonCopy.question).replace("{name}", preferred.map((supplier) => supplier.name).join(", "));
+          const linkError = linkErrors[line.key];
           // Where each field's value came from: the server's source while it is
           // unchanged, then "Edited", or "Your choice" where nothing was suggested.
           const quantitySource = !line.quantity ? ""
             : row.suggestedQuantity.value !== null && line.quantity === String(row.suggestedQuantity.value)
-              ? copy.t(`ai.v2.form.source.${row.suggestedQuantity.source}`, { minimum: copy.number(row.suggestedQuantity.minimum ?? row.suggestedQuantity.value) })
+              ? copy.t(`ai.v2.form.source.${row.suggestedQuantity.source}`, { minimum: copy.number(row.suggestedQuantity.minimum ?? row.suggestedQuantity.value), days: copy.number(row.suggestedQuantity.coverDays ?? 0) })
               : copy.t(row.suggestedQuantity.value !== null ? "ai.v2.form.source.edited" : "ai.v2.form.source.chosen");
           const supplierSource = !line.supplierId ? ""
             : row.supplier && line.supplierId === row.supplier.id ? copy.t(`ai.v2.form.source.${row.supplier.source}`)
@@ -428,13 +639,37 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
                   <label data-testid="ai-v2-pr-field" data-field="supplier" className="space-y-0.5">
                     <span className="block text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.supplier")}</span>
                     <span className="flex flex-wrap items-center gap-1.5">
-                      <select value={line.supplierId} onChange={(event) => chooseSupplier(line, event.target.value)} className={`${inputClass} max-w-[16rem]`} style={inputStyle}>
+                      <select value={line.supplierId} onChange={(event) => (event.target.value === OTHER_SUPPLIER ? update(line.key, { picking: true }) : chooseSupplier(line, event.target.value))} className={`${inputClass} max-w-[16rem]`} style={inputStyle}>
                         {!line.supplierId ? <option value="">{copy.t("ai.v2.form.pickSupplier")}</option> : null}
-                        {options.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.preferred ? copy.t("ai.v2.form.preferred", { name: supplier.name }) : supplier.name}</option>)}
+                        {options.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.preferred ? copy.t("ai.v2.form.preferred", { name: supplier.name }) : supplier.link === "new" ? copy.t("ai.v2.form.newOption", { name: supplier.name }) : supplier.name}</option>)}
+                        {props.canLinkSuppliers ? <option value={OTHER_SUPPLIER}>{copy.t("ai.v2.form.otherSupplier")}</option> : null}
                       </select>
                       {supplierSource ? <SourceChip>{supplierSource}</SourceChip> : null}
                     </span>
                   </label>
+                  {line.picking && props.canLinkSuppliers ? <OtherSupplierPicker copy={copy} exclude={new Set(options.map((supplier) => supplier.id))} onPick={(supplier) => pickOther(line, supplier)} onCancel={() => update(line.key, { picking: false })} /> : null}
+                  {fresh && chosen ? (
+                    <p data-testid="ai-v2-pr-new-supplier" data-linked={linked[line.key] === chosen.id ? "true" : "false"} className="flex items-start gap-1.5 text-[12px]" style={{ color: ORANGE.color }}>
+                      <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden />
+                      <span>{copy.t(linked[line.key] === chosen.id ? "ai.v2.form.newSupplier.added" : "ai.v2.form.newSupplier.note", { name: chosen.name, sku: row.item.sku })}</span>
+                    </p>
+                  ) : null}
+                  {linkError ? <p role="alert" data-testid="ai-v2-pr-link-error" className="text-[12px]" style={{ color: toneStyle("danger").color }}>{linkError}</p> : null}
+                  {fresh && needsReason(line) ? (
+                    <div data-testid="ai-v2-pr-reason" className="space-y-1">
+                      <label className="block space-y-0.5">
+                        <span className="block text-[12px]" style={{ color: A.sub }}>{reasonQuestion}</span>
+                        <select value={line.override.reasonCode} onChange={(event) => update(line.key, { override: { ...line.override, reasonCode: event.target.value } })} className={`${inputClass} max-w-[16rem]`} style={inputStyle}>
+                          <option value="">{reasonCopy.choose}</option>
+                          {SUPPLIER_OVERRIDE_REASONS.map((code) => <option key={code} value={code}>{supplierOverrideReasonLabel(code, copy.language)}</option>)}
+                        </select>
+                      </label>
+                      <label className="block space-y-0.5">
+                        <span className="block text-[12px]" style={{ color: A.sub }}>{reasonCopy.note}</span>
+                        <input type="text" value={line.override.note} maxLength={500} onChange={(event) => update(line.key, { override: { ...line.override, note: event.target.value } })} className={`${inputClass} max-w-[16rem]`} style={inputStyle} />
+                      </label>
+                    </div>
+                  ) : null}
                   <label data-testid="ai-v2-pr-field" data-field="needBy" className="space-y-0.5">
                     <span className="block text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.needBy")}</span>
                     <span className="flex flex-wrap items-center gap-1.5">
@@ -443,13 +678,32 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
                       {shortSoon ? <Chip testId="ai-v2-pr-short-week" style={ORANGE}><AlertTriangle size={11} aria-hidden />{copy.t("ai.v2.form.shortWeek", { date: copy.day(String(row.needByDate.shortWeekOf)) })}</Chip> : null}
                     </span>
                   </label>
+                  {fresh ? (
+                    // The new supplier's terms: the link records them and the request line uses the price.
+                    <div data-testid="ai-v2-pr-new-terms" className="flex flex-wrap gap-2">
+                      <label className="space-y-0.5">
+                        <span className="block text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.price")}</span>
+                        <input type="number" min="0" step="any" inputMode="decimal" value={line.terms.price} onChange={(event) => setTerms(line, { price: event.target.value })} className={`${inputClass} max-w-[8rem]`} style={inputStyle} />
+                      </label>
+                      <label className="space-y-0.5">
+                        <span className="block text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.currency")}</span>
+                        <input type="text" maxLength={3} value={line.terms.currency} onChange={(event) => setTerms(line, { currency: event.target.value.toUpperCase() })} className={`${inputClass} max-w-[5rem]`} style={inputStyle} />
+                      </label>
+                      <label className="space-y-0.5">
+                        <span className="block text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.leadTimeDays")}</span>
+                        <input type="number" min="0" step="1" inputMode="numeric" value={line.terms.leadTime} onChange={(event) => setTerms(line, { leadTime: event.target.value })} className={`${inputClass} max-w-[6rem]`} style={inputStyle} />
+                      </label>
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap gap-x-4 gap-y-1">
-                    <span data-testid="ai-v2-pr-field" data-field="price">
-                      <span className="text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.price")} </span>
-                      {price.value !== null
-                        ? <><span className="tabular-nums" style={{ color: A.label }}>{copy.value(price.value, "money", price.currency)}</span> <SourceChip>{copy.t("ai.v2.form.referencePrice")}</SourceChip></>
-                        : <span data-testid="ai-v2-pr-price-unavailable" style={{ color: ORANGE.color }}>{copy.t(price.source === "masked" ? "ai.v2.form.priceMasked" : "ai.v2.form.priceMissing")}</span>}
-                    </span>
+                    {fresh ? null : (
+                      <span data-testid="ai-v2-pr-field" data-field="price">
+                        <span className="text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.price")} </span>
+                        {price.value !== null
+                          ? <><span className="tabular-nums" style={{ color: A.label }}>{copy.value(price.value, "money", price.currency)}</span> <SourceChip>{copy.t("ai.v2.form.referencePrice")}</SourceChip></>
+                          : <span data-testid="ai-v2-pr-price-unavailable" style={{ color: ORANGE.color }}>{copy.t(price.source === "masked" ? "ai.v2.form.priceMasked" : "ai.v2.form.priceMissing")}</span>}
+                      </span>
+                    )}
                     {row.warehouse ? <span data-testid="ai-v2-pr-field" data-field="warehouse"><span className="text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.warehouse")} </span><span style={{ color: A.label }}>{row.warehouse.label === row.warehouse.id ? warehouseName(row.warehouse.id) : row.warehouse.label}</span> <SourceChip>{copy.t("ai.v2.form.source.item_default")}</SourceChip></span> : null}
                   </div>
                 </div>

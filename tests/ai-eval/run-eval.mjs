@@ -104,7 +104,7 @@ const ORIGINAL_CASE_IDS = new Set([
   'lang-risk-zh', 'lang-records-zh', 'lang-draft-zh', 'lang-zh-question-en-ui', 'lang-en-question-zh-ui', 'repeat-today', 'repeat-metrics',
   'repeat-risk', 'repeat-draft', 'repeat-today-zh',
 ])
-const EXPECT_FIELDS = new Set(['status', 'code', 'agent', 'skill', 'skills', 'sections', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'mentionsAny', 'absent', 'knowledge', 'followUp', 'draft', 'draftFields', 'nextSteps', 'noDraft', 'noAutoOpen', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
+const EXPECT_FIELDS = new Set(['status', 'code', 'agent', 'skill', 'skills', 'sections', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'mentionsAny', 'absent', 'knowledge', 'followUp', 'draft', 'draftFields', 'draftItem', 'absentChoices', 'nextSteps', 'noDraft', 'noAutoOpen', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
 const CASE_FIELDS = new Set(['id', 'category', 'language', 'answerLanguage', 'role', 'tenant', 'question', 'questionRepeat', 'questionPrefix', 'skillHint', 'focusTarget', 'after', 'repeat', 'expect', 'pending', 'note'])
 // The fields that define what a case asks and expects. A mustPass case whose
 // fingerprint differs from the baseline's is a regression ("expectation changed").
@@ -648,6 +648,8 @@ function conversationContextOf(payload, turns = []) {
     previousQuestion: payload?.query,
     previousConclusionTitle: payload?.conclusion?.title,
     previousEvidenceRefs: array(payload?.keyEvidence).slice(0, 8).map((item) => ({ id: item.id, label: item.label, entityType: PANEL_TYPES[item.entityType] || 'Unknown', entityId: item.entityId, entityLabel: item.entityLabel })),
+    // The order the previous answer offered to confirm, as the panel sends it.
+    ...(payload?.pendingOrder ? { previousPendingOrder: payload.pendingOrder } : {}),
   }
 }
 
@@ -774,6 +776,18 @@ function scoreCase(entry, runs, context) {
   if (expect.draft) {
     const cards = array(payload.reviewCards)
     add('draft', answered && cards.length > 0 && cards.every((card) => card.previewOnly === true && card.reviewRequired === true), cards.length ? 'a review card is not review-only' : 'no review card')
+  }
+  // The item a draft opens (2026-11-04: a reply with a purpose to an offered
+  // order must open that order's item).
+  if (expect.draftItem) {
+    const items = array(payload.reviewCards).map((card) => text(card.payload?.itemIdOrSku))
+    add(`draft opens ${expect.draftItem}`, answered && items.includes(expect.draftItem), `drafts open ${items.join(', ') || 'nothing'}`)
+  }
+  // Items never offered as an order choice (2026-11-04: LDM-001, not due for
+  // eleven days, was offered beside the item due today).
+  for (const sku of array(expect.absentChoices)) {
+    const offered = array(payload.orderChoices).some((choice) => text(choice.sku) === sku)
+    add(`no order choice ${sku}`, !offered, `${sku} is offered as an order choice`)
   }
   // Prefill (docs/ai-prefill-autocomplete-design.md): every answer line that
   // needs attention states its next step; a draft fills each listed field and

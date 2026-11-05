@@ -449,40 +449,77 @@ const stockProjection = defineAiTool({
   },
 })
 
-const OPERATIONS = ['sum', 'difference', 'ratio', 'percent', 'percent_change', 'average', 'days_between', 'add_days']
+const OPERATIONS = ['sum', 'difference', 'product', 'ratio', 'percent', 'percent_change', 'average', 'days_between', 'add_days']
 const ISO_DAY = '^\\d{4}-\\d{2}-\\d{2}$'
 const dayNumber = (day) => Date.parse(`${day}T00:00:00Z`) / 86400000
+// Several figures in one call (2026-11-04: a longer explanation spent the
+// answer's 12 calls on one calculation each).
+const MAX_CALCULATIONS = 20
+const isDayText = (value) => typeof value === 'string' && new RegExp(ISO_DAY).test(value)
+// One calculation from the model's list, checked as the parameters would be:
+// the validator does not look inside the list's items.
+function calculationOf(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return { error: 'invalid_arguments', details: ['each calculation must be an object'] }
+  if (!OPERATIONS.includes(entry.operation)) return { error: 'invalid_arguments', details: [`operation must be one of ${OPERATIONS.join(', ')}`] }
+  if (entry.values !== undefined && (!Array.isArray(entry.values) || entry.values.length > 50 || entry.values.some((value) => typeof value !== 'number' || !Number.isFinite(value)))) return { error: 'invalid_arguments', details: ['values must be up to 50 numbers'] }
+  if (entry.dates !== undefined && (!Array.isArray(entry.dates) || entry.dates.length > 2 || !entry.dates.every(isDayText))) return { error: 'invalid_arguments', details: ['dates must be up to 2 YYYY-MM-DD dates'] }
+  return calculateOne(entry)
+}
 const calculate = defineAiTool({
   name: 'calculate',
-  description: 'Arithmetic done by the server, for every figure the answer derives instead of reading: sum or average of values; difference (first minus second); ratio (first divided by second); percent (first as a percent of second); percent_change (from first to second); days_between two dates; add_days to a date. The answer may state a derived figure only if it came from here.',
+  description: `Arithmetic done by the server, for every figure the answer derives instead of reading: sum or average of values; difference (first minus second); product (the values multiplied, such as a quantity times a unit price); ratio (first divided by second); percent (first as a percent of second); percent_change (from first to second); days_between two dates; add_days to a date. For several figures, pass calculations, up to ${MAX_CALCULATIONS} in one call, each with a short label. The answer may state a derived figure only if it came from here.`,
   parameters: {
     operation: { type: 'string', enum: OPERATIONS },
     values: { type: 'array', items: { type: 'number' }, maxItems: 50, description: 'The numbers, from tool results.' },
     dates: { type: 'array', items: { type: 'string', pattern: ISO_DAY }, maxItems: 2, description: 'YYYY-MM-DD dates for days_between and add_days.' },
+    calculations: {
+      type: 'array',
+      maxItems: MAX_CALCULATIONS,
+      description: 'Several calculations at once, instead of operation, values and dates: each { label, operation, values, dates }.',
+      items: {
+        type: 'object',
+        properties: {
+          label: { type: 'string', maxLength: 60, description: 'What the figure is, such as "LDM-002 cost".' },
+          operation: { type: 'string', enum: OPERATIONS },
+          values: { type: 'array', items: { type: 'number' }, maxItems: 50 },
+          dates: { type: 'array', items: { type: 'string', pattern: ISO_DAY }, maxItems: 2 },
+        },
+        required: ['operation'],
+      },
+    },
   },
-  required: ['operation'],
   available: () => true,
   run(args) {
-    const values = array(args.values)
-    const dates = array(args.dates)
-    const need = (count) => (values.length < count ? { error: 'invalid_arguments', details: [`${args.operation} needs ${count} value(s)`] } : null)
-    const round = (value) => Math.round(value * 10000) / 10000
-    switch (args.operation) {
-      case 'sum': return need(1) || { result: round(values.reduce((total, value) => total + value, 0)) }
-      case 'average': return need(1) || { result: round(values.reduce((total, value) => total + value, 0) / values.length) }
-      case 'difference': return need(2) || { result: round(values[0] - values[1]) }
-      case 'ratio': return need(2) || (values[1] === 0 ? { error: 'division_by_zero' } : { result: round(values[0] / values[1]) })
-      case 'percent': return need(2) || (values[1] === 0 ? { error: 'division_by_zero' } : { result: round((values[0] / values[1]) * 100), unit: 'percent' })
-      case 'percent_change': return need(2) || (values[0] === 0 ? { error: 'division_by_zero' } : { result: round(((values[1] - values[0]) / Math.abs(values[0])) * 100), unit: 'percent' })
-      case 'days_between': return dates.length < 2 ? { error: 'invalid_arguments', details: ['days_between needs two dates'] } : { result: dayNumber(dates[1]) - dayNumber(dates[0]), unit: 'days' }
-      case 'add_days': {
-        if (dates.length < 1 || values.length < 1 || !Number.isInteger(values[0])) return { error: 'invalid_arguments', details: ['add_days needs a date and a whole number of days'] }
-        return { result: new Date((dayNumber(dates[0]) + values[0]) * 86400000).toISOString().slice(0, 10) }
-      }
-      default: return { error: 'invalid_arguments' }
+    if (Array.isArray(args.calculations) && args.calculations.length) {
+      return { results: args.calculations.map((entry) => ({ label: typeof entry?.label === 'string' ? entry.label.slice(0, 60) : null, operation: OPERATIONS.includes(entry?.operation) ? entry.operation : null, ...calculationOf(entry) })) }
     }
+    if (!args.operation) return { error: 'invalid_arguments', details: ['give operation (with values or dates), or calculations'] }
+    return calculateOne(args)
   },
 })
+
+// One calculation: { operation, values, dates } → { result, unit? } or an error.
+function calculateOne(args) {
+  const values = array(args.values)
+  const dates = array(args.dates)
+  const need = (count) => (values.length < count ? { error: 'invalid_arguments', details: [`${args.operation} needs ${count} value(s)`] } : null)
+  const round = (value) => Math.round(value * 10000) / 10000
+  switch (args.operation) {
+    case 'sum': return need(1) || { result: round(values.reduce((total, value) => total + value, 0)) }
+    case 'average': return need(1) || { result: round(values.reduce((total, value) => total + value, 0) / values.length) }
+    case 'difference': return need(2) || { result: round(values[0] - values[1]) }
+    case 'product': return need(2) || { result: round(values.reduce((total, value) => total * value, 1)) }
+    case 'ratio': return need(2) || (values[1] === 0 ? { error: 'division_by_zero' } : { result: round(values[0] / values[1]) })
+    case 'percent': return need(2) || (values[1] === 0 ? { error: 'division_by_zero' } : { result: round((values[0] / values[1]) * 100), unit: 'percent' })
+    case 'percent_change': return need(2) || (values[0] === 0 ? { error: 'division_by_zero' } : { result: round(((values[1] - values[0]) / Math.abs(values[0])) * 100), unit: 'percent' })
+    case 'days_between': return dates.length < 2 ? { error: 'invalid_arguments', details: ['days_between needs two dates'] } : { result: dayNumber(dates[1]) - dayNumber(dates[0]), unit: 'days' }
+    case 'add_days': {
+      if (dates.length < 1 || values.length < 1 || !Number.isInteger(values[0])) return { error: 'invalid_arguments', details: ['add_days needs a date and a whole number of days'] }
+      return { result: new Date((dayNumber(dates[0]) + values[0]) * 86400000).toISOString().slice(0, 10) }
+    }
+    default: return { error: 'invalid_arguments' }
+  }
+}
 
 // The tools over the facts, then those that read services with the
 // request's context (ai-read-service-tools.mjs).
