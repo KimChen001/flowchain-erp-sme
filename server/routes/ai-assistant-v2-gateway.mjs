@@ -117,7 +117,12 @@ function noticeAnswer(code, language, query) {
 async function addFormNotes({ context, session, threadId, userId, formResults }) {
   if (!context.prisma || !Array.isArray(formResults)) return 0
   let added = 0
-  for (const entry of formResults.slice(0, FORM_RESULTS)) {
+  // A record card reports each step the user took in it ({ actionId, type,
+  // id, action }); forms report what they created.
+  for (const entry of formResults.filter((row) => row && typeof row === 'object' && 'actionId' in row).slice(0, ACTION_RESULTS)) {
+    added += await addActionNote({ context, session, threadId, userId, entry })
+  }
+  for (const entry of formResults.filter((row) => !(row && typeof row === 'object' && 'actionId' in row)).slice(0, FORM_RESULTS)) {
     const formId = text(entry?.formId)
     // A setup card reports the suppliers and items it created instead.
     if (Array.isArray(entry?.created)) {
@@ -180,6 +185,97 @@ async function suppliersAddedWith({ context, requestId, createdAt, userId }) {
     return added
   } catch {
     return []
+  }
+}
+
+// The steps a record card offers (offer_record_actions), each with the audit
+// row its command writes (procurement-request-command-service.mjs,
+// procurement-db-command-service.mjs) and the statuses its record may be in
+// once the user took it: the one it leaves, or one a later step of the card
+// leads to. Requesting quotes leaves the request approved, with its RFQ.
+const RECORD_STEPS = Object.freeze({
+  purchase_request: Object.freeze({
+    submit: { audit: 'purchase_request_submit', entityType: 'PurchaseRequest', statuses: ['submitted', 'approved', 'rejected', 'converted'] },
+    approve: { audit: 'purchase_request_approve', entityType: 'PurchaseRequest', statuses: ['approved', 'converted'] },
+    reject: { audit: 'purchase_request_reject', entityType: 'PurchaseRequest', statuses: ['rejected'] },
+    create_po: { audit: 'purchase_request_converted_to_purchase_orders', entityType: 'PurchaseRequest', statuses: ['converted'] },
+    create_rfq: { audit: 'rfq_created_from_purchase_request', entityType: 'Rfq', statuses: ['approved'] },
+  }),
+  purchase_order: Object.freeze({
+    approve: { audit: 'purchase_order_approve', entityType: 'PurchaseOrder', statuses: ['approved', 'issued', 'partially_received', 'fully_received', 'closed'] },
+    issue: { audit: 'purchase_order_issue', entityType: 'PurchaseOrder', statuses: ['issued', 'partially_received', 'fully_received', 'closed'] },
+  }),
+})
+const ACTION_ID = /^[\w:-]{1,200}$/
+const ACTION_RESULTS = 10
+const statusCode = (value) => (STATUS.test(text(value).toLowerCase()) ? text(value).toLowerCase() : 'unknown')
+const orderNumber = (row) => noteName(row?.metadata?.orderNumber) || text(row?.id)
+
+// A step the user took in a record card, as reported by the client, becomes
+// a note in the thread only when the server can confirm it: the command's
+// audit row in this workspace, with this user as the actor, written while a
+// thread can live, under the card's idempotency key for that step
+// (ai-action:<actionId>, the actionId naming this thread, the step and the
+// record's version); and the record in this workspace, in a status the step
+// leads to. Anything else is ignored. The note says what the user did, so the
+// model may say it; the thread keeps the step, which the loop accepts as
+// backing for saying it was taken.
+async function addActionNote({ context, session, threadId, userId, entry }) {
+  const actionId = text(entry?.actionId)
+  const type = text(entry?.type)
+  const id = text(entry?.id)
+  const action = text(entry?.action)
+  const step = RECORD_STEPS[type]?.[action]
+  const key = `action:${actionId}`
+  if (!step || !ACTION_ID.test(actionId) || !actionId.startsWith(`${threadId}:`) || !new RegExp(`:${action}:v\\d{1,9}$`).test(actionId) || !RECORD_ID.test(id) || session.forms.has(key)) return 0
+  try {
+    const { prisma, tenantId } = context
+    const audits = await prisma.auditLog.findMany({
+      where: { tenantId, action: step.audit, entityType: step.entityType, actorId: userId, createdAt: { gte: new Date(Date.now() - SETUP_NOTE_WINDOW_MS) }, ...(step.entityType === 'Rfq' ? {} : { entityId: id }) },
+      select: { entityId: true, actorId: true, metadata: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    })
+    const audit = (Array.isArray(audits) ? audits : []).find((row) => {
+      const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {}
+      return text(row.actorId) === userId && metadata.idempotencyKey === `ai-action:${actionId}` && (step.entityType === 'Rfq' ? text(metadata.purchaseRequestId) === id : text(row.entityId) === id)
+    })
+    if (!audit) return 0
+    const cardId = actionId.replace(new RegExp(`:${action}:v\\d{1,9}$`), '')
+    let words
+    let record
+    let created = []
+    if (type === 'purchase_order') {
+      const order = await prisma.purchaseOrder.findFirst({ where: { id, tenantId: context.tenantId }, select: { id: true, status: true, metadata: true } })
+      if (!order || !step.statuses.includes(statusCode(order.status))) return 0
+      record = { number: orderNumber(order), status: statusCode(order.status) }
+      words = action === 'approve'
+        ? `approved ${record.number} (status now: ${record.status})`
+        : `marked ${record.number} as issued (status now: ${record.status}); FlowChain records the issue and sends nothing to the supplier`
+    } else {
+      const request = await prisma.purchaseRequest.findFirst({ where: { id, tenantId: context.tenantId }, select: { id: true, status: true } })
+      if (!request || !step.statuses.includes(statusCode(request.status))) return 0
+      record = { number: text(request.id), status: statusCode(request.status) }
+      if (action === 'create_po') {
+        const ids = (Array.isArray(audit.metadata?.purchaseOrderIds) ? audit.metadata.purchaseOrderIds : []).map(text).filter((value) => RECORD_ID.test(value)).slice(0, 10)
+        const orders = ids.length ? await prisma.purchaseOrder.findMany({ where: { tenantId: context.tenantId, id: { in: ids } }, select: { id: true, status: true, metadata: true } }) : []
+        created = (Array.isArray(orders) ? orders : []).map((order) => ({ type: 'purchase_order', number: orderNumber(order), status: statusCode(order.status) }))
+        if (!created.length) return 0
+        words = `created ${created.map((order) => `${order.number} (status: ${order.status})`).join(' and ')} from ${record.number} (status now: ${record.status})`
+      } else if (action === 'create_rfq') {
+        const rfq = await prisma.rfq.findFirst({ where: { id: text(audit.entityId), tenantId: context.tenantId, sourceRequestId: id }, select: { id: true, status: true } })
+        if (!rfq) return 0
+        created = [{ type: 'rfq', number: text(rfq.id), status: statusCode(rfq.status) }]
+        words = `created ${created[0].number} (status: ${created[0].status}; nothing is sent to suppliers until the RFQ is opened) from ${record.number} to request quotes`
+      } else {
+        words = `${{ submit: 'submitted', approve: 'approved', reject: 'rejected' }[action]} ${record.number}${action === 'submit' ? ' for approval' : ''} (status now: ${record.status})`
+      }
+    }
+    session.note(key, { action: { type, action, id, number: record.number, status: record.status, created } }, { role: 'user', content: [{ type: 'text', text: `${SERVER_NOTE_PREFIX}, not the user's words: with card ${cardId} the user ${words}.` }] })
+    return 1
+  } catch {
+    // An unreadable report adds no note; the answer goes on.
+    return 0
   }
 }
 
