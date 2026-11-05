@@ -8,7 +8,7 @@ export { AssistantModelError } from './model-error.mjs'
 // The assistant v2 model seam (docs/ai-assistant-v2-design.md §3.4). Every
 // client has one method:
 //
-//   client.stream({ system, messages, tools, maxTokens }, signal) → AsyncIterable of
+//   client.stream({ system, messages, tools, maxTokens, withdrawnTools? }, signal) → AsyncIterable of
 //     { type: 'text_delta', text }
 //     { type: 'tool_use_start', id, name }
 //     { type: 'tool_input_delta', id, partialJson }
@@ -18,7 +18,10 @@ export { AssistantModelError } from './model-error.mjs'
 // `messages` and `content` are in the Messages API's shape whatever the
 // provider; `content` is appended to the transcript unchanged, thinking blocks
 // included. `usage` is the call's token counts in the Messages API's fields,
-// unpriced. A stopped call throws an AbortError and a failed one an
+// unpriced. `tools` is the same list on every call of an answer;
+// `withdrawnTools` names those the loop no longer offers (it refuses their
+// calls itself), for a client to leave out where the list may change between
+// calls. A stopped call throws an AbortError and a failed one an
 // AssistantModelError. The client never records usage: the loop does, so no
 // call is metered after the user stops an answer.
 //

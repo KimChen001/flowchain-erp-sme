@@ -6,7 +6,11 @@ import { AssistantModelError, modelAbortError } from './model-error.mjs'
 // §3.4): for unit tests, CI, the browser specs and an offline fallback during
 // a live showcase. A turn is the list of events one model call streams; it
 // may leave out its message_end, or the message_end its content, and both are
-// then built from the turn's text and tool events.
+// then built from the turn's text and tool events. In the scripted client, a
+// { type: 'pause', ms } event holds the replay there, as a slow model would,
+// until the time is up or the call is stopped: the browser specs stop an
+// answer mid-stream with it. The Messages server spaces frames with
+// eventDelayMs instead.
 //
 // A script takes one of two forms:
 // - a list of turns, replayed in call order: for unit tests that drive one
@@ -21,6 +25,25 @@ const ZERO_USAGE = Object.freeze({ input_tokens: 0, output_tokens: 0, cache_read
 const listOfTurns = (value) => Array.isArray(value) && value.every(Array.isArray)
 const blocks = (content) => (typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : [])
 const questionKey = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
+const PAUSE_MAX_MS = 60000
+
+function pause(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(modelAbortError())
+      return
+    }
+    const stop = () => {
+      clearTimeout(timer)
+      reject(modelAbortError())
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', stop)
+      resolve()
+    }, Math.min(PAUSE_MAX_MS, Math.max(0, Number(ms) || 0)))
+    signal?.addEventListener('abort', stop, { once: true })
+  })
+}
 
 export function readScriptedTurns(path) {
   const script = JSON.parse(readFileSync(path, 'utf8'))
@@ -56,13 +79,14 @@ function turnContent(events) {
 }
 
 // A turn's events with a complete message_end, copied so a caller cannot
-// change the recording.
+// change the recording. A message_end whose usage is null keeps it, as a
+// provider that reports none sends it.
 export function completeScriptedTurn(turn) {
   const events = structuredClone(turn).filter((event) => event.type !== 'message_end')
   const end = turn.find((event) => event.type === 'message_end') || {}
   const content = end.content ? structuredClone(end.content) : turnContent(events)
   const stopReason = end.stopReason || (content.some((block) => block.type === 'tool_use') ? 'tool_use' : 'end_turn')
-  return [...events, { type: 'message_end', stopReason, usage: { ...ZERO_USAGE, ...end.usage }, content }]
+  return [...events, { type: 'message_end', stopReason, usage: end.usage === null ? null : { ...ZERO_USAGE, ...end.usage }, content }]
 }
 
 // The scripted model client: each stream call replays its turn and records
@@ -80,6 +104,10 @@ export function createScriptedModelClient(script) {
       if (!turn) throw new AssistantModelError('malformed_output')
       for (const event of completeScriptedTurn(turn)) {
         if (signal?.aborted) throw modelAbortError()
+        if (event.type === 'pause') {
+          await pause(event.ms, signal)
+          continue
+        }
         yield event
       }
     },
@@ -93,7 +121,7 @@ const sse = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...d
 // meets partial JSON.
 function messagesStream(turn, model, id) {
   const end = completeScriptedTurn(turn).at(-1)
-  const { output_tokens: outputTokens, ...inputUsage } = end.usage
+  const { output_tokens: outputTokens, ...inputUsage } = end.usage || ZERO_USAGE
   const frames = [sse('message_start', { message: { id, type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage: { ...inputUsage, output_tokens: 1 } } })]
   end.content.forEach((block, index) => {
     if (block.type === 'text') {

@@ -4,14 +4,21 @@ import { RefChip, usePartCopy, type Navigate, type PartCopy } from "./partKit";
 import type { FlagSpan, PartRef } from "./types";
 
 // The model's prose, as it streams. Only a small part of markdown is read:
-// paragraphs, numbered and bulleted lists, bold and inline code. Images are
+// paragraphs, section headings (any level, all shown alike), numbered and
+// bulleted lists, pipe tables (the first row as the header), bold and inline
+// code. Images are
 // dropped and links keep only their text, so nothing in an answer can load
 // from or send a click to another site; the only links are record chips for
 // the refs the server gave this answer.
 
-type Block = { kind: "p" | "ol" | "ul"; start: number; lines: string[] };
+type Block = { kind: "p" | "h" | "ol" | "ul" | "table"; start: number; lines: string[] };
 const LIST_LINE = /^(?:(\d{1,3})[.)]\s+|[-*+•]\s+)/;
 const HEADING = /^#{1,6}\s+/;
+// A table row is a line between pipes; the line of dashes under the header
+// is dropped.
+const TABLE_ROW = /^\|.*\|$/;
+const TABLE_RULE = /^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?$/;
+const tableCells = (line: string) => line.replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
 
 function markdownBlocks(text: string): Block[] {
   const blocks: Block[] = [];
@@ -23,7 +30,15 @@ function markdownBlocks(text: string): Block[] {
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) { flush(); continue; }
-    if (HEADING.test(line)) { flush(); blocks.push({ kind: "p", start: 1, lines: [line.replace(HEADING, "")] }); continue; }
+    if (HEADING.test(line)) { flush(); blocks.push({ kind: "h", start: 1, lines: [line.replace(HEADING, "")] }); continue; }
+    if (TABLE_ROW.test(line)) {
+      flush();
+      const last = blocks[blocks.length - 1];
+      if (TABLE_RULE.test(line)) continue;
+      if (last && last.kind === "table") last.lines.push(line);
+      else blocks.push({ kind: "table", start: 1, lines: [line] });
+      continue;
+    }
     const match = line.match(LIST_LINE);
     if (!match) { paragraph.push(line); continue; }
     flush();
@@ -109,7 +124,18 @@ export function StreamingText({ text, refs = [], flags = [], language, onNavigat
     <div data-testid="ai-v2-text" lang={copy.language} className="space-y-2 text-sm leading-relaxed" style={{ color: A.label }}>
       {markdownBlocks(withoutImagesAndLinks(text)).map((block, index) => block.kind === "p"
         ? <p key={index}>{line(block.lines[0], `${index}`)}</p>
-        : block.kind === "ol"
+        : block.kind === "h"
+          ? <p key={index} data-testid="ai-v2-text-heading" className="pt-1 font-semibold">{line(block.lines[0], `${index}`)}</p>
+          : block.kind === "table"
+          ? (
+            <div key={index} className="overflow-x-auto">
+              <table data-testid="ai-v2-text-table" className="w-full border-collapse text-xs">
+                <thead><tr>{tableCells(block.lines[0]).map((cell, column) => <th key={column} className="border-b px-2 py-1 text-left font-semibold" style={{ borderColor: A.gray4 }}>{line(cell, `${index}-h-${column}`)}</th>)}</tr></thead>
+                <tbody>{block.lines.slice(1).map((row, rowIndex) => <tr key={rowIndex}>{tableCells(row).map((cell, column) => <td key={column} className="border-b px-2 py-1 align-top" style={{ borderColor: A.gray5 }}>{line(cell, `${index}-${rowIndex}-${column}`)}</td>)}</tr>)}</tbody>
+              </table>
+            </div>
+          )
+          : block.kind === "ol"
           ? <ol key={index} start={block.start} className="list-decimal space-y-1 pl-5">{block.lines.map((value, row) => <li key={row}>{line(value, `${index}-${row}`)}</li>)}</ol>
           : <ul key={index} className="list-disc space-y-1 pl-5">{block.lines.map((value, row) => <li key={row}>{line(value, `${index}-${row}`)}</li>)}</ul>)}
     </div>

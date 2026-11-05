@@ -8,6 +8,11 @@ import { AI_ASSISTANT_V2_TOOLS } from './ai-assistant-v2-data-tools.mjs'
 import { AI_READ_TOOL_COLUMNS, aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { buildReorderList } from './reorder-list.mjs'
+import { attachReorderPointSuggestions } from './reorder-point-suggestion.mjs'
+import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
+import { buildFirstRunChecklist } from './today-work.mjs'
+import { firstRunSetupOptions, readFirstRunSetupCounts } from './first-run-setup.mjs'
+import { reportReadAccessFor } from './report-read-access.mjs'
 
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
 // order of 100 and a reference price of 95 USD.
@@ -187,6 +192,56 @@ test('suggest_purchase_lines raises the gap to the minimum order and fills suppl
   assert.deepEqual((await cancelled.run('suggest_purchase_lines')).result.rows[0].suggestedQuantity, { value: 102, source: 'reorder_gap' })
 })
 
+// LDM-001 ships 50 a day on 18 days of September: 900 over the 90-day window,
+// 10 a day. Lead time 12 days.
+const shipping = (data) => {
+  data.shipmentLines = Array.from({ length: 18 }, (_, index) => ({ itemId: 'ITEM-001', unit: 'pcs', postedQuantity: 50, shipment: { postedAt: new Date(`2026-09-${String(index + 1).padStart(2, '0')}T16:00:00Z`) } }))
+}
+
+// A reader of every warehouse, as the reorder list asks.
+const everyWarehouse = (actor) => { actor.allWarehouses = true }
+
+// "Order what we need for the next 2 weeks" (2026-11-04) had no answer.
+test('suggest_purchase_lines with coverDays sizes a line from recorded demand and says the basis', async () => {
+  const { run } = await v2({ change: shipping, actor: everyWarehouse })
+  const result = (await run('suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'], coverDays: 14 })).result
+  assert.equal(result.coverDays, 14)
+  const [ldm1, ldm2] = result.rows
+  // 10 a day × (12 + 14) + 30 safety = 290; 290 - 28 available - 70 incoming - 50 requested = 142.
+  assert.deepEqual(ldm1.cover, { days: 14, basis: 'recorded_demand', averageDailyDemand: 10, demandWindowDays: 90, shipmentDays: 18, leadTimeDays: 12, target: 290 })
+  assert.deepEqual(ldm1.suggestedQuantity, { value: 142, source: 'cover_days' })
+  // No shipments: the reorder point rule stands, and the row says why.
+  assert.equal(ldm2.cover.basis, 'not_enough_shipment_history')
+  assert.equal(ldm2.cover.target, null)
+  assert.notEqual(ldm2.suggestedQuantity.source, 'cover_days')
+  // A short period raised to the supplier's minimum order of 100.
+  const short = (await run('suggest_purchase_lines', { skus: ['LDM-001'], coverDays: 3 })).result.rows[0]
+  assert.deepEqual([short.cover.target, short.suggestedQuantity], [180, { value: 100, source: 'cover_days_raised_to_moq' }])
+  // Without names, an item with recorded demand is suggested though it is above
+  // its reorder point once the request is counted.
+  const plain = await v2({ change: shipping, actor: everyWarehouse })
+  const listed = (await plain.run('suggest_purchase_lines', { coverDays: 30 })).result
+  assert.deepEqual(listed.rows.map((row) => [row.item.sku, row.suggestedQuantity.source]), [['LDM-001', 'cover_days']])
+  // Without coverDays nothing changes.
+  const before = (await plain.run('suggest_purchase_lines', { skus: ['LDM-001'] })).result.rows[0]
+  assert.equal(before.cover, undefined)
+  assert.equal(before.suggestedQuantity.source, 'covered_by_open_orders')
+})
+
+test('suggest_purchase_lines with coverDays reads no demand for a reader of only some warehouses', async () => {
+  const { run } = await v2({ change: (data) => { shipping(data); data.warehouses = [{ id: 'WH-1' }, { id: 'WH-2' }] }, ctx: { routeContext: { reportReadAccess: { warehouseIds: ['WH-1'] } } } })
+  const [row] = (await run('suggest_purchase_lines', { skus: ['LDM-001'], coverDays: 14 })).result.rows
+  assert.deepEqual([row.cover.basis, row.cover.averageDailyDemand], ['warehouse_scope', null])
+})
+
+// Stock rows that record no unit (the showcase's) left every form line with
+// unit null; the item's own stock unit stands in.
+test('suggest_purchase_lines gives the item\'s stock unit when the stock row records none', async () => {
+  const { run } = await v2({ change: (data) => { highReorderPoint(data); data.balances[0].unit = null } })
+  const [row] = (await run('suggest_purchase_lines', { skus: ['LDM-001'] })).result.rows
+  assert.equal(row.item.unit, 'pcs')
+})
+
 test('suggest_purchase_lines counts a draft request as cover and names what covers the item', async () => {
   const { facts, run } = await v2({ change: (data) => { highReorderPoint(data); data.purchaseRequests[1].lines = [{ id: 'PRL-002', sku: 'LDM-001', itemId: 'ITEM-001', quantity: 60, unit: 'pcs' }] } })
   // The skills still count only the submitted request.
@@ -324,6 +379,29 @@ test('reorder_list returns the preferred supplier\'s lead time, id and minimum o
   assert.equal((await runAiReadTool('reorder_list', { supplier: 'Nobody Ltd' }, { facts, context })).error, 'supplier_not_found')
 })
 
+test('reorder_list carries the suggested reorder point beside the recorded one, with what it rests on', async () => {
+  const scenario = aiSkillScenario()
+  const items = scenario.data.items.map((row) => ({ ...row, status: 'active', reorderPoint: row.sku === 'LDM-001' ? 200 : row.reorderPoint }))
+  const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
+  // LDM-001 shipped 15 on each of the 90 days before today; Acme's lead time
+  // is 12 days, so 19 days (12 + 7) of it is 285, above the recorded 200.
+  const reorderList = {
+    read: async (input) => {
+      const shipmentLines = Array.from({ length: 90 }, (_, index) => ({ itemId: 'ITEM-001', unit: 'pcs', quantity: 15, postedAt: `${addCalendarDays(input.today, -90 + index)}T16:00:00Z` }))
+      return attachReorderPointSuggestions(buildReorderList({ allocationRows: input.allocationRows, items, shipmentLines, supplierLinks: [link()], suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }), shipmentLines)
+    },
+  }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  const facts = await readAiSkillFacts(context)
+  const row = (await runAiReadTool('reorder_list', { sku: 'LDM-001' }, { facts, context })).result.rows[0]
+  assert.deepEqual([row.reorderPoint, row.suggestedReorderPoint], [200, 285])
+  const { basis, ...suggestion } = row.reorderPointSuggestion
+  assert.deepEqual(suggestion, { recordedBelow: true, coverDays: 19, leadTimeDays: 12, reviewDays: 7, shipmentDays: 90, reason: null })
+  assert.match(basis, /next 19 days \(lead time 12 \+ 7 review days\) in 5 of 6 past 19-day stretches/)
+  // The rule's own figures are as without the suggestion.
+  assert.equal(row.shortfall, 102)
+})
+
 // The services the read tools call, recorded, so every declared table has rows.
 const RECORDED_SERVICES = {
   receivables: {
@@ -383,4 +461,43 @@ test('every data tool declares its columns, and each declared column is in its r
   // Every declared table, of every tool, had rows to check.
   const declared = Object.entries(AI_READ_TOOL_COLUMNS).flatMap(([name, tables]) => Object.keys(tables).map((path) => `${name} ${path}`))
   assert.deepEqual([...checked].sort(), declared.sort())
+})
+
+test('setup_status reports the first-day checklist exactly as Today builds it, with the item gaps', async () => {
+  const env = { FLOWCHAIN_ENABLE_DATA_IMPORT: 'true', FLOWCHAIN_PERSISTENCE_MODE: 'database' }
+  const { context, run } = await v2({ ctx: { env } })
+  const result = (await run('setup_status')).result
+  // The fixture: 3 items, 2 suppliers, 2 items in stock, no customers, one user.
+  assert.deepEqual(result.steps.map((step) => [step.id, step.done, step.count]), [['items', true, 3], ['suppliers', true, 2], ['customers', false, 0], ['opening_stock', true, 2], ['teammates', false, 0]])
+  assert.deepEqual([result.open, result.done, result.total, result.importOn], [true, 3, 5, true])
+  // An administrator may do every step; with import on, each step opens the import page for its type.
+  assert.deepEqual(result.steps.map((step) => [step.blocked, step.href]), [
+    [null, '/app/master-data/import?type=items'], [null, '/app/master-data/import?type=suppliers'], [null, '/app/master-data/import?type=customers'],
+    [null, '/app/master-data/import?type=opening-stock'], [null, '/app/settings/roles'],
+  ])
+  // The same counts and options give Today's checklist, step for step.
+  const today = buildFirstRunChecklist(await readFirstRunSetupCounts(context.prisma, { tenantId: context.tenantId, now: context.now }), firstRunSetupOptions(reportReadAccessFor(context.actor), env))
+  assert.deepEqual(result.steps, today.steps)
+  // LDM-009 has no unit, preferred supplier or threshold: what records_missing_data reports.
+  assert.deepEqual(result.gaps, { checked: 3, unit: 1, preferredSupplier: 1, thresholds: 1 })
+  // How much the chat takes at once, so an answer can state it from a result.
+  assert.deepEqual(result.limits, { pasteCharacters: 8000, setupCardRows: 25 })
+  assert.deepEqual(aiReadToolRefs(result), [])
+})
+
+test('setup_status: without import a step opens its own page; a role that may not do a step gets no link; a read failure is an error', async () => {
+  const plain = (await (await v2()).run('setup_status')).result
+  assert.deepEqual(plain.steps.map((step) => step.href), ['/app/master-data/items', '/app/master-data/suppliers', '/app/master-data/customers', null, '/app/settings/roles'])
+  assert.equal(plain.steps.find((step) => step.id === 'opening_stock').blocked, 'unavailable')
+  assert.equal(plain.importOn, false)
+  const viewer = (await (await v2({ roleKey: 'read-only-viewer' })).run('setup_status')).result
+  assert.ok(viewer.steps.every((step) => step.href === null && step.blocked === 'permission'))
+  // Every step done: the checklist is closed but still reported.
+  // One model of the stand-in database answered differently.
+  const swapped = (prisma, model, methods) => new Proxy({}, { get: (_target, key) => (key === model ? new Proxy({}, { get: (_inner, method) => methods[method] || prisma[model][method] }) : prisma[key]) })
+  const done = await v2({ change: (data) => { data.customers = [{ id: 'CUST-1' }] } })
+  const all = (await runAiReadTool('setup_status', {}, { facts: done.facts, context: { ...done.context, prisma: swapped(done.context.prisma, 'user', { count: async () => 2 }) }, assistantV2: true })).result
+  assert.deepEqual([all.open, all.done], [false, 5])
+  const broken = await v2()
+  assert.deepEqual(await runAiReadTool('setup_status', {}, { facts: broken.facts, context: { ...broken.context, prisma: swapped(broken.context.prisma, 'supplier', { count: async () => { throw new Error('down') } }) }, assistantV2: true }), { ok: false, error: 'setup_counts_unavailable' })
 })

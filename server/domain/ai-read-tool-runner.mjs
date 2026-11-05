@@ -52,7 +52,7 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   late_order_impact: { orders: ['orderNumber', 'overdueDays'], skus: ['sku', 'unit', 'stillToReceive', 'availableToPromise', 'withoutTheseLines', 'additionalShortfall'] },
   calculate: { '': ['result', 'unit'] },
   search_records: { rows: ['type', 'number', 'name', 'status'] },
-  reorder_list: { rows: ['sku', 'itemName', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'position', 'reorderPoint', 'shortfall', 'averageDailyDemand', 'supplier', 'leadTimeDays', 'minimumOrderQuantity', 'moqUnit', 'requestQuantity', 'raisedToMinimum'] },
+  reorder_list: { rows: ['sku', 'itemName', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'position', 'reorderPoint', 'shortfall', 'averageDailyDemand', 'supplier', 'leadTimeDays', 'minimumOrderQuantity', 'moqUnit', 'requestQuantity', 'raisedToMinimum', 'suggestedReorderPoint'] },
   list_receivables: { rows: ['obligationNumber', 'customerInvoiceNumber', 'customerName', 'outstandingAmount', 'paidAmount', 'originalAmount', 'currency', 'dueDate', 'status', 'disputeStatus'], aging: ['currency', 'current', '1_30', '31_60', '61_90', '90_plus', 'total', 'count'] },
   list_contracts: { rows: ['number', 'title', 'externalReference', 'type', 'state', 'startDate', 'endDate', 'signedOn', 'noticeDays', 'totalValue', 'currency', 'supplier'] },
   price_history: { earlier: ['unitPrice', 'currency', 'unit', 'orderedQuantity', 'date', 'orderNumber', 'supplierName'], lastOrderBySupplier: ['supplier', 'orderNumber', 'day'] },
@@ -61,6 +61,7 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   attention_list: { rows: ['rank', 'type', 'severity', 'label', 'whenKind', 'days', 'date', 'supplier'] },
   records_missing_data: { rows: ['type', 'label', 'source', 'missing'] },
   suggest_purchase_lines: { rows: ['item.sku', 'item.name', 'item.unit', 'onHand', 'safetyStock', 'reorderPoint', 'suggestedQuantity.value', 'suggestedQuantity.source', 'supplier.name', 'needByDate.value', 'estimatedUnitPrice.value', 'estimatedUnitPrice.currency'] },
+  setup_status: { steps: ['id', 'done', 'count'] },
 })
 
 export function aiReadToolsFor(facts, context = null, { assistantV2 = false } = {}) {

@@ -394,7 +394,14 @@ export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFA
 // adjustment, if adjustments are turned on. Invitations are made in Users &
 // Roles. A reader who may not do a step gets no link ('permission'), and a
 // step this workspace has no page for gets none either ('unavailable').
-export function buildFirstRunChecklist(setup, { permissions = {}, importEnabled = false, adjustmentsEnabled = false } = {}) {
+export function buildFirstRunChecklist(setup, options = {}) {
+  const checklist = firstRunSetupSteps(setup, options)
+  return checklist && checklist.done < checklist.total ? checklist : null
+}
+
+// Every step of the checklist, also once all are done: Today hides a
+// finished checklist, the assistant's setup_status still reports it.
+export function firstRunSetupSteps(setup, { permissions = {}, importEnabled = false, adjustmentsEnabled = false } = {}) {
   if (!setup) return null
   const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
   const importPage = (type, fallback) => (importEnabled ? `/app/master-data/import?type=${type}` : fallback)
@@ -411,8 +418,7 @@ export function buildFirstRunChecklist(setup, { permissions = {}, importEnabled 
     href: permitted && href ? href : null,
     blocked: !permitted ? 'permission' : !href ? 'unavailable' : null,
   }))
-  const done = steps.filter((step) => step.done).length
-  return done === steps.length ? null : { steps, done, total: steps.length }
+  return { steps, done: steps.filter((step) => step.done).length, total: steps.length }
 }
 
 // How many documents the reader can open were last changed on the workspace
