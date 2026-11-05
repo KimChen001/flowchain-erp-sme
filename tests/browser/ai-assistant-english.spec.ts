@@ -71,7 +71,7 @@ test("the assistant answers every prompt chip in English from the workspace data
     if (chip === "Which purchase orders are overdue?") {
       const draft = answer.getByTestId("ai-action-draft-preview").first();
       // Each line's draft button names the supplier the message is for.
-      await expect(draft).toHaveText(/^Draft follow-up to S/);
+      await expect(draft).toHaveText(/^Draft follow-up to \S/);
     }
     await newConversation(panel, "New conversation");
   }
