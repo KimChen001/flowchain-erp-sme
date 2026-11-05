@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, Link2, RefreshCw, RotateCcw, Upload } from "lucide-react";
-import { Card } from "../../components/ui";
+import { Card, useConfirm } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
@@ -18,6 +18,7 @@ const body = (value: unknown) => ({ method: "POST", body: JSON.stringify(value) 
 
 export default function BankReconciliationWorkbench({ initialView }: { initialView: "bank-statements" | "bank-reconciliation" }) {
   const { language } = useI18n(); const en = language === "en-US"; const tr = (zh: string, english: string) => en ? english : zh;
+  const confirmDialog = useConfirm();
   // New mapping templates record the workspace timezone (America/New_York when none is known).
   const { timezone: workspaceTimezone } = useWorkspaceCurrency();
   const [accounts, setAccounts] = useState<Account[]>([]), [mappings, setMappings] = useState<Mapping[]>([]), [batches, setBatches] = useState<Batch[]>([]), [lines, setLines] = useState<Line[]>([]), [groups, setGroups] = useState<Group[]>([]), [exceptions, setExceptions] = useState<Exception[]>([]);
@@ -46,19 +47,19 @@ export default function BankReconciliationWorkbench({ initialView }: { initialVi
     let batch = await apiJson<Batch>("/api/finance/bank-statements/batches", body({ cashbookAccountId: selectedAccount.id, mappingTemplateId: mappingId, uploadId: upload.uploadId, currency: selectedAccount.currency, coverageType: "transaction_export" }));
     batch = await apiJson<Batch>(`/api/finance/bank-statements/batches/${encodeURIComponent(batch.id)}/parse`, body({})); batch = await apiJson<Batch>(`/api/finance/bank-statements/batches/${encodeURIComponent(batch.id)}/validate`, body({})); setNotice(tr(`已校验 ${batch.totalRowCount} 行，请复核后 Commit`, `Validated ${batch.totalRowCount} rows; review before commit`));
   }
-  async function commitBatch(batch: Batch) { if (!confirm(tr("确认创建不可修改的正式银行流水？", "Create immutable formal bank statement lines?"))) return; await apiJson(`/api/finance/bank-statements/batches/${encodeURIComponent(batch.id)}/commit`, body({ expectedVersion: batch.version, idempotencyKey: key() })); setNotice(tr("银行流水文件已导入", "Bank statement file imported")); }
+  async function commitBatch(batch: Batch) { if (!(await confirmDialog.confirm({ title: tr("导入这些银行流水？", "Import these bank statement lines?"), description: tr("导入后这些流水不能修改。", "Imported lines cannot be changed afterwards."), confirmLabel: tr("导入", "Import") }))) return; await apiJson(`/api/finance/bank-statements/batches/${encodeURIComponent(batch.id)}/commit`, body({ expectedVersion: batch.version, idempotencyKey: key() })); setNotice(tr("银行流水文件已导入", "Bank statement file imported")); }
   async function generate(line: Line) { const result = await apiJson<{ candidates: Candidate[] }>(`/api/finance/bank-reconciliation/lines/${encodeURIComponent(line.id)}/candidates/generate`, body({ dateWindowDays: 3 })); setCandidates((current) => ({ ...current, [line.id]: result.candidates })); setSelectedLineIds([line.id]); if (line.remainingAmount) setAllocationAmount(line.remainingAmount); }
   async function createAndConfirm() {
     if (!selectedAccount || !selectedLines.length || !candidateEntryIds.length || !allocationAmount) throw new Error(tr("请选择流水、Cashbook 候选和分配金额", "Select statement lines, cashbook candidates, and allocation amount"));
     const direction = selectedLines[0].direction, currency = selectedLines[0].currency;
     const group = await apiJson<Group>("/api/finance/bank-reconciliation/groups", body({ cashbookAccountId: selectedAccount.id, currency, direction, reconciliationDate: new Date().toISOString(), bankAllocations: selectedLines.map((line) => ({ bankStatementLineId: line.id, allocatedAmount: selectedLines.length === 1 ? allocationAmount : line.remainingAmount })), cashbookAllocations: candidateEntryIds.map((cashbookEntryId) => ({ cashbookEntryId, allocatedAmount: allocationAmount })) }));
-    const preview = await apiJson<{ allowed: boolean; differenceAmount: string; issues: unknown[] }>(`/api/finance/bank-reconciliation/groups/${encodeURIComponent(group.id)}/preview`, body({})); if (!preview.allowed) throw new Error(`${tr("分配未平衡", "Allocations do not balance")}: ${preview.differenceAmount}`); if (!confirm(tr("确认仅建立银行流水匹配关系？不会修改 Cashbook。", "Confirm this evidence relationship? Cashbook will not change."))) return;
+    const preview = await apiJson<{ allowed: boolean; differenceAmount: string; issues: unknown[] }>(`/api/finance/bank-reconciliation/groups/${encodeURIComponent(group.id)}/preview`, body({})); if (!preview.allowed) throw new Error(`${tr("分配未平衡", "Allocations do not balance")}: ${preview.differenceAmount}`); if (!(await confirmDialog.confirm({ title: tr("确认这项匹配？", "Confirm this match?"), description: tr("只记录银行流水与现金账的匹配关系，现金账不会改变。", "Only the match between the statement and the cashbook is recorded. The cashbook does not change."), confirmLabel: tr("确认匹配", "Confirm match") }))) return;
     await apiJson(`/api/finance/bank-reconciliation/groups/${encodeURIComponent(group.id)}/confirm`, body({ expectedVersion: group.version, idempotencyKey: key() })); setNotice(tr("已与导入银行流水匹配", "Matched to an imported bank statement")); setSelectedLineIds([]); setCandidateEntryIds([]);
   }
-  async function reverse(group: Group) { const reason = prompt(tr("请输入撤销匹配原因", "Enter reconciliation reversal reason")); if (!reason) return; await apiJson(`/api/finance/bank-reconciliation/groups/${encodeURIComponent(group.id)}/reverse`, body({ expectedVersion: group.version, reason })); }
+  async function reverse(group: Group) { const reason = await confirmDialog.prompt({ title: tr("撤销这项匹配？", "Reverse this match?"), field: { label: tr("撤销原因", "Why is it reversed?") }, confirmLabel: tr("撤销匹配", "Reverse match"), tone: "danger" }); if (!reason) return; await apiJson(`/api/finance/bank-reconciliation/groups/${encodeURIComponent(group.id)}/reverse`, body({ expectedVersion: group.version, reason })); }
 
   const summary = useMemo(() => ({ unmatched: lines.filter((item) => item.reconciliationStatus === "unmatched").length, partial: lines.filter((item) => item.reconciliationStatus === "partially_matched").length, matched: lines.filter((item) => item.reconciliationStatus === "matched").length, exceptions: exceptions.filter((item) => item.status === "open").length }), [lines, exceptions]);
-  return <div className="min-w-0 space-y-4 overflow-x-hidden" data-testid="bank-reconciliation-workbench">
+  return <div className="min-w-0 space-y-4 overflow-x-hidden" data-testid="bank-reconciliation-workbench">{confirmDialog.element}
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[[tr("尚未匹配", "Unmatched"), summary.unmatched], [tr("部分匹配", "Partial"), summary.partial], [tr("已匹配", "Matched"), summary.matched], [tr("证据异常", "Exceptions"), summary.exceptions]].map(([label, value]) => <Card className="p-4" key={String(label)}><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-xl font-semibold">{value}</div></Card>)}</div>
     {error && <div role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{error}</div>}{notice && <div role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</div>}
     {initialView === "bank-statements" ? <>

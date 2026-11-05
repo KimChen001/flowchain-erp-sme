@@ -10,12 +10,13 @@ test("admin creates a custom multi-role return operator and grants take effect i
   await session(page, admin);
   await page.goto("/app/settings/roles");
   await expect(page.getByTestId("authorization-workbench")).toBeVisible();
-  page.once("dialog", dialog => dialog.accept("Return Operator"));
   await page.getByTestId("create-role").click();
+  await page.getByTestId("confirm-dialog-field").fill("Return Operator");
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByText("Return Operator", { exact: true }).first()).toBeVisible();
   await page.getByText("Return Operator", { exact: true }).first().click();
   for (const code of ["returns.posting.read", "returns.posting.prepare", "returns.posting.post"]) {
-    await page.getByText(code, { exact: true }).locator("xpath=ancestor::label").locator('input[type="checkbox"]').check();
+    await page.getByTestId(`permission-${code}`).check();
   }
   await page.getByTestId("save-role").click();
   await expect(page.getByRole("status")).toContainText("立即生效");
@@ -61,14 +62,15 @@ test("admin grants a master data code from the permission matrix and it decides 
   await session(page, admin);
   await page.goto("/app/settings/roles");
   await expect(page.getByTestId("authorization-workbench")).toBeVisible();
-  page.once("dialog", dialog => dialog.accept("Supplier Steward"));
   await page.getByTestId("create-role").click();
+  await page.getByTestId("confirm-dialog-field").fill("Supplier Steward");
+  await page.getByTestId("confirm-dialog-confirm").click();
   await page.getByText("Supplier Steward", { exact: true }).first().click();
   // The master data codes have their own group in the matrix.
   const group = page.locator("section").filter({ has: page.getByRole("heading", { name: /^(Master data|基础资料)$/ }) });
-  await expect(group.getByText("master_data.item.manage", { exact: true })).toBeVisible();
-  await expect(group.getByText("master_data.customer.manage", { exact: true })).toBeVisible();
-  await group.getByText("master_data.supplier.manage", { exact: true }).locator("xpath=ancestor::label").locator('input[type="checkbox"]').check();
+  await expect(group.getByTestId("permission-master_data.item.manage")).toBeVisible();
+  await expect(group.getByTestId("permission-master_data.customer.manage")).toBeVisible();
+  await group.getByTestId("permission-master_data.supplier.manage").check();
   await page.getByTestId("save-role").click();
   await expect(page.getByRole("status")).toContainText(/立即生效|effective immediately/);
   const model = await (await request.get("/api/authorization/roles", { headers: auth(admin.token) })).json();

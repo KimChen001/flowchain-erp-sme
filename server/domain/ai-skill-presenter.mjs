@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { aiSkillCountText, aiSkillLanguage, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
+import { AI_SKILL_COPY, aiSkillCountText, aiSkillLanguage, aiSkillList, aiSkillSentences, aiSkillText, aiSkillUnitLabel } from './ai-skill-copy.mjs'
 import { AI_SKILL_SIGNAL_VERSION } from './ai-skill-signals.mjs'
 
 // Turns a skill result (codes, ids, numbers) into the full AiResponseV2 the
@@ -27,10 +27,12 @@ const SOURCE_OF = { purchase_order: 'purchase_orders', item: 'inventory', suppli
 
 export function aiSkillFormatter(facts, language) {
   const locale = facts.locale || 'en-US'
-  const numberFormat = new Intl.NumberFormat(locale, { maximumFractionDigits: 4 })
+  // At most two decimals, with the locale's thousands separators.
+  const numberFormat = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 })
   const number = (value) => value === null || value === undefined || !Number.isFinite(Number(value)) ? aiSkillText('value.unknown', language) : numberFormat.format(Number(value))
-  // 'mixed' and 'multiple_skus' say why an order has no total; they are not units.
-  const quantity = (value, unit) => unit && unit !== 'mixed' && unit !== 'multiple_skus' ? `${number(value)} ${unit}` : number(value)
+  // 'mixed' and 'multiple_skus' say why an order has no total; they are not
+  // units. A unit code is shown by its label: "300 boxes", "300 箱".
+  const quantity = (value, unit) => unit && unit !== 'mixed' && unit !== 'multiple_skus' ? `${number(value)} ${aiSkillUnitLabel(unit, language, value)}` : number(value)
   // What an order still has to receive: the report's total when it has one
   // (one SKU in one unit), else each line still to receive with its SKU ("10
   // pcs of BOLT and 5 pcs of MOTOR"), never a total across SKUs or units.
@@ -90,7 +92,7 @@ export function aiSkillMetricSentences(facts, language, { spend = true, invoices
 function signalValue(item, fmt, language) {
   const data = item.data || {}
   switch (item.type) {
-    case 'po_overdue': return aiSkillText('value.days_late', language, { days: fmt.number(data.days) })
+    case 'po_overdue': return aiSkillCountText('value.days_late', data.days === 1 ? 1 : 2, language, { days: fmt.number(data.days) })
     case 'po_due_7d': return aiSkillText('value.due_in', language, { days: fmt.number(data.days) })
     case 'po_partially_received': return data.ordered === null || data.ordered === undefined ? null : aiSkillText('value.received_of', language, { received: fmt.number(data.received), ordered: fmt.quantity(data.ordered, data.unit) })
     case 'stock_shortage': return aiSkillText('value.short', language, { shortage: fmt.number(data.shortage) })
@@ -177,12 +179,15 @@ export function aiSkillRecordImpact({ area, impact, explanation, severity = 'inf
   return { area: aiSkillText(`area.${area}`, language), impact, severity, explanation, affectedObjects: [entityId] }
 }
 
+// A signal with no impact sentence of its own (an order due soon, whose next
+// step already asks for the date) gets an empty explanation, so its line
+// shows no "Impact:" line.
 export function aiSkillImpact(item, language) {
   return {
     area: aiSkillText(`area.${item.area || 'purchasing'}`, language),
     impact: aiSkillText(`signal.${item.type}.status`, language),
     severity: item.severity,
-    explanation: aiSkillText(`impact.${item.type}`, language),
+    explanation: AI_SKILL_COPY[`impact.${item.type}`] ? aiSkillText(`impact.${item.type}`, language) : '',
     affectedObjects: [item.entityId],
   }
 }
@@ -222,7 +227,7 @@ function limitationEntries(facts, language, { money: includeMoney = true } = {})
 export const aiSkillLimitations = (facts, language, options) => limitationEntries(facts, language, options)
 
 function followUps(ids, language) {
-  const key = { today_priorities: 'today', highest_risk_items: 'risk', records_needing_data: 'records', prepare_action_draft: 'draft', workspace_metrics: 'metrics', purchase_orders: 'orders', pending_approvals: 'approvals', inventory_availability: 'stock', invoice_summary: 'invoices', rfq_followups: 'rfqs', receiving_issues: 'receiving', supplier_attention: 'suppliers' }
+  const key = { today_priorities: 'today', highest_risk_items: 'risk', records_needing_data: 'records', prepare_action_draft: 'draft', workspace_metrics: 'metrics', purchase_orders: 'orders', pending_approvals: 'approvals', inventory_availability: 'stock', invoice_summary: 'invoices', rfq_followups: 'rfqs', receiving_issues: 'receiving', supplier_attention: 'suppliers', late_order_impact: 'impact' }
   return ids.map((id) => ({ label: aiSkillText(`followup.${key[id]}.label`, language), prompt: aiSkillText(`followup.${key[id]}.prompt`, language), intentHint: id, skillHint: id, requiresReview: id === 'prepare_action_draft' }))
 }
 

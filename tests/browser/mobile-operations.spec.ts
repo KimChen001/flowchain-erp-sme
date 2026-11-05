@@ -98,8 +98,9 @@ test("mobile task inbox governs settlement and PO approval across offline and tw
   await expect(page.getByTestId("mobile-network-status")).toContainText("等待同步");
   await context.setOffline(false);
   await expect(page.getByTestId("mobile-network-status")).toContainText("在线");
-  page.once("dialog", (dialog) => dialog.accept("Mobile rejection evidence"));
   await page.getByTestId("mobile-po-reject").click();
+  await page.getByTestId("confirm-dialog-field").fill("Mobile rejection evidence");
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByTestId("mobile-po-status")).toHaveText("rejected");
 
   const race = await api(request, mobile.token, "get", "/api/mobile/purchase-orders/PO-MOBILE-RACE");
@@ -159,8 +160,8 @@ test("mobile receiving posts partial GRNs with evidence, replay protection, conf
   await attachmentResponse;
   await page.getByTestId("mobile-receiving-submit").click();
   await expect(page.getByTestId("mobile-receiving-detail")).toContainText("ready_for_receiving");
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByTestId("mobile-receiving-post").click();
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByTestId("mobile-receiving-detail")).toContainText("posted");
   await expect(page.getByTestId("mobile-inventory-impact")).toContainText("GRN");
   await expect(page.getByTestId("mobile-inventory-impact")).toContainText("库存影响: 1");

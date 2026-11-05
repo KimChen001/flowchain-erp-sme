@@ -20,7 +20,7 @@ test("disabled returns capability remains readable and fail-closed", async ({
 
   await page.goto("/app/inventory/returns/requests/new");
   await expect(page.getByTestId("capability-route-blocked")).toContainText("能力暂不可用");
-  await expect(page.getByTestId("capability-route-blocked")).toContainText("权限已具备，但该业务能力当前未启用。");
+  await expect(page.getByTestId("capability-route-blocked")).toContainText("你有访问权限，但此功能在当前工作区未开启。");
   await expect(page.getByTestId("preview-return-request")).toHaveCount(0);
   await page.goto("/app/inventory/quarantine");
   await expect(page.getByTestId("capability-route-blocked")).toContainText("能力暂不可用");

@@ -168,7 +168,7 @@ test("SME navigation, direct access and browser history follow the route manifes
       ).toHaveCount(0);
       await expect(
         page.getByTestId("app-breadcrumb").getByRole("link", {
-          name: "采购管理",
+          name: "采购",
           exact: true,
         }),
       ).toHaveCount(0);

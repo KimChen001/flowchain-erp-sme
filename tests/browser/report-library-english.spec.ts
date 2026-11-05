@@ -50,12 +50,14 @@ test('English create, clone, share and delete preserve report identity', async (
   await library.getByText('Team reports', { exact: true }).click();
   await expect(library.getByText(name, { exact: true })).toBeVisible();
   await expect(library).not.toContainText(/[\u3400-\u9fff]/);
-  page.once('dialog', async prompt => { expect(prompt.message()).toBe(`Delete ${name}?`); await prompt.accept(); });
   await library.getByRole('button', { name: `Delete ${name}`, exact: true }).click();
+  await expect(page.getByTestId('confirm-dialog')).toContainText(`Delete ${name}?`);
+  await expect(page.getByTestId('confirm-dialog')).not.toContainText(/[\u3400-\u9fff]/);
+  await page.getByTestId('confirm-dialog-confirm').click();
   await expect(library.getByText(name, { exact: true })).toHaveCount(0);
   await library.getByText('My reports', { exact: true }).click();
-  page.once('dialog', prompt => prompt.accept());
   await library.getByRole('button', { name: `Delete ${name} (Copy)`, exact: true }).click();
+  await page.getByTestId('confirm-dialog-confirm').click();
   await expect(library.getByText(`${name} (Copy)`, { exact: true })).toHaveCount(0);
   expect(errors).toEqual([]);
 });

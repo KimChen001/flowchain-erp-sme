@@ -91,6 +91,14 @@ function onTimeText(row, fmt, language) {
   return row.deliveries ? aiSkillCountText('compare.too_few', row.deliveries, language, { count: fmt.number(row.deliveries) }) : aiSkillText('compare.no_deliveries', language)
 }
 
+// The period inside the value's own bracket, so a title has one: "on time
+// 80% (8 of 10 deliveries, Jul 1 – Sep 30)", never "(8 of 10) (Jul 1 – Sep 30)".
+function withPeriod(value, period, language) {
+  const zh = language === 'zh-CN'
+  if (zh ? value.endsWith('）') : value.endsWith(')')) return `${value.slice(0, -1)}${zh ? '，' : ', '}${period}${zh ? '）' : ')'}`
+  return zh ? `${value}（${period}）` : `${value} (${period})`
+}
+
 function detailText(row, result, fmt, language) {
   const parts = []
   if (rateOf(row.inFull) !== null) parts.push(aiSkillText('compare.in_full', language, { rate: percent(rateOf(row.inFull), fmt) }))
@@ -122,11 +130,11 @@ export function presentSupplierComparison(result, facts, { skill, language, quer
   if (result.mode === 'compare') {
     title = aiSkillText('compare.title_compare', language, { list: aiSkillList(result.suppliers.map((row) => `${row.name} ${rateOf(row.onTime) !== null ? percent(rateOf(row.onTime), fmt) : aiSkillText('compare.n_a', language)}`), language), period })
   } else if (result.mode === 'one') {
-    title = aiSkillText('compare.title_one', language, { supplier: first.name, value: onTimeText(first, fmt, language), period })
+    title = aiSkillText('compare.title_one', language, { supplier: first.name, value: withPeriod(onTimeText(first, fmt, language), period, language) })
   } else if (!first) {
     title = aiSkillText('compare.title_none', language, { period })
   } else {
-    title = aiSkillText(result.mode === 'worst' ? 'compare.title_worst' : 'compare.title_best', language, { supplier: first.name, value: onTimeText(first, fmt, language), period })
+    title = aiSkillText(result.mode === 'worst' ? 'compare.title_worst' : 'compare.title_best', language, { supplier: first.name, value: withPeriod(onTimeText(first, fmt, language), period, language) })
   }
   const summary = aiSkillSentences([
     result.mode === 'best' || result.mode === 'worst' ? (result.more ? aiSkillCountText('compare.more', result.more, language, { count: fmt.number(result.more) }) : '') : '',
@@ -139,7 +147,7 @@ export function presentSupplierComparison(result, facts, { skill, language, quer
   const figures = result.suppliers.filter((row) => rateOf(row.onTime) !== null).map((row) => ({ key: `supplier_on_time_rate:${row.id}`, code: 'supplier_on_time_rate', entityId: row.id, value: rateOf(row.onTime), unit: 'ratio' }))
   return presentAiSkillAnswer({
     ...empty, title, summary, evidence,
-    impacts: evidence.map((item) => ({ area: aiSkillText('area.purchasing', language), impact: item.status, severity: 'info', explanation: aiSkillText('compare.impact', language), affectedObjects: [item.entityId] })),
+    impacts: evidence.map((item) => ({ area: aiSkillText('area.purchasing', language), impact: item.status, severity: 'info', explanation: '', affectedObjects: [item.entityId] })),
     navigation: [...result.suppliers.slice(0, 3).map((row) => aiSkillNavigation({ label: row.name, entityType: 'supplier', entityId: row.id }, language)), { label: aiSkillText('compare.view_analytics', language), moduleId: 'reports:suppliers', returnTo: 'ai-assistant', source: 'ai' }],
     figures,
     followUpIds: ['supplier_attention'],

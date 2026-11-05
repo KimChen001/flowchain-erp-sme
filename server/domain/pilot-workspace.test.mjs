@@ -35,7 +35,7 @@ test('Pilot workspace APIs provision users, protect admin actions, and enforce w
     await prisma.userWarehouseScope.create({ data: { id: randomUUID(), tenantId: scenario.tenantId, userId: manager.userId, warehouseId: scenario.warehouseId, accessLevel: 'operate' } })
     try {
       const profile = await call(manager, 'GET', '/api/me/profile')
-      assert.equal(profile.status, 200); assert.equal(profile.payload.name, 'Kim'); assert.equal(profile.payload.roleLabel, '供应链经理')
+      assert.equal(profile.status, 200); assert.equal(profile.payload.name, 'Kim'); assert.equal(profile.payload.roleLabel, '运营经理')
       assert.equal((await call(manager, 'PATCH', '/api/workspace', { version: 0, name: 'Forged' })).status, 403)
       const workspace = await call(admin, 'PATCH', '/api/workspace', { version: 0, name: 'Pilot Workspace', legalName: 'Pilot Legal', countryCode: 'CN', baseCurrency: 'CNY', timezone: 'Asia/Shanghai' })
       assert.equal(workspace.status, 200); assert.equal(workspace.payload.version, 1)

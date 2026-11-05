@@ -20,9 +20,10 @@ test('a PO action refused for a stale version says the order changed and reloads
 
   await page.goto('/app/procurement/orders/browser-po')
   await expect(page.getByTestId('po-action-close')).toBeVisible()
-  page.once('dialog', (dialog) => void dialog.accept('Supplier stopped the line'))
   const reload = page.waitForRequest((req) => req.method() === 'GET' && req.url().endsWith('/api/purchase-orders-workbench'))
   await page.getByTestId('po-action-close').click()
+  await page.getByTestId('confirm-dialog-field').fill('Supplier stopped the line')
+  await page.getByTestId('confirm-dialog-confirm').click()
   await reload
   await expect(page.getByText('This purchase order was changed elsewhere, so nothing was done. It has been reloaded; check it and try again.')).toBeVisible()
   await expect(page.getByTestId('po-workflow-actions').getByRole('button')).toHaveText(['Close PO'])

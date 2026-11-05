@@ -14,7 +14,11 @@
 
     <body>
       
-      <div id="root"></div>
+      <!-- Shown only if the app has not started after a while (its code failed
+           to load); the app replaces it as soon as it renders. No script runs
+           here, so it works under the content security policy. -->
+      <style>@keyframes fc-boot-reveal { to { visibility: visible; } } .fc-boot-fallback { visibility: hidden; animation: fc-boot-reveal 0s 8s forwards; display: flex; height: 100%; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: #1d1d1f; background: #f5f5f7; text-align: center; } .fc-boot-fallback a { display: inline-block; margin-top: 12px; padding: 8px 16px; border-radius: 8px; background: #0071e3; color: #fff; text-decoration: none; font-weight: 600; }</style>
+      <div id="root"><div class="fc-boot-fallback" role="alert"><div><strong>FlowChain could not load.</strong><br />Check your connection, then reload the page.<br /><span lang="zh-CN">FlowChain 无法加载，请检查网络后重新加载页面。</span><br /><a href="">Reload · 重新加载</a></div></div></div>
       <script type="module" src="/src/main.tsx"></script>
       
     </body>

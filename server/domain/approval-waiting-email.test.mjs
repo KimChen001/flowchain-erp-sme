@@ -34,7 +34,7 @@ test("each document type has an English and a Chinese subject and body that name
       if (language === "en-US") {
         assert.match(email.text, /is waiting for approval in FlowChain\./);
         assert.match(email.text, /Nothing has been approved or rejected/);
-        assert.match(email.text, /turn them off in System Administration › My Profile/);
+        assert.match(email.text, /turn them off in System administration › My profile/);
         for (const body of [email.subject, email.text, email.html]) assert.doesNotMatch(body, cjk);
       } else {
         assert.match(email.text, /正在等待审批/);

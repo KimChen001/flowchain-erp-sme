@@ -13,8 +13,11 @@ export type AppRoute = { moduleId: string; query?: Record<string, string> };
 // A part of an answer as the stream builds it: text grows with each delta and
 // carries its flags and the records the server found it names; a UI part
 // arrives whole.
+// replaced: why the server replaced the text (unbacked_action_claim: a
+// sentence that read as an action was left out, or the whole part when the
+// text is empty), for the note under it.
 export type AnswerPart =
-  | { id: string; type: "text"; text: string; flags?: FlagSpan[]; refs?: PartRef[] }
+  | { id: string; type: "text"; text: string; flags?: FlagSpan[]; refs?: PartRef[]; replaced?: string }
   | { id: string; type: "ui"; component: string; schemaVersion?: number; props: unknown; refs?: PartRef[] };
 
 export type MoneyCell = { amount: number | null; currency: string };

@@ -1,4 +1,4 @@
-import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
+import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText, aiSkillUnitLabel } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillEvidence, aiSkillFormatter, aiSkillNavigation, aiSkillRecordEvidence, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { aiSkillPurchaseOrderNotSent, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { aiSkillDraftCard, aiSkillMinimumText } from './ai-skill-drafts.mjs'
@@ -75,7 +75,7 @@ function supplyingOrders(facts, plan) {
 
 export function runStartOrder(facts, { focus = null, route = null, canDraft = false } = {}) {
   const request = route?.order || {}
-  const base = { skillId: 'prepare_action_draft', mode: 'order', canDraft, advice: Boolean(request.advice), quantity: request.quantity ?? null }
+  const base = { skillId: 'prepare_action_draft', mode: 'order', canDraft, advice: Boolean(request.advice), quantity: request.quantity ?? null, named: Boolean(request.named) }
   if (!facts.inventory) return { ...base, outcome: 'no_stock', targets: [] }
   const stockItems = rankAiSkillItemsByDate(buildAiSkillSignals(facts)).filter((item) => STOCK.has(item.type))
   const rowOf = (item) => facts.inventory.rows.find((row) => row.itemId === item.entityId || row.sku === item.label)
@@ -130,7 +130,9 @@ function requestCard(target, result, facts, language, { autoOpen, anyway = false
     allowedNextStep: aiSkillText(anyway ? 'order.action.anyway' : amount ? 'order.action.open' : 'order.action.open_no_quantity', language, values),
     title, draftTitle: title, description: why,
     draftType: 'purchase_request_draft', targetModule: AI_SKILL_MODULES.purchase_request, targetEntityType: 'item', targetEntityId: row.itemId || row.sku,
-    payload: { itemIdOrSku: row.sku, ...(quantity ? { quantity } : {}), reason: why, language },
+    // The unit is shown beside the quantity on the card (its label in the
+    // answer language); the request form takes the item's own unit.
+    payload: { itemIdOrSku: row.sku, ...(quantity ? { quantity } : {}), ...(quantity && row.unit ? { unit: row.unit, unitLabel: aiSkillUnitLabel(row.unit, language, quantity) } : {}), reason: why, language },
     originEvidence: [{ entityType: 'item', entityId: row.itemId || row.sku }],
     autoOpen,
   }
@@ -232,13 +234,17 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
     const latest = covered ? target.supplying.find((po) => !aiSkillPurchaseOrderNotSent(po)) : null
     const unsent = covered && !latest ? target.supplying[0] || null : null
     const otherUnit = aiSkillOtherUnitLines(row, fmt, language)
+    // The question named an item the catalog has no match for ("I need 50
+    // temperature sensors" in a catalog without one): its quantity is not
+    // carried to the item offered instead.
+    const offered = result.named ? { ...result, quantity: null } : result
     const cards = [
-      requestCard(target, result, facts, language, { autoOpen: false, anyway: covered }),
+      requestCard(target, offered, facts, language, { autoOpen: false, anyway: covered }),
       ...(latest ? [followUpCard(target, latest, facts, language)] : []),
       blankCard(language),
     ]
     return answer(aiSkillText('order.title_choose', language), [
-      aiSkillText('order.choose_lead', language),
+      aiSkillText(result.named ? 'order.choose_lead_unmatched' : 'order.choose_lead', language),
       covered ? aiSkillText('order.choice_covered', language, { sku: row.sku }) : aiSkillText('order.choice_short', language, { sku: row.sku, gap: fmt.quantity(plan.gap, row.unit) }),
       ...(covered ? onOrderSentences(target, facts, language) : []),
       ...(otherUnit ? [aiSkillText('order.other_unit', language, { sku: row.sku, lines: otherUnit })] : []),

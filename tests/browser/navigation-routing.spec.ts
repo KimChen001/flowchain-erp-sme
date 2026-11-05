@@ -37,11 +37,11 @@ test("breadcrumb parents are links while current page is not a link", async ({ p
   await authenticate(page);
   await page.goto("/app/procurement/orders");
   const breadcrumb = page.getByTestId("app-breadcrumb");
-  await expect(breadcrumb.getByRole("link", { name: "首页" })).toBeVisible();
-  await expect(breadcrumb.getByRole("link", { name: "采购管理" })).toBeVisible();
+  await expect(breadcrumb.getByRole("link", { name: "今日" })).toBeVisible();
+  await expect(breadcrumb.getByRole("link", { name: "采购", exact: true })).toBeVisible();
   await expect(breadcrumb.locator("[aria-current='page']")).toHaveText("采购订单");
   await expect(breadcrumb.getByRole("link", { name: "采购订单" })).toHaveCount(0);
-  await breadcrumb.getByRole("link", { name: "采购管理" }).click();
+  await breadcrumb.getByRole("link", { name: "采购", exact: true }).click();
   await expect(page).toHaveURL(/\/app\/procurement\/workbench$/);
 });
 

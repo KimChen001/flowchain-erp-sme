@@ -6,6 +6,7 @@ import { ApiError, apiJson } from "../../../lib/api-client";
 import { useI18n } from "../../../i18n/I18n";
 import { usePermissionSet } from "../../../lib/usePermissionSet";
 import { listButtonClass } from "../../../components/ui/listLayout";
+import { useConfirm } from "../../../components/ui/ConfirmDialog";
 import { typography } from "../../../components/ui/typography";
 
 // A secondary header button: the list button height, with a border so it
@@ -41,9 +42,16 @@ const COPY: Record<string, [string, string]> = {
   issue: ["Mark as issued to supplier", "标记为已下达供应商"],
   cancel: ["Cancel PO", "取消采购订单"],
   close: ["Close PO", "关闭采购订单"],
-  closeReason: ["Why is this purchase order closed? The remaining quantity will not be received.", "请输入关闭原因（剩余数量将不再收货）"],
-  rejectReason: ["Why is this purchase order rejected?", "请输入驳回原因"],
-  cancelReason: ["Why is this purchase order cancelled?", "请输入取消原因"],
+  closeTitle: ["Close this purchase order?", "关闭该采购订单？"],
+  closeBody: ["The remaining quantity will not be received. Goods already received stay in stock.", "剩余数量将不再收货；已收货物仍保留在库存中。"],
+  closeReason: ["Why is it closed?", "关闭原因"],
+  rejectTitle: ["Reject this purchase order?", "驳回该采购订单？"],
+  rejectBody: ["The order will not be approved.", "该订单将不会被批准。"],
+  rejectReason: ["Why is it rejected?", "驳回原因"],
+  cancelTitle: ["Cancel this purchase order?", "取消该采购订单？"],
+  cancelBody: ["Nothing will be ordered or received on it.", "取消后不会再按此订单采购或收货。"],
+  cancelReason: ["Why is it cancelled?", "取消原因"],
+  goBack: ["Go back", "返回"],
   done: ["Purchase order updated", "采购订单已更新"],
   failed: ["The purchase order could not be updated", "采购订单更新失败"],
   issueNote: ["Print or save the PO document and send it yourself, then mark it issued.", "请打印或另存采购订单文件并自行发送，然后标记为已下达。"],
@@ -79,6 +87,7 @@ export function PurchaseOrderWorkflowActions({
   const tr = (key: string) => COPY[key][language === "en-US" ? 0 : 1];
   const permissions = usePermissionSet();
   const [busy, setBusy] = useState<WorkflowAction | "">("");
+  const confirmDialog = useConfirm();
 
   const actions = (ACTIONS_BY_STATUS[status] || []).filter((action) => permissions?.has(PERMISSION[action](status)));
   if (!Number.isInteger(version) || !actions.length) return null;
@@ -86,8 +95,16 @@ export function PurchaseOrderWorkflowActions({
   const run = async (action: WorkflowAction) => {
     let reason = "";
     if (action === "reject" || action === "cancel" || action === "close") {
-      reason = window.prompt(tr(action === "reject" ? "rejectReason" : action === "close" ? "closeReason" : "cancelReason"))?.trim() || "";
-      if (!reason) return;
+      const answer = await confirmDialog.prompt({
+        title: tr(`${action}Title`),
+        description: tr(`${action}Body`),
+        field: { label: tr(`${action}Reason`) },
+        confirmLabel: tr(action),
+        cancelLabel: tr("goBack"),
+        tone: "danger",
+      });
+      if (answer === null || !answer) return;
+      reason = answer;
     }
     setBusy(action);
     try {
@@ -125,6 +142,7 @@ export function PurchaseOrderWorkflowActions({
         </button>
       ))}
       {showNote && actions.includes("issue") && <span className="text-[11px] text-slate-500">{tr("issueNote")}</span>}
+      {confirmDialog.element}
     </div>
   );
 }

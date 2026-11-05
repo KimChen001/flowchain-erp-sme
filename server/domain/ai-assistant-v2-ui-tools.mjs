@@ -175,7 +175,12 @@ const QUANTITY_COLUMNS = new Set([
   'safetyStock', 'reorderPoint', 'incoming', 'demand', 'endAvailable', 'quantity', 'rejected', 'stillToReceive', 'withoutTheseLines', 'additionalShortfall',
   'position', 'shortfall', 'minimumOrderQuantity', 'requestQuantity', 'orderedQuantity', 'averageDailyDemand', 'suggestedQuantity.value',
 ])
-const STATUS_COLUMNS = new Set(['status', 'postingStatus', 'matchStatus', 'state', 'disputeStatus', 'severity', 'whenKind', 'suggestedQuantity.source'])
+// A signal or record type (po_overdue, purchase_order) and a priority (high)
+// are codes too: the panel words them, never showing the code (2026-11-05).
+const STATUS_COLUMNS = new Set(['status', 'postingStatus', 'matchStatus', 'state', 'disputeStatus', 'severity', 'whenKind', 'suggestedQuantity.source', 'type', 'priority'])
+const PRIORITY_TONES = Object.freeze({ urgent: 'danger', high: 'warning', medium: 'info', normal: 'neutral', low: 'neutral' })
+// Closed records are late no more: their days overdue are not shown.
+const CLOSED_STATES = new Set(['cancelled', 'canceled', 'closed', 'fully_received', 'received', 'completed', 'rejected'])
 const NUMERIC_KINDS = Object.freeze({ number: 'count', quantity: 'quantity', money: 'money', percent: 'percent', days: 'days' })
 
 const isMoneyColumn = (tool, key, output) => (MONEY_KEYS.has(key) || Boolean(MONEY_COLUMNS[tool]?.includes(key))) && !(tool === 'spend_analysis' && output.amounts === false)
@@ -217,6 +222,8 @@ function cellOf(kind, row, key, output) {
   if (typeof value === 'boolean') return { code: value ? 'yes' : 'no', tone: 'neutral' }
   if (Array.isArray(value)) return value.every((entry) => typeof entry === 'string' || isNumber(entry)) ? value.join(', ').slice(0, MAX_TEXT) : null
   if (isObject(value)) return refOf(value) || (typeof value.name === 'string' ? value.name.slice(0, MAX_TEXT) : null)
+  if (kind === 'status' && isCode(value) && key === 'type') return { code: value, tone: 'neutral' }
+  if (kind === 'status' && isCode(value) && key === 'priority') return { code: value, ...(PRIORITY_TONES[value] ? { tone: PRIORITY_TONES[value] } : {}) }
   if (kind === 'status' && isCode(value)) return { code: value }
   if (kind === 'date') return value.slice(0, 10)
   if (typeof value === 'string') {
@@ -358,12 +365,29 @@ const showTable = defineUiTool({
       const kind = columnKind(tool, key, shown.map((row) => valueAt(row, key)), output)
       const code = aiUiColumnCode(key)
       for (const [index, row] of shown.entries()) {
-        const cell = cellOf(kind, row, key, output)
+        let cell = cellOf(kind, row, key, output)
         if (cell === undefined) return fail('currency_missing', `${key} in ${input.source} has an amount without a currency; it cannot be shown.`)
+        // Days overdue only on a record that is late: none on time, none on a
+        // cancelled or received one (2026-11-05: "0 days" on every row).
+        if (key === 'overdueDays' && (!(numberOf(cell) > 0) || row.open === false || CLOSED_STATES.has(text(row.status)))) cell = null
         cells[index][code] = cell
       }
       const isRefColumn = kind === 'text' && cells.some((row) => refOf(row[code]))
       columns.push({ code, kind: isRefColumn ? 'ref' : kind })
+    }
+    // A quantity carries its unit in its own cell ("7,000 pcs"): the row's
+    // unit goes beside the cells as unit (moq_unit for a minimum order
+    // quantity), and a column of units alone is not shown.
+    if (columns.some((column) => column.kind === 'quantity')) {
+      for (const [index, row] of shown.entries()) {
+        const unit = [row.unit, row.item?.unit].find((entry) => typeof entry === 'string' && entry.trim() && entry.length <= 20)
+        if (unit) cells[index].unit = unit.trim()
+        if (typeof row.moqUnit === 'string' && row.moqUnit.trim() && row.moqUnit.length <= 20) cells[index].moq_unit = row.moqUnit.trim()
+      }
+      for (const code of ['unit', 'moq_unit']) {
+        const at = columns.findIndex((column) => column.code === code && column.kind === 'text')
+        if (at >= 0 && columns.length > 1) columns.splice(at, 1)
+      }
     }
     // A list cut by the data tool says how many it had in all.
     const total = Math.max(rows.length, table.path === 'rows' && Number.isInteger(output.total) ? output.total : 0)

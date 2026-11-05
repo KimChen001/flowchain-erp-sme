@@ -12,7 +12,7 @@ test('receiving workbench posts and reverses through real PostgreSQL APIs', asyn
   await page.goto('/app/procurement/receiving/browser-grn')
   await expect(page.getByTestId('receiving-workbench')).toBeVisible()
   await expect(page.getByText('Kim', { exact: true })).toBeVisible()
-  await expect(page.getByText('Supply Chain Manager', { exact: true })).toBeVisible()
+  await expect(page.getByText('Operations manager', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Workflow').first()).toBeVisible()
   await expect(page.getByText('Approved', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Posting', { exact: true }).first()).toBeVisible()
@@ -59,9 +59,9 @@ test('receiving workbench posts and reverses through real PostgreSQL APIs', asyn
   await expect(page.getByText(/Receipt reversal/)).toBeVisible()
 
   await page.getByText('Kim', { exact: true }).click()
-  await page.getByRole('button', { name: 'My Profile' }).click()
+  await page.getByRole('button', { name: 'My profile' }).click()
   await expect(page.getByTestId('workspace-settings-profile')).toBeVisible()
   await expect(page.locator('input[value="kim@example.com"]')).toBeVisible()
   // The profile names the roles assigned in Roles & permissions, not the legacy role.
-  await expect(page.getByRole('textbox', { name: 'Role', exact: true })).toHaveValue('Operations Manager')
+  await expect(page.getByRole('textbox', { name: 'Role', exact: true })).toHaveValue('Operations manager')
 })

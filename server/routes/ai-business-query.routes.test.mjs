@@ -41,7 +41,7 @@ test('runtime endpoint returns scoped multi-section V2 without raw plan or tool 
   assert.equal(status, 200)
   assert.equal(payload.version, 'v2')
   assert.equal(payload.businessQuery.scopeMode, 'all')
-  assert.deepEqual(payload.businessQuery.goalLabels, ['需要付款', '付款准备度', '发票差异', '延期 PO'])
+  assert.deepEqual(payload.businessQuery.goalLabels, ['需要付款', '付款准备度', '发票差异', '逾期采购订单'])
   const serialized = JSON.stringify(payload)
   assert.doesNotMatch(serialized, /executedTools|toolName|SELECT\s|Prisma|chain.?of.?thought|requestedActions/gi)
   assert.doesNotMatch(serialized, /getSupplierPaymentSummary|getSupplierInvoiceExceptions/)
@@ -205,7 +205,7 @@ test('unavailable sources and hidden fields are worded in the answer language, n
   const codes = ['rfqs_unavailable', 'bankReconciliation_unavailable', 'amounts_hidden', 'partner_snapshot_hidden']
   const expected = {
     'en-US': { message: 'Check supplier payments, overdue POs, and invoice mismatches together.', descriptions: ['RFQs are unavailable, so RFQ follow-ups are unknown.', 'Bank reconciliation is unavailable, so reconciliation exceptions are unknown.', 'Your role cannot view amounts, so they are not shown.', 'Your role cannot view supplier details, so supplier names are hidden.'] },
-    'zh-CN': { message: '帮我同时看看供应商付款、延期 PO 和发票差异。', descriptions: ['RFQ 数据暂不可用，RFQ 跟进事项未知。', '银行核对暂不可用，核对异常未知。', '当前角色无权查看金额，因此未显示金额。', '当前角色无权查看供应商详情，因此已隐藏供应商名称。'] },
+    'zh-CN': { message: '帮我同时看看供应商付款、延期 PO 和发票差异。', descriptions: ['询价单暂不可用，询价跟进事项未知。', '银行核对暂不可用，核对异常未知。', '当前角色无权查看金额，因此未显示金额。', '当前角色无权查看供应商详情，因此已隐藏供应商名称。'] },
   }
   for (const [answerLanguage, { message, descriptions }] of Object.entries(expected)) {
     const harness = baseContext('/api/ai-runtime/respond', { message, answerLanguage, activeModuleId: 'srm' })

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { roleLabel } from "../../shared/roles.mjs";
 import { Toaster } from "sonner";
 import { Activity, ArrowLeft, BarChart3, Boxes, Globe, Info, Link2, Loader2, Lock, Mail, ShieldCheck, ShoppingCart } from "lucide-react";
 import { A } from "../components/ui";
@@ -76,11 +77,6 @@ const COPY = {
   inviteFailed: { en: "The invitation could not be accepted. Try again.", zh: "邀请接受失败，请重试。" },
 } as const;
 
-const INVITED_ROLE: Record<string, [string, string]> = {
-  admin: ["Workspace Administrator", "工作区管理员"], manager: ["Operations Manager", "运营经理"],
-  "business-specialist": ["Operations Specialist", "运营专员"], buyer: ["Procurement Specialist", "采购专员"],
-  "finance-specialist": ["Finance Specialist", "财务专员"], viewer: ["Read-only Viewer", "只读查看者"],
-};
 
 type CopyKey = keyof typeof COPY;
 
@@ -399,7 +395,7 @@ export function AcceptInvitationScreen({ localStatus }: { localStatus: LocalDeve
       </div>
     </SignInLayout>
   );
-  const roleName = INVITED_ROLE[invitation.role]?.[language === "zh-CN" ? 1 : 0] || invitation.role;
+  const roleName = roleLabel(invitation.role, language);
   return (
     <SignInLayout>
       <form onSubmit={accept} className="space-y-4" data-testid="accept-invitation-form">

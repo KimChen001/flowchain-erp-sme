@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Copy, Send, UserCheck, UserX } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
-import { A, Card } from "../../components/ui";
+import { A, Card, useConfirm } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
+import { ROLE_NAMES } from "../../../shared/roles.mjs";
 
 // Workspace members: invite a teammate with a role, revoke a pending
 // invitation, and enable or disable a member. Role assignments and warehouse
@@ -13,15 +14,10 @@ import { useI18n } from "../../i18n/I18n";
 type Member = { id: string; name: string; email: string; role: string; status: string; version: number };
 type Invitation = { id: string; email: string; role: string; status: string; expiresAt: string; createdAt: string };
 
-// The invitation roles, each a default role template.
-export const INVITATION_ROLES: Array<[string, string, string]> = [
-  ["manager", "Operations Manager", "运营经理"],
-  ["business-specialist", "Operations Specialist", "运营专员"],
-  ["buyer", "Procurement Specialist", "采购专员"],
-  ["finance-specialist", "Finance Specialist", "财务专员"],
-  ["viewer", "Read-only Viewer", "只读查看者"],
-  ["admin", "Workspace Administrator", "工作区管理员"],
-];
+// The invitation roles, each a default role template, named from the shared
+// role vocabulary.
+export const INVITATION_ROLES: Array<[string, string, string]> = ["manager", "business-specialist", "buyer", "finance-specialist", "viewer", "admin"]
+  .map((code) => [code, ROLE_NAMES[code].en, ROLE_NAMES[code].zh]);
 const STATUS: Record<string, [string, string]> = {
   active: ["Active", "已启用"], disabled: ["Disabled", "已停用"], pending: ["Pending", "待接受"],
   accepted: ["Accepted", "已接受"], expired: ["Expired", "已过期"], revoked: ["Revoked", "已撤销"],
@@ -45,6 +41,7 @@ export default function WorkspaceMembers() {
   const [link, setLink] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
+  const confirmDialog = useConfirm();
 
   const load = useCallback(async () => {
     try {
@@ -86,13 +83,27 @@ export default function WorkspaceMembers() {
     } finally { setBusy(""); }
   };
   const revoke = async (invitation: Invitation) => {
+    const confirmed = await confirmDialog.confirm({
+      title: tr(`Revoke the invitation for ${invitation.email}?`, `撤销发给 ${invitation.email} 的邀请？`),
+      description: tr("The invitation link stops working. You can invite them again later.", "邀请链接将失效。之后可以重新邀请。"),
+      confirmLabel: tr("Revoke", "撤销"),
+      cancelLabel: tr("Cancel", "取消"),
+      tone: "danger",
+    });
+    if (!confirmed) return;
     setBusy(invitation.id); setNotice("");
     try { await apiJson(`/api/workspace/invitations/${encodeURIComponent(invitation.id)}/revoke`, { method: "POST", body: JSON.stringify({}) }); await load(); }
     catch (error) { setNotice(error instanceof Error ? error.message : tr("The invitation could not be revoked.", "邀请撤销失败。")); }
     finally { setBusy(""); }
   };
   const setStatus = async (member: Member, status: "active" | "disabled") => {
-    if (status === "disabled" && !window.confirm(tr(`Disable ${member.email}? They are signed out now and cannot sign in until enabled again.`, `停用 ${member.email}？该成员会立即被登出，重新启用前无法登录。`))) return;
+    if (status === "disabled" && !(await confirmDialog.confirm({
+      title: tr(`Disable ${member.email}?`, `停用 ${member.email}？`),
+      description: tr("They are signed out now and cannot sign in until enabled again.", "该成员会立即被登出，重新启用前无法登录。"),
+      confirmLabel: tr("Disable", "停用"),
+      cancelLabel: tr("Cancel", "取消"),
+      tone: "danger",
+    }))) return;
     setBusy(member.id); setNotice("");
     try { await apiJson(`/api/workspace/users/${encodeURIComponent(member.id)}`, { method: "PATCH", body: JSON.stringify({ status, version: member.version }) }); await load(); }
     catch (error) { setNotice(error instanceof Error ? error.message : tr("The member could not be updated.", "成员更新失败。")); await load(); }
@@ -101,6 +112,7 @@ export default function WorkspaceMembers() {
   const pending = invitations.filter((invitation) => invitation.status === "pending");
 
   return <Card className="p-5" data-testid="workspace-members">
+    {confirmDialog.element}
     <h2 className="text-lg font-semibold">{tr("Members", "成员")}</h2>
     <p className="mt-1 text-sm text-slate-500">{tr("Invite teammates and enable or disable members. Choose each member's roles and warehouse access below.", "邀请同事加入，启用或停用成员。成员的角色和仓库权限在下方设置。")}</p>
     {notice && <div role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{notice}</div>}

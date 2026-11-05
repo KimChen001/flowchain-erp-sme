@@ -232,7 +232,8 @@ const listRfqs = defineAiTool({
   run(args, { facts }) {
     const ready = new Set(array(facts.rfqs.readyToAward).map((row) => row.id))
     const rows = [...array(facts.rfqs.open)].sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'))
-    return { asOf: facts.asOf, ...aiToolList(rows.map((row) => ({ rfq: row.number || row.id, title: row.title, invited: row.invited ?? null, quotes: row.responses, due: row.due, readyToAward: ready.has(row.id), ref: aiToolRef('rfq', row.id, row.title) })), args.limit) }
+    // The RFQ is named by its number, as the app shows it; its title is beside it.
+    return { asOf: facts.asOf, ...aiToolList(rows.map((row) => ({ rfq: row.number || row.id, title: row.title, invited: row.invited ?? null, quotes: row.responses, due: row.due, readyToAward: ready.has(row.id), ref: aiToolRef('rfq', row.id, row.number || row.title || row.id) })), args.limit) }
   },
 })
 

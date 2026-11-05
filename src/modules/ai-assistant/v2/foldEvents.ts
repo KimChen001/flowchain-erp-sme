@@ -140,6 +140,6 @@ export function rulesAnswerBody(message: AssistantV2Message) {
 // The parts as AnswerParts draws them.
 export function answerPartsOf(message: AssistantV2Message): AnswerPart[] {
   return chipsLast(message.parts).map((part) => part.kind === "text"
-    ? { id: part.id, type: "text", text: part.text, flags: part.flags, ...(part.refs?.length ? { refs: part.refs } : {}) }
+    ? { id: part.id, type: "text", text: part.text, flags: part.flags, ...(part.refs?.length ? { refs: part.refs } : {}), ...(part.replaced ? { replaced: part.replaced } : {}) }
     : { id: part.id, type: "ui", component: part.component, props: part.props, refs: part.refs });
 }

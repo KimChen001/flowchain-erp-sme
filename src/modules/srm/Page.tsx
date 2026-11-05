@@ -9,7 +9,7 @@ import { useEffect, useState, useRef } from "react";
 import { ArrowLeft, Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
-import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
+import { A, Card, Chip, Field, inputStyle, useConfirm } from "../../components/ui";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
@@ -166,6 +166,9 @@ export default function SupplierMasterPage({
   const { language, formatNumber } = useI18n();
   const { count, spendCell, onTimeCell } = useSupplierMetricCells();
   const copy = (label: string) => supplierCopy(workspaceCopy(label, language), language);
+  const en = language === "en-US";
+  // Status changes save at once, so each one is confirmed first.
+  const confirmDialog = useConfirm();
   const listSeparator = language === "en-US" ? ", " : "、";
   // Supplier edits need master_data.supplier.manage; the supplied-item links
   // are item edits and need master_data.item.manage.
@@ -378,12 +381,45 @@ export default function SupplierMasterPage({
     } finally { savingRef.current = false; setSaving(false); }
   };
   const toggle = async (supplier: Supplier) => {
-    await request(`/api/master-data/suppliers/${supplier.id}`, "PATCH", {
-      status: supplier.status === "active" ? "inactive" : "active",
-      expectedVersion: supplier.version,
+    const deactivate = supplier.status === "active";
+    const name = supplier.supplierName || supplier.supplierCode;
+    const confirmed = await confirmDialog.confirm({
+      title: deactivate
+        ? (en ? `Set ${name} inactive?` : `停用 ${name}？`)
+        : (en ? `Set ${name} active?` : `启用 ${name}？`),
+      description: deactivate
+        ? (en ? "It can't be chosen for new purchase requests or orders. Records that already use it don't change. You can set it active again later." : "停用后不能在新的采购申请或订单中选择；已使用它的记录不变。之后可以重新启用。")
+        : (en ? "It can be chosen for new purchase requests and orders again." : "启用后可以在新的采购申请和订单中再次选择。"),
+      confirmLabel: deactivate ? copy("Set inactive") : copy("Set active"),
+      tone: deactivate ? "danger" : "primary",
     });
-    await load();
-    if (selected?.id === supplier.id) await openDetail(supplier.id);
+    if (!confirmed) return;
+    try {
+      await request(`/api/master-data/suppliers/${supplier.id}`, "PATCH", {
+        status: deactivate ? "inactive" : "active",
+        expectedVersion: supplier.version,
+      });
+      await load();
+      if (selected?.id === supplier.id) await openDetail(supplier.id);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? copy(e.message) : copy("Could not save supplier. Please try again."));
+    }
+  };
+  // A supplied item set inactive is no longer offered for this supplier.
+  const toggleRelationship = async (relationship: Relationship) => {
+    const label = relationship.item?.sku || relationship.supplierSku || relationship.item?.itemName || "";
+    const deactivate = relationship.active;
+    const confirmed = await confirmDialog.confirm({
+      title: deactivate
+        ? (en ? `Set the supplied item ${label} inactive?` : `停用供货物料 ${label}？`)
+        : (en ? `Set the supplied item ${label} active?` : `启用供货物料 ${label}？`),
+      description: deactivate
+        ? (en ? "This supplier is no longer offered for the item on new purchase requests. You can set it active again later." : "新的采购申请中将不再为该物料提供此供应商。之后可以重新启用。")
+        : (en ? "This supplier is offered for the item on new purchase requests again." : "新的采购申请中将再次为该物料提供此供应商。"),
+      confirmLabel: deactivate ? copy("Set inactive") : copy("Set active"),
+      tone: deactivate ? "danger" : "primary",
+    });
+    if (confirmed) await updateRelationship(relationship, { active: !relationship.active });
   };
   const addRelationship = async () => {
     if (!selected || !relationForm.itemId) return;
@@ -457,7 +493,7 @@ export default function SupplierMasterPage({
                 {copy("编辑")}</button>
               <button
                 type="button"
-                onClick={() => toggle(selected)}
+                onClick={() => void toggle(selected)}
                 className={listButtonClass.secondary}
               >
                 {copy(selected.status === "active" ? "Set inactive" : "Set active")}
@@ -653,9 +689,7 @@ export default function SupplierMasterPage({
                         <button
                           type="button"
                           className={rowActionClass.neutral}
-                          onClick={() =>
-                            updateRelationship(r, { active: !r.active })
-                          }
+                          onClick={() => void toggleRelationship(r)}
                         >
                           {copy(r.active ? "Set inactive" : "Set active")}
                         </button>
@@ -674,6 +708,7 @@ export default function SupplierMasterPage({
           empty={{ orders: copy("暂无采购交易记录"), risks: copy("暂无风险或异常") }}
         />
         </>}
+        {confirmDialog.element}
       </div>
     );
   // Laid out like the other list pages (purchase orders, items): a search
@@ -853,7 +888,7 @@ export default function SupplierMasterPage({
                     {writes.suppliers && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                       <div className="flex items-center gap-1.5">
                         <button type="button" onClick={() => startEdit(row)} className={rowActionClass.primary}>{copy("编辑")}</button>
-                        <button type="button" onClick={() => toggle(row)} className={rowActionClass.neutral}>
+                        <button type="button" onClick={() => void toggle(row)} className={rowActionClass.neutral}>
                           {copy(row.status === "active" ? "Set inactive" : "Set active")}
                         </button>
                       </div>
@@ -865,6 +900,7 @@ export default function SupplierMasterPage({
           </div>
         )}
       </Card>
+      {confirmDialog.element}
     </div>
   );
 }

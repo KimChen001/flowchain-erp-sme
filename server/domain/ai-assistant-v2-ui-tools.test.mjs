@@ -165,11 +165,32 @@ test('show_table fills every cell from the source rows: refs, amounts with their
     assert.equal(row.due_date, source.dueDate)
     assert.deepEqual(row.amount, { amount: source.amount, currency: source.currency })
     assert.equal(row.remaining_quantity, source.remaining)
-    assert.equal(row.days_overdue, source.overdueDays)
+    // Days overdue only on an order that is late and open (2026-11-05).
+    assert.equal(row.days_overdue, source.overdueDays > 0 && source.open !== false ? source.overdueDays : null)
     assert.deepEqual(row.open, { code: source.open ? 'yes' : 'no', tone: 'neutral' })
+    // The quantity's unit goes beside its cell.
+    assert.equal(row.unit, source.unit)
   }
+  assert.ok(props.rows.some((row) => row.days_overdue === null) && props.rows.some((row) => row.days_overdue > 0))
   // PO-009 keeps its own currency in a table.
   assert.ok(props.rows.some((row) => row.amount.currency === 'EUR'))
+  // A column of units alone is not shown next to a quantity; it stays without one.
+  const units = assertPart(build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'remaining', 'unit'] }), 'table')
+  assert.deepEqual(units.columns.map((column) => column.code), ['order', 'remaining_quantity'])
+  assert.ok(units.rows.every((row, index) => row.unit === output.rows[index].unit))
+  const plain = assertPart(build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'unit'] }), 'table')
+  assert.deepEqual(plain.columns.map((column) => column.code), ['order', 'unit'])
+})
+
+test('show_table words types and priorities as codes the panel labels, never as text', async () => {
+  const { call, build } = await workspace()
+  await call('toolu_attention', 'attention_list', { kind: 'problems', limit: 5 })
+  const props = assertPart(build('show_table', { source: 'toolu_attention', columns: ['label', 'type', 'severity'] }), 'table')
+  assert.deepEqual(props.columns.map((column) => [column.code, column.kind]), [['label', 'ref'], ['type', 'status'], ['severity', 'status']])
+  assert.ok(props.rows.every((row) => typeof row.type === 'object' && /^[a-z_]+$/.test(row.type.code) && row.type.tone === 'neutral'), JSON.stringify(props.rows))
+  await call('toolu_requests', 'list_purchase_requests', { status: 'all' })
+  const requests = assertPart(build('show_table', { source: 'toolu_requests', columns: ['request', 'priority'] }), 'table')
+  assert.ok(requests.rows.some((row) => row.priority?.code === 'high' && row.priority.tone === 'warning'), JSON.stringify(requests.rows))
 })
 
 test('show_table sorts and limits as asked and counts what it left out', async () => {

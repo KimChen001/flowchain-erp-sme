@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { rememberDocumentNumbers, resolveDocumentNumbers } from "../../lib/documentNumbers";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { ApiError, apiJson } from "../../lib/api-client";
-import { A, Card, Field, inputStyle } from "../../components/ui";
+import { A, Card, Field, inputStyle, useConfirm } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ExportButton, ListCard, ListSearchCard, ListStateRow, PrimaryButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
@@ -178,6 +178,14 @@ const COPY = {
   edit: ["Edit", "编辑"],
   submitForApproval: ["Submit for approval", "提交审批"],
   backToRequest: ["Back to the purchase request", "返回采购申请"],
+  rejectTitle: ["Reject this purchase request?", "拒绝该采购申请？"],
+  rejectBody: ["It will not be approved or turned into a purchase order.", "该申请将不会被批准，也不会生成采购订单。"],
+  rejectReason: ["Why is it rejected?", "拒绝原因"],
+  reject: ["Reject", "拒绝"],
+  goBack: ["Go back", "返回"],
+  deleteLineTitle: ["Delete purchase line {line}?", "删除采购行 {line}？"],
+  deleteLineBody: ["The line is removed from this form. Nothing is saved until you save the request.", "该行将从表单中移除；保存申请前不会保存任何更改。"],
+  deleteLine: ["Delete line", "删除采购行"],
 } as const;
 const request = <T,>(url: string, method = "GET", body?: unknown) =>
   apiJson<T>(url, {
@@ -232,6 +240,7 @@ export default function CanonicalProcurementPanel({
     // non-catalog handoff matching its unit and supplier, wait on it.
     [loaded, setLoaded] = useState(false);
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
+  const confirmDialog = useConfirm();
   // Editing and submitting a draft need the permission the server checks for
   // them (PURCHASE_REQUEST_PERMISSIONS: update and submit follow PO revise).
   const permissions = usePermissionSet();
@@ -674,7 +683,16 @@ export default function CanonicalProcurementPanel({
   const act = async (pr: PR, action: string) => {
     try {
       const reason =
-        action === "reject" ? window.prompt(copy("请输入拒绝原因")) || "" : "";
+        action === "reject"
+          ? await confirmDialog.prompt({
+              title: tr("rejectTitle"),
+              description: tr("rejectBody"),
+              field: { label: tr("rejectReason") },
+              confirmLabel: tr("reject"),
+              cancelLabel: tr("goBack"),
+              tone: "danger",
+            })
+          : "";
       if (action === "reject" && !reason) return;
       const result: any = await request(
         `/api/procurement/requests/${pr.id}/${action}`,
@@ -1004,6 +1022,7 @@ export default function CanonicalProcurementPanel({
             </table>
           </div>
         </ListCard>
+        {confirmDialog.element}
       </div>
     );
   }
@@ -1124,12 +1143,15 @@ export default function CanonicalProcurementPanel({
                 type="button"
                 aria-label={`${copy("删除采购行")} ${index + 1}`}
                 title={copy("删除采购行")}
-                onClick={() => {
-                  if (
-                    lines.length > 1 &&
-                    window.confirm(copy("确认删除该采购行？"))
-                  )
-                    setLines(lines.filter((_, i) => i !== index));
+                onClick={async () => {
+                  if (lines.length < 2) return;
+                  const confirmed = await confirmDialog.confirm({
+                    title: tr("deleteLineTitle").replace("{line}", String(index + 1)),
+                    description: tr("deleteLineBody"),
+                    confirmLabel: tr("deleteLine"),
+                    tone: "danger",
+                  });
+                  if (confirmed) setLines((current) => current.filter((candidate) => candidate.lineId !== line.lineId));
                 }}
                 className="rounded-md p-1 text-red-600 hover:bg-red-50 disabled:opacity-40"
                 disabled={lines.length < 2}
@@ -1403,6 +1425,7 @@ export default function CanonicalProcurementPanel({
           </strong>
         </div>
       </ListCard>
+      {confirmDialog.element}
     </div>
   );
 }

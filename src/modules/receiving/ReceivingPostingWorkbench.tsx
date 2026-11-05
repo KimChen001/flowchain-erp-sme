@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { AlertTriangle, ArrowRight, Link2, Loader2, Printer, ShieldCheck } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
-import { A } from "../../components/ui";
+import { A, useConfirm } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, statusToneOf } from "../../components/ui/listLayout";
 import { tableMinSmClass, tableScrollClass, tdClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { createSecureClientMutationId } from "../../lib/client-id";
@@ -43,7 +43,10 @@ const DRAFT_COPY: Record<string, Pair> = {
   submitFailed: ["The receipt could not be submitted.", "收货单提交失败。"],
   draftNote: ["This receipt is a draft. Submit it to post it to inventory.", "该收货单为草稿，提交后方可过账入库。"],
   cancelReceipt: ["Cancel receipt", "取消收货单"],
-  cancelReason: ["Why is this receipt cancelled? Nothing will be posted to inventory.", "请输入取消原因（不会过账入库）"],
+  cancelTitle: ["Cancel this receipt?", "取消该收货单？"],
+  cancelBody: ["Nothing from it will be posted to inventory.", "其中的内容不会过账入库。"],
+  cancelReason: ["Why is it cancelled?", "取消原因"],
+  keepReceipt: ["Keep receipt", "保留收货单"],
   cancelFailed: ["The receipt could not be cancelled.", "收货单取消失败。"],
 };
 
@@ -127,6 +130,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
   const sayPair = (pair: Pair) => say(pair[0], pair[1]);
   const draftCopy = (key: string) => sayPair(DRAFT_COPY[key]);
+  const confirmDialog = useConfirm();
   const warehouseName = useWarehouseNames();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [links, setLinks] = useState<Link[]>([]);
@@ -178,7 +182,14 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
 
   async function cancelReceipt() {
     if (!detail) return;
-    const reason = window.prompt(draftCopy("cancelReason"))?.trim() || "";
+    const reason = await confirmDialog.prompt({
+      title: draftCopy("cancelTitle"),
+      description: draftCopy("cancelBody"),
+      field: { label: draftCopy("cancelReason") },
+      confirmLabel: draftCopy("cancelReceipt"),
+      cancelLabel: draftCopy("keepReceipt"),
+      tone: "danger",
+    });
     if (!reason) return;
     setSaving(true); setError("");
     try {
@@ -376,6 +387,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       {preview.operation === 'reverse' && <label className="mt-4 block text-sm font-medium">{say("Reversal reason *", "冲销原因 *")}<textarea data-testid="reversal-reason" value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 w-full rounded-lg border p-2" rows={3}/></label>}
       <div className="mt-5 flex justify-end gap-2"><button className={BUTTON.secondary} onClick={() => setPreview(null)}>{say("Cancel", "取消")}</button><button data-testid="confirm-receiving-action" disabled={!preview.allowed || saving || (preview.operation === 'reverse' && !reason.trim())} onClick={() => void confirm()} className={`inline-flex h-9 items-center rounded-lg px-4 text-sm font-semibold text-white disabled:opacity-40 ${preview.operation === 'reverse' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>{saving ? say('Saving…', '正在保存…') : preview.operation === 'post' ? say('Confirm Post', '确认过账') : say('Confirm Reversal', '确认冲销')}</button></div>
     </div></div>}
+    {confirmDialog.element}
     {printing && <PrintLayoutEditor open documentType="receive_sheet" documentNo={grn.documentNumber || grn.id} data={adaptReceivingDetailSheet(detail, { quantity: (value) => formatDecimal(value, locale), rejectedLabel: (qty) => t("printLayout.rejectedQty", { qty }), day: (instant) => formatInstantDay(instant, locale, timezone) })} onClose={() => setPrinting(false)} />}
   </div>;
 }

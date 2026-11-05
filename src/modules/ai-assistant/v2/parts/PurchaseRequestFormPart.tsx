@@ -563,7 +563,9 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
     );
   }
 
-  const createLabel = busy ? copy.t("ai.v2.form.working") : ticked.length === 1 ? copy.t("ai.v2.form.createOne") : copy.t("ai.v2.form.create", { count: ticked.length });
+  // With nothing ticked the button says what to do first (2026-11-05: it read
+  // "Create draft request (0 lines)").
+  const createLabel = busy ? copy.t("ai.v2.form.working") : !ticked.length ? copy.t("ai.v2.form.createNone") : ticked.length === 1 ? copy.t("ai.v2.form.createOne") : copy.t("ai.v2.form.create", { count: ticked.length });
   return (
     <section data-testid="ai-v2-pr-form" data-form-id={props.formId} lang={copy.language} className="space-y-3 rounded-xl p-3 text-[13px]" style={cardStyle}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -630,7 +632,7 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
               {line.checked ? (
                 <div data-testid="ai-v2-pr-line-fields" className="grid gap-2 pl-6">
                   <label data-testid="ai-v2-pr-field" data-field="quantity" className="space-y-0.5">
-                    <span className="block text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.quantity")}{unit ? ` (${unit})` : ""}</span>
+                    <span className="block text-[12px]" style={{ color: A.sub }}>{unit ? copy.t("ai.v2.form.quantityUnit", { unit }) : copy.t("ai.v2.form.quantity")}</span>
                     <span className="flex flex-wrap items-center gap-1.5">
                       <input type="number" min="0" step="any" inputMode="decimal" value={line.quantity} onChange={(event) => update(line.key, { quantity: event.target.value })} className={`${inputClass} max-w-[8rem]`} style={inputStyle} />
                       {quantitySource ? <SourceChip>{quantitySource}</SourceChip> : null}

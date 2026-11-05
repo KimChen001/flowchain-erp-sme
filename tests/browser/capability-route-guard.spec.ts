@@ -20,14 +20,14 @@ test("finance direct URL is blocked while its database capability is disabled", 
   await page.goto("/app/finance/payables");
   const blocked = page.getByTestId("capability-route-blocked");
   await expect(blocked).toContainText("能力暂不可用");
-  await expect(blocked).toContainText("权限已具备，但该业务能力当前未启用。");
+  await expect(blocked).toContainText("你有访问权限，但此功能在当前工作区未开启。");
 });
 
 // Forecast / MRP is unavailable: the old local experiment switch must not open it.
 test("forecast direct URL stays unavailable even with the local experiment switched on", async ({ page }) => {
   await authenticate(page, ["forecast"]);
   await page.goto("/app/forecast/cockpit");
-  await expect(page.getByTestId("capability-route-blocked")).toContainText("该冻结业务能力未作为正式产品功能启用。");
+  await expect(page.getByTestId("capability-route-blocked")).toContainText("FlowChain 的这部分功能暂不提供。");
   await expect(page.locator("[data-planning-view]")).toHaveCount(0);
 });
 
@@ -43,7 +43,7 @@ test("capability API failure closes capability-gated routes while stable routes 
   await authenticate(page);
   await page.route("**/api/capabilities", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "unavailable" }) }));
   await page.goto("/app/finance/payables");
-  await expect(page.getByTestId("capability-registry-unavailable")).toContainText("能力注册表暂不可用");
+  await expect(page.getByTestId("capability-registry-unavailable")).toContainText("无法确认功能状态");
   await page.goto("/app/procurement/requests");
   await expect(page.getByTestId("capability-registry-unavailable")).toHaveCount(0);
   await expect(page.getByTestId("module-title")).toHaveText("采购");

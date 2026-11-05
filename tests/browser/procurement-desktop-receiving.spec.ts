@@ -78,15 +78,17 @@ test('a manager receives an issued purchase order on the desktop and posts the r
   // The supplier drops the last 3. A receipt started by mistake is cancelled,
   // then the PO is closed and offers no more receiving.
   const stray = await (await request.post('/api/procurement/receiving', { headers: { Authorization: `Bearer ${session.token}` }, data: { poId: 'browser-receive-po', warehouseId: 'browser-warehouse', idempotencyKey: `stray-${Date.now()}`, lines: [{ purchaseOrderLineId: po.lines[0].id, acceptedQuantity: '1', location: 'B-02' }] } })).json()
-  page.once('dialog', (dialog) => void dialog.accept('Started by mistake'))
   await page.goto(`/app/procurement/receiving/${stray.entityId}`)
   await page.getByTestId('receiving-cancel').click()
+  await page.getByTestId('confirm-dialog-field').fill('Started by mistake')
+  await page.getByTestId('confirm-dialog-confirm').click()
   await expect(page.getByText('Cancelled', { exact: true }).first()).toBeVisible()
   await expect(page.getByTestId('receiving-cancel')).toHaveCount(0)
 
   await page.goto('/app/procurement/orders/browser-receive-po')
-  page.once('dialog', (dialog) => void dialog.accept('Supplier cancelled the remaining 3'))
   await page.getByTestId('po-action-close').click()
+  await page.getByTestId('confirm-dialog-field').fill('Supplier cancelled the remaining 3')
+  await page.getByTestId('confirm-dialog-confirm').click()
   await expect(page.getByText('Closed', { exact: true }).first()).toBeVisible()
   await expect(page.getByTestId('po-action-receive')).toHaveCount(0)
   const closed = await api('/api/procurement/orders/browser-receive-po')

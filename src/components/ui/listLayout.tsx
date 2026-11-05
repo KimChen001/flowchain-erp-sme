@@ -1,5 +1,5 @@
-import type React from "react";
-import { FileSpreadsheet, Plus, RefreshCw } from "lucide-react";
+import React, { useState } from "react";
+import { FileSpreadsheet, Plus, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { A, Card } from "./index";
 import { typography } from "./typography";
 import { useI18n } from "../../i18n/I18n";
@@ -15,7 +15,12 @@ const COPY = {
   loading: ["Loading…", "加载中…"],
   retry: ["Retry", "重试"],
   shown: ["{total} total, {shown} shown", "共 {total} 条，当前显示 {shown} 条"],
+  filters: ["Filters ({count})", "筛选（{count}）"],
+  hideFilters: ["Hide filters", "收起筛选"],
 } as const;
+
+// The metric cards above a list: two per row on phones, four from 1024 px.
+export const metricGridClass = "grid grid-cols-2 gap-3 lg:grid-cols-4";
 
 export function useListCopy() {
   const { language } = useI18n();
@@ -55,14 +60,19 @@ export function PrimaryButton({ onClick, children, testId }: { onClick: () => vo
   return <button type="button" onClick={onClick} className={listButtonClass.primary} data-testid={testId}><Plus size={13} />{children}</button>;
 }
 
+// Below 768 px only the first field (the search) shows; the other filters
+// open from a Filters button.
 export function ListSearchCard({ title, subtitle, actions, children }: {
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const say = useListCopy();
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [first, ...rest] = React.Children.toArray(children);
   return (
-    <Card className="p-5">
+    <Card className="p-4 sm:p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="fc-section-title" style={{ color: A.label }}>{title}</h2>
@@ -70,7 +80,22 @@ export function ListSearchCard({ title, subtitle, actions, children }: {
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </div>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">{children}</div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4" data-testid="list-search-fields">
+        {first}
+        {rest.length > 0 && <div className={filtersOpen ? "contents" : "hidden md:contents"} data-testid="list-search-more-filters">{rest}</div>}
+      </div>
+      {rest.length > 0 && (
+        <button
+          type="button"
+          aria-expanded={filtersOpen}
+          onClick={() => setFiltersOpen((open) => !open)}
+          className={`mt-3 md:hidden ${listButtonClass.secondary}`}
+          data-testid="list-search-filters-toggle"
+        >
+          <SlidersHorizontal size={13} />
+          {filtersOpen ? say("hideFilters") : say("filters", { count: rest.length })}
+        </button>
+      )}
     </Card>
   );
 }
@@ -86,7 +111,7 @@ export function ListCard({ title, total, shown, right, children, testId }: {
   const say = useListCopy();
   return (
     <Card data-testid={testId}>
-      <div className="flex flex-wrap items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3.5 sm:px-5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
         <div>
           <div className="text-sm font-semibold" style={{ color: A.label }}>{title}</div>
           {total !== undefined && <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{say("shown", { total, shown: shown ?? total })}</div>}

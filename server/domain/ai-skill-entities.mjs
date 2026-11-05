@@ -81,7 +81,11 @@ function mentions(said, name) {
       if (needle.length >= 2 && (!after || !CJK.test(after) || CJK_NAME_FOLLOWER.test(after))) return true
       continue
     }
-    if ((!before || !LATIN_WORD_CHAR.test(before)) && (!after || !LATIN_WORD_CHAR.test(after))) return true
+    if (before && LATIN_WORD_CHAR.test(before)) continue
+    if (!after || !LATIN_WORD_CHAR.test(after)) return true
+    // The plural of an item name: "temperature sensors" for Temperature Sensor.
+    const plural = said.slice(index + needle.length).match(/^(?:es|s)(?![a-z0-9])/i)
+    if (plural && /[a-z]$/i.test(needle)) return true
   }
   return false
 }

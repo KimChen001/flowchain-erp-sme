@@ -57,8 +57,8 @@ test.skip("internal settlement closes the cashbook, posting, reversal, redaction
   await expect(row).toContainText("60.0000");
   await row.getByRole("link", { name: "SET-BROWSER-001" }).click();
   await expect(page.getByTestId("settlement-detail")).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByTestId("post-settlement").click();
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByText("posted · posted", { exact: true })).toBeVisible();
   await expect(page.getByTestId("settlement-reconciliation")).toContainText("matched");
   const settlementId = decodeURIComponent(new URL(page.url()).pathname.split("/").pop()!);
@@ -77,9 +77,10 @@ test.skip("internal settlement closes the cashbook, posting, reversal, redaction
   expect((await denied.json()).code).toBe("AUTHORIZATION_PERMISSION_DENIED");
   await viewerContext.close();
 
-  page.once("dialog", (dialog) => dialog.accept("Browser correction"));
   await page.getByText("纠错操作", { exact: true }).click();
   await page.getByTestId("reverse-settlement").click();
+  await page.getByTestId("confirm-dialog-field").fill("Browser correction");
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByText("reversed · reversed", { exact: true })).toBeVisible();
   await expect(page.getByTestId("settlement-reconciliation")).toContainText("matched");
   await page.goto("/app/finance/reconciliation");

@@ -67,14 +67,14 @@ test('suppliers are ranked by the scorecard\'s on-time rate; too few deliveries 
   assert.deepEqual(best.suppliers.map((row) => row.name), ['Bravo Parts', 'Example Supplier'])
   assert.deepEqual(best.few, [{ name: 'Charlie Tools', deliveries: 1 }])
   const english = answer(best, facts)
-  assert.equal(english.conclusion.title, 'Most reliable: Bravo Parts, on time 100% (6 of 6 deliveries) (Jul 17, 2026 – Oct 14, 2026)')
+  assert.equal(english.conclusion.title, 'Most reliable: Bravo Parts, on time 100% (6 of 6 deliveries, Jul 17, 2026 – Oct 14, 2026)')
   assert.match(english.conclusion.summary, /1 supplier has too few deliveries to rate: Charlie Tools\./)
   assert.match(english.keyEvidence[1].summary, /in full 83\.3%, OTIF 66\.7%, 2\.5% of the received quantity rejected and 3 late deliveries, 5 days late on average/)
   assert.deepEqual(english.figures.map((row) => [row.key, row.value]), [['supplier_on_time_rate:SUP-B', 1], ['supplier_on_time_rate:EXAMPLE-SUP', 0.75]])
   assert.deepEqual(english.reviewCards, [])
   const worst = runSupplierComparison(facts, { route: { scorecard: card, signals: { compare: { mode: 'worst' } } } })
   assert.deepEqual(worst.suppliers.map((row) => row.name), ['Example Supplier', 'Bravo Parts'])
-  assert.match(answer(worst, facts, 'zh-CN').conclusion.title, /^最不可靠的是 Example Supplier：准时 75%（12 次交付中 9 次）/)
+  assert.match(answer(worst, facts, 'zh-CN').conclusion.title, /^最不可靠的是 Example Supplier：准时 75%（12 次交付中 9 次，[^（）]+）$/)
 })
 
 test('named suppliers are compared side by side, with no rate below the minimum sample', async () => {
@@ -85,10 +85,10 @@ test('named suppliers are compared side by side, with no rate below the minimum 
   const english = answer(result, facts)
   assert.equal(english.conclusion.title, 'On time: Example Supplier 75% and Charlie Tools not rated (Jul 17, 2026 – Oct 14, 2026)')
   assert.match(english.conclusion.summary, /A rate needs at least 5 deliveries in the period\./)
-  assert.equal(english.keyEvidence[1].value, '1 delivery, too few to rate (5 needed)')
+  assert.equal(english.keyEvidence[1].value, '1 delivery, fewer than the 5 a rate needs')
   // One named supplier: its own line.
   const one = runSupplierComparison(facts, { route: { scorecard: card, entities: { suppliers: [{ id: 'SUP-B', name: 'Bravo Parts' }] } } })
-  assert.equal(answer(one, facts).conclusion.title, 'Bravo Parts: on time 100% (6 of 6 deliveries) (Jul 17, 2026 – Oct 14, 2026)')
+  assert.equal(answer(one, facts).conclusion.title, 'Bravo Parts: on time 100% (6 of 6 deliveries, Jul 17, 2026 – Oct 14, 2026)')
 })
 
 test('the gateway reads the scorecard the supplier page reads, for the same period', async () => {

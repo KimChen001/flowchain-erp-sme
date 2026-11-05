@@ -255,3 +255,40 @@ button, input, select, textarea { font-family: var(--fc-font-family); font-size:
   .fc-overlay-enter, .fc-dialog-enter, .fc-drawer-enter, .fc-skeleton { animation: none !important; }
   .fc-module-subnav a { transition: none; }
 }
+
+/* The navigation drawer opened from the header below 1024 px slides in from
+   the left, where the sidebar sits. */
+@keyframes fc-drawer-left-in { from { opacity: 0.6; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
+[data-testid="mobile-navigation"].fc-drawer-enter { animation-name: fc-drawer-left-in; }
+
+/* Keyboard focus that scrolls the page keeps clear of the floating AI
+   assistant button in the bottom right corner. */
+[data-testid="app-main"] { scroll-padding-bottom: 96px; }
+
+/* Tables with a sticky Actions column on the right: the column is marked off
+   from the cells scrolling under it, and keeps room for its buttons. */
+.fc-module-content table th.sticky.right-0,
+.fc-module-content table td.sticky.right-0 {
+  min-width: 88px;
+  box-shadow: inset 1px 0 0 rgba(15, 23, 42, 0.06), -10px 0 12px -12px rgba(15, 23, 42, 0.45);
+}
+
+/* Phones and small tablets: a sticky right column would cover the record it
+   acts on, so it scrolls with the row, and the first column (the record's
+   number or name) stays in view instead. */
+@media (max-width: 767px) {
+  .fc-module-content table th.sticky.right-0,
+  .fc-module-content table td.sticky.right-0 {
+    position: static;
+    box-shadow: none;
+    min-width: 0;
+  }
+  .fc-module-content table:not(.print-data-table) tr > th:first-child,
+  .fc-module-content table:not(.print-data-table) tr > td:first-child:not([colspan]) {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background-color: #fff;
+    box-shadow: inset -1px 0 0 rgba(15, 23, 42, 0.08), 10px 0 12px -12px rgba(15, 23, 42, 0.45);
+  }
+}

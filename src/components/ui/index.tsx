@@ -9,6 +9,7 @@ import { typography } from "./typography";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 
 export { A } from "./tokens";
+export { ConfirmDialog, useConfirm, type ConfirmField, type ConfirmOptions, type ConfirmTone } from "./ConfirmDialog";
 
 const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 

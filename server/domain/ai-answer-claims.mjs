@@ -9,11 +9,27 @@
 const SELF_CLAIMS = [
   /\b(I|we)\s+(have\s+|had\s+|just\s+|already\s+)?(sent|emailed|approved|paid|issued|placed|posted|cancelled|canceled|deleted|removed)\b/i,
 ]
+const EN_STATE_CLAIM = /\b(was|were|has been|have been)\s+(sent|emailed|approved|paid|issued|placed|posted|cancelled|canceled|deleted|removed)\b/i
 const STATE_CLAIMS = [
-  /\b(was|were|has been|have been)\s+(sent|emailed|approved|paid|issued|placed|posted|cancelled|canceled|deleted|removed)\b/i,
+  EN_STATE_CLAIM,
   /(?<!状态\s*(?:[：:]|是|为)?\s*)(?:已发送|已批准|已付款|已支付|已下单|已下达|已过账|已删除|已取消)/,
 ]
 export const AI_ANSWER_ACTION_CLAIMS = Object.freeze([...SELF_CLAIMS, ...STATE_CLAIMS])
+
+// Chinese wording in which the assistant says it acted itself: 我已付款,
+// 我们已经为你下单, 已为您发送, 我帮你把订单取消了. Assistant v2 reads Chinese
+// claims only in this form (2026-11-05): a state word on its own describes a
+// record ("已批准的采购订单", "订单已取消"), and taking those sentences out left
+// answers with holes where facts were.
+const ZH_ACTS = '(?:发送|发出|批准|审批|付款|支付|下单|下达|过账|删除|取消)'
+const ZH_FOR_YOU = '(?:为你|帮你|替你|给你|为您|帮您|替您|给您)'
+const ZH_OBJECT = '(?:把[^。！？；\\n]{0,20}?)?'
+const ZH_SELF_CLAIMS = [
+  new RegExp(`(?:我|我们)(?:已经|已|刚刚|刚才|刚)${ZH_FOR_YOU}?${ZH_OBJECT}${ZH_ACTS}`, 'g'),
+  // With no subject, at the start of a clause: 已为你下单.
+  new RegExp(`(?<=^|[\\s。！？；，、,:：])已经?${ZH_FOR_YOU}${ZH_OBJECT}${ZH_ACTS}`, 'g'),
+  new RegExp(`(?:我|我们)${ZH_FOR_YOU}${ZH_OBJECT}${ZH_ACTS}了`, 'g'),
+]
 
 export function aiAnswerClaimsAction(value) {
   const text = String(value ?? '')
@@ -67,6 +83,24 @@ export function aiAnswerActionClaims(value, states = null) {
     }
   }
   return claims
+}
+
+// The claims of an assistant v2 answer: "I/we" forms and passive English
+// state words as aiAnswerActionClaims reads them (a state word about records
+// in that state is their status), and Chinese only with the assistant as the
+// one who acted (ZH_SELF_CLAIMS). Each wording once.
+export function aiAnswerAssistantActionClaims(value, states = null) {
+  const text = String(value ?? '')
+  const claims = []
+  for (const pattern of SELF_CLAIMS) {
+    const found = text.match(pattern)
+    if (found) claims.push(found[0])
+  }
+  for (const found of text.matchAll(new RegExp(EN_STATE_CLAIM.source, 'gi'))) {
+    if (!statedStatus(text, found, states)) claims.push(found[0])
+  }
+  for (const pattern of ZH_SELF_CLAIMS) for (const found of text.matchAll(pattern)) claims.push(found[0])
+  return [...new Set(claims)]
 }
 
 function statedStatus(text, found, states) {

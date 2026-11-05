@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, CircleAlert, RefreshCw, Scale, ShieldCheck, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
-import { A, Card, Chip } from "../../components/ui";
+import { A, Card, Chip, useConfirm } from "../../components/ui";
 import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
 import { useI18n } from "../../i18n/I18n";
@@ -246,6 +246,7 @@ function AwardDecisionPanel({ comparison, award, canAward, onAward }: { comparis
   const [reviewed, setReviewed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const confirmDialog = useConfirm();
   const selected = eligible.find((response) => response.supplierId === supplierId);
   const awardSupplier = comparison.responses.find((response) => response.supplierId === award?.supplierId);
 
@@ -254,7 +255,13 @@ function AwardDecisionPanel({ comparison, award, canAward, onAward }: { comparis
   const unavailable = comparison.rfqStatus !== "collecting_quotes" || eligible.length === 0;
   const submit = async () => {
     if (!selected?.latestRevision || !reviewed || !reason.trim()) return;
-    if (!window.confirm(tr("确认记录这项不可修改的正式授标决定？", "Record this immutable formal award decision?"))) return;
+    const confirmed = await confirmDialog.confirm({
+      title: tr("记录这项正式授标决定？", "Record this formal award decision?"),
+      description: `${selected.supplierName || selected.supplierId} · ${tr("报价修订", "Quotation revision")} ${selected.latestRevision.revisionNumber}. ${tr("记录后不能修改。", "The award record cannot be changed afterwards.")}`,
+      confirmLabel: tr("记录授标", "Record award"),
+      cancelLabel: tr("返回", "Go back"),
+    });
+    if (!confirmed) return;
     setBusy(true); setError("");
     try {
       const result = await procurementApi.createRfqAwardDecision(comparison.rfqId, {
@@ -277,6 +284,7 @@ function AwardDecisionPanel({ comparison, award, canAward, onAward }: { comparis
       <label className="block text-xs font-semibold">{tr("决定理由", "Decision reason")}<textarea rows={3} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2 font-normal" placeholder={tr("说明价格、交期、质量或业务判断依据", "Describe the price, lead time, quality, or business basis")}/></label>
       <label className="flex items-start gap-2 text-xs"><input className="mt-0.5" type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} /><span>{tr("我已复核所选供应商、报价金额及确切 Revision，并理解授标记录不可修改。", "I reviewed the supplier, quoted amount, and exact revision, and understand that the award record is immutable.")}</span></label>
       {error && <p className="rounded-lg bg-rose-50 p-2 text-xs text-rose-700" role="alert">{error}</p>}
+      {confirmDialog.element}
       <button type="button" data-testid="record-rfq-award" disabled={busy || !selected || !reviewed || !reason.trim()} onClick={() => void submit()} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? tr("正在记录…", "Recording…") : tr("记录正式授标决定", "Record formal award decision")}</button>
     </div>}
   </div></div></Card>;

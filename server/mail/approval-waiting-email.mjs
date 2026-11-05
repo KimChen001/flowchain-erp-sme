@@ -21,7 +21,7 @@ const COPY = {
     button: "Open in FlowChain",
     fallback: "Or copy and paste this link into your browser:",
     decide: "Nothing has been approved or rejected. Open the document in FlowChain to review it and decide.",
-    optOut: "To stop these emails, turn them off in System Administration › My Profile.",
+    optOut: "To stop these emails, turn them off in System administration › My profile.",
     signature: "FlowChain",
   },
   "zh-CN": {
@@ -36,7 +36,7 @@ const COPY = {
     button: "在 FlowChain 中打开",
     fallback: "也可以将此链接复制到浏览器中打开：",
     decide: "此邮件不会批准或驳回任何单据。请在 FlowChain 中打开单据审阅并决定。",
-    optOut: "如不想再收到此类邮件，可在 系统管理 › 我的资料 中关闭。",
+    optOut: "如不想再收到此类邮件，可在“系统管理 › 我的资料”中关闭。",
     signature: "FlowChain",
   },
 };

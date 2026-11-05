@@ -44,7 +44,7 @@ test('a PO whose first line is fully received names the open line and its own qu
   assert.deepEqual(english.payload.message.split('\n'), ['Hello Acme Components,', '', 'Please confirm a delivery date for the open line on PO-001:', `- LDM-002: 40 pcs still to deliver, promised ${shown(day(-4))} (originally ${shown(day(-9))})`, '', 'Thank you.'])
   assert.doesNotMatch(english.payload.message, /LDM-001/)
   assert.equal(english.payload.subject, 'PO-001: delivery date for LDM-002')
-  assert.deepEqual(draft('zh-CN').payload.message.split('\n'), ['Acme Components，您好：', '', '请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 pcs 未交，承诺日期 ${shown(day(-4))}（原定 ${shown(day(-9))}）`, '', '谢谢。'])
+  assert.deepEqual(draft('zh-CN').payload.message.split('\n'), ['Acme Components，您好：', '', '请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 件未交，承诺日期 ${shown(day(-4))}（原定 ${shown(day(-9))}）`, '', '谢谢。'])
   // The card carries the open lines next to the message, and stays review-only.
   assert.deepEqual(english.payload.lines, row.openLines)
   assert.deepEqual([english.previewOnly, english.reviewRequired, english.requiresHumanReview], [true, true, true])
@@ -59,7 +59,7 @@ test('several open lines are each named with their own remaining quantity and un
   const english = draft('en-US')
   assert.deepEqual(english.payload.message.split('\n').slice(2, 5), ['Please confirm delivery dates for the open lines on PO-001:', `- LDM-002: 40 pcs still to deliver, promised ${shown(day(-4))}`, `- LDM-003: 10 箱 still to deliver (2 of 12 received), promised ${shown(day(-4))}`])
   assert.equal(english.payload.subject, 'PO-001: delivery dates for 2 open lines')
-  assert.deepEqual(draft('zh-CN').payload.message.split('\n').slice(2, 5), ['请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 pcs 未交，承诺日期 ${shown(day(-4))}`, `- LDM-003：仍有 10 箱 未交（已收 2/12），承诺日期 ${shown(day(-4))}`])
+  assert.deepEqual(draft('zh-CN').payload.message.split('\n').slice(2, 5), ['请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 件未交，承诺日期 ${shown(day(-4))}`, `- LDM-003：仍有 10 箱未交（已收 2/12），承诺日期 ${shown(day(-4))}`])
 })
 
 test('an open line with an unknown quantity or no SKU gets the generic message', async () => {
@@ -79,7 +79,7 @@ test('an order of two SKUs in one unit names each SKU still to receive, never a 
   for (const entry of [row, indexed]) assert.deepEqual([entry.ordered, entry.received, entry.remaining, entry.unit], [null, null, null, 'multiple_skus'])
   const single = (language) => answerAiSkill({ skillId: 'purchase_orders', facts, language, query: 'PO-001', route: { mode: 'single', entities: { purchaseOrders: [indexed] } } }).response
   assert.equal(single('en-US').conclusion.title, 'PO-001: 10 pcs of LDM-001 and 5 pcs of LDM-002 still to receive')
-  assert.equal(single('zh-CN').conclusion.title, 'PO-001：还有 LDM-001 10 pcs和 LDM-002 5 pcs 待收货')
+  assert.equal(single('zh-CN').conclusion.title, 'PO-001：还有 LDM-001 10 件和 LDM-002 5 件待收货')
   const texts = (response) => JSON.stringify([response.conclusion, response.keyEvidence])
   for (const language of ['en-US', 'zh-CN']) assert.doesNotMatch(texts(single(language)), /15/)
   // The overdue signal names the lines too.
@@ -145,7 +145,7 @@ test('the draft answer writes one message to a supplier about all of its overdue
   // In Chinese, the same orders and quantities.
   const zh = answer('prepare_action_draft', 'zh-CN').reviewCards.find((entry) => entry.payload.supplierId === 'SUP-001')
   assert.equal(zh.payload.subject, 'PO-001、PO-008 的交货日期')
-  assert.match(zh.payload.message, /- PO-001 · LDM-001：仍有 15 pcs 未交（已收 5\/20）/)
+  assert.match(zh.payload.message, /- PO-001 · LDM-001：仍有 15 件未交（已收 5\/20）/)
   // The priorities answer lists PO-002, due soon, and says it needs no follow-up yet.
   const line = answer('today_priorities', 'en-US').keyEvidence.find((item) => item.entityId === 'PO-002')
   assert.equal(line?.nextStep, `Next: no follow-up yet; it is due ${shown(day(4))} and not overdue.`)

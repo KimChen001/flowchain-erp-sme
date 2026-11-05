@@ -2,7 +2,7 @@ import { operationsEnglish } from "./operationsCopy";
 import { statusCodeLabel } from "./statusLabels";
 // Display labels only. Never apply this mapping to stored business values.
 const english: Record<string, string> = {
-  '工作区管理员': 'Workspace administrator', '供应链经理': 'Supply Chain Manager', '只读用户': 'Read-only User', '业务专员': 'Business Specialist', '采购员': 'Buyer', '未知角色': 'Unknown role', '正在加载基础资料…': 'Loading master data…', '基础资料加载失败': 'Could not load master data', '重新加载': 'Reload',
+  '工作区管理员': 'Workspace administrator', '运营经理': 'Operations manager', '运营专员': 'Operations specialist', '采购专员': 'Procurement specialist', '财务专员': 'Finance specialist', '只读查看者': 'Read-only viewer', '导入上传员': 'Intake uploader', '导入复核员': 'Intake reviewer', '供应链经理': 'Supply Chain Manager', '只读用户': 'Read-only User', '业务专员': 'Business Specialist', '采购员': 'Buyer', '未知角色': 'Unknown role', '正在加载基础资料…': 'Loading master data…', '基础资料加载失败': 'Could not load master data', '重新加载': 'Reload',
   '今日': 'Today', '采购': 'Purchasing', '采购履约': 'Purchase fulfillment', '收货': 'Receiving', '收货记录': 'Receipts', '应付与应收': 'Payables & receivables', '库存': 'Inventory', '销售': 'Sales', '供应商': 'Suppliers', '合同': 'Contracts', '全部合同': 'All contracts', '即将到期': 'Ending soon', '新建合同': 'New contract', '合同详情': 'Contract details', '物料': 'Items', '报表': 'Reports', '财务': 'Finance', '数据接入': 'Data intake', '复核队列': 'Review queue',
   '商品资料 / 物料资料': 'Item master', '商品資料 / 物料資料': 'Item master', '物料资料': 'Items', '供应商资料': 'Suppliers', '仓库 / 库位': 'Warehouses / locations', '客户资料': 'Customers', '供应商评估': 'Supplier evaluation', '供应商风险': 'Supplier risks', '供应商价格': 'Supplier prices',
   '搜索基础资料': 'Search master data', '导出当前结果': 'Export results', '旧导入已停用': 'Legacy import retired',

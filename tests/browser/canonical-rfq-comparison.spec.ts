@@ -208,8 +208,8 @@ test("authorized user records an explicit reviewed award from the exact quotatio
   await panel.getByText("Acme Components").click();
   await panel.getByLabel(/Decision reason|决定理由/).fill("Best reviewed balance of price, lead time, and delivery risk.");
   await panel.getByText(/I reviewed the supplier|我已复核所选供应商/).click();
-  page.once("dialog", dialog => dialog.accept());
   await panel.getByTestId("record-rfq-award").click();
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(panel).toContainText(/Formal award decision recorded|正式授标决定已记录/);
   await expect(panel).toContainText("Acme Components");
   await expect(panel).toContainText("4900.0000 CNY");

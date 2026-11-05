@@ -74,7 +74,9 @@ test('an English skill answer renders with no Chinese, the source badge and the 
   assert.match(today, /data-testid="ai-evidence-details"/)
   assert.doesNotMatch(today, /Verifiable records|View key evidence|>Risk<|>Priorities<|>Next step</)
   const drafts = client.render(answer('prepare_action_draft'))
-  assert.match(drafts, /data-action-kind="generate_text_draft"[^>]*>Review draft</)
+  // Each line's draft button names the supplier the message is for.
+  assert.match(drafts, /data-action-kind="generate_text_draft"[^>]*>Draft follow-up to [^<]+</)
+  assert.doesNotMatch(drafts, />Review draft</)
 
   // The recovery message follows the interface language and the failure.
   const { ApiError, aiRecoveryReason, displaySafeAssistantRecoveryMessage } = client
@@ -84,7 +86,9 @@ test('an English skill answer renders with no Chinese, the source badge and the 
   assert.match(displaySafeAssistantRecoveryMessage('q', 'en-US', aiRecoveryReason(new Error('aborted'), true)), /took too long/)
   assert.match(displaySafeAssistantRecoveryMessage('q', 'en-US', aiRecoveryReason(new ApiError(401, { code: 'AUTHENTICATION_REQUIRED' }, ''), false)), /Sign in again/)
   assert.match(displaySafeAssistantRecoveryMessage('q', 'en-US', aiRecoveryReason(new ApiError(400, { code: 'AI_QUESTION_TOO_SHORT', error: 'Enter a question of at least two characters.' }, ''), false)), /Enter a question of at least two characters\./)
-  assert.match(displaySafeAssistantRecoveryMessage('q', 'zh-CN', aiRecoveryReason(new ApiError(503, {}, ''), false)), /当前工作区数据暂时未能完整读取/)
+  assert.equal(displaySafeAssistantRecoveryMessage('q', 'zh-CN', aiRecoveryReason(new ApiError(503, {}, ''), false)), '暂时无法读取工作区数据，未修改任何内容。')
+  // One line: no headings, topics or boundary list.
+  assert.equal(unavailable, 'The assistant could not read your workspace data just now. Nothing was changed.')
 })
 
 test('an order answer names each request button, and only a clear choice is opened on arrival', async () => {
@@ -209,7 +213,7 @@ test('an order proposal is a confirm card with its fields and one primary button
   assert.match(markup, /data-testid="ai-confirm-card"/)
   assert.match(markup, />Suggested: new purchase request</)
   assert.match(markup, /<dt[^>]*>Item<\/dt><dd[^>]*>LDM-001<\/dd>/)
-  assert.match(markup, /<dt[^>]*>Quantity<\/dt><dd[^>]*>12<\/dd>/)
+  assert.match(markup, /<dt[^>]*>Quantity<\/dt><dd[^>]*>12 pcs<\/dd>/)
   assert.match(markup, /data-testid="ai-confirm-cancel"[^>]*>Cancel</)
   // Its button opens the filled-in request form; it is the answer's only one for the order.
   assert.equal((markup.match(/data-action-kind="create_formal_business_draft"/g) || []).length, 1)

@@ -149,7 +149,7 @@ export function presentLateOrderImpact(result, facts, { skill, language, query }
   return presentAiSkillAnswer({
     ...empty, title, summary, evidence,
     severity: hit.length ? 'risk' : 'info',
-    impacts: evidence.map((item) => ({ area: item.sourceLabel, impact: item.status, severity: item.severity, explanation: aiSkillText(item.entityType === 'sales_order' ? 'impact.explain_sales_order' : 'impact.explain_po', language), affectedObjects: [item.entityId] })),
+    impacts: evidence.map((item) => ({ area: item.sourceLabel, impact: item.status, severity: item.severity, explanation: '', affectedObjects: [item.entityId] })),
     navigation: result.pos.slice(0, 3).map((po) => aiSkillNavigation({ label: po.orderNumber, entityType: 'purchase_order', entityId: po.id }, language)),
     figures,
     followUpIds: ['inventory_availability', 'prepare_action_draft'],

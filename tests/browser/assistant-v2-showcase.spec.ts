@@ -101,8 +101,18 @@ test("S2: the overdue orders stream in as a table with a record chip per order",
   await expect(answer.getByTestId("ai-v2-text")).toContainText("Precision Fastener Works is the furthest behind");
   const table = answer.getByTestId("ai-v2-table");
   await expect(table).toContainText("Overdue purchase orders");
+  // The answer's sentence comes before the table.
+  const textTop = (await answer.getByTestId("ai-v2-text").boundingBox())?.y ?? Infinity;
+  expect(textTop).toBeLessThan((await table.boundingBox())?.y ?? -Infinity);
   // One chip per order, in the result's order: the most days overdue first.
+  // In the narrow panel the first five show until "Show all 8".
   const chips = table.locator('[data-testid="ai-record-chip"]:visible');
+  const expand = table.getByTestId("ai-v2-table-expand");
+  if (await expand.isVisible()) {
+    await expect(chips).toHaveCount(5);
+    await expect(expand).toHaveText("Show all 8");
+    await expand.click();
+  }
   await expect(chips).toHaveCount(8);
   await expect(chips.first()).toHaveText("LOCAL-DEMO-PO-020");
   await expect(chips.first()).toHaveAttribute("data-business-id", "LOCAL-DEMO-PO-020");

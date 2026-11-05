@@ -6,7 +6,7 @@ import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
 import { ListCard, ListSearchCard, ListStateRow, PrimaryButton, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
-import { tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass, tableBodyTextClass } from "../../components/ui/workbenchTable";
+import { tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass, tableBodyTextClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
 import type { ProcurementNavigate, ProcurementWorkItem } from "./procurementTypes";
 import { useI18n } from "../../i18n/I18n";
@@ -224,7 +224,9 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
                   </td>
                   <td className={tdNowrapClass} style={{ color: A.sub }}>{row.dueDate || "—"}</td>
                   <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row)}</td>
-                  <td className={tdNowrapClass}>
+                  {/* Signals wrap onto lines of their own, so the table fits and the sticky
+                      Actions column does not cover them. */}
+                  <td className={`${tdClass} min-w-[150px] [&_.fc-status-chip]:whitespace-normal`}>
                     {row.signals?.length ? <div className="flex flex-wrap gap-1">{row.signals.map(signal => <StatusChip key={signal} label={signal in COPY ? tr(signal as keyof typeof COPY) : signal} tone="warning" />)}</div> : <span style={{ color: A.gray2 }}>—</span>}
                   </td>
                   <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>

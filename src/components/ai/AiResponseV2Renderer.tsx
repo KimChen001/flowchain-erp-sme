@@ -194,7 +194,8 @@ function OrderProposal({ card, onNavigate, onReviewActionDraft, language }: { ca
   const quantity = typeof payload.quantity === "number" ? payload.quantity.toLocaleString("en-US") : text(payload.quantity);
   const fields = [
     { label: copy.item, value: payload.nonCatalog ? fill(copy.newItem, { description: text(payload.description) || copy.notNamed }) : text(payload.itemIdOrSku) },
-    { label: copy.quantity, value: [quantity, text(payload.unit)].filter(Boolean).join(" ") },
+    // The unit's label in the answer language when the server gives one ("25 pcs", "25 件").
+    { label: copy.quantity, value: [quantity, text(payload.unitLabel) || text(payload.unit)].filter(Boolean).join(" ") },
     { label: copy.supplier, value: text(payload.supplierName) },
     { label: copy.needBy, value: text(payload.needByDate) },
     { label: copy.why, value: card.description || text(payload.reason) },
@@ -386,6 +387,8 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   const trust = !capability && (response.answerSourceLabel || sourceCount || noteCount || basis.length || focused.businessImpact.length || response.contextCards?.length);
   // One meta line (owner, 2026-11-03): what was checked goes inside the trust
   // line when there is one, and stands above the answer only when there is not.
+  // A clarification's detail is shown once, by the business query panel.
+  const clarifying = Boolean(response.businessQuery?.clarification?.needed);
   const checkedLine = response.checkedLabel ? <p data-testid="ai-answer-checked" className="flex items-start gap-1.5 text-[13px] leading-5" style={{ color: A.sub }}><Search size={13} className="mt-[3px] shrink-0" aria-hidden />{response.checkedLabel}</p> : null;
   return (
     <div data-testid="ai-response-v2" data-answer-mode={focused.answerMode} data-answer-source={response.answerSource || undefined} className="space-y-3">
@@ -398,7 +401,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
 
       <section data-testid="ai-focused-conclusion" lang={response.language || undefined} className="space-y-2">
         {headline ? <h3 className="text-[15px] font-semibold leading-6" style={{ color: A.label }}>{withRecordChips(headline, chips.refs, chips.pattern)}</h3> : null}
-        {body ? <AnswerText text={body} chips={chips} /> : null}
+        {body && !clarifying ? <AnswerText text={body} chips={chips} /> : null}
       </section>
 
       <BusinessQueryPresentation response={response} />
@@ -415,7 +418,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink>{item.status && !item.reason.startsWith(item.status) ? <span className="text-[13px]" style={{ color: A.sub }}>{item.status}</span> : null}</div>
               {item.reason ? <p className="mt-1 text-sm leading-relaxed" lang={response.language || undefined} style={{ color: A.label }}>{withRecordChips(item.reason, chips.refs, chips.pattern)}</p> : null}
               {item.impact && !sharedImpact ? <p className="mt-0.5 text-[13px] leading-relaxed" style={{ color: A.sub }}>{fill(copy.impact, { impact: item.impact })}</p> : null}
-              {item.nextStep || item.draft ? <div data-testid="ai-line-next-step" className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1.5">{item.nextStep ? <span className="text-[13px] font-medium leading-relaxed" lang={response.language || undefined} style={{ color: A.blue }}>{item.nextStep}</span> : null}{item.draft ? <Action action={item.draft} compact onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /> : null}</div> : null}
+              {item.nextStep || item.draft ? <div data-testid="ai-line-next-step" className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1.5">{item.nextStep ? <span className="text-[13px] leading-relaxed" lang={response.language || undefined} style={{ color: A.label }}>{withRecordChips(item.nextStep, chips.refs, chips.pattern)}</span> : null}{item.draft ? <Action action={item.draft} compact onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /> : null}</div> : null}
             </li>)}
       </ul> : null}
       {/* The same impact on every line is said once. */}

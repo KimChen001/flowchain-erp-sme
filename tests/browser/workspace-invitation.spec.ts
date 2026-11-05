@@ -45,7 +45,7 @@ test("an invited teammate joins with the invited role and can be disabled", asyn
   const form = guest.getByTestId("accept-invitation-form");
   await expect(form).toBeVisible();
   await expect(form).toContainText(invitee);
-  await expect(form).toContainText(/Procurement Specialist|采购专员/);
+  await expect(form).toContainText(/Procurement specialist|采购专员/);
   expect(new URL(guest.url()).search).toBe("");
   await guest.getByTestId("accept-invitation-name").fill("Ivy Invitee");
   await guest.getByTestId("accept-invitation-submit").click();
@@ -68,8 +68,8 @@ test("an invited teammate joins with the invited role and can be disabled", asyn
   await page.reload();
   const row = page.getByTestId(`member-${invitee}`);
   await expect(row).toContainText(/Active|已启用/);
-  page.once("dialog", (dialog) => void dialog.accept());
   await page.getByTestId(`disable-${invitee}`).click();
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(row).toContainText(/Disabled|已停用/);
   const after = await request.get("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } });
   expect(after.status()).toBe(401);

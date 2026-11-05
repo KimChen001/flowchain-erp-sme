@@ -683,7 +683,9 @@ test('an unbacked claim takes only its own sentence; a condition or a negation i
   const { events, audit } = await ask([OVERDUE, [...say('PO-001 is 4 days overdue. I have approved PO-008. Chase Acme Components today.'), end()]])
   const [replace] = ofType(events, 'replace')
   assert.equal(replace.code, 'unbacked_action_claim')
-  assert.match(replace.text, /^PO-001 is 4 days overdue\. \(A sentence is left out here because it read as if something had been done for you\. Open the record to see its status\.\) Chase Acme Components today\.$/)
+  // The sentence goes without a note in the prose: the panel says under the
+  // text that a sentence was left out (2026-11-05).
+  assert.equal(replace.text, 'PO-001 is 4 days overdue. Chase Acme Components today.')
   assert.deepEqual(audit.replaces, ['unbacked_action_claim'])
   // The records the rest names still get their chips.
   assert.ok(ofType(events, 'flag').some((flag) => (flag.refs || []).some((ref) => ref.id === 'PO-001')))
@@ -691,14 +693,27 @@ test('an unbacked claim takes only its own sentence; a condition or a negation i
     const plain = await ask([OVERDUE, [...say(sentence), end()]])
     assert.equal(ofType(plain.events, 'replace').length, 0, sentence)
   }
-  // Chinese keeps its punctuation; a list item keeps its marker.
-  const zh = await ask([OVERDUE, [...say('PO-001 已逾期 4 天。我已经帮你提交了采购申请。请今天催 Acme Components。'), end()]], { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } })
-  assert.equal(ofType(zh.events, 'replace')[0].text, 'PO-001 已逾期 4 天。（此处略去一句：它读起来像是已替你执行了操作。请打开记录查看状态。）请今天催 Acme Components。')
+  // Chinese keeps its punctuation; a list item left empty goes with its line.
+  const zhAsk = { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } }
+  const zh = await ask([OVERDUE, [...say('PO-001 已逾期 4 天。我已经帮你提交了采购申请。请今天催 Acme Components。'), end()]], zhAsk)
+  assert.equal(ofType(zh.events, 'replace')[0].text, 'PO-001 已逾期 4 天。请今天催 Acme Components。')
   const list = await ask([OVERDUE, [...say('Next:\n- Chase PO-001.\n- The new request was approved yesterday.'), end()]])
-  assert.match(ofType(list.events, 'replace')[0].text, /\n- \(A sentence is left out here/)
-  // A part that is nothing but a claim is replaced whole, as before.
+  assert.equal(ofType(list.events, 'replace')[0].text, 'Next:\n- Chase PO-001.')
+  // In Chinese only the assistant acting is a claim: a state word that
+  // describes records stays (2026-11-05: 已批准的采购订单 took its sentence).
+  for (const sentence of ['已批准的采购订单还有 2 张没有发给供应商。', 'PO-001 部分收货，已下达且逾期的订单共 2 张。', '订单已取消的不计入逾期。']) {
+    const plain = await ask([OVERDUE, [...say(sentence), end()]], zhAsk)
+    assert.equal(ofType(plain.events, 'replace').length, 0, sentence)
+  }
+  for (const claim of ['PO-001 已逾期。我已为你付款。', 'PO-001 已逾期。已为你下单。', 'PO-001 已逾期。我帮你把订单取消了。']) {
+    const { events } = await ask([OVERDUE, [...say(claim), end()]], zhAsk)
+    assert.equal(ofType(events, 'replace')[0]?.text, 'PO-001 已逾期。', claim)
+  }
+  // A part that is nothing but a claim is sent empty, which the panel shows
+  // as a short note; the folded answer keeps the fixed text.
   const whole = await ask([OVERDUE, [...say('I have approved PO-008.'), end()]])
-  assert.match(ofType(whole.events, 'replace')[0].text, /^This part of the answer is not shown/)
+  assert.equal(ofType(whole.events, 'replace')[0].text, '')
+  assert.match(whole.body.conclusion.summary, /^This part of the answer is not shown/)
 })
 
 // A month's plan reached 103k of the 120k tokens with a call to go, most of it
@@ -744,8 +759,8 @@ test('a claim that something was done is replaced with the fixed text', async ()
     const replace = ofType(events, 'replace')
     assert.equal(replace.length, 1, claim)
     assert.equal(replace[0].code, 'unbacked_action_claim')
-    assert.equal(replace[0].text, aiSkillText('assistant_v2.replace.action_claim', 'en-US'))
-    assert.equal(body.conclusion.summary, replace[0].text)
+    assert.equal(replace[0].text, '')
+    assert.equal(body.conclusion.summary, aiSkillText('assistant_v2.replace.action_claim', 'en-US'))
     assert.deepEqual(audit.replaces, ['unbacked_action_claim'])
   }
   // A state the record is in is its status, not a claim.
@@ -992,4 +1007,91 @@ test('the system prompt sets the setup rules apart, after the purchase request r
   assert.ok(setup > ASSISTANT_V2_SYSTEM.indexOf('call suggest_purchase_lines, then suggest_purchase_request'))
   assert.ok(setup < ASSISTANT_V2_SYSTEM.indexOf('The answer:'))
   for (const rule of [/call setup_status, then show_setup_steps/, /FlowChain has an import: never say you cannot tell whether it has one/, /call suggest_setup_records with them\. Pass only values the user wrote/, /Never say a supplier or item was created, added or saved/, /up to 8,000 characters/]) assert.match(ASSISTANT_V2_SYSTEM, rule)
+})
+
+// A live run on 2026-11-05: prose dates, amounts and quantities did not match
+// the cards, Chinese answers had ASCII punctuation and English narration, and
+// the answer sentence came after the table.
+test('the text is written as the app shows it: workspace dates and amounts, full-width punctuation in Chinese', async () => {
+  const zhAsk = { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } }
+  const { events, body } = await ask([OVERDUE, [...say('PO-001 的承诺日期是 2026-10-30(已逾期),差异 200 ', 'USD,还剩 1200 pcs 未收!'), end()]], zhAsk)
+  assertProtocol(events)
+  const shown = ofType(events, 'text_delta').map((event) => event.text).join('')
+  assert.equal(shown, 'PO-001 的承诺日期是 Oct 30, 2026（已逾期），差异 $200.00，还剩 1,200 pcs 未收！')
+  assert.equal(body.conclusion.summary, shown)
+  // No piece leaves a figure parted from its currency.
+  assert.ok(ofType(events, 'text_delta').every((event) => !/\d\s$/.test(event.text)), JSON.stringify(ofType(events, 'text_delta')))
+  // English keeps its punctuation; its dates and amounts are rewritten too.
+  const en = await ask([OVERDUE, [...say('PO-001 was due 2026-10-30 (Amount: 5,000 USD).'), end()]])
+  assert.equal(ofType(en.events, 'text_delta').map((event) => event.text).join(''), 'PO-001 was due Oct 30, 2026 (Amount: $5,000.00).')
+  // The follow-up questions read the same way.
+  const chips = await ask([OVERDUE, [...say('PO-001 已逾期。'), ...call('tu_chips', 'suggest_followups', { questions: ['PO-001 会影响哪些销售订单?'] }), end()]], { ...zhAsk, uiTools: [followups] })
+  assert.deepEqual(ofType(chips.events, 'ui')[0].props.questions, ['PO-001 会影响哪些销售订单？'])
+})
+
+test('a Chinese answer leaves out English narration before a tool call', async () => {
+  const { events, body } = await ask([
+    [...say('The item is LDM-002 Temperature Sensor. I will fill in the form.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [...say('PO-001 已逾期 4 天。'), end()],
+  ], { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } })
+  assertProtocol(events)
+  assert.ok(ofType(events, 'text_delta').every((event) => /[㐀-鿿]/.test(event.text) || !/[A-Za-z]{3,} [A-Za-z]{3,}/.test(event.text)), JSON.stringify(ofType(events, 'text_delta')))
+  assert.doesNotMatch(body.conclusion.summary, /fill in the form/)
+  assert.deepEqual(body.parts.map((part) => part.type), ['text'])
+  // English narration in an English answer still shows; text with Chinese in it too.
+  const en = await ask([[...say('Let me check the orders.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()], [...say('PO-001 is late.'), end()]])
+  assert.match(ofType(en.events, 'text_delta').map((event) => event.text).join(''), /^Let me check the orders\./)
+})
+
+test('a date the user typed is not flagged as unmatched', async () => {
+  const { events } = await ask([OVERDUE, [...say('PO-001 is late; you need it by 2026-11-20, and Nov 20 is 3 weeks away.'), end()]], { question: 'Which orders are late? We need them by Nov 20.' })
+  const spans = ofType(events, 'flag').flatMap((flag) => flag.spans)
+  assert.ok(!spans.some((span) => span.kind === 'date'), JSON.stringify(spans))
+  // A date the user did not type still is.
+  const other = await ask([OVERDUE, [...say('PO-001 arrives 2026-12-24.'), end()]], { question: 'When does PO-001 arrive?' })
+  assert.ok(ofType(other.events, 'flag').flatMap((flag) => flag.spans).some((span) => span.kind === 'date'))
+})
+
+test('the model reads display strings and the words for codes; a chart of a table\'s rows is not drawn again', async () => {
+  const { client, events, audit } = await ask([
+    OVERDUE,
+    [...say('Two orders are overdue.'), ...call('tu_table', 'show_table', { source: 'list_purchase_orders#1', columns: ['orderNumber', 'amount'] }), ...call('tu_chart', 'show_chart', { source: 'list_purchase_orders#1', kind: 'bar', x: 'orderNumber', series: ['amount'] }), end()],
+    [...say('PO-001 is the older one.'), end()],
+  ], { uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assertProtocol(events)
+  const [read] = lastToolResults(client.requests[1]).map((block) => JSON.parse(block.content))
+  const row = read.rows[0]
+  assert.match(row.dueDateText, /^[A-Z][a-z]{2} \d{1,2}, \d{4}$/)
+  assert.match(row.amountText, /^\$[\d,]+\.\d{2}$/)
+  assert.deepEqual(ofType(events, 'ui').map((event) => event.component), ['table'])
+  assert.deepEqual(audit.uiTools.map((entry) => entry.status), ['ok', 'skipped'])
+  assert.equal(audit.displayFailures, 0)
+  assert.equal(JSON.parse(lastToolResults(client.requests[2]).find((block) => block.tool_use_id === 'tu_chart').content).shown, null)
+})
+
+test('an item the user names by its name is ticked on the form', async () => {
+  const { events } = await ask([
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-002'] }), end()],
+    [...say('I\'ve filled in a request form for you to review.'), ...call('tu_form', 'suggest_purchase_request', { source: 'tu_lines', from: 'user_named', lines: [{ sku: 'LDM-002', quantity: 50 }] }), end()],
+    [...say('Check the line, then click Create draft request.'), end()],
+  ], { question: 'I need 50 temperature sensors', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  const form = ofType(events, 'ui').find((event) => event.component === 'pr_form')?.props
+  assert.deepEqual(form.lines.map((row) => [row.item.sku, row.checked, row.suggestedQuantity.value]), [['LDM-002', true, 50]])
+})
+
+test('the system prompt asks for the answer first, display strings, whole record numbers and the app\'s terms', () => {
+  for (const rule of [
+    /write its one-sentence answer as text before any show_\* or suggest_purchase_request call/,
+    /copy that string as it is, in any answer language/,
+    /never write a code such as po_overdue/,
+    /whole \(LOCAL-DEMO-PO-014, never PO-014\)/,
+    /Do not add codes the user did not ask for/,
+    /Do not narrate what you are about to look up/,
+    /with offer_choices the buttons ask it, so do not ask it again in the text/,
+    /Headings and labels in sentence case/,
+    /采购订单、采购申请、收货单、物料、询价单、采购发票、销售发票/,
+    /full-width punctuation/,
+    /with nothing ticked, "tick the items you want, then click Create draft request"/,
+  ]) assert.match(ASSISTANT_V2_SYSTEM, rule)
+  assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /Copy figures as the tools give them/)
 })
