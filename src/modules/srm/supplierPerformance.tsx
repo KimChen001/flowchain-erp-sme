@@ -278,7 +278,7 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
           <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[620px] text-xs"><thead><tr>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("ordered"), tr("amount")].map((header) => <th key={header} className="p-2 text-left" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
             <tbody>{orders.map((order) => order.lines.map((line, index) => (
               <tr key={line.purchaseOrderLineId} className="border-t" data-testid={`supplier-performance-not-sent-${line.purchaseOrderLineId}`}>
-                <td className="p-2">{index === 0 ? <EntityLink kind="purchase_order" id={order.purchaseOrderId}>{order.orderNumber}</EntityLink> : null}</td>
+                <td className="p-2">{index === 0 ? <EntityLink kind="purchase_order" id={order.purchaseOrderId} number={order.orderNumber} /> : null}</td>
                 <td className="p-2">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
                 <td className="p-2">{format.day(line.originalPromisedDate)}</td>
                 <td className="p-2">{format.day(line.currentPromisedDate)}</td>

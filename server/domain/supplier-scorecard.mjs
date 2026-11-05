@@ -442,7 +442,7 @@ function notSentPurchaseOrder(purchaseOrder, { inPeriod, lineAmounts }) {
   if (!lines.length) return null
   return {
     purchaseOrderId: purchaseOrder.id,
-    orderNumber: text(purchaseOrder.orderNumber || purchaseOrder.metadata?.orderNumber) || purchaseOrder.id,
+    orderNumber: text(purchaseOrder.number || purchaseOrder.orderNumber || purchaseOrder.metadata?.orderNumber) || purchaseOrder.id,
     status: text(purchaseOrder.status),
     promisedDate: lines.map((line) => line.originalPromisedDate || line.currentPromisedDate).sort()[0],
     lines,

@@ -16,6 +16,10 @@ import { receivingDecimalString, receivingDecimalUnits } from "../domain/receivi
 import { applyPromisedDateChanges, recordOriginalPromises } from "../domain/purchase-order-promise-dates.mjs";
 import { mergeOperationalSettings } from "../domain/workspace-settings-contract.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { isTransactionConflict } from "../persistence/transaction-conflict.mjs";
+import { allocateDocumentNumber } from "../domain/document-numbering.mjs";
+import { isPrismaConcurrencyError } from "../domain/prisma-concurrency-error.mjs";
+import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 import { sanitizeSuggestionTrail } from "../../shared/prefill-suggestions.mjs";
 import { mapPurchaseOrder, mapPurchaseRequest, mapRfq } from "../repositories/db-procurement-read-repository.mjs";
 
@@ -53,7 +57,12 @@ const SCALE = 10_000n;
 const text = (value) => String(value ?? "").trim();
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const serial = (value) => value?.toISOString?.() || value || null;
+// The internal id (global primary key). The number people see is separate:
+// the workspace's next PREFIX-YYYYMM-NNNN, assigned in the creating
+// transaction (nextNumber below).
 const documentId = (prefix) => `${prefix}-${randomUUID().slice(0, 8).toUpperCase()}`;
+const numberOf = procurementDocumentNumber;
+const NUMBERED_MODEL = Object.freeze({ purchase_request: "purchaseRequest", rfq: "rfq", purchase_order: "purchaseOrder" });
 const fail = (code, message, status = 400, details = [], extra = {}) => { throw procurementError(code, message, details, status, extra); };
 
 function units(value, field) {
@@ -195,6 +204,14 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
     return row;
   };
   const timelineEntry = (action, actor, reason) => ({ action, actorId: actor.user.id, at: serial(now()), reason: text(reason) || null });
+  // The workspace's next number for a new purchase request, RFQ or purchase
+  // order (shared/document-numbering.mjs), inside the creating transaction.
+  // A number another document of the type already shows, as its number or
+  // as the id an older document shows, is skipped.
+  const nextNumber = (tx, tenantId, documentType) => allocateDocumentNumber(tx, {
+    tenantId, documentType, at: now(),
+    isTaken: async (number) => Boolean(await tx[NUMBERED_MODEL[documentType]].findFirst({ where: { tenantId, OR: [{ number }, { id: number }] }, select: { id: true } })),
+  });
 
   // Runs one command exactly once per (tenant, commandType, idempotencyKey):
   // a repeat with the same payload returns the stored result, a repeat with a
@@ -202,7 +219,11 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
   // record commit together. When the client sends no key, the key is derived
   // from the target, the expected version and the payload, so a resend is a
   // replay and a changed request still meets the version check.
-  async function runCommand({ context, permission, commandType, idempotencyKey, derivedKey, payload, execute }) {
+  // `attempts` above one runs a transaction that lost a serialization
+  // conflict again: every create advances the workspace's number sequence
+  // row for its type, so two documents saved at once meet there and the
+  // later one takes the next number on its next attempt.
+  async function runCommand({ context, permission, commandType, idempotencyKey, derivedKey, payload, execute, attempts = 1 }) {
     const client = await db();
     const initial = await actorFor(client, context, permission);
     const requestHash = hash(payload);
@@ -214,28 +235,37 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
       if (row.status !== "completed" || !row.resultPayload) fail("COMMAND_EXECUTION_IN_PROGRESS", "The command is already in progress.", 409);
       return { ...row.resultPayload, idempotentReplay: true };
     };
-    const prior = replay(await client.businessCommandExecution.findUnique({ where }));
-    if (prior) return prior;
-    try {
-      return await client.$transaction(async (tx) => {
-        const actor = await actorFor(tx, context, permission);
-        const inside = replay(await tx.businessCommandExecution.findUnique({ where }));
-        if (inside) return inside;
-        const execution = await tx.businessCommandExecution.create({ data: { id: idFactory(), tenantId: actor.tenantId, commandType, idempotencyKey: key, requestHash, status: "pending" } });
-        const { result, entityType, entityId, audit } = await execute(tx, actor, { idempotencyKey: key });
-        await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: "procurement_request_command_service", module: "procurement", entityType, entityId, ...audit, metadata: { commandType, idempotencyKey: key, ...(audit.metadata || {}) } } });
-        await tx.businessCommandExecution.update({ where: { id: execution.id }, data: { status: "completed", entityType, entityId, resultPayload: result, completedAt: now() } });
-        return { ...result, idempotentReplay: false };
-      }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 });
-    } catch (error) {
-      if (error?.code === "P2002") {
-        const committed = replay(await client.businessCommandExecution.findUnique({ where }));
-        if (committed) return committed;
+    for (let attempt = 1; ; attempt += 1) {
+      const prior = replay(await client.businessCommandExecution.findUnique({ where }));
+      if (prior) return prior;
+      try {
+        return await client.$transaction(async (tx) => {
+          const actor = await actorFor(tx, context, permission);
+          const inside = replay(await tx.businessCommandExecution.findUnique({ where }));
+          if (inside) return inside;
+          const execution = await tx.businessCommandExecution.create({ data: { id: idFactory(), tenantId: actor.tenantId, commandType, idempotencyKey: key, requestHash, status: "pending" } });
+          const { result, entityType, entityId, audit } = await execute(tx, actor, { idempotencyKey: key });
+          await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: "procurement_request_command_service", module: "procurement", entityType, entityId, ...audit, metadata: { commandType, idempotencyKey: key, ...(audit.metadata || {}) } } });
+          await tx.businessCommandExecution.update({ where: { id: execution.id }, data: { status: "completed", entityType, entityId, resultPayload: result, completedAt: now() } });
+          return { ...result, idempotentReplay: false };
+        }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 });
+      } catch (error) {
+        if (error?.code === "P2002") {
+          const committed = replay(await client.businessCommandExecution.findUnique({ where }));
+          if (committed) return committed;
+        }
+        if (attempt < attempts && (isTransactionConflict(error) || isPrismaConcurrencyError(error))) {
+          await new Promise((resolve) => setTimeout(resolve, 20 * attempt + Math.floor(Math.random() * 20)));
+          continue;
+        }
+        throw error;
       }
-      throw error;
     }
   }
 
+  // The request's number is the workspace's next PR-YYYYMM-NNNN, assigned in
+  // the creating transaction; a number the client sends is ignored and is
+  // not part of the request fingerprint.
   async function createPurchaseRequest(input = {}, context) {
     const client = await db();
     const actor = await actorFor(client, context, PURCHASE_REQUEST_PERMISSIONS.create);
@@ -256,10 +286,12 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
       // Without a client key every create is a new request.
       idempotencyKey: input.idempotencyKey || idFactory(),
       payload: { departmentId: text(input.departmentId), currency, needBy, lines: persisted.rows.map(({ id: _id, ...row }) => row) },
+      attempts: 5,
       execute: async (tx, commandActor) => {
+        const number = await nextNumber(tx, commandActor.tenantId, "purchase_request");
         const created = await tx.purchaseRequest.create({
           data: {
-            id, tenantId: commandActor.tenantId, status: PURCHASE_REQUEST_STATUS.DRAFT,
+            id, number, tenantId: commandActor.tenantId, status: PURCHASE_REQUEST_STATUS.DRAFT,
             requester: commandActor.user.id, supplierId: persisted.supplierId, supplierName: persisted.supplierName,
             requiredDate: needBy ? new Date(`${needBy}T00:00:00Z`) : null, amount: persisted.amount, currency,
             reason: text(input.reason) || null, source: "manual",
@@ -268,7 +300,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           },
         });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, commandActor.tenantId, created.id));
-        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: created.id, audit: { action: "purchase_request_created", summary: `Created purchase request ${created.id}.`, metadata: { version: 1, amount: persisted.amount, currency, ...withOverrides(supplierOverrideAudit(persisted.rows)), ...(suggestions ? { suggestions } : {}) } } };
+        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: created.id, audit: { action: "purchase_request_created", summary: `Created purchase request ${number}.`, metadata: { version: 1, number, amount: persisted.amount, currency, ...withOverrides(supplierOverrideAudit(persisted.rows)), ...(suggestions ? { suggestions } : {}) } } };
       },
     });
   }
@@ -306,7 +338,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           },
         });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, commandActor.tenantId, row.id));
-        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_updated", summary: `Updated purchase request ${row.id}.`, metadata: { expectedVersion, version, ...(persisted ? withOverrides(supplierOverrideAudit(persisted.rows)) : {}) } } };
+        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_updated", summary: `Updated purchase request ${numberOf(row)}.`, metadata: { expectedVersion, version, ...(persisted ? withOverrides(supplierOverrideAudit(persisted.rows)) : {}) } } };
       },
     });
   }
@@ -359,17 +391,17 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           },
         });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, actor.tenantId, row.id));
-        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: `purchase_request_${action}`, summary: `${action} purchase request ${row.id}.`, metadata: { expectedVersion, version, from: row.status, to: next, reason: reason || null, ...(missingOverrides.length ? { supplierOverridesMissing: missingOverrides } : {}) } } };
+        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: `purchase_request_${action}`, summary: `${action} purchase request ${numberOf(row)}.`, metadata: { expectedVersion, version, from: row.status, to: next, reason: reason || null, ...(missingOverrides.length ? { supplierOverridesMissing: missingOverrides } : {}) } } };
       },
     });
   }
 
   // An approved PR feeds either one open RFQ or its purchase orders, never both.
   async function assertNoActiveDownstream(tx, tenantId, purchaseRequestId) {
-    const po = await tx.purchaseOrder.findFirst({ where: { tenantId, sourceRequestId: purchaseRequestId, status: { not: PURCHASE_ORDER_STATUS.CANCELLED } }, select: { id: true } });
-    if (po) fail("DOWNSTREAM_OBJECT_ALREADY_EXISTS", `Purchase order ${po.id} already exists for this purchase request.`, 409, [], { entityId: po.id });
-    const rfq = await tx.rfq.findFirst({ where: { tenantId, sourceRequestId: purchaseRequestId, status: { notIn: INACTIVE_RFQ_STATUSES } }, select: { id: true } });
-    if (rfq) fail("DOWNSTREAM_OBJECT_ALREADY_EXISTS", `RFQ ${rfq.id} is still open for this purchase request.`, 409, [], { entityId: rfq.id });
+    const po = await tx.purchaseOrder.findFirst({ where: { tenantId, sourceRequestId: purchaseRequestId, status: { not: PURCHASE_ORDER_STATUS.CANCELLED } }, select: { id: true, number: true, metadata: true } });
+    if (po) fail("DOWNSTREAM_OBJECT_ALREADY_EXISTS", `Purchase order ${numberOf(po)} already exists for this purchase request.`, 409, [], { entityId: po.id });
+    const rfq = await tx.rfq.findFirst({ where: { tenantId, sourceRequestId: purchaseRequestId, status: { notIn: INACTIVE_RFQ_STATUSES } }, select: { id: true, number: true } });
+    if (rfq) fail("DOWNSTREAM_OBJECT_ALREADY_EXISTS", `RFQ ${numberOf(rfq)} is still open for this purchase request.`, 409, [], { entityId: rfq.id });
   }
   const assertApproved = (row) => {
     if (row.status !== PURCHASE_REQUEST_STATUS.APPROVED) fail("INVALID_STATE_TRANSITION", "Only an approved purchase request can be sourced.", 409, [], { currentStatus: row.status, currentVersion: versionOf(row) });
@@ -391,6 +423,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
       idempotencyKey: input.idempotencyKey,
       derivedKey: `purchase_request.create_rfq:${text(id)}:v${expectedVersion}`,
       payload: { id: text(id), expectedVersion, dueDate, invitedSupplierIds, title },
+      attempts: 5,
       execute: async (tx, actor) => {
         const row = await lockRequest(tx, actor.tenantId, id);
         assertCurrentVersion(row, expectedVersion);
@@ -401,9 +434,11 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           const supplier = suppliers.find((entry) => entry.id === supplierId);
           if (!supplier || text(supplier.status || "active").toLowerCase() !== "active") fail("SUPPLIER_NOT_FOUND", `Supplier ${supplierId} is not an active supplier of this workspace.`, 400, [{ field: "invitedSupplierIds" }]);
         }
+        // The RFQ's number is the workspace's next RFQ-YYYYMM-NNNN.
         const rfqId = documentId("RFQ");
+        const rfqNumber = await nextNumber(tx, actor.tenantId, "rfq");
         await tx.rfq.create({ data: {
-          id: rfqId, tenantId: actor.tenantId, title: title || `RFQ for ${row.id}`, status: RFQ_STATUS.DRAFT,
+          id: rfqId, number: rfqNumber, tenantId: actor.tenantId, title: title || `RFQ for ${numberOf(row)}`, status: RFQ_STATUS.DRAFT,
           supplierCount: invitedSupplierIds.length, respondedSupplierCount: 0,
           dueDate: dueDate ? new Date(`${dueDate}T00:00:00Z`) : row.requiredDate, sourceRequestId: row.id, currency: row.currency,
           metadata: { version: 1, createdBy: actor.user.id, sourcePurchaseRequestVersion: versionOf(row), invitedSupplierIds, timeline: [timelineEntry("create", actor)] },
@@ -416,7 +451,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         await tx.purchaseRequest.update({ where: { id: row.id }, data: sourcedRequest(row, actor, "create_rfq", { linkedRfqId: rfqId, metadata: { procurementPath: "rfq" } }) });
         const rfq = await tx.rfq.findUnique({ where: { id: rfqId }, include: { lines: true } });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, actor.tenantId, row.id));
-        return { result: { purchaseRequest, rfq: mapRfq(rfq) }, entityType: "Rfq", entityId: rfqId, audit: { action: "rfq_created_from_purchase_request", summary: `Created RFQ ${rfqId} from purchase request ${row.id}.`, metadata: { purchaseRequestId: row.id, expectedVersion, invitedSupplierIds, currency: row.currency } } };
+        return { result: { purchaseRequest, rfq: mapRfq(rfq) }, entityType: "Rfq", entityId: rfqId, audit: { action: "rfq_created_from_purchase_request", summary: `Created RFQ ${rfqNumber} from purchase request ${numberOf(row)}.`, metadata: { purchaseRequestId: row.id, rfqNumber, expectedVersion, invitedSupplierIds, currency: row.currency } } };
       },
     });
   }
@@ -444,7 +479,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         // FlowChain; nothing is sent to them.
         if (action === "open") await tx.rfqSupplierParticipation.updateMany({ where: { tenantId: actor.tenantId, rfqId: row.id, status: "planned" }, data: { status: "invited_internal", invitedAt: now(), version: { increment: 1 } } });
         const updated = await tx.rfq.update({ where: { id: row.id }, data: { status: next, metadata: { ...(row.metadata || {}), version: currentVersion + 1, lastAction: action, lastActorId: actor.user.id, lastReason: text(input.reason) || null, timeline: [...(row.metadata?.timeline || []), timelineEntry(action, actor, input.reason)] } }, include: { lines: true } });
-        return { result: mapRfq(updated), entityType: "Rfq", entityId: row.id, audit: { action: `rfq_${action}`, summary: `${action} RFQ ${row.id}.`, metadata: { expectedVersion, version: currentVersion + 1, from: row.status, to: next } } };
+        return { result: mapRfq(updated), entityType: "Rfq", entityId: row.id, audit: { action: `rfq_${action}`, summary: `${action} RFQ ${numberOf(row)}.`, metadata: { expectedVersion, version: currentVersion + 1, from: row.status, to: next } } };
       },
     });
   }
@@ -463,6 +498,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
       idempotencyKey: input.idempotencyKey,
       derivedKey: `purchase_request.create_purchase_orders:${text(id)}:v${expectedVersion}`,
       payload: { id: text(id), expectedVersion },
+      attempts: 5,
       execute: async (tx, actor, { idempotencyKey }) => {
         const row = await lockRequest(tx, actor.tenantId, id);
         assertCurrentVersion(row, expectedVersion);
@@ -486,6 +522,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           return [line.id, wanted === undefined || current?.reasonCode ? current : wanted];
         }));
         const purchaseOrderIds = [];
+        const purchaseOrderNumbers = [];
         const carriedOverrides = [];
         // Approved with the request: the PO never waits in pending approval,
         // and its approval step names the request and who approved it.
@@ -502,8 +539,12 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           : [];
         const originalPromisesRecorded = [];
         for (const group of groups.values()) {
+          // Each order's number is the workspace's next PO-YYYYMM-NNNN; its
+          // metadata.orderNumber carries the same number for older readers.
           const poId = documentId("PO");
+          const poNumber = await nextNumber(tx, actor.tenantId, "purchase_order");
           purchaseOrderIds.push(poId);
+          purchaseOrderNumbers.push(poNumber);
           let total = 0n;
           const lines = group.lines.map((line) => {
             const amount = receivingDecimalUnits(String(line.amount ?? "0"));
@@ -519,10 +560,10 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           carriedOverrides.push(...supplierOverrideAudit(group.lines.map((line) => ({ ...line, metadata: { ...(line.metadata || {}), supplierOverride: overrideOf.get(line.id) || null } })), (line) => ({ purchaseOrderId: poId, purchaseRequestLineId: line.id })));
           const dates = group.lines.map((line) => line.metadata?.needByDate).filter(Boolean).sort();
           await tx.purchaseOrder.create({ data: {
-            id: poId, tenantId: actor.tenantId, status, ...(approvedWithRequest ? { receivingBaseStatus: PURCHASE_ORDER_STATUS.APPROVED } : {}), supplierId: group.supplierId, supplierName: group.supplierName,
+            id: poId, number: poNumber, tenantId: actor.tenantId, status, ...(approvedWithRequest ? { receivingBaseStatus: PURCHASE_ORDER_STATUS.APPROVED } : {}), supplierId: group.supplierId, supplierName: group.supplierName,
             sourceRequestId: row.id, expectedDate: dates[0] ? new Date(`${dates[0]}T00:00:00Z`) : row.requiredDate,
             amount: receivingDecimalString(total), currency: group.currency, owner: actor.user.name || actor.user.id, version: 0,
-            metadata: { orderNumber: poId, targetWarehouseId: group.warehouseId, procurementPath: "direct_po", transmissionStatus: "not_sent", createdBy: actor.user.id, sourcePurchaseRequestVersion: versionOf(row), ...(approvedWithRequest ? { approvalTimeline } : {}) },
+            metadata: { orderNumber: poNumber, targetWarehouseId: group.warehouseId, procurementPath: "direct_po", transmissionStatus: "not_sent", createdBy: actor.user.id, sourcePurchaseRequestVersion: versionOf(row), ...(approvedWithRequest ? { approvalTimeline } : {}) },
             lines: { create: lines },
           } });
           // Each line's date from its PR line (a promised date, or else the need-by
@@ -544,7 +585,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         await tx.purchaseRequest.update({ where: { id: row.id }, data: sourcedRequest(row, actor, "create_purchase_orders", { status: PURCHASE_REQUEST_STATUS.CONVERTED, linkedPoId: purchaseOrderIds[0], metadata: { procurementPath: "direct_po", linkedPurchaseOrderIds: purchaseOrderIds } }) });
         const orders = await tx.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, id: { in: purchaseOrderIds } }, include: { lines: true }, orderBy: { id: "asc" } });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, actor.tenantId, row.id));
-        return { result: { purchaseRequestId: row.id, purchaseRequest, createdPurchaseOrders: orders.map(mapPurchaseOrder) }, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_converted_to_purchase_orders", summary: `Created ${purchaseOrderIds.length} ${approvedWithRequest ? "approved " : ""}purchase order(s) from purchase request ${row.id}.`, metadata: { expectedVersion, purchaseOrderIds, approvedWithRequest, ...(approvedWithRequest ? { originalPromisesRecorded } : {}), ...withOverrides(carriedOverrides) } } };
+        return { result: { purchaseRequestId: row.id, purchaseRequest, createdPurchaseOrders: orders.map(mapPurchaseOrder) }, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_converted_to_purchase_orders", summary: `Created ${purchaseOrderIds.length} ${approvedWithRequest ? "approved " : ""}purchase order(s) from purchase request ${numberOf(row)}: ${purchaseOrderNumbers.join(", ")}.`, metadata: { expectedVersion, purchaseOrderIds, purchaseOrderNumbers, approvedWithRequest, ...(approvedWithRequest ? { originalPromisesRecorded } : {}), ...withOverrides(carriedOverrides) } } };
       },
     });
   }
@@ -552,7 +593,9 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
   async function readPurchaseRequest(id, context) {
     const client = await db();
     const actor = await actorFor(client, context, PURCHASE_REQUEST_PERMISSIONS.read);
-    const row = await readRequest(client, actor.tenantId, id);
+    // By id, or by the number the request shows (PR-202611-0001).
+    const row = await readRequest(client, actor.tenantId, id)
+      || await client.purchaseRequest.findFirst({ where: { tenantId: actor.tenantId, number: text(id) }, include: { lines: { orderBy: { id: "asc" } } } });
     if (!row) fail("ENTITY_NOT_FOUND", "Purchase request was not found.", 404);
     return mapPurchaseRequest(row);
   }

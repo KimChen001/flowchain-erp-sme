@@ -20,6 +20,7 @@ import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { requireTenantId } from './repository-read-scope.mjs'
+import { procurementDocumentNumber } from '../../shared/document-numbering.mjs'
 
 function requireDatabaseConfig(env = process.env) {
   return validateDatabasePersistenceConfig(env)
@@ -120,6 +121,24 @@ function documentWhere(tenantId, id) {
   }
 }
 
+// A purchase request, RFQ or purchase order opens by its id or by the number
+// it shows (PR-202611-0001); the id is tried first.
+async function findNumberedDocument(model, tenantId, id, include) {
+  const byId = await model.findFirst({ where: documentWhere(tenantId, id), include })
+  if (byId) return byId
+  return model.findFirst({ where: { tenantId, number: { equals: escapeLikePattern(id), mode: 'insensitive' } }, include })
+}
+
+// The numbers the loaded requests, RFQs and orders show, by id, so a
+// reference to one of them can carry its number without another query.
+function numbersById(rows = []) {
+  return new Map(rows.map((row) => [row.id, procurementDocumentNumber(row)]))
+}
+const withNumber = (field, numbers, id) => {
+  const value = numbers.get(text(id))
+  return value ? { [field]: value } : {}
+}
+
 // The request with its requester's name, when the user is known.
 function withRequesterName(request, names) {
   const name = names.get(request.requesterId)
@@ -165,6 +184,8 @@ export function mapPurchaseRequest(record = {}) {
   return {
     id: record.id,
     pr: record.id,
+    // The number people see; documents created before numbering show their id.
+    number: procurementDocumentNumber(record),
     version: numberFrom(meta.version, 0),
     requesterId: text(meta.requesterId || record.requester),
     departmentId: text(meta.departmentId),
@@ -205,8 +226,9 @@ export function mapRfq(record = {}, quotations = []) {
   const quoteCount = quotations.filter((quote) => quote.rfqId === record.id).length
   return {
     id: record.id,
+    number: procurementDocumentNumber(record),
     version: numberFrom(meta.version, 0),
-    title: text(record.title, record.id),
+    title: text(record.title, procurementDocumentNumber(record)),
     category: text(record.category),
     status: canonicalStatus('rfq', record.status) || text(record.status, 'active'),
     suppliers: numberFrom(record.supplierCount, quoteCount),
@@ -367,7 +389,7 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
   const noResponseCount = knownParticipants.filter((participant) => participant.responseState === 'no_response').length
 
   const relatedEvidence = [
-    { type: 'rfq', id: record.id, label: text(record.title, record.id), relation: 'canonical_record' },
+    { type: 'rfq', id: record.id, number: procurementDocumentNumber(record), label: text(record.title, procurementDocumentNumber(record)), relation: 'canonical_record' },
     ...(record.sourceRequestId ? [{ type: 'pr', id: record.sourceRequestId, label: record.sourceRequestId, relation: 'source_request' }] : []),
     ...(record.linkedPoId ? [{ type: 'po', id: record.linkedPoId, label: record.linkedPoId, relation: 'linked_po' }] : []),
     ...quotationDetails.map((quotation) => ({ type: 'supplier_quotation', id: quotation.id, label: quotation.id, relation: 'quotation' })),
@@ -415,10 +437,12 @@ export function mapPurchaseOrder(record = {}) {
   const meta = metadata(record)
   const ordered = lineQuantity(record.lines, 'orderedQuantity', numberFrom(meta.orderedQuantity, 0))
   const received = lineQuantity(record.lines, 'receivedQuantity', numberFrom(meta.receivedQuantity, 0))
+  const number = procurementDocumentNumber(record)
   return {
     id: record.id,
     po: record.id,
-    orderNumber: text(meta.orderNumber, record.id),
+    number,
+    orderNumber: number,
     version: numberFrom(record.version, 0),
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
@@ -628,19 +652,13 @@ function mapFollowup(record = {}) {
 }
 
 async function readPurchaseRequestDocument(client, { id, tenantId }) {
-  const record = await client.purchaseRequest.findFirst({
-    where: documentWhere(tenantId, id),
-    include: { lines: true },
-  })
+  const record = await findNumberedDocument(client.purchaseRequest, tenantId, id, { lines: true })
   if (!record) return null
   return buildProcurementPurchaseRequests({ purchaseRequests: [mapPurchaseRequest(record)] })[0] || null
 }
 
 async function readRfqDocument(client, { id, tenantId }) {
-  const record = await client.rfq.findFirst({
-    where: documentWhere(tenantId, id),
-    include: { lines: true },
-  })
+  const record = await findNumberedDocument(client.rfq, tenantId, id, { lines: true })
   if (!record) return null
   const quotations = await client.supplierQuotation.findMany({
     where: { tenantId, rfqId: record.id },
@@ -662,10 +680,7 @@ async function readRfqDocument(client, { id, tenantId }) {
 }
 
 async function readPurchaseOrderDocument(client, { id, tenantId }) {
-  const record = await client.purchaseOrder.findFirst({
-    where: documentWhere(tenantId, id),
-    include: { lines: true },
-  })
+  const record = await findNumberedDocument(client.purchaseOrder, tenantId, id, { lines: true })
   if (!record) return null
   const receivingDocuments = await client.receivingDocument.findMany({
     where: { tenantId, poId: record.id },
@@ -781,15 +796,40 @@ async function loadProcurementSnapshot(client, filters = {}) {
   const requesters = requesterIds.length && typeof client.user?.findMany === 'function'
     ? new Map((await client.user.findMany({ where: { ...where, id: { in: requesterIds } }, select: { id: true, name: true } })).map((user) => [user.id, text(user.name)]))
     : new Map()
+  // References to a request, RFQ or order carry its number when it is among
+  // the loaded rows (prNumber, rfqNumber, poNumber); otherwise the page looks
+  // it up (GET /api/procurement/document-numbers).
+  const prNumbers = numbersById(purchaseRequests)
+  const rfqNumbers = numbersById(rfqs)
+  const poNumbers = numbersById(purchaseOrders)
   return {
-    purchaseRequests: purchaseRequests.map((record) => withRequesterName(mapPurchaseRequest(record), requesters)),
-    rfqs: rfqs.map((rfq) => mapRfq(rfq, supplierQuotations)),
-    purchaseOrders: purchaseOrders.map(mapPurchaseOrder),
-    receivingDocs: receivingDocuments.map(mapReceivingDocument),
-    supplierInvoices: supplierInvoices.map(mapSupplierInvoice),
+    purchaseRequests: purchaseRequests.map((record) => ({ ...withRequesterName(mapPurchaseRequest(record), requesters), ...withNumber('rfqNumber', rfqNumbers, record.linkedRfqId), ...withNumber('poNumber', poNumbers, record.linkedPoId) })),
+    rfqs: rfqs.map((rfq) => ({ ...mapRfq(rfq, supplierQuotations), ...withNumber('prNumber', prNumbers, rfq.sourceRequestId), ...withNumber('poNumber', poNumbers, rfq.linkedPoId) })),
+    purchaseOrders: purchaseOrders.map((record) => ({ ...mapPurchaseOrder(record), ...withNumber('prNumber', prNumbers, record.sourceRequestId), ...withNumber('rfqNumber', rfqNumbers, record.sourceRfqId) })),
+    receivingDocs: receivingDocuments.map((record) => ({ ...mapReceivingDocument(record), ...withNumber('poNumber', poNumbers, record.poId) })),
+    supplierInvoices: supplierInvoices.map((record) => ({ ...mapSupplierInvoice(record), ...withNumber('poNumber', poNumbers, record.relatedPoId) })),
     documentLinks: documentLinks.map(mapDocumentLink).filter((link) => link.sourceType && link.sourceId && link.targetType && link.targetId),
     procurementFollowups: procurementFollowups.map(mapFollowup).filter((item) => item.id && item.documentType && item.documentId),
   }
+}
+
+// The number each named purchase order, purchase request and RFQ of the
+// workspace shows, by id: { purchase_order: { id: number }, purchase_request:
+// {...}, rfq: {...} }. An id the workspace does not have is left out. The
+// caller decides which types the reader may see.
+export const DOCUMENT_NUMBER_LOOKUP_LIMIT = 200
+const NUMBER_LOOKUP_MODELS = Object.freeze({ purchase_order: 'purchaseOrder', purchase_request: 'purchaseRequest', rfq: 'rfq' })
+export async function readProcurementDocumentNumbers(client, { tenantId, ids = {} } = {}) {
+  const scoped = requireTenantId({ tenantId })
+  const numbers = {}
+  for (const [type, model] of Object.entries(NUMBER_LOOKUP_MODELS)) {
+    const wanted = [...new Set(asArray(ids[type]).map((id) => text(id)).filter(Boolean))].slice(0, DOCUMENT_NUMBER_LOOKUP_LIMIT)
+    const rows = wanted.length
+      ? await client[model].findMany({ where: { tenantId: scoped, id: { in: wanted } }, select: { id: true, number: true, ...(type === 'purchase_order' ? { metadata: true } : {}) } })
+      : []
+    numbers[type] = Object.fromEntries(rows.map((row) => [row.id, procurementDocumentNumber(row)]))
+  }
+  return numbers
 }
 
 export function createDbProcurementReadRepository({ env = process.env, prisma } = {}) {
@@ -838,6 +878,7 @@ export function createDbProcurementReadRepository({ env = process.env, prisma } 
       const summary = explicitFollowups ? { ...built, followupCount: built.followupCount + explicitFollowups } : built
       return access ? maskProcurementSummary(summary, access) : summary
     },
+    documentNumbers: async ({ tenantId, ids } = {}) => readProcurementDocumentNumbers(await resolvePrisma({ env, prisma }), { tenantId, ids }),
     normalizeDocumentType: (type) => normalizeProcurementDocumentType(type),
     isDocumentType: (type) => isProcurementDocumentType(type),
   }

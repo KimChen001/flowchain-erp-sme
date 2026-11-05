@@ -204,12 +204,13 @@ function linkedRfqForPr(db = {}, pr = {}, options = {}) {
   return linked ? String(linked.id || linked.rfq || linked.rfqId || '') : ''
 }
 
+// By id or by the number the document shows (PR-202611-0001).
 function findPr(requests = [], id = '') {
-  return requests.find((pr) => sameId(prIdFor(pr), id)) || null
+  return requests.find((pr) => sameId(prIdFor(pr), id) || (pr.number && sameId(pr.number, id))) || null
 }
 
 function findPo(orders = [], id = '') {
-  return orders.find((po) => sameId(poIdFor(po), id)) || null
+  return orders.find((po) => sameId(poIdFor(po), id) || [po.number, po.orderNumber].some((number) => number && sameId(number, id))) || null
 }
 
 function findReceiving(docs = [], id = '') {

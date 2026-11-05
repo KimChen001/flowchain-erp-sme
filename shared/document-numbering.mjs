@@ -8,14 +8,15 @@
 // notes and a mapping list for the user.
 //
 // `applied` marks the document types whose creation path assigns these
-// numbers now. Purchase requests, RFQs and purchase orders follow once they
-// have a per-workspace number field (their id is global today); returns and
-// credit notes follow with phase 2. Existing documents keep their numbers.
+// numbers now; returns and credit notes follow with phase 2. Existing
+// documents keep their numbers. Purchase requests, RFQs and purchase orders
+// keep a global internal id and carry the number in their own `number` field
+// (unique per workspace); those created before it show their id.
 
 export const DOCUMENT_NUMBER_TYPES = Object.freeze([
-  { type: 'purchase_request', ruleId: 'NUM-PR', prefix: 'PR', document: 'Purchase Request', zh: '采购申请', applied: false },
-  { type: 'rfq', ruleId: 'NUM-RFQ', prefix: 'RFQ', document: 'Request for Quotation', zh: '询价单', applied: false },
-  { type: 'purchase_order', ruleId: 'NUM-PO', prefix: 'PO', document: 'Purchase Order', zh: '采购订单', applied: false },
+  { type: 'purchase_request', ruleId: 'NUM-PR', prefix: 'PR', document: 'Purchase Request', zh: '采购申请', applied: true },
+  { type: 'rfq', ruleId: 'NUM-RFQ', prefix: 'RFQ', document: 'Request for Quotation', zh: '询价单', applied: true },
+  { type: 'purchase_order', ruleId: 'NUM-PO', prefix: 'PO', document: 'Purchase Order', zh: '采购订单', applied: true },
   { type: 'receiving_document', ruleId: 'NUM-GRN', prefix: 'GRN', document: 'Receiving Document', zh: '收货单', applied: true },
   { type: 'sales_order', ruleId: 'NUM-SO', prefix: 'SO', document: 'Sales Order', zh: '销售订单', applied: true },
   { type: 'shipment', ruleId: 'NUM-DN', prefix: 'DN', document: 'Shipment', zh: '发货单', applied: true },
@@ -35,6 +36,15 @@ export const DOCUMENT_NUMBER_DATE_PATTERN = 'YYYYMM'
 export const DOCUMENT_NUMBER_SEQUENCE_LENGTH = 4
 export const DOCUMENT_NUMBER_PREFIX_PATTERN = /^[A-Z0-9]{1,8}$/
 const DEFAULT_TIME_ZONE = 'America/New_York'
+
+// The number a purchase request, RFQ or purchase order shows: its `number`
+// field, else (rows written outside the app) a purchase order's recorded
+// order number, else its id.
+export function procurementDocumentNumber(row) {
+  const value = [row?.number, row?.metadata?.orderNumber, row?.orderNumber, row?.id]
+    .map((entry) => String(entry ?? '').trim()).find(Boolean)
+  return value || ''
+}
 
 export function documentNumberType(type) {
   return DOCUMENT_NUMBER_TYPES.find((entry) => entry.type === type) || null

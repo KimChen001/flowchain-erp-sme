@@ -156,7 +156,7 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
               <tbody>
                 {orders.rows.map((row, index) => (
                   <tr key={row.id} className={listRowClass} style={listRowStyle(index, orders.rows.length)} data-testid="supplier-purchase-record">
-                    <td className={tdIdClass}><EntityLink kind="purchase_order" id={row.id} className={tableLinkClass}>{row.orderNumber}</EntityLink></td>
+                    <td className={tdIdClass}><EntityLink kind="purchase_order" id={row.id} number={row.orderNumber} className={tableLinkClass} /></td>
                     <td className={tdNowrapClass}>{f.day(row.date)}</td>
                     <td className={tdNowrapClass}><Status code={row.status} label={f.status(row.status)} /></td>
                     <td className={tdNowrapClass}>{f.day(row.promisedDate)}{row.overdueDays > 0 ? <span className="ml-2" style={{ color: A.red }}>{t("overdueBy", { n: row.overdueDays })}</span> : null}</td>

@@ -87,4 +87,5 @@ export type PrFormProps = {
   departmentId?: string;
 };
 // The request a form created, as the procurement routes return it.
-export type PrReceipt = { id: string; version: number; status: string };
+// number: the request's document number (shown); id: its internal id (links and calls).
+export type PrReceipt = { id: string; number?: string; version: number; status: string };

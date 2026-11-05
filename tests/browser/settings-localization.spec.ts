@@ -92,7 +92,8 @@ test("only the invoice matching tolerances and the AI switch save; settings noth
   await expect(salesOrderRule).toContainText("Sales Order");
   await expect(salesOrderRule).toContainText(/SO-\d{6}-0001/);
   await expect(salesOrderRule).toContainText("In effect");
-  await expect(page.getByTestId("settings-numbering-rule-NUM-PO")).toContainText("Not in effect yet");
+  await expect(page.getByTestId("settings-numbering-rule-NUM-PO")).toContainText("In effect");
+  await expect(page.getByTestId("settings-numbering-rule-NUM-RR")).toContainText("Not in effect yet");
   await expect(page.getByLabel("Prefix for Sales Order", { exact: true })).toBeEnabled();
   await expect(page.getByTestId("settings-save")).toBeVisible();
 

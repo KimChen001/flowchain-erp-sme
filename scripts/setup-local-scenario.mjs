@@ -499,14 +499,16 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
   // with nothing received, unposted receipts, opening stock and the rest.
   const unpostedReceipts = await prisma.$transaction(async tx => {
     const put = putWith(tx)
-    await put('purchaseRequest', 'LOCAL-DEMO-PR-001', { tenantId, status: PURCHASE_REQUEST_STATUS.SUBMITTED, requester: 'Kim', priority: 'high', requiredDate: day(14), amount: 5000, currency: 'USD', source: 'local_demo_scenario', metadata, createdAt: at(-23, '09:15') })
+    // The walkthrough's requests, RFQs and orders keep their seeded numbers
+    // (number = id), as documents created before workspace numbering do.
+    await put('purchaseRequest', 'LOCAL-DEMO-PR-001', { tenantId, number: 'LOCAL-DEMO-PR-001', status: PURCHASE_REQUEST_STATUS.SUBMITTED, requester: 'Kim', priority: 'high', requiredDate: day(14), amount: 5000, currency: 'USD', source: 'local_demo_scenario', metadata, createdAt: at(-23, '09:15') })
     await put('purchaseRequestLine', 'LOCAL-DEMO-PRL-001', { purchaseRequestId: 'LOCAL-DEMO-PR-001', itemId: items['LDM-001'].id, sku: 'LDM-001', itemName: items['LDM-001'].name, quantity: 50, unit: 'pcs', unitPrice: 100, amount: 5000, metadata })
 
     // The RFQ awarded from the purchase request. Quotation revisions are
     // immutable in the database, so they keep the dates of their first seed.
     const rfqLineMetadata = { ...metadata, requiredDate: isoDay(14), deliveryLocation: WAREHOUSE }
     await put('rfq', 'LOCAL-DEMO-RFQ-AWARD-001', {
-      tenantId, title: 'Flow Controller RFQ', category: 'Electronic components', status: 'collecting_quotes', supplierCount: 2, respondedSupplierCount: 2,
+      tenantId, number: 'LOCAL-DEMO-RFQ-AWARD-001', title: 'Flow Controller RFQ', category: 'Electronic components', status: 'collecting_quotes', supplierCount: 2, respondedSupplierCount: 2,
       dueDate: day(2), sourceRequestId: 'LOCAL-DEMO-PR-001', currency: 'USD', metadata, createdAt: at(-7, '10:00'),
     })
     await put('rfqLine', 'LOCAL-DEMO-RFQL-AWARD-001', { tenantId, rfqId: 'LOCAL-DEMO-RFQ-AWARD-001', itemId: items['LDM-001'].id, sku: 'LDM-001', itemName: items['LDM-001'].name, quantity: 50, unit: 'pcs', metadata: rfqLineMetadata })
@@ -587,7 +589,7 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
         ...(po.cancellationReason ? { cancellationReason: po.cancellationReason } : {}),
       }
       if (await put('purchaseOrder', id, {
-        tenantId, status, supplierId: po.supplier, supplierName, sourceRequestId: po.request ? 'LOCAL-DEMO-PR-001' : null,
+        tenantId, number: id, status, supplierId: po.supplier, supplierName, sourceRequestId: po.request ? 'LOCAL-DEMO-PR-001' : null,
         expectedDate: day(po.promised), amount, currency: 'USD', owner: BUYERS[po.n % BUYERS.length], priority: po.priority || 'medium', metadata: poMetadata,
         createdAt: at(po.created, '09:30'), receivingBaseStatus: null, issuedAt,
       })) {

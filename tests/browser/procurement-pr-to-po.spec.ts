@@ -38,7 +38,8 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   expect(submitted).toBeTruthy()
   expect(submitted.currency).toBe('USD')
   expect(submitted.totalAmount).toBe(49.2)
-  const row = page.locator('tr', { hasText: submitted.id })
+  // Pages show the document number (PR-YYYYMM-NNNN); the id stays in links and calls.
+  const row = page.locator('tr', { hasText: submitted.number || submitted.id })
   await row.getByRole('button', { name: 'Approve' }).click()
   await expect(row.getByRole('button', { name: 'Create purchase order' })).toBeVisible()
   await row.getByRole('button', { name: 'Create purchase order' }).click()
@@ -79,7 +80,7 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   // supplier's reference price (4.25): nothing is filled in from history.
   await page.goto('/app/procurement/requests?mode=create')
   await page.getByLabel('SKU 1').selectOption('browser-pr-item')
-  await expect(page.getByTestId('pr-line-price-history-1-latest')).toContainText(`Last PO price USD 4.10 / EA · ${po.id}`)
+  await expect(page.getByTestId('pr-line-price-history-1-latest')).toContainText(`Last PO price USD 4.10 / EA · ${po.number || po.id}`)
   await expect(page.getByTestId('pr-line-price-history-1-note')).toContainText('not invoiced or paid prices')
   await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('4.25')
 })
@@ -249,10 +250,10 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   expect(submitted.lines[0].supplierOverride).toMatchObject({ reasonCode: 'lead_time', note: 'Acme is out until November', preferredSupplierId: ids.acme })
   const flag = `Not preferred (Acme ${ids.stamp}). Reason: Lead time — Acme is out until November`
   // The list row's approve button skips the detail, so the row shows the reason too.
-  const row = page.locator('tr', { hasText: submitted.id })
+  const row = page.locator('tr', { hasText: submitted.number || submitted.id })
   await expect(row.getByTestId('pr-row-supplier-overrides')).toHaveText('1 line skips the preferred supplier')
   await expect(row.getByTestId('pr-row-supplier-override')).toHaveText(`SC-Wrap-${ids.stamp} · Bolt ${ids.stamp}: ${flag}`)
-  await row.getByText(submitted.id).click()
+  await row.getByText(submitted.number || submitted.id).click()
   await expect(page.getByTestId('pr-line-supplier-override')).toHaveText(flag)
 
   await page.goto('/app/procurement/requests')

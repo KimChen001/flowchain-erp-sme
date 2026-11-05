@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
@@ -92,7 +93,9 @@ const mapPromiseRevision = (row) => ({
 function mapPurchaseOrder(row, { includePrices = true, includePartner = true } = {}) {
   return {
     id: row.id,
-    orderNumber: row.metadata?.orderNumber || row.id,
+    // The number people see; orderNumber is the same for older readers.
+    number: procurementDocumentNumber(row),
+    orderNumber: procurementDocumentNumber(row),
     status: row.status,
     supplierId: row.supplierId,
     supplierSnapshot: includePartner && (row.supplierId || row.supplierName) ? { id: row.supplierId, supplierName: row.supplierName } : null,
@@ -132,7 +135,9 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
     databaseEnabled(env);
     const client = await db();
     const actor = await actorFor(client, context, "procurement.purchase_order.read");
-    const row = await client.purchaseOrder.findFirst({ where: { id: text(id), tenantId: actor.tenantId }, include: LINES_WITH_REVISIONS });
+    // By id, or by the number the order shows (PO-202611-0001).
+    const row = await client.purchaseOrder.findFirst({ where: { id: text(id), tenantId: actor.tenantId }, include: LINES_WITH_REVISIONS })
+      || await client.purchaseOrder.findFirst({ where: { number: text(id), tenantId: actor.tenantId }, include: LINES_WITH_REVISIONS });
     if (!row) fail("PURCHASE_ORDER_NOT_FOUND", "Purchase order was not found.", 404);
     return mapPurchaseOrder(row, options);
   }

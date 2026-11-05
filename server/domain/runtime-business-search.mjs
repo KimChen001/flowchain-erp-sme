@@ -3,14 +3,19 @@ const text = value => String(value ?? '').trim()
 const lower = value => text(value).toLowerCase()
 const idOf = (row, keys) => text(keys.map(key => row?.[key]).find(Boolean))
 
+// Purchase requests, RFQs and purchase orders are found by the number they
+// show (PR-202611-0001) as well as by their id; a result names its number.
+const NUMBERED = new Set(['purchase_request', 'rfq', 'purchase_order'])
+const numberOf = row => text(row?.number || row?.orderNumber)
+
 const definitions = [
   ['item', 'items', ['itemId', 'sku', 'id'], ['itemName', 'name', 'sku'], '/app/master-data/items', 'masterData.itemRuntime'],
   ['supplier', 'suppliers', ['id', 'supplierCode', 'code'], ['supplierName', 'name', 'supplierCode'], '/app/master-data/suppliers', 'masterData.supplierRuntime'],
   ['customer', 'customers', ['id', 'code', 'customerCode'], ['name', 'customerName', 'code'], '/app/master-data/customers', 'masterData.customerRuntime'],
   ['sales_order', 'salesOrders', ['salesOrderId', 'id'], ['customerName', 'salesOrderId'], '/app/sales/orders', 'salesOrders'],
-  ['purchase_request', 'purchaseRequests', ['id', 'pr'], ['title', 'id'], '/app/procurement/requests', 'procurementRuntime'],
-  ['rfq', 'rfqs', ['id'], ['title', 'id'], '/app/procurement/rfq', 'procurementRuntime'],
-  ['purchase_order', 'purchaseOrders', ['id', 'po'], ['supplierSnapshot.supplierName', 'id'], '/app/procurement/orders', 'procurementRuntime'],
+  ['purchase_request', 'purchaseRequests', ['id', 'pr'], ['title', 'number', 'id'], '/app/procurement/requests', 'procurementRuntime'],
+  ['rfq', 'rfqs', ['id'], ['title', 'number', 'id'], '/app/procurement/rfq', 'procurementRuntime'],
+  ['purchase_order', 'purchaseOrders', ['id', 'po'], ['supplierSnapshot.supplierName', 'orderNumber', 'id'], '/app/procurement/orders', 'procurementRuntime'],
   ['inventory_item', 'inventoryItems', ['sku', 'itemId', 'id'], ['itemName', 'name', 'sku'], '/app/inventory/items', 'inventoryRuntime'],
   ['warehouse', 'warehouses', ['id', 'warehouseId', 'code'], ['name', 'warehouseName', 'code'], '/app/master-data/warehouses', 'warehouseRuntime'],
 ]
@@ -26,9 +31,10 @@ export function searchRuntimeBusinessContext(context, query, { limit = 15 } = {}
       const entityId = idOf(row, idKeys)
       if (!entityId) continue
       const label = text(labelKeys.map(key => nested(row, key)).find(Boolean)) || entityId
-      const haystack = lower([entityId, label, ...Object.values(row).filter(value => typeof value !== 'object')].join(' '))
+      const number = NUMBERED.has(entityType) ? numberOf(row) || entityId : ''
+      const haystack = lower([entityId, number, label, ...Object.values(row).filter(value => typeof value !== 'object')].join(' '))
       if (!haystack.includes(normalized)) continue
-      const exact = lower(entityId) === normalized || lower(label) === normalized
+      const exact = lower(entityId) === normalized || lower(label) === normalized || (number && lower(number) === normalized)
       const canonicalRoute = `${route}/${encodeURIComponent(entityId)}`
       results.push({
         id: `${entityType}:${entityId}`,
@@ -37,13 +43,14 @@ export function searchRuntimeBusinessContext(context, query, { limit = 15 } = {}
         entityId,
         entityLabel: label,
         label,
+        ...(number ? { number } : {}),
         subtitle: text(row.status || row.statusLabel || row.supplierName || row.customerName),
         status: text(row.status || row.statusLabel),
         canonicalRoute,
         deepLink: canonicalRoute,
         sourceRepository,
-        score: exact ? 120 : lower(entityId).includes(normalized) ? 95 : 72,
-        matchedFields: exact ? ['entityId'] : ['runtimeRecord'],
+        score: exact ? 120 : lower(entityId).includes(normalized) || lower(number).includes(normalized) ? 95 : 72,
+        matchedFields: exact ? [number && lower(number) === normalized ? 'number' : 'entityId'] : ['runtimeRecord'],
         // sourceRepository names the internal repository the row came from; it is
         // for diagnostics and never shown, so the result carries no evidence row.
         evidence: [],

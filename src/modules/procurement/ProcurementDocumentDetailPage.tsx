@@ -428,7 +428,7 @@ export function ProcurementDocumentDetailPage({
                 <BusinessEntityLink entityType="supplier" entityId={record.supplierId}>{record.supplierName || record.supplierId || "—"}</BusinessEntityLink>
               </Fact>
               <Fact label={copy("Purchase order")}>
-                <BusinessEntityLink entityType="purchase_order" entityId={poId}>{poId || "—"}</BusinessEntityLink>
+                <BusinessEntityLink entityType="purchase_order" entityId={poId} number={record?.poNumber} />
               </Fact>
               <Fact label={copy("Receipt")}>
                 <BusinessEntityLink entityType="receiving_doc" entityId={grnId}>{grnId || "—"}</BusinessEntityLink>

@@ -4,6 +4,7 @@ import { assertAuthorized } from '../auth/authorization-service.mjs'
 import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { isTransactionConflict } from '../persistence/transaction-conflict.mjs'
 import { allocateDocumentNumber } from './document-numbering.mjs'
+import { procurementDocumentNumber } from '../../shared/document-numbering.mjs'
 import { assertWarehouseAccess, hasWarehouseAccess, resolveProvisionedActor } from './pilot-identity.mjs'
 import { isPrismaConcurrencyError } from './prisma-concurrency-error.mjs'
 import { ReceivingCommandError } from './receiving-posting-command-service.mjs'
@@ -304,7 +305,8 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
     assertAuthorized({ actor, permission: 'receiving.read', tenantId: actor.tenantId })
     const value = escapeLikePattern(text(search)), id = text(purchaseOrderId)
     const rows = await prisma.purchaseOrder.findMany({
-      where: { tenantId: actor.tenantId, ...(id ? { id } : { status: { in: [...RECEIVABLE_PURCHASE_ORDER_INPUTS] } }), ...(value ? { id: { contains: value, mode: 'insensitive' } } : {}) },
+      // A search matches the order's number (PO-202611-0001) or its id.
+      where: { tenantId: actor.tenantId, ...(id ? { id } : { status: { in: [...RECEIVABLE_PURCHASE_ORDER_INPUTS] } }), ...(value ? { OR: [{ id: { contains: value, mode: 'insensitive' } }, { number: { contains: value, mode: 'insensitive' } }] } : {}) },
       include: { lines: true }, take: 50, orderBy: { updatedAt: 'desc' },
     })
     const warehouses = await prisma.warehouse.findMany({
@@ -314,7 +316,7 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
     const { stockBySku, locationsByWarehouse } = await receivingLocations(actor.tenantId, rows, warehouses)
     const showSupplier = actor.permissionCodes.has('finance.partner_snapshot.read') || channel === RECEIVING_DRAFT_CHANNELS.desktop
     const items = rows.map((po) => ({
-      id: po.id, status: po.status, version: po.version, receivable: isPurchaseOrderReceivable(po.status),
+      id: po.id, number: procurementDocumentNumber(po), status: po.status, version: po.version, receivable: isPurchaseOrderReceivable(po.status),
       supplierName: showSupplier ? po.supplierName : null, currency: po.currency, defaultWarehouseId: text(po.metadata?.targetWarehouseId) || null,
       lines: po.lines.map((line) => ({ ...receivableLine(line), stockLocations: stockBySku.get(text(line.sku)) || [] })),
     }))
@@ -373,9 +375,12 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
     const visible = rows.filter((row) => hasWarehouseAccess(actor, [row.warehouseId, ...row.lines.map((line) => line.warehouseId)].filter(Boolean), 'read'))
     const warehouseIds = [...new Set(visible.map((row) => row.warehouseId).filter(Boolean))]
     const warehouses = new Map((warehouseIds.length ? await prisma.warehouse.findMany({ where: { tenantId: actor.tenantId, id: { in: warehouseIds } }, select: { id: true, code: true, name: true } }) : []).map((row) => [row.id, row]))
+    // Each receipt names its purchase order by the number the order shows.
+    const poIds = [...new Set(visible.map((row) => row.poId).filter(Boolean))]
+    const poNumbers = new Map((poIds.length ? await prisma.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, id: { in: poIds } }, select: { id: true, number: true, metadata: true } }) : []).map((row) => [row.id, procurementDocumentNumber(row)]))
     const sum = (lines, field) => receivingDecimalString(lines.reduce((total, line) => total + receivingDecimalUnits(line[field] || 0), 0n))
     const items = visible.map((row) => ({
-      ...documentSummary(row), supplierName: row.supplierName, receiver: row.receiver, currency: row.currency,
+      ...documentSummary(row), ...(poNumbers.get(row.poId) ? { poNumber: poNumbers.get(row.poId) } : {}), supplierName: row.supplierName, receiver: row.receiver, currency: row.currency,
       warehouse: warehouses.get(row.warehouseId) || (row.warehouseId ? { id: row.warehouseId, code: row.warehouseId, name: row.warehouseId } : null),
       arrivedAt: serial(row.arrivedAt), postedAt: serial(row.postedAt), createdAt: serial(row.createdAt), updatedAt: serial(row.updatedAt),
       lineCount: row.lines.length, acceptedQuantity: sum(row.lines, 'acceptedQty'), rejectedQuantity: sum(row.lines, 'rejectedQty'),

@@ -234,7 +234,8 @@ function nodeFromProcurement(addNode, doc = {}) {
   return addNode({
     type: mappedType,
     id: docId(doc),
-    label: `${TYPE_LABELS[mappedType] || mappedType} ${docId(doc)}`.trim(),
+    // Requests, RFQs and orders are named by the number they show.
+    label: `${TYPE_LABELS[mappedType] || mappedType} ${doc.number || docId(doc)}`.trim(),
     status: doc.status || doc.matchStatus || doc.invoiceStatus,
     riskLevel: doc.riskLevel || doc.severity,
     riskLabel: riskLabel(doc.riskLevel || doc.severity),
@@ -325,30 +326,30 @@ function addSalesOrderChain(builder, context, order) {
 function addPurchaseOrderChains(builder, context, poRows = [], skuNode = null, orderNode = null) {
   for (const po of poRows.filter(Boolean)) {
     const poNode = nodeFromProcurement(builder.addNode, po)
-    if (skuNode) builder.addEdge(skuNode, poNode, 'supplied_by_po', '由采购订单补给', `${skuNode.id} 由 ${po.id} 补给`)
-    if (orderNode) builder.addEdge(poNode, orderNode, 'impacts_delivery', '影响客户交付', `${po.id} 影响 ${orderNode.id} 交付`, { strength: 'medium' })
+    if (skuNode) builder.addEdge(skuNode, poNode, 'supplied_by_po', '由采购订单补给', `${skuNode.id} 由 ${po.number || po.id} 补给`)
+    if (orderNode) builder.addEdge(poNode, orderNode, 'impacts_delivery', '影响客户交付', `${po.number || po.id} 影响 ${orderNode.id} 交付`, { strength: 'medium' })
 
     const pr = context.procurementDocuments.find((doc) => doc.documentType === 'pr' && lower(doc.id) === lower(po.sourceRequest || po.linkedPr || po.prId))
     if (pr) {
       const prNode = nodeFromProcurement(builder.addNode, pr)
-      builder.addEdge(poNode, prNode, 'sourced_from_pr', '来源于采购申请', `${po.id} 来源于 ${pr.id}`)
+      builder.addEdge(poNode, prNode, 'sourced_from_pr', '来源于采购申请', `${po.number || po.id} 来源于 ${pr.number || pr.id}`)
     }
     const rfq = context.procurementDocuments.find((doc) => doc.documentType === 'rfq' && lower(doc.id) === lower(po.sourceRfq || po.linkedRfq || po.rfqId))
     if (rfq) {
       const rfqNode = nodeFromProcurement(builder.addNode, rfq)
-      builder.addEdge(poNode, rfqNode, 'quoted_by_rfq', '经过询价', `${po.id} 关联 ${rfq.id}`)
+      builder.addEdge(poNode, rfqNode, 'quoted_by_rfq', '经过询价', `${po.number || po.id} 关联 ${rfq.number || rfq.id}`)
     }
     for (const supplier of supplierRowsFor(context, [po.supplierName || po.supplier])) {
       const supplierNode = nodeFromSupplier(builder.addNode, supplier)
-      builder.addEdge(poNode, supplierNode, 'placed_with_supplier', '下达给供应商', `${po.id} 下达给 ${supplier.name || supplier.id}`)
+      builder.addEdge(poNode, supplierNode, 'placed_with_supplier', '下达给供应商', `${po.number || po.id} 下达给 ${supplier.name || supplier.id}`)
       if (/逾期|延期|延迟|部分|待确认/.test(text(po.status))) {
-        builder.addEdge(poNode, supplierNode, 'delayed_by_supplier', '受供应商延期影响', `${po.id} 需要复核供应商交付`, { strength: 'medium' })
+        builder.addEdge(poNode, supplierNode, 'delayed_by_supplier', '受供应商延期影响', `${po.number || po.id} 需要复核供应商交付`, { strength: 'medium' })
       }
     }
     const grns = relatedReceivingDocs(context, [po.id])
     for (const grn of grns) {
       const grnNode = nodeFromProcurement(builder.addNode, grn)
-      builder.addEdge(poNode, grnNode, 'received_by_grn', '由收货单确认', `${po.id} 关联 ${grn.id}`)
+      builder.addEdge(poNode, grnNode, 'received_by_grn', '由收货单确认', `${po.number || po.id} 关联 ${grn.id}`)
     }
     const invoices = relatedInvoices(context, grns.map((item) => item.id), [po.id])
     for (const invoice of invoices) {
@@ -388,11 +389,11 @@ function addSupplierChain(builder, context, supplierIdOrName = '') {
   const poRows = procurementByType(context, 'po').filter((po) => supplierMatches(supplier, po.supplierName || po.supplier))
   for (const po of poRows) {
     const poNode = nodeFromProcurement(builder.addNode, po)
-    builder.addEdge(poNode, supplierNode, 'placed_with_supplier', '下达给供应商', `${po.id} 下达给 ${supplier.name || supplier.id}`)
+    builder.addEdge(poNode, supplierNode, 'placed_with_supplier', '下达给供应商', `${po.number || po.id} 下达给 ${supplier.name || supplier.id}`)
     const impact = resolvePurchaseOrderSalesImpact(context.db, po.id)
     for (const order of impact.orders) {
       const orderNode = nodeFromOrder(builder.addNode, order)
-      builder.addEdge(poNode, orderNode, 'impacts_delivery', '影响客户交付', `${po.id} 影响 ${order.salesOrderId}`)
+      builder.addEdge(poNode, orderNode, 'impacts_delivery', '影响客户交付', `${po.number || po.id} 影响 ${order.salesOrderId}`)
     }
     addPurchaseOrderChains(builder, context, [po])
   }
@@ -419,20 +420,20 @@ function addProcurementAnchorChain(builder, context, type = '', id = '') {
   if (type === 'purchase_request') {
     for (const rfq of context.procurementDocuments.filter((doc) => doc.documentType === 'rfq' && lower(doc.sourceRequest) === lower(id))) {
       const rfqNode = nodeFromProcurement(builder.addNode, rfq)
-      builder.addEdge(node, rfqNode, 'quoted_by_rfq', '经过询价', `${id} 关联 ${rfq.id}`)
+      builder.addEdge(node, rfqNode, 'quoted_by_rfq', '经过询价', `${id} 关联 ${rfq.number || rfq.id}`)
     }
   }
   if (type === 'rfq') {
     for (const po of context.procurementDocuments.filter((doc) => doc.documentType === 'po' && lower(doc.sourceRfq || doc.linkedRfq) === lower(id))) {
       const poNode = nodeFromProcurement(builder.addNode, po)
-      builder.addEdge(poNode, node, 'quoted_by_rfq', '经过询价', `${po.id} 关联 ${id}`)
+      builder.addEdge(poNode, node, 'quoted_by_rfq', '经过询价', `${po.number || po.id} 关联 ${id}`)
     }
   }
   if (type === 'receiving_doc') {
     const po = context.procurementDocuments.find((doc) => doc.documentType === 'po' && lower(doc.id) === lower(document.relatedPo || document.poId || document.po || document.linkedPo))
     if (po) {
       const poNode = nodeFromProcurement(builder.addNode, po)
-      builder.addEdge(poNode, node, 'received_by_grn', '由收货单确认', `${po.id} 关联 ${id}`)
+      builder.addEdge(poNode, node, 'received_by_grn', '由收货单确认', `${po.number || po.id} 关联 ${id}`)
     }
   }
   if (type === 'supplier_invoice') {

@@ -71,7 +71,7 @@ const searchRecords = defineAiTool({
   async run(args, { context }) {
     const { business } = await scopedBusiness(context)
     const results = searchRuntimeBusinessContext(business, args.query, { limit: AI_TOOL_LIMITS.maxRows })
-    return aiToolList(results.map((row) => ({ type: row.entityType, number: row.entityId, name: row.label, status: row.status || null, ref: aiToolRef(row.entityType, row.entityId, NAMED_RECORDS.has(row.entityType) ? row.label : row.entityId) })), args.limit)
+    return aiToolList(results.map((row) => ({ type: row.entityType, number: row.number || row.entityId, name: row.label, status: row.status || null, ref: aiToolRef(row.entityType, row.entityId, NAMED_RECORDS.has(row.entityType) ? row.label : row.number || row.entityId) })), args.limit)
   },
 })
 // Records a link names by their name: their id is internal. Documents are

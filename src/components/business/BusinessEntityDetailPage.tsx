@@ -3,6 +3,7 @@ import { ArrowLeft, Clock3, FileText } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import type { AppRouteDefinition } from "../../app/routeRegistry";
 import { apiJson } from "../../lib/api-client";
+import { DocumentNumber, isDocumentNumberType, useDocumentNumber } from "../../lib/documentNumbers";
 import { formatLocaleAmount } from "../../lib/format";
 import { useI18n } from "../../i18n/I18n";
 import { DELIVERY_NOTES } from "../../modules/sales/deliveryData";
@@ -165,21 +166,23 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
   const fields = useMemo(() => record ? Object.entries(record).filter(([key, value]) => !HIDDEN_KEYS.has(key) && typeof value !== "object") : [], [record]);
   const links = useMemo(() => record ? relatedLinks(entityType, record) : [], [entityType, record]);
   const recordCurrency = String(record?.currency || record?.defaultCurrency || "");
+  // A purchase request, RFQ or purchase order is named by its document number; the id stays in the address.
+  const shownId = useDocumentNumber(isDocumentNumberType(entityType) ? entityType : null, id, typeof record?.number === "string" ? record.number : null) || id;
 
   if (loading) return <Card className="p-8" data-testid="business-entity-detail"><div className="animate-pulse text-sm" style={{ color: A.gray1 }}>{text("loading", { label: entityLabel })}</div></Card>;
-  if (!record) return <Card className="p-8" data-testid="business-entity-detail"><Link to={returnTo} className="text-sm text-blue-600 hover:underline">← {returnLabel}</Link><h2 className="mt-5 text-lg font-semibold">{text("notFound", { label: entityLabel, id })}</h2><p className="mt-2 text-sm" style={{ color: A.gray1 }}>{text("notFoundHint")}</p></Card>;
+  if (!record) return <Card className="p-8" data-testid="business-entity-detail"><Link to={returnTo} className="text-sm text-blue-600 hover:underline">← {returnLabel}</Link><h2 className="mt-5 text-lg font-semibold">{text("notFound", { label: entityLabel, id: shownId })}</h2><p className="mt-2 text-sm" style={{ color: A.gray1 }}>{text("notFoundHint")}</p></Card>;
 
   return (
     <div className="space-y-4" data-testid="business-entity-detail" data-entity-type={entityType}>
       <Link to={returnTo} className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 rounded"><ArrowLeft size={15} />{returnLabel}</Link>
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><div className="fc-caption" style={{ color: A.gray2 }}>{entityLabel}</div><h1 className="mt-1 text-xl font-semibold tabular-nums" style={{ color: A.label }}>{id}</h1></div>
+          <div><div className="fc-caption" style={{ color: A.gray2 }}>{entityLabel}</div><h1 className="mt-1 text-xl font-semibold tabular-nums" style={{ color: A.label }}>{shownId}</h1></div>
           <Chip label={formatValue("status", record.status || record.matchStatus || record.settlementStatus || "active", { locale, currency: recordCurrency, zh })} color={A.blue} bg="#f0f6ff" />
         </div>
       </Card>
 
-      {links.length > 0 && <Card className="p-5"><SectionHeader title={text("related")} /><div className="flex flex-wrap gap-2">{links.map((link) => <BusinessEntityLink key={`${link.type}-${link.id}`} entityType={link.type} entityId={link.id} returnLabel={text("back", { label: entityLabel, id })} className="inline-flex rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs">{businessEntityCopy(link.label, language)} · {link.id}</BusinessEntityLink>)}</div></Card>}
+      {links.length > 0 && <Card className="p-5"><SectionHeader title={text("related")} /><div className="flex flex-wrap gap-2">{links.map((link) => <BusinessEntityLink key={`${link.type}-${link.id}`} entityType={link.type} entityId={link.id} returnLabel={text("back", { label: entityLabel, id: shownId })} className="inline-flex rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs">{businessEntityCopy(link.label, language)} · {isDocumentNumberType(link.type) ? <DocumentNumber type={link.type} id={link.id} /> : link.id}</BusinessEntityLink>)}</div></Card>}
 
       <Card className="p-5"><SectionHeader title={text("details")} /><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{fields.map(([key, value]) => <div key={key} className="rounded-lg p-3" style={{ background: A.gray6 }}><div className="fc-caption" style={{ color: A.gray2 }}>{fieldLabel(key)}</div><div className="mt-1 break-words text-sm font-medium" style={{ color: A.label }}>{formatValue(key, value, { locale, currency: recordCurrency, zh })}</div></div>)}</div></Card>
 

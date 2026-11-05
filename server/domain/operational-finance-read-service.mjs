@@ -1,4 +1,5 @@
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
+import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 import { can } from "../auth/authorization-service.mjs";
 import { paymentRecordsView } from "./payment-record-command-service.mjs";
 import { awaitingReceipt, financeFixed, financeUnits } from "./operational-finance-policy.mjs";
@@ -664,6 +665,7 @@ export function createOperationalFinanceReadService({
       },
       select: { purchaseOrderLineId: true, quantity: true },
     });
+    const poNumbers = new Map(purchaseOrders.map((row) => [row.id, procurementDocumentNumber(row)]));
     const billed = new Map();
     for (const row of billedRows)
       billed.set(row.purchaseOrderLineId, (billed.get(row.purchaseOrderLineId) || 0n) + financeUnits(row.quantity || 0));
@@ -671,6 +673,8 @@ export function createOperationalFinanceReadService({
       suppliers: await withPaymentTerms(suppliers, current.tenantId),
       purchaseOrders: purchaseOrders.map((row) => ({
         id: row.id,
+        // The number the order shows; orders created before numbering show their id.
+        number: procurementDocumentNumber(row),
         supplierId: row.supplierId,
         supplierName: row.supplierName,
         currency: row.currency,
@@ -693,6 +697,7 @@ export function createOperationalFinanceReadService({
         id: row.id,
         documentNumber: row.documentNumber,
         poId: row.poId,
+        ...(poNumbers.get(row.poId) ? { poNumber: poNumbers.get(row.poId) } : {}),
         supplierId: row.supplierId,
         supplierName: row.supplierName,
         currency: row.currency,

@@ -87,7 +87,14 @@ export type PurchaseOrderLine = {
 export type PurchaseOrder = {
   // Set by the server when the role may not read prices ("amounts").
   restrictedFields?: string[];
+  // The internal id: URLs, links and API calls.
   po: string;
+  // The document number people read (PO-YYYYMM-NNNN; the id for orders made before numbering).
+  number?: string;
+  orderNumber?: string;
+  // The numbers of the source request and RFQ, when the server sends them.
+  prNumber?: string;
+  rfqNumber?: string;
   supplier: string;
   created: string;
   // When the PO was issued to the supplier (an instant); null when not recorded.

@@ -244,7 +244,7 @@ function FinanceList({
     (!status || row.status === status)
     && (!supplier || row.supplierName === supplier)
     && (!variance || (variance === "with" ? hasVariance(row) : !hasVariance(row)))
-    && (!needle || [row.invoiceNumber, row.id, row.supplierName, row.relatedPoId].some((entry) => String(entry || "").toLowerCase().includes(needle))));
+    && (!needle || [row.invoiceNumber, row.id, row.supplierName, row.relatedPoNumber, row.relatedPoId].some((entry) => String(entry || "").toLowerCase().includes(needle))));
   const count = (code: string) => data.items.filter((row) => row.status === code).length;
   const statuses = [...new Set(data.items.map(statusOf).filter(Boolean))];
   const suppliers = [...new Set(data.items.map((row) => String(row.supplierName || "")).filter(Boolean))].sort();
@@ -352,7 +352,7 @@ function FinanceList({
                       </td>
                       <td className={`${tdNameClass} max-w-[200px] truncate`} title={row.supplierName}>{row.supplierName || "—"}</td>
                       <td className={tdNowrapClass}>
-                        {row.relatedPoId ? <EntityLink kind="purchase_order" id={row.relatedPoId} className="font-medium">{row.relatedPoId}</EntityLink> : <span style={{ color: A.gray2 }}>—</span>}
+                        {row.relatedPoId ? <EntityLink kind="purchase_order" id={row.relatedPoId} number={row.relatedPoNumber || row.poNumber} className="font-medium" /> : <span style={{ color: A.gray2 }}>—</span>}
                         <div className="text-[11px]" style={{ color: A.sub }}>{row.relatedGrnId ? <EntityLink kind="receiving_doc" id={row.relatedGrnId} className="text-[11px] font-normal">{row.relatedGrnId}</EntityLink> : "—"}</div>
                       </td>
                       <td className={tdNowrapClass}>

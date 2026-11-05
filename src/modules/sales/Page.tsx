@@ -4,6 +4,7 @@ import { salesDemandEnglish } from "./salesDemandCopy";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Boxes, ClipboardList, FileText, PackageSearch, ShoppingCart, Truck, Users } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { DocumentNumber } from "../../lib/documentNumbers";
 import { A, Card, Chip, Field, SectionHeader, inputStyle } from "../../components/ui";
 import EvidenceGraphPanel, { type EvidenceGraphResponse, type EvidenceNavigate } from "../../components/evidence/EvidenceGraphPanel";
 import SalesReturnPage from "./SalesReturnPage";
@@ -49,7 +50,8 @@ type SalesOrder = {
   deliveryRiskLabel: string;
   deliveryRiskReason: string;
   linkedInventory?: { availableQuantity?: number; safetyStock?: number; status?: string } | null;
-  linkedPurchaseOrders: Array<{ id: string; supplierName?: string; status?: string; expectedDate?: string }>;
+  // number: the order's document number (shown in place of its id).
+  linkedPurchaseOrders: Array<{ id: string; number?: string; supplierName?: string; status?: string; expectedDate?: string }>;
   linkedSuppliers: Array<{ id: string; name: string; risk?: string; status?: string }>;
   linkedReceivingDocs: Array<{ id: string; status?: string; poId?: string }>;
   linkedExceptionCases: string[];
@@ -454,7 +456,7 @@ function EvidenceChainView({
       <div className="grid grid-cols-1 gap-1.5 text-[11px] leading-5">
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ClipboardList size={12} />{copy("客户订单：")}{customerLabel(selectedOrder)} · {copy(selectedOrder.statusLabel)}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><PackageSearch size={12} />{copy("SKU库存：")}{selectedOrder.sku} / {itemLabel(selectedOrder)}{copy("· 已预留")}{qty(selectedOrder.reservedQty)}{copy("· 缺口")}{qty(selectedOrder.shortageQty)}</div>
-        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ShoppingCart size={12} />{copy("采购订单：")}{selectedOrder.linkedPurchaseOrders.map((po) => `${po.id} ${po.status || ""}`).join("; ") || copy("暂无完整采购订单关联")}</div>
+        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ShoppingCart size={12} />{copy("采购订单：")}{selectedOrder.linkedPurchaseOrders.length ? selectedOrder.linkedPurchaseOrders.map((po, index) => <span key={po.id}>{index ? "; " : ""}<DocumentNumber type="purchase_order" id={po.id} number={po.number} /> {po.status || ""}</span>) : copy("暂无完整采购订单关联")}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><Users size={12} />{copy("供应商：")}{selectedOrder.linkedSuppliers.map((supplier) => `${supplier.name}${supplier.risk ? ` · ${supplier.risk}` : ""}`).join("; ") || copy("暂无完整供应商记录")}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><Truck size={12} />{copy("收货单：")}{selectedOrder.linkedReceivingDocs.map((grn) => `${grn.id} ${grn.status || ""}`).join("; ") || copy("暂无完整收货记录")}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><FileText size={12} />{copy("发票财务：按当前采购和收货记录人工追溯")}</div>

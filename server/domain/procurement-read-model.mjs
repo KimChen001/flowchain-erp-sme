@@ -79,11 +79,12 @@ function evidence(type, id, summary = '', extra = {}) {
   return [{ ...item, summary: text(summary) || id }]
 }
 
-function related(type, id, label = '') {
+function related(type, id, label = '', number = '') {
   const canonical = normalizeProcurementDocumentType(type)
   const documentId = text(id)
   if (!canonical || !documentId) return null
-  return { type: canonical, id: documentId, label: text(label, documentId) }
+  const shown = text(number)
+  return { type: canonical, id: documentId, label: text(label, shown || documentId), ...(shown ? { number: shown } : {}) }
 }
 
 function compactRelatedDocuments(values = []) {
@@ -133,15 +134,42 @@ function invoiceId(invoice = {}, index = 0) {
   return text(invoice.invoiceNumber || invoice.invoiceId || invoice.id, `INV-READ-${String(index + 1).padStart(4, '0')}`)
 }
 
+// The number a purchase request, RFQ or purchase order shows: its number
+// (shared/document-numbering.mjs), else its id.
+function numberOf(row = {}, id = '') {
+  return text(row.number || row.orderNumber, id)
+}
+
+// The numbers of the requests, RFQs and orders in `data`, by id, so that a
+// reference to one of them carries its number (prNumber, rfqNumber,
+// poNumber). A reference whose document is not loaded keeps its own number
+// when the row has one, and otherwise has none.
+function numberIndex(data = {}) {
+  const index = (rows, idOf) => new Map(asArray(rows).map((row, position) => {
+    const id = idOf(row, position)
+    return [id, numberOf(row, id)]
+  }))
+  return { pr: index(data.purchaseRequests, prId), rfq: index(data.rfqs, rfqId), po: index(data.purchaseOrders, poId) }
+}
+function referenceNumber(numbers, id, own = '') {
+  return text(own) || (text(id) ? numbers.get(text(id)) || '' : '')
+}
+const numberField = (field, value) => (value ? { [field]: value } : {})
+
 export function buildProcurementPurchaseRequests(data = {}) {
+  const numbers = numberIndex(data)
   return asArray(data.purchaseRequests).map((request, index) => {
     const id = prId(request, index)
+    const number = numberOf(request, id)
+    const rfqNumber = referenceNumber(numbers.rfq, request.linkedRfq || request.rfqId, request.rfqNumber)
+    const poNumber = referenceNumber(numbers.po, request.linkedPo || request.poId, request.poNumber)
     return {
       type: 'purchase_request',
       documentType: 'pr',
       id,
-      label: id,
-      title: `${id} ${text(request.sourceName || request.itemName || request.sourceSku || request.sku)}`.trim(),
+      number,
+      label: number,
+      title: `${number} ${text(request.sourceName || request.itemName || request.sourceSku || request.sku)}`.trim(),
       status: text(request.status, '待处理'),
       requester: text(request.requester),
       buyer: text(request.buyer),
@@ -163,28 +191,35 @@ export function buildProcurementPurchaseRequests(data = {}) {
       updatedAt: text(request.updatedAt || request.convertedAt || request.approvedAt),
       linkedRfq: text(request.linkedRfq || request.rfqId),
       linkedPo: text(request.linkedPo || request.poId),
+      ...numberField('rfqNumber', rfqNumber),
+      ...numberField('poNumber', poNumber),
       relatedDocuments: compactRelatedDocuments([
-        related('rfq', request.linkedRfq || request.rfqId),
-        related('po', request.linkedPo || request.poId),
+        related('rfq', request.linkedRfq || request.rfqId, '', rfqNumber),
+        related('po', request.linkedPo || request.poId, '', poNumber),
       ]),
       source: text(request.source),
       reason: text(request.reason),
-      evidence: evidence('pr', id, request.reason, { status: request.status, supplierName: request.supplier, amount: toNumber(request.amount, 0), currency: request.currency }),
+      evidence: evidence('pr', id, request.reason || number, { status: request.status, supplierName: request.supplier, amount: toNumber(request.amount, 0), currency: request.currency }),
     }
   })
 }
 
 export function buildProcurementRfqs(data = {}) {
+  const numbers = numberIndex(data)
   return asArray(data.rfqs).map((rfq, index) => {
     const id = rfqId(rfq, index)
+    const number = numberOf(rfq, id)
+    const prNumber = referenceNumber(numbers.pr, rfq.sourceRequest || rfq.linkedPr, rfq.prNumber)
+    const poNumber = referenceNumber(numbers.po, rfq.linkedPo, rfq.poNumber)
     const supplierCount = toNumber(rfq.suppliers ?? asArray(rfq.invitedSuppliers).length, 0)
     const respondedSupplierCount = toNumber(rfq.quoted ?? rfq.respondedSupplierCount, 0)
     return {
       type: 'rfq',
       documentType: 'rfq',
       id,
-      label: id,
-      title: text(rfq.title, id),
+      number,
+      label: number,
+      title: text(rfq.title, number),
       category: text(rfq.category),
       status: text(rfq.status, '进行中'),
       supplierCount,
@@ -195,9 +230,11 @@ export function buildProcurementRfqs(data = {}) {
       awardedSupplier: text(rfq.bestSupplier || rfq.awardedSupplier),
       linkedPr: text(rfq.sourceRequest || rfq.linkedPr),
       linkedPo: text(rfq.linkedPo),
+      ...numberField('prNumber', prNumber),
+      ...numberField('poNumber', poNumber),
       relatedDocuments: compactRelatedDocuments([
-        related('pr', rfq.sourceRequest || rfq.linkedPr),
-        related('po', rfq.linkedPo),
+        related('pr', rfq.sourceRequest || rfq.linkedPr, '', prNumber),
+        related('po', rfq.linkedPo, '', poNumber),
       ]),
       sku: text(rfq.sourceSku || rfq.sku),
       itemId: text(rfq.itemId || rfq.sourceSku || rfq.sku),
@@ -223,8 +260,12 @@ export function buildProcurementPurchaseOrders(data = {}) {
     grnsByPo.get(key).push(grn)
   }
 
+  const numbers = numberIndex(data)
   return asArray(data.purchaseOrders).map((po, index) => {
     const id = poId(po, index)
+    const number = numberOf(po, id)
+    const prNumber = referenceNumber(numbers.pr, po.sourceRequest || po.linkedPr, po.prNumber)
+    const rfqNumber = referenceNumber(numbers.rfq, po.sourceRfq || po.linkedRfq, po.rfqNumber)
     const lines = asArray(po.lines)
     const orderedQuantity = toNumber(po.totalOrderedQty ?? po.items ?? po.recommendedQty, 0)
     const receivedQuantity = toNumber(po.totalReceivedQty ?? po.received, 0)
@@ -233,14 +274,18 @@ export function buildProcurementPurchaseOrders(data = {}) {
       type: 'purchase_order',
       documentType: 'po',
       id,
-      label: id,
-      title: `${id} ${text(po.sourceName || po.sourceSku || po.supplier)}`.trim(),
+      number,
+      orderNumber: number,
+      label: number,
+      title: `${number} ${text(po.sourceName || po.sourceSku || po.supplier)}`.trim(),
       status: text(po.status, '待处理'),
       supplier: text(po.supplier),
       supplierName: text(po.supplier),
       supplierId: text(po.supplierId),
       sourceRequest: text(po.sourceRequest || po.linkedPr),
       linkedRfq: text(po.sourceRfq || po.linkedRfq),
+      ...numberField('prNumber', prNumber),
+      ...numberField('rfqNumber', rfqNumber),
       expectedDate: text(po.eta || po.expectedDate || po.requiredDate),
       dueDate: text(po.eta || po.expectedDate || po.requiredDate),
       amount: toNumber(po.amount ?? po.totalAmount, 0),
@@ -250,8 +295,8 @@ export function buildProcurementPurchaseOrders(data = {}) {
       receivingStatus: receivedQuantity <= 0 ? '未收货' : receivedQuantity < orderedQuantity ? '部分收货' : '已收货',
       linkedGrns,
       relatedDocuments: compactRelatedDocuments([
-        related('pr', po.sourceRequest || po.linkedPr),
-        related('rfq', po.sourceRfq || po.linkedRfq),
+        related('pr', po.sourceRequest || po.linkedPr, '', prNumber),
+        related('rfq', po.sourceRfq || po.linkedRfq, '', rfqNumber),
         ...linkedGrns.map((grn) => related('grn', grn)),
       ]),
       lineCount: toNumber(po.lineCount ?? lines.length, lines.length),
@@ -262,7 +307,7 @@ export function buildProcurementPurchaseOrders(data = {}) {
       itemName: text(po.sourceName || lines.find((line) => line?.itemName)?.itemName),
       createdAt: text(po.createdAt || po.created),
       updatedAt: text(po.updatedAt),
-      evidence: evidence('po', id, po.reason || `${id} ${text(po.status)}`, { status: po.status, supplierName: po.supplier, amount: toNumber(po.amount ?? po.totalAmount, 0), currency: po.currency }),
+      evidence: evidence('po', id, po.reason || `${number} ${text(po.status)}`, { status: po.status, supplierName: po.supplier, amount: toNumber(po.amount ?? po.totalAmount, 0), currency: po.currency }),
     }
   })
 }
@@ -276,8 +321,10 @@ export function buildProcurementReceivingDocs(data = {}) {
     invoicesByGrn.get(key).push(invoice)
   }
 
+  const numbers = numberIndex(data)
   return asArray(data.receivingDocs).map((grn, index) => {
     const id = grnId(grn, index)
+    const poNumber = referenceNumber(numbers.po, grn.po || grn.poId, grn.poNumber)
     const lines = asArray(grn.lines)
     const acceptedQty = lines.length
       ? lines.reduce((sum, line) => sum + toNumber(line.acceptedQty ?? line.passed, 0), 0)
@@ -290,9 +337,10 @@ export function buildProcurementReceivingDocs(data = {}) {
       documentType: 'grn',
       id,
       label: id,
-      title: `${id} ${text(grn.po || grn.poId)}`.trim(),
+      title: `${id} ${poNumber || text(grn.po || grn.poId)}`.trim(),
       po: text(grn.po || grn.poId),
       poId: text(grn.po || grn.poId),
+      ...numberField('poNumber', poNumber),
       supplier: text(grn.supplier),
       supplierName: text(grn.supplier),
       supplierId: text(grn.supplierId),
@@ -307,18 +355,20 @@ export function buildProcurementReceivingDocs(data = {}) {
       rejectedQty,
       linkedInvoices: asArray(invoicesByGrn.get(id)).map((invoice, invoiceIndex) => invoiceId(invoice, invoiceIndex)),
       relatedDocuments: compactRelatedDocuments([
-        related('po', grn.po || grn.poId),
+        related('po', grn.po || grn.poId, '', poNumber),
         ...asArray(invoicesByGrn.get(id)).map((invoice, invoiceIndex) => related('invoice', invoiceId(invoice, invoiceIndex))),
       ]),
       currency: text(grn.currency),
-      evidence: evidence('grn', id, `${text(grn.po)} ${text(grn.status)}`, { status: grn.status, supplierName: grn.supplier, currency: grn.currency }),
+      evidence: evidence('grn', id, `${poNumber || text(grn.po)} ${text(grn.status)}`, { status: grn.status, supplierName: grn.supplier, currency: grn.currency }),
     }
   })
 }
 
 export function buildProcurementSupplierInvoices(data = {}) {
+  const numbers = numberIndex(data)
   return asArray(data.supplierInvoices).map((invoice, index) => {
     const id = invoiceId(invoice, index)
+    const poNumber = referenceNumber(numbers.po, invoice.relatedPo || invoice.po || invoice.poId, invoice.poNumber)
     const amount = toNumber(invoice.amount ?? invoice.total ?? invoice.grossAmount, 0)
     const varianceAmount = toNumber(invoice.varianceAmount ?? invoice.variance ?? invoice.priceVariance, 0)
     return {
@@ -334,6 +384,7 @@ export function buildProcurementSupplierInvoices(data = {}) {
       relatedGrn: text(invoice.relatedGrn || invoice.grn || invoice.grnId),
       poId: text(invoice.relatedPo || invoice.po || invoice.poId),
       grnId: text(invoice.relatedGrn || invoice.grn || invoice.grnId),
+      ...numberField('poNumber', poNumber),
       invoiceDate: text(invoice.invoiceDate || invoice.date),
       createdAt: text(invoice.createdAt || invoice.invoiceDate || invoice.date),
       updatedAt: text(invoice.updatedAt),
@@ -344,7 +395,7 @@ export function buildProcurementSupplierInvoices(data = {}) {
       invoiceStatus: text(invoice.status || invoice.invoiceStatus, '待处理'),
       varianceAmount,
       relatedDocuments: compactRelatedDocuments([
-        related('po', invoice.relatedPo || invoice.po || invoice.poId),
+        related('po', invoice.relatedPo || invoice.po || invoice.poId, '', poNumber),
         related('grn', invoice.relatedGrn || invoice.grn || invoice.grnId),
         related('threeWayMatch', `MATCH-${id}`),
       ]),
@@ -567,6 +618,9 @@ export function buildProcurementThreeWayMatches(data = {}) {
     const invoiceAmount = toNumber(invoice.amount, 0)
     const varianceRate = poAmount > 0 ? Number((varianceAmount / poAmount).toFixed(4)) : null
     const status = invoice.matchStatus || (varianceAmount ? '存在差异' : '已匹配')
+    const poNumber = text(invoice.poNumber || po?.number)
+    const prNumber = text(po?.prNumber)
+    const rfqNumber = text(po?.rfqNumber)
     return {
       type: 'three_way_match',
       documentType: 'threeWayMatch',
@@ -581,6 +635,9 @@ export function buildProcurementThreeWayMatches(data = {}) {
       poId: invoice.relatedPo,
       grnId: invoice.relatedGrn,
       invoiceId: invoice.id,
+      ...numberField('poNumber', poNumber),
+      ...numberField('prNumber', prNumber),
+      ...numberField('rfqNumber', rfqNumber),
       supplierId: text(invoice.supplierId || po?.supplierId || grn?.supplierId),
       supplier: invoice.supplier || po?.supplier || grn?.supplier || '',
       supplierName: invoice.supplier || po?.supplier || grn?.supplier || '',
@@ -599,15 +656,15 @@ export function buildProcurementThreeWayMatches(data = {}) {
       lines,
       ...lineTotals,
       relatedDocuments: compactRelatedDocuments([
-        related('pr', po?.sourceRequest),
-        related('rfq', po?.linkedRfq),
-        related('po', invoice.relatedPo),
+        related('pr', po?.sourceRequest, '', prNumber),
+        related('rfq', po?.linkedRfq, '', rfqNumber),
+        related('po', invoice.relatedPo, '', poNumber),
         related('grn', invoice.relatedGrn),
         related('invoice', invoice.id),
       ]),
       evidence: [
         ...evidence('invoice', invoice.id, invoice.status, { status: invoice.invoiceStatus, supplierName: invoice.supplier, amount: invoiceAmount, currency: invoice.currency }),
-        ...(po ? evidence('po', po.id, po.status, { status: po.status, supplierName: po.supplier, amount: poAmount, currency: po.currency }) : []),
+        ...(po ? evidence('po', po.id, `${po.number} ${text(po.status)}`.trim(), { status: po.status, supplierName: po.supplier, amount: poAmount, currency: po.currency }) : []),
         ...(grn ? evidence('grn', grn.id, grn.status, { status: grn.status, supplierName: grn.supplier, currency: grn.currency }) : []),
       ],
     }
@@ -636,17 +693,19 @@ export function getProcurementDocument(data = {}, type = '', id = '') {
 
 export function buildProcurementDocumentLinks(data = {}) {
   const links = []
+  // Labels name requests, RFQs and orders by the number they show; the ids
+  // stay in sourceId and targetId.
   for (const rfq of buildProcurementRfqs(data)) {
-    if (rfq.linkedPr) links.push({ sourceType: 'pr', sourceId: rfq.linkedPr, targetType: 'rfq', targetId: rfq.id, relationship: 'sourced_rfq', relation: 'sourced_rfq', label: `${rfq.linkedPr} -> ${rfq.id}`, status: rfq.status })
-    if (rfq.linkedPo) links.push({ sourceType: 'rfq', sourceId: rfq.id, targetType: 'po', targetId: rfq.linkedPo, relationship: 'awarded_po', relation: 'awarded_po', label: `${rfq.id} -> ${rfq.linkedPo}`, status: rfq.status })
+    if (rfq.linkedPr) links.push({ sourceType: 'pr', sourceId: rfq.linkedPr, targetType: 'rfq', targetId: rfq.id, relationship: 'sourced_rfq', relation: 'sourced_rfq', label: `${rfq.prNumber || rfq.linkedPr} -> ${rfq.number}`, status: rfq.status })
+    if (rfq.linkedPo) links.push({ sourceType: 'rfq', sourceId: rfq.id, targetType: 'po', targetId: rfq.linkedPo, relationship: 'awarded_po', relation: 'awarded_po', label: `${rfq.number} -> ${rfq.poNumber || rfq.linkedPo}`, status: rfq.status })
   }
   for (const po of buildProcurementPurchaseOrders(data)) {
-    if (po.sourceRequest) links.push({ sourceType: 'pr', sourceId: po.sourceRequest, targetType: 'po', targetId: po.id, relationship: 'converted_po', relation: 'converted_po', label: `${po.sourceRequest} -> ${po.id}`, status: po.status })
-    if (po.linkedRfq) links.push({ sourceType: 'rfq', sourceId: po.linkedRfq, targetType: 'po', targetId: po.id, relationship: 'awarded_po', relation: 'awarded_po', label: `${po.linkedRfq} -> ${po.id}`, status: po.status })
-    for (const grn of po.linkedGrns) links.push({ sourceType: 'po', sourceId: po.id, targetType: 'grn', targetId: grn, relationship: 'received_by', relation: 'received_by', label: `${po.id} -> ${grn}`, status: po.receivingStatus })
+    if (po.sourceRequest) links.push({ sourceType: 'pr', sourceId: po.sourceRequest, targetType: 'po', targetId: po.id, relationship: 'converted_po', relation: 'converted_po', label: `${po.prNumber || po.sourceRequest} -> ${po.number}`, status: po.status })
+    if (po.linkedRfq) links.push({ sourceType: 'rfq', sourceId: po.linkedRfq, targetType: 'po', targetId: po.id, relationship: 'awarded_po', relation: 'awarded_po', label: `${po.rfqNumber || po.linkedRfq} -> ${po.number}`, status: po.status })
+    for (const grn of po.linkedGrns) links.push({ sourceType: 'po', sourceId: po.id, targetType: 'grn', targetId: grn, relationship: 'received_by', relation: 'received_by', label: `${po.number} -> ${grn}`, status: po.receivingStatus })
   }
   for (const invoice of buildProcurementSupplierInvoices(data)) {
-    if (invoice.relatedPo) links.push({ sourceType: 'po', sourceId: invoice.relatedPo, targetType: 'invoice', targetId: invoice.id, relationship: 'invoiced_by', relation: 'invoiced_by', label: `${invoice.relatedPo} -> ${invoice.id}`, status: invoice.invoiceStatus })
+    if (invoice.relatedPo) links.push({ sourceType: 'po', sourceId: invoice.relatedPo, targetType: 'invoice', targetId: invoice.id, relationship: 'invoiced_by', relation: 'invoiced_by', label: `${invoice.poNumber || invoice.relatedPo} -> ${invoice.id}`, status: invoice.invoiceStatus })
     if (invoice.relatedGrn) links.push({ sourceType: 'grn', sourceId: invoice.relatedGrn, targetType: 'invoice', targetId: invoice.id, relationship: 'matched_invoice', relation: 'matched_invoice', label: `${invoice.relatedGrn} -> ${invoice.id}`, status: invoice.matchStatus })
     links.push({ sourceType: 'invoice', sourceId: invoice.id, targetType: 'threeWayMatch', targetId: `MATCH-${invoice.id}`, relationship: 'matched_by', relation: 'matched_by', label: `${invoice.id} -> MATCH-${invoice.id}`, status: invoice.matchStatus })
   }
@@ -664,15 +723,16 @@ export function buildProcurementFollowups(data = {}, options = {}) {
         id: `FOLLOWUP-overdue_po-${po.id}`,
         severity: 'high',
         owner: po.owner,
-        title: `${po.id} 已超过预计日期`,
-        message: `${po.id} 预计日期 ${po.expectedDate}，当前状态 ${po.status}`,
-        summary: `${po.id} 预计日期 ${po.expectedDate}，当前状态 ${po.status}`,
+        title: `${po.number} 已超过预计日期`,
+        message: `${po.number} 预计日期 ${po.expectedDate}，当前状态 ${po.status}`,
+        summary: `${po.number} 预计日期 ${po.expectedDate}，当前状态 ${po.status}`,
         status: 'open',
         dueDate: po.expectedDate,
         supplierName: po.supplierName,
         supplierId: po.supplierId,
         documentType: 'po',
         documentId: po.id,
+        documentNumber: po.number,
         evidence: evidence('po', po.id, po.status, po)[0],
       })
     }
@@ -684,15 +744,16 @@ export function buildProcurementFollowups(data = {}, options = {}) {
         id: `FOLLOWUP-pending_rfq_response-${rfq.id}`,
         severity: rfq.pendingSupplierCount > 1 ? 'medium' : 'low',
         owner: '',
-        title: `${rfq.id} 待供应商回复`,
-        message: `${rfq.id} 仍有 ${rfq.pendingSupplierCount} 家供应商待回复`,
-        summary: `${rfq.id} 仍有 ${rfq.pendingSupplierCount} 家供应商待回复`,
+        title: `${rfq.number} 待供应商回复`,
+        message: `${rfq.number} 仍有 ${rfq.pendingSupplierCount} 家供应商待回复`,
+        summary: `${rfq.number} 仍有 ${rfq.pendingSupplierCount} 家供应商待回复`,
         status: 'open',
         dueDate: rfq.dueDate,
         supplierName: rfq.supplierName,
         supplierId: rfq.supplierId,
         documentType: 'rfq',
         documentId: rfq.id,
+        documentNumber: rfq.number,
         evidence: evidence('rfq', rfq.id, rfq.status, rfq)[0],
       })
     }

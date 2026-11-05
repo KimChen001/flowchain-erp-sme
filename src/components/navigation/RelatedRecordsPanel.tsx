@@ -2,6 +2,7 @@ import { Link2 } from "lucide-react";
 import { A, Card, Chip } from "../ui";
 import { groupBusinessLinkedRecords, type BusinessLinkedRecord } from "../../lib/businessLinks";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { useDocumentNumbers } from "../../lib/documentNumbers";
 
 const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
@@ -27,6 +28,9 @@ export function RelatedRecordsPanel({
   onNavigate?: (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null) => void;
 }) {
   const groups = groupBusinessLinkedRecords(records);
+  // A purchase request, RFQ or purchase order labelled with its id shows its document number.
+  const shownNumber = useDocumentNumbers(records.filter((record) => record.displayLabel === record.entityId).map((record) => [record.entityType, record.entityId] as const));
+  const labelOf = (record: BusinessLinkedRecord) => record.displayLabel === record.entityId ? shownNumber(record.entityType, record.entityId) || record.displayLabel : record.displayLabel;
   const groupEntries = Object.entries(groups);
 
   return (
@@ -46,7 +50,7 @@ export function RelatedRecordsPanel({
                   <>
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0 truncate text-[11px] font-semibold" style={{ color: clickable ? A.blue : A.label }}>
-                        {record.displayLabel}
+                        {labelOf(record)}
                       </div>
                       {record.status ? <Chip label={record.status} color={A.gray1} bg={A.gray6} /> : null}
                     </div>

@@ -70,7 +70,7 @@ export function SupplierInvoiceListPage() {
                   <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold">{copy(row.matchStatus || row.invoiceStatus || "—")}</span>
                 </div>
                 <dl className="mt-4 grid gap-x-6 gap-y-4 text-xs sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-                  <div><dt style={{ color: A.sub }}>{copy("采购订单")}</dt><dd className="mt-1"><BusinessEntityLink entityType="purchase_order" entityId={row.relatedPo || row.poId}>{row.relatedPo || row.poId || "—"}</BusinessEntityLink></dd></div>
+                  <div><dt style={{ color: A.sub }}>{copy("采购订单")}</dt><dd className="mt-1"><BusinessEntityLink entityType="purchase_order" entityId={row.relatedPo || row.poId} number={row.poNumber} /></dd></div>
                   <div><dt style={{ color: A.sub }}>{copy("收货单")}</dt><dd className="mt-1"><BusinessEntityLink entityType="receiving_doc" entityId={row.relatedGrn || row.grnId}>{row.relatedGrn || row.grnId || "—"}</BusinessEntityLink></dd></div>
                   <div><dt style={{ color: A.sub }}>{copy("发票金额")}</dt><dd className="mt-1 font-medium tabular-nums">{money(row.amount, row.currency, locale)}</dd></div>
                   <div><dt style={{ color: A.sub }}>{copy("差异金额")}</dt><dd className="mt-1 font-medium tabular-nums">{money(row.varianceAmount, row.currency, locale)}</dd></div>

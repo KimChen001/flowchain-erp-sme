@@ -3,6 +3,7 @@ import { createDbProcurementCommandService } from "../domain/procurement-db-comm
 import { receivingDecimalString, receivingDecimalUnits } from "../domain/receiving-transaction-policy.mjs";
 import { mapPurchaseRequest, mapRfq } from "./db-procurement-read-repository.mjs";
 import { findManyWithinLimit, requireTenantId } from "./repository-read-scope.mjs";
+import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const decimal = (value) => value === null || value === undefined ? null : receivingDecimalString(receivingDecimalUnits(value));
@@ -26,7 +27,8 @@ const mapLine = (line = {}) => ({
 
 const mapPo = (row = {}) => ({
   id: row.id,
-  orderNumber: row.metadata?.orderNumber || row.id,
+  number: procurementDocumentNumber(row),
+  orderNumber: procurementDocumentNumber(row),
   supplierId: row.supplierId,
   supplierSnapshot: row.supplierId || row.supplierName ? { id: row.supplierId, supplierName: row.supplierName } : null,
   currency: row.currency,
@@ -84,8 +86,12 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
         findManyWithinLimit(dbClient.supplierInvoice, query, bounded("supplier_invoices")),
       ]);
       const iso = value => value?.toISOString?.() || value || null;
-      const receipts = receivingRows.map(row => ({ id: row.id, documentNumber: row.documentNumber, poId: row.poId, supplierId: row.supplierId, supplierName: row.supplierName, status: row.status, workflowStatus: row.workflowStatus, postingStatus: row.postingStatus, warehouseId: row.warehouseId, currency: row.currency, arrivedAt: iso(row.arrivedAt), postedAt: iso(row.postedAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, acceptedQty: decimal(line.acceptedQty), rejectedQty: decimal(line.rejectedQty), unit: line.unit })) }));
-      const supplierInvoices = invoiceRows.map(row => ({ id: row.id, invoiceNumber: row.invoiceNumber, supplierId: row.supplierId, supplierName: row.supplierName, poId: row.relatedPoId, receiptId: row.relatedGrnId, relatedPo: row.relatedPoId, relatedGrn: row.relatedGrnId, amount: decimal(row.amount), totalAmount: decimal(row.totalAmount), currency: row.currency, status: row.status, matchStatus: row.matchStatus, varianceAmount: decimal(row.varianceAmount), invoiceDate: iso(row.invoiceDate), dueDate: iso(row.dueDate), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, quantity: decimal(line.quantity), unitPrice: decimal(line.unitPrice), amount: decimal(line.amount), unit: line.unit })) }));
+      // A receipt's or bill's purchase order number, when the order is among
+      // the loaded rows.
+      const poNumbers = new Map(rows.map(row => [row.id, procurementDocumentNumber(row)]));
+      const poNumberOf = id => (poNumbers.get(id) ? { poNumber: poNumbers.get(id) } : {});
+      const receipts = receivingRows.map(row => ({ id: row.id, documentNumber: row.documentNumber, poId: row.poId, ...poNumberOf(row.poId), supplierId: row.supplierId, supplierName: row.supplierName, status: row.status, workflowStatus: row.workflowStatus, postingStatus: row.postingStatus, warehouseId: row.warehouseId, currency: row.currency, arrivedAt: iso(row.arrivedAt), postedAt: iso(row.postedAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, acceptedQty: decimal(line.acceptedQty), rejectedQty: decimal(line.rejectedQty), unit: line.unit })) }));
+      const supplierInvoices = invoiceRows.map(row => ({ id: row.id, invoiceNumber: row.invoiceNumber, supplierId: row.supplierId, supplierName: row.supplierName, poId: row.relatedPoId, ...poNumberOf(row.relatedPoId), receiptId: row.relatedGrnId, relatedPo: row.relatedPoId, relatedGrn: row.relatedGrnId, amount: decimal(row.amount), totalAmount: decimal(row.totalAmount), currency: row.currency, status: row.status, matchStatus: row.matchStatus, varianceAmount: decimal(row.varianceAmount), invoiceDate: iso(row.invoiceDate), dueDate: iso(row.dueDate), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, quantity: decimal(line.quantity), unitPrice: decimal(line.unitPrice), amount: decimal(line.amount), unit: line.unit })) }));
       // Quotation counts back the RFQ response figures when the RFQ row has none.
       const quotations = rfqRows.length ? await dbClient.supplierQuotation.findMany({ where: { tenantId, rfqId: { in: rfqRows.map(row => row.id) } }, select: { rfqId: true } }) : [];
       // Purchase requests and RFQs carry their update day; the instant is kept

@@ -9,6 +9,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
 import { ArrowLeft, CheckCircle2, ClipboardCheck, FileText, Plus, RefreshCw, Trash2, Truck } from "lucide-react";
 import { toast } from "sonner";
+import { rememberDocumentNumbers, resolveDocumentNumbers } from "../../lib/documentNumbers";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
@@ -82,7 +84,10 @@ type Line = {
   supplierOverride?: SupplierOverride | null;
 };
 type PR = {
+  // The internal id: URLs, links and API calls.
   id: string;
+  // The document number people read (PR-YYYYMM-NNNN; the id for requests made before numbering).
+  number?: string;
   status: string;
   version: number;
   requesterId: string;
@@ -98,6 +103,8 @@ type PR = {
   requester?: string;
   createdAt?: string;
 };
+// The number people read; the id stays in links and calls.
+const numberOf = (pr: Pick<PR, "id" | "number">) => pr.number || pr.id;
 type FieldError = { field?: string; code?: string; message?: string };
 const OVERRIDE_FIELD = /^lines\.(\d+)\.supplierOverride\.(reasonCode|note)$/;
 // The line fields a handoff (the assistant's purchase request draft) can fill.
@@ -265,6 +272,8 @@ export default function CanonicalProcurementPanel({
     focus?.entityType === "purchase_request"
       ? rows.find((row) => row.id === focus.entityId)
       : null;
+  // The breadcrumb names the request by its number, not the id in the address.
+  useDetailCrumb(selected ? numberOf(selected) : null);
   const load = async () => {
     try {
       const [prs, catalog, selector, departmentSelector, currencySelector, unitSelector, commoditySelector, warehouseSelector, settings] = await Promise.all([
@@ -280,6 +289,7 @@ export default function CanonicalProcurementPanel({
         request<{ options: SelectorOption[] }>("/api/master-data/warehouses/select"),
         request<{ company: { currency: string } }>("/api/settings-runtime").catch(() => null),
       ]);
+      rememberDocumentNumbers("purchase_request", prs, (pr) => [pr.id, pr.number]);
       setRows(prs);
       setItems(catalog.items);
       setSuppliers(
@@ -659,6 +669,7 @@ export default function CanonicalProcurementPanel({
         "POST",
         { expectedVersion: pr.version, reason },
       );
+      rememberDocumentNumbers("purchase_order", result.createdPurchaseOrders, (po: { id?: string; number?: string }) => [po.id, po.number]);
       if (result.createdPurchaseOrders?.[0])
         onNavigate?.("procurement:orders", {
           entityType: "purchase_order",
@@ -736,7 +747,7 @@ export default function CanonicalProcurementPanel({
   const contains = (value: unknown, needle: string) => String(value || "").toLowerCase().includes(needle.trim().toLowerCase());
   const shownRows = rows.filter((pr) =>
     (!statusFilter || pr.status === statusFilter)
-    && (!filters.number.trim() || contains(pr.id, filters.number))
+    && (!filters.number.trim() || contains(numberOf(pr), filters.number) || contains(pr.id, filters.number))
     && (!filters.item.trim() || pr.lines.some((line) => contains(line.sku, filters.item) || contains(line.itemNameSnapshot, filters.item)))
     && (!filters.requester.trim() || contains(requesterOf(pr), filters.requester)),
   );
@@ -744,9 +755,11 @@ export default function CanonicalProcurementPanel({
     setFilters({ number: "", item: "", requester: "" });
     setStatusFilter("");
   };
-  const exportRequests = () =>
+  // Document numbers, not internal ids, in the file.
+  const exportRequests = async () => {
+    const orderNumbers = await resolveDocumentNumbers("purchase_order", shownRows.flatMap((pr) => pr.linkedPurchaseOrderIds || []));
     exportRowsToCsv("purchase-requests-export.csv", shownRows.map((pr) => ({
-      [tr("requestNumber")]: pr.id,
+      [tr("requestNumber")]: numberOf(pr),
       [tr("item")]: pr.lines.map((line) => [line.sku, line.itemNameSnapshot].filter(Boolean).join(" ")).join("; "),
       [tr("supplier")]: suppliersOf(pr),
       [tr("requester")]: requesterOf(pr),
@@ -754,8 +767,9 @@ export default function CanonicalProcurementPanel({
       [tr("amount")]: pr.totalAmount ?? "",
       Currency: pr.defaultCurrency,
       [tr("status")]: statusLabel(pr.status),
-      [tr("purchaseOrders")]: (pr.linkedPurchaseOrderIds || []).join("; "),
+      [tr("purchaseOrders")]: (pr.linkedPurchaseOrderIds || []).map((id) => orderNumbers.get(id) || id).join("; "),
     })), timezone);
+  };
   if (loadError)
     return (
       <Card className="p-12 text-center">
@@ -780,7 +794,7 @@ export default function CanonicalProcurementPanel({
           <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-lg font-semibold" style={{ color: A.label }}>{selected.id}</h1>
+                <h1 className="text-lg font-semibold" style={{ color: A.label }}>{numberOf(selected)}</h1>
                 <StatusChip label={statusLabel(selected.status)} tone={statusToneOf(selected.status)} />
               </div>
               <p className="mt-1 text-xs" style={{ color: A.sub }}>
@@ -843,9 +857,7 @@ export default function CanonicalProcurementPanel({
           ) : (
             <div className="mt-3 flex flex-wrap gap-2">
               {selected.linkedPurchaseOrderIds.map((id) => (
-                <EntityLink key={id} kind="purchase_order" id={id} className="text-sm text-blue-600">
-                  {id}
-                </EntityLink>
+                <EntityLink key={id} kind="purchase_order" id={id} className="text-sm text-blue-600" />
               ))}
             </div>
           )}
@@ -915,9 +927,7 @@ export default function CanonicalProcurementPanel({
                   return (
                     <tr key={pr.id} className={listRowClass} style={listRowStyle(index, shownRows.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
-                        <EntityLink kind="purchase_request" id={pr.id} className={tableLinkClass}>
-                          {pr.id}
-                        </EntityLink>
+                        <EntityLink kind="purchase_request" id={pr.id} number={numberOf(pr)} className={tableLinkClass} />
                         {pr.createdAt && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr("created")} {dayText(pr.createdAt)}</div>}
                       </td>
                       <td className={`${tdNameClass} max-w-[240px]`}>
@@ -948,7 +958,7 @@ export default function CanonicalProcurementPanel({
                         ) : null}
                         {pr.linkedPurchaseOrderIds?.length ? (
                           <div className="mt-1 flex flex-wrap gap-x-2 text-[11px]">
-                            {pr.linkedPurchaseOrderIds.map((id) => <EntityLink key={id} kind="purchase_order" id={id} className="text-[11px] font-medium">{id}</EntityLink>)}
+                            {pr.linkedPurchaseOrderIds.map((id) => <EntityLink key={id} kind="purchase_order" id={id} className="text-[11px] font-medium" />)}
                           </div>
                         ) : null}
                       </td>
@@ -994,7 +1004,7 @@ export default function CanonicalProcurementPanel({
         <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold" style={{ color: A.label }}>
-              {editing ? `${copy("编辑采购申请")} ${editing.id}` : copy("新建采购申请")}
+              {editing ? `${copy("编辑采购申请")} ${numberOf(editing)}` : copy("新建采购申请")}
             </h2>
             <p className="mt-1 text-xs" style={{ color: A.sub }}>{copy("每一行均需明确物料或服务、供应商、金额、交付地点和需求日期。")}</p>
           </div>

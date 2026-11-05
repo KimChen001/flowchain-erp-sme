@@ -36,8 +36,8 @@ export function aiSkillKnownValues(facts) {
   }
   for (const row of array(facts.inventory?.masterOnly)) { add(row.itemId, row.sku); keep(row.sku, row.itemName, row.unit) }
   for (const row of array(facts.invoices?.variances)) { add(row.id, row.invoiceNumber, row.supplierId, row.poId); keep(row.supplier, row.invoiceNumber) }
-  for (const row of array(facts.purchaseRequests?.awaitingApproval)) { add(row.id); keep(row.sku, row.unit) }
-  for (const row of [...array(facts.rfqs?.readyToAward), ...array(facts.rfqs?.open)]) { add(row.id); keep(row.title) }
+  for (const row of [...array(facts.purchaseRequests?.awaitingApproval), ...array(facts.purchaseRequests?.open)]) { add(row.id, row.number); keep(row.sku, row.unit) }
+  for (const row of [...array(facts.rfqs?.readyToAward), ...array(facts.rfqs?.open)]) { add(row.id, row.number); keep(row.title) }
   for (const row of [...array(facts.receipts?.rejected), ...array(facts.receipts?.unposted)]) { add(row.id, row.documentNumber, row.poId, row.supplierId); keep(row.supplier, row.documentNumber, row.unit) }
   for (const row of array(facts.records)) { add(row.entityId); keep(row.label) }
   for (const row of array(facts.salesOrders)) { add(row.id, row.number); keep(row.number, row.customer) }

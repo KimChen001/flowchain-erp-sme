@@ -100,7 +100,7 @@ function collectHidden(value, hidden, out = { money: new Set(), names: new Set()
 }
 
 // Record numbers, SKUs, routes and codes are never scrubbed.
-const ID_KEY = /^(id|po|pr|rfq|grn|invoice|sku|route|type|documentType|currency|status|relatedPo|relatedGrn)$|Id$|Ids$|Number$/
+const ID_KEY = /^(id|number|po|pr|rfq|grn|invoice|sku|route|type|documentType|currency|status|relatedPo|relatedGrn)$|Id$|Ids$|Number$/
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 function scrubber(values) {

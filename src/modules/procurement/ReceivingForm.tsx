@@ -10,6 +10,7 @@ import { receivingApi, type ReceivableLine, type ReceivablePurchaseOrder, type R
 import { PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { buildSuggestionTrail, type PrefillEntry } from "../../lib/prefill";
 import { ReceivablePurchaseOrderChooser } from "./ReceivablePurchaseOrderChooser";
+import { DocumentNumber } from "../../lib/documentNumbers";
 
 // English source copy with its Chinese translation.
 const COPY: Record<string, [string, string]> = {
@@ -269,7 +270,7 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
         {/* The server numbers a new receipt (GRN-YYYYMM-NNNN) when it is saved. */}
         {mode === "new" && <div className="mt-1 text-xs" style={{ color: A.sub }} data-testid="receiving-number-on-save">{tr("numberOnSave")}</div>}
         <dl className="mt-4 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
-          <div><dt style={{ color: A.sub }}>{tr("purchaseOrder")}</dt><dd className="mt-1 font-medium">{po.id}</dd></div>
+          <div><dt style={{ color: A.sub }}>{tr("purchaseOrder")}</dt><dd className="mt-1 font-medium"><DocumentNumber type="purchase_order" id={po.id} number={po.number} /></dd></div>
           <div><dt style={{ color: A.sub }}>{tr("supplier")}</dt><dd className="mt-1 font-medium">{po.supplierName || "—"}</dd></div>
           <label className="block"><span style={{ color: A.sub }}>{tr("warehouse")} *</span>
             <select aria-label={tr("warehouse")} value={warehouseId} onChange={(event) => changeWarehouse(event.target.value)} className={`${inputClass} mt-1`}>

@@ -14,11 +14,13 @@ import { RecordBillAction } from "../../components/business/BillingEntryActions"
 import PrintLayoutEditor from "../print-layout/PrintLayoutEditor";
 import { adaptReceivingDetailSheet } from "../print-layout/printDataAdapters";
 import { formatDecimal, formatInstantDay } from "../business-documents/documentFormat";
+import { DocumentNumber } from "../../lib/documentNumbers";
 
 type Capability = { enabled?: boolean; maturity?: string };
 type Detail = {
   receivingDocument: { id: string; documentNumber: string; workflowStatus: string; postingStatus: string; qualityStatus: string; version: number; arrivedAt?: string | null; postedAt?: string | null; postedById?: string | null; reversedAt?: string | null; reversedById?: string | null; reversalReason?: string | null; receiver?: string | null; supplier?: { name?: string }; warehouse?: { name?: string; code?: string } | null };
-  purchaseOrder: { id: string; workflowStatus: string; fulfillmentStatus: string };
+  // number: the order's document number (shown); id: its internal id (links).
+  purchaseOrder: { id: string; number?: string; workflowStatus: string; fulfillmentStatus: string };
   lines: Array<{ id: string; poLineId: string; sku: string; itemName: string; orderedQuantity: string; previouslyReceivedQuantity: string; documentAcceptedQuantity: string; currentlyAppliedQuantity: string; acceptedQuantity: string; rejectedQuantity: string; remainingReceivableQuantity: string; unit?: string; warehouse?: { name?: string; code?: string } | null; location?: string; lotSerialCapability: { postingAvailable: boolean; message: string } }>;
   postingSummary: { acceptedQuantity: string; rejectedQuantity: string; lineCount: number };
   capabilities: { posting?: Capability; reversal?: Capability };
@@ -299,7 +301,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</div>}
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><h1 className="text-xl font-semibold">{grn.documentNumber}</h1><p className="mt-1 text-sm text-gray-500">{grn.supplier?.name || say("Unknown supplier", "未知供应商")} · {say("Purchase order", "采购订单")} <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}>{detail.purchaseOrder.id}</a></p></div>
+        <div><h1 className="text-xl font-semibold">{grn.documentNumber}</h1><p className="mt-1 text-sm text-gray-500">{grn.supplier?.name || say("Unknown supplier", "未知供应商")} · {say("Purchase order", "采购订单")} <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}><DocumentNumber type="purchase_order" id={detail.purchaseOrder.id} number={detail.purchaseOrder.number} /></a></p></div>
         {/* Non-destructive actions first; cancelling or reversing the receipt comes last, tinted red. */}
         <div className="flex flex-wrap items-center gap-2">
           <button data-testid="receiving-print-sheet" aria-label={say(`Print receive sheet ${grn.documentNumber}`, `打印入库单 ${grn.documentNumber}`)} onClick={() => setPrinting(true)} className={BUTTON.secondary}><Printer size={14} />{say("Print receive sheet", "打印入库单")}</button>

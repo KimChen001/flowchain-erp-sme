@@ -98,7 +98,8 @@ function resolveRfqId(body = {}, message = '') {
 
 function findRfq(rfqs = [], id = '') {
   const key = normalizedText(id)
-  return rfqs.find((rfq) => normalizedText(rfqIdFor(rfq)) === key) || null
+  // By id or by the number the RFQ shows (RFQ-202611-0001).
+  return rfqs.find((rfq) => normalizedText(rfqIdFor(rfq)) === key || (rfq.number && normalizedText(rfq.number) === key)) || null
 }
 
 function supplierCount(rfq = {}) {

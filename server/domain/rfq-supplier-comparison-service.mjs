@@ -204,6 +204,8 @@ export function createRfqSupplierComparisonService({ prisma, env = process.env, 
       return {
         entityType: "RfqSupplierComparison",
         rfqId: snapshot.rfq.id,
+        // The number the RFQ shows; RFQs created before numbering show their id.
+        rfqNumber: text(snapshot.rfq.number) || snapshot.rfq.id,
         rfqTitle: text(snapshot.rfq.title) || null,
         rfqStatus: canonicalStatus("rfq", snapshot.rfq.status),
         rfqStatusRaw: text(snapshot.rfq.status) || null,
