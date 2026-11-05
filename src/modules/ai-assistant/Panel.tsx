@@ -98,6 +98,8 @@ type SafeConversationContext = {
   // The last few questions and answers of this panel, as text, so the
   // model-first assistant reads a follow-up with what came before.
   previousTurns?: Array<{ question: string; answer: string }>;
+  // The order the last answer offered to confirm (model-first), if any.
+  previousPendingOrder?: { sku: string; quantity?: number } | null;
 };
 
 // The welcome cards (owner-approved panel design, 2026-11-01): what to handle
@@ -466,6 +468,7 @@ function buildSafeConversationContext(messages: AiChatMessage[], activeContext: 
     })),
     lastResponseId: (response as (AiResponseV2 & { responseId?: string }) | null)?.responseId,
     previousTurns: previousTurns(messages),
+    previousPendingOrder: response?.pendingOrder || null,
     returnContext: {
       returnTo: "ai-assistant",
       returnLabel: language === "zh-CN" ? "返回 AI 助手" : "Back to AI assistant",

@@ -74,6 +74,8 @@ const entries = {
   'answer.source_agent': ['Answered from your workspace data. Worded by AI; figures checked.', '基于当前工作区数据回答，由 AI 组织语言，数字已核对'],
   // Model-first: the model read the records through tools and wrote the answer; the server checked every figure, date and name against what the tools returned (docs/ai-model-first-design.md §3).
   'answer.source_model_first': ['Written by AI from your records; figures checked', '由 AI 根据你的记录撰写，数字已核对'],
+  // Model-first: the user says they did not say a word their earlier question has; the answer quotes it (2026-11-04).
+  'model_first.user_said': ['Your earlier question was "{quote}".', '你上一轮说的是“{quote}”。'],
   // Assistant v2: the model wrote the answer from the records it read; figures it could not match are underlined, not checked (docs/ai-assistant-v2-design.md §3.9).
   'answer.source_assistant_v2': ['Written by AI from your records', '由 AI 根据你的记录撰写'],
   // Assistant v2's hard replacements (§3.9): a part that read as if the assistant acted, and a value the role may not see.
