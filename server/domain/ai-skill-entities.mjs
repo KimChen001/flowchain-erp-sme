@@ -1,4 +1,4 @@
-import { PROMPT_INJECTION } from './ai-semantic-query-planner.mjs'
+import { PROMPT_INJECTION } from './ai-injection-guard.mjs'
 import { aiSkillIsKnownWord } from './ai-skill-intent-text.mjs'
 
 // Resolves the records a question names against the actor's own facts, and

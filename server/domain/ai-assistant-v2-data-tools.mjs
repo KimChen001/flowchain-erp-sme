@@ -1,17 +1,21 @@
+import { QUESTION_LIMITS, SETUP_FORM_ROWS } from '../../shared/assistant-protocol.mjs'
 import { AI_TOOL_LIMITS, aiToolList, aiToolPurchaseOrder, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
 import { aiStockProjection } from './ai-read-tools.mjs'
 import { runHighestRisk } from './ai-skill-highest-risk.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { AI_SKILL_SIGNAL_TYPES, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
+import { readFirstRunSetup } from './first-run-setup.mjs'
 import { listItemSupplierRecords, mapItemSupplierRecord } from './master-data-commands.mjs'
+import { reportReadAccessFor } from './report-read-access.mjs'
 import { maskReferencePrice, masterDataReadAccessFor } from './master-data-read-access.mjs'
-import { isActiveItem, itemStockUnit, requestMinimumOf } from './reorder-list.mjs'
-import { planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
+import { DEMAND_WINDOW_DAYS, dailyDemand, isActiveItem, itemStockUnit, requestMinimumOf } from './reorder-list.mjs'
+import { addCalendarDays, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
 import { OPEN_PURCHASE_REQUEST_STATUSES, PURCHASE_SUGGESTION_SOURCES, openRequestQuantity, requestLineCountsFor, suggestNeedByDate, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
 
 // The data tools only assistant v2 is offered (docs/ai-assistant-v2-design.md
 // §5.1): the attention list, the records missing data, the purchase request
-// lines it suggests, and the purchase requests in any open status. They read
+// lines it suggests, the purchase requests in any open status, and the
+// first-day setup checklist (setup_status, counts only). They read
 // the asking user's facts like the other read tools, and the suggestions also
 // read the items' approved suppliers in the user's workspace. They need the
 // facts read with { openPurchaseRequests: true } (ai-skill-readers.mjs), so a
@@ -215,6 +219,53 @@ const STOCK_SIGNALS = new Set(['stock_shortage', 'stock_below_safety', 'stock_be
 const SUPPLIER_SOURCE = Object.freeze({ 'item_supplier:preferred': 'preferred_supplier', 'item_supplier:only_approved': 'only_approved_supplier' })
 const MAX_SUGGESTED = 8
 const PROJECTION_WEEKS = 12
+const COVER_DAYS_MAX = 180
+const COVER_CANDIDATES = 40
+
+// Recorded daily demand by item id, for coverDays (2026-11-04: "order what
+// we need for the next 2 weeks" got "the system has no way to size an order
+// to the next two weeks"). The reorder list's own rule (dailyDemand): posted
+// shipments of its 90-day window, in the item's stock unit. Read only for a
+// reader of every warehouse, as the reorder list reads it, so a part of the
+// workspace's shipments is never set against a whole item.
+async function recordedDemand(context, facts, items) {
+  const { prisma, tenantId } = context
+  const access = context.routeContext?.reportReadAccess || reportReadAccessFor(context.actor)
+  if (Array.isArray(access?.warehouseIds)) {
+    const warehouses = array(await prisma.warehouse.findMany({ where: { tenantId }, select: { id: true } }))
+    if (!(warehouses.length && warehouses.every((row) => access.warehouseIds.includes(row.id)))) return { scoped: true, byItem: new Map() }
+  }
+  const ids = items.map((item) => text(item.id)).filter(Boolean)
+  if (!ids.length) return { scoped: false, byItem: new Map() }
+  const from = new Date(`${addCalendarDays(facts.today, -DEMAND_WINDOW_DAYS - 1)}T00:00:00Z`)
+  const to = new Date(`${addCalendarDays(facts.today, 1)}T12:00:00Z`)
+  const lines = array(await prisma.shipmentLine.findMany({
+    where: { itemId: { in: ids }, shipment: { tenantId, postingStatus: 'posted', postedAt: { gte: from, lt: to } } },
+    select: { itemId: true, unit: true, postedQuantity: true, shipment: { select: { postedAt: true } } },
+  }))
+  const byLine = new Map()
+  for (const line of lines) {
+    const key = text(line.itemId)
+    if (!byLine.has(key)) byLine.set(key, [])
+    byLine.get(key).push({ itemId: key, unit: line.unit, quantity: Number(line.postedQuantity), postedAt: line.shipment?.postedAt?.toISOString?.() || line.shipment?.postedAt || null })
+  }
+  return { scoped: false, byItem: new Map(items.map((item) => [text(item.id), dailyDemand({ lines: byLine.get(text(item.id)) || [], stockUnit: itemStockUnit(item), today: facts.today, timeZone: facts.timezone })])) }
+}
+
+// What an item needs to cover a period: recorded daily demand over the
+// supplier's lead time and the days to cover after the order arrives, plus
+// safety stock. null without enough recorded demand.
+const coverTargetOf = (row, rate, lead, coverDays) => (rate === null || !coverDays ? null : Math.ceil(rate * ((lead ?? 0) + coverDays) + Math.max(0, Number(row.safetyStock) || 0)))
+const COVER_SOURCE = Object.freeze({ [PURCHASE_SUGGESTION_SOURCES.reorderGap]: PURCHASE_SUGGESTION_SOURCES.coverDays, [PURCHASE_SUGGESTION_SOURCES.raisedToMoq]: PURCHASE_SUGGESTION_SOURCES.coverDaysRaisedToMoq })
+// The shared quantity rule with the cover target in place of the reorder
+// point; the reorder point rule when there is no cover target.
+function sizeOf(facts, row, minimum, target) {
+  if (target === null) return quantityOf(facts, row, minimum)
+  const sized = suggestPurchaseQuantity({ reorderPoint: target, safetyStock: row.safetyStock, openDemand: row.openSalesDemand, available: row.available, incoming: row.incomingApprovedPo, openRequests: openRequestsOf(facts, row), minimum })
+  const source = COVER_SOURCE[sized.quantity.source]
+  return source ? { ...sized, quantity: { ...sized.quantity, source } } : sized
+}
+const preferredLead = (sources) => (sources.find((source) => source.preferred) || sources[0])?.leadTimeDays ?? null
 
 // The open requests and purchase orders that bring an item (a request only
 // when one of its lines counts towards the cover), each with its ref, so the
@@ -232,10 +283,11 @@ function coverRecords(facts, row) {
 
 const suggestPurchaseLines = defineAiTool({
   name: 'suggest_purchase_lines',
-  description: 'Purchase request lines worked out by the server, for the in-chat purchase request form: per item its on-hand stock, safety stock and reorder point, the suggested quantity (the gap between the highest of the reorder point, safety stock and open sales demand and what is available, incoming on purchase orders and on open purchase requests, raised to the supplier\'s minimum order), the supplier (the preferred, or the only approved one), the need-by date (today plus the supplier\'s lead time, with a warning when stock runs short sooner) and the reference price. Items already covered by open requests or orders come back as covered. An item that is not active, or has no stock row, gets no quantity (source item_inactive or no_stock_position). Name SKUs for those items; with none, the items below their stock levels, up to 8. The user chooses which lines to request.',
+  description: 'Purchase request lines worked out by the server, for the in-chat purchase request form: per item its on-hand stock, safety stock and reorder point, the suggested quantity (the gap between the highest of the reorder point, safety stock and open sales demand and what is available, incoming on purchase orders and on open purchase requests, raised to the supplier\'s minimum order; with coverDays, the cover target takes the reorder point\'s place), the supplier (the preferred, or the only approved one), the need-by date (today plus the supplier\'s lead time, with a warning when stock runs short sooner) and the reference price. Items already covered by open requests or orders come back as covered. An item that is not active, or has no stock row, gets no quantity (source item_inactive or no_stock_position). Name SKUs for those items; with none, the items below their stock levels, up to 8. The user chooses which lines to request.',
   parameters: {
     skus: { type: 'array', items: { type: 'string' }, maxItems: AI_TOOL_LIMITS.items, description: 'The SKUs the user named.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_SUGGESTED, description: `How many items to suggest when none is named, ${MAX_SUGGESTED} by default.` },
+    coverDays: { type: 'integer', minimum: 1, maximum: COVER_DAYS_MAX, description: 'Size each line to cover this many days after the order arrives, when the user asks to order for a period ("what we need for the next 2 weeks", 一个月的量): target = average daily demand (posted shipments over the last 90 days) × (lead time + coverDays) + safety stock. Without names, any stocked item that falls short of it is suggested. Each row\'s cover gives the basis; an item without enough shipment history keeps the reorder point quantity (cover.basis says so).' },
   },
   available: (facts, context) => Boolean(facts.inventory) && Boolean(context?.actor && context.prisma),
   assistantV2Only: true,
@@ -244,6 +296,7 @@ const suggestPurchaseLines = defineAiTool({
     // a reader of requests never gets suggestions that ignore them.
     if (facts.purchaseRequests && !openRequestsRead(facts)) return { error: 'open_purchase_requests_not_read' }
     const named = array(args.skus).length > 0
+    const coverDays = Number.isInteger(args.coverDays) && args.coverDays >= 1 && args.coverDays <= COVER_DAYS_MAX ? args.coverDays : null
     let rows = []
     if (named) {
       for (const sku of args.skus) {
@@ -257,21 +310,40 @@ const suggestPurchaseLines = defineAiTool({
       // reorder point): the same items the order skill suggests.
       const ranked = rankAiSkillItemsByDate(buildAiSkillSignals(facts)).filter((item) => STOCK_SIGNALS.has(item.type))
       rows = ranked.map((item) => array(facts.inventory.rows).find((row) => row.itemId === item.entityId || row.sku === item.label)).filter(Boolean)
+      // To cover a period any stocked item may fall short, not only those
+      // below their levels: the others follow, by the days their stock lasts.
+      if (coverDays) for (const row of array(facts.inventory.rows)) if (!row.noStock && !rows.includes(row)) rows.push(row)
     }
     const stored = await storedItems(context, [...new Set(rows.map((row) => text(row.itemId)).filter(Boolean))])
     const itemOf = (row) => stored.get(text(row.itemId)) || null
+    const demand = coverDays ? await recordedDemand(context, facts, [...stored.values()]) : null
+    const demandOf = (row) => demand?.byItem.get(text(row.itemId)) || null
+    const rateOf = (row) => demandOf(row)?.averageDailyDemand ?? null
+    if (coverDays && !named) {
+      // Those with recorded demand by the days their stock lasts, then those
+      // below their levels without it (sized by the reorder point rule).
+      const ranked = new Set(rankAiSkillItemsByDate(buildAiSkillSignals(facts)).filter((item) => STOCK_SIGNALS.has(item.type)).map((item) => text(item.entityId || item.label)))
+      const lasting = (row) => ((Number(row.available) || 0) + (Number(row.incomingApprovedPo) || 0)) / rateOf(row)
+      const withDemand = rows.filter((row) => rateOf(row) !== null).sort((a, b) => lasting(a) - lasting(b))
+      const belowWithout = rows.filter((row) => rateOf(row) === null && (ranked.has(text(row.itemId)) || ranked.has(text(row.sku))))
+      rows = [...withDemand, ...belowWithout].slice(0, COVER_CANDIDATES)
+    }
+    // With coverDays and no names, the sources of every candidate are read
+    // first, as the lead time decides which of them fall short.
+    const candidateSources = coverDays && !named ? await itemSources(context, [...new Set(rows.map(itemOf).filter(Boolean))]) : null
     // Suggested without names: only active items that need ordering or are
     // covered, as the reorder list and the purchase request command take
     // them. The supplier's minimum only raises a positive gap, so this is
     // known before any supplier is read. A named item is always returned, so
     // the answer can say why nothing is suggested.
     const listed = named ? rows : rows.filter((row) => {
-      const quantity = quantityOf(facts, row)
+      const lead = candidateSources ? preferredLead(candidateSources.byItem.get(text(row.itemId)) || []) : null
+      const quantity = sizeOf(facts, row, 0, coverTargetOf(row, rateOf(row), lead, coverDays))
       return isActiveItem(itemOf(row)) && (quantity.quantity.value !== null || quantity.covered)
     })
     const limit = named ? listed.length : args.limit || MAX_SUGGESTED
     const shown = listed.slice(0, limit)
-    const { byItem, prices } = await itemSources(context, [...new Set(shown.map(itemOf).filter(Boolean))])
+    const { byItem, prices } = candidateSources || await itemSources(context, [...new Set(shown.map(itemOf).filter(Boolean))])
     const suppliersVisible = Array.isArray(facts.suppliers)
     const suggestions = shown.map((row) => {
       const item = itemOf(row)
@@ -280,7 +352,8 @@ const suggestPurchaseLines = defineAiTool({
       const plan = planPurchaseRequestPrefill({ query: { itemId: row.itemId, origin: 'ai_assistant' }, item: { itemId: row.itemId, defaultWarehouseId: text(meta.defaultWarehouseId || meta.warehouseId) }, suppliers: sources, today: facts.today })
       const chosen = sources.find((source) => source.id === plan.values.supplierId) || null
       const minimum = chosen && item ? requestMinimumOf(item, chosen, itemStockUnit(item)) : 0
-      const quantity = quantityOf(facts, row, minimum)
+      const coverTarget = row.noStock ? null : coverTargetOf(row, rateOf(row), chosen?.leadTimeDays ?? null, coverDays)
+      const quantity = sizeOf(facts, row, minimum, coverTarget)
       // The rule is not run on an item that cannot be requested, nor on one
       // with no stock row, whose stock and levels are not known.
       const notRun = item && !isActiveItem(item) ? PURCHASE_SUGGESTION_SOURCES.itemInactive : row.noStock ? PURCHASE_SUGGESTION_SOURCES.noStockPosition : null
@@ -290,17 +363,32 @@ const suggestPurchaseLines = defineAiTool({
       const needBy = suggestNeedByDate({ today: facts.today, leadTimeDays: lead, firstShortWeek: projection?.firstWeekShort })
       const covered = !notRun && quantity.covered ? { by: coverRecords(facts, row) } : null
       return {
-        item: { id: text(row.itemId) || null, sku: row.sku, name: row.itemName || null, unit: row.unit || null },
+        item: { id: text(row.itemId) || null, sku: row.sku, name: row.itemName || null, unit: row.unit || (item ? itemStockUnit(item) : '') || null },
         onHand: row.onHand ?? null, available: row.available ?? null, safetyStock: row.safetyStock ?? null, reorderPoint: row.reorderPoint ?? null,
         openSalesDemand: row.openSalesDemand ?? null, incoming: row.incomingApprovedPo ?? null, openRequests: openRequestsOf(facts, row),
         target: row.noStock ? null : quantity.target, gap: row.noStock ? null : quantity.gap,
         suggestedQuantity: notRun ? { value: null, source: notRun } : quantity.quantity,
         supplier: suppliersVisible && chosen ? { id: chosen.id, name: chosen.name, source: SUPPLIER_SOURCE[plan.fields.supplierId?.ref] || 'approved_supplier' } : null,
         supplierChoices: suppliersVisible ? plan.supplierChoices.map((choice) => ({ id: choice.id, name: choice.name })) : [],
+        // Every approved source, so the form's select holds them all and a
+        // supplier the user names comes with its own lead time and price.
+        approvedSuppliers: suppliersVisible ? sources.map((source) => ({ id: source.id, name: source.name, preferred: source.preferred, leadTimeDays: source.leadTimeDays, unitPrice: source.referencePrice === null || source.referencePrice === undefined ? null : Number(source.referencePrice), currency: source.currency })) : [],
         needByDate: { value: needBy.value, source: needBy.source, leadTimeDays: needBy.leadTimeDays, warning: needBy.warning },
         estimatedUnitPrice: plan.values.estimatedUnitPrice ? { value: Number(plan.values.estimatedUnitPrice), currency: plan.values.currency || null, source: 'reference_price' } : null,
         warehouseId: plan.values.targetWarehouseId || null,
         covered,
+        // The basis of a period's quantity: recorded_demand, or why the
+        // reorder point rule stands (not_enough_shipment_history,
+        // warehouse_scope, no_stock_position).
+        ...(coverDays ? { cover: {
+          days: coverDays,
+          basis: coverTarget !== null ? 'recorded_demand' : row.noStock ? 'no_stock_position' : demand?.scoped ? 'warehouse_scope' : 'not_enough_shipment_history',
+          averageDailyDemand: rateOf(row),
+          demandWindowDays: DEMAND_WINDOW_DAYS,
+          shipmentDays: demandOf(row)?.shipmentDays ?? 0,
+          leadTimeDays: chosen?.leadTimeDays ?? null,
+          target: coverTarget,
+        } } : {}),
         ref: aiToolRef('item', row.itemId || row.sku, row.sku),
       }
     })
@@ -308,6 +396,7 @@ const suggestPurchaseLines = defineAiTool({
       asOf: facts.asOf,
       today: facts.today,
       from: named ? 'named' : 'suggestions',
+      ...(coverDays ? { coverDays } : {}),
       pricesHidden: !prices,
       suppliersHidden: !suppliersVisible,
       purchaseRequestsRead: openRequestsRead(facts),
@@ -318,4 +407,44 @@ const suggestPurchaseLines = defineAiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests])
+// What records_missing_data reports an item lacks, as the setup gaps count it.
+const SETUP_GAPS = Object.freeze({ unit: 'unit', preferredSupplier: 'preferred_supplier', thresholds: 'stock_threshold' })
+
+// The first-day checklist exactly as Today builds it (first-run-setup.mjs:
+// the same counts, the same steps and the same pages for the same reader),
+// with every step also once all are done, and the gaps of the items already
+// there, from the facts records_missing_data reads. Counts only: no record
+// is named, so the checklist is offered to every reader, as Today shows it.
+const setupStatus = defineAiTool({
+  name: 'setup_status',
+  description: 'The workspace\'s first-day setup checklist, the same one the Today page shows, in order: items, suppliers, customers, opening_stock, teammates. Per step: done, count (records so far), blocked (permission: this user cannot do it; unavailable: no page for it here) and href, the page in the app that does it; with import turned on that is the import page, which takes a CSV or XLSX file for many rows at once. open is false once every step is done. gaps counts the items that still lack a unit, a preferred supplier or stock thresholds (a reorder point or safety stock), which reorder suggestions need; null when the user cannot read inventory.',
+  available: (_facts, context) => Boolean(context?.actor && context.prisma && context.tenantId),
+  assistantV2Only: true,
+  async run(_args, { facts, context }) {
+    let checklist
+    try {
+      checklist = await readFirstRunSetup(context.prisma, { tenantId: context.tenantId, now: context.now, access: reportReadAccessFor(context.actor), env: context.routeContext?.env || process.env })
+    } catch {
+      return { error: 'setup_counts_unavailable' }
+    }
+    const checked = facts.recordsChecked?.items
+    const items = array(facts.records).filter((record) => record.source === 'items')
+    const gaps = Number.isInteger(checked)
+      ? { checked, ...Object.fromEntries(Object.entries(SETUP_GAPS).map(([key, field]) => [key, items.filter((record) => record.missing.includes(field)).length])) }
+      : null
+    return {
+      asOf: facts.asOf,
+      open: checklist.done < checklist.total,
+      done: checklist.done,
+      total: checklist.total,
+      importOn: checklist.steps.some((step) => String(step.href || '').startsWith('/app/master-data/import')),
+      steps: checklist.steps.map((step) => ({ id: step.id, done: step.done, count: step.count, blocked: step.blocked, href: step.href })),
+      gaps,
+      // What the chat takes at once, so an answer that tells the user how
+      // much to paste states figures a result holds.
+      limits: { pasteCharacters: QUESTION_LIMITS.assistantV2, setupCardRows: SETUP_FORM_ROWS },
+    }
+  },
+})
+
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus])

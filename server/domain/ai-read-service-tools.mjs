@@ -4,6 +4,7 @@ import { createContractReadService } from './contract-read-service.mjs'
 import { createOperationalFinanceO2cReadService } from './operational-finance-o2c-read-service.mjs'
 import { createPriceHistoryReadService } from './price-history-read-service.mjs'
 import { createReorderListReadService } from './reorder-list-read-service.mjs'
+import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
 import { SUPPLIER_ISSUE_TYPES, createSupplierInsightsReadService } from './supplier-insights.mjs'
 import { reportReadAccessFor, scopeBusinessContext } from './report-read-access.mjs'
 import { searchRuntimeBusinessContext } from './runtime-business-search.mjs'
@@ -78,12 +79,21 @@ const searchRecords = defineAiTool({
 // named by their number, and items by their SKU.
 const NAMED_RECORDS = new Set(['supplier', 'customer', 'warehouse'])
 
+// A row's suggested reorder point with what it rests on, in words the
+// assistant can repeat; reason says why there is none.
+const suggestionFacts = (suggestion) => ({
+  ...primitives(suggestion, ['recordedBelow', 'coverDays', 'leadTimeDays', 'reviewDays', 'shipmentDays', 'reason']),
+  basis: suggestion.suggestedReorderPoint === null
+    ? 'No suggestion; reason says why.'
+    : `Enough for the next ${suggestion.coverDays} days (lead time ${suggestion.leadTimeDays} + ${suggestion.reviewDays} review days) in 5 of 6 past ${suggestion.coverDays}-day stretches of the last ${suggestion.historyDays} days of shipments. A suggestion only; nothing changes until a person sets the reorder point on the item.`,
+})
+
 // The preferred supplier's lead time and minimum order come from the item's
 // supplier link (preferredSupplierFor in reorder-list.mjs), so they are read
 // from the row's supplier, never from the row itself.
 const reorderList = defineAiTool({
   name: 'reorder_list',
-  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Flags name late lines and lines it could not count. Filter by SKU or supplier. Transfers between warehouses are not considered.',
+  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Flags name late lines and lines it could not count. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. Transfers between warehouses are not considered.',
   parameters: {
     sku: { type: 'string', description: 'Only this SKU.' },
     supplier: { type: 'string', description: 'Only items whose preferred supplier is this one: a name or code.' },
@@ -114,12 +124,23 @@ const reorderList = defineAiTool({
       supplier: text(row.supplier?.name) || null,
       supplierId: text(row.supplier?.id) || null,
       leadTimeDays: row.supplier?.leadTimeDays ?? null,
+      // When an order placed today would arrive (the request's need-by date),
+      // beside orderByDate, the last day to order: on 2026-11-04 an answer
+      // gave the order-by day as the need-by day.
+      // Only on a row to order now: for one not due, today plus the lead time
+      // fell before its order-by day plus the lead time and read as wrong.
+      needByDate: row.orderNow === true && Number.isInteger(row.supplier?.leadTimeDays) && /^\d{4}-\d{2}-\d{2}$/.test(text(facts.today)) ? addCalendarDays(facts.today, row.supplier.leadTimeDays) : null,
       minimumOrderQuantity: row.supplier?.minimumOrderQuantity ?? null,
       moqUnit: row.supplier?.moqUnit ?? null,
       requestQuantity: row.purchaseRequest?.quantity ?? null,
       raisedToMinimum: Boolean(row.purchaseRequest?.raisedToMinimum),
       flags: array(row.flags).map((flag) => primitives(flag, ['code', 'orderNumber', 'unit', 'dueDay', 'count'])),
       incomingLines: array(row.incomingLines).map((line) => primitives(line, ['orderNumber', 'remaining', 'dueDay', 'late'])),
+      // The suggested reorder point the page shows beside the recorded one
+      // (reorder-point-suggestion.mjs). A suggestion only: the row is dated
+      // by the recorded reorder point until a person changes it on the item.
+      suggestedReorderPoint: row.reorderPointSuggestion?.suggestedReorderPoint ?? null,
+      reorderPointSuggestion: row.reorderPointSuggestion ? suggestionFacts(row.reorderPointSuggestion) : null,
       ref: aiToolRef('item', row.itemId || row.purchaseRequest?.itemId || row.sku, row.sku),
     }))
     rows.sort((a, b) => text(a.orderByDate || '9999').localeCompare(text(b.orderByDate || '9999')) || text(a.sku).localeCompare(text(b.sku)))
