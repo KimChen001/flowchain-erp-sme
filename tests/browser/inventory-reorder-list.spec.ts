@@ -42,7 +42,8 @@ const listInput = {
 const list = attachReorderPointSuggestions(buildReorderList(listInput), shipmentLines);
 
 async function open(page: Page, language = "en-US", payload: unknown = { ...list, dataLimitations: ["transfers_not_considered"] }) {
-  const response = await page.request.post("/api/auth/login", { data: { email: "manager@example.com", name: "Ignored", company: "Ignored" } });
+  // A user the walkthrough data seeds (PLAYWRIGHT_PRODUCT_RECOVERY_DB=true).
+  const response = await page.request.post("/api/auth/login", { data: { email: "admin@flowchain.local", name: "Ignored", company: "Ignored" } });
   const session = await response.json();
   await page.route("**/api/me/localization", (route) => route.fulfill({ json: { languagePreference: language, defaultLanguage: "en-US", effectiveLanguage: language, locale: language, timezone: "America/New_York" } }));
   await page.route("**/api/inventory/reorder-list", (route) => route.fulfill({ json: payload }));
