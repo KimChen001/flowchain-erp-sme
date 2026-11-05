@@ -748,11 +748,14 @@ function supplierRecommendations() {
 // mailer replaces the provider FLOWCHAIN_MAIL_PROVIDER selects for sign-in
 // links and approval emails; tests and harnesses pass one so they never reach
 // a real mail service.
+// staticDir is the built SPA the server serves (dist/ by default); tests pass
+// a folder of their own, so they need no prior `npm run build`.
 export function createScmServer({
   readinessCheck = checkRuntimeReadiness,
   requestLogger = null,
   errorLogger,
   mailer = null,
+  staticDir = distDir,
   errorReporter = createErrorReporter({ logger: errorLogger || console, env: process.env, commitSha: buildIdentity.commitSha }),
 } = {}) {
   validateProductionRuntimeConfig(process.env);
@@ -767,7 +770,7 @@ export function createScmServer({
   const localSessionSecret = createLocalSessionSecret(process.env);
   const handleRequest = createHttpRequestHandler({
     port,
-    distDir,
+    distDir: staticDir,
     buildIdentity,
     readinessCheck,
     sessionStore,
