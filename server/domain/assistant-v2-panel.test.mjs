@@ -415,3 +415,27 @@ test('a setup card keeps what it created by form id, and the setup tool has a st
   const reading = fold([event({ type: 'start', threadId: 'thr_7f2c', messageId: 'msg_22', model: 'claude-sonnet-5-5', language: 'en-US' }), event({ type: 'tool', id: 'toolu_03', name: 'setup_status', state: 'running' })])
   assert.match(client.render({ message: reading }), /Checking your workspace setup…/)
 })
+
+test('a record card keeps what its clicks did by card id, and a Chinese answer words it in Chinese', () => {
+  const props = {
+    cardId: 'thr_7f2c:msg_23:p2',
+    record: { ref: { type: 'purchase_request', id: 'PR-0231', label: 'PR-0231' }, type: 'purchase_request', status: 'submitted', version: 3, suppliers: ['Northstar Electronics'], lines: [{ sku: 'LDM-002', name: 'Temperature Sensor', quantity: 300, unit: 'pcs' }], lineCount: 1 },
+    allowed: ['approve', 'reject', 'create_po'],
+    actions: ['approve', 'reject'],
+    path: { recommendation: 'direct_po', reasons: ['direct_po_ok'] },
+  }
+  const message = (language) => fold([
+    event({ type: 'start', threadId: 'thr_7f2c', messageId: 'msg_23', model: 'claude-sonnet-5-5', language }),
+    event({ type: 'ui', partId: 'p2', component: 'record_actions', schemaVersion: 1, props, refs: [{ type: 'purchase_request', id: 'PR-0231', label: 'PR-0231' }] }),
+  ])
+  const open = client.render({ message: message('en-US') })
+  assert.match(open, /data-testid="ai-v2-record-actions"[^>]*data-status="submitted"[^]*data-action="approve"[^>]*>Approve</)
+  assert.doesNotMatch(open, CJK)
+  const receipt = { type: 'purchase_request', id: 'PR-0231', status: 'approved', version: 4, steps: [{ actionId: 'thr_7f2c:msg_23:p2:approve:v3', action: 'approve', created: [] }] }
+  const approved = client.render({ message: message('en-US'), actionReceipts: { 'thr_7f2c:msg_23:p2': receipt } })
+  assert.match(approved, /data-status="approved"[^]*data-testid="ai-v2-record-done" data-action="approve"[^>]*>You approved it\./)
+  // Approved: the next step, ordering it, is offered in the same card.
+  assert.match(approved, /data-action="create_po"[^>]*>Create purchase order</)
+  assert.doesNotMatch(client.render({ message: message('en-US'), actionReceipts: { 'thr_7f2c:msg_22:p2': receipt } }), /ai-v2-record-done/)
+  assert.match(client.render({ message: message('zh-CN') }), /采购申请[^]*批准[^]*驳回/)
+})

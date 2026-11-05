@@ -14,7 +14,7 @@ import { ApiError } from "../../lib/api-client";
 import { aiProgressLine, looksLikeRawJson, sanitizeAiMessage } from "./presentation";
 import { AssistantV2Answer } from "./v2/AssistantV2Answer";
 import { emptyAssistantV2Message, finishAssistantV2Message, foldAssistantV2Event, type AssistantV2Message } from "./v2/foldEvents";
-import type { PrReceipt, SetupReceipt } from "./v2/parts/types";
+import type { PrReceipt, RecordActionReceipt, SetupReceipt } from "./v2/parts/types";
 import { setupCreatedRecords } from "./v2/parts/SetupRecordsPart";
 import { assistantV2Failure, newThreadId, streamAssistantV2, type AssistantV2FormResult } from "./v2/streamClient";
 
@@ -714,6 +714,9 @@ export default function FloatingAiAssistant({
   // Setup card receipts by form id, and the records already reported.
   const [setupReceipts, setSetupReceipts] = useState<Record<string, SetupReceipt>>({});
   const reportedSetupRef = useRef(new Set<string>());
+  // Record card receipts by card id, and the steps already reported.
+  const [actionReceipts, setActionReceipts] = useState<Record<string, RecordActionReceipt>>({});
+  const reportedActionsRef = useRef(new Set<string>());
   // What readiness last said: whether v2 answers, and the setup checklist.
   const [readiness, setReadiness] = useState<Pick<AiRuntimeReadinessV2, "assistantV2" | "setup"> | null>(null);
 
@@ -852,6 +855,8 @@ export default function FloatingAiAssistant({
     pendingFormResultsRef.current = [];
     setSetupReceipts({});
     reportedSetupRef.current = new Set();
+    setActionReceipts({});
+    reportedActionsRef.current = new Set();
     // The checklist may have moved on (records created in this conversation).
     if (readinessRef.current) void fetchAiRuntimeReadiness().then((ready) => setReadiness({ assistantV2: ready.assistantV2, setup: ready.setup ?? null }), () => undefined);
   }
@@ -873,7 +878,7 @@ export default function FloatingAiAssistant({
   function recordFormReceipt(formId: string, receipt: PrReceipt) {
     if (!reportedFormsRef.current.has(formId)) {
       reportedFormsRef.current.add(formId);
-      pendingFormResultsRef.current = [...pendingFormResultsRef.current, { formId, purchaseRequestId: receipt.id }];
+      pendingFormResultsRef.current = [...pendingFormResultsRef.current, { formId, purchaseRequestId: receipt.id, ...(receipt.addedSupplierLinks?.length ? { addedSupplierLinks: receipt.addedSupplierLinks } : {}) }];
     }
     setFormReceipts((current) => ({ ...current, [formId]: receipt }));
   }
@@ -884,6 +889,14 @@ export default function FloatingAiAssistant({
     for (const record of fresh) reportedSetupRef.current.add(`${formId}|${record.type}:${record.id}`);
     if (fresh.length) pendingFormResultsRef.current = [...pendingFormResultsRef.current, { formId, created: fresh }];
     setSetupReceipts((current) => ({ ...current, [formId]: receipt }));
+  }
+
+  // Each step taken in a record card, reported once, with the next question.
+  function recordActionReceipt(cardId: string, receipt: RecordActionReceipt) {
+    const fresh = receipt.steps.filter((step) => !reportedActionsRef.current.has(step.actionId));
+    for (const step of fresh) reportedActionsRef.current.add(step.actionId);
+    if (fresh.length) pendingFormResultsRef.current = [...pendingFormResultsRef.current, ...fresh.map((step) => ({ actionId: step.actionId, type: receipt.type, id: receipt.id, action: step.action }))];
+    setActionReceipts((current) => ({ ...current, [cardId]: receipt }));
   }
 
   async function askAi(text: string, skillHint?: string) {
@@ -1149,6 +1162,8 @@ export default function FloatingAiAssistant({
                       onReceipt={recordFormReceipt}
                       setupReceipts={setupReceipts}
                       onSetupReceipt={recordSetupReceipt}
+                      actionReceipts={actionReceipts}
+                      onActionReceipt={recordActionReceipt}
                       onNavigate={minimizeAfterNavigate}
                       onFollowUp={askAi}
                       onRetry={message.question ? () => askAi(message.question || "") : undefined}

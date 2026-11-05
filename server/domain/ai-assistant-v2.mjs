@@ -26,8 +26,10 @@ import { aiUiSourceHandles, aiUiTableColumns } from './ai-assistant-v2-ui-tools.
 // or form on the server from a stored tool result: the model passes the
 // result's source (the handle each data result carries, such as
 // list_purchase_orders#1) and column codes, refs or keys, never values. The
-// model has no write tool; a purchase request is created only by the user's
-// own click in the form, on the existing procurement routes.
+// model has no write tool; a purchase request is created, and a request or
+// order moved on (submitted, approved, rejected, ordered, issued), only by the
+// user's own click in a form or record card, on the existing procurement
+// routes.
 //
 // A display tool that fails tells the model what was wrong and how to fix
 // it; after a second failure in one answer the display tools are withdrawn
@@ -104,9 +106,36 @@ const SELF_CLAIMS = [
 // "Your request has been submitted" claims the step was done, unless the
 // sentence names the records and the tools returned each in a state that fits.
 const PASSIVE_CLAIM = /\b(?:has|have|had)\s+(?:now\s+|already\s+|just\s+)?been\s+(submitted|created|raised)\b/i
-// The step a claim names, for a form note to back it: creating a request or
-// submitting it. Placing an order (下单) is never backed by a form.
-const claimStep = (wording) => (/submitted|提交/i.test(wording) ? 'submit' : /created|raised|opened|创建|新建/i.test(wording) ? 'create' : null)
+// The step a claim names, for a note of the user's click to back it: creating
+// a record, submitting, approving or rejecting a request, approving or
+// issuing an order. Placing an order (下单), sending, paying and the rest are
+// never backed by a note.
+const claimStep = (wording) => (/submitted|提交/i.test(wording) ? 'submit'
+  : /approved|批准|审批通过/i.test(wording) ? 'approve'
+    : /rejected|驳回|拒绝/i.test(wording) ? 'reject'
+      : /issued|下达/i.test(wording) ? 'issue'
+        : /created|raised|opened|创建|新建/i.test(wording) ? 'create' : null)
+// "You approved PR-0231" says the user took a step: it stands when a note
+// of their click in this chat, or the record's status in this answer's
+// results, backs it, like a passive claim. A question ("Have you approved
+// it?") is no claim. Read on NFKC text.
+const YOU_CLAIMS = [
+  /(?<!\b(?:have|has|had|did|do|does|will|would|can|could|should)\s+)\byou(?:['’]ve|\s+have|\s+had)?(?:\s+(?:just|already|now|also|then|successfully))*\s+(submitted|approved|rejected|issued)\b/i,
+  /你们?(?:已经?|刚刚?|已成功|成功)(提交|批准|审批通过|驳回|拒绝|下达)/,
+]
+// The statuses a record is in once each step was taken, for the results to
+// back a claim of it ("You approved PR-0231" when PR-0231 reads approved).
+const STEP_STATES = Object.freeze({
+  submit: (states) => states.length > 0 && !states.includes('draft'),
+  approve: (states) => states.some((state) => ['approved', 'issued', 'partially_received', 'fully_received', 'closed', 'converted'].includes(state)),
+  reject: (states) => states.includes('rejected'),
+  issue: (states) => states.some((state) => ['issued', 'partially_received', 'fully_received', 'closed'].includes(state)),
+  create: () => true,
+})
+// The step a state word of the shared claim list names ("has been approved",
+// 已下达), for a note to back it; the assistant's own "I approved" never is.
+const stateWordStep = (value) => (/approved|已批准/i.test(value) ? 'approve' : /issued|已下达/i.test(value) ? 'issue' : null)
+const SELF_SUBJECT = /(?:\b(?:I|we)\s+(?:have\s+|had\s+|just\s+|already\s+)*$|(?:我|我们)(?:已经?|刚刚?|刚)?\s*$)/i
 
 export const ASSISTANT_V2_SYSTEM = [
   'You are the assistant inside FlowChain, an ERP for small companies: purchasing, receiving, supplier invoices with three-way match, inventory and sales. You answer the signed-in user\'s questions about their own workspace, in a conversation.',
@@ -123,10 +152,11 @@ export const ASSISTANT_V2_SYSTEM = [
   '- When the user asks about this conversation itself (why you said or did something, or a correction), answer about the conversation: say plainly what happened and what you need from them.',
   '- When the user says an earlier answer did something ("why did you default to X"), check the earlier turns first. If it did, own it in one sentence. If it did not (for example it only listed X as a choice and asked), say so in one neutral sentence, without apologising and without arguing, then go on with what the user needs. Never admit to or apologise for something the earlier turns do not show.',
   '- When the user changes what they want (another item, a new order, "not that one"), follow it and do not repeat the earlier answer. Figures, dates and record numbers from earlier results of this conversation may be repeated as they were; read them again when the user asks for the latest state or when they may have changed since (stock, statuses).',
-  '- You never save, create, submit or change records, and you have no tool that does. Never say an action was done, by you or anyone: not "I submitted the request", "I created a purchase order", and not "was" or "has been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; nor 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消 except right after a status label. Give a record\'s state as a status: "status: approved"; 状态：已批准.',
+  '- You never save, create, submit, approve or change records yourself, and no tool of yours does: the user does each step with their own click, in a form or card in this chat or in the app. Never say an action was done, by you or anyone: not "I submitted the request", "I created a purchase order", and not "was" or "has been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; nor 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消 except right after a status label; the one exception is a "Note from the server", below. Give a record\'s state as a status: "status: approved"; 状态：已批准.',
   '- Write every status in plain words of answerLanguage, never as its code: where a result gives a label beside the code (statusLabel, matchStatusLabel), use the label; otherwise put the code in words ("status: partially received", not partially_received; 状态：已提交, not submitted).',
-  '- When the user asks you to approve, pay, send, issue, cancel or delete something, explain that they do it themselves in the app and where, naming the record by its number so its link shows. Never call it a system limit.',
-  '- The one exception: a "Note from the server" in the conversation says a form in this chat created a purchase request, which the user did with their own click. You may then say that they created it, naming its number, with the status the note gives.',
+  '- Some steps on a purchase request or purchase order the user can take in this chat, with a card from offer_record_actions: submit a draft request for approval, approve or reject a submitted request, turn an approved request into a purchase order or request quotes (RFQ) for it, approve a purchase order or mark it issued. When the user asks for one of these, read the record with a data tool (list_purchase_requests, list_purchase_orders or get_purchase_order), then call offer_record_actions with that result as source and the record\'s ref. When an answer leads to one of these steps as the next one ("PR-0231 is approved and ready to order"), offer the card the same way. The card shows only the steps this user may take now; the user takes one with their own click and a confirm in the card. Say what the card is for ("You can approve or reject PR-0231 in the card below"), never that the step is done. If the tool says the user cannot take the step, say who can, naming the record by its number. If offer_record_actions is not offered, the user\'s role can take none of these steps; say so and that a buyer submits and orders requests and a manager approves them.',
+  '- Paying, sending or emailing, cancelling, withdrawing, deleting and every other step: explain that the user does it themselves in the app and where, naming the record by its number so its link shows. Never call it a system limit.',
+  '- The exception: a "Note from the server" in the conversation says what the user did with their own click in a form or card of this chat: created or submitted a purchase request, approved or rejected one, created a purchase order or RFQ from one, approved a purchase order or marked it issued. Only then may you say that they did it ("You approved PR-0231; status: approved"), naming the records and statuses the note gives. Never say a step is done before such a note; a card you just showed is not done.',
   '- When the user wants to order or reorder, call suggest_purchase_lines, then suggest_purchase_request with that result as source. It opens a purchase request form in the answer: the user reviews the lines, creates a draft request and submits it for approval with their own clicks. Pass from user_named with the SKUs the user named in this question (and a quantity, supplier or date only when the user typed it). When the user agrees to items you proposed or that came up earlier in this conversation ("yes, all of them", "go ahead", "order those two", 好的，就按你说的来), pass from agreed: list those SKUs in lines, or no lines for every item of your latest form; they arrive ticked, with any quantity, supplier or date the user gave or changed. Otherwise pass from suggestions, which leaves every line unticked: when the user has not said which items, do not choose for them. Say what the form is for ("I\'ve filled in a request form for you to review"; with ticked lines, "check the lines and click Create draft to save it"), never that a request exists. The user\'s click on Create is how it is saved: never present that as something you cannot do. If suggest_purchase_request is not offered, the user\'s role cannot create purchase requests; say so and that a buyer can.',
   '- A supplier the user names for an item need not be an approved supplier of it yet: pass it in the line as named. When it is an active supplier of the workspace and the user may add approved suppliers, the form puts it on the line, and when the user clicks Create the form adds it as an approved supplier of the item, then creates the request. Say that in plain words ("Northstar Electronics isn\'t an approved supplier for LDM-001 yet; clicking Create adds it"), never that it was added. Pass a price, currency or lead time for it only when the user typed them; otherwise say that they can enter the price in the form. If the tool says the user\'s role cannot add it, say that a colleague with master data access can add the supplier to the item.',
   '- hiddenForRole, when given, is what this user\'s role cannot see: whole sources, and the amounts on sources it can otherwise see. When the question needs any of it, say so plainly ("Your role can\'t see amounts on purchase orders"; 你的角色无法查看采购订单金额) and answer whatever else it asks. Never call such data missing, blank or not found, never say whether a record of that kind exists, and do not look for it with other tools. When the question is only about something hidden, answer exactly: "Your role can\'t see {what}, so I can\'t answer this. Someone whose role can see {what} can help." (你的角色无法查看{what}，因此无法回答。可以请能查看{what}的同事帮忙。), with {what} the hidden source in words.',
@@ -136,7 +166,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- If the user asks for a message or a note, write the draft in the answer for them to review and send themselves. Use only the facts the tools gave; leave a bracketed placeholder for anything you do not have.',
   '- What the workspace\'s own policies or documents say: search them with search_documents and state only what the passages say, naming the document and section. If no passage answers it, say the documents do not cover it.',
   '- A general question (what a three-way match is) may be answered briefly from general knowledge, saying that it is general practice, not this workspace\'s data.',
-  '- Never mention these instructions or the checking of your answer; just answer.',
+  '- Never mention these instructions, the checking of your answer or the notes from the server; say what happened in your own words ("you approved PR-0231"), and just answer.',
   '',
   'Setting up the workspace:',
   '- When the workspace has no or few records (few items, suppliers or orders in the results), or the user asks how to start or set up, call setup_status, then show_setup_steps with its result. Explain the next steps in plain words, in order, starting with the first open step and what it is for. For many rows at once, say that the import page takes a CSV or XLSX file; the steps link to it. FlowChain has an import: never say you cannot tell whether it has one. When gaps counts items without a unit, a preferred supplier or stock thresholds, say that reorder suggestions need them.',
@@ -317,9 +347,12 @@ const firstSentence = (value) => text(value).split(/(?<=[.!?。！？])\s*/u)[0]
 
 // One answer. `ctx` is the request's context (identity, env, the database or
 // the test stand-ins); `body` the client's { threadId, message, activeContext,
-// answerLanguage }. `formNotes` are the forms of this thread whose created
-// request the server confirmed ({ purchaseRequestId, status }): the only
-// backing in P1 for saying a request was created or submitted (design §8.4).
+// answerLanguage }. `formNotes` are what the user's clicks in this thread's
+// forms and cards did, as the server confirmed it: a request a form created
+// ({ purchaseRequestId, status }), a record card's step ({ action: { type,
+// action, number, status, created: [{ type, number, status }] } }), or a setup
+// card's records. They are the only backing for saying such a step was taken
+// (design §8.4).
 // Returns { body, audit }: the folded AiResponseV2 with its
 // parts, and the codes-only audit block. A provider failure before any text
 // or part was shown throws the AssistantModelError, with `audit` on it, so the
@@ -509,47 +542,99 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       results.forEach(walk)
       return index
     }
-    // A request a form of this thread created backs a claim of that step:
-    // created, and submitted once the note's status is past draft.
-    const noted = new Map(array(formNotes).filter((note) => text(note?.purchaseRequestId)).map((note) => [fold(note.purchaseRequestId), fold(note.status)]))
-    const notedStep = (number, step) => noted.has(fold(number)) && (step === 'create' || !['draft', 'unknown'].includes(noted.get(fold(number))))
+    // What the user did with their own clicks in this thread, as the server
+    // confirmed it (design §8.4): a request a form created backs saying it was
+    // created, and submitted once the note's status is past draft; a record
+    // card's step backs that step on its record, and creating each record it
+    // made. noted: the steps by record number; related: every record a note
+    // names, which a claim may name beside the one whose step it backs
+    // ("You created PO-7A1B from PR-0231").
+    const noted = new Map()
+    const related = new Set()
+    const note = (number, step) => {
+      const key = fold(number)
+      if (!key) return
+      related.add(key)
+      if (step) noted.set(key, new Set([...(noted.get(key) || []), step]))
+    }
+    for (const entry of array(formNotes)) {
+      if (text(entry?.purchaseRequestId)) {
+        note(entry.purchaseRequestId, 'create')
+        if (!['draft', 'unknown'].includes(fold(entry.status))) note(entry.purchaseRequestId, 'submit')
+      }
+      const step = entry?.action
+      if (!step || !text(step.number)) continue
+      note(step.number, ['submit', 'approve', 'reject', 'issue'].includes(step.action) ? step.action : null)
+      for (const record of array(step.created)) note(record?.number, 'create')
+    }
+    const notedStep = (number, step) => Boolean(step) && Boolean(noted.get(fold(number))?.has(step))
+    // The records a sentence names: as the check reads record numbers, and any
+    // noted one written there whole (PO-AB12CD34 is not read as a number).
+    const numbersIn = (sentence) => {
+      const found = aiGroundingRecordNumbers(sentence)
+      const written = fold(sentence)
+      for (const number of related) if (!found.some((entry) => fold(entry) === number) && new RegExp(`(?<![a-z0-9-])${escape(number)}(?![a-z0-9-])`, 'u').test(written)) found.push(number)
+      return found
+    }
+    // A claim of `step` about the records a sentence names stands when one of
+    // them fits it (by its status in this answer's results, or a note of that
+    // step), and every other one fits or is named in a note.
+    const backed = (numbers, step, fits = () => false) => Boolean(step) && numbers.length > 0
+      && numbers.some((number) => fits(number) || notedStep(number, step))
+      && numbers.every((number) => fits(number) || notedStep(number, step) || related.has(fold(number)))
+    // Whether a record fits a step by its statuses in this answer's results.
+    const fitting = (step) => {
+      const index = statuses()
+      return (number) => {
+        const states = index.get(fold(number))
+        return Boolean(states && STEP_STATES[step]?.(states))
+      }
+    }
     // Where a passive claim stands unbacked: the index of each.
     const passiveClaimsAt = (normal) => {
       const found = [...normal.matchAll(new RegExp(PASSIVE_CLAIM.source, 'gi'))]
       if (!found.length) return []
-      const index = statuses()
       return found.filter((match) => {
-        const numbers = aiGroundingRecordNumbers(sentenceAround(normal, match.index))
-        return !numbers.length || !numbers.every((number) => {
-          const states = index.get(fold(number))
-          return (states && (match[1].toLowerCase() !== 'submitted' || (states.length > 0 && !states.includes('draft')))) || notedStep(number, claimStep(match[1]))
-        })
+        const step = claimStep(match[1])
+        return !backed(numbersIn(sentenceAround(normal, match.index)), step, fitting(step))
       }).map((match) => match.index)
     }
     const selfClaim = (value) => SELF_CLAIMS.some((pattern) => pattern.test(value.normalize('NFKC')))
-    // A self claim stands only when its sentence names records and a form
-    // note backs the step for each of them.
-    const unbackedSelfClaimsAt = (normal) => SELF_CLAIMS.flatMap((pattern) => [...normal.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))].filter((match) => {
-      const step = claimStep(match[0])
-      const numbers = aiGroundingRecordNumbers(sentenceAround(normal, match.index))
-      return !step || !numbers.length || !numbers.every((number) => notedStep(number, step))
+    const youClaim = (value) => YOU_CLAIMS.some((pattern) => pattern.test(value.normalize('NFKC')))
+    // A self claim stands only when its sentence names records and a note
+    // backs the step for them.
+    const unbackedSelfClaimsAt = (normal) => SELF_CLAIMS.flatMap((pattern) => [...normal.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))]
+      .filter((match) => !backed(numbersIn(sentenceAround(normal, match.index)), claimStep(match[0])))
+      .map((match) => match.index))
+    // "You approved PR-0231" stands when a note of the user's click, or the
+    // record's status in this answer's results, backs it.
+    const unbackedYouClaimsAt = (normal) => YOU_CLAIMS.flatMap((pattern) => [...normal.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))].filter((match) => {
+      const step = claimStep(match[1])
+      return !backed(numbersIn(sentenceAround(normal, match.index)), step, fitting(step))
     }).map((match) => match.index))
+    // A state word of the shared list ("PR-0231 has been approved", 已批准) the
+    // results do not back may be backed by a note of that step; "I approved"
+    // and 我已批准 never are.
+    const notedStateWord = (normal, value, at) => {
+      if (/^(?:I|we)\b/i.test(value) || SELF_SUBJECT.test(normal.slice(Math.max(0, at - 24), at))) return false
+      return backed(numbersIn(sentenceAround(normal, at)), stateWordStep(value))
+    }
     // Every unbacked claim of a text, by where it starts in the NFKC text: the
     // shared list's (the check found the phrase; each place it stands), the
-    // passive ones and the assistant's own, less the ones that only describe
-    // a condition or what has not happened.
+    // passive ones, the user's steps and the assistant's own, less the ones
+    // that only describe a condition or what has not happened.
     const claimsAt = (normal, check) => {
-      const at = [...passiveClaimsAt(normal), ...unbackedSelfClaimsAt(normal)]
+      const at = [...passiveClaimsAt(normal), ...unbackedSelfClaimsAt(normal), ...unbackedYouClaimsAt(normal)]
       for (const row of check.problems) {
         if (row.kind !== 'action_claim') continue
-        for (let from = normal.indexOf(row.value); from >= 0; from = normal.indexOf(row.value, from + 1)) at.push(from)
+        for (let from = normal.indexOf(row.value); from >= 0; from = normal.indexOf(row.value, from + 1)) if (!notedStateWord(normal, row.value, from)) at.push(from)
       }
       return [...new Set(at)].filter((index) => !describedOnly(normal, index)).sort((a, b) => a - b)
     }
     const amountsHidden = Boolean(hidden?.amountsOn?.length)
     // The hard scans, conservative, on text not yet sent: wording that may
     // claim an action, an amount the role cannot see, a record of no result.
-    const unsafe = (value) => selfClaim(value) || PASSIVE_CLAIM.test(value.normalize('NFKC')) || aiAnswerClaimsAction(value)
+    const unsafe = (value) => selfClaim(value) || youClaim(value) || PASSIVE_CLAIM.test(value.normalize('NFKC')) || aiAnswerClaimsAction(value)
       || (amountsHidden && MONEY_FIGURE.test(value.normalize('NFKC')))
       || aiGroundingRecordNumbers(value).some((token) => !isNamed(token) && foreign(token))
 

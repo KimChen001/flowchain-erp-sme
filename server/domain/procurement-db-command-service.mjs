@@ -37,7 +37,7 @@ function databaseEnabled(env) {
 // admin); approval decisions use "approve" and "reject" (manager, admin).
 // Cancelling a PO that is already pending or approved needs "reject".
 const { DRAFT, PENDING_APPROVAL, APPROVED, ISSUED, PARTIALLY_RECEIVED, CLOSED, CANCELLED } = PURCHASE_ORDER_STATUS;
-const PURCHASE_ORDER_COMMANDS = Object.freeze({
+export const PURCHASE_ORDER_COMMANDS = Object.freeze({
   submit: { from: [DRAFT], to: PENDING_APPROVAL, permission: "procurement.purchase_order.revise" },
   approve: { from: [PENDING_APPROVAL], to: APPROVED, permission: "procurement.purchase_order.approve" },
   reject: { from: [PENDING_APPROVAL], to: PURCHASE_ORDER_STATUS.REJECTED, permission: "procurement.purchase_order.reject", reasonRequired: true },

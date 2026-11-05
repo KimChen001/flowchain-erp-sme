@@ -49,13 +49,13 @@ const followups = Object.freeze({
   build: (input) => ({ component: 'followups', props: { questions: input.questions }, refs: [] }),
 })
 
-async function ask(turns, { roleKey = 'workspace-administrator', question = 'Which purchase orders are overdue?', thread = { messages: [], results: new Map() }, uiTools = [showRecords], limits, signal, onEvent, client, body = {} } = {}) {
+async function ask(turns, { roleKey = 'workspace-administrator', question = 'Which purchase orders are overdue?', thread = { messages: [], results: new Map() }, uiTools = [showRecords], limits, signal, onEvent, client, body = {}, formNotes = [] } = {}) {
   const scenario = aiSkillScenario({ roleKey })
   const modelClient = client || createScriptedModelClient(turns)
   const events = []
   const metered = []
   const outcome = await runWithAiUsageScope((usage) => { metered.push(usage) }, () => answerAssistantV2({ ...scenario.ctx, env: ENV }, { threadId: 'thr_test', message: question, answerLanguage: 'en-US', ...body }, {
-    emit: (event) => { events.push(event); onEvent?.(event) }, signal, modelClient, uiTools, thread, limits,
+    emit: (event) => { events.push(event); onEvent?.(event) }, signal, modelClient, uiTools, thread, limits, formNotes,
   }))
   return { ...outcome, events, metered, client: modelClient, scenario, thread }
 }
@@ -1002,4 +1002,35 @@ test('the system prompt sets the setup rules apart, after the purchase request r
   assert.ok(setup > ASSISTANT_V2_SYSTEM.indexOf('call suggest_purchase_lines, then suggest_purchase_request'))
   assert.ok(setup < ASSISTANT_V2_SYSTEM.indexOf('The answer:'))
   for (const rule of [/call setup_status, then show_setup_steps/, /FlowChain has an import: never say you cannot tell whether it has one/, /call suggest_setup_records with them\. Pass only values the user wrote/, /Never say a supplier or item was created, added or saved/, /up to 8,000 characters/]) assert.match(ASSISTANT_V2_SYSTEM, rule)
+})
+
+test('a note of the user\'s step in a record card backs "you approved PR-001"; without it, or for another step, the words are replaced', async () => {
+  const approved = { action: { type: 'purchase_request', action: 'approve', id: 'PR-001', number: 'PR-001', status: 'approved', created: [] } }
+  const ordered = { action: { type: 'purchase_request', action: 'create_po', id: 'PR-001', number: 'PR-001', status: 'converted', created: [{ type: 'purchase_order', number: 'PO-AB12CD34', status: 'approved' }] } }
+  const replaced = async (answer, formNotes = [], question = 'Did PR-001 go through?') => ofType((await ask([[...say(answer), end()]], { question, formNotes })).events, 'replace').map((event) => event.code)
+  for (const answer of ['You approved PR-001; status: approved.', 'PR-001 has been approved, so it can be ordered.', '你已批准 PR-001。']) {
+    assert.deepEqual(await replaced(answer, [approved]), [], answer)
+    assert.deepEqual(await replaced(answer), ['unbacked_action_claim'], answer)
+  }
+  // The assistant never approves; the note backs only its step.
+  assert.deepEqual(await replaced('I approved PR-001.', [approved]), ['unbacked_action_claim'])
+  assert.deepEqual(await replaced('我已批准 PR-001。', [approved]), ['unbacked_action_claim'])
+  assert.deepEqual(await replaced('You rejected PR-001.', [approved]), ['unbacked_action_claim'])
+  assert.deepEqual(await replaced('You submitted PR-002 for approval.', [approved]), ['unbacked_action_claim'])
+  // An order the user's click created, named with its request (the check does not read PO-AB12CD34 as a number).
+  assert.deepEqual(await replaced('PO-AB12CD34 has been created from PR-001.', [ordered], 'Is PR-001 ordered?'), [])
+  assert.deepEqual(await replaced('PO-AB12CD34 has been created from PR-001.', [approved], 'Is PR-001 ordered?'), ['unbacked_action_claim'])
+  // A question or a condition is no claim; a status the results give backs the words.
+  assert.deepEqual(await replaced('Have you approved PR-001 yet? Once you approved it, a buyer can order it.'), [])
+  const REQUESTS = [...call('tu_prs', 'list_purchase_requests', { status: 'all' }), end()]
+  const { events } = await ask([REQUESTS, [...say('You submitted PR-001; it is waiting for approval.'), end()]], { question: 'Where is PR-001?' })
+  assert.deepEqual(ofType(events, 'replace'), [])
+})
+
+test('the prompt offers the record card for the steps it takes, and keeps every other step in the app', () => {
+  assert.match(ASSISTANT_V2_SYSTEM, /with a card from offer_record_actions: submit a draft request for approval, approve or reject a submitted request, turn an approved request into a purchase order or request quotes \(RFQ\) for it, approve a purchase order or mark it issued/)
+  assert.match(ASSISTANT_V2_SYSTEM, /When an answer leads to one of these steps as the next one \("PR-0231 is approved and ready to order"\), offer the card the same way/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Paying, sending or emailing, cancelling, withdrawing, deleting and every other step: explain that the user does it themselves in the app/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Never say a step is done before such a note; a card you just showed is not done/)
+  assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /When the user asks you to approve, pay, send, issue, cancel or delete something/)
 })
