@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, useRef } from "react";
 import { AlertTriangle, Plus, X } from "lucide-react";
 import { SUPPLIER_OVERRIDE_REASONS, overrideNeeded, validateSupplierOverride } from "../../../../../shared/supplier-override-reasons.mjs";
 import { A } from "../../../../components/ui";
@@ -220,9 +220,9 @@ export function newSupplierLinkBody(line: FormLine) {
 type Post = (url: string, body: unknown) => Promise<unknown>;
 type Linked = Record<string, string>;
 export type FormCreateOutcome =
-  | { status: "link_failed"; linked: Linked; key: string; failure: unknown }
-  | { status: "request_failed"; linked: Linked; failure: unknown }
-  | { status: "created"; linked: Linked; created: PrReceipt & { idempotentReplay?: boolean } };
+  | { status: "link_failed"; linked: Linked; key: string; failure: unknown; added: string[] }
+  | { status: "request_failed"; linked: Linked; failure: unknown; added: string[] }
+  | { status: "created"; linked: Linked; created: PrReceipt & { idempotentReplay?: boolean }; added: string[] };
 
 const failureCode = (failure: unknown) => (failure && typeof failure === "object" && "code" in failure ? String((failure as { code?: unknown }).code || "") : "");
 
@@ -239,20 +239,24 @@ export async function createFormRequest({ ticked, props, ids, post, linked = {} 
   linked?: Linked;
 }): Promise<FormCreateOutcome> {
   const done: Linked = { ...linked };
+  // The links this call created (a link already there is not one of them).
+  const added: string[] = [];
   for (const line of ticked) {
     if (!isNewSupplier(line) || done[line.key] === line.supplierId) continue;
     try {
-      await post(`/api/master-data/items/${encodeURIComponent(line.row.item.id)}/suppliers`, newSupplierLinkBody(line));
+      const made = await post(`/api/master-data/items/${encodeURIComponent(line.row.item.id)}/suppliers`, newSupplierLinkBody(line)) as { relationship?: { relationshipId?: string } } | null;
+      const id = made?.relationship?.relationshipId;
+      if (typeof id === "string" && id) added.push(id);
     } catch (failure) {
-      if (failureCode(failure) !== "RELATIONSHIP_EXISTS") return { status: "link_failed", linked: done, key: line.key, failure };
+      if (failureCode(failure) !== "RELATIONSHIP_EXISTS") return { status: "link_failed", linked: done, key: line.key, failure, added };
     }
     done[line.key] = line.supplierId;
   }
   try {
     const created = await post("/api/procurement/requests", draftRequestBody(ticked, props, ids)) as PrReceipt & { idempotentReplay?: boolean };
-    return { status: "created", linked: done, created };
+    return { status: "created", linked: done, created, added };
   } catch (failure) {
-    return { status: "request_failed", linked: done, failure };
+    return { status: "request_failed", linked: done, failure, added };
   }
 }
 
@@ -487,6 +491,7 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
     onNavigate(target.moduleId, null, { returnTo: "ai", source: "ai", entityLabel: copy.t("ai.v2.form.title"), query: target.query });
   };
 
+  const addedLinksRef = useRef<string[]>([]);
   const record = (next: PrReceipt) => {
     setReceipt(next);
     onReceipt?.(next);
@@ -500,6 +505,8 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
     try {
       const outcome = await createFormRequest({ ticked, props, ids: { threadId, messageId, partId }, linked, post: (url, body) => apiJson(url, { method: "POST", body: JSON.stringify(body) }) });
       setLinked(outcome.linked);
+      // Links added on an earlier try count too: a retry after a failed request skips them.
+      addedLinksRef.current = [...new Set([...addedLinksRef.current, ...outcome.added])];
       if (outcome.status === "link_failed") {
         const line = ticked.find((entry) => entry.key === outcome.key);
         setLinkErrors({ [outcome.key]: linkErrorText(outcome.failure, copy, (line && optionOf(line)?.name) || "", line?.row.item.sku || "") });
@@ -512,7 +519,7 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
       const { created } = outcome;
       // A replay returns the request as it was first created; it may have been submitted or cancelled since.
       const current = created.idempotentReplay ? await apiJson<PrReceipt>(`/api/procurement/requests/${encodeURIComponent(created.id)}`) : created;
-      record({ id: current.id || created.id, version: current.version, status: current.status || "draft" });
+      record({ id: current.id || created.id, version: current.version, status: current.status || "draft", ...(addedLinksRef.current.length ? { addedSupplierLinks: addedLinksRef.current } : {}) });
     } catch (failure) {
       setError(errorText(failure, copy));
     } finally {

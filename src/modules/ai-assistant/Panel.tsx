@@ -875,7 +875,7 @@ export default function FloatingAiAssistant({
   function recordFormReceipt(formId: string, receipt: PrReceipt) {
     if (!reportedFormsRef.current.has(formId)) {
       reportedFormsRef.current.add(formId);
-      pendingFormResultsRef.current = [...pendingFormResultsRef.current, { formId, purchaseRequestId: receipt.id }];
+      pendingFormResultsRef.current = [...pendingFormResultsRef.current, { formId, purchaseRequestId: receipt.id, ...(receipt.addedSupplierLinks?.length ? { addedSupplierLinks: receipt.addedSupplierLinks } : {}) }];
     }
     setFormReceipts((current) => ({ ...current, [formId]: receipt }));
   }

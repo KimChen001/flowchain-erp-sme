@@ -536,29 +536,40 @@ test('the cost reservation holds: answers running together share the remaining b
 // The form added Northstar as an approved supplier of LDM-002 before it
 // created the request (2026-11-04); the assistant then could only say "the
 // form should have added it". The note now says so when the audit shows it.
-test('the form note names a supplier the same click added to a requested item', async () => {
-  const created = new Date('2026-11-04T15:00:00Z')
+// The form added Northstar as an approved supplier of LDM-002 before it
+// created the request (2026-11-04). 2026-11-05: the note named a supplier set
+// up by other means minutes earlier as if the click had added it; it now names
+// only the links the form reports, each checked.
+test('the form note names only the supplier links the form reports it added, each checked', async () => {
   const prisma = (scenario) => {
     const base = readOnlyPrisma(scenario.data)
+    const links = { 'ISR-NEW': { id: 'ISR-NEW', payload: { itemId: 'ITEM-002', supplierId: 'SUP-005' } }, 'ISR-OLD': { id: 'ISR-OLD', payload: { itemId: 'ITEM-002', supplierId: 'SUP-001' } }, 'ISR-ELSE': { id: 'ISR-ELSE', payload: { itemId: 'ITEM-777', supplierId: 'SUP-005' } } }
     const extra = {
       purchaseRequest: { findFirst: async ({ where }) => (where.id === 'PR-0231' ? { id: 'PR-0231', status: 'draft', requester: 'workspace-administrator-user' } : null) },
       purchaseRequestLine: { findMany: async ({ where }) => (where.purchaseRequestId === 'PR-0231' ? [{ itemId: 'ITEM-002', sku: 'LDM-002' }] : []) },
       auditLog: {
-        findFirst: async ({ where }) => (where.entityId === 'PR-0231' ? { actorId: 'workspace-administrator-user', createdAt: created, metadata: { idempotencyKey: 'ai-form:thr_link:msg_1:p2', suggestions: { origin: 'ai_assistant' } } } : null),
-        findMany: async ({ where }) => (where.entityType === 'item_supplier' && where.actorId === 'workspace-administrator-user' && where.createdAt.gte <= new Date(created.getTime() - 5000) ? [{ entityId: 'ISR-NEW' }] : []),
+        findFirst: async ({ where }) => {
+          if (where.entityId === 'PR-0231') return { actorId: 'workspace-administrator-user', metadata: { idempotencyKey: 'ai-form:thr_link:msg_1:p2', suggestions: { origin: 'ai_assistant' } } }
+          // Only ISR-NEW and ISR-ELSE were created by this user; ISR-OLD was there before.
+          return where.entityType === 'item_supplier' && ['ISR-NEW', 'ISR-ELSE'].includes(where.entityId) && where.actorId === 'workspace-administrator-user' ? { id: 'audit-1' } : null
+        },
       },
-      runtimeRecord: { findMany: async () => [{ id: 'ISR-OLD', payload: { itemId: 'ITEM-002', supplierId: 'SUP-001' } }, { id: 'ISR-NEW', payload: { itemId: 'ITEM-002', supplierId: 'SUP-005' } }] },
-      supplier: { findFirst: async ({ where }) => (where.id === 'SUP-005' ? { name: 'Northstar Electronics', code: 'SUP-005' } : null) },
+      runtimeRecord: { findFirst: async ({ where }) => links[where.id] || null, findMany: (...args) => base.runtimeRecord.findMany(...args) },
+      supplier: { findFirst: async ({ where }) => (where.id === 'SUP-005' ? { name: 'Northstar Electronics', code: 'SUP-005' } : where.id === 'SUP-001' ? { name: 'Acme Components', code: 'SUP-001' } : null) },
     }
     return new Proxy({}, { get: (_target, model) => extra[model] || base[model] })
   }
-  const client = createScriptedModelClient({ 'Did it work?': [[...say('Yes, you created PR-0231.'), end()]] })
+  const client = createScriptedModelClient({ 'Did it work?': [[...say('Yes, you created PR-0231.'), end()]], 'And then?': [[...say('Yes, you created PR-0231.'), end()]] })
   const { ask } = setup({ client, prisma })
-  await ask({ threadId: 'thr_link', message: 'Did it work?', formResults: [{ formId: 'thr_link:msg_1:p2', purchaseRequestId: 'PR-0231' }] })
+  // Reported: the new link (named), one that was there before and one of another item (neither named).
+  await ask({ threadId: 'thr_link', message: 'Did it work?', formResults: [{ formId: 'thr_link:msg_1:p2', purchaseRequestId: 'PR-0231', addedSupplierLinks: ['ISR-NEW', 'ISR-OLD', 'ISR-ELSE'] }] })
   const sent = JSON.stringify(client.requests[0].messages)
   assert.match(sent, /form thr_link:msg_1:p2 created PR-0231 \(draft\)\. The same click added Northstar Electronics as an approved supplier of LDM-002\./)
-  // A link that was there before (no create audit of this user) is not named.
-  assert.doesNotMatch(sent, /SUP-001|Acme/)
+  assert.doesNotMatch(sent, /Acme|ITEM-777/)
+  // Nothing reported: the request alone, whatever links this user made lately.
+  const quiet = setup({ client, prisma })
+  await quiet.ask({ threadId: 'thr_link2', message: 'And then?', formResults: [{ formId: 'thr_link2:msg_1:p2', purchaseRequestId: 'PR-0231' }] })
+  assert.doesNotMatch(JSON.stringify(client.requests.at(-1).messages), /The same click added/)
 })
 
 test('a confirmed form note backs saying that request was created; any other claim is still replaced', async () => {

@@ -11,7 +11,7 @@ export type AssistantV2ActiveContext = { moduleId: string; entityType: string | 
 // created, or a step taken in a record card, reported once with the next
 // question; the server checks them before it adds a note to the thread.
 export type AssistantV2FormResult =
-  | { formId: string; purchaseRequestId: string }
+  | { formId: string; purchaseRequestId: string; addedSupplierLinks?: string[] }
   | { formId: string; created: { type: "supplier" | "item"; id: string }[] }
   | { actionId: string; type: "purchase_request" | "purchase_order"; id: string; action: string };
 export type AssistantV2Request = {

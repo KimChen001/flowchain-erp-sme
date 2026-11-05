@@ -485,7 +485,8 @@ test('Create adds the new supplier to the item first, then creates the request w
   const trail = sanitizeSuggestionTrail(body.suggestionTrail)
   assert.equal(trail.fields.some((field) => field.field === 'lines.0.supplierId' || field.field === 'lines.0.estimatedUnitPrice'), false)
   assert.deepEqual(trail.fields.find((field) => field.field === 'lines.0.needByDate'), { field: 'lines.0.needByDate', source: 'default', ref: 'toolu_01', outcome: 'accepted' })
-  assert.deepEqual(outcome, { status: 'created', linked: { [first.key]: 'sup_9' }, created: { id: 'PR-0300', version: 1, status: 'draft' } })
+  // The link it created is reported, so the server can say the click added it.
+  assert.deepEqual(outcome, { status: 'created', linked: { [first.key]: 'sup_9' }, created: { id: 'PR-0300', version: 1, status: 'draft' }, added: ['ISR-1'] })
   // A retry after a failed request does not add the supplier again.
   posts.length = 0
   await client.createFormRequest({ ticked, props, ids: IDS, post, linked: outcome.linked })
@@ -494,6 +495,8 @@ test('Create adds the new supplier to the item first, then creates the request w
   posts.length = 0
   const conflict = await client.createFormRequest({ ticked, props, ids: IDS, post: async (url, body) => { if (url !== '/api/procurement/requests') { posts.push([url]); throw Object.assign(new Error('linked'), { status: 409, code: 'RELATIONSHIP_EXISTS' }) } return post(url, body) } })
   assert.equal(conflict.status, 'created')
+  // A link that was already there is not one the form added.
+  assert.deepEqual(conflict.added, [])
   assert.deepEqual(posts.map(([url]) => url), ['/api/master-data/items/itm_42/suppliers', '/api/procurement/requests'])
   // An approved supplier creates the request alone, as before.
   posts.length = 0
