@@ -1,7 +1,6 @@
-import { capabilityForEnvironment } from './capability-registry.mjs'
 import { contractsEnabled } from './contract-policy.mjs'
 import { readContractWork } from './contract-read-service.mjs'
-import { CUSTOMER_NAMESPACE } from './master-data-commands.mjs'
+import { firstRunSetupOptions, readFirstRunSetupCounts } from './first-run-setup.mjs'
 import { overdueReceivableWhere } from './operational-finance-o2c-read-service.mjs'
 import { createReorderListReadService } from './reorder-list-read-service.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
@@ -152,30 +151,14 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
       if (work.truncated) limitations.push('truncated:contracts')
     }))
   }
+  // The same counts and options the assistant's setup_status reads (first-run-setup.mjs).
   let setup = null
   reads.push(attempt('setup_counts', async () => {
-    const [items, suppliers, customers, stockedItems, activeUsers, pendingInvitations] = await Promise.all([
-      prisma.item.count({ where: { tenantId } }),
-      prisma.supplier.count({ where: { tenantId } }),
-      prisma.runtimeRecord.count({ where: { tenantId, namespace: CUSTOMER_NAMESPACE } }),
-      prisma.inventoryBalance.count({ where: { tenantId, onHandQuantity: { gt: 0 } } }),
-      prisma.user.count({ where: { tenantId, status: 'active' } }),
-      prisma.workspaceInvitation.count({ where: { tenantId, status: 'pending', expiresAt: { gt: now } } }),
-    ])
-    setup = { items, suppliers, customers, stockedItems, activeUsers, pendingInvitations }
+    setup = await readFirstRunSetupCounts(prisma, { tenantId, now })
   }))
   await Promise.all(reads)
 
-  return {
-    sources,
-    setup,
-    setupOptions: {
-      permissions: home.setup || {},
-      importEnabled: Boolean(capabilityForEnvironment('data-import', ctx.env || process.env)?.enabled),
-      adjustmentsEnabled: Boolean(capabilityForEnvironment('inventory-adjustment-document', ctx.env || process.env)?.enabled),
-    },
-    limitations,
-  }
+  return { sources, setup, setupOptions: firstRunSetupOptions(access, ctx.env || process.env), limitations }
 }
 
 // The kinds of work the reader's role cannot open, so the page can say they
