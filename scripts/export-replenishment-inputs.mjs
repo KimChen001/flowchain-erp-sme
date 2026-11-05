@@ -9,6 +9,7 @@ import { buildRuntimeInventoryAllocation } from '../server/domain/runtime-invent
 import { createReorderListReadService } from '../server/domain/reorder-list-read-service.mjs'
 import { DEMAND_WINDOW_DAYS, MIN_SHIPMENT_DAYS, isActiveItem, itemStockUnit, preferredSupplierFor, recordedReorderPoint } from '../server/domain/reorder-list.mjs'
 import { listItemSupplierRecords } from '../server/domain/master-data-commands.mjs'
+import { suggestReorderPoint } from '../server/domain/reorder-point-suggestion.mjs'
 import { isCommittedPurchaseOrder } from '../server/domain/open-purchase-order.mjs'
 import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from '../server/domain/tenant-calendar-day.mjs'
 
@@ -18,7 +19,8 @@ import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from '
 // point and safety stock, the preferred supplier's recorded lead time,
 // minimum order quantity and reference price, the last purchase order price,
 // and the quantity shipped on each of the 90 days the reorder list's demand
-// covers, with the reorder list's own row for comparison.
+// covers, with the reorder list's own row for comparison, and the suggested
+// reorder point the reorder list shows beside the recorded one.
 //
 // It only reads. Everything is read in one read-only transaction, through the
 // same read services as the reorder list, so one export is one consistent
@@ -137,13 +139,15 @@ export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, e
     for (const item of items.filter(isActiveItem)) {
       const unit = itemStockUnit(item)
       const stock = availabilityBySku.get(item.sku)
+      const itemShipmentLines = shipmentLines.filter((row) => row.itemId === item.id).map((row) => ({ unit: row.unit, quantity: Number(row.postedQuantity), postedAt: row.shipment.postedAt }))
       const { byDay: shippedByDay, otherUnitLines, unitsMixed } = shippedByWorkspaceDay({
-        lines: shipmentLines.filter((row) => row.itemId === item.id).map((row) => ({ unit: row.unit, quantity: Number(row.postedQuantity), postedAt: row.shipment.postedAt })),
+        lines: itemShipmentLines,
         stockUnit: unit,
         days,
         timeZone,
       })
       const supplier = preferredSupplierFor(item, links, suppliersById)
+      const suggestion = suggestReorderPoint({ lines: itemShipmentLines, stockUnit: unit, leadTimeDays: supplier?.leadTimeDays ?? null, today, timeZone })
       const link = supplier ? links.find((row) => row.payload?.itemId === item.id && row.payload?.supplierId === supplier.id) : null
       const committedLines = purchaseLines.filter((row) => row.itemId === item.id && isCommittedPurchaseOrder(row.purchaseOrder))
       const reorderRow = reorderRowBySku.get(item.sku)
@@ -183,6 +187,21 @@ export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, e
         // As recorded on the item; null when none is (the reorder list does not check the item then).
         reorderPoint: recordedReorderPoint(item),
         safetyStock: number(item.safetyStock) || null,
+        // The suggested reorder point (server/domain/reorder-point-suggestion.mjs):
+        // the rank-th smallest of the windowCount circular sums of coverDays
+        // (lead time + reviewDays) consecutive days of dailyShipped, rounded up
+        // to a whole unit; null with a reason when there is none. Every
+        // active item gets one, listed on the reorder list or not.
+        suggestedReorderPoint: suggestion.suggestedReorderPoint,
+        reorderPointSuggestion: {
+          coverDays: suggestion.coverDays,
+          leadTimeDays: suggestion.leadTimeDays,
+          reviewDays: suggestion.reviewDays,
+          windowCount: suggestion.windowCount,
+          rank: suggestion.rank,
+          inStockTarget: suggestion.inStockTarget,
+          reason: suggestion.reason,
+        },
         preferredSupplier: supplier ? {
           id: supplier.id,
           code: supplier.code,

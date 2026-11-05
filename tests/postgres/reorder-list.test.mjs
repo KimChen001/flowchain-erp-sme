@@ -116,6 +116,12 @@ test('the reorder list ranks items by order-by day from recorded data over every
     assert.equal(c.demand.shipmentDays, 0)
     assert.deepEqual(c.purchaseRequest, { itemId: 'RL-ITEM-C', supplierId: 'RL-SUP', quantity: 15, raisedToMinimum: false })
     assert.deepEqual([c.supplier.leadTimeDays, c.supplier.minimumOrderQuantity], [null, null])
+    // The suggested reorder point beside the recorded one. RL-A shipped 9 on 8
+    // days in a row; a stretch is 10 days' lead time + 7 = 17 days. 66 of the
+    // 90 circular stretches hold none of those days, so the 75th smallest
+    // holds 5 of them: 45, below the recorded 100. RL-C has no shipments.
+    assert.deepEqual([a.reorderPointSuggestion.suggestedReorderPoint, a.reorderPointSuggestion.coverDays, a.reorderPointSuggestion.shipmentDays, a.reorderPointSuggestion.recordedBelow], [45, 17, 8, false])
+    assert.deepEqual([c.reorderPointSuggestion.suggestedReorderPoint, c.reorderPointSuggestion.reason, c.reorderPointSuggestion.recordedBelow], [null, 'not_enough_history', false])
     // 201 items without a reorder point: the first 50 by SKU are named.
     assert.equal(admin.body.noReorderPoint.count, 201)
     assert.equal(admin.body.noReorderPoint.items.length, 50)

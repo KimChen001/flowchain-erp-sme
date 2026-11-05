@@ -8,6 +8,8 @@ import { AI_ASSISTANT_V2_TOOLS } from './ai-assistant-v2-data-tools.mjs'
 import { AI_READ_TOOL_COLUMNS, aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { buildReorderList } from './reorder-list.mjs'
+import { attachReorderPointSuggestions } from './reorder-point-suggestion.mjs'
+import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
 import { buildFirstRunChecklist } from './today-work.mjs'
 import { firstRunSetupOptions, readFirstRunSetupCounts } from './first-run-setup.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
@@ -375,6 +377,29 @@ test('reorder_list returns the preferred supplier\'s lead time, id and minimum o
   assert.deepEqual((await runAiReadTool('reorder_list', { supplier: 'acme' }, { facts, context })).result.rows.map((entry) => entry.sku), ['LDM-001'])
   assert.deepEqual((await runAiReadTool('reorder_list', { supplier: 'Summit Packaging' }, { facts, context })).result.rows, [])
   assert.equal((await runAiReadTool('reorder_list', { supplier: 'Nobody Ltd' }, { facts, context })).error, 'supplier_not_found')
+})
+
+test('reorder_list carries the suggested reorder point beside the recorded one, with what it rests on', async () => {
+  const scenario = aiSkillScenario()
+  const items = scenario.data.items.map((row) => ({ ...row, status: 'active', reorderPoint: row.sku === 'LDM-001' ? 200 : row.reorderPoint }))
+  const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
+  // LDM-001 shipped 15 on each of the 90 days before today; Acme's lead time
+  // is 12 days, so 19 days (12 + 7) of it is 285, above the recorded 200.
+  const reorderList = {
+    read: async (input) => {
+      const shipmentLines = Array.from({ length: 90 }, (_, index) => ({ itemId: 'ITEM-001', unit: 'pcs', quantity: 15, postedAt: `${addCalendarDays(input.today, -90 + index)}T16:00:00Z` }))
+      return attachReorderPointSuggestions(buildReorderList({ allocationRows: input.allocationRows, items, shipmentLines, supplierLinks: [link()], suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }), shipmentLines)
+    },
+  }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  const facts = await readAiSkillFacts(context)
+  const row = (await runAiReadTool('reorder_list', { sku: 'LDM-001' }, { facts, context })).result.rows[0]
+  assert.deepEqual([row.reorderPoint, row.suggestedReorderPoint], [200, 285])
+  const { basis, ...suggestion } = row.reorderPointSuggestion
+  assert.deepEqual(suggestion, { recordedBelow: true, coverDays: 19, leadTimeDays: 12, reviewDays: 7, shipmentDays: 90, reason: null })
+  assert.match(basis, /next 19 days \(lead time 12 \+ 7 review days\) in 5 of 6 past 19-day stretches/)
+  // The rule's own figures are as without the suggestion.
+  assert.equal(row.shortfall, 102)
 })
 
 // The services the read tools call, recorded, so every declared table has rows.
