@@ -15,6 +15,8 @@ import PrintLayoutEditor from "../print-layout/PrintLayoutEditor";
 import { adaptReceivingDetailSheet } from "../print-layout/printDataAdapters";
 import { formatDecimal, formatInstantDay } from "../business-documents/documentFormat";
 import { DocumentNumber } from "../../lib/documentNumbers";
+import { BackToListLink } from "../procurement/BackToListLink";
+import { procurementErrorCode, procurementErrorText } from "../procurement/procurementErrors";
 
 type Capability = { enabled?: boolean; maturity?: string };
 type Detail = {
@@ -117,11 +119,14 @@ const BUTTON = {
 const text = (value: unknown) => (typeof value === "string" || typeof value === "number" ? String(value) : "");
 const record = (value: unknown): Record<string, unknown> => (value && typeof value === "object" ? value as Record<string, unknown> : {});
 
-function errorMessage(error: unknown, language: string) {
+function errorMessage(error: unknown, language: string, fallback: Pair = ["Receiving data could not be loaded.", "收货数据读取失败。"]) {
   const index = language === "en-US" ? 0 : 1;
-  if (!(error instanceof ApiError)) return ["Receiving data could not be loaded.", "收货数据读取失败。"][index];
-  return ERROR_COPY[error.code || ""]?.[index] || error.message;
+  if (!(error instanceof ApiError)) return fallback[index];
+  return ERROR_COPY[error.code || ""]?.[index] || procurementErrorText(error, language, fallback);
 }
+
+// The sentence after "The receipt could not be submitted." when the code has none of its own.
+const RETRY: Pair = ["Try again in a moment.", "请稍后重试。"];
 
 export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavigate }: { receivingDocumentId: string; onNavigate?: Navigate }) {
   const { language, locale, timezone, t, formatDateTime } = useI18n();
@@ -138,6 +143,8 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const [reconciliation, setReconciliation] = useState<Reconciliation | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // The failed request's code and status, in the message's tooltip for support.
+  const [errorCode, setErrorCode] = useState<string | undefined>();
   const [preview, setPreview] = useState<Preview | null>(null);
   const [actionKey, setActionKey] = useState("");
   const [reason, setReason] = useState("");
@@ -146,7 +153,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
 
   const refresh = useCallback(async () => {
     if (!receivingDocumentId) return;
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setErrorCode(undefined);
     try {
       const encoded = encodeURIComponent(receivingDocumentId);
       const [nextDetail, nextLinks, nextEvidence, nextReconciliation] = await Promise.all([
@@ -156,7 +163,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
         apiJson<Reconciliation>(`/api/procurement/receiving/${encoded}/reconciliation`),
       ]);
       setDetail(nextDetail); setLinks(nextLinks.links); setEvents(nextEvidence.events); setReconciliation(nextReconciliation);
-    } catch (nextError) { setError(errorMessage(nextError, languageRef.current)); setDetail(null); }
+    } catch (nextError) { setError(errorMessage(nextError, languageRef.current)); setErrorCode(procurementErrorCode(nextError)); setDetail(null); }
     finally { setLoading(false); }
   }, [receivingDocumentId]);
 
@@ -175,7 +182,8 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/submit`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version }) });
       await refresh();
     } catch (nextError) {
-      setError(nextError instanceof ApiError ? `${draftCopy("submitFailed")} ${nextError.message}` : draftCopy("submitFailed"));
+      setError(nextError instanceof ApiError ? `${draftCopy("submitFailed")} ${errorMessage(nextError, language, RETRY)}` : draftCopy("submitFailed"));
+      setErrorCode(procurementErrorCode(nextError));
       if (nextError instanceof ApiError && nextError.status === 409) await refresh();
     } finally { setSaving(false); }
   }
@@ -196,7 +204,8 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/cancel`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version, reason }) });
       await refresh();
     } catch (nextError) {
-      setError(nextError instanceof ApiError ? `${draftCopy("cancelFailed")} ${nextError.message}` : draftCopy("cancelFailed"));
+      setError(nextError instanceof ApiError ? `${draftCopy("cancelFailed")} ${errorMessage(nextError, language, RETRY)}` : draftCopy("cancelFailed"));
+      setErrorCode(procurementErrorCode(nextError));
       if (nextError instanceof ApiError && nextError.status === 409) await refresh();
     } finally { setSaving(false); }
   }
@@ -204,7 +213,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   async function openPreview(nextOperation: "post" | "reverse") {
     setError(""); setReason(""); setActionKey(newKey());
     try { setPreview(await apiJson<Preview>(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/impact-preview?operation=${nextOperation}`)); }
-    catch (nextError) { setError(errorMessage(nextError, language)); }
+    catch (nextError) { setError(errorMessage(nextError, language, ["The posting review could not be opened.", "无法打开过账复核。"])); setErrorCode(procurementErrorCode(nextError)); }
   }
 
   async function confirm() {
@@ -216,13 +225,14 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       });
       setPreview(null); await refresh();
     } catch (nextError) {
-      setError(errorMessage(nextError, language));
+      setError(errorMessage(nextError, language, ["The receiving action could not be completed.", "收货操作未完成。"]));
+      setErrorCode(procurementErrorCode(nextError));
       if (nextError instanceof ApiError && nextError.status === 409) { setPreview(null); await refresh(); }
     } finally { setSaving(false); }
   }
 
   if (loading) return <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm" data-testid="receiving-loading"><Loader2 className="animate-spin" size={18} />{say("Loading receipt…", "正在读取收货单…")}</div>;
-  if (!detail) return <div className="rounded-xl border p-6" data-testid="receiving-error"><AlertTriangle className="mb-2" color={A.red} />{error || say("This receipt is unavailable.", "该收货单暂时无法查看。")}<button className="ml-3 underline" onClick={() => void refresh()}>{say("Retry", "重试")}</button></div>;
+  if (!detail) return <div className="space-y-3"><BackToListLink list="receiving" /><div className="rounded-xl border p-6" data-testid="receiving-error" title={errorCode}><AlertTriangle className="mb-2" color={A.red} />{error || say("This receipt is unavailable.", "该收货单暂时无法查看。")}<button className="ml-3 underline" onClick={() => void refresh()}>{say("Retry", "重试")}</button></div></div>;
 
   const unavailable = say("Unavailable", "不可用");
   // Quantities are recorded as decimal strings; they are shown in the
@@ -244,6 +254,13 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     ? [say("Lot and serial numbers are not recorded on receipts yet.", "收货暂不记录批次号和序列号。")]
     : [];
   const grn = detail.receivingDocument;
+  // A PO line named by its item and its position on this receipt, not its id.
+  const poLineName = (poLineId?: string) => {
+    const position = detail.lines.findIndex((line) => line.poLineId === poLineId);
+    if (position < 0) return say("Purchase order line", "采购订单行");
+    const line = detail.lines[position];
+    return [line.sku, say(`Line ${position + 1}`, `第 ${position + 1} 行`)].filter(Boolean).join(" · ");
+  };
   const documentNumber = grn.documentNumber || grn.id;
   // The timeline's fixed wording in the interface language; the recorded
   // values (numbers, SKUs, reasons) are shown as recorded. An event this page
@@ -307,9 +324,10 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     ["SKU", false], [say("Warehouse", "仓库"), false], [say("Location", "库位"), false], [say("Calculated from movements", "按库存移动计算"), true],
     [say("Recorded balance", "账面余额"), true], [say("Difference", "差异"), true], [say("Status", "状态"), false],
   ];
-  const actionButton = canOfferAction && <button data-testid="receiving-primary-action" onClick={() => void openPreview(operation)} className={operation === "post" ? BUTTON.primary : BUTTON.danger}>{operation === "post" ? say("Post Receipt", "过账入库") : say("Reverse Receipt", "冲销收货")}</button>;
+  const actionButton = canOfferAction && <button data-testid="receiving-primary-action" onClick={() => void openPreview(operation)} className={operation === "post" ? BUTTON.primary : BUTTON.danger}>{operation === "post" ? say("Post receipt", "过账入库") : say("Reverse receipt", "冲销收货")}</button>;
   return <div className="space-y-4" data-testid="receiving-workbench">
-    {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</div>}
+    <BackToListLink list="receiving" />
+    {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert" title={errorCode}>{error}</div>}
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><h1 className="text-xl font-semibold">{grn.documentNumber}</h1><p className="mt-1 text-sm text-gray-500">{grn.supplier?.name || say("Unknown supplier", "未知供应商")} · {say("Purchase order", "采购订单")} <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}><DocumentNumber type="purchase_order" id={detail.purchaseOrder.id} number={detail.purchaseOrder.number} /></a></p></div>
@@ -319,7 +337,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
           {detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className={BUTTON.secondary}>{draftCopy("editDraft")}</a>}
           {detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className={BUTTON.primary}>{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}
           {operation === "post" && actionButton}
-          {detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className={BUTTON.secondary}>{say("View Reversal", "查看冲销")}</button>}
+          {detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className={BUTTON.secondary}>{say("View reversal", "查看冲销")}</button>}
           {grn.postingStatus === 'posted' && <RecordBillAction receiptId={grn.id} />}
           {detail.availableActions.canCancel && <button data-testid="receiving-cancel" disabled={saving} onClick={() => void cancelReceipt()} className={BUTTON.danger}>{draftCopy("cancelReceipt")}</button>}
           {operation === "reverse" && actionButton}
@@ -381,11 +399,11 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       <div className="flex items-start justify-between"><div><h2 className="text-lg font-semibold">{preview.operation === 'post' ? say('Review receipt posting', '复核收货过账') : say('Review receipt reversal', '复核收货冲销')}</h2><p className="text-sm text-gray-500">{say("Nothing is recorded until you confirm.", "确认前不会记录任何变更。")}</p></div><button aria-label={say("Close", "关闭")} onClick={() => setPreview(null)}>✕</button></div>
       {preview.blockingIssues.map((issue, index) => <div key={`${issue.code}-${index}`} className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{issueText(issue)}</div>)}
       {preview.warnings.map((issue, index) => <div key={`${issue.code}-${index}`} className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{issueText(issue)}</div>)}
-      <h3 className="mt-5 font-semibold">{say("Inventory impact", "库存影响")}</h3>{preview.inventoryImpacts.map((impact, index) => <div key={index} className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-lg bg-gray-50 p-3 text-sm"><span>{impact.sku}<br/><small>{warehouseName(impact.warehouseId)} / {impact.location || say('No location', '未指定库位')}</small></span><ArrowRight size={16}/><span data-testid="balance-impact">{say("On hand", "在手")} {impact.onHandBefore} → {impact.onHandAfter}<br/>{say("Available", "可用")} {impact.availableBefore} → {impact.availableAfter}</span></div>)}
-      <h3 className="mt-5 font-semibold">{say("Purchase order impact", "采购订单影响")}</h3>{preview.purchaseOrderImpacts.map((impact, index) => <div key={index} className="mt-2 rounded-lg bg-gray-50 p-3 text-sm">{impact.poLineId}: {impact.receivedBefore} → {impact.receivedAfter} · {say("Remaining", "剩余")} {impact.remainingAfter}</div>)}
+      <h3 className="mt-5 font-semibold">{say("Inventory impact", "库存影响")}</h3>{preview.inventoryImpacts.map((impact, index) => <div key={index} className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-lg bg-gray-50 p-3 text-sm"><span>{impact.sku}<br/><small>{warehouseName(impact.warehouseId)} / {impact.location || say('No location', '未指定库位')}</small></span><ArrowRight size={16}/><span data-testid="balance-impact">{say("On hand", "在手")} {qty(impact.onHandBefore)} → {qty(impact.onHandAfter)}<br/>{say("Available", "可用")} {qty(impact.availableBefore)} → {qty(impact.availableAfter)}</span></div>)}
+      <h3 className="mt-5 font-semibold">{say("Purchase order impact", "采购订单影响")}</h3>{preview.purchaseOrderImpacts.map((impact, index) => <div key={index} className="mt-2 rounded-lg bg-gray-50 p-3 text-sm" title={impact.poLineId}>{poLineName(impact.poLineId)}: {qty(impact.receivedBefore)} → {qty(impact.receivedAfter)} · {say("Remaining", "剩余")} {qty(impact.remainingAfter)}</div>)}
       <div className="mt-4 rounded-lg border p-3 text-sm">{say("PO fulfillment", "订单履约")} {statusText(preview.statusImpact.poFulfillmentBefore)} → {statusText(preview.statusImpact.poFulfillmentAfter)} · {say(`${preview.factsToCreate.inventoryMovementCount} inventory movement(s), ${preview.factsToCreate.auditEventCount} audit event(s)`, `${preview.factsToCreate.inventoryMovementCount} 条库存移动，${preview.factsToCreate.auditEventCount} 条审计记录`)}</div>
       {preview.operation === 'reverse' && <label className="mt-4 block text-sm font-medium">{say("Reversal reason *", "冲销原因 *")}<textarea data-testid="reversal-reason" value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 w-full rounded-lg border p-2" rows={3}/></label>}
-      <div className="mt-5 flex justify-end gap-2"><button className={BUTTON.secondary} onClick={() => setPreview(null)}>{say("Cancel", "取消")}</button><button data-testid="confirm-receiving-action" disabled={!preview.allowed || saving || (preview.operation === 'reverse' && !reason.trim())} onClick={() => void confirm()} className={`inline-flex h-9 items-center rounded-lg px-4 text-sm font-semibold text-white disabled:opacity-40 ${preview.operation === 'reverse' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>{saving ? say('Saving…', '正在保存…') : preview.operation === 'post' ? say('Confirm Post', '确认过账') : say('Confirm Reversal', '确认冲销')}</button></div>
+      <div className="mt-5 flex justify-end gap-2"><button className={BUTTON.secondary} onClick={() => setPreview(null)}>{say("Cancel", "取消")}</button><button data-testid="confirm-receiving-action" disabled={!preview.allowed || saving || (preview.operation === 'reverse' && !reason.trim())} onClick={() => void confirm()} className={`inline-flex h-9 items-center rounded-lg px-4 text-sm font-semibold text-white disabled:opacity-40 ${preview.operation === 'reverse' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>{saving ? say('Saving…', '正在保存…') : preview.operation === 'post' ? say('Confirm posting', '确认过账') : say('Confirm reversal', '确认冲销')}</button></div>
     </div></div>}
     {confirmDialog.element}
     {printing && <PrintLayoutEditor open documentType="receive_sheet" documentNo={grn.documentNumber || grn.id} data={adaptReceivingDetailSheet(detail, { quantity: (value) => formatDecimal(value, locale), rejectedLabel: (qty) => t("printLayout.rejectedQty", { qty }), day: (instant) => formatInstantDay(instant, locale, timezone) })} onClose={() => setPrinting(false)} />}

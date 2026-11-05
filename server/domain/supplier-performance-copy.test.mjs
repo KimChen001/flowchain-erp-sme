@@ -103,5 +103,11 @@ test("the supplier list's 90-day on-time column says it counts deliveries agains
   assert.ok(source('src/modules/srm/supplierMetrics.tsx').includes(`t("${tooltip}")`))
   assert.ok(source('src/modules/srm/Page.tsx').includes('useSupplierMetricCells()'))
   assert.equal(supplier.supplierCopy(tooltip, 'zh-CN'), '{of} 次交付中 {count} 次按采购订单日期准时（该日期可能是采购方的需求日期）')
-  assert.equal(supplier.supplierCopy('On time (PO date), 90 days', 'zh-CN'), '90 天准时率（按采购订单日期）')
+  // The header is short; its tooltip says the date is the one on the PO.
+  assert.equal(supplier.supplierCopy('On time, 90 days', 'zh-CN'), '90 天准时率')
+  const headerTip = "Share of deliveries received by the date on the PO, over the last 90 days. That date may be the buyer's need date."
+  assert.ok(source('src/modules/srm/supplierMetrics.tsx').includes(`ON_TIME_HEADER_TIP = "${headerTip}"`))
+  assert.ok(source('src/modules/srm/Page.tsx').includes('copy(ON_TIME_HEADER_TIP)'))
+  assert.ok(source('src/modules/srm/SupplierEvaluationPage.tsx').includes('t(ON_TIME_HEADER_TIP)'))
+  assert.equal(supplier.supplierCopy(headerTip, 'zh-CN'), '最近 90 天内按采购订单上的日期收货的交付占比；该日期可能是采购方的需求日期。')
 })

@@ -6,7 +6,7 @@ import { A, Card } from "../../components/ui";
 import { procurementApi } from "./procurementApi";
 import type { ProcurementDocument } from "./procurementTypes";
 import { useI18n } from "../../i18n/I18n";
-import { formatLocaleAmount } from "../../lib/format";
+import { formatCalendarDay, formatLocaleAmount } from "../../lib/format";
 
 function money(value: number | undefined, currency: string | undefined, locale: string) {
   if (!Number.isFinite(value)) return "—";
@@ -39,7 +39,7 @@ export function SupplierInvoiceListPage() {
       <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
         <div>
           <div className="text-sm font-semibold">{copy("发票记录")}</div>
-          <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("PostgreSQL 中的正式供应商发票及其采购订单、收货和匹配状态。")}</div>
+          <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("供应商发票及其关联的采购订单、收货和匹配状态。")}</div>
         </div>
         <button type="button" onClick={() => void load()} className="inline-flex items-center gap-1 rounded border px-3 py-2 text-xs">
           <RefreshCw size={14} />{copy("刷新")}</button>
@@ -74,8 +74,8 @@ export function SupplierInvoiceListPage() {
                   <div><dt style={{ color: A.sub }}>{copy("收货单")}</dt><dd className="mt-1"><BusinessEntityLink entityType="receiving_doc" entityId={row.relatedGrn || row.grnId}>{row.relatedGrn || row.grnId || "—"}</BusinessEntityLink></dd></div>
                   <div><dt style={{ color: A.sub }}>{copy("发票金额")}</dt><dd className="mt-1 font-medium tabular-nums">{money(row.amount, row.currency, locale)}</dd></div>
                   <div><dt style={{ color: A.sub }}>{copy("差异金额")}</dt><dd className="mt-1 font-medium tabular-nums">{money(row.varianceAmount, row.currency, locale)}</dd></div>
-                  <div><dt style={{ color: A.sub }}>{copy("发票日期")}</dt><dd className="mt-1 font-medium">{row.invoiceDate || "—"}</dd></div>
-                  <div><dt style={{ color: A.sub }}>{copy("到期日")}</dt><dd className="mt-1 font-medium">{row.dueDate || "—"}</dd></div>
+                  <div><dt style={{ color: A.sub }}>{copy("发票日期")}</dt><dd className="mt-1 font-medium">{row.invoiceDate ? formatCalendarDay(row.invoiceDate, locale) : "—"}</dd></div>
+                  <div><dt style={{ color: A.sub }}>{copy("到期日")}</dt><dd className="mt-1 font-medium">{row.dueDate ? formatCalendarDay(row.dueDate, locale) : "—"}</dd></div>
                 </dl>
               </article>
             ))}

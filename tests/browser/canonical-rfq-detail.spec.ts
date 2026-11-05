@@ -80,8 +80,8 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(quotation).toContainText("4,900");
   await expect(quotation).toContainText(/Jan 5, 2030, \d{1,2}:30\s?[AP]M/);
   await expect(page.getByTestId("rfq-quotation-line-LOCAL-DEMO-REVLINE-002")).toContainText("LDM-001 · 50 pcs");
-  await expect(page.getByTestId("rfq-revision-LOCAL-DEMO-REV-002")).toContainText("Revision 2 · 当前版本");
-  await expect(page.getByTestId("rfq-revision-LOCAL-DEMO-REV-001")).toContainText("Revision 1 · 历史版本");
+  await expect(page.getByTestId("rfq-revision-LOCAL-DEMO-REV-002")).toContainText("报价修订 2 · 当前版本");
+  await expect(page.getByTestId("rfq-revision-LOCAL-DEMO-REV-001")).toContainText("报价修订 1 · 历史版本");
   await expect(page.getByTestId("rfq-revision-line-LOCAL-DEMO-REVLINE-001")).toContainText("100");
 
   await expect(page.getByTestId("rfq-participant-LOCAL-DEMO-SUP-001")).toContainText("已记录响应");
@@ -130,7 +130,7 @@ test("direct RFQ refresh uses only the encoded exact endpoint", async ({ page, r
   });
 
   await page.goto(`/app/procurement/rfq/${encodeURIComponent(RFQ_ID)}`);
-  await expect(page.getByTestId("canonical-rfq-detail")).toContainText("LOCAL-DEMO-RFQL-001");
+  await expect(page.getByTestId("rfq-line-LOCAL-DEMO-RFQL-001")).toContainText("第 1 行");
   await expect(page.getByTestId("canonical-rfq-detail")).toContainText("LOCAL-DEMO-QUOTE-001");
   await page.reload();
   await expect(page.getByTestId("rfq-quotation-line-LOCAL-DEMO-REVLINE-002")).toBeVisible();
@@ -156,9 +156,9 @@ test("encoded empty RFQ remains a valid authoritative record with subsection emp
   await page.goto(`/app/procurement/rfq/${encodeURIComponent(EMPTY_RFQ_ID)}`);
   const detail = page.getByTestId("canonical-rfq-detail");
   await expect(detail).toContainText("Valid RFQ without lines or quotations");
-  await expect(page.getByTestId("rfq-lines")).toContainText("当前 RFQ 没有权威行项目");
-  await expect(page.getByTestId("rfq-quotations")).toContainText("当前 RFQ 没有权威报价记录");
-  await expect(page.getByTestId("rfq-suppliers")).toContainText("当前 RFQ 没有权威供应商参与记录");
+  await expect(page.getByTestId("rfq-lines")).toContainText("当前 RFQ 没有行项目");
+  await expect(page.getByTestId("rfq-quotations")).toContainText("当前 RFQ 没有报价记录");
+  await expect(page.getByTestId("rfq-suppliers")).toContainText("当前 RFQ 没有供应商参与记录");
   await expect(detail).not.toContainText("LOCAL-DEMO-QUOTE-001");
   await expect(detail).not.toContainText("Acme Components");
   await expectNoWriteActions(page);

@@ -1,6 +1,6 @@
 // Presentation labels only. Do not translate record names or identifiers.
 const chinese: Record<string, string> = {
-  'Mixed units': '混合计量单位',
+  'Mixed units': '混合计量单位', 'Units differ, so there is no total': '单位不同，无法合计',
   'Restricted': '受限', 'Your role cannot view this figure': '你的角色无权查看此数据', 'Your role cannot view amounts.': '你的角色无权查看金额。',
   'Inventory uses different units; quantities are shown by SKU without a combined stock total.': '库存使用不同计量单位，数量按 SKU 展示，不合计在手总量。',
   "Purchase order lines in another unit than the item's stock unit are not counted as incoming or in available to promise:": '单位与物料库存单位不同的采购订单行，不计入在途和可承诺量：',
@@ -40,7 +40,7 @@ const chinese: Record<string, string> = {
   'Definition': '中文定义', 'Data range': '数据范围', 'Chart data': '图表数据', 'Detail data': '明细数据', 'Filters': '筛选条件',
   'Not compared': '未比较', 'Numerator': '分子', 'Denominator': '分母', 'Not applicable': '不适用', 'Metric version': '指标版本',
   'Data limitations': '数据限制', 'None': '无', 'Source subject': '来源对象', 'Reserved': '已预留', 'Fulfilled': '已履约',
-  'Operational snapshot': '运营概览', 'See what changed. Focus on what needs attention.': '查看业务变化，优先关注待处理事项。',
+  'See what changed. Focus on what needs attention.': '查看业务变化，优先关注待处理事项。',
   'Record activity by month': '每月业务记录活动', 'Purchase orders': '采购订单', 'Sales orders': '销售订单',
   'Purchase order status': '采购订单状态', 'Purchasing by supplier': '按供应商统计采购订单',
   'Needs attention': '需要关注', 'Open purchase orders': '未完成采购订单', 'Short for sales orders': '销售订单缺货', 'Items to reorder': '待补货物料', 'Open reorder list': '打开补货清单',

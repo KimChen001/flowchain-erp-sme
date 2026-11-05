@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Copy, Eye } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { apiErrorText } from "../../lib/apiErrorText";
 import { A, Chip } from "../../components/ui";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import type { CustomerMaster, PrintTemplateCatalogItem } from "./standardData";
@@ -30,7 +31,7 @@ const CUSTOMER_FIELDS: Array<{ key: CustomerField; label: string; required?: boo
 // The customer form writes through /api/master-data/customers; the server
 // checks the fields and answers each problem by field.
 function NewCustomerForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => void }) {
-  const { copy } = useMasterDataCopy();
+  const { copy, language } = useMasterDataCopy();
   const [form, setForm] = useState(EMPTY_CUSTOMER);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -45,7 +46,7 @@ function NewCustomerForm({ onSaved, onCancel }: { onSaved: () => void; onCancel:
     } catch (cause) {
       const details = cause instanceof ApiError ? cause.details : [];
       setFieldErrors(Object.fromEntries(details.map((item) => [String(item.field || ""), String(item.message || "")])));
-      setError(cause instanceof Error ? cause.message : copy("Could not save the customer."));
+      setError(apiErrorText(cause, language, ["Could not save the customer.", copy("Could not save the customer.")]));
     } finally {
       setSaving(false);
     }
@@ -80,7 +81,7 @@ function NewCustomerForm({ onSaved, onCancel }: { onSaved: () => void; onCancel:
 // The list's search card holds Import and New customer; this table shows the
 // form while a customer is being created.
 export function CustomerTable({ customers, onChanged, creating = false, onCreatingDone }: { customers: CustomerMaster[]; onChanged?: () => void; creating?: boolean; onCreatingDone?: () => void }) {
-  const { copy } = useMasterDataCopy();
+  const { copy, language } = useMasterDataCopy();
   // Changing a customer's status needs master_data.customer.manage.
   const canEdit = useMasterDataWriteAccess().customers;
   const [error, setError] = useState("");
@@ -90,7 +91,7 @@ export function CustomerTable({ customers, onChanged, creating = false, onCreati
       await apiJson(`/api/master-data/customers/${encodeURIComponent(item.id || item.code)}/${active ? "activate" : "deactivate"}`, { method: "POST", body: JSON.stringify({ expectedVersion: item.version }) });
       onChanged?.();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : copy("Could not change the customer status."));
+      setError(apiErrorText(cause, language, ["Could not change the customer status.", copy("Could not change the customer status.")]));
     }
   };
   return (

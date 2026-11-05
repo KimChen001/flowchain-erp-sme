@@ -8,7 +8,7 @@ import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, Sta
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
 import { useI18n } from "../../i18n/I18n";
-import { todayInTimeZone } from "../../lib/format";
+import { formatCalendarDay, todayInTimeZone } from "../../lib/format";
 import type { ProcurementDocument } from "./procurementTypes";
 
 const RFQ_STATUS_LABELS: Record<string, readonly [string, string]> = {
@@ -57,7 +57,7 @@ const COPY = {
 } as const;
 
 export function RfqListPage() {
-  const { language, timezone } = useI18n();
+  const { language, locale, timezone, formatNumber } = useI18n();
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
   const statusLabel = (status?: string) => status ? (RFQ_STATUS_LABELS[status] ? RFQ_STATUS_LABELS[status][language === "en-US" ? 0 : 1] : status) : "—";
   const [rows, setRows] = useState<ProcurementDocument[]>([]);
@@ -189,11 +189,11 @@ export function RfqListPage() {
                       <div className="truncate font-medium" style={{ color: A.label }} title={row.title}>{row.title || "—"}</div>
                       <div className="truncate text-[11px]" style={{ color: A.sub }}>{[row.itemName, row.category].filter(Boolean).join(" · ")}</div>
                     </td>
-                    <td className={tdNumericRightClass}>{Number.isFinite(row.quantity) ? Number(row.quantity).toLocaleString() : "—"} {row.unit || ""}</td>
+                    <td className={tdNumericRightClass}>{Number.isFinite(Number(row.quantity)) && row.quantity !== null && row.quantity !== undefined ? formatNumber(Number(row.quantity)) : "—"} {row.unit || ""}</td>
                     <td className={tdNowrapClass}>
                       <StatusChip label={`${responded} / ${row.supplierCount ?? 0}`} tone={quotesIn(row) ? "success" : responded > 0 ? "info" : "neutral"} />
                     </td>
-                    <td className={tdNowrapClass} style={{ color: overdue(row) ? "#b91c1c" : A.sub }}>{row.dueDate || "—"}</td>
+                    <td className={tdNowrapClass} style={{ color: overdue(row) ? "#b91c1c" : A.sub }}>{row.dueDate ? formatCalendarDay(row.dueDate, locale) : "—"}</td>
                     <td className={tdNowrapClass}><StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} /></td>
                     <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                       <div className="flex items-center gap-1.5">

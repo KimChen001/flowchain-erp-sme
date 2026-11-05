@@ -100,6 +100,13 @@ const COPY = {
   reservedNote: ["Balances with stock held for orders", "为订单预留了库存的余额"],
   warehouses: ["Warehouses", "仓库"],
   warehousesNote: ["Warehouses holding stock you can see", "你可查看且有库存的仓库"],
+  // The warnings page counts its own warnings rather than repeating the stock page's cards.
+  belowSafety: ["Below safety stock", "低于安全库存"],
+  belowSafetyNote: ["Available stock under the item's safety stock", "可用量低于物料的安全库存"],
+  atReorderPoint: ["At the reorder point", "达到再订货点"],
+  atReorderPointNote: ["Available stock at or below the reorder point", "可用量等于或低于再订货点"],
+  noneAvailable: ["Nothing available", "无可用库存"],
+  noneAvailableNote: ["Items with a warning and no stock available", "有预警且没有可用库存的物料"],
   searchBalances: ["Inventory search", "库存查询"],
   searchBalancesSubtitle: ["Only posted stock is shown. Search by SKU or item, warehouse and stock status.", "仅显示已过账的库存记录。可按 SKU 或物料、仓库和库存状态查询。"],
   searchWarnings: ["Warning search", "预警查询"],
@@ -370,6 +377,15 @@ export default function InventoryPage({
   const movementTypes = [...new Set((rows as Movement[]).map((row) => row.movementType).filter(Boolean))] as string[];
   const statuses = [...new Set(rows.map((row: any) => row.status).filter(Boolean))] as string[];
   const balances = view === "overview" || view === "warnings";
+  // Each warned SKU once, judged on its stock over every location shown, as the list judges it.
+  const warningSkus = [...new Set(items.filter((item) => isShort(item, totals)).map((item) => item.sku))];
+  const warningFacts = (sku: string) => {
+    const item = items.find((row) => row.sku === sku) as Item;
+    const available = totals.get(sku) ?? quantity(item);
+    const safetyStock = Number(item.safetyStock || 0);
+    const reorderPoint = Number(item.reorderPoint || 0);
+    return { available, belowSafety: safetyStock > 0 && available < safetyStock, atReorderPoint: reorderPoint > 0 && available <= reorderPoint };
+  };
   const count = (value: number) => (state === "ready" ? String(value) : "—");
   const stateRow = (colSpan: number) =>
     state === "loading" ? <ListStateRow colSpan={colSpan} state="loading" />
@@ -399,7 +415,15 @@ export default function InventoryPage({
 
   return (
     <div className="space-y-5">
-      {balances && (
+      {view === "warnings" && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="inventory-warning-cards">
+          <ActionableMetricCard label={tr("short")} value={count(warningSkus.length)} description={tr("shortNote")} to="/app/inventory/warnings" icon={AlertTriangle} color={A.orange} />
+          <ActionableMetricCard label={tr("belowSafety")} value={count(warningSkus.filter((sku) => warningFacts(sku).belowSafety).length)} description={tr("belowSafetyNote")} to="/app/inventory/warnings" icon={PackageOpen} color={A.red} />
+          <ActionableMetricCard label={tr("atReorderPoint")} value={count(warningSkus.filter((sku) => warningFacts(sku).atReorderPoint).length)} description={tr("atReorderPointNote")} to="/app/inventory/reorder" icon={Boxes} color={A.blue} />
+          <ActionableMetricCard label={tr("noneAvailable")} value={count(warningSkus.filter((sku) => warningFacts(sku).available <= 0).length)} description={tr("noneAvailableNote")} to="/app/inventory/warnings" icon={Warehouse} color={A.gray1} />
+        </div>
+      )}
+      {view === "overview" && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <ActionableMetricCard label={tr("stockedItems")} value={count(new Set(items.map((item) => item.sku)).size)} description={tr("stockedItemsNote")} to="/app/inventory/stock" icon={Boxes} color={A.blue} />
           <ActionableMetricCard label={tr("short")} value={count(new Set(items.filter((item) => isShort(item, totals)).map((item) => item.sku)).size)} description={tr("shortNote")} to="/app/inventory/warnings" icon={AlertTriangle} color={A.orange} />

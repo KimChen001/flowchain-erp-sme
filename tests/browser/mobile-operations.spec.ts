@@ -235,12 +235,12 @@ test("mobile workbenches localize in English and remain overflow-free at tablet 
   const page = await context.newPage();
   await installSession(page, english);
   await page.goto("/app/mobile/tasks");
-  await expect(page.getByRole("heading", { name: "Mobile Tasks" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Mobile tasks" })).toBeVisible();
   await expect(page.getByTestId("mobile-network-status")).toContainText("Online");
   await expectNoPageOverflow(page);
   await page.goto("/app/mobile/receiving");
   await expect(
-    page.getByTestId("mobile-operations-workbench").getByRole("heading", { name: "Mobile Receiving" }),
+    page.getByTestId("mobile-operations-workbench").getByRole("heading", { name: "Mobile receiving" }),
   ).toBeVisible();
   await page.getByLabel("PO number").fill("mobile-browser-receiving-po");
   await page.getByTestId("mobile-receiving-search").click();

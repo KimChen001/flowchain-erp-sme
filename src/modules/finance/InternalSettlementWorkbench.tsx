@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Landmark, Paperclip, Plu
 import { Card, useConfirm } from "../../components/ui";
 import { apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
+import { apiErrorText } from "../../lib/apiErrorText";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { todayInTimeZone } from "../../lib/format";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
@@ -16,6 +17,10 @@ type Reconciliation = { status: "matched" | "mismatch"; checks: Array<{ rule: st
 
 const post = <T,>(url: string, body: unknown) => apiJson<T>(url, { method: "POST", body: JSON.stringify(body) });
 const key = () => createSecureClientMutationId("settlement");
+// Settlement refusals in the reader's language; other failures read as the shared message.
+const SETTLEMENT_ERRORS: Record<string, readonly [string, string]> = {
+  SETTLEMENT_SELF_APPROVAL_BLOCKED: ["The person who created this settlement cannot approve it. Ask another approver.", "核销的创建人不能批准该核销，请由其他审批人批准。"],
+};
 const show = (value: unknown) => value === null || value === undefined ? "No permission" : String(value);
 const emptyAccountDraft = (currency: string) => ({ accountCode: "", name: "", accountType: "bank", currency, openingBalance: "0.0000" });
 const accountCurrencyOptions = (current: string) => [...new Set([current, "USD", "EUR", "GBP", "CAD", "CNY", ...Intl.supportedValuesOf("currency")].filter(Boolean))];
@@ -70,13 +75,13 @@ export default function InternalSettlementWorkbench({ view }: { view: "cashbook"
         const [record, evidence] = await Promise.all([apiJson<Settlement>(`/api/finance/settlements/${encodeURIComponent(detailId)}`), apiJson<Reconciliation>(`/api/finance/settlements/${encodeURIComponent(detailId)}/reconciliation`)]);
         setDetail(record); setReconciliation(evidence);
       }
-    } catch (reason) { setError(reason instanceof Error ? reason.message : tr("加载失败", "Loading failed")); }
+    } catch (reason) { setError(apiErrorText(reason, language, ["Could not load this page. Try again.", "加载失败，请重试。"])); }
   }
   useEffect(() => { void load(); }, [view, detailId]);
 
   async function act(run: () => Promise<unknown>) {
     setBusy(true); setError("");
-    try { await run(); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : tr("操作失败", "Operation failed")); } finally { setBusy(false); }
+    try { await run(); await load(); } catch (reason) { setError(apiErrorText(reason, language, ["The action did not complete. Try again.", "操作未完成，请重试。"], SETTLEMENT_ERRORS)); } finally { setBusy(false); }
   }
 
   if (error && !accounts.length && !settlements.length && !detail) return <Notice>{error}</Notice>;

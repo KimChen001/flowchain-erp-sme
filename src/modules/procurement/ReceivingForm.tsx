@@ -11,6 +11,7 @@ import { PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { buildSuggestionTrail, type PrefillEntry } from "../../lib/prefill";
 import { ReceivablePurchaseOrderChooser } from "./ReceivablePurchaseOrderChooser";
 import { DocumentNumber } from "../../lib/documentNumbers";
+import { procurementErrorCode, procurementErrorText } from "./procurementErrors";
 
 // English source copy with its Chinese translation.
 const COPY: Record<string, [string, string]> = {
@@ -103,6 +104,8 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [errors, setErrors] = useState<string[]>([]);
   const [serverError, setServerError] = useState("");
+  // The failed request's code, in the message's tooltip for support.
+  const [serverErrorCode, setServerErrorCode] = useState<string | undefined>();
   const [saving, setSaving] = useState<"" | "draft" | "submit">("");
   // One key per form: a resend after a lost response replays the same receipt.
   const [createKey] = useState(() => createSecureClientMutationId("receipt"));
@@ -203,7 +206,7 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
       AUTHORIZATION_PERMISSION_DENIED: tr("permissionDenied"), WAREHOUSE_SCOPE_DENIED: tr("warehouseDenied"),
       CAPABILITY_NOT_AVAILABLE: tr("capability"), RECEIVING_PURCHASE_ORDER_NOT_RECEIVABLE: tr("notReceivable"),
     };
-    return byCode[error.code || ""] || `${tr("failed")} ${error.message}`;
+    return byCode[error.code || ""] || `${tr("failed")} ${procurementErrorText(error, language, ["Try again in a moment.", "请稍后重试。"])}`;
   };
 
   async function save(submit: boolean) {
@@ -248,6 +251,7 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
     } catch (error) {
       setErrors([]);
       setServerError(serverMessage(error));
+      setServerErrorCode(procurementErrorCode(error));
     } finally {
       setSaving("");
     }
@@ -335,7 +339,7 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
         {(errors.length > 0 || serverError) && (
           <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700" data-testid="receiving-form-errors">
             {errors.map((key) => <div key={key}>{tr(key)}</div>)}
-            {serverError && <div>{serverError}</div>}
+            {serverError && <div title={serverErrorCode}>{serverError}</div>}
           </div>
         )}
         {/* Left-aligned so the floating assistant button never covers them. */}

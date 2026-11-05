@@ -37,9 +37,9 @@ export type SupplierTierFields = {
 type FieldError = { field?: string; message?: string };
 
 export const TIER_OPTIONS: Array<{ tier: Tier; label: string; meaning: string }> = [
-  { tier: 1, label: "Tier 1 Strategic", meaning: "Losing this supplier would stop sales or operations soon. Needs a named owner and regular review." },
-  { tier: 2, label: "Tier 2 Core", meaning: "A regular, approved source, with alternatives or limited impact." },
-  { tier: 3, label: "Tier 3 Transactional", meaning: "Occasional or low-impact purchases." },
+  { tier: 1, label: "Tier 1 · Strategic", meaning: "Losing this supplier would stop sales or operations soon. Needs a named owner and regular review." },
+  { tier: 2, label: "Tier 2 · Core", meaning: "A regular, approved source, with alternatives or limited impact." },
+  { tier: 3, label: "Tier 3 · Transactional", meaning: "Occasional or low-impact purchases." },
   { tier: null, label: "Not tiered", meaning: "Nobody has decided yet." },
 ];
 export const tierLabel = (tier: Tier) => TIER_OPTIONS.find((option) => option.tier === tier)?.label || "Not tiered";

@@ -326,7 +326,7 @@ function RuntimeHomepage() {
                   <tr key={`${row.type}-${row.id}`} className={listRowClass} style={listRowStyle(index, recent.length)}>
                     <td className={tdNameClass} style={{ color: A.sub }}>{t(`type_${row.type}` as TodayCopyKey) || row.type}</td>
                     <td className={tdIdClass}><Link to={row.canonicalRoute} className={LINK}>{row.number}</Link></td>
-                    <td className={tdNowrapClass}><StatusChip label={t.status(row.status)} tone={statusToneOf(row.status)} /></td>
+                    <td className={tdNowrapClass} title={row.status || undefined}><StatusChip label={t.status(row.status)} tone={statusToneOf(row.status)} /></td>
                     <td className={`${tdNameClass} max-w-[240px] truncate`} title={row.partner || undefined}>{row.partner || "—"}</td>
                     <td className={tdNumericRightClass}>{money(row.amount, row.currency)}</td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{formatDateTimeInTimeZone(row.updatedAt, locale, timezone)}</td>

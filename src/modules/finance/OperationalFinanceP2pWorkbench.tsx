@@ -9,6 +9,8 @@ import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, Sta
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
+import { apiErrorView, type ApiErrorView } from "../../lib/apiErrorText";
+import { formatCalendarDay } from "../../lib/format";
 
 type Landing = {
   dataSource: string;
@@ -73,27 +75,29 @@ const tokenKeys: Record<string, TranslationKey> = {
   link_receipt: "finance.action.link_receipt",
 };
 
-function Warning({ children }: { children: ReactNode }) {
+function Warning({ children, title }: { children: ReactNode; title?: string }) {
   return (
-    <div className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+    <div className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" title={title || undefined}>
       <AlertTriangle className="mt-0.5 shrink-0" size={16} />
       <span>{children}</span>
     </div>
   );
 }
 
+// A failed load names the problem in the interface language; the server's
+// code stays in the notice's tooltip.
+const LOAD_FAILED = ["Could not load this finance page. Try again.", "财务页面加载失败，请重试。"] as const;
+
 export function FinanceLanding() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [data, setData] = useState<Landing | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ApiErrorView | null>(null);
   useEffect(() => {
     void apiJson<Landing>("/api/finance/landing")
       .then(setData)
-      .catch((reason) =>
-        setError(reason instanceof Error ? reason.message : t("finance.loadFailed")),
-      );
+      .catch((reason) => setError(apiErrorView(reason, language, LOAD_FAILED)));
   }, []);
-  if (error) return <Warning>{error}</Warning>;
+  if (error) return <Warning title={error.code}>{error.message}</Warning>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const cards = [
     ["supplierInvoicesAwaitingMatch", t("finance.awaitingMatch"), "/app/procurement/bills?status=submitted"],
@@ -154,7 +158,9 @@ const LIST_COPY = {
   matched: ["Matched, to approve", "已匹配待批准"],
   matchedNote: ["Matched and waiting for approval", "已匹配，等待批准"],
   approved: ["Approved", "已批准"],
-  approvedNote: ["Approved and handed to payables", "已批准并转入应付"],
+  // Approving a bill in FlowChain records its payable, but a seeded or
+  // imported bill can be approved without one, so the card does not say so.
+  approvedNote: ["Approved by finance", "财务已批准"],
   searchTitle: ["Supplier invoice search", "采购发票查询"],
   searchSubtitle: ["Search supplier invoices by number, supplier, purchase order, status and variance.", "按发票编号、供应商、采购订单、状态和差异查询采购发票。"],
   search: ["Search", "搜索"],
@@ -187,9 +193,16 @@ const LIST_COPY = {
   supplierOrReturn: ["Supplier / return", "供应商 / 退货"],
   nextStep: ["Next step", "下一步"],
   supplierCreditNoRefund: ["A supplier credit memo does not record a refund from the supplier.", "供应商贷项不代表已收到供应商退款。"],
+  // What each list shows, and when its first record appears.
+  emptyInvoice: ["No supplier invoices yet", "暂无采购发票"],
+  emptyInvoiceDetail: ["Supplier invoices appear here once you enter one against a purchase order and its receipt.", "按采购订单和收货登记采购发票后，会显示在这里。"],
+  emptyPayable: ["No payables yet", "暂无应付款"],
+  emptyPayableDetail: ["A payable is recorded when a supplier invoice is approved, and stays here until it is paid in full.", "采购发票批准后会生成应付款，并在全额付款前一直显示在这里。"],
+  emptyCredit: ["No supplier credits yet", "暂无供应商贷项"],
+  emptyCreditDetail: ["A credit memo appears here once a supplier return is posted and credited.", "供应商退货过账并生成贷项后，会显示在这里。"],
+  emptyMatch: ["No match exceptions", "暂无匹配异常"],
+  emptyMatchDetail: ["Price or quantity differences found when a supplier invoice is matched to its purchase order and receipt appear here.", "采购发票与采购订单、收货核对时发现的价格或数量差异会显示在这里。"],
 } as const;
-
-const day = (value: unknown) => String(value || "").slice(0, 10);
 
 function FinanceList({
   endpoint,
@@ -204,7 +217,7 @@ function FinanceList({
   const tr = (key: keyof typeof LIST_COPY) => LIST_COPY[key][language === "en-US" ? 0 : 1];
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<ListPayload | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ApiErrorView | null>(null);
   const [search, setSearch] = useState("");
   const [supplier, setSupplier] = useState("");
   // An address with matchStatus=variance (the purchase order cards) starts on invoices with a variance.
@@ -213,15 +226,13 @@ function FinanceList({
   // invoice; the other lists keep the server's filter from the address.
   const invoices = kind === "invoice";
   const load = () => {
-    setError("");
+    setError(null);
     void apiJson<ListPayload>(invoices ? endpoint : `${endpoint}?${query()}`)
       .then(setData)
-      .catch((reason) =>
-        setError(reason instanceof Error ? reason.message : t("finance.loadFailed")),
-      );
+      .catch((reason) => setError(apiErrorView(reason, language, LOAD_FAILED)));
   };
   useEffect(load, [endpoint]);
-  if (error) return <Warning>{error}</Warning>;
+  if (error) return <Warning title={error.code}>{error.message}</Warning>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const enabled = data.capabilities?.[capability]?.enabled;
   const statusOf = (row: Record<string, any>) => String(value(row, "status", "matchStatus") || "");
@@ -255,11 +266,14 @@ function FinanceList({
     setVariance("");
     setSearchParams({}, { replace: true });
   };
+  const empty = {
+    invoice: [tr("emptyInvoice"), tr("emptyInvoiceDetail")],
+    payable: [tr("emptyPayable"), tr("emptyPayableDetail")],
+    credit: [tr("emptyCredit"), tr("emptyCreditDetail")],
+    match: [tr("emptyMatch"), tr("emptyMatchDetail")],
+  }[kind];
   return (
     <div className="space-y-5" data-testid={`operational-finance-${kind}-list`}>
-      {!enabled && <Warning>{t("finance.capabilityDisabled")}</Warning>}
-      {kind === "payable" && <Warning>{t("finance.notPaid")}</Warning>}
-      {kind === "credit" && <Warning>{tr("supplierCreditNoRefund")}</Warning>}
       {!invoices && (
         <ListSearchCard
           title={tr(kind === "payable" ? "payableSearch" : kind === "credit" ? "creditSearch" : "matchSearch")}
@@ -322,6 +336,11 @@ function FinanceList({
           </ListSearchCard>
         </>
       )}
+      {/* Notices sit in one place on every finance list: between the search
+          card and the list they explain. */}
+      {!enabled && <Warning>{t("finance.capabilityDisabled")}</Warning>}
+      {kind === "payable" && <Warning>{t("finance.notPaid")}</Warning>}
+      {kind === "credit" && <Warning>{tr("supplierCreditNoRefund")}</Warning>}
       <ListCard title={title} total={data.items.length} shown={rows.length}>
         <div className={tableScrollClass}>
           {invoices ? (
@@ -339,7 +358,9 @@ function FinanceList({
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 && <ListStateRow colSpan={8} state="empty" title={data.items.length ? tr("noMatch") : t("common.empty")} />}
+                {rows.length === 0 && (data.items.length
+                  ? <ListStateRow colSpan={8} state="empty" title={tr("noMatch")} />
+                  : <ListStateRow colSpan={8} state="empty" title={empty[0]} detail={empty[1]} />)}
                 {rows.map((row, index) => {
                   const id = String(row.id || "");
                   const rawStatus = statusOf(row);
@@ -356,8 +377,8 @@ function FinanceList({
                         <div className="text-[11px]" style={{ color: A.sub }}>{row.relatedGrnId ? <EntityLink kind="receiving_doc" id={row.relatedGrnId} className="text-[11px] font-normal">{row.relatedGrnId}</EntityLink> : "—"}</div>
                       </td>
                       <td className={tdNowrapClass}>
-                        <div>{day(row.invoiceDate) || "—"}</div>
-                        {row.dueDate && <div className="text-[11px]" style={{ color: A.sub }}>{tr("due")} {day(row.dueDate)}</div>}
+                        <div>{formatCalendarDay(row.invoiceDate, locale)}</div>
+                        {row.dueDate && <div className="text-[11px]" style={{ color: A.sub }}>{tr("due")} {formatCalendarDay(row.dueDate, locale)}</div>}
                       </td>
                       <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row.totalAmount, row.currency, locale)}</td>
                       <td className={tdNumericRightClass} style={{ color: varianceAmount ? "#b91c1c" : A.sub }}>{varianceAmount ? money(row.varianceAmount, row.currency, locale) : "—"}</td>
@@ -442,7 +463,9 @@ function FinanceList({
                     </tr>
                   );
                 })}
-                {!rows.length && <ListStateRow colSpan={5} state="empty" title={data.items.length ? tr("noRows") : t("common.empty")} />}
+                {!rows.length && (data.items.length
+                  ? <ListStateRow colSpan={5} state="empty" title={tr("noRows")} />
+                  : <ListStateRow colSpan={5} state="empty" title={empty[0]} detail={empty[1]} />)}
               </tbody>
             </table>
           )}

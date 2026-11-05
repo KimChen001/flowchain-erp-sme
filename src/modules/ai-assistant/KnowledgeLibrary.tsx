@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiJson } from '../../lib/api-client';
+import { apiErrorText } from '../../lib/apiErrorText';
 import { useI18n } from '../../i18n/I18n';
 
 const endpoint = '/api/ai-runtime/knowledge';
@@ -16,7 +17,7 @@ function KnowledgeDocument({ id, chunkId, searched = false, onClose }: { id: str
   const highlighted = useRef<HTMLElement | null>(null);
   useEffect(() => { highlighted.current?.scrollIntoView({ block: 'center' }); }, [document, chunkId]);
   useEffect(() => { const listener = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); }; window.addEventListener('keydown', listener); return () => window.removeEventListener('keydown', listener); }, [onClose]);
-  useEffect(() => { const controller = new AbortController(); apiJson<typeof document>(`${endpoint}/${encodeURIComponent(id)}`, { signal: controller.signal }).then(setDocument).catch(e => { if (!controller.signal.aborted) setError(e.message); }); return () => controller.abort(); }, [id]);
+  useEffect(() => { const controller = new AbortController(); apiJson<typeof document>(`${endpoint}/${encodeURIComponent(id)}`, { signal: controller.signal }).then(setDocument).catch(e => { if (!controller.signal.aborted) setError(apiErrorText(e, language, ['Could not load the source document. Try again.', '原文加载失败，请重试。'])); }); return () => controller.abort(); }, [id]);
   return <div role="dialog" aria-modal="true" aria-label={language === 'zh-CN' ? '引用原文' : 'Source document'} className="pointer-events-auto fixed inset-4 z-[90] overflow-auto rounded-xl border bg-white p-5 shadow-2xl sm:inset-12">
     <button type="button" onClick={onClose} className="float-right rounded border px-3 py-1">{language === 'zh-CN' ? '关闭' : 'Close'}</button>
     <h2 className="mb-4 text-lg font-semibold">{document?.title || (language === 'zh-CN' ? '读取来源' : 'Loading source')}</h2>
@@ -43,6 +44,9 @@ export function RagAnswerCard({ rag, title, summary }: { rag: RagAnswer; title: 
 export function KnowledgeLibrary({ onClose }: { onClose: () => void }) {
   const { language } = useI18n();
   const zh = language === 'zh-CN';
+  // A failed request in the interface language, never the server's own words.
+  const failed = (reason: unknown, fallback: readonly [string, string]) => apiErrorText(reason, language, fallback);
+  const LOAD_FAILED = ['Could not load the knowledge library. Try again.', '知识库加载失败，请重试。'] as const;
   const [items, setItems] = useState<Source[]>([]);
   const [canManage, setCanManage] = useState(false);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
@@ -55,16 +59,16 @@ export function KnowledgeLibrary({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [source, setSource] = useState<string | null>(null);
   const refresh = useCallback(async () => { const result = await apiJson<{ items: Source[]; canManage: boolean; capabilities?: Capabilities }>(endpoint); setItems(result.items); setCanManage(result.canManage); setCapabilities(result.capabilities || null); }, []);
-  useEffect(() => { refresh().catch(e => setError(e.message)); }, []);
+  useEffect(() => { refresh().catch(e => setError(failed(e, LOAD_FAILED))); }, []);
   useEffect(() => {
     if (!items.some(item => item.indexAttemptStatus === 'processing') && !busy) return;
     const timer = window.setInterval(() => refresh().catch(() => {}), 2000);
     return () => window.clearInterval(timer);
   }, [items, busy, refresh]);
   function failureText(code?: string) {
-    if (code === 'KNOWLEDGE_QUOTA_EXCEEDED') return zh ? 'Embedding 服务的 API 额度不足。请管理员检查额度后重试，原索引已保留。' : 'Embedding API quota is exhausted. Ask an administrator to check billing, then retry. The previous index was kept.';
-    if (code === 'KNOWLEDGE_CREDENTIALS_INVALID') return zh ? 'Embedding 凭据被拒绝，请管理员更新服务端配置。' : 'The embedding credential was rejected. Ask an administrator to update the server configuration.';
-    if (code === 'KNOWLEDGE_EMBEDDING_NOT_CONFIGURED') return zh ? '未配置 embedding；资料仍可用于关键词检索。' : 'Embedding is not configured. Keyword search remains available.';
+    if (code === 'KNOWLEDGE_QUOTA_EXCEEDED') return zh ? '智能检索服务的额度已用完。请管理员检查额度后重试，原有索引已保留。' : 'The smart search service has used up its quota. Ask an administrator to check billing, then retry. The previous index was kept.';
+    if (code === 'KNOWLEDGE_CREDENTIALS_INVALID') return zh ? '智能检索服务拒绝了访问密钥，请管理员更新服务器设置。' : 'The smart search service rejected its access key. Ask an administrator to update the server settings.';
+    if (code === 'KNOWLEDGE_EMBEDDING_NOT_CONFIGURED') return zh ? '尚未设置智能检索服务；资料仍可按关键词检索。' : 'Smart search is not set up. Keyword search still works.';
     if (code === 'interrupted') return zh ? '上次索引任务被中断，可以重试。' : 'The previous indexing attempt was interrupted. Retry to continue.';
     return zh ? '上次索引未完成。原有索引已保留，可以重试。' : 'The last indexing attempt failed. The previous index was kept. You can retry.';
   }
@@ -75,16 +79,16 @@ export function KnowledgeLibrary({ onClose }: { onClose: () => void }) {
       await apiJson(pendingFile ? `${endpoint}/import` : endpoint, { method: 'POST', body: JSON.stringify(body) });
       setTitle(''); setContent(''); setPendingFile(null); await refresh();
     }
-    catch (e) { setError(e instanceof Error ? e.message : 'Import failed'); }
+    catch (e) { setError(failed(e, ['Could not import the document. Check the file and try again.', '资料导入失败，请检查文件后重试。'])); }
     finally { setBusy(false); }
   }
   return <div role="dialog" aria-modal="true" aria-label={zh ? '公司知识库' : 'Company knowledge library'} data-testid="knowledge-library" className="pointer-events-auto fixed inset-4 z-[80] overflow-auto rounded-xl border bg-white p-5 shadow-2xl sm:inset-12">
     <button type="button" onClick={onClose} className="float-right rounded border px-3 py-1">{zh ? '关闭' : 'Close'}</button>
     <h2 className="text-xl font-semibold">{zh ? '产品资料与公司知识库' : 'Product information & company knowledge'}</h2>
     <p className="my-3 text-sm text-slate-600">{zh ? '导入产品说明、术语表或公司手册。回答会引用当前工作区中你有权限阅读的资料。' : 'Import product guides, glossaries, or company handbooks. Answers cite documents you can read in this workspace.'}</p>
-    {capabilities && <div data-testid="knowledge-readiness" className="mb-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><strong>{zh ? '检索状态' : 'Search readiness'}</strong><p className="mt-1">{capabilities.embeddingConfigured ? (zh ? 'Embedding 服务已配置，完成索引后可使用语义检索。' : 'Embedding is configured. Semantic search is available after successful indexing.') : (zh ? '当前使用关键词检索。配置 embedding 服务后可建立语义索引。' : 'Keyword search is active. Configure an embedding provider to build semantic indexes.')}</p>{canManage && <p className="mt-1 text-xs text-slate-500">{capabilities.model || (zh ? '未选择模型' : 'No embedding model selected')} · {capabilities.vectorStorage === 'pgvector' ? 'PostgreSQL / pgvector' : (zh ? '本地向量检索（未启用 pgvector）' : 'Local vector search (pgvector not enabled)')}</p>}</div>}
+    {capabilities && <div data-testid="knowledge-readiness" className="mb-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><strong>{zh ? '检索状态' : 'Search readiness'}</strong><p className="mt-1">{capabilities.embeddingConfigured ? (zh ? '智能检索已设置，资料建立索引后即可按含义检索。' : 'Smart search is set up. Documents can be searched by meaning once they are indexed.') : (zh ? '当前按关键词检索。设置智能检索服务后，可按含义检索资料。' : 'Keyword search is on. Set up a smart search service to search documents by meaning.')}</p>{canManage && <p className="mt-1 text-xs text-slate-500">{capabilities.model || (zh ? '未选择模型' : 'No search model selected')} · {capabilities.vectorStorage === 'pgvector' ? (zh ? '索引保存在数据库中' : 'Index stored in the database') : (zh ? '索引保存在本服务器' : 'Index stored on this server')}</p>}</div>}
     {capabilities && <p data-testid="knowledge-generation-status" className="mb-3 text-sm text-slate-600">{capabilities.generationConfigured ? (zh ? `回答模型已配置：${capabilities.generationModel}。服务可用性以实际请求结果为准。` : `Answer model configured: ${capabilities.generationModel}. Availability depends on a successful request.`) : (zh ? '未配置回答模型，目前显示带引用的资料摘录。' : 'No answer model configured. Answers show cited document excerpts.')}</p>}
-    <button type="button" onClick={() => refresh().catch(e => setError(e.message))} className="mb-3 text-sm text-blue-700">{zh ? '刷新状态' : 'Refresh status'}</button>
+    <button type="button" onClick={() => refresh().catch(e => setError(failed(e, LOAD_FAILED)))} className="mb-3 text-sm text-blue-700">{zh ? '刷新状态' : 'Refresh status'}</button>
     {error && <p role="alert" className="my-3 text-sm text-red-700">{error}</p>}
     {canManage && <div className="my-4 space-y-3 rounded-xl border p-4">
       <label className="block text-sm">{zh ? '标题' : 'Title'}<input data-testid="knowledge-title" value={title} maxLength={160} onChange={e => setTitle(e.target.value)} className="mt-1 block w-full rounded border p-2" /></label>
@@ -107,13 +111,13 @@ export function KnowledgeLibrary({ onClose }: { onClose: () => void }) {
           <button type="button" disabled={busy || processing} className="text-xs text-blue-700 disabled:opacity-50" onClick={async () => {
             setBusy(true); setWorkingId(item.id); setError('');
             try { await apiJson(`${endpoint}/${encodeURIComponent(item.id)}/reindex`, { method: 'POST' }); }
-            catch (e) { setError(e instanceof Error ? e.message : (zh ? '索引失败' : 'Reindex failed')); }
+            catch (e) { setError(failed(e, ['Could not index the document. Try again.', '建立索引失败，请重试。'])); }
             finally { await refresh().catch(() => {}); setBusy(false); setWorkingId(null); }
           }}>{processing ? (zh ? '索引中…' : 'Indexing…') : item.indexAttemptStatus === 'failed' ? (zh ? '重试索引' : 'Retry indexing') : (zh ? '重建索引' : 'Reindex')}</button>
           <button type="button" disabled={busy || processing} className="text-xs text-slate-600 disabled:opacity-50" onClick={async () => {
             setBusy(true); setError('');
             try { await apiJson(`${endpoint}/${encodeURIComponent(item.id)}`, { method: 'DELETE' }); await refresh(); }
-            catch (e) { setError(e instanceof Error ? e.message : (zh ? '归档失败' : 'Archive failed')); }
+            catch (e) { setError(failed(e, ['Could not archive the document. Try again.', '归档失败，请重试。'])); }
             finally { setBusy(false); }
           }}>{zh ? '归档' : 'Archive'}</button>
         </div>}

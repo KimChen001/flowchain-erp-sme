@@ -34,12 +34,12 @@ export const outboundEnglish: Record<string, string> = {
   "恢复": "Resume",
   "订单行与库存可用性": "Order lines and availability",
   "库存预留": "Reserved stock",
-  "预留 ID": "Reservation ID",
+  "参考号": "Reference",
+  "预留参考号": "Reservation reference",
   "已分配": "Allocated",
   "已消耗": "Used",
   "已释放": "Released",
   "可释放": "Releasable",
-  "流水 ID": "Movement ID",
   "入": "In",
   "出": "Out",
   "完整订单对账无法在当前权限范围内确认。": "The full order reconciliation cannot be confirmed with your access.",
@@ -76,8 +76,11 @@ export const outboundEnglish: Record<string, string> = {
   "现有 {n}": "On hand {n}",
   "预留 {n}": "Reserved {n}",
   "可用 {n}": "Available {n}",
-  "命令记录": "Command",
-  "幂等键": "Idempotency key",
+  "参考号：{id}": "Reference: {id}",
+  // What a failed request shows when its code has no message of its own.
+  "未找到该记录，可能已被删除。": "This record was not found. It may have been removed.",
+  "记录已被他人修改，请刷新后重试。": "This record was changed by someone else. Refresh and try again.",
+  "操作未完成，请刷新后重试。": "The action did not complete. Refresh and try again.",
   "暂停订单": "Put on hold",
   "预留量": "Reserved",
   // The reserve dialog picks one stock balance.
@@ -85,8 +88,8 @@ export const outboundEnglish: Record<string, string> = {
   // Shipment, reservation and allocation statuses.
   "待过账": "Ready to post",
   "有效": "Active",
-  "部分分配": "Partly allocated",
-  "部分消耗": "Partly used",
+  "部分分配": "Partially allocated",
+  "部分消耗": "Partially used",
   "已取消分配": "Allocation cancelled",
   // Timeline titles the order workbench API builds each time it is read
   // (server/domain/outbound-workbench-read-service.mjs). They are not stored.

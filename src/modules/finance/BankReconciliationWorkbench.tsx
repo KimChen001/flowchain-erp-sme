@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, Link2, RefreshCw, RotateCcw, Upload } from "lucide-react";
 import { Card, useConfirm } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
+import { apiErrorText } from "../../lib/apiErrorText";
 import { apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
@@ -32,9 +33,9 @@ export default function BankReconciliationWorkbench({ initialView }: { initialVi
     ]);
     const eligible = accountResult.items.filter((item) => ["bank", "payment_platform"].includes(item.accountType)); setAccounts(eligible); setMappings(mappingResult.items); setBatches(batchResult.items); setLines(lineResult.items); setGroups(groupResult.items); setExceptions(exceptionResult.items); if (!accountId && eligible[0]) setAccountId(eligible[0].id);
   }
-  useEffect(() => { void load().catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))); }, []);
+  useEffect(() => { void load().catch((reason) => setError(apiErrorText(reason, language, ["Could not load bank reconciliation. Try again.", "银行对账加载失败，请重试。"]))); }, []);
   useEffect(() => { const active = mappings.find((item) => item.cashbookAccountId === accountId); if (active) setMappingId(active.id); }, [accountId, mappings]);
-  const act = async (action: () => Promise<void>) => { setBusy(true); setError(""); setNotice(""); try { await action(); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { setBusy(false); } };
+  const act = async (action: () => Promise<void>) => { setBusy(true); setError(""); setNotice(""); try { await action(); await load(); } catch (reason) { setError(apiErrorText(reason, language, ["The action did not complete. Try again.", "操作未完成，请重试。"])); } finally { setBusy(false); } };
 
   async function createDefaultMapping() {
     if (!selectedAccount) return;

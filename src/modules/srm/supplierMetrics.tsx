@@ -1,5 +1,6 @@
 import { A } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
+import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 import { supplierCopy } from "./supplierCopy";
 import type { SupplierInsight } from "./supplierInsights";
 
@@ -9,6 +10,7 @@ import type { SupplierInsight } from "./supplierInsights";
 // across currencies.
 export function useSupplierMetricCells() {
   const { language, locale } = useI18n();
+  const { currency: workspaceCurrency } = useWorkspaceCurrency();
   const t = (value: string) => supplierCopy(value, language);
   const hiddenCell = <span title={t("Hidden for your role")} style={{ color: A.sub }}>—</span>;
   const count = (value: number | null | undefined) => (value === null || value === undefined ? hiddenCell : <span className="tabular-nums">{value}</span>);
@@ -18,7 +20,8 @@ export function useSupplierMetricCells() {
   };
   const spendCell = (insight?: SupplierInsight) => {
     if (!insight || insight.spend12m === null) return hiddenCell;
-    if (!insight.spend12m.length) return <span className="tabular-nums">0</span>;
+    // No committed spend: zero in the workspace currency, styled as the amounts beside it.
+    if (!insight.spend12m.length) return <span className="tabular-nums" title={t("No spend in the last 12 months")}>{workspaceCurrency ? moneyText(0, workspaceCurrency) : "0"}</span>;
     const [first, ...others] = insight.spend12m;
     return <span className="tabular-nums" title={insight.spend12m.map((row) => moneyText(row.amount, row.currency)).join(" · ")}>
       {moneyText(first.amount, first.currency)}{others.length ? <span style={{ color: A.sub }}> +{others.length} {t("currencies")}</span> : null}
@@ -33,6 +36,8 @@ export function useSupplierMetricCells() {
   };
   return { count, spendCell, onTimeCell };
 }
+
+export const ON_TIME_HEADER_TIP = "Share of deliveries received by the date on the PO, over the last 90 days. That date may be the buyer's need date.";
 
 export type SupplierSort = "name" | "spend" | "open" | "overdue" | "onTime" | "issues";
 

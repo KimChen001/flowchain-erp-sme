@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { A } from "../../components/ui";
 import { ApiError } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
+import { formatCalendarDay } from "../../lib/format";
 import { PRICE_HISTORY_MAX_KEYS, compareQuote, priceHistoryKeyString, type PriceFact, type PriceHistory, type QuoteComparison } from "../../../shared/price-history.mjs";
 import { procurementApi } from "./procurementApi";
 import { usePriceHistoryCopy } from "./priceHistoryCopy";
@@ -69,10 +70,11 @@ export function usePoPrice() {
 }
 
 export function usePriceFactText() {
+  const { locale } = useI18n();
   const copy = usePriceHistoryCopy();
   const price = usePoPrice();
   const date = (fact: PriceFact) => {
-    const day = fact.date || copy("dateNotRecorded");
+    const day = fact.date ? formatCalendarDay(fact.date, locale) : copy("dateNotRecorded");
     if (fact.dateSource === "order_date_not_issued") return copy("orderedNotIssued", { date: day });
     return fact.dateSource === "order_date" ? copy("orderedNoIssueDate", { date: day }) : day;
   };
@@ -94,11 +96,15 @@ export function PriceHistoryFacts({
   state = "loaded",
   compact = false,
   testId,
+  excludesThisOrder = false,
 }: {
   history: PriceHistory | null | undefined;
   state?: LoadState;
   compact?: boolean;
   testId?: string;
+  // On a purchase order: the history leaves this order out, so an empty one
+  // means no earlier orders, not that the item was never ordered.
+  excludesThisOrder?: boolean;
 }) {
   const copy = usePriceHistoryCopy();
   const text = usePriceFactText();
@@ -130,7 +136,7 @@ export function PriceHistoryFacts({
           {!compact && <div className="italic" data-testid={testId ? `${testId}-note` : undefined}>{copy("poPriceNote")}</div>}
         </>
       ) : notes.length ? null : (
-        <div>{copy(history.supplierId ? "noIssuedPoFromSupplier" : "noIssuedPo")}</div>
+        <div>{copy(history.supplierId ? "noIssuedPoFromSupplier" : excludesThisOrder ? "noEarlierPoForItem" : "noIssuedPo")}</div>
       )}
       {notes.map((note) => <div key={note}>{note}</div>)}
     </>,

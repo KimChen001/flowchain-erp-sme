@@ -8,6 +8,7 @@ import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 import { PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { buildSuggestionTrail, type PrefillEntry } from "../../lib/prefill";
 import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "./PriceHistoryFacts";
+import { rfqQuantity } from "./rfqFormat";
 import type {
   ProcurementRfqDocument,
   ProcurementRfqParticipant,
@@ -53,7 +54,7 @@ function commandError(error: unknown, tr: (zh: string, en: string) => string) {
       case "RFQ_RESPONSE_VERSION_CONFLICT":
         return tr("报价已被其他操作更新，请重新加载最新版本后再继续。", "The quotation was updated elsewhere. Reload the latest revision before continuing.");
       case "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD":
-        return tr("本次重试标识已对应其他内容，请修改后重新发起一次保存。", "This retry key belongs to a different payload. Change the input and save again.");
+        return tr("这次保存与之前的一次保存冲突，请重新加载后再保存。", "This save conflicts with an earlier one. Reload and save again.");
       case "COMMAND_EXECUTION_IN_PROGRESS":
         return tr("相同的保存请求仍在处理中，请稍候后重试。", "The same save request is still processing. Try again shortly.");
       case "RFQ_RESPONSE_CONCURRENCY_CONFLICT":
@@ -69,11 +70,11 @@ function commandError(error: unknown, tr: (zh: string, en: string) => string) {
         return tr("数量或单价格式无效，请输入非负且最多四位小数的数值。", "A quantity or unit price is invalid. Enter a nonnegative value with no more than four decimal places.");
       case "SUPPLIER_NOT_FOUND":
       case "RFQ_NOT_FOUND":
-        return tr("RFQ 或供应商在当前租户下不可用。", "The RFQ or supplier is unavailable in the current workspace.");
+        return tr("当前工作区中找不到该 RFQ 或供应商。", "The RFQ or supplier is unavailable in the current workspace.");
       default:
         if (error.status === 401) return tr("登录状态已失效，请重新登录后再试。", "Your session expired. Sign in and try again.");
         if (error.status === 403) return tr("当前用户没有执行此项报价操作的权限。", "You do not have permission to perform this quotation action.");
-        if (error.status === 404) return tr("RFQ 或供应商在当前租户下不可用。", "The RFQ or supplier is unavailable in the current workspace.");
+        if (error.status === 404) return tr("当前工作区中找不到该 RFQ 或供应商。", "The RFQ or supplier is unavailable in the current workspace.");
         if (error.status >= 500) return tr("报价服务暂时不可用，请稍后重试。", "The quotation service is temporarily unavailable. Try again later.");
         if (error.status === 422) return tr("报价输入未通过服务校验，请检查字段后再试。", "The quotation input failed validation. Review the fields and try again.");
         return tr("报价操作未完成，请检查后重试。", "The quotation action did not complete. Review the input and try again.");
@@ -137,8 +138,10 @@ export function RfqSupplierResponseDialog({
   onReload: () => Promise<void>;
   onSuccess: () => Promise<void>;
 }) {
-  const { language } = useI18n();
+  const { language, locale } = useI18n();
   const tr = (zh: string, en: string) => language === "en-US" ? en : zh;
+  // A line named by its position on the RFQ; its id stays in the tooltip.
+  const linePosition = (lineId: string) => record.lines.findIndex((line) => line.id === lineId) + 1;
   const quotation = useMemo(
     () => participant ? latestQuotation(record, participant.supplierId) : null,
     [participant, record],
@@ -175,9 +178,10 @@ export function RfqSupplierResponseDialog({
     if (selected.length === 0) return tr("至少录入一条 RFQ 行项目后才能保存草稿。", "Select at least one RFQ line item before saving a draft.");
     if (!/^[A-Za-z]{3}$/.test(currency.trim())) return tr("币种必须是三位 ISO 4217 代码。", "Currency must be a three-letter ISO 4217 code.");
     for (const line of selected) {
-      if (!isPositive(line.quantity)) return tr(`行 ${line.rfqLineId} 的报价数量必须是正数，最多四位小数。`, `Quoted quantity for line ${line.rfqLineId} must be positive with no more than four decimal places.`);
-      if (!isNonNegative(line.unitPrice)) return tr(`行 ${line.rfqLineId} 的单价必须是非负数，最多四位小数。`, `Unit price for line ${line.rfqLineId} must be nonnegative with no more than four decimal places.`);
-      if (line.deliveryDate && !/^\d{4}-\d{2}-\d{2}$/.test(line.deliveryDate)) return tr(`行 ${line.rfqLineId} 的交期格式无效。`, `Delivery date for line ${line.rfqLineId} is invalid.`);
+      const position = linePosition(line.rfqLineId);
+      if (!isPositive(line.quantity)) return tr(`第 ${position} 行的报价数量必须是正数，最多四位小数。`, `Quoted quantity on line ${position} must be positive with no more than four decimal places.`);
+      if (!isNonNegative(line.unitPrice)) return tr(`第 ${position} 行的单价必须是非负数，最多四位小数。`, `Unit price on line ${position} must be zero or more with no more than four decimal places.`);
+      if (line.deliveryDate && !/^\d{4}-\d{2}-\d{2}$/.test(line.deliveryDate)) return tr(`第 ${position} 行的交期格式无效。`, `Delivery date on line ${position} is invalid.`);
     }
     if (requestedMode === "submitted" && selected.length !== record.lines.length) return tr("正式提交必须覆盖全部 RFQ 行项目。", "A submitted quotation must cover every RFQ line item.");
     return null;
@@ -229,10 +233,10 @@ export function RfqSupplierResponseDialog({
     }
   };
 
-  const title = mode === "append" ? tr("新增报价 Revision", "Add quotation revision") : tr("录入供应商报价", "Record supplier quotation");
+  const title = mode === "append" ? tr("新增报价修订", "Add quote revision") : tr("录入供应商报价", "Record supplier quotation");
   const canSubmit = mode === "append" ? canRevise : canCreate;
   return (
-    <Modal open={open} onClose={submitting ? () => undefined : onClose} title={title} subtitle={tr("内部采购记录；服务器负责 Decimal 金额与版本权威。", "Internal procurement record. The server controls exact decimal amounts and revision authority.")} width={900} footer={(
+    <Modal open={open} onClose={submitting ? () => undefined : onClose} title={title} subtitle={tr("内部采购记录。保存后会生成新的报价修订，已有记录不会被改动。", "Internal procurement record. Saving adds a quote revision; earlier ones stay as they are.")} width={900} footer={(
       <>
         <button type="button" className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold" style={{ color: A.sub }} disabled={submitting} onClick={onClose}><X size={15} />{tr("取消", "Cancel")}</button>
         <button type="button" data-testid="rfq-response-save-draft" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold" disabled={submitting || !canSubmit} onClick={() => void submit("draft")}><Save size={15} />{tr("保存草稿", "Save draft")}</button>
@@ -242,11 +246,11 @@ export function RfqSupplierResponseDialog({
       <div className="space-y-5" data-testid="rfq-supplier-response-editor">
         {!canSubmit && <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle size={15} className="mt-0.5" />{tr("当前用户没有执行此项报价操作的权限。", "You do not have permission to perform this quotation action.")}</div>}
         <div className="grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs" style={{ color: A.sub }}>RFQ</div><div className="mt-1 text-sm font-medium">{record.id}</div></div>
+          <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs" style={{ color: A.sub }}>RFQ</div><div className="mt-1 text-sm font-medium">{record.number || record.id}</div></div>
           <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs" style={{ color: A.sub }}>{tr("供应商", "Supplier")}</div><div className="mt-1 text-sm font-medium">{participant?.supplierName || participant?.supplierId || "—"}</div><div className="mt-1 text-[11px]" style={{ color: A.sub }}>{participant?.supplierId} · {(PARTICIPATION_LABELS[participant?.status || ""]?.[language === "en-US" ? 1 : 0]) || participant?.status || "—"}</div></div>
-          <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs" style={{ color: A.sub }}>{tr("当前版本", "Current revision")}</div><div className="mt-1 text-sm font-medium">{mode === "append" ? `Revision ${quotation?.latestRevision?.revisionNumber || quotation?.revisionNumber || "—"}` : tr("尚未创建报价", "No quotation created")}</div></div>
+          <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs" style={{ color: A.sub }}>{tr("当前报价修订", "Current quote revision")}</div><div className="mt-1 text-sm font-medium">{mode === "append" ? tr(`报价修订 ${quotation?.latestRevision?.revisionNumber || quotation?.revisionNumber || "—"}`, `Quote revision ${quotation?.latestRevision?.revisionNumber || quotation?.revisionNumber || "—"}`) : tr("尚未创建报价", "No quotation created")}</div></div>
         </div>
-        {mode === "append" && <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800">{tr("现有报价历史不会被修改，本次保存将创建新的报价版本。", "Existing quotation history will remain unchanged. Saving creates a new quotation revision.")}</div>}
+        {mode === "append" && <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800">{tr("现有报价历史不会被修改，本次保存将创建新的报价修订。", "Existing quotation history will remain unchanged. Saving creates a new quote revision.")}</div>}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="text-xs font-semibold" style={{ color: A.sub }}>{tr("币种", "Currency")}<input aria-label={tr("币种", "Currency")} className="mt-1 h-9 w-full rounded-lg border px-2 text-sm uppercase" maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
           <label className="text-xs font-semibold" style={{ color: A.sub }}>{tr("付款条款", "Payment terms")}<input aria-label={tr("付款条款", "Payment terms")} className="mt-1 h-9 w-full rounded-lg border px-2 text-sm" placeholder={tr("例如 NET30", "For example, NET30")} value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} /></label>
@@ -258,8 +262,8 @@ export function RfqSupplierResponseDialog({
           <p>{tr("正式提交需要覆盖全部 RFQ 行项目。", "A formal submission must cover every RFQ line item.")}</p>
         </div>
         <Card className="overflow-hidden" data-testid="rfq-response-line-editor">
-          <div className="border-b p-4"><h3 className="text-sm font-semibold">{tr("RFQ 行项目", "RFQ line items")}</h3><p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("RFQ 行 ID、SKU、物料和需求数量是只读源事实；只填写供应商报价字段。", "RFQ line ID, SKU, item, and required quantity are read-only source facts. Enter supplier quotation fields only.")}</p></div>
-          <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-xs"><thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("录入", "Include"), tr("RFQ 行 / SKU / 物料", "RFQ line / SKU / item"), tr("需求数量", "Required quantity"), tr("报价数量", "Quoted quantity"), tr("单价", "Unit price"), tr("行交期", "Line delivery date")].map((label) => <th className="p-3 font-medium" key={label}>{label}</th>)}</tr></thead><tbody>{record.lines.map((line) => { const editable = lines.find((item) => item.rfqLineId === line.id); if (!editable) return null; return <tr className="border-t align-top" data-testid={`rfq-response-editor-line-${line.id}`} key={line.id}><td className="p-3"><input aria-label={`${tr("选择", "Select")} ${line.id}`} type="checkbox" checked={editable.selected} onChange={(event) => updateLine(line.id, "selected", event.target.checked)} /></td><td className="p-3"><div className="font-medium">{line.id}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || "—"} · {line.itemName || line.itemId || "—"}</div></td><td className="p-3 tabular-nums">{line.quantity ?? "—"} {line.unit || ""}</td><td className="p-3"><input aria-label={`${tr("报价数量", "Quoted quantity")} ${line.id}`} className="h-9 w-32 rounded-lg border px-2 tabular-nums" inputMode="decimal" value={editable.quantity} onChange={(event) => updateLine(line.id, "quantity", event.target.value)} placeholder="0.0000" /><div><PrefillSourceChip entry={linePrefill[line.id]?.quantity} current={editable.quantity} testId={`rfq-response-prefill-quantity-${line.id}`} /></div></td><td className="p-3"><input aria-label={`${tr("单价", "Unit price")} ${line.id}`} className="h-9 w-32 rounded-lg border px-2 tabular-nums" inputMode="decimal" value={editable.unitPrice} onChange={(event) => updateLine(line.id, "unitPrice", event.target.value)} placeholder="0.0000" />{historyKeyOf(line) && <div className="max-w-[260px]"><PriceHistoryFacts history={priceHistory.histories.get(historyKeyOf(line))} state={priceHistory.state} testId={`rfq-response-price-history-${line.id}`} /></div>}</td><td className="p-3"><input aria-label={`${tr("行交期", "Line delivery date")} ${line.id}`} type="date" className="h-9 rounded-lg border px-2" value={editable.deliveryDate || ""} onChange={(event) => updateLine(line.id, "deliveryDate", event.target.value)} /><div><PrefillSourceChip entry={linePrefill[line.id]?.deliveryDate} current={editable.deliveryDate || ""} testId={`rfq-response-prefill-date-${line.id}`} /></div></td></tr>; })}</tbody></table></div>
+          <div className="border-b p-4"><h3 className="text-sm font-semibold">{tr("RFQ 行项目", "RFQ line items")}</h3><p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("行、SKU、物料和需求数量来自 RFQ，不能修改；只填写供应商的报价。", "The line, SKU, item and required quantity come from the RFQ and cannot be changed. Enter the supplier's quote only.")}</p></div>
+          <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-xs"><thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("录入", "Include"), tr("RFQ 行 / SKU / 物料", "RFQ line / SKU / item"), tr("需求数量", "Required quantity"), tr("报价数量", "Quoted quantity"), tr("单价", "Unit price"), tr("行交期", "Line delivery date")].map((label) => <th className="p-3 font-medium" key={label}>{label}</th>)}</tr></thead><tbody>{record.lines.map((line) => { const editable = lines.find((item) => item.rfqLineId === line.id); if (!editable) return null; return <tr className="border-t align-top" data-testid={`rfq-response-editor-line-${line.id}`} key={line.id}><td className="p-3"><input aria-label={`${tr("选择", "Select")} ${line.id}`} type="checkbox" checked={editable.selected} onChange={(event) => updateLine(line.id, "selected", event.target.checked)} /></td><td className="p-3"><div className="font-medium" title={line.id}>{tr(`第 ${linePosition(line.id)} 行`, `Line ${linePosition(line.id)}`)}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || "—"} · {line.itemName || line.itemId || "—"}</div></td><td className="p-3 tabular-nums">{rfqQuantity(line.quantity, locale)} {line.unit || ""}</td><td className="p-3"><input aria-label={`${tr("报价数量", "Quoted quantity")} ${line.id}`} className="h-9 w-32 rounded-lg border px-2 tabular-nums" inputMode="decimal" value={editable.quantity} onChange={(event) => updateLine(line.id, "quantity", event.target.value)} placeholder="0.0000" /><div><PrefillSourceChip entry={linePrefill[line.id]?.quantity} current={editable.quantity} testId={`rfq-response-prefill-quantity-${line.id}`} /></div></td><td className="p-3"><input aria-label={`${tr("单价", "Unit price")} ${line.id}`} className="h-9 w-32 rounded-lg border px-2 tabular-nums" inputMode="decimal" value={editable.unitPrice} onChange={(event) => updateLine(line.id, "unitPrice", event.target.value)} placeholder="0.0000" />{historyKeyOf(line) && <div className="max-w-[260px]"><PriceHistoryFacts history={priceHistory.histories.get(historyKeyOf(line))} state={priceHistory.state} testId={`rfq-response-price-history-${line.id}`} /></div>}</td><td className="p-3"><input aria-label={`${tr("行交期", "Line delivery date")} ${line.id}`} type="date" className="h-9 rounded-lg border px-2" value={editable.deliveryDate || ""} onChange={(event) => updateLine(line.id, "deliveryDate", event.target.value)} /><div><PrefillSourceChip entry={linePrefill[line.id]?.deliveryDate} current={editable.deliveryDate || ""} testId={`rfq-response-prefill-date-${line.id}`} /></div></td></tr>; })}</tbody></table></div>
         </Card>
         {error && <div className="space-y-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800" data-testid="rfq-response-error"><div className="flex items-start gap-2"><AlertTriangle size={15} className="mt-0.5" />{error}</div>{/重新加载|reload/i.test(error) && <button type="button" className="inline-flex items-center gap-2 font-semibold text-rose-800" onClick={async () => { await onReload(); onClose(); }}><RefreshCw size={14} />{tr("重新加载", "Reload")}</button>}</div>}
         {submitting && <div className="flex items-center gap-2 text-xs" style={{ color: A.sub }}><Check size={14} />{tr("正在等待服务器确认，成功后将重新读取 RFQ。", "Waiting for server confirmation. The RFQ will reload after a successful save.")}</div>}

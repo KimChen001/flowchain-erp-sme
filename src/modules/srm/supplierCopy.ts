@@ -24,7 +24,7 @@ const zh: Record<string, string> = {
   'Preferred': '首选', 'Approved': '已批准', 'Lead time (days)': '交期（天）', 'MOQ': '最小起订量',
   'Earlier PO prices': '以往采购价',
   // Supplier tiers and business owners.
-  'Tier 1 Strategic': '一级 · 战略', 'Tier 2 Core': '二级 · 核心', 'Tier 3 Transactional': '三级 · 一般', 'Not tiered': '未分级',
+  'Tier 1 · Strategic': '一级 · 战略', 'Tier 2 · Core': '二级 · 核心', 'Tier 3 · Transactional': '三级 · 一般', 'Not tiered': '未分级',
   'Tier 1': '一级', 'Tier 2': '二级', 'Tier 3': '三级', 'Tier': '层级', 'All': '全部', 'Managed by me': '我负责的', 'Supplier list': '供应商列表',
   'Losing this supplier would stop sales or operations soon. Needs a named owner and regular review.': '失去该供应商会很快影响销售或运营，需要指定负责人并定期复核。',
   'A regular, approved source, with alternatives or limited impact.': '常用的已批准来源，有替代来源或影响有限。',
@@ -39,7 +39,10 @@ const zh: Record<string, string> = {
   'Choose an active user of this workspace.': '请选择本工作区的在职用户。', 'Choose a different owner.': '请选择不同的负责人。',
   // Supplier metrics.
   'Supplier': '供应商',
-  'Spend, 12 months': '近 12 个月花费', 'Open POs': '未完成 PO', 'Overdue POs': '逾期 PO', 'On time (PO date), 90 days': '90 天准时率（按采购订单日期）', 'Open issues': '未结问题',
+  'Spend, 12 months': '近 12 个月花费', 'Open POs': '未完成 PO', 'Overdue POs': '逾期 PO', 'On time, 90 days': '90 天准时率', 'Open issues': '未结问题',
+  "Share of deliveries received by the date on the PO, over the last 90 days. That date may be the buyer's need date.": '最近 90 天内按采购订单上的日期收货的交付占比；该日期可能是采购方的需求日期。',
+  'No spend in the last 12 months': '近 12 个月无花费',
+  'Could not load the supplied items.': '可供应物料加载失败。', 'Could not save the change. Try again.': '修改保存失败，请重试。',
   'Hidden for your role': '你的角色不可见', 'Fewer than 5 deliveries in 90 days': '90 天内交付不足 5 次，暂不计算',
   "{count} of {of} deliveries on time against the date on the PO, which may be the buyer's need date": '{of} 次交付中 {count} 次按采购订单日期准时（该日期可能是采购方的需求日期）',
   'Set inactive': '设为停用', 'Set active': '设为启用', 'Supplier search': '供应商查询', 'Search suppliers by code, name, status, category and owner.': '按编号、名称、状态、品类和负责人查询供应商。', 'Search': '搜索',

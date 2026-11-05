@@ -18,7 +18,7 @@ test("Structured Intake wizard profiles, maps, validates, and reviews parser-own
   await expect(page).toHaveURL(/\/app\/universal-intake$/);
   await expect(page.getByRole("heading", { name: "Structured Smart Intake" })).toBeVisible();
   await expect(page.getByText("No Supplier, Item, or Customer will be created.")).toBeVisible();
-  await page.getByRole("button", { name: "Paste Table" }).click();
+  await page.getByRole("button", { name: "Paste table" }).click();
   await page.getByTestId("intake-paste").fill("code\tname\nSUP-BROWSER-1\tSuzhou Components");
   await page.getByTestId("intake-profile-source").click();
   await expect(page.getByTestId("intake-profile")).toContainText("paste_table");

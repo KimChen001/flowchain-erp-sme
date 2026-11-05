@@ -138,12 +138,12 @@ for (const financeEnabled of [false, true]) {
     await page.goto('/app/procurement/orders');
     const row = page.locator('tr').filter({ hasText: 'PO-OPEN' });
     await row.locator('summary', { hasText: 'More' }).click();
-    await expect(row.getByRole('button', { name: 'View order lines and evidence', exact: true })).toBeVisible();
+    await expect(row.getByRole('button', { name: 'View supplier invoice', exact: true })).toBeVisible();
     await expect(page.locator('aside').getByRole('button', { name: 'Purchasing', exact: true })).toBeVisible();
     await expect(page.locator('aside').getByRole('button', { name: /^Payables & receivables( |$)/ })).toHaveCount(financeEnabled ? 1 : 0);
-    await expect(row.getByRole('button', { name: 'Open supplier invoice', exact: true })).toHaveCount(1);
-    await expect(row.getByRole('button', { name: 'Open three-way match', exact: true })).toHaveCount(1);
-    await row.getByRole('button', { name: 'Open three-way match', exact: true }).click();
+    await expect(row.getByRole('button', { name: 'View supplier invoice', exact: true })).toHaveCount(1);
+    await expect(row.getByRole('button', { name: 'View three-way match', exact: true })).toHaveCount(1);
+    await row.getByRole('button', { name: 'View three-way match', exact: true }).click();
     await expect(page).toHaveURL(/\/app\/procurement\/three-way-match/);
     await expect(page.getByTestId('capability-route-blocked')).toHaveCount(0);
   });

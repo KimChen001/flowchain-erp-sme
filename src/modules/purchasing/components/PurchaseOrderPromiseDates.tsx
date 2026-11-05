@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiJson } from "../../../lib/api-client";
 import { useI18n } from "../../../i18n/I18n";
+import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
 
 // Promised dates of an issued PO: each line's original promise, its current
 // date and the revisions between them. Revising needs a reason; the server
@@ -50,7 +51,7 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
       await load();
       onChanged?.();
     } catch (error) {
-      toast.error(tr("failed"), { description: error instanceof Error ? error.message : undefined });
+      toast.error(tr("failed"), { description: <span title={procurementErrorCode(error)}>{procurementErrorText(error, language, ["Try again in a moment.", "请稍后重试。"])}</span> });
     } finally {
       setBusy(false);
     }

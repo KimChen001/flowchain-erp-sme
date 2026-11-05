@@ -57,7 +57,7 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   await expect(issuedField).toContainText('Not issued yet')
   await expect(issuedField).not.toContainText('Issue date not recorded')
   // The PO's own line is not its own history.
-  if (firstAttempt) await expect(page.locator('[data-testid^="po-line-price-history-"]').first()).toContainText('No issued PO for this item yet')
+  if (firstAttempt) await expect(page.locator('[data-testid^="po-line-price-history-"]').first()).toContainText('No earlier purchase orders for this item')
   await expect(page.getByTestId('po-action-submit')).toHaveCount(0)
   await expect(page.getByTestId('po-action-approve')).toHaveCount(0)
   await expect(page.getByTestId('po-action-issue')).toBeVisible()

@@ -58,7 +58,7 @@ test("the response editor shows the item's earlier PO prices beside the unit pri
   await page.goto(`/app/procurement/rfq/${RFQ_ID}`);
   await page.getByTestId(`rfq-response-action-${SUPPLIER_B}`).click();
   const firstRow = page.getByTestId(`rfq-response-editor-line-${LINE_1}`);
-  await expect(page.getByTestId(`rfq-response-price-history-${LINE_1}`)).toContainText("上次采购订单价 CNY 90.00 / pcs · PO-0031 · 2026-09-14 · Acme");
+  await expect(page.getByTestId(`rfq-response-price-history-${LINE_1}`)).toContainText("上次采购订单价 CNY 90.00 / pcs · PO-0031 · Sep 14, 2026 · Acme");
   await expect(firstRow.getByLabel(`单价 ${LINE_1}`)).toHaveValue("");
   expect(historyKeys[0]).toContain(`LOCAL-DEMO-ITEM-001|pcs|CNY`);
 });
@@ -106,11 +106,11 @@ test("planned Supplier progresses draft to submitted revisions with one idempote
   await expect(page.getByTestId("rfq-response-error")).toContainText("无法连接到报价服务");
   issues.splice(0);
   await page.getByTestId("rfq-response-save-draft").click();
-  await expect(page.getByTestId("rfq-response-notice")).toContainText("服务器权威结果");
+  await expect(page.getByTestId("rfq-response-notice")).toContainText("报价已保存");
   await page.unroute(`**${initialPath}`);
 
   const supplierBRevision1 = await quotationFor(page, "Summit Packaging");
-  await expect(supplierBRevision1).toContainText("Revision 1 · 当前版本");
+  await expect(supplierBRevision1).toContainText("报价修订 1 · 当前版本");
   await expect(page.getByTestId(`rfq-participant-${SUPPLIER_B}`)).toContainText("计划参与");
   const initialCommands = commands.filter((command) => command.path === initialPath);
   expect(initialCommands).toHaveLength(2);
@@ -119,13 +119,13 @@ test("planned Supplier progresses draft to submitted revisions with one idempote
   expect(initialCommands[1].key).toBe(initialCommands[0].key);
 
   await page.getByTestId(`rfq-response-action-${SUPPLIER_B}`).click();
-  await expect(page.getByTestId("rfq-supplier-response-editor")).toContainText("Revision 1");
+  await expect(page.getByTestId("rfq-supplier-response-editor")).toContainText("报价修订 1");
   await selectLine(page, LINE_2, "25.0000", "39.5000");
   await page.getByTestId("rfq-response-submit").click();
   await expect(page.getByTestId("rfq-response-notice")).toBeVisible();
   const supplierBRevision2 = await quotationFor(page, "Summit Packaging");
-  await expect(supplierBRevision2).toContainText("Revision 2 · 当前版本");
-  await expect(supplierBRevision2).toContainText("Revision 1 · 历史版本");
+  await expect(supplierBRevision2).toContainText("报价修订 2 · 当前版本");
+  await expect(supplierBRevision2).toContainText("报价修订 1 · 历史版本");
   await expect(page.getByTestId(`rfq-participant-${SUPPLIER_B}`)).toContainText("已记录响应");
 
   expect(commands.some((command) => command.path === appendPath(SUPPLIER_B) && command.method === "POST")).toBeTruthy();
@@ -146,8 +146,8 @@ test("submitted quotation preserves date-only values and surfaces a real stale-v
   await page.getByLabel(`行交期 ${LINE_2}`).fill("2030-02-18");
   await page.getByTestId("rfq-response-submit").click();
   const supplierARevision3 = await quotationFor(page, "Acme Components");
-  await expect(supplierARevision3).toContainText("Revision 3 · 当前版本");
-  await expect(supplierARevision3).toContainText("Revision 2 · 历史版本");
+  await expect(supplierARevision3).toContainText("报价修订 3 · 当前版本");
+  await expect(supplierARevision3).toContainText("报价修订 2 · 历史版本");
   const detailAfterAppend = await request.get(detailPath(), { headers: { Authorization: `Bearer ${session.token}` } });
   expect(detailAfterAppend.ok()).toBeTruthy();
   const quotationAfterAppend = (await detailAfterAppend.json()).document.quotations.find((item: { supplierId: string }) => item.supplierId === SUPPLIER_A);
@@ -186,7 +186,7 @@ test("submitted quotation preserves date-only values and surfaces a real stale-v
   await page.getByTestId("rfq-response-submit").click();
   await expect(page.getByTestId("rfq-response-error")).toContainText("报价已被其他操作更新，请重新加载最新版本后再继续。");
   await page.getByRole("button", { name: "重新加载" }).click();
-  await expect(await quotationFor(page, "Acme Components")).toContainText("Revision 4 · 当前版本");
+  await expect(await quotationFor(page, "Acme Components")).toContainText("报价修订 4 · 当前版本");
 
   await page.goto("/app/procurement/rfq/LOCAL-DEMO-RFQ-CLOSED");
   await expect(page.getByTestId("canonical-rfq-detail")).toContainText("当前 RFQ 状态不允许录入新的供应商响应");
@@ -198,7 +198,7 @@ test("response editor renders explicit command failures safely", async ({ page, 
   const cases = [
     { status: 401, code: "AUTHENTICATION_REQUIRED", expected: "登录状态已失效" },
     { status: 403, code: "AUTHORIZATION_DENIED", expected: "没有执行此项报价操作的权限" },
-    { status: 404, code: "SUPPLIER_NOT_FOUND", expected: "RFQ 或供应商在当前租户下不可用" },
+    { status: 404, code: "SUPPLIER_NOT_FOUND", expected: "当前工作区中找不到该 RFQ 或供应商" },
     { status: 409, code: "RFQ_RESPONSE_CONCURRENCY_CONFLICT", expected: "报价数据已发生变化" },
     { status: 422, code: "RFQ_RESPONSE_DECIMAL_INVALID", expected: "数量或单价格式无效" },
     { status: 500, code: "RFQ_SUPPLIER_RESPONSE_COMMAND_FAILED", expected: "报价服务暂时不可用" },

@@ -8,6 +8,7 @@ import { usePermissionSet } from "../../../lib/usePermissionSet";
 import { listButtonClass } from "../../../components/ui/listLayout";
 import { useConfirm } from "../../../components/ui/ConfirmDialog";
 import { typography } from "../../../components/ui/typography";
+import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
 
 // A secondary header button: the list button height, with a border so it
 // shows on the page background beside the supplier invoice entry button.
@@ -120,7 +121,7 @@ export function PurchaseOrderWorkflowActions({
         toast.error(tr("changed"));
         onChanged();
       } else {
-        toast.error(tr("failed"), { description: error instanceof Error ? error.message : undefined });
+        toast.error(tr("failed"), { description: <span title={procurementErrorCode(error)}>{procurementErrorText(error, language, ["Try again in a moment.", "请稍后重试。"])}</span> });
       }
     } finally {
       setBusy("");

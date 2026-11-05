@@ -129,11 +129,14 @@ export function DocumentHistoryPanel({
   entityId,
   title = "单据历史",
   refreshKey,
+  emptyText = "暂无历史记录。当前单据暂无操作记录，后续状态变更会自动记录。",
 }: {
   entityType: AuditEntry["entityType"];
   entityId?: string;
   title?: string;
   refreshKey?: string;
+  // The text when there are no entries, for a page that says what the panel tracks.
+  emptyText?: string;
 }) {
   const { formatDateTime } = useI18n();
   const [entries, setEntries] = useState<AuditEntry[]>([]);
@@ -165,7 +168,7 @@ export function DocumentHistoryPanel({
       </div>
       {entries.length === 0 ? (
         <div className="fc-caption leading-4" style={{ color: A.sub }}>
-          {copy("暂无历史记录。当前单据暂无操作记录，后续状态变更会自动记录。")}
+          {copy(emptyText)}
         </div>
       ) : (
         <div className="space-y-2">

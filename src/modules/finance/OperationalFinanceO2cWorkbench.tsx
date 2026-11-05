@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, FilePlus2, FileText, MessageSquareWarning, RefreshCw, Send, Wallet } from "lucide-react";
 import { Link } from "react-router";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { apiErrorView, type ApiErrorView } from "../../lib/apiErrorText";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { StatusChip, TwoStepAction, useFinanceStatusLabel } from "./FinanceControls";
 import { PaymentRecords } from "./PaymentRecords";
@@ -151,9 +152,9 @@ const canPrepare = () => {
   }
 };
 
-function Notice({ children }: { children: ReactNode }) {
+function Notice({ children, title }: { children: ReactNode; title?: string }) {
   return (
-    <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+    <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" title={title || undefined}>
       <AlertTriangle className="mt-0.5 shrink-0" size={16} />
       <span>{children}</span>
     </div>
@@ -216,7 +217,21 @@ const LIST_COPY = {
   days61: ["61–90 days", "61–90 天"],
   days90: ["Over 90 days", "90 天以上"],
   total: ["Total", "合计"],
+  // What each list shows, and when its first record appears.
+  emptyInvoices: ["No customer invoices yet", "暂无销售发票"],
+  emptyInvoicesDetail: ["Customer invoices appear here once you raise one from a posted shipment.", "根据已过账的发货开具销售发票后，会显示在这里。"],
+  emptyReceivables: ["No receivables yet", "暂无应收款"],
+  emptyReceivablesDetail: ["A receivable is recorded when a customer invoice is issued, and stays here until it is paid in full.", "销售发票开出后会生成应收款，并在全额收款前一直显示在这里。"],
+  emptyAging: ["Nothing to age yet", "暂无需要统计账龄的应收款"],
+  emptyAgingDetail: ["Once customer invoices are issued, open receivables are grouped here by how far past due they are.", "销售发票开出后，未结应收款会按逾期时长在这里分组。"],
+  emptyCredits: ["No credit notes yet", "暂无贷项通知单"],
+  emptyCreditsDetail: ["A credit note appears here once a customer return is posted and credited.", "客户退货过账并生成贷项后，会显示在这里。"],
+  loadFailed: ["Could not load this finance page. Try again.", "财务页面加载失败，请重试。"],
+  invoiceFailed: ["Could not prepare the invoice. Check the shipment and lines, then try again.", "无法准备发票，请检查发货单和明细后重试。"],
 } as const;
+
+// A failed request in the interface language; the server's code stays in the tooltip.
+const LOAD_FAILED = LIST_COPY.loadFailed;
 
 function useListCopyO2c() {
   const { language } = useI18n();
@@ -289,19 +304,19 @@ function Filters({ title, subtitle, statuses, currencies, onRefresh, actions }: 
 // A list read with the address's filters, plus the unfiltered list for the
 // metric cards when a filter is set.
 function useFinanceList<T>(endpoint: string) {
-  const { t } = useI18n();
+  const { language } = useI18n();
   const [data, setData] = useState<ListPayload<T> | null>(null);
   const [all, setAll] = useState<T[] | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ApiErrorView | null>(null);
   const load = useCallback(() => {
-    setError("");
+    setError(null);
     const query = queryString();
     void apiJson<ListPayload<T>>(`${endpoint}?${query}`)
       .then((payload) => {
         setData(payload);
         if (!query) setAll(payload.items);
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : t("finance.loadFailed")));
+      .catch((reason) => setError(apiErrorView(reason, language, LOAD_FAILED)));
     if (query) void apiJson<ListPayload<T>>(endpoint).then((payload) => setAll(payload.items)).catch(() => setAll(null));
   }, [endpoint]);
   useEffect(load, [load]);
@@ -320,7 +335,7 @@ function InvoiceList() {
   const { t, locale, timezone } = useI18n();
   const tr = useListCopyO2c();
   const { data, all, error, load } = useFinanceList<Invoice>("/api/finance/customer-invoices");
-  if (error) return <Notice>{error}</Notice>;
+  if (error) return <Notice title={error.code}>{error.message}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const enabled =
     data.capabilities["customer-invoice"]?.enabled && canPrepare();
@@ -368,7 +383,9 @@ function InvoiceList() {
               </tr>
             </thead>
             <tbody>
-              {!data.items.length && <ListStateRow colSpan={7} state="empty" title={queryString() ? tr("noMatch") : t("common.empty")} />}
+              {!data.items.length && (queryString()
+                ? <ListStateRow colSpan={7} state="empty" title={tr("noMatch")} />
+                : <ListStateRow colSpan={7} state="empty" title={tr("emptyInvoices")} detail={tr("emptyInvoicesDetail")} />)}
               {data.items.map((row, index) => {
                 const next = row.availableActions.filter((action) => action !== "cancel").map((action) => t(`finance.action.${action}` as Parameters<typeof t>[0]));
                 return (
@@ -410,7 +427,7 @@ function Receivables() {
   const { t, locale, timezone } = useI18n();
   const tr = useListCopyO2c();
   const { data, all, error, load } = useFinanceList<Receivable>("/api/finance/receivables");
-  if (error) return <Notice>{error}</Notice>;
+  if (error) return <Notice title={error.code}>{error.message}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const today = todayInTimeZone(timezone);
   const counted = all || data.items;
@@ -447,7 +464,9 @@ function Receivables() {
               </tr>
             </thead>
             <tbody>
-              {!data.items.length && <ListStateRow colSpan={6} state="empty" title={queryString() ? tr("noMatch") : t("common.empty")} />}
+              {!data.items.length && (queryString()
+                ? <ListStateRow colSpan={6} state="empty" title={tr("noMatch")} />
+                : <ListStateRow colSpan={6} state="empty" title={tr("emptyReceivables")} detail={tr("emptyReceivablesDetail")} />)}
               {data.items.map((row, index) => {
                 const next = row.availableActions.map((action) => RECEIVABLE_ACTION_KEYS[action] ? t(RECEIVABLE_ACTION_KEYS[action]) : action);
                 const invoicePath = row.customerInvoiceId ? `/app/sales/invoices/${encodeURIComponent(row.customerInvoiceId)}` : "";
@@ -489,16 +508,16 @@ function Receivables() {
 }
 
 function Aging() {
-  const { t, locale } = useI18n();
+  const { t, locale, language } = useI18n();
   const tr = useListCopyO2c();
   const [data, setData] = useState<AgingPayload | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ApiErrorView | null>(null);
   useEffect(() => {
     void apiJson<AgingPayload>(`/api/finance/aging?${queryString()}`)
       .then(setData)
-      .catch((reason) => setError(reason instanceof Error ? reason.message : t("finance.loadFailed")));
+      .catch((reason) => setError(apiErrorView(reason, language, LOAD_FAILED)));
   }, []);
-  if (error) return <Notice>{error}</Notice>;
+  if (error) return <Notice title={error.code}>{error.message}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const buckets = [
     [tr("current"), "current"],
@@ -525,7 +544,7 @@ function Aging() {
               </tr>
             </thead>
             <tbody>
-              {!data.groups.length && <ListStateRow colSpan={8} state="empty" title={t("common.empty")} />}
+              {!data.groups.length && <ListStateRow colSpan={8} state="empty" title={tr("emptyAging")} detail={tr("emptyAgingDetail")} />}
               {data.groups.map((group, index) => (
                 <tr className={listRowClass} style={listRowStyle(index, data.groups.length)} key={group.currency}>
                   <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{group.currency}</td>
@@ -547,23 +566,23 @@ function Aging() {
 }
 
 function CreditNotes() {
-  const { t, locale } = useI18n();
+  const { t, locale, language } = useI18n();
   const tr = useListCopyO2c();
   const statusLabel = useFinanceStatusLabel();
   const [data, setData] = useState<ListPayload<CreditNote> | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ApiErrorView | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const load = useCallback(() => {
-    setError("");
+    setError(null);
     void apiJson<ListPayload<CreditNote>>(
       `/api/finance/customer-credit-notes?${queryString()}`,
     )
       .then(setData)
-      .catch((reason) => setError(reason instanceof Error ? reason.message : t("finance.loadFailed")));
+      .catch((reason) => setError(apiErrorView(reason, language, LOAD_FAILED)));
   }, []);
   useEffect(load, [load]);
-  if (error) return <Notice>{error}</Notice>;
+  if (error) return <Notice title={error.code}>{error.message}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const needle = search.trim().toLowerCase();
   const shown = data.items.filter((row) =>
@@ -604,7 +623,9 @@ function CreditNotes() {
               </tr>
             </thead>
             <tbody>
-              {!shown.length && <ListStateRow colSpan={6} state="empty" title={data.items.length ? tr("noMatch") : t("common.empty")} />}
+              {!shown.length && (data.items.length
+                ? <ListStateRow colSpan={6} state="empty" title={tr("noMatch")} />
+                : <ListStateRow colSpan={6} state="empty" title={tr("emptyCredits")} detail={tr("emptyCreditsDetail")} />)}
               {shown.map((row, index) => (
                 <tr className={listRowClass} style={listRowStyle(index, shown.length)} key={row.id}>
                   <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.creditNoteNumber}</td>
@@ -624,7 +645,7 @@ function CreditNotes() {
 }
 
 function NewInvoice() {
-  const { t, locale } = useI18n();
+  const { t, locale, language } = useI18n();
   const tr = useListCopyO2c();
   const [entry, setEntry] = useState<EntryData | null>(null);
   const [shipmentId, setShipmentId] = useState("");
@@ -635,14 +656,14 @@ function NewInvoice() {
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [taxes, setTaxes] = useState<Record<string, string>>({});
   const [plan, setPlan] = useState<InvoicePlan | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<ApiErrorView | null>(null);
   // Set when the form was opened from a sales order: only its shipments.
   const [orderFilter, setOrderFilter] = useState("");
   const [sourceNotice, setSourceNotice] = useState("");
   useEffect(() => {
     void apiJson<EntryData>("/api/finance/entry-data")
       .then(setEntry)
-      .catch((reason) => setNotice(reason instanceof Error ? reason.message : t("finance.loadFailed")));
+      .catch((reason) => setNotice(apiErrorView(reason, language, LOAD_FAILED)));
   }, []);
   const shipped = (row: EntryData["postedShipments"][number]) =>
     Object.fromEntries(row.lines.map((line) => [line.id, String(Number(line.postedQuantity))]));
@@ -693,7 +714,7 @@ function NewInvoice() {
         })) || [],
   });
   const preview = async () => {
-    setNotice("");
+    setNotice(null);
     try {
       setPlan(
         await apiJson<InvoicePlan>("/api/finance/customer-invoices/preview", {
@@ -702,11 +723,11 @@ function NewInvoice() {
         }),
       );
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : t("finance.loadFailed"));
+      setNotice(apiErrorView(reason, language, LIST_COPY.invoiceFailed));
     }
   };
   const create = async () => {
-    setNotice("");
+    setNotice(null);
     try {
       const result = await apiJson<{ entityId: string }>(
         "/api/finance/customer-invoices",
@@ -722,15 +743,15 @@ function NewInvoice() {
         `/app/sales/invoices/${encodeURIComponent(result.entityId)}`,
       );
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : t("finance.loadFailed"));
+      setNotice(apiErrorView(reason, language, LIST_COPY.invoiceFailed));
     }
   };
-  if (!entry) return notice ? <Notice>{notice}</Notice> : <Card className="p-6">{t("common.loading")}</Card>;
+  if (!entry) return notice ? <Notice title={notice.code}>{notice.message}</Notice> : <Card className="p-6">{t("common.loading")}</Card>;
   const enabled = entry.capabilities["customer-invoice"]?.enabled && canPrepare();
   return (
     <div className="space-y-4" data-testid="new-customer-invoice">
       {!enabled && <Notice>{t("finance.capabilityDisabled")}</Notice>}
-      {notice && <Notice>{notice}</Notice>}
+      {notice && <Notice title={notice.code}>{notice.message}</Notice>}
       {sourceNotice && <Notice>{sourceNotice}</Notice>}
       <Card className="space-y-4 p-5">
         {orderFilter && (
@@ -756,7 +777,7 @@ function NewInvoice() {
           <button data-testid="customer-invoice-create" className={`${button} text-white`} style={{ background: A.blue }} disabled={!enabled || !plan?.allowed} onClick={() => void create()}><FilePlus2 size={14} />{t("finance.createDraft")}</button>
         </div>
       </Card>
-      {plan && <Card className="p-5"><div className="font-semibold">{plan.allowed ? `${plan.invoice?.totalAmount} ${plan.invoice?.currency}` : plan.blockingIssues.map((issue) => issue.message).join(" · ")}</div></Card>}
+      {plan && <Card className="p-5"><div className="font-semibold">{plan.allowed ? money(plan.invoice?.totalAmount, plan.invoice?.currency || "", locale) : plan.blockingIssues.map((issue) => issue.message).join(" · ")}</div></Card>}
     </div>
   );
 }
@@ -775,18 +796,18 @@ function invoiceReadFailure(reason: unknown): InvoiceReadFailure {
 // issued here. Issuing opens the receivable; nothing on this page collects
 // money. Each step previews the server's plan before it runs.
 function InvoiceDetail() {
-  const { t, locale } = useI18n();
+  const { t, locale, language } = useI18n();
   const canOpenRoute = useRouteAvailability();
   const id = decodeURIComponent(window.location.pathname.split("/").filter(Boolean).at(-1) || "");
   const [data, setData] = useState<any>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ApiErrorView | null>(null);
   const [failure, setFailure] = useState<InvoiceReadFailure | null>(null);
   const load = useCallback(() => {
     setFailure(null);
     void apiJson(`/api/finance/customer-invoices/${encodeURIComponent(id)}`)
-      .then((next) => { setData(next); setError(""); })
+      .then((next) => { setData(next); setError(null); })
       .catch((reason) => {
-        setError(reason instanceof Error ? reason.message : t("finance.loadFailed"));
+        setError(apiErrorView(reason, language, LOAD_FAILED));
         setFailure(invoiceReadFailure(reason));
       });
   }, [id]);
@@ -810,7 +831,7 @@ function InvoiceDetail() {
   const receivable = data.receivable;
   return (
     <div className="space-y-4" data-testid="customer-invoice-detail">
-      {error && <Notice>{error}</Notice>}
+      {error && <Notice title={error.code}>{error.message}</Notice>}
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>

@@ -2,11 +2,13 @@ import { useMemo } from "react";
 import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { apiErrorText } from "../../lib/apiErrorText";
 // Display copy for the inventory workbench (inventoryOperationsCopyMaps.ts).
 import { chinese, chineseCodes, english, englishCodes } from "./inventoryOperationsCopyMaps";
 
-// Server refusals shown in this page's own words. The code is matched; the
-// server's English message is shown for any other code.
+// Server refusals shown in this page's own words. The code is matched; any
+// other code reads as the shared message for its kind (signed out, no access,
+// changed) or the caller's fallback, never the server's English.
 const errorCodeCopy: Record<string, string> = {
   ADJUSTMENT_OPENING_BALANCE_EXISTS: "This item already has stock or stock history at this location, so opening stock cannot be recorded. Use another reason to correct it.",
 };
@@ -36,13 +38,13 @@ export function useInventoryOperationsCopy() {
     inventoryCodeLabel: (code: string) => codeLabel(language, code),
     // A refusal code this page knows, in the active language, or undefined.
     issueText: (code?: string) => (code && errorCodeCopy[code] ? translate(language, errorCodeCopy[code]) : undefined),
-    // What a failed request shows: known refusal codes are translated, other
-    // errors keep the server message, and anything else uses the fallback.
+    // What a failed request shows: refusal codes this page knows in its own
+    // words, other failures as the shared message or the fallback.
     errorText: (reason: unknown, fallback: string) => {
       const code = (reason as { code?: unknown } | null)?.code;
       const known = typeof code === "string" && errorCodeCopy[code];
       if (known) return translate(language, known);
-      return reason instanceof Error ? reason.message : translate(language, fallback);
+      return apiErrorText(reason, language, [translate("en-US", fallback), translate("zh-CN", fallback)]);
     },
   }), [language]);
 }

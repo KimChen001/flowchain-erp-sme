@@ -16,7 +16,10 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
-import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
+import { PriceHistoryFacts, priceHistoryKey, usePoPrice, usePriceHistory } from "../procurement/PriceHistoryFacts";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
+import { apiErrorText } from "../../lib/apiErrorText";
+import { ON_TIME_HEADER_TIP } from "./supplierMetrics";
 import { DataImportLink } from "../master-data/DataImportLink";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { SupplierContractsPanel } from "../contracts/SupplierContractsPanel";
@@ -111,8 +114,8 @@ const empty = (currency = "") => ({
 const statusLabel = { draft: "草稿", active: "启用", inactive: "停用" };
 // The list's long metric headers wrap to two lines; the list scrolls
 // sideways with the code and actions columns kept in view, as on purchase orders.
-const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time (PO date), 90 days", "Open issues"]);
-const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", "On time (PO date), 90 days", "Open issues"]);
+const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
+const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
 
 function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): Supplier {
   const text = (candidate: unknown, fallback = "") => String(candidate ?? "").trim() || fallback;
@@ -165,6 +168,9 @@ export default function SupplierMasterPage({
 }) {
   const { language, formatNumber } = useI18n();
   const { count, spendCell, onTimeCell } = useSupplierMetricCells();
+  const poPrice = usePoPrice();
+  // A failed request in the interface language, never the server's own words.
+  const failure = (reason: unknown) => apiErrorText(reason, language, ["Could not save the change. Try again.", "修改保存失败，请重试。"]);
   const copy = (label: string) => supplierCopy(workspaceCopy(label, language), language);
   const en = language === "en-US";
   // Status changes save at once, so each one is confirmed first.
@@ -227,6 +233,7 @@ export default function SupplierMasterPage({
       // Empty means "use the supplier's default currency" when saving.
       currency: "",
     });
+  useDetailCrumb(selected ? `${selected.supplierCode} · ${selected.supplierName}` : null);
   // Only the latest request may fill the list: an older, slower one is dropped.
   const loadSequence = useRef(0);
   const loadedOnce = useRef(false);
@@ -302,7 +309,7 @@ export default function SupplierMasterPage({
         entityLabel: normalizedSupplier.supplierName,
       });
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(apiErrorText(e, language, ["Could not load this supplier. Try again.", "供应商加载失败，请重试。"]));
     }
   };
   useEffect(() => { loadPaymentTerms(); }, []);
@@ -439,7 +446,7 @@ export default function SupplierMasterPage({
       );
       await openDetail(selected.id);
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(failure(e));
     }
   };
   const updateRelationship = async (
@@ -455,7 +462,7 @@ export default function SupplierMasterPage({
       );
       await openDetail(selected.id);
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(failure(e));
     }
   };
   const insightOf = (id: string): SupplierInsight | undefined => insights?.suppliers[id];
@@ -665,7 +672,7 @@ export default function SupplierMasterPage({
                     <td className={tdNowrapClass}>{copy(r.approved ? "是" : "否")}</td>
                     <td className={tdNumericRightClass}>{r.leadTimeDays == null ? "—" : formatNumber(r.leadTimeDays)}</td>
                     <td className={tdNumericRightClass}>{r.minimumOrderQuantity == null ? "—" : formatNumber(r.minimumOrderQuantity)}</td>
-                    <td className={tdNumericRightClass}>{r.currency} {r.referencePrice}</td>
+                    <td className={tdNumericRightClass}>{r.referencePrice === null || r.referencePrice === undefined ? "—" : poPrice(String(r.referencePrice), r.currency)}</td>
                     {relationshipHistory.state === "hidden" ? null : (
                       <td className={`${tdClass} min-w-[200px]`}>
                         {relationshipHistoryKey(r) && <PriceHistoryFacts compact history={relationshipHistory.histories.get(relationshipHistoryKey(r))} state={relationshipHistory.state} testId={`supplied-item-price-history-${r.itemId}`} />}
@@ -848,12 +855,12 @@ export default function SupplierMasterPage({
                     "Spend, 12 months",
                     "Open POs",
                     "Overdue POs",
-                    "On time (PO date), 90 days",
+                    "On time, 90 days",
                     "Open issues",
                     "状态",
                     ...(writes.suppliers ? ["操作"] : []),
                   ].map((h) => (
-                    <th key={copy(h)} className={`${thClass} align-bottom${WRAPPED_HEADERS.has(h) ? " !whitespace-normal min-w-[84px] max-w-[120px]" : ""}${NUMERIC_HEADERS.has(h) ? " text-right" : ""}${h === "供应商" ? " sticky left-0 z-20 bg-white" : h === "操作" ? " sticky right-0 z-20 bg-white" : ""}`} style={{ color: A.gray1 }}>
+                    <th key={copy(h)} title={h === "On time, 90 days" ? copy(ON_TIME_HEADER_TIP) : undefined} className={`${thClass} align-bottom${WRAPPED_HEADERS.has(h) ? " !whitespace-normal min-w-[84px] max-w-[120px]" : ""}${NUMERIC_HEADERS.has(h) ? " text-right" : ""}${h === "供应商" ? " sticky left-0 z-20 bg-white" : h === "操作" ? " sticky right-0 z-20 bg-white" : ""}`} style={{ color: A.gray1 }}>
                       {/* One supplier per row: the singular, not the Suppliers module name. */}
                       {h === "供应商" ? (language === "en-US" ? "Supplier" : "供应商") : copy(h)}
                     </th>

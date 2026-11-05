@@ -9,7 +9,7 @@ import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { supplierCopy } from "./supplierCopy";
 import { TierChip, TierForm, type Tier } from "./SupplierTier";
 import type { SupplierInsight, SupplierInsights } from "./supplierInsights";
-import { sortSuppliersBy, useSupplierMetricCells, type SupplierSort } from "./supplierMetrics";
+import { ON_TIME_HEADER_TIP, sortSuppliersBy, useSupplierMetricCells, type SupplierSort } from "./supplierMetrics";
 
 // Supplier evaluation (owner decision 2026-10-09): each supplier's indicators
 // (spend over 12 months, open and overdue POs, on time over 90 days, open
@@ -50,7 +50,7 @@ const SORTS: Array<{ value: SupplierSort; label: string }> = [
 ];
 const STATUS_LABEL: Record<Status, string> = { active: "Active", inactive: "Inactive", draft: "Draft" };
 // The long metric headers wrap to two lines, as on the supplier list.
-const METRIC_HEADERS = ["Spend, 12 months", "Open POs", "Overdue POs", "On time (PO date), 90 days", "Open issues"];
+const METRIC_HEADERS = ["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"];
 
 function normalize(value: Record<string, unknown>): EvaluatedSupplier {
   const text = (candidate: unknown) => String(candidate ?? "").trim();
@@ -222,7 +222,7 @@ export default function SupplierEvaluationPage() {
                   <th className={`${thClass} sticky left-0 z-20 bg-white align-bottom`} style={{ color: A.gray1 }}>{t("Supplier code")}</th>
                   <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Supplier name")}</th>
                   <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Business owner")}</th>
-                  {METRIC_HEADERS.map((label) => <th key={label} className={`${thClass} align-bottom !whitespace-normal min-w-[84px] max-w-[120px] text-right`} style={{ color: A.gray1 }}>{t(label)}</th>)}
+                  {METRIC_HEADERS.map((label) => <th key={label} title={label === "On time, 90 days" ? t(ON_TIME_HEADER_TIP) : undefined} className={`${thClass} align-bottom !whitespace-normal min-w-[84px] max-w-[120px] text-right`} style={{ color: A.gray1 }}>{t(label)}</th>)}
                   <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Tier")}</th>
                   {canEdit && <th className={`${thClass} sticky right-0 z-20 bg-white align-bottom`} style={{ color: A.gray1 }}>{t("Actions")}</th>}
                 </tr>

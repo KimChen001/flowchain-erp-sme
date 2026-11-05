@@ -11,7 +11,7 @@ import { procurementApi } from "./procurementApi";
 import type { ProcurementNavigate, ProcurementWorkItem } from "./procurementTypes";
 import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
-import { formatLocaleAmount } from "../../lib/format";
+import { formatCalendarDay, formatLocaleAmount } from "../../lib/format";
 
 const FINISHED_PURCHASE_ORDER_STATUSES = ["fully_received", "completed", "closed", "cancelled", "已完成", "已关闭", "已取消"];
 
@@ -222,7 +222,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
                     <StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} />
                     {row.transmissionStatus && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{statusLabel(row.transmissionStatus)}</div>}
                   </td>
-                  <td className={tdNowrapClass} style={{ color: A.sub }}>{row.dueDate || "—"}</td>
+                  <td className={tdNowrapClass} style={{ color: A.sub }}>{row.dueDate ? formatCalendarDay(row.dueDate, locale) : "—"}</td>
                   <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row)}</td>
                   {/* Signals wrap onto lines of their own, so the table fits and the sticky
                       Actions column does not cover them. */}

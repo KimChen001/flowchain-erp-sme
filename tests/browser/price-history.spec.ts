@@ -44,7 +44,7 @@ test('a supplied item shows its last PO price from this supplier in the link cur
   });
   await page.goto(`/app/master-data/suppliers/${supplierId}`);
   const facts = page.getByTestId(`supplied-item-price-history-${itemId}`);
-  await expect(facts.getByTestId(`supplied-item-price-history-${itemId}-latest`)).toHaveText('Last PO price USD 4.20 / EA · PO-0031 · 2026-09-14 · Acme');
+  await expect(facts.getByTestId(`supplied-item-price-history-${itemId}-latest`)).toHaveText('Last PO price USD 4.20 / EA · PO-0031 · Sep 14, 2026 · Acme');
   await expect(facts).toContainText('Average PO price of 2 (by quantity): USD 4.30');
   await expect(facts).toContainText('Earlier purchases in EUR, not compared');
   // Compact: earlier lines are left to the forms.
@@ -78,7 +78,7 @@ test('the facts read in Chinese, and a hidden price is never shown as 0', async 
   }] } }));
   await page.goto(`/app/master-data/suppliers/${supplierId}`);
   const facts = page.getByTestId(`supplied-item-price-history-${itemId}`);
-  await expect(facts.getByTestId(`supplied-item-price-history-${itemId}-latest`)).toHaveText('上次采购订单价对当前角色隐藏 · PO-0031 · 2026-09-10（下单日期 · 未记录下达日期） · Acme');
+  await expect(facts.getByTestId(`supplied-item-price-history-${itemId}-latest`)).toHaveText('上次采购订单价对当前角色隐藏 · PO-0031 · Sep 10, 2026（下单日期 · 未记录下达日期） · Acme');
   await expect(facts).toContainText('以往采购以 CASE 计，未比较');
   await expect(facts).not.toContainText('0.00');
 });
@@ -103,7 +103,7 @@ test('linking a new item shows its last PO price under the reference price, and 
   await page.goto(`/app/master-data/suppliers/${supplierId}`);
   await page.getByRole('combobox', { name: 'Select SKU' }).selectOption(newItemId);
   const facts = page.getByTestId('supplied-item-form-price-history');
-  await expect(facts.getByTestId('supplied-item-form-price-history-latest')).toHaveText('Last PO price USD 4.20 / EA · PO-0031 · 2026-09-14 · Acme');
+  await expect(facts.getByTestId('supplied-item-form-price-history-latest')).toHaveText('Last PO price USD 4.20 / EA · PO-0031 · Sep 14, 2026 · Acme');
   await expect(facts).toContainText('not invoiced or paid prices');
   await expect(facts).toHaveAttribute('role', 'group');
   await expect(page.getByRole('textbox', { name: 'Reference price' })).toHaveValue('');

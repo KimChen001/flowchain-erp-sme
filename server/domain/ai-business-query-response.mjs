@@ -74,7 +74,7 @@ const STATUS_COPY = Object.freeze({
   fully_received: ['Fully received', '全部收货'],
   receiving: ['Receiving', '收货中'],
   inspecting: ['Inspecting', '检验中'],
-  ready_for_receiving: ['Ready for posting', '待过账'],
+  ready_for_receiving: ['Ready to post', '待过账'],
   received: ['Received', '已收货'],
   unposted: ['Unposted', '未过账'],
   posted: ['Posted', '已过账'],

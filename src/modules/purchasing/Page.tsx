@@ -67,7 +67,9 @@ import {
   tableBodyTextClass,
 } from "../../components/ui/workbenchTable";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
-import { ExportButton, ListCard, ListSearchCard, ListStateRow, ResetButton, StatusChip, listButtonClass, metricGridClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, metricGridClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { BackToListLink } from "../procurement/BackToListLink";
+import { procurementErrorCode, procurementErrorText } from "../procurement/procurementErrors";
 import { PurchaseOrderReceiveAction, PurchaseOrderWorkflowActions, poSecondaryButtonClass, usePurchaseOrderActionNotes } from "./components/PurchaseOrderWorkflowActions";
 import { RecordBillAction } from "../../components/business/BillingEntryActions";
 import { PurchaseOrderPromiseDates } from "./components/PurchaseOrderPromiseDates";
@@ -131,6 +133,8 @@ type PoEvidenceRow = {
 type GrnEvidenceRow = {
   grn: string;
   grnLineId: string;
+  // The line's position on its receipt, shown instead of its id.
+  grnLineNumber: number;
   po: string;
   poLineId: string;
   supplier: string;
@@ -152,6 +156,8 @@ type InvoiceEvidenceRow = {
   currency?: string;
   invoiceNumber: string;
   invoiceLineId: string;
+  // The line's position on its invoice, shown instead of its id.
+  invoiceLineNumber: number;
   supplier: string;
   po: string;
   poLineId: string;
@@ -238,15 +244,19 @@ function useCalendarDay() {
   };
 }
 
-// A line made in the app has a random internal id (a UUID), which means
-// nothing to a person, so its card is headed by its position instead; a
-// readable line number (LOCAL-DEMO-PO-001-LINE-001) is shown as it is.
-const INTERNAL_LINE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// A line's internal id (a UUID, or LOCAL-DEMO-PO-001-LINE-001) means nothing
+// to a person, so a line is named by its position on its document ("Line 1");
+// the id stays in the tooltip for support.
+function useLineName() {
+  const say = useSay();
+  return (position: number) => say(`Line ${position}`, `第 ${position} 行`);
+}
 
 function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvidenceRow[]; currency?: string; priceHistory?: (poLineId: string) => React.ReactNode }) {
   const copy = useWorkspaceCopy();
   const say = useSay();
   const day = useCalendarDay();
+  const lineName = useLineName();
   const { formatNumber } = useI18n();
   if (!rows.length) {
     return <Card className="p-8 text-center text-xs" style={{ color: A.gray2 }}>{copy("当前采购订单没有明细行。")}</Card>;
@@ -259,8 +269,8 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
           {
             title: "来源",
             facts: [
-              [say("Source PR line", "来源采购申请行"), line.sourcePrLine],
-              [say("Source RFQ line", "来源询价行"), line.sourceRfqLine],
+              [say("Source PR line", "来源采购申请行"), line.sourcePrLine === "无采购申请" ? line.sourcePrLine : `${line.sourcePrLine} · ${lineName(line.lineNumber)}`],
+              [say("Source RFQ line", "来源询价行"), line.sourceRfqLine === "未经询价" ? line.sourceRfqLine : `${line.sourceRfqLine} · ${lineName(line.lineNumber)}`],
             ],
           },
           {
@@ -291,7 +301,7 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
           <article key={line.poLineId} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <div className="text-xs font-semibold tabular-nums" style={{ color: A.blue }}>{INTERNAL_LINE_ID.test(line.poLineId) ? `${copy("采购行")} ${line.lineNumber}` : line.poLineId}</div>
+                <div className="text-xs font-semibold tabular-nums" style={{ color: A.blue }} title={line.poLineId} data-testid="po-line-name">{lineName(line.lineNumber)}</div>
                 <div className="mt-1 text-sm font-semibold" style={{ color: A.label }}>{line.sku} · {line.itemName}</div>
                 {line.supplierOverride ? <div className="mt-1"><SupplierOverrideFlag override={line.supplierOverride} testId="po-line-supplier-override" /></div> : null}
               </div>
@@ -459,8 +469,8 @@ function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts, sour
       poLineId: line.poLineId,
       lineNumber: index + 1,
       currency: line.currency || po.currency,
-      sourcePrLine: po.sourceRequest ? `${sourceNumbers.request || po.sourceRequest}-L${String(index + 1).padStart(3, "0")}` : "无采购申请",
-      sourceRfqLine: po.sourceRfq ? `${sourceNumbers.rfq || po.sourceRfq}-L${String(index + 1).padStart(3, "0")}` : "未经询价",
+      sourcePrLine: po.sourceRequest ? sourceNumbers.request || po.sourceRequest : "无采购申请",
+      sourceRfqLine: po.sourceRfq ? sourceNumbers.rfq || po.sourceRfq : "未经询价",
       sku: safeText(line.sku, po.sourceSku || "SKU 待补齐"),
       itemName: safeText(line.itemName, po.sourceName || "物料名称待补齐"),
       quantity: ordered,
@@ -483,6 +493,8 @@ function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts, sour
 }
 
 const REJECTED_RECEIPT_NOTE = "拒收数量需要采购与财务协同复核";
+// The placeholder for a receipt or invoice line that names no PO line.
+const MISSING_PO_LINE = "采购订单行待补齐";
 
 function buildGrnRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): GrnEvidenceRow[] {
   const poLines = poLinesOf(po);
@@ -497,8 +509,9 @@ function buildGrnRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): GrnEvi
       return {
         grn: grn.grn,
         grnLineId: safeText(line.grnLineId, `${grn.grn}-L${String(index + 1).padStart(3, "0")}`),
+        grnLineNumber: index + 1,
         po: po.po,
-        poLineId: safeText(line.poLineId || poLine?.poLineId, "PO Line 待补齐"),
+        poLineId: safeText(line.poLineId || poLine?.poLineId, MISSING_PO_LINE),
         supplier: grn.supplier,
         sku: safeText(line.sku || poLine?.sku, "SKU 待补齐"),
         receivedQty,
@@ -535,14 +548,15 @@ function buildInvoiceRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): In
       varianceType: invoice.varianceType,
       varianceAmount: invoice.varianceAmount,
     }];
-    return invoiceLines.map((line) => ({
+    return invoiceLines.map((line, index) => ({
     currency: invoice.currency,
     invoiceNumber: invoice.invoiceNumber,
     invoiceLineId: line.lineId,
+    invoiceLineNumber: index + 1,
     supplier: invoice.supplier,
     po: invoice.relatedPo,
-    poLineId: safeText(line.poLine, "PO Line 待补齐"),
-    grnLineId: safeText(line.grnLine, "GRN / Receipt Line 待补齐"),
+    poLineId: safeText(line.poLine, MISSING_PO_LINE),
+    grnLineId: safeText(line.grnLine, "收货行待补齐"),
     sku: safeText(line.sku, "SKU 待补齐"),
     quantity: toNumber(line.quantity),
     unit: safeText(line.unit, "件"),
@@ -588,8 +602,6 @@ function suggestedActionForStatus(status: string, invoiceGap = 0) {
   if (status === "已匹配" && invoiceGap > MATCH_QTY_EPSILON) return "等待发票";
   return "财务协同复核";
 }
-
-const MISSING_PO_LINE = "PO Line 待补齐";
 
 function buildMatchRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): MatchEvidenceRow[] {
   const grnRows = buildGrnRows(po, facts);
@@ -768,7 +780,8 @@ export default function PurchasingOrdersPage({
   const [invoiceRecords, setInvoiceRecords] = useState<SupplierInvoice[]>([]);
   const [summary, setSummary] = useState<PurchaseOrderWorkbenchSummary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
+  // The failed read, shown as a translated sentence (its code in the tooltip).
+  const [loadError, setLoadError] = useState<{ error: unknown } | null>(null);
   const [filters, setFilters] = useState<PurchaseOrderWorkbenchFilters>(() => ({
     ...defaultPurchaseOrderWorkbenchFilters,
     poNumber: searchParams.get("po") || "",
@@ -792,7 +805,7 @@ export default function PurchasingOrdersPage({
   const loadWorkbench = React.useCallback(() => {
     let alive = true;
     setLoading(true);
-    setLoadError("");
+    setLoadError(null);
     apiJson<PurchaseOrderWorkbenchPayload>("/api/purchase-orders-workbench")
       .then((data) => {
         if (!alive) return;
@@ -809,7 +822,7 @@ export default function PurchasingOrdersPage({
         setReceivingRecords([]);
         setInvoiceRecords([]);
         setSummary(null);
-        setLoadError(error instanceof Error ? error.message : "采购订单加载失败");
+        setLoadError({ error });
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
@@ -854,15 +867,33 @@ export default function PurchasingOrdersPage({
   const sourceRfqNumber = useDocumentNumber("rfq", selectedPO?.sourceRfq, selectedPO?.rfqNumber);
   // The breadcrumb names the order by its number, not the id in the address.
   useDetailCrumb(viewMode === "detail" ? selectedPONumber : null);
+  const lineName = useLineName();
+  // The receipt, invoice and match tables name a line by its position on its
+  // document, as the line cards do; a placeholder ("not received yet") is
+  // translated, and an id the page cannot place is shown as it is.
+  const poLineLabel = (id: string) => {
+    const position = poLinesOf(selectedPO).findIndex((line) => line.poLineId === id);
+    return position >= 0 ? lineName(position + 1) : copy(id);
+  };
+  // "LOCAL-DEMO-GRN-001 · Line 1" for a receipt line id.
+  const receiptLineLabel = (id: string) => {
+    for (const grn of receivingRecords) {
+      const position = grnLinesOf(grn).findIndex((line) => line.grnLineId === id);
+      if (position >= 0) return `${grn.grn} · ${lineName(position + 1)}`;
+    }
+    return copy(id);
+  };
+  // "LOCAL-DEMO-INV-001 · Line 1" for a supplier invoice line id.
+  const invoiceLineLabel = (id: string) => {
+    for (const invoice of invoiceRecords) {
+      const position = invoice.lines.findIndex((line) => line.lineId === id);
+      if (position >= 0) return `${invoice.invoiceNumber} · ${lineName(position + 1)}`;
+    }
+    return copy(id);
+  };
   // Earlier PO prices for each line's item, unit and currency, in one
   // request. The server leaves this PO out and, once it is issued, every PO
   // dated after it. Display only.
-  // The receipt and match tables name an app-made line by its position, as its card does.
-  const poLineLabel = (id: string) => {
-    if (!INTERNAL_LINE_ID.test(id)) return id;
-    const position = poLinesOf(selectedPO).findIndex((line) => line.poLineId === id);
-    return position >= 0 ? `${copy("采购行")} ${position + 1}` : copy("采购行");
-  };
   // Notes for the header buttons, shown on a line under them.
   const actionNotes = usePurchaseOrderActionNotes({ status: selectedPO?.status || "", version: selectedPO?.version, billable: BILLABLE_PO_STATUSES.has(selectedPO?.status || "") });
   const poLineHistoryKeys = new Map((viewMode === "detail" && selectedPO?.lines ? selectedPO.lines : []).map((line) => [line.poLineId, priceHistoryKey({ itemId: line.itemId, unit: line.unit, currency: line.currency || selectedPO?.currency })]));
@@ -923,7 +954,7 @@ export default function PurchasingOrdersPage({
 
   async function exportCsv() {
     if (filtered.length === 0) {
-      toast.warning("暂无可导出的数据");
+      toast.warning(copy("暂无可导出的数据"));
       return;
     }
     // Document numbers, not internal ids, in the file.
@@ -946,7 +977,7 @@ export default function PurchasingOrdersPage({
       三单匹配状态: matchStatus(order, facts),
       下一步: nextStepForPo(order, facts),
     })));
-    toast.success("当前结果已导出");
+    toast.success(copy("当前结果已导出"));
   }
 
   function navigateOrderWithReturn(order: PurchaseOrder, moduleId: string, focusTarget?: { entityType: string; entityId: string } | null, label?: string) {
@@ -1032,9 +1063,11 @@ export default function PurchasingOrdersPage({
       ...(firstInvoice ? [{ key: "invoice", label: copy("查看采购发票"), onClick: focusFulfillmentEvidence }] : []),
       { key: "match", label: copy("查看三单匹配"), onClick: focusFulfillmentEvidence },
     ];
+    // The order status ("Partially received") already says what a receiving
+    // status of the same words would (compared in English, where the two
+    // vocabularies share their labels).
+    const receiptStatusRepeatsOrder = workspaceCopy(receivedStatus(selectedPO, facts), "en-US") === workspaceCopy(String(selectedPO.status), "en-US");
     const overviewFields: OverviewField[] = [
-      { label: copy("PO 编号"), value: selectedPONumber },
-      { label: copy("状态"), value: <POStatusPill status={selectedPO.status} /> },
       { label: copy("来源 PR"), value: selectedPO.sourceRequest ? sourceRequestNumber : copy("未从采购申请创建") },
       // A PO need not come from a request or an RFQ: neither is a gap (owner, 2026-11-03).
       { label: copy("来源 RFQ"), value: selectedPO.sourceRfq ? sourceRfqNumber : copy(selectedPO.sourceRequest ? "未经询价，由采购申请创建" : "未经询价") },
@@ -1045,17 +1078,17 @@ export default function PurchasingOrdersPage({
       { label: copy("预计到货"), value: day(selectedPO.eta) },
       { label: copy("目标仓库"), value: poLines[0]?.warehouse || warehouseName(selectedPO.warehouseId) || copy("目标仓库待补齐") },
       { label: copy("订单金额"), value: fmt(poAmount(selectedPO)) },
-      { label: copy("收货状态"), value: statusChip(receivedStatus(selectedPO, facts)) },
+      ...(receiptStatusRepeatsOrder ? [] : [{ label: copy("收货状态"), value: statusChip(receivedStatus(selectedPO, facts)) }]),
       { label: copy("发票状态"), value: statusChip(invoiceStatus(selectedPO, facts)) },
       { label: copy("匹配状态"), value: statusChip(matchStatus(selectedPO, facts)) },
       { label: copy("当前下一步"), value: copy(nextStepForPo(selectedPO, facts)) },
       { label: copy("延迟 / 未收齐风险"), value: <StatusChip label={copy(delayed ? "需关注" : "未触发")} tone={delayed ? "warning" : "success"} />, helper: delayNote },
     ];
-    const lineLabel = (id: string) => copy(poLineLabel(id));
+    const lineLabel = poLineLabel;
     const grnColumns: EvidenceColumn<GrnEvidenceRow>[] = [
       { key: "grn", label: say("Receipt", "收货单"), width: 180, render: (row) => <>
         <button type="button" className={`${tableLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openReceipt(row.grn)}>{row.grn}</button>
-        <Sub><span className="whitespace-nowrap">{row.grnLineId}</span></Sub>
+        <Sub><span className="whitespace-nowrap" title={row.grnLineId}>{lineName(row.grnLineNumber)}</span></Sub>
       </> },
       { key: "poLine", label: say("PO line", "采购订单行"), width: 230, render: (row) => <>
         <div className="whitespace-nowrap">{lineLabel(row.poLineId)}</div>
@@ -1076,7 +1109,7 @@ export default function PurchasingOrdersPage({
         {row.note === REJECTED_RECEIPT_NOTE ? <Sub>{copy(row.note)}</Sub> : null}
       </> },
       { key: "invoiceLine", label: say("Invoice line", "发票行"), width: 180, render: (row) => <>
-        <div className="whitespace-nowrap">{copy(row.invoiceLine)}</div>
+        <div className="break-words" title={row.invoiceLine}>{invoiceLineLabel(row.invoiceLine)}</div>
         <Sub>{row.invoiceImpact === "影响发票匹配" ? say("Counted in the invoice match", "已计入发票匹配") : copy(row.invoiceImpact)}</Sub>
       </> },
     ];
@@ -1085,12 +1118,12 @@ export default function PurchasingOrdersPage({
         {canOpenInvoice
           ? <button type="button" className={`${tableLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openInvoice(row.invoiceNumber)}>{row.invoiceNumber}</button>
           : <span className="whitespace-nowrap font-medium" style={{ color: A.blue }}>{row.invoiceNumber}</span>}
-        <Sub><span className="whitespace-nowrap">{row.invoiceLineId}</span></Sub>
+        <Sub><span className="whitespace-nowrap" title={row.invoiceLineId}>{lineName(row.invoiceLineNumber)}</span></Sub>
       </> },
       { key: "poLine", label: say("PO line", "采购订单行"), width: 230, render: (row) => <>
         <div className="whitespace-nowrap">{lineLabel(row.poLineId)}</div>
         <Sub>{copy(row.sku)}</Sub>
-        <Sub><span className="whitespace-nowrap">{say("Receipt: ", "收货：")}{copy(row.grnLineId)}</span></Sub>
+        <Sub><span className="whitespace-nowrap" title={row.grnLineId}>{say("Receipt: ", "收货：")}{receiptLineLabel(row.grnLineId)}</span></Sub>
       </> },
       { key: "quantity", label: copy("开票数量"), width: 120, align: "right", render: (row) => <>
         <div className="whitespace-nowrap">{formatNumber(row.quantity)} {copy(row.unit)}</div>
@@ -1118,8 +1151,8 @@ export default function PurchasingOrdersPage({
     const matchColumns: EvidenceColumn<MatchEvidenceRow>[] = [
       { key: "poLine", label: say("PO line", "采购订单行"), width: 220, render: (row) => <>
         <div className="whitespace-nowrap">{lineLabel(row.poLineId)}</div>
-        <Sub><span className="whitespace-nowrap">{say("Receipt: ", "收货：")}{copy(row.grnLineId)}</span></Sub>
-        <Sub><span className="whitespace-nowrap">{say("Invoice: ", "发票：")}{copy(row.invoiceLineId)}{row.moreInvoiceLines ? say(` +${formatNumber(row.moreInvoiceLines)} more`, ` 等 ${formatNumber(row.moreInvoiceLines + 1)} 行`) : ""}</span></Sub>
+        <Sub><span className="whitespace-nowrap" title={row.grnLineId}>{say("Receipt: ", "收货：")}{receiptLineLabel(row.grnLineId)}</span></Sub>
+        <Sub><span className="whitespace-nowrap" title={row.invoiceLineId}>{say("Invoice: ", "发票：")}{invoiceLineLabel(row.invoiceLineId)}{row.moreInvoiceLines ? say(` +${formatNumber(row.moreInvoiceLines)} more`, ` 等 ${formatNumber(row.moreInvoiceLines + 1)} 行`) : ""}</span></Sub>
       </> },
       { key: "poQty", label: copy("订购数量"), width: 80, align: "right", render: (row) => formatNumber(row.poQty) },
       { key: "receivedQty", label: copy("已收数量"), width: 110, align: "right", render: (row) => <>
@@ -1153,18 +1186,20 @@ export default function PurchasingOrdersPage({
       </> },
     ];
 
+    // The order's number is the heading, under a small "Purchase order" label;
+    // its status is shown once, beside that label.
     return (
+      <div className="space-y-3">
+      <BackToListLink list="orders" />
       <DocumentShell
-        title={copy("采购订单 / PO")}
-        documentNo={selectedPONumber}
-        moduleLabel="采购订单证据"
+        title={selectedPONumber}
+        moduleLabel={say("Purchase order", "采购订单")}
         status={selectedPO.status}
         statusTone={poStatusToneOf(selectedPO.status)}
-        subtitle={`${selectedPO.supplier} · ${copy(receivedStatus(selectedPO, facts))} · ${copy(invoiceStatus(selectedPO, facts))}`}
+        subtitle={selectedPO.supplier}
       >
         <div className="space-y-3" data-testid="po-header-actions">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <RecoveryActions actions={[{ key: "po-list", label: copy("返回采购订单"), onClick: returnToList, kind: "list" }]} />
             <nav aria-label={say("Related records", "相关单据")} className="flex flex-wrap items-center gap-x-4 gap-y-1">
               {relatedLinks.map((link) => (
                 <button key={link.key} type="button" onClick={link.onClick} className={relatedLinkClass}>{link.label}</button>
@@ -1209,7 +1244,7 @@ export default function PurchasingOrdersPage({
             currency={selectedPO.currency}
             priceHistory={(poLineId) => poLineHistoryKeys.get(poLineId) ? (
               <div className="mt-2">
-                <PriceHistoryFacts history={poPriceHistory.histories.get(poLineHistoryKeys.get(poLineId) || "")} state={poPriceHistory.state} testId={`po-line-price-history-${poLineId}`} />
+                <PriceHistoryFacts history={poPriceHistory.histories.get(poLineHistoryKeys.get(poLineId) || "")} state={poPriceHistory.state} testId={`po-line-price-history-${poLineId}`} excludesThisOrder />
               </div>
             ) : null}
           />
@@ -1252,7 +1287,7 @@ export default function PurchasingOrdersPage({
             testId="po-invoice-lines"
             rows={invoiceRows}
             rowKey={(row) => `${row.invoiceNumber}:${row.invoiceLineId}`}
-            emptyText={copy("当前 PO 尚未读取到 Invoice Line。")}
+            emptyText={copy("当前采购订单暂无发票行。")}
             columns={invoiceColumns}
           />
         </div>
@@ -1282,28 +1317,30 @@ export default function PurchasingOrdersPage({
 
 
         <div>
-          <SectionTitle title={copy("历史记录")} />
+          <SectionTitle title={copy("变更记录")} />
           <DocumentHistoryPanel
             entityType="purchaseOrder"
             entityId={selectedPO.po}
-            title={copy("采购订单历史")}
+            title={copy("订单变更记录")}
+            emptyText="此订单暂无变更记录。收货和发票见上方。"
             refreshKey={selectedPO.lastAuditId || selectedPO.auditTrailIds?.join(",") || selectedPO.status}
           />
         </div>
 
       </DocumentShell>
+      </div>
     );
   })();
 
   if (loading) {
-    return <Card className="p-12 text-center text-sm" data-testid="po-loading-state">{copy("正在读取 PostgreSQL 采购订单与履约证据…")}</Card>;
+    return <Card className="p-12 text-center text-sm" data-testid="po-loading-state">{copy("正在加载采购订单…")}</Card>;
   }
 
   if (loadError) {
     return (
       <Card className="p-12 text-center" data-testid="po-error-state">
         <div className="text-sm font-semibold">{copy("采购订单加载失败")}</div>
-        <div className="mt-2 text-xs" style={{ color: A.sub }}>{loadError}</div>
+        <div className="mt-2 text-xs" style={{ color: A.sub }} title={procurementErrorCode(loadError.error)}>{procurementErrorText(loadError.error, language, ["Try again in a moment.", "请稍后重试。"])}</div>
         <button type="button" onClick={() => loadWorkbench()} className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white">{copy("重试")}</button>
       </Card>
     );
@@ -1313,9 +1350,9 @@ export default function PurchasingOrdersPage({
     return (
       <div className="space-y-5">
         {selectedPO ? detailContent : (
-          <Card className="p-8 text-center text-xs" style={{ color: A.gray2 }}>
+          <Card className="flex flex-wrap items-center justify-center gap-3 p-8 text-center text-xs" style={{ color: A.gray2 }}>
             {copy("未找到采购订单。")}
-            <button onClick={returnToList} className="ml-3 px-3 py-1.5 rounded-lg font-medium" style={{ background: A.gray6, color: A.blue }}>{copy("返回 PO 列表")}</button>
+            <RecoveryActions actions={[{ key: "po-list", label: copy("返回采购订单"), onClick: returnToList, kind: "list" }]} />
           </Card>
         )}
       </div>
@@ -1336,6 +1373,7 @@ export default function PurchasingOrdersPage({
         subtitle={copy("查询 PO、来源 PR / RFQ、供应商、收货、发票和三单匹配状态")}
         actions={<>
           <ResetButton onClick={resetFilters} />
+          <RefreshButton onClick={() => loadWorkbench()} />
           <ExportButton onClick={exportCsv} />
         </>}
       >
@@ -1413,7 +1451,7 @@ export default function PurchasingOrdersPage({
                     <td className={tdNowrapClass}><POStatusPill status={order.status} /></td>
                     <td className={`${tdNowrapClass} truncate`} style={{ color: A.sub }}>{order.owner}</td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{formatCurrencyAmount(poAmount(order), order.currency)}</td>
-                    <td className={tdNowrapClass} style={{ color: A.sub }}>{order.eta}</td>
+                    <td className={tdNowrapClass} style={{ color: A.sub }}>{order.eta ? day(order.eta) : "—"}</td>
                     <td className={tdNowrapClass}>
                       <div className="flex flex-col items-start gap-1">
                         {statusChip(receivedStatus(order, facts))}
@@ -1425,12 +1463,11 @@ export default function PurchasingOrdersPage({
                       <div className="flex items-center gap-1.5">
                         <button onClick={() => openDetail(order.po)} className={rowActionClass.primary}>{copy("查看")}</button>
                         <details className="relative"><summary className={`cursor-pointer list-none ${rowActionClass.neutral}`}>{copy("更多")}</summary><div className="absolute right-0 top-7 z-30 w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
-                          <button onClick={() => openDetail(order.po)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看订单行与证据")}</button>
-                          {firstGrn && <button onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, firstGrn.grn)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开收货记录")}</button>}
-                          {firstInvoice && canOpenRoute("procurement:bills") && <button onClick={() => navigateOrderWithReturn(order, "procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开采购发票")}</button>}
-                          {canOpenRoute("procurement:match") && <button onClick={() => navigateOrderWithReturn(order, "procurement:match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开三单匹配")}</button>}
-                          {order.sourceRequest && <button onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, documentNumberFor("purchase_request", order.sourceRequest, order.prNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开来源 PR")}</button>}
-                          {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, documentNumberFor("rfq", order.sourceRfq, order.rfqNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开来源 RFQ")}</button>}
+                          {firstGrn && <button onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, firstGrn.grn)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看收货单")}</button>}
+                          {firstInvoice && canOpenRoute("procurement:bills") && <button onClick={() => navigateOrderWithReturn(order, "procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看采购发票")}</button>}
+                          {canOpenRoute("procurement:match") && <button onClick={() => navigateOrderWithReturn(order, "procurement:match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看三单匹配")}</button>}
+                          {order.sourceRequest && <button onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, documentNumberFor("purchase_request", order.sourceRequest, order.prNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{say("View source PR", "查看来源采购申请")}</button>}
+                          {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, documentNumberFor("rfq", order.sourceRfq, order.rfqNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{say("View source RFQ", "查看来源询价")}</button>}
                         </div></details>
                       </div>
                     </td>

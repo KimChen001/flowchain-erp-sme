@@ -51,7 +51,7 @@ test.skip("governed settlement runs create, submit, independent approval, post, 
   await page.getByTestId("submit-settlement").click();
   await expect(page.getByTestId("settlement-detail")).toContainText("submitted");
   await page.getByTestId("approve-settlement").click();
-  await expect(page.getByTestId("settlement-detail")).toContainText("creator may not approve");
+  await expect(page.getByTestId("settlement-detail")).toContainText("核销的创建人不能批准");
   const settlementId = decodeURIComponent(new URL(page.url()).pathname.split("/").pop()!);
 
   const managerContext = await browser.newContext();

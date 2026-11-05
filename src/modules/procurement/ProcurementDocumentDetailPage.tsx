@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router";
 import { RefreshCw } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Card } from "../../components/ui";
@@ -9,6 +10,8 @@ import { ApiError } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { procurementApi } from "./procurementApi";
+import { BackToListLink } from "./BackToListLink";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import type { ProcurementDocument } from "./procurementTypes";
 
 type DetailKind = "invoice" | "threeWayMatch";
@@ -26,6 +29,7 @@ function readFailureState(error: unknown): Exclude<ReadState, "loading" | "loade
 const zh: Record<string, string> = {
   "Supplier invoice details": "供应商发票详情", "Three-way match details": "三单匹配详情",
   "Read-only view of this workspace's purchasing records. Approval, matching and posting are not available here.": "只读查看当前工作区的采购单据，此处不能审批、匹配或过账。",
+  "Read-only: this page compares the purchase order, receipt and supplier invoice. Variances are resolved on the supplier invoice.": "只读：本页比对采购订单、收货单和采购发票。差异在采购发票上处理。",
   "Refresh": "刷新", "Loading…": "正在读取…", "Retry": "重试",
   "This document was not found in the current workspace, or you cannot see it.": "当前工作区未找到该单据，或您无权查看。",
   "Document number: {id}": "单据编号：{id}",
@@ -59,6 +63,11 @@ const zh: Record<string, string> = {
   "The variance recorded on the invoice is {amount}; the lines above add up to a different amount.": "发票上记录的差异金额为 {amount}，与上方各行合计不一致。",
   "Line detail is not available for this match, so only the recorded invoice amount and variance are shown. The purchase order total is not compared with the invoice.": "该匹配暂无行明细，因此仅显示发票记录的金额和差异，不将采购订单总额与发票比较。",
   "Amounts are hidden for your role.": "您的角色无法查看金额。",
+  // The page heading and the way to the invoice, where a variance is resolved.
+  "Three-way match · {invoice}": "三单匹配 · {invoice}", "Supplier invoice · {invoice}": "采购发票 · {invoice}",
+  "Line {n}": "第 {n} 行",
+  "Variances are reviewed and resolved on the supplier invoice.": "差异在采购发票上复核和处理。",
+  "Resolve it on the supplier invoice": "到采购发票上处理差异",
 };
 
 function useDetailCopy() {
@@ -222,9 +231,8 @@ function LineMatch({ match, invoiceTotal, currency, copy, locale }: {
               return (
                 <tr key={line.invoiceLineId || index} className={listRowClass} style={listRowStyle(index, lines.length)} data-testid="three-way-match-line">
                   <td className={`${tdClass} align-top`}>
-                    <div className="whitespace-nowrap font-medium">{line.poLineId || "—"}</div>
+                    <div className="whitespace-nowrap font-medium" title={[line.poLineId, line.invoiceLineId].filter(Boolean).join(" · ") || undefined}>{copy("Line {n}", { n: String(index + 1) })}</div>
                     <div className={subClass} style={{ color: A.sub }}>{[line.sku, line.itemName, line.unit ? copy(line.unit) : ""].filter(Boolean).join(" · ") || "—"}</div>
-                    {line.invoiceLineId ? <div className={`${subClass} whitespace-nowrap`} style={{ color: A.sub }}>{copy("Invoice line")} {line.invoiceLineId}</div> : null}
                   </td>
                   <td className={`${tdNumericRightClass} align-top`}>{qty(line.orderedQty)}</td>
                   <td className={`${tdNumericRightClass} align-top`}>
@@ -349,6 +357,14 @@ export function ProcurementDocumentDetailPage({
   const poId = record?.relatedPo || record?.poId || record?.po;
   const grnId = record?.relatedGrn || record?.grnId;
   const invoiceId = isInvoice ? record?.id : record?.invoiceId;
+  const invoiceNumber = record?.invoiceNumber || (isInvoice ? record?.id : record?.invoiceId) || "";
+  // The page names the match by its invoice; the match's own id stays in the tooltip.
+  const heading = invoiceNumber
+    ? copy(isInvoice ? "Supplier invoice · {invoice}" : "Three-way match · {invoice}", { invoice: invoiceNumber })
+    : record?.id || documentId;
+  useDetailCrumb(state === "loaded" ? invoiceNumber || record?.id : null);
+  // A variance is resolved on the supplier invoice; this page only reads.
+  const canResolveOnInvoice = !isInvoice && Boolean(invoiceId);
   // The match, read line by line when the server returns its lines. Without
   // them (an older server, or an invoice with no lines) the page shows the
   // recorded invoice amount and variance only, never the whole PO total
@@ -372,11 +388,14 @@ export function ProcurementDocumentDetailPage({
 
   return (
     <div className="space-y-4" data-testid={`procurement-${kind}-detail`}>
+      <BackToListLink list={isInvoice ? "bills" : "match"} />
       <Card className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
         <div>
           <div className="text-sm font-semibold">{title}</div>
           <div className="mt-1 text-xs" style={{ color: A.sub }}>
-            {copy("Read-only view of this workspace's purchasing records. Approval, matching and posting are not available here.")}
+            {isInvoice
+              ? copy("Read-only view of this workspace's purchasing records. Approval, matching and posting are not available here.")
+              : copy("Read-only: this page compares the purchase order, receipt and supplier invoice. Variances are resolved on the supplier invoice.")}
           </div>
         </div>
         <button type="button" onClick={() => void load()} className="inline-flex items-center gap-1 rounded border px-3 py-2 text-xs">
@@ -417,7 +436,7 @@ export function ProcurementDocumentDetailPage({
           <>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-xl font-semibold">{record.id || documentId}</h2>
+                <h2 className="text-xl font-semibold" title={record.id || documentId} data-testid="procurement-document-heading">{heading}</h2>
                 <p className="mt-1 text-sm" style={{ color: A.sub }}>{record.supplierName || copy("No linked supplier")}</p>
               </div>
               {statusChip(status === "—" ? undefined : status)}
@@ -459,9 +478,15 @@ export function ProcurementDocumentDetailPage({
             </dl>
 
             {blockingReason && (
-              <div className="mt-4 rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-900">
-                {copy(blockingReason)}
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-900" data-testid="three-way-match-blocking-reason">
+                <span>{copy(blockingReason)}</span>
+                {canResolveOnInvoice && (
+                  <Link to={`/app/procurement/bills/${encodeURIComponent(invoiceId || "")}`} className="whitespace-nowrap font-semibold text-blue-600 hover:underline" data-testid="three-way-match-resolve-link">{copy("Resolve it on the supplier invoice")} →</Link>
+                )}
               </div>
+            )}
+            {!blockingReason && canResolveOnInvoice && (
+              <p className="mt-4 text-xs" style={{ color: A.sub }}>{copy("Variances are reviewed and resolved on the supplier invoice.")}</p>
             )}
             {matchLines && match ? (
               <LineMatch match={match} invoiceTotal={invoiceTotal} currency={match.currency || record.currency} copy={copy} locale={locale} />

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FilePlus2, RefreshCw } from "lucide-react";
+import { Link } from "react-router";
 import { A, Card } from "../../components/ui";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { useI18n } from "../../i18n/I18n";
@@ -11,6 +12,10 @@ import { PaymentRecords } from "./PaymentRecords";
 import { addCalendarDays } from "../../lib/prefill";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { documentNumberFor, rememberDocumentNumbers, useDocumentNumber } from "../../lib/documentNumbers";
+import { BackToListLink } from "../procurement/BackToListLink";
+import { procurementErrorCode, procurementErrorText } from "../procurement/procurementErrors";
+import { invoiceVarianceLabelKey } from "../../domain/procurement/variance-types";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
 
 // The supplier invoice screens of the trial's procure-to-pay chain: enter an
 // invoice against a posted receipt, then submit, match, review exceptions,
@@ -280,7 +285,9 @@ type LinkPlan = Plan & { warnings?: Issue[]; receipt?: { documentNumber?: string
 // A bill recorded before the goods arrived is linked to its receipt once the
 // warehouse posts it; only then can it be matched, approved and paid.
 function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: number; relatedPoId: string; relatedPoNumber?: string; poNumber?: string; receiptCandidates?: Array<{ id: string; documentNumber: string | null }> }; onDone: () => void }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  // The failed request's code, in the error's tooltip for support.
+  const [errorCode, setErrorCode] = useState<string | undefined>();
   const candidates = invoice.receiptCandidates || [];
   const [open, setOpen] = useState(false);
   const [receiptId, setReceiptId] = useState(candidates[0]?.id || "");
@@ -304,7 +311,8 @@ function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: numb
       setOpen(false);
       onDone();
     } catch (reason) {
-      setError(reason instanceof ApiError || reason instanceof Error ? reason.message : t("finance.loadFailed"));
+      setError(procurementErrorText(reason, language, ["The receipt could not be linked. Try again.", "收货单关联失败，请重试。"]));
+      setErrorCode(procurementErrorCode(reason));
     } finally {
       setBusy(false);
     }
@@ -325,7 +333,7 @@ function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: numb
         ? <Notice tone="success">{t("finance.previewAllowed")}</Notice>
         : <Notice>{(plan.blockingIssues || []).map((issue) => issue.message).join(" · ")}</Notice>)}
       {plan?.allowed && Boolean(plan.warnings?.length) && <Notice>{(plan.warnings || []).map((issue) => issue.message).join(" · ")}</Notice>}
-      {error && <Notice>{error}</Notice>}
+      {error && <div title={errorCode}><Notice>{error}</Notice></div>}
     </div>
   );
 }
@@ -476,6 +484,49 @@ function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { i
   );
 }
 
+// ---------------------------------------------------------- variance reason
+
+// One line of the three-way match, as the procurement read model returns it.
+type VarianceLine = { sku?: string; itemName?: string; unit?: string; status?: string; invoicedQty?: number | null; receivedQty?: number | null; poUnitPrice?: number | null; invoiceUnitPrice?: number | null; varianceAmount?: number | null };
+
+// Why a bill is in exception, at the top of the page: the recorded variance
+// and, when the three-way match can be read, each line that differs from the
+// purchase order or the receipt. Approving the bill accepts the difference, so
+// the reason comes before the buttons.
+function VarianceReason({ invoice }: { invoice: { id: string; version?: number; currency?: string; varianceAmount?: string | number | null } }) {
+  const { language, locale, formatNumber } = useI18n();
+  const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
+  const matchId = `MATCH-${invoice.id}`;
+  const [lines, setLines] = useState<VarianceLine[]>([]);
+  useEffect(() => {
+    let alive = true;
+    apiJson<{ document?: { lines?: VarianceLine[] } }>(`/api/procurement/documents/threeWayMatch/${encodeURIComponent(matchId)}`)
+      .then((payload) => { if (alive) setLines((payload.document?.lines || []).filter((line) => line.status && line.status !== "matched")); })
+      // Without the match (no permission, or none recorded) the recorded variance is shown alone.
+      .catch(() => { if (alive) setLines([]); });
+    return () => { alive = false; };
+  }, [matchId, invoice.version]);
+  const amount = (value: unknown) => money(value, invoice.currency, locale);
+  const quantity = (value: number | null | undefined) => (typeof value === "number" && Number.isFinite(value) ? formatNumber(value) : "—");
+  const lineText = (line: VarianceLine) => {
+    const item = line.sku || line.itemName || say("A line", "某行");
+    const price = say(`invoice price ${amount(line.invoiceUnitPrice)}, PO price ${amount(line.poUnitPrice)}`, `发票单价 ${amount(line.invoiceUnitPrice)}，订单单价 ${amount(line.poUnitPrice)}`);
+    const qty = say(`invoiced ${quantity(line.invoicedQty)}, received ${quantity(line.receivedQty)}`, `开票 ${quantity(line.invoicedQty)}，已收 ${quantity(line.receivedQty)}`);
+    const parts = line.status === "price_variance" ? [price] : line.status === "quantity_variance" ? [qty] : line.status === "price_and_quantity_variance" ? [price, qty] : [];
+    const difference = typeof line.varianceAmount === "number" && line.varianceAmount ? say(` (${line.varianceAmount > 0 ? "+" : ""}${amount(line.varianceAmount)})`, `（${line.varianceAmount > 0 ? "+" : ""}${amount(line.varianceAmount)}）`) : "";
+    return `${item}${say(": ", "：")}${parts.join(say("; ", "；")) || say("differs from the purchase order", "与采购订单不一致")}${difference}`;
+  };
+  const recorded = Number(invoice.varianceAmount || 0);
+  return (
+    <div className="mt-4 space-y-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" data-testid="supplier-invoice-variance-reason">
+      <div className="font-medium">{recorded ? say(`This invoice differs from the purchase order or receipt by ${amount(recorded)}.`, `该发票与采购订单或收货相差 ${amount(recorded)}。`) : say("This invoice differs from the purchase order or receipt.", "该发票与采购订单或收货不一致。")}</div>
+      {lines.map((line, index) => <div key={index} className="text-xs">{lineText(line)}</div>)}
+      <div className="text-xs">{say("Review the difference before approving: approving accepts it.", "批准前请复核差异：批准即表示接受该差异。")}{" "}<Link to={`/app/procurement/three-way-match/${encodeURIComponent(matchId)}`} className="font-semibold text-blue-600 hover:underline" data-testid="supplier-invoice-variance-match">{say("Open the three-way match", "查看三单匹配")}</Link></div>
+    </div>
+  );
+}
+
+
 type BillReadFailure = "notFound" | "unauthenticated" | "forbidden" | "error";
 
 function billReadFailure(reason: unknown): BillReadFailure {
@@ -487,7 +538,7 @@ function billReadFailure(reason: unknown): BillReadFailure {
 }
 
 export function SupplierInvoiceDetail() {
-  const { t, locale } = useI18n();
+  const { t, locale, language, formatNumber } = useI18n();
   const id = decodeURIComponent(window.location.pathname.split("/").filter(Boolean).at(-1) || "");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
@@ -509,11 +560,14 @@ export function SupplierInvoiceDetail() {
     const testId = { notFound: "supplier-invoice-not-found", unauthenticated: "supplier-invoice-unauthenticated", forbidden: "supplier-invoice-forbidden", error: "supplier-invoice-read-error" }[failure];
     const text = { notFound: t("finance.billNotFound"), unauthenticated: t("finance.billSignedOut"), forbidden: t("finance.billForbidden"), error: t("finance.billReadError") }[failure];
     return (
+      <div className="space-y-3">
+      <BackToListLink list="bills" />
       <Card className="py-16 text-center" data-testid={testId}>
         <div className="text-sm font-semibold">{text}</div>
         <div className="mt-2 text-xs text-slate-500">{id}</div>
         {failure === "error" && <button type="button" onClick={load} className="mt-3 text-sm font-semibold text-blue-600">{t("finance.retry")}</button>}
       </Card>
+      </div>
     );
   }
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
@@ -523,8 +577,12 @@ export function SupplierInvoiceDetail() {
   const exceptions: any[] = data.match?.exceptions || [];
   const payable = data.payable;
   const payableActions: string[] = Array.isArray(payable?.availableActions) ? payable.availableActions : [];
+  // An invoice in exception differs from its PO or receipt: the reason is shown
+  // first and Approve, which accepts the difference, is not the main button.
+  const inException = data.status === "exception" || exceptions.some((entry) => entry.status === "open");
   return (
     <div className="space-y-4" data-testid="supplier-invoice-detail">
+      <BackToListLink list="bills" />
       {error && <Notice>{error}</Notice>}
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -542,6 +600,7 @@ export function SupplierInvoiceDetail() {
             <div className="mt-1"><StatusChip status={data.status} /></div>
           </div>
         </div>
+        {inException && <VarianceReason invoice={data} />}
         {data.awaitingReceipt && (
           <div className="mt-4 space-y-2" data-testid="supplier-invoice-awaiting-receipt">
             <Notice>{t("finance.awaitingReceiptNote")}</Notice>
@@ -551,7 +610,7 @@ export function SupplierInvoiceDetail() {
         <div className="mt-4 flex flex-wrap gap-2" data-testid="supplier-invoice-actions">
           {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="invoice-submit" oneStep previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={() => version} onDone={load} />}
           {actions.includes("match") && <TwoStepAction label={t("finance.action.match")} testId="invoice-match" oneStep previewUrl={`${base}/match-preview`} runUrl={`${base}/match`} payload={() => version} onDone={load} />}
-          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="invoice-approve" oneStep previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={() => version} issueText={duplicateIssueText(t)} issueDetail={(issue) => <DuplicateApprovalDetail issue={issue} />} onDone={load} />}
+          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="invoice-approve" tone={inException ? "secondary" : "primary"} oneStep previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={() => version} issueText={duplicateIssueText(t)} issueDetail={(issue) => <DuplicateApprovalDetail issue={issue} />} onDone={load} />}
           {actions.includes("cancel") && <TwoStepAction label={t("finance.action.cancel")} testId="invoice-cancel" tone="secondary" previewUrl={`${base}/cancel-preview`} runUrl={`${base}/cancel`} payload={() => version} reasonLabel={t("finance.cancelReason")} onDone={load} />}
           {!actions.filter((action) => !["link_receipt", "revise", "dismiss_duplicate"].includes(action)).length && <span className="text-xs text-slate-500">{t("finance.noActions")}</span>}
         </div>
@@ -565,7 +624,7 @@ export function SupplierInvoiceDetail() {
           <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2">SKU</th><th className="py-2">{t("finance.quantity")}</th><th className="py-2">{t("finance.unitPrice")}</th><th className="py-2">{t("finance.tax")}</th><th className="py-2">{t("finance.amount")}</th></tr></thead>
           <tbody>
             {(data.lines || []).map((line: any) => (
-              <tr key={line.id} className="border-b border-slate-50"><td className="py-2">{line.sku} · {line.itemName}</td><td className="py-2">{line.quantity} {line.unit || ""}</td><td className="py-2">{money(line.unitPrice, data.currency, locale)}</td><td className="py-2">{money(line.enteredTaxAmount, data.currency, locale)}</td><td className="py-2">{money(line.totalAmount, data.currency, locale)}</td></tr>
+              <tr key={line.id} className="border-b border-slate-50"><td className="py-2">{line.sku} · {line.itemName}</td><td className="py-2">{Number.isFinite(Number(line.quantity)) && line.quantity !== null && line.quantity !== "" ? formatNumber(Number(line.quantity)) : "—"} {line.unit || ""}</td><td className="py-2">{money(line.unitPrice, data.currency, locale)}</td><td className="py-2">{money(line.enteredTaxAmount, data.currency, locale)}</td><td className="py-2">{money(line.totalAmount, data.currency, locale)}</td></tr>
             ))}
           </tbody>
         </table>
@@ -578,7 +637,7 @@ export function SupplierInvoiceDetail() {
           {exceptions.map((entry) => (
             <div key={entry.id} className="space-y-2 rounded-xl bg-slate-50 p-3 text-sm" data-testid="match-exception">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div><span className="font-medium">{entry.exceptionType}</span> · {t("finance.expected")} {entry.expectedValue ?? "—"} · {t("finance.actual")} {entry.actualValue ?? "—"}</div>
+                <div><span className="font-medium">{workspaceCopy(invoiceVarianceLabelKey(entry.exceptionType), language)}</span> · {t("finance.expected")} {entry.expectedValue ?? "—"} · {t("finance.actual")} {entry.actualValue ?? "—"}</div>
                 <StatusChip status={entry.status} />
               </div>
               {entry.resolution && <div className="text-xs text-slate-500">{entry.resolution}</div>}

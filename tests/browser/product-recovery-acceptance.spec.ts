@@ -77,9 +77,10 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await capture(page, "01a-order-fulfillment-lines");
 
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-001");
-  await expect(page.getByRole("heading", { name: "采购订单 / PO" })).toBeVisible();
-  await expect(page.getByText(/LOCAL-DEMO-PO-001 · Acme Components/)).toBeVisible();
-  await expect(page.getByText("LOCAL-DEMO-PO-001-LINE-001", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "LOCAL-DEMO-PO-001", exact: true })).toBeVisible();
+  await expect(page.getByTestId("po-line-name").first()).toHaveText("第 1 行");
+  await expect(page.getByTestId("po-line-name").first()).toHaveAttribute("title", "LOCAL-DEMO-PO-001-LINE-001");
+  await expect(page.locator("main").first()).not.toContainText("LOCAL-DEMO-PO-001-LINE-001");
   await expect(page.getByText("LOCAL-DEMO-GRN-001", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-INV-001", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("金额差异", { exact: true }).first()).toBeVisible();
@@ -96,9 +97,9 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByTestId("po-fulfillment-focus")).toHaveAttribute("data-focus-highlight", "true");
 
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-002");
-  await expect(page.getByText("LOCAL-DEMO-PO-002-LINE-001", { exact: true }).first()).toBeVisible();
+  await expect(page.getByTestId("po-line-name").first()).toHaveAttribute("title", "LOCAL-DEMO-PO-002-LINE-001");
   await expect(page.getByText("当前 PO 暂无收货记录。")).toBeVisible();
-  await expect(page.getByText("当前 PO 尚未读取到 Invoice Line。")).toBeVisible();
+  await expect(page.getByText("当前采购订单暂无发票行。")).toBeVisible();
   await expect(page.getByText("等待收货", { exact: true }).first()).toBeVisible();
   await capture(page, "03-po-002-detail");
 
@@ -120,16 +121,16 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   documentRequests.length = 0;
   await page.goto("/app/procurement/three-way-match/MATCH-LOCAL-DEMO-INV-001");
   const matchDetail = page.getByTestId("procurement-threeWayMatch-detail");
-  await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
+  await expect(matchDetail).toContainText("三单匹配 · LOCAL-DEMO-INV-001");
   await expect(matchDetail.getByRole("link", { name: "采购发票 LOCAL-DEMO-INV-001" })).toBeVisible();
   expect(documentRequests).toContain("/api/procurement/documents/threeWayMatch/MATCH-LOCAL-DEMO-INV-001");
   expect(documentRequests.some((requestUrl) => requestUrl.includes("?type=threeWayMatch"))).toBeFalsy();
   await page.reload();
-  await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
+  await expect(matchDetail).toContainText("三单匹配 · LOCAL-DEMO-INV-001");
   await page.goBack();
   await expect(page).toHaveURL(/\/app\/procurement\/bills\/LOCAL-DEMO-INV-001/);
   await page.goForward();
-  await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
+  await expect(matchDetail).toContainText("三单匹配 · LOCAL-DEMO-INV-001");
   expect(consoleIssues).toEqual([]);
 
   // A bill that cannot be read says why instead of showing an empty page.

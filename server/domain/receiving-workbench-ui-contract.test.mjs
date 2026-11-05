@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises'
 const source = await readFile(new URL('../../src/modules/receiving/ReceivingPostingWorkbench.tsx', import.meta.url), 'utf8')
 
 test('receiving workbench exposes explicit loading, capability, conflict, post, and reversal states', () => {
-  for (const marker of ['receiving-loading', 'receiving-error', 'Post Receipt', 'Reverse Receipt', 'View Reversal', 'impact-preview', 'reversal-reason', 'Read-only.', 'Unavailable', 'receiving-reconciliation', 'availableActions.primaryAction', 'onNavigate', 'Data was refreshed']) {
+  for (const marker of ['receiving-loading', 'receiving-error', 'Post receipt', 'Reverse receipt', 'View reversal', 'Confirm posting', 'Confirm reversal', 'BackToListLink', 'impact-preview', 'reversal-reason', 'Read-only.', 'Unavailable', 'receiving-reconciliation', 'availableActions.primaryAction', 'onNavigate', 'Data was refreshed']) {
     assert.match(source, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), marker)
   }
 })

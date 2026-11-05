@@ -42,13 +42,13 @@ test('a manager sets a tier with a reason and an owner; the list shows no tier a
   await expect(panel).toContainText('Nobody has decided yet.');
   await panel.getByTestId('supplier-change-tier').click();
   const form = panel.getByTestId('supplier-tier-form');
-  await form.getByLabel('Tier 1 Strategic', { exact: true }).check();
+  await form.getByLabel('Tier 1 · Strategic', { exact: true }).check();
   await form.getByRole('button', { name: 'Save tier' }).click();
   await expect(form.getByText('Enter a reason of 3 to 500 characters.', { exact: true })).toBeVisible();
   await form.getByLabel('Reason').fill('Only approved source of the drive motor');
   await form.getByRole('button', { name: 'Save tier' }).click();
   await expect(form).toHaveCount(0);
-  await expect(panel.getByTestId('supplier-tier-chip')).toHaveText('Tier 1 Strategic');
+  await expect(panel.getByTestId('supplier-tier-chip')).toHaveText('Tier 1 · Strategic');
   await expect(panel.getByTestId('supplier-tier-reason')).toHaveText('Only approved source of the drive motor');
   await expect(panel.getByTestId('supplier-tier-history')).toContainText('Not tiered → Tier 1');
   await expect(panel).not.toContainText(/[㐀-鿿]/);
@@ -88,7 +88,7 @@ test('the tier panel reads in Chinese, and read-only users cannot change it', as
   await login(viewer, 'en-US', 'viewer');
   await viewer.goto(`/app/master-data/suppliers/${id}`);
   const readOnly = viewer.getByTestId('supplier-tier-panel');
-  await expect(readOnly.getByTestId('supplier-tier-chip')).toHaveText('Tier 2 Core');
+  await expect(readOnly.getByTestId('supplier-tier-chip')).toHaveText('Tier 2 · Core');
   await expect(readOnly.getByTestId('supplier-change-tier')).toHaveCount(0);
   await expect(readOnly.getByTestId('supplier-change-owner')).toHaveCount(0);
 });

@@ -37,7 +37,7 @@ const COPY = {
   listTitle: ["Match list", "匹配列表"],
   match: ["Match", "匹配"],
   documents: ["PO / receipt / invoice", "采购订单 / 收货单 / 发票"],
-  poAmount: ["PO amount", "PO 金额"],
+  poAmount: ["PO amount", "采购订单金额"],
   invoiceAmount: ["Invoice amount", "发票金额"],
   varianceAmount: ["Variance", "差异金额"],
   status: ["Status", "状态"],

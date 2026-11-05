@@ -39,7 +39,7 @@ test('receiving workbench posts and reverses through real PostgreSQL APIs', asyn
 
   await page.getByTestId('receiving-primary-action').click()
   await expect(page.getByTestId('impact-preview')).toBeVisible()
-  await expect(page.getByTestId('balance-impact')).toContainText('0.0000 → 4.0000')
+  await expect(page.getByTestId('balance-impact')).toContainText('0 → 4')
   await page.getByTestId('confirm-receiving-action').click()
   await expect(page.getByText('Posted', { exact: true }).first()).toBeVisible()
   await expect(page.getByText(/Movements · 1/)).toBeVisible()
