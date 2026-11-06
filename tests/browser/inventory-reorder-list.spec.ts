@@ -7,6 +7,9 @@ import { attachReorderPointSuggestions } from "../../server/domain/reorder-point
 // point, the supplier filter, the purchase request it opens prefilled, and a
 // reader of only some warehouses, for whom nothing is checked. Each row has
 // the suggested reorder point the read service adds.
+// Runs in the product recovery suite (scripts/run-product-recovery-playwright.mjs,
+// phase "reorder list"), whose walkthrough data seeds admin@flowchain.local;
+// the reorder list itself is stubbed.
 
 const TODAY = "2026-10-05";
 const shipments = (itemId: string, days: number, quantity: number) =>
