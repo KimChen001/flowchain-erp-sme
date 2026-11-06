@@ -16,6 +16,7 @@ declare module '../../shared/prefill-suggestions.mjs' {
 }
 declare module '../../shared/purchase-request-prefill.mjs' {
   export function planPurchaseRequestPrefill(input: unknown): any;
+  export function planNonCatalogPrefill(input: unknown): any;
   export function addCalendarDays(day: string, days: number): string;
 }
 declare module '../../../shared/price-history.mjs' {

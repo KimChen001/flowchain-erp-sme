@@ -216,9 +216,19 @@ export type AiResponseV2 = {
   answerSourceLabel?: string;
   checked?: string[];
   checkedLabel?: string;
+  // A model-first answer's bases and caveats, shown folded under its trust line.
+  answerBasis?: string[];
+  // Items a model-first answer offers to order: each chip sends its request.
+  orderChoices?: Array<{ sku: string; prompt: string }>;
+  // The order a model-first answer offered to confirm; the panel sends it back
+  // with the next question, so a reply with a purpose confirms it.
+  pendingOrder?: { sku: string; quantity?: number };
   skill?: { id: string; version: string; asOf?: string | null; timezone?: string | null; signalVersion?: string };
-  // Set when the workspace reached this month's AI limit: the answer comes from workspace rules.
-  aiModelAccess?: { status: "over_cap" };
+  // Set when the workspace reached this month's AI limit (over_cap), or when a
+  // model call for this answer failed (unavailable; reason budget when the
+  // provider's own spending limit refused it; unchecked when a model-first
+  // answer could not be finished and checked): the answer comes from the rules.
+  aiModelAccess?: { status: "over_cap" } | { status: "unavailable"; reason?: "budget" | "unchecked" };
   // A compound answer has a section per part; a one-part answer has none.
   sections?: AiResponseV2Section[];
   // Which path chose the skills: rules, or a model (pick-one routing or agent planning).

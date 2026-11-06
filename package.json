@@ -23,7 +23,7 @@
     "test:db:email-link-sign-in": "node scripts/run-postgres-test-files.mjs tests/postgres/email-link-sign-in-migration.test.mjs tests/postgres/workspace-sessions.test.mjs tests/postgres/email-link-sign-in.test.mjs",
     "test:db:approval-email": "node scripts/run-postgres-test-files.mjs tests/postgres/approval-email.test.mjs",
     "test:db:tenant-provision": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-provision.test.mjs",
-    "test:db:walkthrough-scenario": "node scripts/run-postgres-test-files.mjs tests/postgres/walkthrough-scenario.test.mjs",
+    "test:db:walkthrough-scenario": "node scripts/run-postgres-test-files.mjs tests/postgres/walkthrough-scenario.test.mjs && node scripts/run-postgres-test-files.mjs tests/postgres/walkthrough-scenario-resume.test.mjs",
     "test:db:tenant-scoped-reads": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-scoped-business-reads.test.mjs",
     "test:db:master-data-writes": "node scripts/run-postgres-test-files.mjs tests/postgres/master-data-writes.test.mjs",
     "test:db:data-import": "node scripts/run-postgres-test-files.mjs server/domain/data-import-transaction.test.mjs",
@@ -36,6 +36,7 @@
     "test:db:report-truncation": "node scripts/run-postgres-test-files.mjs tests/postgres/report-truncation.test.mjs",
     "test:db:inventory-allocation": "node scripts/run-postgres-test-files.mjs tests/postgres/inventory-allocation-walkthrough.test.mjs",
     "test:db:reorder-list": "node scripts/run-postgres-test-files.mjs tests/postgres/reorder-list.test.mjs",
+    "test:db:ai-read-tools": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-read-tools.test.mjs",
     "test:db:ai-knowledge": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-knowledge.test.mjs",
     "test:db:warehouse-writes": "node scripts/run-postgres-test-files.mjs tests/postgres/warehouse-writes.test.mjs",
     "test:db:ai-pgvector": "node --test tests/postgres/ai-pgvector-service.test.mjs",
@@ -164,6 +165,7 @@
     "test:db:contracts": "node scripts/run-postgres-test-files.mjs tests/postgres/contracts.test.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.3.0",
     "@langchain/core": "1.2.9",
     "@langchain/textsplitters": "1.0.1",
     "@prisma/adapter-pg": "7.8.0",
@@ -219,7 +221,8 @@
     "undici": "6.28.1",
     "vaul": "1.1.2",
     "xlsx": "^0.18.5",
-    "yauzl": "^3.4.0"
+    "yauzl": "^3.4.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

@@ -52,7 +52,11 @@ test('the reorder list ranks items by order-by day from recorded data over every
       balance('RL-ITEM-B', 'RL-B', 'RL-EAST', '1', '0'),
       balance('RL-ITEM-C', 'RL-C', 'RL-EAST', '5', '0'),
     ] })
-    // 30 pcs due Oct 8 count; 5 CASE are another unit and never count.
+    // 30 pcs due Oct 8 and 20 due Dec 31, long after the order-by day, count;
+    // 5 CASE are another unit and never count. ZZ-100's 2 pcs were due Oct 1:
+    // late, and still counted.
+    await prisma.purchaseOrder.create({ data: { id: 'RL-PO-4', tenantId, supplierId: 'RL-SUP', supplierName: 'Reorder Supply', status: 'issued', currency: 'USD', amount: 200, expectedDate: new Date('2026-12-31T12:00:00Z'), metadata: { orderNumber: 'PO-0042' }, lines: { create: [{ id: 'RL-PO-4-L1', itemId: 'RL-ITEM-A', sku: 'RL-A', orderedQuantity: 20, receivedQuantity: 0, unit: 'pcs', unitPrice: 10, amount: 200 }] } } })
+    await prisma.purchaseOrder.create({ data: { id: 'RL-PO-5', tenantId, supplierId: 'RL-SUP', supplierName: 'Reorder Supply', status: 'issued', currency: 'USD', amount: 20, expectedDate: new Date('2026-10-01T12:00:00Z'), metadata: { orderNumber: 'PO-0043' }, lines: { create: [{ id: 'RL-PO-5-L1', itemId: 'RL-ITEM-Z', sku: 'ZZ-100', orderedQuantity: 2, receivedQuantity: 0, unit: 'pcs', unitPrice: 10, amount: 20 }] } } })
     await prisma.purchaseOrder.create({ data: { id: 'RL-PO-1', tenantId, supplierId: 'RL-SUP', supplierName: 'Reorder Supply', status: 'issued', currency: 'USD', amount: 300, expectedDate: new Date('2026-10-08T12:00:00Z'), metadata: { orderNumber: 'PO-0039' }, lines: { create: [{ id: 'RL-PO-1-L1', itemId: 'RL-ITEM-A', sku: 'RL-A', orderedQuantity: 30, receivedQuantity: 0, unit: 'pcs', unitPrice: 10, amount: 300 }] } } })
     await prisma.purchaseOrder.create({ data: { id: 'RL-PO-3', tenantId, supplierId: 'RL-SUP', supplierName: 'Reorder Supply', status: 'issued', currency: 'USD', amount: 1200, expectedDate: new Date('2026-10-09T12:00:00Z'), metadata: { orderNumber: 'PO-0041' }, lines: { create: [{ id: 'RL-PO-3-L1', itemId: 'RL-ITEM-Z', sku: 'ZZ-100', orderedQuantity: 12, receivedQuantity: 0, unit: 'CASE', unitPrice: 100, amount: 1200 }] } } })
     await prisma.inventoryBalance.create({ data: balance('RL-ITEM-Z', 'ZZ-100', 'RL-EAST', '4', '0') })
@@ -88,30 +92,36 @@ test('the reorder list ranks items by order-by day from recorded data over every
     }
 
     // The administrator: every warehouse. RL-A has 110 on hand, 10 reserved and
-    // 30 incoming = 130 against 100. 72 shipped over 8 days in the 90 days
+    // 30 + 20 incoming = 150 against 100. 72 shipped over 8 days in the 90 days
     // before Oct 5 (the reversed 500 is not demand): 0.8 a day, so
-    // (130 - 100) / 0.8 = 37.5 days, order by Oct 5 + 37 = Nov 11. RL-C has 5
-    // against 20 and no shipments: order now. ZZ-100 has 4 against 10 and its
-    // 12 CASE are not counted: order now. RL-B has no reorder point.
+    // (150 - 100) / 0.8 = 62.5 days, order by Oct 5 + 62 = Dec 6. RL-C has 5
+    // against 20 and no shipments: order now. ZZ-100 has 4 + 2 late against 10
+    // and its 12 CASE are not counted: order now. RL-B has no reorder point.
     const admin = await call('admin')
     assert.equal(admin.status, 200)
     assert.equal(admin.body.today, '2026-10-05')
     assert.deepEqual(admin.body.scope, { kind: 'all_warehouses', warehouseCount: null, totalWarehouseCount: 2 })
-    assert.deepEqual(admin.body.rows.map((row) => [row.sku, row.orderByDate, row.orderNow]), [['RL-C', '2026-10-05', true], ['ZZ-100', '2026-10-05', true], ['RL-A', '2026-11-11', false]])
+    assert.deepEqual(admin.body.rows.map((row) => [row.sku, row.orderByDate, row.orderNow]), [['RL-C', '2026-10-05', true], ['ZZ-100', '2026-10-05', true], ['RL-A', '2026-12-06', false]])
     const z = admin.body.rows.find((row) => row.sku === 'ZZ-100')
-    assert.deepEqual([z.onHand, z.incoming, z.position, z.shortfall], [4, 0, 4, 6])
-    assert.deepEqual(z.flags, [{ code: 'po_line_other_unit', orderNumber: 'PO-0041', unit: 'CASE' }])
+    assert.deepEqual([z.onHand, z.incoming, z.position, z.shortfall], [4, 2, 6, 4])
+    assert.deepEqual(z.flags, [{ code: 'po_line_other_unit', orderNumber: 'PO-0041', unit: 'CASE' }, { code: 'po_line_late', orderNumber: 'PO-0043', dueDay: '2026-10-01' }])
     const a = admin.body.rows.find((row) => row.sku === 'RL-A')
-    assert.deepEqual([a.onHand, a.reserved, a.incoming, a.position, a.reorderPoint, a.shortfall], [110, 10, 30, 130, 100, 0])
+    assert.deepEqual([a.onHand, a.reserved, a.incoming, a.position, a.reorderPoint, a.shortfall], [110, 10, 50, 150, 100, 0])
     assert.deepEqual([a.demand.averageDailyDemand, a.demand.shipmentDays, a.demand.shippedQuantity], [0.8, 8, 72])
     assert.deepEqual(a.flags, [{ code: 'po_line_other_unit', orderNumber: 'PO-0040', unit: 'CASE' }])
-    assert.deepEqual(a.incomingLines, [{ orderNumber: 'PO-0039', remaining: 30, dueDay: '2026-10-08', counted: true }])
+    assert.deepEqual([...a.incomingLines].sort((x, y) => x.orderNumber.localeCompare(y.orderNumber)), [{ orderNumber: 'PO-0039', remaining: 30, dueDay: '2026-10-08', late: false }, { orderNumber: 'PO-0042', remaining: 20, dueDay: '2026-12-31', late: false }])
     assert.deepEqual(a.supplier, { id: 'RL-SUP', code: 'RLS', name: 'Reorder Supply', leadTimeDays: 10, minimumOrderQuantity: null, moqUnit: 'pcs' })
     const c = admin.body.rows.find((row) => row.sku === 'RL-C')
     assert.equal(c.demand.enough, false)
     assert.equal(c.demand.shipmentDays, 0)
     assert.deepEqual(c.purchaseRequest, { itemId: 'RL-ITEM-C', supplierId: 'RL-SUP', quantity: 15, raisedToMinimum: false })
     assert.deepEqual([c.supplier.leadTimeDays, c.supplier.minimumOrderQuantity], [null, null])
+    // The suggested reorder point beside the recorded one. RL-A shipped 9 on 8
+    // days in a row; a stretch is 10 days' lead time + 7 = 17 days. 66 of the
+    // 90 circular stretches hold none of those days, so the 75th smallest
+    // holds 5 of them: 45, below the recorded 100. RL-C has no shipments.
+    assert.deepEqual([a.reorderPointSuggestion.suggestedReorderPoint, a.reorderPointSuggestion.coverDays, a.reorderPointSuggestion.shipmentDays, a.reorderPointSuggestion.recordedBelow], [45, 17, 8, false])
+    assert.deepEqual([c.reorderPointSuggestion.suggestedReorderPoint, c.reorderPointSuggestion.reason, c.reorderPointSuggestion.recordedBelow], [null, 'not_enough_history', false])
     // 201 items without a reorder point: the first 50 by SKU are named.
     assert.equal(admin.body.noReorderPoint.count, 201)
     assert.equal(admin.body.noReorderPoint.items.length, 50)
@@ -125,10 +135,10 @@ test('the reorder list ranks items by order-by day from recorded data over every
     assert.ok(!admin.body.rows.some((row) => row.sku === 'RL-B'))
 
     // The East reader sees one of two warehouses. The reorder point is one
-    // figure for the whole item, and the 30 incoming name no warehouse: East's
-    // 60 on hand, 10 reserved and every incoming line set against 100 would
-    // say "order 20" for stock the company does not need. So no item is
-    // checked for this reader, and no quantity or order number is shown.
+    // figure for the whole item, and the incoming lines name no warehouse: a
+    // part of the stock set against it says nothing about what the company
+    // needs. So no item is checked for this reader, and no quantity or order
+    // number is shown.
     const east = await call('east')
     assert.equal(east.status, 200)
     assert.deepEqual(east.body.scope, { kind: 'reader_warehouses', warehouseCount: 1, totalWarehouseCount: 2 })

@@ -161,24 +161,45 @@ test('ties on the order-by day rank by SKU, never by a score', () => {
   assert.ok(list.rows.every((row) => !('score' in row)))
 })
 
-test('incoming due after the order-by day is left out, and the day computed again until it stops moving', () => {
-  // 4 a day. Position 30 + 40 + 40 = 110 against 20: (110 - 20) / 4 = 22 days
-  // (Oct 27). PO-LATE is due Nov 30, after it: (70 - 20) / 4 = 12 days
-  // (Oct 17). PO-MID is due Oct 20, after that: (30 - 20) / 4 = 2 days (Oct 7).
+test('every open purchase order line counts as incoming whatever its due day; late lines and lines with no due day are flagged', () => {
+  // 4 a day. Position 30 + 10 + 5 + 40 + 0.0001 = 85.0001 against 20:
+  // 65.0001 / 4 = 16.25 days (Oct 21), with the line due in eight weeks counted.
   const list = build({
     items: [item('A')],
-    allocationRows: [allocation('A', { onHand: 30, incomingLines: [incoming('PO-MID', 40, '2026-10-20'), incoming('PO-LATE', 40, '2026-11-30'), incoming('PO-NODATE', 0.0001)] })],
+    allocationRows: [allocation('A', { onHand: 30, incomingLines: [incoming('PO-LATE', 10, '2026-10-01'), incoming('PO-TODAY', 5, TODAY), incoming('PO-FAR', 40, '2026-11-30'), incoming('PO-NODATE', 0.0001)] })],
     shipmentLines: shipments('A', 8, 45),
   })
   const a = rowOf(list, 'A')
-  assert.equal(a.orderByDate, '2026-10-07')
-  assert.equal(a.incoming, 0.0001)
-  assert.deepEqual(a.incomingLines.map((line) => [line.orderNumber, line.counted]), [['PO-MID', false], ['PO-LATE', false], ['PO-NODATE', true]])
-  assert.deepEqual(a.flags.map((flag) => flag.code), ['po_line_due_after_order_by', 'po_line_due_after_order_by', 'po_line_no_due_day'])
-  // Without daily demand every line counts, and the row says so.
-  const noHistory = build({ items: [item('A')], allocationRows: [allocation('A', { onHand: 0, incomingLines: [incoming('PO-LATE', 10, '2026-11-30')] })] })
+  assert.equal(a.incoming, 55.0001)
+  assert.equal(a.position, 85.0001)
+  assert.equal(a.orderByDate, '2026-10-21')
+  // A line due today is not late yet.
+  assert.deepEqual(a.incomingLines.map((line) => [line.orderNumber, line.dueDay, line.late]), [['PO-LATE', '2026-10-01', true], ['PO-TODAY', TODAY, false], ['PO-FAR', '2026-11-30', false], ['PO-NODATE', null, false]])
+  assert.deepEqual(a.flags, [{ code: 'po_line_late', orderNumber: 'PO-LATE', dueDay: '2026-10-01' }, { code: 'po_line_no_due_day', orderNumber: 'PO-NODATE' }])
+  // Without daily demand the same lines count.
+  const noHistory = build({ items: [item('A')], allocationRows: [allocation('A', { onHand: 0, incomingLines: [incoming('PO-FAR', 10, '2026-11-30')] })] })
   assert.equal(rowOf(noHistory, 'A').incoming, 10)
-  assert.ok(rowOf(noHistory, 'A').flags.some((flag) => flag.code === 'all_incoming_counted'))
+  assert.deepEqual(rowOf(noHistory, 'A').flags, [])
+  // Without purchase order access a late line names no order.
+  const hidden = buildReorderList({ items: [item('A')], allocationRows: [allocation('A', { onHand: 0, incomingLines: [incoming('PO-LATE', 10, '2026-10-01')] })], today: TODAY, timeZone: TZ, showPurchaseOrders: false })
+  assert.deepEqual(rowOf(hidden, 'A').flags, [{ code: 'po_line_late', orderNumber: null, dueDay: '2026-10-01' }])
+})
+
+// Walkthrough 2026-11-03: 50 LDM-002 ordered from the reorder list, due after
+// the supplier's lead time, were left out as due after the order-by day
+// (today), so the list still said "Order now". Every open line now counts.
+test('a purchase order placed today counts as incoming, so the item it covers is no longer "order now"', () => {
+  const suppliers = [{ id: 'SUP-1', code: 'S1', name: 'Acme', status: 'active' }]
+  const supplierLinks = [{ id: 'r1', payload: { itemId: 'ITEM-A', supplierId: 'SUP-1', preferred: true, leadTimeDays: 17, minimumOrderQuantity: 50 } }]
+  const open = [incoming('PO-014', 50, '2026-09-29'), incoming('PO-002', 40, '2026-10-09'), incoming('PO-021', 25, '2026-10-19')]
+  // 10 a day; 150 on hand + 115 on order = 265 against a reorder point of 270.
+  const read = (incomingLines) => rowOf(build({ items: [item('A', { reorderPoint: 270 })], allocationRows: [allocation('A', { onHand: 150, incomingLines })], shipmentLines: shipments('A', 9, 100), supplierLinks, suppliers }), 'A')
+  const before = read(open)
+  assert.deepEqual([before.position, before.orderNow, before.shortfall, before.purchaseRequest.quantity, before.purchaseRequest.raisedToMinimum], [265, true, 5, 50, true])
+  // The 50 ordered today, due in 17 days: 315, so order by (315 - 270) / 10 = 4.5 days.
+  const after = read([...open, incoming('PO-NEW', 50, '2026-10-22')])
+  assert.deepEqual([after.position, after.orderNow, after.daysUntilOrderBy, after.shortfall, after.purchaseRequest.quantity], [315, false, 4, 0, null])
+  assert.ok(after.flags.every((flag) => flag.orderNumber !== 'PO-NEW'))
 })
 
 test('the preferred supplier shows its lead time and minimum order quantity only when recorded', () => {

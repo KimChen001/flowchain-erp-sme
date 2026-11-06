@@ -1,0 +1,64 @@
+{
+  "Which purchase orders are overdue, by supplier?": [
+    [
+      { "type": "tool_use_start", "id": "toolu_s2_orders", "name": "list_purchase_orders" },
+      { "type": "tool_use_end", "id": "toolu_s2_orders", "name": "list_purchase_orders", "input": { "status": "overdue" } },
+      { "type": "message_end", "stopReason": "tool_use", "usage": { "input_tokens": 3200, "output_tokens": 60, "cache_read_input_tokens": 2900 } }
+    ],
+    [
+      { "type": "text_delta", "text": "Eight purchase orders are past their promised date. " },
+      { "type": "text_delta", "text": "Precision Fastener Works is the furthest behind: LOCAL-DEMO-PO-020 is 15 days overdue, and it has two of the eight." },
+      { "type": "tool_use_start", "id": "toolu_s2_table", "name": "show_table" },
+      { "type": "tool_use_end", "id": "toolu_s2_table", "name": "show_table", "input": { "source": "toolu_s2_orders", "columns": ["orderNumber", "supplier", "dueDate", "overdueDays", "remaining"], "title": "Overdue purchase orders" } },
+      { "type": "tool_use_start", "id": "toolu_s2_followups", "name": "suggest_followups" },
+      { "type": "tool_use_end", "id": "toolu_s2_followups", "name": "suggest_followups", "input": { "questions": ["Which customers are affected if these orders arrive late?", "How is each supplier's on-time rate this quarter?"] } },
+      { "type": "message_end", "stopReason": "tool_use", "usage": { "input_tokens": 5400, "output_tokens": 180, "cache_read_input_tokens": 2900 } }
+    ],
+    [
+      { "type": "message_end", "stopReason": "end_turn", "usage": { "input_tokens": 5900, "output_tokens": 4, "cache_read_input_tokens": 2900 } }
+    ]
+  ],
+  "What should I reorder this week? Fill in a request.": [
+    [
+      { "type": "tool_use_start", "id": "toolu_s4_lines", "name": "suggest_purchase_lines" },
+      { "type": "tool_use_end", "id": "toolu_s4_lines", "name": "suggest_purchase_lines", "input": {} },
+      { "type": "message_end", "stopReason": "tool_use", "usage": { "input_tokens": 3300, "output_tokens": 50, "cache_read_input_tokens": 2900 } }
+    ],
+    [
+      { "type": "text_delta", "text": "Three items are below their stock levels. " },
+      { "type": "text_delta", "text": "I've filled in a request form for you to review: tick the items you want, check the quantities, then create the draft request. LDM-001 is already on an open request." },
+      { "type": "tool_use_start", "id": "toolu_s4_form", "name": "suggest_purchase_request" },
+      { "type": "tool_use_end", "id": "toolu_s4_form", "name": "suggest_purchase_request", "input": { "source": "toolu_s4_lines", "from": "suggestions" } },
+      { "type": "tool_use_start", "id": "toolu_s4_followups", "name": "suggest_followups" },
+      { "type": "tool_use_end", "id": "toolu_s4_followups", "name": "suggest_followups", "input": { "questions": ["Which purchase requests are waiting for approval?"] } },
+      { "type": "message_end", "stopReason": "tool_use", "usage": { "input_tokens": 6100, "output_tokens": 160, "cache_read_input_tokens": 2900 } }
+    ],
+    [
+      { "type": "message_end", "stopReason": "end_turn", "usage": { "input_tokens": 6600, "output_tokens": 4, "cache_read_input_tokens": 2900 } }
+    ]
+  ],
+  "Which purchase requests are waiting for approval?": [
+    [
+      { "type": "tool_use_start", "id": "toolu_pr_submitted", "name": "list_purchase_requests" },
+      { "type": "tool_use_end", "id": "toolu_pr_submitted", "name": "list_purchase_requests", "input": { "status": "submitted" } },
+      { "type": "message_end", "stopReason": "tool_use", "usage": { "input_tokens": 6900, "output_tokens": 50, "cache_read_input_tokens": 2900 } }
+    ],
+    [
+      { "type": "text_delta", "text": "These purchase requests are waiting for approval, the soonest required first." },
+      { "type": "tool_use_start", "id": "toolu_pr_table", "name": "show_table" },
+      { "type": "tool_use_end", "id": "toolu_pr_table", "name": "show_table", "input": { "source": "toolu_pr_submitted", "columns": ["request", "status", "requiredDate", "skus"] } },
+      { "type": "message_end", "stopReason": "tool_use", "usage": { "input_tokens": 7600, "output_tokens": 90, "cache_read_input_tokens": 2900 } }
+    ],
+    [
+      { "type": "message_end", "stopReason": "end_turn", "usage": { "input_tokens": 7900, "output_tokens": 4, "cache_read_input_tokens": 2900 } }
+    ]
+  ],
+  "Give me a summary of this week's purchasing.": [
+    [
+      { "type": "text_delta", "text": "Here is this week's purchasing so far. " },
+      { "type": "pause", "ms": 30000 },
+      { "type": "text_delta", "text": "The rest of this answer arrives only when nobody stops it." },
+      { "type": "message_end", "stopReason": "end_turn", "usage": { "input_tokens": 3100, "output_tokens": 40, "cache_read_input_tokens": 2900 } }
+    ]
+  ]
+}

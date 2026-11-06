@@ -11,6 +11,9 @@ export const PO_TRANSITIONS = PROCUREMENT_STATUS_TRANSITIONS.purchaseOrderWorkfl
 export const RFQ_TRANSITIONS = PROCUREMENT_STATUS_TRANSITIONS.rfq
 export { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS, RFQ_STATUS }
 export const PROCUREMENT_PATHS = ['undecided','direct_po','rfq']
+// The direct-PO-or-RFQ policy the path recommendation route applies; the
+// assistant's record card shows the same recommendation.
+export const PROCUREMENT_PATH_POLICY = Object.freeze({ directPurchaseThreshold: 50000, rfqRequiredAboveAmount: 100000, allowManagerOverride: true })
 
 export function procurementError(code, message, details = [], status = 422, extra = {}) {
   const error = new Error(message); Object.assign(error, { code, details, status, ...extra }); return error

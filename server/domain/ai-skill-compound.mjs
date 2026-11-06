@@ -42,6 +42,10 @@ const CONNECTOR = /\s+(?:and also|as well as|and|also|plus)\s+|(?:以及|同时|
 // A connector or filler left at the start of a part.
 const LEADING = /^(?:(?:and|also|plus|then|but|so|ok(?:ay)?)\b[\s,]*|(?:还有|以及|同时|另外|顺便|并且|此外|那么|那|再)[\s，,]*)+/iu
 const MIN_PART_LENGTH = 3
+// A condition is not a question of its own: "if PO-020 slips a week, which
+// customer orders are hit?" and 如果 PO-020 再晚一周，会影响哪些客户订单？ ask one
+// thing about PO-020, so the condition is read with the clause after it.
+const CONDITION = /^(?:(?:what\s+)?if|suppose|supposing|assuming|in case)\b|^(?:如果|假如|假设|要是|万一|倘若|若是?|一旦)/iu
 
 // Splits at clause ends, then at connectors. Each part keeps its place in the
 // question, so parts read together are the question's own words.
@@ -64,7 +68,7 @@ export function splitAiCompoundQuestion(message) {
   }
   clauses.push([from, raw.length])
   for (const [start, end] of clauses) cut(start, end, CONNECTOR)
-  return pieces.map(([start, end]) => {
+  const parts = pieces.map(([start, end]) => {
     const slice = raw.slice(start, end)
     const lead = slice.match(/^\s*/)[0].length
     const body = slice.trimStart()
@@ -73,6 +77,13 @@ export function splitAiCompoundQuestion(message) {
     const value = raw.slice(offset, end).trimEnd()
     return { text: value, start: offset, end: offset + value.length }
   }).filter((part) => part.text.length >= MIN_PART_LENGTH)
+  const joined = []
+  for (const part of parts) {
+    const before = joined.at(-1)
+    if (before && !before.condition && CONDITION.test(before.text)) joined[joined.length - 1] = { text: raw.slice(before.start, part.end), start: before.start, end: part.end, condition: true }
+    else joined.push(part)
+  }
+  return joined.map(({ condition: _condition, ...part }) => part)
 }
 
 const keyOf = (route) => `${route.skillId}:${route.mode || ''}`

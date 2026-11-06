@@ -108,6 +108,10 @@ test('a purchase request opened from the assistant arrives prefilled, labels eac
   await expect(page.getByTestId('prefill-source-estimatedUnitPrice')).toHaveText('Reference price')
   await expect(page.getByTestId('prefill-source-targetWarehouseId')).toHaveText('Item default warehouse')
   await expect(page.getByTestId('prefill-source-internalLineComment')).toHaveText('Reason from the assistant')
+  // The header's default date is the line's date, not today (2026-11-04).
+  const lineDay = await field(page, 'Required date').locator('input').first().inputValue()
+  expect(lineDay).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  await expect(page.getByLabel('Default required date')).toHaveValue(lineDay)
   // Opening the form saves nothing.
   expect((await api('/api/procurement/requests')).filter((pr: { id: string }) => !before.has(pr.id))).toHaveLength(0)
 
@@ -124,6 +128,14 @@ test('a purchase request opened from the assistant arrives prefilled, labels eac
   expect(Number(saved[0].lines[0].quantity)).toBe(20)
   expect(saved[0].lines[0].supplierId).toBe('browser-supplier')
   expect(saved[0].lines[0].internalLineComment).toBe(reason)
+
+  // A need-by date from the assistant that is not today moves the header's
+  // default date with the line (the showcase, 2026-11-04: header today, line
+  // 11-21).
+  const due = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
+  await page.goto(`/app/procurement/requests?mode=create&itemId=browser-pr-item&sku=browser-pr-item&quantity=17&due=${due}&origin=ai_assistant`)
+  await expect(field(page, 'Required date').locator('input').first()).toHaveValue(due)
+  await expect(page.getByLabel('Default required date')).toHaveValue(due)
 })
 
 // Suppliers and items made through the API, so each run has its own:

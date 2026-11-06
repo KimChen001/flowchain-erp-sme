@@ -72,6 +72,26 @@ const entries = {
   // The help answer reads no business data, so it never says it did.
   'answer.source_none': ['No workspace data was read for this answer', '本次回答没有读取工作区数据'],
   'answer.source_agent': ['Answered from your workspace data. Worded by AI; figures checked.', '基于当前工作区数据回答，由 AI 组织语言，数字已核对'],
+  // Model-first: the model read the records through tools and wrote the answer; the server checked every figure, date and name against what the tools returned (docs/ai-model-first-design.md §3).
+  'answer.source_model_first': ['Written by AI from your records; figures checked', '由 AI 根据你的记录撰写，数字已核对'],
+  // Model-first: the user says they did not say a word their earlier question has; the answer quotes it (2026-11-04).
+  'model_first.user_said': ['Your earlier question was "{quote}".', '你上一轮说的是“{quote}”。'],
+  // Assistant v2: the model wrote the answer from the records it read; figures it could not match are underlined, not checked (docs/ai-assistant-v2-design.md §3.9).
+  'answer.source_assistant_v2': ['Written by AI from your records', '由 AI 根据你的记录撰写'],
+  // Assistant v2's hard replacements (§3.9): a part that read as if the assistant acted, and a value the role may not see.
+  'assistant_v2.replace.action_claim': ['This part of the answer is not shown because it read as if something had been done for you. The assistant changes nothing: open the record to see its status and act there.', '这部分回答读起来像是已替你执行了操作，因此不显示。助手不会修改任何内容：请打开相关记录查看状态，并在那里操作。'],
+  'assistant_v2.replace.withheld': ['[not shown]', '[不显示]'],
+  // One sentence of a part left out for the same reason; the rest stays.
+  'assistant_v2.replace.action_claim_sentence': ['(A sentence is left out here because it read as if something had been done for you. Open the record to see its status.)', '（此处略去一句：它读起来像是已替你执行了操作。请打开记录查看状态。）'],
+  // Assistant v2's refusals before the model (§3.2), for a client that reads the folded answer; the panel words the notice code itself.
+  'assistant_v2.notice.injection_refused': ['This question asks the assistant to ignore its rules, so it was not answered.', '该问题要求助手忽略它的规则，因此没有回答。'],
+  'assistant_v2.notice.rate_limited': ['You have asked many questions in a short time. Wait a few minutes, then ask again.', '短时间内提问较多，请几分钟后再问。'],
+  'assistant_v2.notice.too_long_for_rules': ['The assistant model cannot answer just now, and without it a question can have at most 1,200 characters. Try again later, shorten the question, or use the import page for many rows.', '助手模型暂时无法回答；没有模型时，问题最多 1,200 个字符。请稍后再试、缩短问题，或使用导入页面一次导入多行。'],
+  // A purchase request the model-first assistant proposed: the reason line of the prefilled form.
+  'model_first.request.reason': ['Requested in the assistant. Review it before you submit.', '在 AI 助手中提出，提交前请核对。'],
+  // The reason line when the user gave none: the reorder list's basis for the quantity.
+  'model_first.request.reason_reorder': ['Reorder list: order by {date}; {quantity} {unit} brings the stock position back to the reorder point.', '补货清单：最晚下单日 {date}；{quantity} {unit}可补回再订货点。'],
+  'model_first.request.reason_reorder_minimum': ['Reorder list: order by {date}; shortfall {shortfall} {unit}, raised to the supplier minimum of {quantity} {unit}.', '补货清单：最晚下单日 {date}；缺口 {shortfall} {unit}，按供应商最小起订量提到 {quantity} {unit}。'],
   'answer.checked': ['Checked: {sources}', '已检查：{sources}'],
   'answer.review_boundary': ['This answer does not send, approve or change anything.', '本回答不会发送、批准或修改任何内容。'],
   // A question with several parts, answered part by part (ai-skill-compound.mjs).
@@ -123,6 +143,9 @@ const entries = {
   'capability.contracts.open': ['Open Contracts', '打开合同'],
   'capability.outside': ['I can only answer questions about your workspace data.', '我只能回答与当前工作区数据有关的问题。'],
   'capability.topic': ["I couldn't tell what you want to know about {topic}.", '我没能确定你想了解{topic}的哪方面。'],
+  // No skill reads sales orders, shipments or what customers owe yet.
+  'capability.sales': ["I don't answer questions about sales orders, shipments or customer payments yet.", '销售订单、发货和客户付款的问题，我暂时还答不了。'],
+  'topic.sales': ['sales orders and customers', '销售订单和客户'],
   'topic.suppliers': ['suppliers', '供应商'],
   'topic.purchase_orders': ['purchase orders', '采购订单'],
   'topic.inventory': ['stock', '库存'],
@@ -231,6 +254,8 @@ const entries = {
   'next.po_followup': ['Next: ask {supplier} to confirm a delivery date.', '下一步：请 {supplier} 确认交货日期。'],
   'next.chase_po': ['Next: chase {po}, which brings this item.', '下一步：跟进带来该物料的 {po}。'],
   'next.send_po': ['Next: send {po} to the supplier; it has not been issued yet.', '下一步：把 {po} 发给供应商，它尚未发出。'],
+  // An approved order the answer names that is not due soon: send it, then mark it issued on its page.
+  'next.issue_po': ['Next: send {po} to the supplier (print or save the PO document), then mark it issued on its page.', '下一步：把 {po} 发给供应商（打印或另存订单文件后自行发送），再在订单页面标记为下达。'],
   'next.not_due': ['Next: no follow-up yet; it is due {date} and not overdue.', '下一步：暂不需要跟进，{date} 到期，尚未逾期。'],
   'next.on_order': ['Next: no follow-up yet; it is on order on {po}, due {date}.', '下一步：暂不需要跟进，已在 {po} 订购，{date} 到期。'],
   'next.on_order_no_date': ['Next: no follow-up yet; it is on order on {po}.', '下一步：暂不需要跟进，已在 {po} 订购。'],
@@ -256,6 +281,11 @@ const entries = {
   'order.title_advice_no_levels': ['{sku} has no stock levels to judge by', '{sku} 没有可供判断的库存水平'],
   'order.advice_summary': ['The button below opens the purchase request, filled in; nothing is saved until you save it.', '下面的按钮会打开预填好的采购申请；在你保存之前不会保存任何内容。'],
   'order.title_several': ['{count} SKUs need ordering', '{count} 个 SKU 需要采购'],
+  'order.title_choose': ['Which item is the purchase request for?', '要为哪个物料建采购申请？'],
+  'order.choose_lead': ['You did not name an item, so I have not picked one.', '你没有说是哪个物料，我不替你选。'],
+  'order.choice_short': ['{sku} is short by {gap}.', '{sku} 还缺 {gap}。'],
+  'order.choice_covered': ['{sku} is below its target, but open orders or requests already cover it.', '{sku} 低于目标，但在途订单或待审批申请已经覆盖。'],
+  'order.choose_next': ['Pick an item below or start a blank request. FlowChain creates a purchase request first; it becomes a purchase order once approved.', '从下面选一个物料，或新建空白申请。FlowChain 先建采购申请，审批通过后再生成采购订单。'],
   'order.several_summary': ['Pick one and I will open its purchase request, filled in. Nothing is saved until you save it.', '选一个，我会打开预填好的采购申请。在你保存之前不会保存任何内容。'],
   'order.title_covered': ['{sku} already has open orders on the way', '{sku} 已有在途订单'],
   'order.title_covered_requested': ['{sku} already has a request awaiting approval', '{sku} 已有待审批的采购申请'],
@@ -288,6 +318,13 @@ const entries = {
   'order.card.title_no_quantity': ['Request {sku}', '申请采购 {sku}'],
   'order.action.open': ['Open request: {quantity} of {sku}', '打开采购申请：{sku} {quantity}'],
   'order.action.open_no_quantity': ['Open a request for {sku}', '打开 {sku} 的采购申请'],
+  // An item the workspace does not have: one Other (non-catalog) line from the user's words.
+  'order.card.new_item_quantity': ['Request {quantity} of {description} (not in the catalog)', '申请采购 {description} {quantity}（非目录）'],
+  'order.card.new_item_named': ['Request {description} (not in the catalog)', '申请采购 {description}（非目录）'],
+  'order.card.new_item_blank': ['Request a new item (not in the catalog)', '申请采购新物料（非目录）'],
+  'order.action.new_item_quantity': ['Open request: {quantity} of {description}', '打开采购申请：{description} {quantity}'],
+  'order.action.new_item_named': ['Open request: {description}', '打开采购申请：{description}'],
+  'order.action.new_item_blank': ['Open a blank request for a new item', '打开空白的新物料采购申请'],
   'order.action.anyway': ['Open a request for {sku} anyway', '仍然新建 {sku} 的采购申请'],
   'order.action.blank': ['Open a blank purchase request', '新建空白采购申请'],
   'order.action.follow_up': ['Draft a follow-up on {po}', '起草 {po} 的跟进消息'],
@@ -436,6 +473,9 @@ const entries = {
   'source.items': ['items', '物料'],
   'source.suppliers': ['suppliers', '供应商'],
   'source.sales_orders': ['sales orders', '销售订单'],
+  'source.documents': ['documents', '文档'],
+  'source.contracts': ['contracts', '合同'],
+  'source.supplier_risks': ['supplier risks', '供应商风险'],
   'source.workspace': ['workspace skills', '工作区技能'],
 
   // Fields checked by records_needing_data
