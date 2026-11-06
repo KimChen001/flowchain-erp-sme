@@ -1915,6 +1915,7 @@ export default function FlowChainApp() {
           moduleId={activeModule}
           activeContext={aiActiveContext}
           openSignal={aiOpenSignal}
+          userName={user.name}
           onNavigate={navigateTo}
           onReviewActionDraft={openActionDraftReview}
         />

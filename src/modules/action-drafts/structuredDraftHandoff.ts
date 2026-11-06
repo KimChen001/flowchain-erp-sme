@@ -21,10 +21,18 @@ export function autoOpenDraftCard<T extends { autoOpen?: boolean; draftType?: st
 export function structuredDraftTarget(type: string, payload: Record<string, unknown> = {}, source?: string | null) {
   const query = Object.fromEntries(Object.entries({
     mode: "create",
+    // An item the workspace does not have: one "Other" line from the user's words.
+    lineType: payload.nonCatalog ? "non_catalog" : undefined,
+    description: payload.nonCatalog ? payload.description : undefined,
+    unit: payload.nonCatalog ? payload.unit : undefined,
     itemId: payload.itemIdOrSku,
     sku: payload.itemIdOrSku,
     quantity: payload.quantity,
+    // Where the assistant's quantity and reason came from (the user, or the
+    // reorder list), so the form labels each field.
+    quantityFrom: payload.quantity ? payload.quantitySource : undefined,
     reason: payload.reason,
+    reasonFrom: payload.reason ? payload.reasonSource : undefined,
     suppliers: Array.isArray(payload.supplierCandidates) ? payload.supplierCandidates.join(",") : payload.supplierCandidates || payload.supplierId,
     due: payload.quotationDeadline || payload.requestedDeliveryDate,
     origin: prefillOrigin(source),

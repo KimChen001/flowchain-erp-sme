@@ -10,7 +10,15 @@ async function openAssistant(page: Page) {
   await page.route('**/api/me/localization', route => route.fulfill({ json: { effectiveLanguage: 'en-US', languagePreference: 'en-US', defaultLanguage: 'en-US', locale: 'en-US', timezone: 'America/New_York' } }));
   await page.goto('/app/overview/risks');
   await page.getByTestId('ai-assistant-toggle').click();
-  await expect(page.getByTestId('ai-query-mode')).toHaveValue('auto');
+  // No search-mode select: the server picks records or documents from the question.
+  await expect(page.getByTestId('ai-assistant-panel')).toBeVisible();
+  await expect(page.getByTestId('ai-query-mode')).toHaveCount(0);
+}
+
+// The knowledge library sits behind the panel's "More" menu.
+async function openLibrary(page: Page) {
+  await page.getByTestId('ai-more-menu').click();
+  await page.getByTestId('ai-knowledge-library').click();
 }
 
 test('library exposes keyword readiness, persists failed attempt, and retries visibly', async ({ page }) => {
@@ -23,7 +31,7 @@ test('library exposes keyword readiness, persists failed attempt, and retries vi
   const held = new Promise<void>(resolve => { finish = resolve; });
   await page.route('**/api/ai-runtime/knowledge/guide/reindex', async route => { await held; failed = false; await route.fulfill({ json: { indexStatus: 'semantic' } }); });
   await openAssistant(page);
-  await page.getByTestId('ai-knowledge-library').click();
+  await openLibrary(page);
   const library = page.getByTestId('knowledge-library');
   await expect(library).toContainText('The previous index was kept');
   await library.getByRole('button', { name: 'Retry indexing' }).click();

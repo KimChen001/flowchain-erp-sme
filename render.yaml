@@ -143,9 +143,37 @@ projects:
               # for now, https://app.getflowchain.com once the domain is added.
               - key: FLOWCHAIN_PUBLIC_BASE_URL
                 sync: false
-              # No AI or knowledge provider key: the trial calls no model
-              # (decision V4, 2026-10-04). Do not add one in the dashboard
-              # until a hosted provider is decided.
+              # The assistant (assistant v2) on MIT Parley with Claude Sonnet 5.5
+              # (owner decision, 2026-11-04; replaces V4, "the trial calls no
+              # model"). Only a workspace whose administrator switches on
+              # Settings > AI calls the model; every other workspace keeps the
+              # rules' answers. See docs/ai-workspace-access.md.
+              - key: FLOWCHAIN_AI_ASSISTANT_MODE
+                value: "assistant_v2"
+              - key: FLOWCHAIN_AI_WORKSPACE_OPT_IN
+                value: "required"
+              - key: FLOWCHAIN_AI_RUNTIME_MODE
+                value: "provider_assisted"
+              - key: FLOWCHAIN_AI_PROVIDER_KIND
+                value: "parley_chat"
+              - key: FLOWCHAIN_AI_PROVIDER_ENDPOINT
+                value: "https://parley.api.mit.edu/v1/chat/completions"
+              - key: FLOWCHAIN_AI_PROVIDER_MODEL
+                value: "claude-sonnet-5-5"
+              # Production refuses Parley unless this says true.
+              - key: FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION
+                value: "true"
+              # The Parley key, entered in the Render dashboard. While it is
+              # empty the server calls no model.
+              - key: FLOWCHAIN_AI_PROVIDER_API_KEY
+                sync: false
+              # Spend per workspace per calendar month (UTC), in US dollars at
+              # the model's list prices. Keep the total over all switched-on
+              # workspaces below the Parley budget.
+              - key: FLOWCHAIN_AI_MONTHLY_CAP_USD
+                value: "25"
+              # No knowledge or embedding provider, answer wording (P3) or
+              # model-first mode: assistant v2 is the only path to the model.
         databases:
           - name: flowchain-staging-db
             region: virginia
@@ -263,9 +291,37 @@ projects:
               # for now, https://app.getflowchain.com once the domain is added.
               - key: FLOWCHAIN_PUBLIC_BASE_URL
                 sync: false
-              # No AI or knowledge provider key: the trial calls no model
-              # (decision V4, 2026-10-04). Do not add one in the dashboard
-              # until a hosted provider is decided.
+              # The assistant (assistant v2) on MIT Parley with Claude Sonnet 5.5
+              # (owner decision, 2026-11-04; replaces V4, "the trial calls no
+              # model"). Only a workspace whose administrator switches on
+              # Settings > AI calls the model; every other workspace keeps the
+              # rules' answers. See docs/ai-workspace-access.md.
+              - key: FLOWCHAIN_AI_ASSISTANT_MODE
+                value: "assistant_v2"
+              - key: FLOWCHAIN_AI_WORKSPACE_OPT_IN
+                value: "required"
+              - key: FLOWCHAIN_AI_RUNTIME_MODE
+                value: "provider_assisted"
+              - key: FLOWCHAIN_AI_PROVIDER_KIND
+                value: "parley_chat"
+              - key: FLOWCHAIN_AI_PROVIDER_ENDPOINT
+                value: "https://parley.api.mit.edu/v1/chat/completions"
+              - key: FLOWCHAIN_AI_PROVIDER_MODEL
+                value: "claude-sonnet-5-5"
+              # Production refuses Parley unless this says true.
+              - key: FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION
+                value: "true"
+              # The Parley key, entered in the Render dashboard. While it is
+              # empty the server calls no model.
+              - key: FLOWCHAIN_AI_PROVIDER_API_KEY
+                sync: false
+              # Spend per workspace per calendar month (UTC), in US dollars at
+              # the model's list prices. Keep the total over all switched-on
+              # workspaces below the Parley budget.
+              - key: FLOWCHAIN_AI_MONTHLY_CAP_USD
+                value: "25"
+              # No knowledge or embedding provider, answer wording (P3) or
+              # model-first mode: assistant v2 is the only path to the model.
         databases:
           - name: flowchain-production-db
             region: virginia

@@ -69,6 +69,7 @@
 ## AI
 
 - [AI assistant plan, v4.0](ai-assistant-plan.md): decisions, state, roadmap and stop points for the assistant and knowledge work
+- [Model-first assistant design](ai-model-first-design.md): proposal of 2026-10-28; the model reads through tools and writes the answer, with a grounding check; decisions M1–M7 open
 - [AI safety and draft-first explainer](ai-safety-and-draft-first-explainer-v1.md)
 - [AI provider safety gate](ai-provider-safety-gate-v1.md)
 - [AI provider adapter plan](ai-provider-adapter-v1-plan.md)
@@ -78,6 +79,7 @@
 - [AI response latency notes](ai-response-latency-notes.md)
 - [AI chat copilot plan](ai-chat-copilot-v1-plan.md)
 - [AI provider baseline, 2026-10-04](ai-provider-baseline-2026-10-04.md)
+- [Onboarding and standing instructions (L3) design](ai-onboarding-and-automation-design.md): proposal of 2026-10-29; setup by chat on the existing import, scheduled rules that leave drafts; decisions O1–O6 and A1–A8 approved 2026-10-29
 
 ## UI
 
@@ -93,8 +95,10 @@
 ## Domain Notes
 
 - [Reports as a decision loop](report-collaboration-design.md): proposal of 2026-10-30; one metric registry, change breakdowns, "Ask about this", a weekly brief and thresholds; decisions R1–R12 approved 2026-10-30; presentation layer (§13) added and P1–P5 approved 2026-10-31
+- [Order changes, history import and reverse flows](order-changes-history-reverse-design.md): proposal of 2026-11-01; PO revisions and sales order remainder close, importing past and open orders, returns and credits; decisions OC1–OC8, HI1–HI8, RV1–RV6 approved 2026-11-01
 - [Global business search](global-business-search-v1.md)
 - [Supplier operational search](supplier-operational-search-v1.md)
+- [Supplier tiers and the supplier list: design](supplier-tiers-design.md)
 - [SRM supplier API migration notes](srm-supplier-api-migration-notes.md)
 - [Receiving GRN list/detail safe plan](receiving-grn-list-detail-safe-plan.md)
 - [ERPNext reference notes](erpnext-reference-notes-for-flowchain.md)

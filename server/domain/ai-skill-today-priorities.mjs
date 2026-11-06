@@ -39,12 +39,14 @@ export function aiSkillFocusName(focus, facts) {
 // the longest overdue first, then what falls due soonest, then the oldest open
 // problems, then stock below its levels.
 // A user under pressure (route signal `calm`) gets the first CALM only.
+// `top`: how many items to keep, TOP for the skill answer; the assistant's
+// attention list (ai-assistant-v2-data-tools.mjs) keeps them all and filters.
 const CALM = 3
-export function runTodayPriorities(facts, { focus = null, route = null } = {}) {
+export function runTodayPriorities(facts, { focus = null, route = null, top = TOP } = {}) {
   const signals = buildAiSkillSignals(facts)
   const ranked = rankAiSkillItemsByDate(signals).filter((item) => matchesAiSkillFocus(item, focus))
   const calm = Boolean(route?.signals?.calm) && !focus
-  return { skillId: 'today_priorities', focus, calm, total: ranked.length, items: ranked.slice(0, calm ? CALM : TOP).map((item, index) => ({ ...item, rank: index + 1 })), counts: countAiSkillSignals(signals) }
+  return { skillId: 'today_priorities', focus, calm, total: ranked.length, items: ranked.slice(0, calm ? CALM : top).map((item, index) => ({ ...item, rank: index + 1 })), counts: countAiSkillSignals(signals) }
 }
 
 // When the answer lists fewer records than its title counts, it says so.

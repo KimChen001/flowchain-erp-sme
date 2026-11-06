@@ -1,5 +1,6 @@
 import { recordAiProviderCall } from './ai-usage-meter.mjs'
 import {
+  aiProviderIdentityHeaders,
   callProviderSpecificAdapter,
   isProviderSpecificKind,
   selectProviderSpecificAdapter,
@@ -206,11 +207,13 @@ export async function callGenericHttpProvider(providerInput, env = {}, fetchImpl
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${config.apiKey}`,
+        ...aiProviderIdentityHeaders(env),
       },
       body: JSON.stringify(providerInput),
       signal: controller.signal,
     })
-    if (!response.ok) return { ok: false, reason: 'non_success_status' }
+    // 402: the provider's spending limit is reached (the answer says so).
+    if (!response.ok) return { ok: false, reason: 'non_success_status', ...(response.status === 402 ? { budgetExceeded: true } : {}) }
     const contentType = response.headers?.get?.('content-type') || ''
     let rawText = ''
     if (/application\/json/i.test(contentType)) {
