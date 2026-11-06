@@ -18,32 +18,41 @@ export type ChartContext = {
 type Row = Record<string, unknown> & { name?: unknown; filterValue?: unknown };
 type TooltipParam = { marker?: string; seriesName?: string; name?: string; value?: unknown; data?: unknown; dataIndex: number; percent?: number; seriesIndex?: number; treePathInfo?: Array<{ name: string }> };
 
-export const PALETTE = ["#2563eb", "#0d9488", "#f59e0b", "#8b5cf6", "#ec4899", "#0ea5e9", "#65a30d", "#ea580c", "#64748b", "#dc2626", "#14b8a6", "#a855f7"];
+// Categories take these slots in this order: brand blue, then teal, gold,
+// violet, pink and sky. Neighbouring slots stay apart for color-blind readers,
+// and the first three stay apart in every pair, as scatter and radar need.
+// Slots are never reused: a seventh category and beyond are drawn in OTHER.
+export const PALETTE = ["#2563eb", "#0d9488", "#a16207", "#7c3aed", "#db2777", "#0284c7"];
+const OTHER = "#64748b";
 const INK = "#0f172a";
 const SUB = "#64748b";
-const GRID_LINE = "#eef2f7";
+const GRID_LINE = "#f1f5f9";
 const AXIS_LINE = "#e2e8f0";
 
-// Colors that carry meaning: green is done or healthy, red is a problem, amber
-// is waiting. Anything else takes the palette.
+// Colors that carry meaning (owner decision of 2026-10-03): teal is done,
+// blue is in progress (darkest before the supplier has the order), orange is
+// waiting or a stock warning, red is a problem, grey is draft, cancelled or
+// closed. Anything else takes a palette slot.
+const DONE = "#0d9488";
+const WAITING = "#f59e0b";
+const PROBLEM = "#dc2626";
 const SEMANTIC: Record<string, string> = {
-  draft: "#94a3b8", pending_approval: "#f59e0b", approved: "#0ea5e9", issued: "#2563eb", partially_received: "#8b5cf6",
-  fully_received: "#16a34a", received: "#16a34a", closed: "#64748b", cancelled: "#cbd5e1", canceled: "#cbd5e1", rejected: "#dc2626",
-  submitted: "#0ea5e9", matching: "#6366f1", exception: "#dc2626", matched: "#16a34a", held: "#f59e0b",
-  confirmed: "#2563eb", shortage_risk: "#dc2626", fulfilled: "#16a34a", partially_fulfilled: "#8b5cf6", ready_to_ship: "#0ea5e9",
-  out_of_stock: "#dc2626", below_safety_stock: "#f97316", below_reorder_point: "#f59e0b", ok: "#16a34a", unknown: "#94a3b8",
-  high: "#dc2626", medium: "#f59e0b", low: "#16a34a",
-  Matched: "#16a34a", "Match exception": "#dc2626", "Awaiting match": "#f59e0b",
+  draft: "#cbd5e1", pending_approval: WAITING, approved: "#1e3a8a", issued: "#2563eb", partially_received: "#60a5fa",
+  fully_received: DONE, received: DONE, closed: "#64748b", cancelled: "#94a3b8", canceled: "#94a3b8", rejected: PROBLEM,
+  submitted: "#2563eb", matching: "#60a5fa", exception: PROBLEM, matched: DONE, held: WAITING,
+  confirmed: "#2563eb", shortage_risk: PROBLEM, fulfilled: DONE, partially_fulfilled: "#60a5fa", ready_to_ship: "#1e3a8a",
+  out_of_stock: PROBLEM, below_safety_stock: "#ea580c", below_reorder_point: WAITING, ok: DONE, unknown: "#cbd5e1",
+  high: PROBLEM, medium: WAITING, low: DONE,
+  Matched: DONE, "Match exception": PROBLEM, "Awaiting match": WAITING,
 };
-const FUNNEL = ["#312e81", "#3730a3", "#4338ca", "#0f766e", "#15803d"];
+// Stages run from dark to light blue, one step apart in lightness.
+const STAGES = ["#172554", "#1e3a8a", "#1d4ed8", "#3b82f6", "#60a5fa"];
 
-const alpha = (hex: string, opacity: number) => `${hex}${Math.round(opacity * 255).toString(16).padStart(2, "0")}`;
-const vertical = (color: string, from = 1, to = 0.6) => ({ type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: alpha(color, from) }, { offset: 1, color: alpha(color, to) }] });
-const horizontal = (color: string) => ({ type: "linear", x: 0, y: 0, x2: 1, y2: 0, colorStops: [{ offset: 0, color: alpha(color, 0.7) }, { offset: 1, color }] });
 const rowsOf = (chart: ReportChart) => (chart.data || []) as Row[];
 const num = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : value === null || value === undefined || value === "" || value === "-" ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const filterValueOf = (row: Row) => String(row.filterValue ?? row.name ?? "");
-const colorFor = (name: string, index: number, palette = PALETTE) => SEMANTIC[name] || palette[index % palette.length];
+const slot = (index: number, palette = PALETTE) => palette[index] ?? OTHER;
+const colorFor = (name: string, index: number, palette = PALETTE) => SEMANTIC[name] || slot(index, palette);
 const escape = (value: unknown) => String(value ?? "").replace(/[&<>"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" })[char] || char);
 
 function keysOf(chart: ReportChart, rows: Row[]) {
@@ -59,8 +68,9 @@ function axisLabel(ctx: ChartContext, extra: Record<string, unknown> = {}) {
   return { color: SUB, fontSize: ctx.large ? 12 : 11, hideOverlap: true, ...extra };
 }
 
+// Legends wrap onto a second line instead of paging, so every entry shows.
 function legend(ctx: ChartContext, extra: Record<string, unknown> = {}) {
-  return { type: "scroll", top: 0, left: 0, icon: "roundRect", itemWidth: 10, itemHeight: 10, itemGap: 14, textStyle: { color: SUB, fontSize: ctx.large ? 12 : 11 }, pageIconSize: 10, ...extra };
+  return { type: "plain", top: 0, left: 0, icon: "roundRect", itemWidth: 10, itemHeight: 10, itemGap: 14, textStyle: { color: SUB, fontSize: ctx.large ? 12 : 11 }, ...extra };
 }
 
 // The chart container is labelled with the visual's title and the card's
@@ -75,8 +85,9 @@ function valueAxis(ctx: ChartContext, unit: string, currencyCode: string | null 
   return { type: "value", axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: GRID_LINE } }, axisLabel: axisLabel(ctx, { formatter: (value: number) => ctx.compact(value, unit, currencyCode) }), ...extra };
 }
 
+// Long names break onto a second line rather than being cut short.
 function categoryAxis(ctx: ChartContext, names: string[], extra: Record<string, unknown> = {}) {
-  return { type: "category", data: names, axisLine: { lineStyle: { color: AXIS_LINE } }, axisTick: { show: false }, axisLabel: axisLabel(ctx, { width: 120, overflow: "truncate" }), ...extra };
+  return { type: "category", data: names, axisLine: { lineStyle: { color: AXIS_LINE } }, axisTick: { show: false }, axisLabel: axisLabel(ctx, { width: 120, overflow: "break" }), ...extra };
 }
 
 function cartesian(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
@@ -89,23 +100,23 @@ function cartesian(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   const palette = chart.colors?.length ? chart.colors : PALETTE;
   const single = keys.length === 1;
   const series = keys.map((key, index) => {
-    const color = palette[index % palette.length];
+    const color = slot(index, palette);
     return {
       name: key === "value" ? ctx.copy(chart.title) : ctx.copy(key),
       type: line ? "line" : "bar",
       ...(stacked ? { stack: "total" } : {}),
-      ...(line ? { smooth: 0.35, symbol: "circle", symbolSize: 7, showSymbol: rows.length <= 24, lineStyle: { width: 2.5, color }, itemStyle: { color, borderColor: "#fff", borderWidth: 2 } } : { barMaxWidth: sideways ? 18 : 36, itemStyle: { color: sideways ? horizontal(color) : vertical(color), borderRadius: stacked ? 0 : sideways ? [0, 5, 5, 0] : [5, 5, 0, 0] } }),
-      ...(chart.type === "area" ? { areaStyle: { color: vertical(color, 0.3, 0.02) } } : {}),
+      ...(line ? { smooth: 0.35, symbol: "circle", symbolSize: 8, showSymbol: rows.length <= 24, lineStyle: { width: 2, color }, itemStyle: { color, borderColor: "#fff", borderWidth: 2 } } : { barMaxWidth: sideways ? 18 : 36, itemStyle: { color, borderRadius: stacked ? 0 : sideways ? [0, 4, 4, 0] : [4, 4, 0, 0] } }),
+      ...(chart.type === "area" ? { areaStyle: { color, opacity: 0.12 } } : {}),
       emphasis: { focus: "series" },
       ...(single && !line && rows.length <= 16 ? { label: { show: true, position: sideways ? "right" : "top", color: SUB, fontSize: ctx.large ? 12 : 10, formatter: (param: TooltipParam) => ctx.compact(num((param.data as Row)?.value) ?? 0, unit, chart.currencyCode) } } : {}),
       data: rows.map(row => {
         const value = num(row[key]);
-        return { value, filterValue: filterValueOf(row), ...(single && value !== null && value < 0 ? { itemStyle: { color: sideways ? horizontal("#dc2626") : vertical("#dc2626"), borderRadius: sideways ? [5, 0, 0, 5] : [0, 0, 5, 5] } } : {}) };
+        return { value, filterValue: filterValueOf(row), ...(single && value !== null && value < 0 ? { itemStyle: { color: PROBLEM, borderRadius: sideways ? [4, 0, 0, 4] : [0, 0, 4, 4] } } : {}) };
       }),
     };
   });
   const names = rows.map(row => ctx.category(chart, String(row.name ?? "")));
-  const categories = categoryAxis(ctx, names, sideways ? { inverse: true, axisLabel: axisLabel(ctx, { width: 130, overflow: "truncate", interval: 0 }) } : {});
+  const categories = categoryAxis(ctx, names, sideways ? { inverse: true, axisLabel: axisLabel(ctx, { width: 150, overflow: "break", lineHeight: 14, interval: 0 }) } : {});
   const values = valueAxis(ctx, unit, chart.currencyCode);
   return {
     ...base(chart),
@@ -129,13 +140,13 @@ function combo(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
     return valueAxis(ctx, measure.unit, chart.currencyCode, index ? { splitLine: { show: false } } : {});
   });
   const series = measures.map((measure, index) => {
-    const color = PALETTE[index % PALETTE.length];
+    const color = slot(index);
     const data = rows.map(row => ({ value: num(row[measure.key]), filterValue: filterValueOf(row) }));
     const yAxisIndex = Math.max(0, axes.indexOf(axisIndexOf(measure)));
     const name = ctx.copy(measure.label || measure.key);
     return measure.kind === "line"
-      ? { name, type: "line", yAxisIndex, smooth: 0.35, symbol: "circle", symbolSize: 8, lineStyle: { width: 3, color: "#f59e0b" }, itemStyle: { color: "#f59e0b", borderColor: "#fff", borderWidth: 2 }, z: 3, data }
-      : { name, type: "bar", yAxisIndex, barMaxWidth: 38, itemStyle: { color: vertical(color, 1, 0.55), borderRadius: [6, 6, 0, 0] }, emphasis: { focus: "series" }, data };
+      ? { name, type: "line", yAxisIndex, smooth: 0.35, symbol: "circle", symbolSize: 8, lineStyle: { width: 2, color }, itemStyle: { color, borderColor: "#fff", borderWidth: 2 }, z: 3, data }
+      : { name, type: "bar", yAxisIndex, barMaxWidth: 38, itemStyle: { color, borderRadius: [4, 4, 0, 0] }, emphasis: { focus: "series" }, data };
   });
   return {
     ...base(chart),
@@ -161,7 +172,7 @@ function pareto(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
     const before = index ? num(rows[index - 1]["Cumulative share"]) ?? 0 : 0;
     return before < 80 ? "A" : before < 95 ? "B" : "C";
   });
-  const classColor: Record<string, string> = { A: "#2563eb", B: "#0ea5e9", C: "#94a3b8", other: "#cbd5e1" };
+  const classColor: Record<string, string> = { A: PALETTE[0], B: PALETTE[1], C: OTHER, other: "#cbd5e1" };
   const barMeasure = chart.measures?.find(item => item.key === "value");
   return {
     ...base(chart),
@@ -173,12 +184,13 @@ function pareto(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       return `<b>${escape(ctx.category(chart, String(row?.name ?? "")))}</b>${escape(group)}<br/>${escape(ctx.copy(barMeasure?.label || chart.title))}&nbsp;&nbsp;<b>${escape(ctx.format(num(row?.value), unit, chart.currencyCode))}</b><br/>${escape(ctx.copy("Cumulative share"))}&nbsp;&nbsp;<b>${escape(ctx.format(num(row?.["Cumulative share"]), "percentage"))}</b>`;
     } }),
     grid: grid({ left: rows.length > 6 ? 36 : 12 }),
-    xAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { axisLabel: axisLabel(ctx, { width: 76, overflow: "truncate", rotate: rows.length > 6 ? 28 : 0, interval: 0 }) }),
+    xAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { axisLabel: axisLabel(ctx, { width: 64, overflow: "break", lineHeight: 13, rotate: rows.length > 6 ? 28 : 0, interval: 0 }) }),
     yAxis: [valueAxis(ctx, unit, chart.currencyCode), valueAxis(ctx, "percentage", null, { min: 0, max: 100, splitLine: { show: false }, axisLabel: axisLabel(ctx, { formatter: (value: number) => `${value}%` }) })],
     series: [
-      { name: ctx.copy(barMeasure?.label || chart.title), type: "bar", barMaxWidth: 38, data: rows.map((row, index) => ({ value: num(row.value), filterValue: String(row.filterValue ?? ""), itemStyle: { color: vertical(classColor[classes[index]], 1, 0.65), borderRadius: [6, 6, 0, 0] } })), emphasis: { focus: "series" } },
-      { name: ctx.copy("Cumulative share"), type: "line", yAxisIndex: 1, smooth: 0.25, symbol: "circle", symbolSize: 7, lineStyle: { width: 2.5, color: "#f59e0b" }, itemStyle: { color: "#f59e0b", borderColor: "#fff", borderWidth: 2 }, z: 3, data: rows.map(row => num(row["Cumulative share"])),
-        markLine: { silent: true, symbol: "none", lineStyle: { color: "#f59e0b", type: "dashed", width: 1 }, label: { color: "#b45309", fontSize: 10, formatter: "80%", position: "insideEndTop" }, data: [{ yAxis: 80 }] } },
+      { name: ctx.copy(barMeasure?.label || chart.title), type: "bar", barMaxWidth: 38, data: rows.map((row, index) => ({ value: num(row.value), filterValue: String(row.filterValue ?? ""), itemStyle: { color: classColor[classes[index]], borderRadius: [4, 4, 0, 0] } })), emphasis: { focus: "series" } },
+      // The running share is a reading guide, so it is drawn in ink, not in a category color.
+      { name: ctx.copy("Cumulative share"), type: "line", yAxisIndex: 1, smooth: 0.25, symbol: "circle", symbolSize: 8, lineStyle: { width: 2, color: "#334155" }, itemStyle: { color: "#334155", borderColor: "#fff", borderWidth: 2 }, z: 3, data: rows.map(row => num(row["Cumulative share"])),
+        markLine: { silent: true, symbol: "none", lineStyle: { color: "#94a3b8", type: "dashed", width: 1 }, label: { color: SUB, fontSize: 10, formatter: "80%", position: "insideEndTop" }, data: [{ yAxis: 80 }] } },
     ],
   };
 }
@@ -191,11 +203,11 @@ function pie(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   return {
     ...base(chart),
     tooltip: tooltip({ trigger: "item", formatter: (param: TooltipParam) => `${param.marker}${escape(param.name)}<br/><b>${escape(ctx.format(num(param.value), unit, chart.currencyCode))}</b>&nbsp;·&nbsp;${param.percent ?? 0}%` }),
-    legend: legend(ctx, { top: "auto", bottom: 0, left: "center", textStyle: { color: SUB, fontSize: ctx.large ? 12 : 11, width: 120, overflow: "truncate" } }),
-    ...(donut ? { title: { text: ctx.compact(total, unit, chart.currencyCode), subtext: ctx.copy("Total"), left: "center", top: "middle", itemGap: 2, textStyle: { fontSize: ctx.large ? 26 : 20, fontWeight: 650, color: INK }, subtextStyle: { fontSize: 11, color: SUB } } } : {}),
+    legend: legend(ctx, { top: "auto", bottom: 0, left: "center" }),
+    ...(donut ? { title: { text: ctx.compact(total, unit, chart.currencyCode), subtext: ctx.copy("Total"), left: "center", top: "40%", itemGap: 2, textStyle: { fontSize: ctx.large ? 26 : 20, fontWeight: 650, color: INK }, subtextStyle: { fontSize: 11, color: SUB } } } : {}),
     series: [{
-      type: "pie", radius: donut ? ["44%", "64%"] : ["0%", "64%"], center: ["50%", "50%"], padAngle: donut ? 2 : 0, avoidLabelOverlap: true,
-      itemStyle: { borderRadius: donut ? 6 : 2, borderColor: "#fff", borderWidth: 2 }, label: { show: false }, labelLine: { show: false },
+      type: "pie", radius: donut ? ["42%", "60%"] : ["0%", "60%"], center: ["50%", "45%"], padAngle: donut ? 2 : 0, avoidLabelOverlap: true,
+      itemStyle: { borderRadius: donut ? 4 : 2, borderColor: "#fff", borderWidth: 2 }, label: { show: false }, labelLine: { show: false },
       emphasis: { scale: true, scaleSize: 6 },
       data: rows.map((row, index) => ({ name: ctx.category(chart, String(row.name ?? "")), value: num(row.value), filterValue: filterValueOf(row), itemStyle: { color: colorFor(String(row.name ?? ""), index, chart.colors?.length ? chart.colors : PALETTE) } })),
     }],
@@ -218,13 +230,13 @@ function funnel(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       label: { show: true, position: "right", color: INK, fontSize: ctx.large ? 13 : 11, formatter: (param: TooltipParam) => `{name|${String(param.name ?? "").replace(/[{}|]/g, "")}}\n{value|${ctx.format(num(param.value), "number")}${param.dataIndex && first ? `  ·  ${Math.round((num(param.value) ?? 0) / first * 100)}%` : ""}}`, rich: { name: { color: SUB, fontSize: ctx.large ? 12 : 11, lineHeight: 16 }, value: { color: INK, fontSize: ctx.large ? 15 : 13, fontWeight: 600, lineHeight: 18 } } },
       labelLine: { show: true, length: 10, lineStyle: { color: AXIS_LINE } }, itemStyle: { borderColor: "#fff", borderWidth: 1 },
       emphasis: { label: { fontWeight: 700 } },
-      data: rows.map((row, index) => ({ name: ctx.category(chart, String(row.name ?? "")), value: num(row.value), itemStyle: { color: FUNNEL[index % FUNNEL.length] } })),
+      data: rows.map((row, index) => ({ name: ctx.category(chart, String(row.name ?? "")), value: num(row.value), itemStyle: { color: STAGES[Math.min(index, STAGES.length - 1)] } })),
     }],
   };
 }
 
 // A stacked bar with an invisible base: totals rise from zero, steps float
-// from the running total, decreases in orange and increases in green.
+// from the running total, decreases (still waiting) in orange and increases in teal.
 function waterfall(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   const rows = rowsOf(chart);
   const totals = new Set(chart.totals || []);
@@ -250,9 +262,9 @@ function waterfall(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
     yAxis: valueAxis(ctx, unit, chart.currencyCode),
     series: [
       { name: "lift", type: "bar", stack: "bridge", silent: true, itemStyle: { color: "transparent" }, emphasis: { disabled: true }, tooltip: { show: false }, data: lift },
-      { name: ctx.copy("Total"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: vertical("#2563eb", 1, 0.7), borderRadius: [6, 6, 0, 0] }, label: label(""), data: total },
-      { name: ctx.copy("Decrease"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: vertical("#f97316", 0.95, 0.7), borderRadius: 4 }, label: label("−"), data: down },
-      { name: ctx.copy("Increase"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: vertical("#16a34a", 0.95, 0.7), borderRadius: 4 }, label: label("+"), data: up },
+      { name: ctx.copy("Total"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: PALETTE[0], borderRadius: [4, 4, 0, 0] }, label: label(""), data: total },
+      { name: ctx.copy("Decrease"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: WAITING, borderRadius: 4 }, label: label("−"), data: down },
+      { name: ctx.copy("Increase"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: DONE, borderRadius: 4 }, label: label("+"), data: up },
     ],
   };
 }
@@ -275,7 +287,7 @@ function treemap(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       upperLabel: { show: false },
       itemStyle: { borderColor: "#fff", borderWidth: 2, gapWidth: 2, borderRadius: 6 },
       levels: [{ itemStyle: { borderWidth: 0, gapWidth: 3 } }, { colorSaturation: [0.35, 0.55], itemStyle: { gapWidth: 2, borderRadius: 4 } }],
-      data: rows.map((row, index) => ({ name: ctx.category(chart, String(row.name ?? "")), value: num(row.value), filterValue: filterValueOf(row), itemStyle: { color: PALETTE[index % PALETTE.length] }, children: (chart.breakdown?.[String(row.name)] || []).map(item => ({ name: ctx.category(chart, item.name), value: item.value })) })),
+      data: rows.map((row, index) => ({ name: ctx.category(chart, String(row.name ?? "")), value: num(row.value), filterValue: filterValueOf(row), itemStyle: { color: slot(index) }, children: (chart.breakdown?.[String(row.name)] || []).map(item => ({ name: ctx.category(chart, item.name), value: item.value })) })),
     }],
   };
 }
@@ -289,7 +301,7 @@ function gauge(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
     tooltip: { show: false },
     series: [{
       type: "gauge", startAngle: 210, endAngle: -30, min: 0, max: 100, radius: "96%", center: ["50%", "58%"],
-      progress: { show: true, roundCap: true, width: ctx.large ? 22 : 16, itemStyle: { color: { type: "linear", x: 0, y: 0, x2: 1, y2: 0, colorStops: [{ offset: 0, color: "#0ea5e9" }, { offset: 1, color: "#2563eb" }] } } },
+      progress: { show: true, roundCap: true, width: ctx.large ? 22 : 16, itemStyle: { color: PALETTE[0] } },
       axisLine: { roundCap: true, lineStyle: { width: ctx.large ? 22 : 16, color: [[1, GRID_LINE]] } },
       pointer: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false }, anchor: { show: false },
       title: { show: true, offsetCenter: [0, "34%"], color: SUB, fontSize: ctx.large ? 14 : 12 },
@@ -342,7 +354,7 @@ function calendar(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       const [day, value] = param.value as [string, number];
       return `<b>${escape(day)}</b><br/>${escape(ctx.copy("Receipts"))}&nbsp;&nbsp;<b>${escape(ctx.format(value, "number"))}</b>`;
     } }),
-    visualMap: { min: 0, max, show: true, orient: "horizontal", right: 4, bottom: 0, itemWidth: 10, itemHeight: 90, text: [ctx.copy("More"), ctx.copy("Less")], textStyle: { color: SUB, fontSize: 10 }, inRange: { color: ["#dcfce7", "#86efac", "#22c55e", "#15803d"] } },
+    visualMap: { min: 0, max, show: true, orient: "horizontal", right: 4, bottom: 0, itemWidth: 10, itemHeight: 90, text: [ctx.copy("More"), ctx.copy("Less")], textStyle: { color: SUB, fontSize: 10 }, inRange: { color: ["#f0fdfa", "#99f6e4", "#14b8a6", "#0f766e"] } },
     calendar: {
       range: [start, end], top: 26, left: 34, right: 8, bottom: 30, cellSize: ["auto", ctx.large ? 22 : 18], orient: "horizontal",
       splitLine: { show: false }, itemStyle: { color: "#f8fafc", borderColor: "#fff", borderWidth: 3 },
@@ -369,7 +381,7 @@ function sankey(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       type: "sankey", left: 4, right: 128, top: 8, bottom: 8, nodeWidth: 14, nodeGap: 10, nodeAlign: "justify", draggable: false,
       emphasis: { focus: "adjacency" }, lineStyle: { color: "gradient", curveness: 0.5, opacity: 0.32 }, label: { color: INK, fontSize: ctx.large ? 13 : 11 },
       itemStyle: { borderWidth: 0, borderRadius: 3 },
-      data: [...sources.map((name, index) => ({ name, itemStyle: { color: PALETTE[index % PALETTE.length] } })), ...targets.map((name, index) => ({ name: label(name), itemStyle: { color: SEMANTIC[name] || PALETTE[(sources.length + index) % PALETTE.length] } }))],
+      data: [...sources.map((name, index) => ({ name, itemStyle: { color: slot(index) } })), ...targets.map((name, index) => ({ name: label(name), itemStyle: { color: SEMANTIC[name] || slot(sources.length + index) } }))],
       links: links.map(link => ({ source: link.source, target: label(link.target), value: link.value })),
     }],
   };
@@ -404,7 +416,7 @@ function scatter(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       itemStyle: { opacity: 0.85, borderColor: "#fff", borderWidth: 1.5, shadowBlur: 6, shadowColor: "rgba(15,23,42,0.15)" },
       emphasis: { focus: "self", scale: 1.15 },
       markLine: { silent: true, symbol: "none", lineStyle: { type: "dashed", color: "#94a3b8", width: 1 }, data: guides },
-      data: rows.map((row, index) => ({ name: String(row.name ?? ""), value: [num(row[x.key]), num(row[y.key]), num(row[size?.key || ""]) ?? 1], filterValue: filterValueOf(row), itemStyle: { color: PALETTE[index % PALETTE.length] } })),
+      data: rows.map((row, index) => ({ name: String(row.name ?? ""), value: [num(row[x.key]), num(row[y.key]), num(row[size?.key || ""]) ?? 1], filterValue: filterValueOf(row), itemStyle: { color: slot(index) } })),
     }],
   };
 }
@@ -433,7 +445,7 @@ function radar(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       return [`<b>${escape(param.name)}</b>`, ...keys.map(key => `${escape(ctx.copy(key))}&nbsp;&nbsp;<b>${escape(ctx.format(num(row?.[key]), "percentage"))}</b>`)].join("<br/>");
     } }),
     radar: { indicator: keys.map(key => ({ name: wrap(ctx.copy(key)), max: 100 })), radius: "58%", center: ["50%", "48%"], splitNumber: 4, axisName: { color: SUB, fontSize: ctx.large ? 12 : 11, lineHeight: 14 }, splitLine: { lineStyle: { color: GRID_LINE } }, splitArea: { areaStyle: { color: ["#ffffff", "#f8fafc"] } }, axisLine: { lineStyle: { color: AXIS_LINE } } },
-    series: [{ type: "radar", symbol: "circle", symbolSize: 5, emphasis: { focus: "self", lineStyle: { width: 3 } }, data: rows.map((row, index) => ({ name: String(row.name ?? ""), value: keys.map(key => num(row[key]) ?? 0), lineStyle: { width: 2, color: PALETTE[index % PALETTE.length] }, itemStyle: { color: PALETTE[index % PALETTE.length] }, areaStyle: { color: PALETTE[index % PALETTE.length], opacity: 0.1 } })) }],
+    series: [{ type: "radar", symbol: "circle", symbolSize: 5, emphasis: { focus: "self", lineStyle: { width: 3 } }, data: rows.map((row, index) => ({ name: String(row.name ?? ""), value: keys.map(key => num(row[key]) ?? 0), lineStyle: { width: 2, color: slot(index) }, itemStyle: { color: slot(index) }, areaStyle: { color: slot(index), opacity: 0.1 } })) }],
   };
 }
 
