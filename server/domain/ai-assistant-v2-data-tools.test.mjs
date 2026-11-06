@@ -315,9 +315,13 @@ test('optimize_order_plan solves the order from the records and costs it beside 
   assert.deepEqual(tight.plans.map((plan) => plan.plan), ['optimal', 'without_budget_limit', 'no_order', 'reorder_list'])
   // A plan the user proposes, below the minimum order.
   const yours = (await run('optimize_order_plan', { plan: [{ sku: 'ldm-001', quantity: 50 }] })).result
-  assert.deepEqual(yours.plans.at(-1), { plan: 'your_plan', lines: 'LDM-001 50', spend: 4750, holdingCost: yours.plans.at(-1).holdingCost, shortageCost: yours.plans.at(-1).shortageCost, expectedCost: 626.06, costAboveOptimal: 211.69, withinBudget: true, overBudgetAmount: null, issues: ['LDM-001 below_minimum_order'] })
+  assert.deepEqual(yours.plans.at(-1), { plan: 'your_plan', lines: 'LDM-001 50', spend: 4750, holdingCost: yours.plans.at(-1).holdingCost, shortageCost: yours.plans.at(-1).shortageCost, expectedCost: 626.06, costAboveOptimal: 211.69, withinBudget: true, overBudgetAmount: null, budgetLeft: null, issues: ['LDM-001 below_minimum_order'] })
   // Over a budget: by how much, so the answer need not work it out.
   assert.equal((await run('optimize_order_plan', { budget: 4000, plan: [{ sku: 'LDM-001', quantity: 100 }] })).result.plans.at(-1).overBudgetAmount, 5500)
+  // What is left of a budget is a figure the result gives (2026-11-06).
+  const roomy = (await run('optimize_order_plan', { budget: 100000 })).result.plans.find((row) => row.plan === 'optimal')
+  assert.equal(roomy.budgetLeft, Math.round((100000 - roomy.spend) * 100) / 100)
+  assert.equal(roomy.overBudgetAmount, null)
   assert.deepEqual([yours.decision.savingVsYourPlan, yours.items[0].planQuantity], [211.69, 50])
   // A service level the user gives sets the shortage cost: 95% is 19 x holding.
   const strict = (await run('optimize_order_plan', { serviceLevelPercent: 95 })).result

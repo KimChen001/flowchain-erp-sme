@@ -143,6 +143,11 @@ export function aiGroundingSources(results = []) {
       addDates(value)
       if (/^-?[\d,]+(?:\.\d+)?$/.test(value.trim())) numbers.push({ value: Number(value.replace(/,/g, '')), key, currency: text(parent?.currency).toUpperCase() || null, unit: null })
       else if (PROSE_KEYS.has(key)) addProse(value)
+      // A plan's lines as the solver writes them ("FOODS_3_090 390, ..."):
+      // each figure is a quantity (2026-11-06: an answer quoting the plan
+      // without a budget, 81 units, was flagged though the tool gave it).
+      // Digits inside a SKU are not read.
+      else if (key === 'lines') for (const match of value.matchAll(PROSE_NUMBER)) numbers.push({ value: Number(match[0].replace(/,/g, '')), key: 'quantity', currency: null, unit: null })
       return
     }
     if (typeof value === 'boolean') return

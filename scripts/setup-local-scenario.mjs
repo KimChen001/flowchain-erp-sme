@@ -367,7 +367,7 @@ async function scenarioSeedDay(prisma, tenantId, requested, timeZone) {
 // The workspace user who posts the walkthrough's documents: the first active
 // user, by email, whose roles grant every permission given. pilot:setup
 // provisions the roles.
-async function scenarioActor(prisma, tenantId, permissions, documents) {
+export async function scenarioActor(prisma, tenantId, permissions, documents) {
   const users = await prisma.user.findMany({ where: { tenantId, status: 'active' }, orderBy: { email: 'asc' } })
   for (const user of users) {
     const identity = { authenticated: true, tenantId, userId: user.id, role: user.role, name: user.name, source: 'local_walkthrough_scenario' }
@@ -381,7 +381,7 @@ async function scenarioActor(prisma, tenantId, permissions, documents) {
   throw new Error(`No active workspace user may post ${documents}. Run pilot:setup before pilot:setup:scenario.`)
 }
 
-const HISTORY_PERMISSIONS = ['inventory.adjustment.create', 'inventory.adjustment.approve', 'inventory.adjustment.post', 'shipment.prepare', 'shipment.post']
+export const HISTORY_PERMISSIONS = ['inventory.adjustment.create', 'inventory.adjustment.approve', 'inventory.adjustment.post', 'shipment.prepare', 'shipment.post']
 
 // The opening stock entry (see OPENING_STOCK_KEY), or null before it exists.
 async function openingStockEntry(prisma, tenantId, where = {}, select = undefined) {
@@ -414,7 +414,7 @@ async function postOpeningStock(prisma, { tenantId, calendar, identity, env }) {
 // is resumed; anything else a person has changed since (a posted, reversed or
 // cancelled shipment, an order on hold or cancelled, a released reservation)
 // is left as it is.
-async function shipHistoryOrder(prisma, order, { tenantId, calendar, identity, env }) {
+export async function shipHistoryOrder(prisma, order, { tenantId, calendar, identity, env }) {
   // The order's one shipment, found by the order (the server numbers it).
   const posted = await prisma.shipmentDocument.findFirst({ where: { tenantId, salesOrderId: order.id }, orderBy: { createdAt: 'asc' } })
   if (posted && (posted.postingStatus !== 'unposted' || posted.workflowStatus === 'cancelled')) return false
