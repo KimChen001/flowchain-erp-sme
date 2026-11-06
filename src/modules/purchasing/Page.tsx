@@ -277,7 +277,7 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
           {
             title: "订购",
             facts: [
-              ["订购数量", `${formatNumber(line.quantity)} ${line.unit}`],
+              ["订购数量", `${formatNumber(line.quantity)} ${unitLabel(line.unit, language, line.quantity)}`],
               ["单价", fmt(line.unitPrice)],
               ["行金额", fmt(line.lineAmount)],
             ],
@@ -1098,7 +1098,7 @@ export default function PurchasingOrdersPage({
         <div className="whitespace-nowrap">{lineLabel(row.poLineId)}</div>
         <Sub>{copy(row.sku)}</Sub>
       </> },
-      { key: "receivedQty", label: copy("收货数量"), width: 100, align: "right", render: (row) => <span className="whitespace-nowrap">{formatNumber(row.receivedQty)} {copy(row.unit)}</span> },
+      { key: "receivedQty", label: copy("收货数量"), width: 100, align: "right", render: (row) => <span className="whitespace-nowrap">{formatNumber(row.receivedQty)} {unitLabel(row.unit, language, row.receivedQty)}</span> },
       { key: "arrived", label: copy("收货日期"), width: 130, render: (row) => <>
         <div className="whitespace-nowrap">{day(row.arrived) || "—"}</div>
         <Sub>{copy(row.receiver)}</Sub>
@@ -1130,7 +1130,7 @@ export default function PurchasingOrdersPage({
         <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.grnLineId)}>{say("Receipt: ", "收货：")}{receiptLineLabel(row.grnLineId)}</span></Sub>
       </> },
       { key: "quantity", label: copy("开票数量"), width: 120, align: "right", render: (row) => <>
-        <div className="whitespace-nowrap">{formatNumber(row.quantity)} {copy(row.unit)}</div>
+        <div className="whitespace-nowrap">{formatNumber(row.quantity)} {unitLabel(row.unit, language, row.quantity)}</div>
         <Sub><span className="whitespace-nowrap">@ {formatCurrencyAmount(row.unitPrice, row.currency)}</span></Sub>
       </> },
       { key: "invoiceAmount", label: copy("发票金额"), width: 120, align: "right", render: (row) => <span className="whitespace-nowrap">{formatCurrencyAmount(row.invoiceAmount, row.currency)}</span> },

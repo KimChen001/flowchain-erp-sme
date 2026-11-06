@@ -181,7 +181,7 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   );
   await expect(
     page.getByTestId("inventory-item-OUT-BROWSER-SKU"),
-  ).toContainText("7 EA");
+  ).toContainText("7 个");
   await page.goto(postedShipmentUrl);
 
   await page.getByTestId("open-reverse").click();

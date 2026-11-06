@@ -79,7 +79,7 @@ test('the facts read in Chinese, and a hidden price is never shown as 0', async 
   await page.goto(`/app/master-data/suppliers/${supplierId}`);
   const facts = page.getByTestId(`supplied-item-price-history-${itemId}`);
   await expect(facts.getByTestId(`supplied-item-price-history-${itemId}-latest`)).toHaveText('上次采购订单价对当前角色隐藏 · PO-0031 · Sep 10, 2026（下单日期 · 未记录下达日期） · Acme');
-  await expect(facts).toContainText('以往采购以 CASE 计，未比较');
+  await expect(facts).toContainText('以往采购以 箱 计，未比较');
   await expect(facts).not.toContainText('0.00');
 });
 

@@ -20,6 +20,7 @@ import { outboundEnglish } from "./outboundCopy";
 import { outboundPreviewSentences, type OutboundPreviewLookup } from "./outboundPreviewText";
 import { formatCalendarDay, formatLocaleAmount, formatQuantity } from "../../lib/format";
 import { movementTypeLabel } from "../../i18n/statusLabels";
+import { unitLabel } from "../../i18n/unitLabels";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
@@ -1146,7 +1147,7 @@ function OrderDetail({ id }: { id: string }) {
   const warehouseName = useWarehouseNames();
   const place = usePlace();
   const stamp = useStamp();
-  const { locale } = useI18n();
+  const { locale, language } = useI18n();
   const dialog = useConfirm();
   const [data, setData] = useState<Workbench | null>(null),
     [error, setError] = useState(""),
@@ -1833,7 +1834,7 @@ function OrderDetail({ id }: { id: string }) {
             label={say("Lines", "订单行")}
             note={
               lineUnits.length === 1
-                ? say(`${orderedText} ${lineUnits[0]} ordered`, `订购 ${orderedText} ${lineUnits[0]}`)
+                ? say(`${orderedText} ${unitLabel(lineUnits[0], language, 2)} ordered`, `订购 ${orderedText} ${unitLabel(lineUnits[0], language)}`)
                 : ""
             }
           >
