@@ -1123,6 +1123,14 @@ test('a count that adds up the lists\' totals is checked, and a table named by d
   assert.ok(!spans.some((span) => span.text === '4'), JSON.stringify(spans))
 })
 
+test('the system prompt asks for judgement on broad questions, limits only when asked to act, and drafts as quotes', () => {
+  for (const rule of [
+    /lead with the one to three things that matter most, each with why/,
+    /Say what you cannot do only then, when the user asks for such a step/,
+    /as "> " quoted lines, in the language the user asked in/,
+    /weighs its terms \(item_suppliers: lead time, minimum order, reference price\)/,
+  ]) assert.match(ASSISTANT_V2_SYSTEM, rule)
+})
 
 test('a note of the user\'s step in a record card backs "you approved PR-001"; without it, or for another step, the words are replaced', async () => {
   const approved = { action: { type: 'purchase_request', action: 'approve', id: 'PR-001', number: 'PR-001', status: 'approved', created: [] } }

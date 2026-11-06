@@ -5,6 +5,7 @@ import { runHighestRisk } from './ai-skill-highest-risk.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { AI_SKILL_SIGNAL_TYPES, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { readFirstRunSetup } from './first-run-setup.mjs'
+import { createRfqSupplierComparisonService } from './rfq-supplier-comparison-service.mjs'
 import { listItemSupplierRecords, mapItemSupplierRecord } from './master-data-commands.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
 import { maskReferencePrice, masterDataReadAccessFor } from './master-data-read-access.mjs'
@@ -447,4 +448,89 @@ const setupStatus = defineAiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus])
+// An item's approved suppliers with their terms, as the item's purchasing
+// set-up records them (the purchase request form's read, itemSources): for
+// "should I switch supplier" the answer had no lead time or minimum order of
+// the other supplier (2026-11-05). Prices only for a user who may see them.
+const itemSuppliers = defineAiTool({
+  name: 'item_suppliers',
+  description: 'An item\'s approved suppliers as its purchasing set-up records them, the preferred first: each with its lead time in days, minimum order quantity and reference price (hidden from users who may not see prices). Use it to compare suppliers of an item or to judge a switch; price_history gives what was actually paid, supplier_performance how each delivers.',
+  parameters: { sku: { type: 'string', description: 'The item\'s SKU.' } },
+  required: ['sku'],
+  available: (facts, context) => Boolean(facts.inventory) && Array.isArray(facts.suppliers) && Boolean(context?.actor && context.prisma),
+  assistantV2Only: true,
+  async run(args, { facts, context }) {
+    const row = stockRow(facts, args.sku) || array(facts.inventory.masterOnly).find((entry) => fold(entry.sku) === fold(args.sku))
+    if (!row || !text(row.itemId)) return { error: 'not_found' }
+    const item = (await storedItems(context, [text(row.itemId)])).get(text(row.itemId))
+    if (!item) return { error: 'not_found' }
+    const { byItem, prices } = await itemSources(context, [item])
+    const sources = byItem.get(text(item.id)) || []
+    const number = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
+    return {
+      sku: row.sku, itemName: row.itemName || text(item.name) || null, unit: itemStockUnit(item) || row.unit || null, pricesHidden: !prices,
+      suppliers: sources.map((source) => ({
+        name: source.name, preferred: source.preferred, leadTimeDays: source.leadTimeDays ?? null, minimumOrderQuantity: number(source.minimumOrderQuantity),
+        referencePrice: prices ? number(source.referencePrice) : null, currency: source.currency || null, ref: aiToolRef('supplier', source.id, source.name),
+      })),
+      total: sources.length,
+    }
+  },
+})
+
+// The quotes suppliers sent on open RFQs, read through the RFQ comparison
+// (rfq-supplier-comparison-service.mjs, the RFQ page's read, which checks the
+// user may see prices): "the RFQ has 2 quotes, but I don't have their
+// content" (2026-11-05). Each supplier's latest quote, line by line; no
+// ranking and no award, which stay the user's in the RFQ.
+const RFQ_QUOTE_LIMIT = 3
+const canReadPrices = (context) => Boolean(context?.actor?.permissionCodes?.has?.('procurement.prices.read'))
+const rfqQuotes = defineAiTool({
+  name: 'rfq_quotes',
+  description: 'The quotes suppliers sent on open RFQs: per RFQ its number, title and quote due date, and one row per supplier and line of its latest quote with the SKU, quantity, unit price, currency, delivery date and how long the quote is valid, plus the invited suppliers that have not quoted. Name an RFQ by number, or a SKU for the open RFQs that ask for it (up to 3). No ranking or award: the user compares and awards in the RFQ.',
+  parameters: {
+    rfq: { type: 'string', description: 'An RFQ number.' },
+    sku: { type: 'string', description: 'A SKU: the open RFQs with a line for it.' },
+  },
+  available: (facts, context) => Boolean(facts.rfqs) && Boolean(context?.actor && context.prisma) && canReadPrices(context),
+  assistantV2Only: true,
+  async run(args, { facts, context }) {
+    const open = array(facts.rfqs.open)
+    let picked = open
+    if (args.rfq) picked = open.filter((row) => fold(row.number) === fold(args.rfq) || fold(row.id) === fold(args.rfq))
+    else if (args.sku) {
+      const stock = stockRow(facts, args.sku) || array(facts.inventory?.masterOnly).find((entry) => fold(entry.sku) === fold(args.sku))
+      const match = [{ sku: { equals: text(args.sku), mode: 'insensitive' } }, ...(text(stock?.itemId) ? [{ itemId: text(stock.itemId) }] : [])]
+      const lines = open.length ? await context.prisma.rfqLine.findMany({ where: { tenantId: context.tenantId, rfqId: { in: open.map((row) => row.id) }, OR: match }, select: { rfqId: true } }) : []
+      const ids = new Set(array(lines).map((line) => text(line.rfqId)))
+      picked = open.filter((row) => ids.has(row.id))
+    }
+    if (!picked.length) return { rfqs: [], rows: [], total: 0 }
+    const service = context.routeContext?.aiReadServices?.rfqComparison || createRfqSupplierComparisonService({ prisma: context.prisma, env: context.routeContext?.env || process.env, now: () => context.now || new Date() })
+    const day = (value) => (text(value) ? text(value).slice(0, 10) : null)
+    const number = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
+    const rfqs = []
+    const rows = []
+    for (const rfq of picked.slice(0, RFQ_QUOTE_LIMIT)) {
+      let comparison
+      try { comparison = await service.getComparison(rfq.id, { identity: context.routeContext?.identity }) } catch { continue }
+      const ref = aiToolRef('rfq', rfq.id, rfq.number || rfq.title)
+      for (const response of array(comparison.responses)) {
+        const revision = response.latestRevision
+        if (!revision) continue
+        for (const line of array(revision.lines)) {
+          if (args.sku && fold(line.sku) !== fold(args.sku)) continue
+          rows.push({
+            rfq: rfq.number || rfq.id, supplier: response.supplierName, sku: line.sku || null, quantity: number(line.quantity), unit: line.unit || null,
+            unitPrice: number(line.unitPrice), currency: revision.currency || null, deliveryDate: day(line.deliveryDate || revision.deliveryDate), validUntil: day(revision.validUntil),
+            ref,
+          })
+        }
+      }
+      rfqs.push({ rfq: rfq.number || rfq.id, title: rfq.title || null, due: rfq.due || null, quotes: array(comparison.responses).filter((response) => response.latestRevision).length, notQuoted: array(comparison.nonResponseParticipants).map((row) => row.supplierName).filter(Boolean), ref })
+    }
+    return { rfqs, ...aiToolList(rows, AI_TOOL_LIMITS.maxRows) }
+  },
+})
+
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes])
