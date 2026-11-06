@@ -309,7 +309,7 @@ test('the answer leads with its finding, and a clarification asks its question w
   const chineseQuestion = buildBusinessQueryResponseV2(clarifying, { plan: asked }, { answerLanguage: 'zh-CN' })
   assert.equal(chineseQuestion.conclusion.title, '你想看供应商哪方面的风险？')
   assert.doesNotMatch(JSON.stringify(chineseQuestion.conclusion), /RFQ|PO/)
-  assert.equal(chineseQuestion.followUpSuggestions[4].label, '未授标询价')
+  assert.equal(chineseQuestion.followUpSuggestions[4].label, '未授标询价单')
 })
 
 test('two checks read from the same records are one card, and a shared note is said once', async () => {

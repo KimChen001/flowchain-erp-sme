@@ -13,6 +13,9 @@ import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
 import { buildFirstRunChecklist } from './today-work.mjs'
 import { firstRunSetupOptions, readFirstRunSetupCounts } from './first-run-setup.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
 // order of 100 and a reference price of 95 USD.
@@ -282,6 +285,74 @@ test('inventory_value values stock at reference prices and states the holding ra
   assert.equal((await run('inventory_value', { skus: ['NOPE-1'] })).error, 'not_found')
 })
 
+// 2026-11-06: multi-item order trade-offs under a budget, minimum orders and
+// open orders go to an exact solver (replenishment-solver.mjs). LDM-001:
+// 28 on hand + 70 on PO-001 and PO-008 + 50 on PR-001 (submitted) = 148;
+// 12 days' lead time + 7 review days; minimum 100 at 95 USD; 50 shipped on
+// each of 18 days.
+test('optimize_order_plan solves the order from the records and costs it beside no order, the reorder list and the user\'s plan', async () => {
+  const { run } = await v2({ change: shipping, actor: everyWarehouse })
+  const result = (await run('optimize_order_plan')).result
+  assert.equal(result.status, 'optimal')
+  assert.deepEqual(result.decision.lines.map((line) => [line.sku, line.quantity, line.unit, line.supplier, line.unitPrice, line.orderValue]), [['LDM-001', 202, 'pcs', 'Acme Components', 95, 19190]])
+  assert.deepEqual([result.decision.spend, result.decision.expectedCost, result.decision.savingVsNoOrder], [19190, 414.37, 328.65])
+  const [item] = result.items
+  assert.deepEqual([item.sku, item.position, item.openRequests, item.cycleDays, item.minimumOrderQuantity, item.minimumOrderValue, item.optimalQuantity, item.reorderListQuantity, item.reason], ['LDM-001', 148, 50, 19, 100, 9500, 202, 0, 'ordered'])
+  assert.deepEqual([item.chanceShortNoOrderPercent, item.chanceShortWithOptimalPercent], [52.1, 13.8])
+  assert.deepEqual(result.plans.map((plan) => [plan.plan, plan.lines, plan.expectedCost, plan.costAboveOptimal]), [['optimal', 'LDM-001 202', 414.37, 0], ['no_order', '', 743.02, 328.65], ['reorder_list', '', 743.02, 328.65]])
+  // What it could not plan, and why; never guessed.
+  assert.deepEqual(result.notPlanned, [{ sku: 'LDM-002', reason: 'no_lead_time' }, { sku: 'LDM-003', reason: 'no_item_record' }])
+  // The assumptions come back as data, as the other cost tools give them.
+  assert.deepEqual(result.assumptions, { holdingRatePercent: 25, holdingRateSource: 'assumed_planning_value', shortageCostMultiple: 5, serviceLevelPercent: 83.3, shortageCostSource: 'assumed_planning_value', reviewDays: 7, reviewDaysSource: 'assumed_planning_value', budgetSource: 'none' })
+  assert.deepEqual([result.method.solverStatus, result.method.gapPercent, result.method.scenarios, result.method.costSamples, result.method.demandWindowDays], ['optimal', 0, 200, 20000, 90])
+  assert.deepEqual(aiReadToolRefs(result), [{ type: 'item', id: 'ITEM-001', label: 'LDM-001' }])
+
+  // A budget below the minimum order's 9,500: nothing fits, and the result
+  // says what lifting the limit would buy.
+  const tight = (await run('optimize_order_plan', { budget: 5000 })).result
+  assert.deepEqual([tight.decision.lines, tight.items[0].reason], [[], 'cut_by_budget'])
+  assert.deepEqual(tight.budget, { amount: 5000, spend: 0, left: 5000, binds: true, spendWithoutLimit: 19190, costWithoutLimit: 414.37, costSavedWithoutLimit: 328.65 })
+  assert.deepEqual(tight.plans.map((plan) => plan.plan), ['optimal', 'without_budget_limit', 'no_order', 'reorder_list'])
+  // A plan the user proposes, below the minimum order.
+  const yours = (await run('optimize_order_plan', { plan: [{ sku: 'ldm-001', quantity: 50 }] })).result
+  assert.deepEqual(yours.plans.at(-1), { plan: 'your_plan', lines: 'LDM-001 50', spend: 4750, holdingCost: yours.plans.at(-1).holdingCost, shortageCost: yours.plans.at(-1).shortageCost, expectedCost: 626.06, costAboveOptimal: 211.69, withinBudget: true, overBudgetAmount: null, issues: ['LDM-001 below_minimum_order'] })
+  // Over a budget: by how much, so the answer need not work it out.
+  assert.equal((await run('optimize_order_plan', { budget: 4000, plan: [{ sku: 'LDM-001', quantity: 100 }] })).result.plans.at(-1).overBudgetAmount, 5500)
+  assert.deepEqual([yours.decision.savingVsYourPlan, yours.items[0].planQuantity], [211.69, 50])
+  // A service level the user gives sets the shortage cost: 95% is 19 x holding.
+  const strict = (await run('optimize_order_plan', { serviceLevelPercent: 95 })).result
+  assert.deepEqual([strict.assumptions.shortageCostMultiple, strict.assumptions.shortageCostSource, strict.decision.lines[0].quantity], [19, 'service_level', 452])
+  // Lines it cannot plan, and SKUs it does not know.
+  assert.deepEqual(await run('optimize_order_plan', { plan: [{ sku: 'LDM-002', quantity: 10 }] }), { ok: false, error: 'cannot_plan_item', details: ['LDM-002: no_lead_time'] })
+  assert.equal((await run('optimize_order_plan', { skus: ['NOPE-1'] })).error, 'not_found')
+  assert.equal((await run('optimize_order_plan', { plan: [{ sku: 'LDM-001' }] })).error, 'invalid_arguments')
+  // A fixed line below the minimum order cannot be planned around.
+  const fixed = (await run('optimize_order_plan', { fixedLines: [{ sku: 'LDM-001', quantity: 50 }] })).result
+  assert.deepEqual([fixed.status, fixed.reason, fixed.decision], ['infeasible', 'fixed_below_minimum_order', null])
+  // Only one supplier's items.
+  assert.deepEqual((await run('optimize_order_plan', { supplier: 'acme' })).result.notPlanned, [{ sku: 'LDM-002', reason: 'no_lead_time' }])
+})
+
+test('optimize_order_plan refuses what the role may not see, and logs each call for a study when asked', async () => {
+  // Prices hidden from the role: no plan can be costed.
+  assert.equal((await (await v2({ roleKey: 'read-only-viewer', change: shipping, actor: everyWarehouse })).run('optimize_order_plan')).error, 'prices_hidden')
+  // A reader of only some warehouses: the item's demand is the whole workspace's.
+  const scoped = await v2({ change: (data) => { shipping(data); data.warehouses = [{ id: 'WH-1' }, { id: 'WH-2' }] }, ctx: { routeContext: { reportReadAccess: { warehouseIds: ['WH-1'] } } } })
+  assert.equal((await scoped.run('optimize_order_plan')).error, 'warehouse_scope')
+  const folder = mkdtempSync(join(tmpdir(), 'order-plan-log-'))
+  try {
+    const log = join(folder, 'calls.jsonl')
+    const { run } = await v2({ change: shipping, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_REPLENISHMENT_SOLVER_LOG: log } } })
+    await run('optimize_order_plan', { budget: 25000 })
+    const [line] = readFileSync(log, 'utf8').trim().split('\n').map((entry) => JSON.parse(entry))
+    assert.deepEqual([line.caller, line.args, line.options.budget, line.input.items.map((entry) => [entry.sku, entry.openRequests]), line.result.optimal.quantities], ['assistant_v2', { budget: 25000 }, 25000, [['LDM-001', 50]], [202]])
+    // And what the model was shown, for the study's "plan given to the LLM" arm.
+    assert.deepEqual([line.toolResult.decision.lines.map((entry) => entry.quantity), line.toolResult.budget.binds], [[202], false])
+  } finally {
+    rmSync(folder, { recursive: true, force: true })
+  }
+})
+
 test('suggest_purchase_lines with coverDays reads no demand for a reader of only some warehouses', async () => {
   const { run } = await v2({ change: (data) => { shipping(data); data.warehouses = [{ id: 'WH-1' }, { id: 'WH-2' }] }, ctx: { routeContext: { reportReadAccess: { warehouseIds: ['WH-1'] } } } })
   const [row] = (await run('suggest_purchase_lines', { skus: ['LDM-001'], coverDays: 14 })).result.rows
@@ -471,6 +542,17 @@ const RECORDED_SERVICES = {
     list: async () => ({ items: [{ id: 'DOC-1', title: 'Purchasing Policy', language: 'en-US' }] }),
     documents: async () => [{ pageContent: 'Escalate to the buyer manager when a supplier is 3 business days past the promised date.', metadata: { id: 'DOC-1-0', documentId: 'DOC-1', title: 'Purchasing Policy', heading: 'Follow-up and escalation', position: 0, language: 'en-US', contentHash: 'h1' } }],
   },
+  // The RFQ page's comparison, as rfq-supplier-comparison-service.mjs returns it.
+  rfqComparison: {
+    getComparison: async (rfqId) => ({
+      rfqId,
+      responses: [{
+        supplierId: 'SUP-002', supplierName: 'Summit Packaging',
+        latestRevision: { currency: 'USD', validUntil: '2026-11-30T00:00:00.000Z', deliveryDate: '2026-11-20T00:00:00.000Z', lines: [{ sku: 'LDM-001', quantity: '50', unit: 'pcs', unitPrice: '92.5', deliveryDate: null }] },
+      }],
+      nonResponseParticipants: [{ supplierId: 'SUP-001', supplierName: 'Acme Components' }],
+    }),
+  },
 }
 
 test('every data tool declares its columns, and each declared column is in its result', async () => {
@@ -495,22 +577,34 @@ test('every data tool declares its columns, and each declared column is in its r
     list_receivables: [{}, { view: 'aging' }],
     price_history: [{ sku: 'LDM-001' }],
     search_documents: [{ query: 'supplier past the promised date escalate' }],
+    // A row's details depend on its signal: today's list and the problems
+    // between them hold every detail column.
+    attention_list: [{ limit: 10 }, { kind: 'problems', limit: 10 }],
+    item_suppliers: [{ sku: 'LDM-001' }],
+    rfq_quotes: [{}],
     order_quantity_costs: [{ sku: 'LDM-001', quantities: [50, 100] }],
+    optimize_order_plan: [{ plan: [{ sku: 'LDM-001', quantity: 100 }] }],
   }
   // A nested column under a null value (a rate with too few deliveries) is
-  // there, and null.
+  // there, and null. Each column must be in a row of one of the tool's calls.
   const at = (value, path) => (path ? path.split('.').reduce((entry, key) => (entry === null || entry === undefined ? entry : entry[key]), value) : value)
   const checked = new Set()
   for (const tool of aiReadToolsFor(facts, context, { assistantV2: true })) {
+    const seen = new Map()
     for (const args of calls[tool.name] || [{}]) {
       const output = await run(tool.name, args)
       assert.ok(output.ok, `${tool.name} ${JSON.stringify(args)}: ${output.error}`)
       for (const [path, columns] of Object.entries(AI_READ_TOOL_COLUMNS[tool.name])) {
         const rows = path ? at(output.result, path) : [output.result]
         if (!Array.isArray(rows) || !rows.length) continue
-        for (const column of columns) assert.ok(rows.some((row) => at(row, column) !== undefined), `${tool.name} ${path} has ${column}`)
+        if (!seen.has(path)) seen.set(path, new Set())
+        for (const column of columns) if (rows.some((row) => at(row, column) !== undefined)) seen.get(path).add(column)
         checked.add(`${tool.name} ${path}`)
       }
+    }
+    for (const [path, columns] of Object.entries(AI_READ_TOOL_COLUMNS[tool.name])) {
+      if (!seen.has(path)) continue
+      for (const column of columns) assert.ok(seen.get(path).has(column), `${tool.name} ${path} has ${column}`)
     }
   }
   // Every declared table, of every tool, had rows to check.
@@ -555,4 +649,31 @@ test('setup_status: without import a step opens its own page; a role that may no
   assert.deepEqual([all.open, all.done], [false, 5])
   const broken = await v2()
   assert.deepEqual(await runAiReadTool('setup_status', {}, { facts: broken.facts, context: { ...broken.context, prisma: swapped(broken.context.prisma, 'supplier', { count: async () => { throw new Error('down') } }) }, assistantV2: true }), { ok: false, error: 'setup_counts_unavailable' })
+})
+
+// A supplier switch was judged without the other supplier's terms, and open
+// quotes were out of reach (2026-11-05).
+test('item_suppliers gives an item\'s approved suppliers with lead time, minimum and reference price', async () => {
+  const { run } = await v2()
+  const output = await run('item_suppliers', { sku: 'LDM-001' })
+  assert.ok(output.ok, output.error)
+  const [first] = output.result.suppliers
+  assert.equal(output.result.sku, 'LDM-001')
+  assert.equal(first.preferred, true)
+  assert.equal(first.name, 'Acme Components')
+  assert.equal(first.leadTimeDays, 12)
+  assert.equal(typeof first.referencePrice, 'number')
+  assert.deepEqual(first.ref, { type: 'supplier', id: 'SUP-001', label: 'Acme Components' })
+  assert.equal((await run('item_suppliers', { sku: 'NOPE-9' })).error, 'not_found')
+})
+
+test('rfq_quotes reads each open RFQ\'s latest quotes through the RFQ comparison, only for a user who may see prices', async () => {
+  const { run, context, facts } = await v2({ ctx: { aiReadServices: RECORDED_SERVICES } })
+  const output = await run('rfq_quotes', {})
+  assert.ok(output.ok, output.error)
+  assert.deepEqual(output.result.rows[0], { rfq: output.result.rfqs[0].rfq, supplier: 'Summit Packaging', sku: 'LDM-001', quantity: 50, unit: 'pcs', unitPrice: 92.5, currency: 'USD', deliveryDate: '2026-11-20', validUntil: '2026-11-30', ref: output.result.rfqs[0].ref })
+  assert.deepEqual(output.result.rfqs[0].notQuoted, ['Acme Components'])
+  const tool = AI_ASSISTANT_V2_TOOLS.find((entry) => entry.name === 'rfq_quotes')
+  assert.equal(tool.available(facts, context), true)
+  assert.equal(tool.available(facts, { ...context, actor: { ...context.actor, permissionCodes: new Set() } }), false)
 })

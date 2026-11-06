@@ -1,4 +1,5 @@
 import { analyticsCopy } from './analyticsCopy';
+import { currentChineseLabel } from '../../i18n/legacyTerms';
 // Presentation copy only: report names and other user-owned values stay intact.
 const english: Record<string, string> = {
   '标准报表': 'Standard reports', '我的报表': 'My reports', '团队共享': 'Team reports', '最近使用': 'Recently opened',
@@ -6,7 +7,7 @@ const english: Record<string, string> = {
   '基于模板创建报表': 'Create report', '逾期采购订单': 'Overdue purchase orders', '销售订单履约': 'Sales order fulfillment',
   '库存风险': 'Inventory risk', '供应商概览': 'Supplier overview',
   '采购分析': 'Procurement analytics', '销售分析': 'Sales analytics', '库存分析': 'Inventory analytics', '结算分析': 'Settlement analytics', '发票分析': 'Invoice analytics', '供应商分析': 'Supplier analytics',
-  '采购订单': 'Purchase orders', '销售订单': 'Sales orders', '库存余额': 'Inventory balances', '供应商发票': 'Supplier invoices', '供应商': 'Suppliers',
+  '采购订单': 'Purchase orders', '销售订单': 'Sales orders', '库存余额': 'Inventory balances', '采购发票': 'Supplier invoices', '供应商': 'Suppliers',
   '采购申请': 'Purchase requests', '询报价': 'RFQs and quotations', '收货': 'Receiving',
   '系统标准报表': 'Standard report', '当前工作区': 'Current workspace', '打开报表': 'Open report',
   '报表名称': 'Report name', '业务主题': 'Business subject', '创建人': 'Created by', '可见范围': 'Visibility', '最近更新': 'Last updated', '版本': 'Version', '操作': 'Actions',
@@ -18,13 +19,14 @@ const english: Record<string, string> = {
   '请填写报表名称': 'Enter a report name', '基于受控业务主题和字段目录创建': 'Created from the business subject and column catalog',
   '我的报表已创建': 'Report created', '创建失败': 'Could not create report', '请重试': 'Please try again', '报表已复制': 'Report copied',
   '业务编号': 'Business ID', '单据号': 'Document number', '业务日期': 'Business date', '客户': 'Customer', '金额': 'Amount', '数量': 'Quantity', '状态': 'Status',
-  '销售订单数量': 'Sales order count', '未履约销售需求': 'Unfulfilled sales demand', '采购订单金额': 'Purchase order amount', '开放 PO': 'Open POs',
-  '在手库存': 'On-hand inventory', '库存风险 SKU': 'Inventory risk SKUs', '供应商发票金额': 'Supplier invoice amount', '供应商数量': 'Supplier count',
+  '销售订单数量': 'Sales order count', '未履约销售需求': 'Unfulfilled sales demand', '采购订单金额': 'Purchase order amount', '未结 PO': 'Open POs',
+  '在手库存': 'On-hand inventory', '库存风险 SKU': 'Inventory risk SKUs', '采购发票金额': 'Supplier invoice amount', '供应商数量': 'Supplier count',
   '关闭': 'Close', '无法加载报表库': 'Could not load the report library', '无法加载报表模板': 'Could not load report templates',
   '无法完成此操作': 'Could not complete this action', '重试': 'Retry', '正在加载报表库': 'Loading report library',
 };
 
-export function reportLibraryCopy(value: string, language: string) {
+export function reportLibraryCopy(source: string, language: string) {
+  const value = currentChineseLabel(source);
   // Metric labels the server writes in English take their Chinese from the analytics copy.
   return language === 'en-US' ? english[value] || value : analyticsCopy(value, language);
 }

@@ -157,6 +157,10 @@ const CODE_ALIASES = Object.freeze({
   'suggestedQuantity.source': 'suggested_quantity_source', 'supplier.name': 'supplier', 'needByDate.value': 'need_by_date', 'estimatedUnitPrice.value': 'unit_price',
   'estimatedUnitPrice.currency': 'currency', '1_30': 'days_1_30', '31_60': 'days_31_60', '61_90': 'days_61_90', '90_plus': 'days_90_plus',
   'purchaseOrders.open': 'open_purchase_orders', 'purchaseOrders.overdue': 'overdue_purchase_orders', 'purchaseOrders.waitingForApproval': 'pending_approvals',
+  'details.sku': 'sku', 'details.remaining': 'remaining_quantity', 'details.unit': 'unit', 'details.available': 'available', 'details.demand': 'demand',
+  'details.shortage': 'shortage', 'details.incoming': 'incoming', 'details.safety': 'safety_stock', 'details.reorder': 'reorder_point', 'details.pendingRequests': 'open_requests',
+  'details.covered': 'covered', 'details.variance': 'variance', 'details.currency': 'currency', 'details.rejected': 'rejected', 'details.quantity': 'quantity',
+  'details.priority': 'priority', 'details.requiredDate': 'required_date', 'details.responses': 'quotes', 'details.title': 'title', 'details.count': 'count', referencePrice: 'unit_price', leadTimeDays: 'lead_time_days',
 })
 
 const snakeCase = (key) => key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/\./g, '_').toLowerCase()
@@ -175,15 +179,23 @@ const MONEY_COLUMNS = Object.freeze({
   spend_analysis: ['value'],
   list_receivables: ['current', '1_30', '31_60', '61_90', '90_plus', 'total'],
   suggest_purchase_lines: ['estimatedUnitPrice.value'],
+  optimize_order_plan: ['spend', 'holdingCost', 'shortageCost', 'expectedCost', 'costAboveOptimal', 'orderValue', 'minimumOrderValue', 'overBudgetAmount'],
+  attention_list: ['details.variance'],
+  item_suppliers: ['referencePrice'],
 })
 const QUANTITY_COLUMNS = new Set([
   'ordered', 'received', 'remaining', 'onHand', 'reserved', 'available', 'openSalesDemand', 'incomingOnPurchaseOrders', 'availableToPromise', 'shortage',
   'safetyStock', 'reorderPoint', 'incoming', 'demand', 'endAvailable', 'quantity', 'rejected', 'stillToReceive', 'withoutTheseLines', 'additionalShortfall',
   'position', 'shortfall', 'minimumOrderQuantity', 'requestQuantity', 'orderedQuantity', 'averageDailyDemand', 'suggestedQuantity.value',
+  'expectedDemand', 'optimalQuantity', 'reorderListQuantity', 'planQuantity', 'openRequests',
+  'details.remaining', 'details.available', 'details.demand', 'details.shortage', 'details.incoming', 'details.safety', 'details.reorder', 'details.covered', 'details.rejected', 'details.quantity',
 ])
 // A signal or record type (po_overdue, purchase_order) and a priority (high)
 // are codes too: the panel words them, never showing the code (2026-11-05).
-const STATUS_COLUMNS = new Set(['status', 'postingStatus', 'matchStatus', 'state', 'disputeStatus', 'severity', 'whenKind', 'suggestedQuantity.source', 'type', 'priority'])
+const STATUS_COLUMNS = new Set(['status', 'postingStatus', 'matchStatus', 'state', 'disputeStatus', 'severity', 'whenKind', 'suggestedQuantity.source', 'type', 'priority', 'details.priority', 'plan', 'reason'])
+// Codes that name a kind of thing rather than a state (an order plan, why an
+// item gets its quantity): worded, never coloured.
+const NEUTRAL_CODE_COLUMNS = new Set(['type', 'plan', 'reason'])
 const PRIORITY_TONES = Object.freeze({ urgent: 'danger', high: 'warning', medium: 'info', normal: 'neutral', low: 'neutral' })
 // Closed records are late no more: their days overdue are not shown.
 const CLOSED_STATES = new Set(['cancelled', 'canceled', 'closed', 'fully_received', 'received', 'completed', 'rejected'])
@@ -228,8 +240,8 @@ function cellOf(kind, row, key, output) {
   if (typeof value === 'boolean') return { code: value ? 'yes' : 'no', tone: 'neutral' }
   if (Array.isArray(value)) return value.every((entry) => typeof entry === 'string' || isNumber(entry)) ? value.join(', ').slice(0, MAX_TEXT) : null
   if (isObject(value)) return refOf(value) || (typeof value.name === 'string' ? value.name.slice(0, MAX_TEXT) : null)
-  if (kind === 'status' && isCode(value) && key === 'type') return { code: value, tone: 'neutral' }
-  if (kind === 'status' && isCode(value) && key === 'priority') return { code: value, ...(PRIORITY_TONES[value] ? { tone: PRIORITY_TONES[value] } : {}) }
+  if (kind === 'status' && isCode(value) && NEUTRAL_CODE_COLUMNS.has(key)) return { code: value, tone: 'neutral' }
+  if (kind === 'status' && isCode(value) && (key === 'priority' || key === 'details.priority')) return { code: value, ...(PRIORITY_TONES[value] ? { tone: PRIORITY_TONES[value] } : {}) }
   if (kind === 'status' && isCode(value)) return { code: value }
   if (kind === 'date') return value.slice(0, 10)
   if (typeof value === 'string') {
@@ -420,7 +432,7 @@ const showTable = defineUiTool({
         if (one !== many) cell[`${code}_one`] = one
       }
       for (const [index, row] of shown.entries()) {
-        const unit = [row.unit, row.item?.unit].find((entry) => typeof entry === 'string' && entry.trim() && entry.length <= 20)
+        const unit = [row.unit, row.item?.unit, row.details?.unit].find((entry) => typeof entry === 'string' && entry.trim() && entry.length <= 20)
         if (unit) worded(cells[index], 'unit', unit.trim())
         if (typeof row.moqUnit === 'string' && row.moqUnit.trim() && row.moqUnit.length <= 20) worded(cells[index], 'moq_unit', row.moqUnit.trim())
       }
@@ -776,10 +788,15 @@ function formRow(row, output, { named, line, scope }) {
       // supplier the form adds has no reference price yet: the user enters
       // the price in the form (any price they typed is on its option).
       estimatedUnitPrice = !picked.link && picked.unitPrice !== null && picked.unitPrice !== undefined ? { value: picked.unitPrice, currency: picked.currency, source: 'reference_price' } : { value: null, currency: null, source: price.source === 'masked' && !picked.link ? 'masked' : 'missing' }
+      // A supplier with no lead time recorded keeps the item's need-by date
+      // from its preferred supplier's lead time, never today (2026-11-05:
+      // "from Northstar instead" set today while the answer said Nov 22).
       const moved = suggestNeedByDate({ today: output.today, leadTimeDays: picked.leadTimeDays ?? null, firstShortWeek: shortWeekOf })
-      lead = moved.leadTimeDays
-      leadDate = moved.source === PURCHASE_SUGGESTION_SOURCES.leadTime ? moved.value : null
-      shortWeekOf = moved.warning?.weekOf ?? null
+      if (moved.source === PURCHASE_SUGGESTION_SOURCES.leadTime) {
+        lead = moved.leadTimeDays
+        leadDate = moved.value
+        shortWeekOf = moved.warning?.weekOf ?? null
+      }
     }
   }
   const needByDate = named && line?.needByDate
@@ -788,26 +805,30 @@ function formRow(row, output, { named, line, scope }) {
       ? { value: leadDate, source: 'lead_time', leadTimeDays: lead, shortWeekOf }
       : { value: output.today, source: 'today', leadTimeDays: null, shortWeekOf }
   const cover = isObject(row.covered) ? refOf(array(row.covered.by)[0]?.ref) : null
+  // A quantity of the conversation's latest optimize_order_plan decision is
+  // the server's, like any suggestion. That plan already counted the open
+  // orders and requests, so they do not mark its line as covered.
+  const fromPlan = isNumber(line?.quantity) && line.quantity > 0 && scope.orderPlan?.get(fold(row.item.sku)) === line.quantity
   return {
     item: { id: text(row.item.id) || row.ref.id, sku: row.item.sku, name: text(row.item.name), unit: row.item.unit ?? null },
     onHand: row.onHand ?? null,
     safetyStock: row.safetyStock ?? null,
     reorderPoint: row.reorderPoint ?? null,
-    suggestedQuantity: named && isNumber(line?.quantity) ? { value: line.quantity, source: 'user_named' } : suggestedQuantity(row),
+    suggestedQuantity: fromPlan ? { value: line.quantity, source: 'order_plan' } : named && isNumber(line?.quantity) ? { value: line.quantity, source: 'user_named' } : suggestedQuantity(row),
     supplier,
     suppliers,
     needByDate,
     estimatedUnitPrice,
     warehouse: row.warehouseId ? { id: row.warehouseId, label: row.warehouseId } : null,
-    covered: cover ? { ref: cover } : null,
+    covered: cover && !fromPlan ? { ref: cover } : null,
     // Ticked only for an item the user named and nothing already covers.
-    checked: named && !row.covered,
+    checked: named && (fromPlan || !row.covered),
   }
 }
 
 const suggestPurchaseRequest = defineUiTool({
   name: 'suggest_purchase_request',
-  description: 'Show the in-chat purchase request form from a suggest_purchase_lines result (source). from user_named: the items the user named in this question, listed in lines. from agreed: the items the user agreed to, named or proposed earlier in this conversation, listed in lines, or no lines for every item of the latest form. from suggestions: the suggested items (all, or those listed in lines), for the user to choose. Quantity, supplier and need-by date in a line are used only for an item the user named or agreed to, and only when the user gave or changed them; otherwise the server fills every value. Named and agreed items are ticked (unless open orders already cover them); the user ticks the rest and creates the draft with their own click. A supplier the user named that is not yet an approved supplier of the item, but is an active supplier of the workspace, goes on the line when the user may add approved suppliers: when the user clicks Create, the form adds it as an approved supplier of the item, then creates the request. Pass unitPrice, currency and leadTimeDays only for such a supplier and only as the user typed them; the user can also enter them in the form.',
+  description: 'Show the in-chat purchase request form from a suggest_purchase_lines result (source). from user_named: the items the user named in this question, listed in lines. from agreed: the items the user agreed to, named or proposed earlier in this conversation, listed in lines, or no lines for every item of the latest form. from suggestions: the suggested items (all, or those listed in lines), for the user to choose. Quantity, supplier and need-by date in a line are used only for an item the user named or agreed to, and only when the user gave or changed them; otherwise the server fills every value. A line may also carry an item\'s quantity from the latest optimize_order_plan decision, which the form shows as the best plan\'s. Named and agreed items are ticked (unless open orders already cover them); the user ticks the rest and creates the draft with their own click. A supplier the user named that is not yet an approved supplier of the item, but is an active supplier of the workspace, goes on the line when the user may add approved suppliers: when the user clicks Create, the form adds it as an approved supplier of the item, then creates the request. Pass unitPrice, currency and leadTimeDays only for such a supplier and only as the user typed them; the user can also enter them in the form.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -821,7 +842,7 @@ const suggestPurchaseRequest = defineUiTool({
           type: 'object',
           properties: {
             sku: { type: 'string', minLength: 1, maxLength: 120 },
-            quantity: { type: 'number', exclusiveMinimum: 0, description: 'Only a quantity the user typed or changed.' },
+            quantity: { type: 'number', exclusiveMinimum: 0, description: 'Only a quantity the user typed or changed, or the item\'s quantity in the latest optimize_order_plan decision.' },
             supplier: { type: 'string', minLength: 1, maxLength: 200, description: 'Only a supplier the user named: its name, code or id.' },
             needByDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', minLength: 10, maxLength: 10, description: 'Only a date the user gave, YYYY-MM-DD.' },
             unitPrice: { type: 'number', minimum: 0, maximum: 1000000000, description: 'Only a unit price the user typed for a supplier that is not yet approved for the item.' },
@@ -898,7 +919,7 @@ const suggestPurchaseRequest = defineUiTool({
     const mayLink = canLinkItemSuppliers(ctx.actor) && !output.suppliersHidden
     const workspaceCurrency = currencyCode(text(ctx.workspaceCurrency).toUpperCase())
     const finish = (records) => {
-      const scope = { records, mayLink, words: userWords(ctx.userText), workspaceCurrency }
+      const scope = { records, mayLink, words: userWords(ctx.userText), workspaceCurrency, orderPlan: ctx.orderPlan instanceof Map ? ctx.orderPlan : null }
       const named = []
       const suggested = []
       for (const { row, isNamed, line } of entries) {

@@ -30,6 +30,22 @@ test('the validator rejects claims that the assistant acted', async () => {
   }
 })
 
+// The app's status words (owner's terminology, 2026-11-05) stand in an
+// evidence status field, and in the label that repeats it, as a status; the
+// same word in a sentence is still a claim.
+test('a status word in an evidence status field is a status, in a sentence a claim', async () => {
+  const { facts, response } = await base()
+  const chinese = { ...response, language: 'zh-CN' }
+  const item = chinese.keyEvidence[0]
+  for (const status of ['已下达', '已批准，待下达', '已取消']) {
+    const withStatus = { ...chinese, keyEvidence: [{ ...item, label: status, status }, ...chinese.keyEvidence.slice(1)] }
+    assert.equal(validateAiSkillResponse(withStatus, facts).ok, true, status)
+    assert.equal(validateAiSkillResponse(withSummary(chinese, `采购订单${status}。`), facts).ok, false, status)
+  }
+  const claim = { ...chinese, keyEvidence: [{ ...item, status: '我已下单' }, ...chinese.keyEvidence.slice(1)] }
+  assert.equal(validateAiSkillResponse(claim, facts).ok, false)
+})
+
 test('the validator rejects ids the readers did not return and cards that are not review-only', async () => {
   const { facts, response } = await base()
   const invented = { ...response, keyEvidence: [...response.keyEvidence, { ...response.keyEvidence[0], entityId: 'PO-999' }] }

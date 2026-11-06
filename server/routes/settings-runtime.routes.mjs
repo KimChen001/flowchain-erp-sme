@@ -78,7 +78,7 @@ export async function handleSettingsRuntimeRoute(ctx) {
     try {
       send(res, 200, (await getDatabaseSettings(ctx)).settings)
     } catch (error) {
-      send(res, error?.status || error?.statusCode || 500, { code: error?.code, message: error?.message || '系统设置读取失败' })
+      send(res, error?.status || error?.statusCode || 500, { code: error?.code, message: error?.message || '系统设置加载失败' })
     }
     return true
   }

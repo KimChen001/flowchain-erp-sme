@@ -27,8 +27,8 @@ const COPY = {
   "en-US": {
     reserve: "Reserves {amount} at {place}. Available stock there goes down by {q}.",
     release: "Releases {amount} reserved at {place}. Available stock there goes up by {q}.",
-    draft: "Creates a delivery for {amount} from {place}. Stock does not change until the shipment is posted.",
-    cancelDraft: "Cancels this delivery draft. {amount} at {place} stays reserved for the order.",
+    draft: "Creates a shipment for {amount} from {place}. Stock does not change until the shipment is posted.",
+    cancelDraft: "Cancels this shipment draft. {amount} at {place} stays reserved for the order.",
     post: "Ships {amount} from {place}. On hand and reserved both go down by {q}.",
     reverse: "Returns {amount} to {place}. On hand and reserved both go up by {q}.",
     amount: "{q} {unit} of {sku}",

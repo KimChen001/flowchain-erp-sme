@@ -46,6 +46,17 @@ names, or supplier names in place. Translate their presentation where appropriat
   (`docs/bills-invoices-and-accounting-handoff.md`). Route paths and ids such
   as `/app/procurement/bills` are unchanged.
   Field labels that name the supplier's own number still say "Invoice number".
+- Chinese terms (owner decision 2026-11-05): 采购发票 and 销售发票; 未结 for an open
+  document (未结采购订单); 承诺交期 for the promised date and 提前期 for a lead time in
+  days (交期 alone is a date); 基础资料 for master data; 销售订单; 最小起订量; 询价单
+  for an RFQ; 你 for the user; 加载失败 for a load error; and the statuses 已批准,
+  已下达, 已驳回 and 已取消. The assistant's status words are the same
+  (`po_status` in `server/domain/ai-skill-copy.mjs`, `ai-assistant-v2-display.mjs`); in a
+  skill answer a status follows 状态： or stands in a status field, so the action-claim
+  checks read it as a status. In English the outbound document is "Shipment";
+  "Delivery" stays for a supplier's delivery to us and "Proof of delivery" for 签收单.
+  Stored values, status codes and route paths do not change; an older record that
+  stores 已发出 is shown as 已下达. Messages written to suppliers keep 您.
 - The assistant's compound answers (a question with several parts) have English and
   Chinese copy for the answer title, the "first parts only" limitation and the card's
   section heading; each section is its skill's own answer in the question's language.

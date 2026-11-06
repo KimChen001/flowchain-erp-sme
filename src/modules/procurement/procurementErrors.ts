@@ -21,7 +21,7 @@ const PURCHASING_CODES: Record<string, ErrorPair> = {
   PURCHASE_ORDER_HAS_OPEN_RECEIPTS: ["This purchase order has receipts that are not posted yet. Post or cancel them first.", "该采购订单还有未过账的收货单，请先过账或取消。"],
   // The shared rules call this "not turned on"; the purchasing pages have
   // always said "try again" here, so they keep it.
-  FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE: ["Purchasing records cannot be read right now. Try again shortly.", "暂时无法读取采购记录，请稍后重试。"],
+  FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE: ["Purchasing records cannot be read right now. Try again shortly.", "采购记录加载失败，请稍后重试。"],
 };
 
 const INVALID: ErrorPair = ["Some details are not valid. Check them and try again.", "部分信息无效，请检查后重试。"];

@@ -6,7 +6,7 @@ const SUBJECTS = Object.freeze({
   purchase_requests: { label: '采购申请', defaultDateField: 'date', detailRoute: '/app/procurement/requests', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   rfqs: { label: '询报价', defaultDateField: 'date', detailRoute: '/app/procurement/rfq', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   receiving: { label: '收货', defaultDateField: 'date', detailRoute: '/app/procurement/receiving', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
-  supplier_invoices: { label: '供应商发票', defaultDateField: 'date', detailRoute: '/app/finance/invoices', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
+  supplier_invoices: { label: '采购发票', defaultDateField: 'date', detailRoute: '/app/finance/invoices', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   three_way_matches: { label: '三单匹配', defaultDateField: 'date', detailRoute: '/app/finance/three-way-match', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   reconciliation: { label: '供应商对账', defaultDateField: 'date', detailRoute: '/app/finance/reconciliation', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   settlement: { label: '结算', defaultDateField: 'date', detailRoute: '/app/finance/settlement', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
@@ -42,7 +42,7 @@ const FIELD_PRESENTATION = Object.freeze({
 })
 
 const ENUM_PRESENTATION = Object.freeze({
-  delivered: '已交付', partial: '部分交付', open: '进行中', completed: '已完成', pending: '待处理', paid: '已结算',
+  delivered: '已交付', partial: '部分交付', open: '未结', completed: '已完成', pending: '待处理', paid: '已结算',
   matched: '已匹配', variance: '存在差异', blocked: '阻断', approved: '已审批', review: '待复核', normal: '正常', risk: '风险',
 })
 
@@ -79,20 +79,20 @@ export const reportMetricCatalog = Object.freeze([
   metric('sales_order_count', '销售订单数量', 'sales_orders', 'number', 'count(id)', '筛选范围内销售订单数。', '/app/sales/orders'),
   metric('unshipped_amount', '未发货金额', 'sales_orders', 'currency', 'sum(amount where status != delivered)', '未完成发货的销售订单金额。', '/app/sales/orders?status=unshipped'),
   metric('delivery_completion_rate', '发货完成率', 'deliveries', 'percentage', 'delivered / ordered', '已完成发货订单数占应发货订单数。', '/app/sales/orders', { numerator: 'delivered orders', denominator: 'orders due for delivery' }),
-  metric('on_time_delivery_rate', '准时交付率', 'deliveries', 'percentage', 'on_time / due', '按承诺日期完成交付的订单占比。', '/app/sales/orders', { numerator: 'on-time deliveries', denominator: 'deliveries due' }),
+  metric('on_time_delivery_rate', '准时交付率', 'deliveries', 'percentage', 'on_time / due', '按承诺交期完成交付的订单占比。', '/app/sales/orders', { numerator: 'on-time deliveries', denominator: 'deliveries due' }),
   metric('purchase_order_amount', '采购订单金额', 'purchase_orders', 'currency', 'sum(amount)', '筛选范围内采购订单金额合计。', '/app/procurement/orders'),
-  metric('open_po_count', '开放 PO', 'purchase_orders', 'number', 'count(open)', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/procurement/orders?status=open'),
-  metric('overdue_po_amount', '逾期 PO 金额', 'purchase_orders', 'currency', 'sum(overdue amount)', '承诺日期早于范围结束且未完成的采购订单金额。', '/app/procurement/orders?overdue=true'),
-  metric('rfq_response_rate', 'RFQ 响应率', 'rfqs', 'percentage', 'quoted / invited', '已报价供应商数占邀请供应商数。', '/app/procurement/rfq', { numerator: 'quoted suppliers', denominator: 'invited suppliers' }),
+  metric('open_po_count', '未结 PO', 'purchase_orders', 'number', 'count(open)', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/procurement/orders?status=open'),
+  metric('overdue_po_amount', '逾期 PO 金额', 'purchase_orders', 'currency', 'sum(overdue amount)', '承诺交期早于范围结束且未结的采购订单金额。', '/app/procurement/orders?overdue=true'),
+  metric('rfq_response_rate', '询价单响应率', 'rfqs', 'percentage', 'quoted / invited', '已报价供应商数占邀请供应商数。', '/app/procurement/rfq', { numerator: 'quoted suppliers', denominator: 'invited suppliers' }),
   // Legacy metric, kept as is: it counts receipts without rejections, not OTIF.
   // The authoritative supplier OTIF is server/domain/supplier-scorecard.mjs
   // (GET /api/reports/supplier-scorecard), measured against the original promise.
-  metric('supplier_otif', '供应商 OTIF', 'receiving', 'percentage', 'on_time_in_full / due', '按承诺日期足量收货的订单占比。', '/app/reports/suppliers', { numerator: 'on-time in-full receipts', denominator: 'receipts due' }),
+  metric('supplier_otif', '供应商 OTIF', 'receiving', 'percentage', 'on_time_in_full / due', '按承诺交期足量收货的订单占比。', '/app/reports/suppliers', { numerator: 'on-time in-full receipts', denominator: 'receipts due' }),
   metric('inventory_value', '库存金额', 'inventory_balances', 'currency', 'sum(quantity * unitCost)', '库存数量乘受控单位成本的合计。', '/app/inventory'),
   metric('inventory_turnover', '库存周转率', 'inventory_movements', 'number', 'annualized outbound / average inventory', '年化出库成本除以平均库存金额；无成本数据时为空。', '/app/inventory/movements'),
   metric('inventory_coverage_days', '库存覆盖天数', 'inventory_balances', 'days', 'quantity / demand * 30', '当前库存按月需求折算的覆盖天数。', '/app/inventory'),
   metric('inventory_risk_sku', '库存风险 SKU', 'inventory_balances', 'number', 'count(quantity < safetyStock)', '低于安全库存或缺货的 SKU 数。', '/app/inventory?risk=below-safety'),
-  metric('invoice_amount', '发票总额', 'supplier_invoices', 'currency', 'sum(total)', '供应商发票含税金额合计。', '/app/finance/invoices'),
+  metric('invoice_amount', '发票总额', 'supplier_invoices', 'currency', 'sum(total)', '采购发票含税金额合计。', '/app/finance/invoices'),
   metric('overdue_payable', '逾期应付', 'supplier_invoices', 'currency', 'sum(overdue unpaid)', '已到期且未结清发票金额。', '/app/finance/invoices?overdue=true'),
   metric('three_way_match_rate', '三单匹配率', 'three_way_matches', 'percentage', 'matched_without_block / in_scope', '无阻断差异的已匹配发票数占进入匹配范围的发票数。', '/app/finance/three-way-match', { numerator: 'matched invoices without blocking variance', denominator: 'in-scope invoices' }),
   metric('invoice_variance_amount', '差异金额', 'supplier_invoices', 'currency', 'sum(abs(variance))', '发票与采购/收货证据差异绝对值合计。', '/app/finance/invoices?variance=true'),
@@ -285,7 +285,7 @@ export function buildGovernedReport(data = {}, input = {}) {
   const warnings = []
   if (dashboard === 'inventory' && kpis.some((item) => item.id === 'inventory_turnover' && item.value === 0)) warnings.push('当前库存数据缺少完整出库成本，库存周转率暂不计算。')
   if (['overview', 'inventory'].includes(dashboard) && calculate('inventory_value', filtered, query) === 0) warnings.push('当前库存余额缺少受控单位成本，库存金额不使用估算值补齐。')
-  if (dashboard === 'finance' && filtered.supplier_invoices.length === 0) warnings.push('当前筛选范围没有已导入供应商发票。')
+  if (dashboard === 'finance' && filtered.supplier_invoices.length === 0) warnings.push('当前筛选范围没有已导入采购发票。')
   return {
     query, generatedAt: new Date().toISOString(), dataScope: { label: '当前工作区受治理数据', company: query.company || '全部公司', currency: query.currency, from: query.from, to: query.to, activeFilterCount: ['company', 'warehouse', 'supplier', 'customer', 'category'].filter((key) => query[key]).length, sourceLabel: '当前工作区业务记录', completenessLabel: details.length ? `已读取 ${details.length} 条范围内记录` : '当前范围无业务记录' },
     kpis, charts, rankings: charts.filter((chart) => /排名|Top/.test(chart.title)), details: details.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, localizedValue(key, value)]))), columnDefinitions: columnDefinitions(details, dashboard), warnings,

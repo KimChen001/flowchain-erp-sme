@@ -23,7 +23,7 @@ export type SupplierOverride = {
 
 const REASON_LABELS: Record<SupplierOverrideReasonCode, readonly [string, string]> = {
   price: ["Price", "价格"],
-  lead_time: ["Lead time", "交期"],
+  lead_time: ["Lead time", "提前期"],
   stock_now: ["Stock available now", "现货可供"],
   quality: ["Quality", "质量"],
   moq_fit: ["MOQ fit", "起订量合适"],

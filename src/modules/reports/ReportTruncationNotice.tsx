@@ -8,7 +8,7 @@ type Sentence = (limit: string) => string;
 const SUBJECT_COPY: Record<string, { en: Sentence; zh: Sentence }> = {
   purchase_orders: { en: n => `Showing the latest ${n} purchase orders.`, zh: n => `仅显示最新的 ${n} 张采购订单。` },
   receipts: { en: n => `Showing the latest ${n} receipts.`, zh: n => `仅显示最新的 ${n} 张收货单。` },
-  supplier_invoices: { en: n => `Showing the latest ${n} supplier invoices.`, zh: n => `仅显示最新的 ${n} 张供应商发票。` },
+  supplier_invoices: { en: n => `Showing the latest ${n} supplier invoices.`, zh: n => `仅显示最新的 ${n} 张采购发票。` },
   sales_orders: { en: n => `Showing the latest ${n} sales orders.`, zh: n => `仅显示最新的 ${n} 张销售订单。` },
   purchase_requests: { en: n => `Showing the latest ${n} purchase requests.`, zh: n => `仅显示最新的 ${n} 张采购申请。` },
   rfqs: { en: n => `Showing the latest ${n} RFQs.`, zh: n => `仅显示最新的 ${n} 张询价单。` },

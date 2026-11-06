@@ -138,7 +138,7 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
     ["ERROR-404", 404, "supplier-invoice-not-found", "未找到这张采购发票"],
     ["ERROR-401", 401, "supplier-invoice-unauthenticated", "登录状态已失效"],
     ["ERROR-403", 403, "supplier-invoice-forbidden", "没有查看这张采购发票的权限"],
-    ["ERROR-500", 500, "supplier-invoice-read-error", "暂时无法读取，可重试"],
+    ["ERROR-500", 500, "supplier-invoice-read-error", "加载失败，可重试"],
   ] as const) {
     await page.route(`**/api/finance/supplier-invoices/${id}`, async (route) => {
       await route.fulfill({ status, contentType: "application/json", body: '{"code":"READ_FAILED"}' });
@@ -151,7 +151,7 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
     await route.abort("failed");
   });
   await page.goto("/app/procurement/bills/ERROR-NETWORK");
-  await expect(page.getByTestId("supplier-invoice-read-error")).toContainText("暂时无法读取，可重试");
+  await expect(page.getByTestId("supplier-invoice-read-error")).toContainText("加载失败，可重试");
   await expect(page.getByText("LOCAL-DEMO-INV-001", { exact: true })).toHaveCount(0);
 
   await page.goto("/app/sales/orders");

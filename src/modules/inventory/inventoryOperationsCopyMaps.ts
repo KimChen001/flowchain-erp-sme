@@ -3,7 +3,7 @@
 // strings have a Chinese entry. Codes sent to the server are never translated.
 // No imports, so the owner-rule tests can check the maps under Node.
 export const english: Record<string, string> = {
-  "库存操作入口读取失败": "Could not load inventory operations",
+  "库存操作入口加载失败": "Could not load inventory operations",
   "正在读取正式库存操作数据…": "Loading inventory operations…",
   "库存操作（测试版）尚未由管理员启用；正式记录保持只读，所有交易动作均已关闭。": "An administrator has not enabled inventory operations (beta). Records are read only and all actions are off.",
   "库存操作": "Inventory operations",
@@ -56,7 +56,7 @@ export const english: Record<string, string> = {
   "调整数量": "Adjustment quantity",
   "调整数量 {n}": "Adjustment quantity {n}",
   "减少库存不会影响已预留数量；调整后在库数量不得低于已预留数量。": "A decrease does not touch reserved stock. On hand cannot fall below reserved.",
-  "读取失败": "Could not load",
+  "加载失败": "Could not load",
   "操作失败": "The action failed",
   "预览失败": "Could not load the preview",
   "盘点录入失败": "Could not save the counted quantities",

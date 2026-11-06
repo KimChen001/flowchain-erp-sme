@@ -7,11 +7,11 @@ import { createDatabaseRepositoryRegistry } from '../server/repositories/adapter
 import { readBusinessContext } from '../server/services/runtime-business-read-service.mjs'
 import { buildRuntimeInventoryAllocation } from '../server/domain/runtime-inventory-allocation-read-model.mjs'
 import { createReorderListReadService } from '../server/domain/reorder-list-read-service.mjs'
-import { DEMAND_WINDOW_DAYS, MIN_SHIPMENT_DAYS, isActiveItem, itemStockUnit, preferredSupplierFor, recordedReorderPoint } from '../server/domain/reorder-list.mjs'
+import { DEMAND_WINDOW_DAYS, MIN_SHIPMENT_DAYS, isActiveItem, itemStockUnit, preferredSupplierFor, recordedReorderPoint, shippedByWorkspaceDay } from '../server/domain/reorder-list.mjs'
 import { listItemSupplierRecords } from '../server/domain/master-data-commands.mjs'
 import { suggestReorderPoint } from '../server/domain/reorder-point-suggestion.mjs'
 import { isCommittedPurchaseOrder } from '../server/domain/open-purchase-order.mjs'
-import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from '../server/domain/tenant-calendar-day.mjs'
+import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from '../server/domain/tenant-calendar-day.mjs'
 
 // The inputs a replenishment optimizer needs, as JSON, for one workspace's
 // active stock items: on hand, reserved and the open purchase order quantity
@@ -36,12 +36,15 @@ import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from '
 // another workspace day (default today); stock and open orders are always as
 // they are now. Without --out the JSON goes to stdout.
 
+// The daily series lives with the reorder list's rules (reorder-list.mjs),
+// where the assistant's order plan tool reads it too.
+export { shippedByWorkspaceDay }
+
 export const REPLENISHMENT_INPUTS_SCHEMA = 'flowchain.replenishment-inputs.v1'
 
 const text = (value) => String(value ?? '').trim()
 const number = (value) => (value === null || value === undefined || value === '' ? null : Number(value))
 const round = (value) => Math.round(value * 10000) / 10000
-const sameUnit = (a, b) => text(a).toLowerCase() === text(b).toLowerCase()
 
 // The last purchase order price for an item: the most recent committed order
 // line by order date (cancelled, draft and pending orders are not prices
@@ -59,26 +62,6 @@ function lastPurchasePrice(lines, supplierId = null) {
     orderedAt: line.purchaseOrder.createdAt.toISOString(),
     status: line.purchaseOrder.status,
   }
-}
-
-// Shipped quantity per workspace day of the window, from posted shipment
-// lines ({ unit, quantity, postedAt }), added as the reorder list's daily
-// demand adds it: a line in another unit than the stock unit is counted apart
-// and never added, and without a stock unit, lines in more than one unit are
-// not added to each other at all (unitsMixed lists their units).
-export function shippedByWorkspaceDay({ lines = [], stockUnit = '', days = [], timeZone = DEFAULT_TENANT_TIMEZONE }) {
-  const byDay = new Map(days.map((day) => [day, 0]))
-  const inWindow = lines.filter((line) => byDay.has(instantCalendarDay(line.postedAt, timeZone)))
-  const lineUnits = [...new Map(inWindow.filter((line) => text(line.unit)).map((line) => [text(line.unit).toLowerCase(), text(line.unit)])).values()]
-  const unitsMixed = !text(stockUnit) && lineUnits.length > 1 ? lineUnits : []
-  let otherUnitLines = 0
-  for (const line of inWindow) {
-    if (text(line.unit) && text(stockUnit) && !sameUnit(line.unit, stockUnit)) { otherUnitLines += 1; continue }
-    if (unitsMixed.length) continue
-    const day = instantCalendarDay(line.postedAt, timeZone)
-    byDay.set(day, round(byDay.get(day) + Number(line.quantity)))
-  }
-  return { byDay, otherUnitLines, unitsMixed }
 }
 
 // A calendar day that exists, in YYYY-MM-DD format.

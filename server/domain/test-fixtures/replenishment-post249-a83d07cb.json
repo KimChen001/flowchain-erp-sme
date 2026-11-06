@@ -1,0 +1,214 @@
+{
+ "schema": "flowchain.replenishment-inputs.v1",
+ "derivedFrom": {
+  "note": "Subset of a replenishment-inputs export of the local walkthrough (synthetic walkthrough data, scenario v8, history seed 20261103) after PR #249, reseeded 2026-11-05 on main a83d07cb: only the fields the replenishment solver reads. The prototype (research note v5, appendix A) reports, held out: no order 780.41, the reorder list after #249 (50 LDM-002) 827.55, q* = 25 LDM-001 740.50.",
+  "exportGeneratedAt": "2026-11-05T05:02:01.432Z",
+  "exportSha256": "5b6f3eda9da5bb71f2173ecdd5c8a8047ba1e70591e8e72dffc8109a959a5223"
+ },
+ "workspace": {
+  "currency": "USD",
+  "timeZone": "America/New_York"
+ },
+ "today": "2026-11-05",
+ "demandWindow": {
+  "firstDay": "2026-08-07",
+  "days": 90
+ },
+ "items": [
+  {
+   "sku": "LDM-001",
+   "name": "Flow Controller",
+   "unit": "pcs",
+   "onHand": 28,
+   "reserved": 0,
+   "openPurchaseOrderLines": [
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-001",
+     "remaining": 30,
+     "dueDay": "2026-11-01"
+    },
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-015",
+     "remaining": 40,
+     "dueDay": "2026-11-03"
+    }
+   ],
+   "reorderPoint": 40,
+   "preferredSupplier": {
+    "name": "Acme Components",
+    "leadTimeDays": 14,
+    "minimumOrderQuantity": 25,
+    "referencePrice": 100
+   },
+   "reorderList": {
+    "qRule": 0
+   },
+   "dailyShipped": [0, 0, 0, 0, 0, 0, 10, 11, 0, 0, 9, 0, 7, 11, 6, 0, 0, 5, 0, 13, 9, 10, 0, 0, 11, 0, 8, 8, 18, 0, 0, 0, 0, 10, 7, 5, 0, 0, 12, 0, 9, 9, 6, 0, 0, 16, 0, 6, 11, 10, 0, 0, 11, 0, 6, 6, 4, 0, 0, 9, 0, 13, 10, 0, 0, 0, 9, 0, 11, 10, 19, 0, 0, 8, 0, 14, 8, 8, 0, 0, 0, 0, 0, 18, 18, 0, 0, 15, 0, 11]
+  },
+  {
+   "sku": "LDM-002",
+   "name": "Temperature Sensor",
+   "unit": "pcs",
+   "onHand": 150,
+   "reserved": 0,
+   "openPurchaseOrderLines": [
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-014",
+     "remaining": 50,
+     "dueDay": "2026-10-30"
+    },
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-021",
+     "remaining": 25,
+     "dueDay": "2026-11-19"
+    },
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-002",
+     "remaining": 40,
+     "dueDay": "2026-11-09"
+    }
+   ],
+   "reorderPoint": 270,
+   "preferredSupplier": {
+    "name": "Acme Components",
+    "leadTimeDays": 17,
+    "minimumOrderQuantity": 50,
+    "referencePrice": 100
+   },
+   "reorderList": {
+    "qRule": 50
+   },
+   "dailyShipped": [0, 0, 0, 0, 0, 0, 17, 0, 0, 0, 16, 15, 14, 14, 14, 0, 0, 17, 11, 15, 15, 14, 0, 0, 18, 12, 16, 13, 15, 0, 0, 15, 12, 13, 18, 15, 0, 0, 16, 13, 13, 13, 18, 0, 0, 11, 0, 14, 16, 16, 0, 0, 18, 16, 13, 16, 18, 0, 0, 16, 19, 25, 17, 15, 0, 0, 15, 18, 18, 15, 14, 0, 0, 14, 15, 16, 15, 16, 0, 0, 18, 17, 17, 15, 20, 0, 0, 14, 17, 18]
+  },
+  {
+   "sku": "LDM-003",
+   "name": "Shipping Carton",
+   "unit": "box",
+   "onHand": 950,
+   "reserved": 0,
+   "openPurchaseOrderLines": [
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-011",
+     "remaining": 300,
+     "dueDay": "2026-10-28"
+    },
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-022",
+     "remaining": 200,
+     "dueDay": "2026-11-15"
+    },
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-019",
+     "remaining": 300,
+     "dueDay": "2026-11-17"
+    }
+   ],
+   "reorderPoint": 180,
+   "preferredSupplier": {
+    "name": "Summit Packaging",
+    "leadTimeDays": 12,
+    "minimumOrderQuantity": 100,
+    "referencePrice": 12.5
+   },
+   "reorderList": {
+    "qRule": 0
+   },
+   "dailyShipped": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 30, 0, 0, 0, 25, 45, 0, 35, 0, 0, 0, 45, 30, 0, 35, 0, 0, 0, 35, 25, 0, 0, 0, 0, 0, 0, 50, 0, 0, 0, 0, 0, 60, 35, 0, 30, 0, 0, 0, 65, 0, 0, 0, 0, 0, 0, 25, 50, 0, 45, 0, 0, 0, 35, 55, 0, 25, 0, 0, 0, 40, 60, 0, 0, 0, 0, 0, 0, 30, 0, 0, 0, 0, 0, 30, 30, 0]
+  },
+  {
+   "sku": "LDM-004",
+   "name": "Stainless Steel Fastener",
+   "unit": "pcs",
+   "onHand": 19500,
+   "reserved": 0,
+   "openPurchaseOrderLines": [
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-013",
+     "remaining": 3500,
+     "dueDay": "2026-11-08"
+    },
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-012",
+     "remaining": 6000,
+     "dueDay": "2026-11-02"
+    },
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-020",
+     "remaining": 7000,
+     "dueDay": "2026-10-21"
+    },
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-017",
+     "remaining": 4000,
+     "dueDay": "2026-11-13"
+    }
+   ],
+   "reorderPoint": 5000,
+   "preferredSupplier": {
+    "name": "Atlas Industrial Supply",
+    "leadTimeDays": 14,
+    "minimumOrderQuantity": 2000,
+    "referencePrice": 0.4
+   },
+   "reorderList": {
+    "qRule": 0
+   },
+   "dailyShipped": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 700, 0, 0, 700, 0, 0, 0, 500, 0, 0, 0, 0, 0, 0, 1200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 500, 0, 0, 0, 300, 0, 0, 100, 0, 0, 0, 400, 0, 0, 2700, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7600, 0, 0, 0, 0, 0, 0, 400, 0, 0, 0, 0, 0]
+  },
+  {
+   "sku": "LDM-005",
+   "name": "Shielded Control Cable",
+   "unit": "ft",
+   "onHand": 5800,
+   "reserved": 0,
+   "openPurchaseOrderLines": [
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-023",
+     "remaining": 900,
+     "dueDay": "2026-11-04"
+    },
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-018",
+     "remaining": 1200,
+     "dueDay": "2026-11-06"
+    }
+   ],
+   "reorderPoint": 1200,
+   "preferredSupplier": {
+    "name": "Acme Components",
+    "leadTimeDays": 10,
+    "minimumOrderQuantity": 500,
+    "referencePrice": 1.85
+   },
+   "reorderList": {
+    "qRule": 0
+   },
+   "dailyShipped": [0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 0, 475, 200, 0, 150, 0, 0, 0, 175, 100, 0, 100, 0, 0, 0, 400, 0, 0, 225, 0, 0, 0, 250, 400, 0, 225, 0, 0, 0, 125, 0, 0, 100, 0, 0, 0, 75, 400, 0, 275, 0, 0, 0, 475, 400, 0, 0, 0, 0, 0, 0, 150, 0, 175, 0, 0, 0, 100, 125, 0, 150, 0, 0, 0, 400, 75, 0, 325, 0, 0, 0, 175, 200, 0, 225, 0, 0, 0, 375, 300]
+  },
+  {
+   "sku": "LDM-006",
+   "name": "Product Label Roll",
+   "unit": "roll",
+   "onHand": 120,
+   "reserved": 0,
+   "openPurchaseOrderLines": [
+    {
+     "purchaseOrder": "LOCAL-DEMO-PO-016",
+     "remaining": 80,
+     "dueDay": "2026-10-29"
+    }
+   ],
+   "reorderPoint": 45,
+   "preferredSupplier": {
+    "name": "Summit Packaging",
+    "leadTimeDays": 10,
+    "minimumOrderQuantity": 50,
+    "referencePrice": 17.5
+   },
+   "reorderList": {
+    "qRule": 0
+   },
+   "dailyShipped": [0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 0, 0, 0, 18, 0, 0, 0, 20, 0, 0, 24, 0, 0, 0, 0, 0, 0, 18, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 22, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 20, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 0, 0, 0, 22, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  }
+ ]
+}

@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs'
 import { RECORD_ACTION_RULES, recordActionsNow } from '../../shared/assistant-record-actions.mjs'
 import { PR_TRANSITIONS } from './procurement-workflow.mjs'
 import { PURCHASE_ORDER_COMMANDS } from './procurement-db-command-service.mjs'
+import { latestOrderPlan } from './ai-assistant-v2.mjs'
 
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
 // order of 100 and a reference price of 95 USD. With a reorder point of 200
@@ -374,6 +375,31 @@ test('suggest_purchase_request ticks a named item and keeps the user\'s own valu
   assert.deepEqual([plain.lines.length, plain.suggested[0].checked, plain.suggested[0].suggestedQuantity.value], [0, false, 100])
 })
 
+// The solver's decision goes into the form as the server's suggestion: the
+// form shows it as the best plan's quantity, ticked once the user agrees, and
+// the open orders the plan already counted do not mark it covered.
+test('suggest_purchase_request carries the latest optimize_order_plan decision\'s quantity as the best plan\'s', async () => {
+  const shipping = (data) => {
+    data.shipmentLines = Array.from({ length: 18 }, (_, index) => ({ itemId: 'ITEM-001', unit: 'pcs', postedQuantity: 50, shipment: { postedAt: new Date(`2026-09-${String(index + 1).padStart(2, '0')}T16:00:00Z`) } }))
+  }
+  // The recorded reorder point (40) is covered by the open orders and PR-001.
+  const agreeable = (sku) => String(sku).toLowerCase() === 'ldm-001'
+  const { ctx, call, build } = await workspace({ change: shipping, actor: (actor) => { actor.allWarehouses = true }, agreeable, lastFormSkus: ['ldm-001'] })
+  const plan = await call('toolu_plan', 'optimize_order_plan')
+  const quantity = plan.decision.lines[0].quantity
+  await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  ctx.orderPlan = latestOrderPlan(ctx.results)
+  assert.deepEqual([...ctx.orderPlan], [['ldm-001', quantity]])
+  const offered = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'suggestions', lines: [{ sku: 'LDM-001', quantity }] }), 'pr_form')
+  assert.deepEqual([offered.suggested[0].suggestedQuantity, offered.suggested[0].checked, offered.suggested[0].covered], [{ value: quantity, source: 'order_plan' }, false, null])
+  const agreed = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'agreed', lines: [{ sku: 'LDM-001', quantity }] }), 'pr_form')
+  assert.deepEqual([agreed.lines[0].suggestedQuantity.source, agreed.lines[0].checked], ['order_plan', true])
+  // Any other quantity the model passes is not the plan's: the server's suggestion stands.
+  const other = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'suggestions', lines: [{ sku: 'LDM-001', quantity: quantity + 1 }] }), 'pr_form')
+  assert.notEqual(other.suggested[0].suggestedQuantity.source, 'order_plan')
+  assert.ok(other.suggested[0].covered)
+})
+
 // "Yes, all of them" after a form (2026-11-04): the items the user agreed to
 // arrive ticked; an item never named nor offered in the conversation does not.
 test('suggest_purchase_request ticks the items the user agreed to, and only those the conversation offered', async () => {
@@ -464,9 +490,11 @@ test('suggest_purchase_request puts a named supplier the item has not approved o
   const [line] = props.lines
   assert.deepEqual(line.supplier, { id: 'SUP-003', name: 'Northstar Electronics', source: 'user_named', link: 'new' })
   assert.deepEqual(line.suppliers, [ACME_OPTION, { id: 'SUP-003', name: 'Northstar Electronics', preferred: false, leadTimeDays: null, unitPrice: null, currency: 'USD', link: 'new' }])
-  // No price or lead time the user did not give: the need-by date falls back to today.
+  // No price the user did not give; with no lead time of its own the need-by
+  // date keeps the preferred supplier's (12 days), never today (2026-11-05).
   assert.deepEqual(line.estimatedUnitPrice, { value: null, currency: null, source: 'missing' })
-  assert.deepEqual(line.needByDate, { value: ctx.facts.today, source: 'today', leadTimeDays: null, shortWeekOf: null })
+  assert.deepEqual(line.needByDate, { value: '2026-10-11', source: 'lead_time', leadTimeDays: 12, shortWeekOf: null })
+  assert.notEqual(line.needByDate.value, ctx.facts.today)
   assert.deepEqual([line.suggestedQuantity, line.checked], [{ value: 200, source: 'user_named' }, true])
   assert.deepEqual([props.canLinkSuppliers, props.workspaceCurrency], [true, 'USD'])
   assert.ok(built.refs.some((ref) => ref.type === 'supplier' && ref.id === 'SUP-003' && ref.label === 'Northstar Electronics'))
@@ -845,6 +873,13 @@ test('an item the user described in their own words and the model resolved arriv
   assert.equal(suggested.lines.length, 0)
 })
 
+test('an attention item\'s details are columns of their own', async () => {
+  const { call, build } = await workspace()
+  await call('toolu_attention', 'attention_list', { limit: 10 })
+  const props = assertPart(build('show_table', { source: 'toolu_attention', columns: ['label', 'type', 'details.remaining', 'details.shortage'] }), 'table')
+  assert.deepEqual(props.columns.map((column) => [column.code, column.kind]), [['label', 'ref'], ['type', 'status'], ['remaining_quantity', 'quantity'], ['shortage', 'quantity']])
+  assert.ok(props.rows.some((row) => typeof row.remaining_quantity === 'number' && row.unit === 'pcs'), JSON.stringify(props.rows))
+})
 
 // ---------------------------------------------------------------- record actions
 

@@ -86,7 +86,7 @@ test('an English skill answer renders with no Chinese, the source badge and the 
   assert.match(displaySafeAssistantRecoveryMessage('q', 'en-US', aiRecoveryReason(new Error('aborted'), true)), /took too long/)
   assert.match(displaySafeAssistantRecoveryMessage('q', 'en-US', aiRecoveryReason(new ApiError(401, { code: 'AUTHENTICATION_REQUIRED' }, ''), false)), /Sign in again/)
   assert.match(displaySafeAssistantRecoveryMessage('q', 'en-US', aiRecoveryReason(new ApiError(400, { code: 'AI_QUESTION_TOO_SHORT', error: 'Enter a question of at least two characters.' }, ''), false)), /Enter a question of at least two characters\./)
-  assert.equal(displaySafeAssistantRecoveryMessage('q', 'zh-CN', aiRecoveryReason(new ApiError(503, {}, ''), false)), '暂时无法读取工作区数据，未修改任何内容。')
+  assert.equal(displaySafeAssistantRecoveryMessage('q', 'zh-CN', aiRecoveryReason(new ApiError(503, {}, ''), false)), '工作区数据暂时加载失败，未修改任何内容。')
   // One line: no headings, topics or boundary list.
   assert.equal(unavailable, 'The assistant could not read your workspace data just now. Nothing was changed.')
 })

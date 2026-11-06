@@ -29,8 +29,8 @@ const SOURCE_MODULE_LABELS: Record<string, string> = {
 };
 
 const SOURCE_ENTITY_LABELS: Record<string, string> = {
-  customer_order: "客户订单",
-  sales_order: "客户订单",
+  customer_order: "销售订单",
+  sales_order: "销售订单",
   inventory_availability: "库存可用量",
   inventory_item: "SKU",
   item: "SKU",
@@ -40,7 +40,7 @@ const SOURCE_ENTITY_LABELS: Record<string, string> = {
   purchase_order: "采购订单",
   receiving_doc: "收货单",
   supplier: "供应商",
-  supplier_invoice: "供应商发票",
+  supplier_invoice: "采购发票",
   exception_case: "异常工单",
   report: "报表",
   import_batch: "数据导入批次",

@@ -416,7 +416,7 @@ test('each data result the model reads starts with its source and gives status w
   assert.deepEqual(tables[2].props.cards.map((card) => card.ref.label), ['LDM-001'])
   // A Chinese answer gets the words in Chinese.
   const zh = await ask([OVERDUE, [...say('PO-001 部分收货。'), end()]], { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } })
-  assert.deepEqual(JSON.parse(lastToolResults(zh.client.requests[1])[0].content).rows.map((row) => row.statusLabel), ['部分收货', '已发给供应商'])
+  assert.deepEqual(JSON.parse(lastToolResults(zh.client.requests[1])[0].content).rows.map((row) => row.statusLabel), ['部分收货', '已下达'])
 })
 
 test('a failed display says how to fix it; a second failure withdraws the display tools for the rest of the answer', async () => {
@@ -1140,6 +1140,14 @@ test('a count that adds up the lists\' totals is checked, and a table named by d
   assert.ok(!spans.some((span) => span.text === '4'), JSON.stringify(spans))
 })
 
+test('the system prompt asks for judgement on broad questions, limits only when asked to act, and drafts as quotes', () => {
+  for (const rule of [
+    /lead with the one to three things that matter most, each with why/,
+    /Say what you cannot do only then, when the user asks for such a step/,
+    /as "> " quoted lines, in the language the user asked in/,
+    /weighs its terms \(item_suppliers: lead time, minimum order, reference price\)/,
+  ]) assert.match(ASSISTANT_V2_SYSTEM, rule)
+})
 
 test('a note of the user\'s step in a record card backs "you approved PR-001"; without it, or for another step, the words are replaced', async () => {
   const approved = { action: { type: 'purchase_request', action: 'approve', id: 'PR-001', number: 'PR-001', status: 'approved', created: [] } }

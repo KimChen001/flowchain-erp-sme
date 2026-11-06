@@ -34,8 +34,8 @@ const entityLabels: Record<string, string> = {
   purchase_request: "采购申请",
   rfq: "RFx",
   receiving_doc: "收货单",
-  supplier_invoice: "供应商发票",
-  sales_order: "客户订单",
+  supplier_invoice: "采购发票",
+  sales_order: "销售订单",
   limitation: "数据限制",
 };
 

@@ -127,6 +127,7 @@ import {
   ACCEPT_INVITATION_PATH,
   AcceptInvitationScreen,
   SignInConfirmScreen,
+  SIGNED_OUT_REASON_KEY,
   type LocalDevelopmentStatus,
 } from "./SignInScreens";
 
@@ -187,10 +188,10 @@ const labelIn = (label: LabelPair | undefined, language: string) =>
 const SEARCH_TYPE_LABELS: Record<string, LabelPair> = {
   sales_order: { en: "Sales order", zh: "销售订单" },
   purchase_request: { en: "PR", zh: "PR" },
-  rfq: { en: "RFQ", zh: "RFQ" },
+  rfq: { en: "RFQ", zh: "询价单" },
   purchase_order: { en: "PO", zh: "PO" },
   receiving_doc: { en: "GRN", zh: "GRN" },
-  supplier_invoice: { en: "Supplier invoice", zh: "发票" },
+  supplier_invoice: { en: "Supplier invoice", zh: "采购发票" },
   supplier: { en: "Supplier", zh: "供应商" },
   item: { en: "Item", zh: "物料" },
   inventory_item: { en: "Stock", zh: "库存" },
@@ -201,10 +202,10 @@ const SEARCH_TYPE_LABELS: Record<string, LabelPair> = {
 const SEARCH_GROUP_LABELS: Record<string, LabelPair> = {
   sales_order: { en: "Sales orders", zh: "销售订单" },
   purchase_request: { en: "Purchase requests", zh: "采购申请" },
-  rfq: { en: "RFQs / sourcing", zh: "RFQ / 寻源" },
+  rfq: { en: "RFQs / sourcing", zh: "询价单 / 寻源" },
   purchase_order: { en: "Purchase orders", zh: "采购订单" },
   receiving_doc: { en: "Receipts", zh: "采购收货单" },
-  supplier_invoice: { en: "Supplier invoices", zh: "供应商发票" },
+  supplier_invoice: { en: "Supplier invoices", zh: "采购发票" },
   supplier: { en: "Suppliers", zh: "供应商资料" },
   item: { en: "Items", zh: "物料" },
   inventory_item: { en: "Inventory", zh: "库存" },
@@ -237,7 +238,7 @@ const FOCUS_ENTITY_LABELS: Record<string, LabelPair> = {
   purchase_order: { en: "Purchase order", zh: "采购订单" },
   receiving_doc: { en: "Receipt", zh: "收货单" },
   supplier: { en: "Supplier", zh: "供应商" },
-  supplier_invoice: { en: "Supplier invoice", zh: "供应商发票" },
+  supplier_invoice: { en: "Supplier invoice", zh: "采购发票" },
   exception_case: { en: "Exception case", zh: "异常工单" },
   // Any other record.
   record: { en: "Business record", zh: "业务对象" },
@@ -658,6 +659,8 @@ export default function FlowChainApp() {
       })
       .catch((error) => {
         if (error instanceof ApiError && error.status === 401) {
+          // The stored session was refused: the sign-in page says so.
+          try { sessionStorage.setItem(SIGNED_OUT_REASON_KEY, "expired"); } catch { /* the notice is optional */ }
           localStorage.removeItem(AUTH_TOKEN_KEY);
           localStorage.removeItem(CURRENT_USER_KEY);
           setAuthToken("");

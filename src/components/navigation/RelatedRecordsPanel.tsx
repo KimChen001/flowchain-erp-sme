@@ -7,8 +7,8 @@ import { useDocumentNumbers } from "../../lib/documentNumbers";
 const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 const entityLabels: Record<string, string> = {
-  sales_order: "客户订单",
-  customer_order: "客户订单",
+  sales_order: "销售订单",
+  customer_order: "销售订单",
   inventory_item: "SKU",
   item: "SKU",
   purchase_request: "采购申请",
@@ -16,7 +16,7 @@ const entityLabels: Record<string, string> = {
   purchase_order: "采购订单",
   receiving_doc: "收货单",
   supplier: "供应商",
-  supplier_invoice: "供应商发票",
+  supplier_invoice: "采购发票",
   exception_case: "异常工单",
 };
 

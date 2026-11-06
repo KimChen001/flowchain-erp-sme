@@ -67,9 +67,9 @@ const STATUS_COPY = Object.freeze({
   pending: ['Pending', '待处理'],
   pending_approval: ['Pending approval', '待审批'],
   approved: ['Approved', '已批准'],
-  rejected: ['Rejected', '已拒绝'],
+  rejected: ['Rejected', '已驳回'],
   issued: ['Issued', '已下达'],
-  open: ['Open', '进行中'],
+  open: ['Open', '未结'],
   overdue: ['Overdue', '已逾期'],
   partially_received: ['Partially received', '部分收货'],
   fully_received: ['Fully received', '全部收货'],
@@ -123,7 +123,7 @@ const timezoneInvalidCopy = (configured, resolved) => [`The workspace timezone $
 const LIMITATION_COPY = Object.freeze({
   suppliers_unavailable: ['Supplier records are unavailable, so some suppliers may be missing.', '供应商记录暂不可用，结果可能缺少部分供应商。'],
   payables_unavailable: ['Payables are unavailable, so payment counts are unknown.', '应付数据暂不可用，付款数量未知。'],
-  invoices_unavailable: ['Supplier invoices are unavailable, so invoice counts are unknown.', '供应商发票暂不可用，发票数量未知。'],
+  invoices_unavailable: ['Supplier invoices are unavailable, so invoice counts are unknown.', '采购发票暂不可用，发票数量未知。'],
   settlements_unavailable: ['Settlements are unavailable, so payment blocks may be incomplete.', '结算数据暂不可用，付款阻断可能不完整。'],
   purchaseOrders_unavailable: ['Purchase orders are unavailable, so purchase order counts are unknown.', '采购订单暂不可用，采购订单数量未知。'],
   receiving_unavailable: ['Receiving records are unavailable, so receiving counts are unknown.', '收货记录暂不可用，收货数量未知。'],
@@ -222,7 +222,7 @@ const RISK_OPTIONS = Object.freeze([
   ['Overdue orders', 'Which purchase orders are overdue?', '逾期订单', '哪些采购订单逾期了？'],
   ['Receiving issues', 'Which receipts have problems?', '收货问题', '哪些收货单需要处理？'],
   ['Invoice exceptions', 'Which invoices have three-way match exceptions?', '发票差异', '哪些发票有三单匹配异常？'],
-  ['Open RFQs', 'Which RFQs are waiting for quotes?', '未授标询价', '哪些询价单还没授标？'],
+  ['Open RFQs', 'Which RFQs are waiting for quotes?', '未授标询价单', '哪些询价单还没授标？'],
   ['Other risks', 'Which suppliers need attention?', '其他风险', '哪些供应商需要注意？'],
 ])
 
@@ -292,7 +292,7 @@ const ZERO_TITLES = Object.freeze({
   supplier_payment_readiness: ['No supplier payments are due', '没有到期的供应商付款'],
   supplier_payables_overdue: ['No supplier payments are overdue', '没有逾期的供应商付款'],
   supplier_payment_blocks: ['No supplier payments are blocked', '没有被阻断的供应商付款'],
-  supplier_invoice_exceptions: ['No supplier invoice exceptions', '没有供应商发票差异'],
+  supplier_invoice_exceptions: ['No supplier invoice exceptions', '没有采购发票差异'],
   supplier_receiving_exceptions: ['No receiving exceptions', '没有收货异常'],
   supplier_overdue_purchase_orders: ['No overdue purchase orders', '没有逾期采购订单'],
   supplier_rfq_followups: ['No RFQs need a follow-up', '没有需要跟进的询价单'],

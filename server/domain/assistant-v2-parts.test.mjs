@@ -854,6 +854,16 @@ test('with buttons to pick from, the text tells the user to pick no more', async
   assert.doesNotMatch(live, /请选一张/)
 })
 
+// A drafted email in "> " lines ran into one paragraph with its marks showing
+// (2026-11-05).
+test('a quoted draft and a fenced block render as blocks of their own', async () => {
+  const client = await loadClient()
+  const markup = client.text({ text: 'Here is a draft:\n\n> Subject: Overdue order PO-020\n>\n> Hello [contact name],\n> - Confirm a date.\n> - Send the rest.\n\nSend it when ready.\n\n```\nLine one\n  indented\n```' })
+  assert.match(markup, /<blockquote data-testid="ai-v2-text-quote"[^>]*><p>Subject: Overdue order PO-020<\/p><p>Hello \[contact name\],<\/p><ul[^>]*><li>Confirm a date\.<\/li><li>Send the rest\.<\/li><\/ul><\/blockquote>/)
+  assert.doesNotMatch(markup, /&gt;/)
+  assert.match(markup, /<p>Send it when ready\.<\/p>/)
+  assert.match(markup, /<pre data-testid="ai-v2-text-pre"[^>]*>Line one\n {0,2}indented<\/pre>/)
+})
 
 // ---------------------------------------------------------------- record card
 
