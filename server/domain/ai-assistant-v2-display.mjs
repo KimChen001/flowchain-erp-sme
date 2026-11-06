@@ -175,13 +175,20 @@ const CODE_LABELS = Object.freeze({
 })
 function codesInWords(value, index) {
   const known = (code) => CODE_LABELS[code] || LABELS.type[code] || LABELS.priority[code]
+  // Inside an English sentence the label reads as a word ("status: approved",
+  // "partially received"), an acronym kept (RFQ); Chinese labels as they are.
+  const inline = (code) => {
+    const label = known(code)?.[index]
+    if (!label) return null
+    return index === 0 && /^[A-Z][a-z]/.test(label) ? label[0].toLowerCase() + label.slice(1) : label
+  }
   return value
     // A code written as one (partially_received, po_overdue), anywhere.
-    .replace(/(?<![\w-])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\w-])/g, (whole, code) => known(code)?.[index] ?? whole)
+    .replace(/(?<![\w-])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\w-])/g, (whole, code) => inline(code) ?? whole)
     // A code in quotes ('marks it as "risk"').
     .replace(/(["“‘「])([a-z][a-z_]*)(["”’」])/g, (whole, open, code, close) => (known(code) ? `${open}${known(code)[index]}${close}` : whole))
     // A code after "status" ("match status: variance", 状态：approved).
-    .replace(/\b((?:match |posting |dispute )?status(?:\s+is|\s*[:：])\s*)([a-z][a-z_]*)\b/gi, (whole, lead, code) => (known(code) ? `${lead}${known(code)[index]}` : whole))
+    .replace(/\b((?:match |posting |dispute )?status(?:\s+is|\s*[:：])\s*)([a-z][a-z_]*)\b/gi, (whole, lead, code) => (known(code) ? `${lead}${inline(code)}` : whole))
     .replace(/(状态\s*(?:[:：]|为|是)\s*)([a-z][a-z_]*)/g, (whole, lead, code) => (known(code) ? `${lead}${known(code)[index]}` : whole))
 }
 

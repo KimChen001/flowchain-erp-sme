@@ -10,6 +10,9 @@ import { safeParsePartProps } from '../../shared/assistant-protocol.mjs'
 import { PURCHASE_SUGGESTION_SOURCES } from '../../shared/purchase-suggestion.mjs'
 import { sanitizeSuggestionTrail } from '../../shared/prefill-suggestions.mjs'
 import { readFileSync } from 'node:fs'
+import { RECORD_ACTION_RULES, recordActionsNow } from '../../shared/assistant-record-actions.mjs'
+import { PR_TRANSITIONS } from './procurement-workflow.mjs'
+import { PURCHASE_ORDER_COMMANDS } from './procurement-db-command-service.mjs'
 
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
 // order of 100 and a reference price of 95 USD. With a reorder point of 200
@@ -54,7 +57,7 @@ function assertPart(built, component) {
 const assertError = (built, code) => assert.equal(built.error?.code, code, JSON.stringify(built))
 
 test('every UI tool follows the contract: kind ui, a closed input schema, frozen', () => {
-  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'suggest_purchase_request', 'show_setup_steps', 'suggest_setup_records', 'suggest_followups'])
+  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'suggest_purchase_request', 'show_setup_steps', 'suggest_setup_records', 'offer_record_actions', 'suggest_followups'])
   assert.ok(Object.isFrozen(AI_ASSISTANT_V2_UI_TOOLS))
   for (const entry of AI_ASSISTANT_V2_UI_TOOLS) {
     assert.ok(Object.isFrozen(entry))
@@ -594,6 +597,18 @@ test('show_records keeps the currency of every amount, whichever tool the record
   assert.equal(bare.figures, undefined)
 })
 
+// An overdue list came back without its order numbers (2026-11-04): a
+// table of records always leads with the column that names the record.
+test('show_table puts the record column first when the model leaves it out', async () => {
+  const { call, build } = await workspace()
+  await call('toolu_po', 'list_purchase_orders', { status: 'overdue' })
+  const props = assertPart(build('show_table', { source: 'toolu_po', columns: ['supplier', 'due_date', 'days_overdue'] }), 'table')
+  assert.deepEqual(props.columns.map((column) => [column.code, column.kind]).slice(0, 2), [['order', 'ref'], ['supplier', 'text']])
+  // Named by the model: nothing is added.
+  const named = assertPart(build('show_table', { source: 'toolu_po', columns: ['order', 'days_overdue'] }), 'table')
+  assert.deepEqual(named.columns.map((column) => column.code), ['order', 'days_overdue'])
+})
+
 test('supplier_risks rows keep their date in cards and tables', async () => {
   const { call, build } = await workspace()
   const risks = await call('toolu_risks', 'supplier_risks')
@@ -828,4 +843,168 @@ test('an item the user described in their own words and the model resolved arriv
   // From suggestions nothing is ticked.
   const suggested = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'suggestions' }), 'pr_form')
   assert.equal(suggested.lines.length, 0)
+})
+
+
+// ---------------------------------------------------------------- record actions
+
+// The purchase requests and orders the record card reads as stored, behind
+// the fixture's read-only client: another workspace finds none.
+const TENANT = 'tenant-ai-skills'
+function withStoredRecords(base, { requests = {}, orders = {}, rfqs = [] } = {}) {
+  const reads = []
+  const mine = (where) => where.tenantId === TENANT
+  const extra = {
+    purchaseRequest: { findFirst: async ({ where }) => { reads.push(['purchaseRequest', where]); return mine(where) ? structuredClone(requests[where.id] || null) : null } },
+    purchaseOrder: {
+      findFirst: async ({ where }) => {
+        reads.push(['purchaseOrder', where])
+        if (!mine(where)) return null
+        if (where.sourceRequestId) return Object.values(orders).find((row) => row.sourceRequestId === where.sourceRequestId && row.status !== where.status.not) || null
+        return structuredClone(orders[where.id] || null)
+      },
+    },
+    rfq: { findFirst: async ({ where }) => (mine(where) ? rfqs.find((row) => row.sourceRequestId === where.sourceRequestId && !where.status.notIn.includes(row.status)) || null : null) },
+  }
+  return { reads, prisma: new Proxy({}, { get: (_target, model) => extra[model] || base[model] }) }
+}
+
+const requestLine = (over = {}) => ({
+  id: 'PRL-1', sku: 'LDM-002', itemName: 'Temperature Sensor', quantity: '300', unit: 'pcs', unitPrice: '4', amount: '1200',
+  metadata: { supplierId: 'SUP-005', currency: 'USD', targetWarehouseId: 'WH-1', supplierSnapshot: { supplierName: 'Northstar Electronics' } },
+  ...over,
+})
+const storedRequest = (id, status, over = {}) => ({
+  id, tenantId: TENANT, status, requester: 'procurement-specialist-user', supplierId: 'SUP-005', supplierName: 'Northstar Electronics',
+  amount: '1200', currency: 'USD', metadata: { version: 3 }, lines: [requestLine()], ...over,
+})
+const storedOrder = (id, status, over = {}) => ({
+  id, tenantId: TENANT, status, version: 4, supplierId: 'SUP-001', supplierName: 'Acme Components', amount: '12000', currency: 'USD', metadata: { orderNumber: id },
+  lines: [{ id: `${id}-L1`, sku: 'LDM-001', itemName: 'Flow Controller', orderedQuantity: '120', unit: 'pcs', unitPrice: '100', amount: '12000', metadata: {} }], ...over,
+})
+
+// A workspace whose open requests include the stored ones (as `listed`, when
+// the list read them in another status), the card's reads behind it, and the
+// list results its refs come from.
+async function recordCard({ roleKey = 'workspace-administrator', requests = {}, orders = {}, rfqs = [], actor = null } = {}) {
+  const ws = await workspace({
+    roleKey, actor,
+    change: (data) => {
+      for (const row of Object.values(requests)) {
+        if (data.purchaseRequests.some((entry) => entry.id === row.id)) continue
+        data.purchaseRequests.push({ id: row.id, pr: row.id, status: row.listed || row.status, priority: 'high', requiredDate: null, currency: 'USD', lines: [{ id: 'L1', sku: 'LDM-002', itemId: 'ITEM-002', quantity: 300, unit: 'pcs' }] })
+      }
+    },
+  })
+  const stored = withStoredRecords(ws.ctx.prisma, { requests, orders, rfqs })
+  ws.ctx.prisma = stored.prisma
+  await ws.call('tu_pr', 'list_purchase_requests', { limit: 50 })
+  await ws.call('tu_po', 'list_purchase_orders', { status: 'all', limit: 50 })
+  const offer = (type, id, source = type === 'purchase_order' ? 'list_purchase_orders#1' : 'list_purchase_requests#1') => tool('offer_record_actions').build({ source, ref: { type, id } }, ws.ctx)
+  return { ...ws, reads: stored.reads, offer }
+}
+
+test('the record card steps follow the commands\' own status rules', () => {
+  const targets = { submit: 'submitted', approve: 'approved', reject: 'rejected', create_po: 'converted' }
+  for (const [step, from] of Object.entries(RECORD_ACTION_RULES.purchase_request)) {
+    if (step === 'create_rfq') assert.equal(from, 'approved')
+    else assert.ok(PR_TRANSITIONS[from].includes(targets[step]), `${step} from ${from}`)
+  }
+  for (const [step, from] of Object.entries(RECORD_ACTION_RULES.purchase_order)) assert.deepEqual(PURCHASE_ORDER_COMMANDS[step].from, [from], step)
+  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po', 'create_rfq'], path: { recommendation: 'rfq' } }), ['create_rfq', 'create_po'])
+  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po', 'create_rfq'], path: { recommendation: 'direct_po' } }), ['create_po'])
+  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po', 'create_rfq'], path: { recommendation: 'direct_po' }, poBlocked: 'lines_incomplete' }), [])
+})
+
+test('the record card offers the steps this user may take now, by status and role, from the record as stored', async () => {
+  const requests = {
+    'PR-0231': storedRequest('PR-0231', 'submitted'),
+    'PR-0232': storedRequest('PR-0232', 'draft', { requester: 'workspace-administrator-user' }),
+    'PR-0233': storedRequest('PR-0233', 'draft'),
+    'PR-0234': storedRequest('PR-0234', 'approved'),
+  }
+  const orders = { 'PO-006': storedOrder('PO-006', 'pending_approval'), 'PO-009': storedOrder('PO-009', 'approved', { supplierName: 'Summit Packaging', currency: 'EUR', amount: '500' }) }
+  const admin = await recordCard({ requests, orders })
+  // Submitted: the approver approves or rejects; submitting is only the requester's.
+  const pending = assertPart(await admin.offer('purchase_request', 'PR-0231'), 'record_actions')
+  assert.deepEqual(pending.actions, ['approve', 'reject'])
+  assert.ok(!pending.allowed.includes('submit'))
+  assert.equal(pending.cardId, 'thr_7f2c:msg_19:p2')
+  assert.deepEqual(pending.record, {
+    ref: { type: 'purchase_request', id: 'PR-0231', label: 'PR-0231' }, type: 'purchase_request', status: 'submitted', version: 3, suppliers: ['Northstar Electronics'],
+    lines: [{ sku: 'LDM-002', name: 'Temperature Sensor', quantity: 300, unit: 'pcs' }], lineCount: 1, amount: { amount: 1200, currency: 'USD' },
+  })
+  assert.deepEqual(assertPart(await admin.offer('purchase_request', 'PR-0232'), 'record_actions').actions, ['submit'])
+  const notMine = await admin.offer('purchase_request', 'PR-0233')
+  assertError(notMine, 'not_allowed')
+  assert.match(notMine.error.message, /its requester/)
+  // Approved: the path the recommendation route gives; a purchase order directly.
+  const approved = assertPart(await admin.offer('purchase_request', 'PR-0234'), 'record_actions')
+  assert.deepEqual([approved.actions, approved.path], [['create_po'], { recommendation: 'direct_po', reasons: ['direct_po_ok'] }])
+  // Orders: approve one waiting for approval, mark an approved one issued.
+  assert.deepEqual(assertPart(await admin.offer('purchase_order', 'PO-006'), 'record_actions').actions, ['approve'])
+  const issue = assertPart(await admin.offer('purchase_order', 'PO-009'), 'record_actions')
+  assert.deepEqual([issue.actions, issue.record.ref.label, issue.record.amount], [['issue'], 'PO-009', { amount: 500, currency: 'EUR' }])
+  assertError(await admin.offer('purchase_order', 'PO-002'), 'record_unavailable')
+  // Every read is in the user's workspace.
+  assert.ok(admin.reads.every(([, where]) => where.tenantId === TENANT))
+
+  // A buyer submits their own drafts and orders approved requests, but approves nothing.
+  const buyer = await recordCard({ roleKey: 'procurement-specialist', requests, orders })
+  assert.deepEqual(assertPart(await buyer.offer('purchase_request', 'PR-0233'), 'record_actions').actions, ['submit'])
+  const waiting = await buyer.offer('purchase_request', 'PR-0231')
+  assertError(waiting, 'not_allowed')
+  assert.match(waiting.error.message, /a manager or administrator whose role may approve/)
+  assert.deepEqual(assertPart(await buyer.offer('purchase_request', 'PR-0234'), 'record_actions').actions, ['create_po'])
+  assertError(await buyer.offer('purchase_order', 'PO-006'), 'not_allowed')
+  assert.deepEqual(assertPart(await buyer.offer('purchase_order', 'PO-009'), 'record_actions').actions, ['issue'])
+})
+
+test('an approved request: quotes first when the route recommends them, no order without complete lines or once one exists', async () => {
+  const requests = {
+    'PR-0241': storedRequest('PR-0241', 'approved', { amount: '150000' }),
+    'PR-0242': storedRequest('PR-0242', 'approved', { lines: [requestLine({ metadata: { supplierId: 'SUP-005', currency: 'USD', supplierSnapshot: { supplierName: 'Northstar Electronics' } } })] }),
+    'PR-0243': storedRequest('PR-0243', 'approved', { supplierId: null, supplierName: null, lines: [requestLine({ metadata: { currency: 'USD', targetWarehouseId: 'WH-1' } })] }),
+    'PR-0244': storedRequest('PR-0244', 'approved'),
+    // Listed as approved, ordered since: the card goes by the record as stored.
+    'PR-0245': storedRequest('PR-0245', 'converted', { listed: 'approved' }),
+  }
+  const orders = { 'PO-7A1B': storedOrder('PO-7A1B', 'approved', { sourceRequestId: 'PR-0244' }) }
+  const card = await recordCard({ requests, orders })
+  const quotes = assertPart(await card.offer('purchase_request', 'PR-0241'), 'record_actions')
+  assert.deepEqual([quotes.actions, quotes.path], [['create_rfq', 'create_po'], { recommendation: 'rfq', reasons: ['amount_over_rfq_threshold'] }])
+  // No delivery warehouse on a line: the route would refuse the order.
+  const incomplete = await card.offer('purchase_request', 'PR-0242')
+  assertError(incomplete, 'nothing_to_offer')
+  assert.match(incomplete.error.message, /supplier, a currency and a delivery warehouse/)
+  // No supplier chosen: quotes are recommended, and only they can be requested.
+  const noSupplier = assertPart(await card.offer('purchase_request', 'PR-0243'), 'record_actions')
+  assert.deepEqual([noSupplier.actions, noSupplier.path.reasons, noSupplier.poBlocked], [['create_rfq'], ['supplier_not_selected'], 'lines_incomplete'])
+  assertError(await card.offer('purchase_request', 'PR-0244'), 'nothing_to_offer')
+  const converted = await card.offer('purchase_request', 'PR-0245')
+  assertError(converted, 'nothing_to_offer')
+  assert.match(converted.error.message, /PR-0245 is converted/)
+  // A role that cannot see amounts gets no amount, and no amount reason.
+  const masked = await recordCard({ requests, orders, actor: (actor) => actor.permissionCodes.delete('procurement.prices.read') })
+  const hidden = assertPart(await masked.offer('purchase_request', 'PR-0241'), 'record_actions')
+  assert.equal(hidden.record.amount, undefined)
+  assert.deepEqual(hidden.path, { recommendation: 'rfq', reasons: [] })
+})
+
+test('the record card is not offered to a viewer, and takes only a request or order ref of the named result', async () => {
+  const requests = { 'PR-0231': storedRequest('PR-0231', 'submitted') }
+  const viewer = await recordCard({ roleKey: 'read-only-viewer', requests })
+  assert.ok(!aiUiToolsFor(viewer.ctx.actor).some((entry) => entry.name === 'offer_record_actions'))
+  const refused = await viewer.offer('purchase_request', 'PR-0231')
+  assertError(refused, 'not_allowed')
+  assert.match(refused.error.message, /a manager approves them/)
+  assert.deepEqual(viewer.reads, [])
+  const admin = await recordCard({ requests })
+  assert.ok(aiUiToolsFor(admin.ctx.actor).some((entry) => entry.name === 'offer_record_actions'))
+  assertError(await admin.offer('purchase_request', 'PR-0999'), 'foreign_ref')
+  assertError(await admin.offer('purchase_order', 'PR-0231', 'list_purchase_requests#1'), 'foreign_ref')
+  assertError(await tool('offer_record_actions').build({ source: 'list_purchase_requests#1', ref: { type: 'item', id: 'ITEM-001' } }, admin.ctx), 'wrong_ref_type')
+  assertError(await admin.offer('purchase_request', 'PR-0231', 'list_purchase_requests#2'), 'source_missing')
+  // Without the workspace's records nothing is shown.
+  assertError(await tool('offer_record_actions').build({ source: 'list_purchase_requests#1', ref: { type: 'purchase_request', id: 'PR-0231' } }, { ...admin.ctx, prisma: null }), 'record_unavailable')
 })

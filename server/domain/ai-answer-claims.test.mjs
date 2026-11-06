@@ -47,9 +47,13 @@ test('assistant v2 counts a Chinese claim only when the assistant is the one who
   const states = aiAnswerRecordStates([{ type: 'purchase_order', numbers: ['PO-021'], states: ['issued'] }])
   assert.deepEqual(aiAnswerAssistantActionClaims('I have sent the reminder.'), ['I have sent'])
   assert.deepEqual(aiAnswerAssistantActionClaims('PO-021 has been issued.', states), [])
-  // An English state word describes records unless it was done for the user.
-  assert.deepEqual(aiAnswerAssistantActionClaims('PO-022 has been issued.', states), [])
-  assert.deepEqual(aiAnswerAssistantActionClaims('LOCAL-DEMO-PO-023 was approved but not issued, and all eight were issued except it.'), [])
+  // A named record the results do not show in that state is a claim; a
+  // clause that names no record describes records.
+  assert.deepEqual(aiAnswerAssistantActionClaims('PO-022 has been issued.', states), ['has been issued'])
+  assert.deepEqual(aiAnswerAssistantActionClaims('PR-001 has been approved, so it can be ordered.'), ['has been approved'])
+  const approvedPo = aiAnswerRecordStates([{ type: 'purchase_order', numbers: ['LOCAL-DEMO-PO-023'], states: ['approved'] }])
+  assert.deepEqual(aiAnswerAssistantActionClaims('LOCAL-DEMO-PO-023 was approved but not issued, and all eight were issued except it.', approvedPo), [])
+  assert.deepEqual(aiAnswerAssistantActionClaims('All eight were issued last month.'), [])
   assert.deepEqual(aiAnswerAssistantActionClaims('PO-022 has been issued for you.'), ['has been issued for you'])
   assert.deepEqual(aiAnswerAssistantActionClaims('The reminder was sent on your behalf.'), ['was sent on your behalf'])
   // ...but a named record the tools show in another state is a claim.

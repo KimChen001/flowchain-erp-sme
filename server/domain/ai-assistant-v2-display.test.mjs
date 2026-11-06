@@ -124,7 +124,7 @@ test('a display is never placed above or below in the text', () => {
 
 test('status and severity codes in quotes, after "status" or as codes read as words', () => {
   const en = withUnits('en-US').tidy
-  assert.equal(en('It marks one as "risk" and one as “warning” (match status: variance); partially_received.'), 'It marks one as "Risk" and one as “Warning” (match status: Variance); Partially received.')
+  assert.equal(en('It marks one as "risk" and one as “warning” (match status: variance); partially_received.'), 'It marks one as "Risk" and one as “Warning” (match status: variance); partially received.')
   assert.equal(en('Acme\'s "best" order, the word risk.'), 'Acme\'s "best" order, the word risk.')
   assert.equal(withUnits('zh-CN').tidy('状态：pending_approval，类型 po_overdue。'), '状态：待审批，类型 逾期采购订单。')
 })

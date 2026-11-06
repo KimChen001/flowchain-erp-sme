@@ -536,29 +536,40 @@ test('the cost reservation holds: answers running together share the remaining b
 // The form added Northstar as an approved supplier of LDM-002 before it
 // created the request (2026-11-04); the assistant then could only say "the
 // form should have added it". The note now says so when the audit shows it.
-test('the form note names a supplier the same click added to a requested item', async () => {
-  const created = new Date('2026-11-04T15:00:00Z')
+// The form added Northstar as an approved supplier of LDM-002 before it
+// created the request (2026-11-04). 2026-11-05: the note named a supplier set
+// up by other means minutes earlier as if the click had added it; it now names
+// only the links the form reports, each checked.
+test('the form note names only the supplier links the form reports it added, each checked', async () => {
   const prisma = (scenario) => {
     const base = readOnlyPrisma(scenario.data)
+    const links = { 'ISR-NEW': { id: 'ISR-NEW', payload: { itemId: 'ITEM-002', supplierId: 'SUP-005' } }, 'ISR-OLD': { id: 'ISR-OLD', payload: { itemId: 'ITEM-002', supplierId: 'SUP-001' } }, 'ISR-ELSE': { id: 'ISR-ELSE', payload: { itemId: 'ITEM-777', supplierId: 'SUP-005' } } }
     const extra = {
       purchaseRequest: { findFirst: async ({ where }) => (where.id === 'PR-0231' ? { id: 'PR-0231', status: 'draft', requester: 'workspace-administrator-user' } : null) },
       purchaseRequestLine: { findMany: async ({ where }) => (where.purchaseRequestId === 'PR-0231' ? [{ itemId: 'ITEM-002', sku: 'LDM-002' }] : []) },
       auditLog: {
-        findFirst: async ({ where }) => (where.entityId === 'PR-0231' ? { actorId: 'workspace-administrator-user', createdAt: created, metadata: { idempotencyKey: 'ai-form:thr_link:msg_1:p2', suggestions: { origin: 'ai_assistant' } } } : null),
-        findMany: async ({ where }) => (where.entityType === 'item_supplier' && where.actorId === 'workspace-administrator-user' && where.createdAt.gte <= new Date(created.getTime() - 5000) ? [{ entityId: 'ISR-NEW' }] : []),
+        findFirst: async ({ where }) => {
+          if (where.entityId === 'PR-0231') return { actorId: 'workspace-administrator-user', metadata: { idempotencyKey: 'ai-form:thr_link:msg_1:p2', suggestions: { origin: 'ai_assistant' } } }
+          // Only ISR-NEW and ISR-ELSE were created by this user; ISR-OLD was there before.
+          return where.entityType === 'item_supplier' && ['ISR-NEW', 'ISR-ELSE'].includes(where.entityId) && where.actorId === 'workspace-administrator-user' ? { id: 'audit-1' } : null
+        },
       },
-      runtimeRecord: { findMany: async () => [{ id: 'ISR-OLD', payload: { itemId: 'ITEM-002', supplierId: 'SUP-001' } }, { id: 'ISR-NEW', payload: { itemId: 'ITEM-002', supplierId: 'SUP-005' } }] },
-      supplier: { findFirst: async ({ where }) => (where.id === 'SUP-005' ? { name: 'Northstar Electronics', code: 'SUP-005' } : null) },
+      runtimeRecord: { findFirst: async ({ where }) => links[where.id] || null, findMany: (...args) => base.runtimeRecord.findMany(...args) },
+      supplier: { findFirst: async ({ where }) => (where.id === 'SUP-005' ? { name: 'Northstar Electronics', code: 'SUP-005' } : where.id === 'SUP-001' ? { name: 'Acme Components', code: 'SUP-001' } : null) },
     }
     return new Proxy({}, { get: (_target, model) => extra[model] || base[model] })
   }
-  const client = createScriptedModelClient({ 'Did it work?': [[...say('Yes, you created PR-0231.'), end()]] })
+  const client = createScriptedModelClient({ 'Did it work?': [[...say('Yes, you created PR-0231.'), end()]], 'And then?': [[...say('Yes, you created PR-0231.'), end()]] })
   const { ask } = setup({ client, prisma })
-  await ask({ threadId: 'thr_link', message: 'Did it work?', formResults: [{ formId: 'thr_link:msg_1:p2', purchaseRequestId: 'PR-0231' }] })
+  // Reported: the new link (named), one that was there before and one of another item (neither named).
+  await ask({ threadId: 'thr_link', message: 'Did it work?', formResults: [{ formId: 'thr_link:msg_1:p2', purchaseRequestId: 'PR-0231', addedSupplierLinks: ['ISR-NEW', 'ISR-OLD', 'ISR-ELSE'] }] })
   const sent = JSON.stringify(client.requests[0].messages)
   assert.match(sent, /form thr_link:msg_1:p2 created PR-0231 \(draft\)\. The same click added Northstar Electronics as an approved supplier of LDM-002\./)
-  // A link that was there before (no create audit of this user) is not named.
-  assert.doesNotMatch(sent, /SUP-001|Acme/)
+  assert.doesNotMatch(sent, /Acme|ITEM-777/)
+  // Nothing reported: the request alone, whatever links this user made lately.
+  const quiet = setup({ client, prisma })
+  await quiet.ask({ threadId: 'thr_link2', message: 'And then?', formResults: [{ formId: 'thr_link2:msg_1:p2', purchaseRequestId: 'PR-0231' }] })
+  assert.doesNotMatch(JSON.stringify(client.requests.at(-1).messages), /The same click added/)
 })
 
 test('a confirmed form note backs saying that request was created; any other claim is still replaced', async () => {
@@ -742,4 +753,126 @@ test('readiness carries the first-day checklist with v2 on, so the panel can off
   assert.deepEqual((await fresh.readiness()).payload.setup, { open: true, firstStepsOpen: true })
   const off = setup({ env: PROVIDER, client: createScriptedModelClient(OVERDUE) })
   assert.equal('setup' in (await off.readiness()).payload, false)
+})
+
+// The stored side of record card steps: audit rows as the procurement
+// commands write them, and the records, each in its workspace.
+const ME = 'workspace-administrator-user'
+function cardStepPrisma({ audits = [], requests = [], orders = [], rfqs = [] }) {
+  const inScope = (row, where) => row.tenantId === where.tenantId
+  const reads = []
+  return (scenario) => {
+    const base = readOnlyPrisma(scenario.data)
+    const extra = {
+      auditLog: {
+        findMany: async ({ where }) => {
+          reads.push(where)
+          return audits.filter((row) => inScope(row, where) && row.action === where.action && row.entityType === where.entityType && row.actorId === where.actorId
+            && row.createdAt >= where.createdAt.gte && (!where.entityId || row.entityId === where.entityId))
+        },
+      },
+      purchaseRequest: { findFirst: async ({ where }) => requests.find((row) => inScope(row, where) && row.id === where.id) || null },
+      purchaseOrder: {
+        findFirst: async ({ where }) => orders.find((row) => inScope(row, where) && row.id === where.id) || null,
+        findMany: async ({ where }) => (where.id?.in ? orders.filter((row) => inScope(row, where) && where.id.in.includes(row.id)) : base.purchaseOrder.findMany({ where })),
+      },
+      rfq: { findFirst: async ({ where }) => rfqs.find((row) => inScope(row, where) && row.id === where.id && row.sourceRequestId === where.sourceRequestId) || null },
+    }
+    return Object.assign(new Proxy({}, { get: (_target, model) => extra[model] || base[model] }), { reads })
+  }
+}
+const cardAudit = (action, entityType, entityId, key, { metadata = {}, ...extra } = {}) => ({ tenantId: 'tenant-ai-skills', action, entityType, entityId, actorId: ME, createdAt: new Date(Date.now() - 60 * 1000), metadata: { idempotencyKey: `ai-action:${key}`, ...metadata }, ...extra })
+const request = (id, status, tenantId = 'tenant-ai-skills') => ({ id, status, tenantId })
+const noteTexts = (request) => request.messages.flatMap((message) => message.content).filter((block) => block.type === 'text' && block.text.startsWith('Note from the server')).map((block) => block.text)
+
+test('record card steps: one this user took with the card becomes a note; another user\'s, another workspace\'s, an old one or one without the card\'s key is ignored', async () => {
+  const prisma = cardStepPrisma({
+    audits: [
+      cardAudit('purchase_request_approve', 'PurchaseRequest', 'PR-0231', 'thr_cards:msg_1:p2:approve:v3'),
+      cardAudit('purchase_request_converted_to_purchase_orders', 'PurchaseRequest', 'PR-0232', 'thr_cards:msg_1:p3:create_po:v4', { metadata: { purchaseOrderIds: ['PO-7A1B2C3D'] } }),
+      cardAudit('purchase_order_issue', 'PurchaseOrder', 'PO-009', 'thr_cards:msg_1:p4:issue:v4'),
+      cardAudit('rfq_created_from_purchase_request', 'Rfq', 'RFQ-3C4D5E6F', 'thr_cards:msg_1:p5:create_rfq:v2', { metadata: { purchaseRequestId: 'PR-0236' } }),
+      cardAudit('purchase_request_reject', 'PurchaseRequest', 'PR-0240', 'thr_cards:msg_1:p6:reject:v1'),
+      // Another user approved it.
+      cardAudit('purchase_request_approve', 'PurchaseRequest', 'PR-0233', 'thr_cards:msg_1:p7:approve:v1', { actorId: 'someone-else' }),
+      // Approved on the request's page: the route's own key, not the card's.
+      { ...cardAudit('purchase_request_approve', 'PurchaseRequest', 'PR-0234', 'x'), metadata: { idempotencyKey: 'purchase_request.approve:PR-0234:v1:3f2a' } },
+      // Longer ago than a thread lives.
+      cardAudit('purchase_request_approve', 'PurchaseRequest', 'PR-0235', 'thr_cards:msg_1:p9:approve:v1', { createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000) }),
+      // In another workspace.
+      cardAudit('purchase_request_approve', 'PurchaseRequest', 'PR-0237', 'thr_cards:msg_1:p10:approve:v1', { tenantId: 'tenant-other' }),
+    ],
+    requests: [request('PR-0231', 'approved'), request('PR-0232', 'converted'), request('PR-0233', 'approved'), request('PR-0234', 'approved'), request('PR-0235', 'approved'), request('PR-0236', 'approved'), request('PR-0240', 'rejected'), request('PR-0237', 'approved', 'tenant-other')],
+    orders: [{ id: 'PO-7A1B2C3D', tenantId: 'tenant-ai-skills', status: 'approved', metadata: { orderNumber: 'PO-7A1B2C3D' } }, { id: 'PO-009', tenantId: 'tenant-ai-skills', status: 'issued', metadata: { orderNumber: 'PO-009' } }],
+    rfqs: [{ id: 'RFQ-3C4D5E6F', tenantId: 'tenant-ai-skills', status: 'draft', sourceRequestId: 'PR-0236' }],
+  })
+  const client = createScriptedModelClient([[...say('Noted.'), end()], [...say('Noted again.'), end()]])
+  const { ask } = setup({ client, prisma })
+  const step = (key, type, id, action) => ({ actionId: key, type, id, action })
+  await ask({
+    threadId: 'thr_cards',
+    message: 'What happens next?',
+    formResults: [
+      step('thr_cards:msg_1:p2:approve:v3', 'purchase_request', 'PR-0231', 'approve'),
+      step('thr_cards:msg_1:p3:create_po:v4', 'purchase_request', 'PR-0232', 'create_po'),
+      step('thr_cards:msg_1:p4:issue:v4', 'purchase_order', 'PO-009', 'issue'),
+      step('thr_cards:msg_1:p5:create_rfq:v2', 'purchase_request', 'PR-0236', 'create_rfq'),
+      step('thr_cards:msg_1:p6:reject:v1', 'purchase_request', 'PR-0240', 'reject'),
+      step('thr_cards:msg_1:p7:approve:v1', 'purchase_request', 'PR-0233', 'approve'),
+      step('thr_cards:msg_1:p8:approve:v1', 'purchase_request', 'PR-0234', 'approve'),
+      step('thr_cards:msg_1:p9:approve:v1', 'purchase_request', 'PR-0235', 'approve'),
+      step('thr_cards:msg_1:p10:approve:v1', 'purchase_request', 'PR-0237', 'approve'),
+      // Another thread's card, a step the key does not name, and a step the card does not take.
+      step('thr_other:msg_1:p2:approve:v3', 'purchase_request', 'PR-0231', 'approve'),
+    ],
+  })
+  assert.deepEqual(noteTexts(client.requests[0]), [
+    "Note from the server, not the user's words: with card thr_cards:msg_1:p2 the user approved PR-0231 (status now: approved).",
+    "Note from the server, not the user's words: with card thr_cards:msg_1:p3 the user created PO-7A1B2C3D (status: approved) from PR-0232 (status now: converted).",
+    "Note from the server, not the user's words: with card thr_cards:msg_1:p4 the user marked PO-009 as issued (status now: issued); FlowChain records the issue and sends nothing to the supplier.",
+    "Note from the server, not the user's words: with card thr_cards:msg_1:p5 the user created RFQ-3C4D5E6F (status: draft; nothing is sent to suppliers until the RFQ is opened) from PR-0236 to request quotes.",
+    "Note from the server, not the user's words: with card thr_cards:msg_1:p6 the user rejected PR-0240 (status now: rejected).",
+  ])
+  // Reported again with the next question, or for a step its key does not name: nothing more.
+  await ask({ threadId: 'thr_cards', message: 'And now?', formResults: [step('thr_cards:msg_1:p2:approve:v3', 'purchase_request', 'PR-0231', 'approve'), step('thr_cards:msg_1:p2:approve:v3', 'purchase_request', 'PR-0231', 'reject'), step('thr_cards:msg_1:p2:cancel:v3', 'purchase_request', 'PR-0231', 'cancel')] })
+  assert.equal(noteTexts(client.requests[1]).length, 5)
+})
+
+test('a card step is noted only while its record is where the step leads', async () => {
+  const prisma = cardStepPrisma({
+    audits: [cardAudit('purchase_request_approve', 'PurchaseRequest', 'PR-0231', 'thr_moved:msg_1:p2:approve:v3')],
+    // Withdrawn to a draft since.
+    requests: [request('PR-0231', 'draft')],
+  })
+  const client = createScriptedModelClient([[...say('Noted.'), end()]])
+  const { ask } = setup({ client, prisma })
+  await ask({ threadId: 'thr_moved', message: 'Where is it?', formResults: [{ actionId: 'thr_moved:msg_1:p2:approve:v3', type: 'purchase_request', id: 'PR-0231', action: 'approve' }] })
+  assert.deepEqual(noteTexts(client.requests[0]), [])
+})
+
+test('a confirmed card step backs saying the user took it; another step, another record or no note is still replaced', async () => {
+  const prisma = cardStepPrisma({
+    audits: [cardAudit('purchase_request_approve', 'PurchaseRequest', 'PR-0231', 'thr_said:msg_1:p2:approve:v3')],
+    requests: [request('PR-0231', 'approved')],
+  })
+  const client = createScriptedModelClient({
+    'Did it go through?': [[...say('Yes. You approved PR-0231; status: approved. PR-0231 has been approved, so a buyer can now order it.'), end()]],
+    '批准了吗？': [[...say('是的，你已批准 PR-0231，状态：已批准。'), end()]],
+    'Is it rejected?': [[...say('You rejected PR-0231.'), end()]],
+    'And PR-001?': [[...say('You approved PR-001 as well.'), end()]],
+    'Did you approve it?': [[...say('I approved PR-0231.'), end()]],
+  })
+  const { ask } = setup({ client, prisma })
+  const replaced = (lines) => lines.filter((line) => line.type === 'replace').map((line) => line.code)
+  const said = await ask({ threadId: 'thr_said', message: 'Did it go through?', formResults: [{ actionId: 'thr_said:msg_1:p2:approve:v3', type: 'purchase_request', id: 'PR-0231', action: 'approve' }] })
+  assert.deepEqual(replaced(said.lines), [])
+  assert.equal(said.lines.at(-1).body.conclusion.summary, 'Yes. You approved PR-0231; status: approved. PR-0231 has been approved, so a buyer can now order it.')
+  assert.deepEqual(replaced((await ask({ threadId: 'thr_said', message: '批准了吗？', answerLanguage: 'zh-CN' })).lines), [])
+  // The note backs its own step on its own record, and the user's click, not the assistant's.
+  assert.deepEqual(replaced((await ask({ threadId: 'thr_said', message: 'Is it rejected?' })).lines), ['unbacked_action_claim'])
+  assert.deepEqual(replaced((await ask({ threadId: 'thr_said', message: 'And PR-001?' })).lines), ['unbacked_action_claim'])
+  assert.deepEqual(replaced((await ask({ threadId: 'thr_said', message: 'Did you approve it?' })).lines), ['unbacked_action_claim'])
+  // Without the note the same words are replaced.
+  const other = setup({ client: createScriptedModelClient({ 'Did it go through?': [[...say('Yes. You approved PR-0231; status: approved.'), end()]] }), prisma })
+  assert.deepEqual(replaced((await other.ask({ threadId: 'thr_said', message: 'Did it go through?' })).lines), ['unbacked_action_claim'])
 })

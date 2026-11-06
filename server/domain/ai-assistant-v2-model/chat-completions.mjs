@@ -29,16 +29,25 @@ const joinText = (content) => blocks(content).filter((block) => block?.type === 
 // Endpoints (with their model) that refused a streamed request, for this process.
 const NOT_STREAMING = new Set()
 
-// OpenCode Go and Parley are for local development only: they are not
+// OpenCode Go and Parley were for local development only: they are not
 // covered by the agreements a customer workspace runs under.
-export function isLocalOnlyProviderEndpoint(endpoint) {
-  let host = ''
-  try { host = new URL(text(endpoint)).hostname.toLowerCase() } catch { return false }
-  return host.includes('opencode') || host.includes('parley')
+// 2026-11-04: the owner chose MIT Parley (Sonnet 5.5) for the trial servers.
+// Parley may now run in production, but only where the deployment says so in
+// FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION=true. OpenCode stays local only.
+const isHost = (endpoint, name) => {
+  try { return new URL(text(endpoint)).hostname.toLowerCase().includes(name) } catch { return false }
 }
 
+export function isLocalOnlyProviderEndpoint(endpoint) {
+  return isHost(endpoint, 'opencode') || isHost(endpoint, 'parley')
+}
+
+export const parleyAllowedInProduction = (env = {}) => text(env.FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION).toLowerCase() === 'true'
+
 export function assertAssistantV2EndpointAllowed(env = {}, endpoint = providerRuntimeConfig(env).endpoint) {
-  if (text(env.NODE_ENV).toLowerCase() === 'production' && isLocalOnlyProviderEndpoint(endpoint)) throw new AssistantModelError('local_only_provider')
+  if (text(env.NODE_ENV).toLowerCase() !== 'production' || !isLocalOnlyProviderEndpoint(endpoint)) return
+  if (isHost(endpoint, 'parley') && !isHost(endpoint, 'opencode') && parleyAllowedInProduction(env)) return
+  throw new AssistantModelError('local_only_provider')
 }
 
 // Through OpenCode, reasoning_effort "none" worked for Haiku 5.5 and for

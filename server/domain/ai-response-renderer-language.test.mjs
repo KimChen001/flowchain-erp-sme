@@ -285,6 +285,35 @@ test('a list of items may be a table; the basis folds under the one trust line w
   assert.match(client.render({ ...response, answerSourceLabel: '', keyEvidence: [], answerBasis: [], skill: { id: 'capability_overview' } }), /data-testid="ai-answer-checked"/)
 })
 
+// "Which purchase orders are overdue?" (owner, 2026-11-04: "表单拉的也太丑了"):
+// order numbers broke onto four lines in the narrow panel, and every order
+// was named again on a "Next:" line under the table.
+test('a table keeps record numbers whole, reads as compact rows in the panel, and folds the next steps it already lists', async () => {
+  const client = await loadClient()
+  const po = (id, supplier) => ({ id: `po:${id}`, entityType: 'purchase_order', entityId: id, entityLabel: id, label: id, sourceLabel: 'Your workspace', nextStep: `Next: ask ${supplier} to confirm a delivery date.` })
+  const response = {
+    version: 'v2', language: 'en-US', query: 'Which purchase orders are overdue?', answerSource: 'workspace_model', answerSourceLabel: 'Written by AI from your records, figures checked',
+    conclusion: { title: '3 purchase orders are overdue', summary: ['- The oldest is LOCAL-DEMO-PO-020, 15 days late.', '| PO | Supplier | Days overdue | Remaining |', '| --- | --- | --- | --- |', '| LOCAL-DEMO-PO-020 | Precision Fastener Works | 15 | 7,000 pcs |', '| LOCAL-DEMO-PO-011 | Evergreen Packaging | 8 | 300 box |', '| LOCAL-DEMO-PO-016 | Summit Packaging | 7 | 80 roll |'].join('\n'), severity: 'warning', confidence: 'medium' },
+    keyEvidence: [po('LOCAL-DEMO-PO-020', 'Precision Fastener Works'), po('LOCAL-DEMO-PO-011', 'Evergreen Packaging'), po('LOCAL-DEMO-PO-016', 'Summit Packaging')],
+    dataLimitations: [], reviewCards: [], navigationLinks: [], followUpSuggestions: [],
+  }
+  const markup = client.render(response)
+  // A record chip never wraps inside its number; a figure keeps to one line, a name may wrap.
+  assert.match(markup, /data-testid="ai-record-chip"[^>]*class="[^"]*whitespace-nowrap/)
+  assert.match(markup, /<td class="[^"]*whitespace-nowrap"[^>]*>15<\/td>/)
+  assert.match(markup, /<td class="[^"]*first:pl-0 "[^>]*>Precision Fastener Works<\/td>/)
+  // The narrow panel reads each row as the record, then the rest of its row.
+  const rows = markup.match(/<ul data-testid="ai-answer-table-rows"[^]*?<\/ul>/)[0]
+  assert.equal((rows.match(/<li /g) || []).length, 3)
+  assert.match(rows, /data-business-id="LOCAL-DEMO-PO-020"[^]*?<span>Precision Fastener Works<\/span><span> · <span class="whitespace-nowrap">Days overdue <span[^>]*>15<\/span><\/span><\/span><span> · <span class="whitespace-nowrap">Remaining <span[^>]*>7,000 pcs<\/span><\/span><\/span>/)
+  // The next steps of the records the table lists fold under one line.
+  assert.match(markup, /data-testid="ai-next-steps-toggle"[^>]*>Next steps for these records \(3\)<\/button>/)
+  assert.doesNotMatch(markup, /data-testid="ai-focused-primary-items"/)
+  assert.doesNotMatch(markup, /ask Precision Fastener Works/)
+  // In Chinese too.
+  assert.match(client.render({ ...response, language: 'zh-CN' }), /这些记录的下一步（3）/)
+})
+
 test('an item the answer offers to order is a choice that asks for it, not a link to its page', async () => {
   const client = await loadClient()
   const record = (id) => ({ id: `item:${id}`, entityType: 'item', entityId: `ITEM-${id}`, entityLabel: id, label: id, sourceLabel: '你的工作区' })
@@ -294,7 +323,10 @@ test('an item the answer offers to order is a choice that asks for it, not a lin
     keyEvidence: [record('LDM-002'), record('LDM-001')], dataLimitations: [], reviewCards: [], navigationLinks: [],
     followUpSuggestions: [{ label: '为 LDM-002 开采购申请', prompt: '为 LDM-002 开采购申请' }], orderChoices: [{ sku: 'LDM-002', prompt: '为 LDM-002 开采购申请' }],
   })
-  assert.equal((markup.match(/data-testid="ai-order-choice"[^>]*data-business-id="LDM-002"/g) || []).length, 2)
+  // The table (and its narrow rows, which repeat it for the small panel) and the question each offer it.
+  const narrow = markup.match(/<ul data-testid="ai-answer-table-rows"[^]*?<\/ul>/)[0]
+  assert.equal((markup.replace(narrow, '').match(/data-testid="ai-order-choice"[^>]*data-business-id="LDM-002"/g) || []).length, 2)
+  assert.equal((narrow.match(/data-testid="ai-order-choice"[^>]*data-business-id="LDM-002"/g) || []).length, 1)
   assert.match(markup, /title="为 LDM-002 起草采购申请"/)
   const text = markup.match(/<div data-testid="ai-answer-text"[^]*?<\/section>/)[0]
   assert.doesNotMatch(text, /data-action-kind="view_evidence" data-business-id="ITEM-LDM-002"/)

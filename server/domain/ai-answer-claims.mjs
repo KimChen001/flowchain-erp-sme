@@ -90,13 +90,14 @@ export function aiAnswerActionClaims(value, states = null) {
   return claims
 }
 
-// The claims of an assistant v2 answer, the assistant as the one who acted
-// (2026-11-05): "I/we" forms, an English state word said to be done for the
-// user or by the assistant, and Chinese with the assistant as the subject
-// (ZH_SELF_CLAIMS). A state word that only describes records is no claim
-// ("all eight were issued"), unless the sentence names records of that kind
-// and none of them is in that state: "PO-023 has been approved" while PO-023
-// is a draft reads as done when it was not.
+// The claims of an assistant v2 answer (2026-11-05): "I/we" forms, an
+// English state word said to be done for the user or by the assistant,
+// Chinese with the assistant as the subject (ZH_SELF_CLAIMS), and an English
+// state word whose clause names a record that the results do not show in that
+// state ("PR-001 has been approved" with no result or a draft PR-001). A
+// state word whose clause names no record describes records ("all eight were
+// issued") and is no claim. Assistant v2 then lets a note of the user's own
+// step back a state word.
 export function aiAnswerAssistantActionClaims(value, states = null) {
   const text = String(value ?? '')
   const claims = []
@@ -104,21 +105,43 @@ export function aiAnswerAssistantActionClaims(value, states = null) {
     const found = text.match(pattern)
     if (found) claims.push(found[0])
   }
-  for (const found of text.matchAll(EN_ASSISTANT_STATE_CLAIM)) claims.push(found[0])
+  const said = new Set()
+  for (const found of text.matchAll(EN_ASSISTANT_STATE_CLAIM)) { claims.push(found[0]); said.add(found.index) }
   for (const found of text.matchAll(new RegExp(EN_STATE_CLAIM.source, 'gi'))) {
-    if (contradictedStatus(text, found, states)) claims.push(found[0])
+    if (!said.has(found.index) && unbackedNamedState(text, found, states)) claims.push(found[0])
   }
   for (const pattern of ZH_SELF_CLAIMS) for (const found of text.matchAll(pattern)) claims.push(found[0])
   return [...new Set(claims)]
 }
 
-// The sentence names records the state word describes, and none is in it.
-function contradictedStatus(text, found, states) {
-  if (!states?.size) return false
+// A record number as answers write them: PR-001, LOCAL-DEMO-PO-023.
+const RECORD_NUMBER = /\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d[\w-]*/
+// Where a clause starts inside a sentence; "and" may join two subjects
+// ("PO-021 and PO-023 were issued"), so it is no break.
+const CLAUSE_BREAK = /[,;:，；：]|\b(?:but|while|whereas|although|though|except|so)\b/gi
+
+// The clause before a state word: from the sentence's start or the last break.
+function clauseBefore(text, index) {
+  let start = 0
+  for (const match of text.matchAll(SENTENCE_END)) {
+    if (match.index < index) start = match.index + 1
+    else break
+  }
+  const lead = text.slice(start, index)
+  let from = 0
+  for (const match of lead.matchAll(CLAUSE_BREAK)) from = match.index + match[0].length
+  return lead.slice(from)
+}
+
+// The clause names a record, and no record it names of a kind the word
+// describes is in that state in the results.
+function unbackedNamedState(text, found, states) {
+  const clause = clauseBefore(text, found.index)
+  if (!RECORD_NUMBER.test(clause)) return false
   const rule = WORD_STATES.find((row) => row.word.test(found[0].trim().split(/\s+/).at(-1)))
-  if (!rule) return false
-  const named = recordsIn(sentenceAt(text, found.index), states).filter((record) => !rule.types || rule.types.includes(record.type))
-  return named.length > 0 && !named.some((record) => rule.states.some((state) => record.states.has(state)))
+  if (!rule || !states?.size) return true
+  const named = recordsIn(clause, states).filter((record) => !rule.types || rule.types.includes(record.type))
+  return !named.some((record) => rule.states.some((state) => record.states.has(state)))
 }
 
 function statedStatus(text, found, states) {

@@ -101,7 +101,9 @@ export type PrFormProps = {
 };
 // The request a form created, as the procurement routes return it.
 // number: the request's document number (shown); id: its internal id (links and calls).
-export type PrReceipt = { id: string; number?: string; version: number; status: string };
+// addedSupplierLinks: the item-supplier links this form created before the
+// request, reported with it so the server can say they were added.
+export type PrReceipt = { id: string; number?: string; version: number; status: string; addedSupplierLinks?: string[] };
 
 // The first-day checklist (setup_steps), as Today shows it.
 export type SetupStepId = "items" | "suppliers" | "customers" | "opening_stock" | "teammates";
@@ -155,6 +157,38 @@ export type SetupFormProps = {
   canCreateSuppliers: boolean;
   canCreateItems: boolean;
 };
+// The record card (record_actions): a purchase request or purchase order as
+// stored, the steps on it the user's role permits (allowed) and those its
+// status admits now (actions). The card works out the steps again after each
+// click from the shared rules (shared/assistant-record-actions.mjs).
+export type RecordActionCode = "submit" | "approve" | "reject" | "create_rfq" | "create_po" | "issue";
+export type RecordActionType = "purchase_request" | "purchase_order";
+export type ActionRecord = {
+  ref: PartRef;
+  type: RecordActionType;
+  status: string;
+  version: number;
+  suppliers: string[];
+  lines: { sku: string | null; name: string; quantity: number | null; unit: string | null }[];
+  lineCount: number;
+  amount?: MoneyCell;
+};
+export type RecordPath = { recommendation: "direct_po" | "rfq"; reasons: string[] };
+export type RecordActionsProps = {
+  cardId: string;
+  source?: string;
+  record: ActionRecord;
+  allowed: RecordActionCode[];
+  actions: RecordActionCode[];
+  path?: RecordPath;
+  poBlocked?: "lines_incomplete";
+};
+// What a card's clicks did: each step taken, with the records it created,
+// and the record as it now stands. type and id say which record, for the
+// next question's report.
+export type RecordActionStep = { actionId: string; action: RecordActionCode; created: PartRef[] };
+export type RecordActionReceipt = { type: RecordActionType; id: string; status: string; version: number; steps: RecordActionStep[]; sourced?: boolean };
+
 // What one row of a setup card came to: the record it created (an item also
 // with its supplier link, when it has a supplier), or why it failed.
 export type SetupRowResult =
