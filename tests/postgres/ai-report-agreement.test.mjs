@@ -165,11 +165,12 @@ test('the assistant states the same open POs, committed spend and at-risk SKUs a
     // Left out, but never hidden: the report says which SKU has a line in
     // another unit, and the answer names the order and its quantity.
     assert.ok(inventoryAfter.limitations.includes('po_line_unit_mismatch:LDM-002'))
-    assert.match(promise.conclusion.summary, /Not counted as incoming because the line is in another unit than the stock: AGREEMENT-CASE-PO \(12 CASE\)\./)
+    assert.match(promise.conclusion.summary, /Not counted as incoming because the line is in another unit than the stock: AGREEMENT-CASE-PO \(12 cases\)\./)
     // Asked for the order, the assistant names the CASE line first and opens nothing.
+    // The unit reads as a word in the answer's number: 12 cases, not 12 CASE.
     const orderAnswer = (await routeJson(handleAiRuntimeGatewayRoute, aiCtx('admin', users.admin), 'POST', '/api/ai-runtime/respond', { message: 'Create a purchase order for LDM-002', answerLanguage: 'en-US' })).payload
     assert.equal(orderAnswer.intent, 'prepare_action_draft')
-    assert.match(orderAnswer.conclusion.summary, /^LDM-002 is also on open purchase order lines in another unit, not counted above: AGREEMENT-CASE-PO \(12 CASE\)\./)
+    assert.match(orderAnswer.conclusion.summary, /^LDM-002 is also on open purchase order lines in another unit, not counted above: AGREEMENT-CASE-PO \(12 cases\)\./)
     assert.ok(orderAnswer.reviewCards.every((card) => card.autoOpen !== true))
   } finally {
     await prisma.$disconnect()
