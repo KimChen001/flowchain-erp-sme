@@ -16,7 +16,8 @@
 //
 // Run it after changing the policy or adding anything that loads from another
 // origin. On Windows the harness is ended with taskkill, so its temporary
-// database folder (%TEMP%\flowchain-product-recovery-*) stays behind.
+// database folder (%TEMP%\flowchain-product-recovery-*) stays behind until
+// the next harness run or `npm run test:clean-temp` removes it.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";

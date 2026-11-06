@@ -1,13 +1,13 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { rm } from 'node:fs/promises'
 import { createServer as createNetServer } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import EmbeddedPostgres from 'embedded-postgres'
 import { createPrismaClient } from '../server/persistence/prisma-client.mjs'
 import { answerLegacySignInThroughEmailLink, productionHarnessMailEnv, productionHarnessMailer } from './test-support/production-harness.mjs'
+import { createTempClusterDirectory } from './test-support/temp-cluster.mjs'
 
 const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, '..')
@@ -25,7 +25,7 @@ const freePort = () => new Promise((resolvePort, reject) => {
 
 const pgPort = await freePort()
 const password = `local-${randomUUID()}`
-const directory = await mkdtemp(join(tmpdir(), 'flowchain-receiving-browser-'))
+const directory = await createTempClusterDirectory('flowchain-receiving-browser-')
 const database = 'flowchain_receiving_browser_test'
 const url = `postgresql://flowchain_browser:${encodeURIComponent(password)}@127.0.0.1:${pgPort}/${database}?schema=public`
 const pg = new EmbeddedPostgres({ databaseDir: directory, user: 'flowchain_browser', password, port: pgPort, persistent: false, onLog: () => {}, onError: () => {} })

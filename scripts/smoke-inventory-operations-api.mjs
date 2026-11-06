@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
 import { productionHarnessMailEnv, signInThroughEmailLink } from "./test-support/production-harness.mjs";
+import { createTempClusterDirectory } from "./test-support/temp-cluster.mjs";
 
 const execFileAsync = promisify(execFile),
   root = resolve(import.meta.dirname, ".."),
@@ -73,9 +73,7 @@ async function request(base, path, options) {
 const pgPort = await freePort(),
   apiPort = await freePort(),
   password = `local-${randomUUID()}`,
-  directory = await mkdtemp(
-    join(tmpdir(), "flowchain-inventory-operations-api-"),
-  ),
+  directory = await createTempClusterDirectory("flowchain-inventory-operations-api-"),
   database = "flowchain_inventory_operations_api";
 const url = `postgresql://flowchain_inventory_api:${encodeURIComponent(password)}@127.0.0.1:${pgPort}/${database}?schema=public`;
 const pg = new EmbeddedPostgres({
