@@ -7,12 +7,13 @@ import type { AnswerLanguage, FlagSpan, PartRef } from "./parts/types";
 // server keeps the thread's tool results and never reads history from here.
 
 export type AssistantV2ActiveContext = { moduleId: string; entityType: string | null; entityId: string | null };
-// A request an in-chat form created, or the suppliers and items a setup card
-// created, reported once with the next question; the server checks them
-// before it adds a note to the thread.
+// A request an in-chat form created, the suppliers and items a setup card
+// created, or a step taken in a record card, reported once with the next
+// question; the server checks them before it adds a note to the thread.
 export type AssistantV2FormResult =
-  | { formId: string; purchaseRequestId: string }
-  | { formId: string; created: { type: "supplier" | "item"; id: string }[] };
+  | { formId: string; purchaseRequestId: string; addedSupplierLinks?: string[] }
+  | { formId: string; created: { type: "supplier" | "item"; id: string }[] }
+  | { actionId: string; type: "purchase_request" | "purchase_order"; id: string; action: string };
 export type AssistantV2Request = {
   threadId: string;
   message: string;

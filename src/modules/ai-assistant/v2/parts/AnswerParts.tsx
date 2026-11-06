@@ -7,11 +7,12 @@ import { FollowupChips } from "./FollowupChips";
 import { KpiTilesPart } from "./KpiTilesPart";
 import type { Navigate } from "./partKit";
 import { PurchaseRequestFormPart } from "./PurchaseRequestFormPart";
+import { RecordActionsPart } from "./RecordActionsPart";
 import { RecordCardsPart } from "./RecordCardsPart";
 import { SetupRecordsPart } from "./SetupRecordsPart";
 import { SetupStepsPart } from "./SetupStepsPart";
 import { StreamingText } from "./StreamingText";
-import type { AnswerPart, PartRef, PrReceipt, SetupReceipt } from "./types";
+import type { AnswerPart, PartRef, PrReceipt, RecordActionReceipt, SetupReceipt } from "./types";
 
 type Context = {
   threadId: string;
@@ -27,6 +28,9 @@ type Context = {
   // What each setup card created, by part id.
   setupReceipts?: Record<string, SetupReceipt>;
   onSetupReceipt?: (partId: string, receipt: SetupReceipt) => void;
+  // What each record card's clicks did, by part id.
+  actionReceipts?: Record<string, RecordActionReceipt>;
+  onActionReceipt?: (partId: string, receipt: RecordActionReceipt) => void;
 };
 
 // One renderer per component. Props are checked against the protocol first,
@@ -40,6 +44,7 @@ const RENDERERS: Record<string, (part: Extract<AnswerPart, { type: "ui" }>, prop
   pr_form: (part, props, context) => <PurchaseRequestFormPart props={props} partId={part.id} threadId={context.threadId} messageId={context.messageId} language={context.language} onNavigate={context.onNavigate} receipt={context.receipts?.[part.id] || null} onReceipt={context.onReceipt ? (receipt) => context.onReceipt?.(part.id, receipt) : undefined} />,
   setup_steps: (_part, props, context) => <SetupStepsPart props={props} language={context.language} onNavigate={context.onNavigate} />,
   setup_form: (part, props, context) => <SetupRecordsPart props={props} partId={part.id} language={context.language} onNavigate={context.onNavigate} receipt={context.setupReceipts?.[part.id] || null} onReceipt={context.onSetupReceipt ? (receipt) => context.onSetupReceipt?.(part.id, receipt) : undefined} />,
+  record_actions: (part, props, context) => <RecordActionsPart props={props} language={context.language} onNavigate={context.onNavigate} receipt={context.actionReceipts?.[part.id] || null} onReceipt={context.onActionReceipt ? (receipt) => context.onActionReceipt?.(part.id, receipt) : undefined} />,
   // Next questions only under the latest answer.
   followups: (_part, props, context) => context.latest ? <FollowupChips props={props} language={context.language} onFollowUp={context.onFollowUp} /> : null,
 };

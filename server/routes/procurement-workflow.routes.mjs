@@ -2,15 +2,10 @@ import { canReadProcurementDocument, maskProcurementRecord, maskProcurementSnaps
 const denied = (send, res) => send(res, 403, { code: "PERMISSION_DENIED", message: "Your role cannot view these procurement records.", details: [] }) || true;
 import { createHash } from "node:crypto";
 import { createProcurementRequestCommandService } from "../services/procurement-request-command-service.mjs";
-import { recommendProcurementPath } from "../domain/procurement-workflow.mjs";
+import { PROCUREMENT_PATH_POLICY, recommendProcurementPath } from "../domain/procurement-workflow.mjs";
 import { notifyApprovalWaiting } from "../notifications/approval-notifier.mjs";
 import { createPurchaseOrderDocumentReadService } from "../domain/purchase-order-document-read-service.mjs";
 import { DOCUMENT_NUMBER_LOOKUP_LIMIT } from "../repositories/db-procurement-read-repository.mjs";
-const PROCUREMENT_PATH_POLICY = Object.freeze({
-  directPurchaseThreshold: 50000,
-  rfqRequiredAboveAmount: 100000,
-  allowManagerOverride: true,
-});
 // Purchase request commands write PostgreSQL directly. Permissions come from
 // the signed-in actor's role grants inside the service, not from role names.
 const requestCommands = (ctx) => ctx.repositories?.procurementRequests

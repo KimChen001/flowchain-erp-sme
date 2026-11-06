@@ -45,6 +45,7 @@ const rendererCopy = {
     cancel: "Cancel",
     cancelled: "Suggestion dismissed. Nothing was saved.",
     moreLines: "Show {count} more",
+    nextSteps: "Next steps for these records ({count})",
     limitedMode: "AI planning was unavailable, so this answer comes from the standard rules and may not cover every part of your question.",
     overCap: "This workspace reached this month's AI limit, so this answer comes from workspace rules.",
     modelUnavailable: "The AI model did not respond, so this answer comes from the standard rules.",
@@ -78,6 +79,7 @@ const rendererCopy = {
     cancel: "取消",
     cancelled: "已取消这条建议，没有保存任何内容。",
     moreLines: "再显示 {count} 条",
+    nextSteps: "这些记录的下一步（{count}）",
     limitedMode: "AI 规划暂不可用，本回答来自标准规则，可能没有覆盖问题的每个部分。",
     overCap: "本工作区本月 AI 用量已达上限，本回答按工作区规则生成。",
     modelUnavailable: "AI 模型没有响应，本回答来自标准规则。",
@@ -104,7 +106,12 @@ function entityType(value = ""): BusinessEntityType | null {
   return candidate in businessEntityRouteRegistry ? candidate as BusinessEntityType : null;
 }
 
-const chipClass = "inline-flex max-w-full items-center rounded px-1 align-baseline text-[12.5px] font-semibold leading-5";
+const chipClass = "inline-flex max-w-full items-center whitespace-nowrap rounded px-1 align-baseline text-[12.5px] font-semibold leading-5";
+
+// A table cell that holds a record number, a figure or a date keeps to one
+// line; words (a supplier, a status) wrap.
+const KEEP_ON_ONE_LINE = /^(?:[A-Za-z0-9][A-Za-z0-9._/-]*\d[A-Za-z0-9._/-]*|[-+−]?[$€£¥]?\s?\d[\d,.]*\s?(?:%|[A-Za-z]{1,8}|[\u4e00-\u9fff]{1,3})?|\d{4}-\d{2}-\d{2})$/u;
+const cellClass = (value: string) => (KEEP_ON_ONE_LINE.test(value.trim()) ? "whitespace-nowrap" : "");
 
 // A purchase request, RFQ or purchase order labelled with its internal id (or
 // not labelled) is shown by its document number; the id still opens it.
@@ -297,7 +304,21 @@ function AnswerText({ text, lang, chips }: { text: string; lang?: string; chips:
   return (
     <div data-testid="ai-answer-text" lang={lang} className="space-y-2 text-sm leading-relaxed" style={{ color: A.label }}>
       {answerTextBlocks(text).map((block, index) => block.kind === "table"
-        ? <div key={index} className="overflow-x-auto"><table data-testid="ai-answer-table" className="w-full text-[13px] leading-5"><thead><tr>{block.head.map((cell, column) => <th key={column} className="whitespace-nowrap px-2 py-1 text-left font-medium first:pl-0" style={{ color: A.sub, borderBottom: `1px solid ${A.gray4}` }}>{line(cell)}</th>)}</tr></thead><tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>{block.head.map((_, column) => <td key={column} className="px-2 py-1 align-top tabular-nums first:pl-0" style={{ borderBottom: `1px solid ${A.gray5}` }}>{line(row[column] || "")}</td>)}</tr>)}</tbody></table></div>
+        ? <div key={index} className="@container">
+            <div className="hidden overflow-x-auto @lg:block"><table data-testid="ai-answer-table" className="w-full text-[12.5px] leading-5"><thead><tr>{block.head.map((cell, column) => <th key={column} className="whitespace-nowrap px-1.5 py-1 text-left font-medium first:pl-0" style={{ color: A.sub, borderBottom: `1px solid ${A.gray4}` }}>{line(cell)}</th>)}</tr></thead><tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>{block.head.map((_, column) => <td key={column} className={`px-1.5 py-1 align-top tabular-nums first:pl-0 ${cellClass(row[column] || "")}`} style={{ borderBottom: `1px solid ${A.gray5}` }}>{line(row[column] || "")}</td>)}</tr>)}</tbody></table></div>
+            {/* In the narrow panel: the record on one line, the rest of its row on the next. */}
+            <ul data-testid="ai-answer-table-rows" className="divide-y @lg:hidden" style={{ borderColor: A.gray5 }}>
+              {block.rows.map((row, rowIndex) => {
+                const rest = block.head.slice(1).map((head, column) => ({ head, value: (row[column + 1] || "").trim() })).filter((cell) => cell.value);
+                return (
+                  <li key={rowIndex} className="py-1.5 text-[13px] leading-5 first:pt-0">
+                    <div className="font-medium" style={{ color: A.label }}>{line(row[0] || "")}</div>
+                    {rest.length ? <div style={{ color: A.sub }}>{rest.map((cell, column) => <span key={column}>{column ? " · " : ""}{KEEP_ON_ONE_LINE.test(cell.value) ? <span className="whitespace-nowrap">{cell.head} <span className="tabular-nums" style={{ color: A.label }}>{line(cell.value)}</span></span> : line(cell.value)}</span>)}</div> : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         : block.kind === "p"
         ? <p key={index}>{line(block.lines[0])}</p>
         : block.kind === "ol"
@@ -335,6 +356,7 @@ function splitHeadline(summary: string, headline: string) {
 export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft, onFollowUp, latest = true }: { response: AiResponseV2; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; onFollowUp?: (prompt: string, skillHint?: string) => void; latest?: boolean }) {
   const { language: uiLanguage } = useI18n();
   const [allLines, setAllLines] = useState(false);
+  const [nextOpen, setNextOpen] = useState(false);
   const language: Language = response?.language === "zh-CN" || response?.language === "en-US" ? response.language : uiLanguage === "zh-CN" ? "zh-CN" : "en-US";
   const copy = rendererCopy[language];
   if (!response || response.version !== "v2") return null;
@@ -365,6 +387,11 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   const citedOnly = items.every((item) => !saysSomething(item));
   const lines = compound ? [] : citedOnly ? items.filter(notInText) : response.answerSource === "workspace_model" ? items.filter((item) => saysSomething(item) || notInText(item)) : items;
   const compactLines = !citedOnly && lines.every((item) => !item.reason && !item.impact);
+  // A table in the text already lists the records: their next steps fold
+  // under one line instead of naming each record a third time (owner,
+  // 2026-11-04: the summary, the table and a "Next:" line per order).
+  const tableInText = /^\s*\|.+\|\s*$/m.test(body || "");
+  const foldedLines = !citedOnly && compactLines && tableInText && lines.length > 1 && lines.every((item) => !notInText(item)) && !nextOpen;
   const shownLines = citedOnly || allLines ? lines : lines.slice(0, LINE_LIMIT);
   const hiddenLines = lines.length - shownLines.length;
   const impacts = new Set(lines.map((item) => item.impact));
@@ -405,7 +432,8 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
 
       {compound ? <section data-testid="ai-answer-sections" className="space-y-3">{sections.map((section) => <AnswerSection key={section.id} section={section} evidence={(section.evidenceIds || []).map((id) => evidenceById.get(id)).filter((item): item is AiResponseV2EvidenceItem => Boolean(item))} answerLanguage={response.language} chips={chips} onNavigate={onNavigate} />)}</section> : null}
 
-      {lines.length ? <ul data-testid="ai-focused-primary-items" data-records={citedOnly ? "cited" : "priorities"} className={citedOnly ? "flex flex-wrap gap-x-4 gap-y-1.5" : compactLines ? "space-y-2" : "divide-y"} style={citedOnly || compactLines ? undefined : { borderColor: A.gray5 }} aria-label={citedOnly ? copy.records : undefined}>
+      {foldedLines ? <button type="button" data-testid="ai-next-steps-toggle" onClick={() => setNextOpen(true)} className="text-[13px] font-medium hover:underline" style={{ color: A.blue }}>{fill(copy.nextSteps, { count: lines.length })}</button> : null}
+      {lines.length && !foldedLines ? <ul data-testid="ai-focused-primary-items" data-records={citedOnly ? "cited" : "priorities"} className={citedOnly ? "flex flex-wrap gap-x-4 gap-y-1.5" : compactLines ? "space-y-2" : "divide-y"} style={citedOnly || compactLines ? undefined : { borderColor: A.gray5 }} aria-label={citedOnly ? copy.records : undefined}>
         {shownLines.map((item) => citedOnly
           ? <li key={item.id} data-testid="ai-cited-record" className="text-[13px] leading-6"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink>{item.status ? <span style={{ color: A.sub }}> · {item.status}</span> : null}</li>
           // A line with only its next step (a model-first answer's record): one row.
@@ -421,7 +449,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
       {/* The same impact on every line is said once. */}
       {sharedImpact ? <p data-testid="ai-shared-impact" className="text-[13px] leading-relaxed" style={{ color: A.sub }}>{fill(copy.impact, { impact: sharedImpact })}</p> : null}
       {/* Three lines show; the rest open on request, so a long answer stays readable on a phone. */}
-      {hiddenLines ? <button type="button" data-testid="ai-more-lines" onClick={() => setAllLines(true)} className="text-[13px] font-medium hover:underline" style={{ color: A.blue }}>{fill(copy.moreLines, { count: hiddenLines })}</button> : null}
+      {hiddenLines && !foldedLines ? <button type="button" data-testid="ai-more-lines" onClick={() => setAllLines(true)} className="text-[13px] font-medium hover:underline" style={{ color: A.blue }}>{fill(copy.moreLines, { count: hiddenLines })}</button> : null}
 
       {proposals.map((card, index) => <OrderProposal key={`${card.draftType}-${card.payload?.itemIdOrSku}-${index}`} card={card} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} />)}
 

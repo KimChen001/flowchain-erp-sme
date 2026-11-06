@@ -40,6 +40,17 @@ function chipsLast(parts: AssistantV2Part[]) {
   return [...parts.filter((part) => !isFollowups(part)), chips[chips.length - 1]];
 }
 
+// The answer's first words come first: when the model showed a table or
+// cards before it wrote anything, its first text moves above them (owner,
+// 2026-11-04: the conclusion sat under eight rows of orders).
+function textFirst(parts: AssistantV2Part[]) {
+  const first = parts.findIndex((part) => !isFollowups(part))
+  if (first < 0 || parts[first].kind === "text") return parts;
+  const text = parts.findIndex((part) => part.kind === "text" && part.text.trim());
+  if (text < 0) return parts;
+  return [...parts.slice(0, first), parts[text], ...parts.slice(first).filter((_, at) => at + first !== text)];
+}
+
 function withPart(parts: AssistantV2Part[], id: string, update: (part: AssistantV2Part | undefined) => AssistantV2Part | null) {
   const index = parts.findIndex((part) => part.id === id);
   const next = update(index >= 0 ? parts[index] : undefined);
@@ -139,7 +150,7 @@ export function rulesAnswerBody(message: AssistantV2Message) {
 
 // The parts as AnswerParts draws them.
 export function answerPartsOf(message: AssistantV2Message): AnswerPart[] {
-  return chipsLast(message.parts).map((part) => part.kind === "text"
+  return chipsLast(textFirst(message.parts)).map((part) => part.kind === "text"
     ? { id: part.id, type: "text", text: part.text, flags: part.flags, ...(part.refs?.length ? { refs: part.refs } : {}) }
     : { id: part.id, type: "ui", component: part.component, props: part.props, refs: part.refs });
 }

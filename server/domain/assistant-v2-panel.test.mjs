@@ -197,6 +197,23 @@ test('one set of follow-up chips per answer, after every other part, and the rec
   assert.doesNotMatch(markup, /Which supplier\?/)
 })
 
+// The conclusion sat under eight rows of orders (2026-11-04): an answer
+// that showed a table before it wrote anything leads with its first text.
+test('an answer that opens with a display leads with its first text; the chips stay last', () => {
+  const chips = event({ type: 'ui', partId: 'p3', component: 'followups', schemaVersion: 1, props: { questions: ['Which supplier?'] }, refs: [] })
+  const table = event({ type: 'ui', partId: 'p1', component: 'table', schemaVersion: 1, props: { title: 'Overdue', columns: [{ code: 'order', kind: 'text' }], rows: [], total: 0, more: false }, refs: [] })
+  const message = fold([
+    table,
+    event({ type: 'text_delta', partId: 'p2', text: '8 purchase orders are overdue.' }),
+    chips,
+    event({ type: 'text_delta', partId: 'p4', text: 'Chase Acme first.' }),
+  ])
+  assert.deepEqual(client.answerPartsOf(message).map((part) => part.id), ['p2', 'p1', 'p4', 'p3'])
+  // Text already first: nothing moves.
+  const plain = fold([event({ type: 'text_delta', partId: 'p1', text: 'Two are late.' }), { ...table, partId: 'p2' }])
+  assert.deepEqual(client.answerPartsOf(plain).map((part) => part.id), ['p1', 'p2'])
+})
+
 test('a stream line that cannot be read is skipped, not fatal', () => {
   for (const line of ['', '   ', 'not json', '{"v":2,"seq":1,"type":"text_delta"}', '{"v":2,"seq":1,"type":"mystery"}', '{"v":3,"seq":1,"type":"notice","code":"cancelled"}', '[1,2]', '{"type":"notice","code":"cancelled"}']) {
     assert.equal(client.parseAssistantV2Line(line), null, line)
@@ -397,4 +414,28 @@ test('a setup card keeps what it created by form id, and the setup tool has a st
   assert.doesNotMatch(client.render({ message, setupReceipts: { 'thr_7f2c:msg_20:p1': receipt } }), /data-testid="ai-v2-setup-row-created"/)
   const reading = fold([event({ type: 'start', threadId: 'thr_7f2c', messageId: 'msg_22', model: 'claude-sonnet-5-5', language: 'en-US' }), event({ type: 'tool', id: 'toolu_03', name: 'setup_status', state: 'running' })])
   assert.match(client.render({ message: reading }), /Checking your workspace setup…/)
+})
+
+test('a record card keeps what its clicks did by card id, and a Chinese answer words it in Chinese', () => {
+  const props = {
+    cardId: 'thr_7f2c:msg_23:p2',
+    record: { ref: { type: 'purchase_request', id: 'PR-0231', label: 'PR-0231' }, type: 'purchase_request', status: 'submitted', version: 3, suppliers: ['Northstar Electronics'], lines: [{ sku: 'LDM-002', name: 'Temperature Sensor', quantity: 300, unit: 'pcs' }], lineCount: 1 },
+    allowed: ['approve', 'reject', 'create_po'],
+    actions: ['approve', 'reject'],
+    path: { recommendation: 'direct_po', reasons: ['direct_po_ok'] },
+  }
+  const message = (language) => fold([
+    event({ type: 'start', threadId: 'thr_7f2c', messageId: 'msg_23', model: 'claude-sonnet-5-5', language }),
+    event({ type: 'ui', partId: 'p2', component: 'record_actions', schemaVersion: 1, props, refs: [{ type: 'purchase_request', id: 'PR-0231', label: 'PR-0231' }] }),
+  ])
+  const open = client.render({ message: message('en-US') })
+  assert.match(open, /data-testid="ai-v2-record-actions"[^>]*data-status="submitted"[^]*data-action="approve"[^>]*>Approve</)
+  assert.doesNotMatch(open, CJK)
+  const receipt = { type: 'purchase_request', id: 'PR-0231', status: 'approved', version: 4, steps: [{ actionId: 'thr_7f2c:msg_23:p2:approve:v3', action: 'approve', created: [] }] }
+  const approved = client.render({ message: message('en-US'), actionReceipts: { 'thr_7f2c:msg_23:p2': receipt } })
+  assert.match(approved, /data-status="approved"[^]*data-testid="ai-v2-record-done" data-action="approve"[^>]*>You approved it\./)
+  // Approved: the next step, ordering it, is offered in the same card.
+  assert.match(approved, /data-action="create_po"[^>]*>Create purchase order</)
+  assert.doesNotMatch(client.render({ message: message('en-US'), actionReceipts: { 'thr_7f2c:msg_22:p2': receipt } }), /ai-v2-record-done/)
+  assert.match(client.render({ message: message('zh-CN') }), /采购申请[^]*批准[^]*驳回/)
 })

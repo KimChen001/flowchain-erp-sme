@@ -2,8 +2,9 @@
 
 Status: built 2026-10-05 for the owner's AI direction of that day: AI is on only
 for the trial workspaces the owner opts in. This revises V4 ("the trial assistant
-stays model-free"). The deployment settings (Render Blueprint) change in a
-separate step, once the owner has provided the key and a budget.
+stays model-free"). On 2026-11-04 the owner chose MIT Parley with Claude Sonnet
+5.5 for the trial servers; the Render Blueprint declares those settings (see
+"On the trial servers" below).
 
 ## What it does
 
@@ -36,12 +37,13 @@ separate step, once the owner has provided the key and a budget.
 | `FLOWCHAIN_AI_WORKSPACE_OPT_IN` | `required` in production, otherwise not | `required`: only switched-on workspaces under the cap call a model. `not_required`: every workspace may (local development, the eval runner). |
 | `FLOWCHAIN_AI_MONTHLY_CAP_USD` | `20` | Spend per workspace per calendar month (UTC). |
 | `FLOWCHAIN_AI_PRICE_INPUT_PER_MTOK`, `FLOWCHAIN_AI_PRICE_OUTPUT_PER_MTOK` | the configured model's list prices | US dollars per million tokens. Listed: claude-haiku-5-5 (`0.1`, `0.5`), claude-haiku-4-5 (`1`, `5`), claude-sonnet-5-5 (`2`, `10`); another model is priced as claude-haiku-4-5. A cache read costs a tenth of an input token, a cache write 1.25 times one. |
-| `FLOWCHAIN_AI_PROVIDER_KIND` | — | `anthropic_messages` for Anthropic's native Messages API (the model-first assistant), or `anthropic_chat` for its OpenAI-compatible endpoint. |
-| `FLOWCHAIN_AI_PROVIDER_ENDPOINT` | — | `https://api.anthropic.com/v1/chat/completions` (Anthropic's OpenAI-compatible endpoint). |
-| `FLOWCHAIN_AI_PROVIDER_MODEL` | — | `claude-haiku-4-5` |
-| `FLOWCHAIN_AI_PROVIDER_API_KEY` | — | The owner's Anthropic key. Set it as a secret, never in a file in the repository. |
+| `FLOWCHAIN_AI_PROVIDER_KIND` | — | `parley_chat` on the trial servers (MIT Parley's chat completions). Also `anthropic_messages` for Anthropic's native Messages API, or `anthropic_chat` for its OpenAI-compatible endpoint. |
+| `FLOWCHAIN_AI_PROVIDER_ENDPOINT` | — | `https://parley.api.mit.edu/v1/chat/completions` on the trial servers. |
+| `FLOWCHAIN_AI_PROVIDER_MODEL` | — | `claude-sonnet-5-5` on the trial servers. |
+| `FLOWCHAIN_AI_PROVIDER_API_KEY` | — | The provider key (the Parley key on the trial servers). Set it as a secret, never in a file in the repository. While it is empty the server calls no model. |
+| `FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION` | off | `true` lets assistant v2 use Parley when `NODE_ENV=production`. Without it production refuses Parley, and it always refuses OpenCode. |
 | `FLOWCHAIN_AI_RUNTIME_MODE` | `local` | `provider_assisted` |
-| `FLOWCHAIN_AI_ASSISTANT_MODE` | off | `model_first`: free-text questions go to the model-first tool loop (below). |
+| `FLOWCHAIN_AI_ASSISTANT_MODE` | off | `assistant_v2` (the trial servers): the assistant v2 agent loop answers, and needs `FLOWCHAIN_AI_WORKSPACE_OPT_IN=required` outside local development. `model_first`: free-text questions go to the model-first tool loop (below). |
 | `FLOWCHAIN_AI_ASSISTANT_REASONING_EFFORT` | `low` (native), `none` (chat completions) | How much the loop's model reasons: `none`, `low`, `medium` or `high`. |
 | `FLOWCHAIN_AI_ASSISTANT_CHAT_CACHE` | on for a Claude model on Parley, otherwise off | Assistant v2 on chat completions: `on` marks the system prompt for the provider's prompt cache (Anthropic's `cache_control`), `off` never does. Verified on Parley only. |
 | `FLOWCHAIN_AI_ASSISTANT_TIMEOUT_MS`, `FLOWCHAIN_AI_ASSISTANT_TOKEN_BUDGET` | `20000`, `80000` | One answer's time (at most 30 s) and tokens read and written. |
@@ -149,12 +151,48 @@ lets the workspace call a model.
   - With it off, skill answers send no business figures to any model.
 - The switch covers every one of these paths.
 
+## On the trial servers (MIT Parley)
+
+The owner's decision of 2026-11-04: production uses the school's MIT Parley,
+with Claude Sonnet 5.5. In a side-by-side run of the same 16 questions, Sonnet
+cost about $0.04 an answer and made up no record numbers; Haiku 5.5 cost about
+$0.002 but made up record numbers in 2 of 12 showcase answers, and the
+check withheld those answers.
+
+- **Settings.** `render.yaml` (staging and production) and
+  `deploy/env.production.example` declare `FLOWCHAIN_AI_ASSISTANT_MODE=assistant_v2`,
+  `FLOWCHAIN_AI_WORKSPACE_OPT_IN=required`, `FLOWCHAIN_AI_RUNTIME_MODE=provider_assisted`,
+  `FLOWCHAIN_AI_PROVIDER_KIND=parley_chat`, the Parley endpoint,
+  `FLOWCHAIN_AI_PROVIDER_MODEL=claude-sonnet-5-5`,
+  `FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION=true`, `FLOWCHAIN_AI_MONTHLY_CAP_USD=25`
+  and the key as a secret (`sync: false`). `render-blueprint.test.mjs` fails if
+  any other AI setting is added: no knowledge or embedding provider, answer
+  wording (P3), model-first mode or the legacy `/api/ai` path.
+- **Only assistant v2 calls the model.** A question v2 hands back, and every
+  workspace that is not switched on or is over its cap, runs on the
+  model-free environment.
+- **The key.** The Parley key is the owner's own, tied to an MIT account. Enter
+  it on each service's **Environment** page in Render. Before using it with a
+  trial company's records, confirm with MIT that Parley may be used for this.
+  Rotate it there if it has been shared or pasted anywhere, and after a
+  rotation update both services.
+- **When Parley fails.** An expired key or a used-up Parley budget makes the
+  call fail. If nothing has been shown yet, the rules answer, with the notice
+  that the model is not available. If the answer was already streaming, the
+  panel says the assistant could not answer just now and that nothing was
+  changed.
+- **The cap.** `FLOWCHAIN_AI_MONTHLY_CAP_USD` is per workspace and counted at the
+  model's list prices, not by Parley. Keep the total over all switched-on
+  workspaces below the Parley budget, and watch the Parley usage page as well
+  as Settings > AI.
+
 ## Turning it on for a trial workspace
 
 1. Set the provider variables and `FLOWCHAIN_AI_WORKSPACE_OPT_IN=required` on the
-   server. The Blueprint change also updates `render-blueprint.test.mjs` (PR #143)
-   to allow exactly these keys.
+   server. On Render they are in the Blueprint; enter the Parley key on each
+   service's **Environment** page.
 2. Sign in as the workspace's administrator, open Settings › AI and switch
    on "AI features".
-3. Ask the assistant a question no rule matches. With agent planning on, the
-   answer carries `skillRouting.source: 'model'`.
+3. Ask the assistant "What should I reorder this week?". The answer is
+   streamed and labelled "Written by AI from your records". Settings › AI then
+   shows this month's spend.
