@@ -56,9 +56,9 @@ const DRAFT_COPY: Record<string, Pair> = {
 const ERROR_COPY: Record<string, Pair> = {
   CAPABILITY_NOT_AVAILABLE: ["Receipt posting is turned off for this workspace. Ask an administrator to turn it on.", "当前工作区未开启收货过账，请联系管理员开启。"],
   AUTHENTICATION_REQUIRED: ["Your session has expired. Sign in again.", "登录已过期，请重新登录。"],
-  PERMISSION_DENIED: ["Your role cannot perform this receiving action.", "您的角色无权执行此收货操作。"],
+  PERMISSION_DENIED: ["Your role cannot perform this receiving action.", "你的角色无权执行此收货操作。"],
   TENANT_CONTEXT_REQUIRED: ["No workspace is selected for this session. Sign in again.", "当前会话未选择工作区，请重新登录。"],
-  ACTOR_NOT_PROVISIONED: ["Your account has not been added to this workspace.", "您的账号尚未加入此工作区。"],
+  ACTOR_NOT_PROVISIONED: ["Your account has not been added to this workspace.", "你的账号尚未加入此工作区。"],
   RECEIVING_NOT_FOUND: ["This receipt is not available in this workspace.", "此工作区中找不到该收货单。"],
   RECEIVING_VALIDATION_FAILED: ["The receipt does not meet the posting rules. Review its status and lines.", "收货单不符合过账规则，请检查其状态和明细。"],
   RECEIVING_OVER_RECEIPT: ["Accepted quantity exceeds the remaining purchase order quantity.", "合格数量超过采购订单的剩余数量。"],
@@ -75,7 +75,7 @@ const ERROR_COPY: Record<string, Pair> = {
 // translation, or the server's message when the code is not listed here.
 const ISSUE_COPY: Record<string, Pair> = {
   REVERSAL_REASON_REQUIRED_ON_CONFIRM: ["A reversal reason is required when confirming.", "确认冲销前请填写冲销原因。"],
-  RECEIVING_REVERSAL_BLOCKED_BY_INVOICE: ["A supplier invoice already claims this receipt, so it can no longer be reversed. To send these goods back, use a supplier return.", "已有供应商发票关联此收货单，无法冲销。如需退回货物，请发起供应商退货。"],
+  RECEIVING_REVERSAL_BLOCKED_BY_INVOICE: ["A supplier invoice already claims this receipt, so it can no longer be reversed. To send these goods back, use a supplier return.", "已有采购发票关联此收货单，无法冲销。如需退回货物，请发起供应商退货。"],
   RECEIVING_ALREADY_POSTED: ["This receipt has already been posted.", "该收货单已过账。"],
   RECEIVING_ALREADY_REVERSED: ["This receipt has already been reversed.", "该收货单已冲销。"],
   RECEIVING_OVER_RECEIPT: ["Accepted quantity exceeds the remaining purchase order quantity.", "合格数量超过采购订单的剩余数量。"],
@@ -119,7 +119,7 @@ const BUTTON = {
 const text = (value: unknown) => (typeof value === "string" || typeof value === "number" ? String(value) : "");
 const record = (value: unknown): Record<string, unknown> => (value && typeof value === "object" ? value as Record<string, unknown> : {});
 
-function errorMessage(error: unknown, language: string, fallback: Pair = ["Receiving data could not be loaded.", "收货数据读取失败。"]) {
+function errorMessage(error: unknown, language: string, fallback: Pair = ["Receiving data could not be loaded.", "收货数据加载失败。"]) {
   const index = language === "en-US" ? 0 : 1;
   if (!(error instanceof ApiError)) return fallback[index];
   return ERROR_COPY[error.code || ""]?.[index] || procurementErrorText(error, language, fallback);

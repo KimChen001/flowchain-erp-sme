@@ -186,7 +186,7 @@ const COPY = {
     emptyNotCheckedOne: "1 个物料无法检查，见下方。",
     filteredEmpty: "该供应商下没有物料。",
     loading: "正在读取补货清单…",
-    error: "补货清单读取失败，请重试。",
+    error: "补货清单加载失败，请重试。",
     notAvailable: "补货清单需要工作区数据库。",
     reason: "补货清单：库存头寸 {position}，再订货点 {reorderPoint}；最晚下单日 {date}。",
     aboveWithoutHistory: "{n} 个物料高于再订货点但发货历史不足，无法推算日期，未列出。",

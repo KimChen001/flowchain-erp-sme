@@ -380,23 +380,23 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
   await expect(page.getByTestId("outbound-timeline")).not.toContainText("库存预留");
 
   await page.getByTestId("open-shipment-draft").click();
-  const draft = page.getByRole("dialog", { name: "Create delivery draft" });
+  const draft = page.getByRole("dialog", { name: "Create shipment draft" });
   const reservation = draft.getByLabel("Reservations").locator("option:checked");
   await expect(reservation).toHaveText("华东成品仓 / A-01 · Reserved 2 / Allocated 0 / Used 0 / Released 0 / Available 2");
   await expect(reservation).not.toContainText(reservationId);
   await expect(draft.getByLabel("Quantity", { exact: true })).toHaveValue("2.0000");
-  await expect(draft.getByTestId("shipment-number-on-save")).toHaveText("Delivery number: assigned when you save");
+  await expect(draft.getByTestId("shipment-number-on-save")).toHaveText("Shipment number: assigned when you save");
   await expect(draft).not.toContainText("API");
   await page.getByTestId("outbound-preview").click();
   await expect(page.getByTestId("outbound-preview-sentence")).toHaveText(
-    "Creates a delivery for 2 EA of OUT-BROWSER-SKU from 华东成品仓 / A-01. Stock does not change until the shipment is posted.",
+    "Creates a shipment for 2 EA of OUT-BROWSER-SKU from 华东成品仓 / A-01. Stock does not change until the shipment is posted.",
   );
-  await expect(page.getByTestId("confirm-outbound-action")).toHaveText("Create delivery draft");
+  await expect(page.getByTestId("confirm-outbound-action")).toHaveText("Create shipment draft");
   await page.getByTestId("confirm-outbound-action").click();
   await expect(draft).toHaveCount(0);
 
   const deliveryNumber = await createdShipmentNumber(page);
-  await expect(page.getByTestId("shipment-created-number")).toHaveText(`Delivery ${deliveryNumber} created.`);
+  await expect(page.getByTestId("shipment-created-number")).toHaveText(`Shipment ${deliveryNumber} created.`);
   await page.getByText(deliveryNumber, { exact: true }).click();
   const shipment = page.getByTestId("shipment-workbench");
   await expect(page.getByTestId("shipment-sales-order")).toHaveText(`Sales order ${order.orderNumber}`);

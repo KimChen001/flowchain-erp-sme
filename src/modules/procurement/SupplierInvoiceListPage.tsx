@@ -39,7 +39,7 @@ export function SupplierInvoiceListPage() {
       <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
         <div>
           <div className="text-sm font-semibold">{copy("发票记录")}</div>
-          <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("供应商发票及其关联的采购订单、收货和匹配状态。")}</div>
+          <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("采购发票及其关联的采购订单、收货和匹配状态。")}</div>
         </div>
         <button type="button" onClick={() => void load()} className="inline-flex items-center gap-1 rounded border px-3 py-2 text-xs">
           <RefreshCw size={14} />{copy("刷新")}</button>
@@ -47,15 +47,15 @@ export function SupplierInvoiceListPage() {
 
       <Card className="overflow-hidden" data-testid="supplier-invoice-record-list">
         {state === "loading" ? (
-          <div className="py-16 text-center text-sm" style={{ color: A.sub }}>{copy("正在读取供应商发票…")}</div>
+          <div className="py-16 text-center text-sm" style={{ color: A.sub }}>{copy("正在读取采购发票…")}</div>
         ) : state === "error" ? (
           <div className="py-16 text-center">
-            <div className="text-sm font-semibold">{copy("供应商发票加载失败")}</div>
+            <div className="text-sm font-semibold">{copy("采购发票加载失败")}</div>
             <button type="button" onClick={() => void load()} className="mt-3 text-sm font-semibold text-blue-600">{copy("重试")}</button>
           </div>
         ) : rows.length === 0 ? (
           <div className="py-16 text-center">
-            <div className="text-sm font-semibold">{copy("当前工作区暂无供应商发票")}</div>
+            <div className="text-sm font-semibold">{copy("当前工作区暂无采购发票")}</div>
             <div className="mt-2 text-xs" style={{ color: A.sub }}>{copy("不会使用静态发票补足空数据。")}</div>
           </div>
         ) : (

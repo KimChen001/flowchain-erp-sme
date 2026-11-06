@@ -85,7 +85,7 @@ const RESOURCES: Record<string, Pair> = {
   "finance/amounts": ["finance amounts", "财务金额"],
   "finance/partner_snapshot": ["supplier and customer details on finance records", "财务单据中的往来方信息"],
   "procurement/prices": ["purchase prices", "采购价格"],
-  "finance/supplier_invoice": ["supplier invoices", "供应商发票"],
+  "finance/supplier_invoice": ["supplier invoices", "采购发票"],
   "finance/three_way_match": ["three-way matches", "三单匹配"],
   "finance/match_exception": ["match exceptions", "匹配异常"],
   "finance/payable": ["payables", "应付款"],

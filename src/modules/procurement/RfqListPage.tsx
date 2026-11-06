@@ -13,7 +13,7 @@ import type { ProcurementDocument } from "./procurementTypes";
 
 const RFQ_STATUS_LABELS: Record<string, readonly [string, string]> = {
   draft: ["Draft", "草稿"],
-  open: ["Open", "开放"],
+  open: ["Open", "未结"],
   collecting_quotes: ["Collecting quotes", "收集报价"],
   closed: ["Closed", "已关闭"],
   cancelled: ["Cancelled", "已取消"],
@@ -21,16 +21,16 @@ const RFQ_STATUS_LABELS: Record<string, readonly [string, string]> = {
 const OPEN_STATUSES = ["draft", "open", "collecting_quotes"];
 
 const COPY = {
-  open: ["Open RFQs", "进行中的询价"],
-  openNote: ["Draft, open or collecting quotes", "草稿、开放或正在收集报价"],
+  open: ["Open RFQs", "未结询价单"],
+  openNote: ["Draft, open or collecting quotes", "草稿、未结或正在收集报价"],
   collecting: ["Collecting quotes", "收集报价"],
   collectingNote: ["Sent to suppliers, waiting for quotes", "已发给供应商，等待报价"],
   complete: ["All quotes in", "报价已收齐"],
   completeNote: ["Every invited supplier has responded", "所有受邀供应商均已回复"],
   dueSoon: ["Due in 7 days", "7 天内截止"],
-  dueSoonNote: ["Open RFQs closing within a week", "一周内截止的进行中询价"],
-  searchTitle: ["RFQ search", "询价查询"],
-  searchSubtitle: ["Search requests for quotation by number, subject, item, status and due date.", "按询价单号、主题、物料、状态和截止日期查询询价。"],
+  dueSoonNote: ["Open RFQs closing within a week", "一周内截止的未结询价单"],
+  searchTitle: ["RFQ search", "询价单查询"],
+  searchSubtitle: ["Search requests for quotation by number, subject, item, status and due date.", "按询价单号、主题、物料、状态和截止日期查询询价单。"],
   search: ["Search", "搜索"],
   searchPlaceholder: ["RFQ number, subject or item", "询价单号、主题或物料"],
   status: ["Status", "状态"],
@@ -41,7 +41,7 @@ const COPY = {
   quotesWaiting: ["Waiting for quotes", "等待报价"],
   due: ["Due date", "截止日期"],
   anyDue: ["Any time", "不限"],
-  listTitle: ["RFQ list", "询价列表"],
+  listTitle: ["RFQ list", "询价单列表"],
   rfq: ["RFQ", "询价单"],
   subject: ["Subject / item", "主题 / 物料"],
   quantity: ["Quantity", "数量"],
@@ -50,10 +50,10 @@ const COPY = {
   view: ["View", "查看"],
   compare: ["Compare quotes", "比较报价"],
   fromRequest: ["From", "来源"],
-  loadFailed: ["RFQ records could not be loaded", "询价记录加载失败"],
-  empty: ["No RFQ records in this workspace", "当前工作区暂无询价记录"],
-  emptyDetail: ["This page shows formal RFQs for the current workspace. Quotations are never generated for missing records.", "页面只展示当前工作区的正式 RFQ，没有记录时不会自动补入报价。"],
-  noMatch: ["No RFQs match these filters", "没有符合筛选条件的询价"],
+  loadFailed: ["RFQ records could not be loaded", "询价单加载失败"],
+  empty: ["No RFQ records in this workspace", "当前工作区暂无询价单"],
+  emptyDetail: ["This page shows formal RFQs for the current workspace. Quotations are never generated for missing records.", "页面只展示当前工作区的正式询价单，没有记录时不会自动补入报价。"],
+  noMatch: ["No RFQs match these filters", "没有符合筛选条件的询价单"],
 } as const;
 
 export function RfqListPage() {

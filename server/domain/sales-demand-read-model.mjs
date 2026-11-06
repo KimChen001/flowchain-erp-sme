@@ -168,7 +168,7 @@ export function normalizeSalesOrder(raw = {}, context = {}, index = 0) {
     (deliveryRiskLevel === 'blocked'
       ? '库存缺口叠加采购到货风险，承诺交付需优先复核。'
       : deliveryRiskLevel === 'high'
-        ? '当前客户订单数量超过已预留数量，存在交付缺口。'
+        ? '当前销售订单数量超过已预留数量，存在交付缺口。'
         : deliveryRiskLevel === 'medium'
           ? '采购在途或供应商风险可能影响承诺交付。'
           : '当前库存与采购证据未显示明显交付风险。')

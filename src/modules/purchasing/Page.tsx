@@ -270,7 +270,7 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
             title: "来源",
             facts: [
               [say("Source PR line", "来源采购申请行"), line.sourcePrLine === "无采购申请" ? line.sourcePrLine : `${line.sourcePrLine} · ${lineName(line.lineNumber)}`],
-              [say("Source RFQ line", "来源询价行"), line.sourceRfqLine === "未经询价" ? line.sourceRfqLine : `${line.sourceRfqLine} · ${lineName(line.lineNumber)}`],
+              [say("Source RFQ line", "来源询价单行"), line.sourceRfqLine === "未经询价" ? line.sourceRfqLine : `${line.sourceRfqLine} · ${lineName(line.lineNumber)}`],
             ],
           },
           {
@@ -415,7 +415,7 @@ function nextStepForPo(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
   if (status === "缺少收货") return "等待收货";
   if (status === "缺少发票") return "等待发票";
   if (status === "数量差异") return "复核收货记录";
-  if (status === "价格差异") return "复核供应商发票";
+  if (status === "价格差异") return "复核采购发票";
   if (status === "已匹配") return "财务协同复核";
   if (receivedStatus(po, facts) === "异常处理") return "生成内部差异说明草稿";
   return "需人工复核";
@@ -426,7 +426,7 @@ function poTimeline(po: PurchaseOrder, facts: ProcurementRuntimeFacts, day: (val
   const invoice = invoiceStatus(po, facts);
   const match = matchStatus(po, facts);
   return [
-    { label: "来源确认", status: "done", helper: po.sourceRequest || po.sourceRfq || "直接创建（无采购申请或询价）" },
+    { label: "来源确认", status: "done", helper: po.sourceRequest || po.sourceRfq || "直接创建（无采购申请或询价单）" },
     { label: "PO 已建立", status: "done", helper: day(po.created) },
     { label: "收货证据", status: receipt === "未收货" ? "pending" : receipt === "异常处理" ? "warning" : "done", helper: receipt },
     { label: "发票证据", status: invoice === "未开票" ? "pending" : invoice === "发票差异" ? "warning" : "done", helper: invoice },
@@ -597,7 +597,7 @@ function suggestedActionForStatus(status: string, invoiceGap = 0) {
   if (status === "缺少收货") return "等待收货";
   if (status === "缺少发票" || status === "已收未票") return "等待发票";
   if (status === "已票未收" || status === "数量差异") return "复核收货记录";
-  if (status === "价格差异" || status === "金额差异") return "复核供应商发票";
+  if (status === "价格差异" || status === "金额差异") return "复核采购发票";
   // Matched so far; the rest of what was received is still to be invoiced.
   if (status === "已匹配" && invoiceGap > MATCH_QTY_EPSILON) return "等待发票";
   return "财务协同复核";
@@ -649,7 +649,7 @@ function buildMatchRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): Matc
 
 function dataLimitations() {
   return [
-    "当前仅基于工作区内 PR、RFQ、PO、GRN 和发票记录判断。",
+    "当前仅基于工作区内 PR、询价单、PO、GRN 和发票记录判断。",
     "部分收货记录或发票记录可能尚未完整读取。",
     "当前不执行真实收货、库存过账、发票过账或付款。",
     "三单匹配结论仅用于内部复核，需业务负责人确认。",
@@ -968,7 +968,7 @@ export default function PurchasingOrdersPage({
     exportRowsToCsv("purchase-order-evidence-export.csv", filtered.map((order) => ({
       PO编号: purchaseOrderNumber(order),
       来源PR: order.sourceRequest ? order.prNumber || requestNumbers.get(order.sourceRequest) || order.sourceRequest : "",
-      来源RFQ: order.sourceRfq ? order.rfqNumber || rfqNumbers.get(order.sourceRfq) || order.sourceRfq : "",
+      来源询价单: order.sourceRfq ? order.rfqNumber || rfqNumbers.get(order.sourceRfq) || order.sourceRfq : "",
       供应商: order.supplier,
       状态: order.status,
       采购负责人: order.owner,
@@ -1059,7 +1059,7 @@ export default function PurchasingOrdersPage({
       }] : []),
       ...(selectedPO.sourceRfq ? [{
         key: "source-rfq",
-        label: `${say("Source RFQ", "来源询价")} ${sourceRfqNumber}`,
+        label: `${say("Source RFQ", "来源询价单")} ${sourceRfqNumber}`,
         onClick: () => navigateWithReturn("procurement:rfq", { entityType: "rfq", entityId: selectedPO.sourceRfq }, sourceRfqNumber),
       }] : []),
       ...(firstGrn ? [{ key: "receiving", label: copy("查看收货单"), onClick: () => openReceipt(firstGrn.grn) }] : []),
@@ -1073,7 +1073,7 @@ export default function PurchasingOrdersPage({
     const overviewFields: OverviewField[] = [
       { label: copy("来源 PR"), value: selectedPO.sourceRequest ? sourceRequestNumber : copy("未从采购申请创建") },
       // A PO need not come from a request or an RFQ: neither is a gap (owner, 2026-11-03).
-      { label: copy("来源 RFQ"), value: selectedPO.sourceRfq ? sourceRfqNumber : copy(selectedPO.sourceRequest ? "未经询价，由采购申请创建" : "未经询价") },
+      { label: copy("来源询价单"), value: selectedPO.sourceRfq ? sourceRfqNumber : copy(selectedPO.sourceRequest ? "未经询价，由采购申请创建" : "未经询价") },
       { label: supplierLabel, value: selectedPO.supplier },
       { label: copy("采购负责人"), value: selectedPO.owner },
       { label: copy("创建日期"), value: day(selectedPO.created) },
@@ -1366,14 +1366,14 @@ export default function PurchasingOrdersPage({
     <div className="space-y-5">
       <div className={metricGridClass}>
         <ActionableMetricCard label={copy("已承诺采购订单金额")} value={!summary ? "—" : committedHidden ? copy("受限") : committedValue.length === 0 ? formatCurrencyAmount(0, "") : committedValue.map((row) => formatCurrencyAmount(row.amount, row.currency)).join(" · ")} description={loading ? copy("加载中") : `${summary?.committedOrderCount ?? 0} ${copy("张已承诺订单（已批准、已下达或已收货）")}`} to="/app/procurement/orders" icon={FileText} color={A.blue} />
-        <ActionableMetricCard label={copy("未完成采购订单")} value={summary ? String(summary.openOrderCount) : "—"} description={copy("已承诺且仍有待收数量")} to="/app/procurement/orders?status=open" icon={Truck} color={A.orange} />
+        <ActionableMetricCard label={copy("未结采购订单")} value={summary ? String(summary.openOrderCount) : "—"} description={copy("已承诺且仍有待收数量")} to="/app/procurement/orders?status=open" icon={Truck} color={A.orange} />
         <ActionableMetricCard label={copy("发票差异")} value={String(invoiceExceptions)} description={copy("采购与财务共同复核")} to="/app/procurement/bills?matchStatus=variance" icon={AlertCircle} color={A.red} />
         <ActionableMetricCard label={copy("匹配复核")} value={String(matchExceptions)} description={copy("查看三单匹配异常")} to="/app/procurement/bills?status=exception" icon={ShieldCheck} color={A.purple} />
       </div>
 
       <ListSearchCard
         title={copy("采购订单查询")}
-        subtitle={copy("查询 PO、来源 PR / RFQ、供应商、收货、发票和三单匹配状态")}
+        subtitle={copy("查询 PO、来源 PR / 询价单、供应商、收货、发票和三单匹配状态")}
         actions={<>
           <ResetButton onClick={resetFilters} />
           <RefreshButton onClick={() => loadWorkbench()} />
@@ -1470,7 +1470,7 @@ export default function PurchasingOrdersPage({
                           {firstInvoice && canOpenRoute("procurement:bills") && <button onClick={() => navigateOrderWithReturn(order, "procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看采购发票")}</button>}
                           {canOpenRoute("procurement:match") && <button onClick={() => navigateOrderWithReturn(order, "procurement:match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看三单匹配")}</button>}
                           {order.sourceRequest && <button onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, documentNumberFor("purchase_request", order.sourceRequest, order.prNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{say("View source PR", "查看来源采购申请")}</button>}
-                          {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, documentNumberFor("rfq", order.sourceRfq, order.rfqNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{say("View source RFQ", "查看来源询价")}</button>}
+                          {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, documentNumberFor("rfq", order.sourceRfq, order.rfqNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{say("View source RFQ", "查看来源询价单")}</button>}
                         </div></details>
                       </div>
                     </td>

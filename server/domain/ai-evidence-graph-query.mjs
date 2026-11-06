@@ -78,7 +78,7 @@ function readableLimitation(code = '') {
     missing_daily_demand_history: '缺少完整日需求历史',
     missing_inventory_balance: '缺少可用库存余额',
     missing_source_pr: '缺少来源采购申请',
-    missing_rfq_link: '缺少询价关联',
+    missing_rfq_link: '缺少询价单关联',
     missing_grn: '缺少收货记录',
     missing_invoice_match: '缺少发票匹配记录',
     route_not_available: '明细页暂不可用',

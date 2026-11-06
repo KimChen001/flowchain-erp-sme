@@ -274,9 +274,9 @@ export function OrderFulfillmentLinesPage() {
   return (
     <div className="space-y-5" data-testid="procurement-order-fulfillment-lines">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <ActionableMetricCard label={say("Open order lines", "未完成订单行")} value={count("open")} description={say("Lines still to receive or invoice", "仍待收货或开票的订单行")} to="/app/procurement/order-lines" icon={ClipboardList} color={A.blue} />
+        <ActionableMetricCard label={say("Open order lines", "未结订单行")} value={count("open")} description={say("Lines still to receive or invoice", "仍待收货或开票的订单行")} to="/app/procurement/order-lines" icon={ClipboardList} color={A.blue} />
         <ActionableMetricCard label={say("Partially received", "部分收货")} value={count("partial")} description={say("Some quantity has arrived", "已到货一部分")} to="/app/procurement/order-lines?view=partial" icon={Truck} color={A.purple} />
-        <ActionableMetricCard label={say("Received, not invoiced", "已收未票")} value={count("uninvoiced")} description={say("Waiting for the supplier invoice", "等待供应商发票")} to="/app/procurement/order-lines?view=uninvoiced" icon={FileClock} color={A.orange} />
+        <ActionableMetricCard label={say("Received, not invoiced", "已收未票")} value={count("uninvoiced")} description={say("Waiting for the supplier invoice", "等待采购发票")} to="/app/procurement/order-lines?view=uninvoiced" icon={FileClock} color={A.orange} />
         <ActionableMetricCard label={say("Review required", "需要复核")} value={count("exceptions")} description={say("Quantity or amount does not match", "数量或金额对不上")} to="/app/procurement/order-lines?view=exceptions" icon={AlertTriangle} color={A.red} />
       </div>
 
@@ -302,7 +302,7 @@ export function OrderFulfillmentLinesPage() {
         </Field>
         <Field label={say("View", "视图")}>
           <select aria-label={copy("履约视图")} value={view} onChange={(event) => setView(event.target.value as View)} style={inputStyle}>
-            <option value="open">{copy("未完成履约")}</option>
+            <option value="open">{copy("未结履约")}</option>
             <option value="partial">{say("Partially received", "部分收货")}</option>
             <option value="uninvoiced">{say("Received, not invoiced", "已收未票")}</option>
             <option value="exceptions">{copy("需要复核")}</option>

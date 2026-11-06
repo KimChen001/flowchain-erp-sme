@@ -327,7 +327,7 @@ const supplierPerformance = defineAiTool({
 
 const lateOrderImpact = defineAiTool({
   name: 'late_order_impact',
-  description: 'What late purchase orders put at risk, in the inventory page\'s terms: per SKU, available to promise with and without the late lines, how much more the open sales orders would fall short, and those sales orders with their customers and promised days. Name orders to judge each on its own; with none, the overdue orders are judged together. No arrival dates are guessed.',
+  description: 'What late purchase orders put at risk, in the inventory page\'s terms: per SKU, available to promise with and without the late lines, how much more the open sales orders would fall short, and those sales orders with their customers and promised days. availableToPromise counts every late line as arriving; withoutTheseLines is available to promise if the late lines judged here never arrive (all of them, or the one order named), never what one order brings on its own; additionalShortfall is how much more the sales orders then fall short. Name orders to judge each on its own; with none, the overdue orders are judged together. No arrival dates are guessed.',
   parameters: { orders: { type: 'array', items: { type: 'string' }, maxItems: 5, description: 'Purchase order numbers.' } },
   available: (facts) => Boolean(facts.purchaseOrders) && Boolean(facts.inventory),
   run(args, { facts }) {

@@ -17,7 +17,7 @@ export default function ReportsPanel({ onNavigate, initialView = "overview" }: R
   if (initialView === "library") return <ReportLibraryV2 />;
   return <div className="space-y-4">
     {["overview", "procurement"].includes(initialView) && <nav aria-label={language === "en-US" ? "Purchase order reports" : "采购订单报表"} className="flex flex-wrap gap-4 text-sm">
-      <Link className="font-semibold text-blue-600 hover:underline" to="/app/reports/procurement">{language === "en-US" ? "Open purchase orders" : "未完成采购订单"}</Link>
+      <Link className="font-semibold text-blue-600 hover:underline" to="/app/reports/procurement">{language === "en-US" ? "Open purchase orders" : "未结采购订单"}</Link>
       <Link className="font-semibold text-blue-600 hover:underline" to="/app/reports/procurement?view=analytics">{language === "en-US" ? "Procurement analytics" : "采购分析"}</Link>
     </nav>}
     {openOrders ? <OpenPurchaseOrdersPage /> : <BiDashboard view={initialView} onNavigate={onNavigate} afterInsights={initialView === "suppliers" ? <SupplierPerformanceTable /> : null} />}

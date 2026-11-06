@@ -27,7 +27,7 @@ const COPY = {
   variance: ["Variances", "差异"],
   varianceNote: ["Invoice differs from the PO or receipt", "发票与采购订单或收货不一致"],
   searchTitle: ["Three-way match search", "三单匹配查询"],
-  searchSubtitle: ["Compare purchase orders, goods receipts and supplier invoices to review matching results and variances.", "比对采购订单、收货单与供应商发票，复核匹配结果和差异。"],
+  searchSubtitle: ["Compare purchase orders, goods receipts and supplier invoices to review matching results and variances.", "比对采购订单、收货单与采购发票，复核匹配结果和差异。"],
   search: ["Search", "搜索"],
   searchPlaceholder: ["Invoice, PO or receipt number", "发票、采购订单或收货单号"],
   supplier: ["Supplier", "供应商"],
@@ -45,7 +45,7 @@ const COPY = {
   loading: ["Loading three-way matches…", "正在读取三单匹配…"],
   loadFailed: ["Three-way matches could not be loaded", "三单匹配加载失败"],
   empty: ["No matching records in this workspace", "当前工作区暂无可匹配记录"],
-  emptyDetail: ["A match needs a real purchase order, receipt and supplier invoice.", "需要真实采购订单、收货单和供应商发票后才能形成匹配。"],
+  emptyDetail: ["A match needs a real purchase order, receipt and supplier invoice.", "需要真实采购订单、收货单和采购发票后才能形成匹配。"],
   noMatch: ["No matches fit these filters", "没有符合筛选条件的匹配记录"],
 } as const;
 

@@ -149,7 +149,7 @@ const CONTEXT_ENTITY_LABELS: Record<string, { "en-US": string; "zh-CN": string }
   rfq: { "en-US": "RFQ", "zh-CN": "询价单" },
   supplier: { "en-US": "Supplier", "zh-CN": "供应商" },
   purchase_request: { "en-US": "Purchase request", "zh-CN": "采购申请" },
-  sales_order: { "en-US": "Sales order", "zh-CN": "客户订单" },
+  sales_order: { "en-US": "Sales order", "zh-CN": "销售订单" },
 };
 // What the assistant answers about: always the whole workspace, which page or
 // module is open does not change it. On a record's page the record is named
@@ -166,9 +166,9 @@ export function getAiContextLabel(activeContext?: ActiveContext | null, language
 const CONTEXT_ENTITY_PHRASES: Record<string, { "en-US": string; "zh-CN": string }> = {
   purchase_order: { "en-US": "this PO", "zh-CN": "这个 PO" },
   item: { "en-US": "this SKU", "zh-CN": "这个 SKU" },
-  rfq: { "en-US": "this RFQ", "zh-CN": "这个 RFQ" },
+  rfq: { "en-US": "this RFQ", "zh-CN": "这个询价单" },
   supplier: { "en-US": "this supplier", "zh-CN": "这个供应商" },
-  sales_order: { "en-US": "this sales order", "zh-CN": "这个客户订单" },
+  sales_order: { "en-US": "this sales order", "zh-CN": "这个销售订单" },
   purchase_request: { "en-US": "this purchase request", "zh-CN": "这个采购申请" },
 };
 
@@ -533,7 +533,7 @@ const RECOVERY_COPY = {
   "zh-CN": {
     signed_out: "登录已失效，请重新登录后再提问。",
     invalid_question: "这个问题无法按原样回答。",
-    unavailable: "暂时无法读取工作区数据，未修改任何内容。",
+    unavailable: "工作区数据暂时加载失败，未修改任何内容。",
     timeout: "AI 助手响应超时，未修改任何内容。",
     network: "暂时无法连接 AI 助手，请检查网络。未修改任何内容。",
   },
@@ -581,8 +581,8 @@ export function getAiFollowUpChips(message: AiChatMessage, language: "en-US" | "
     chips.push(localizedChip("预览补货 PR 草稿", "Preview replenishment PR", "预览补货 PR 草稿", "Preview a replenishment purchase request draft"));
   }
   if (firstRfq) {
-    chips.push(localizedChip("有几家回复了？", "How many suppliers replied?", "刚才那个 RFQ 有几家回复了？", "How many suppliers replied to that RFQ?"));
-    chips.push(localizedChip("谁还没回复？", "Who has not replied?", "谁还没回复这个 RFQ？", "Who has not replied to this RFQ?"));
+    chips.push(localizedChip("有几家回复了？", "How many suppliers replied?", "刚才那个询价单有几家回复了？", "How many suppliers replied to that RFQ?"));
+    chips.push(localizedChip("谁还没回复？", "Who has not replied?", "谁还没回复这个询价单？", "Who has not replied to this RFQ?"));
     chips.push(localizedChip("预览供应商提醒草稿", "Preview supplier reminder", "预览供应商提醒草稿", "Preview a supplier reminder draft"));
   }
 

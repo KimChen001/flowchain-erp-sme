@@ -77,8 +77,8 @@ const zh: Record<string, string> = {
   'Days before the key date that it shows on Today and Ending soon.': '在关键日期前多少天出现在“今日”和“即将到期”中。',
   'Choose currency': '选择币种', 'Save draft': '保存草稿', 'Save changes': '保存修改', 'Saving…': '正在保存…',
   'An active contract keeps its supplier and type. Renew it to change them.': '生效中的合同不能更改供应商和类型。如需更改，请续约。',
-  'Could not load the workspace users. The owner defaults to the supplier\'s business owner.': '无法读取工作区用户，负责人默认为供应商的业务负责人。',
-  'Could not load the workspace payment terms.': '无法读取工作区付款条款。', 'Could not load suppliers.': '供应商数据加载失败。',
+  'Could not load the workspace users. The owner defaults to the supplier\'s business owner.': '工作区用户加载失败，负责人默认为供应商的业务负责人。',
+  'Could not load the workspace payment terms.': '工作区付款条款加载失败。', 'Could not load suppliers.': '供应商数据加载失败。',
   // Supplier page tab.
   "This supplier's contracts": '该供应商的合同', 'No contracts with this supplier yet.': '该供应商暂无合同。',
   // History actions.

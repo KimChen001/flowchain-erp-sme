@@ -17,7 +17,7 @@ test('R134 AI assistant empty state exposes business prompt chips', () => {
 test('R135 the placeholder offers the page record next to the whole workspace, and the context can be cleared', () => {
   assert.match(panelSource, /export function getAiInputPlaceholder/)
   assert.doesNotMatch(panelSource, /moduleId === "overview"/)
-  for (const phrase of ['这个 PO', '这个 SKU', '这个 RFQ', '这个供应商']) assert.match(panelSource, new RegExp(phrase))
+  for (const phrase of ['这个 PO', '这个 SKU', '这个询价单', '这个供应商']) assert.match(panelSource, new RegExp(phrase))
   assert.match(panelSource, /Ask about \$\{phrase\} or anything else, or tell me what to do…/)
   assert.match(panelSource, /"Ask a question, or tell me what to do…"/)
   assert.match(panelSource, /"问点什么，或让我帮你做…"/)

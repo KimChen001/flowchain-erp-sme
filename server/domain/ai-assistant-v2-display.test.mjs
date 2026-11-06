@@ -92,7 +92,7 @@ test('codes the results give alone get their words: a request\'s status, a signa
 // A live re-check on 2026-11-05: Chinese dates in their own format, units as
 // stored codes, "the table above" with the table below, codes in quotes, and
 // no space between Chinese and numbers.
-const unitLabel = (language) => (unit, quantity) => ({ box: [quantity === 1 ? 'box' : 'boxes', '箱'], roll: [quantity === 1 ? 'roll' : 'rolls', '卷'], pcs: ['pcs', '件'] }[unit]?.[language === 'zh-CN' ? 1 : 0] || unit)
+const unitLabel = (language) => (unit, quantity, lineLanguage) => ({ box: [quantity === 1 ? 'box' : 'boxes', '箱'], roll: [quantity === 1 ? 'roll' : 'rolls', '卷'], pcs: ['pcs', '件'] }[unit]?.[(lineLanguage || language) === 'zh-CN' ? 1 : 0] || unit)
 const withUnits = (language) => aiV2TextTidier({ language, formats: aiV2Formats({ unitLabel: unitLabel(language) }), records, units: () => ['box', 'roll', 'pcs'] })
 
 test('Chinese dates are written in the workspace format, ranges too', () => {
@@ -134,4 +134,15 @@ test('Chinese text keeps a space between Chinese and a number', () => {
   assert.equal(tidy('涉及5家供应商，共11项，第3张'), '涉及 5 家供应商，共 11 项，第 3 张')
   assert.equal(tidy('有', '共'), '有')
   assert.equal(tidy('5家', '涉及'), ' 5 家')
+})
+
+// A Chinese answer's English draft kept Chinese rules (2026-11-05: "30 件are
+// still outstanding （20 of 50 received）").
+test('in a Chinese answer, quoted lines and English lines keep English punctuation and units', () => {
+  const { tidy } = withUnits('zh-CN')
+  const draft = '催货消息如下:\n> Subject: Overdue orders (LDM-001)\n> 30 pcs are still outstanding (20 of 50 received), promised 2026-11-01.\nTwo of our purchase orders are past their promised dates (see below).\n请核对后发送!'
+  assert.equal(tidy(draft), '催货消息如下：\n> Subject: Overdue orders (LDM-001)\n> 30 pcs are still outstanding (20 of 50 received), promised Nov 1, 2026.\nTwo of our purchase orders are past their promised dates (see below).\n请核对后发送！')
+  // A line is judged whole: the Chinese after a piece counts.
+  assert.equal(tidy('LOCAL-DEMO-PO-020 (Precision Fastener Works) ', '', '逾期 15 天'), 'LOCAL-DEMO-PO-020（Precision Fastener Works） ')
+  assert.equal(tidy('LOCAL-DEMO-PO-020 (Precision Fastener Works) ', '', 'is late'), 'LOCAL-DEMO-PO-020 (Precision Fastener Works) ')
 })

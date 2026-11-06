@@ -73,7 +73,7 @@ test("the on-time KPI definition names the buyer's need date in both languages",
   assert.match(analytics.analyticsCopy(definition, 'zh-CN'), /采购方的需求日期/)
   // Orders approved but never sent are not measured, in both languages.
   assert.match(definition, /not sent to the supplier are left out/)
-  assert.match(analytics.analyticsCopy(definition, 'zh-CN'), /已审批但未发给供应商的采购订单不计入/)
+  assert.match(analytics.analyticsCopy(definition, 'zh-CN'), /已批准但未下达的采购订单不计入/)
 })
 
 test("the supplier performance panel and table show the PO-date basis in both languages", () => {
@@ -86,9 +86,9 @@ test("the supplier performance panel and table show the PO-date basis in both la
   // Only POs the supplier got count (owner decision 2026-10-06); a PO approved
   // but not sent is listed apart. A closed line never received is late.
   assert.match(panel, /only POs the supplier actually got count: issued to the supplier, or with a posted receipt/)
-  assert.match(panel, /已审批但未发给供应商且没有收货的采购订单不计入任何指标/)
+  assert.match(panel, /已批准但未下达且没有收货的采购订单不计入任何指标/)
   assert.doesNotMatch(panel, /even before it is sent|即使尚未发送给供应商/)
-  assert.deepEqual(copy('notSent'), ['Not sent to supplier: {n}', '未发给供应商：{n} 张'])
+  assert.deepEqual(copy('notSent'), ['Not sent to supplier: {n}', '未下达：{n} 张'])
   assert.match(panel, /a line closed with nothing received counts as late/)
   // Settled-sample and waiting copy is distinct from "Fewer than 5 deliveries".
   assert.deepEqual(copy('fewerSettled'), ['Fewer than 5 settled deliveries', '已判定的交付少于 5 次'])

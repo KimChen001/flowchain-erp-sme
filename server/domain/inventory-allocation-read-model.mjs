@@ -219,7 +219,7 @@ function buildAvailabilityForSku(db = {}, sku = '', options = {}) {
         : 'low'
   const riskLabel = ({ blocked: '已阻塞', high: '高风险', medium: '需关注', low: '正常' })[riskLevel]
   const riskReason = riskLevel === 'blocked'
-    ? '供需缺口已影响高优先级或重点客户订单。'
+    ? '供需缺口已影响高优先级或重点销售订单。'
     : riskLevel === 'high'
       ? '当前销售需求、安全库存与在途采购计算后仍存在缺口。'
       : riskLevel === 'medium'
@@ -266,9 +266,9 @@ function buildAvailabilityForSku(db = {}, sku = '', options = {}) {
     riskLabel,
     riskReason,
     allocationPolicy: '人工复核优先：重点客户与高优先级订单优先分配，系统仅提供预留建议。',
-    allocationExplanation: '可承诺量基于实物库存、已预留库存、客户订单需求和在途采购记录计算，不会自动锁定库存。',
+    allocationExplanation: '可承诺量基于实物库存、已预留库存、销售订单需求和在途采购记录计算，不会自动锁定库存。',
     purchaseDelayImpact: overdueIncomingQty > 0 ? `已有 ${overdueIncomingQty} ${text(inventory?.unit, '件')} 在途采购逾期，需复核客户交付承诺。` : '当前未识别逾期在途采购。仍需结合供应商确认日期复核。',
-    deliveryRiskPropagation: orders.length ? `影响 ${orders.length} 个客户订单，优先复核 ${orders[0].salesOrderId}。` : '当前工作区未找到关联客户订单。',
+    deliveryRiskPropagation: orders.length ? `影响 ${orders.length} 个销售订单，优先复核 ${orders[0].salesOrderId}。` : '当前工作区未找到关联销售订单。',
     affectedSalesOrders: orders,
     linkedPurchaseOrders: incomingRows,
     linkedSuppliers: supplierRows.map((supplier) => ({ id: supplierId(supplier), name: text(supplier.name || supplier.supplierName || supplier.id), risk: text(supplier.risk || supplier.riskStatus), status: text(supplier.status) })),

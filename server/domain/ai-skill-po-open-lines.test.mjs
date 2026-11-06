@@ -44,7 +44,7 @@ test('a PO whose first line is fully received names the open line and its own qu
   assert.deepEqual(english.payload.message.split('\n'), ['Hello Acme Components,', '', 'Please confirm a delivery date for the open line on PO-001:', `- LDM-002: 40 pcs still to deliver, promised ${shown(day(-4))} (originally ${shown(day(-9))})`, '', 'Thank you.'])
   assert.doesNotMatch(english.payload.message, /LDM-001/)
   assert.equal(english.payload.subject, 'PO-001: delivery date for LDM-002')
-  assert.deepEqual(draft('zh-CN').payload.message.split('\n'), ['Acme Components，您好：', '', '请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 件未交，承诺日期 ${shown(day(-4))}（原定 ${shown(day(-9))}）`, '', '谢谢。'])
+  assert.deepEqual(draft('zh-CN').payload.message.split('\n'), ['Acme Components，您好：', '', '请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 件未交，承诺交期 ${shown(day(-4))}（原定 ${shown(day(-9))}）`, '', '谢谢。'])
   // The card carries the open lines next to the message, and stays review-only.
   assert.deepEqual(english.payload.lines, row.openLines)
   assert.deepEqual([english.previewOnly, english.reviewRequired, english.requiresHumanReview], [true, true, true])
@@ -59,7 +59,7 @@ test('several open lines are each named with their own remaining quantity and un
   const english = draft('en-US')
   assert.deepEqual(english.payload.message.split('\n').slice(2, 5), ['Please confirm delivery dates for the open lines on PO-001:', `- LDM-002: 40 pcs still to deliver, promised ${shown(day(-4))}`, `- LDM-003: 10 箱 still to deliver (2 of 12 received), promised ${shown(day(-4))}`])
   assert.equal(english.payload.subject, 'PO-001: delivery dates for 2 open lines')
-  assert.deepEqual(draft('zh-CN').payload.message.split('\n').slice(2, 5), ['请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 件未交，承诺日期 ${shown(day(-4))}`, `- LDM-003：仍有 10 箱未交（已收 2/12），承诺日期 ${shown(day(-4))}`])
+  assert.deepEqual(draft('zh-CN').payload.message.split('\n').slice(2, 5), ['请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 件未交，承诺交期 ${shown(day(-4))}`, `- LDM-003：仍有 10 箱未交（已收 2/12），承诺交期 ${shown(day(-4))}`])
 })
 
 test('an open line with an unknown quantity or no SKU gets the generic message', async () => {

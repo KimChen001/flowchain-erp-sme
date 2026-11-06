@@ -187,7 +187,7 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
       })
       .catch(() => {
         if (!alive) return;
-        setOrdersError("当前未读取到客户订单记录，请检查工作区数据或刷新后重试。");
+        setOrdersError("当前未读取到销售订单记录，请检查工作区数据或刷新后重试。");
       })
       .finally(() => { if (alive) setLoadingOrders(false); });
 
@@ -254,30 +254,30 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
   return (
     <div className="space-y-5">
       {view === "risks" && <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <ActionableMetricCard label={copy("客户订单")} value={String(activeSummary.totalOrders)} description={copy("查看当前工作区全部订单")} to="/app/sales/orders" icon={ClipboardList} color={A.blue} />
+        <ActionableMetricCard label={say("Customer order", "销售订单")} value={String(activeSummary.totalOrders)} description={copy("查看当前工作区全部订单")} to="/app/sales/orders" icon={ClipboardList} color={A.blue} />
         <ActionableMetricCard label={copy("交付风险")} value={String(activeSummary.riskOrderCount)} description={say(`${activeSummary.highRiskOrderCount} high-risk ${activeSummary.highRiskOrderCount === 1 ? "order" : "orders"}`, `${activeSummary.highRiskOrderCount} 个高风险订单`)} to="/app/sales/orders?risk=true" icon={AlertTriangle} color={activeSummary.highRiskOrderCount ? A.red : A.orange} />
         <ActionableMetricCard label={copy("缺口数量")} value={qty(activeSummary.shortageQty)} description={copy("查看影响交付承诺的订单")} to="/app/sales/orders?risk=blocked" icon={PackageSearch} color={A.red} />
         <ActionableMetricCard label={copy("已预留数量")} value={qty(activeSummary.reservedQty)} description={copy("查看库存分配证据")} to="/app/sales/orders?status=unshipped" icon={Boxes} color={A.green} />
       </div>}
 
       {ordersError && <Card className="p-4 text-sm" style={{ color: A.red }}>{copy(ordersError)}</Card>}
-      {loadingOrders && <Card className="p-6 text-sm" style={{ color: A.sub }}>{copy("正在读取客户订单…")}</Card>}
+      {loadingOrders && <Card className="p-6 text-sm" style={{ color: A.sub }}>{copy("正在读取销售订单…")}</Card>}
       {!loadingOrders && !ordersError && orders.length === 0 && (
-        <Card className="p-6 text-sm" style={{ color: A.sub }}>{copy("当前工作区暂无客户订单记录。后续可通过订单导入或业务数据接入生成客户订单视图。")}</Card>
+        <Card className="p-6 text-sm" style={{ color: A.sub }}>{copy("当前工作区暂无销售订单记录。后续可通过订单导入或业务数据接入生成销售订单视图。")}</Card>
       )}
 
       {!loadingOrders && !ordersError && orders.length > 0 && view === "orders" && (
         <div className="space-y-3">
           <Card>
             <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${A.border}` }}>
-              <SectionHeader title={copy("客户订单列表")} />
+              <SectionHeader title={copy("销售订单列表")} />
               <span className="text-[11px]" style={{ color: A.sub }}>{visibleOrders.length} {copy("条")}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[980px] text-xs">
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${A.border}` }}>
-                    {[copy("客户订单号"), copy("客户"), copy("SKU / 物料"), copy("订单数量"), copy("已预留"), copy("缺口"), copy("承诺日期"), copy("风险等级"), copy("状态"), copy("操作")].map((header) => (
+                    {[copy("销售订单号"), copy("客户"), copy("SKU / 物料"), copy("订单数量"), copy("已预留"), copy("缺口"), copy("承诺交期"), copy("风险等级"), copy("状态"), copy("操作")].map((header) => (
                       <th key={header} className="px-3 py-3 text-left font-semibold" style={{ color: A.gray1 }}>{header}</th>
                     ))}
                   </tr>
@@ -314,7 +314,7 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
           <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${A.border}` }}>
             <div>
               <SectionHeader title={copy("交付风险查询")} />
-              <p className="mt-1 text-xs" style={{ color: A.sub }}>{copy("逐行查看订单缺口、承诺日期、风险原因和可核验履约事实。")}</p>
+              <p className="mt-1 text-xs" style={{ color: A.sub }}>{copy("逐行查看订单缺口、承诺交期、风险原因和可核验履约事实。")}</p>
             </div>
             <span className="text-xs" style={{ color: A.sub }}>{say(`${riskOrders.length} ${riskOrders.length === 1 ? "order" : "orders"} at risk`, `${riskOrders.length} 条风险订单`)}</span>
           </div>
@@ -326,7 +326,7 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
                   <th className={thClass} style={{ color: A.gray1 }}>{copy("SKU / 物料")}</th>
                   <th className={thRightClass} style={{ color: A.gray1 }}>{copy("订购 / 预留 / 履约")}</th>
                   <th className={thRightClass} style={{ color: A.gray1 }}>{copy("缺口")}</th>
-                  {[copy("承诺日期"), copy("风险"), copy("风险原因")].map((header) => (
+                  {[copy("承诺交期"), copy("风险"), copy("风险原因")].map((header) => (
                     <th key={header} className={thClass} style={{ color: A.gray1 }}>{header}</th>
                   ))}
                   <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{copy("操作")}</th>
@@ -408,7 +408,7 @@ function EvidenceChainView({
   // it is translated when shown so a language change applies to it.
   const graphError = (reason: unknown) => reason instanceof ApiError && reason.status === 403
     ? RESTRICTED_GRAPH
-    : "当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。";
+    : "当前暂未读取到完整证据链，请返回销售订单列表或切换业务对象后重试。";
 
   useEffect(() => {
     if (!selectedOrderId) {
@@ -438,8 +438,8 @@ function EvidenceChainView({
     sourceRoute: "sales:evidence",
     sourceEntityType: "sales_order",
     sourceEntityId: selectedOrder.salesOrderId,
-    sourceLabel: say(`Sales order ${selectedOrder.salesOrderId}`, `客户订单 ${selectedOrder.salesOrderId}`),
-    returnLabel: say(`Back to sales order ${selectedOrder.salesOrderId}`, `返回客户订单 ${selectedOrder.salesOrderId}`),
+    sourceLabel: say(`Sales order ${selectedOrder.salesOrderId}`, `销售订单 ${selectedOrder.salesOrderId}`),
+    returnLabel: say(`Back to sales order ${selectedOrder.salesOrderId}`, `返回销售订单 ${selectedOrder.salesOrderId}`),
     originIntent: "evidenceGraph",
   } : null;
 
@@ -458,7 +458,7 @@ function EvidenceChainView({
     <Card className="p-4">
       <SectionHeader title={copy("工作区关联摘要")} right={<Chip label={copy("需人工复核")} color={A.orange} bg="#fff8f0" />} />
       <div className="grid grid-cols-1 gap-1.5 text-[11px] leading-5">
-        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ClipboardList size={12} />{copy("客户订单：")}{customerLabel(selectedOrder)} · {copy(selectedOrder.statusLabel)}</div>
+        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ClipboardList size={12} />{copy("销售订单：")}{customerLabel(selectedOrder)} · {copy(selectedOrder.statusLabel)}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><PackageSearch size={12} />{copy("SKU库存：")}{selectedOrder.sku} / {itemLabel(selectedOrder)}{copy("· 已预留")}{qty(selectedOrder.reservedQty)}{copy("· 缺口")}{qty(selectedOrder.shortageQty)}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ShoppingCart size={12} />{copy("采购订单：")}{selectedOrder.linkedPurchaseOrders.length ? selectedOrder.linkedPurchaseOrders.map((po, index) => <span key={po.id}>{index ? "; " : ""}<DocumentNumber type="purchase_order" id={po.id} number={po.number} /> {po.status || ""}</span>) : copy("暂无完整采购订单关联")}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><Users size={12} />{copy("供应商：")}{selectedOrder.linkedSuppliers.map((supplier) => `${supplier.name}${supplier.risk ? ` · ${supplier.risk}` : ""}`).join("; ") || copy("暂无完整供应商记录")}</div>
@@ -504,8 +504,8 @@ function EvidenceChainView({
             onRetry={retry}
             onBack={() => onNavigate?.("sales")}
             onReturnList={() => onNavigate?.("sales")}
-            onReturnSource={() => onNavigate?.("sales", { entityType: "sales_order", entityId: selectedOrderId }, { returnTo: "sales:evidence", entityLabel: say(`Sales order ${selectedOrderId}`, `客户订单 ${selectedOrderId}`), returnContext })}
-            sourceLabel={selectedOrder ? say(`Sales order ${selectedOrder.salesOrderId}`, `客户订单 ${selectedOrder.salesOrderId}`) : ""}
+            onReturnSource={() => onNavigate?.("sales", { entityType: "sales_order", entityId: selectedOrderId }, { returnTo: "sales:evidence", entityLabel: say(`Sales order ${selectedOrderId}`, `销售订单 ${selectedOrderId}`), returnContext })}
+            sourceLabel={selectedOrder ? say(`Sales order ${selectedOrder.salesOrderId}`, `销售订单 ${selectedOrder.salesOrderId}`) : ""}
             returnContext={returnContext}
             returnTo="sales:evidence"
             showReturnPath={false}

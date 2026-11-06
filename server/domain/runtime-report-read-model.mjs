@@ -96,12 +96,12 @@ const unknownCurrencyLabel = '币种缺失或无效'
 const metricDefinitions = {
   sales_order_count: ['销售订单数量', 'sales_orders', 'number', '当前范围内真实销售订单记录数。', '/app/sales/orders'],
   open_sales_demand: ['未履约销售需求', 'sales_orders', 'number', 'Ordered less fulfilled quantity on confirmed sales order lines, before inventory reservations. Shown only while every line with demand left is the same SKU in the same unit.', '/app/sales/orders'],
-  purchase_order_amount: ['Committed PO amount', 'purchase_orders', 'currency', '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，不含草稿、待审批、驳回和取消的订单；有订单缺少金额时不显示合计。', '/app/procurement/orders'],
-  open_po_count: ['开放 PO', 'purchase_orders', 'number', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/procurement/orders'],
+  purchase_order_amount: ['Committed PO amount', 'purchase_orders', 'currency', '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，不含草稿、待审批、已驳回和已取消的订单；有订单缺少金额时不显示合计。', '/app/procurement/orders'],
+  open_po_count: ['未结 PO', 'purchase_orders', 'number', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/procurement/orders'],
   inventory_on_hand: ['在手库存', 'inventory_balances', 'number', 'On-hand quantity recorded in inventory. Shown only while all inventory is the same SKU in the same unit.', '/app/inventory'],
   inventory_risk_sku: ['SKUs short for sales orders', 'inventory_balances', 'number', 'SKUs whose open sales demand, less its reservations, is more than the available stock. Incoming purchase orders are not counted.', '/app/inventory?risk=high'],
-  invoice_amount: ['供应商发票金额', 'supplier_invoices', 'currency', '已提交供应商发票（已提交、匹配中、有差异、已匹配、已批准或暂挂）的金额合计，不含草稿、驳回和取消的发票；有发票缺少金额时不显示合计。', '/app/finance/invoices'],
-  supplier_count: ['供应商数量', 'suppliers', 'number', '当前供应商主数据记录数。', '/app/master-data/suppliers'],
+  invoice_amount: ['采购发票金额', 'supplier_invoices', 'currency', '已提交采购发票（已提交、匹配中、有差异、已匹配、已批准或暂挂）的金额合计，不含草稿、已驳回和已取消的发票；有发票缺少金额时不显示合计。', '/app/finance/invoices'],
+  supplier_count: ['供应商数量', 'suppliers', 'number', '当前供应商基础资料记录数。', '/app/master-data/suppliers'],
   overdue_open_po_count: ['Overdue open POs', 'purchase_orders', 'number', "Open purchase orders whose earliest line still to receive was due before today in the workspace timezone (the line's promised date, else the order's expected date).", '/app/reports/procurement?scope=overdue'],
   on_time_receipt_rate: ['On-time deliveries (date on the PO)', 'receipts', 'percentage', "Deliveries (the lines of one PO with one date) first promised in range whose every line had a posted receipt by the date on the PO, which may be the buyer's need date. Orders approved but not sent to the supplier are left out. Needs at least 5 deliveries.", '/app/reports/suppliers'],
   active_supplier_count: ['Suppliers with committed orders', 'purchase_orders', 'number', 'Suppliers with at least one committed purchase order in range.', '/app/master-data/suppliers'],
@@ -352,7 +352,7 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
 export function getRuntimeReportCatalog() {
   const subjects = {
     purchase_orders: ['采购订单', '/app/procurement/orders'], sales_orders: ['销售订单', '/app/sales/orders'],
-    inventory_balances: ['库存余额', '/app/inventory'], supplier_invoices: ['供应商发票', '/app/finance/invoices'],
+    inventory_balances: ['库存余额', '/app/inventory'], supplier_invoices: ['采购发票', '/app/finance/invoices'],
     suppliers: ['供应商', '/app/master-data/suppliers'], purchase_requests: ['采购申请', '/app/procurement/requests'],
     rfqs: ['询报价', '/app/procurement/rfq'], receiving: ['收货', '/app/procurement/receiving'],
   }

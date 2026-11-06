@@ -54,7 +54,7 @@ test('Chinese report keeps the same business values', async ({ page }) => {
   await authenticate(page, 'zh-CN'); await fixture(page);
   await page.goto('/app/reports/procurement');
   const report = page.getByTestId('open-purchase-orders-report');
-  await expect(report.getByRole('heading', { name: '未完成采购订单' })).toBeVisible();
+  await expect(report.getByRole('heading', { name: '未结采购订单' })).toBeVisible();
   await expect(report).toContainText('Acme Components');
   await expect(report).toContainText('PO-REPORT-000');
   await expect(report).toContainText('USD');

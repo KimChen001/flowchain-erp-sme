@@ -51,7 +51,7 @@ const COPY = {
   moreLines: ["+{count} more", "另 {count} 行"],
   loadFailed: ["The purchasing workbench could not be loaded", "采购工作台加载失败"],
   empty: ["No purchasing work is open", "暂无采购待办"],
-  emptyDetail: ["Submitted requests and open purchase orders appear here.", "已提交的采购申请和未完成的采购订单会显示在这里。"],
+  emptyDetail: ["Submitted requests and open purchase orders appear here.", "已提交的采购申请和未结采购订单会显示在这里。"],
   noMatch: ["No work matches these filters", "没有符合筛选条件的待办"],
   invoice_variance: ["Invoice variance", "发票差异"],
   match_exception: ["Three-way match exception", "三单匹配异常"],

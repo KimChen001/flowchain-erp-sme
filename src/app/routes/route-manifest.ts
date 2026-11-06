@@ -537,9 +537,9 @@ function limitationFor(
   classification: RouteClassification,
 ) {
   if (route.id === "procurement:rfq-detail")
-    return "只读展示当前租户的 RFQ、行项目、参与记录、最大 revisionNumber 报价和明确证据关系；内部 response/revision command 与 Comparison read contract 不在此 UI 路由内。";
+    return "只读展示当前租户的询价单、行项目、参与记录、最大 revisionNumber 报价和明确证据关系；内部 response/revision command 与 Comparison read contract 不在此 UI 路由内。";
   if (route.id === "procurement:rfq-comparison")
-    return "只读展示当前租户 RFQ 的供应商报价比较、Participation 摘要与非有效响应；不排名、不推荐、不授标、不转换 PO，币种不做汇率换算。";
+    return "只读展示当前租户询价单的供应商报价比较、Participation 摘要与非有效响应；不排名、不推荐、不授标、不转换 PO，币种不做汇率换算。";
   if (route.id === "procurement:order-document")
     return "Read-only PO document to print or save as PDF; printable from approval on and only with procurement.prices.read. FlowChain does not send it.";
   if (route.id === "sales:invoice-document")

@@ -111,7 +111,7 @@ test('drafts are review-only cards for the top signals, and need purchasing edit
   assert.match(english.reviewCards[0].payload.message, /^Please confirm delivery dates for these open lines:\n- PO-001 · LDM-001: 30 pcs still to deliver \(20 of 50 received\), promised .*\n- PO-008 · LDM-001: 40 pcs still to deliver, promised /m)
   assert.equal(english.reviewCards[1].payload.message, 'Hello Acme Components,\n\nInvoice INV-001 differs from the purchase order by $200.00. Please send a corrected invoice or the reason for the difference.\n\nThank you.')
   assert.equal(english.reviewCards[1].payload.subject, 'Invoice INV-001: difference from the purchase order')
-  assert.match(answer('prepare_action_draft', 'zh-CN').reviewCards[0].payload.message, /^- PO-001 · LDM-001：仍有 30 件未交（已收 20\/50），承诺日期 /m)
+  assert.match(answer('prepare_action_draft', 'zh-CN').reviewCards[0].payload.message, /^- PO-001 · LDM-001：仍有 30 件未交（已收 20\/50），承诺交期 /m)
   // Each suggested field says where it came from: templates filled from the record.
   assert.deepEqual(Object.fromEntries(Object.entries(english.reviewCards[0].prefill).map(([field, entry]) => [field, `${entry.source}:${entry.ref}`])), { subject: 'template:draft.po_followup.subject_orders', message: 'template:draft.po_followup.message' })
   // A read-only viewer gets links and a limitation, no cards.

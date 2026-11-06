@@ -144,7 +144,7 @@ test("multi-currency comparison keeps every response visible without FX or ranki
   await expect(page.getByTestId("rfq-comparison-response-LOCAL-DEMO-SUP-005")).toContainText("已撤回");
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-006")).toContainText("计划参与");
   await expect(page.getByTestId("rfq-comparison-cell-LOCAL-DEMO-RFQL-COMPARISON-MIXED-LOCAL-DEMO-SUP-005")).toContainText("未覆盖");
-  await expect(page.getByTestId("rfq-comparison-line-matrix")).toContainText("未能对应到 RFQ 行");
+  await expect(page.getByTestId("rfq-comparison-line-matrix")).toContainText("未能对应到询价单行");
   await expect(page.getByTestId("rfq-award-decision")).toBeVisible();
   await expect(page.getByRole("button", { name: /推荐|创建采购订单|转为 PO/i })).toHaveCount(0);
   expect(businessRequests.filter((request) => request.path.endsWith("/comparison"))).toEqual([{ method: "GET", path: exactComparisonPath("LOCAL-DEMO-RFQ-COMPARISON-MIXED") }]);
@@ -173,8 +173,8 @@ test("comparison page keeps explicit 401, 403, 404, 500 and network states", asy
   for (const [id, status, message] of [
     ["RFQ-ERROR-401", 401, "登录状态已失效"],
     ["RFQ-ERROR-403", 403, "没有查看供应商价格比较的权限"],
-    ["RFQ-ERROR-422", 422, "RFQ 编号格式无效"],
-    ["RFQ-ERROR-500", 500, "供应商报价比较暂时无法读取"],
+    ["RFQ-ERROR-422", 422, "询价单编号格式无效"],
+    ["RFQ-ERROR-500", 500, "供应商报价比较加载失败"],
   ] as const) {
     const pattern = `**${exactComparisonPath(id)}`;
     await page.route(pattern, (route) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ code: `RFQ_COMPARISON_TEST_${status}` }) }));
@@ -185,7 +185,7 @@ test("comparison page keeps explicit 401, 403, 404, 500 and network states", asy
     await page.unroute(pattern);
   }
   await page.goto(`/app/procurement/rfq/${encodeURIComponent("RFQ-MISSING-404")}/comparison`);
-  await expect(page.getByTestId("canonical-rfq-comparison-state")).toContainText("找不到该 RFQ");
+  await expect(page.getByTestId("canonical-rfq-comparison-state")).toContainText("找不到该询价单");
   const networkPattern = `**${exactComparisonPath("RFQ-ERROR-NETWORK")}`;
   await page.route(networkPattern, (route) => route.abort("failed"));
   await page.goto(`/app/procurement/rfq/RFQ-ERROR-NETWORK/comparison`);
