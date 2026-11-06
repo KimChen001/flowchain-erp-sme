@@ -64,7 +64,9 @@ const text = (value) => String(value ?? '').trim()
 export function validateAssistantV2Question(body = {}) {
   const length = text(body.message || body.question).length
   if (length > QUESTION_LIMITS.assistantV2) return { ok: false, status: 400, tooLong: true }
-  if (length < 2) return { ok: false, status: 400, tooLong: false }
+  // One character is a whole reply in a conversation (好, 行, 对, y); only an
+  // empty question is too short (2026-11-06: "好" was refused with a 400).
+  if (length < 1) return { ok: false, status: 400, tooLong: false }
   return { ok: true, status: 200 }
 }
 

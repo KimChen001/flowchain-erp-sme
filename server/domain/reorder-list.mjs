@@ -160,9 +160,13 @@ const purchaseUnitOf = (item, stockUnit) => text(metadataOf(item).purchaseUnit) 
 // since the minimum is in the unit the item is bought in. One rule for the
 // reorder list and the assistant's order suggestions (ai-skill-readers.mjs).
 export function requestMinimumOf(item, supplier, stockUnit) {
-  if (!text(stockUnit) || !sameUnit(purchaseUnitOf(item, stockUnit), stockUnit)) return 0
+  if (!boughtInStockUnit(item, stockUnit)) return 0
   return Number(supplier?.minimumOrderQuantity) > 0 ? Number(supplier.minimumOrderQuantity) : 0
 }
+
+// Whether the item is bought in its stock unit, so a supplier's minimum order
+// and reference price are per stock unit (the assistant's cost figures use it).
+export const boughtInStockUnit = (item, stockUnit) => Boolean(text(stockUnit)) && sameUnit(purchaseUnitOf(item, stockUnit), stockUnit)
 
 // One item's row, or { notJudged } / null (not listed). stockUnit is recorded.
 function judgeItem({ item, allocation, demand, reorderPoint, stockUnit, today, showPurchaseOrders, supplier }) {
