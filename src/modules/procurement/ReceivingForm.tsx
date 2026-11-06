@@ -10,12 +10,14 @@ import { receivingApi, type ReceivableLine, type ReceivablePurchaseOrder, type R
 import { PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { buildSuggestionTrail, type PrefillEntry } from "../../lib/prefill";
 import { ReceivablePurchaseOrderChooser } from "./ReceivablePurchaseOrderChooser";
+import { DocumentNumber } from "../../lib/documentNumbers";
 
 // English source copy with its Chinese translation.
 const COPY: Record<string, [string, string]> = {
   titleNew: ["Receive purchase order", "采购订单收货"],
   titleEdit: ["Edit receipt draft", "编辑收货草稿"],
   intro: ["Record what arrived. Accepted quantity goes to stock when the receipt is posted; rejected quantity stays out of stock.", "登记本次到货。收货单过账后，合格数量计入库存；拒收数量不入库。"],
+  numberOnSave: ["The receipt number is assigned when you save.", "收货单号在保存时自动生成。"],
   loading: ["Loading the purchase order…", "正在读取采购订单…"],
   loadFailed: ["The purchase order could not be loaded for receiving.", "无法读取可收货的采购订单。"],
   retry: ["Retry", "重试"],
@@ -265,8 +267,10 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
       <Card className="p-4">
         <div className="text-sm font-semibold">{tr(mode === "new" ? "titleNew" : "titleEdit")}{draft?.documentNumber ? ` · ${draft.documentNumber}` : ""}</div>
         <div className="mt-1 text-xs" style={{ color: A.sub }}>{tr("intro")}</div>
+        {/* The server numbers a new receipt (GRN-YYYYMM-NNNN) when it is saved. */}
+        {mode === "new" && <div className="mt-1 text-xs" style={{ color: A.sub }} data-testid="receiving-number-on-save">{tr("numberOnSave")}</div>}
         <dl className="mt-4 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
-          <div><dt style={{ color: A.sub }}>{tr("purchaseOrder")}</dt><dd className="mt-1 font-medium">{po.id}</dd></div>
+          <div><dt style={{ color: A.sub }}>{tr("purchaseOrder")}</dt><dd className="mt-1 font-medium"><DocumentNumber type="purchase_order" id={po.id} number={po.number} /></dd></div>
           <div><dt style={{ color: A.sub }}>{tr("supplier")}</dt><dd className="mt-1 font-medium">{po.supplierName || "—"}</dd></div>
           <label className="block"><span style={{ color: A.sub }}>{tr("warehouse")} *</span>
             <select aria-label={tr("warehouse")} value={warehouseId} onChange={(event) => changeWarehouse(event.target.value)} className={`${inputClass} mt-1`}>

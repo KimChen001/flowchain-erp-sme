@@ -153,9 +153,9 @@ const listOpenPurchaseRequests = defineAiTool({
         const lines = row.lines.map((line) => ({ sku: line.sku, quantity: line.quantity, unit: line.unit }))
         const [only] = lines.length === 1 ? lines : []
         return {
-          request: row.id, status: row.status, priority: row.priority, requiredDate: row.requiredDate,
+          request: row.number || row.id, status: row.status, priority: row.priority, requiredDate: row.requiredDate,
           skus: [...new Set(lines.map((line) => line.sku).filter(Boolean))], lineCount: lines.length, quantity: only?.quantity ?? null, unit: only?.unit ?? null, lines,
-          ref: aiToolRef('purchase_request', row.id, row.id),
+          ref: aiToolRef('purchase_request', row.id, row.number || row.id),
         }
       }), args.limit),
     }
@@ -273,7 +273,7 @@ const preferredLead = (sources) => (sources.find((source) => source.preferred) |
 function coverRecords(facts, row) {
   const requests = array(facts.purchaseRequests?.open)
     .filter((request) => OPEN_PURCHASE_REQUEST_STATUSES.includes(request.status) && request.lines.some((line) => requestLineCountsFor(line, row)))
-    .map((request) => ({ label: request.id, status: request.status, ref: aiToolRef('purchase_request', request.id, request.id) }))
+    .map((request) => ({ label: request.number || request.id, status: request.status, ref: aiToolRef('purchase_request', request.id, request.number || request.id) }))
   const orders = array(row.purchaseOrderIds)
     .map((id) => array(facts.purchaseOrders?.index).find((po) => po.id === id))
     .filter((po) => po?.isOpen)

@@ -60,7 +60,8 @@ test('R206-R208 AI insight and transactional links preserve workflow return cont
   assert.match(aiPanel, /onNavigateRecord/)
   assert.match(aiPanel, /source:\s*"contextualAiInsight"/)
   assert.doesNotMatch(aiPanel, /Back to AI Assistant/)
-  assert.match(purchasing, /returnLabel:\s*`返回采购订单 \$\{order\.po\}`/)
+  // The order is named by the number it shows (its id before numbering).
+  assert.match(purchasing, /returnLabel:\s*`返回采购订单 \$\{(?:order\.po|purchaseOrderNumber\(order\))\}`/)
   assert.match(purchasing, /buildGrnRows\(selectedPO, facts\)/)
   assert.match(purchasing, /buildInvoiceRows\(selectedPO, facts\)/)
 })

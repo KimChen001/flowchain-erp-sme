@@ -5,6 +5,7 @@ import { createProcurementRequestCommandService } from "../services/procurement-
 import { PROCUREMENT_PATH_POLICY, recommendProcurementPath } from "../domain/procurement-workflow.mjs";
 import { notifyApprovalWaiting } from "../notifications/approval-notifier.mjs";
 import { createPurchaseOrderDocumentReadService } from "../domain/purchase-order-document-read-service.mjs";
+import { DOCUMENT_NUMBER_LOOKUP_LIMIT } from "../repositories/db-procurement-read-repository.mjs";
 // Purchase request commands write PostgreSQL directly. Permissions come from
 // the signed-in actor's role grants inside the service, not from role names.
 const requestCommands = (ctx) => ctx.repositories?.procurementRequests
@@ -59,9 +60,31 @@ const commandBody = async (ctx) => {
   const header = String(ctx.req.headers?.["idempotency-key"] || "").trim();
   return header && !body.idempotencyKey ? { ...body, idempotencyKey: header } : body;
 };
+// GET /api/procurement/document-numbers?purchase_order=<id>,<id>&purchase_request=…&rfq=…
+// → { numbers: { purchase_order: { <id>: <number> }, purchase_request: {…}, rfq: {…} } }
+// The numbers pages show for ids they hold (a receipt's PO, an invoice's PO):
+// at most DOCUMENT_NUMBER_LOOKUP_LIMIT ids per type, from the caller's
+// workspace. A type the caller may not read, and an id the workspace does not
+// have, are left out rather than refused, so nothing tells the two apart.
+const NUMBER_LOOKUP_TYPES = Object.freeze({ purchase_order: "po", purchase_request: "pr", rfq: "rfq" });
+async function documentNumbers(ctx) {
+  const { url, send, res } = ctx;
+  if (!ctx.identity?.authenticated || !ctx.identity.tenantId) return send(res, 401, { code: "TENANT_CONTEXT_REQUIRED", message: "An authenticated tenant context is required." }) || true;
+  const wanted = Object.fromEntries(Object.keys(NUMBER_LOOKUP_TYPES).map((type) => [type, [...new Set(url.searchParams.getAll(type).flatMap((value) => value.split(",")).map((id) => id.trim()).filter(Boolean))].slice(0, DOCUMENT_NUMBER_LOOKUP_LIMIT)]));
+  const empty = Object.fromEntries(Object.keys(NUMBER_LOOKUP_TYPES).map((type) => [type, {}]));
+  if (!Object.values(wanted).some((ids) => ids.length)) return send(res, 200, { numbers: empty }) || true;
+  const access = await procurementReadAccess(ctx);
+  const readable = Object.fromEntries(Object.entries(wanted).filter(([type]) => canReadProcurementDocument(NUMBER_LOOKUP_TYPES[type], access)));
+  const found = Object.values(readable).some((ids) => ids.length)
+    ? await ctx.repositories.procurementRead.documentNumbers({ tenantId: ctx.identity.tenantId, ids: readable })
+    : {};
+  return send(res, 200, { numbers: { ...empty, ...Object.fromEntries(Object.keys(readable).map((type) => [type, found[type] || {}])) } }) || true;
+}
+
 export async function handleProcurementWorkflowRoute(ctx) {
   const { req, res, url, send } = ctx;
   if (!url.pathname.startsWith("/api/procurement/")) return false;
+  if (req.method === "GET" && url.pathname === "/api/procurement/document-numbers") return documentNumbers(ctx);
   // Lists answer only the collections the actor may read, with prices and
   // amounts masked by role (procurement-read-access.mjs).
   const list = async (key, type) => {

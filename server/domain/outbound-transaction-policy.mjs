@@ -279,18 +279,15 @@ export async function buildReservationReleasePlan({ prisma, tenantId, salesOrder
   return basePlan('release', blockingIssues, { order, normalizedPlan: { salesOrderId: order.id, reason: outboundText(reason), releases: sorted([...releaseByReservation.keys()]).map((id) => ({ reservationId: id, quantity: outboundDecimalString(releaseByReservation.get(id)), expectedReservationVersion: expectedVersions.get(id) ?? null })) }, reservationImpacts, balanceImpacts, salesOrderLineImpacts, salesOrderStatusImpacts: { before: { reservationStatus: order.reservationStatus, fulfillmentStatus: order.fulfillmentStatus }, after: statuses }, factsToCreate: { ...emptyFacts(), reservationEvents: reservationImpacts.map((impact) => ({ reservationId: impact.reservationId, eventType: 'released', quantity: outboundDecimalString(impact.quantityUnits) })) } })
 }
 
-export async function buildShipmentDraftPlan({ prisma, tenantId, salesOrderId, shipmentNumber, lines = [] }) {
+// The shipment number is not part of the plan: the server assigns it when the
+// draft is saved (DN-YYYYMM-NNNN), so a preview has none to show.
+export async function buildShipmentDraftPlan({ prisma, tenantId, salesOrderId, lines = [] }) {
   const blockingIssues = []
   const order = await loadOrder(prisma, tenantId, salesOrderId)
   if (!order) return basePlan('create_shipment_draft', [policyError('SALES_ORDER_NOT_FOUND', 'Sales order was not found.', 404)])
   if (order.workflowStatus !== 'confirmed') blockingIssues.push(policyError('SALES_ORDER_NOT_CONFIRMED', 'Sales order must be confirmed before a shipment draft can be created.', 409))
-  if (!outboundText(shipmentNumber)) blockingIssues.push(policyError('RESERVATION_VALIDATION_FAILED', 'shipmentNumber is required.'))
   if (!Array.isArray(lines) || lines.length === 0) blockingIssues.push(policyError('RESERVATION_VALIDATION_FAILED', 'At least one shipment line is required.'))
   await validateOrderItems(prisma, tenantId, order, blockingIssues)
-  if (outboundText(shipmentNumber)) {
-    const duplicate = await prisma.shipmentDocument.findFirst({ where: { tenantId, shipmentNumber: outboundText(shipmentNumber) }, select: { id: true } })
-    if (duplicate) blockingIssues.push(policyError('SHIPMENT_NUMBER_CONFLICT', 'Shipment number is already in use for this workspace.', 409))
-  }
   const orderLines = new Map(order.lines.map((line) => [line.id, line]))
   const reservationIds = sorted((lines || []).flatMap((line) => (line.allocations || []).map((allocation) => outboundText(allocation.reservationId))))
   const reservations = reservationIds.length ? await prisma.inventoryReservation.findMany({ where: { tenantId, salesOrderId: order.id, id: { in: reservationIds } }, orderBy: { id: 'asc' } }) : []
@@ -324,7 +321,7 @@ export async function buildShipmentDraftPlan({ prisma, tenantId, salesOrderId, s
     if (quantity > allocatable) blockingIssues.push(policyError('SHIPMENT_RESERVATION_INSUFFICIENT', `Reservation ${reservationId} does not have enough allocatable quantity.`, 409))
     reservationImpacts.push({ reservation, reservationId, quantityUnits: quantity, allocatedBefore: outboundDecimalString(allocated), allocatedAfter: outboundDecimalString(allocated + quantity), statusAfter: outboundReservationStatus({ ...reservation, allocatedQuantity: outboundDecimalString(allocated + quantity) }) })
   }
-  return basePlan('create_shipment_draft', blockingIssues, { order, normalizedPlan: { salesOrderId: order.id, shipmentNumber: outboundText(shipmentNumber), lines: normalizedLines.map((line) => ({ salesOrderLineId: line.salesOrderLineId, requestedQuantity: outboundDecimalString(line.requestedQuantityUnits), allocations: line.allocations.map((allocation) => ({ reservationId: allocation.reservationId, quantity: outboundDecimalString(allocation.quantityUnits) })) })) }, quantityPlans: normalizedLines, reservationImpacts, shipmentImpacts: [{ workflowStatusBefore: null, workflowStatusAfter: 'ready', postingStatusBefore: null, postingStatusAfter: 'unposted' }], factsToCreate: { ...emptyFacts(), reservationEvents: reservationImpacts.map((impact) => ({ reservationId: impact.reservationId, eventType: 'allocated', quantity: outboundDecimalString(impact.quantityUnits) })) } })
+  return basePlan('create_shipment_draft', blockingIssues, { order, normalizedPlan: { salesOrderId: order.id, lines: normalizedLines.map((line) => ({ salesOrderLineId: line.salesOrderLineId, requestedQuantity: outboundDecimalString(line.requestedQuantityUnits), allocations: line.allocations.map((allocation) => ({ reservationId: allocation.reservationId, quantity: outboundDecimalString(allocation.quantityUnits) })) })) }, quantityPlans: normalizedLines, reservationImpacts, shipmentImpacts: [{ workflowStatusBefore: null, workflowStatusAfter: 'ready', postingStatusBefore: null, postingStatusAfter: 'unposted' }], factsToCreate: { ...emptyFacts(), reservationEvents: reservationImpacts.map((impact) => ({ reservationId: impact.reservationId, eventType: 'allocated', quantity: outboundDecimalString(impact.quantityUnits) })) } })
 }
 
 export async function buildShipmentCancellationPlan({ prisma, tenantId, shipmentId, reason }) {

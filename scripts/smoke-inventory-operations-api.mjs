@@ -199,7 +199,6 @@ try {
     token,
     method: "POST",
     body: {
-      transferNumber: "TR-API-001",
       idempotencyKey: "tr-create",
       tenantId: "forged",
       lines: [
@@ -280,7 +279,6 @@ try {
     token,
     method: "POST",
     body: {
-      countNumber: "CC-API-001",
       warehouseId: "warehouse-a",
       blindCount: true,
       balanceIds: ["balance-a"],
@@ -362,7 +360,7 @@ try {
     const created = await request(base, "/api/inventory/counts", {
       token,
       method: "POST",
-      body: { countNumber: number, warehouseId: "warehouse-a", blindCount: true, balanceIds: ["balance-a"], idempotencyKey: `${number}-create` },
+      body: { warehouseId: "warehouse-a", blindCount: true, balanceIds: ["balance-a"], idempotencyKey: `${number}-create` },
     });
     if (!review) return created.session;
     const entered = await request(base, `/api/inventory/counts/${created.session.id}`, {
@@ -404,7 +402,6 @@ try {
     token,
     method: "POST",
     body: {
-      adjustmentNumber: "ADJ-API-001",
       reasonCode: "damage",
       notes: "Damaged",
       idempotencyKey: "adj-create",
@@ -463,7 +460,6 @@ try {
     token,
     method: "POST",
     body: {
-      adjustmentNumber: "ADJ-API-OPEN-001",
       reasonCode: "opening_balance",
       notes: "Go-live stock",
       idempotencyKey: "open-create",
@@ -524,7 +520,6 @@ try {
     token,
     method: "POST",
     body: {
-      transferNumber: "TR-API-NEW-BIN",
       idempotencyKey: "tr-new-bin-create",
       lines: [
         {
@@ -636,7 +631,6 @@ try {
     token: disabledLogin.token,
     method: "POST",
     body: {
-      adjustmentNumber: "DISABLED",
       reasonCode: "damage",
       idempotencyKey: "disabled",
       lines: [{ inventoryBalanceId: "balance-a", adjustmentQuantity: "1" }],

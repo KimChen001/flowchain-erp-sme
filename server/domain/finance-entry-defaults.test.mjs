@@ -1,14 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { customerPaymentTerm, nextInvoiceNumber } from './operational-finance-o2c-read-service.mjs'
+import * as o2cRead from './operational-finance-o2c-read-service.mjs'
+
+const { customerPaymentTerm } = o2cRead
 
 // Walkthrough 2026-10-07: the customer invoice number had to be typed, and the
-// due date was blank although the customer was recorded as NET30.
-test('the next customer invoice number follows the highest INV- number, starting at INV-1001', () => {
-  assert.equal(nextInvoiceNumber([]), 'INV-1001')
-  assert.equal(nextInvoiceNumber(['INV-1001', 'INV-1009', 'inv-1003']), 'INV-1010')
-  // Numbers in another style are left alone, and never lower the suggestion.
-  assert.equal(nextInvoiceNumber(['2026-0042', 'INV-ABC', 'INV-0042']), 'INV-1001')
+// due date was blank although the customer was recorded as NET30. Since
+// 2026-11-04 the server assigns the number when the draft is created
+// (CI-YYYYMM-NNNN), so nothing suggests one.
+test('no customer invoice number is suggested; the server assigns it on create', () => {
+  assert.equal(o2cRead.nextInvoiceNumber, undefined)
 })
 
 test("a customer's payment terms count when they name one of the workspace's terms", () => {

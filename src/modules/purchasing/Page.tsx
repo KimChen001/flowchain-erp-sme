@@ -22,6 +22,8 @@ import { typography } from "../../components/ui/typography";
 import { usePriceHistoryCopy } from "../procurement/priceHistoryCopy";
 import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
+import { documentNumberFor, rememberDocumentNumbers, resolveDocumentNumbers, useDocumentNumber } from "../../lib/documentNumbers";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { SupplierOverrideFlag } from "../../components/procurement/SupplierOverrideReason";
 import type { PurchaseOrder, PurchaseOrderLine, ReceivingDoc, SupplierInvoice } from "../../types/scm";
 import {
@@ -436,7 +438,13 @@ function lineReceiptStatus(status: string | undefined, ordered: number, received
   return lineStatusLabel(status);
 }
 
-function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): PoEvidenceRow[] {
+// The number people read; the id (po) stays in links and calls.
+function purchaseOrderNumber(order: PurchaseOrder) {
+  return documentNumberFor("purchase_order", order.po, order.number || order.orderNumber);
+}
+
+// sourceNumbers: the source request's and RFQ's document numbers, shown in place of their ids.
+function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts, sourceNumbers: { request?: string; rfq?: string } = {}): PoEvidenceRow[] {
   const cancelled = ["cancelled", "已取消"].includes(po.status);
   const notIssued = NOT_ISSUED_PO_STATUSES.has(String(po.status));
   return poLinesOf(po).map((line, index) => {
@@ -451,8 +459,8 @@ function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): PoE
       poLineId: line.poLineId,
       lineNumber: index + 1,
       currency: line.currency || po.currency,
-      sourcePrLine: po.sourceRequest ? `${po.sourceRequest}-L${String(index + 1).padStart(3, "0")}` : "无采购申请",
-      sourceRfqLine: po.sourceRfq ? `${po.sourceRfq}-L${String(index + 1).padStart(3, "0")}` : "未经询价",
+      sourcePrLine: po.sourceRequest ? `${sourceNumbers.request || po.sourceRequest}-L${String(index + 1).padStart(3, "0")}` : "无采购申请",
+      sourceRfqLine: po.sourceRfq ? `${sourceNumbers.rfq || po.sourceRfq}-L${String(index + 1).padStart(3, "0")}` : "未经询价",
       sku: safeText(line.sku, po.sourceSku || "SKU 待补齐"),
       itemName: safeText(line.itemName, po.sourceName || "物料名称待补齐"),
       quantity: ordered,
@@ -788,6 +796,7 @@ export default function PurchasingOrdersPage({
     apiJson<PurchaseOrderWorkbenchPayload>("/api/purchase-orders-workbench")
       .then((data) => {
         if (!alive) return;
+        rememberDocumentNumbers("purchase_order", data.purchaseOrders, (order) => [order.po, order.number || order.orderNumber]);
         setOrders(data.purchaseOrders || []);
         setReceivingRecords(data.receivingDocs || []);
         setInvoiceRecords(data.supplierInvoices || []);
@@ -839,6 +848,12 @@ export default function PurchasingOrdersPage({
   });
   const selectedPO = orders.find((order) => order.po === selectedId) ?? null;
   const selectedPOTotals = poTotals(selectedPO);
+  // People read document numbers; the ids stay in links and calls.
+  const selectedPONumber = selectedPO ? purchaseOrderNumber(selectedPO) : "";
+  const sourceRequestNumber = useDocumentNumber("purchase_request", selectedPO?.sourceRequest, selectedPO?.prNumber);
+  const sourceRfqNumber = useDocumentNumber("rfq", selectedPO?.sourceRfq, selectedPO?.rfqNumber);
+  // The breadcrumb names the order by its number, not the id in the address.
+  useDetailCrumb(viewMode === "detail" ? selectedPONumber : null);
   // Earlier PO prices for each line's item, unit and currency, in one
   // request. The server leaves this PO out and, once it is issued, every PO
   // dated after it. Display only.
@@ -868,11 +883,11 @@ export default function PurchasingOrdersPage({
       module: "procurement",
       entityType: "purchase_order",
       entityId: selectedPO.po,
-      entityLabel: `${selectedPO.po} · ${selectedPO.supplier}`,
+      entityLabel: `${selectedPONumber} · ${selectedPO.supplier}`,
       view: "orders",
     });
     return () => onActiveContextChange?.(null);
-  }, [viewMode, selectedPO?.po, selectedPO?.supplier, onActiveContextChange]);
+  }, [viewMode, selectedPO?.po, selectedPONumber, selectedPO?.supplier, onActiveContextChange]);
 
   const committedValue = summary?.committedValueByCurrency || [];
   const committedHidden = Boolean(summary) && summary?.committedValueByCurrency === null;
@@ -906,15 +921,20 @@ export default function PurchasingOrdersPage({
     routerNavigate("/app/procurement/orders");
   }
 
-  function exportCsv() {
+  async function exportCsv() {
     if (filtered.length === 0) {
       toast.warning("暂无可导出的数据");
       return;
     }
+    // Document numbers, not internal ids, in the file.
+    const [requestNumbers, rfqNumbers] = await Promise.all([
+      resolveDocumentNumbers("purchase_request", filtered.filter((order) => !order.prNumber).map((order) => order.sourceRequest)),
+      resolveDocumentNumbers("rfq", filtered.filter((order) => !order.rfqNumber).map((order) => order.sourceRfq)),
+    ]);
     exportRowsToCsv("purchase-order-evidence-export.csv", filtered.map((order) => ({
-      PO编号: order.po,
-      来源PR: order.sourceRequest || "",
-      来源RFQ: order.sourceRfq || "",
+      PO编号: purchaseOrderNumber(order),
+      来源PR: order.sourceRequest ? order.prNumber || requestNumbers.get(order.sourceRequest) || order.sourceRequest : "",
+      来源RFQ: order.sourceRfq ? order.rfqNumber || rfqNumbers.get(order.sourceRfq) || order.sourceRfq : "",
       供应商: order.supplier,
       状态: order.status,
       采购负责人: order.owner,
@@ -935,12 +955,12 @@ export default function PurchasingOrdersPage({
       sourceEntityType: "purchase_order",
       sourceEntityId: order.po,
       sourceRoute: "procurement:orders",
-      sourceLabel: order.po,
-      returnLabel: `返回采购订单 ${order.po}`,
+      sourceLabel: purchaseOrderNumber(order),
+      returnLabel: `返回采购订单 ${purchaseOrderNumber(order)}`,
     };
     onNavigate?.(moduleId, focusTarget || null, {
       returnTo: "procurement:orders",
-      entityLabel: label || order.po,
+      entityLabel: label || purchaseOrderNumber(order),
       returnContext,
       source: "purchaseOrderEvidence",
     });
@@ -972,7 +992,7 @@ export default function PurchasingOrdersPage({
   const detailContent = selectedPO && (() => {
     const fmt = (value: number | null) => formatCurrencyAmount(value, selectedPO.currency);
     const hideAmounts = amountsHidden(selectedPO);
-    const poLines = buildPoLineRows(selectedPO, facts).map((row) => ({ ...row, warehouse: warehouseName(row.warehouse) }));
+    const poLines = buildPoLineRows(selectedPO, facts, { request: sourceRequestNumber, rfq: sourceRfqNumber }).map((row) => ({ ...row, warehouse: warehouseName(row.warehouse) }));
     const grnRows = buildGrnRows(selectedPO, facts);
     const invoiceRows = buildInvoiceRows(selectedPO, facts);
     const matchRows = buildMatchRows(selectedPO, facts);
@@ -1000,24 +1020,24 @@ export default function PurchasingOrdersPage({
     const relatedLinks = [
       ...(selectedPO.sourceRequest ? [{
         key: "source-pr",
-        label: `${say("Source PR", "来源采购申请")} ${selectedPO.sourceRequest}`,
-        onClick: () => navigateWithReturn("procurement:requests", { entityType: "purchase_request", entityId: selectedPO.sourceRequest }, selectedPO.sourceRequest),
+        label: `${say("Source PR", "来源采购申请")} ${sourceRequestNumber}`,
+        onClick: () => navigateWithReturn("procurement:requests", { entityType: "purchase_request", entityId: selectedPO.sourceRequest }, sourceRequestNumber),
       }] : []),
       ...(selectedPO.sourceRfq ? [{
         key: "source-rfq",
-        label: `${say("Source RFQ", "来源询价")} ${selectedPO.sourceRfq}`,
-        onClick: () => navigateWithReturn("procurement:rfq", { entityType: "rfq", entityId: selectedPO.sourceRfq }, selectedPO.sourceRfq),
+        label: `${say("Source RFQ", "来源询价")} ${sourceRfqNumber}`,
+        onClick: () => navigateWithReturn("procurement:rfq", { entityType: "rfq", entityId: selectedPO.sourceRfq }, sourceRfqNumber),
       }] : []),
       ...(firstGrn ? [{ key: "receiving", label: copy("查看收货单"), onClick: () => openReceipt(firstGrn.grn) }] : []),
       ...(firstInvoice ? [{ key: "invoice", label: copy("查看采购发票"), onClick: focusFulfillmentEvidence }] : []),
       { key: "match", label: copy("查看三单匹配"), onClick: focusFulfillmentEvidence },
     ];
     const overviewFields: OverviewField[] = [
-      { label: copy("PO 编号"), value: selectedPO.po },
+      { label: copy("PO 编号"), value: selectedPONumber },
       { label: copy("状态"), value: <POStatusPill status={selectedPO.status} /> },
-      { label: copy("来源 PR"), value: copy(selectedPO.sourceRequest || "未从采购申请创建") },
+      { label: copy("来源 PR"), value: selectedPO.sourceRequest ? sourceRequestNumber : copy("未从采购申请创建") },
       // A PO need not come from a request or an RFQ: neither is a gap (owner, 2026-11-03).
-      { label: copy("来源 RFQ"), value: copy(selectedPO.sourceRfq || (selectedPO.sourceRequest ? "未经询价，由采购申请创建" : "未经询价")) },
+      { label: copy("来源 RFQ"), value: selectedPO.sourceRfq ? sourceRfqNumber : copy(selectedPO.sourceRequest ? "未经询价，由采购申请创建" : "未经询价") },
       { label: supplierLabel, value: selectedPO.supplier },
       { label: copy("采购负责人"), value: selectedPO.owner },
       { label: copy("创建日期"), value: day(selectedPO.created) },
@@ -1136,7 +1156,7 @@ export default function PurchasingOrdersPage({
     return (
       <DocumentShell
         title={copy("采购订单 / PO")}
-        documentNo={selectedPO.po}
+        documentNo={selectedPONumber}
         moduleLabel="采购订单证据"
         status={selectedPO.status}
         statusTone={poStatusToneOf(selectedPO.status)}
@@ -1387,7 +1407,7 @@ export default function PurchasingOrdersPage({
                 return (
                   <tr key={order.po} className={listRowClass} style={listRowStyle(index, filtered.length)}>
                     <td className={`${tdIdClass} sticky left-0 z-10 truncate bg-white`}>
-                      <BusinessEntityLink entityType="purchase_order" entityId={order.po} className={tableLinkClass}>{order.po}</BusinessEntityLink>
+                      <BusinessEntityLink entityType="purchase_order" entityId={order.po} number={purchaseOrderNumber(order)} className={tableLinkClass} />
                     </td>
                     <td className={`${tdNameClass} truncate font-medium`} title={order.supplier}><BusinessEntityLink entityType="supplier" entityId={order.supplier}>{order.supplier}</BusinessEntityLink></td>
                     <td className={tdNowrapClass}><POStatusPill status={order.status} /></td>
@@ -1409,8 +1429,8 @@ export default function PurchasingOrdersPage({
                           {firstGrn && <button onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, firstGrn.grn)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开收货记录")}</button>}
                           {firstInvoice && canOpenRoute("procurement:bills") && <button onClick={() => navigateOrderWithReturn(order, "procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开采购发票")}</button>}
                           {canOpenRoute("procurement:match") && <button onClick={() => navigateOrderWithReturn(order, "procurement:match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开三单匹配")}</button>}
-                          {order.sourceRequest && <button onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, order.sourceRequest)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开来源 PR")}</button>}
-                          {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, order.sourceRfq)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开来源 RFQ")}</button>}
+                          {order.sourceRequest && <button onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, documentNumberFor("purchase_request", order.sourceRequest, order.prNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开来源 PR")}</button>}
+                          {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, documentNumberFor("rfq", order.sourceRfq, order.rfqNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开来源 RFQ")}</button>}
                         </div></details>
                       </div>
                     </td>

@@ -22,8 +22,6 @@ export const outboundEnglish: Record<string, string> = {
   "历史出库事实不一致，系统已阻止冲销。": "Past outbound records do not match, so the reversal was blocked.",
   "已有客户发票对此发货开票，不能再冲销。如需收回货物，请使用客户退货和贷项通知单。":
     "A customer invoice already bills this shipment, so it can no longer be reversed. To take the goods back, use a customer return and credit note.",
-  "发货单号已存在，请更换号码。": "This shipment number is already in use. Choose another.",
-  "销售订单号已存在，请更换号码。": "This sales order number is already in use. Choose another.",
   "当前订单状态不允许此操作。": "The order's current status does not allow this action.",
   "订单物料与当前工作区主数据不一致。": "The order's items do not match this workspace's item master.",
   "返回销售订单列表": "Back to sales orders",

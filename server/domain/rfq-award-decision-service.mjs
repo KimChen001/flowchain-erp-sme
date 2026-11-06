@@ -70,11 +70,14 @@ function replayExecution(row, requestHash) {
   return { ...row.resultPayload, idempotentReplay: true };
 }
 
-function mapAward(row) {
+// rfqNumber: the number the RFQ shows; RFQs created before numbering show
+// their id.
+function mapAward(row, rfq = null) {
   return {
     entityType: "RfqAwardDecision",
     entityId: row.id,
     rfqId: row.rfqId,
+    rfqNumber: text(rfq?.number) || row.rfqId,
     supplierId: row.supplierId,
     quotationId: row.quotationId,
     quotationRevisionId: row.quotationRevisionId,
@@ -201,7 +204,7 @@ export function createRfqAwardDecisionService({
           metadata: { authority: "human_reviewed_exact_quotation_revision", eligibility: eligibility.state },
         } });
         inject("after_award_create");
-        const result = mapAward(award);
+        const result = mapAward(award, rfq);
 
         await tx.auditLog.create({ data: {
           id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: SOURCE, module: "procurement",
@@ -263,10 +266,10 @@ export function createRfqAwardDecisionService({
     const client = await db();
     const actor = await actorFor(client, context, "procurement.prices.read");
     const targetRfqId = canonicalId(rfqId, "RFQ_ID_INVALID", "rfqId");
-    const rfq = await client.rfq.findFirst({ where: { tenantId: actor.tenantId, id: targetRfqId }, select: { id: true } });
+    const rfq = await client.rfq.findFirst({ where: { tenantId: actor.tenantId, id: targetRfqId }, select: { id: true, number: true } });
     if (!rfq) fail("RFQ_NOT_FOUND", "RFQ was not found.", 404);
     const award = await client.rfqAwardDecision.findUnique({ where: { tenantId_rfqId: { tenantId: actor.tenantId, rfqId: targetRfqId } } });
-    return { awardDecision: award ? mapAward(award) : null };
+    return { awardDecision: award ? mapAward(award, rfq) : null };
   }
 
   return { createAwardDecision, getAwardDecision };

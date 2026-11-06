@@ -102,6 +102,8 @@ export const chinese: Record<string, string> = {
   "This item already has a stock record here. Opening stock is refused if the record has any history. Choose another reason to correct it.": "该物料在此库位已有库存记录；如该记录已有任何库存历史，期初库存将被拒绝。请改用其他原因更正。",
   "This item already has stock or stock history at this location, so opening stock cannot be recorded. Use another reason to correct it.": "该物料在此库位已有库存或库存历史，不能录入期初库存。请改用其他原因更正。",
   opening_balance: "期初库存",
+  // A new document's number is assigned by the server when it is saved.
+  "Assigned when you save": "保存时自动生成",
 };
 
 export const englishCodes: Record<string, string> = {

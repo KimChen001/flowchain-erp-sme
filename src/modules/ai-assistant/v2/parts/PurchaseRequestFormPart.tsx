@@ -519,7 +519,7 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
       const { created } = outcome;
       // A replay returns the request as it was first created; it may have been submitted or cancelled since.
       const current = created.idempotentReplay ? await apiJson<PrReceipt>(`/api/procurement/requests/${encodeURIComponent(created.id)}`) : created;
-      record({ id: current.id || created.id, version: current.version, status: current.status || "draft", ...(addedLinksRef.current.length ? { addedSupplierLinks: addedLinksRef.current } : {}) });
+      record({ id: current.id || created.id, number: current.number || created.number, version: current.version, status: current.status || "draft", ...(addedLinksRef.current.length ? { addedSupplierLinks: addedLinksRef.current } : {}) });
     } catch (failure) {
       setError(errorText(failure, copy));
     } finally {
@@ -533,7 +533,7 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
     setError("");
     try {
       const next = await apiJson<PrReceipt>(`/api/procurement/requests/${encodeURIComponent(receipt.id)}/${action}`, { method: "POST", body: JSON.stringify({ expectedVersion: receipt.version }) });
-      record({ id: next.id || receipt.id, version: next.version, status: next.status || receipt.status });
+      record({ id: next.id || receipt.id, number: next.number || receipt.number, version: next.version, status: next.status || receipt.status });
     } catch (failure) {
       setError(errorText(failure, copy));
     } finally {
@@ -546,8 +546,8 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
     <button type="button" data-testid={testId} onClick={onClick} disabled={busy} className={linkClass} style={{ color: A.blue }}>{label}</button>;
 
   if (receipt) {
-    const chip = <RefChip value={{ type: "purchase_request", id: receipt.id, label: receipt.id }} onNavigate={onNavigate} />;
-    const open = onNavigate ? secondary(copy.t("ai.v2.form.open"), () => onNavigate(REQUEST_ROUTE, { entityType: "purchase_request", entityId: receipt.id }, { returnTo: "ai", source: "ai", entityLabel: receipt.id }), "ai-v2-pr-open") : null;
+    const chip = <RefChip value={{ type: "purchase_request", id: receipt.id, label: receipt.number || receipt.id }} onNavigate={onNavigate} />;
+    const open = onNavigate ? secondary(copy.t("ai.v2.form.open"), () => onNavigate(REQUEST_ROUTE, { entityType: "purchase_request", entityId: receipt.id }, { returnTo: "ai", source: "ai", entityLabel: receipt.number || receipt.id }), "ai-v2-pr-open") : null;
     const draft = receipt.status === "draft";
     const submitted = receipt.status === "submitted" || receipt.status === "pending_approval";
     return (

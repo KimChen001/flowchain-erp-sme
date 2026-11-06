@@ -91,7 +91,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
           const lines = row.lines || [];
           const suppliers = [...new Set(lines.map(line => line.supplierSnapshot?.supplierName).filter(Boolean))] as string[];
           const needBy = lines.map(line => line.needByDate).filter(Boolean).sort()[0] || row.defaultNeedByDate;
-          return { id: row.id, kind: "purchase_request", status: row.status, bucket: row.status === "submitted" ? "approval" : "tracking", amount: row.totalAmount, currency: row.defaultCurrency, item: lines[0]?.itemNameSnapshot || lines[0]?.sku || "", moreLines: Math.max(lines.length - 1, 0), supplier: suppliers.join(", "), dueDate: needBy };
+          return { id: row.id, number: row.number || row.id, kind: "purchase_request", status: row.status, bucket: row.status === "submitted" ? "approval" : "tracking", amount: row.totalAmount, currency: row.defaultCurrency, item: lines[0]?.itemNameSnapshot || lines[0]?.sku || "", moreLines: Math.max(lines.length - 1, 0), supplier: suppliers.join(", "), dueDate: needBy };
         }),
         ...orders
           // A fully received, closed or cancelled order needs no more purchasing work.
@@ -102,6 +102,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
             const hasMatchException = relatedInvoices.some(invoice => /差异|异常|待处理|variance/i.test(String(invoice.matchStatus || "")));
             return {
               id: row.id,
+              number: row.number || row.id,
               kind: "purchase_order",
               status: row.status,
               transmissionStatus: row.transmissionStatus,
@@ -132,7 +133,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
     .filter(row => inQueue(row, queue))
     .filter(row => !type || row.kind === type)
     .filter(row => !status || row.status === status)
-    .filter(row => !needle || [row.id, row.item, row.supplier].some(value => String(value || "").toLowerCase().includes(needle)))
+    .filter(row => !needle || [row.number, row.id, row.item, row.supplier].some(value => String(value || "").toLowerCase().includes(needle)))
     .sort((left, right) => Number(right.bucket === "approval") - Number(left.bucket === "approval") || Number(Boolean(right.signals?.length)) - Number(Boolean(left.signals?.length)));
   const count = (name: Queue) => rows.filter(row => inQueue(row, name)).length;
   const reset = () => { setQuery(""); setType(""); setStatus(""); setQueue("all"); };
@@ -209,7 +210,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
               {state === "loaded" && shown.map((row, index) => (
                 <tr key={`${row.kind}:${row.id}`} className={listRowClass} style={listRowStyle(index, shown.length)}>
                   <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
-                    <EntityLink kind={row.kind} id={row.id} className={tableLinkClass}>{row.id}</EntityLink>
+                    <EntityLink kind={row.kind} id={row.id} number={row.number} className={tableLinkClass} />
                     <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr(row.kind === "purchase_request" ? "request" : "order")}</div>
                   </td>
                   <td className={`${tdNameClass} max-w-[220px]`}>

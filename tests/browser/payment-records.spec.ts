@@ -88,25 +88,28 @@ test("a customer payment settles the receivable of an issued invoice", async ({ 
   await signIn(page, "manager@example.com");
   await page.goto("/app/sales/invoices/new?shipment=finance-browser-shipment-USD");
   await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("finance-browser-shipment-USD");
-  await page.getByTestId("customer-invoice-number").fill("UI-PAY-INV");
+  // No number to type: the server assigns CI-YYYYMM-NNNN when the draft is saved.
   await page.getByTestId("customer-invoice-due").fill("2026-11-15");
   await page.getByTestId("customer-invoice-preview").click();
   await expect(page.getByTestId("customer-invoice-create")).toBeEnabled();
   await page.getByTestId("customer-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/sales\/invoices\/[0-9a-f-]{36}$/);
+  const numberHeading = page.getByTestId("customer-invoice-detail").getByRole("heading", { name: /^CI-\d{6}-\d{4,}$/ });
+  await expect(numberHeading).toBeVisible();
+  const invoiceNumber = (await numberHeading.innerText()).trim();
   await run(page, "customer-invoice-submit");
   await run(page, "customer-invoice-approve");
   await run(page, "customer-invoice-issue");
 
   const receivable = page.getByTestId("customer-invoice-receivable");
-  await expect(receivable).toContainText("AR-UI-PAY-INV");
+  await expect(receivable).toContainText(`AR-${invoiceNumber}`);
   await recordPayment(page, { reference: "WIRE-77", status: /Paid|已结清/ });
   await expect(receivable.getByTestId("payment-row")).toHaveCount(1);
   await expect(receivable).toContainText(/Paid|已结清/);
 
   await page.goto("/app/finance/receivables");
-  const row = page.getByTestId("receivables-workbench").getByRole("row").filter({ hasText: "UI-PAY-INV" });
+  const row = page.getByTestId("receivables-workbench").getByRole("row").filter({ hasText: invoiceNumber });
   await expect(row).toContainText(/Paid|已结清/);
-  await row.getByRole("link", { name: "UI-PAY-INV" }).click();
+  await row.getByRole("link", { name: invoiceNumber, exact: true }).click();
   await expect(page).toHaveURL(/\/app\/sales\/invoices\/[0-9a-f-]{36}$/);
 });

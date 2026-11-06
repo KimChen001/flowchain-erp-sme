@@ -97,9 +97,10 @@ export type PrFormProps = {
   workspaceCurrency?: string;
 };
 // The request a form created, as the procurement routes return it.
+// number: the request's document number (shown); id: its internal id (links and calls).
 // addedSupplierLinks: the item-supplier links this form created before the
 // request, reported with it so the server can say they were added.
-export type PrReceipt = { id: string; version: number; status: string; addedSupplierLinks?: string[] };
+export type PrReceipt = { id: string; number?: string; version: number; status: string; addedSupplierLinks?: string[] };
 
 // The first-day checklist (setup_steps), as Today shows it.
 export type SetupStepId = "items" | "suppliers" | "customers" | "opening_stock" | "teammates";

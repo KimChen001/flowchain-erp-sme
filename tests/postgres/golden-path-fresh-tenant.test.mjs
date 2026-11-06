@@ -321,7 +321,9 @@ step('9. a sales order for valves is entered, confirmed, reserved and shipped', 
   assert.ok(customer, 'the imported customer is offered on the order form')
   assert.equal(customer.name, CUSTOMER.name)
   assert.equal(customer.currency, 'USD')
-  const created = expectStatus(await api('POST', '/api/sales/orders', { orderNumber: 'SO-GP-1001', customerId: customer.id, currency: customer.currency, idempotencyKey: key('so'), lines: [{ itemId: state.items[VALVE.sku], quantity: String(SHIPPED[VALVE.sku].quantity), unitPrice: SALE_PRICE }] }), 201)
+  // The form sends no order number; the server assigns SO-YYYYMM-NNNN.
+  const created = expectStatus(await api('POST', '/api/sales/orders', { customerId: customer.id, currency: customer.currency, idempotencyKey: key('so'), lines: [{ itemId: state.items[VALVE.sku], quantity: String(SHIPPED[VALVE.sku].quantity), unitPrice: SALE_PRICE }] }), 201)
+  assert.match(created.order.orderNumber, /^SO-\d{6}-\d{4,}$/)
   assert.equal(created.order.customerId, customer.id)
   assert.equal(created.order.customerName, CUSTOMER.name)
   state.soId = created.order.id
@@ -334,11 +336,12 @@ step('9. a sales order for valves is entered, confirmed, reserved and shipped', 
   const reserved = expectStatus(await api('POST', `/api/sales/orders/${state.soId}/reservations/reserve`, { expectedOrderVersion: workbench.order.version, idempotencyKey: key('so-reserve'), allocations: [allocation] }), 200)
   const reservationId = reserved.reservations[0].id
   workbench = expectStatus(await api('GET', `/api/sales/orders/${state.soId}/workbench`), 200)
-  const shipment = { shipmentNumber: 'SHIP-GP-1001', lines: [{ salesOrderLineId: state.soLineId, allocations: [{ reservationId, quantity: String(SHIPPED[VALVE.sku].quantity) }] }] }
+  const shipment = { lines: [{ salesOrderLineId: state.soLineId, allocations: [{ reservationId, quantity: String(SHIPPED[VALVE.sku].quantity) }] }] }
   const draftPreview = expectStatus(await api('POST', `/api/sales/orders/${state.soId}/shipments/preview`, shipment), 200)
   assert.equal(draftPreview.allowed, true, JSON.stringify(draftPreview.blockingIssues))
   const drafted = expectStatus(await api('POST', `/api/sales/orders/${state.soId}/shipments`, { ...shipment, expectedOrderVersion: workbench.order.version, idempotencyKey: key('ship') }), 201)
   state.shipmentId = drafted.shipment.id
+  assert.match(drafted.shipment.shipmentNumber, /^DN-\d{6}-\d{4,}$/)
   const postPreview = expectStatus(await api('POST', `/api/sales/shipments/${state.shipmentId}/post-preview`, {}), 200)
   assert.equal(postPreview.allowed, true, JSON.stringify(postPreview.blockingIssues))
   const posted = expectStatus(await api('POST', `/api/sales/shipments/${state.shipmentId}/post`, { expectedShipmentVersion: drafted.shipment.version, idempotencyKey: key('ship-post') }), 200)
@@ -349,8 +352,9 @@ step('10. the customer invoice for the shipment is issued and the customer payme
   const entry = expectStatus(await api('GET', '/api/finance/entry-data'), 200)
   const shipment = (entry.postedShipments || []).find((row) => row.id === state.shipmentId)
   assert.ok(shipment, `the posted shipment is offered for invoicing: ${JSON.stringify(entry.postedShipments)?.slice(0, 800)}`)
+  // No invoice number: the server assigns CI-YYYYMM-NNNN when the draft is created.
   const invoice = {
-    invoiceNumber: 'INV-GP-1001', shipmentId: state.shipmentId, currency: shipment.currency || 'USD',
+    shipmentId: state.shipmentId, currency: shipment.currency || 'USD',
     invoiceDate: midnight(workspaceDay()), dueDate: midnight(workspaceDay(30)),
     lines: shipment.lines.map((line) => ({ shipmentLineId: line.id, quantity: String(SHIPPED[VALVE.sku].quantity), enteredTaxAmount: '0' })),
   }
@@ -360,6 +364,7 @@ step('10. the customer invoice for the shipment is issued and the customer payme
   assert.equal(num(preview.invoice.totalAmount), expectedTotal)
   const created = expectStatus(await api('POST', '/api/finance/customer-invoices', { ...invoice, idempotencyKey: key('inv') }), 201)
   const invoiceId = created.invoice?.id || created.entityId
+  assert.match(created.invoice.invoiceNumber, /^CI-\d{6}-\d{4,}$/)
   expectStatus(await api('POST', `/api/finance/customer-invoices/${invoiceId}/submit`, { expectedVersion: 0, idempotencyKey: key('inv-submit') }), 200)
   expectStatus(await api('POST', `/api/finance/customer-invoices/${invoiceId}/approve`, { expectedVersion: 1, idempotencyKey: key('inv-approve') }), 200)
   const issued = expectStatus(await api('POST', `/api/finance/customer-invoices/${invoiceId}/issue`, { expectedVersion: 2, idempotencyKey: key('inv-issue') }), 200)

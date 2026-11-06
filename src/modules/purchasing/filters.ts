@@ -84,7 +84,8 @@ export function purchaseOrderMatchesWorkbenchFilters(
   order: PurchaseOrder,
   filters: PurchaseOrderWorkbenchFilters,
 ) {
-  if (!containsText(order.po, filters.poNumber)) return false;
+  // The PO filter finds an order by its document number or its id.
+  if (![order.number, order.orderNumber, order.po].some((value) => containsText(value, filters.poNumber))) return false;
   if (!containsText(order.supplier, filters.supplier)) return false;
   if (!orderMatchesSkuOrItem(order, filters.skuOrItem)) return false;
   if (filters.status !== "全部" && order.status !== filters.status) return false;

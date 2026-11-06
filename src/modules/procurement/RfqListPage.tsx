@@ -100,7 +100,7 @@ export function RfqListPage() {
     (!status || row.status === status)
     && (!quotes || (quotes === "complete" ? quotesIn(row) : !quotesIn(row)))
     && (!due || dueSoon(row))
-    && (!needle || [row.id, row.title, row.itemName, row.category].some((value) => String(value || "").toLowerCase().includes(needle))),
+    && (!needle || [row.number, row.id, row.title, row.itemName, row.category].some((value) => String(value || "").toLowerCase().includes(needle))),
   );
   const reset = () => {
     setQuery("");
@@ -181,9 +181,9 @@ export function RfqListPage() {
                         to={`/app/procurement/rfq/${encodeURIComponent(row.id || "")}`}
                         data-testid={`rfq-id-link-${row.id}`}
                       >
-                        {row.id}
+                        {row.number || row.id}
                       </Link>
-                      {row.linkedPr && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr("fromRequest")} <EntityLink kind="purchase_request" id={row.linkedPr} className="text-[11px] font-medium">{row.linkedPr}</EntityLink></div>}
+                      {row.linkedPr && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr("fromRequest")} <EntityLink kind="purchase_request" id={row.linkedPr} number={row.prNumber} className="text-[11px] font-medium" /></div>}
                     </td>
                     <td className={`${tdNameClass} max-w-[280px]`}>
                       <div className="truncate font-medium" style={{ color: A.label }} title={row.title}>{row.title || "—"}</div>

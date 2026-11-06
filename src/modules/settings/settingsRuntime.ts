@@ -4,7 +4,7 @@ import type { DocumentSettings } from '../../../shared/business-documents.mjs';
 export type SettingsRuntime = {
   company: { companyName: string; workspaceName: string; timezone: string; currency: string; locale: string; defaultLanguage?: string };
   roles: { users: Array<{ id: string; name: string; email: string; role: string; enabled: boolean }>; roleOptions: string[] };
-  numbering: { rules: Array<{ id: string; document: string; prefix: string; datePattern: string; separator: string; sequenceLength: number; nextSequence: number }> };
+  numbering: { rules: Array<{ id: string; document: string; prefix: string; datePattern: string; separator: string; sequenceLength: number }> };
   review: {
     policies: Array<{ id: string; name: string; enabled: boolean; reviewerRoles: string[] }>; amountThreshold: number; riskLevels: string[]; inventoryTolerancePercent: number; reviewerRoles: string[]; enabled: boolean;
     // Invoice matching tolerances, stored as decimal strings. Three-way match applies these.

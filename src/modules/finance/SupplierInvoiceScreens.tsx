@@ -10,6 +10,7 @@ import { Notice, StatusChip, TwoStepAction, button, field, message } from "./Fin
 import { PaymentRecords } from "./PaymentRecords";
 import { addCalendarDays } from "../../lib/prefill";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
+import { documentNumberFor, rememberDocumentNumbers, useDocumentNumber } from "../../lib/documentNumbers";
 
 // The supplier invoice screens of the trial's procure-to-pay chain: enter an
 // invoice against a posted receipt, then submit, match, review exceptions,
@@ -21,8 +22,9 @@ type Issue = { code?: string; message?: string; details?: unknown };
 type Plan = { allowed: boolean; blockingIssues?: Issue[]; invoice?: { totalAmount?: string; currency?: string }; nextStatus?: string };
 type EntryData = {
   suppliers: Array<{ id: string; code?: string | null; name: string; paymentTerm?: { code: string; name: string; days: number | null } | null }>;
-  purchaseOrders: Array<{ id: string; supplierId: string; currency: string; status: string; lines: Array<{ id: string; sku: string; itemName: string; orderedQuantity: string; billedQuantity: string; unitPrice: string | null; unit: string | null }> }>;
-  receivingDocuments: Array<{ id: string; documentNumber: string | null; poId: string | null; supplierId: string; supplierName: string | null; currency: string | null; lines: Array<{ id: string; purchaseOrderLineId: string | null; sku: string; itemName: string; acceptedQuantity: string; unit: string | null }> }>;
+  // number: the order's document number (shown); id: its internal id (values and calls).
+  purchaseOrders: Array<{ id: string; number?: string; supplierId: string; currency: string; status: string; lines: Array<{ id: string; sku: string; itemName: string; orderedQuantity: string; billedQuantity: string; unitPrice: string | null; unit: string | null }> }>;
+  receivingDocuments: Array<{ id: string; documentNumber: string | null; poId: string | null; poNumber?: string | null; supplierId: string; supplierName: string | null; currency: string | null; lines: Array<{ id: string; purchaseOrderLineId: string | null; sku: string; itemName: string; acceptedQuantity: string; unit: string | null }> }>;
   capabilities: Record<string, { enabled?: boolean }>;
 };
 type Order = EntryData["purchaseOrders"][number];
@@ -77,7 +79,10 @@ export function NewSupplierInvoice() {
   const [sourceNotice, setSourceNotice] = useState("");
   useEffect(() => {
     void apiJson<EntryData>("/api/finance/entry-data")
-      .then(setEntry)
+      .then((data) => {
+        rememberDocumentNumbers("purchase_order", data?.purchaseOrders, (row) => [row.id, row.number]);
+        setEntry(data);
+      })
       .catch((reason) => setNotice(message(reason, t("finance.loadFailed"))));
   }, []);
   // Opened from a receipt (?receipt=) or a purchase order (?po=): choose the
@@ -210,13 +215,13 @@ export function NewSupplierInvoice() {
           <label className="text-xs">{t("finance.purchaseOrder")}
             <select data-testid="supplier-invoice-po" className={`${field} mt-1 w-full`} value={poId} onChange={(event) => chooseOrder(event.target.value)}>
               <option value="">{t("finance.anyPurchaseOrder")}</option>
-              {orders.map((row) => <option key={row.id} value={row.id}>{row.id} · {row.currency}</option>)}
+              {orders.map((row) => <option key={row.id} value={row.id}>{row.number || row.id} · {row.currency}</option>)}
             </select>
           </label>
           <label className="text-xs">{t("finance.postedReceipt")}
             <select data-testid="supplier-invoice-receipt" className={`${field} mt-1 w-full`} value={receiptId} onChange={(event) => chooseReceipt(event.target.value)}>
               <option value="">{poId ? t("finance.noReceiptYet") : "—"}</option>
-              {receipts.map((row) => <option key={row.id} value={row.id}>{row.documentNumber || row.id} · {row.poId || "—"}{row.supplierName ? ` · ${row.supplierName}` : ""}</option>)}
+              {receipts.map((row) => <option key={row.id} value={row.id}>{row.documentNumber || row.id} · {documentNumberFor("purchase_order", row.poId, row.poNumber) || "—"}{row.supplierName ? ` · ${row.supplierName}` : ""}</option>)}
             </select>
           </label>
           <label className="text-xs">{t("finance.invoiceNumber")}
@@ -274,7 +279,7 @@ type LinkPlan = Plan & { warnings?: Issue[]; receipt?: { documentNumber?: string
 
 // A bill recorded before the goods arrived is linked to its receipt once the
 // warehouse posts it; only then can it be matched, approved and paid.
-function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: number; relatedPoId: string; receiptCandidates?: Array<{ id: string; documentNumber: string | null }> }; onDone: () => void }) {
+function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: number; relatedPoId: string; relatedPoNumber?: string; poNumber?: string; receiptCandidates?: Array<{ id: string; documentNumber: string | null }> }; onDone: () => void }) {
   const { t } = useI18n();
   const candidates = invoice.receiptCandidates || [];
   const [open, setOpen] = useState(false);
@@ -282,9 +287,10 @@ function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: numb
   const [plan, setPlan] = useState<LinkPlan | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const poNumber = useDocumentNumber("purchase_order", invoice.relatedPoId, invoice.relatedPoNumber || invoice.poNumber);
   const base = `/api/finance/supplier-invoices/${encodeURIComponent(invoice.id)}`;
   const body = () => ({ expectedVersion: invoice.version, receivingDocumentId: receiptId });
-  if (!candidates.length) return <p className="text-xs text-slate-500" data-testid="link-receipt-none">{t("finance.noReceiptToLink", { po: invoice.relatedPoId })}</p>;
+  if (!candidates.length) return <p className="text-xs text-slate-500" data-testid="link-receipt-none">{t("finance.noReceiptToLink", { po: poNumber })}</p>;
   if (!open) return <button type="button" data-testid="link-receipt" className={`${button} text-white`} style={{ background: A.blue }} onClick={() => setOpen(true)}>{t("finance.action.link_receipt")}</button>;
   const preview = async () => {
     setError("");
@@ -526,7 +532,7 @@ export function SupplierInvoiceDetail() {
             <h2 className="font-semibold">{data.invoiceNumber}</h2>
             <p className="mt-1 text-sm text-slate-500" data-testid="supplier-invoice-sources">
               {data.supplierName || "—"}
-              {" · "}{t("finance.purchaseOrder")} {data.relatedPoId ? <BusinessEntityLink entityType="purchase_order" entityId={data.relatedPoId} /> : "—"}
+              {" · "}{t("finance.purchaseOrder")} {data.relatedPoId ? <BusinessEntityLink entityType="purchase_order" entityId={data.relatedPoId} number={data.relatedPoNumber || data.poNumber} /> : "—"}
               {" · "}{t("finance.receipt")} {data.relatedGrnId ? <BusinessEntityLink entityType="receiving_doc" entityId={data.relatedGrnId}>{data.relatedGrnNumber || data.relatedGrnId}</BusinessEntityLink> : data.awaitingReceipt ? <span className="font-medium text-amber-700">{t("finance.awaitingReceipt")}</span> : "—"}
               {data.relatedPoId && <>{" · "}<BusinessEntityLink entityType="three_way_match" entityId={`MATCH-${data.id}`}>{t("finance.threeWayMatch")}</BusinessEntityLink></>}
             </p>

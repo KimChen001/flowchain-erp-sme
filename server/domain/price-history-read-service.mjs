@@ -66,7 +66,7 @@ counted AS (
     scope."supplierId" AS "scopeSupplierId",
     line.id AS "lineId",
     po.id AS "purchaseOrderId",
-    po.metadata->>'orderNumber' AS "orderNumber",
+    COALESCE(po."number", po.metadata->>'orderNumber', po.id) AS "orderNumber",
     po."supplierId" AS "supplierId",
     po."supplierName" AS "supplierName",
     line."itemId" AS "itemId",
@@ -131,7 +131,7 @@ const LAST_ORDER_SQL = `
 SELECT DISTINCT ON (po."supplierId")
   po."supplierId" AS "supplierId",
   po.id AS "purchaseOrderId",
-  po.metadata->>'orderNumber' AS "orderNumber",
+  COALESCE(po."number", po.metadata->>'orderNumber', po.id) AS "orderNumber",
   po."issuedAt" AS "issuedAt",
   po."createdAt" AS "createdAt",
   po.status AS status,

@@ -2,7 +2,9 @@ import { createHash, randomUUID } from 'node:crypto'
 import { assertAuthorized } from '../auth/authorization-service.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { isTransactionConflict } from '../persistence/transaction-conflict.mjs'
+import { allocateDocumentNumber } from './document-numbering.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
+import { isPrismaConcurrencyError } from './prisma-concurrency-error.mjs'
 import { loadContractView, workspaceDay } from './contract-read-service.mjs'
 import {
   CONTRACT_FILE_MAX_BYTES,
@@ -64,7 +66,7 @@ function assertStatus(row, allowed, code = 'INVALID_STATE_TRANSITION', message) 
 
 const changedFields = (before, after) => Object.fromEntries(Object.keys(after).filter((key) => before[key] !== after[key]).map((key) => [key, { before: before[key], after: after[key] }]))
 
-export function createContractCommandService({ prisma, env = process.env, idFactory = randomUUID, numberFactory = () => `CT-${randomUUID().slice(0, 8).toUpperCase()}`, now = () => new Date() } = {}) {
+export function createContractCommandService({ prisma, env = process.env, idFactory = randomUUID, now = () => new Date() } = {}) {
   const db = async () => prisma || getPrismaClient(env)
   const actorFor = async (client, context) => {
     const actor = await resolveProvisionedActor(client, context?.identity || context)
@@ -117,7 +119,7 @@ export function createContractCommandService({ prisma, env = process.env, idFact
           const committed = replay(await client.businessCommandExecution.findUnique({ where }))
           if (committed) return finish(committed)
         }
-        if (isTransactionConflict(error) && attempt < MAX_ATTEMPTS) {
+        if ((isTransactionConflict(error) || isPrismaConcurrencyError(error)) && attempt < MAX_ATTEMPTS) {
           await new Promise((resolve) => setTimeout(resolve, 25 * attempt))
           continue
         }
@@ -167,13 +169,14 @@ export function createContractCommandService({ prisma, env = process.env, idFact
     return user?.id ?? null
   }
 
-  async function uniqueNumber(tx, tenantId) {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const number = numberFactory()
-      if (!(await tx.contract.findFirst({ where: { tenantId, number }, select: { id: true } }))) return number
-    }
-    return fail('CONTRACT_NUMBER_UNAVAILABLE', 'A contract number could not be assigned. Try again.', 409)
-  }
+  // The workspace's next contract number (CT-YYYYMM-NNNN), assigned in the
+  // creating transaction; nobody types it. Contracts saved at once advance
+  // the same sequence row, and the loser of that race is retried above.
+  // The number on the signed document stays in externalReference.
+  const nextNumber = (tx, tenantId) => allocateDocumentNumber(tx, {
+    tenantId, documentType: 'contract', at: now(),
+    isTaken: async (number) => Boolean(await tx.contract.findFirst({ where: { tenantId, number }, select: { id: true } })),
+  })
 
   const storedFields = (values) => {
     const data = {}
@@ -198,7 +201,7 @@ export function createContractCommandService({ prisma, env = process.env, idFact
         const ownerId = Object.prototype.hasOwnProperty.call(values, 'ownerId') ? values.ownerId : await activeUserOrNull(tx, actor.tenantId, supplier?.businessOwnerId)
         const merged = await withCurrency(tx, actor.tenantId, { ...values, ownerId })
         const id = idFactory()
-        const number = await uniqueNumber(tx, actor.tenantId)
+        const number = await nextNumber(tx, actor.tenantId)
         const row = await tx.contract.create({ data: { id, tenantId: actor.tenantId, number, counterpartyType: 'supplier', status: 'draft', ...storedFields(merged), createdById: actor.user.id, updatedById: actor.user.id } })
         return { result: { contractId: row.id, number }, entityId: row.id, audit: { action: 'contract_created', summary: `Created contract ${number}.`, metadata: { number, version: row.version, after: contractSnapshot(row) } } }
       },
@@ -335,7 +338,7 @@ export function createContractCommandService({ prisma, env = process.env, idFact
           paymentTermsId: old.paymentTermsId, currency: old.currency, totalValue: old.totalValue,
         }
         const renewalId = idFactory()
-        const number = await uniqueNumber(tx, actor.tenantId)
+        const number = await nextNumber(tx, actor.tenantId)
         const created = await tx.contract.create({ data: { id: renewalId, tenantId: actor.tenantId, number, counterpartyType: row.counterpartyType, status: 'draft', ...storedFields(prefill), renewsContractId: row.id, createdById: actor.user.id, updatedById: actor.user.id } })
         await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: SOURCE, module: 'contracts', entityType: 'Contract', entityId: created.id, action: 'contract_created', summary: `Created contract ${number} to renew ${row.number}.`, metadata: { number, version: created.version, renewsContractId: row.id, renewsNumber: row.number, after: contractSnapshot(created) } } })
         return { result: { contractId: created.id, number, renewsContractId: row.id }, entityId: row.id, audit: { action: 'contract_renewed', summary: `Started renewal ${number} of contract ${row.number}.`, metadata: { number: row.number, version: row.version, renewalId: created.id, renewalNumber: number } } }

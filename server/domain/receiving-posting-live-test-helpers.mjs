@@ -107,6 +107,9 @@ export async function cleanupReceivingScenario(prisma, scenario) {
   await prisma.supplier.deleteMany({ where: { tenantId } })
   await prisma.warehouseLocation.deleteMany({ where: { tenantId } })
   await prisma.warehouse.deleteMany({ where: { tenantId } })
+  // Documents created through the commands advanced the workspace's number
+  // sequences (document-numbering.mjs), which hold on to the tenant.
+  await prisma.documentNumberSequence.deleteMany({ where: { tenantId } })
   await prisma.tenant.deleteMany({ where: { id: tenantId } })
 }
 

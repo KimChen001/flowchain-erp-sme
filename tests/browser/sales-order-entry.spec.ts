@@ -25,6 +25,8 @@ test("a sales order is placed for a customer from Customers, with two lines, and
   await page.goto("/app/sales/orders/new");
   const create = page.getByTestId("create-sales-order");
   await expect(page.getByTestId("sales-order-entry")).toBeVisible();
+  // No order number to type: the server assigns SO-YYYYMM-NNNN on save.
+  await expect(page.getByTestId("sales-order-number-on-save")).toHaveText("Order number: assigned when you save");
   // No free-text customer: the customer is chosen from Customers.
   await expect(page.getByLabel("Customer", { exact: true }).locator("option")).toHaveText([
     "Choose a customer",
@@ -50,6 +52,7 @@ test("a sales order is placed for a customer from Customers, with two lines, and
   await create.click();
 
   await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();
+  await expect(page.getByTestId("outbound-order-workbench").getByRole("heading", { level: 1 })).toHaveText(/^SO-\d{6}-\d{4,}$/);
   await expect(page.getByText("Playwright Customer").first()).toBeVisible();
   await expect(page.getByTestId("sales-order-line-price")).toHaveCount(2);
 

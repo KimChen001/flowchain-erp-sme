@@ -18,7 +18,8 @@ test('the readers keep every open RFQ without an award, with its quotes and invi
   const { facts } = await answers()
   // RFQ-002 is awarded, so only RFQ-001 is open; ready to award is unchanged.
   assert.deepEqual(facts.rfqs.open.map((row) => [row.id, row.responses, row.invited, row.awarded]), [['RFQ-001', 2, 2, false]])
-  assert.deepEqual(facts.rfqs.readyToAward, [{ id: 'RFQ-001', title: 'Flow Controller RFQ', responses: 2, awarded: false, due: null }])
+  // number: what the RFQ shows; one created before numbering shows its id.
+  assert.deepEqual(facts.rfqs.readyToAward, [{ id: 'RFQ-001', number: 'RFQ-001', title: 'Flow Controller RFQ', responses: 2, awarded: false, due: null }])
 })
 
 test('RFQ follow-ups list the quoted RFQs first and link to the RFQ', async () => {

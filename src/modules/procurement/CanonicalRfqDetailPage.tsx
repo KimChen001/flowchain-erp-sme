@@ -10,6 +10,8 @@ import { RfqSupplierResponseDialog } from "./RfqSupplierResponseDialog";
 import { useI18n } from "../../i18n/I18n";
 import { formatCalendarDay, formatDateTimeInTimeZone, formatLocaleAmount } from "../../lib/format";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
+import { useDocumentNumber } from "../../lib/documentNumbers";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import type { ProcurementQuotationRevision, ProcurementRfqDocument, ProcurementRfqQuotation } from "./procurementTypes";
 
 type ReadState = "loading" | "loaded" | "notFound" | "unauthenticated" | "forbidden" | "error" | "network" | "malformed";
@@ -217,6 +219,12 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
   const { day, when } = useRfqDates();
   const warehouseName = useWarehouseNames();
+  // Document numbers are shown; the ids stay in links and calls.
+  const rfqNumber = record.number || record.id || "";
+  const requestNumber = useDocumentNumber("purchase_request", record.linkedPr, record.prNumber);
+  const orderNumber = useDocumentNumber("purchase_order", record.linkedPo, record.poNumber);
+  // The breadcrumb names the RFQ by its number, not the id in the address.
+  useDetailCrumb(rfqNumber);
   const [editor, setEditor] = useState<{ supplier: typeof record.suppliers.knownParticipants[number]; mode: "initial" | "append" } | null>(null);
   const quotationFor = (supplierId: string) => record.quotations.find((quotation) => quotation.supplierId === supplierId) || null;
   const responseWorkflowOpen = ["open", "collecting_quotes"].includes(record.status || "");
@@ -236,8 +244,8 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: A.sub }}>RFQ · {record.id}</div>
-            <h1 className="mt-1 text-xl font-semibold">{record.title || record.id}</h1>
+            <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: A.sub }}>RFQ · {rfqNumber}</div>
+            <h1 className="mt-1 text-xl font-semibold">{record.title || rfqNumber}</h1>
             {record.description && <p className="mt-2 text-sm" style={{ color: A.sub }}>{record.description}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -254,14 +262,14 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
         </div>
         <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            [tr("RFQ 编号", "RFQ ID"), record.id],
+            [tr("RFQ 编号", "RFQ number"), rfqNumber],
             [tr("截止日期", "Due date"), day(record.dueDate)],
             [tr("币种", "Currency"), record.currency || "—"],
-            [tr("来源 PR", "Source purchase request"), record.linkedPr || "—"],
+            [tr("来源 PR", "Source purchase request"), requestNumber || "—"],
             [tr("创建时间", "Created at"), when(record.createdAt)],
             [tr("更新时间", "Updated at"), when(record.updatedAt)],
             [tr("已记录响应", "Responses recorded"), `${record.suppliers.responseRecordedCount} / ${record.suppliers.participantCount}`],
-            [tr("关联 PO", "Linked purchase order"), record.linkedPo || "—"],
+            [tr("关联 PO", "Linked purchase order"), orderNumber || "—"],
           ].map(([label, value]) => (
             <div key={label} className="rounded-lg bg-slate-50 p-3">
               <dt className="text-xs" style={{ color: A.sub }}>{label}</dt>

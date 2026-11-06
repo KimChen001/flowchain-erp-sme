@@ -4,6 +4,7 @@ import {
   resolveProvisionedActor,
 } from "./pilot-identity.mjs";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
+import { allocateDocumentNumber } from "./document-numbering.mjs";
 import {
   buildCycleCountPostingPlan,
   buildCycleCountReviewPlan,
@@ -276,7 +277,11 @@ export function createInventoryOperationsCommandService({
 } = {}) {
   if (!prisma) throw new Error("prisma is required");
 
-  async function execute(commandType, input, context, work) {
+  // `attempts` above one runs a transaction that lost a serialization
+  // conflict again. Creates use it: every create of a document type advances
+  // the workspace's number sequence for it (document-numbering.mjs), so two
+  // documents saved at once conflict and the later one takes the next number.
+  async function execute(commandType, input, context, work, { attempts = 1 } = {}) {
     assertEnabled(env);
     const identity = context?.identity || context;
     if (!identity?.authenticated || !text(identity.tenantId))
@@ -297,62 +302,94 @@ export function createInventoryOperationsCommandService({
       requestHash,
     );
     if (before) return before;
-    try {
-      return await prisma.$transaction(
-        async (tx) => {
-          const actor = await resolveProvisionedActor(tx, identity);
-          assertAuthorized({ actor, permission: commandPermissions[commandType], tenantId: actor.tenantId });
-          const inside = replay(
-            await tx.businessCommandExecution.findUnique({ where }),
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await prisma.$transaction(
+          async (tx) => {
+            const actor = await resolveProvisionedActor(tx, identity);
+            assertAuthorized({ actor, permission: commandPermissions[commandType], tenantId: actor.tenantId });
+            const inside = replay(
+              await tx.businessCommandExecution.findUnique({ where }),
+              requestHash,
+            );
+            if (inside) return inside;
+            const execution = await tx.businessCommandExecution.create({
+              data: {
+                id: idFactory(),
+                tenantId: actor.tenantId,
+                commandType,
+                idempotencyKey,
+                requestHash,
+                status: "pending",
+              },
+            });
+            const result = await work(tx, actor, payload);
+            await tx.businessCommandExecution.update({
+              where: { id: execution.id },
+              data: {
+                status: "completed",
+                entityType: result.entityType,
+                entityId: result.entityId,
+                resultPayload: result,
+                completedAt: now(),
+              },
+            });
+            return { ...result, idempotentReplay: false };
+          },
+          { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
+        );
+      } catch (error) {
+        if (
+          error instanceof InventoryOperationsError ||
+          error?.name === "PilotIdentityError"
+        )
+          throw error;
+        if (uniqueError(error)) {
+          const result = replay(
+            await prisma.businessCommandExecution.findUnique({ where }),
             requestHash,
           );
-          if (inside) return inside;
-          const execution = await tx.businessCommandExecution.create({
-            data: {
-              id: idFactory(),
-              tenantId: actor.tenantId,
-              commandType,
-              idempotencyKey,
-              requestHash,
-              status: "pending",
-            },
-          });
-          const result = await work(tx, actor, payload);
-          await tx.businessCommandExecution.update({
-            where: { id: execution.id },
-            data: {
-              status: "completed",
-              entityType: result.entityType,
-              entityId: result.entityId,
-              resultPayload: result,
-              completedAt: now(),
-            },
-          });
-          return { ...result, idempotentReplay: false };
-        },
-        { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-      );
-    } catch (error) {
-      if (
-        error instanceof InventoryOperationsError ||
-        error?.name === "PilotIdentityError"
-      )
+          if (result) return result;
+        }
+        if (concurrencyError(error) && attempt < attempts) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, 20 * attempt + Math.floor(Math.random() * 20)),
+          );
+          continue;
+        }
+        if (concurrencyError(error) || uniqueError(error))
+          fail(
+            "INVENTORY_OPERATIONS_CONCURRENT_TRANSACTION_CONFLICT",
+            "Inventory changed in another transaction. Refresh and retry.",
+            409,
+          );
         throw error;
-      if (uniqueError(error)) {
-        const result = replay(
-          await prisma.businessCommandExecution.findUnique({ where }),
-          requestHash,
-        );
-        if (result) return result;
       }
-      if (concurrencyError(error) || uniqueError(error))
-        fail(
-          "INVENTORY_OPERATIONS_CONCURRENT_TRANSACTION_CONFLICT",
-          "Inventory changed in another transaction. Refresh and retry.",
-          409,
-        );
-      throw error;
     }
+  }
+
+  // The workspace's next number for a transfer, count or adjustment
+  // (TR-, CC-, ADJ-YYYYMM-NNNN), assigned in the creating transaction. A
+  // number the client sends is ignored; nobody types or edits it.
+  const NUMBER_FIELDS = Object.freeze({
+    stock_transfer: { model: "stockTransferDocument", field: "transferNumber" },
+    cycle_count: { model: "cycleCountSession", field: "countNumber" },
+    inventory_adjustment: { model: "inventoryAdjustmentDocument", field: "adjustmentNumber" },
+  });
+  function nextNumber(tx, actor, documentType) {
+    const { model, field } = NUMBER_FIELDS[documentType];
+    return allocateDocumentNumber(tx, {
+      tenantId: actor.tenantId,
+      documentType,
+      at: now(),
+      isTaken: async (number) =>
+        Boolean(
+          await tx[model].findFirst({
+            where: { tenantId: actor.tenantId, [field]: number },
+            select: { id: true },
+          }),
+        ),
+    });
   }
 
   async function validateTransferLines(
@@ -479,20 +516,8 @@ export function createInventoryOperationsCommandService({
       input,
       context,
       async (tx, actor, payload) => {
-        const transferNumber = text(payload.transferNumber);
-        if (!transferNumber)
-          fail("TRANSFER_INVALID_ROUTE", "transferNumber is required.", 422);
-        if (
-          await tx.stockTransferDocument.findFirst({
-            where: { tenantId: actor.tenantId, transferNumber },
-          })
-        )
-          fail(
-            "TRANSFER_NUMBER_CONFLICT",
-            "Transfer number is already in use.",
-            409,
-          );
         const lines = await validateTransferLines(tx, actor, payload.lines);
+        const transferNumber = await nextNumber(tx, actor, "stock_transfer");
         const transfer = await tx.stockTransferDocument.create({
           data: {
             id: idFactory(),
@@ -543,6 +568,7 @@ export function createInventoryOperationsCommandService({
           transfer,
         });
       },
+      { attempts: 5 },
     );
   }
 
@@ -1077,15 +1103,14 @@ export function createInventoryOperationsCommandService({
       input,
       context,
       async (tx, actor, payload) => {
-        const countNumber = text(payload.countNumber),
-          warehouseId = text(payload.warehouseId),
+        const warehouseId = text(payload.warehouseId),
           balanceIds = [
             ...new Set((payload.balanceIds || []).map(text).filter(Boolean)),
           ];
-        if (!countNumber || !warehouseId || !balanceIds.length)
+        if (!warehouseId || !balanceIds.length)
           fail(
             "COUNT_LINE_INCOMPLETE",
-            "Count number, warehouse, and balance lines are required.",
+            "A warehouse and balance lines are required.",
             422,
           );
         assertWarehouseAccess(actor, [warehouseId], "operate");
@@ -1098,12 +1123,6 @@ export function createInventoryOperationsCommandService({
         });
         if (!warehouse)
           fail("COUNT_NOT_FOUND", "Count warehouse was not found.", 404);
-        if (
-          await tx.cycleCountSession.findFirst({
-            where: { tenantId: actor.tenantId, countNumber },
-          })
-        )
-          fail("COUNT_NUMBER_CONFLICT", "Count number is already in use.", 409);
         const balances = await tx.inventoryBalance.findMany({
           where: {
             tenantId: actor.tenantId,
@@ -1118,6 +1137,7 @@ export function createInventoryOperationsCommandService({
             "One or more count balances were not found.",
             404,
           );
+        const countNumber = await nextNumber(tx, actor, "cycle_count");
         const session = await tx.cycleCountSession.create({
           data: {
             id: idFactory(),
@@ -1159,6 +1179,7 @@ export function createInventoryOperationsCommandService({
         });
         return commandResult("CycleCountSession", session.id, { session });
       },
+      { attempts: 5 },
     );
   }
 
@@ -1733,24 +1754,12 @@ export function createInventoryOperationsCommandService({
       input,
       context,
       async (tx, actor, payload) => {
-        const adjustmentNumber = text(payload.adjustmentNumber);
-        if (!adjustmentNumber)
-          fail(
-            "ADJUSTMENT_REASON_REQUIRED",
-            "adjustmentNumber is required.",
-            422,
-          );
-        if (
-          await tx.inventoryAdjustmentDocument.findFirst({
-            where: { tenantId: actor.tenantId, adjustmentNumber },
-          })
-        )
-          fail(
-            "ADJUSTMENT_NUMBER_CONFLICT",
-            "Adjustment number is already in use.",
-            409,
-          );
         const normalized = await validateAdjustment(tx, actor, payload);
+        const adjustmentNumber = await nextNumber(
+          tx,
+          actor,
+          "inventory_adjustment",
+        );
         const adjustment = await tx.inventoryAdjustmentDocument.create({
           data: {
             id: idFactory(),
@@ -1783,6 +1792,7 @@ export function createInventoryOperationsCommandService({
           adjustment,
         });
       },
+      { attempts: 5 },
     );
   }
 

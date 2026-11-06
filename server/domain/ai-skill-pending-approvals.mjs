@@ -46,7 +46,7 @@ export function presentPendingApprovals(result, facts, { skill, language, query 
   }
   const built = [
     ...result.orders.map((row) => ({ row, type: 'purchase_order', label: row.orderNumber || row.id, summary: aiSkillText('approval.po_summary', language, { supplier: row.supplier, date: fmt.day(row.createdDate) }) })),
-    ...array(result.requests).map((row) => ({ row, type: 'purchase_request', label: row.id, summary: aiSkillText('approval.pr_summary', language, { date: fmt.day(row.requiredDate) }) })),
+    ...array(result.requests).map((row) => ({ row, type: 'purchase_request', label: row.number || row.id, summary: aiSkillText('approval.pr_summary', language, { date: fmt.day(row.requiredDate) }) })),
   ].slice(0, MAX_EVIDENCE).map(({ row, type, label, summary }, index) => ({
     evidence: aiSkillRecordEvidence({ evidenceType: `${type}_awaiting_approval`, entityType: type, entityId: row.id, label, status, summary, severity: 'warning', rank: index + 1 }, language),
     impact: aiSkillRecordImpact({ area: 'purchasing', entityId: row.id, severity: 'warning', impact: status, explanation: aiSkillText('approval.impact.explanation', language) }, language),

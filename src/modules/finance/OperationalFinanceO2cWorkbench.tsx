@@ -86,7 +86,6 @@ type AgingPayload = {
 };
 type EntryData = {
   today?: string;
-  suggestedInvoiceNumber?: string;
   postedShipments: Array<{
     id: string;
     shipmentNumber: string;
@@ -194,6 +193,7 @@ const LIST_COPY = {
   settled: ["Paid", "已结清"],
   settledNote: ["Paid in full", "已全额收款"],
   number: ["Invoice number", "发票编号"],
+  numberOnSave: ["Invoice number: assigned when you save", "发票编号：保存时自动生成"],
   creditNumber: ["Credit note", "贷项通知单"],
   customer: ["Customer", "客户"],
   shipment: ["Shipment", "发货单"],
@@ -625,12 +625,12 @@ function CreditNotes() {
 
 function NewInvoice() {
   const { t, locale } = useI18n();
+  const tr = useListCopyO2c();
   const [entry, setEntry] = useState<EntryData | null>(null);
   const [shipmentId, setShipmentId] = useState("");
-  const [invoiceNumber, setInvoiceNumber] = useState("");
   const [dueDate, setDueDate] = useState("");
-  // The number and due date are suggested until someone types their own.
-  const [numberTyped, setNumberTyped] = useState(false);
+  // The due date is suggested until someone types their own. The invoice
+  // number is assigned by the server when the draft is created.
   const [dueTyped, setDueTyped] = useState(false);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [taxes, setTaxes] = useState<Record<string, string>>({});
@@ -676,13 +676,9 @@ function NewInvoice() {
   const term = shipment?.customerPaymentTerm || null;
   const termDue = term && entry?.today ? addCalendarDays(entry.today, term.days) : "";
   useEffect(() => {
-    if (!numberTyped && entry?.suggestedInvoiceNumber) setInvoiceNumber(entry.suggestedInvoiceNumber);
-  }, [entry, numberTyped]);
-  useEffect(() => {
     if (!dueTyped) setDueDate(termDue);
   }, [termDue, dueTyped]);
   const body = () => ({
-    invoiceNumber,
     shipmentId,
     currency: shipment?.currency || "",
     invoiceDate: entry?.today ? `${entry.today}T00:00:00.000Z` : new Date().toISOString(),
@@ -744,7 +740,7 @@ function NewInvoice() {
           </div>
         )}
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="text-xs">{t("finance.invoiceNumber")}<input data-testid="customer-invoice-number" className={`${field} mt-1 w-full`} value={invoiceNumber} onChange={(event) => { setInvoiceNumber(event.target.value); setNumberTyped(true); }} /></label>
+          <p className="self-end rounded-lg bg-slate-50 p-2 text-xs text-slate-600" data-testid="customer-invoice-number-on-save">{tr("numberOnSave")}</p>
           <label className="text-xs">{t("finance.postedShipment")}<select data-testid="customer-invoice-shipment" className={`${field} mt-1 w-full`} value={shipmentId} onChange={(event) => { const next = entry.postedShipments.find((row) => row.id === event.target.value); setShipmentId(event.target.value); setQuantities(next ? shipped(next) : {}); setPlan(null); }}><option value="">—</option>{entry.postedShipments.filter((row) => !orderFilter || row.salesOrderId === orderFilter).map((row) => <option value={row.id} key={row.id}>{row.shipmentNumber} · {row.customerName} · {row.currency}</option>)}</select></label>
           <label className="text-xs">{t("finance.dueDate")}<input type="date" data-testid="customer-invoice-due" className={`${field} mt-1 w-full`} value={dueDate} onChange={(event) => { setDueDate(event.target.value); setDueTyped(true); }} />{!dueTyped && termDue && dueDate === termDue && term && <span className="mt-1 block text-slate-500" data-testid="customer-invoice-due-terms">{t("finance.dueFromTerms", { term: term.name, days: String(term.days) })}</span>}</label>
         </div>

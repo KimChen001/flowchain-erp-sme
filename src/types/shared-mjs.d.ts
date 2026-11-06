@@ -1,3 +1,10 @@
+declare module '../../../shared/document-numbering.mjs' {
+  export const DOCUMENT_NUMBER_TYPES: ReadonlyArray<{ type: string; ruleId: string; prefix: string; document: string; zh: string; applied: boolean }>;
+  export const DOCUMENT_NUMBER_PREFIX_PATTERN: RegExp;
+  export function numberingPeriod(at?: Date | string, timeZone?: string): string;
+  export function formatDocumentNumber(prefix: string, period: string, sequence: number): string;
+}
+
 declare module '../../shared/roles.mjs' {
   export const ROLE_LABELS: Readonly<Record<string, string>>;
   export function roleLabel(role: string): string;

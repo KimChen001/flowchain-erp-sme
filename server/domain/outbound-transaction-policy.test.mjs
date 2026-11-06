@@ -70,11 +70,13 @@ const reserved = () => ({ id: 'res-1', tenantId: 'tenant-1', salesOrderId: 'so-1
 
 test('shipment draft allocates reservation but has no balance or movement impact', async () => {
   const prisma = { salesOrder: { findFirst: async () => order() }, item: itemApi, shipmentDocument: { findFirst: async () => null }, inventoryReservation: { findMany: async () => [reserved()] } }
-  const plan = await buildShipmentDraftPlan({ prisma, tenantId: 'tenant-1', salesOrderId: 'so-1', shipmentNumber: 'SHIP-1', lines: [{ salesOrderLineId: 'sol-1', allocations: [{ reservationId: 'res-1', quantity: '4.0000' }] }] })
+  const plan = await buildShipmentDraftPlan({ prisma, tenantId: 'tenant-1', salesOrderId: 'so-1', lines: [{ salesOrderLineId: 'sol-1', allocations: [{ reservationId: 'res-1', quantity: '4.0000' }] }] })
   assert.equal(plan.allowed, true)
   assert.equal(plan.balanceImpacts.length, 0)
   assert.equal(plan.factsToCreate.inventoryMovements.length, 0)
   assert.equal(plan.reservationImpacts[0].allocatedAfter, '4.0000')
+  // No shipment number: the server assigns it when the draft is saved.
+  assert.equal('shipmentNumber' in plan.normalizedPlan, false)
 })
 
 const shipment = (postingStatus = 'unposted', allocationStatus = 'allocated') => {

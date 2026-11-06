@@ -7,6 +7,7 @@ import { APPROVAL_WAITING_TAG, buildApprovalWaitingEmail } from "../mail/approva
 import { createMailer } from "../mail/mailer.mjs";
 import { publicBaseUrl } from "../mail/public-base-url.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 
 // Approval emails: when a document starts waiting for approval, the people
 // who may approve it get an email that says so. People decide: the email
@@ -34,16 +35,16 @@ const DOCUMENTS = Object.freeze({
     permission: "procurement.purchase_order.approve",
     path: (id) => `/app/procurement/requests/${encodeURIComponent(id)}`,
     async load(prisma, { tenantId, documentId }) {
-      const row = documentId ? await prisma.purchaseRequest.findFirst({ where: { id: documentId, tenantId }, select: { id: true, status: true } }) : null;
-      return row?.status === PURCHASE_REQUEST_STATUS.SUBMITTED ? { id: row.id, number: row.id, warehouseIds: [] } : null;
+      const row = documentId ? await prisma.purchaseRequest.findFirst({ where: { id: documentId, tenantId }, select: { id: true, number: true, status: true } }) : null;
+      return row?.status === PURCHASE_REQUEST_STATUS.SUBMITTED ? { id: row.id, number: procurementDocumentNumber(row), warehouseIds: [] } : null;
     },
   },
   purchase_order: {
     permission: "procurement.purchase_order.approve",
     path: (id) => `/app/procurement/orders/${encodeURIComponent(id)}`,
     async load(prisma, { tenantId, documentId }) {
-      const row = documentId ? await prisma.purchaseOrder.findFirst({ where: { id: documentId, tenantId }, select: { id: true, status: true, metadata: true } }) : null;
-      return row?.status === PURCHASE_ORDER_STATUS.PENDING_APPROVAL ? { id: row.id, number: text(row.metadata?.orderNumber) || row.id, warehouseIds: [] } : null;
+      const row = documentId ? await prisma.purchaseOrder.findFirst({ where: { id: documentId, tenantId }, select: { id: true, number: true, status: true, metadata: true } }) : null;
+      return row?.status === PURCHASE_ORDER_STATUS.PENDING_APPROVAL ? { id: row.id, number: procurementDocumentNumber(row), warehouseIds: [] } : null;
     },
   },
   // A bill can be approved once it is matched, or once every match exception

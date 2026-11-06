@@ -1,4 +1,12 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+
+// The server numbers a delivery draft DN-YYYYMM-NNNN when it is saved; the
+// order page says which number it got.
+async function createdShipmentNumber(page: Page) {
+  const notice = page.getByTestId("shipment-created-number");
+  await expect(notice).toContainText(/DN-\d{6}-\d{4,}/);
+  return /DN-\d{6}-\d{4,}/.exec((await notice.textContent()) || "")?.[0] || "";
+}
 
 test.describe.configure({ retries: 0 });
 
@@ -88,10 +96,11 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.getByLabel("销售订单行").selectOption({ index: 1 });
   await page.getByLabel("预留记录").selectOption({ index: 1 });
   await page.getByLabel("交易数量").fill("3.0000");
-  await page.getByLabel("发货单号").fill("SHIP-PW-CANCEL");
+  await expect(page.getByTestId("shipment-number-on-save")).toHaveText("发货单号：保存时自动生成");
   await page.getByTestId("outbound-preview").click();
   await page.getByTestId("confirm-outbound-action").click();
-  await page.getByText("SHIP-PW-CANCEL", { exact: true }).click();
+  const cancelledNumber = await createdShipmentNumber(page);
+  await page.getByText(cancelledNumber, { exact: true }).click();
   await expect(page.getByTestId("shipment-workbench")).toBeVisible();
   await page.getByRole("button", { name: "取消草稿" }).click();
   await page.getByTestId("shipment-preview").click();
@@ -103,12 +112,13 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.getByLabel("销售订单行").selectOption({ index: 1 });
   await page.getByLabel("预留记录").selectOption({ index: 1 });
   await page.getByLabel("交易数量").fill("3.0000");
-  await page.getByLabel("发货单号").fill("SHIP-PW-POST");
   await page.getByTestId("outbound-preview").click();
   await page.getByTestId("confirm-outbound-action").click();
+  const postedNumber = await createdShipmentNumber(page);
+  expect(postedNumber).not.toBe(cancelledNumber);
   await page.getByRole("button", { name: "暂停订单" }).click();
   await expect(page.getByText("暂停", { exact: true }).first()).toBeVisible();
-  await page.getByText("SHIP-PW-POST", { exact: true }).click();
+  await page.getByText(postedNumber, { exact: true }).click();
   await expect(page.getByTestId("open-post")).toHaveCount(0);
   const shipmentId = decodeURIComponent(page.url().split("/").pop() || "");
   const postingStateResponse = await request.get(
@@ -132,7 +142,7 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.getByRole("link", { name: /SO-/ }).click();
   await page.getByRole("button", { name: "恢复" }).click();
   await expect(page.getByText("已确认", { exact: true }).first()).toBeVisible();
-  await page.getByText("SHIP-PW-POST", { exact: true }).click();
+  await page.getByText(postedNumber, { exact: true }).click();
   await page.getByTestId("open-post").click();
   await page.getByTestId("shipment-preview").click();
   await page.getByTestId("confirm-shipment-action").dblclick();
@@ -323,7 +333,6 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
   const created = await request.post("/api/sales/orders", {
     headers,
     data: {
-      orderNumber: "SO-PW-ENGLISH",
       customerName: "US Customer",
       currency: "USD",
       idempotencyKey: "pw-english-order",
@@ -376,19 +385,21 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
   await expect(reservation).toHaveText("华东成品仓 / A-01 · Reserved 2 / Allocated 0 / Used 0 / Released 0 / Available 2");
   await expect(reservation).not.toContainText(reservationId);
   await expect(draft.getByLabel("Quantity", { exact: true })).toHaveValue("2.0000");
-  await draft.getByLabel("Delivery number").fill("SHIP-PW-ENGLISH");
+  await expect(draft.getByTestId("shipment-number-on-save")).toHaveText("Delivery number: assigned when you save");
   await expect(draft).not.toContainText("API");
   await page.getByTestId("outbound-preview").click();
   await expect(page.getByTestId("outbound-preview-sentence")).toHaveText(
-    "Creates delivery SHIP-PW-ENGLISH for 2 EA of OUT-BROWSER-SKU from 华东成品仓 / A-01. Stock does not change until the shipment is posted.",
+    "Creates a delivery for 2 EA of OUT-BROWSER-SKU from 华东成品仓 / A-01. Stock does not change until the shipment is posted.",
   );
   await expect(page.getByTestId("confirm-outbound-action")).toHaveText("Create delivery draft");
   await page.getByTestId("confirm-outbound-action").click();
   await expect(draft).toHaveCount(0);
 
-  await page.getByText("SHIP-PW-ENGLISH", { exact: true }).click();
+  const deliveryNumber = await createdShipmentNumber(page);
+  await expect(page.getByTestId("shipment-created-number")).toHaveText(`Delivery ${deliveryNumber} created.`);
+  await page.getByText(deliveryNumber, { exact: true }).click();
   const shipment = page.getByTestId("shipment-workbench");
-  await expect(page.getByTestId("shipment-sales-order")).toHaveText("Sales order SO-PW-ENGLISH");
+  await expect(page.getByTestId("shipment-sales-order")).toHaveText(`Sales order ${order.orderNumber}`);
   await expect(page.getByTestId("shipment-status")).toHaveText("Ready to post");
   await expect(page.getByTestId("shipment-posting-dates")).toHaveText("Posted — · Reversed —");
   await expect(shipment).not.toContainText("Posted record");

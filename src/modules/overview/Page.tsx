@@ -8,6 +8,7 @@ import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftRevi
 import AiSuggestionsPage from "./AiSuggestionsPage";
 import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
+import { useDocumentNumbers } from "../../lib/documentNumbers";
 import { formatDateTimeInTimeZone, formatLocaleAmount, formatQuantity } from "../../lib/format";
 import { useTodayCopy, type TodayCopyKey } from "./todayCopy";
 
@@ -108,6 +109,9 @@ function RuntimeHomepage() {
     }
   };
   useEffect(() => { void load(); }, []);
+  // A work item labelled with a purchase request's, RFQ's or order's id shows its document number.
+  const shownNumber = useDocumentNumbers((overview?.workItems || []).filter((item) => item.label === item.recordId).map((item) => [item.entityType, item.recordId] as const));
+  const labelOf = (item: WorkItem) => item.label === item.recordId ? shownNumber(item.entityType, item.recordId) || item.label : item.label;
 
   if (state === "error") {
     return (
@@ -280,11 +284,11 @@ function RuntimeHomepage() {
                 <div className="min-w-0 flex-1">
                   <span className="mb-1 inline-block rounded px-2 py-0.5 text-xs font-medium sm:hidden" style={tone(item)}>{dateText(item)}</span>
                   <div className="text-sm font-medium">{t(`kind_${item.kind}` as TodayCopyKey)}</div>
-                  <Link to={item.href} className={`mt-0.5 inline-block text-xs ${LINK}`}>{item.label}</Link>
+                  <Link to={item.href} className={`mt-0.5 inline-block text-xs ${LINK}`}>{labelOf(item)}</Link>
                   <div className="text-xs" style={{ color: A.sub }}>{reasons(item).join(" · ")}</div>
                   {item.actionHref ? <Link to={item.actionHref} className={`text-xs ${LINK}`}>{t("openReorderList")}</Link> : null}
                 </div>
-                <Link to={item.href} className="p-1" aria-label={item.label}><ArrowRight size={16} /></Link>
+                <Link to={item.href} className="p-1" aria-label={labelOf(item)}><ArrowRight size={16} /></Link>
               </li>
             ))}
           </ul>

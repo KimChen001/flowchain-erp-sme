@@ -282,7 +282,6 @@ function OperationList({
 function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
   const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   const navigate = useNavigate(),
-    [number, setNumber] = useState(`TR-${Date.now()}`),
     [lines, setLines] = useState<TransferLine[]>([
       {
         itemId: "",
@@ -305,7 +304,6 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
       const data = await apiJson<any>("/api/inventory/transfers", {
         method: "POST",
         body: JSON.stringify({
-          transferNumber: number,
           idempotencyKey: key("transfer-create"),
           lines: lines.map((line) => ({
             itemId: line.itemId,
@@ -340,14 +338,16 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
     <div className="space-y-4" data-testid="transfer-create">
       <ReadOnly entry={entry} />
       <Card className="space-y-4 p-5">
-        <label className={`${formLabel} max-w-md`}>
+        {/* The server numbers the transfer (TR-YYYYMM-NNNN) when it is saved. */}
+        <div className={`${formLabel} max-w-md`}>
           {copy("调拨单号")}
-          <input
-            className={formField}
-            value={number}
-            onChange={(event) => setNumber(event.target.value)}
-          />
-        </label>
+          <span
+            className="flex h-10 items-center text-sm text-slate-500"
+            data-testid="transfer-number-on-save"
+          >
+            {copy("Assigned when you save")}
+          </span>
+        </div>
         {lines.map((line, index) => (
           <div key={index} className="space-y-3 rounded-lg border p-4">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -506,7 +506,6 @@ function CancelLink({ to }: { to: string }) {
 function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
   const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   const navigate = useNavigate(),
-    [number, setNumber] = useState(`CC-${Date.now()}`),
     [warehouseId, setWarehouseId] = useState(""),
     [blind, setBlind] = useState(true),
     [balanceIds, setBalanceIds] = useState<string[]>([]),
@@ -519,7 +518,6 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
       const data = await apiJson<any>("/api/inventory/counts", {
         method: "POST",
         body: JSON.stringify({
-          countNumber: number,
           warehouseId,
           blindCount: blind,
           balanceIds,
@@ -536,14 +534,16 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
       <ReadOnly entry={entry} />
       <Card className="space-y-4 p-5">
         <div className="grid gap-3 md:grid-cols-3">
-          <label className={formLabel}>
+          {/* The server numbers the count (CC-YYYYMM-NNNN) when it is saved. */}
+          <div className={formLabel}>
             {copy("盘点单号")}
-            <input
-              className={formField}
-              value={number}
-              onChange={(event) => setNumber(event.target.value)}
-            />
-          </label>
+            <span
+              className="flex h-10 items-center text-sm text-slate-500"
+              data-testid="count-number-on-save"
+            >
+              {copy("Assigned when you save")}
+            </span>
+          </div>
           <label className={formLabel}>
             {copy("仓库")}
             <select
@@ -639,7 +639,6 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
   const { copy, inventoryCodeLabel, errorText } = useInventoryOperationsCopy();
   const warehouseName = useWarehouseNames();
   const navigate = useNavigate(),
-    [number, setNumber] = useState(`ADJ-${Date.now()}`),
     [reasonCode, setReasonCode] = useState("damage"),
     [notes, setNotes] = useState(""),
     [lines, setLines] = useState<AdjustmentLine[]>([
@@ -695,7 +694,6 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
       const data = await apiJson<any>("/api/inventory/adjustments", {
         method: "POST",
         body: JSON.stringify({
-          adjustmentNumber: number,
           reasonCode,
           notes,
           idempotencyKey: key("adjust-create"),
@@ -726,14 +724,16 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
       <ReadOnly entry={entry} />
       <Card className="space-y-4 p-5">
         <div className="grid gap-3 md:grid-cols-3">
-          <label className={formLabel}>
+          {/* The server numbers the adjustment (ADJ-YYYYMM-NNNN) when it is saved. */}
+          <div className={formLabel}>
             {copy("调整单号")}
-            <input
-              className={formField}
-              value={number}
-              onChange={(event) => setNumber(event.target.value)}
-            />
-          </label>
+            <span
+              className="flex h-10 items-center text-sm text-slate-500"
+              data-testid="adjustment-number-on-save"
+            >
+              {copy("Assigned when you save")}
+            </span>
+          </div>
           <label className={formLabel}>
             {copy("原因")}
             <select

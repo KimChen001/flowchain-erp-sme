@@ -7,6 +7,7 @@ import { procurementApi } from "./procurementApi";
 import { useI18n } from "../../i18n/I18n";
 import { QuoteVsHistory, priceHistoryKey, usePriceHistory, usePriceFactText } from "./PriceHistoryFacts";
 import { usePriceHistoryCopy } from "./priceHistoryCopy";
+import { useDocumentNumber } from "../../lib/documentNumbers";
 import { compareQuote } from "../../../shared/price-history.mjs";
 import type {
   RfqAwardDecision,
@@ -198,6 +199,7 @@ function CopySupplierNote({ comparison, response, history, historyKeyOf }: {
 }) {
   const copy = usePriceHistoryCopy();
   const text = usePriceFactText();
+  const rfqNumber = useDocumentNumber("rfq", comparison.rfqId, comparison.rfqNumber);
   const [status, setStatus] = useState<"" | "copied" | "failed">("");
   if (history.state !== "loaded") return null;
   const lines = comparison.lines.flatMap((line) => {
@@ -218,7 +220,7 @@ function CopySupplierNote({ comparison, response, history, historyKeyOf }: {
     })];
   });
   if (!lines.length) return null;
-  const note = copy("noteTemplate", { supplier: response.supplierName || response.supplierId, rfq: comparison.rfqId, lines: lines.join("\n") });
+  const note = copy("noteTemplate", { supplier: response.supplierName || response.supplierId, rfq: rfqNumber, lines: lines.join("\n") });
   const copyNote = async () => {
     try {
       await navigator.clipboard.writeText(note);
@@ -285,15 +287,17 @@ function LoadedComparison({ comparison, award, canAward, onAward }: { comparison
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
   const noParticipants = comparison.participationSummary.participantCount === 0;
   const noQuotations = comparison.summary.quotationCount === 0;
+  // The RFQ's document number is shown; its id stays in links and calls.
+  const rfqNumber = useDocumentNumber("rfq", comparison.rfqId, comparison.rfqNumber);
   return (
     <div className="space-y-4" data-testid="canonical-rfq-comparison">
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0"><div className="text-xs font-semibold uppercase tracking-wide" style={{ color: A.sub }}>{tr("只读供应商报价比较", "Supplier quotation comparison")} · {comparison.rfqId}</div><h1 className="mt-1 text-xl font-semibold">{comparison.rfqTitle || comparison.rfqId}</h1><p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("本页不排名、不推荐、不授标，也不创建采购订单。", "This page does not rank or recommend suppliers. A formal award requires a separate authorized human decision and does not create a purchase order.")}</p></div>
+          <div className="min-w-0"><div className="text-xs font-semibold uppercase tracking-wide" style={{ color: A.sub }}>{tr("只读供应商报价比较", "Supplier quotation comparison")} · {rfqNumber}</div><h1 className="mt-1 text-xl font-semibold">{comparison.rfqTitle || rfqNumber}</h1><p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("本页不排名、不推荐、不授标，也不创建采购订单。", "This page does not rank or recommend suppliers. A formal award requires a separate authorized human decision and does not create a purchase order.")}</p></div>
           <div className="flex flex-wrap gap-2"><Chip label={tr("只读比较", "Read-only comparison")} color={A.blue} bg="#eff6ff" /><Chip label={localLabel(RFQ_STATUS_LABELS, comparison.rfqStatus || "", language, comparison.rfqStatusRaw || tr("状态未知", "Unknown status"))} color={A.sub} bg="#f1f5f9" /></div>
         </div>
         <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[[tr("RFQ 编号", "RFQ ID"), comparison.rfqId], [tr("RFQ 币种", "RFQ currency"), comparison.rfqCurrency || "—"], [tr("有效报价", "Eligible quotations"), String(comparison.summary.eligibleResponseCount)], [tr("权威响应", "Authoritative responses"), String(comparison.summary.authoritativeResponseCount)], [tr("参与供应商", "Participating suppliers"), String(comparison.participationSummary.participantCount)], [tr("全部报价记录", "All quotation records"), String(comparison.summary.quotationCount)], [tr("显示顺序", "Display order"), tr("供应商 ID 升序", "Supplier ID ascending")], [tr("生成时间", "Generated at"), date(comparison.generatedAt)]].map(([label, value]) => <div className="rounded-lg bg-slate-50 p-3" key={label}><dt className="text-xs" style={{ color: A.sub }}>{label}</dt><dd className="mt-1 break-words text-sm font-medium">{value}</dd></div>)}
+          {[[tr("RFQ 编号", "RFQ number"), rfqNumber], [tr("RFQ 币种", "RFQ currency"), comparison.rfqCurrency || "—"], [tr("有效报价", "Eligible quotations"), String(comparison.summary.eligibleResponseCount)], [tr("权威响应", "Authoritative responses"), String(comparison.summary.authoritativeResponseCount)], [tr("参与供应商", "Participating suppliers"), String(comparison.participationSummary.participantCount)], [tr("全部报价记录", "All quotation records"), String(comparison.summary.quotationCount)], [tr("显示顺序", "Display order"), tr("供应商 ID 升序", "Supplier ID ascending")], [tr("生成时间", "Generated at"), date(comparison.generatedAt)]].map(([label, value]) => <div className="rounded-lg bg-slate-50 p-3" key={label}><dt className="text-xs" style={{ color: A.sub }}>{label}</dt><dd className="mt-1 break-words text-sm font-medium">{value}</dd></div>)}
         </dl>
       </Card>
 

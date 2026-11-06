@@ -11,6 +11,7 @@ import { businessEntityRouteRegistry, type BusinessEntityType } from "../busines
 import { AiConfirmCard } from "./AiConfirmCard";
 import { A } from "../ui";
 import { useI18n } from "../../i18n/I18n";
+import { isDocumentNumberType, useDocumentNumber } from "../../lib/documentNumbers";
 
 type Language = "en-US" | "zh-CN";
 // The renderer's own labels, in the answer's language (the question's), so a
@@ -112,9 +113,20 @@ const chipClass = "inline-flex max-w-full items-center whitespace-nowrap rounded
 const KEEP_ON_ONE_LINE = /^(?:[A-Za-z0-9][A-Za-z0-9._/-]*\d[A-Za-z0-9._/-]*|[-+−]?[$€£¥]?\s?\d[\d,.]*\s?(?:%|[A-Za-z]{1,8}|[\u4e00-\u9fff]{1,3})?|\d{4}-\d{2}-\d{2})$/u;
 const cellClass = (value: string) => (KEEP_ON_ONE_LINE.test(value.trim()) ? "whitespace-nowrap" : "");
 
+// A purchase request, RFQ or purchase order labelled with its internal id (or
+// not labelled) is shown by its document number; the id still opens it.
+function useNumberedEvidence(item: AiResponseV2EvidenceItem, type: BusinessEntityType | null): AiResponseV2EvidenceItem {
+  const id = String(item.entityId || "");
+  const byId = !item.entityLabel || item.entityLabel === id;
+  const number = useDocumentNumber(type && isDocumentNumberType(type) && byId ? type : null, id);
+  if (!type || !isDocumentNumberType(type) || !byId || !number || number === id) return item;
+  return { ...item, entityLabel: number, label: !item.label || item.label === id ? number : item.label };
+}
+
 // A record as a small chip that opens it; plain text when it has no page.
-export function EvidenceLink({ item, children, onNavigate }: { item: AiResponseV2EvidenceItem; children?: ReactNode; onNavigate?: Navigate }) {
-  const type = entityType(item.entityType);
+export function EvidenceLink({ item: evidence, children, onNavigate }: { item: AiResponseV2EvidenceItem; children?: ReactNode; onNavigate?: Navigate }) {
+  const type = entityType(evidence.entityType);
+  const item = useNumberedEvidence(evidence, type);
   const route = type ? businessEntityRouteRegistry[type] : null;
   if (!route || !item.entityId || !onNavigate || isUnavailableProductRoute(route.listRouteId)) return <span className="font-medium" style={{ color: A.label }}>{children || item.entityLabel || item.label}</span>;
   const focusArea = type === "purchase_order" ? "evidence" : undefined;
@@ -131,7 +143,11 @@ function linkFocusTarget(link: AiResponseV2NavigationLink) {
 }
 
 // A record the answer names only through its link ("Open CT-ACME0001").
-function LinkChip({ link, code, onNavigate }: { link: AiResponseV2NavigationLink; code: string; onNavigate?: Navigate }) {
+function LinkChip({ link, code: written, onNavigate }: { link: AiResponseV2NavigationLink; code: string; onNavigate?: Navigate }) {
+  // A purchase request, RFQ or order written by its id is shown by its document number.
+  const type = entityType(link.entityType);
+  const number = useDocumentNumber(type && isDocumentNumberType(type) && written === link.entityId ? type : null, link.entityId);
+  const code = type && isDocumentNumberType(type) && written === link.entityId && number ? number : written;
   if (!onNavigate || isUnavailableProductRoute(link.moduleId)) return <span className="font-medium" style={{ color: A.label }}>{code}</span>;
   return <button type="button" data-testid="ai-record-chip" data-action-kind="view_business_object" data-business-id={link.entityId || ""} className={`${chipClass} hover:underline`} style={CHIP_STYLE} onClick={() => onNavigate(link.moduleId, linkFocusTarget(link), { returnTo: "ai", entityLabel: link.label, source: "ai", returnContext: link.returnContext })}>{code}</button>;
 }

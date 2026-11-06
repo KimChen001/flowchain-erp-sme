@@ -169,11 +169,12 @@ async function runS4(page: Page, session: Session, panel: Locator, requestsBefor
   await create.dblclick();
   const receipt = answer.getByTestId("ai-v2-pr-receipt");
   await expect(receipt).toHaveAttribute("data-status", "draft");
-  const requestsAfter = await apiJson<Array<{ id: string }>>(page.request, session, "/api/procurement/requests");
+  const requestsAfter = await apiJson<Array<{ id: string; number?: string }>>(page.request, session, "/api/procurement/requests");
   const created = requestsAfter.filter((row) => !requestsBefore.some((old) => old.id === row.id));
   expect(created).toHaveLength(1);
   const requestId = created[0].id;
-  await expect(receipt).toContainText(requestId);
+  await expect(receipt).toContainText(created[0].number || requestId);
+  expect(created[0].number).toMatch(/^PR-\d{6}-\d{4,}$/);
   expect(posts.length).toBeGreaterThanOrEqual(1);
   for (const body of posts) {
     const sent = JSON.parse(body);

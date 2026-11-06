@@ -26,6 +26,10 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
 
   await page.getByRole("link", { name: /库存调拨/ }).click();
   await page.getByRole("link", { name: "新建" }).click();
+  // The server numbers the transfer when it is saved; nobody types it.
+  await expect(page.getByTestId("transfer-number-on-save")).toHaveText(
+    "保存时自动生成",
+  );
   await page.getByLabel("调拨物料 1").selectOption("inventory-browser-item");
   await page.getByLabel("调拨数量 1").fill("3.0000");
   await page.getByLabel("来源仓库 1").selectOption("inventory-browser-a");
@@ -41,6 +45,9 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await page.getByLabel("目标库位 2").fill("B-01");
   await page.getByTestId("create-transfer").click();
   await expect(page.getByTestId("inventory-transfer-workbench")).toBeVisible();
+  await expect(
+    page.getByTestId("inventory-transfer-workbench").locator("h2").first(),
+  ).toHaveText(/^TR-\d{6}-\d{4,}$/);
   const transferUrl = page.url();
   await page.getByTestId("operation-ready").click();
   await page.getByTestId("operation-preview-post").click();
@@ -185,7 +192,6 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   const denied = await request.post("/api/inventory/counts", {
     headers: { Authorization: `Bearer ${viewer.token}` },
     data: {
-      countNumber: "VIEWER-DENIED",
       warehouseId: "inventory-browser-a",
       balanceIds: ["inventory-browser-balance-a"],
       idempotencyKey: "viewer-denied",

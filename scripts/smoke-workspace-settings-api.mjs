@@ -133,7 +133,8 @@ try {
   assert.equal(followed.timezone, "America/Chicago");
 
   const settings = await request(base, "/api/settings-runtime", { token });
-  for (const name of ["Return Request", "Return Authorization", "Return Posting", "Supplier Invoice", "Customer Invoice", "Credit Memo / Credit Note"]) {
+  // Supplier invoices keep the supplier's own number, so they have no rule.
+  for (const name of ["Return Request", "Return Authorization", "Return Posting", "Customer Invoice", "Credit Memo / Credit Note", "Purchase Order", "Sales Order"]) {
     assert.ok(settings.numbering.rules.some(rule => rule.document === name), `missing numbering rule ${name}`);
   }
   for (const name of ["Return Authorization", "Supplier Invoice Match Exception", "Payable Approval", "Customer Credit Note Approval"]) {

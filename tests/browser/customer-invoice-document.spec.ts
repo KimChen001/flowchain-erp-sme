@@ -56,13 +56,16 @@ test("an invoice is checked as a document when approved and printed alone once i
   await signIn(page);
   await page.goto("/app/sales/invoices/new?shipment=finance-browser-shipment-USD");
   await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("finance-browser-shipment-USD");
-  await page.getByTestId("customer-invoice-number").fill("UI-DOC-INV");
+  // No number to type: the server assigns CI-YYYYMM-NNNN when the draft is saved.
   await page.getByTestId("customer-invoice-due").fill("2026-11-15");
   await page.getByTestId("customer-invoice-preview").click();
   await expect(page.getByTestId("customer-invoice-create")).toBeEnabled();
   await page.getByTestId("customer-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/sales\/invoices\/[0-9a-f-]{36}$/);
   const invoiceUrl = page.url();
+  const numberHeading = page.getByTestId("customer-invoice-detail").getByRole("heading", { name: /^CI-\d{6}-\d{4,}$/ });
+  await expect(numberHeading).toBeVisible();
+  const invoiceNumber = (await numberHeading.innerText()).trim();
   // A draft has no document to open yet.
   await expect(page.getByTestId("customer-invoice-open-document")).toHaveCount(0);
   await run(page, "customer-invoice-submit");
@@ -93,7 +96,7 @@ test("an invoice is checked as a document when approved and printed alone once i
   await expect(page.getByTestId("business-document-send-note")).toContainText("FlowChain does not send this document.");
 
   const english = await figures(page);
-  expect(english).toMatchObject({ number: "UI-DOC-INV", currency: "USD", sku: "FIN-BROWSER", quantity: "10", unitPrice: "12.50", amount: "125.00", subtotal: "125.00", tax: "0.00", total: "125.00", balance: "125.00" });
+  expect(english).toMatchObject({ number: invoiceNumber, currency: "USD", sku: "FIN-BROWSER", quantity: "10", unitPrice: "12.50", amount: "125.00", subtotal: "125.00", tax: "0.00", total: "125.00", balance: "125.00" });
   // The due date entered is the day printed, whatever the time zone.
   expect(english.due).toBe("Nov 15, 2026");
   await expect(page.getByTestId("invoice-document-totals")).toContainText("Total (USD)");

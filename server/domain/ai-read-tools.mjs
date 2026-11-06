@@ -220,7 +220,7 @@ const listPurchaseRequests = defineAiTool({
   available: (facts) => Boolean(facts.purchaseRequests),
   run(args, { facts }) {
     const rows = [...array(facts.purchaseRequests.awaitingApproval)].sort((a, b) => (a.requiredDate || '9999').localeCompare(b.requiredDate || '9999'))
-    return { asOf: facts.asOf, ...aiToolList(rows.map((row) => ({ request: row.id, skus: row.skus, quantity: row.quantity, unit: row.unit, priority: row.priority, requiredDate: row.requiredDate, ref: aiToolRef('purchase_request', row.id, row.id) })), args.limit) }
+    return { asOf: facts.asOf, ...aiToolList(rows.map((row) => ({ request: row.number || row.id, skus: row.skus, quantity: row.quantity, unit: row.unit, priority: row.priority, requiredDate: row.requiredDate, ref: aiToolRef('purchase_request', row.id, row.number || row.id) })), args.limit) }
   },
 })
 
@@ -232,7 +232,7 @@ const listRfqs = defineAiTool({
   run(args, { facts }) {
     const ready = new Set(array(facts.rfqs.readyToAward).map((row) => row.id))
     const rows = [...array(facts.rfqs.open)].sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'))
-    return { asOf: facts.asOf, ...aiToolList(rows.map((row) => ({ rfq: row.id, title: row.title, invited: row.invited ?? null, quotes: row.responses, due: row.due, readyToAward: ready.has(row.id), ref: aiToolRef('rfq', row.id, row.title) })), args.limit) }
+    return { asOf: facts.asOf, ...aiToolList(rows.map((row) => ({ rfq: row.number || row.id, title: row.title, invited: row.invited ?? null, quotes: row.responses, due: row.due, readyToAward: ready.has(row.id), ref: aiToolRef('rfq', row.id, row.title) })), args.limit) }
   },
 })
 

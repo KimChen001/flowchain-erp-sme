@@ -23,7 +23,6 @@ test("disabled inventory operations fail closed in UI and API", async ({
   const mutation = await request.post("/api/inventory/adjustments", {
     headers: { Authorization: `Bearer ${session.token}` },
     data: {
-      adjustmentNumber: "DISABLED",
       reasonCode: "damage",
       idempotencyKey: "disabled-browser",
       lines: [

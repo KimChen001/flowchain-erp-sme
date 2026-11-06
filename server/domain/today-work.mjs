@@ -298,7 +298,7 @@ function purchasingWork(purchaseRequests, purchaseOrders) {
     if (!kind) return []
     const id = text(request.id)
     return [row(kind, 'purchase_request', id, {
-      label: id,
+      label: text(request.number) || id,
       href: `/app/procurement/requests/${encode(id)}`,
       date: calendarDay(request.requiredDate || request.defaultNeedByDate) || null,
       dateKind: 'required',

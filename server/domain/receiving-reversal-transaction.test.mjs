@@ -105,7 +105,6 @@ test('database receiving reversal preserves history, restores state, and fails c
         // operations service as stock_transfer_out.
         transferOut: async (quantity) => {
           const created = await inventoryOperations.createTransfer({
-            transferNumber: `TR-${suffix}`,
             idempotencyKey: `ledger-transfer-create-${suffix}`,
             lines: [{ itemId, quantity, source: { warehouseId: scenario.warehouseId, location: 'A-01' }, destination: { warehouseId: destinationWarehouseId, location: 'B-01' } }],
           }, manager)
@@ -117,7 +116,7 @@ test('database receiving reversal preserves history, restores state, and fails c
         // operations service: the change in quantityOut and again in adjustmentQty.
         adjust: async (quantity) => {
           const balance = await prisma.inventoryBalance.findFirst({ where: { tenantId: scenario.tenantId, sku, warehouseId: scenario.warehouseId, locationKey: 'a-01' } })
-          const created = await inventoryOperations.createAdjustment({ adjustmentNumber: `ADJ-${suffix}`, reasonCode: 'damage', notes: 'Damaged on the shelf', idempotencyKey: `ledger-adjust-create-${suffix}`, lines: [{ inventoryBalanceId: balance.id, adjustmentQuantity: quantity }] }, manager)
+          const created = await inventoryOperations.createAdjustment({ reasonCode: 'damage', notes: 'Damaged on the shelf', idempotencyKey: `ledger-adjust-create-${suffix}`, lines: [{ inventoryBalanceId: balance.id, adjustmentQuantity: quantity }] }, manager)
           const ready = await inventoryOperations.readyAdjustment(created.adjustment.id, { expectedAdjustmentVersion: 0, idempotencyKey: `ledger-adjust-ready-${suffix}` }, manager)
           await inventoryOperations.postAdjustment(created.adjustment.id, { expectedAdjustmentVersion: ready.adjustment.version, idempotencyKey: `ledger-adjust-post-${suffix}` }, manager)
           const movement = await prisma.inventoryMovement.findFirst({ where: { tenantId: scenario.tenantId, sku, warehouseId: scenario.warehouseId, movementType: 'inventory_adjustment' } })

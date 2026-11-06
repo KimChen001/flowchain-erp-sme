@@ -1,7 +1,7 @@
 // Plain sentences that say what a reserve, release, delivery draft, post or
 // reverse preview will do, built from the server's preview. English is the
 // source; zh-CN is chosen by the interface language. SKUs, units, warehouse
-// names, locations and shipment numbers are shown as stored; quantities use the
+// names and locations are shown as stored; quantities use the
 // shared quantity format. Display only: nothing here is sent to the server.
 import { formatQuantity } from "../../lib/format.ts";
 
@@ -27,7 +27,7 @@ const COPY = {
   "en-US": {
     reserve: "Reserves {amount} at {place}. Available stock there goes down by {q}.",
     release: "Releases {amount} reserved at {place}. Available stock there goes up by {q}.",
-    draft: "Creates delivery {number} for {amount} from {place}. Stock does not change until the shipment is posted.",
+    draft: "Creates a delivery for {amount} from {place}. Stock does not change until the shipment is posted.",
     cancelDraft: "Cancels this delivery draft. {amount} at {place} stays reserved for the order.",
     post: "Ships {amount} from {place}. On hand and reserved both go down by {q}.",
     reverse: "Returns {amount} to {place}. On hand and reserved both go up by {q}.",
@@ -38,7 +38,7 @@ const COPY = {
   "zh-CN": {
     reserve: "在 {place} 预留 {amount}。该库位可用量减少 {q}。",
     release: "释放 {place} 的预留 {amount}。该库位可用量增加 {q}。",
-    draft: "创建发货单 {number}：从 {place} 发出 {amount}。发货过账前库存不变。",
+    draft: "创建发货单：从 {place} 发出 {amount}。发货过账前库存不变。",
     cancelDraft: "取消该发货草稿。{place} 的 {amount} 仍为该订单预留。",
     post: "从 {place} 发出 {amount}。在库量和预留量各减少 {q}。",
     reverse: "将 {amount} 退回 {place}。在库量和预留量各增加 {q}。",
@@ -117,7 +117,6 @@ export function outboundPreviewSentences(language: string, preview: OutboundPrev
         for (const allocation of rows(line.allocations)) {
           const id = str(allocation.reservationId), sku = str(orderLine?.sku || lookup.reservation?.(id)?.sku);
           sentences.push(text(language, "draft", {
-            number: str(plan.shipmentNumber) || "—",
             amount: amount(language, str(allocation.quantity), sku, unitFor(sku, orderLine?.unit)),
             place: reservationPlace(id),
           }));

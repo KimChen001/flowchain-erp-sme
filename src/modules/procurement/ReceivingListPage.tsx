@@ -58,7 +58,7 @@ export function ReceivingListPage() {
     (!posting || (posting === "rejected" ? rejected(row) : postingOf(row) === posting))
     && (!supplier || row.supplierName === supplier)
     && (!warehouse || row.warehouse?.name === warehouse)
-    && (!needle || [row.documentNumber, row.id, row.poId, row.supplierName, row.receiver].some((value) => String(value || "").toLowerCase().includes(needle))),
+    && (!needle || [row.documentNumber, row.id, row.poNumber, row.poId, row.supplierName, row.receiver].some((value) => String(value || "").toLowerCase().includes(needle))),
   );
   const suppliers = [...new Set(rows.map((row) => row.supplierName || "").filter(Boolean))].sort();
   const warehouses = [...new Set(rows.map((row) => row.warehouse?.name || "").filter(Boolean))].sort();
@@ -145,7 +145,7 @@ export function ReceivingListPage() {
                     {row.receiver && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{row.receiver}</div>}
                   </td>
                   <td className={tdNowrapClass}>
-                    <BusinessEntityLink entityType="purchase_order" entityId={row.poId}>
+                    <BusinessEntityLink entityType="purchase_order" entityId={row.poId} number={row.poNumber}>
                       {row.poId || "—"}
                     </BusinessEntityLink>
                   </td>

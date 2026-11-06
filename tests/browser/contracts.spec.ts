@@ -71,6 +71,8 @@ test("a manager records a draft, activates it and adds the signed file; Ending s
   await expect(page.getByTestId("page-title")).toHaveText("New contract");
   await expect(page.locator("#contract-supplierId")).toHaveValue(supplierId);
   await expect(page.locator("#contract-reminderDays")).toHaveValue("60");
+  // The server numbers the contract when it is saved; the form says so.
+  await expect(page.getByTestId("contract-number-on-save")).toHaveText("The contract number is assigned when you save. Put the number on the signed document in Their reference.");
   // Notice days show only for a contract that renews automatically.
   await expect(page.locator("#contract-noticeDays")).toHaveCount(0);
   await page.locator("#contract-renewal").selectOption("automatic");
@@ -94,7 +96,7 @@ test("a manager records a draft, activates it and adds the signed file; Ending s
   const detail = page.getByTestId("contract-detail");
   await expect(detail.getByTestId("contract-state-chip").first()).toHaveText("Draft");
   const number = (await page.getByTestId("contract-number").innerText()).trim();
-  expect(number).toMatch(/^CT-[0-9A-F]{8}$/);
+  expect(number).toMatch(/^CT-\d{6}-\d{4,}$/);
   await expect(page.getByTestId("contract-title")).toHaveText(title);
   await page.getByTestId("contract-action-activate").click();
   await page.getByTestId("contract-activate-signed").fill(plus(-12));

@@ -26,6 +26,8 @@ test('a manager receives an issued purchase order on the desktop and posts the r
   await expect(form.getByTestId('receiving-prefill-warehouse')).toHaveText(/^(Purchase order warehouse|Your default warehouse|Your only warehouse)$/)
   await expect(form.getByTestId('receiving-prefill-arrival')).toHaveText('Now')
   await expect(form.getByTestId('receiving-prefill-accepted')).toHaveText('Starts at the quantity still to receive')
+  // The server numbers the receipt when it is saved; the form says so.
+  await expect(form.getByTestId('receiving-number-on-save')).toHaveText('The receipt number is assigned when you save.')
   await form.getByLabel('Accepted BROWSER-SKU').fill('4')
   await form.getByLabel('Rejected BROWSER-SKU').fill('1')
   await form.getByTestId('receiving-form-save').click()
@@ -42,6 +44,7 @@ test('a manager receives an issued purchase order on the desktop and posts the r
   await expect(page.getByTestId('receiving-form')).toBeVisible()
   // Editing a saved receipt shows its saved values, with no prefill labels.
   await expect(page.getByTestId('receiving-prefill-arrival')).toHaveCount(0)
+  await expect(page.getByTestId('receiving-number-on-save')).toHaveCount(0)
   await expect(page.getByLabel('Accepted BROWSER-SKU')).toHaveValue('4')
   await expect(page.getByLabel('Rejection reason BROWSER-SKU')).toHaveValue('Carton crushed in transit')
   await page.getByLabel('Accepted BROWSER-SKU').fill('5')
@@ -63,6 +66,7 @@ test('a manager receives an issued purchase order on the desktop and posts the r
   expect(po.lines[0].remainingQuantity).toBe('3.0000')
   const receipts = (await api('/api/procurement/receiving?poId=browser-receive-po')).items
   expect(receipts).toHaveLength(1)
+  expect(receipts[0].documentNumber).toMatch(/^GRN-\d{6}-\d{4,}$/)
   expect(receipts[0]).toMatchObject({ workflowStatus: 'ready_for_receiving', postingStatus: 'posted', acceptedQuantity: '5.0000', rejectedQuantity: '1.0000' })
 
   await page.goto('/app/procurement/receiving')

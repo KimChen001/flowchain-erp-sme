@@ -176,7 +176,7 @@ function recordsNeedingData({ reportRows, openReport, business, raw, visible, vi
     }
     const requests = array(business.purchaseRequests).filter((row) => ['draft', 'submitted', 'approved'].includes(text(row.status)))
     checked.purchase_requests = requests.length
-    for (const request of requests) add('purchase_request', text(request.id), text(request.id), 'purchase_requests', [...(!text(request.requiredDate) ? ['required_date'] : []), ...(!array(request.lines).length ? ['lines'] : [])])
+    for (const request of requests) add('purchase_request', text(request.id), text(request.number || request.id), 'purchase_requests', [...(!text(request.requiredDate) ? ['required_date'] : []), ...(!array(request.lines).length ? ['lines'] : [])])
   }
   // A field hidden from the reader is null in their rows: it is not reported
   // as missing, since the reader cannot tell.
@@ -392,12 +392,13 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
     facts.purchaseRequests = {
       awaitingApproval: array(business.purchaseRequests).filter((row) => text(row.status) === 'submitted').map((row) => {
         const line = array(row.lines)[0] || {}
-        return { id: text(row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, skus: [...new Set(array(row.lines).map((entry) => text(entry.sku)).filter(Boolean))], itemIds: [...new Set(array(row.lines).map((entry) => text(entry.itemId)).filter(Boolean))], quantity: amount(line.quantity), unit: text(line.unit) || null }
+        // number: what the request shows (PR-202611-0001); older ones show their id.
+        return { id: text(row.id), number: text(row.number || row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, skus: [...new Set(array(row.lines).map((entry) => text(entry.sku)).filter(Boolean))], itemIds: [...new Set(array(row.lines).map((entry) => text(entry.itemId)).filter(Boolean))], quantity: amount(line.quantity), unit: text(line.unit) || null }
       }),
     }
     if (openPurchaseRequests) {
       facts.purchaseRequests.open = array(business.purchaseRequests).filter((row) => OPEN_PURCHASE_REQUEST_STATUSES.includes(text(row.status))).map((row) => ({
-        id: text(row.id), status: text(row.status), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null,
+        id: text(row.id), number: text(row.number || row.id), status: text(row.status), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null,
         lines: array(row.lines).map((line) => ({ sku: text(line.sku) || null, itemId: text(line.itemId) || null, quantity: amount(line.quantity), unit: text(line.unit) || null })),
       }))
     }
@@ -407,11 +408,11 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
     const open = array(business.rfqs).filter((row) => ['open', 'collecting_quotes'].includes(text(row.status)))
     const evidence = await rfqEvidence(prisma, tenantId, open)
     // Without the participation tables the row counters are the only source.
-    const rows = open.map((row) => ({ id: text(row.id), title: text(row.title) || text(row.id), responses: evidence ? evidence.responses.get(text(row.id)) || 0 : amount(row.quoted) ?? 0, awarded: evidence ? evidence.awarded.has(text(row.id)) : Boolean(text(row.bestSupplier)), invited: amount(row.suppliers), due: text(row.due).slice(0, 10) || null }))
+    const rows = open.map((row) => ({ id: text(row.id), number: text(row.number || row.id), title: text(row.title) || text(row.number || row.id), responses: evidence ? evidence.responses.get(text(row.id)) || 0 : amount(row.quoted) ?? 0, awarded: evidence ? evidence.awarded.has(text(row.id)) : Boolean(text(row.bestSupplier)), invited: amount(row.suppliers), due: text(row.due).slice(0, 10) || null }))
     facts.rfqs = {
       // Every open RFQ without an award, with or without quotes.
       open: rows.filter((row) => !row.awarded),
-      readyToAward: rows.filter((row) => row.responses > 0 && !row.awarded).map(({ id, title, responses, awarded, due }) => ({ id, title, responses, awarded, due })),
+      readyToAward: rows.filter((row) => row.responses > 0 && !row.awarded).map(({ id, number, title, responses, awarded, due }) => ({ id, number, title, responses, awarded, due })),
     }
   }
 

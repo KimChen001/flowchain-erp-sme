@@ -1,4 +1,5 @@
 import { ReceivingCommandError } from './receiving-posting-command-service.mjs'
+import { procurementDocumentNumber } from '../../shared/document-numbering.mjs'
 import {
   buildReceivingPostingPlan,
   buildReceivingReversalPlan,
@@ -112,7 +113,7 @@ function detailModel(aggregate, capabilities = {}, availableActions = {}) {
       warehouse: warehouses.get(grn.warehouseId) || null, currency: grn.currency,
     },
     purchaseOrder: {
-      id: po.id, workflowStatus: workflowStatusOf(po), fulfillmentStatus: fulfillmentStatus(po.lines), version: po.version,
+      id: po.id, number: procurementDocumentNumber(po), workflowStatus: workflowStatusOf(po), fulfillmentStatus: fulfillmentStatus(po.lines), version: po.version,
       supplier: { id: po.supplierId, name: po.supplierName || grn.supplierName || 'Unknown' }, expectedDate: iso(po.expectedDate),
     },
     lines,
@@ -237,7 +238,7 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
     const reversals = movements.filter((movement) => movement.movementType === 'receipt_reversal')
     const link = (value) => ({ unavailableReason: value.enabled ? null : 'No authoritative records are available.', ...value })
     return { links: [
-      link({ label: 'Purchase Order', count: 1, targetRouteId: 'procurement:order-detail', targetType: 'purchase_order', targetId: aggregate.purchaseOrder.id, filter: {}, enabled: true }),
+      link({ label: 'Purchase Order', count: 1, targetRouteId: 'procurement:order-detail', targetType: 'purchase_order', targetId: aggregate.purchaseOrder.id, targetNumber: procurementDocumentNumber(aggregate.purchaseOrder), filter: {}, enabled: true }),
       link({ label: 'Movements', count: movements.length, targetRouteId: 'inventory:movements', targetType: 'inventory_movement', targetId: receivingDocumentId, filter: { relatedGrnId: receivingDocumentId }, enabled: movements.length > 0 }),
       link({ label: 'Balances', count: balanceCount, targetRouteId: 'inventory:stock', targetType: 'inventory_balance', targetId: receivingDocumentId, filter: { balanceKeys }, enabled: balanceCount > 0 }),
       link({ label: 'Audit', count: auditCount, targetRouteId: 'settings:audit', targetType: 'audit', targetId: receivingDocumentId, filter: { entityType: 'ReceivingDocument', entityId: receivingDocumentId }, enabled: auditCount > 0 }),
@@ -276,7 +277,7 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
     if (!po) fail('RECEIVING_NOT_FOUND', 'Purchase order was not found.', 404)
     const receipts = await prisma.receivingDocument.findMany({ where: { tenantId: scope.tenantId, poId: purchaseOrderId }, select: { id: true, postingStatus: true } })
     const movementCount = await prisma.inventoryMovement.count({ where: { tenantId: scope.tenantId, relatedPoId: purchaseOrderId } })
-    return { purchaseOrder: { id: po.id, workflowStatus: workflowStatusOf(po), fulfillmentStatus: fulfillmentStatus(po.lines) }, receiptsCount: receipts.length, postedReceiptsCount: receipts.filter((row) => row.postingStatus === 'posted').length, reversedReceiptsCount: receipts.filter((row) => row.postingStatus === 'reversed').length, movementCount, receivedQuantitySummary: receivingDecimalString(po.lines.reduce((sum, line) => sum + receivingDecimalUnits(line.receivedQuantity), ZERO)) }
+    return { purchaseOrder: { id: po.id, number: procurementDocumentNumber(po), workflowStatus: workflowStatusOf(po), fulfillmentStatus: fulfillmentStatus(po.lines) }, receiptsCount: receipts.length, postedReceiptsCount: receipts.filter((row) => row.postingStatus === 'posted').length, reversedReceiptsCount: receipts.filter((row) => row.postingStatus === 'reversed').length, movementCount, receivedQuantitySummary: receivingDecimalString(po.lines.reduce((sum, line) => sum + receivingDecimalUnits(line.receivedQuantity), ZERO)) }
   }
 
   return { getReceivingDetail, getReceivingImpactPreview, getReceivingEvidenceTimeline, getReceivingSmartLinks, getReceivingReconciliation, getPurchaseOrderReceivingSummary }

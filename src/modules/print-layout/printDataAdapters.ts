@@ -26,7 +26,8 @@ export type ReceivingDetailForPrint = {
     supplier?: { name?: string } | null;
     warehouse?: { name?: string; code?: string } | null;
   };
-  purchaseOrder: { id: string };
+  // number: the order's document number, printed in place of its internal id.
+  purchaseOrder: { id: string; number?: string };
   lines: Array<{ sku: string; itemName: string; documentAcceptedQuantity: string; rejectedQuantity: string; unit?: string }>;
 };
 
@@ -39,7 +40,7 @@ export function adaptReceivingDetailSheet(detail: ReceivingDetailForPrint, { qua
   const arrived = grn.arrivedAt ? day(grn.arrivedAt) : "";
   return {
     companyName: "", documentNo: grn.documentNumber || grn.id, documentDate: arrived, supplier: grn.supplier?.name || "",
-    warehouse: grn.warehouse?.name || grn.warehouse?.code || "", sourceOrderNo: detail.purchaseOrder.id, handler: "",
+    warehouse: grn.warehouse?.name || grn.warehouse?.code || "", sourceOrderNo: detail.purchaseOrder.number || detail.purchaseOrder.id, handler: "",
     receiver: grn.receiver || "", receiveDate: arrived, createdBy: "", reviewedBy: "", remarks: "",
     lines: detail.lines.map((line) => ({
       sku: line.sku || "",

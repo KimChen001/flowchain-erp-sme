@@ -94,7 +94,7 @@ export function ThreeWayMatchListPage() {
   const shown = rows.filter((row) =>
     (!result || resultOf(row) === result)
     && (!supplier || row.supplierName === supplier)
-    && (!needle || [row.id, poOf(row), row.grnId, row.invoiceId].some((value) => String(value || "").toLowerCase().includes(needle))),
+    && (!needle || [row.id, row.poNumber, poOf(row), row.grnId, row.invoiceId].some((value) => String(value || "").toLowerCase().includes(needle))),
   );
   const suppliers = [...new Set(rows.map((row) => String(row.supplierName || "")).filter(Boolean))].sort();
   const count = (name: Result) => rows.filter((row) => resultOf(row) === name).length;
@@ -174,7 +174,7 @@ export function ThreeWayMatchListPage() {
                     <td className={`${tdNameClass} max-w-[200px] truncate`} title={row.supplierName}>{row.supplierName || <span style={{ color: A.gray2 }}>{tr("noSupplier")}</span>}</td>
                     <td className={tdNowrapClass}>
                       <div className="flex flex-col gap-0.5 text-[12px]">
-                        <BusinessEntityLink entityType="purchase_order" entityId={poOf(row)}>{poOf(row) || "—"}</BusinessEntityLink>
+                        <BusinessEntityLink entityType="purchase_order" entityId={poOf(row)} number={row.poNumber} />
                         <BusinessEntityLink entityType="receiving_doc" entityId={row.grnId}>{row.grnId || "—"}</BusinessEntityLink>
                         <BusinessEntityLink entityType="supplier_invoice" entityId={row.invoiceId}>{row.invoiceId || "—"}</BusinessEntityLink>
                       </div>

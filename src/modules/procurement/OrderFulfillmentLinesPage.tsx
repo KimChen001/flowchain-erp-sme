@@ -33,6 +33,8 @@ export type OrderFulfillmentLine = {
   id: string;
   lineNumber: number;
   poId: string;
+  // The order's document number (its id for orders made before numbering).
+  poNumber: string;
   poStatus: string;
   supplier: string;
   supplierId?: string;
@@ -118,6 +120,7 @@ export function buildOrderFulfillmentLines(
         id: line.poLineId,
         lineNumber: index + 1,
         poId: order.po,
+        poNumber: order.number || order.orderNumber || order.po,
         poStatus: order.status,
         supplier: order.supplier,
         supplierId: order.supplierId,
@@ -248,7 +251,7 @@ export function OrderFulfillmentLinesPage() {
       if (!inView[view](row)) return false;
       if (supplier && row.supplier !== supplier) return false;
       if (!normalized) return true;
-      return [row.poId, row.id, row.supplier, row.sku, row.itemName]
+      return [row.poNumber, row.poId, row.id, row.supplier, row.sku, row.itemName]
         .some((value) => String(value || "").toLowerCase().includes(normalized));
     });
   }, [query, rows, supplier, view]);
@@ -346,7 +349,7 @@ export function OrderFulfillmentLinesPage() {
               {state === "loaded" && filtered.map((row, index) => (
                 <tr key={row.id} data-testid={`fulfillment-line-${row.id}`} className={listRowClass} style={listRowStyle(index, filtered.length)}>
                   <td className={`${cellClass} sticky left-0 z-10 max-w-[210px] bg-white`} title={row.id}>
-                    <BusinessEntityLink entityType="purchase_order" entityId={row.poId} className={tableLinkClass}>{row.poId}</BusinessEntityLink>
+                    <BusinessEntityLink entityType="purchase_order" entityId={row.poId} number={row.poNumber} className={tableLinkClass} />
                     <div className="truncate text-[11px]"><SupplierDisplay row={row} /></div>
                     <div className="mt-1 flex items-center gap-1.5 text-[11px]">
                       <span style={{ color: A.gray2 }}>{say(`Line ${row.lineNumber}`, `第 ${row.lineNumber} 行`)}</span>
@@ -385,7 +388,7 @@ export function OrderFulfillmentLinesPage() {
             <article key={row.id} data-testid={`fulfillment-line-mobile-${row.id}`} className="p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <BusinessEntityLink entityType="purchase_order" entityId={row.poId}>{row.poId}</BusinessEntityLink>
+                  <BusinessEntityLink entityType="purchase_order" entityId={row.poId} number={row.poNumber} />
                   <div className="mt-1 text-xs font-medium">{say(`Line ${row.lineNumber}`, `第 ${row.lineNumber} 行`)} · {row.itemName || row.sku}</div>
                   <div className="mt-1 break-words text-xs" style={{ color: A.sub }}>
                     <SupplierDisplay row={row} /> · {row.sku || copy("SKU 待补齐")}

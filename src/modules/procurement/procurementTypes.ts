@@ -193,6 +193,7 @@ export type RfqComparisonParticipant = NonResponseParticipant;
 export type RfqSupplierComparison = {
   entityType: "RfqSupplierComparison";
   rfqId: string;
+  rfqNumber?: string;
   rfqTitle: string | null;
   rfqStatus: string | null;
   rfqStatusRaw: string | null;
@@ -286,6 +287,7 @@ export type RfqAwardDecisionInput = {
 };
 export type PurchaseRequestSummary = {
   id: string;
+  number?: string;
   status: string;
   totalAmount: number | null;
   defaultCurrency?: string;
@@ -293,9 +295,16 @@ export type PurchaseRequestSummary = {
   lines?: Array<{ itemNameSnapshot?: string; sku?: string | null; needByDate?: string; supplierSnapshot?: { supplierName?: string } | null }>;
 };
 export type PurchaseOrderLine = { sourcePurchaseRequestLineId: string; itemNameSnapshot: string; estimatedAmount: number };
-export type PurchaseOrder = { id: string; status: string; transmissionStatus: string; totalAmount: number | null; currency?: string; supplier?: string; eta?: string; sourceName?: string; supplierId: string; supplierSnapshot?: { supplierName?: string }; targetWarehouseId?: string; sourcePrId?: string; sourcePurchaseRequestId?: string; lines: PurchaseOrderLine[] };
+export type PurchaseOrder = { id: string; number?: string; status: string; transmissionStatus: string; totalAmount: number | null; currency?: string; supplier?: string; eta?: string; sourceName?: string; supplierId: string; supplierSnapshot?: { supplierName?: string }; targetWarehouseId?: string; sourcePrId?: string; sourcePurchaseRequestId?: string; lines: PurchaseOrderLine[] };
+// number: the document number people read (requests, RFQs and orders; the id for
+// documents made before numbering). poNumber/prNumber/rfqNumber: the numbers of
+// the documents this one refers to, when the server sends them.
 export type ProcurementDocument = {
   id?: string;
+  number?: string;
+  poNumber?: string;
+  prNumber?: string;
+  rfqNumber?: string;
   category?: string;
   invoiceNumber?: string;
   relatedPo?: string;
@@ -342,6 +351,7 @@ export type ProcurementDocument = {
 // signals are codes ("invoice_variance", "match_exception"), labelled when shown.
 export type ProcurementWorkItem = {
   id: string;
+  number?: string;
   kind: EntityKind;
   status: string;
   transmissionStatus?: string;

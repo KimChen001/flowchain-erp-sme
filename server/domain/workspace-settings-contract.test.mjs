@@ -39,7 +39,8 @@ test('workspace localization and base currency accept only governed values', () 
 
 test('PostgreSQL operational settings seed covers Phase 4 numbering and review policies', () => {
   const settings = mergeOperationalSettings({})
-  for (const name of ['Return Request', 'Return Authorization', 'Return Posting', 'Supplier Invoice', 'Customer Invoice', 'Credit Memo / Credit Note']) {
+  // Supplier invoices keep the supplier's own number, so they have no rule.
+  for (const name of ['Return Request', 'Return Authorization', 'Return Posting', 'Customer Invoice', 'Credit Memo / Credit Note', 'Sales Order', 'Receiving Document']) {
     assert.ok(settings.numbering.rules.some(rule => rule.document === name))
   }
   for (const name of ['Return Authorization', 'Supplier Invoice Match Exception', 'Payable Approval', 'Customer Credit Note Approval']) {
@@ -71,18 +72,20 @@ const serverSources = () => {
   return files.map(path => ({ path: relative(serverRoot, path).replaceAll('\\', '/'), source: readFileSync(path, 'utf8') }))
 }
 
-test('only the four invoice matching tolerances, PO approval from an approved request, the AI switch and the document settings are read from the operational settings the UI edits', () => {
+test('only the numbering prefixes, the four invoice matching tolerances, PO approval from an approved request, the AI switch and the document settings are read from the operational settings the UI edits', () => {
   assert.deepEqual(REVIEW_TOLERANCE_FIELDS, ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance'])
-  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
+  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: ['prefix'], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
 
   const sources = serverSources()
-  // Every server reader of tenant.operationalSettings. The PO and invoice documents read
+  // Every server reader of tenant.operationalSettings. Document numbering reads the
+  // numbering prefixes (document-numbering.mjs). The PO and invoice documents read
   // the documents section through mergeOperationalSettings. The settlement services
   // read settlementPolicy, which the settings UI never edits; Mobile Sync reads
   // module visibility but is outside the US trial capability set.
   assert.deepEqual(sources.filter(file => /operationalSettings/.test(file.source)).map(file => file.path).sort(), [
     'domain/ai-workspace-access.mjs',
     'domain/customer-invoice-document-read-service.mjs',
+    'domain/document-numbering.mjs',
     'domain/internal-settlement-command-service.mjs',
     'domain/internal-settlement-read-service.mjs',
     'domain/mobile-sync-entity-policy.mjs',

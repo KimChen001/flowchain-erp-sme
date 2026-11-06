@@ -41,10 +41,11 @@ const COPY: Record<string, [string, string]> = {
 const RECEIVE_STATUSES = new Set(["issued", "partially_received"]);
 
 type OrderLine = { quantityOrdered?: number; quantityReceived?: number; unit?: string; sku?: string; itemName?: string };
-type Order = { id?: string; po?: string; status: string; supplier?: string; eta?: string; lines?: OrderLine[]; totalOrderedQty?: number; totalReceivedQty?: number };
+type Order = { id?: string; po?: string; number?: string; orderNumber?: string; status: string; supplier?: string; eta?: string; lines?: OrderLine[]; totalOrderedQty?: number; totalReceivedQty?: number };
 // open is a total only when every open line uses one unit; otherwise null and
 // the row says how many lines are open.
-type Receivable = { id: string; status: string; supplier: string; eta: string; open: number | null; unit: string; openLines: number; search: string };
+// number: the document number people read; id stays in links and calls.
+type Receivable = { id: string; number: string; status: string; supplier: string; eta: string; open: number | null; unit: string; openLines: number; search: string };
 
 const quantity = (value: unknown) => {
   const parsed = Number(value ?? 0);
@@ -62,15 +63,17 @@ function receivableOf(order: Order): Receivable | null {
     : Math.max(quantity(order.totalOrderedQty) - quantity(order.totalReceivedQty), 0);
   if (open <= 0) return null;
   const units = [...new Set(openLines.map((line) => String(line.unit || "").trim()))];
+  const number = String(order.number || order.orderNumber || "").trim() || id;
   return {
     id,
+    number,
     status: order.status,
     supplier: String(order.supplier || ""),
     eta: String(order.eta || ""),
     open: units.length > 1 ? null : open,
     unit: units.length === 1 ? units[0] : "",
     openLines: openLines.length,
-    search: [id, order.supplier, ...lines.flatMap((line) => [line.sku, line.itemName])].filter(Boolean).join(" ").toLowerCase(),
+    search: [number, id, order.supplier, ...lines.flatMap((line) => [line.sku, line.itemName])].filter(Boolean).join(" ").toLowerCase(),
   };
 }
 
@@ -154,7 +157,7 @@ export function ReceivablePurchaseOrderChooser() {
               {canReceive && state === "loaded" && shown.map((row, index) => (
                 <tr key={row.id} className={listRowClass} style={listRowStyle(index, shown.length)} data-testid="receiving-po-chooser-row">
                   <td className={tdIdClass}>
-                    <EntityLink kind="purchase_order" id={row.id} className={tableLinkClass}>{row.id}</EntityLink>
+                    <EntityLink kind="purchase_order" id={row.id} number={row.number} className={tableLinkClass} />
                   </td>
                   <td className={`${tdNameClass} max-w-[260px] truncate`} title={row.supplier}>{row.supplier || "—"}</td>
                   <td className={tdNowrapClass} style={{ color: A.sub }}>{row.eta ? formatCalendarDay(row.eta, locale) : "—"}</td>
@@ -167,7 +170,7 @@ export function ReceivablePurchaseOrderChooser() {
                       type="button"
                       className={rowActionClass.primary}
                       data-testid="receiving-po-chooser-receive"
-                      aria-label={`${tr("receive")} ${row.id}`}
+                      aria-label={`${tr("receive")} ${row.number}`}
                       onClick={() => navigate(`/app/procurement/receiving/new?po=${encodeURIComponent(row.id)}`)}
                     >{tr("receive")}</button>
                   </td>

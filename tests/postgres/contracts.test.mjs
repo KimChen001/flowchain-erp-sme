@@ -11,6 +11,8 @@ import { createScmServer } from '../../server/bootstrap/scm-server.mjs'
 import { tenantCalendarDay } from '../../server/domain/tenant-calendar-day.mjs'
 import { createPrismaClient, disconnectPrismaClient } from '../../server/persistence/prisma-client.mjs'
 import { addContractDays } from '../../shared/contract-status.mjs'
+import { numberingPeriod } from '../../shared/document-numbering.mjs'
+import { createContractCommandService } from '../../server/domain/contract-command-service.mjs'
 
 // Contract records (docs/contracts-module-design.md, K1) against PostgreSQL:
 // commands with versions, idempotent retries and audit rows; the activate,
@@ -123,7 +125,8 @@ let main
 test('a buyer creates a draft; a retry with the same key replays it; the owner is the supplier\'s business owner', async () => {
   const created = ok(await as.buyer('POST', '/api/contracts', { ...draftInput(), idempotencyKey: 'contracts-create-1' }), 201)
   main = created.contract
-  assert.match(main.number, /^CT-[0-9A-F]{8}$/)
+  // The server numbers it: the workspace's first contract this month.
+  assert.equal(main.number, `CT-${numberingPeriod(new Date(), 'America/New_York')}-0001`)
   assert.deepEqual([main.status, main.state, main.version, main.owner?.id, main.supplier?.name, main.totalValue, main.currency, main.startDate, main.endDate, created.idempotentReplay],
     ['draft', 'draft', 1, userId('finance'), 'Acme Packaging', '120000.0000', 'USD', day(-30), day(335), false])
   const replay = ok(await as.buyer('POST', '/api/contracts', { ...draftInput(), idempotencyKey: 'contracts-create-1' }), 201)
@@ -446,4 +449,32 @@ test('the contract permissions migration grants the codes to existing default ro
   } finally {
     await client.end().catch(() => {})
   }
+})
+
+// Document numbers (shared/document-numbering.mjs, owner decisions
+// 2026-11-04): the server numbers each new contract and each renewal
+// CT-YYYYMM-NNNN in the workspace's month and ignores a number the client
+// sends; the number on the signed document stays in externalReference.
+test('a new contract and its renewal are numbered by the server in the workspace month, ignoring a sent number', async () => {
+  const numbers = 'tenant-contracts-numbers'
+  await prisma.tenant.create({ data: { id: numbers, name: 'Contract numbers', currency: 'USD', timezone: 'America/New_York' } })
+  await prisma.user.create({ data: { id: `${numbers}-manager`, tenantId: numbers, email: 'manager-contract-numbers@example.com', name: 'Numbers manager', role: 'manager' } })
+  await prisma.supplier.create({ data: { id: 'SUP-CN', tenantId: numbers, code: 'SUP-CN', name: 'Numbers Supplier', metadata: { defaultCurrency: 'USD', version: 1 } } })
+  await backfillTenantAuthorization(prisma, numbers)
+  const context = { identity: { authenticated: true, tenantId: numbers, userId: `${numbers}-manager`, role: 'manager', source: 'signed-session' } }
+  // 03:30 UTC on 1 December 2026 is still 30 November in New York.
+  const commands = createContractCommandService({ prisma, env: { ...process.env, FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, now: () => new Date('2026-12-01T03:30:00Z') })
+  const input = { title: 'Numbered agreement', type: 'purchase_agreement', supplierId: 'SUP-CN', renewal: 'none', startDate: '2026-11-01', endDate: '2027-10-31' }
+  const first = await commands.createContract({ ...input, number: 'CT-TYPED-1', externalReference: 'SUP-AGR-77', idempotencyKey: 'numbers-1' }, context)
+  const second = await commands.createContract({ ...input, idempotencyKey: 'numbers-2' }, context)
+  assert.deepEqual([first.contract.number, second.contract.number, first.contract.externalReference], ['CT-202611-0001', 'CT-202611-0002', 'SUP-AGR-77'])
+  assert.equal(await prisma.contract.count({ where: { tenantId: numbers, number: 'CT-TYPED-1' } }), 0)
+  // A renewal is a new contract with the next number.
+  const active = await commands.activateContract(first.contract.id, { expectedVersion: first.contract.version, signedOn: '2026-10-30', idempotencyKey: 'numbers-activate' }, context)
+  const renewed = await commands.renewContract(first.contract.id, { expectedVersion: active.contract.version, idempotencyKey: 'numbers-renew' }, context)
+  assert.equal((await prisma.contract.findFirst({ where: { tenantId: numbers, renewsContractId: first.contract.id } })).number, 'CT-202611-0003')
+  assert.deepEqual([renewed.contract.number, renewed.contract.renewsContract?.id], ['CT-202611-0003', first.contract.id])
+  // In Shanghai the same moment is already December: a new sequence.
+  await prisma.tenant.update({ where: { id: numbers }, data: { timezone: 'Asia/Shanghai' } })
+  assert.equal((await commands.createContract({ ...input, idempotencyKey: 'numbers-3' }, context)).contract.number, 'CT-202612-0001')
 })

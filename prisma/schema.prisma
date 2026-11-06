@@ -120,6 +120,7 @@ model Tenant {
   customFieldRevisions                  CustomFieldRevision[]
   customFieldOptions                    CustomFieldOption[]
   intakeSchemaSnapshots                 IntakeSchemaSnapshot[]
+  documentNumberSequences               DocumentNumberSequence[]
 }
 
 enum IntakeSourceType {
@@ -1014,6 +1015,10 @@ model AiEvidence {
 model PurchaseRequest {
   id           String    @id
   tenantId     String
+  // The number people see (PREFIX-YYYYMM-NNNN, unique in the workspace);
+  // documents created before it keep their id. Null only on rows written
+  // outside the app, which show their id.
+  number       String?
   status       String    @default("draft")
   requester    String?
   buyer        String?
@@ -1034,6 +1039,7 @@ model PurchaseRequest {
   tenant Tenant                @relation(fields: [tenantId], references: [id])
   lines  PurchaseRequestLine[]
 
+  @@unique([tenantId, number])
   @@index([tenantId, status])
   @@index([tenantId, createdAt])
 }
@@ -1058,6 +1064,10 @@ model PurchaseRequestLine {
 model Rfq {
   id                     String    @id
   tenantId               String
+  // The number people see (PREFIX-YYYYMM-NNNN, unique in the workspace);
+  // documents created before it keep their id. Null only on rows written
+  // outside the app, which show their id.
+  number                 String?
   title                  String
   category               String?
   status                 String    @default("active")
@@ -1080,6 +1090,7 @@ model Rfq {
   supplierParticipations RfqSupplierParticipation[]
   awardDecisions         RfqAwardDecision[]
 
+  @@unique([tenantId, number])
   @@unique([tenantId, id])
   @@index([tenantId, status])
   @@index([tenantId, dueDate])
@@ -1264,6 +1275,10 @@ model RfqAwardDecision {
 model PurchaseOrder {
   id                  String    @id
   tenantId            String
+  // The number people see (PREFIX-YYYYMM-NNNN, unique in the workspace);
+  // documents created before it keep their id. Null only on rows written
+  // outside the app, which show their id.
+  number              String?
   status              String    @default("draft")
   supplierId          String?
   supplierName        String?
@@ -1288,6 +1303,7 @@ model PurchaseOrder {
   tenant Tenant              @relation(fields: [tenantId], references: [id])
   lines  PurchaseOrderLine[]
 
+  @@unique([tenantId, number])
   @@index([tenantId, status])
   @@index([tenantId, expectedDate])
   @@index([tenantId, issuedAt])
@@ -3602,4 +3618,17 @@ model AiUsageMonthly {
   tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@id([tenantId, month])
+}
+
+// Document number sequences (shared/document-numbering.mjs): the last number
+// given out per workspace, document type and month (YYYYMM, workspace time).
+model DocumentNumberSequence {
+  tenantId     String
+  documentType String
+  period       String
+  lastValue    Int
+  updatedAt    DateTime @default(now()) @updatedAt
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, documentType, period])
 }

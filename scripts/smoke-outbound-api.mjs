@@ -253,6 +253,8 @@ async function main() {
         lines: [{ itemId: "outbound-smoke-item", quantity: "2" }],
       },
     });
+    // The order number sent is ignored: the server assigns SO-YYYYMM-NNNN.
+    assert.match(lifecycle.order.orderNumber, /^SO-\d{6}-\d{4,}$/);
     assert.equal(
       (
         await request(base, "/api/sales/orders", {
@@ -432,6 +434,10 @@ async function main() {
       { token, method: "POST", body: draftBody },
     );
     const shipmentId = drafted.shipment.id;
+    // The number in the body is ignored: the server assigns DN-YYYYMM-NNNN.
+    assert.match(drafted.shipment.shipmentNumber, /^DN-\d{6}-\d{4,}$/);
+    // A second draft for the same reservation is refused for its quantity,
+    // never for a number.
     const duplicate = await raw(
       base,
       "/api/sales/orders/outbound-smoke-order/shipments",
@@ -446,7 +452,7 @@ async function main() {
       },
     );
     assert.equal(duplicate.response.status, 409);
-    assert.equal(duplicate.payload.code, "SHIPMENT_NUMBER_CONFLICT");
+    assert.equal(duplicate.payload.code, "SHIPMENT_RESERVATION_INSUFFICIENT");
     const balanceAfterDraft = await prisma.inventoryBalance.findUnique({
       where: { id: "outbound-smoke-balance" },
     });

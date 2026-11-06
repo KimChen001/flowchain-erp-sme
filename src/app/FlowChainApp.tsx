@@ -58,6 +58,7 @@ import {
 } from "../components/navigation/ModuleShell";
 import type { WorkflowContext } from "../lib/workflowContext";
 import { buildReturnContext } from "../lib/workflowContext";
+import { DocumentNumber, isDocumentNumberType } from "../lib/documentNumbers";
 import { typography } from "../components/ui/typography";
 import type { WorkspaceUser, PurchaseIntent } from "../types/scm";
 import {
@@ -155,6 +156,8 @@ type GlobalSearchResult = {
   id: string;
   type: string;
   label: string;
+  // A purchase request's, RFQ's or order's document number.
+  number?: string;
   subtitle: string;
   status: string;
   moduleId: string;
@@ -1602,7 +1605,10 @@ export default function FlowChainApp() {
                                           className={`${typography.searchResultTitle} truncate`}
                                           style={{ color: A.label }}
                                         >
-                                          {result.label}
+                                          {/* A request, RFQ or order found by its id shows its document number. */}
+                                          {isDocumentNumberType(result.entityType) && result.label === result.entityId
+                                            ? <DocumentNumber type={result.entityType} id={result.entityId} number={result.number} />
+                                            : result.label}
                                         </span>
                                       </div>
                                       <div

@@ -280,11 +280,14 @@ test('a bill with match exceptions waits for the last one to be approved; previe
 })
 
 test('a new adjustment goes only to approvers who may operate its warehouse', async () => {
-  const create = () => api(tokens.submitter, 'POST', '/api/inventory/adjustments', { idempotencyKey: 'ae-adj-1', adjustmentNumber: 'ADJ-AE-1', reasonCode: 'found_stock', lines: [{ itemId: item.id, warehouseId: warehouse, location: 'A-01', adjustmentQuantity: '2' }] })
+  const create = () => api(tokens.submitter, 'POST', '/api/inventory/adjustments', { idempotencyKey: 'ae-adj-1', reasonCode: 'found_stock', lines: [{ itemId: item.id, warehouseId: warehouse, location: 'A-01', adjustmentQuantity: '2' }] })
   const first = await emailsAfter(create, 1)
   assert.equal(first.result.status, 201, describe(first.result))
   assert.deepEqual(first.messages.map((message) => message.to), [users.approverEn.email], 'read access to the warehouse is not enough')
-  assert.equal(first.messages[0].subject, 'Inventory adjustment ADJ-AE-1 is waiting for approval')
+  // The server numbers the adjustment (ADJ-YYYYMM-NNNN); the email carries that number.
+  const { adjustmentNumber } = await prisma.inventoryAdjustmentDocument.findUnique({ where: { id: first.result.body.entityId } })
+  assert.match(adjustmentNumber, /^ADJ-\d{6}-\d{4,}$/)
+  assert.equal(first.messages[0].subject, `Inventory adjustment ${adjustmentNumber} is waiting for approval`)
   assertOnlyTypeNumberAndLink(first.messages[0], `https://flowchain.test/app/inventory/adjustments/${first.result.body.entityId}`, [item.sku, item.name, 'A-01'])
 
   const replay = await emailsAfter(create, 0)

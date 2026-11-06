@@ -84,7 +84,20 @@ test("only the invoice matching tolerances and the AI switch save; settings noth
 
   // Advanced settings (session timeout, negative stock) sit on an internal page
   // outside normal navigation; they carry the same notice there.
-  for (const path of ["/app/settings/numbering", "/app/settings/modules"]) {
+  // Numbering is in effect (owner decisions 2026-11-04): one rule per
+  // document type, only the prefix editable, applied types marked.
+  await page.goto("/app/settings/numbering");
+  await expect(page.getByTestId("settings-not-in-effect")).toHaveCount(0);
+  const salesOrderRule = page.getByTestId("settings-numbering-rule-NUM-SO");
+  await expect(salesOrderRule).toContainText("Sales Order");
+  await expect(salesOrderRule).toContainText(/SO-\d{6}-0001/);
+  await expect(salesOrderRule).toContainText("In effect");
+  await expect(page.getByTestId("settings-numbering-rule-NUM-PO")).toContainText("In effect");
+  await expect(page.getByTestId("settings-numbering-rule-NUM-RR")).toContainText("Not in effect yet");
+  await expect(page.getByLabel("Prefix for Sales Order", { exact: true })).toBeEnabled();
+  await expect(page.getByTestId("settings-save")).toBeVisible();
+
+  for (const path of ["/app/settings/modules"]) {
     await page.goto(path);
     const notice = page.getByTestId("settings-not-in-effect");
     await expect(notice).toContainText("Not in effect yet");
@@ -154,6 +167,9 @@ test("not-in-effect settings and matching tolerances are translated into Chinese
   await session(page, await login(request));
   await forceLanguage(page, "zh-CN");
   await page.goto("/app/settings/numbering");
+  await expect(page.getByTestId("settings-numbering-rule-NUM-SO")).toContainText("销售订单");
+  await expect(page.getByTestId("settings-numbering-rule-NUM-SO")).toContainText("已生效");
+  await page.goto("/app/settings/modules");
   await expect(page.getByTestId("settings-not-in-effect")).toContainText("尚未生效");
   await page.goto("/app/settings/ai");
   await expect(page.getByTestId("settings-ai-model")).toContainText("AI 功能");

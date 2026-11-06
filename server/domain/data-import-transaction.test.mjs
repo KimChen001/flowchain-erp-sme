@@ -163,6 +163,9 @@ if (!gate.enabled) {
       assert.equal(openingCommit.documents.length, 2)
       const drafts = await prisma.inventoryAdjustmentDocument.findMany({ where: { tenantId: tenantA }, include: { lines: true }, orderBy: { adjustmentNumber: 'asc' } })
       assert.equal(drafts.length, 2)
+      // Numbered by the adjustment command, one after the other.
+      assert.deepEqual(drafts.map((draft) => draft.adjustmentNumber.replace(/^ADJ-\d{6}-/, '')), ['0001', '0002'])
+      assert.deepEqual(openingCommit.documents.map((document) => document.number).sort(), drafts.map((draft) => draft.adjustmentNumber))
       for (const draft of drafts) {
         assert.deepEqual([draft.reasonCode, draft.workflowStatus, draft.postingStatus], ['opening_balance', 'draft', 'unposted'])
         assert.ok(draft.lines.every((line) => line.inventoryBalanceId === null))

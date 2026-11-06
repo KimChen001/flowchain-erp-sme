@@ -69,6 +69,7 @@ const zh: Record<string, string> = {
   'Reload': '重新加载', 'Working…': '处理中…',
   // Form.
   'Record a signed agreement. It is saved as a draft; activate it once the signed date and start date are in.': '记录一份已签署的协议。保存后为草稿，填写签署日期和开始日期后即可生效。',
+  'The contract number is assigned when you save. Put the number on the signed document in Their reference.': '合同编号在保存时自动生成。签署文件上的编号请填入“对方编号”。',
   'Required fields': '必填字段', 'Choose a supplier': '选择供应商', 'Choose a type': '选择类型',
   "The supplier's business owner": '供应商的业务负责人', 'Gets the reminders on Today.': '在“今日”页接收提醒。',
   'Leave empty for an open-ended contract.': '无固定到期日时请留空。',

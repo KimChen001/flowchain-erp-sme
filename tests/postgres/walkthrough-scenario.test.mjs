@@ -226,7 +226,7 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
     // item's movements never take its stock below zero and end at its stock
     // record's on-hand quantity.
     const [opening] = await prisma.inventoryAdjustmentDocument.findMany({ where: { tenantId }, include: { lines: true } })
-    assert.deepEqual([opening.adjustmentNumber, opening.reasonCode, opening.workflowStatus, opening.postingStatus, opening.lines.length], ['LOCAL-DEMO-ADJ-OPENING', 'opening_balance', 'ready', 'posted', 6])
+    assert.deepEqual([opening.adjustmentNumber, opening.reasonCode, opening.workflowStatus, opening.postingStatus, opening.lines.length], ['ADJ-202509-0001', 'opening_balance', 'ready', 'posted', 6], 'the server numbers the opening stock entry in the month it was counted (160 days before the seed day)')
     const ledger = await prisma.inventoryMovement.findMany({ where: { tenantId }, orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }] })
     assert.ok(ledger[0].occurredAt < receipts.map((receipt) => receipt.arrivedAt).sort((a, b) => a - b)[0], 'opening stock comes first')
     for (const record of records) {
