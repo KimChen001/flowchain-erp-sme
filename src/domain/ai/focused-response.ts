@@ -47,7 +47,7 @@ type Language = "en-US" | "zh-CN";
 const PRIMARY_LIMIT = 8;
 const focusedCopy = {
   "en-US": { rfqDraft: "Create RFQ draft", taskDraft: "Create task draft", prDraft: "Create purchase request draft", textDraft: "Prepare text draft", headline: "Business review complete", summary: "Review the priorities and suggested next steps." },
-  "zh-CN": { rfqDraft: "创建正式 RFQ 草稿", taskDraft: "创建正式任务草稿", prDraft: "创建正式 PR 草稿", textDraft: "生成文本草稿", headline: "已完成业务分析", summary: "请查看重点事项和建议下一步。" },
+  "zh-CN": { rfqDraft: "创建询价单草稿", taskDraft: "创建任务草稿", prDraft: "创建采购申请草稿", textDraft: "生成文本草稿", headline: "已完成业务分析", summary: "请查看重点事项和建议下一步。" },
 } as const;
 
 function answerMode(response: AiResponseV2): AiFocusedAnswerMode {
@@ -103,6 +103,9 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
   // Every line the server lists (it caps them: 5 priorities, 8 records), so
   // an answer titled "4 items need attention" shows four.
   const impacts = (response.businessImpact || []).slice(0, PRIMARY_LIMIT);
+  // A skill answer gives one impact per line, in the lines' order. A supplier
+  // business query gives one per section, so its lines have none of their own.
+  const lineImpacts = response.businessQuery ? [] : impacts;
   // The server's rank, when it gives one, is the order; otherwise the server's
   // own order (by date). The page never re-sorts by a severity or amount score.
   const ranked = (response.keyEvidence || []).every((item) => typeof item.rank === "number");
@@ -119,7 +122,8 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
       // The server's own line, or none: a record the answer only cites (a
       // model-first answer's) gets no stock sentence.
       reason: item.summary || "",
-      impact: impacts[index]?.explanation || impacts[index]?.impact || "",
+      // An empty explanation is the server leaving the line without one.
+      impact: lineImpacts[index] ? (lineImpacts[index].explanation ?? lineImpacts[index].impact ?? "") : "",
       status: item.status || "",
       severity: item.severity || impacts[index]?.severity || "info",
       evidence: item,
@@ -129,15 +133,17 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
   });
   const availableActions = actions(response, language, lineCards);
   // The help answer has no records to show, so its suggestions are the answer:
-  // all four of them. Any other answer offers two next questions.
+  // all four of them. A clarification offers one chip per option. Any other
+  // answer offers two next questions.
   const followUps = (response.followUpSuggestions || [])
     .filter((item, index, rows) => Boolean(item.label && item.prompt) && rows.findIndex((row) => row.prompt === item.prompt) === index)
-    .slice(0, isAiCapabilityAnswer(response) ? 4 : 2)
+    .slice(0, isAiCapabilityAnswer(response) ? 4 : response.businessQuery?.clarification?.needed ? 6 : 2)
     .map((item) => ({ label: item.label, prompt: item.prompt, ...(item.skillHint ? { skillHint: item.skillHint } : {}) }));
   return {
     answerMode: answerMode(response),
     headline: response.conclusion?.title || answerCopy.headline,
-    summary: response.conclusion?.summary || (response.answerSource === "workspace_rules" ? "" : answerCopy.summary),
+    // A skill or business query answer that has no summary shows none.
+    summary: response.conclusion?.summary || (response.answerSource === "workspace_rules" || response.businessQuery ? "" : answerCopy.summary),
     severity: response.conclusion?.severity || "info",
     primaryItems,
     primaryAction: availableActions[0] || null,

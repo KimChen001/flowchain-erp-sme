@@ -71,7 +71,8 @@ export function ModuleShell({ route, children, routeAccess }: { route: GovernedA
       {showPageHeader && (
         <div className="fc-page-header" data-testid="page-header">
           <div className="min-w-0">
-            <h1 className="fc-page-title" data-testid="page-title">{workspaceName && route.moduleId === "settings" ? `${workspaceName} · ${routeLabel(route)}` : routeLabel(route)}</h1>
+            {/* The page's one heading; settings cards below carry no second title. */}
+            <h1 className="fc-page-title" data-testid="page-title">{routeLabel(route)}</h1>
           </div>
         </div>
       )}

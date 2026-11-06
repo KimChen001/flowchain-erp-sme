@@ -19,5 +19,5 @@ export type PrintTemplateCatalogItem = {
 export const PRINT_TEMPLATE_CATALOG: PrintTemplateCatalogItem[] = [
   { id: "default-receive-sheet", name: "Standard receiving slip", documentType: "Purchase receipt / receiving slip", isDefault: true, updatedAt: "2026-07-10T09:30:00" },
   { id: "default-delivery-note", name: "Standard delivery note", documentType: "Sales shipment / delivery note", isDefault: true, updatedAt: "2026-07-10T09:30:00" },
-  { id: "default-sign-receipt", name: "Standard delivery receipt", documentType: "Delivery receipt", isDefault: true, updatedAt: "2026-07-10T09:30:00" },
+  { id: "default-sign-receipt", name: "Standard proof of delivery", documentType: "Proof of delivery", isDefault: true, updatedAt: "2026-07-10T09:30:00" },
 ];

@@ -51,7 +51,7 @@ test.skip("governed settlement runs create, submit, independent approval, post, 
   await page.getByTestId("submit-settlement").click();
   await expect(page.getByTestId("settlement-detail")).toContainText("submitted");
   await page.getByTestId("approve-settlement").click();
-  await expect(page.getByTestId("settlement-detail")).toContainText("creator may not approve");
+  await expect(page.getByTestId("settlement-detail")).toContainText("核销的创建人不能批准");
   const settlementId = decodeURIComponent(new URL(page.url()).pathname.split("/").pop()!);
 
   const managerContext = await browser.newContext();
@@ -63,8 +63,8 @@ test.skip("governed settlement runs create, submit, independent approval, post, 
   await managerContext.close();
 
   await page.reload();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByTestId("post-settlement").click();
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByTestId("settlement-detail")).toContainText("posted");
   await expect(page.getByTestId("settlement-detail")).toContainText("20.0000");
   const upload = page.locator('input[type="file"]');
@@ -72,8 +72,9 @@ test.skip("governed settlement runs create, submit, independent approval, post, 
   await expect(page.getByTestId("settlement-detail")).toContainText("1 个附件");
   await expect(page.getByTestId("settlement-reconciliation")).toContainText("matched");
   await page.getByText("纠错操作").click();
-  page.once("dialog", (dialog) => dialog.accept("Browser exact reversal"));
   await page.getByTestId("reverse-settlement").click();
+  await page.getByTestId("confirm-dialog-field").fill("Browser exact reversal");
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByTestId("settlement-detail")).toContainText("reversed");
 
   const English = await login(request, "settlement-en@example.com");

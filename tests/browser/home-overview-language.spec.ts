@@ -36,7 +36,7 @@ for (const language of ['en-US', 'zh-CN']) {
     await page.route('**/api/home/overview', route => route.fulfill({ json: overview(supplier) }));
     await page.goto('/app/overview/risks');
     const root = page.getByTestId('runtime-homepage');
-    await expect(root.getByText(language === 'en-US' ? 'Draft PO awaiting review' : 'Draft PO 待复核', { exact: true })).toBeVisible();
+    await expect(root.getByText(language === 'en-US' ? 'Draft purchase order awaiting review' : '采购订单草稿待复核', { exact: true })).toBeVisible();
     const rows = root.getByTestId('today-work-item');
     await expect(rows).toHaveCount(4);
     if (language === 'en-US') {

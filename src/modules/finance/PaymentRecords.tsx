@@ -3,6 +3,7 @@ import { CheckCircle2, Info, RefreshCw } from "lucide-react";
 import { A } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { apiErrorText } from "../../lib/apiErrorText";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { StatusChip, TwoStepAction, button, field } from "./FinanceControls";
 
@@ -69,7 +70,7 @@ const day = (value: string, locale: string) =>
 function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
   kind: "payable" | "receivable"; obligation: PaymentObligation; onDone: () => void; onClose: () => void;
 }) {
-  const { t, locale } = useI18n();
+  const { t, locale, language } = useI18n();
   const base = `/api/finance/${kind === "payable" ? "payables" : "receivables"}/${encodeURIComponent(obligation.id)}/payments`;
   const [paymentDate, setPaymentDate] = useState(today);
   const [amount, setAmount] = useState(() => (obligation.outstandingAmount ? String(Number(obligation.outstandingAmount)) : ""));
@@ -83,7 +84,7 @@ function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
   const edit = <T,>(setter: (value: T) => void) => (value: T) => { setter(value); setPlan(null); };
   const preview = async () => {
     setError("");
-    try { setPlan(await apiJson<Plan>(`${base}/preview`, { method: "POST", body: JSON.stringify(body()) })); } catch (reason) { setError(reason instanceof Error ? reason.message : t("finance.loadFailed")); }
+    try { setPlan(await apiJson<Plan>(`${base}/preview`, { method: "POST", body: JSON.stringify(body()) })); } catch (reason) { setError(apiErrorText(reason, language, PAYMENT_FAILED)); }
   };
   const confirm = async () => {
     setError("");
@@ -92,7 +93,7 @@ function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
       await apiJson(base, { method: "POST", body: JSON.stringify({ ...body(), idempotencyKey: createSecureClientMutationId("payment") }) });
       onDone();
     } catch (reason) {
-      setError(reason instanceof ApiError || reason instanceof Error ? reason.message : t("finance.loadFailed"));
+      setError(apiErrorText(reason, language, PAYMENT_FAILED));
     } finally {
       setBusy(false);
     }
@@ -136,6 +137,9 @@ function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
     </div>
   );
 }
+
+// A failed payment request in the reader's language, never the server's own words.
+const PAYMENT_FAILED = ["Could not record the payment. Check the amount and date, then try again.", "付款记录失败，请检查金额和日期后重试。"] as const;
 
 export function PaymentRecords({ kind, obligation, onDone }: {
   kind: "payable" | "receivable"; obligation: PaymentObligation; onDone: () => void;

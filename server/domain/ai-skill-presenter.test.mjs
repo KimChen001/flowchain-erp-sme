@@ -77,7 +77,7 @@ test('today priorities states the report figures with tenant formatting', async 
   assert.equal(english.keyEvidence[0].summary, '4 days past the promised date (Sep 25, 2026); 30 pcs still to receive from Acme Components.')
   // Each line states the date it is ordered by.
   assert.equal(english.keyEvidence[3].summary, 'Invoice variance of $200.00 from Acme Components. Open 5 days, since Sep 24, 2026.')
-  assert.equal(answer('today_priorities', 'zh-CN').keyEvidence[4].summary, '已收货，尚未过账到库存。已挂起 1 天（自 Sep 28, 2026）。')
+  assert.equal(answer('today_priorities', 'zh-CN').keyEvidence[4].summary, '已收货，尚未过账到库存。已等待 1 天（自 Sep 28, 2026）。')
   assert.equal(english.checkedLabel, 'Checked: purchase orders, purchase requests, RFQs, inventory balances, supplier invoices and receipts')
   assert.ok(english.dataLimitations.some((item) => item.code === 'multi_currency'))
   const chinese = answer('today_priorities', 'zh-CN')
@@ -111,7 +111,7 @@ test('drafts are review-only cards for the top signals, and need purchasing edit
   assert.match(english.reviewCards[0].payload.message, /^Please confirm delivery dates for these open lines:\n- PO-001 · LDM-001: 30 pcs still to deliver \(20 of 50 received\), promised .*\n- PO-008 · LDM-001: 40 pcs still to deliver, promised /m)
   assert.equal(english.reviewCards[1].payload.message, 'Hello Acme Components,\n\nInvoice INV-001 differs from the purchase order by $200.00. Please send a corrected invoice or the reason for the difference.\n\nThank you.')
   assert.equal(english.reviewCards[1].payload.subject, 'Invoice INV-001: difference from the purchase order')
-  assert.match(answer('prepare_action_draft', 'zh-CN').reviewCards[0].payload.message, /^- PO-001 · LDM-001：仍有 30 pcs 未交（已收 20\/50），承诺日期 /m)
+  assert.match(answer('prepare_action_draft', 'zh-CN').reviewCards[0].payload.message, /^- PO-001 · LDM-001：仍有 30 件未交（已收 20\/50），承诺日期 /m)
   // Each suggested field says where it came from: templates filled from the record.
   assert.deepEqual(Object.fromEntries(Object.entries(english.reviewCards[0].prefill).map(([field, entry]) => [field, `${entry.source}:${entry.ref}`])), { subject: 'template:draft.po_followup.subject_orders', message: 'template:draft.po_followup.message' })
   // A read-only viewer gets links and a limitation, no cards.

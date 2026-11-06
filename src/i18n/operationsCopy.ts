@@ -58,7 +58,7 @@ export const operationsEnglish: Record<string, string> = {
   '当前未读取到客户订单记录，请检查工作区数据或刷新后重试。': 'Could not load customer orders. Check workspace data or refresh to try again.',
   '查看当前工作区全部订单': 'View all workspace orders', '缺口数量': 'Shortage quantity',
   '查看影响交付承诺的订单': 'View orders affecting delivery commitments', '已预留数量': 'Reserved quantity',
-  '查看库存分配证据': 'View inventory allocation evidence', '正在读取客户订单...': 'Loading customer orders…',
+  '查看库存分配证据': 'View inventory allocation evidence', '正在读取客户订单…': 'Loading customer orders…',
   '当前工作区暂无客户订单记录。后续可通过订单导入或业务数据接入生成客户订单视图。': 'No customer orders in this workspace. Import orders or connect business data to get started.',
   '客户订单列表': 'Customer orders', '条': 'records', '客户订单号': 'Customer order number', '订单数量': 'Order quantity',
   '缺口': 'Shortage', '承诺日期': 'Promised date', '交付风险查询': 'Delivery risk review',

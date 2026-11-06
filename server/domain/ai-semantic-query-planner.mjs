@@ -73,10 +73,13 @@ function goalSignals(message) {
   const input = normalize(message)
   const goals = new Set()
   const paymentExcluded = /付款之外|除(?:了)?付款|不要看付款|不看付款|besides payment|other than payment|apart from payment/.test(input)
-  const payment = !paymentExcluded && /付款|付钱|应付|payable|payment|pay\b|paid\b/.test(input)
+  // "Which supplier invoices are due this month?" asks what is to be paid,
+  // not about invoice exceptions (unless it names one).
+  const invoiceDue = /\b(?:invoices?|bills?)\b[^.!?]{0,30}\bdue\b|\bdue\b[^.!?]{0,20}\binvoices?\b|发票[^。？！]{0,10}到期|到期[^。？！]{0,10}发票/.test(input)
+  const payment = !paymentExcluded && (/付款|付钱|应付|payable|payment|pay\b|paid\b/.test(input) || invoiceDue)
   const paymentOverdue = /(?:逾期|过期|拖欠)\s*(?:的\s*)?(?:付款|应付)|(?:付款|应付)\s*(?:已|已经)?\s*(?:逾期|过期|拖欠)|overdue\s+(?:payments?|payables?)\b|(?:payments?|payables?)\s+(?:are\s+)?(?:overdue|past\s+due)\b(?!\s+(?:pos?\b|purchase\s+orders?\b|orders?\b))|past\s+due\s+(?:payments?|payables?)\b/.test(input)
   const blocked = /阻断|不能付|无法付|暂时不能|卡在|卡住|blocked|blocks?\b|cannot\s+(?:pay|be\s+paid)|can.?t\s+(?:pay|be\s+paid)|cannot\b[^.!?]{0,50}\bbe\s+paid|can.?t\b[^.!?]{0,50}\bbe\s+paid|hold|争议/.test(input)
-  const invoice = /发票|invoice|三单|three.way|差异|mismatch|dispute/.test(input)
+  const invoice = /发票|invoice|三单|three.way|差异|mismatch|dispute/.test(input) && (!invoiceDue || /三单|three.way|差异|mismatch|dispute|exception|异常|variance/.test(input))
   const receiving = /收货|到货|验收|拒收|receiv|grn/.test(input)
   const purchaseOrder = /\bpos?\b|采购订单|订单拖期|延期订单|purchase orders?/.test(input)
   const rfq = /\brfqs?\b|询价|报价|quotation/.test(input)
@@ -162,7 +165,7 @@ function clarificationFor(reason) {
   if (reason === 'current_supplier_unavailable') return '当前页面没有绑定唯一供应商，请提供供应商名称或编号。'
   if (reason?.startsWith('supplier_not_found:')) return `未找到 ${reason.slice('supplier_not_found:'.length)}，请确认供应商名称或编号。`
   if (reason === 'prompt_injection') return '该请求包含不允许的系统或数据访问指令。请改为描述需要查询的业务事实。'
-  if (reason === 'no_supported_goal') return '你想查看供应商的付款、订单、收货、发票、RFQ，还是其他风险？'
+  if (reason === 'no_supported_goal') return '请选择要查看的方面：付款、订单、收货、发票、询价或其他风险。'
   return '请说明要查看哪一家供应商，或明确查询全部供应商。'
 }
 

@@ -15,7 +15,7 @@ test('focused AI presentation limits priorities, actions, evidence and follow-up
   assert.match(model, /availableActions\.slice\(1, 3\)/)
   assert.match(model, /evidence: evidence\.slice\(0, PRIMARY_LIMIT\)/)
   // Two follow-ups, or four on the help answer, which has no records to show.
-  assert.match(model, /\.slice\(0, isAiCapabilityAnswer\(response\) \? 4 : 2\)/)
+  assert.match(model, /\.slice\(0, isAiCapabilityAnswer\(response\) \? 4 : response\.businessQuery\?\.clarification\?\.needed \? 6 : 2\)/)
   assert.match(renderer, /<details data-testid=/)
   assert.match(panel, /emptyPrompts\.slice\(0, 4\)/)
   assert.match(panel, /取消请求/)

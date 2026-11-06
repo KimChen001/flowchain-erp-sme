@@ -6,8 +6,18 @@ declare module '../../../shared/document-numbering.mjs' {
 }
 
 declare module '../../shared/roles.mjs' {
+  export const ROLE_NAMES: Readonly<Record<string, Readonly<{ en: string; zh: string }>>>;
+  export const ROLE_TEMPLATE_NAMES: Readonly<Record<string, Readonly<{ stored: string; en: string; zh: string }>>>;
   export const ROLE_LABELS: Readonly<Record<string, string>>;
-  export function roleLabel(role: string): string;
+  export function roleLabel(role: string, language?: string): string;
+  export function roleDisplayName(role: { roleKey?: string; name: string }, language?: string): string;
+}
+declare module '../../../shared/roles.mjs' {
+  export const ROLE_NAMES: Readonly<Record<string, Readonly<{ en: string; zh: string }>>>;
+  export const ROLE_TEMPLATE_NAMES: Readonly<Record<string, Readonly<{ stored: string; en: string; zh: string }>>>;
+  export const ROLE_LABELS: Readonly<Record<string, string>>;
+  export function roleLabel(role: string, language?: string): string;
+  export function roleDisplayName(role: { roleKey?: string; name: string }, language?: string): string;
 }
 declare module '../../../shared/unavailable-product-routes.mjs' {
   export const FROZEN_PRODUCT_ROUTE_IDS: readonly string[];

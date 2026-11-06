@@ -168,11 +168,32 @@ test('show_table fills every cell from the source rows: refs, amounts with their
     assert.equal(row.due_date, source.dueDate)
     assert.deepEqual(row.amount, { amount: source.amount, currency: source.currency })
     assert.equal(row.remaining_quantity, source.remaining)
-    assert.equal(row.days_overdue, source.overdueDays)
+    // Days overdue only on an order that is late and open (2026-11-05).
+    assert.equal(row.days_overdue, source.overdueDays > 0 && source.open !== false ? source.overdueDays : null)
     assert.deepEqual(row.open, { code: source.open ? 'yes' : 'no', tone: 'neutral' })
+    // The quantity's unit goes beside its cell.
+    assert.equal(row.unit, source.unit)
   }
+  assert.ok(props.rows.some((row) => row.days_overdue === null) && props.rows.some((row) => row.days_overdue > 0))
   // PO-009 keeps its own currency in a table.
   assert.ok(props.rows.some((row) => row.amount.currency === 'EUR'))
+  // A column of units alone is not shown next to a quantity; it stays without one.
+  const units = assertPart(build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'remaining', 'unit'] }), 'table')
+  assert.deepEqual(units.columns.map((column) => column.code), ['order', 'remaining_quantity'])
+  assert.ok(units.rows.every((row, index) => row.unit === output.rows[index].unit))
+  const plain = assertPart(build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'unit'] }), 'table')
+  assert.deepEqual(plain.columns.map((column) => column.code), ['order', 'unit'])
+})
+
+test('show_table words types and priorities as codes the panel labels, never as text', async () => {
+  const { call, build } = await workspace()
+  await call('toolu_attention', 'attention_list', { kind: 'problems', limit: 5 })
+  const props = assertPart(build('show_table', { source: 'toolu_attention', columns: ['label', 'type', 'severity'] }), 'table')
+  assert.deepEqual(props.columns.map((column) => [column.code, column.kind]), [['label', 'ref'], ['type', 'status'], ['severity', 'status']])
+  assert.ok(props.rows.every((row) => typeof row.type === 'object' && /^[a-z_]+$/.test(row.type.code) && row.type.tone === 'neutral'), JSON.stringify(props.rows))
+  await call('toolu_requests', 'list_purchase_requests', { status: 'all' })
+  const requests = assertPart(build('show_table', { source: 'toolu_requests', columns: ['request', 'priority'] }), 'table')
+  assert.ok(requests.rows.some((row) => row.priority?.code === 'high' && row.priority.tone === 'warning'), JSON.stringify(requests.rows))
 })
 
 test('show_table sorts and limits as asked and counts what it left out', async () => {
@@ -786,6 +807,44 @@ test('the setup card is offered only to a role that may add suppliers or items, 
   const offline = await workspace({ userText: PASTED })
   assertError(await tool('suggest_setup_records').build(SETUP_INPUT, { ...offline.ctx, prisma: null }), 'setup_unavailable')
 })
+
+// A live re-check on 2026-11-05: the model named columns by the display
+// strings it read (amountText, statusLabel) and both tables failed; units read
+// "300 box" in English and Chinese; a described item stayed unticked.
+test('a column named by its display string or label is the value\'s own column', async () => {
+  const { call, build } = await workspace()
+  await call('toolu_po', 'list_purchase_orders')
+  const props = assertPart(build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'statusLabel', 'dueDateText', 'amountText', 'remainingText'] }), 'table')
+  assert.deepEqual(props.columns.map((column) => column.code), ['order', 'status', 'due_date', 'amount', 'remaining_quantity'])
+  assertError(build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'priceText'] }), 'unknown_column')
+})
+
+test('a quantity\'s unit is worded in the answer\'s language and number', async () => {
+  const { ctx, call, build } = await workspace()
+  await call('toolu_po', 'list_purchase_orders')
+  const en = assertPart(build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'remaining'] }), 'table')
+  assert.ok(en.rows.every((row) => row.unit === 'pcs'))
+  ctx.language = 'zh-CN'
+  const zh = assertPart(build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'remaining'] }), 'table')
+  assert.ok(zh.rows.every((row) => row.unit === '件'), JSON.stringify(zh.rows[0]))
+})
+
+test('an item the user described in their own words and the model resolved arrives ticked', async () => {
+  const { ctx, call, build } = await workspace()
+  await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-002'] })
+  ctx.question = '我需要 50 个温度传感器'
+  const typed = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-002', quantity: 50 }] }), 'pr_form')
+  assert.deepEqual(typed.lines.map((row) => [row.item.sku, row.checked, row.suggestedQuantity.value, row.suggestedQuantity.source]), [['LDM-002', true, 50, 'user_named']])
+  // One item described without a quantity: ticked, with the server's quantity.
+  ctx.question = '帮我买温度传感器'
+  const plain = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-002', quantity: 999 }] }), 'pr_form')
+  assert.equal(plain.lines[0].checked, true)
+  assert.notEqual(plain.lines[0].suggestedQuantity.value, 999)
+  // From suggestions nothing is ticked.
+  const suggested = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'suggestions' }), 'pr_form')
+  assert.equal(suggested.lines.length, 0)
+})
+
 
 // ---------------------------------------------------------------- record actions
 

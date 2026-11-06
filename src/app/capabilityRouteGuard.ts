@@ -13,24 +13,26 @@ export type ModuleCapability = {
 export type CapabilityLoadState = "loading" | "ready" | "failed";
 export const EXPERIMENTAL_MODULES_KEY = "flowchain:experimental-modules";
 
+// What each page needs when the capability list cannot be read. The reasons
+// are plain words a person may see; the server's list replaces them once read.
 const localCapabilityFallback: Record<string, ModuleCapability> = Object.fromEntries([
-  ["overview", "stable", "Authoritative runtime overview"],
-  ["master-data", "stable", "Runtime item, supplier, and customer masters"],
-  ["procurement", "stable", "Canonical PR and draft PO workflow"],
-  ["sales", "stable", "Durable sales order runtime"],
-  ["inventory", "stable", "Durable inventory balances and movements"],
-  ["inventory-bin-read", "unavailable", "库存库位读取模型尚未接入当前 PostgreSQL 运行时"],
-  ["finance", "beta", "Operational finance requires database mode and explicit enablement"],
-  ["reports", "stable", "Authoritative runtime analytics"],
-  ["settings", "beta", "Local/UAT workspace settings"],
-  ["imports", "unavailable", "Legacy direct imports are retired; use Universal Intake."],
-  ["universal-intake", "preview", "Tenant-scoped Intake foundation without parsing or business commit adapters"],
-  ["forecast", "unavailable", "Forecast and MRP planning are unavailable until PostgreSQL authoritative models exist"],
-  ["exception-cases", "preview", "Internal exception workflow preview"],
-  ["collaboration-drafts", "preview", "Internal draft-only workflow"],
-  ["review-actions", "preview", "Human review workflow preview"],
-  ["audit-history", "preview", "Internal audit exploration"],
-  ["pilot-readiness", "preview", "Internal readiness assessment"],
+  ["overview", "stable", "Today's work and overview."],
+  ["master-data", "stable", "Items, suppliers and customers."],
+  ["procurement", "stable", "Purchase requests and orders."],
+  ["sales", "stable", "Sales orders."],
+  ["inventory", "stable", "Stock on hand and stock movements."],
+  ["inventory-bin-read", "unavailable", "Stock by bin is not available yet."],
+  ["finance", "beta", "Payables and receivables are off until an administrator turns them on."],
+  ["reports", "stable", "Reports."],
+  ["settings", "beta", "Workspace settings."],
+  ["imports", "unavailable", "This import page was replaced by Data intake."],
+  ["universal-intake", "preview", "Data intake is a preview: files can be uploaded but not yet turned into records."],
+  ["forecast", "unavailable", "Forecast and MRP planning are not available yet."],
+  ["exception-cases", "preview", "Exception cases are an internal preview."],
+  ["collaboration-drafts", "preview", "Collaboration drafts are an internal preview."],
+  ["review-actions", "preview", "The review queue is an internal preview."],
+  ["audit-history", "preview", "Audit history is an internal preview."],
+  ["pilot-readiness", "preview", "Readiness checks are an internal preview."],
 ].map(([id, maturity, reason]) => [id, {
   id,
   maturity,
@@ -71,19 +73,19 @@ export function resolveCapabilityRouteAccess(input: {
     maturity: "unavailable" as const,
     readReady: false,
     writeReady: false,
-    reason: "Capability is not registered",
+    reason: "This feature is not available.",
   };
   const capability = input.capabilities[input.moduleId] || fallback;
 
   if (input.loadState === "loading") return { status: "loading" as const, capability };
   if (input.loadState === "failed") {
     if (fallback.maturity === "stable" && fallback.enabled) return { status: "allowed" as const, capability: fallback };
-    return { status: "blocked" as const, capability: fallback, reason: "能力注册表暂不可用；非 stable 模块已按安全策略关闭。" };
+    return { status: "blocked" as const, capability: fallback, reason: "FlowChain could not check which features are turned on, so features that are not generally available stay closed." };
   }
   if (capability.maturity === "preview") {
     return input.experimentalModuleIds.has(input.moduleId)
       ? { status: "allowed" as const, capability }
-      : { status: "blocked" as const, capability, reason: `${capability.reason}；需要在本地实验设置中明确启用。` };
+      : { status: "blocked" as const, capability, reason: `${capability.reason} It opens only when turned on in this browser's preview settings.` };
   }
   if (capability.maturity === "unavailable" || !capability.enabled) {
     return { status: "blocked" as const, capability, reason: capability.reason };

@@ -73,7 +73,7 @@ function orderEvidence(row, fmt, language, rank, facts) {
   const open = row.isOpen !== false
   const supplier = aiSkillSupplierWithTier(row.supplier, row.supplierId, facts, language)
   const summary = row.overdueDays > 0
-    ? aiSkillText('po.evidence_late', language, { status, supplier, date: fmt.day(row.dueDate), days: fmt.number(row.overdueDays) })
+    ? aiSkillCountText('po.evidence_late', row.overdueDays === 1 ? 1 : 2, language, { status, supplier, date: fmt.day(row.dueDate), days: fmt.number(row.overdueDays) })
     : open && row.dueDate
       ? aiSkillText('po.evidence_due', language, { status, supplier, date: fmt.day(row.dueDate) })
       : aiSkillText('po.evidence_plain', language, { status, supplier })
@@ -86,7 +86,8 @@ function orderEvidence(row, fmt, language, rank, facts) {
     impact: aiSkillRecordImpact({
       area: 'purchasing', entityId: row.id, severity: row.overdueDays > 0 ? 'risk' : 'info',
       impact: aiSkillText(row.overdueDays > 0 ? 'po.impact_late' : open ? 'po.impact_open' : 'po.impact_closed', language),
-      explanation: aiSkillText(row.overdueDays > 0 ? 'po.impact_late.explanation' : open ? 'po.impact_open.explanation' : 'po.impact_closed.explanation', language),
+      // An open order that is not late has no impact line: its next step says whether to follow up.
+      explanation: row.overdueDays > 0 ? aiSkillText('po.impact_late.explanation', language) : open ? '' : aiSkillText('po.impact_closed.explanation', language),
     }, language),
     navigation: aiSkillNavigation({ label: row.orderNumber || row.id, entityType: 'purchase_order', entityId: row.id }, language),
   }

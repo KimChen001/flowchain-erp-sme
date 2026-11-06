@@ -172,7 +172,7 @@ export function presentSpendAnalysis(result, facts, { skill, language, query }) 
     : { key: entityId ? `supplier_po_count:${entityId}` : 'committed_po_count', code: entityId ? 'supplier_po_count' : 'committed_po_count', entityId: entityId || null, value: amount, unit: 'orders' }
   const common = { skill, facts, language, query, severity: 'info', moneyLimitations: false }
   // One impact per evidence line: what the figure is.
-  const impactsOf = (evidence) => evidence.map((item) => ({ area: aiSkillText('area.purchasing', language), impact: item.status, severity: 'info', explanation: aiSkillText(`spend.impact.${item.evidenceType}`, language), affectedObjects: [item.entityId || item.id] }))
+  const impactsOf = (evidence) => evidence.map((item) => ({ area: aiSkillText('area.purchasing', language), impact: item.status, severity: 'info', explanation: '', affectedObjects: [item.entityId || item.id] }))
 
   if (result.mode === 'trend') {
     const evidence = result.months.map((row, index) => ({

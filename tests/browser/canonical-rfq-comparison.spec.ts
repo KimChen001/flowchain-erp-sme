@@ -45,14 +45,14 @@ test("RFQ detail opens authoritative comparison and preserves history without wr
   await expect(page.getByTestId("rfq-comparison-availability")).toContainText("可进行并列比价");
   await expect(page.getByTestId("rfq-comparison-response-LOCAL-DEMO-SUP-001")).toContainText("Acme Components");
   await expect(page.getByTestId("rfq-comparison-response-LOCAL-DEMO-SUP-002")).toContainText("Summit Packaging");
-  await expect(page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001")).toContainText("98.0000 CNY");
-  await expect(page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001")).toContainText("97.5000 CNY");
-  await expect(page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001")).toContainText("2030-02-18");
+  await expect(page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001")).toContainText("CN¥98.00");
+  await expect(page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001")).toContainText("CN¥97.50");
+  await expect(page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001")).toContainText("Feb 18, 2030");
   await expect(page.getByTestId("rfq-comparison-commercial-terms")).toContainText("NET45");
-  await expect(page.getByTestId("rfq-comparison-commercial-terms")).toContainText("2030-03-31");
-  await expect(page.getByTestId("rfq-comparison-commercial-terms")).toContainText("2030-02-20");
-  await expect(page.getByTestId("canonical-rfq-comparison")).not.toContainText("2030-03-30");
-  await expect(page.getByTestId("canonical-rfq-comparison")).not.toContainText("2030-02-17");
+  await expect(page.getByTestId("rfq-comparison-commercial-terms")).toContainText("Mar 31, 2030");
+  await expect(page.getByTestId("rfq-comparison-commercial-terms")).toContainText("Feb 20, 2030");
+  await expect(page.getByTestId("canonical-rfq-comparison")).not.toContainText("Mar 30, 2030");
+  await expect(page.getByTestId("canonical-rfq-comparison")).not.toContainText("Feb 17, 2030");
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-003")).toContainText("已拒绝");
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-004")).toContainText("已撤回");
   // Name comes from LOCAL_DEMO_SUPPLIERS in scripts/setup-local-demo.mjs, the
@@ -100,8 +100,8 @@ test("each quoted price is set against the item's own PO history as plain text, 
   const row = page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001");
   // 98 against 90 is +8.9%; 97.5 against 90 is +8.3%. Text only, in the
   // server's supplier order. The session reads Chinese.
-  await expect(row).toContainText("对比上次采购订单 CNY 90.00（PO-0031，2026-09-14）：+8.9%；2 笔平均：CNY 91.00");
-  await expect(row).toContainText("对比上次采购订单 CNY 90.00（PO-0031，2026-09-14）：+8.3%；2 笔平均：CNY 91.00");
+  await expect(row).toContainText("对比上次采购订单 CNY 90.00（PO-0031，Sep 14, 2026）：+8.9%；2 笔平均：CNY 91.00");
+  await expect(row).toContainText("对比上次采购订单 CNY 90.00（PO-0031，Sep 14, 2026）：+8.3%；2 笔平均：CNY 91.00");
   await expect(row.locator("[data-quote-comparison]")).toHaveCount(2);
   const responseRows = await page.getByTestId("rfq-comparison-responses").locator("tbody > tr").allTextContents();
   expect(responseRows[0]).toContain("Acme Components");
@@ -111,7 +111,7 @@ test("each quoted price is set against the item's own PO history as plain text, 
   const note = page.getByTestId("rfq-comparison-copy-note-LOCAL-DEMO-SUP-001");
   const drafted = String(await note.getAttribute("data-note"));
   expect(drafted).toContain(RFQ_ID);
-  expect(drafted).toContain("我们上次采购订单 CNY 90.00（PO-0031，2026-09-14）；2 笔平均：CNY 91.00");
+  expect(drafted).toContain("我们上次采购订单 CNY 90.00（PO-0031，Sep 14, 2026）；2 笔平均：CNY 91.00");
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => undefined);
   await note.click();
   await expect(page.getByRole("status").filter({ hasText: /Note copied|备注已复制|could not be copied|复制失败/ })).toBeVisible();
@@ -144,7 +144,7 @@ test("multi-currency comparison keeps every response visible without FX or ranki
   await expect(page.getByTestId("rfq-comparison-response-LOCAL-DEMO-SUP-005")).toContainText("已撤回");
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-006")).toContainText("计划参与");
   await expect(page.getByTestId("rfq-comparison-cell-LOCAL-DEMO-RFQL-COMPARISON-MIXED-LOCAL-DEMO-SUP-005")).toContainText("未覆盖");
-  await expect(page.getByTestId("rfq-comparison-line-matrix")).toContainText("未能与 RFQ 行建立权威对应");
+  await expect(page.getByTestId("rfq-comparison-line-matrix")).toContainText("未能对应到 RFQ 行");
   await expect(page.getByTestId("rfq-award-decision")).toBeVisible();
   await expect(page.getByRole("button", { name: /推荐|创建采购订单|转为 PO/i })).toHaveCount(0);
   expect(businessRequests.filter((request) => request.path.endsWith("/comparison"))).toEqual([{ method: "GET", path: exactComparisonPath("LOCAL-DEMO-RFQ-COMPARISON-MIXED") }]);
@@ -208,11 +208,11 @@ test("authorized user records an explicit reviewed award from the exact quotatio
   await panel.getByText("Acme Components").click();
   await panel.getByLabel(/Decision reason|决定理由/).fill("Best reviewed balance of price, lead time, and delivery risk.");
   await panel.getByText(/I reviewed the supplier|我已复核所选供应商/).click();
-  page.once("dialog", dialog => dialog.accept());
   await panel.getByTestId("record-rfq-award").click();
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(panel).toContainText(/Formal award decision recorded|正式授标决定已记录/);
   await expect(panel).toContainText("Acme Components");
-  await expect(panel).toContainText("4900.0000 CNY");
+  await expect(panel).toContainText("CN¥4,900.00");
 });
 
 test("RFQ list and comparison use English when the user selects English", async ({ page, request }) => {
@@ -229,9 +229,9 @@ test("RFQ list and comparison use English when the user selects English", async 
   await expect(detail).toContainText("RFQ line items");
   await expect(detail).toContainText("Internal participation records");
   await expect(detail).toContainText("Supplier quotations");
-  await expect(detail).toContainText("Data boundaries");
-  await expect(detail).not.toContainText(/比较供应商报价|内部参与记录|供应商报价|数据边界/);
-  await detail.getByRole("button", { name: "Add revision" }).first().click();
+  await expect(detail).toContainText("About these records");
+  await expect(detail).not.toContainText(/比较供应商报价|内部参与记录|供应商报价|记录说明/);
+  await detail.getByRole("button", { name: "Add quote revision" }).first().click();
   const editor = page.getByTestId("rfq-supplier-response-editor");
   await expect(page.getByText(/Internal procurement record/)).toBeVisible();
   await expect(editor).toContainText("Quoted quantity");
@@ -246,6 +246,6 @@ test("RFQ list and comparison use English when the user selects English", async 
   const comparison = page.getByTestId("canonical-rfq-comparison");
   await expect(comparison).toContainText("Side-by-side comparison available");
   await expect(comparison).toContainText("Supplier response summary");
-  await expect(comparison).toContainText("Authority and data boundaries");
-  await expect(comparison).not.toContainText(/供应商响应摘要|行项目并列展示|商业条款|权限与数据边界/);
+  await expect(comparison).toContainText("About this comparison");
+  await expect(comparison).not.toContainText(/供应商响应摘要|行项目并列展示|商业条款|关于此比较/);
 });

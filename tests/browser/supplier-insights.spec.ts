@@ -25,7 +25,7 @@ test('the list shows metrics without tiers or suggestions, and metrics follow th
   const row = (name: string) => page.getByRole('row').filter({ hasText: name });
   await expect(row(source)).toHaveCount(1);
   // Columns: supplier (code and name), categories, owner, spend, open POs, ...
-  await expect(row(source).locator('td').nth(3)).toHaveText('0');
+  await expect(row(source).locator('td').nth(3)).toHaveText('CN¥0');
   await expect(row(source).getByTestId('supplier-tier-chip')).toHaveCount(0);
   await expect(page.getByTestId('supplier-suggestion-differs')).toHaveCount(0);
   await expect(page.getByTestId('supplier-review-suggestions-open')).toHaveCount(0);
@@ -74,7 +74,7 @@ test('Supplier evaluation filters by tier, and a manager sets a tier there with 
   await expect(row(brook).getByTestId('supplier-tier-chip')).toHaveText('Tier 2');
   await expect(row(alder).getByTestId('supplier-tier-chip')).toHaveText('Not tiered');
   // The indicators sit beside the tier: no orders yet, so no spend and no open POs.
-  await expect(row(alder).locator('td').nth(3)).toHaveText('0');
+  await expect(row(alder).locator('td').nth(3)).toHaveText('CN¥0');
   await expect(row(alder).locator('td').nth(4)).toHaveText('0');
   await expect(page.getByTestId('supplier-evaluation-count')).toHaveText('2 suppliers, 2 shown');
 
@@ -91,7 +91,7 @@ test('Supplier evaluation filters by tier, and a manager sets a tier there with 
   // Setting a tier needs a reason; it is saved with an audit row.
   await row(alder).getByTestId('supplier-evaluation-set-tier').click();
   const form = page.getByTestId('supplier-tier-form');
-  await form.getByLabel('Tier 1 Strategic', { exact: true }).check();
+  await form.getByLabel('Tier 1 · Strategic', { exact: true }).check();
   await form.getByRole('button', { name: 'Save tier' }).click();
   await expect(form.getByText('Enter a reason of 3 to 500 characters.', { exact: true })).toBeVisible();
   await form.getByLabel('Reason').fill('Sole source of the cast housing');

@@ -38,8 +38,8 @@ test("bank statement workbench imports immutable evidence and exposes reconcilia
   });
   await page.getByTestId("upload-bank-statement").click();
   await expect(page.getByRole("status")).toContainText(/校验|Validated/);
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByTestId("commit-bank-statement").click();
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByRole("status")).toContainText(/已导入|imported/);
 
   const batchList = await api(request, authenticated.token, "get", "/api/finance/bank-statements/batches");
@@ -55,13 +55,14 @@ test("bank statement workbench imports immutable evidence and exposes reconcilia
   await expect(page.getByTestId("candidate-evidence")).toContainText("CB-BANK-BROWSER");
   const cashbookBefore = await api(request, authenticated.token, "get", "/api/finance/cashbook/entries?cashbookAccountId=bank-browser-account");
   await page.getByTestId("candidate-evidence").getByRole("checkbox").check();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByTestId("confirm-bank-reconciliation").click();
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByRole("status")).toContainText(/已与导入银行流水匹配|Matched to an imported/);
   const cashbookAfter = await api(request, authenticated.token, "get", "/api/finance/cashbook/entries?cashbookAccountId=bank-browser-account");
   expect(cashbookAfter.items).toEqual(cashbookBefore.items);
-  page.once("dialog", (dialog) => dialog.accept("Controlled browser reversal"));
   await page.getByTestId("reverse-bank-reconciliation").click();
+  await page.getByTestId("confirm-dialog-field").fill("Controlled browser reversal");
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByText(/Imported statement evidence only|导入的银行流水/)).toBeVisible();
   await expect(page.getByTestId("bank-reconciliation-workbench")).not.toHaveCSS("overflow-x", "visible");
 });

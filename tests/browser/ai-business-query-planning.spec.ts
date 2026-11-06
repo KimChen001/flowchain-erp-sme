@@ -50,8 +50,9 @@ test.describe('Phase 5.4A business query planning', () => {
     await openApp(page)
     const assistant = await ask(page, 'Check supplier payments, overdue POs and invoice variances together.')
     await expect(assistant.getByTestId('ai-business-query-scope')).toHaveText('All suppliers')
-    for (const label of ['Payments due', 'Payment readiness', 'Invoice exceptions', 'Overdue POs']) await expect(assistant).toContainText(label)
-    await expect(assistant.getByTestId('ai-business-query-section')).toHaveCount(4)
+    // Payment readiness reads the same records as payments due, so it is one card with it.
+    for (const label of ['Payments due', 'Invoice exceptions', 'Overdue purchase orders']) await expect(assistant).toContainText(label)
+    await expect(assistant.getByTestId('ai-business-query-section')).toHaveCount(3)
     await expectNoInternalLeakage(assistant)
   })
 

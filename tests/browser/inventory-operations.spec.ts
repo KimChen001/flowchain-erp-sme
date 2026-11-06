@@ -52,18 +52,18 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await page.getByTestId("operation-ready").click();
   await page.getByTestId("operation-preview-post").click();
   await expect(page.getByTestId("inventory-operation-preview")).toContainText(
-    "Preview 允许执行",
+    "预览允许执行",
   );
   await page.getByTestId("confirm-inventory-operation").click();
   await expect(
     page
       .getByTestId("operation-movement-stock_transfer_out")
-      .filter({ hasText: "出 3.0000" }),
+      .filter({ hasText: "出 3" }),
   ).toHaveCount(1);
   await expect(
     page
       .getByTestId("operation-movement-stock_transfer_in")
-      .filter({ hasText: "入 3.0000" }),
+      .filter({ hasText: "入 3" }),
   ).toHaveCount(1);
   // The stored "matched" status is shown as its label.
   await expect(page.getByTestId("inventory-reconciliation")).toContainText(
@@ -130,7 +130,7 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await page.getByTestId("confirm-inventory-operation").click();
   await expect(
     page.getByTestId("operation-movement-cycle_count_adjustment"),
-  ).toContainText("入 1.0000");
+  ).toContainText("入 1");
 
   await page.goto("/app/inventory/adjustments/new");
   await page
@@ -143,7 +143,7 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await page.getByTestId("confirm-inventory-operation").click();
   await expect(
     page.getByTestId("operation-movement-inventory_adjustment"),
-  ).toContainText("出 1.0000");
+  ).toContainText("出 1");
   await page.getByTestId("operation-preview-reverse").click();
   await page.getByTestId("confirm-inventory-operation").click();
   await expect(
@@ -154,9 +154,9 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   // record points to it, and switching back to Damage restores the picker
   // and a decrease.
   await page.goto("/app/inventory/adjustments/new");
-  await expect(page.getByLabel("调整数量 1")).toHaveValue("-1.0000");
+  await expect(page.getByLabel("调整数量 1")).toHaveValue("-1");
   await page.getByLabel("调整原因").selectOption({ label: "盘盈" });
-  await expect(page.getByLabel("调整数量 1")).toHaveValue("1.0000");
+  await expect(page.getByLabel("调整数量 1")).toHaveValue("1");
   await page.getByTestId("adjustment-line-mode-1").selectOption("new");
   await page.getByLabel("调整物料 1").selectOption("inventory-browser-item");
   await page.getByLabel("调整仓库 1").selectOption("inventory-browser-b");
@@ -164,7 +164,7 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await expect(page.getByTestId("adjustment-line-existing-1")).toBeVisible();
   await page.getByLabel("调整原因").selectOption({ label: "损坏" });
   await expect(page.getByLabel("调整余额 1")).toBeVisible();
-  await expect(page.getByLabel("调整数量 1")).toHaveValue("-1.0000");
+  await expect(page.getByLabel("调整数量 1")).toHaveValue("-1");
 
   // Opening stock for a location with no stock record: posting creates it.
   // A key that already has a stock record is flagged before saving.
@@ -186,7 +186,7 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await page.getByTestId("confirm-inventory-operation").click();
   await expect(
     page.getByTestId("operation-movement-inventory_adjustment"),
-  ).toContainText("入 5.0000");
+  ).toContainText("入 5");
 
   const viewer = await login(request, "viewer@example.com");
   const denied = await request.post("/api/inventory/counts", {

@@ -146,7 +146,8 @@ function runtimeRows(context, inventory, timeZone) {
     sales_orders: array(context.salesOrders).map(row => ({ id: text(row.salesOrderId || row.id), number: text(row.orderNumber), date: salesOrderDate(row, timeZone), customer: text(row.customerName || row.customerId), ...salesQuantity(row), status: text(inactiveSalesStatuses.includes(row.workflowStatus) ? row.workflowStatus : row.status || row.statusLabel), amount: amountOf(row.totalAmount ?? row.amount), currency: currencyCode(row.currency) })),
     inventory_balances: inventory.availability.map(row => ({ id: row.sku, itemName: row.itemName === row.sku ? '' : row.itemName, unit: inventoryUnit(row.sku), quantity: row.onHand, reserved: row.reserved, available: row.available, shortage: row.shortage, availableToPromise: row.availableToPromise, stockStatus: row.stockStatus, status: row.riskLevel })),
     supplier_invoices: array(context.supplierInvoices).map(row => ({ id: text(row.id || row.invoiceNumber), number: text(row.invoiceNumber), date: invoiceDate(row, timeZone), supplier: text(row.supplierName || row.supplierId), amount: amountOf(row.totalAmount ?? row.amount), status: text(row.status), currency: currencyCode(row.currency) })),
-    suppliers: array(context.suppliers).map(row => ({ id: text(row.id || row.supplierCode), supplier: text(row.supplierName || row.name), status: text(row.status) })),
+    // number: the supplier code the lists show; id stays for the link.
+    suppliers: array(context.suppliers).map(row => ({ id: text(row.id || row.supplierCode), number: text(row.supplierCode), supplier: text(row.supplierName || row.name), status: text(row.status) })),
   }
 }
 
@@ -334,7 +335,7 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const promiseOptions = { graceDays: query.graceDays, warehouseIds: Array.isArray(options.warehouseIds) ? options.warehouseIds : null, purchaseOrderIds: promisePurchaseOrderIds }
   const facts = { ...buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand, onTimeWithheld, promiseOptions }), salesDemandTotal: salesDemandTotal(salesDemand), inventoryOnHand: inventoryOnHandTotal(source.inventory_balances, inventory.units) }
   const visuals = buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts, today, timeZone, salesDemand, onTimeWithheld, promiseOptions })
-  const inventoryLabels = primaryKey === 'inventory_balances' ? { id: 'SKU', itemName: '物料名称', status: 'Risk' } : {}
+  const inventoryLabels = primaryKey === 'inventory_balances' ? { id: 'SKU', itemName: '物料名称', status: 'Risk' } : primaryKey === 'suppliers' ? { number: '供应商编号' } : {}
   const repeatsId = key => key === 'number' && details.every(row => !text(row.number) || text(row.number) === text(row.id))
   const columns = [...new Set(details.flatMap(row => Object.keys(row)))].filter(key => !repeatsId(key)).map(key => ({ key, label: inventoryLabels[key] || ({ id: '业务编号', number: '单据号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', unit: '单位', fulfilled: '已履约', reserved: 'Reserved quantity', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: 'Short now', availableToPromise: 'Available to promise', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'fulfilled', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
   const kpis = metricIds.map(id => metric(id, all, inventory, query, primaryKey, facts, restriction))

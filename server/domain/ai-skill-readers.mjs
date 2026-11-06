@@ -329,7 +329,9 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
 
   if (visible.inventory) {
     const allocation = buildRuntimeInventoryAllocation(access.collections.inventoryItems ? allocationContext : business)
-    const unitBySku = new Map(array(business.items).map((row) => [text(row.sku), text(row.unit) || null]))
+    // The unit the item is stocked in: the item master read gives it as
+    // recordedUnit (never its 'pcs' placeholder), a plain item row as unit.
+    const unitBySku = new Map(array(business.items).map((row) => [text(row.sku), text(row.unit || row.recordedUnit) || null]))
     const minimums = await orderMinimums(prisma, tenantId, raw.items ?? array(business.items), { names: visible.purchase_orders })
     const rows = allocation.availability.map((row) => ({
       // The preferred supplier's minimum order ({ quantity, supplier }), or null.
@@ -349,7 +351,7 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
     // Master items with no stock, sales or purchase line: known items the
     // allocation has no row for, so a question about one is not "not found".
     const allocated = new Set(rows.map((row) => text(row.sku)))
-    const masterOnly = array(business.items).filter((row) => text(row.sku) && !allocated.has(text(row.sku))).map((row) => ({ sku: text(row.sku), itemId: text(row.id || row.itemId) || null, itemName: text(row.name || row.itemName) || null, unit: text(row.unit) || null, noStock: true }))
+    const masterOnly = array(business.items).filter((row) => text(row.sku) && !allocated.has(text(row.sku))).map((row) => ({ sku: text(row.sku), itemId: text(row.id || row.itemId) || null, itemName: text(row.name || row.itemName) || null, unit: text(row.unit || row.recordedUnit) || null, noStock: true }))
     facts.inventory = {
       rows,
       masterOnly,
@@ -365,6 +367,8 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
       const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
       facts.salesOrders = array(business.salesOrders).filter((row) => open.has(text(row.salesOrderId || row.id))).map((row) => ({
         id: text(row.salesOrderId || row.id), number: text(row.orderNumber || row.salesOrderId || row.id), customer: text(row.customerName) || null, promisedDate: dayOf(row.promisedDate),
+        // How far the order is: on hold, partly shipped, or not shipped yet.
+        status: text(row.workflowStatus || row.status) === 'on_hold' ? 'on_hold' : /partial/.test(text(row.fulfillmentStatus)) ? 'partially_shipped' : 'not_shipped',
         lines: array(row.lines).map((line) => ({ sku: text(line.sku || line.itemId), open: Math.max(0, count(line.orderedQuantity ?? line.orderedQty ?? line.quantity) - count(line.fulfilledQuantity ?? line.fulfilledQty ?? line.shippedQty) - count(line.reservedQuantity ?? line.reservedQty)) })).filter((line) => line.sku),
       }))
     }

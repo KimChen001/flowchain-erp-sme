@@ -18,6 +18,7 @@ import {
   Lock,
   X,
   ChevronRight,
+  Menu,
 } from "lucide-react";
 import { navGroups, navItems } from "./routes.tsx";
 import {
@@ -276,6 +277,7 @@ class PanelErrorBoundary extends React.Component<
   render() {
     if (!this.state.hasError) return this.props.children;
     const english = this.props.language === "en-US";
+    const codeMissing = /dynamically imported module|Importing a module script failed|Loading chunk|error loading dynamically/i.test(this.state.errorMessage);
 
     return (
       <Card className="p-8">
@@ -293,13 +295,19 @@ class PanelErrorBoundary extends React.Component<
             {english ? `${this.props.moduleLabel} could not be displayed` : `${this.props.moduleLabel}模块加载失败`}
           </h2>
           <p className="text-sm leading-6 mb-5" style={{ color: A.gray1 }}>
-            {english
-              ? "Your data is kept and you are still signed in; only this part of the page failed to display. Details: "
-              : "页面数据已经保留，当前只是这个模块渲染时遇到异常，不会退出登录。错误信息："}
-            {this.state.errorMessage || (english ? "Unknown error" : "未知错误")}
+            {codeMissing
+              ? english
+                ? "This part of FlowChain did not finish loading, often after an update or a dropped connection. Your data is kept and you are still signed in. Reload the page to continue."
+                : "FlowChain 的这部分内容未能加载完成，通常是因为版本更新或网络中断。数据已保留，你仍处于登录状态。请重新加载页面后继续。"
+              : <>
+                  {english
+                    ? "Your data is kept and you are still signed in; only this part of the page failed to display. Details: "
+                    : "页面数据已经保留，当前只是这个模块渲染时遇到异常，不会退出登录。错误信息："}
+                  {this.state.errorMessage || (english ? "Unknown error" : "未知错误")}
+                </>}
           </p>
           <button
-            onClick={() => this.setState({ hasError: false, errorMessage: "" })}
+            onClick={() => codeMissing ? window.location.reload() : this.setState({ hasError: false, errorMessage: "" })}
             className="h-9 px-4 rounded-lg text-sm font-semibold text-white"
             style={{ background: A.blue }}
           >
@@ -357,7 +365,7 @@ function CapabilityRouteStatus({
         {t("capability.blocked", { module: moduleLabel })}
       </h1>
       <p className="mt-2 text-xs" style={{ color: A.sub }}>
-        {t("capability.maturity", { maturity })}
+        {t("capability.maturity", { maturity: t(`capability.maturity.${maturity}` as Parameters<typeof t>[0]) || maturity })}
       </p>
       <p
         className="mx-auto mt-3 max-w-2xl text-sm leading-6"
@@ -422,6 +430,10 @@ export default function FlowChainApp() {
     null,
   );
   const [profileOpen, setProfileOpen] = useState(false);
+  // Below 1024 px the navigation opens as a drawer from the header.
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const mobileNavRef = useRef<HTMLDivElement | null>(null);
+  const mobileNavButtonRef = useRef<HTMLButtonElement | null>(null);
   const [expandedNavGroups, setExpandedNavGroups] = useState<
     Record<string, boolean>
   >({});
@@ -558,6 +570,23 @@ export default function FlowChainApp() {
       }
     }
   }, [location.hash, location.pathname, location.search, routerNavigate]);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const opener = mobileNavButtonRef.current;
+    mobileNavRef.current?.querySelector<HTMLElement>("nav button")?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNavOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      opener?.focus();
+    };
+  }, [mobileNavOpen]);
 
   const activeRoute = routeByPath(location.pathname);
   const active = activeRoute?.id || "not-found";
@@ -1173,6 +1202,175 @@ export default function FlowChainApp() {
     ),
   };
 
+  const visibleNavItems = localizedNavItems.filter((item) => {
+    const governedRoute = routeById(item.routeId);
+    return Boolean(governedRoute && isRouteVisibleInNavigation(governedRoute, "PRIMARY", routeAccess));
+  });
+
+  function renderNavigation(mode: "sidebar" | "drawer") {
+    const rail = mode === "sidebar";
+    // In the sidebar the names are visually hidden on the icon rail
+    // (1024–1279 px) but keep the buttons' accessible names.
+    const label = rail ? "sr-only xl:not-sr-only" : "";
+    const go = (routeId: string) => {
+      setMobileNavOpen(false);
+      navigateTo(routeId);
+    };
+    return (
+      <>
+        <div
+          className={rail ? "flex h-[68px] items-center justify-center px-2 xl:justify-start xl:px-5" : "flex items-center justify-between px-5 py-5"}
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+        >
+          <div className="flex items-center gap-2.5" title={rail ? PRODUCT_NAME : undefined}>
+            <div
+              className="w-7 h-7 shrink-0 rounded-md flex items-center justify-center"
+              style={{ background: A.blue }}
+            >
+              <Activity size={14} className="text-white" strokeWidth={2.5} />
+            </div>
+            <div className={rail ? "hidden xl:block" : ""}>
+              <div className="text-sm font-semibold leading-none text-white">
+                {PRODUCT_NAME}
+              </div>
+              <div className="fc-caption mt-1" style={{ color: A.sidebarSub }}>
+                {language === "en-US" ? "AI-powered inventory and supply chain workspace" : PRODUCT_TAGLINE}
+              </div>
+            </div>
+          </div>
+          {!rail && (
+            <button
+              type="button"
+              aria-label={language === "en-US" ? "Close navigation" : "关闭导航"}
+              onClick={() => setMobileNavOpen(false)}
+              className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-white/10"
+              style={{ color: A.sidebarSub }}
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
+
+        <nav aria-label={t("nav.primary")} className={rail ? "flex-1 space-y-4 overflow-y-auto px-2 py-4 xl:px-3" : "flex-1 space-y-4 overflow-y-auto px-3 py-4"}>
+          {navGroups.map((group) => {
+            const isCollapsible =
+              "defaultCollapsed" in group && group.defaultCollapsed;
+            const isExpanded = !isCollapsible || expandedNavGroups[group.label];
+            const groupLabel = group.label === "主导航" ? t("nav.primary") : t("nav.advanced");
+            return (
+              <div key={group.label}>
+                {isCollapsible ? (
+                  <button
+                    type="button"
+                    aria-expanded={Boolean(isExpanded)}
+                    onClick={() =>
+                      setExpandedNavGroups((current) => ({
+                        ...current,
+                        [group.label]: !current[group.label],
+                      }))
+                    }
+                    className={`${rail ? "hidden xl:flex" : "flex"} w-full items-center justify-between gap-2 fc-caption font-semibold uppercase tracking-widest px-2 mb-2`}
+                    style={{ color: "rgba(148,163,184,0.58)" }}
+                  >
+                    <span>{groupLabel}</span>
+                    <ChevronRight
+                      size={12}
+                      className="transition-transform"
+                      style={{
+                        transform: isExpanded
+                          ? "rotate(90deg)"
+                          : "rotate(0deg)",
+                      }}
+                    />
+                  </button>
+                ) : (
+                  <div
+                    className={`${rail ? "hidden xl:block" : ""} fc-caption font-semibold uppercase tracking-widest px-2 mb-2`}
+                    style={{ color: "rgba(148,163,184,0.58)" }}
+                  >
+                    {groupLabel}
+                  </div>
+                )}
+                {(isExpanded || rail) && (
+                  <div className={`space-y-0.5 ${rail && !isExpanded ? "xl:hidden" : ""}`}>
+                    {group.itemIds.map((itemId) => {
+                      const item = visibleNavItems.find(
+                        (entry) => entry.id === itemId,
+                      );
+                      const governedRoute = item
+                        ? routeById(item.routeId)
+                        : undefined;
+                      if (!item || !governedRoute) return null;
+                      const isActive = activeNavItem?.id === item.id;
+                      const beta = Boolean(
+                        governedRoute.requiredCapability &&
+                          capabilities[governedRoute.requiredCapability]?.maturity === "beta",
+                      );
+                      return (
+                        <div key={item.id} className="space-y-0.5">
+                          <button
+                            aria-current={isActive ? "page" : undefined}
+                            title={rail ? item.label : undefined}
+                            onClick={() => go(item.routeId)}
+                            className={`relative w-full flex items-center gap-2.5 rounded-md py-2 text-sm font-medium transition-colors duration-150 ${rail ? "justify-center px-0 xl:justify-start xl:px-2.5" : "px-2.5"}`}
+                            style={
+                              isActive
+                                ? {
+                                    background: A.sidebarAccent,
+                                    color: "#f8fafc",
+                                  }
+                                : {
+                                    background: "transparent",
+                                    color: A.sidebarSub,
+                                  }
+                            }
+                          >
+                            <item.icon
+                              size={rail ? 17 : 15}
+                              className={rail ? "shrink-0 xl:h-[15px] xl:w-[15px]" : "shrink-0"}
+                              strokeWidth={isActive ? 2 : 1.8}
+                            />
+                            {/* Long labels such as "Payables & receivables" wrap instead of being cut off. */}
+                            <span className={`min-w-0 text-left leading-snug ${label}`}>{item.label}</span>
+                            {beta && (
+                              <span className={`ml-auto rounded bg-blue-500/20 px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-blue-100 ${label}`}>
+                                {t("capability.beta")}
+                              </span>
+                            )}
+                            {beta && rail && <span aria-hidden="true" className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-blue-300 xl:hidden" />}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </nav>
+
+        <div
+          className={rail ? "space-y-1 p-2 xl:p-3" : "space-y-1 p-3"}
+          style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
+        >
+          <button
+            type="button"
+            title={rail ? t("nav.ai") : undefined}
+            onClick={() => {
+              setMobileNavOpen(false);
+              setAiOpenSignal(Date.now());
+            }}
+            className={`w-full flex items-center gap-2.5 rounded-md py-2 text-sm font-medium transition-colors duration-150 ${rail ? "justify-center px-0 xl:justify-start xl:px-2.5" : "px-2.5"}`}
+            style={{ background: "transparent", color: A.sidebarSub }}
+          >
+            <Sparkles size={rail ? 17 : 15} className="shrink-0" strokeWidth={1.8} />
+            <span className={label}>{t("nav.ai")}</span>
+          </button>
+        </div>
+      </>
+    );
+  }
+
   function handleLogin(nextUser: WorkspaceUser, token: string) {
     setUser(nextUser);
     setAuthToken(token);
@@ -1227,150 +1425,34 @@ export default function FlowChainApp() {
           },
         }}
       />
+      {/* From 1280 px the full sidebar; from 1024 px an icon rail whose names
+          stay readable to assistive technology and show as tooltips; below
+          1024 px the header's menu button opens the same navigation. */}
       <aside
-        className="hidden w-56 shrink-0 flex-col lg:flex"
+        className="hidden w-14 shrink-0 flex-col lg:flex xl:w-56"
+        data-testid="app-sidebar"
         style={{
           background: A.sidebar,
           borderRight: "1px solid rgba(255,255,255,0.06)",
         }}
       >
-        <div
-          className="px-5 py-5"
-          style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
-        >
-          <div className="flex items-center gap-2.5">
-            <div
-              className="w-7 h-7 rounded-md flex items-center justify-center"
-              style={{ background: A.blue }}
-            >
-              <Activity size={14} className="text-white" strokeWidth={2.5} />
-            </div>
-            <div>
-              <div className="text-sm font-semibold leading-none text-white">
-                {PRODUCT_NAME}
-              </div>
-              <div className="fc-caption mt-1" style={{ color: A.sidebarSub }}>
-                {language === "en-US" ? "AI-powered inventory and supply chain workspace" : PRODUCT_TAGLINE}
-              </div>
-            </div>
+        {renderNavigation("sidebar")}
+      </aside>
+      {mobileNavOpen && (
+        <div className="fc-overlay-enter fixed inset-0 z-50 flex lg:hidden" style={{ background: "rgba(15,23,42,0.4)" }} onMouseDown={(event) => { if (event.target === event.currentTarget) setMobileNavOpen(false); }}>
+          <div
+            ref={mobileNavRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("nav.primary")}
+            data-testid="mobile-navigation"
+            className="fc-drawer-enter flex h-full w-72 max-w-[85vw] flex-col"
+            style={{ background: A.sidebar }}
+          >
+            {renderNavigation("drawer")}
           </div>
         </div>
-
-        <nav className="flex-1 px-3 py-4 space-y-4 overflow-y-auto">
-          {navGroups.map((group) => {
-            const isCollapsible =
-              "defaultCollapsed" in group && group.defaultCollapsed;
-            const isExpanded = !isCollapsible || expandedNavGroups[group.label];
-            return (
-              <div key={group.label}>
-                {isCollapsible ? (
-                  <button
-                    type="button"
-                    aria-expanded={Boolean(isExpanded)}
-                    onClick={() =>
-                      setExpandedNavGroups((current) => ({
-                        ...current,
-                        [group.label]: !current[group.label],
-                      }))
-                    }
-                    className="w-full flex items-center justify-between gap-2 fc-caption font-semibold uppercase tracking-widest px-2 mb-2"
-                    style={{ color: "rgba(148,163,184,0.58)" }}
-                  >
-                    <span>{group.label === "主导航" ? t("nav.primary") : t("nav.advanced")}</span>
-                    <ChevronRight
-                      size={12}
-                      className="transition-transform"
-                      style={{
-                        transform: isExpanded
-                          ? "rotate(90deg)"
-                          : "rotate(0deg)",
-                      }}
-                    />
-                  </button>
-                ) : (
-                  <div
-                    className="fc-caption font-semibold uppercase tracking-widest px-2 mb-2"
-                    style={{ color: "rgba(148,163,184,0.58)" }}
-                  >
-                    {group.label === "主导航" ? t("nav.primary") : t("nav.advanced")}
-                  </div>
-                )}
-                {isExpanded && (
-                  <div className="space-y-0.5">
-                    {group.itemIds.map((itemId) => {
-                      const item = localizedNavItems.find(
-                        (entry) => entry.id === itemId,
-                      );
-                      const governedRoute = item
-                        ? routeById(item.routeId)
-                        : undefined;
-                      if (
-                        !item ||
-                        !governedRoute ||
-                        !isRouteVisibleInNavigation(
-                          governedRoute,
-                          "PRIMARY",
-                          routeAccess,
-                        )
-                      )
-                        return null;
-                      const isActive = activeNavItem?.id === item.id;
-                      return (
-                        <div key={item.id} className="space-y-0.5">
-                          <button
-                            aria-current={isActive ? "page" : undefined}
-                            onClick={() => navigateTo(item.routeId)}
-                            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm font-medium transition-colors duration-150"
-                            style={
-                              isActive
-                                ? {
-                                    background: A.sidebarAccent,
-                                    color: "#f8fafc",
-                                  }
-                                : {
-                                    background: "transparent",
-                                    color: A.sidebarSub,
-                                  }
-                            }
-                          >
-                            <item.icon
-                              size={15}
-                              strokeWidth={isActive ? 2 : 1.8}
-                            />
-                            {/* Long labels such as "Payables & receivables" wrap instead of being cut off. */}
-                            <span className="min-w-0 text-left leading-snug">{item.label}</span>
-                            {governedRoute.requiredCapability &&
-                              capabilities[governedRoute.requiredCapability]
-                                ?.maturity === "beta" && (
-                              <span className="ml-auto rounded bg-blue-500/20 px-1.5 py-0.5 text-[9px] text-blue-100">
-                                Beta
-                              </span>
-                            )}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </nav>
-
-        <div
-          className="p-3 space-y-1"
-          style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
-        >
-          <button
-            onClick={() => setAiOpenSignal(Date.now())}
-            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm font-medium transition-colors duration-150"
-            style={{ background: "transparent", color: A.sidebarSub }}
-          >
-            <Sparkles size={15} strokeWidth={1.8} />
-            <span>{t("nav.ai")}</span>
-          </button>
-        </div>
-      </aside>
+      )}
 
       {/* Main column */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -1381,37 +1463,26 @@ export default function FlowChainApp() {
             borderBottom: `1px solid ${A.border}`,
           }}
         >
-          <div className="flex min-w-0 items-center gap-2 text-sm">
-            <select
-              aria-label={t("nav.primary")}
-              value={activeNavItem?.routeId || activeModule}
-              onChange={(event) => navigateTo(event.target.value)}
-              className="max-w-[150px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs lg:hidden"
+          <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+            <button
+              ref={mobileNavButtonRef}
+              type="button"
+              aria-label={language === "en-US" ? "Open navigation" : "打开导航"}
+              aria-expanded={mobileNavOpen}
+              data-testid="mobile-navigation-toggle"
+              onClick={() => setMobileNavOpen(true)}
+              className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md hover:bg-slate-100 lg:hidden"
+              style={{ color: A.label }}
             >
-              {localizedNavItems
-                .filter((item) => {
-                  const governedRoute = routeById(item.routeId);
-                  return Boolean(
-                    governedRoute &&
-                      isRouteVisibleInNavigation(
-                        governedRoute,
-                        "PRIMARY",
-                        routeAccess,
-                      ),
-                  );
-                })
-                .map((item) => (
-                  <option key={item.id} value={item.routeId}>
-                    {item.label}
-                  </option>
-                ))}
-            </select>
-            <span className="fc-label font-medium" style={{ color: A.label }}>
+              <Menu size={18} />
+            </button>
+            <span className="fc-label min-w-0 truncate font-medium" style={{ color: A.label }} title={workspaceName || user.company}>
               {workspaceName || user.company}
             </span>
-            {localStatus && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800" title={`User ${user.email} · Demo ${localStatus.demoMasterDataLoaded ? "loaded" : "not loaded"} · Scenario ${localStatus.demoScenarioLoaded ? "loaded" : "not loaded"} · Universal Intake ${localStatus.universalIntakeEnabled ? "enabled" : "disabled"}`}>Local Development</span>}
+            {/* On a phone only a dot shows; its words stay for assistive technology. */}
+            {localStatus && <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-100 px-1.5 py-1 text-xs font-semibold leading-none text-amber-800 sm:px-2 sm:py-0.5 sm:leading-5" title={`User ${user.email} · Demo ${localStatus.demoMasterDataLoaded ? "loaded" : "not loaded"} · Scenario ${localStatus.demoScenarioLoaded ? "loaded" : "not loaded"} · Universal Intake ${localStatus.universalIntakeEnabled ? "enabled" : "disabled"}`}><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-600 sm:hidden" /><span className="sr-only sm:not-sr-only sm:whitespace-nowrap">{language === "en-US" ? "Local development" : "本地开发"}</span></span>}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
             <form
               ref={searchRef}
               onSubmit={(event) => {
@@ -1675,7 +1746,7 @@ export default function FlowChainApp() {
               disabled
               aria-label={language === 'en-US' ? 'Notifications unavailable' : '通知中心尚未接入'}
               title={language === 'en-US' ? 'Notifications unavailable' : '通知中心尚未接入'}
-              className="relative p-2 rounded-md opacity-45"
+              className="relative hidden p-2 rounded-md opacity-45 sm:block"
               style={{ color: A.gray1 }}
             >
               <Bell size={15} strokeWidth={1.8} />
@@ -1699,7 +1770,8 @@ export default function FlowChainApp() {
                     className="fc-caption leading-tight"
                     style={{ color: A.gray2 }}
                   >
-                    {workspaceCopy(user.roleLabel || roleLabel(user.role), language)}
+                    {/* The role by its code, so a label cached before a rename is not shown. */}
+                    {user.role ? roleLabel(user.role, language) : workspaceCopy(user.roleLabel || roleLabel(user.role), language)}
                   </div>
                 </div>
               </button>
@@ -1769,7 +1841,7 @@ export default function FlowChainApp() {
                       <AlertTriangle className="mx-auto text-amber-600" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Page unavailable" : "页面尚未接通"}</h2>
                       <p className="mt-2 text-sm text-slate-500">
-                        {activeRoute.knownLimitations || (language === "en-US" ? "This route is recognized, but its production page is not connected." : "当前路径已识别，但正式业务页面尚未接通。")}
+                        {language === "en-US" ? "This page is not available yet." : "此页面暂未开放。"}
                       </p>
                       <button
                         type="button"
@@ -1797,14 +1869,14 @@ export default function FlowChainApp() {
                       <Lock className="mx-auto text-slate-500" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Internal page" : "内部页面不可从普通工作台进入"}</h2>
                       <p className="mt-2 text-sm text-slate-500">
-                        {language === "en-US" ? "This governance page is not available from the standard SME workspace." : "此页面属于内部治理边界，不是默认 SME 产品入口。"}
+                        {language === "en-US" ? "This page is for internal use and is not part of your workspace." : "此页面仅供内部使用，不属于你的工作区。"}
                       </p>
                     </Card>
                   ) : activeRoute.directAccessBehavior === "FROZEN_UNAVAILABLE" ? (
                     <Card className="p-10 text-center" data-testid="capability-route-blocked">
                       <Lock className="mx-auto text-slate-500" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability unavailable" : "能力暂不可用"}</h2>
-                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "This frozen product surface is not available." : "该冻结业务能力未作为正式产品功能启用。"}</p>
+                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "This part of FlowChain is not available." : "FlowChain 的这部分功能暂不提供。"}</p>
                     </Card>
                   ) : activeRoute.requiredPermission &&
                     authorizationLoadState === "loading" ? (
@@ -1824,7 +1896,7 @@ export default function FlowChainApp() {
                     <Card className="p-10 text-center" data-testid="authorization-route-denied">
                       <ShieldAlert className="mx-auto text-amber-600" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Access denied" : "无权访问"}</h2>
-                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "Your effective permissions do not grant access to this route." : "当前有效权限未授予此页面的读取权限。"}</p>
+                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "Your roles do not include access to this page. Ask a workspace administrator if you need it." : "你的角色没有此页面的访问权限。如需访问，请联系工作区管理员。"}</p>
                     </Card>
                   ) : activeCapabilityId &&
                     capabilityLoadState === "loading" ? (
@@ -1839,15 +1911,15 @@ export default function FlowChainApp() {
                     capabilityLoadState === "failed" ? (
                     <Card className="p-10 text-center" data-testid="capability-registry-unavailable">
                       <Lock className="mx-auto text-slate-500" size={34} />
-                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability registry unavailable" : "能力注册表暂不可用"}</h2>
-                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "The application could not verify whether this capability is enabled." : "无法验证该扩展能力是否启用，页面已按安全策略关闭。"}</p>
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Could not check this feature" : "无法确认功能状态"}</h2>
+                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "FlowChain could not check whether this feature is turned on, so the page stays closed. Refresh to try again." : "无法确认此功能是否已开启，页面暂时关闭。请刷新后重试。"}</p>
                     </Card>
                   ) : activeCapabilityId &&
                     capabilityAccess?.status === "blocked" ? (
                     <Card className="p-10 text-center" data-testid="capability-route-blocked">
                       <Lock className="mx-auto text-slate-500" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability unavailable" : "能力暂不可用"}</h2>
-                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "Permission is present, but this capability is disabled." : "权限已具备，但该业务能力当前未启用。"}</p>
+                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "You have access, but this feature is turned off for this workspace." : "你有访问权限，但此功能在当前工作区未开启。"}</p>
                     </Card>
                   ) : (
                     <PanelErrorBoundary

@@ -5,6 +5,7 @@ import { executeBusinessQueryPlan } from './ai-business-query-executor.mjs'
 import { assertReadOnlyGoalRegistry, goalDefinition } from './ai-business-goal-registry.mjs'
 import { buildBusinessQueryResponseV2 } from './ai-business-query-response.mjs'
 import { buildSupplierActionSummaries } from './supplier-action-summary-read-service.mjs'
+import { buildDeterministicBusinessQueryPlan } from './ai-semantic-query-planner.mjs'
 
 const summary = {
   supplier: { id: 's1', name: 'Supplier One', displayName: 'Supplier One' },
@@ -279,4 +280,55 @@ test('a section card shows a shared general sentence once, with every code kept'
   assert.deepEqual(response.businessQuery.sectionCards[0].limitationCodes, codes)
   assert.deepEqual(response.businessQuery.sectionCards[0].limitations, ['Some source data is unavailable, so related counts are unknown.'])
   assert.deepEqual(response.dataLimitations.map((item) => item.code), codes)
+})
+
+// The supplier answer leads with what it found, in plain words (2026-11-05
+// review): no "read-only checks completed", no count of business goals, no
+// "Impact: Confirmed from authorized business records."; a clarification is
+// titled as its question, with one chip per option.
+test('the answer leads with its finding, and a clarification asks its question with a chip per option', async () => {
+  const pack = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ scope: { mode: 'all' }, goals: ['supplier_invoice_exceptions'] }), { summaryService })
+  const english = buildBusinessQueryResponseV2(pack, {}, { answerLanguage: 'en-US', message: 'Which supplier invoices have mismatches?' })
+  assert.equal(english.conclusion.title, '1 invoice mismatch, 1 disputed invoice, 1 open invoice')
+  assert.doesNotMatch(english.conclusion.title + english.conclusion.summary, /read-only checks|business goals|sections contain/)
+  assert.deepEqual(english.businessImpact.map((item) => item.explanation), [''])
+  const chinese = buildBusinessQueryResponseV2(pack, {}, { answerLanguage: 'zh-CN', message: '哪些供应商发票有差异？' })
+  assert.equal(chinese.conclusion.title, '1 张发票有差异，1 张发票有争议，1 张未结发票')
+  assert.doesNotMatch(chinese.conclusion.title + chinese.conclusion.summary, /跨模块只读检查|业务目标/)
+
+  const zero = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ scope: { mode: 'all' }, goals: ['supplier_overdue_purchase_orders'] }), { summaryService })
+  assert.equal(buildBusinessQueryResponseV2(zero, {}, { answerLanguage: 'en-US' }).conclusion.title, 'No overdue purchase orders')
+  assert.equal(buildBusinessQueryResponseV2(zero, {}, { answerLanguage: 'zh-CN' }).businessQuery.sectionCards[0].stateLabel, '没有发现')
+
+  const asked = buildDeterministicBusinessQueryPlan({ message: 'Which suppliers are risky?' })
+  const clarifying = await executeBusinessQueryPlan(asked, { summaryService })
+  const question = buildBusinessQueryResponseV2(clarifying, { plan: asked }, { answerLanguage: 'en-US' })
+  assert.equal(question.conclusion.title, 'Which supplier risk do you mean?')
+  assert.deepEqual(question.businessQuery.goalLabels, [])
+  assert.deepEqual(question.followUpSuggestions.map((chip) => chip.label), ['Supplier payments', 'Overdue orders', 'Receiving issues', 'Invoice exceptions', 'Open RFQs', 'Other risks'])
+  const chineseQuestion = buildBusinessQueryResponseV2(clarifying, { plan: asked }, { answerLanguage: 'zh-CN' })
+  assert.equal(chineseQuestion.conclusion.title, '你想看供应商哪方面的风险？')
+  assert.doesNotMatch(JSON.stringify(chineseQuestion.conclusion), /RFQ|PO/)
+  assert.equal(chineseQuestion.followUpSuggestions[4].label, '未授标询价')
+})
+
+test('two checks read from the same records are one card, and a shared note is said once', async () => {
+  const pack = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ scope: { mode: 'all' }, goals: ['supplier_payables_due', 'supplier_payment_readiness', 'supplier_invoice_exceptions'] }), { summaryService })
+  const response = buildBusinessQueryResponseV2(pack, {}, { answerLanguage: 'en-US' })
+  const cards = response.businessQuery.sectionCards
+  assert.deepEqual(cards.map((card) => card.goal), ['supplier_payables_due', 'supplier_invoice_exceptions'])
+  const notes = cards.flatMap((card) => card.limitations)
+  assert.equal(notes.length, new Set(notes).size)
+  // Every card keeps its codes.
+  assert.ok(cards.every((card) => card.limitationCodes.length === pack.sections.find((section) => section.goal === card.goal).limitations.length))
+  // Different checks that both found nothing stay two cards.
+  const quiet = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ scope: { mode: 'all' }, goals: ['supplier_receiving_exceptions', 'supplier_overdue_purchase_orders'] }), { summaryService })
+  assert.deepEqual(buildBusinessQueryResponseV2(quiet, {}, { answerLanguage: 'en-US' }).businessQuery.sectionCards.map((card) => card.goal), ['supplier_receiving_exceptions', 'supplier_overdue_purchase_orders'])
+})
+
+test('invoices due are payables due, not invoice exceptions', () => {
+  for (const message of ['Which supplier invoices are due this month?', '哪些供应商发票本月到期？']) {
+    assert.deepEqual(buildDeterministicBusinessQueryPlan({ message }).goals, ['supplier_payables_due', 'supplier_payment_readiness'], message)
+  }
+  assert.ok(buildDeterministicBusinessQueryPlan({ message: 'Which supplier invoices are due and have a mismatch?' }).goals.includes('supplier_invoice_exceptions'))
 })

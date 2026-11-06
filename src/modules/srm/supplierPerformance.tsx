@@ -137,16 +137,17 @@ const shiftDay = (day: string, days: number) => isoDay(new Date(Date.parse(`${da
 const PRESETS = [["last30", 30], ["last90", 90], ["last180", 180], ["last365", 365]] as const;
 
 // The scorecard's own error codes, in the reader's language; any other error
-// keeps the server's message.
+// reads as "could not load", with its code in the tooltip.
 const SCORECARD_ERRORS: Record<string, string> = { SCORECARD_PERIOD_INVALID: "periodInvalid", SCORECARD_PERIOD_TOO_LONG: "periodTooLong", SCORECARD_GRACE_DAYS_INVALID: "graceInvalid" };
-type ScorecardFailure = { key: string; n: string } | { message: string };
+type ScorecardFailure = { key: string; n: string } | { code: string };
 function scorecardFailure(reason: unknown): ScorecardFailure {
   if (reason instanceof ApiError && reason.code && SCORECARD_ERRORS[reason.code]) return { key: SCORECARD_ERRORS[reason.code], n: String(reason.details.find((item) => item.maxDays !== undefined)?.maxDays ?? "") };
-  return { message: reason instanceof Error ? reason.message : "" };
+  const failure = reason as { code?: unknown; status?: unknown } | null;
+  return { code: typeof failure?.code === "string" ? failure.code : typeof failure?.status === "number" ? `HTTP ${failure.status}` : "" };
 }
 function ScorecardError({ failure, onRetry }: { failure: ScorecardFailure; onRetry: () => void }) {
   const tr = useCopy();
-  return <>{tr("loadFailed")} {"key" in failure ? tr(failure.key, { n: failure.n }) : failure.message} <button type="button" className="ml-2 underline" onClick={onRetry}>{tr("retry")}</button></>;
+  return <><span title={"code" in failure ? failure.code || undefined : undefined}>{tr("loadFailed")}</span> {"key" in failure ? tr(failure.key, { n: failure.n }) : null} <button type="button" className="ml-2 underline" onClick={onRetry}>{tr("retry")}</button></>;
 }
 
 export function useSupplierScorecard(query: { supplierId?: string; from: string; to: string; graceDays: number }) {

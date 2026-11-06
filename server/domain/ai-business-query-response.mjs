@@ -1,4 +1,5 @@
 import { isProcurementAuthorityStatus, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
+import { goalDefinition } from './ai-business-goal-registry.mjs'
 
 const EN = {
   "需要付款": "Payments due",
@@ -10,22 +11,21 @@ const EN = {
   "供应商比较": "Supplier comparison",
   "发票差异": "Invoice exceptions",
   "收货异常": "Receiving exceptions",
-  "延期 PO": "Overdue POs",
-  "RFQ 跟进": "RFQ follow-ups",
+  "逾期采购订单": "Overdue purchase orders",
+  "询价跟进": "RFQ follow-ups",
   "缺失证据": "Missing evidence",
   "银行核对异常": "Bank reconciliation exceptions",
   "库存风险": "Inventory risks",
   "采购异常": "Procurement exceptions",
   "数据质量限制": "Data quality limitations",
   "已确认": "Confirmed",
-  "确认没有": "Confirmed zero",
+  "没有发现": "None found",
   "数据不完整": "Incomplete data",
   "无权限": "Hidden by permissions",
   "数据不可用": "Unavailable",
   "业务证据": "Business evidence",
   "来自已授权确定性 Read Service。": "From authorized business records.",
   "确定性业务读取": "Authorized business records",
-  "需要补充查询范围": "Clarify the query scope",
   "查询限制": "Query limitation",
   "该限制不会被解释为业务数量 0。": "This limitation does not mean the business count is zero.",
   "业务事实读取 · 确定性执行 · 证据支持": "Business records · Read-only checks · Supporting evidence",
@@ -34,7 +34,6 @@ const EN = {
   "当前角色无权查看该分区，不能解释为 0。": "This role cannot view this section; the count is unknown.",
   "数据源或 Capability 不可用，不能解释为 0。": "The data source is unavailable; the count is unknown.",
   "存在不完整记录，未计入正式数量。": "Incomplete records are excluded from formal counts.",
-  "已由确定性 Read Service 确认。": "Confirmed from authorized business records.",
   "继续进行只读查询，不创建或执行正式业务动作。": "Continue a read-only query.",
   "返回 AI 助手": "Back to AI assistant",
   "只读": "Read only",
@@ -44,6 +43,7 @@ const EN = {
   "业务事实来自确定性 Read Service": "Facts come from authorized business records",
   "查看付款阻断": "Show supplier payment blocks",
   "查看延期采购订单": "Show overdue supplier purchase orders",
+  "查看逾期采购订单": "Show overdue supplier purchase orders",
   "查看发票差异": "Show supplier invoice exceptions",
   "查看缺失证据": "Show missing supplier evidence",
   "受限供应商": "Restricted supplier",
@@ -54,10 +54,10 @@ const EN = {
 const GOAL_LABELS = Object.freeze({
   supplier_payables_due: '需要付款', supplier_payables_overdue: '逾期付款', supplier_payment_blocks: '付款阻断', supplier_payment_readiness: '付款准备度',
   supplier_operational_followups: '其他跟进', supplier_priority: '优先级', supplier_comparison: '供应商比较', supplier_invoice_exceptions: '发票差异',
-  supplier_receiving_exceptions: '收货异常', supplier_overdue_purchase_orders: '延期 PO', supplier_rfq_followups: 'RFQ 跟进', supplier_missing_evidence: '缺失证据',
+  supplier_receiving_exceptions: '收货异常', supplier_overdue_purchase_orders: '逾期采购订单', supplier_rfq_followups: '询价跟进', supplier_missing_evidence: '缺失证据',
   supplier_bank_reconciliation_exceptions: '银行核对异常', inventory_risks: '库存风险', procurement_exceptions: '采购异常', data_quality_limitations: '数据质量限制',
 })
-const STATE_LABELS = Object.freeze({ confirmed: '已确认', confirmed_zero: '确认没有', incomplete: '数据不完整', hidden: '无权限', unavailable: '数据不可用' })
+const STATE_LABELS = Object.freeze({ confirmed: '已确认', confirmed_zero: '没有发现', incomplete: '数据不完整', hidden: '无权限', unavailable: '数据不可用' })
 // Stored status codes on supplier summary evidence (payables, purchase orders,
 // supplier invoices, receiving documents), as [English, Chinese]. Users see the
 // label; the code itself stays in `statusCode`.
@@ -75,7 +75,7 @@ const STATUS_COPY = Object.freeze({
   fully_received: ['Fully received', '全部收货'],
   receiving: ['Receiving', '收货中'],
   inspecting: ['Inspecting', '检验中'],
-  ready_for_receiving: ['Ready for posting', '待过账'],
+  ready_for_receiving: ['Ready to post', '待过账'],
   received: ['Received', '已收货'],
   unposted: ['Unposted', '未过账'],
   posted: ['Posted', '已过账'],
@@ -127,7 +127,7 @@ const LIMITATION_COPY = Object.freeze({
   settlements_unavailable: ['Settlements are unavailable, so payment blocks may be incomplete.', '结算数据暂不可用，付款阻断可能不完整。'],
   purchaseOrders_unavailable: ['Purchase orders are unavailable, so purchase order counts are unknown.', '采购订单暂不可用，采购订单数量未知。'],
   receiving_unavailable: ['Receiving records are unavailable, so receiving counts are unknown.', '收货记录暂不可用，收货数量未知。'],
-  rfqs_unavailable: ['RFQs are unavailable, so RFQ follow-ups are unknown.', 'RFQ 数据暂不可用，RFQ 跟进事项未知。'],
+  rfqs_unavailable: ['RFQs are unavailable, so RFQ follow-ups are unknown.', '询价单暂不可用，询价跟进事项未知。'],
   bankReconciliation_unavailable: ['Bank reconciliation is unavailable, so reconciliation exceptions are unknown.', '银行核对暂不可用，核对异常未知。'],
   amounts_hidden: ['Your role cannot view amounts, so they are not shown.', '当前角色无权查看金额，因此未显示金额。'],
   partner_snapshot_hidden: ['Your role cannot view supplier details, so supplier names are hidden.', '当前角色无权查看供应商详情，因此已隐藏供应商名称。'],
@@ -200,9 +200,106 @@ function englishClarification(ambiguities = []) {
   if (reason === 'current_supplier_unavailable') return 'This page is not about one supplier. Name the supplier or give its code.'
   if (reason.startsWith('supplier_not_found:')) return `I couldn't find ${reason.slice('supplier_not_found:'.length)}. Check the supplier name or code.`
   if (reason === 'prompt_injection') return 'This request contains instructions about the system or data access, which are not allowed. Describe the business facts you want to check instead.'
-  if (reason === 'no_supported_goal') return 'Do you want supplier payments, orders, receiving, invoices, RFQs or other risks?'
+  if (reason === 'no_supported_goal') return 'Pick what to check: payments, orders, receiving, invoices, RFQs or other risks.'
   return ''
 }
+
+// A clarification's title is the question it asks, by the planner's
+// ambiguity code, as [English, Chinese].
+const CLARIFICATION_TITLES = Object.freeze({
+  no_supported_goal: ['Which supplier risk do you mean?', '你想看供应商哪方面的风险？'],
+  supplier_not_found: ['Which supplier do you mean?', '你指的是哪家供应商？'],
+  current_supplier_unavailable: ['Which supplier do you mean?', '你指的是哪家供应商？'],
+  previous_result_unavailable: ['Which earlier result do you mean?', '你指的是哪一轮结果？'],
+  prompt_injection: ["I can't run that request", '这个请求无法执行'],
+})
+const CLARIFICATION_TITLE_DEFAULT = ['Which suppliers should I check?', '要查看哪些供应商？']
+// One chip per option of the "which risk?" question, as [English label,
+// English question, Chinese label, Chinese question]; the assistant answers
+// each question.
+const RISK_OPTIONS = Object.freeze([
+  ['Supplier payments', 'Which supplier payments are due?', '供应商付款', '哪些供应商付款到期了？'],
+  ['Overdue orders', 'Which purchase orders are overdue?', '逾期订单', '哪些采购订单逾期了？'],
+  ['Receiving issues', 'Which receipts have problems?', '收货问题', '哪些收货单需要处理？'],
+  ['Invoice exceptions', 'Which invoices have three-way match exceptions?', '发票差异', '哪些发票有三单匹配异常？'],
+  ['Open RFQs', 'Which RFQs are waiting for quotes?', '未授标询价', '哪些询价单还没授标？'],
+  ['Other risks', 'Which suppliers need attention?', '其他风险', '哪些供应商需要注意？'],
+])
+
+// What each count of a section is, as [[one, many] in English, Chinese].
+const COUNT_PHRASES = Object.freeze({
+  due: [['1 payment due', '{n} payments due'], '{n} 笔待付款'],
+  overdue: [['1 overdue payment', '{n} overdue payments'], '{n} 笔逾期付款'],
+  ready: [['1 payment ready to pay', '{n} payments ready to pay'], '{n} 笔可付款'],
+  blocked: [['1 blocked payment', '{n} blocked payments'], '{n} 笔付款被阻断'],
+  open: [['1 open invoice', '{n} open invoices'], '{n} 张未结发票'],
+  mismatch: [['1 invoice mismatch', '{n} invoice mismatches'], '{n} 张发票有差异'],
+  disputed: [['1 disputed invoice', '{n} disputed invoices'], '{n} 张发票有争议'],
+  missingEvidence: [['1 record missing evidence', '{n} records missing evidence'], '{n} 条记录缺少证据'],
+  openPo: [['1 open purchase order', '{n} open purchase orders'], '{n} 张未结采购订单'],
+  overduePo: [['1 overdue purchase order', '{n} overdue purchase orders'], '{n} 张逾期采购订单'],
+  unreceivedPo: [['1 order not fully received', '{n} orders not fully received'], '{n} 张未收完的订单'],
+  exceptions: [['1 receiving exception', '{n} receiving exceptions'], '{n} 个收货异常'],
+  pendingEvidence: [['1 receipt awaiting evidence', '{n} receipts awaiting evidence'], '{n} 张收货单待补证据'],
+  awaitingResponse: [['1 RFQ awaiting replies', '{n} RFQs awaiting replies'], '{n} 张询价单待回复'],
+  expired: [['1 expired RFQ', '{n} expired RFQs'], '{n} 张询价单已过期'],
+  unreconciledPayments: [['1 unreconciled payment', '{n} unreconciled payments'], '{n} 笔付款未核对'],
+  blockingExceptions: [['1 blocking reconciliation exception', '{n} blocking reconciliation exceptions'], '{n} 个阻断性核对异常'],
+  incompleteRecords: [['1 incomplete record', '{n} incomplete records'], '{n} 条记录不完整'],
+})
+// The totals a problem count sits in come after it: "1 invoice mismatch, 2 open invoices".
+const TOTAL_COUNTS = new Set(['open', 'openPo', 'due'])
+const RANKED_GOALS = new Set(['supplier_priority', 'supplier_comparison', 'supplier_operational_followups'])
+
+// The headline leads with what was found: "1 invoice mismatch, 2 open
+// invoices", "Acme Components: 2 overdue purchase orders", "Most urgent
+// supplier: Acme Components", or that nothing matched. The scope badge and
+// the sections show the rest.
+function findingTitle(sections, { english, scopeLabel, singleSupplier, L }) {
+  const parts = []
+  const seen = new Set()
+  for (const section of sections.filter((row) => row.state === 'confirmed')) {
+    const counts = Object.entries(section.counts || {}).filter(([key, value]) => COUNT_PHRASES[key] && Number(value) > 0)
+    counts.sort(([a], [b]) => Number(TOTAL_COUNTS.has(a)) - Number(TOTAL_COUNTS.has(b)))
+    for (const [key, value] of counts) {
+      if (seen.has(key)) continue
+      seen.add(key)
+      const [[one, many], zh] = COUNT_PHRASES[key]
+      parts.push((english ? (Number(value) === 1 ? one : many) : zh).replace('{n}', Number(value).toLocaleString('en-US')))
+    }
+  }
+  const shown = parts.slice(0, 3)
+  const prefix = singleSupplier ? `${scopeLabel}${english ? ': ' : '：'}` : ''
+  if (shown.length) return `${prefix}${shown.join(english ? ', ' : '，')}`
+  const ranked = sections.find((section) => section.state === 'confirmed' && RANKED_GOALS.has(section.goal) && section.rows?.length)
+  if (ranked) {
+    const first = supplierLabel(ranked.rows[0].supplier, english)
+    if (ranked.goal === 'supplier_operational_followups') {
+      const count = ranked.rows.length
+      return english ? `${count} ${count === 1 ? 'supplier has' : 'suppliers have'} follow-ups; first: ${first}` : `${count} 家供应商有待跟进事项，最先处理：${first}`
+    }
+    return english ? `Most urgent supplier: ${first}` : `最需要处理的供应商：${first}`
+  }
+  // Nothing found: said for the first check that found nothing.
+  const zero = sections.find((section) => section.state === 'confirmed_zero')
+  if (zero && sections.every((section) => section.state === 'confirmed_zero')) return `${prefix}${inLanguage(ZERO_TITLES[zero.goal] || ZERO_TITLE_DEFAULT, english)}`
+  return english ? `${prefix}Some checks could not be completed` : `${prefix}部分检查未能完成`
+}
+
+// "Nothing found" for each check, as [English, Chinese].
+const ZERO_TITLES = Object.freeze({
+  supplier_payables_due: ['No supplier payments are due', '没有到期的供应商付款'],
+  supplier_payment_readiness: ['No supplier payments are due', '没有到期的供应商付款'],
+  supplier_payables_overdue: ['No supplier payments are overdue', '没有逾期的供应商付款'],
+  supplier_payment_blocks: ['No supplier payments are blocked', '没有被阻断的供应商付款'],
+  supplier_invoice_exceptions: ['No supplier invoice exceptions', '没有供应商发票差异'],
+  supplier_receiving_exceptions: ['No receiving exceptions', '没有收货异常'],
+  supplier_overdue_purchase_orders: ['No overdue purchase orders', '没有逾期采购订单'],
+  supplier_rfq_followups: ['No RFQs need a follow-up', '没有需要跟进的询价单'],
+  supplier_bank_reconciliation_exceptions: ['No bank reconciliation exceptions', '没有银行核对异常'],
+  supplier_missing_evidence: ['No supplier evidence is missing', '没有缺失的供应商证据'],
+})
+const ZERO_TITLE_DEFAULT = ['Nothing needs attention', '没有需要处理的事项']
 
 function evidenceItem(item, index, { L, english }) {
   const entityType = text(item.entityType || item.type)
@@ -233,25 +330,38 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
   const english = request.answerLanguage !== "zh-CN"
   const singleSupplier = !["all", "previous_result"].includes(pack.scopeSummary.mode) && pack.scopeSummary.entityCount === 1
   const scopeLabel = singleSupplier ? supplierLabel(pack.scopeSummary.supplier, english) || L(text(pack.scopeSummary.label)) : english ? (pack.scopeSummary.mode === "all" ? "All suppliers" : pack.scopeSummary.mode === "previous_result" ? "Previous results" : `${pack.scopeSummary.entityCount} suppliers`) : pack.scopeSummary.label
-  const followups = (pack.availableFollowups || []).map(L)
+  // "Overdue" is 逾期 everywhere in the assistant, never 延期.
+  const followups = (pack.availableFollowups || []).map((label) => L(label === '查看延期采购订单' ? '查看逾期采购订单' : label))
   const clarification = Boolean(pack.clarification?.needed)
   const sections = pack.sections || []
   const tone = clarification ? 'warning' : severity(sections)
-  const confirmed = sections.filter((section) => section.state === 'confirmed').length
   const limited = sections.filter((section) => ['incomplete', 'hidden', 'unavailable'].includes(section.state)).length
+  // A clarification is titled as the question it asks; its detail is the
+  // planner's sentence. An answer leads with what it found, and says only
+  // whether some checks were limited (the notes say which).
+  const reason = text(pack.plan?.ambiguities?.[0]).split(':')[0]
   const conclusion = clarification
-    ? { title: L('需要补充查询范围'), summary: english ? (pack.clarification.questionEn || englishClarification(pack.plan?.ambiguities) || "Which suppliers should I check? Specify supplier names or use the current result.") : pack.clarification.question, severity: 'warning', confidence: 'low' }
+    ? { title: inLanguage(CLARIFICATION_TITLES[reason] || CLARIFICATION_TITLE_DEFAULT, english), summary: english ? (pack.clarification.questionEn || englishClarification(pack.plan?.ambiguities) || 'Name the suppliers, or ask about the current result.') : pack.clarification.question, severity: 'warning', confidence: 'low' }
     : {
-        title: english ? `${scopeLabel}: read-only checks completed` : `${scopeLabel}：已完成跨模块只读检查`,
-        summary: english ? `Checked ${sections.length} business goals; ${confirmed} sections contain confirmed items and ${limited} have access, completeness, or availability limits.` : `已按 ${sections.length} 个业务目标读取授权数据；${confirmed} 个分区有已确认事项${limited ? `，${limited} 个分区存在权限、完整性或可用性限制` : ''}。`,
+        title: findingTitle(sections, { english, scopeLabel, singleSupplier, L }),
+        summary: limited ? (english ? 'Some checks are limited by access or data; see the notes.' : '部分检查受权限或数据限制，详见说明。') : '',
         severity: tone,
         confidence: planner.plan?.confidence >= 0.8 ? 'high' : planner.plan?.confidence >= 0.5 ? 'medium' : 'low',
       }
+  // "Which risk?" offers each risk as a chip.
+  const options = clarification && reason === 'no_supported_goal'
+    ? RISK_OPTIONS.map(([enLabel, enPrompt, zhLabel, zhPrompt]) => ({ label: english ? enLabel : zhLabel, prompt: english ? enPrompt : zhPrompt, intentHint: 'business_query_followup', requiresReview: false }))
+    : null
   const evidence = (pack.evidence || []).slice(0, 12).map((item, index) => evidenceItem(item, index, { L, english }))
   const withSupplierLabel = (row) => row?.supplier ? { ...row, supplier: { ...row.supplier, displayName: supplierLabel(row.supplier, english) } } : row
   const describe = (code) => limitationDescription(code, { english, clarification })
   const limitations = limitationCodes(pack.limitations).map((code) => ({ code, label: L('查询限制'), description: describe(code), severity: 'warning', consequence: L('该限制不会被解释为业务数量 0。') }))
   const goalLabels = (planner.plan?.goals || sections.map((section) => section.goal)).map((goal) => L(GOAL_LABELS[goal] || goal))
+  // Two goals read through the same read and section (payments due and
+  // payment readiness) give the same card twice: it is shown once. A note several
+  // cards share is said on the first of them only; every card keeps its codes.
+  const seenCards = new Set()
+  const saidNotes = new Set()
   const sectionCards = sections.map((section) => ({
     goal: section.goal,
     label: L(GOAL_LABELS[section.goal] || section.goal),
@@ -263,7 +373,17 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
     // Sentences in the answer language (unlisted codes can share one); the codes are in `limitationCodes`.
     limitations: [...new Set(limitationCodes(section.limitations).map(describe))],
     limitationCodes: limitationCodes(section.limitations),
-  }))
+  })).filter((card) => {
+    const definition = goalDefinition(card.goal)
+    const key = JSON.stringify([definition?.tool || card.goal, definition?.section || card.goal, card.state, card.counts, card.amounts, card.rows])
+    if (seenCards.has(key)) return false
+    seenCards.add(key)
+    return true
+  }).map((card) => {
+    const limitations = card.limitations.filter((sentence) => !saidNotes.has(sentence))
+    for (const sentence of card.limitations) saidNotes.add(sentence)
+    return { ...card, limitations }
+  })
   return {
     version: 'v2',
     responseId: `AIQ-${Date.now()}-${Math.abs(text(request.message || request.question).length * 31)}`,
@@ -274,14 +394,14 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
     scope: { module: text(request.activeModuleId || request.moduleId || 'overview'), entityType: 'supplier', entityId: pack.scopeSummary.entityCount === 1 ? pack.sections?.[0]?.rows?.[0]?.supplier?.id || '' : '', timeRange: pack.timeWindow?.interpretation || '', dataScopeLabel: L('当前工作区授权数据') },
     conclusion,
     keyEvidence: evidence,
-    businessImpact: sectionCards.map((section) => ({ area: section.label, impact: section.stateLabel, severity: section.state === 'confirmed' ? 'warning' : section.state === 'confirmed_zero' ? 'success' : 'warning', explanation: section.state === 'confirmed_zero' ? L('权威数据足以确认当前没有符合条件的事项。') : section.state === 'hidden' ? L('当前角色无权查看该分区，不能解释为 0。') : section.state === 'unavailable' ? L('数据源或 Capability 不可用，不能解释为 0。') : section.state === 'incomplete' ? L('存在不完整记录，未计入正式数量。') : L('已由确定性 Read Service 确认。') })),
+    businessImpact: sectionCards.map((section) => ({ area: section.label, impact: section.stateLabel, severity: section.state === 'confirmed' ? 'warning' : section.state === 'confirmed_zero' ? 'success' : 'warning', explanation: section.state === 'confirmed_zero' ? L('权威数据足以确认当前没有符合条件的事项。') : section.state === 'hidden' ? L('当前角色无权查看该分区，不能解释为 0。') : section.state === 'unavailable' ? L('数据源或 Capability 不可用，不能解释为 0。') : section.state === 'incomplete' ? L('存在不完整记录，未计入正式数量。') : '' })),
     recommendedActions: clarification ? [] : followups.slice(0, 4).map((label, index) => ({ label, description: L('继续进行只读查询，不创建或执行正式业务动作。'), actionType: 'follow_up_query', priority: index === 0 ? 'high' : 'medium', reviewRequired: false })),
     navigationLinks: evidence.filter((item) => item.entityId).slice(0, 7).map((item) => ({ label: `${english ? "View" : "查看"} ${item.entityLabel}`, moduleId: item.moduleId, entityType: item.entityType, entityId: item.entityId, returnLabel: L('返回 AI 助手'), returnTo: 'ai-assistant', source: 'business-query' })),
     dataLimitations: limitations,
     reviewCards: [],
     safetyBoundaries: [L('只读'), L('不创建 ActionProposal'), L('不执行付款'), L('不修改业务数据'), L('业务事实来自确定性 Read Service')],
-    followUpQuestions: followups,
-    followUpSuggestions: followups.slice(0, 4).map((label) => ({ label, prompt: label, intentHint: 'business_query_followup', requiresReview: false })),
+    followUpQuestions: options ? options.map((option) => option.label) : followups,
+    followUpSuggestions: options || followups.slice(0, 4).map((label) => ({ label, prompt: label, intentHint: 'business_query_followup', requiresReview: false })),
     resolvedContext: { resolvedFrom: pack.plan?.scope?.source === 'previous_result' ? 'previousResponse' : pack.plan?.scope?.source === 'current_context' ? 'activePage' : 'currentMessage', entityRefs: [...new Map(sections.flatMap(section => section.rows || []).filter(row => row.supplier?.id).map(row => [row.supplier.id, { entityType: "supplier", entityId: row.supplier.id, entityLabel: supplierLabel(row.supplier, english) }])).values()].slice(0, 12), intentCarryOver: 'business_query_plan_v1', confidence: planner.plan?.confidence >= 0.8 ? 'high' : 'medium' },
     sourceSummary: [],
     readinessSignals: [],
@@ -292,7 +412,8 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
       plannerStatus: planner.plannerStatus || 'ready',
       scopeBadge: scopeLabel,
       scopeMode: pack.scopeSummary.mode,
-      goalLabels,
+      // A clarification's goal is the planner's placeholder, not the question's.
+      goalLabels: clarification ? [] : goalLabels,
       sectionCards,
       clarification: { ...pack.clarification, question: clarification ? conclusion.summary : null },
       fieldVisibility: pack.fieldVisibility,

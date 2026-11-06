@@ -1,4 +1,4 @@
-import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
+import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText, aiSkillUnitLabel } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillEvidence, aiSkillFormatter, aiSkillNavigation, aiSkillRecordEvidence, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { aiSkillPurchaseOrderNotSent, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { aiSkillDraftCard, aiSkillMinimumText } from './ai-skill-drafts.mjs'
@@ -75,7 +75,7 @@ function supplyingOrders(facts, plan) {
 
 export function runStartOrder(facts, { focus = null, route = null, canDraft = false } = {}) {
   const request = route?.order || {}
-  const base = { skillId: 'prepare_action_draft', mode: 'order', canDraft, advice: Boolean(request.advice), quantity: request.quantity ?? null }
+  const base = { skillId: 'prepare_action_draft', mode: 'order', canDraft, advice: Boolean(request.advice), quantity: request.quantity ?? null, named: Boolean(request.named) }
   if (!facts.inventory) return { ...base, outcome: 'no_stock', targets: [] }
   const stockItems = rankAiSkillItemsByDate(buildAiSkillSignals(facts)).filter((item) => STOCK.has(item.type))
   const rowOf = (item) => facts.inventory.rows.find((row) => row.itemId === item.entityId || row.sku === item.label)
@@ -85,6 +85,9 @@ export function runStartOrder(facts, { focus = null, route = null, canDraft = fa
     const plan = facts.inventory.rows.includes(named) ? stockPlan(facts, named, item) : null
     return { ...base, outcome: 'named', targets: [{ row: named, item, plan, supplying: plan ? supplyingOrders(facts, plan) : [] }] }
   }
+  // The question names what it needs ("I need 50 temperature sensors") and the
+  // catalog has no item by that name: no other item is offered in its place.
+  if (base.named) return { ...base, outcome: 'unmatched', targets: [] }
   const planned = stockItems.map((item) => { const row = rowOf(item); const plan = stockPlan(facts, row, item); return { row, item, plan, supplying: supplyingOrders(facts, plan) } })
   const needed = planned.filter((entry) => entry.plan.gap > 0)
   if (needed.length) return { ...base, outcome: needed.length === 1 ? 'one' : 'several', targets: needed.slice(0, MAX_CARDS), more: Math.max(0, needed.length - MAX_CARDS) }
@@ -116,44 +119,48 @@ function requestCard(target, result, facts, language, { autoOpen, anyway = false
   const { row, plan } = target
   const quantity = quantityFor(target, result)
   const amount = quantity ? fmt.quantity(quantity, row.unit) : ''
-  const values = { sku: row.sku, quantity: amount, available: fmt.number(plan?.available), target: fmt.number(plan?.target), coming: fmt.quantity((plan?.incoming ?? 0) + (plan?.pending ?? 0), row.unit) }
+  const values = { sku: row.sku, quantity: amount, available: fmt.quantity(plan?.available, row.unit), target: fmt.quantity(plan?.target, row.unit), coming: fmt.quantity((plan?.incoming ?? 0) + (plan?.pending ?? 0), row.unit) }
   // The reason is also the request line's note.
   const reason = !plan ? aiSkillText('order.reason.no_levels', language, values)
     : result.quantity ? aiSkillText('order.reason.asked', language, values)
       : plan.gap > 0 ? aiSkillText(plan.incoming || plan.pending ? 'order.reason.gap_after_incoming' : 'draft.pr.reason', language, values)
         : aiSkillText(plan.onTop > 0 ? 'order.reason.on_top' : 'order.reason.not_needed', language, values)
   const raised = raisedToMinimum(target, result)
-  const why = raised ? [reason, aiSkillMinimumText(raised, fmt, language)].join(language === 'zh-CN' ? '' : ' ') : reason
+  const why = raised ? [reason, aiSkillMinimumText({ ...raised, unit: row.unit }, fmt, language)].join(language === 'zh-CN' ? '' : ' ') : reason
   const title = aiSkillText(amount ? 'order.card.title' : 'order.card.title_no_quantity', language, values)
   return {
     previewOnly: true, reviewRequired: true, requiresHumanReview: true, prohibitedActions: PROHIBITED,
     allowedNextStep: aiSkillText(anyway ? 'order.action.anyway' : amount ? 'order.action.open' : 'order.action.open_no_quantity', language, values),
     title, draftTitle: title, description: why,
     draftType: 'purchase_request_draft', targetModule: AI_SKILL_MODULES.purchase_request, targetEntityType: 'item', targetEntityId: row.itemId || row.sku,
-    payload: { itemIdOrSku: row.sku, ...(quantity ? { quantity } : {}), reason: why, language },
+    // The unit is shown beside the quantity on the card (its label in the
+    // answer language); the request form takes the item's own unit.
+    payload: { itemIdOrSku: row.sku, ...(quantity ? { quantity } : {}), ...(quantity && row.unit ? { unit: row.unit, unitLabel: aiSkillUnitLabel(row.unit, language, quantity) } : {}), reason: why, language },
     originEvidence: [{ entityType: 'item', entityId: row.itemId || row.sku }],
     autoOpen,
+    // Open orders cover the item: the card is headed as optional, not suggested.
+    ...(anyway ? { optional: true } : {}),
   }
 }
 
-function blankCard(language) {
+function blankCard(language, description = aiSkillText('order.none_summary', language)) {
   const title = aiSkillText('order.action.blank', language)
   return {
     previewOnly: true, reviewRequired: true, requiresHumanReview: true, prohibitedActions: PROHIBITED,
-    allowedNextStep: title, title, draftTitle: title, description: aiSkillText('order.none_summary', language),
+    allowedNextStep: title, title, draftTitle: title, description,
     draftType: 'purchase_request_draft', targetModule: AI_SKILL_MODULES.purchase_request, payload: { language }, originEvidence: [], autoOpen: false,
   }
 }
 
 // The PO follow-up is the drafts' own (ai-skill-drafts.mjs): recipient,
-// subject, greeting and each open line. Only its button and description say
-// why it comes first here: the order is late.
+// subject, greeting, each open line and its button ("Draft follow-up to
+// Acme Components"). Only its description says why it comes first here: the
+// order is late.
 function followUpCard(target, po, facts, language) {
   const fmt = aiSkillFormatter(facts, language)
   const card = aiSkillDraftCard({ kind: 'po_followup_draft', key: `po:${po.id}`, item: target.item, po, chases: true }, facts, language)
   return {
     ...card,
-    allowedNextStep: aiSkillText('order.action.follow_up', language, { po: po.orderNumber }),
     ...(po.overdueDays > 0 ? { description: aiSkillCountText('order.late', po.overdueDays, language, { po: po.orderNumber, days: fmt.number(po.overdueDays) }) } : {}),
   }
 }
@@ -188,7 +195,7 @@ function evidenceFor(target, facts, language) {
   return aiSkillRecordEvidence({
     evidenceType: 'stock_level', entityType: 'item', entityId: row.itemId || row.sku, label: row.sku,
     status: aiSkillText('order.evidence.status', language),
-    summary: row.noStock ? aiSkillText('order.reason.no_levels', language, { sku: row.sku }) : aiSkillText('order.evidence.summary', language, { available: fmt.number(row.available), reorder: fmt.number(row.reorderPoint), safety: fmt.number(row.safetyStock) }),
+    summary: row.noStock ? aiSkillText('order.reason.no_levels', language, { sku: row.sku }) : aiSkillText('order.evidence.summary', language, { available: fmt.quantity(row.available, row.unit), reorder: fmt.quantity(row.reorderPoint, row.unit), safety: fmt.quantity(row.safetyStock, row.unit) }),
   }, language)
 }
 
@@ -208,6 +215,8 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
   }
   if (result.outcome === 'no_stock') return answer(aiSkillText('order.title_no_stock', language), [aiSkillText('order.no_stock_summary', language)], [blankCard(language)])
   if (result.outcome === 'none') return answer(aiSkillText('order.title_none', language), [aiSkillText('order.none_summary', language)], [blankCard(language)])
+  // An item the catalog has no match for: the blank request, to pick it there.
+  if (result.outcome === 'unmatched') return answer(aiSkillText('order.title_choose', language), [aiSkillText('order.choose_lead_unmatched', language), aiSkillText('order.unmatched_next', language)], [blankCard(language, aiSkillText('order.unmatched_next', language))])
   if (result.outcome === 'several') {
     const cards = result.targets.map((target) => requestCard(target, result, facts, language, { autoOpen: false }))
     return answer(aiSkillCountText('order.title_several', result.targets.length + result.more, language, { count: fmt.number(result.targets.length + result.more) }), [aiSkillText('order.several_summary', language)], cards)
@@ -259,7 +268,7 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
       ...onOrderSentences(target, facts, language),
       ...otherUnitSentences,
       aiSkillText('order.covered_why', language),
-      aiSkillText('order.position', language, { available: fmt.number(plan.available), target: fmt.number(plan.target) }),
+      aiSkillText('order.position', language, { available: fmt.quantity(plan.available, target.row.unit), target: fmt.quantity(plan.target, target.row.unit) }),
       aiSkillText(next, language, { po: (latest || unsent)?.orderNumber }),
     ], cards, unsent ? { navigation: [aiSkillNavigation({ label: unsent.orderNumber, entityType: 'purchase_order', entityId: unsent.id }, language), ...navigation].slice(0, 3) } : {})
   }

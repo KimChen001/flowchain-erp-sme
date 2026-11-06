@@ -200,7 +200,7 @@ test('every part renders in English with no Chinese', async () => {
   assert.doesNotMatch(markup, CJK)
   for (const testId of ['ai-v2-text', 'ai-v2-table', 'ai-v2-records', 'ai-v2-kpis', 'ai-v2-chart', 'ai-v2-choices', 'ai-v2-pr-form', 'ai-v2-followups']) assert.match(markup, new RegExp(`data-testid="${testId}"`), testId)
   // Labels by column code, figures through the workspace formatters, statuses in the palette.
-  for (const text of ['Days overdue', 'Promised', 'Remaining', '1,234', '$1,500.00', 'Oct 28, 2026', 'Show all 12', '3 days overdue', 'Waiting 1 day', 'Pending approval', 'Not available for your role', 'View in Reports', 'Which item do you mean?', 'Create draft request (']) assert.ok(markup.includes(text), text)
+  for (const text of ['Days overdue', 'Promised', 'Remaining', '1,234', '$1,500.00', 'Oct 28, 2026', 'Show all 12', '3 days overdue', 'Waiting 1 day', 'Pending approval', 'Not available for your role', 'View in Reports', 'Which item do you mean?', 'Tick a line to create a request']) assert.ok(markup.includes(text), text)
   assert.match(markup, /data-testid="ai-v2-status" data-tone="danger"[^>]*>Overdue</)
   assert.match(markup, /data-testid="ai-v2-status" data-tone="warning"[^>]*>Pending approval</)
   // A hidden amount is a dash, never $0.
@@ -213,7 +213,7 @@ test('every part renders in English with no Chinese', async () => {
 test('a Chinese answer gets Chinese labels on the English interface', async () => {
   const client = await loadClient()
   const markup = client.answer({ parts: everyPart(), language: 'zh-CN' })
-  for (const label of ['逾期天数', '承诺交期', '供应商', '逾期 3 天', '已等待 1 天', '待审批', '你的角色无权查看', '在报表中心查看', '你指的是哪个物料？', '采购申请', '建议补货的物料', '全部加入', '仍要采购', '查看全部 12 条']) assert.ok(markup.includes(label), label)
+  for (const label of ['逾期天数', '承诺交期', '供应商', '逾期 3 天', '已等待 1 天', '待审批', '你的角色无权查看', '在报表中心查看', '你指的是哪个物料？', '采购申请', '建议补货的物料', '全部加入', '仍要采购', '查看全部 12 条', '勾选物料后创建申请']) assert.ok(markup.includes(label), label)
   for (const label of ['Days overdue', 'Not available for your role', 'Show all', 'Order anyway', 'Add all suggested', 'Which item do you mean?']) assert.ok(!markup.includes(label), label)
   // Numbers and amounts keep the workspace locale.
   assert.ok(markup.includes('1,234') && markup.includes('$1,500.00'))
@@ -282,9 +282,20 @@ test('the form ticks nothing for the user, and a covered row needs "Order anyway
   assert.match(covered, /Already requested: <button[^>]*data-business-id="PR-0228"[^>]*>PR-0228<\/button>/)
   assert.match(covered, /data-testid="ai-v2-pr-order-anyway"[^>]*>Order anyway</)
   for (const open of rows.filter((value) => value.includes('data-covered="false"'))) assert.doesNotMatch(open, /disabled=""[^>]*aria-label="Order/)
-  // One primary button; with nothing ticked it is off. No Submit before the request exists.
+  // One primary button; with nothing ticked it is off and says what to do
+  // first (2026-11-05). No Submit before the request exists.
   assert.equal(count(markup, /data-primary="true"/g), 1)
-  assert.match(markup, /data-testid="ai-v2-pr-create" data-primary="true" disabled=""[^>]*>Create draft request \(0 lines\)</)
+  assert.match(markup, /data-testid="ai-v2-pr-create" data-primary="true" disabled=""[^>]*>Tick a line to create a request</)
+  // The quantity label keeps the unit in full-width parentheses in Chinese,
+  // worded for the form's language (2026-11-05: "数量（pcs）"); the stored
+  // code is what the request records.
+  const ticked = (language, unit = 'pcs') => client.form({ props: formProps({ suggested: [], lines: [row({ item: { ...item('itm_42', 'SKU-1007', 'Corrugated box 40x30'), unit }, checked: true, suggestedQuantity: { value: 5, source: 'user_named' } })] }), language })
+  assert.match(ticked('en-US'), />Quantity \(pcs\)</)
+  assert.match(ticked('zh-CN'), />数量（件）</)
+  assert.match(ticked('en-US', 'box'), />Quantity \(boxes\)</)
+  assert.match(ticked('zh-CN', 'box'), />数量（箱）</)
+  assert.match(ticked('zh-CN', 'drum'), />数量（drum）</)
+  assert.match(client.form({ props: formProps(), language: 'zh-CN' }), /建议 600 件/)
   assert.doesNotMatch(markup, /Submit for approval|data-testid="ai-v2-pr-submit"/)
 })
 
@@ -372,7 +383,7 @@ test('the receipt has Submit as its one primary button, and submitting says when
   assert.match(draft, /data-testid="ai-v2-pr-receipt" data-status="draft"/)
   assert.match(draft, /data-business-id="PR-0231"[^>]*>PR-0231<\/button><span>created \(draft\)<\/span>/)
   assert.equal(count(draft, /data-primary="true"/g), 1)
-  assert.match(draft, /data-testid="ai-v2-pr-submit" data-primary="true"[^>]*>Submit for approval — approvers will be emailed</)
+  assert.match(draft, /data-testid="ai-v2-pr-submit" data-primary="true"[^>]*>Submit for approval</)
   assert.match(draft, /data-testid="ai-v2-pr-cancel"[^>]*>Cancel draft</)
   assert.doesNotMatch(draft, /data-testid="ai-v2-pr-create"/)
   const submitted = client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 2, status: 'submitted' } })
@@ -382,7 +393,7 @@ test('the receipt has Submit as its one primary button, and submitting says when
   assert.match(submitted, /<p data-testid="ai-v2-pr-emailed"[^>]*>Approvers get an email when approval emails are turned on for this workspace\.</)
   assert.match(submitted, /data-testid="ai-v2-pr-withdraw"[^>]*>Withdraw</)
   assert.doesNotMatch(submitted, /Submit for approval/)
-  assert.match(client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 1, status: 'draft' }, language: 'zh-CN' }), /提交审批（将邮件通知审批人）/)
+  assert.match(client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 1, status: 'draft' }, language: 'zh-CN' }), />提交审批</)
 })
 
 test('create posts the classic form body with one key per form and an assistant suggestion trail', async () => {
@@ -448,7 +459,7 @@ test('a supplier the item has not approved says Create adds it, and asks for its
   // SKU-1007 prefers Acme Packaging, so the reason is asked here: the full form cannot pick Northstar.
   assert.match(markup, /data-testid="ai-v2-pr-reason"[^]*Why not the preferred supplier \(Acme Packaging\)\?/)
   assert.match(markup, /data-testid="ai-v2-pr-create" data-primary="true" disabled=""/)
-  assert.match(markup, /data-testid="ai-v2-pr-blocked"[^]*Enter a unit price and a 3-letter currency for each supplier Create adds/)
+  assert.match(markup, /data-testid="ai-v2-pr-blocked"[^]*For each new supplier, enter a unit price and a 3-letter currency code/)
   const chinese = client.form({ props, language: 'zh-CN' })
   for (const text of ['Northstar Electronics 还不是 SKU-1007 的批准供应商。点击创建时会将其添加为批准供应商。', 'Northstar Electronics（尚未批准）', '其他供应商…', '为什么不选首选供应商（Acme Packaging）？', '币种']) assert.ok(chinese.includes(text), text)
   // A role that may not add approved suppliers is not offered another one.
@@ -736,6 +747,113 @@ test('the answer renders the setup parts in place', async () => {
   assert.deepEqual([...markup.matchAll(/data-part-id="(p\d)" data-component="([a-z_]+)"/g)].map((match) => `${match[1]}:${match[2]}`), ['p1:setup_steps', 'p2:setup_form'])
   assert.doesNotMatch(markup, CJK)
 })
+
+// A live run on 2026-11-05: fifteen order cards came before the answer's
+// sentence, "0 days" overdue on orders not late, "1 days", the unit in a
+// column of its own, signal types as codes, and "which record?" three times.
+test('the answer\'s first text goes above the first table, chart or form', async () => {
+  const client = await loadClient()
+  const parts = [
+    ui('p1', 'table', tableProps, [ref('purchase_order', 'PO-020')]),
+    { id: 'p2', type: 'text', text: 'Two orders are overdue.' },
+    ui('p3', 'followups', { questions: ['Which supplier is most late?'] }),
+    { id: 'p4', type: 'text', text: 'PO-020 is the older one.' },
+  ]
+  const markup = client.answer({ parts })
+  const order = ['Two orders are overdue.', 'data-testid="ai-v2-table"', 'is the older one.', 'data-testid="ai-v2-followups"'].map((marker) => markup.indexOf(marker))
+  assert.ok(order.every((at, index) => at >= 0 && (!index || at > order[index - 1])), String(order))
+})
+
+test('in a narrow panel a table shows five rows until "Show all"; cells read as the cards do', async () => {
+  const client = await loadClient()
+  const rows = Array.from({ length: 8 }, (_, index) => ({ order: ref('purchase_order', `PO-0${20 + index}`), days_overdue: index < 2 ? index : 0, remaining_quantity: 7000, unit: 'pcs', type: { code: 'po_overdue', tone: 'neutral' }, priority: { code: 'high', tone: 'warning' } }))
+  const props = { columns: [{ code: 'order', kind: 'ref' }, { code: 'days_overdue', kind: 'days' }, { code: 'remaining_quantity', kind: 'quantity' }, { code: 'type', kind: 'status' }, { code: 'priority', kind: 'status' }], rows, total: 8, more: false }
+  const markup = client.answer({ parts: [ui('p1', 'table', props)] })
+  assert.equal(count(markup, /data-testid="ai-v2-table-card"/g), 5)
+  assert.equal(count(markup, /data-testid="ai-v2-table-row"/g), 8)
+  assert.match(markup, /data-testid="ai-v2-table-expand"[^>]*>Show 3 more</)
+  // A quantity carries its unit; one day is "1 day"; not late is a dash.
+  assert.ok(markup.includes('7,000 pcs'))
+  assert.ok(markup.includes('>1 day<'))
+  assert.doesNotMatch(markup, /0 days|1 days/)
+  // Types and priorities in words, never as codes.
+  assert.match(markup, /data-tone="neutral"[^>]*>Overdue purchase order</)
+  assert.match(markup, /data-tone="warning"[^>]*>High</)
+  assert.doesNotMatch(markup, />po_overdue<|>high</)
+  const zh = client.answer({ parts: [ui('p1', 'table', props)], language: 'zh-CN' })
+  for (const label of ['逾期采购订单', '>高<', '1 天', '再显示 3 条']) assert.ok(zh.includes(label), label)
+  // Five rows or fewer need no button.
+  assert.doesNotMatch(client.answer({ parts: [ui('p1', 'table', { ...props, rows: rows.slice(0, 5), total: 5 })] }), /ai-v2-table-expand/)
+})
+
+test('with buttons to pick from, the text does not ask the question again', async () => {
+  const client = await loadClient()
+  const parts = [
+    { id: 'p1', type: 'text', text: 'Which order do you mean? Eight orders are overdue; PO-020 is the most overdue.\n- Which one?\nTell me the number if it is not listed.' },
+    ui('p2', 'choices', { promptCode: 'pick_record', options: [ref('purchase_order', 'PO-020'), ref('purchase_order', 'PO-021')] }),
+  ]
+  const markup = client.answer({ parts })
+  assert.doesNotMatch(markup, /Which order do you mean\?|Which one\?/)
+  assert.match(markup, /Eight orders are overdue/)
+  assert.match(markup, /Tell me the number if it is not listed\./)
+  assert.equal(count(markup, /Which record do you mean\?/g), 1)
+  // Without buttons the question stays.
+  assert.match(client.answer({ parts: [parts[0]] }), /Which order do you mean\?/)
+  assert.equal(client.answer({ parts: [{ id: 'p1', type: 'text', text: '你说的是哪一个？目前有 8 张逾期。' }, parts[1]], language: 'zh-CN' }).includes('哪一个？'), false)
+})
+
+test('a sentence left out for reading as an action is noted under the text, apart from the prose', async () => {
+  const client = await loadClient()
+  const trimmed = client.answer({ parts: [{ id: 'p1', type: 'text', text: 'PO-001 is 4 days overdue.', replaced: 'unbacked_action_claim' }] })
+  assert.match(trimmed, /<p>PO-001 is 4 days overdue\.<\/p>/)
+  assert.match(trimmed, /data-testid="ai-v2-claim-note"[^>]*>A sentence was left out because it read as if something had been done for you\./)
+  const whole = client.answer({ parts: [{ id: 'p1', type: 'text', text: '', replaced: 'unbacked_action_claim' }], language: 'zh-CN' })
+  assert.match(whole, /data-testid="ai-v2-claim-note"[^>]*>这部分回答读起来像是已替你执行了操作/)
+  assert.doesNotMatch(whole, /data-testid="ai-v2-text"/)
+  assert.doesNotMatch(client.answer({ parts: [{ id: 'p1', type: 'text', text: 'Fine.' }] }), /ai-v2-claim-note/)
+})
+
+// A live re-check on 2026-11-05: a Chinese answer said its first sentence
+// again after the table, "Show all 10" of 18, and "pick one" with the buttons.
+test('a later text part leaves out the sentences an earlier one said', async () => {
+  const client = await loadClient()
+  const first = '上个季度已承诺的采购支出共 $17,440.00，涉及 5 家供应商。'
+  const markup = client.answer({ parts: [
+    { id: 'p1', type: 'text', text: first },
+    ui('p2', 'table', tableProps),
+    { id: 'p3', type: 'text', text: `${first}Northstar Electronics 最高。` },
+  ], language: 'zh-CN' })
+  assert.equal(count(markup, /涉及 5 家供应商/g), 1)
+  assert.match(markup, /Northstar Electronics 最高。/)
+})
+
+test('a table cut by its tool says how many it shows of how many', async () => {
+  const client = await loadClient()
+  const rows = Array.from({ length: 10 }, (_, index) => ({ order: ref('purchase_order', `PO-0${10 + index}`) }))
+  const markup = client.answer({ parts: [ui('p1', 'table', { columns: [{ code: 'order', kind: 'ref' }], rows, total: 18, more: true })] })
+  assert.match(markup, /data-testid="ai-v2-table-count"[^>]*>Showing 10 of 18</)
+  assert.match(markup, /data-testid="ai-v2-table-expand"[^>]*>Show 5 more</)
+  assert.doesNotMatch(markup, /Show all 10/)
+  const zh = client.answer({ parts: [ui('p1', 'table', { columns: [{ code: 'order', kind: 'ref' }], rows, total: 18, more: true })], language: 'zh-CN' })
+  assert.ok(zh.includes('显示 18 条中的 10 条') && zh.includes('再显示 5 条'))
+})
+
+test('with buttons to pick from, the text tells the user to pick no more', async () => {
+  const client = await loadClient()
+  const choices = ui('p2', 'choices', { promptCode: 'pick_record', options: [ref('purchase_order', 'PO-020'), ref('purchase_order', 'PO-021')] })
+  const en = client.answer({ parts: [{ id: 'p1', type: 'text', text: 'You have 8 overdue orders. Pick one, or give me an order number.' }, choices] })
+  assert.match(en, /You have 8 overdue orders\./)
+  assert.doesNotMatch(en, /Pick one/)
+  const zh = client.answer({ parts: [{ id: 'p1', type: 'text', text: '你没说是哪一个订单。目前有 8 个逾期的采购订单，列出逾期最久的 6 个，请选一个。\n请点选你想了解的订单，或直接告诉我订单号。' }, choices], language: 'zh-CN' })
+  assert.match(zh, /目前有 8 个逾期的采购订单，列出逾期最久的 6 个。/)
+  assert.doesNotMatch(zh, /请选一个|请点选/)
+  assert.equal(count(zh, /你指的是哪条记录？/g), 1)
+  // A live answer (2026-11-05): "…几张采购订单，请选一张，或者告诉我订单编号。"
+  const live = client.answer({ parts: [{ id: 'p1', type: 'text', text: '列出的是逾期时间最长的几张采购订单，请选一张，或者告诉我订单编号。' }, choices], language: 'zh-CN' })
+  assert.match(live, /列出的是逾期时间最长的几张采购订单。/)
+  assert.doesNotMatch(live, /请选一张/)
+})
+
 
 // ---------------------------------------------------------------- record card
 

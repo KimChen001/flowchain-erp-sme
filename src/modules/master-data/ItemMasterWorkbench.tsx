@@ -23,6 +23,8 @@ import { exportMasterDataCsv } from "./export";
 import { NOT_PROVIDED, useMasterDataCopy } from "./masterDataCopy";
 import { useI18n } from "../../i18n/I18n";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
+import { apiErrorText } from "../../lib/apiErrorText";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 
 export type MasterItem = {
   itemId: string;
@@ -169,6 +171,10 @@ export default function ItemMasterWorkbench({
   // Supplier names for the preferred supplier column; ids when unavailable.
   const [suppliers, setSuppliers] = useState<Map<string, SupplierName>>(new Map());
   const [selected, setSelected] = useState<MasterItem | null>(null);
+  // The breadcrumb names the item by its SKU, as the list does, never its stored id.
+  useDetailCrumb(selected ? `${selected.sku} · ${selected.itemName}` : null);
+  // A failed request in the interface language, never the server's own words.
+  const loadFailed = (cause: unknown) => apiErrorText(cause, language, ["Could not load items. Try again.", copy("Could not load items. Try again.")]);
   const [editing, setEditing] = useState<Partial<MasterItem> | null>(null);
   const [query, setQuery] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
@@ -191,7 +197,7 @@ export default function ItemMasterWorkbench({
     setLoaded(true);
   };
   useEffect(() => {
-    load().catch((cause) => setError(cause.message));
+    load().catch((cause) => setError(loadFailed(cause)));
     apiJson<{ suppliers?: SupplierName[] }>("/api/master-data/suppliers")
       .then((result) => setSuppliers(new Map((result.suppliers || []).map((row) => [row.id, row]))))
       .catch(() => {});
@@ -259,7 +265,7 @@ export default function ItemMasterWorkbench({
       setError("");
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : copy("保存失败"));
+      setError(apiErrorText(cause, language, ["Could not save the item. Check the fields and try again.", copy("Could not save the item. Check the fields and try again.")]));
     }
   };
   if (editing)
@@ -422,7 +428,7 @@ export default function ItemMasterWorkbench({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ResetButton onClick={resetFilters} />
-            <RefreshButton onClick={() => { load().catch((cause) => setError(cause.message)); }} />
+            <RefreshButton onClick={() => { load().catch((cause) => setError(loadFailed(cause))); }} />
             <button type="button" onClick={() => exportMasterDataCsv("items", { items: shown.map((item) => ({ ...item, preferredSupplierName: item.defaultSupplierId ? supplierLabel(item.defaultSupplierId) : "" })) }, copy)} className={listButtonClass.export}>
               <FileSpreadsheet size={13} /> {copy("Export results")}
             </button>

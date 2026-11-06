@@ -208,7 +208,7 @@ test('a draft request that names several records drafts for those records only',
   assert.ok(two.reviewCards.some((card) => /PO-008/.test(recordsOf(card))))
   assert.ok(two.reviewCards.every((card) => (card.payload?.poIds || []).every((id) => ['PO-001', 'PO-008'].includes(id))))
   const zh = await ask({ message: '给 PO-001 和 PO-008 起草催货', answerLanguage: 'zh-CN' })
-  assert.match(zh.conclusion.title, /PO-001和 PO-008/)
+  assert.match(zh.conclusion.title, /PO-001 和 PO-008/)
 })
 
 test('a previous answer the actor never saw narrows nothing', async () => {

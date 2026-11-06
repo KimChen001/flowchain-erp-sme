@@ -1,11 +1,12 @@
 import { Suspense, lazy } from "react";
 import { isUnavailableProductRoute } from "../../../../../shared/unavailable-product-routes.mjs";
 import { A } from "../../../../components/ui";
+import { chartHeight } from "./chartLayout";
 import { cardStyle, usePartCopy, type Navigate } from "./partKit";
 import type { ChartProps } from "./types";
 
 const ChartCanvas = lazy(() => import("./ChartCanvas"));
-const HEIGHT = 200;
+const BASE_HEIGHT = 200;
 
 // A chart in the report dashboards' look. "View in Reports" opens the report
 // it summarises.
@@ -14,6 +15,7 @@ export function ChartPart({ props, language, onNavigate }: { props: ChartProps; 
   // A money chart always names its one currency; without it nothing is drawn.
   if (props.unit === "money" && !props.currency) return null;
   const label = props.title || copy.t("ai.v2.chart");
+  const HEIGHT = chartHeight(props, BASE_HEIGHT);
   const report = props.reportRoute && onNavigate && !isUnavailableProductRoute(props.reportRoute.moduleId) ? props.reportRoute : null;
   return (
     <figure data-testid="ai-v2-chart" lang={copy.language} className="space-y-2 rounded-xl p-3" style={cardStyle}>

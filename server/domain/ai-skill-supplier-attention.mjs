@@ -96,6 +96,14 @@ function activityText(row, fmt, language) {
   return aiSkillText('suppliers.activity.entry', language, { supplier: row.name, parts: aiSkillList(parts, language) })
 }
 
+// The headline's supplier and its bracket: the tier and the most urgent date
+// in one bracket, "Acme Components (Tier 1, 6 days overdue)", not two.
+function titleSupplier(group, facts, fmt, language) {
+  const lead = leadText(group.items[0], fmt, language)
+  const tier = array(facts?.suppliers).find((row) => row.id === group.supplierId)?.tier
+  return tier ? { supplier: group.name, lead: aiSkillText('suppliers.lead_tier', language, { tier: aiSkillText(`tier.${tier}`, language), lead }) } : { supplier: group.name, lead }
+}
+
 export function presentSupplierAttention(result, facts, { skill, language, query }) {
   const fmt = aiSkillFormatter(facts, language)
   const date = fmt.day(facts.asOf)
@@ -107,7 +115,7 @@ export function presentSupplierAttention(result, facts, { skill, language, query
   const title = result.hidden ? aiSkillText('suppliers.title_hidden', language)
     : group && !named && !result.tier.supplierIds.length ? aiSkillText('suppliers.tier_empty', language, { group })
       : !first ? (named ? aiSkillText('suppliers.title_named_none', language, { supplier: named, date }) : group ? aiSkillText('suppliers.tier_title_none', language, { group, date }) : aiSkillText('suppliers.title_none', language, { date }))
-        : aiSkillCountText(group && !named ? 'suppliers.tier_title' : 'suppliers.title', result.total, language, { count: fmt.number(result.total), supplier: label(first), lead: leadText(first.items[0], fmt, language), ...(group ? { group } : {}) })
+        : aiSkillCountText(group && !named ? 'suppliers.tier_title' : 'suppliers.title', result.total, language, { count: fmt.number(result.total), ...titleSupplier(first, facts, fmt, language), ...(group ? { group } : {}) })
   const totalsText = partsText(result.totals, fmt, language)
   const summary = aiSkillSentences([
     totalsText ? aiSkillText('suppliers.totals', language, { parts: totalsText }) : '',

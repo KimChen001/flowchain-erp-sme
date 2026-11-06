@@ -193,7 +193,8 @@ for (const path of [
   test(`detail page ${path} shows labels, not stored status or type codes`, async ({ page }) => {
     await signIn(page);
     await page.goto(path);
-    await expect(page.getByText(path.split("/").pop()!, { exact: true }).first()).toBeVisible();
+    const shown = path.endsWith("/MATCH-LOCAL-DEMO-INV-001") ? "Three-way match · LOCAL-DEMO-INV-001" : path.split("/").pop()!;
+    await expect(page.getByText(shown, { exact: true }).first()).toBeVisible();
     expect(await rawCodeLines(page)).toEqual([]);
   });
 }

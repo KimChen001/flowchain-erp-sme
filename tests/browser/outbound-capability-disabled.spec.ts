@@ -47,7 +47,7 @@ test("disabled outbound capability makes list and direct entry read-only", async
   await page.goto("/app/sales/orders/new");
   await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
   await expect(page.getByTestId("capability-route-blocked")).toContainText("能力暂不可用");
-  await expect(page.getByTestId("capability-route-blocked")).toContainText("权限已具备，但该业务能力当前未启用。");
+  await expect(page.getByTestId("capability-route-blocked")).toContainText("你有访问权限，但此功能在当前工作区未开启。");
   await expect(page.getByTestId("create-sales-order")).toHaveCount(0);
   await expect(page.getByTestId("sales-order-entry")).toHaveCount(0);
 

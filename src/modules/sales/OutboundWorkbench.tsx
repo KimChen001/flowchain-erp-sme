@@ -381,7 +381,10 @@ function errorMessage(error: unknown) {
   if (error.status === 401) return "登录已失效，请重新登录后读取销售订单。";
   if (error.status === 403) return "当前账号没有读取销售订单的权限。";
   if (error.status >= 500) return "销售订单服务暂时不可用，请稍后重试。";
-  return codeMessages[error.code || ""] || error.message;
+  if (codeMessages[error.code || ""]) return codeMessages[error.code || ""];
+  if (error.status === 404 || /_NOT_FOUND$/.test(error.code || "")) return "未找到该记录，可能已被删除。";
+  if (error.status === 409) return "记录已被他人修改，请刷新后重试。";
+  return "操作未完成，请刷新后重试。";
 }
 // A preview's blocking issue in the interface language when its code is known;
 // otherwise the server's message as sent.
@@ -1602,7 +1605,7 @@ function OrderDetail({ id }: { id: string }) {
           ])}
           numeric={[3, 4, 5, 6, 7]}
           headers={[
-            copy("预留 ID"),
+            copy("参考号"),
             copy("仓库"),
             copy("库位"),
             copy("预留量"),
@@ -1644,7 +1647,7 @@ function OrderDetail({ id }: { id: string }) {
             movementTypeLabel(x.movementType, activeLanguage),
           ])}
           numeric={[3, 4]}
-          headers={[copy("流水 ID"), "SKU", copy("仓库"), copy("入"), copy("出"), copy("类型")]}
+          headers={[copy("参考号"), "SKU", copy("仓库"), copy("入"), copy("出"), copy("类型")]}
         />
       </Section>
     ),
@@ -2020,7 +2023,7 @@ function OrderDetail({ id }: { id: string }) {
               {cancelPreview && (
                 <div data-testid="cancel-order-preview" className={`mt-3 rounded-lg border p-3 text-xs ${cancelPreview.allowed ? "bg-emerald-50" : "bg-amber-50"}`}>
                   <div className="font-semibold">{cancelPreview.allowed ? say("The order can be cancelled", "可以取消该订单") : say("The order cannot be cancelled", "该订单不能取消")}</div>
-                  {cancelPreview.blockingIssues.map((issue) => <div className="mt-1 text-red-700" key={issue.code}>{issue.message}</div>)}
+                  {cancelPreview.blockingIssues.map((issue) => <div className="mt-1 text-red-700" key={issue.code} title={issue.code}>{issueMessage(issue)}</div>)}
                   {cancelPreview.allowed && (
                     <div className="mt-2">
                       {say("Releases {q} reserved across {r} reservations; cancels {s} unposted shipments.", "释放预留 {q}（{r} 条预留），取消未过账发货单 {s} 张。")
@@ -2417,7 +2420,7 @@ function ShipmentDetail({ id }: { id: string }) {
       <Section title={copy("分配与库存流水")}>
         <Table
           headers={[
-            copy("预留 ID"),
+            copy("预留参考号"),
             copy("仓库"),
             copy("库位"),
             copy("数量"),
@@ -2575,17 +2578,13 @@ function Timeline({
         <div
           className="border-l-2 border-blue-200 pl-3 text-sm"
           key={`${x.eventType}-${x.entityId}-${i}`}
+          title={x.commandExecutionId ? copy("参考号：{id}").replace("{id}", x.commandExecutionId) : undefined}
         >
           <div className="font-semibold">{copy(x.title)}</div>
           <div className="text-xs text-slate-500">
             {stamp(x.occurredAt)}
             {x.summary && x.summary !== x.title ? ` · ${summary(x.summary)}` : ""}
           </div>
-          {x.commandExecutionId && (
-            <div className="text-[11px] text-slate-400">
-              {copy("命令记录")} {x.commandExecutionId} · {copy("幂等键")} {x.idempotencyKey}
-            </div>
-          )}
         </div>
       ))}
       {!rows.length && <p className="text-sm text-slate-500">{copy("暂无证据事件。")}</p>}

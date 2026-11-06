@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { rememberDocumentNumbers, resolveDocumentNumbers } from "../../lib/documentNumbers";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { ApiError, apiJson } from "../../lib/api-client";
-import { A, Card, Field, inputStyle } from "../../components/ui";
+import { A, Card, Field, inputStyle, useConfirm } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ExportButton, ListCard, ListSearchCard, ListStateRow, PrimaryButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
@@ -26,6 +26,15 @@ import { SupplierChoices } from "../../components/procurement/SupplierChoices";
 import { SupplierOverrideCount, SupplierOverrideFlag, SupplierOverrideReason, hasSupplierOverride, supplierOverrideIssueText, type SupplierOverride } from "../../components/procurement/SupplierOverrideReason";
 import { overrideNeeded, validateSupplierOverride } from "../../../shared/supplier-override-reasons.mjs";
 import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
+import { procurementErrorText, type ErrorPair } from "../procurement/procurementErrors";
+
+// Fallback sentences for a failed request; a known error code or HTTP status
+// gets its own sentence (procurementErrors.ts), never the server's raw text.
+const RETRY: ErrorPair = ["Try again in a moment.", "请稍后重试。"];
+const LOAD_FAILED: ErrorPair = ["Purchase requests could not be loaded. Try again.", "采购申请数据加载失败，请重试。"];
+const SOURCES_FAILED: ErrorPair = ["The item's supplier sources could not be loaded.", "供应商关系读取失败。"];
+const SAVE_FAILED: ErrorPair = ["The purchase request could not be saved.", "采购申请保存失败。"];
+const UPDATE_FAILED: ErrorPair = ["The purchase request could not be updated.", "采购申请更新失败。"];
 
 type Item = {
   itemId: string;
@@ -178,6 +187,14 @@ const COPY = {
   edit: ["Edit", "编辑"],
   submitForApproval: ["Submit for approval", "提交审批"],
   backToRequest: ["Back to the purchase request", "返回采购申请"],
+  rejectTitle: ["Reject this purchase request?", "拒绝该采购申请？"],
+  rejectBody: ["It will not be approved or turned into a purchase order.", "该申请将不会被批准，也不会生成采购订单。"],
+  rejectReason: ["Why is it rejected?", "拒绝原因"],
+  reject: ["Reject", "拒绝"],
+  goBack: ["Go back", "返回"],
+  deleteLineTitle: ["Delete purchase line {line}?", "删除采购行 {line}？"],
+  deleteLineBody: ["The line is removed from this form. Nothing is saved until you save the request.", "该行将从表单中移除；保存申请前不会保存任何更改。"],
+  deleteLine: ["Delete line", "删除采购行"],
 } as const;
 const request = <T,>(url: string, method = "GET", body?: unknown) =>
   apiJson<T>(url, {
@@ -194,6 +211,7 @@ export default function CanonicalProcurementPanel({
 }) {
   const copy = useWorkspaceCopy();
   const { timezone, locale, language } = useI18n();
+  const errorText = (error: unknown, fallback: ErrorPair) => procurementErrorText(error, language, fallback);
   const warehouseName = useWarehouseNames();
   // Amounts use the document currency; without one they stay a plain number.
   const amount = (value: unknown, currencyCode?: string | null) =>
@@ -232,6 +250,7 @@ export default function CanonicalProcurementPanel({
     // non-catalog handoff matching its unit and supplier, wait on it.
     [loaded, setLoaded] = useState(false);
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
+  const confirmDialog = useConfirm();
   // Editing and submitting a draft need the permission the server checks for
   // them (PURCHASE_REQUEST_PERMISSIONS: update and submit follow PO revise).
   const permissions = usePermissionSet();
@@ -311,12 +330,12 @@ export default function CanonicalProcurementPanel({
       setLoaded(true);
       setLoadError("");
     } catch (error: any) {
-      setLoadError(error.message || "采购申请数据加载失败");
+      setLoadError(errorText(error, RETRY));
       throw error;
     }
   };
   useEffect(() => {
-    load().catch((e) => toast.error(copy(e.message)));
+    load().catch((e) => toast.error(errorText(e, LOAD_FAILED)));
   }, []);
   // A handoff opens the form with one line filled from the query: the item,
   // the quantity and reason the assistant computed, and the master data
@@ -409,7 +428,7 @@ export default function CanonicalProcurementPanel({
         followLineDate(line.needByDate);
         setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: plan.supplierChoices });
       })
-      .catch((error) => toast.error(copy(error.message || "供应商关系读取失败")));
+      .catch((error) => toast.error(errorText(error, SOURCES_FAILED)));
   }, [items, loaded, searchParams, location.key]);
   const prefillChip = (line: Line, field: PrefillLineField) =>
     prefill && line.lineId === prefill.lineId ? (
@@ -623,7 +642,7 @@ export default function CanonicalProcurementPanel({
       setErrors(
         details.length
           ? details
-          : [{ message: error instanceof Error ? error.message : "保存失败" }],
+          : [{ message: errorText(error, SAVE_FAILED) }],
       );
       // The server asked for a reason the form did not: the item's preferred
       // supplier changed since the form read it. Read the sources again so
@@ -637,7 +656,7 @@ export default function CanonicalProcurementPanel({
         toast.error(`${copy("采购行")} ${first.index + 1}: ${supplierOverrideIssueText(first.code, language)}`);
         await reloadSuppliers([...new Set(overrideErrors.map(({ index }) => lines[index]?.itemId).filter(Boolean))] as string[]);
       } else {
-        toast.error(copy(error instanceof Error ? error.message : "保存失败"));
+        toast.error(errorText(error, SAVE_FAILED));
       }
     } finally {
       setSaving(false);
@@ -674,7 +693,16 @@ export default function CanonicalProcurementPanel({
   const act = async (pr: PR, action: string) => {
     try {
       const reason =
-        action === "reject" ? window.prompt(copy("请输入拒绝原因")) || "" : "";
+        action === "reject"
+          ? await confirmDialog.prompt({
+              title: tr("rejectTitle"),
+              description: tr("rejectBody"),
+              field: { label: tr("rejectReason") },
+              confirmLabel: tr("reject"),
+              cancelLabel: tr("goBack"),
+              tone: "danger",
+            })
+          : "";
       if (action === "reject" && !reason) return;
       const result: any = await request(
         `/api/procurement/requests/${pr.id}/${action}`,
@@ -689,7 +717,7 @@ export default function CanonicalProcurementPanel({
         });
       await load();
     } catch (e: any) {
-      toast.error(copy(e.message));
+      toast.error(errorText(e, UPDATE_FAILED));
     }
   };
   const edit = async (pr: PR) => {
@@ -732,7 +760,7 @@ export default function CanonicalProcurementPanel({
     detailEdit.current = pr.id;
     edit(pr).catch((error) => {
       detailEdit.current = "";
-      toast.error(copy(error instanceof Error ? error.message : "供应商关系读取失败"));
+      toast.error(errorText(error, SOURCES_FAILED));
     });
   };
   // Submits a saved draft as it is, the same command as the list's Submit.
@@ -743,7 +771,7 @@ export default function CanonicalProcurementPanel({
       toast.success(copy("采购申请已提交"));
       await load();
     } catch (error: unknown) {
-      toast.error(copy(error instanceof Error ? error.message : "保存失败"));
+      toast.error(errorText(error, SAVE_FAILED));
       // Changed elsewhere (a newer version or no longer a draft): show it as it is now.
       if (error instanceof ApiError && error.status === 409) await load().catch(() => undefined);
     } finally {
@@ -790,7 +818,7 @@ export default function CanonicalProcurementPanel({
           {copy(loadError)}
         </p>
         <button
-          onClick={() => load().catch((error) => toast.error(copy(error.message)))}
+          onClick={() => load().catch((error) => toast.error(errorText(error, LOAD_FAILED)))}
           className="mt-3 text-sm text-blue-600"
         >{copy("重试")}</button>
       </Card>
@@ -1004,6 +1032,7 @@ export default function CanonicalProcurementPanel({
             </table>
           </div>
         </ListCard>
+        {confirmDialog.element}
       </div>
     );
   }
@@ -1124,12 +1153,15 @@ export default function CanonicalProcurementPanel({
                 type="button"
                 aria-label={`${copy("删除采购行")} ${index + 1}`}
                 title={copy("删除采购行")}
-                onClick={() => {
-                  if (
-                    lines.length > 1 &&
-                    window.confirm(copy("确认删除该采购行？"))
-                  )
-                    setLines(lines.filter((_, i) => i !== index));
+                onClick={async () => {
+                  if (lines.length < 2) return;
+                  const confirmed = await confirmDialog.confirm({
+                    title: tr("deleteLineTitle").replace("{line}", String(index + 1)),
+                    description: tr("deleteLineBody"),
+                    confirmLabel: tr("deleteLine"),
+                    tone: "danger",
+                  });
+                  if (confirmed) setLines((current) => current.filter((candidate) => candidate.lineId !== line.lineId));
                 }}
                 className="rounded-md p-1 text-red-600 hover:bg-red-50 disabled:opacity-40"
                 disabled={lines.length < 2}
@@ -1403,6 +1435,7 @@ export default function CanonicalProcurementPanel({
           </strong>
         </div>
       </ListCard>
+      {confirmDialog.element}
     </div>
   );
 }

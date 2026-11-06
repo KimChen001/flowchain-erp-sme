@@ -70,7 +70,7 @@ test("a legacy manager made Workspace Administrator in Roles can edit company se
   await forceLanguage(page, "en-US");
 
   await page.goto("/app/settings/profile");
-  await expect(page.getByTestId("profile-roles")).toHaveValue("Workspace Administrator");
+  await expect(page.getByTestId("profile-roles")).toHaveValue("Workspace administrator");
 
   await page.goto("/app/settings/company");
   const companyName = page.getByLabel("Company name", { exact: true });
@@ -104,7 +104,7 @@ test("a legacy admin reduced to Read-only Viewer cannot edit company settings", 
   await forceLanguage(page, "en-US");
 
   await page.goto("/app/settings/profile");
-  await expect(page.getByTestId("profile-roles")).toHaveValue("Read-only Viewer");
+  await expect(page.getByTestId("profile-roles")).toHaveValue("Read-only viewer");
 
   await page.goto("/app/settings/company");
   await expect(page.getByLabel("Company name", { exact: true })).toBeDisabled();
@@ -190,8 +190,8 @@ test("a workspace administrator adds a warehouse and a bin and sets both inactiv
   // Bins are names only; the page says so.
   await expect(page.getByTestId(`bin-advisory-${code}`)).toContainText("does not block receiving or transfers");
 
-  page.once("dialog", (dialog: any) => dialog.accept());
   await page.getByTestId(`warehouse-toggle-${code}`).click();
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByTestId(`warehouse-status-${code}`)).toHaveText("Inactive");
   await expect(page.getByTestId("warehouse-access")).toContainText(`${code} · Playwright Depot · Inactive`);
   const listed = await (await request.get("/api/master-data/warehouses", auth(admin.token))).json();

@@ -42,7 +42,7 @@ function poRowsOf(facts) {
 // "Raised to the supplier's minimum order": the request asks for the minimum,
 // more than the gap.
 export function aiSkillMinimumText(raised, fmt, language) {
-  return aiSkillText(raised.supplier ? 'draft.pr.minimum' : 'draft.pr.minimum_unnamed', language, { minimum: fmt.number(raised.minimum), gap: fmt.number(raised.gap), supplier: raised.supplier || '' })
+  return aiSkillText(raised.supplier ? 'draft.pr.minimum' : 'draft.pr.minimum_unnamed', language, { minimum: fmt.quantity(raised.minimum, raised.unit), gap: fmt.quantity(raised.gap, raised.unit), supplier: raised.supplier || '' })
 }
 
 export function aiSkillDraftCandidate(item, facts) {
@@ -186,7 +186,8 @@ export function aiSkillDraftCard(candidate, facts, language) {
     // The open lines travel with the message, for the review form to show;
     // in a message about several orders each line names its order.
     const lines = pos.flatMap((row) => array(row.openLines).map((line) => ({ ...line, ...(several ? { po: row.orderNumber || row.id } : {}) })))
-    return { ...base, title, draftTitle: title, description: aiSkillSignalReason(item, facts, language), draftType: 'po_followup_draft', targetModule: AI_SKILL_MODULES.purchase_order,
+    // The line's button says who the message is for.
+    return { ...base, allowedNextStep: aiSkillText('draft.follow_up_to', language, { supplier }), title, draftTitle: title, description: aiSkillSignalReason(item, facts, language), draftType: 'po_followup_draft', targetModule: AI_SKILL_MODULES.purchase_order,
       ...(several ? { targetEntityType: 'supplier', targetEntityId: po.supplierId } : { targetEntityType: 'purchase_order', targetEntityId: po.id }),
       payload: { poId: po.id, ...(several ? { poIds: pos.map((row) => row.id) } : {}), supplierId: po.supplierId, supplierName: po.supplier, ...recipient(contact), subject, message, lines, language, reason: aiSkillSignalReason(item, facts, language) },
       prefill: prefillOf({ to: { source: 'default', ref: 'supplier:email', value: contact.email }, subject: { source: 'template', ref: several ? 'draft.po_followup.subject_orders' : 'draft.po_followup.subject', value: subject }, message: { source: 'template', ref: 'draft.po_followup.message', value: message } }),
@@ -199,13 +200,13 @@ export function aiSkillDraftCard(candidate, facts, language) {
     const message = withGreeting(contact.contactName || item.supplier || aiSkillText('value.a_supplier', language), body, language)
     const subject = aiSkillText('draft.invoice.subject', language, { invoice: item.label })
     const title = aiSkillText('draft.invoice.title', language, { supplier: item.supplier || item.supplierId, invoice: item.label })
-    return { ...base, title, draftTitle: title, description: aiSkillSignalReason(item, facts, language), draftType: 'supplier_followup_draft', targetModule: AI_SKILL_MODULES.supplier_invoice, targetEntityType: 'supplier_invoice', targetEntityId: item.entityId,
+    return { ...base, allowedNextStep: aiSkillText('draft.follow_up_to', language, { supplier: item.supplier || aiSkillText('value.a_supplier', language) }), title, draftTitle: title, description: aiSkillSignalReason(item, facts, language), draftType: 'supplier_followup_draft', targetModule: AI_SKILL_MODULES.supplier_invoice, targetEntityType: 'supplier_invoice', targetEntityId: item.entityId,
       payload: { supplierId: item.supplierId, supplierName: item.supplier, invoiceId: item.entityId, poId: item.data.poId, ...(item.supplierId ? recipient(contact) : {}), subject, message, language, reason: aiSkillSignalReason(item, facts, language) },
       prefill: prefillOf({ to: { source: 'default', ref: 'supplier:email', value: contact.email }, subject: { source: 'template', ref: 'draft.invoice.subject', value: subject }, message: { source: 'template', ref: 'draft.invoice.message', value: message } }),
       originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
   }
   const title = aiSkillText('draft.pr.title', language, { quantity: fmt.number(candidate.quantity), unit: '', sku: item.label }).replace(/\s{2,}/g, ' ')
-  const reason = [aiSkillText('draft.pr.reason', language, { available: fmt.number(item.data.available), target: fmt.number(candidate.target) }), candidate.raisedToMinimum ? aiSkillMinimumText(candidate.raisedToMinimum, fmt, language) : ''].filter(Boolean).join(language === 'zh-CN' ? '' : ' ')
+  const reason = [aiSkillText('draft.pr.reason', language, { available: fmt.quantity(item.data.available, item.data.unit), target: fmt.quantity(candidate.target, item.data.unit) }), candidate.raisedToMinimum ? aiSkillMinimumText({ ...candidate.raisedToMinimum, unit: item.data.unit }, fmt, language) : ''].filter(Boolean).join(language === 'zh-CN' ? '' : ' ')
   return { ...base, allowedNextStep: aiSkillText('draft.create_pr', language), title, draftTitle: title, description: reason, draftType: 'purchase_request_draft', targetModule: AI_SKILL_MODULES.purchase_request, targetEntityType: 'item', targetEntityId: item.entityId,
     payload: { itemIdOrSku: item.label, quantity: candidate.quantity, reason, language }, originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
 }

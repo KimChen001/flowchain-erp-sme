@@ -18,7 +18,9 @@ export function runCapabilityOverview(_facts, { refusal = false, outOfDomain = f
   // A question no rule, record or model could answer: not a greeting, the
   // help chip, an instruction or a skill the actor may not use.
   const unmatched = !refusal && !outside && !contracts && !unsupported.length && Boolean(route) && !route.capability && !route.greeting && !route.skillId
-  return { skillId: 'capability_overview', refusal, outOfDomain: outside, contracts, unmatched, unsupported, skills: toolsFor(actor).map((entry) => entry.id).filter((id) => id !== 'capability_overview') }
+  // A thank-you on its own.
+  const thanks = !refusal && Boolean(route?.thanks)
+  return { skillId: 'capability_overview', refusal, outOfDomain: outside, contracts, unmatched, thanks, unsupported, skills: toolsFor(actor).map((entry) => entry.id).filter((id) => id !== 'capability_overview') }
 }
 
 // The workspace topic a question names, most specific first, and the skills
@@ -38,20 +40,24 @@ const TOPICS = [
 const SHIPPING = [/\bshipments?\b|\bship(?:ping)?\s+(?:to|for)\s+customers?\b/i, /发货|出货/]
 const SUPPLIER_WORD = /\b(?:suppliers?|vendors?)\b|供应商|供方/i
 
+// A question about sales orders is offered what the skills can say about them:
+// the customer orders late purchase orders hold up, and the SKUs short
+// against open sales orders.
 export function aiSkillQuestionTopic(query) {
   const question = String(query ?? '')
-  if (aiSkillAboutCustomers(question) || (SHIPPING.some((pattern) => pattern.test(question)) && !SUPPLIER_WORD.test(question))) return { id: 'sales', skills: [] }
+  if (aiSkillAboutCustomers(question) || (SHIPPING.some((pattern) => pattern.test(question)) && !SUPPLIER_WORD.test(question))) return { id: 'sales', skills: ['late_order_impact', 'inventory_availability'] }
   const topic = TOPICS.find(([, patterns]) => patterns.some((pattern) => pattern.test(question)))
   return topic ? { id: topic[0], skills: topic[2] } : null
 }
 
 export function presentCapabilityOverview(result, _facts, { skill, language, query }) {
-  const topic = result.refusal || result.outOfDomain ? null : aiSkillQuestionTopic(query)
+  const topic = result.refusal || result.outOfDomain || result.thanks ? null : aiSkillQuestionTopic(query)
   const order = result.refusal ? ['prepare_action_draft', 'today_priorities', 'highest_risk_items', 'records_needing_data', 'workspace_metrics'] : [...(topic?.skills || []), 'today_priorities', 'highest_risk_items', 'records_needing_data', 'workspace_metrics', 'prepare_action_draft']
   const answer = presentAiSkillAnswer({
     skill, facts: null, language, query,
-    title: aiSkillText(result.refusal ? 'capability.refusal.title' : result.contracts ? 'capability.contracts.title' : result.unmatched ? 'capability.unmatched.title' : 'capability.title', language),
-    summary: result.refusal
+    title: aiSkillText(result.refusal ? 'capability.refusal.title' : result.contracts ? 'capability.contracts.title' : result.thanks ? 'capability.thanks.title' : result.unmatched ? 'capability.unmatched.title' : 'capability.title', language),
+    // The thank-you reply is its title; the suggestions follow.
+    summary: result.thanks ? '' : result.refusal
       ? aiSkillSentences([aiSkillText('capability.refusal.summary', language), aiSkillText('capability.summary', language)], language)
       : aiSkillSentences([
         result.contracts ? aiSkillText('capability.contracts', language) : '',

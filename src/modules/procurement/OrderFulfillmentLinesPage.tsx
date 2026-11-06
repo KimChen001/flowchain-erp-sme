@@ -11,6 +11,7 @@ import { POStatusPill } from "../purchasing/components/POStatusPill";
 import { apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { formatLocaleAmount } from "../../lib/format";
+import { procurementErrorText } from "./procurementErrors";
 import type {
   PurchaseOrder,
   PurchaseOrderLine,
@@ -214,7 +215,8 @@ export function OrderFulfillmentLinesPage() {
   const say = (en: string, zh: string) => (language === "en-US" ? en : zh);
   const [payload, setPayload] = useState<PurchaseOrderWorkbenchPayload>({});
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
-  const [error, setError] = useState("");
+  // The failed read, shown as a translated sentence.
+  const [error, setError] = useState<unknown>(null);
   const [query, setQuery] = useState("");
   const [supplier, setSupplier] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
@@ -228,13 +230,13 @@ export function OrderFulfillmentLinesPage() {
 
   const load = useCallback(async () => {
     setState("loading");
-    setError("");
+    setError(null);
     try {
       setPayload(await apiJson<PurchaseOrderWorkbenchPayload>("/api/purchase-orders-workbench"));
       setState("loaded");
     } catch (nextError) {
       setPayload({});
-      setError(nextError instanceof Error ? nextError.message : "采购订单履约数据不可用");
+      setError(nextError);
       setState("error");
     }
   }, []);
@@ -339,7 +341,7 @@ export function OrderFulfillmentLinesPage() {
             </thead>
             <tbody>
               {state === "loading" && <ListStateRow colSpan={columns} state="loading" />}
-              {state === "error" && <ListStateRow colSpan={columns} state="error" title={copy("订单履约明细加载失败")} detail={copy(error)} onRetry={() => void load()} />}
+              {state === "error" && <ListStateRow colSpan={columns} state="error" title={copy("订单履约明细加载失败")} detail={procurementErrorText(error, language, ["Try again in a moment.", "请稍后重试。"])} onRetry={() => void load()} />}
               {state === "loaded" && rows.length === 0 && (
                 <ListStateRow colSpan={columns} state="empty" title={copy("当前工作区暂无采购订单行")} detail={copy("不会使用固定 PO、收货或发票记录补足空数据。")} />
               )}

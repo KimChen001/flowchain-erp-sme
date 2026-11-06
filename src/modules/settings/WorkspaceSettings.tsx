@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Save, ShieldCheck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card } from "../../components/ui";
-import { useI18n } from "../../i18n/I18n";
+import { isTranslationKey, useI18n } from "../../i18n/I18n";
 import AuthorizationWorkbench from "./AuthorizationWorkbench";
 import DocumentTemplateSettings from "./DocumentTemplateSettings";
 import WarehouseMaster from "./WarehouseMaster";
 import WorkspaceMembers from "./WorkspaceMembers";
+import { roleDisplayName } from "../../../shared/roles.mjs";
 
 type Profile = {
   id: string;
@@ -55,19 +56,6 @@ const timezoneLabels: Record<string, { zh: string; en: string }> = {
   "America/Los_Angeles": { zh: "美国太平洋时间", en: "US Pacific Time" },
   "Europe/London": { zh: "英国时间", en: "United Kingdom Time" },
 };
-// Default role templates are stored under their English names. An unchanged
-// template is shown in the interface language; a renamed or custom role keeps
-// the name the workspace gave it.
-const TEMPLATE_ROLE_NAMES: Record<string, [string, string]> = {
-  "workspace-administrator": ["Workspace Administrator", "工作区管理员"],
-  "operations-manager": ["Operations Manager", "运营经理"],
-  "operations-specialist": ["Operations Specialist", "运营专员"],
-  "procurement-specialist": ["Procurement Specialist", "采购专员"],
-  "finance-specialist": ["Finance Specialist", "财务专员"],
-  "read-only-viewer": ["Read-only Viewer", "只读查看者"],
-  "intake-uploader": ["Intake Uploader", "导入上传员"],
-  "intake-reviewer": ["Intake Reviewer", "导入复核员"],
-};
 const currencyLabels: Record<string, { zh: string; en: string }> = {
   CNY: { zh: "人民币", en: "Chinese Yuan" }, USD: { zh: "美元", en: "US Dollar" },
   EUR: { zh: "欧元", en: "Euro" }, GBP: { zh: "英镑", en: "Pound Sterling" },
@@ -75,21 +63,29 @@ const currencyLabels: Record<string, { zh: string; en: string }> = {
   CAD: { zh: "加拿大元", en: "Canadian Dollar" },
 };
 
-function SearchableSelect({ label, value, options, onChange, disabled = false }: {
+// A setting chosen from a list. A locked one reads as a value with its
+// reason, not as a control that looks editable.
+function SettingSelect({ label, value, options, onChange, disabled = false, locked = "" }: {
   label: string;
   value: string;
   options: Array<{ value: string; label: string }>;
   onChange: (value: string) => void;
   disabled?: boolean;
+  locked?: string;
 }) {
   const { t } = useI18n();
-  const [query, setQuery] = useState("");
-  const filtered = useMemo(() => options.filter(option => `${option.value} ${option.label}`.toLowerCase().includes(query.toLowerCase())), [options, query]);
+  if (locked) {
+    const current = options.find(option => option.value === value)?.label || value;
+    return <div className="text-sm" data-testid="setting-locked">
+      <span className="mb-1 flex items-center gap-2 font-medium" style={{ color: A.label }}>{label}<span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">{t("settings.currencyLockedShort")}</span></span>
+      <div aria-label={label} aria-readonly="true" role="textbox" className="w-full rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{current}</div>
+      <p className="mt-1 text-xs text-slate-500">{locked}</p>
+    </div>;
+  }
   return <label className="text-sm">
     <span className="mb-1 block font-medium" style={{ color: A.label }}>{label}</span>
-    <input aria-label={`${label} ${t("top.search")}`} type="search" className={`${field} mb-1`} value={query} onChange={event => setQuery(event.target.value)} disabled={disabled} placeholder="⌕" />
-    <select aria-label={label} className={field} value={value} onChange={event => onChange(event.target.value)} disabled={disabled}>
-      {filtered.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+    <select aria-label={label} className={`${field} ${disabled ? "bg-slate-50 text-slate-500" : ""}`} value={value} onChange={event => onChange(event.target.value)} disabled={disabled}>
+      {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>
   </label>;
 }
@@ -130,9 +126,12 @@ export default function WorkspaceSettings({ view }: { view: string }) {
   const canReadUsers = permissions.has("settings.users.read");
   const canManageUsers = permissions.has("settings.users.manage");
   const canReadDiagnostics = permissions.has("settings.diagnostics.read");
-  const roleName = (role: AssignedRole) => {
-    const template = TEMPLATE_ROLE_NAMES[role.roleKey];
-    return template && role.name === template[0] ? template[language === "en-US" ? 0 : 1] : role.name;
+  // Default role templates are shown in the interface language; a renamed or
+  // custom role keeps the name the workspace gave it.
+  const roleName = (role: AssignedRole) => roleDisplayName(role, language);
+  const diagnosticWord = (kind: "overall" | "status" | "check", code: string) => {
+    const key = `settings.diagnostics.${kind}.${code}`;
+    return isTranslationKey(key) ? t(key) : code.replace(/_/g, " ");
   };
   const accessName = (access: string) => access === "operate" ? t("settings.operate") : access === "read" ? t("settings.read") : t("settings.noAccess");
 
@@ -250,7 +249,11 @@ export default function WorkspaceSettings({ view }: { view: string }) {
     { value: "en-US", label: `${t("settings.english")} — en-US` },
     { value: "zh-CN", label: `${t("settings.chinese")} — zh-CN` },
   ];
-  const timezoneOptions = workspace.options.timezones.map(value => ({ value, label: `${value} — ${timezoneLabels[value]?.[language === "en-US" ? "en" : "zh"] || value}` }));
+  // A timezone by its name and city ("US Eastern Time — New York"); the value stays the stored id.
+  const timezoneOptions = workspace.options.timezones.map(value => {
+    const city = (value.split("/").pop() || value).replace(/_/g, " ");
+    return { value, label: timezoneLabels[value] ? `${timezoneLabels[value][language === "en-US" ? "en" : "zh"]} — ${city}` : city };
+  });
   const currencyOptions = workspace.options.currencies.map(value => ({ value, label: `${value} — ${currencyLabels[value]?.[language === "en-US" ? "en" : "zh"] || value}` }));
   const localeOptions = [
     { value: "zh-CN", label: "简体中文（中国）— zh-CN" },
@@ -268,14 +271,16 @@ export default function WorkspaceSettings({ view }: { view: string }) {
   if (view === "roles") return <div className="space-y-5"><WorkspaceMembers /><AuthorizationWorkbench /></div>;
 
   const settingsCard = <Card className="p-5" data-testid={`workspace-settings-${view}`}>
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h2 className="text-lg font-semibold">{title}</h2><p className="mt-1 text-sm text-slate-500">{workspace.workspaceName}</p></div>
+    <div className={`flex flex-wrap items-start justify-between gap-3 ${(view === "profile" || view === "company") ? "" : "hidden"}`}>
+      <p className="max-w-3xl text-sm text-slate-500">{view === "profile"
+        ? (language === "en-US" ? "Your name, interface language, default warehouse and approval emails." : "你的姓名、界面语言、默认仓库和审批邮件。")
+        : (language === "en-US" ? "Basic information for this workspace: names, timezone, currency, regional format and default language." : "当前工作区的基础信息：名称、时区、本位币、区域格式和默认语言。")}</p>
       {view === "profile" && <SaveActions state={profileState} onCancel={() => setProfile(savedProfile)} onSave={saveProfile} />}
       {view === "company" && canEditWorkspace && <SaveActions state={workspaceState} onCancel={() => setWorkspace(savedWorkspace)} onSave={saveWorkspace} />}
     </div>
     {notice && <div role="status" className="my-3 rounded-lg bg-slate-50 p-3 text-sm">{notice}</div>}
 
-    {view === "profile" && <div className="mt-5 grid gap-4 md:grid-cols-2">
+    {view === "profile" && <div className="mt-4 grid gap-4 md:grid-cols-2">
       <label>{t("settings.profileName")}<input className={field} value={profile.name} onChange={event => setProfile({ ...profile, name: event.target.value })} /></label>
       <label>{t("settings.jobTitle")}<input className={field} value={profile.jobTitle || ""} onChange={event => setProfile({ ...profile, jobTitle: event.target.value })} /></label>
       <label>{t("settings.email")}<input className={`${field} bg-slate-50`} value={profile.email} readOnly /></label>
@@ -285,14 +290,13 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       <label>{t("settings.defaultWarehouse")}<select aria-label={t("settings.defaultWarehouse")} className={field} value={profile.defaultWarehouseId || ""} onChange={event => setProfile({ ...profile, defaultWarehouseId: event.target.value })}><option value="">{t("settings.none")}</option>{warehouses.filter(item => item.status === "active" && ownWarehouseIds.has(item.id)).map(item => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}</select></label>
     </div>}
 
-    {view === "company" && <div className="mt-5 grid gap-4 md:grid-cols-2">
+    {view === "company" && <div className="mt-4 grid gap-4 md:grid-cols-2">
       <label>{t("settings.companyName")}<input className={field} value={workspace.companyName} disabled={!canEditWorkspace} onChange={event => setWorkspace({ ...workspace, companyName: event.target.value, legalName: event.target.value })} /></label>
       <label>{t("settings.workspaceName")}<input className={field} value={workspace.workspaceName} disabled={!canEditWorkspace} onChange={event => setWorkspace({ ...workspace, workspaceName: event.target.value, name: event.target.value })} /></label>
-      <SearchableSelect label={t("settings.timezone")} value={workspace.timezone} options={timezoneOptions} disabled={!canEditWorkspace} onChange={value => setWorkspace({ ...workspace, timezone: value })} />
-      <SearchableSelect label={t("settings.currency")} value={workspace.baseCurrency} options={currencyOptions} disabled={!canEditWorkspace || workspace.baseCurrencyLocked} onChange={value => setWorkspace({ ...workspace, baseCurrency: value })} />
-      <SearchableSelect label={t("settings.locale")} value={workspace.locale} options={localeOptions} disabled={!canEditWorkspace} onChange={value => setWorkspace({ ...workspace, locale: value as Workspace["locale"] })} />
-      <SearchableSelect label={t("settings.defaultLanguage")} value={workspace.defaultLanguage} options={languageOptions} disabled={!canEditWorkspace} onChange={value => setWorkspace({ ...workspace, defaultLanguage: value as Workspace["defaultLanguage"] })} />
-      {workspace.baseCurrencyLocked && <p className="text-sm text-amber-700 md:col-span-2">{t("settings.currencyLocked")}</p>}
+      <SettingSelect label={t("settings.timezone")} value={workspace.timezone} options={timezoneOptions} disabled={!canEditWorkspace} onChange={value => setWorkspace({ ...workspace, timezone: value })} />
+      <SettingSelect label={t("settings.currency")} value={workspace.baseCurrency} options={currencyOptions} disabled={!canEditWorkspace} locked={workspace.baseCurrencyLocked ? t("settings.currencyLocked") : ""} onChange={value => setWorkspace({ ...workspace, baseCurrency: value })} />
+      <SettingSelect label={t("settings.locale")} value={workspace.locale} options={localeOptions} disabled={!canEditWorkspace} onChange={value => setWorkspace({ ...workspace, locale: value as Workspace["locale"] })} />
+      <SettingSelect label={t("settings.defaultLanguage")} value={workspace.defaultLanguage} options={languageOptions} disabled={!canEditWorkspace} onChange={value => setWorkspace({ ...workspace, defaultLanguage: value as Workspace["defaultLanguage"] })} />
       {!canEditWorkspace && <p data-testid="workspace-read-only" className="text-sm text-amber-700 md:col-span-2">{t("settings.workspaceOnly")}</p>}
       <div data-testid="locale-format-preview" className="rounded-lg bg-slate-50 p-3 text-sm md:col-span-2">
         {new Intl.DateTimeFormat(workspace.locale, { dateStyle: "medium", timeStyle: "short", timeZone: workspace.timezone }).format(new Date("2026-07-17T08:30:00Z"))}
@@ -314,13 +318,13 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       })}</tbody></table>
     </div>}
 
-    {view === "readiness" && <div className="mt-5 space-y-4">
+    {view === "readiness" && <div className="space-y-4">
       <div className="grid gap-3 md:grid-cols-3">{[
         [t("settings.profileSection"), Boolean(profile.profileCompletedAt)],
         [t("settings.workspaceSection"), Boolean(workspace.workspaceCompletedAt)],
         [t("settings.accessSection"), ownWarehouseIds.size > 0],
       ].map(([label, ok]) => <div key={String(label)} className="rounded-xl border p-4"><ShieldCheck size={18} color={ok ? A.green : A.orange} /><div className="mt-2 font-semibold">{label}</div><div className="text-sm text-slate-500">{ok ? t("settings.ready") : t("settings.needsSetup")}</div></div>)}</div>
-      {canReadDiagnostics && diagnostics && <div className="rounded-xl border p-4" data-testid="admin-diagnostics"><div className="flex items-center justify-between"><h3 className="font-semibold">{t("settings.systemReadiness")}</h3><span className="text-xs uppercase">{diagnostics.overall}</span></div><div className="mt-3 grid gap-2 md:grid-cols-2">{diagnostics.checks.map(check => <div key={check.id} className="rounded-lg bg-slate-50 p-3 text-sm"><span className="font-semibold">{check.status.toUpperCase()}</span> · {check.id}</div>)}</div><div className="mt-3 text-xs text-slate-500">{formatDateTime(diagnostics.generatedAt)}</div></div>}
+      {canReadDiagnostics && diagnostics && <div className="rounded-xl border p-4" data-testid="admin-diagnostics"><div className="flex items-center justify-between"><h3 className="font-semibold">{language === "en-US" ? "Workspace checks" : "工作区检查"}</h3><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium" title={diagnostics.overall}>{diagnosticWord("overall", diagnostics.overall)}</span></div><div className="mt-3 grid gap-2 md:grid-cols-2">{diagnostics.checks.map(check => <div key={check.id} className="rounded-lg bg-slate-50 p-3 text-sm"><span className="font-semibold" style={{ color: check.status === "pass" ? A.green : check.status === "fail" ? A.red : A.orange }}>{diagnosticWord("status", check.status)}</span> · <span title={check.detail || check.id}>{diagnosticWord("check", check.id)}</span>{language === "en-US" && check.detail ? <span className="block text-xs text-slate-500">{check.detail}</span> : null}</div>)}</div><div className="mt-3 text-xs text-slate-500">{formatDateTime(diagnostics.generatedAt)}</div></div>}
     </div>}
   </Card>;
   // The letterhead and document templates sit with the company they print.

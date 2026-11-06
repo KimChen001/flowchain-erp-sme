@@ -6,6 +6,9 @@ import { createSecureClientMutationId } from "../../lib/client-id";
 
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { useInventoryOperationsCopy } from "./inventoryOperationsCopy";
+import { formatQuantity } from "../../lib/format";
+import { movementTypeLabel } from "../../i18n/statusLabels";
+import { useI18n } from "../../i18n/I18n";
 import { DataImportLink } from "../master-data/DataImportLink";
 type Capability = { enabled: boolean; maturity?: string };
 type Entry = {
@@ -84,7 +87,7 @@ function Status({ value }: { value: string }) {
 }
 
 export default function InventoryOperationsWorkbench() {
-  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
+  const { copy, inventoryCodeLabel, errorText } = useInventoryOperationsCopy();
   const location = useLocation(),
     navigate = useNavigate();
   const [entry, setEntry] = useState<Entry | null>(null),
@@ -95,7 +98,7 @@ export default function InventoryOperationsWorkbench() {
       .then(setEntry)
       .catch((reason) =>
         setError(
-          reason instanceof Error ? reason.message : copy("库存操作入口读取失败"),
+          errorText(reason, "库存操作入口读取失败"),
         ),
       );
   }, [refresh]);
@@ -103,7 +106,7 @@ export default function InventoryOperationsWorkbench() {
   if (!entry)
     return (
       <Card className="p-8 text-sm text-slate-500">
-        {copy("正在读取正式库存操作数据...")}
+        {copy("正在读取正式库存操作数据…")}
       </Card>
     );
   const path = location.pathname,
@@ -141,7 +144,7 @@ function ReadOnly({ entry }: { entry: Entry }) {
       className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
       data-testid="inventory-operations-readonly"
     >
-      {copy("库存操作 Beta 尚未由管理员启用；正式记录保持只读，所有交易动作均已关闭。")}
+      {copy("库存操作（测试版）尚未由管理员启用；正式记录保持只读，所有交易动作均已关闭。")}
     </Card>
   );
 }
@@ -280,12 +283,12 @@ function OperationList({
 }
 
 function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
-  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
+  const { copy, inventoryCodeLabel, errorText } = useInventoryOperationsCopy();
   const navigate = useNavigate(),
     [lines, setLines] = useState<TransferLine[]>([
       {
         itemId: "",
-        quantity: "1.0000",
+        quantity: "1",
         sourceWarehouseId: "",
         sourceLocation: "",
         destinationWarehouseId: "",
@@ -323,7 +326,7 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
         `/app/inventory/transfers/${encodeURIComponent(data.transfer.id)}`,
       );
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : copy("创建失败"));
+      setError(errorText(reason, "创建失败"));
     }
   };
   const warehouseOptions = entry.warehouses
@@ -461,7 +464,7 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
                 ...rows,
                 {
                   itemId: "",
-                  quantity: "1.0000",
+                  quantity: "1",
                   sourceWarehouseId: "",
                   sourceLocation: "",
                   destinationWarehouseId: "",
@@ -504,7 +507,7 @@ function CancelLink({ to }: { to: string }) {
 }
 
 function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
-  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
+  const { copy, inventoryCodeLabel, errorText } = useInventoryOperationsCopy();
   const navigate = useNavigate(),
     [warehouseId, setWarehouseId] = useState(""),
     [blind, setBlind] = useState(true),
@@ -526,7 +529,7 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
       });
       navigate(`/app/inventory/counts/${encodeURIComponent(data.session.id)}`);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : copy("创建失败"));
+      setError(errorText(reason, "创建失败"));
     }
   };
   return (
@@ -631,8 +634,8 @@ const blankAdjustmentLine = (reasonCode: string): AdjustmentLine => ({
   location: "",
   adjustmentQuantity:
     reasonCode === "opening_balance" || reasonCode === "found_stock"
-      ? "1.0000"
-      : "-1.0000",
+      ? "1"
+      : "-1",
 });
 
 function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
@@ -664,8 +667,8 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
         // An untouched default quantity follows the reason: opening and found
         // stock add, every other reason starts as a decrease.
         const untouched =
-          row.adjustmentQuantity === "1.0000" ||
-          row.adjustmentQuantity === "-1.0000";
+          row.adjustmentQuantity === "1" ||
+          row.adjustmentQuantity === "-1";
         return {
           ...row,
           mode,
@@ -972,6 +975,7 @@ function OperationDetail({
 }) {
   const { copy, inventoryCodeLabel, errorText, issueText } =
     useInventoryOperationsCopy();
+  const { language } = useI18n();
   const warehouseName = useWarehouseNames();
   const config = {
     transfer: {
@@ -1007,7 +1011,7 @@ function OperationDetail({
       })
       .catch((reasonValue) =>
         setError(
-          reasonValue instanceof Error ? reasonValue.message : copy("读取失败"),
+          errorText(reasonValue, "读取失败"),
         ),
       );
   useEffect(() => {
@@ -1076,14 +1080,14 @@ function OperationDetail({
       await load();
     } catch (reasonValue) {
       setError(
-        reasonValue instanceof Error ? reasonValue.message : copy("盘点录入失败"),
+        errorText(reasonValue, "盘点录入失败"),
       );
     }
   };
   if (!data)
     return (
       <Card className="p-8 text-sm text-slate-500">
-        {copy("正在读取库存操作工作台...")}
+        {copy("正在读取库存操作工作台…")}
       </Card>
     );
   const actions = data.availableActions || {},
@@ -1218,7 +1222,7 @@ function OperationDetail({
               className={button}
               onClick={() => void run("ready")}
             >
-              {copy("Ready")}
+              {copy("Mark ready")}
             </button>
           )}
           {actions.canSubmit && (
@@ -1245,7 +1249,7 @@ function OperationDetail({
               className={button}
               onClick={() => void runPreview("post")}
             >
-              {copy("Post Preview")}
+              {copy("Preview posting")}
             </button>
           )}
           {actions.canReverse && (
@@ -1254,7 +1258,7 @@ function OperationDetail({
               className={button}
               onClick={() => void runPreview("reverse")}
             >
-              {copy("Reverse Preview")}
+              {copy("Preview reversal")}
             </button>
           )}
           {actions.canCancel && (
@@ -1282,7 +1286,7 @@ function OperationDetail({
             className={`rounded-lg p-4 text-sm ${preview.allowed ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}
           >
             <div>
-              {preview.allowed ? copy("Preview 允许执行") : copy("Preview 阻止执行")}
+              {preview.allowed ? copy("预览允许执行") : copy("预览阻止执行")}
             </div>
             <div className="mt-2 text-xs">
               {preview.blockingIssues
@@ -1307,7 +1311,7 @@ function OperationDetail({
         )}
       </Card>
       <Card className="p-5">
-        <h3 className="font-semibold">{copy("Movement Evidence")}</h3>
+        <h3 className="font-semibold">{copy("Movement evidence")}</h3>
         <div className="mt-3 space-y-2">
           {(data.movements || []).map((movement: any) => (
             <div
@@ -1315,9 +1319,9 @@ function OperationDetail({
               className="rounded-lg border p-3 text-xs"
               data-testid={`operation-movement-${movement.movementType}`}
             >
-              <span className="font-semibold">{movement.movementType}</span>
+              <span className="font-semibold">{movementTypeLabel(movement.movementType, language)}</span>
               <span className="ml-3">
-                {warehouseName(movement.warehouseId)} · {copy("入 {in} · 出 {out}", { in: movement.quantityIn, out: movement.quantityOut })}
+                {warehouseName(movement.warehouseId)} · {copy("入 {in} · 出 {out}", { in: formatQuantity(movement.quantityIn), out: formatQuantity(movement.quantityOut) })}
               </span>
             </div>
           ))}

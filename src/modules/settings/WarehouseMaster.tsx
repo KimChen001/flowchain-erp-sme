@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { Boxes, Pencil, Plus, Save } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { forgetWarehouseNames } from "../../lib/useWarehouseNames";
-import { A } from "../../components/ui";
+import { A, useConfirm } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 
 // Warehouses and their bins, kept by a workspace administrator: add one,
@@ -73,6 +73,7 @@ export default function WarehouseMaster({ operateIds, onChanged }: { operateIds:
   const [open, setOpen] = useState("");
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState<{ tone: "info" | "alert"; title: string; lines: string[] } | null>(null);
+  const confirmDialog = useConfirm();
 
   const load = useCallback(async () => {
     try {
@@ -140,7 +141,13 @@ export default function WarehouseMaster({ operateIds, onChanged }: { operateIds:
     if (saved) setRenaming(null);
   };
   const setStatus = async (warehouse: WarehouseRow, active: boolean) => {
-    if (!active && !window.confirm(t("settings.warehouseConfirmInactive", { code: warehouse.code }))) return;
+    if (!active && !(await confirmDialog.confirm({
+      title: t("settings.warehouseConfirmInactive", { code: warehouse.code }),
+      description: t("settings.warehouseConfirmInactiveBody"),
+      confirmLabel: t("settings.warehouseSetInactive"),
+      cancelLabel: t("settings.cancel"),
+      tone: "danger",
+    }))) return;
     await run(warehouse.id, warehouse.code, async () => {
       const result = await apiJson<{ clearedDefaults?: number }>(`/api/master-data/warehouses/${encodeURIComponent(warehouse.id)}/${active ? "activate" : "deactivate"}`, { method: "POST", body: JSON.stringify({ expectedVersion: warehouse.version }) });
       if (!active && result.clearedDefaults) return t("settings.warehouseClearedDefaults", { code: warehouse.code, count: result.clearedDefaults });
@@ -180,6 +187,7 @@ export default function WarehouseMaster({ operateIds, onChanged }: { operateIds:
     : <span className="flex flex-wrap items-center gap-2">{name || "—"}{canEdit && <button type="button" data-testid={`${testId}-rename`} className={small} onClick={() => setRenaming({ id, name })}><Pencil size={13} />{t("settings.warehouseRename")}</button>}</span>;
 
   return <section className="mt-5" data-testid="warehouse-master">
+    {confirmDialog.element}
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h3 className="font-semibold">{t("settings.warehouses")}</h3><p className="mt-1 text-sm text-slate-500">{t("settings.warehousesHint")}</p></div>
       {!adding && <button type="button" data-testid="warehouse-new" className={`${button} text-white`} style={{ background: A.blue }} onClick={() => { setAdding(true); setNotice(null); }}><Plus size={15} />{t("settings.warehouseNew")}</button>}

@@ -28,15 +28,25 @@ export function usePartCopy(answerLanguage?: string) {
   const number = (value: number) => i18n.formatNumber(value);
   const money = (value: number, currency?: string | null) => formatLocaleAmount(value, currency, i18n.locale, { maximumFractionDigits: 2 });
   const day = (value: string) => formatCalendarDay(value, i18n.locale);
-  // A missing or role-hidden value is a dash, never 0.
-  const value = (input: number | null | undefined, unit: ValueUnit, currency?: string | null) => {
+  // A missing or role-hidden value is a dash, never 0. One day is "1 day";
+  // a quantity carries its unit when the row gives one ("7,000 pcs").
+  const value = (input: number | null | undefined, unit: ValueUnit, currency?: string | null, unitLabel?: string | null) => {
     if (input === null || input === undefined || !Number.isFinite(input)) return "—";
     if (unit === "money") return money(input, currency);
     if (unit === "percent") return `${number(input)}%`;
-    if (unit === "days") return t("ai.v2.unit.days", { count: number(input) });
+    if (unit === "days") return input === 1 ? t("ai.v2.unit.dayOne") : t("ai.v2.unit.days", { count: number(input) });
+    if (unit === "quantity" && unitLabel) return `${number(input)} ${unitLabel}`;
     return number(input);
   };
-  return { language, locale: i18n.locale, timezone: i18n.timezone, t, known, number, money, day, value };
+  // A compact figure for a chart's axis: $21K, 2.1万.
+  const compact = (input: number, unit: ValueUnit, currency?: string | null) => {
+    try {
+      return new Intl.NumberFormat(i18n.locale, { notation: "compact", maximumFractionDigits: 1, ...(unit === "money" && currency ? { style: "currency", currency } : {}) }).format(input) + (unit === "percent" ? "%" : "");
+    } catch {
+      return value(input, unit, currency);
+    }
+  };
+  return { language, locale: i18n.locale, timezone: i18n.timezone, t, known, number, money, day, value, compact };
 }
 
 export type PartCopy = ReturnType<typeof usePartCopy>;
@@ -61,8 +71,17 @@ export function statusTone(status: StatusValue): StatusTone {
   return status.tone || CODE_TONE[status.code] || "info";
 }
 
+// A status, signal type or priority in words: the app's status label, the
+// assistant's own, a record type's name (purchase_order), else the code
+// made readable.
+export function codeLabel(code: string, copy: PartCopy) {
+  const own = `ai.v2.status.${code}`;
+  const column = `ai.v2.column.${code}`;
+  return statusCodeLabel(code, copy.language) || (isTranslationKey(own) ? copy.t(own) : isTranslationKey(column) ? copy.t(column) : copy.known("ai.v2.status", code));
+}
+
 export function StatusPill({ status, copy }: { status: StatusValue; copy: PartCopy }) {
-  const label = statusCodeLabel(status.code, copy.language) || copy.known("ai.v2.status", status.code);
+  const label = codeLabel(status.code, copy);
   return <span data-testid="ai-v2-status" data-tone={statusTone(status)} className="inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-medium leading-5 whitespace-nowrap" style={TONE_STYLE[statusTone(status)]}>{label}</span>;
 }
 

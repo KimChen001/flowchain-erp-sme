@@ -81,7 +81,11 @@ function mentions(said, name) {
       if (needle.length >= 2 && (!after || !CJK.test(after) || CJK_NAME_FOLLOWER.test(after))) return true
       continue
     }
-    if ((!before || !LATIN_WORD_CHAR.test(before)) && (!after || !LATIN_WORD_CHAR.test(after))) return true
+    if (before && LATIN_WORD_CHAR.test(before)) continue
+    if (!after || !LATIN_WORD_CHAR.test(after)) return true
+    // The plural of an item name: "temperature sensors" for Temperature Sensor.
+    const plural = said.slice(index + needle.length).match(/^(?:es|s)(?![a-z0-9])/i)
+    if (plural && /[a-z]$/i.test(needle)) return true
   }
   return false
 }
@@ -319,6 +323,8 @@ export function refineAiSkillRoute(route, message, facts) {
     const focus = !route.focus && FOCUS_SKILLS.has(skill) ? focusFromIds(idsOnly) : null
     return focus ? { ...route, focus, entities: idsOnly } : { ...route, entities: idsOnly }
   }
+  // Open sales orders, for the SKU the question names when it names one.
+  if (skill === 'inventory_availability' && route.signals?.salesOrders) return as(skill, 'sales_orders')
   if (skill === 'inventory_availability') return as(skill, stockMode(found, short ? 'short' : 'overview'))
   if (skill === 'purchase_orders') return as(skill, orderMode(found, 'overdue', { bySku: true }))
   // A supplier the question names (or the page's, when it points at it) narrows the list to it.

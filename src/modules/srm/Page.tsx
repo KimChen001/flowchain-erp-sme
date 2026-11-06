@@ -9,14 +9,17 @@ import { useEffect, useState, useRef } from "react";
 import { ArrowLeft, Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
-import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
+import { A, Card, Chip, Field, inputStyle, useConfirm } from "../../components/ui";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
-import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
+import { PriceHistoryFacts, priceHistoryKey, usePoPrice, usePriceHistory } from "../procurement/PriceHistoryFacts";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
+import { apiErrorText } from "../../lib/apiErrorText";
+import { ON_TIME_HEADER_TIP } from "./supplierMetrics";
 import { DataImportLink } from "../master-data/DataImportLink";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { SupplierContractsPanel } from "../contracts/SupplierContractsPanel";
@@ -111,8 +114,8 @@ const empty = (currency = "") => ({
 const statusLabel = { draft: "草稿", active: "启用", inactive: "停用" };
 // The list's long metric headers wrap to two lines; the list scrolls
 // sideways with the code and actions columns kept in view, as on purchase orders.
-const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time (PO date), 90 days", "Open issues"]);
-const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", "On time (PO date), 90 days", "Open issues"]);
+const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
+const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
 
 function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): Supplier {
   const text = (candidate: unknown, fallback = "") => String(candidate ?? "").trim() || fallback;
@@ -165,7 +168,13 @@ export default function SupplierMasterPage({
 }) {
   const { language, formatNumber } = useI18n();
   const { count, spendCell, onTimeCell } = useSupplierMetricCells();
+  const poPrice = usePoPrice();
+  // A failed request in the interface language, never the server's own words.
+  const failure = (reason: unknown) => apiErrorText(reason, language, ["Could not save the change. Try again.", "修改保存失败，请重试。"]);
   const copy = (label: string) => supplierCopy(workspaceCopy(label, language), language);
+  const en = language === "en-US";
+  // Status changes save at once, so each one is confirmed first.
+  const confirmDialog = useConfirm();
   const listSeparator = language === "en-US" ? ", " : "、";
   // Supplier edits need master_data.supplier.manage; the supplied-item links
   // are item edits and need master_data.item.manage.
@@ -224,6 +233,7 @@ export default function SupplierMasterPage({
       // Empty means "use the supplier's default currency" when saving.
       currency: "",
     });
+  useDetailCrumb(selected ? `${selected.supplierCode} · ${selected.supplierName}` : null);
   // Only the latest request may fill the list: an older, slower one is dropped.
   const loadSequence = useRef(0);
   const loadedOnce = useRef(false);
@@ -299,7 +309,7 @@ export default function SupplierMasterPage({
         entityLabel: normalizedSupplier.supplierName,
       });
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(apiErrorText(e, language, ["Could not load this supplier. Try again.", "供应商加载失败，请重试。"]));
     }
   };
   useEffect(() => { loadPaymentTerms(); }, []);
@@ -378,12 +388,45 @@ export default function SupplierMasterPage({
     } finally { savingRef.current = false; setSaving(false); }
   };
   const toggle = async (supplier: Supplier) => {
-    await request(`/api/master-data/suppliers/${supplier.id}`, "PATCH", {
-      status: supplier.status === "active" ? "inactive" : "active",
-      expectedVersion: supplier.version,
+    const deactivate = supplier.status === "active";
+    const name = supplier.supplierName || supplier.supplierCode;
+    const confirmed = await confirmDialog.confirm({
+      title: deactivate
+        ? (en ? `Set ${name} inactive?` : `停用 ${name}？`)
+        : (en ? `Set ${name} active?` : `启用 ${name}？`),
+      description: deactivate
+        ? (en ? "It can't be chosen for new purchase requests or orders. Records that already use it don't change. You can set it active again later." : "停用后不能在新的采购申请或订单中选择；已使用它的记录不变。之后可以重新启用。")
+        : (en ? "It can be chosen for new purchase requests and orders again." : "启用后可以在新的采购申请和订单中再次选择。"),
+      confirmLabel: deactivate ? copy("Set inactive") : copy("Set active"),
+      tone: deactivate ? "danger" : "primary",
     });
-    await load();
-    if (selected?.id === supplier.id) await openDetail(supplier.id);
+    if (!confirmed) return;
+    try {
+      await request(`/api/master-data/suppliers/${supplier.id}`, "PATCH", {
+        status: deactivate ? "inactive" : "active",
+        expectedVersion: supplier.version,
+      });
+      await load();
+      if (selected?.id === supplier.id) await openDetail(supplier.id);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? copy(e.message) : copy("Could not save supplier. Please try again."));
+    }
+  };
+  // A supplied item set inactive is no longer offered for this supplier.
+  const toggleRelationship = async (relationship: Relationship) => {
+    const label = relationship.item?.sku || relationship.supplierSku || relationship.item?.itemName || "";
+    const deactivate = relationship.active;
+    const confirmed = await confirmDialog.confirm({
+      title: deactivate
+        ? (en ? `Set the supplied item ${label} inactive?` : `停用供货物料 ${label}？`)
+        : (en ? `Set the supplied item ${label} active?` : `启用供货物料 ${label}？`),
+      description: deactivate
+        ? (en ? "This supplier is no longer offered for the item on new purchase requests. You can set it active again later." : "新的采购申请中将不再为该物料提供此供应商。之后可以重新启用。")
+        : (en ? "This supplier is offered for the item on new purchase requests again." : "新的采购申请中将再次为该物料提供此供应商。"),
+      confirmLabel: deactivate ? copy("Set inactive") : copy("Set active"),
+      tone: deactivate ? "danger" : "primary",
+    });
+    if (confirmed) await updateRelationship(relationship, { active: !relationship.active });
   };
   const addRelationship = async () => {
     if (!selected || !relationForm.itemId) return;
@@ -403,7 +446,7 @@ export default function SupplierMasterPage({
       );
       await openDetail(selected.id);
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(failure(e));
     }
   };
   const updateRelationship = async (
@@ -419,7 +462,7 @@ export default function SupplierMasterPage({
       );
       await openDetail(selected.id);
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(failure(e));
     }
   };
   const insightOf = (id: string): SupplierInsight | undefined => insights?.suppliers[id];
@@ -457,7 +500,7 @@ export default function SupplierMasterPage({
                 {copy("编辑")}</button>
               <button
                 type="button"
-                onClick={() => toggle(selected)}
+                onClick={() => void toggle(selected)}
                 className={listButtonClass.secondary}
               >
                 {copy(selected.status === "active" ? "Set inactive" : "Set active")}
@@ -629,7 +672,7 @@ export default function SupplierMasterPage({
                     <td className={tdNowrapClass}>{copy(r.approved ? "是" : "否")}</td>
                     <td className={tdNumericRightClass}>{r.leadTimeDays == null ? "—" : formatNumber(r.leadTimeDays)}</td>
                     <td className={tdNumericRightClass}>{r.minimumOrderQuantity == null ? "—" : formatNumber(r.minimumOrderQuantity)}</td>
-                    <td className={tdNumericRightClass}>{r.currency} {r.referencePrice}</td>
+                    <td className={tdNumericRightClass}>{r.referencePrice === null || r.referencePrice === undefined ? "—" : poPrice(String(r.referencePrice), r.currency)}</td>
                     {relationshipHistory.state === "hidden" ? null : (
                       <td className={`${tdClass} min-w-[200px]`}>
                         {relationshipHistoryKey(r) && <PriceHistoryFacts compact history={relationshipHistory.histories.get(relationshipHistoryKey(r))} state={relationshipHistory.state} testId={`supplied-item-price-history-${r.itemId}`} />}
@@ -653,9 +696,7 @@ export default function SupplierMasterPage({
                         <button
                           type="button"
                           className={rowActionClass.neutral}
-                          onClick={() =>
-                            updateRelationship(r, { active: !r.active })
-                          }
+                          onClick={() => void toggleRelationship(r)}
                         >
                           {copy(r.active ? "Set inactive" : "Set active")}
                         </button>
@@ -674,6 +715,7 @@ export default function SupplierMasterPage({
           empty={{ orders: copy("暂无采购交易记录"), risks: copy("暂无风险或异常") }}
         />
         </>}
+        {confirmDialog.element}
       </div>
     );
   // Laid out like the other list pages (purchase orders, items): a search
@@ -813,12 +855,12 @@ export default function SupplierMasterPage({
                     "Spend, 12 months",
                     "Open POs",
                     "Overdue POs",
-                    "On time (PO date), 90 days",
+                    "On time, 90 days",
                     "Open issues",
                     "状态",
                     ...(writes.suppliers ? ["操作"] : []),
                   ].map((h) => (
-                    <th key={copy(h)} className={`${thClass} align-bottom${WRAPPED_HEADERS.has(h) ? " !whitespace-normal min-w-[84px] max-w-[120px]" : ""}${NUMERIC_HEADERS.has(h) ? " text-right" : ""}${h === "供应商" ? " sticky left-0 z-20 bg-white" : h === "操作" ? " sticky right-0 z-20 bg-white" : ""}`} style={{ color: A.gray1 }}>
+                    <th key={copy(h)} title={h === "On time, 90 days" ? copy(ON_TIME_HEADER_TIP) : undefined} className={`${thClass} align-bottom${WRAPPED_HEADERS.has(h) ? " !whitespace-normal min-w-[84px] max-w-[120px]" : ""}${NUMERIC_HEADERS.has(h) ? " text-right" : ""}${h === "供应商" ? " sticky left-0 z-20 bg-white" : h === "操作" ? " sticky right-0 z-20 bg-white" : ""}`} style={{ color: A.gray1 }}>
                       {/* One supplier per row: the singular, not the Suppliers module name. */}
                       {h === "供应商" ? (language === "en-US" ? "Supplier" : "供应商") : copy(h)}
                     </th>
@@ -853,7 +895,7 @@ export default function SupplierMasterPage({
                     {writes.suppliers && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                       <div className="flex items-center gap-1.5">
                         <button type="button" onClick={() => startEdit(row)} className={rowActionClass.primary}>{copy("编辑")}</button>
-                        <button type="button" onClick={() => toggle(row)} className={rowActionClass.neutral}>
+                        <button type="button" onClick={() => void toggle(row)} className={rowActionClass.neutral}>
                           {copy(row.status === "active" ? "Set inactive" : "Set active")}
                         </button>
                       </div>
@@ -865,6 +907,7 @@ export default function SupplierMasterPage({
           </div>
         )}
       </Card>
+      {confirmDialog.element}
     </div>
   );
 }

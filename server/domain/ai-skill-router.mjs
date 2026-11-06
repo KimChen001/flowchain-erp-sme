@@ -76,6 +76,14 @@ const DRAFT = [
 // status", 下单日期, 已下单), and neither is a sales order.
 const ORDER_NOUN_RE = '(?:purchase\\s+orders?|purchase\\s+requests?|purchase\\s+requisitions?|requisitions?|replenishment\\s+orders?|orders?|pos?|prs?)(?!-?\\s*#?\\d)\\b'
 const ORDER_FILLER = '(?:(?:a|an|the|new|one|another|my|our|draft|replenishment|purchase|formal|some|that|this|me|us)\\s+){0,3}'
+// A need with a quantity and what it is: "I need 50 temperature sensors",
+// "we need 200 more boxes of LDM-003", 我需要 50 个温度传感器. Not a time,
+// a count of quotes or suppliers, or a percentage. It names what it needs, so
+// an item the catalog does not match is said to be unmatched, not unnamed.
+const ORDER_NEED = [
+  /^\s*(?:hi|hello|hey|so|ok(?:ay)?)?[\s,]*(?:i|we)\s+(?:still\s+|also\s+)?(?:need|want|require)\s+(?:about\s+|another\s+|an?\s+extra\s+)?\d[\d,]*(?:\.\d+)?\s+(?:more\s+)?(?!(?:days?|weeks?|months?|years?|hours?|minutes?|quotes?|quotations?|suppliers?|vendors?|people|reports?|percent)\b)[a-z]/i,
+  /^\s*(?:我们?|咱们)(?:还|也)?(?:需要|要|想要)\s*\d[\d,]*(?:\.\d+)?\s*(?:个|件|箱|卷|只|套|台|片|米|根|包|袋|pcs\b)/i,
+]
 const ORDER_START = [
   new RegExp(`\\b(?:generate|create|raise|place|make|prepare|start|put\\s+in|set\\s+up|write\\s+up)\\s+${ORDER_FILLER}${ORDER_NOUN_RE}`, 'i'),
   new RegExp(`\\b(?:draft|open)\\s+(?:me\\s+)?(?:a|an)\\s+(?:new\\s+)?${ORDER_NOUN_RE}`, 'i'),
@@ -90,8 +98,10 @@ const ORDER_START = [
   // With what to order between: 建一个 200 件 LDM-001 的采购申请, 开一张 Acme 的采购单.
   // Each token ends where its number or word ends, so the match stays short.
   /(?:开|建立?|做|拟|准备|提(?!交))\s*一?(?:张|个|份|笔)(?:\s*(?:\d[\d,.]*(?![\d,.])\s*(?:个|件|箱|卷|只|套|台|片|米|根|pcs\b)?|[A-Za-z][\w-]*(?![\w-]))){1,6}\s*的?\s*(?:新的?)?\s*(?:采购单|采购订单|采购申请|请购单|补货单)/i,
-  /补(?:个|一下|一点|点|些)?货(?![吗么情])/,
+  // 补货, 补点货, and asking which: 我应该补哪些货？ 需要补什么货？
+  /补(?:个|一下|一点|点|些|哪些|哪种|什么|多少)?货(?![吗么情])/,
   /(?:帮我|给我|替我|请|我要|我想|我需要|安排)再?(?:订购|订货|采购|买|订)(?!单号)/,
+  ...ORDER_NEED,
 ]
 // Orders already made are not a request: "Which POs did we create last week?".
 const ORDER_PAST = [/\bdid (?:we|i|you|they)\b|\b(?:have|has) (?:we|i|you|they)\b/i, /哪些[^。？！]*已|上(?:周|月|次)[^。？！]*(?:下|建|生成)/]
@@ -124,7 +134,7 @@ function orderQuantity(raw) {
 export function aiSkillOrderRequest(message) {
   const raw = text(message)
   if (!matches(ORDER_START, raw) || matches(ORDER_PAST, raw) || matches(SALES_ORDER, raw)) return null
-  return { advice: matches(ORDER_ADVICE, raw), anyway: matches(ORDER_ANYWAY, raw), quantity: orderQuantity(raw) }
+  return { advice: matches(ORDER_ADVICE, raw), anyway: matches(ORDER_ANYWAY, raw), quantity: orderQuantity(raw), ...(matches(ORDER_NEED, raw) ? { named: true } : {}) }
 }
 
 // An instruction to act, not a question about it. Word-bounded, and checked
@@ -174,10 +184,12 @@ const RISK = [
 ]
 const METRICS = [
   /\bopen (purchase orders?|pos?)\b/i,
+  /\b(?:purchase orders?|pos)\b[^.?!]{0,20}\b(?:are|is)\s+(?:still\s+)?open\b/i,
   /\bhow many\b[^?]*\b(pos?|purchase orders?)\b/i,
   /\b(committed|total) (po |purchase )?spend\b|\bspend\b[^?]*\b(po|purchase)/i,
   /\boverdue (pos?|purchase orders?)\b/i,
   /未结\s*(采购订单|PO)|开放\s*PO|多少[^？]*(采购订单|PO)|采购金额|已承诺金额|逾期[^？]*(采购订单|PO)/i,
+  /(?:未完成|未结|未关闭|未结清|进行中|开着)的?\s*(?:采购订单|采购单(?!价)|PO)|(?:采购订单|采购单(?!价)|PO)[^，。？！]{0,6}(?:未完成|还没完成|还开着|没关闭|未关闭)/i,
 ]
 // Spend analysis (ai-skill-spend-analysis.mjs): spend broken down by supplier,
 // item or month, or for a period. A spend word with a breakdown cue, a period
@@ -285,7 +297,7 @@ const SPECIFIC_ASPECT = [/\b(?:invoices?|payments?|payables?|pay|paid|rfqs?|quot
 // Questions about the world outside the workspace. A question that also names
 // a workspace record type is about the workspace.
 const OUTSIDE = [
-  /\b(stock|share)\s+(price|prices|market|quote|quotes)\b|\b(price|prices|quote)\s+of\s+[\w\s'.]{0,30}?\b(stock|shares?)\b|\bstock market\b|\bthe market\b|\bweather\b|\b(rain|snow|storm|temperature)\b|\bnews\b|\bheadlines?\b|\b(sports?|football|soccer|basketball|baseball|nba|nfl|super bowl|world cup)\b|\bmovies?\b|\brecipes?\b|\bjokes?\b|\bbitcoin\b|\bcrypto(currency|currencies)?\b|\bexchange rates?\b|\blottery\b|\bhoroscope\b|\bwhat time is it\b|\bpresident\b/i,
+  /\b(stock|share)\s+(price|prices|market|quote|quotes)\b|\b(price|prices|quote)\s+of\s+[\w\s'.]{0,30}?\b(stock|shares?)\b|\bstock market\b|\bthe market\b|\bweather\b|\b(rain|snow|storm)\b|\btemperature\b(?!\s+(?:sensors?|probes?|controllers?|gauges?|loggers?|transmitters?|switch(?:es)?|ranges?|ratings?)\b)|\bnews\b|\bheadlines?\b|\b(sports?|football|soccer|basketball|baseball|nba|nfl|super bowl|world cup)\b|\bmovies?\b|\brecipes?\b|\bjokes?\b|\bbitcoin\b|\bcrypto(currency|currencies)?\b|\bexchange rates?\b|\blottery\b|\bhoroscope\b|\bwhat time is it\b|\bpresident\b/i,
   /股价|股票价格|股市|天气|下雨|新闻|体育|比分|足球|篮球|电影|菜谱|食谱|笑话|比特币|加密货币|汇率|彩票|几点了/,
 ]
 const WORKSPACE_NOUN = [
@@ -306,14 +318,14 @@ const LATE = [/\b(overdue|late|past due|past (?:their|the|its) (?:due|promised) 
 // "PO" only as a word of its own, never inside "components" or "policy"; 采购单
 // is a purchase order, 采购单价 a unit price.
 const ORDER_NOUN = [/\b(purchase orders?|pos?|orders?)\b/i, /采购订单|采购单(?!价)|订单|(?<![a-z])PO(?![a-z])/i]
-const REQUEST_NOUN = [/\b(purchase requests?|requests?|prs?|purchase orders?|pos?|orders?)\b/i, /采购订单|采购申请|申请|订单|PO|PR/i]
+const REQUEST_NOUN = [/\b(purchase requests?|requests?|prs?|purchase orders?|pos?|orders?|documents?)\b/i, /采购订单|采购申请|申请|订单|单据|单子|PO|PR/i]
 const COUNT_QUESTION = [/\bhow many\b/i, /多少|几张|几个/]
 const DELIVERED = [/\b(delivered|arrived|received|shipped)\b[^.?!]{0,20}\blate\b/i, /到货晚了|迟到货/]
 const INVOICE = [/\binvoices?\b/i, /发票/]
 const INVOICE_QUESTION = [/\b(total|totals|committed|how much|amount|amounts|sum|value|add up|in total|altogether|variance|variances|mismatch|mismatches|matched|match|matching|exception|exceptions|status|submitted)\b/i, /金额|合计|总额|总计|多少|差异|匹配|异常|状态/]
 const STOCK = [
-  /\b(stock|stock levels?|inventory|atp|available to promise|on hand|in stock|out of stock|shortages?|stockouts?|short against)\b/i,
-  /库存|可承诺|缺货|短缺|在手|现货/,
+  /\b(stock|stock levels?|inventory|atp|available to promise|on hand|in stock|out of stock|shortages?|stockouts?|short against|running low|run(?:ning)? out|low on)\b/i,
+  /库存|可承诺|缺货|短缺|在手|现货|快没货|快用完|快不够/,
   // "哪些 SKU 无法满足未结销售订单？", the Chinese of "short against open
   // sales orders"; a supplier that cannot meet a date is not a stock question.
   /(sku|物料|商品|产品|存货)[^，。？！?]{0,12}(无法满足|满足不了)/i,
@@ -339,6 +351,12 @@ const HELP = [
   /^\s*(?:你|您)(?:有|都有)(?:什么|哪些)(?:功能|本事|用处|能力)\s*[?？。!！]*\s*$/,
   /^\s*(?:我)?(?:可以|能)问(?:你|您)?(?:些|点)?(?:什么|啥|哪些问题)\s*[?？。!！]*\s*$/,
 ]
+// A thank-you on its own ("Thanks!", "thank you so much", 谢谢) gets a short,
+// warm reply, not the help answer.
+const THANKS = [
+  /^\s*(?:(?:ok(?:ay)?|great|perfect|cool|nice|got it|that'?s? (?:great|helpful|perfect))[\s,.!]*)?(?:thanks?(?: you)?|thank u|thx|ty|cheers|much appreciated|appreciate it)(?:\s+(?:a lot|so much|very much|again|a bunch))?[\s.!]*$/i,
+  /^\s*(?:好的?|好|嗯|收到|明白了?)?[，,\s]*(?:谢谢|多谢|感谢|谢了|谢啦)(?:你|您)?(?:了|啦|哈)?[!！。.~\s]*$/,
+]
 // Sales orders are not purchase orders; no skill answers for them yet.
 // A user under pressure ("I'm stressed", "i had the big pressure", 我压力大)
 // gets the first few of today's priorities, when no other rule matched.
@@ -347,6 +365,8 @@ const UNDER_PRESSURE = [/\b(?:stress(?:ed|ful)?|overwhelm(?:ed|ing)?|swamped|bur
 // about them gets the help answer that says so, never another skill's.
 const CONTRACT = [/\b(?:contracts?|agreements?|bpas?)\b/i, /合同|协议/]
 const SALES_ORDER = [/\b(?:sales|customer) orders?\b/i, /销售订单|客户订单/]
+// Asking to see sales orders, not to create one: "Show open sales orders", 有哪些未结的销售订单？
+const SALES_LIST = [/\b(?:open|show|list|which|what|any|how many|pending|unshipped|outstanding|current)\b/i, /哪些|未结|未完成|未发货|列出|多少|几张|看看/]
 // Customers, their orders and what they owe us, not suppliers.
 const CUSTOMER = [/\b(?:customers?|clients?|sales orders?|receivables?|accounts receivable)\b/i, /客户|销售订单|应收|回款/]
 export const aiSkillAboutCustomers = (message) => matches(CUSTOMER, text(message)) && !matches(SUPPLIER, text(message))
@@ -443,9 +463,17 @@ function excludedSkills(intent) {
 // The intent rules over one reading of the question. null when none matches.
 function intentRoute(intent, base) {
   const route = (skillId) => ({ ...base, skillId, signals: signalsOf(intent) })
-  if (matches(OUTSIDE, intent) && !matches(WORKSPACE_NOUN, intent)) return { capability: true, outOfDomain: true }
+  if (matches(OUTSIDE, intent) && !matches(WORKSPACE_NOUN, intent) && !base.ids.length) return { capability: true, outOfDomain: true }
   if (matches(RECORDS, intent)) return route('records_needing_data')
   if (matches(LATE_IMPACT, intent)) return route('late_order_impact')
+  // "Which sales orders are at risk of late delivery?", 哪些销售订单有交付风险？:
+  // the customer orders waiting on what late purchase orders bring. Not the
+  // open problems, which are purchase orders.
+  if (matches(SALES_ORDER, intent) && matches(RISK, intent)) return route('late_order_impact')
+  // "Show open sales orders", 有哪些未结的销售订单？: the open sales orders the
+  // stock is set against (inventory_availability, mode sales_orders). Not a
+  // question about short stock, late deliveries or creating an order.
+  if (matches(SALES_ORDER, intent) && matches(SALES_LIST, intent) && !matches(STOCK, intent) && !matches(SHORT, intent) && !matches(LATE, intent)) return { ...route('inventory_availability'), signals: { ...signalsOf(intent), salesOrders: true } }
   if (matches(RISK, intent)) return route('highest_risk_items')
   const otherRecord = matches(OTHER_RECORD, intent)
   if (matches(APPROVAL, intent) && matches(REQUEST_NOUN, intent) && !otherRecord) return route('pending_approvals')
@@ -485,6 +513,7 @@ export function routeSkill({ message, skillHint, focusTarget } = {}) {
   const chip = chipSkill.get(normalize(raw))
   if (chip) return { skillId: chip, focus, ids, explicit: true, signals: signalsOf(normalize(raw)) }
   if (matches(HELP, raw)) return { capability: true }
+  if (matches(THANKS, raw)) return { capability: true, thanks: true }
   const order = aiSkillOrderRequest(raw)
   if (order) return { skillId: 'prepare_action_draft', mode: 'order', order, focus, ids }
   // A draft request keeps its signals, so a tier it names narrows the drafts.

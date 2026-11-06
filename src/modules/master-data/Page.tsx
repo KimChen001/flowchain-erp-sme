@@ -25,9 +25,9 @@ const emptyMasterData: MasterDataSnapshot = {
 const LOAD_ERRORS: Record<string, string> = {
   unauthenticated: "Your session has expired. Sign in again to view master data.",
   forbidden: "You do not have permission to view master data.",
-  not_found: "The master data service route was not found.",
-  server_error: "The master data service failed. Try again later.",
-  network_error: "Could not reach the master data service. Check your network or the local API.",
+  not_found: "This master data page could not be found. Refresh and try again.",
+  server_error: "Master data could not be loaded. Try again later.",
+  network_error: "Could not connect. Check your network and try again.",
 };
 
 type ListTab = ReferenceTableTab | "customers" | "print-templates";

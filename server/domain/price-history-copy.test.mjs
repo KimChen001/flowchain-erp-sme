@@ -59,4 +59,7 @@ test("a supplier's page says when nothing was issued to this supplier, apart fro
   assert.equal(priceHistoryText('en-US', 'noIssuedPoFromSupplier'), 'No issued PO from this supplier yet')
   assert.equal(priceHistoryText('zh-CN', 'noIssuedPoFromSupplier'), '尚无向该供应商下达的采购订单')
   assert.equal(priceHistoryText('en-US', 'noIssuedPo'), 'No issued PO for this item yet')
+  // On a purchase order the history leaves the order out: an empty one means no earlier orders.
+  assert.equal(priceHistoryText('en-US', 'noEarlierPoForItem'), 'No earlier purchase orders for this item')
+  assert.equal(priceHistoryText('zh-CN', 'noEarlierPoForItem'), '此物料暂无更早的采购订单')
 })

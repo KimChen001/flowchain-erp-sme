@@ -5,7 +5,8 @@ import { BusinessEntityLink } from '../../components/business/BusinessEntityLink
 import { businessEntityRouteRegistry, type BusinessEntityType } from '../../components/business/businessEntityRoutes';
 import { fetchAiWorkspaceStatus, fetchSettingsAudit, fetchSettingsRuntime, saveSettingsSection, type AiWorkspaceStatus, type SettingsAuditEntry, type SettingsRuntime } from './settingsRuntime';
 import WorkspaceSettings from './WorkspaceSettings';
-import { useI18n } from '../../i18n/I18n';
+import { isTranslationKey, useI18n } from '../../i18n/I18n';
+import { roleLabel } from '../../../shared/roles.mjs';
 import CustomFieldsSettings from './CustomFieldsSettings';
 import { DOCUMENT_NUMBER_PREFIX_PATTERN, DOCUMENT_NUMBER_TYPES, formatDocumentNumber, numberingPeriod } from '../../../shared/document-numbering.mjs';
 
@@ -17,10 +18,36 @@ type TranslationKey = Parameters<Translate>[0];
 // Seeded labels are stored per tenant in Chinese, so known ids are shown
 // through the dictionary and anything a tenant added keeps its own label.
 function labelFor(t: Translate, prefix: 'settings.module' | 'settings.capability', id: string, stored: string) {
-  const key = `.${id}` as TranslationKey;
-  const translated = t(key);
-  return translated === key ? stored : translated;
+  const key = `${prefix}.${id}`;
+  return isTranslationKey(key) ? t(key) : stored;
 }
+
+// Role codes stored on module rows, by name.
+const roleNames = (roles: string[], language: string) => roles.map((role) => roleLabel(role, language)).join(language === 'en-US' ? ', ' : '、');
+
+// Audit modules and actions are stored codes ("ai_skill", "today_priorities");
+// they are shown as words, with the code kept as a tooltip.
+const AUDIT_MODULES: Record<string, [string, string]> = {
+  settings: ['Settings', '设置'], ai: ['AI assistant', 'AI 助手'], ai_skill: ['AI assistant', 'AI 助手'], procurement: ['Purchasing', '采购'],
+  purchasing: ['Purchasing', '采购'], receiving: ['Receiving', '收货'], inventory: ['Inventory', '库存'], sales: ['Sales', '销售'],
+  finance: ['Payables & receivables', '应付与应收'], master_data: ['Master data', '基础资料'], 'master-data': ['Master data', '基础资料'],
+  contracts: ['Contracts', '合同'], reports: ['Reports', '报表'], auth: ['Sign-in', '登录'], workspace: ['Workspace', '工作区'],
+  ai_assistant: ['AI assistant', 'AI 助手'], 'ai-assistant': ['AI assistant', 'AI 助手'],
+};
+const AUDIT_ENTITIES: Record<string, [string, string]> = {
+  ai_skill: ['Assistant answer', '助手回答'], purchase_order: ['Purchase order', '采购订单'], purchase_request: ['Purchase request', '采购申请'],
+  supplier: ['Supplier', '供应商'], item: ['Item', '物料'], customer: ['Customer', '客户'], receiving_doc: ['Receipt', '收货单'],
+  supplier_invoice: ['Supplier invoice', '供应商发票'], customer_invoice: ['Customer invoice', '销售发票'], sales_order: ['Sales order', '销售订单'],
+  rfq: ['RFQ', '询价单'], warehouse: ['Warehouse', '仓库'], contract: ['Contract', '合同'], settings: ['Settings', '设置'], user: ['User', '用户'], role: ['Role', '角色'],
+};
+const ACRONYMS: Record<string, string> = { ai: 'AI', po: 'PO', pr: 'PR', rfq: 'RFQ', grn: 'GRN', sku: 'SKU', id: 'ID' };
+const humanizeCode = (code: string) => {
+  const words = String(code || '').split(/[_.:-]+/).filter(Boolean).map((word) => ACRONYMS[word.toLowerCase()] || word);
+  const text = words.join(' ');
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+};
+// Codes inside a recorded summary ("today_priorities") read as words.
+const readableSummary = (summary: string) => summary.replace(/\b[a-z]+(?:_[a-z]+)+\b/g, (code) => code.split('_').map((word) => ACRONYMS[word] || word).join(' '));
 
 const AI_LEVELS = ['allow', 'review_required', 'draft_only', 'deny'] as const;
 const splitRoles = (value: string) => value.split(/[、,，]\s*/).map((role) => role.trim()).filter(Boolean);
@@ -77,7 +104,7 @@ function Header({ view, dirty, saving, invalid, onSave, onCancel }: { view: View
   const title = t(key);
   const description = sectionDescriptions[view][language === 'en-US' ? 'en' : 'zh'];
   return <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-    <div><h2 className="fc-section-title" style={{ color: A.label }}>{title}</h2><p className="mt-1 text-sm" style={{ color: A.sub }}>{description}</p></div>
+    <p className="max-w-3xl text-sm" style={{ color: A.sub }} data-section-title={title}>{description}</p>
     {onSave && <div className="flex gap-2">{dirty && <button onClick={onCancel} disabled={saving} className={`${buttonClass} border border-slate-200 bg-white`}>{t('settings.cancel')}</button>}<button data-testid="settings-save" disabled={!dirty || saving || invalid} onClick={onSave} className={`${buttonClass} text-white`} style={{ background: A.blue }}><Save size={15} />{saving ? t('settings.saving') : dirty ? t('settings.save') : t('settings.saved')}</button></div>}
   </div>;
 }
@@ -126,8 +153,14 @@ function Numbering({ value, onChange, timezone }: { value: SettingsRuntime['numb
   </div>;
 }
 
+// Stored risk level codes by name.
+const RISK_LEVELS: Record<string, [string, string]> = { low: ['Low', '低'], medium: ['Medium', '中'], high: ['High', '高'], critical: ['Critical', '严重'] };
+
 function Review({ value, onChange }: { value: SettingsRuntime['review']; onChange: (v: SettingsRuntime['review']) => void }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const separator = language === 'en-US' ? ', ' : '、';
+  const riskNames = value.riskLevels.map((level) => RISK_LEVELS[level]?.[language === 'en-US' ? 0 : 1] || level).join(separator);
+  const reviewerNames = roleNames(value.reviewerRoles, language);
   const [amount, setAmount] = useState(120000); const requires = value.enabled && amount >= value.amountThreshold;
   const approvesPo = value.approvedRequestApprovesPurchaseOrder !== false;
   return <div className="space-y-6"><section data-testid="settings-review-po-approval" className="rounded-xl border border-slate-200 p-4">
@@ -142,20 +175,20 @@ function Review({ value, onChange }: { value: SettingsRuntime['review']; onChang
   <section><h3 className="mb-3 font-medium" style={{ color: A.label }}>{t('settings.otherReviewSettings')}</h3><NotInEffect><div className="grid gap-5 lg:grid-cols-[1fr_320px]"><div className="grid gap-4 md:grid-cols-2">
     <label className="text-sm">{t('settings.amountThreshold')}<input type="number" className={`${fieldClass} mt-1`} value={value.amountThreshold} onChange={e => onChange({ ...value, amountThreshold: Number(e.target.value) })} /></label>
     <label className="text-sm">{t('settings.inventoryTolerance')}<input type="number" className={`${fieldClass} mt-1`} value={value.inventoryTolerancePercent} onChange={e => onChange({ ...value, inventoryTolerancePercent: Number(e.target.value) })} /></label>
-    <label className="text-sm">{t('settings.riskLevels')}<input className={`${fieldClass} mt-1`} value={value.riskLevels.join(', ')} onChange={e => onChange({ ...value, riskLevels: e.target.value.split(/[、,]/).filter(Boolean) })} /></label>
-    <label className="text-sm">{t('settings.reviewerRoles')}<input className={`${fieldClass} mt-1`} value={value.reviewerRoles.join(', ')} onChange={e => onChange({ ...value, reviewerRoles: e.target.value.split(/[、,]/).filter(Boolean) })} /></label>
+    <div className="text-sm">{t('settings.riskLevels')}<div className={`${fieldClass} mt-1 bg-slate-50`} title={value.riskLevels.join(', ')}>{riskNames || t('settings.none')}</div></div>
+    <div className="text-sm">{t('settings.reviewerRoles')}<div className={`${fieldClass} mt-1 bg-slate-50`} title={value.reviewerRoles.join(', ')}>{reviewerNames || t('settings.none')}</div></div>
     <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value.enabled} onChange={e => onChange({ ...value, enabled: e.target.checked })} />{t('settings.enableReview')}</label>
     <div className="md:col-span-2"><div className="mb-2 text-sm font-medium">{t('settings.reviewPolicyList')}</div><div className="grid gap-2">{(value.policies || []).map(policy => <label key={policy.id} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3 text-sm"><input type="checkbox" checked={policy.enabled} onChange={e => onChange({ ...value, policies: value.policies.map(row => row.id === policy.id ? { ...row, enabled: e.target.checked } : row) })} />{policy.name}</label>)}</div></div>
-  </div><div className="rounded-xl bg-slate-50 p-4"><div className="font-medium">{t('settings.policySimulation')}</div><label className="mt-3 block text-xs">{t('settings.simulatedAmount')}<input type="number" className={`${fieldClass} mt-1`} value={amount} onChange={e => setAmount(Number(e.target.value))} /></label><div className={`mt-3 rounded-lg p-3 text-sm ${requires ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>{requires ? t('settings.reviewRequired', { roles: value.reviewerRoles.join(' / ') }) : t('settings.standardFlow')}</div></div></div></NotInEffect></section></div>;
+  </div><div className="rounded-xl bg-slate-50 p-4"><div className="font-medium">{t('settings.policySimulation')}</div><label className="mt-3 block text-xs">{t('settings.simulatedAmount')}<input type="number" className={`${fieldClass} mt-1`} value={amount} onChange={e => setAmount(Number(e.target.value))} /></label><div className={`mt-3 rounded-lg p-3 text-sm ${requires ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>{requires ? t('settings.reviewRequired', { roles: reviewerNames }) : t('settings.standardFlow')}</div></div></div></NotInEffect></section></div>;
 }
 
 function Modules({ value, onChange }: { value: SettingsRuntime['modules']; onChange: (v: SettingsRuntime['modules']) => void }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const sorted = [...value.items].sort((a, b) => a.order - b.order);
   const update = (id: string, patch: Partial<(typeof value.items)[number]>) => onChange({ ...value, items: value.items.map(item => item.id === id ? { ...item, ...patch } : item) });
   const move = (index: number, delta: number) => { const next = [...sorted]; const target = index + delta; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target], next[index]]; onChange({ ...value, items: next.map((item, i) => ({ ...item, order: i + 1 })) }); };
   return <div className="grid gap-5 lg:grid-cols-[1fr_260px]"><div className="space-y-2">{sorted.map((item, index) => <div key={item.id} className="grid items-center gap-2 rounded-xl border border-slate-200 p-3 sm:grid-cols-[32px_1fr_160px_110px]">
-    <div className="flex flex-col"><button aria-label={t('settings.moveUp')} onClick={() => move(index, -1)}><ArrowUp size={14} /></button><button aria-label={t('settings.moveDown')} onClick={() => move(index, 1)}><ArrowDown size={14} /></button></div><div><div className="font-medium">{labelFor(t, 'settings.module', item.id, item.label)}</div><input aria-label={t('settings.visibleRoles', { module: labelFor(t, 'settings.module', item.id, item.label) })} className={`${fieldClass} mt-1`} value={item.roles.join(', ')} onChange={e => update(item.id, { roles: splitRoles(e.target.value) })} /></div>
+    <div className="flex flex-col"><button aria-label={t('settings.moveUp')} onClick={() => move(index, -1)}><ArrowUp size={14} /></button><button aria-label={t('settings.moveDown')} onClick={() => move(index, 1)}><ArrowDown size={14} /></button></div><div className="min-w-0"><div className="font-medium" style={{ color: A.label }} data-testid={`settings-module-name-${item.id}`}>{labelFor(t, 'settings.module', item.id, item.label)}</div><div className="mt-1 text-xs" style={{ color: A.sub }} title={item.roles.join(', ')} aria-label={t('settings.visibleRoles', { module: labelFor(t, 'settings.module', item.id, item.label) })}>{t('settings.visibleTo', { roles: roleNames(item.roles, language) || t('settings.none') })}</div></div>
     <label className="text-sm"><input type="radio" name="default-module" checked={value.defaultModule === item.id} onChange={() => onChange({ ...value, defaultModule: item.id })} /> {t('settings.setDefault')}</label>
     <label className="text-sm"><input type="checkbox" checked={item.enabled} disabled={['overview', 'settings'].includes(item.id)} onChange={e => update(item.id, { enabled: e.target.checked })} /> {item.enabled ? t('settings.enabled') : t('settings.disabled')}</label>
   </div>)}</div><div className="rounded-xl bg-slate-900 p-4 text-white"><div className="text-xs text-slate-400">{t('settings.sidebarPreview')}</div><div className="mt-3 space-y-1">{sorted.filter(x => x.enabled).map(x => <div key={x.id} className={`rounded-lg px-3 py-2 text-sm ${x.id === value.defaultModule ? 'bg-blue-600' : 'bg-slate-800'}`}>{labelFor(t, 'settings.module', x.id, x.label)}</div>)}</div></div></div>;
@@ -187,7 +220,7 @@ function AiModelSwitch({ value, onChange }: { value: SettingsRuntime['ai']; onCh
 function AiGovernance({ value, onChange }: { value: SettingsRuntime['ai']; onChange: (v: SettingsRuntime['ai']) => void }) {
   const { t } = useI18n();
   // Option values are the stored level codes; only the labels are translated.
-  return <><div className="space-y-2">{value.capabilities.map(cap => <div key={cap.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-4"><div><div className="font-medium">{labelFor(t, 'settings.capability', cap.id, cap.label)}</div><div className="text-xs text-slate-500">{t('settings.capabilityId')}: {cap.id}</div></div><select className={`${fieldClass} max-w-[220px]`} value={cap.level} onChange={e => onChange({ ...value, capabilities: value.capabilities.map(x => x.id === cap.id ? { ...x, level: e.target.value } : x) })}>{AI_LEVELS.map(level => <option key={level} value={level}>{t(`settings.level.${level}` as TranslationKey)}</option>)}</select></div>)}</div><div className="mt-4 flex flex-wrap gap-6 rounded-xl bg-slate-50 p-4 text-sm"><label><input type="checkbox" checked={value.evidenceRequired} onChange={e => onChange({ ...value, evidenceRequired: e.target.checked })} /> {t('settings.evidenceRequired')}</label><label>{t('settings.retentionDays')} <input type="number" className="ml-2 w-24 rounded border px-2 py-1" value={value.retainDays} onChange={e => onChange({ ...value, retainDays: Number(e.target.value) })} /></label></div></>;
+  return <><div className="space-y-2">{value.capabilities.map(cap => <div key={cap.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-4"><div className="font-medium" title={`${t('settings.capabilityId')}: ${cap.id}`}>{labelFor(t, 'settings.capability', cap.id, cap.label)}</div><select className={`${fieldClass} max-w-[220px]`} value={cap.level} onChange={e => onChange({ ...value, capabilities: value.capabilities.map(x => x.id === cap.id ? { ...x, level: e.target.value } : x) })}>{AI_LEVELS.map(level => <option key={level} value={level}>{t(`settings.level.${level}` as TranslationKey)}</option>)}</select></div>)}</div><div className="mt-4 flex flex-wrap gap-6 rounded-xl bg-slate-50 p-4 text-sm"><label><input type="checkbox" checked={value.evidenceRequired} onChange={e => onChange({ ...value, evidenceRequired: e.target.checked })} /> {t('settings.evidenceRequired')}</label><label>{t('settings.retentionDays')} <input type="number" className="ml-2 w-24 rounded border px-2 py-1" value={value.retainDays} onChange={e => onChange({ ...value, retainDays: Number(e.target.value) })} /></label></div></>;
 }
 
 function Advanced({ value, onChange }: { value: SettingsRuntime['advanced']; onChange: (v: SettingsRuntime['advanced']) => void }) {
@@ -196,11 +229,16 @@ function Advanced({ value, onChange }: { value: SettingsRuntime['advanced']; onC
 }
 
 function Audit() {
-  const { t, locale, timezone } = useI18n();
+  const { t, language, formatDateTime } = useI18n();
+  const english = language === 'en-US';
+  const moduleName = (code: string) => AUDIT_MODULES[code]?.[english ? 0 : 1] || humanizeCode(code);
+  const entityName = (code: string) => AUDIT_ENTITIES[code]?.[english ? 0 : 1] || humanizeCode(code);
+  // An entity id that is itself a code (a skill name) reads as words; a record id stays as recorded.
+  const entityId = (id: string) => /^[a-z]+(?:_[a-z]+)+$/.test(id) ? humanizeCode(id) : id;
   const [entries, setEntries] = useState<SettingsAuditEntry[]>([]); const [query, setQuery] = useState(''); const [module, setModule] = useState(''); const [expanded, setExpanded] = useState<string | null>(null);
   useEffect(() => { fetchSettingsAudit().then(setEntries).catch(() => setEntries([])); }, []);
   const filtered = useMemo(() => entries.filter(e => (!module || e.module === module) && (!query || JSON.stringify(e).toLowerCase().includes(query.toLowerCase()))), [entries, query, module]);
-  return <><div className="mb-4 flex flex-wrap gap-2"><label className="relative min-w-[260px] flex-1"><Search className="absolute left-3 top-2.5 text-slate-400" size={16} /><input aria-label={t('settings.searchAudit')} className={`${fieldClass} pl-9`} value={query} onChange={e => setQuery(e.target.value)} placeholder={t('settings.auditPlaceholder')} /></label><select aria-label={t('settings.moduleFilter')} className={`${fieldClass} w-44`} value={module} onChange={e => setModule(e.target.value)}><option value="">{t('settings.allModules')}</option>{[...new Set(entries.map(e => e.module))].map(x => <option key={x}>{x}</option>)}</select></div><div className="space-y-2">{filtered.map(entry => { const type = entry.entity?.type as BusinessEntityType | undefined; return <div key={entry.id} className="rounded-xl border border-slate-200 p-4"><button className="w-full text-left" onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}><div className="flex flex-wrap justify-between gap-2"><span className="font-medium">{entry.summary || entry.action}</span><time className="text-xs text-slate-500">{new Date(entry.timestamp).toLocaleString(locale, { timeZone: timezone })}</time></div><div className="mt-1 text-xs text-slate-500">{entry.actor?.name || t('settings.systemActor')} · {entry.module} · {entry.entity?.type || 'system'} {entry.entity?.id || ''}</div></button>{expanded === entry.id && <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 md:grid-cols-2"><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.before')}{`\n`}{JSON.stringify(entry.before, null, 2)}</pre><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.after')}{`\n`}{JSON.stringify(entry.after, null, 2)}</pre>{entry.entity?.id && type && type in businessEntityRouteRegistry && <BusinessEntityLink entityType={type} entityId={entry.entity.id}>{t('settings.openEntity')}</BusinessEntityLink>}</div>}</div>; })}{!filtered.length && <div className="py-12 text-center text-sm text-slate-500">{t('settings.noAudit')}</div>}</div></>;
+  return <><div className="mb-4 flex flex-wrap gap-2"><label className="relative min-w-[260px] flex-1"><Search className="absolute left-3 top-2.5 text-slate-400" size={16} /><input aria-label={t('settings.searchAudit')} className={`${fieldClass} pl-9`} value={query} onChange={e => setQuery(e.target.value)} placeholder={t('settings.auditPlaceholder')} /></label><select aria-label={t('settings.moduleFilter')} className={`${fieldClass} w-44`} value={module} onChange={e => setModule(e.target.value)}><option value="">{t('settings.allModules')}</option>{[...new Set(entries.map(e => e.module))].map(x => <option key={x} value={x}>{moduleName(x)}</option>)}</select></div><div className="space-y-2">{filtered.map(entry => { const type = entry.entity?.type as BusinessEntityType | undefined; return <div key={entry.id} className="rounded-xl border border-slate-200 p-4"><button className="w-full text-left" onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}><div className="flex flex-wrap justify-between gap-2"><span className="font-medium" title={entry.action}>{entry.summary ? readableSummary(entry.summary) : humanizeCode(entry.action)}</span><time className="text-xs text-slate-500" dateTime={entry.timestamp}>{entry.timestamp && !Number.isNaN(new Date(entry.timestamp).getTime()) ? formatDateTime(entry.timestamp) : entry.timestamp}</time></div><div className="mt-1 text-xs text-slate-500">{entry.actor?.name || t('settings.systemActor')} · <span title={entry.module}>{moduleName(entry.module)}</span>{entry.entity?.type ? <> · <span title={entry.entity.type}>{entityName(entry.entity.type)}</span> <span title={entry.entity.id || undefined}>{entityId(entry.entity.id || '')}</span></> : null}</div></button>{expanded === entry.id && <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 md:grid-cols-2"><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.before')}{`\n`}{JSON.stringify(entry.before, null, 2)}</pre><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.after')}{`\n`}{JSON.stringify(entry.after, null, 2)}</pre>{entry.entity?.id && type && type in businessEntityRouteRegistry && <BusinessEntityLink entityType={type} entityId={entry.entity.id}>{t('settings.openEntity')}</BusinessEntityLink>}</div>}</div>; })}{!filtered.length && <div className="py-12 text-center text-sm text-slate-500">{t('settings.noAudit')}</div>}</div></>;
 }
 
 export default function SettingsPage({ initialView }: { initialView?: string; onNavigate: NavigateFn }) {

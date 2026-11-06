@@ -52,7 +52,7 @@ const COPY = {
     kind_purchase_order_to_approve: "Purchase order awaiting approval",
     kind_purchase_request_to_approve: "Purchase request awaiting approval",
     kind_purchase_request_to_convert: "Purchase request ready for conversion",
-    kind_draft_purchase_order: "Draft PO awaiting review",
+    kind_draft_purchase_order: "Draft purchase order awaiting review",
     kind_contract_notice_due: "Contract notice due",
     kind_contract_ending: "Contract ending",
     kind_contract_past_end: "Contract past its end date",
@@ -190,7 +190,7 @@ const COPY = {
     kind_purchase_order_to_approve: "采购订单待审批",
     kind_purchase_request_to_approve: "采购申请待审批",
     kind_purchase_request_to_convert: "采购申请待转换",
-    kind_draft_purchase_order: "Draft PO 待复核",
+    kind_draft_purchase_order: "采购订单草稿待复核",
     kind_contract_notice_due: "合同通知截止将至",
     kind_contract_ending: "合同即将到期",
     kind_contract_past_end: "合同已过到期日",
@@ -303,15 +303,26 @@ const EXTRA_STATUS: Record<string, [string, string]> = {
   confirmed: ["Confirmed", "已确认"],
   fulfilled: ["Fulfilled", "已完成"],
   matching: ["Matching", "匹配中"],
-  held: ["On hold", "已暂停"],
+  held: ["Held", "已暂停"],
   paid: ["Paid", "已付款"],
-  void: ["Void", "已作废"],
-  voided: ["Void", "已作废"],
-  export_ready: ["Ready to export", "待导出"],
+  void: ["Voided", "已作废"],
+  voided: ["Voided", "已作废"],
+  export_ready: ["Export ready", "可导出"],
+  settled: ["Paid", "已结清"],
+  partially_settled: ["Partly paid", "部分付款"],
+  recorded: ["Recorded", "已登记"],
+  overdue: ["Overdue", "已逾期"],
+  not_reserved: ["Not reserved", "未预留"],
+  partially_reserved: ["Partially reserved", "部分预留"],
+  fully_reserved: ["Reserved", "已预留"],
+  not_fulfilled: ["Not fulfilled", "未履约"],
+  partially_fulfilled: ["Partially fulfilled", "部分履约"],
+  fully_fulfilled: ["Fulfilled", "已履约"],
 };
 
 // A stored status code as a label. A code no table knows reads as words in
-// English ("ready_to_ship" is "Ready to ship") and stays as stored in Chinese.
+// English ("ready_to_ship" is "Ready to ship") and as "其他状态" in Chinese;
+// the page keeps the stored code in the chip's tooltip.
 export function todayStatusLabel(code: string, language: string) {
   const value = String(code || "").trim();
   if (!value) return "—";
@@ -319,7 +330,8 @@ export function todayStatusLabel(code: string, language: string) {
   if (shared) return shared;
   const extra = EXTRA_STATUS[value];
   if (extra) return extra[language === "en-US" ? 0 : 1];
-  if (language !== "en-US" || !/^[a-z]+(_[a-z]+)*$/.test(value)) return value;
+  if (!/^[a-z]+(_[a-z]+)*$/.test(value)) return value;
+  if (language !== "en-US") return "其他状态";
   const words = value.replace(/_/g, " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 }

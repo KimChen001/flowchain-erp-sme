@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Boxes, ClipboardList, FileText, PackageSearch, ShoppingCart, Truck, Users } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { DocumentNumber } from "../../lib/documentNumbers";
+import { formatCalendarDay } from "../../lib/format";
 import { A, Card, Chip, Field, SectionHeader, inputStyle } from "../../components/ui";
 import EvidenceGraphPanel, { type EvidenceGraphResponse, type EvidenceNavigate } from "../../components/evidence/EvidenceGraphPanel";
 import SalesReturnPage from "./SalesReturnPage";
@@ -162,6 +163,9 @@ export default function SalesDemandPage(props: SalesDemandPageProps) {
 
 function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProps) {
   const { copy, say, customerLabel, itemLabel } = useSalesCopy();
+  const { locale } = useI18n();
+  // A promised date as the workspace shows dates ("Nov 8, 2026"), or "to be confirmed".
+  const promised = (order: SalesOrder) => (order.promisedDate ? formatCalendarDay(order.promisedDate, locale) : copy("待确认"));
   const qty = useQty();
   const [searchParams, setSearchParams] = useSearchParams();
   const view = viewFromInitial(initialView);
@@ -257,7 +261,7 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
       </div>}
 
       {ordersError && <Card className="p-4 text-sm" style={{ color: A.red }}>{copy(ordersError)}</Card>}
-      {loadingOrders && <Card className="p-6 text-sm" style={{ color: A.sub }}>{copy("正在读取客户订单...")}</Card>}
+      {loadingOrders && <Card className="p-6 text-sm" style={{ color: A.sub }}>{copy("正在读取客户订单…")}</Card>}
       {!loadingOrders && !ordersError && orders.length === 0 && (
         <Card className="p-6 text-sm" style={{ color: A.sub }}>{copy("当前工作区暂无客户订单记录。后续可通过订单导入或业务数据接入生成客户订单视图。")}</Card>
       )}
@@ -290,7 +294,7 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
                       <td className="px-3 py-3 tabular-nums" style={{ color: A.label }}>{qty(order.orderedQty)}</td>
                       <td className="px-3 py-3 tabular-nums" style={{ color: A.green }}>{qty(order.reservedQty)}</td>
                       <td className="px-3 py-3 tabular-nums font-semibold" style={{ color: order.shortageQty > 0 ? A.red : A.gray2 }}>{qty(order.shortageQty)}</td>
-                      <td className="px-3 py-3" style={{ color: A.sub }}>{order.promisedDate || copy("待确认")}</td>
+                      <td className="px-3 py-3" style={{ color: A.sub }}>{promised(order)}</td>
                       <td className="px-3 py-3"><Chip label={copy(order.deliveryRiskLabel)} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
                       <td className="px-3 py-3" style={{ color: A.sub }}>{copy(order.statusLabel)}</td>
                       <td className="px-3 py-3">
@@ -344,12 +348,12 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
                       <span style={{ color: A.sub }}> / {qty(order.reservedQty)} / {qty(order.fulfilledQty)}</span>
                     </td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: order.shortageQty > 0 ? A.red : A.gray2 }}>{qty(order.shortageQty)}</td>
-                    <td className={tdNowrapClass}>{order.promisedDate || copy("待确认")}</td>
+                    <td className={tdNowrapClass}>{promised(order)}</td>
                     <td className={tdNowrapClass}><Chip label={copy(order.deliveryRiskLabel)} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
-                    <td className="min-w-[220px] max-w-[300px] px-4 py-3">
-                      <div className="line-clamp-2 text-xs" style={{ color: A.gray1 }}>{copy(order.deliveryRiskReason)}</div>
+                    <td className="min-w-[260px] max-w-[360px] whitespace-normal px-4 py-3 align-top" data-testid={`delivery-risk-reason-${order.salesOrderId}`}>
+                      <div className="text-xs leading-5" style={{ color: A.gray1 }}>{copy(order.deliveryRiskReason)}</div>
                       {order.dataLimitations.length > 0 && (
-                        <div className="mt-1 line-clamp-2 text-[11px]" style={{ color: A.orange }}>{copy("数据限制：")}{order.dataLimitations.map(code => copy(limitationLabel(code))).join("; ")}</div>
+                        <div className="mt-1 text-[11px] leading-4" style={{ color: A.orange }}>{copy("数据限制：")}{order.dataLimitations.map(code => copy(limitationLabel(code))).join(say("; ", "；"))}</div>
                       )}
                     </td>
                     <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>

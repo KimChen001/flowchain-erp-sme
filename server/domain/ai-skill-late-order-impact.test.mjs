@@ -59,7 +59,7 @@ test('the late orders are judged together, in the inventory page\'s terms', asyn
   assert.equal(english.conclusion.title, 'If the 2 late purchase orders do not arrive, LDM-001 falls 7 pcs short of open sales orders')
   assert.match(english.conclusion.summary, /1 open sales order waits on LDM-001: SO-001 for Redwood Retail\. 1 customer is affected: Redwood Retail\./)
   assert.deepEqual(english.figures.map((entry) => [entry.key, entry.value]), [['late_impact_short:LDM-001', 7]])
-  assert.match(present(result, facts, 'zh-CN').conclusion.title, /^如果 2 张逾期采购订单不到货，LDM-001 将比未结销售订单少 7 pcs$/)
+  assert.match(present(result, facts, 'zh-CN').conclusion.title, /^如果 2 张逾期采购订单不到货，LDM-001 将比未结销售订单少 7 件$/)
 })
 
 test('a named order is judged on its own, and says why it is still covered', async () => {

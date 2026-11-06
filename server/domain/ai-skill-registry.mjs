@@ -54,7 +54,7 @@ const entityInput = (modes, lists) => Object.freeze({
 // intent classifier.
 export const AI_SKILL_MODES = Object.freeze({
   purchase_orders: Object.freeze(['single', 'supplier', 'sku', 'overdue', 'not_found', 'hidden', 'ambiguous']),
-  inventory_availability: Object.freeze(['single', 'overview', 'short', 'not_found', 'hidden']),
+  inventory_availability: Object.freeze(['single', 'overview', 'short', 'not_found', 'hidden', 'sales_orders']),
   pending_approvals: Object.freeze(['all', 'not_found']),
   spend_analysis: Object.freeze(['suppliers', 'items', 'trend']),
   supplier_comparison: Object.freeze(['best', 'worst']),

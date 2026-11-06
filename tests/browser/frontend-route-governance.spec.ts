@@ -168,7 +168,7 @@ test("SME navigation, direct access and browser history follow the route manifes
       ).toHaveCount(0);
       await expect(
         page.getByTestId("app-breadcrumb").getByRole("link", {
-          name: "采购管理",
+          name: "采购",
           exact: true,
         }),
       ).toHaveCount(0);
@@ -381,7 +381,7 @@ test("procurement invoice and match records use canonical authoritative read det
     /\/app\/procurement\/three-way-match\/MATCH-LOCAL-DEMO-INV-001/,
   );
   const matchDetail = page.getByTestId("procurement-threeWayMatch-detail");
-  await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
+  await expect(matchDetail).toContainText("三单匹配 · LOCAL-DEMO-INV-001");
   await expect(
     matchDetail.getByRole("link", {
       name: "采购发票 LOCAL-DEMO-INV-001",
@@ -392,7 +392,7 @@ test("procurement invoice and match records use canonical authoritative read det
   await page.goBack();
   await expect(page).toHaveURL(/\/app\/procurement\/three-way-match$/);
   await page.goForward();
-  await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
+  await expect(matchDetail).toContainText("三单匹配 · LOCAL-DEMO-INV-001");
 
   await page.goto("/app/procurement/bills/UNKNOWN-INVOICE");
   await expect(page.getByTestId("supplier-invoice-not-found")).toContainText("UNKNOWN-INVOICE");
@@ -657,8 +657,8 @@ test("RFQ list links to the canonical exact-read detail route", async ({
   await page.getByTestId("rfq-id-link-RFQ-TEST-001").click();
   await expect(page).toHaveURL(/\/app\/procurement\/rfq\/RFQ-TEST-001$/);
   await expect(page.getByTestId("canonical-rfq-detail")).toContainText("Route semantics test");
-  await expect(page.getByTestId("rfq-lines")).toContainText("没有权威行项目");
-  await expect(page.getByTestId("rfq-quotations")).toContainText("没有权威报价记录");
+  await expect(page.getByTestId("rfq-lines")).toContainText("没有行项目");
+  await expect(page.getByTestId("rfq-quotations")).toContainText("没有报价记录");
   expect(detailReads).toBe(1);
   await expect(page.getByTestId("route-not-implemented")).toHaveCount(0);
 });

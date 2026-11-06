@@ -180,11 +180,30 @@ export function getAiInputPlaceholder(activeContext?: ActiveContext | null, lang
   return zh ? "问点什么，或让我帮你做…" : "Ask a question, or tell me what to do…";
 }
 
-// The greeting's name: a Chinese name whole, else the first name.
+// The page's record in the header chip: its number only, a long one by its
+// last two parts ("…PO-001" for "LOCAL-DEMO-PO-001 · Acme Components"); the
+// chip's title has it whole.
+export function aiShortRecordLabel(label?: string | null) {
+  const value = String(label || "").split(" · ")[0].trim();
+  const parts = value.split("-");
+  if (value.length <= 12 || parts.length < 3 || !/\d/.test(parts.at(-1) || "")) return value;
+  return `…${parts.slice(-2).join("-")}`;
+}
+
+// Placeholder and role names a workspace starts with ("Initial Admin", "Admin
+// User"): never greeted by, as "Hi Initial" would be.
+const GENERIC_NAME_WORDS = new Set(["initial", "admin", "administrator", "user", "default", "owner", "manager", "buyer", "viewer", "member", "guest", "system", "workspace", "flowchain"]);
+const GENERIC_CHINESE_NAMES = new Set(["管理员", "初始管理员", "系统管理员", "用户"]);
+
+// The greeting's name: a Chinese name whole, else the first name. No name
+// when the name is a placeholder or a role, so the greeting is just "Hi".
 export function aiGreetingName(name?: string | null) {
   const value = String(name || "").trim();
   if (!value) return "";
-  return /[㐀-鿿]/.test(value) ? value : value.split(/\s+/)[0];
+  if (/[㐀-鿿]/.test(value)) return GENERIC_CHINESE_NAMES.has(value) ? "" : value;
+  const words = value.split(/\s+/);
+  if (words.every((word) => GENERIC_NAME_WORDS.has(word.toLowerCase().replace(/[^a-z]/g, "")))) return "";
+  return GENERIC_NAME_WORDS.has(words[0].toLowerCase()) ? "" : words[0];
 }
 
 // Wide enough to sit beside the page: the panel docks to the right and the
@@ -502,70 +521,26 @@ export function aiRecoveryReason(error: unknown, timedOut: boolean): { reason: A
   return { reason: "network" };
 }
 
+// One line saying why the answer failed; the Retry button sits under it.
 const RECOVERY_COPY = {
   "en-US": {
-    heading: "Assistant · Your workspace data · Review first",
-    conclusion: "Conclusion",
-    evidence: "Where to look",
-    next: "Next step",
-    boundary: "Review boundary",
-    reasons: {
-      signed_out: "Your session has ended. Sign in again, then ask again.",
-      invalid_question: "The question could not be answered as asked.",
-      unavailable: "The assistant could not read your workspace data just now. Nothing was changed.",
-      timeout: "The assistant took too long to answer. Nothing was changed.",
-      network: "The assistant could not be reached. Check your connection. Nothing was changed.",
-    },
-    topics: { receiving: "Receiving exceptions, purchase orders and invoice matching", inventory: "Inventory items, SKU risk and replenishment", po: "Purchase orders, receipts and supplier evidence", other: "Home, inventory and source records" },
-    where: "{topic} can be reviewed from Home, Inventory, Receiving, Purchase orders and Finance.",
-    nextStep: "Retry, or open the related module to review the source records. Drafts always go to human review.",
-    boundaryLine: "Draft preview · Human review · Nothing is submitted, sent, posted or paid",
+    signed_out: "Your session has ended. Sign in again, then ask again.",
+    invalid_question: "The question could not be answered as asked.",
+    unavailable: "The assistant could not read your workspace data just now. Nothing was changed.",
+    timeout: "The assistant took too long to answer. Nothing was changed.",
+    network: "The assistant could not be reached. Check your connection. Nothing was changed.",
   },
   "zh-CN": {
-    heading: "证据辅助回答 · 当前工作区数据 · 复核优先",
-    conclusion: "结论",
-    evidence: "关键证据",
-    next: "建议动作",
-    boundary: "人工复核边界",
-    reasons: {
-      signed_out: "登录已失效，请重新登录后再提问。",
-      invalid_question: "当前问题无法按原样回答。",
-      unavailable: "当前工作区数据暂时未能完整读取，仍可先从相关模块查看来源证据并进入人工复核。",
-      timeout: "AI 助手响应超时，未修改任何数据。",
-      network: "暂时无法连接 AI 助手，请检查网络。未修改任何数据。",
-    },
-    topics: { receiving: "收货异常、采购订单和发票匹配", inventory: "库存项目、SKU 风险和补货建议", po: "采购订单、收货和供应商证据", other: "首页、库存管理和来源证据" },
-    where: "{topic} 可从首页、库存管理、收货记录、采购订单和结算管理继续查看。",
-    nextStep: "打开今日行动或相关模块查看来源证据，必要时预览草稿并交由人工复核。",
-    boundaryLine: "草稿预览 · 人工复核 · 不提交 · 不外发 · 不写库存 · 不写财务凭证 · 不处理资金 · 不改主数据",
+    signed_out: "登录已失效，请重新登录后再提问。",
+    invalid_question: "这个问题无法按原样回答。",
+    unavailable: "暂时无法读取工作区数据，未修改任何内容。",
+    timeout: "AI 助手响应超时，未修改任何内容。",
+    network: "暂时无法连接 AI 助手，请检查网络。未修改任何内容。",
   },
 } as const;
 
-export function displaySafeAssistantRecoveryMessage(prompt: string, language: "en-US" | "zh-CN" = "en-US", failure: { reason: AiRecoveryReason; serverMessage?: string } = { reason: "unavailable" }) {
-  const copy = RECOVERY_COPY[language];
-  const topicKey = /收货|GRN|到货|receiv/i.test(prompt)
-    ? "receiving"
-    : /库存|SKU|补货|可用量|可承诺量|inventory|stock|replenish/i.test(prompt)
-      ? "inventory"
-      : /\bPOs?\b|PO-|采购订单|purchase order/i.test(prompt)
-        ? "po"
-        : "other";
-  const conclusion = failure.reason === "invalid_question" && failure.serverMessage ? failure.serverMessage : copy.reasons[failure.reason];
-  return [
-    copy.heading,
-    "",
-    copy.conclusion,
-    conclusion,
-    "",
-    copy.evidence,
-    copy.where.replace("{topic}", copy.topics[topicKey]),
-    "",
-    copy.next,
-    copy.nextStep,
-    "",
-    copy.boundary,
-    copy.boundaryLine,
-  ].join("\n");
+export function displaySafeAssistantRecoveryMessage(_prompt: string, language: "en-US" | "zh-CN" = "en-US", failure: { reason: AiRecoveryReason; serverMessage?: string } = { reason: "unavailable" }) {
+  return failure.reason === "invalid_question" && failure.serverMessage ? failure.serverMessage : RECOVERY_COPY[language][failure.reason];
 }
 
 function hasRuntimeFollowUpSuggestions(message: AiChatMessage) {
@@ -834,7 +809,7 @@ export default function FloatingAiAssistant({
   const firstQuestion = messages.find((message) => message.role === "user")?.content || "";
   const panelTitle = firstQuestion || (zh ? "FlowChain 助手" : "FlowChain assistant");
   const greetingName = aiGreetingName(userName);
-  const greeting = zh ? (greetingName ? `你好，${greetingName}` : "你好") : (greetingName ? `Hi ${greetingName}` : "Hi there");
+  const greeting = zh ? (greetingName ? `你好，${greetingName}` : "你好") : (greetingName ? `Hi ${greetingName}` : "Hi");
   const lastAssistantIndex = messages.map((message) => message.role).lastIndexOf("assistant");
 
   function startNewConversation() {
@@ -1082,13 +1057,14 @@ export default function FloatingAiAssistant({
           className={`fixed inset-0 z-50 flex flex-col bg-white sm:left-auto sm:w-[440px] sm:shadow-2xl lg:static lg:z-auto lg:h-screen lg:shrink-0 lg:shadow-none ${expanded ? "lg:w-[min(760px,55vw)]" : "lg:w-[440px]"}`}
           style={{ borderLeft: `1px solid ${A.gray4}` }}
         >
-          <header className="flex h-14 shrink-0 items-center gap-1.5 pl-4 pr-2" style={{ borderBottom: `1px solid ${A.gray4}` }}>
+          <header className="flex min-h-14 shrink-0 items-center gap-1.5 py-1.5 pl-4 pr-2" style={{ borderBottom: `1px solid ${A.gray4}` }}>
             <span className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: "#EFF4FF" }}><Sparkles size={15} style={{ color: A.blue }} aria-hidden /></span>
-            <h2 data-testid="ai-assistant-title" className="min-w-0 flex-1 truncate text-[15px] font-semibold" style={{ color: A.label }} title={panelTitle}>{panelTitle}</h2>
+            {/* A long first question wraps to a second line rather than being cut after a word. */}
+            <h2 data-testid="ai-assistant-title" className="line-clamp-2 min-w-0 flex-1 break-words text-[14px] font-semibold leading-5" style={{ color: A.label }} title={panelTitle}>{panelTitle}</h2>
             {/* Shown only when the panel was opened on a record: answers may use it ("this PO"). */}
             {currentContext && pageContextKey ? (
-              <span data-testid="ai-context-chip" title={contextLabel} className="flex min-w-0 max-w-[140px] shrink items-center gap-0.5 rounded-md py-0.5 pl-2 pr-0.5 text-xs font-medium" style={{ background: A.gray5, color: A.gray1 }}>
-                <span className="truncate">{currentContext.entityLabel || currentContext.entityId}</span>
+              <span data-testid="ai-context-chip" title={contextLabel} className="flex min-w-0 max-w-[96px] shrink-0 items-center gap-0.5 rounded-md py-0.5 pl-2 pr-0.5 text-xs font-medium" style={{ background: A.gray5, color: A.gray1 }}>
+                <span className="truncate">{aiShortRecordLabel(currentContext.entityLabel || currentContext.entityId)}</span>
                 <button
                   type="button"
                   data-testid="ai-context-clear"
