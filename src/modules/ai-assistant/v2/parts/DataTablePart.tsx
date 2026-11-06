@@ -111,7 +111,7 @@ export function DataTablePart({ props, language, onNavigate }: { props: TablePro
             <li key={index} data-testid="ai-v2-table-card" className="py-1.5 text-[13px] leading-5" style={{ borderColor: A.gray5 }}>
               <div className="flex flex-wrap items-center gap-x-2 font-medium" style={{ color: A.label }}>{cell(row, lead)}{statuses.map((column) => <span key={column.code}>{cell(row, column)}</span>)}</div>
               {filled.length ? <div style={{ color: A.sub }}>{filled.map((column, position) => (
-                <span key={column.code}>{position ? " · " : ""}<span className={column.kind === "text" || column.kind === "ref" ? "" : "whitespace-nowrap"}>{column.kind === "text" || column.kind === "ref" ? null : <>{label(column.code)} </>}<span className={NUMERIC.includes(column.kind) ? "tabular-nums" : ""} style={{ color: A.label }}>{cell(row, column)}</span></span></span>
+                <span key={column.code}>{position ? " · " : ""}<span className={column.kind === "text" || column.kind === "ref" ? "" : "whitespace-nowrap"}>{column.kind === "text" || column.kind === "ref" || column.code === "days" ? null : <>{label(column.code)} </>}<span className={NUMERIC.includes(column.kind) ? "tabular-nums" : ""} style={{ color: A.label }}>{cell(row, column)}</span></span></span>
               ))}</div> : null}
             </li>
           );

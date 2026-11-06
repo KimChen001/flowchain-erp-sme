@@ -613,10 +613,12 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
           const needBySource = line.needByEdited ? copy.t("ai.v2.form.source.edited")
             : needByMoved || row.needByDate.source === "lead_time" ? (leadDays !== null ? copy.t("ai.v2.form.leadTime", { days: copy.number(leadDays) }) : "")
               : copy.t(`ai.v2.form.source.${row.needByDate.source}`);
+          // Stock figures with the item's unit ("On hand 150 pcs", 现有 150 件).
+          const amount = (value: number) => `${copy.number(value)}${unit ? ` ${unitFor(value)}` : ""}`;
           const facts = [
-            row.onHand !== undefined && row.onHand !== null ? copy.t("ai.v2.form.onHand", { value: copy.number(row.onHand) }) : "",
-            row.safetyStock !== undefined && row.safetyStock !== null ? copy.t("ai.v2.form.safetyStock", { value: copy.number(row.safetyStock) }) : "",
-            row.reorderPoint !== undefined && row.reorderPoint !== null ? copy.t("ai.v2.form.reorderPoint", { value: copy.number(row.reorderPoint) }) : "",
+            row.onHand !== undefined && row.onHand !== null ? copy.t("ai.v2.form.onHand", { value: amount(row.onHand) }) : "",
+            row.safetyStock !== undefined && row.safetyStock !== null ? copy.t("ai.v2.form.safetyStock", { value: amount(row.safetyStock) }) : "",
+            row.reorderPoint !== undefined && row.reorderPoint !== null ? copy.t("ai.v2.form.reorderPoint", { value: amount(row.reorderPoint) }) : "",
             line.origin === "suggested" && row.suggestedQuantity.value !== null ? copy.t("ai.v2.form.suggestedQuantity", { value: `${copy.number(row.suggestedQuantity.value)}${unit ? ` ${unitFor(row.suggestedQuantity.value)}` : ""}` }) : "",
             row.orderByDate ? copy.t("ai.v2.form.orderBy", { date: copy.day(row.orderByDate) }) : "",
           ].filter(Boolean);
