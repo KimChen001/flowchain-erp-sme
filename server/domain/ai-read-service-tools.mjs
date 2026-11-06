@@ -49,9 +49,9 @@ async function paymentTermsOf(context, keys) {
 }
 
 // The user's business context, scoped as the reports scope it, read once per
-// request: the record search and the reorder list read it.
+// request: the record search, the reorder list and the order plan read it.
 const scoped = new WeakMap()
-function scopedBusiness(context) {
+export function scopedBusiness(context) {
   if (!scoped.has(context)) {
     scoped.set(context, (async () => {
       const access = context.routeContext?.reportReadAccess || reportReadAccessFor(context.actor)

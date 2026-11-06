@@ -64,6 +64,11 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   setup_status: { steps: ['id', 'done', 'count'] },
   order_quantity_costs: { options: ['quantity', 'orderValue', 'daysOfDemand', 'ordersPerYear', 'averageCycleStock', 'holdingCostPerYear', 'orderingCostPerYear', 'totalCostPerYear', 'belowSupplierMinimum'], comparisons: ['smaller', 'larger', 'ordersSavedPerYear', 'extraHoldingCostPerYear', 'breakEvenCostPerOrder', 'cheaperAtUserCostPerOrder'] },
   inventory_value: { rows: ['sku', 'itemName', 'onHand', 'unit', 'unitPrice', 'currency', 'value', 'sharePercent', 'cumulativeSharePercent', 'supplier'], totals: ['currency', 'value', 'holdingCostPerYear', 'holdingCostPerMonth', 'holdingCostPerDay'] },
+  optimize_order_plan: {
+    plans: ['plan', 'lines', 'spend', 'holdingCost', 'shortageCost', 'expectedCost', 'costAboveOptimal', 'withinBudget'],
+    items: ['sku', 'itemName', 'unit', 'supplier', 'position', 'openRequests', 'cycleDays', 'expectedDemand', 'minimumOrderQuantity', 'minimumOrderValue', 'unitPrice', 'optimalQuantity', 'reorderListQuantity', 'planQuantity', 'chanceShortNoOrderPercent', 'chanceShortWithOptimalPercent', 'chanceShortWithPlanPercent', 'reason'],
+    'decision.lines': ['sku', 'itemName', 'quantity', 'unit', 'supplier', 'unitPrice', 'orderValue'],
+  },
 })
 
 export function aiReadToolsFor(facts, context = null, { assistantV2 = false } = {}) {

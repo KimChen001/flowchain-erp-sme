@@ -8,7 +8,10 @@ import { readFirstRunSetup } from './first-run-setup.mjs'
 import { listItemSupplierRecords, mapItemSupplierRecord } from './master-data-commands.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
 import { maskReferencePrice, masterDataReadAccessFor } from './master-data-read-access.mjs'
-import { DEMAND_WINDOW_DAYS, boughtInStockUnit, dailyDemand, isActiveItem, itemStockUnit, requestMinimumOf } from './reorder-list.mjs'
+import { DEMAND_WINDOW_DAYS, boughtInStockUnit, dailyDemand, isActiveItem, itemStockUnit, recordedReorderPoint, requestMinimumOf, shippedByWorkspaceDay } from './reorder-list.mjs'
+import { scopedBusiness } from './ai-read-service-tools.mjs'
+import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
+import { REPLENISHMENT_SOLVER_DEFAULTS, ReplenishmentInputError, logReplenishmentCall, planReplenishment } from './replenishment-solver.mjs'
 import { addCalendarDays, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
 import { OPEN_PURCHASE_REQUEST_STATUSES, PURCHASE_SUGGESTION_SOURCES, openRequestQuantity, requestLineCountsFor, suggestNeedByDate, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
 
@@ -195,7 +198,7 @@ function approvedSourcesOf(item, records, suppliersById) {
 // warehouse. One read in the user's workspace.
 async function storedItems({ prisma, tenantId }, itemIds) {
   if (!itemIds.length) return new Map()
-  const items = await prisma.item.findMany({ where: { tenantId, id: { in: itemIds } }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, metadata: true, status: true } })
+  const items = await prisma.item.findMany({ where: { tenantId, id: { in: itemIds } }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, metadata: true, status: true, reorderPoint: true } })
   return new Map(array(items).map((row) => [text(row.id), row]))
 }
 
@@ -249,7 +252,17 @@ async function recordedDemand(context, facts, items) {
     if (!byLine.has(key)) byLine.set(key, [])
     byLine.get(key).push({ itemId: key, unit: line.unit, quantity: Number(line.postedQuantity), postedAt: line.shipment?.postedAt?.toISOString?.() || line.shipment?.postedAt || null })
   }
-  return { scoped: false, byItem: new Map(items.map((item) => [text(item.id), dailyDemand({ lines: byLine.get(text(item.id)) || [], stockUnit: itemStockUnit(item), today: facts.today, timeZone: facts.timezone })])) }
+  // With each item's shipped quantity on each window day, oldest first (the
+  // replenishment-inputs export's series), for the order plan's scenarios.
+  const days = Array.from({ length: DEMAND_WINDOW_DAYS }, (_, index) => addCalendarDays(facts.today, index - DEMAND_WINDOW_DAYS))
+  return {
+    scoped: false,
+    byItem: new Map(items.map((item) => {
+      const itemLines = byLine.get(text(item.id)) || []
+      const { byDay } = shippedByWorkspaceDay({ lines: itemLines, stockUnit: itemStockUnit(item), days, timeZone: facts.timezone })
+      return [text(item.id), { ...dailyDemand({ lines: itemLines, stockUnit: itemStockUnit(item), today: facts.today, timeZone: facts.timezone }), daily: days.map((day) => byDay.get(day)) }]
+    })),
+  }
 }
 
 // What an item needs to cover a period: recorded daily demand over the
@@ -626,4 +639,225 @@ const inventoryValue = defineAiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, orderQuantityCosts, inventoryValue])
+// What to order now across items, solved exactly (replenishment-solver.mjs:
+// the research prototype's SAA MILP on HiGHS), so the model never trades
+// items off against a budget and minimum orders in its head (2026-11-06: on
+// inventory decisions LLMs alone fall short of OR methods; LLM + solver does
+// best). Read-only: placing an order still goes through the confirm cards.
+//
+// Inputs from the records, as the replenishment-inputs export reads them:
+// stock position = on hand - reserved + every open purchase order line, late
+// or not (the reorder list since #249), + open purchase requests (as
+// suggest_purchase_lines counts them); the preferred approved supplier's lead
+// time, minimum order and reference price (items bought in their stock unit,
+// in the workspace currency); the shipped quantity on each of the last 90
+// days. An item without them is listed with the reason, never guessed.
+const PLAN_ITEMS_MAX = 40
+const PLAN_ROWS = 12
+const PLAN_TIME_LIMIT_SECONDS = 10
+const planLine = { type: 'object', properties: { sku: { type: 'string' }, quantity: { type: 'number', minimum: 0, maximum: 10000000 } }, required: ['sku', 'quantity'], additionalProperties: false }
+const percent = (value) => round(value * 100, 1)
+const linesText = (items, quantities) => items.map((item, index) => [item.sku, quantities[index]]).filter(([, quantity]) => quantity > 0).map(([sku, quantity]) => `${sku} ${quantity}`).join(', ')
+
+// The planned items from the records, and the items left out with why.
+async function orderPlanRecords(args, { facts, context }) {
+  const currency = text(facts.currency) || null
+  if (args.supplier && !Array.isArray(facts.suppliers)) return { error: 'suppliers_hidden' }
+  const named = array(args.skus)
+  let rows = named.length ? [] : array(facts.inventory.rows).filter((row) => !row.noStock)
+  for (const sku of named) {
+    const row = stockRow(facts, sku) || array(facts.inventory.masterOnly).find((entry) => fold(entry.sku) === fold(sku))
+    if (!row) return { error: 'not_found', details: [sku] }
+    if (!rows.includes(row)) rows.push(row)
+  }
+  // Lines the user names must be planned too.
+  for (const line of [...array(args.plan), ...array(args.fixedLines), ...array(args.extraDemand)]) {
+    const row = stockRow(facts, line.sku)
+    if (!row) return { error: 'not_found', details: [line.sku] }
+    if (!rows.includes(row)) rows.push(row)
+  }
+  const stored = await storedItems(context, [...new Set(rows.map((row) => text(row.itemId)).filter(Boolean))])
+  const items = [...stored.values()]
+  const [demand, { byItem, prices }, business] = await Promise.all([recordedDemand(context, facts, items), itemSources(context, items), scopedBusiness(context)])
+  if (demand.scoped) return { error: 'warehouse_scope' }
+  if (!prices) return { error: 'prices_hidden' }
+  const allocation = buildRuntimeInventoryAllocation(business.access.collections.inventoryItems ? business.allocationContext : business.business)
+  const stockBySku = new Map(array(allocation.availability).map((row) => [fold(row.sku), row]))
+  // Incoming counts for every inventory reader, as on the reorder list; the
+  // order numbers and supplier names only for those who may read them.
+  const ordersVisible = Boolean(business.access.collections.purchaseOrders)
+  const suppliersVisible = Array.isArray(facts.suppliers)
+  const planned = []
+  const left = []
+  for (const row of rows) {
+    const item = stored.get(text(row.itemId))
+    const stock = stockBySku.get(fold(row.sku))
+    const source = item ? preferredSource(byItem.get(text(item.id)) || []) : null
+    const history = item ? demand.byItem.get(text(item.id)) : null
+    const unitPrice = item ? unitPriceOf(item, source, prices) : null
+    const reason = !item ? 'no_item_record' : !isActiveItem(item) ? 'item_inactive'
+      : !itemStockUnit(item) ? 'no_stock_unit'
+        : !boughtInStockUnit(item, itemStockUnit(item)) ? 'bought_in_another_unit'
+          : !stock || row.noStock ? 'no_stock_position'
+            : !source ? 'no_approved_supplier'
+              : !Number.isInteger(source.leadTimeDays) ? 'no_lead_time'
+                : unitPrice === null || !(unitPrice > 0) ? 'no_reference_price'
+                  : currency && source.currency && fold(source.currency) !== fold(currency) ? 'price_in_another_currency'
+                    : history?.averageDailyDemand === null || history?.averageDailyDemand === undefined ? 'not_enough_shipment_history' : null
+    if (args.supplier && (!source || (!fold(source.name).includes(fold(args.supplier)) && fold(source.id) !== fold(args.supplier)))) continue
+    if (reason) { left.push({ sku: row.sku, reason }); continue }
+    planned.push({
+      row, item, source,
+      input: {
+        sku: row.sku, name: row.itemName || item.name || null, unit: itemStockUnit(item), supplier: suppliersVisible ? source.name : null,
+        unitPrice, moq: requestMinimumOf(item, source, itemStockUnit(item)), leadTimeDays: source.leadTimeDays,
+        onHand: Number(stock.onHand) || 0, reserved: Number(stock.reserved) || 0, openRequests: openRequestsOf(facts, row),
+        openLines: array(stock.incomingLines).map((line) => ({ remaining: Number(line.remaining) || 0, dueInDays: line.dueDay ? Math.round((Date.parse(`${line.dueDay}T12:00:00Z`) - Date.parse(`${facts.today}T12:00:00Z`)) / 86400000) : null, reference: ordersVisible ? text(line.orderNumber) || null : null })),
+        dailyDemand: history.daily,
+        reorderPoint: recordedReorderPoint(item),
+        // Days of cover, to keep the items that run out first when there are many.
+        cover: ((Number(stock.onHand) || 0) - (Number(stock.reserved) || 0) + array(stock.incomingLines).reduce((sum, line) => sum + (Number(line.remaining) || 0), 0)) / history.averageDailyDemand,
+      },
+    })
+  }
+  if (args.supplier && !planned.length && !left.length) return { error: 'supplier_not_found' }
+  const wanted = new Set([...array(args.plan), ...array(args.fixedLines), ...array(args.extraDemand)].map((line) => fold(line.sku)))
+  const unplanned = left.filter((entry) => wanted.has(fold(entry.sku)))
+  if (unplanned.length) return { error: 'cannot_plan_item', details: unplanned.map((entry) => `${entry.sku}: ${entry.reason}`) }
+  planned.sort((a, b) => Number(wanted.has(fold(b.input.sku))) - Number(wanted.has(fold(a.input.sku))) || a.input.cover - b.input.cover)
+  return { currency, planned: planned.slice(0, PLAN_ITEMS_MAX), left, overLimit: Math.max(0, planned.length - PLAN_ITEMS_MAX) }
+}
+
+const optimizeOrderPlan = defineAiTool({
+  name: 'optimize_order_plan',
+  description: 'The cheapest order to place now across items, solved exactly (a mixed-integer program, HiGHS) from the records: each item\'s stock position (on hand - reserved + every open purchase order line and open purchase request), the preferred supplier\'s lead time, minimum order and reference price, and the last 90 days of shipments as 200 demand scenarios. It weighs the cost of holding stock against running short over each item\'s lead time plus the review days, within the budget and the minimum orders, and costs the plan beside ordering nothing, the reorder list\'s quantities and a plan the user proposes. Use it for what to order now (with or without a budget), for what-ifs, and to judge an order someone proposes. Read-only.',
+  parameters: {
+    budget: { type: 'number', minimum: 0, maximum: 100000000, description: 'The most to spend on this order, in the workspace currency, when the user gives one.' },
+    plan: { type: 'array', items: planLine, maxItems: AI_TOOL_LIMITS.items, description: 'An order the user proposes or asks about, to cost beside the best one (e.g. [{ sku: "LDM-002", quantity: 50 }]).' },
+    fixedLines: { type: 'array', items: planLine, maxItems: AI_TOOL_LIMITS.items, description: 'Lines the user will order anyway; the rest is planned around them.' },
+    exclude: { type: 'array', items: { type: 'string' }, maxItems: AI_TOOL_LIMITS.items, description: 'SKUs not to order now.' },
+    extraDemand: { type: 'array', items: planLine, maxItems: AI_TOOL_LIMITS.items, description: 'Demand the history does not show (a known extra order), added to each item\'s cycle.' },
+    skus: { type: 'array', items: { type: 'string' }, maxItems: AI_TOOL_LIMITS.items, description: 'Only these items; all stocked items by default.' },
+    supplier: { type: 'string', description: 'Only items whose preferred supplier this is.' },
+    serviceLevelPercent: { type: 'number', minimum: 50, maximum: 99.9, description: 'When the user gives one: the share of cycles that should end without running short. Without it, running short costs 5 times holding (about 83%).' },
+    holdingRatePercent: holdingRateParam,
+    reviewDays: { type: 'integer', minimum: 1, maximum: 60, description: `Days until the next chance to order, ${REPLENISHMENT_SOLVER_DEFAULTS.reviewDays} by default.` },
+  },
+  available: (facts, context) => Boolean(facts.inventory) && Boolean(context?.actor && context.prisma),
+  assistantV2Only: true,
+  async run(args, { facts, context }) {
+    const records = await orderPlanRecords(args, { facts, context })
+    if (records.error) return records
+    if (!records.planned.length) return { error: 'nothing_to_plan', details: records.left.slice(0, 10).map((entry) => `${entry.sku}: ${entry.reason}`) }
+    const items = records.planned.map((entry) => ({ ...entry.input, extraDemand: array(args.extraDemand).filter((line) => fold(line.sku) === fold(entry.input.sku)).reduce((sum, line) => sum + line.quantity, 0) }))
+    const skuOf = (sku) => items.find((item) => fold(item.sku) === fold(sku))?.sku || sku
+    const linesOf = (lines) => Object.fromEntries(array(lines).map((line) => [skuOf(line.sku), line.quantity]))
+    const options = {
+      budget: args.budget ?? null, holdingRatePercent: args.holdingRatePercent, serviceLevelPercent: args.serviceLevelPercent, reviewDays: args.reviewDays,
+      fixed: linesOf(args.fixedLines), exclude: array(args.exclude).filter((sku) => items.some((item) => fold(item.sku) === fold(sku))).map(skuOf),
+      candidates: array(args.plan).length ? [{ id: 'your_plan', quantities: linesOf(args.plan) }] : [],
+      timeLimitSeconds: PLAN_TIME_LIMIT_SECONDS,
+    }
+    const input = { today: facts.today, currency: records.currency, items: items.map(({ cover, ...item }) => item) }
+    let result
+    try {
+      result = await planReplenishment(input, options)
+    } catch (error) {
+      if (error instanceof ReplenishmentInputError) return { error: 'invalid_plan', details: [error.message] }
+      throw error
+    }
+    logReplenishmentCall({ caller: 'assistant_v2', tenantId: context.tenantId, args, input, options, result }, { path: (context.routeContext?.env || process.env).FLOWCHAIN_REPLENISHMENT_SOLVER_LOG })
+    return orderPlanResult(result, { facts, records, items, args })
+  },
+})
+
+// The solver's answer as the assistant reads it: the decision first, then the
+// plans side by side and the items, every figure rounded as the app shows it.
+function orderPlanResult(result, { facts, records, items, args }) {
+  const plan = (id) => result.plans.find((entry) => entry.id === id) || null
+  const cost = (entry) => (entry.heldOut || entry.inSample)
+  const optimal = plan('optimal')
+  const reorder = plan('reorder_list')
+  const yours = plan('your_plan')
+  const noOrder = plan('no_order')
+  const free = result.binding?.budget?.withoutBudget
+  const planRow = (id, entry) => entry && ({
+    plan: id,
+    lines: linesText(items, entry.quantities),
+    spend: round(entry.spend),
+    holdingCost: round(cost(entry).holding),
+    shortageCost: round(cost(entry).shortage),
+    expectedCost: round(cost(entry).total),
+    costAboveOptimal: entry.costAboveOptimal === null ? null : round(entry.costAboveOptimal),
+    withinBudget: entry.withinBudget,
+    issues: entry.issues.map((issue) => (issue.sku ? `${issue.sku} ${issue.code}` : issue.code)),
+  })
+  const rows = [
+    planRow('optimal', optimal),
+    ...(free ? [planRow('without_budget_limit', { ...free, withinBudget: false, issues: [], costAboveOptimal: free.heldOut && optimal ? free.heldOut.total - optimal.heldOut.total : null })] : []),
+    planRow('no_order', noOrder),
+    planRow('reorder_list', reorder),
+    planRow('your_plan', yours),
+  ].filter(Boolean)
+  const outcome = (entry, index) => entry?.perItem[index] || null
+  const itemRows = result.items.map((item, index) => {
+    const entry = records.planned[index]
+    return {
+      sku: item.sku, itemName: item.name, unit: item.unit, supplier: item.supplier,
+      position: item.position, openRequests: item.openRequests, cycleDays: item.cycleDays, expectedDemand: round(item.meanCycleDemand, 1),
+      minimumOrderQuantity: item.minimumOrder || null, unitPrice: item.unitPrice, minimumOrderValue: item.minimumOrder ? round(item.minimumOrder * item.unitPrice) : null,
+      optimalQuantity: item.optimalQuantity,
+      reorderListQuantity: reorder ? reorder.quantities[index] : null,
+      ...(yours ? { planQuantity: yours.quantities[index] } : {}),
+      chanceShortNoOrderPercent: percent(outcome(noOrder, index).chanceShort),
+      chanceShortWithOptimalPercent: optimal ? percent(outcome(optimal, index).chanceShort) : null,
+      ...(yours ? { chanceShortWithPlanPercent: percent(outcome(yours, index).chanceShort) } : {}),
+      reason: item.reason,
+      ...(item.openLinesDueAfterCycle.length ? { openLinesDueAfterCycle: item.openLinesDueAfterCycle.map((line) => ({ orderNumber: line.reference || null, remaining: line.remaining, dueInDays: line.dueInDays })) } : {}),
+      ref: aiToolRef('item', entry.row.itemId || item.sku, item.sku),
+    }
+  })
+  const interesting = (row) => row.optimalQuantity > 0 || row.reorderListQuantity > 0 || row.planQuantity > 0
+  itemRows.sort((a, b) => Number(interesting(b)) - Number(interesting(a)) || b.chanceShortNoOrderPercent - a.chanceShortNoOrderPercent)
+  const p = result.parameters
+  const budget = result.binding?.budget
+  return {
+    asOf: facts.asOf,
+    today: facts.today,
+    currency: records.currency,
+    status: result.status,
+    ...(result.reason ? { reason: result.reason, reasonItems: result.reasonItems || [] } : {}),
+    decision: optimal ? {
+      lines: result.items.map((item, index) => ({ item, index })).filter(({ index }) => optimal.quantities[index] > 0).map(({ item, index }) => ({
+        sku: item.sku, itemName: item.name, quantity: optimal.quantities[index], unit: item.unit, supplier: item.supplier, unitPrice: item.unitPrice, orderValue: round(optimal.quantities[index] * item.unitPrice),
+        raisedToMinimumOrder: item.reason === 'raised_to_minimum_order',
+      })),
+      spend: round(optimal.spend),
+      expectedCost: round(cost(optimal).total),
+      savingVsNoOrder: round(cost(noOrder).total - cost(optimal).total),
+      ...(reorder ? { savingVsReorderList: round(cost(reorder).total - cost(optimal).total) } : {}),
+      ...(yours ? { savingVsYourPlan: round(cost(yours).total - cost(optimal).total) } : {}),
+    } : null,
+    budget: budget ? { amount: round(budget.amount), spend: round(budget.spend), left: round(budget.left), binds: budget.binds, ...(free ? { spendWithoutLimit: round(free.spend), costWithoutLimit: round(cost(free).total), costSavedWithoutLimit: round(cost(optimal).total - cost(free).total) } : {}) } : null,
+    minimumOrders: result.binding ? { raised: result.binding.raisedToMinimumOrder, skippedAsTooCostly: result.binding.skippedForMinimumOrder } : null,
+    plans: rows,
+    items: itemRows.slice(0, PLAN_ROWS),
+    moreItems: Math.max(0, itemRows.length - PLAN_ROWS),
+    assumptions: {
+      holdingRatePercent: p.holdingRatePercent, holdingRateSource: p.sources.holdingRate,
+      shortageCostMultiple: round(p.shortageCostMultiple, 2), serviceLevelPercent: round(p.serviceLevelPercent, 1), shortageCostSource: p.sources.shortageCost,
+      reviewDays: p.reviewDays, reviewDaysSource: p.sources.reviewDays,
+      budgetSource: p.sources.budget,
+    },
+    method: {
+      solver: 'HiGHS mixed-integer program', solverStatus: result.solver?.status ?? null, gapPercent: result.solver?.mipGap === null || result.solver?.mipGap === undefined ? null : round(result.solver.mipGap * 100, 4),
+      scenarios: p.samples, costSamples: p.heldOutSamples, demandWindowDays: result.historyDays,
+      expectedCostMeans: 'holding cost of stock left at the end of each item\'s lead time plus review days, plus a shortage cost for each unit short, at the assumed rates: a planning figure, not cash. Spend is cash.',
+    },
+    notPlanned: records.left.slice(0, 10),
+    notPlannedCount: records.left.length + records.overLimit,
+    ...(args.supplier ? { supplier: args.supplier } : {}),
+  }
+}
+
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, orderQuantityCosts, inventoryValue, optimizeOrderPlan])

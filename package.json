@@ -203,6 +203,7 @@
     "csv-parse": "7.0.2",
     "echarts": "6.1.0",
     "embla-carousel-react": "8.6.0",
+    "highs": "1.15.4",
     "iconv-lite": "^0.7.3",
     "input-otp": "1.4.2",
     "lucide-react": "0.487.0",

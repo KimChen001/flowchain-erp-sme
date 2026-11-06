@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs'
 import { RECORD_ACTION_RULES, recordActionsNow } from '../../shared/assistant-record-actions.mjs'
 import { PR_TRANSITIONS } from './procurement-workflow.mjs'
 import { PURCHASE_ORDER_COMMANDS } from './procurement-db-command-service.mjs'
+import { latestOrderPlan } from './ai-assistant-v2.mjs'
 
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
 // order of 100 and a reference price of 95 USD. With a reorder point of 200
@@ -372,6 +373,31 @@ test('suggest_purchase_request ticks a named item and keeps the user\'s own valu
   await unnamed.call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
   const plain = assertPart(unnamed.build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 150 }] }), 'pr_form')
   assert.deepEqual([plain.lines.length, plain.suggested[0].checked, plain.suggested[0].suggestedQuantity.value], [0, false, 100])
+})
+
+// The solver's decision goes into the form as the server's suggestion: the
+// form shows it as the best plan's quantity, ticked once the user agrees, and
+// the open orders the plan already counted do not mark it covered.
+test('suggest_purchase_request carries the latest optimize_order_plan decision\'s quantity as the best plan\'s', async () => {
+  const shipping = (data) => {
+    data.shipmentLines = Array.from({ length: 18 }, (_, index) => ({ itemId: 'ITEM-001', unit: 'pcs', postedQuantity: 50, shipment: { postedAt: new Date(`2026-09-${String(index + 1).padStart(2, '0')}T16:00:00Z`) } }))
+  }
+  // The recorded reorder point (40) is covered by the open orders and PR-001.
+  const agreeable = (sku) => String(sku).toLowerCase() === 'ldm-001'
+  const { ctx, call, build } = await workspace({ change: shipping, actor: (actor) => { actor.allWarehouses = true }, agreeable, lastFormSkus: ['ldm-001'] })
+  const plan = await call('toolu_plan', 'optimize_order_plan')
+  const quantity = plan.decision.lines[0].quantity
+  await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  ctx.orderPlan = latestOrderPlan(ctx.results)
+  assert.deepEqual([...ctx.orderPlan], [['ldm-001', quantity]])
+  const offered = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'suggestions', lines: [{ sku: 'LDM-001', quantity }] }), 'pr_form')
+  assert.deepEqual([offered.suggested[0].suggestedQuantity, offered.suggested[0].checked, offered.suggested[0].covered], [{ value: quantity, source: 'order_plan' }, false, null])
+  const agreed = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'agreed', lines: [{ sku: 'LDM-001', quantity }] }), 'pr_form')
+  assert.deepEqual([agreed.lines[0].suggestedQuantity.source, agreed.lines[0].checked], ['order_plan', true])
+  // Any other quantity the model passes is not the plan's: the server's suggestion stands.
+  const other = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'suggestions', lines: [{ sku: 'LDM-001', quantity: quantity + 1 }] }), 'pr_form')
+  assert.notEqual(other.suggested[0].suggestedQuantity.source, 'order_plan')
+  assert.ok(other.suggested[0].covered)
 })
 
 // "Yes, all of them" after a form (2026-11-04): the items the user agreed to

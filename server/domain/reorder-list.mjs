@@ -114,6 +114,27 @@ export function dailyDemand({ lines = [], stockUnit = '', today, timeZone = DEFA
   }
 }
 
+// Shipped quantity per workspace day (days: the window's days, oldest
+// first), from posted shipment
+// lines ({ unit, quantity, postedAt }), added as the reorder list's daily
+// demand adds it: a line in another unit than the stock unit is counted apart
+// and never added, and without a stock unit, lines in more than one unit are
+// not added to each other at all (unitsMixed lists their units).
+export function shippedByWorkspaceDay({ lines = [], stockUnit = '', days = [], timeZone = DEFAULT_TENANT_TIMEZONE }) {
+  const byDay = new Map(days.map((day) => [day, 0]))
+  const inWindow = lines.filter((line) => byDay.has(instantCalendarDay(line.postedAt, timeZone)))
+  const lineUnits = [...new Map(inWindow.filter((line) => text(line.unit)).map((line) => [text(line.unit).toLowerCase(), text(line.unit)])).values()]
+  const unitsMixed = !text(stockUnit) && lineUnits.length > 1 ? lineUnits : []
+  let otherUnitLines = 0
+  for (const line of inWindow) {
+    if (text(line.unit) && text(stockUnit) && !sameUnit(text(line.unit), text(stockUnit))) { otherUnitLines += 1; continue }
+    if (unitsMixed.length) continue
+    const day = instantCalendarDay(line.postedAt, timeZone)
+    byDay.set(day, Math.round((byDay.get(day) + Number(line.quantity)) * SCALE) / SCALE)
+  }
+  return { byDay, otherUnitLines, unitsMixed }
+}
+
 // The order-by day for a position and reorder point (whole ten-thousandths).
 // floor((position - reorder point) / (shipped / 90)) is computed as
 // floor((position - reorder point) * 90 / shipped), so no rounded rate moves it.
