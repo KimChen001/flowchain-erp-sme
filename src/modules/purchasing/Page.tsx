@@ -884,6 +884,9 @@ export default function PurchasingOrdersPage({
     return copy(id);
   };
   // "LOCAL-DEMO-INV-001 · Line 1" for a supplier invoice line id.
+  // A line id for a tooltip: none for the "no receipt / invoice yet"
+  // placeholders (尚未收货, 尚未开票, 待补齐), which are markers, not ids.
+  const lineIdTitle = (id: string) => (!id || /尚未|待补齐/.test(id) ? undefined : id);
   const invoiceLineLabel = (id: string) => {
     for (const invoice of invoiceRecords) {
       const position = invoice.lines.findIndex((line) => line.lineId === id);
@@ -1088,7 +1091,7 @@ export default function PurchasingOrdersPage({
     const grnColumns: EvidenceColumn<GrnEvidenceRow>[] = [
       { key: "grn", label: say("Receipt", "收货单"), width: 180, render: (row) => <>
         <button type="button" className={`${tableLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openReceipt(row.grn)}>{row.grn}</button>
-        <Sub><span className="whitespace-nowrap" title={row.grnLineId}>{lineName(row.grnLineNumber)}</span></Sub>
+        <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.grnLineId)}>{lineName(row.grnLineNumber)}</span></Sub>
       </> },
       { key: "poLine", label: say("PO line", "采购订单行"), width: 230, render: (row) => <>
         <div className="whitespace-nowrap">{lineLabel(row.poLineId)}</div>
@@ -1109,7 +1112,7 @@ export default function PurchasingOrdersPage({
         {row.note === REJECTED_RECEIPT_NOTE ? <Sub>{copy(row.note)}</Sub> : null}
       </> },
       { key: "invoiceLine", label: say("Invoice line", "发票行"), width: 180, render: (row) => <>
-        <div className="break-words" title={row.invoiceLine}>{invoiceLineLabel(row.invoiceLine)}</div>
+        <div className="break-words" title={lineIdTitle(row.invoiceLine)}>{invoiceLineLabel(row.invoiceLine)}</div>
         <Sub>{row.invoiceImpact === "影响发票匹配" ? say("Counted in the invoice match", "已计入发票匹配") : copy(row.invoiceImpact)}</Sub>
       </> },
     ];
@@ -1118,12 +1121,12 @@ export default function PurchasingOrdersPage({
         {canOpenInvoice
           ? <button type="button" className={`${tableLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openInvoice(row.invoiceNumber)}>{row.invoiceNumber}</button>
           : <span className="whitespace-nowrap font-medium" style={{ color: A.blue }}>{row.invoiceNumber}</span>}
-        <Sub><span className="whitespace-nowrap" title={row.invoiceLineId}>{lineName(row.invoiceLineNumber)}</span></Sub>
+        <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.invoiceLineId)}>{lineName(row.invoiceLineNumber)}</span></Sub>
       </> },
       { key: "poLine", label: say("PO line", "采购订单行"), width: 230, render: (row) => <>
         <div className="whitespace-nowrap">{lineLabel(row.poLineId)}</div>
         <Sub>{copy(row.sku)}</Sub>
-        <Sub><span className="whitespace-nowrap" title={row.grnLineId}>{say("Receipt: ", "收货：")}{receiptLineLabel(row.grnLineId)}</span></Sub>
+        <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.grnLineId)}>{say("Receipt: ", "收货：")}{receiptLineLabel(row.grnLineId)}</span></Sub>
       </> },
       { key: "quantity", label: copy("开票数量"), width: 120, align: "right", render: (row) => <>
         <div className="whitespace-nowrap">{formatNumber(row.quantity)} {copy(row.unit)}</div>
@@ -1151,8 +1154,8 @@ export default function PurchasingOrdersPage({
     const matchColumns: EvidenceColumn<MatchEvidenceRow>[] = [
       { key: "poLine", label: say("PO line", "采购订单行"), width: 220, render: (row) => <>
         <div className="whitespace-nowrap">{lineLabel(row.poLineId)}</div>
-        <Sub><span className="whitespace-nowrap" title={row.grnLineId}>{say("Receipt: ", "收货：")}{receiptLineLabel(row.grnLineId)}</span></Sub>
-        <Sub><span className="whitespace-nowrap" title={row.invoiceLineId}>{say("Invoice: ", "发票：")}{invoiceLineLabel(row.invoiceLineId)}{row.moreInvoiceLines ? say(` +${formatNumber(row.moreInvoiceLines)} more`, ` 等 ${formatNumber(row.moreInvoiceLines + 1)} 行`) : ""}</span></Sub>
+        <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.grnLineId)}>{say("Receipt: ", "收货：")}{receiptLineLabel(row.grnLineId)}</span></Sub>
+        <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.invoiceLineId)}>{say("Invoice: ", "发票：")}{invoiceLineLabel(row.invoiceLineId)}{row.moreInvoiceLines ? say(` +${formatNumber(row.moreInvoiceLines)} more`, ` 等 ${formatNumber(row.moreInvoiceLines + 1)} 行`) : ""}</span></Sub>
       </> },
       { key: "poQty", label: copy("订购数量"), width: 80, align: "right", render: (row) => formatNumber(row.poQty) },
       { key: "receivedQty", label: copy("已收数量"), width: 110, align: "right", render: (row) => <>
