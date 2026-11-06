@@ -167,15 +167,15 @@ export default function ItemSupplierPricesPage() {
           </div>
         ) : (
           <div className={tableScrollClass}>
-            <table className={`w-full min-w-[1180px] text-left ${tableBodyTextClass}`} data-testid="item-supplier-prices-table">
+            <table className={`w-full min-w-[1040px] text-left ${tableBodyTextClass}`} data-testid="item-supplier-prices-table">
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
                   <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>SKU</th>
-                  {["Item name", "Supplier", "Supplier SKU"].map((label) => <th key={label} className={thClass} style={{ color: A.gray1 }}>{copy(label)}</th>)}
+                  {["Supplier", "Supplier SKU"].map((label) => <th key={label} className={thClass} style={{ color: A.gray1 }}>{copy(label)}</th>)}
                   <th className={thRightClass} style={{ color: A.gray1 }}>{copy("Reference price")}</th>
                   <th className={thClass} style={{ color: A.gray1 }}>{copy("Currency")}</th>
                   {["MOQ", "Lead time"].map((label) => <th key={label} className={thRightClass} style={{ color: A.gray1 }}>{copy(label)}</th>)}
-                  {["Preferred", "Approved", "Status"].map((label) => <th key={label} className={thClass} style={{ color: A.gray1 }}>{copy(label)}</th>)}
+                  {["Sourcing", "Status"].map((label) => <th key={label} className={thClass} style={{ color: A.gray1 }}>{copy(label)}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -183,8 +183,8 @@ export default function ItemSupplierPricesPage() {
                   <tr key={row.relationshipId} data-testid="item-supplier-price-row" className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < rows.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
                     <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                       <EntityLink kind="item" id={row.itemId} className={tableLinkClass}>{row.item.sku}</EntityLink>
+                      <div className="max-w-[200px] truncate text-[11px] font-normal" style={{ color: A.sub }} title={row.item.itemName}>{row.item.itemName || NOT_PROVIDED}</div>
                     </td>
-                    <td className={`${tdNameClass} max-w-[240px] truncate font-medium`} style={{ color: A.label }} title={row.item.itemName}>{row.item.itemName || NOT_PROVIDED}</td>
                     <td className={`${tdNameClass} max-w-[220px]`} title={row.supplier.supplierName}>
                       <EntityLink kind="supplier" id={row.supplierId} className={tableLinkClass}>{row.supplier.supplierName}</EntityLink>
                       <div className="text-[11px]" style={{ color: A.sub }}>{row.supplier.supplierCode}</div>
@@ -194,9 +194,13 @@ export default function ItemSupplierPricesPage() {
                     <td className={tdNowrapClass}>{row.currency || NOT_PROVIDED}</td>
                     <td className={tdNumericRightClass}>{row.minimumOrderQuantity === null ? muted(copy("Not recorded")) : number(row.minimumOrderQuantity)}</td>
                     <td className={tdNumericRightClass}>{row.leadTimeDays === null ? muted(copy("Not recorded")) : copy("{count} days", { count: number(row.leadTimeDays) })}</td>
-                    <td className={tdNowrapClass}>{row.preferred ? <Chip label={copy("Preferred")} color={A.blue} bg="#f0f6ff" /> : <span style={{ color: A.gray2 }}>{NOT_PROVIDED}</span>}</td>
-                    <td className={tdNowrapClass}>{row.approved ? <Chip label={copy("Approved")} color={A.green} bg="#f0faf4" /> : <Chip label={copy("Not approved")} color={A.orange} bg="#fff8f0" />}</td>
-                    <td className={tdNowrapClass}>{row.active ? <Chip label={copy("Active")} color={A.green} bg="#f0faf4" /> : <Chip label={copy("Inactive")} color={A.gray1} bg={A.gray6} />}</td>
+                    <td className={tdNowrapClass}>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {row.preferred && <Chip label={copy("Preferred")} color={A.blue} bg="#f0f6ff" />}
+                        {row.approved ? <Chip label={copy("Approved")} color="#0f766e" bg="#f0fdfa" /> : <Chip label={copy("Not approved")} color="#b45309" bg="#fffbeb" />}
+                      </div>
+                    </td>
+                    <td className={tdNowrapClass}>{row.active ? <Chip label={copy("Active")} color="#0f766e" bg="#f0fdfa" /> : <Chip label={copy("Inactive")} color={A.gray1} bg={A.gray6} />}</td>
                   </tr>
                 ))}
               </tbody>

@@ -150,11 +150,12 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   );
   // Movements are listed by type, not id: the seeded opening balance
   // ("期初余额") is outside the order filter and reappears once it is cleared.
-  await expect(page.getByText("期初余额", { exact: true })).toHaveCount(0);
+  // Read in the table: the movement type filter lists the same names.
+  await expect(page.getByRole("table").getByText("期初余额", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "清除筛选" }).click();
   await expect(page).not.toHaveURL(/relatedSalesOrderId=/);
   await expect(
-    page.getByText("期初余额", { exact: true }).first(),
+    page.getByRole("table").getByText("期初余额", { exact: true }).first(),
   ).toBeVisible();
 
   await page.goto(orderUrl);

@@ -81,7 +81,7 @@ const zh: Record<string, string> = {
   "Item": "物料", "All items": "全部物料", "Filter by item": "按物料筛选",
   "Supplier price list": "供应商价格列表", "{total} links, {shown} shown": "共 {total} 条供应关系，当前显示 {shown} 条",
   "1 link, {shown} shown": "共 1 条供应关系，当前显示 {shown} 条",
-  "Supplier SKU": "供应商料号", "Reference price": "参考价格", "Preferred": "首选", "Approved": "已批准", "Not approved": "未批准",
+  "Supplier SKU": "供应商料号", "Reference price": "参考价格", "Preferred": "首选", "Approved": "已批准", "Not approved": "未批准", "Sourcing": "供货资质",
   "Hidden for your role": "你的角色不可见", "Not recorded": "未记录", "Reference prices are hidden for your role.": "你的角色看不到参考价格。",
   "Load {count} more": "再加载 {count} 条", "No supplier prices yet": "暂无供应商价格",
   "Link items to a supplier under Supplied items on the supplier's page, or import a file of item–supplier links.": "在供应商页的“可供应物料”中关联物料，或导入物料–供应商关系文件。",

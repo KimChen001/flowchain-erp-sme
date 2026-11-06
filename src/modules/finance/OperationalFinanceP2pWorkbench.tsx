@@ -173,6 +173,20 @@ const LIST_COPY = {
   view: ["View", "查看"],
   actions: ["Actions", "操作"],
   noMatch: ["No supplier invoices match these filters", "没有符合筛选条件的采购发票"],
+  noRows: ["Nothing matches these filters", "没有符合筛选条件的记录"],
+  payableSearch: ["Payable search", "应付查询"],
+  payableSearchSubtitle: ["Approved supplier invoices to pay, by number, supplier and status.", "按单号、供应商和状态查询待付款的已批准采购发票。"],
+  creditSearch: ["Supplier credit search", "供应商贷项查询"],
+  creditSearchSubtitle: ["Credit memos raised from posted supplier returns.", "由已过账的供应商退货生成的贷项。"],
+  matchSearch: ["Match exception search", "匹配异常查询"],
+  matchSearchSubtitle: ["Price and quantity differences found when matching invoices.", "发票匹配时发现的价格和数量差异。"],
+  searchRecord: ["Number or supplier", "单号或供应商"],
+  payableNumber: ["Payable", "应付单"],
+  creditNumber: ["Credit memo", "贷项单"],
+  exceptionNumber: ["Exception", "异常"],
+  supplierOrReturn: ["Supplier / return", "供应商 / 退货"],
+  nextStep: ["Next step", "下一步"],
+  supplierCreditNoRefund: ["A supplier credit memo does not record a refund from the supplier.", "供应商贷项不代表已收到供应商退款。"],
 } as const;
 
 const day = (value: unknown) => String(value || "").slice(0, 10);
@@ -223,7 +237,10 @@ function FinanceList({
   };
   const hasVariance = (row: Record<string, any>) => Number(row.varianceAmount || 0) !== 0 || row.matchStatus === "variance";
   const needle = search.trim().toLowerCase();
-  const rows = !invoices ? data.items : data.items.filter((row) =>
+  const rows = !invoices ? data.items.filter((row) =>
+    (!status || statusOf(row) === status)
+    && (!needle || Object.values(row).some((entry) => typeof entry === "string" && entry.toLowerCase().includes(needle))))
+    : data.items.filter((row) =>
     (!status || row.status === status)
     && (!supplier || row.supplierName === supplier)
     && (!variance || (variance === "with" ? hasVariance(row) : !hasVariance(row)))
@@ -242,7 +259,27 @@ function FinanceList({
     <div className="space-y-5" data-testid={`operational-finance-${kind}-list`}>
       {!enabled && <Warning>{t("finance.capabilityDisabled")}</Warning>}
       {kind === "payable" && <Warning>{t("finance.notPaid")}</Warning>}
-      {kind === "credit" && <Warning>{t("finance.noRefund")}</Warning>}
+      {kind === "credit" && <Warning>{tr("supplierCreditNoRefund")}</Warning>}
+      {!invoices && (
+        <ListSearchCard
+          title={tr(kind === "payable" ? "payableSearch" : kind === "credit" ? "creditSearch" : "matchSearch")}
+          subtitle={tr(kind === "payable" ? "payableSearchSubtitle" : kind === "credit" ? "creditSearchSubtitle" : "matchSearchSubtitle")}
+          actions={<>
+            <ResetButton onClick={reset} />
+            <RefreshButton onClick={load} />
+          </>}
+        >
+          <Field label={tr("search")}>
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tr("searchRecord")} style={inputStyle} />
+          </Field>
+          <Field label={t("finance.status")}>
+            <select value={status} onChange={(event) => setStatus(event.target.value)} style={inputStyle}>
+              <option value="">{tr("allStatuses")}</option>
+              {statuses.map((code) => <option key={code} value={code}>{statusText(code)}</option>)}
+            </select>
+          </Field>
+        </ListSearchCard>
+      )}
       {invoices && (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -347,11 +384,11 @@ function FinanceList({
             <table className={`w-full min-w-[850px] text-left ${tableBodyTextClass}`}>
               <thead>
                 <tr style={listHeadRowStyle}>
-                  <th className={thClass} style={{ color: A.gray1 }}>{t("finance.invoiceNumber")}</th>
-                  <th className={thClass} style={{ color: A.gray1 }}>{t("finance.source")}</th>
+                  <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>{tr(kind === "payable" ? "payableNumber" : kind === "credit" ? "creditNumber" : "exceptionNumber")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{kind === "credit" ? tr("supplierOrReturn") : kind === "payable" ? tr("supplier") : t("finance.invoiceNumber")}</th>
                   <th className={thRightClass} style={{ color: A.gray1 }}>{t("finance.amount")}</th>
                   <th className={thClass} style={{ color: A.gray1 }}>{t("finance.status")}</th>
-                  <th className={thClass} style={{ color: A.gray1 }}>{t("finance.actions")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{tr("nextStep")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -387,7 +424,7 @@ function FinanceList({
                   const rawStatus = statusOf(row);
                   return (
                     <tr className={listRowClass} style={listRowStyle(index, rows.length)} key={id}>
-                      <td className={tdIdClass}>
+                      <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                         {kind === "payable" && row.supplierInvoiceId
                           ? <EntityLink kind="supplier_invoice" id={String(row.supplierInvoiceId)} className={tableLinkClass}>{label}</EntityLink>
                           : label}
@@ -405,7 +442,7 @@ function FinanceList({
                     </tr>
                   );
                 })}
-                {!rows.length && <ListStateRow colSpan={5} state="empty" title={t("common.empty")} />}
+                {!rows.length && <ListStateRow colSpan={5} state="empty" title={data.items.length ? tr("noRows") : t("common.empty")} />}
               </tbody>
             </table>
           )}

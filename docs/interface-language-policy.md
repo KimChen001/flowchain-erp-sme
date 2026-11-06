@@ -59,6 +59,14 @@ names, or supplier names in place. Translate their presentation where appropriat
   status chips, with English and Chinese copy. Server status text such as the match
   status is shown through the workspace dictionary. Checked in both languages on
   2026-11-03 with the walkthrough data.
+- The same list layout now covers the inventory tabs (balances, movements,
+  warnings, lots, serial numbers, exceptions), receipts, customer invoices,
+  receivables, receivables aging, customer credit notes, payables and supplier
+  credit memos. Supplier credit memos have their own notice: they do not record a
+  refund from the supplier. Finance status chips use the shared tones, so overdue
+  and disputed read red.
+- Dates on a Chinese page keep the workspace locale (en-US gives "Nov 2, 2026"):
+  the interface language does not change date or number formats.
 - Shared form labels (`Field`), metric cards (`KpiCard`, `ActionableMetricCard`),
   section headers and dialogs translate with the interface language from the i18n
   context. They used to read `<html lang>`, which changes one render later, so a

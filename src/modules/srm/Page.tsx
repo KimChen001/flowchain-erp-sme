@@ -10,7 +10,8 @@ import { Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
-import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, thClass } from "../../components/ui/workbenchTable";
+import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass } from "../../components/ui/workbenchTable";
+import { rowActionClass } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -111,6 +112,7 @@ const statusLabel = { draft: "草稿", active: "启用", inactive: "停用" };
 // The list's long metric headers wrap to two lines; the list scrolls
 // sideways with the code and actions columns kept in view, as on purchase orders.
 const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time (PO date), 90 days", "Open issues"]);
+const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", "On time (PO date), 90 days", "Open issues"]);
 
 function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): Supplier {
   const text = (candidate: unknown, fallback = "") => String(candidate ?? "").trim() || fallback;
@@ -759,12 +761,11 @@ export default function SupplierMasterPage({
           </div>
         ) : (
           <div className={tableScrollClass}>
-            <table className={`w-full min-w-[1180px] text-left ${tableBodyTextClass}`}>
+            <table className={`w-full min-w-[1060px] text-left ${tableBodyTextClass}`}>
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
                   {[
-                    "供应商编号",
-                    "供应商名称",
+                    "供应商",
                     "经营品类",
                     "Business owner",
                     "Spend, 12 months",
@@ -775,8 +776,9 @@ export default function SupplierMasterPage({
                     "状态",
                     ...(writes.suppliers ? ["操作"] : []),
                   ].map((h) => (
-                    <th key={copy(h)} className={`${thClass} align-bottom${WRAPPED_HEADERS.has(h) ? " !whitespace-normal min-w-[96px] max-w-[132px]" : ""}${h === "供应商编号" ? " sticky left-0 z-20 bg-white" : h === "操作" ? " sticky right-0 z-20 bg-white" : ""}`} style={{ color: A.gray1 }}>
-                      {copy(h)}
+                    <th key={copy(h)} className={`${thClass} align-bottom${WRAPPED_HEADERS.has(h) ? " !whitespace-normal min-w-[84px] max-w-[120px]" : ""}${NUMERIC_HEADERS.has(h) ? " text-right" : ""}${h === "供应商" ? " sticky left-0 z-20 bg-white" : h === "操作" ? " sticky right-0 z-20 bg-white" : ""}`} style={{ color: A.gray1 }}>
+                      {/* One supplier per row: the singular, not the Suppliers module name. */}
+                      {h === "供应商" ? (language === "en-US" ? "Supplier" : "供应商") : copy(h)}
                     </th>
                   ))}
                 </tr>
@@ -784,21 +786,21 @@ export default function SupplierMasterPage({
               <tbody>
                 {sortedRows.map((row, index) => (
                   <tr key={row.id} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < sortedRows.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
-                    <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                    <td className={`${tdIdClass} sticky left-0 z-10 max-w-[240px] bg-white`}>
                       <EntityLink kind="supplier" id={row.id} className={tableLinkClass}>
                         {row.supplierCode}
                       </EntityLink>
+                      <div className="truncate text-[11px] font-medium" style={{ color: A.label }} title={row.supplierName}>{row.supplierName}</div>
                     </td>
-                    <td className={`${tdNameClass} max-w-[220px] truncate font-medium`} style={{ color: A.label }} title={row.supplierName}>{row.supplierName}</td>
                     <td className={`${tdNameClass} max-w-[200px] truncate`} style={{ color: A.sub }}>
                       {(row.categories || []).join(listSeparator) || "—"}
                     </td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{row.businessOwner?.name || "—"}</td>
-                    <td className={tdNowrapClass}>{spendCell(insightOf(row.id))}</td>
-                    <td className={tdNowrapClass}>{count(insightOf(row.id)?.openPos)}</td>
-                    <td className={tdNowrapClass}>{count(insightOf(row.id)?.overduePos)}</td>
-                    <td className={tdNowrapClass}>{onTimeCell(insightOf(row.id))}</td>
-                    <td className={tdNowrapClass}>{count(insightOf(row.id)?.openIssues)}</td>
+                    <td className={tdNumericRightClass}>{spendCell(insightOf(row.id))}</td>
+                    <td className={tdNumericRightClass}>{count(insightOf(row.id)?.openPos)}</td>
+                    <td className={tdNumericRightClass}>{count(insightOf(row.id)?.overduePos)}</td>
+                    <td className={tdNumericRightClass}>{onTimeCell(insightOf(row.id))}</td>
+                    <td className={tdNumericRightClass}>{count(insightOf(row.id)?.openIssues)}</td>
                     <td className={tdNowrapClass}>
                       {row.status === "active"
                         ? <Chip label={copy(statusLabel[row.status])} color={A.green} bg="#f0faf4" />
@@ -808,8 +810,8 @@ export default function SupplierMasterPage({
                     </td>
                     {writes.suppliers && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                       <div className="flex items-center gap-1.5">
-                        <button type="button" onClick={() => startEdit(row)} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">{copy("编辑")}</button>
-                        <button type="button" onClick={() => toggle(row)} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">
+                        <button type="button" onClick={() => startEdit(row)} className={rowActionClass.primary}>{copy("编辑")}</button>
+                        <button type="button" onClick={() => toggle(row)} className={rowActionClass.neutral}>
                           {copy(row.status === "active" ? "Set inactive" : "Set active")}
                         </button>
                       </div>

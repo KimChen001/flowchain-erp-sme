@@ -136,11 +136,11 @@ export type StatusTone = "success" | "warning" | "danger" | "info" | "neutral";
 // gray for drafts and cancelled records. Codes and the server's Chinese
 // labels are both recognised; anything unknown is neutral.
 const TONES: Record<StatusTone, string[]> = {
-  success: ["approved", "matched", "auto_matched", "converted", "completed", "fully_received", "closed", "awarded", "settled", "resolved", "posted", "已批准", "已审批", "已匹配", "自动匹配", "已完成", "已转换", "已解决", "已入库"],
-  warning: ["submitted", "pending", "pending_approval", "pending_match", "held", "on_hold", "awaiting_receipt", "待审批", "待匹配", "待处理", "人工复核", "缺少收货"],
+  success: ["approved", "matched", "recorded", "auto_matched", "converted", "completed", "fully_received", "fully_reserved", "fully_fulfilled", "closed", "awarded", "settled", "resolved", "posted", "已批准", "已审批", "已匹配", "自动匹配", "已完成", "已转换", "已解决", "已入库"],
+  warning: ["submitted", "pending", "pending_approval", "pending_match", "held", "on_hold", "awaiting_receipt", "unposted", "partially_reserved", "待审批", "待匹配", "待处理", "人工复核", "缺少收货"],
   danger: ["rejected", "exception", "variance", "mismatch", "disputed", "overdue", "已驳回", "已拒绝", "存在差异", "差异待处理", "异常处理", "重复发票"],
-  info: ["open", "issued", "sent", "issued_outside_flowchain", "collecting_quotes", "partially_received", "received", "export_ready", "partially_settled", "reviewed", "已发出", "部分到货", "已收货", "已签收", "质检中"],
-  neutral: ["draft", "cancelled", "canceled", "withdrawn", "not_sent", "草稿", "已取消", "已撤回"],
+  info: ["open", "confirmed", "issued", "sent", "issued_outside_flowchain", "collecting_quotes", "partially_received", "partially_fulfilled", "received", "ready_for_receiving", "export_ready", "partially_settled", "reviewed", "已发出", "部分到货", "已收货", "已签收", "质检中"],
+  neutral: ["draft", "cancelled", "canceled", "withdrawn", "not_sent", "reversed", "voided", "not_reserved", "not_fulfilled", "草稿", "已取消", "已撤回"],
 };
 const toneOf = new Map(Object.entries(TONES).flatMap(([tone, codes]) => codes.map((code) => [code, tone as StatusTone])));
 
