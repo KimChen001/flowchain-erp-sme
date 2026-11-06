@@ -94,6 +94,7 @@
 
 ## Domain Notes
 
+- [Reports as a decision loop](report-collaboration-design.md): proposal of 2026-10-30; one metric registry, change breakdowns, "Ask about this", a weekly brief and thresholds; decisions R1–R12 approved 2026-10-30; presentation layer (§13) added and P1–P5 approved 2026-10-31
 - [Order changes, history import and reverse flows](order-changes-history-reverse-design.md): proposal of 2026-11-01; PO revisions and sales order remainder close, importing past and open orders, returns and credits; decisions OC1–OC8, HI1–HI8, RV1–RV6 approved 2026-11-01
 - [Global business search](global-business-search-v1.md)
 - [Supplier operational search](supplier-operational-search-v1.md)
