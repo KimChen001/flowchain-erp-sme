@@ -63,6 +63,7 @@ export type ApprovalSnapshot = {
 export type PurchaseOrderLine = {
   poLineId: string;
   poId?: string;
+  itemId?: string;
   sku: string;
   itemName: string;
   quantityOrdered: number;
@@ -77,6 +78,10 @@ export type PurchaseOrderLine = {
   requiredDate?: string;
   promisedDate?: string;
   status?: string;
+  // Why the purchase request chose a supplier other than the item's preferred
+  // one, carried from its line; null when none was needed.
+  // missingReason: saved before a reason was asked; reasonCode is then null.
+  supplierOverride?: { reasonCode: string | null; note?: string | null; missingReason?: boolean; preferredSupplierId?: string | null; preferredSupplierIds?: string[] | null; preferredSupplierName?: string | null } | null;
 };
 
 export type PurchaseOrder = {
@@ -85,6 +90,10 @@ export type PurchaseOrder = {
   po: string;
   supplier: string;
   created: string;
+  // When the PO was issued to the supplier (an instant); null when not recorded.
+  issuedAt?: string | null;
+  // The status receiving started from: "approved" means received without being issued.
+  receivingBaseStatus?: string | null;
   eta: string;
   owner: string;
   amount: number;
@@ -222,6 +231,8 @@ export type SupplierMaster = {
 };
 
 export type WarehouseBin = {
+  // The record id, for links; the code is what people read. Absent on fallback rows.
+  warehouseId?: string;
   warehouseCode: string;
   warehouseName: string;
   zone: string;
@@ -282,45 +293,6 @@ export type RfqRecord = {
   auditTrailIds?: string[];
 };
 
-export type SupplierRecommendationResult = {
-  sku: string;
-  quantity: number;
-  currentSupplier: string;
-  primary: {
-    supplier: string;
-    unitPrice: number;
-    listPrice?: number;
-    listPriceCny?: number;
-    currency?: string;
-    fxRate?: number;
-    contractId?: string;
-    contractLabel?: string;
-    contractDiscount?: number;
-    contractTierMinQty?: number;
-    leadTimeDays: number;
-    responseScore: number;
-    capacity: number;
-    availableCapacity?: number;
-    capacityWindow?: string;
-    capacityReliability?: number;
-    capacityStatus?: "可承诺" | "紧张" | "不足" | string;
-    risk: string;
-    performanceScore: number;
-    quality: number;
-    rejectRate: number;
-    flag: string;
-    score: number;
-    amount: number;
-    isCurrent: boolean;
-    note: string;
-  } | null;
-  backup: SupplierRecommendationResult["primary"];
-  candidates: NonNullable<SupplierRecommendationResult["primary"]>[];
-  split: { supplier: string; quantity: number; unitPrice: number }[];
-  needsRfq: boolean;
-  rfqReason: string;
-};
-
 export type WorkspaceUser = {
   id: string;
   company: string;
@@ -347,11 +319,15 @@ export type ReceivingDocLine = {
   rejectedQty: number;
   warehouseId?: string;
   unit?: string;
+  // The lot number recorded on the receiving line, when one was.
+  lotNumber?: string;
   status?: string;
 };
 
 export type ReceivingDoc = {
   grn: string;
+  // The receipt number recorded on the document; grn is its id.
+  documentNumber?: string;
   po: string;
   supplier: string;
   arrived: string;

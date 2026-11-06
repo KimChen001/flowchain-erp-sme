@@ -9,7 +9,6 @@ const entries = [
   'src/modules/sales/Page.tsx',
   'src/modules/procurement/Page.tsx',
   'src/modules/purchase-requests/Page.tsx',
-  'src/modules/suppliers/Page.tsx',
   'src/modules/finance/Page.tsx',
   'src/modules/srm/Page.tsx',
   'src/modules/overview/Page.tsx',

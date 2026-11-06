@@ -1,4 +1,5 @@
 import { PURCHASE_ORDER_STATUS, isPurchaseOrderReceivable, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
+import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay } from './tenant-calendar-day.mjs'
 
 // The single definition of an open purchase order in FlowChain reporting:
 // a purchase order that has been committed to the supplier and still has
@@ -35,9 +36,11 @@ export function reportCalendarDay(value) {
 // The business date of a purchase order in every report: its order date, or
 // its creation date when no order date is recorded. Never the last update,
 // which moved an old order into the current month whenever it was edited.
-// '' when neither is known, so a date range leaves the order out.
-export function purchaseOrderBusinessDate(purchaseOrder) {
-  return reportCalendarDay(purchaseOrder?.orderDate || purchaseOrder?.createdAt)
+// The order date is a calendar day; the creation date is an instant and
+// counts on its day in the workspace timezone. '' when neither is known, so a
+// date range leaves the order out.
+export function purchaseOrderBusinessDate(purchaseOrder, timeZone = DEFAULT_TENANT_TIMEZONE) {
+  return reportCalendarDay(purchaseOrder?.orderDate) || instantCalendarDay(purchaseOrder?.createdAt, timeZone)
 }
 
 // Remaining quantity on one purchase order line, rounded to four decimals as the

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { sanitizeSuggestionTrail } from "../../shared/prefill-suggestions.mjs";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
@@ -194,6 +195,9 @@ export function createRfqSupplierResponseCommandService({
     const idempotencyKey = text(commandInput.idempotencyKey);
     if (!idempotencyKey) fail("IDEMPOTENCY_KEY_REQUIRED", "idempotencyKey is required.", 422);
     const payload = canonicalPayload(kind, rfqId, supplierId, commandInput);
+    // Which prefilled values the user kept: codes only, for the audit row,
+    // outside the payload that defines the command.
+    const suggestions = sanitizeSuggestionTrail(commandInput.suggestionTrail);
     const requestHash = digest(payload);
     const executionWhere = {
       tenantId_commandType_idempotencyKey: {
@@ -452,7 +456,7 @@ export function createRfqSupplierResponseCommandService({
             entityType: "SupplierQuotation",
             entityId: quotation.id,
             summary: `${kind === "create" ? payload.submissionMode === "submitted" ? "Recorded" : "Started draft for" : "Revised"} internal supplier response ${quotation.id} at revision ${revisionNumber}.`,
-            metadata: { commandType, rfqId: payload.rfqId, supplierId: payload.supplierId, quotationId: quotation.id, revisionId, revisionNumber, submissionMode: payload.submissionMode, idempotencyKey },
+            metadata: { commandType, rfqId: payload.rfqId, supplierId: payload.supplierId, quotationId: quotation.id, revisionId, revisionNumber, submissionMode: payload.submissionMode, idempotencyKey, ...(suggestions ? { suggestions } : {}) },
           },
         });
         await tx.domainChangeFeed.create({

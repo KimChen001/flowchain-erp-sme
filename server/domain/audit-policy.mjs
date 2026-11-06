@@ -86,6 +86,25 @@ export function actionDraftSavedAuditEntry(saved = {}) {
   }
 }
 
+// A reviewed text draft the user copied or opened in their own mail app.
+// FlowChain sends nothing; this records only the draft type, the use and,
+// when the draft was prefilled, which suggested fields were kept (codes,
+// never the text).
+export function actionDraftUsedAuditEntry({ draftType = '', use = '', suggestions = null } = {}) {
+  return {
+    module: 'action-drafts',
+    action: 'ai_draft_used',
+    entity: { type: 'actionDraft', id: safeText(draftType) },
+    summary: `Action draft ${safeText(draftType || 'unknown draft')} ${use === 'opened_in_email' ? 'opened in the mail app' : 'copied'} by the user.`,
+    metadata: {
+      draftType: safeText(draftType),
+      use,
+      sendsMessage: false,
+      ...(suggestions ? { suggestions } : {}),
+    },
+  }
+}
+
 export function legacyMutationBlockedAuditEntry({ method = '', pathname = '' } = {}) {
   const route = classifyRoute(method, pathname)
   return {

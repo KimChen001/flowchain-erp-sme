@@ -2,7 +2,7 @@ import { RfqAwardDecisionError, createRfqAwardDecisionService } from "../domain/
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 
-const knownError = (error) => error instanceof RfqAwardDecisionError || error instanceof PilotIdentityError || error?.name === "AuthorizationError";
+const knownError = (error) => error instanceof RfqAwardDecisionError || error instanceof PilotIdentityError || error?.name === "AuthorizationError" || error?.name === "RequestBodyError";
 
 function sendError(ctx, error) {
   if (error instanceof SyntaxError) {
@@ -10,6 +10,7 @@ function sendError(ctx, error) {
   } else if (knownError(error)) {
     ctx.send(ctx.res, error.status || 400, { code: error.code || "RFQ_AWARD_DECISION_FAILED", message: error.message, ...(error.details ? { details: error.details } : {}) });
   } else {
+    ctx.reportError?.(error);
     ctx.send(ctx.res, 500, { code: "RFQ_AWARD_DECISION_FAILED", message: "The Award Decision request could not be completed." });
   }
 }

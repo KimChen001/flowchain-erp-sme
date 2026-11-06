@@ -19,6 +19,7 @@ import {
 } from "../domain/inventory-operations-read-service.mjs";
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { notifyApprovalWaiting } from "../notifications/approval-notifier.mjs";
 
 const capabilityIds = [
   "stock-transfer",
@@ -86,11 +87,13 @@ export async function handleInventoryOperationsRoute(ctx) {
       req.method === "POST" &&
       url.pathname === "/api/inventory/adjustments"
     ) {
-      send(
-        res,
-        201,
-        await command.createAdjustment(await ctx.readBody(req), ctx),
-      );
+      const result = await command.createAdjustment(await ctx.readBody(req), ctx);
+      send(res, 201, result);
+      // A new adjustment waits for someone to ready it (its approval).
+      notifyApprovalWaiting(ctx, result, {
+        documentType: "inventory_adjustment",
+        documentId: result?.entityId,
+      });
       return true;
     }
 
@@ -264,7 +267,8 @@ export async function handleInventoryOperationsRoute(ctx) {
       error instanceof InventoryOperationsError ||
       error instanceof InventoryOperationsReadError ||
       error instanceof PilotIdentityError ||
-      error?.name === "AuthorizationError";
+      error?.name === "AuthorizationError" ||
+      error?.name === "RequestBodyError";
     send(res, known ? error.status || 400 : 500, {
       code: known ? error.code : "INVENTORY_OPERATION_FAILED",
       message: known ? error.message : "Inventory operation failed.",

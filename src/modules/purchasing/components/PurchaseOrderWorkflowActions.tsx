@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { useRouteAvailability } from "../../../app/routeAvailability";
-import { apiJson } from "../../../lib/api-client";
+import { ApiError, apiJson } from "../../../lib/api-client";
 import { useI18n } from "../../../i18n/I18n";
+import { usePermissionSet } from "../../../lib/usePermissionSet";
 
 type WorkflowAction = "submit" | "approve" | "reject" | "issue" | "cancel" | "close";
 
@@ -39,24 +40,16 @@ const COPY: Record<string, [string, string]> = {
   cancelReason: ["Why is this purchase order cancelled?", "请输入取消原因"],
   done: ["Purchase order updated", "采购订单已更新"],
   failed: ["The purchase order could not be updated", "采购订单更新失败"],
-  issueNote: ["Issuing records that you sent the PO to the supplier; FlowChain does not send it.", "下达仅记录已将采购订单发送给供应商；FlowChain 不会代为发送。"],
+  issueNote: ["Print or save the PO document and send it yourself, then mark it issued.", "请打印或另存采购订单文件并自行发送，然后标记为已下达。"],
   receive: ["Receive", "收货"],
   receiveNote: ["Record goods that arrived against this PO.", "登记该采购订单的到货。"],
+  changed: ["This purchase order was changed elsewhere, so nothing was done. It has been reloaded; check it and try again.", "该采购订单已在别处被更改，本次操作未执行。页面已重新加载，请核对后重试。"],
 };
 
-// The effective permission codes of the signed-in user; empty when they
-// cannot be read, so no command is offered.
-function usePermissionSet() {
-  const [permissions, setPermissions] = useState<Set<string> | null>(null);
-  useEffect(() => {
-    let alive = true;
-    apiJson<{ effectivePermissions?: string[] }>("/api/authorization/context")
-      .then((context) => { if (alive) setPermissions(new Set(context.effectivePermissions || [])); })
-      .catch(() => { if (alive) setPermissions(new Set()); });
-    return () => { alive = false; };
-  }, []);
-  return permissions;
-}
+// The server refuses a command sent with an older version or for a status the
+// PO has left; both mean the page shows an order that changed elsewhere.
+const STALE_CODES = new Set(["SYNC_VERSION_CONFLICT", "PURCHASE_ORDER_WORKFLOW_CONFLICT"]);
+
 
 export function PurchaseOrderWorkflowActions({
   poId,
@@ -92,7 +85,13 @@ export function PurchaseOrderWorkflowActions({
       toast.success(tr("done"));
       onChanged();
     } catch (error) {
-      toast.error(tr("failed"), { description: error instanceof Error ? error.message : undefined });
+      if (error instanceof ApiError && error.status === 409 && STALE_CODES.has(error.code || "")) {
+        // Show the current order rather than leave buttons for a stale one.
+        toast.error(tr("changed"));
+        onChanged();
+      } else {
+        toast.error(tr("failed"), { description: error instanceof Error ? error.message : undefined });
+      }
     } finally {
       setBusy("");
     }

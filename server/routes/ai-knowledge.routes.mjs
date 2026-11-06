@@ -1,9 +1,10 @@
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { createKnowledgeService, answerKnowledgeQuery, knowledgeResponse, KnowledgeError } from '../domain/ai-knowledge-service.mjs'
-import { parseKnowledgeFile } from '../domain/ai-knowledge-file-parser.mjs'
+import { KNOWLEDGE_FILE_LIMITS, parseKnowledgeFile } from '../domain/ai-knowledge-file-parser.mjs'
 import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
 import { knowledgeProviderEnv } from '../domain/ai-knowledge-config.mjs'
+import { bodyLimitForFile } from '../utils/http.mjs'
 
 async function context(ctx) {
   const prisma = ctx.aiKnowledgePrisma || await getPrismaClient(ctx.env || process.env)
@@ -25,7 +26,7 @@ export async function handleKnowledgeRoute(ctx) {
     if (ctx.req.method === 'GET' && !importing) result = id ? await service.get(actor, id) : await service.list(actor)
     else if (ctx.req.method === 'POST' && reindex && id) result = await service.reindex(actor, id)
     else if (ctx.req.method === 'POST' && importing) {
-      const body = await ctx.readBody(ctx.req)
+      const body = await ctx.readBody(ctx.req, { maxBytes: bodyLimitForFile(KNOWLEDGE_FILE_LIMITS.maximumBytes) })
       const extracted = await parseKnowledgeFile(body)
       result = await service.add(actor, { ...body, title: extracted.title, content: extracted.content })
     }
@@ -41,6 +42,25 @@ export async function handleKnowledgeRoute(ctx) {
 
 export function isKnowledgeQuestion(body = {}) {
   return classifyQueryScope(body) === 'knowledge'
+}
+
+// Knowledge search for agent planning (docs/ai-assistant-plan.md, PR-3): null
+// without database storage or without a document the actor may read;
+// otherwise the languages of those documents, which the planner writes its
+// search words in, and a search with those words. The search shows the
+// passages found, with their sources, and asks no model to write an answer.
+export async function aiAgentKnowledge(ctx) {
+  if (ctx.repositories?.mode !== 'database' && (ctx.env || process.env).FLOWCHAIN_PERSISTENCE_MODE !== 'database') return null
+  const { actor, service, env } = await context(ctx)
+  const documents = (await service.list(actor)).items || []
+  if (!documents.length) return null
+  return {
+    languages: [...new Set(documents.map((document) => document.language === 'zh-CN' ? 'zh-CN' : 'en-US'))].sort(),
+    async search({ query, question, language }) {
+      const result = await answerKnowledgeQuery({ question, retrievalQuery: query, generate: false, language, actor, service, env })
+      return knowledgeResponse(result, question, language)
+    },
+  }
 }
 
 export async function runKnowledgeQuery(ctx, body = {}, { force = false } = {}) {

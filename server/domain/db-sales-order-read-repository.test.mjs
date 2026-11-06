@@ -69,3 +69,13 @@ test('PostgreSQL sales demand repository never manufactures rows for an empty wo
   assert.deepEqual(await repository.listOrders({ tenantId: 'tenant-empty' }), [])
   assert.equal((await repository.getSummary({ tenantId: 'tenant-empty' })).totalOrders, 0)
 })
+
+test('an order total is shown only when every line has an amount', async () => {
+  const repository = createDbSalesOrderReadRepository({
+    env: { DATABASE_URL: 'postgresql://flowchain:test@127.0.0.1:5432/flowchain_test' },
+    prisma: { salesOrder: { findMany: async () => [{ ...row, lines: [row.lines[0], { ...row.lines[0], id: 'SOL-2', amount: null }] }] } },
+  })
+  const [order] = await repository.listOrders({ tenantId: 'tenant-a' })
+  assert.equal(order.totalAmount, null)
+  assert.deepEqual(order.lines.map((line) => line.amount), [245.5, null])
+})

@@ -259,6 +259,12 @@ function blockedCommitPayload(result, db) {
   }
 }
 
+// These 500s guard an invariant rather than catch an error; the report
+// carries the guard's code so the alert says which one tripped.
+function boundaryViolation(code) {
+  return Object.assign(new Error('User data route mutated runtime data.'), { name: 'BoundaryViolation', code })
+}
+
 export async function handleUserDataRoute(ctx) {
   const { req, res, url, send, readBody, db, repositories = {} } = ctx
 
@@ -299,6 +305,7 @@ export async function handleUserDataRoute(ctx) {
     const before = JSON.stringify(db)
     const deactivated = await repositories.userDataRuntime?.markImportBatchInactive?.(scope, importBatchId)
     if (JSON.stringify(db) !== before) {
+      ctx.reportError?.(boundaryViolation('deactivate_boundary_mutation_detected'))
       send(res, 500, inactiveRejectedPayload([{ code: 'deactivate_boundary_mutation_detected', message: 'Deactivate mutated runtime business data.', path: 'db', severity: 'error' }]))
       return true
     }
@@ -375,6 +382,7 @@ export async function handleUserDataRoute(ctx) {
         }
       : normalizeUserDataImportPayload(body, { importedAt: new Date().toISOString() })
     if (JSON.stringify(db) !== before) {
+      ctx.reportError?.(boundaryViolation('commit_boundary_mutation_detected'))
       send(res, 500, {
         ok: false,
         errors: [{ code: 'commit_boundary_mutation_detected', message: 'Import commit boundary attempted to mutate runtime data.', path: 'db', severity: 'error' }],
@@ -496,6 +504,7 @@ export async function handleUserDataRoute(ctx) {
     const before = JSON.stringify(db)
     const result = normalizeUserDataImportPayload(body, { importedAt: new Date().toISOString() })
     if (JSON.stringify(db) !== before) {
+      ctx.reportError?.(boundaryViolation('dry_run_mutation_detected'))
       send(res, 500, {
         ok: false,
         errors: [{ code: 'dry_run_mutation_detected', message: 'Import dry-run attempted to mutate runtime data.', path: 'db', severity: 'error' }],

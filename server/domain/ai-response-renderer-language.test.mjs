@@ -24,10 +24,12 @@ async function loadClient() {
     import { createElement } from 'react'
     import { renderToStaticMarkup } from 'react-dom/server'
     import { AiResponseV2Renderer } from './src/components/ai/AiResponseV2Renderer.tsx'
-    import { aiRecoveryReason, displaySafeAssistantRecoveryMessage } from './src/modules/ai-assistant/Panel.tsx'
+    import { aiRecoveryReason, displaySafeAssistantRecoveryMessage, getAiFollowUpChips } from './src/modules/ai-assistant/Panel.tsx'
     import { ApiError } from './src/lib/api-client.ts'
-    export const render = (response) => renderToStaticMarkup(createElement(AiResponseV2Renderer, { response, onNavigate: () => {}, onReviewActionDraft: () => {}, onFollowUp: () => {} }))
-    export { aiRecoveryReason, displaySafeAssistantRecoveryMessage, ApiError }
+    import { autoOpenDraftCard, structuredDraftTarget } from './src/modules/action-drafts/structuredDraftHandoff.ts'
+    export const renderWith = (response, props = {}) => renderToStaticMarkup(createElement(AiResponseV2Renderer, { response, onNavigate: () => {}, onReviewActionDraft: () => {}, onFollowUp: () => {}, ...props }))
+    export const render = (response) => renderWith(response)
+    export { aiRecoveryReason, displaySafeAssistantRecoveryMessage, getAiFollowUpChips, ApiError, autoOpenDraftCard, structuredDraftTarget }
   `
   const result = await build({
     stdin: { contents: entry, resolveDir: root, loader: 'tsx', sourcefile: 'renderer-entry.tsx' },
@@ -57,15 +59,20 @@ test('an English skill answer renders with no Chinese, the source badge and the 
     const markup = client.render(answer(skillId))
     assert.doesNotMatch(markup, CJK, `${skillId} renders without Chinese`)
     assert.match(markup, /data-answer-source="workspace_rules"/, skillId)
-    assert.match(markup, /Answered from your workspace data/, skillId)
+    // The help answer reads no business data and says so.
+    assert.match(markup, skillId === 'capability_overview' ? /No workspace data was read for this answer/ : /Answered from your workspace data/, skillId)
   }
-  // The help answer reads no records: no "Verifiable records 0" line.
-  assert.doesNotMatch(client.render(answer('capability_overview')), /Verifiable records/)
+  // The help answer reads no records: no trust line with a count of nothing.
+  assert.doesNotMatch(client.render(answer('capability_overview')), /data-testid="ai-trust-line"/)
   const today = client.render(answer('today_priorities'))
   assert.match(today, /Checked: purchase orders, purchase requests, RFQs, inventory balances, supplier invoices and receipts/)
-  assert.match(today, /Verifiable records 5/)
-  assert.match(today, /View key evidence \(5\)/)
-  assert.match(today, />Risk</)
+  // One trust line in place of the severity chip, the evidence count and the
+  // evidence section (panel design, 2026-11-01). It opens to the records.
+  assert.match(today, /data-testid="ai-trust-line"/)
+  assert.match(today, /From your records/)
+  assert.match(today, /5 sources/)
+  assert.match(today, /data-testid="ai-evidence-details"/)
+  assert.doesNotMatch(today, /Verifiable records|View key evidence|>Risk<|>Priorities<|>Next step</)
   const drafts = client.render(answer('prepare_action_draft'))
   assert.match(drafts, /data-action-kind="generate_text_draft"[^>]*>Review draft</)
 
@@ -80,6 +87,28 @@ test('an English skill answer renders with no Chinese, the source badge and the 
   assert.match(displaySafeAssistantRecoveryMessage('q', 'zh-CN', aiRecoveryReason(new ApiError(503, {}, ''), false)), /当前工作区数据暂时未能完整读取/)
 })
 
+test('an order answer names each request button, and only a clear choice is opened on arrival', async () => {
+  const client = await loadClient()
+  const scenario = aiSkillScenario()
+  const covered = await runAiSkillRuntime({ ...scenario.ctx, env: {} }, { message: 'can you help me generate the order?', answerLanguage: 'en-US' })
+  const markup = client.render(covered)
+  assert.doesNotMatch(markup, CJK)
+  assert.match(markup, /data-action-kind="generate_text_draft"[^>]*>Draft a follow-up on PO-001</)
+  assert.match(markup, /data-action-kind="create_formal_business_draft"[^>]*>Open a request for LDM-001 anyway</)
+  assert.equal(client.autoOpenDraftCard(covered.reviewCards), null)
+  const named = await runAiSkillRuntime({ ...scenario.ctx, env: {} }, { message: 'Create a purchase order for LDM-001', answerLanguage: 'en-US' })
+  const card = client.autoOpenDraftCard(named.reviewCards)
+  assert.equal(card.draftType, 'purchase_request_draft')
+  // The same handoff the button makes: the request form, filled in.
+  assert.deepEqual(client.structuredDraftTarget(card.draftType, card.payload, 'ai_assistant'), {
+    moduleId: 'procurement:requests',
+    query: { mode: 'create', itemId: 'LDM-001', sku: 'LDM-001', quantity: '12', reason: '28 available against a target of 40; this is on top of what is already on order.', origin: 'ai_assistant' },
+  })
+  assert.match(client.render(named), /data-action-kind="create_formal_business_draft"[^>]*>Open request: 12 pcs of LDM-001</)
+  // A text draft is never opened on arrival.
+  assert.equal(client.autoOpenDraftCard([{ draftType: 'po_followup_draft', autoOpen: true }]), null)
+})
+
 test('a compound answer renders a section per part in place of the summary and the priorities', async () => {
   const client = await loadClient()
   const scenario = aiSkillScenario()
@@ -88,7 +117,7 @@ test('a compound answer renders a section per part in place of the summary and t
   const markup = client.render(response)
   assert.doesNotMatch(markup, CJK)
   assert.match(markup, /data-testid="ai-answer-sections"/)
-  assert.match(markup, />Answer by part</)
+  assert.doesNotMatch(markup, />Answer by part</)
   assert.deepEqual([...markup.matchAll(/data-testid="ai-answer-section" data-skill="([a-z_]+)"/g)].map((match) => match[1]), ['purchase_orders', 'inventory_availability'])
   assert.match(markup, /LDM-001: 63 pcs available to promise/)
   assert.equal(markup.includes(response.conclusion.summary), false, 'the summary repeats the section titles and is not shown')
@@ -97,4 +126,234 @@ test('a compound answer renders a section per part in place of the summary and t
   const single = client.render((await answers())('today_priorities'))
   assert.match(single, /data-testid="ai-focused-primary-items"/)
   assert.doesNotMatch(single, /data-testid="ai-answer-sections"/)
+})
+
+// The walkthrough on 2026-10-09: a Chinese question on the English interface
+// got a Chinese answer inside English labels ("Priorities", "Impact:", "Next
+// step"). The card's labels follow the answer's language.
+test("a Chinese answer on the English interface gets Chinese labels, and no count of nothing", async () => {
+  const client = await loadClient()
+  const answer = await answers()
+  const chinese = client.render(answer('today_priorities', { language: 'zh-CN' }))
+  for (const label of ['影响：', '来自你的记录', '5 条来源']) assert.ok(chinese.includes(label), label)
+  for (const label of ['Impact:', 'From your records', 'sources', '重点事项', '可核验业务证据', '查看关键证据']) assert.ok(!chinese.includes(label), label)
+  const english = client.render(answer('today_priorities'))
+  assert.match(english, /5 sources/)
+  // "0 notes" says nothing, so it is not shown.
+  assert.doesNotMatch(english, /0 notes/)
+  assert.doesNotMatch(chinese, /0 条说明/)
+})
+
+// The panel redesign (owner-approved 2026-11-01): the answer is plain text;
+// the record numbers it names are chips that open the record; one trust line
+// says the figures were checked and opens to the sources.
+test('record numbers in the answer are chips, and one trust line says the figures were checked', async () => {
+  const client = await loadClient()
+  const record = (type, id) => ({ id: `${type}:${id}`, entityType: type, entityId: id, entityLabel: id, label: id, sourceLabel: 'Your workspace' })
+  const response = {
+    version: 'v2', language: 'en-US', query: 'q', answerSource: 'workspace_model', answerSourceLabel: 'Written by AI from your records; figures checked', checkedLabel: 'Checked: purchase orders, inventory',
+    conclusion: { title: 'PO-020 is 5 days late.', summary: 'PO-020 is 5 days late. It holds 40 pcs of LDM-001, which is below its safety stock.', severity: 'risk', confidence: 'medium' },
+    keyEvidence: [record('purchase_order', 'PO-020'), record('item', 'LDM-001'), record('purchase_order', 'PO-021')],
+    navigationLinks: [{ label: 'Open PO-020', moduleId: 'procurement:orders', entityType: 'purchase_order', entityId: 'PO-020' }],
+    dataLimitations: [], reviewCards: [], followUpSuggestions: [{ label: 'Who supplies LDM-001?', prompt: 'Who supplies LDM-001?' }],
+  }
+  const markup = client.render(response)
+  // The headline leads in bold and the text goes on after it, not repeating it.
+  assert.match(markup, /<h3[^>]*><span><button[^>]*data-business-id="PO-020"[^>]*>PO-020<\/button><\/span> is 5 days late\.<\/h3>/)
+  assert.equal((markup.match(/is 5 days late/g) || []).length, 1)
+  assert.match(markup, /<p>It holds 40 pcs of <span><button type="button" data-testid="ai-record-chip" data-action-kind="view_evidence" data-business-id="LDM-001"[^>]*>LDM-001<\/button><\/span>, which is below its safety stock\.<\/p>/)
+  // A cited record the text does not name is listed; the named ones are not.
+  const cited = [...markup.matchAll(/data-testid="ai-cited-record"/g)]
+  assert.equal(cited.length, 1)
+  assert.match(markup, /data-testid="ai-cited-record"[^]*?>PO-021</)
+  // The link a chip already makes is not repeated as a button.
+  assert.doesNotMatch(markup, /data-testid="ai-business-navigation-action"/)
+  assert.match(markup, /Figures checked/)
+  assert.match(markup, /3 sources/)
+  assert.doesNotMatch(markup, />Risk<|>Info<|Verifiable records/)
+  // Next questions show only under the latest answer.
+  assert.match(markup, /data-testid="ai-focused-follow-ups"/)
+  assert.doesNotMatch(client.renderWith(response, { latest: false }), /data-testid="ai-focused-follow-ups"/)
+  // A headline cut mid-sentence is not shown; the text is shown whole.
+  const cut = client.render({ ...response, conclusion: { ...response.conclusion, title: 'PO-020 is 5 days', summary: 'PO-020 is 5 days late.' } })
+  assert.doesNotMatch(cut, /<h3/)
+  assert.match(cut, /<\/button><\/span> is 5 days late\.<\/p>/)
+})
+
+// The owner on 2026-11-01: the phone panel felt too dense. Three lines show
+// and the rest open on request; an impact every line shares is said once.
+test('an answer shows three lines and folds the rest; an impact every line shares is said once', async () => {
+  const client = await loadClient()
+  const today = client.render((await answers())('today_priorities'))
+  const items = today.match(/data-testid="ai-focused-primary-items"[^]*?<\/ul>/)[0]
+  assert.equal((items.match(/<li /g) || []).length, 3)
+  assert.match(today, /data-testid="ai-more-lines"[^>]*>Show 2 more</)
+  const record = (id) => ({ id: `purchase_order:${id}`, entityType: 'purchase_order', entityId: id, entityLabel: id, label: id, summary: `${id} is late.` })
+  const shared = client.render({
+    version: 'v2', language: 'en-US', query: 'q', answerSource: 'workspace_rules', answerSourceLabel: 'Answered from your workspace data',
+    conclusion: { title: '2 purchase orders are overdue', summary: '', severity: 'risk', confidence: 'high' },
+    keyEvidence: [record('PO-1'), record('PO-2')],
+    businessImpact: [1, 2].map(() => ({ area: 'Stock', impact: 'A late receipt can hold up stock.', severity: 'risk', explanation: 'A late receipt can hold up stock.' })),
+    dataLimitations: [], reviewCards: [], navigationLinks: [], followUpSuggestions: [],
+  })
+  assert.equal((shared.match(/Impact: A late receipt can hold up stock\./g) || []).length, 1)
+  assert.match(shared, /data-testid="ai-shared-impact"/)
+  assert.doesNotMatch(shared, /data-testid="ai-more-lines"/)
+})
+
+test('an order proposal is a confirm card with its fields and one primary button', async () => {
+  const client = await loadClient()
+  const scenario = aiSkillScenario()
+  const named = await runAiSkillRuntime({ ...scenario.ctx, env: {} }, { message: 'Create a purchase order for LDM-001', answerLanguage: 'en-US' })
+  const markup = client.render(named)
+  assert.match(markup, /data-testid="ai-confirm-card"/)
+  assert.match(markup, />Suggested: new purchase request</)
+  assert.match(markup, /<dt[^>]*>Item<\/dt><dd[^>]*>LDM-001<\/dd>/)
+  assert.match(markup, /<dt[^>]*>Quantity<\/dt><dd[^>]*>12<\/dd>/)
+  assert.match(markup, /data-testid="ai-confirm-cancel"[^>]*>Cancel</)
+  // Its button opens the filled-in request form; it is the answer's only one for the order.
+  assert.equal((markup.match(/data-action-kind="create_formal_business_draft"/g) || []).length, 1)
+  assert.match(markup, /data-testid="ai-confirm-card"[^]*data-action-kind="create_formal_business_draft"[^>]*>Open request: 12 pcs of LDM-001</)
+})
+
+// The owner's chat in the local walkthrough on 2026-10-29: a model-first answer's "1. 2. 3." ran
+// together in one paragraph, and each record it cited became a card reading
+// "需要结合当前业务状态处理。". The text keeps its lines and lists; cited
+// records are links, with no stock sentence.
+test('a model-first answer keeps its lines and lists, and its cited records are links with no stock sentence', async () => {
+  const client = await loadClient()
+  const record = (id, label, status) => ({ id: `purchase_order:${id}`, entityType: 'purchase_order', entityId: id, entityLabel: label, label, status, sourceLabel: 'Purchase orders' })
+  const response = {
+    version: 'v2', language: 'zh-CN', answerSource: 'workspace_model', answerSourceLabel: '由 AI 根据你的记录撰写，数字已核对', query: '现在有什么需要我注意的吗',
+    conclusion: { title: '有三件事需要你注意', summary: '目前最需要关注的是：\n1. 8 张采购订单已逾期。\n2. LDM-001 低于安全库存。\n3、INV-001 有 $200 价差。\n\n建议先处理逾期订单。', severity: 'info', confidence: 'medium' },
+    keyEvidence: [record('PO-020', 'PO-020', 'Overdue'), record('PO-021', 'PO-021', 'Overdue')],
+    dataLimitations: [], reviewCards: [], navigationLinks: [], followUpSuggestions: [],
+  }
+  const markup = client.render(response)
+  assert.match(markup, /<ol start="1" class="list-decimal[^"]*"><li>8 张采购订单已逾期。<\/li><li>LDM-001 低于安全库存。<\/li><li>INV-001 有 \$200 价差。<\/li><\/ol>/)
+  assert.match(markup, /<p>目前最需要关注的是：<\/p>/)
+  assert.match(markup, /<p>建议先处理逾期订单。<\/p>/)
+  assert.doesNotMatch(markup, /需要结合当前业务状态处理|Review it against the current business status/)
+  assert.match(markup, /data-records="cited"/)
+  assert.equal((markup.match(/data-testid="ai-cited-record"/g) || []).length, 2)
+  assert.ok(markup.includes('相关记录') && !markup.includes('重点事项'))
+  // A rules answer's lines say why each matters, so they stay cards.
+  const rules = client.render((await answers())('today_priorities', { language: 'zh-CN' }))
+  assert.match(rules, /data-records="priorities"/)
+  assert.doesNotMatch(rules, /需要结合当前业务状态处理/)
+})
+
+test('answer text splits into paragraphs, numbered lists and bulleted lists', async () => {
+  const client = await loadClient()
+  const render = (summary) => client.render({ version: 'v2', language: 'en-US', conclusion: { title: 'T', summary, severity: 'info' }, keyEvidence: [], dataLimitations: [], reviewCards: [], navigationLinks: [] })
+  assert.match(render('First.\n- one\n- two'), /<p>First\.<\/p><ul class="list-disc[^"]*"><li>one<\/li><li>two<\/li><\/ul>/)
+  // A list that starts at 2 keeps its numbers; "1.5 kg" is not a list item.
+  assert.match(render('2. later\n3. last'), /<ol start="2"/)
+  assert.match(render('1.5 kg arrived.'), /<p>1\.5 kg arrived\.<\/p>/)
+  assert.match(render('（1）甲\n（2）乙'), /<ol start="1"[^>]*><li>甲<\/li><li>乙<\/li><\/ol>/)
+})
+
+test('a list of items may be a table; the basis folds under the one trust line with what was checked', async () => {
+  const client = await loadClient()
+  const record = (id) => ({ id: `item:${id}`, entityType: 'item', entityId: id, entityLabel: id, label: id, sourceLabel: '你的工作区' })
+  const response = {
+    version: 'v2', language: 'zh-CN', query: '哪些要补货', answerSource: 'workspace_model', answerSourceLabel: '由 AI 根据你的记录撰写，数字已核对', checkedLabel: '已检查：库存余额',
+    conclusion: { title: '只有 LDM-002 今天要下单', summary: '| 物料 | 最晚下单日 | 建议 |\n| --- | --- | --- |\n| LDM-002 | 2026-11-03 | 50 pcs |\n| LDM-001 | 2026-11-14 | — |\n要我为 LDM-002 开采购申请吗？', severity: 'info', confidence: 'medium' },
+    answerBasis: ['在途只计入最晚下单日前到货的采购单行。'],
+    keyEvidence: [record('LDM-002'), record('LDM-001')], dataLimitations: [], reviewCards: [], navigationLinks: [], followUpSuggestions: [],
+  }
+  const markup = client.render(response)
+  assert.match(markup, /<table data-testid="ai-answer-table"[^]*?<th[^>]*>物料<\/th>[^]*?<td[^>]*><span><button[^>]*data-business-id="LDM-002"[^]*?<td[^>]*>2026-11-03<\/td>/)
+  assert.equal((markup.match(/<tr>/g) || []).length, 3)
+  assert.match(markup, /<p>要我为 <span><button[^>]*>LDM-002<\/button><\/span> 开采购申请吗？<\/p>/)
+  // One meta line: what was checked and the basis are inside the trust line.
+  const trust = markup.slice(markup.indexOf('data-testid="ai-trust-line"'))
+  assert.ok(markup.indexOf('data-testid="ai-answer-checked"') > markup.indexOf('data-testid="ai-trust-line"'))
+  assert.match(trust, /查看依据/)
+  assert.match(trust, /data-testid="ai-answer-basis"[^]*?<li>在途只计入最晚下单日前到货的采购单行。<\/li>/)
+  // A record named in the text is not listed again, even beside a line with a next step.
+  const stepped = client.render({ ...response, keyEvidence: [record('LDM-002'), { ...record('LDM-001'), nextStep: '下一步：跟进 PO-001。' }, record('LDM-006')] })
+  const list = stepped.match(/<ul data-testid="ai-focused-primary-items"[^]*?<\/ul>/)[0]
+  assert.match(list, /data-business-id="LDM-001"[^]*?下一步：跟进 PO-001。/)
+  assert.match(list, /data-business-id="LDM-006"/)
+  assert.doesNotMatch(list, /LDM-002/)
+  // Without a trust line (the help answer) the checked line stays above the answer.
+  assert.match(client.render({ ...response, answerSourceLabel: '', keyEvidence: [], answerBasis: [], skill: { id: 'capability_overview' } }), /data-testid="ai-answer-checked"/)
+})
+
+// "Which purchase orders are overdue?" (owner, 2026-11-04: "表单拉的也太丑了"):
+// order numbers broke onto four lines in the narrow panel, and every order
+// was named again on a "Next:" line under the table.
+test('a table keeps record numbers whole, reads as compact rows in the panel, and folds the next steps it already lists', async () => {
+  const client = await loadClient()
+  const po = (id, supplier) => ({ id: `po:${id}`, entityType: 'purchase_order', entityId: id, entityLabel: id, label: id, sourceLabel: 'Your workspace', nextStep: `Next: ask ${supplier} to confirm a delivery date.` })
+  const response = {
+    version: 'v2', language: 'en-US', query: 'Which purchase orders are overdue?', answerSource: 'workspace_model', answerSourceLabel: 'Written by AI from your records, figures checked',
+    conclusion: { title: '3 purchase orders are overdue', summary: ['- The oldest is LOCAL-DEMO-PO-020, 15 days late.', '| PO | Supplier | Days overdue | Remaining |', '| --- | --- | --- | --- |', '| LOCAL-DEMO-PO-020 | Precision Fastener Works | 15 | 7,000 pcs |', '| LOCAL-DEMO-PO-011 | Evergreen Packaging | 8 | 300 box |', '| LOCAL-DEMO-PO-016 | Summit Packaging | 7 | 80 roll |'].join('\n'), severity: 'warning', confidence: 'medium' },
+    keyEvidence: [po('LOCAL-DEMO-PO-020', 'Precision Fastener Works'), po('LOCAL-DEMO-PO-011', 'Evergreen Packaging'), po('LOCAL-DEMO-PO-016', 'Summit Packaging')],
+    dataLimitations: [], reviewCards: [], navigationLinks: [], followUpSuggestions: [],
+  }
+  const markup = client.render(response)
+  // A record chip never wraps inside its number; a figure keeps to one line, a name may wrap.
+  assert.match(markup, /data-testid="ai-record-chip"[^>]*class="[^"]*whitespace-nowrap/)
+  assert.match(markup, /<td class="[^"]*whitespace-nowrap"[^>]*>15<\/td>/)
+  assert.match(markup, /<td class="[^"]*first:pl-0 "[^>]*>Precision Fastener Works<\/td>/)
+  // The narrow panel reads each row as the record, then the rest of its row.
+  const rows = markup.match(/<ul data-testid="ai-answer-table-rows"[^]*?<\/ul>/)[0]
+  assert.equal((rows.match(/<li /g) || []).length, 3)
+  assert.match(rows, /data-business-id="LOCAL-DEMO-PO-020"[^]*?<span>Precision Fastener Works<\/span><span> · <span class="whitespace-nowrap">Days overdue <span[^>]*>15<\/span><\/span><\/span><span> · <span class="whitespace-nowrap">Remaining <span[^>]*>7,000 pcs<\/span><\/span><\/span>/)
+  // The next steps of the records the table lists fold under one line.
+  assert.match(markup, /data-testid="ai-next-steps-toggle"[^>]*>Next steps for these records \(3\)<\/button>/)
+  assert.doesNotMatch(markup, /data-testid="ai-focused-primary-items"/)
+  assert.doesNotMatch(markup, /ask Precision Fastener Works/)
+  // In Chinese too.
+  assert.match(client.render({ ...response, language: 'zh-CN' }), /这些记录的下一步（3）/)
+})
+
+test('an item the answer offers to order is a choice that asks for it, not a link to its page', async () => {
+  const client = await loadClient()
+  const record = (id) => ({ id: `item:${id}`, entityType: 'item', entityId: `ITEM-${id}`, entityLabel: id, label: id, sourceLabel: '你的工作区' })
+  const markup = client.render({
+    version: 'v2', language: 'zh-CN', query: '帮我起草一份PR', answerSource: 'workspace_model', answerSourceLabel: '由 AI 根据你的记录撰写，数字已核对',
+    conclusion: { title: '要为哪个物料开采购申请？', summary: '| 物料 | 最晚下单日 |\n| --- | --- |\n| LDM-002 | 2026-11-03 |\n要为 LDM-002 开采购申请吗？LDM-001 已有在途订单。', severity: 'info', confidence: 'medium' },
+    keyEvidence: [record('LDM-002'), record('LDM-001')], dataLimitations: [], reviewCards: [], navigationLinks: [],
+    followUpSuggestions: [{ label: '为 LDM-002 开采购申请', prompt: '为 LDM-002 开采购申请' }], orderChoices: [{ sku: 'LDM-002', prompt: '为 LDM-002 开采购申请' }],
+  })
+  // The table (and its narrow rows, which repeat it for the small panel) and the question each offer it.
+  const narrow = markup.match(/<ul data-testid="ai-answer-table-rows"[^]*?<\/ul>/)[0]
+  assert.equal((markup.replace(narrow, '').match(/data-testid="ai-order-choice"[^>]*data-business-id="LDM-002"/g) || []).length, 2)
+  assert.equal((narrow.match(/data-testid="ai-order-choice"[^>]*data-business-id="LDM-002"/g) || []).length, 1)
+  assert.match(markup, /title="为 LDM-002 起草采购申请"/)
+  const text = markup.match(/<div data-testid="ai-answer-text"[^]*?<\/section>/)[0]
+  assert.doesNotMatch(text, /data-action-kind="view_evidence" data-business-id="ITEM-LDM-002"/)
+  // An item that is not offered keeps its link; the offered one keeps its
+  // "view item" link under the sources line.
+  assert.match(text, /data-action-kind="view_evidence" data-business-id="ITEM-LDM-001"/)
+  assert.match(markup.slice(markup.indexOf('data-testid="ai-trust-line"')), /data-action-kind="view_evidence" data-business-id="ITEM-LDM-002"/)
+})
+
+test("follow-up chips follow the answer's language, not the interface language", async () => {
+  const client = await loadClient()
+  const message = (language) => ({ role: 'assistant', content: '', cards: [{ type: 'ai_response_v2', data: { version: 'v2', intent: 'model_first', language, keyEvidence: [{ id: 'e1', entityType: 'purchase_order', entityId: 'PO-012', label: 'PO-012' }], navigationLinks: [], followUpSuggestions: [] } }] })
+  const chinese = client.getAiFollowUpChips(message('zh-CN'), 'en-US')
+  assert.ok(chinese.length > 0)
+  assert.ok(chinese.every((chip) => CJK.test(chip.label) && CJK.test(chip.prompt)), 'a Chinese answer on the English interface gets Chinese chips')
+  const english = client.getAiFollowUpChips(message('en-US'), 'zh-CN')
+  assert.ok(english.every((chip) => !CJK.test(chip.label) && !CJK.test(chip.prompt)), 'an English answer on the Chinese interface gets English chips')
+  // Without an answer language, the interface language decides.
+  const { language: _language, ...unlabelled } = message('en-US').cards[0].data
+  assert.ok(client.getAiFollowUpChips({ ...message('en-US'), cards: [{ type: 'ai_response_v2', data: unlabelled }] }, 'en-US').every((chip) => !CJK.test(chip.label)))
+})
+
+test('a new-item proposal is a confirm card whose button opens one Other line', async () => {
+  const client = await loadClient()
+  const card = { previewOnly: true, reviewRequired: true, requiresHumanReview: true, prohibitedActions: ['send'], draftType: 'purchase_request_draft', title: 'Request 50 pairs of safety gloves, size L (not in the catalog)', allowedNextStep: 'Open request: 50 pairs of safety gloves, size L', description: 'for the warehouse', autoOpen: true,
+    payload: { nonCatalog: true, description: 'safety gloves, size L', quantity: 50, quantitySource: 'user', unit: 'pairs', reason: 'for the warehouse', reasonSource: 'user', language: 'en-US' } }
+  const markup = client.render({ version: 'v2', language: 'en-US', answerSource: 'workspace_model', conclusion: { title: 'The request is open', summary: 'Check it and submit it on the page.', severity: 'info' }, keyEvidence: [], dataLimitations: [], reviewCards: [card], navigationLinks: [] })
+  assert.match(markup, /safety gloves, size L \(not in the catalog\)/)
+  assert.match(markup, /Open request: 50 pairs of safety gloves, size L/)
+  const target = client.structuredDraftTarget('purchase_request_draft', card.payload, 'ai_assistant')
+  assert.deepEqual(target, { moduleId: 'procurement:requests', query: { mode: 'create', lineType: 'non_catalog', description: 'safety gloves, size L', unit: 'pairs', quantity: '50', quantityFrom: 'user', reason: 'for the warehouse', reasonFrom: 'user', origin: 'ai_assistant' } })
+  // It opens by itself, as a catalog proposal does.
+  assert.equal(client.autoOpenDraftCard([card]), card)
 })

@@ -28,7 +28,7 @@
       "properties": {
         "timeWindow": { "enum": ["today", "current_week", "next_7_days", "next_30_days", "month_end", "overdue", "all"] },
         "dueState": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "enum": ["overdue", "blocked"] } },
-        "riskLevels": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "enum": ["critical", "high", "medium", "low"] } },
+        "riskLevels": { "type": "array", "maxItems": 0, "uniqueItems": true, "items": { "type": "string" } },
         "statuses": { "type": "array", "maxItems": 0, "uniqueItems": true, "items": { "type": "string", "maxLength": 80 } },
         "currencies": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z]{3}$" } }
       }

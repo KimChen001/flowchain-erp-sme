@@ -49,7 +49,7 @@ export const PROCUREMENT_TRANSACTION_BASELINE = Object.freeze({
     'server/routes/purchase-requests.routes.mjs',
     'server/routes/rfqs.routes.mjs',
     'src/modules/purchase-requests/Page.tsx',
-    'src/modules/rfq/Page.tsx',
+    'src/modules/procurement/Page.tsx',
     'src/domain/relationships/resolver.ts',
   ],
   chosenBoundaries: {

@@ -1,12 +1,16 @@
+import type { SuggestionTrail } from "../../lib/prefill";
 import { apiJson } from "../../lib/api-client";
 
 // Desktop receiving commands. Quantities travel as decimal strings; the server
 // checks permission, warehouse scope, version and over-receipt on every call.
-export type ReceivableLine = { id: string; sku: string; itemName: string; orderedQuantity: string; receivedQuantity: string; remainingQuantity: string; unit?: string | null };
+// Where the item already has stock, most first, in the warehouses the user may receive into.
+export type ReceivingStockLocation = { warehouseId: string; location: string; onHandQuantity: string };
+export type ReceivableLine = { id: string; sku: string; itemName: string; orderedQuantity: string; receivedQuantity: string; remainingQuantity: string; unit?: string | null; stockLocations?: ReceivingStockLocation[] };
 export type ReceivablePurchaseOrder = { id: string; status: string; version: number; receivable: boolean; supplierName?: string | null; currency?: string | null; defaultWarehouseId?: string | null; lines: ReceivableLine[] };
-export type ReceivingWarehouse = { id: string; code: string; name: string };
+// locations: the warehouse's bins and the locations stock is recorded at.
+export type ReceivingWarehouse = { id: string; code: string; name: string; locations?: string[] };
 export type ReceiptLineInput = { purchaseOrderLineId: string; acceptedQuantity: string; rejectedQuantity: string; rejectionReason: string; location: string };
-export type ReceiptInput = { warehouseId: string; arrivedAt: string; note?: string; lines: ReceiptLineInput[] };
+export type ReceiptInput = { warehouseId: string; arrivedAt: string; note?: string; lines: ReceiptLineInput[]; suggestionTrail?: SuggestionTrail | null };
 export type ReceiptSummary = { id: string; documentNumber: string; poId: string; workflowStatus: string; postingStatus: string; version: number };
 export type ReceiptCommandResult = { entityId: string; receivingDocument: ReceiptSummary; idempotentReplay?: boolean };
 export type ReceiptListItem = ReceiptSummary & {

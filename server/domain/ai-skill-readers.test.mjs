@@ -38,7 +38,7 @@ test('skill facts are the report numbers for the same rows', async () => {
   // At-risk SKUs: the inventory risk KPI's definition, and the inventory report's rows.
   assert.deepEqual(facts.inventory.atRisk, ['LDM-001'])
   assert.equal(facts.inventory.atRiskCount, kpi(overview, 'inventory_risk_sku').currentValue)
-  assert.deepEqual(facts.inventory.atRisk, inventoryReport.details.filter((row) => row.shortage > 0).map((row) => row.sku))
+  assert.deepEqual(facts.inventory.atRisk, inventoryReport.details.filter((row) => row.shortage > 0).map((row) => row.id))
   const ldm1 = facts.inventory.rows.find((row) => row.sku === 'LDM-001')
   assert.deepEqual([ldm1.available, ldm1.openSalesDemand, ldm1.shortage, ldm1.incomingApprovedPo, ldm1.stockStatus], [28, 35, 7, 70, 'below_safety_stock'])
 

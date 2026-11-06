@@ -17,6 +17,7 @@ const prismaCli = join(root, "node_modules", "prisma", "build", "index.js");
 const tenantId = "tenant-workspace-settings-api";
 const email = "settings-admin@flowchain.invalid";
 const userId = `USR-${createHash("sha256").update(email).digest("hex").slice(0, 16)}`;
+const viewerEmail = "settings-viewer@flowchain.invalid";
 
 const freePort = () => new Promise((resolvePort, reject) => {
   const server = createServer().on("error", reject);
@@ -98,6 +99,7 @@ try {
   prisma = await createPrismaClient(env);
   await prisma.tenant.create({ data: { id: tenantId, name: "Settings Workspace", legalName: "Settings Company" } });
   await prisma.user.create({ data: { id: userId, tenantId, email, name: "Settings Admin", role: "admin", status: "active" } });
+  await prisma.user.create({ data: { id: "USR-settings-viewer", tenantId, email: viewerEmail, name: "Settings Viewer", role: "viewer", status: "active" } });
   server = startApi(env);
   const base = `http://127.0.0.1:${apiPort}`;
   await waitFor(`${base}/api/health`);
@@ -140,6 +142,51 @@ try {
   const numbering = { ...settings.numbering, rules: settings.numbering.rules.map(rule => rule.id === "NUM-RR" ? { ...rule, prefix: "RTR" } : rule) };
   await request(base, "/api/settings-runtime/numbering", { token, method: "PATCH", body: { settings: numbering } });
   assert.equal((await prisma.tenant.findUnique({ where: { id: tenantId } })).operationalSettings.numbering.rules.find(rule => rule.id === "NUM-RR").prefix, "RTR");
+
+  // Document settings: saved by whoever manages the workspace, refused over a limit and without that permission.
+  const documents = { ...settings.documents, letterhead: { ...settings.documents.letterhead, addressLines: ["12 Pier Road", "Oakland, CA 94607"] }, purchaseOrder: { ...settings.documents.purchaseOrder, termsText: "Net 30 from invoice." } };
+  await request(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: documents } });
+  assert.equal((await prisma.tenant.findUnique({ where: { id: tenantId } })).operationalSettings.documents.purchaseOrder.termsText, "Net 30 from invoice.");
+  const tooLong = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...documents, purchaseOrder: { ...documents.purchaseOrder, footerText: "x".repeat(501) } } } });
+  assert.deepEqual([tooLong.status, tooLong.payload.code], [400, "DOCUMENT_SETTING_TOO_LONG"]);
+  const viewerToken = (await signInThroughEmailLink(base, prisma, { tenantId, email: viewerEmail })).token;
+  const denied = await raw(base, "/api/settings-runtime/documents", { token: viewerToken, method: "PATCH", body: { settings: documents } });
+  assert.equal(denied.status, 403);
+  assert.equal((await request(base, "/api/settings-runtime", { token: viewerToken })).documents.letterhead.addressLines[0], "12 Pier Road");
+
+  // Print layouts are the workspace's: saved with the section, unknown keys dropped,
+  // readable by a viewer who prints, refused over the limits and without the permission.
+  const layout = (id) => ({
+    id, name: "Dock receipt", documentType: "receive_sheet", isDefault: false, version: 1,
+    page: { paper: "A4", orientation: "portrait", width: 794, height: 1123, margin: 52 },
+    elements: [{ id: "company", type: "field", title: "Company", field: "companyName", x: 52, y: 42, width: 690, height: 30, visible: true, draggable: true, resizable: true, style: { fontSize: 14, bold: true }, script: "dropped" }],
+  });
+  const withLayouts = { ...documents, layouts: [layout("receive_sheet-custom")] };
+  const savedLayouts = await request(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: withLayouts } });
+  assert.deepEqual(savedLayouts.settings.layouts.map((item) => item.id), ["receive_sheet-custom"]);
+  assert.equal("script" in savedLayouts.settings.layouts[0].elements[0], false);
+  assert.equal("isDefault" in savedLayouts.settings.layouts[0], false);
+  assert.equal((await prisma.tenant.findUnique({ where: { id: tenantId } })).operationalSettings.documents.purchaseOrder.termsText, "Net 30 from invoice.", "the rest of the section is kept");
+  assert.deepEqual((await request(base, "/api/settings-runtime", { token: viewerToken })).documents.layouts.map((item) => item.id), ["receive_sheet-custom"]);
+  const tooMany = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: Array.from({ length: 21 }, (_, index) => layout(`receive_sheet-${index}`)) } } });
+  assert.deepEqual([tooMany.status, tooMany.payload.code, tooMany.payload.details?.field, tooMany.payload.details?.limit], [400, "DOCUMENT_LAYOUTS_TOO_MANY", "layouts", 20]);
+  const termsElement = (id) => ({ id, type: "terms", title: "Terms", value: "x".repeat(4000), x: 52, y: 700, width: 690, height: 110, visible: true, draggable: true, resizable: true });
+  const terms = (index) => ({ ...layout(`receive_sheet-terms-${index}`), elements: [termsElement("terms-1"), termsElement("terms-2"), termsElement("terms-3")] });
+  const tooLarge = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: Array.from({ length: 14 }, (_, index) => terms(index)) } } });
+  assert.deepEqual([tooLarge.status, tooLarge.payload.code, tooLarge.payload.details?.field, tooLarge.payload.details?.limit], [400, "DOCUMENT_LAYOUTS_TOO_LARGE", "layouts", 160 * 1024]);
+  // A stored layout comes back unchanged or as the next version; a change from an older copy is refused.
+  const stale = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: [{ ...layout("receive_sheet-custom"), name: "Changed from an old copy" }] } } });
+  assert.deepEqual([stale.status, stale.payload.code], [409, "DOCUMENT_LAYOUT_CHANGED"]);
+  const nextVersion = await request(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: [{ ...layout("receive_sheet-custom"), name: "Dock receipt v2", version: 2 }] } } });
+  assert.deepEqual([nextVersion.settings.layouts[0].name, nextVersion.settings.layouts[0].version], ["Dock receipt v2", 2]);
+  // The audit row keeps the layouts as a summary.
+  const layoutAudit = (await request(base, "/api/audit-log?limit=100", { token })).find((entry) => entry.action === "documents_settings_updated");
+  assert.deepEqual(layoutAudit.after.layouts, { count: 1, items: [{ id: "receive_sheet-custom", name: "Dock receipt v2", documentType: "receive_sheet", version: 2 }] });
+  const badShape = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: [{ ...layout("receive_sheet-x"), documentType: "purchase_order" }] } } });
+  assert.deepEqual([badShape.status, badShape.payload.code, badShape.payload.details?.field], [400, "DOCUMENT_LAYOUT_INVALID", "layouts.0.documentType"]);
+  const layoutDenied = await raw(base, "/api/settings-runtime/documents", { token: viewerToken, method: "PATCH", body: { settings: withLayouts } });
+  assert.equal(layoutDenied.status, 403);
+  assert.deepEqual((await prisma.tenant.findUnique({ where: { id: tenantId } })).operationalSettings.documents.layouts.map((item) => item.id), ["receive_sheet-custom"], "a refused save changes nothing");
 
   await prisma.tenant.update({ where: { id: tenantId }, data: { openingBalanceLockedAt: new Date() } });
   workspace = await request(base, "/api/workspace", { token });

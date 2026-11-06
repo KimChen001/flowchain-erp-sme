@@ -10,10 +10,12 @@ import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 
 // A PO line keeps the date the supplier first promised, apart from the current
 // expected date that moves with the shipment. Supplier scorecards measure
-// against the first one, so it must be recorded at issue and never change.
+// against the first one, so it must be recorded at approval (or at issue, for
+// a line dated after approval) and never change.
 // Run with: node scripts/run-postgres-test-files.mjs tests/postgres/purchase-order-original-promise.test.mjs
 
 const migrationName = '20260930010000_purchase_order_original_promise'
+const backfillName = '20261005210000_purchase_order_original_promise_backfill'
 const migrationsRoot = new URL('../../prisma/migrations/', import.meta.url)
 const migrationSql = (name) => readFileSync(new URL(`${name}/migration.sql`, migrationsRoot), 'utf8')
 
@@ -23,15 +25,16 @@ const people = {
   buyer: { id: 'promise-buyer-a', tenantId: tenantA, email: 'buyer@original-promise.invalid', name: 'Blake Buyer', role: 'buyer' },
   viewer: { id: 'promise-viewer-a', tenantId: tenantA, email: 'viewer@original-promise.invalid', name: 'Vic Viewer', role: 'viewer' },
   otherBuyer: { id: 'promise-buyer-b', tenantId: tenantB, email: 'buyer@other-promise.invalid', name: 'Other Buyer', role: 'buyer' },
+  approver: { id: 'promise-approver-a', tenantId: tenantA, email: 'approver@original-promise.invalid', name: 'Avery Approver', role: 'admin' },
 }
 const contextOf = (user) => ({ identity: { authenticated: true, tenantId: user.tenantId, userId: user.id, role: user.role } })
 const day = (value) => value ? value.toISOString().slice(0, 10) : null
 const at = (iso) => new Date(`${iso}T12:00:00Z`)
 
-async function approvedPo(prisma, id, { tenantId = tenantA, expectedDate = '2026-10-10', lines }) {
+async function approvedPo(prisma, id, { tenantId = tenantA, expectedDate = '2026-10-10', status = 'approved', lines }) {
   await prisma.purchaseOrder.create({
     data: {
-      id, tenantId, status: 'approved', supplierId: 'promise-supplier', supplierName: 'Promise Supplier', currency: 'USD', amount: 1000, expectedDate: expectedDate ? at(expectedDate) : null,
+      id, tenantId, status, supplierId: 'promise-supplier', supplierName: 'Promise Supplier', currency: 'USD', amount: 1000, expectedDate: expectedDate ? at(expectedDate) : null,
       lines: { create: lines.map((line, index) => ({ id: `${id}-L${index + 1}`, sku: `SKU-${index + 1}`, itemName: `Item ${index + 1}`, orderedQuantity: 10, receivedQuantity: 0, unit: 'pcs', unitPrice: 50, amount: 500, metadata: line.promisedDate ? { promisedDate: line.promisedDate } : {} })) },
     },
   })
@@ -78,6 +81,76 @@ test('the migration adds an empty original promise to existing lines and guards 
     await admin.query(`DROP DATABASE IF EXISTS "${upgradeDatabase}"`).catch(() => {})
     await admin.end().catch(() => {})
   }
+})
+
+// Replays every migration before the backfill on a throwaway database, then the
+// backfill, and checks which lines it fills and from which date.
+async function withUpgradeDatabase(prefix, run) {
+  assert.ok(process.env.DATABASE_URL_TEST, 'An isolated test database is required')
+  const admin = new pg.Client({ connectionString: process.env.DATABASE_URL_TEST })
+  const upgradeDatabase = `${prefix}_${randomUUID().replace(/-/g, '')}`
+  const upgradeUrl = new URL(process.env.DATABASE_URL_TEST)
+  upgradeUrl.pathname = `/${upgradeDatabase}`
+  const client = new pg.Client({ connectionString: upgradeUrl.toString() })
+  try {
+    await admin.connect()
+    await admin.query(`CREATE DATABASE "${upgradeDatabase}"`)
+    await client.connect()
+    await run(client)
+  } finally {
+    await client.end().catch(() => {})
+    await admin.query(`DROP DATABASE IF EXISTS "${upgradeDatabase}"`).catch(() => {})
+    await admin.end().catch(() => {})
+  }
+}
+
+test('the backfill records the original promise of approved and later lines from the best date on record', async () => {
+  await withUpgradeDatabase('flowchain_promise_backfill', async (client) => {
+    const earlier = readdirSync(migrationsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name < backfillName).map((entry) => entry.name).sort()
+    for (const name of earlier) await client.query(migrationSql(name))
+    await client.query(`INSERT INTO "Tenant" (id, name, "updatedAt") VALUES ('upgrade-tenant', 'Upgrade', NOW())`)
+    const po = (id, status, expectedDate) => client.query(`INSERT INTO "PurchaseOrder" (id, "tenantId", status, "expectedDate", "updatedAt") VALUES ($1, 'upgrade-tenant', $2, $3, NOW())`, [id, status, expectedDate])
+    const line = (id, poId, metadata, original = null) => client.query(`INSERT INTO "PurchaseOrderLine" (id, "purchaseOrderId", "orderedQuantity", metadata, "originalPromisedDate") VALUES ($1, $2, 5, $3, $4)`, [id, poId, JSON.stringify(metadata), original])
+    await po('po-issued', 'issued', '2026-08-01T12:00:00Z')
+    await line('own-date', 'po-issued', { promisedDate: '2026-08-03' })
+    await line('header-date', 'po-issued', {})
+    await line('revised', 'po-issued', { promisedDate: '2026-08-09' })
+    await line('recorded', 'po-issued', { promisedDate: '2026-08-05' }, '2026-07-30T12:00:00Z')
+    await line('bad-date', 'po-issued', { promisedDate: '2026-02-30' })
+    await po('po-approved', 'approved', '2026-09-15T00:00:00Z')
+    await line('approved-line', 'po-approved', {})
+    await po('po-approved-undated', 'approved', null)
+    await line('undated', 'po-approved-undated', {})
+    await po('po-received', 'fully_received', '2026-07-10T12:00:00Z')
+    await line('received-line', 'po-received', {})
+    await po('po-draft', 'draft', '2026-08-01T12:00:00Z')
+    await line('draft-line', 'po-draft', { promisedDate: '2026-08-03' })
+    await po('po-cancelled', 'cancelled', '2026-08-01T12:00:00Z')
+    await line('cancelled-line', 'po-cancelled', { promisedDate: '2026-08-03' })
+    // Two revisions moved 08-03 to 08-06, then to 08-09: the first date is the promise.
+    const revision = (id, previousDate, newDate, createdAt) => client.query(`INSERT INTO "PurchaseOrderPromiseRevision" (id, "tenantId", "purchaseOrderId", "purchaseOrderLineId", "previousDate", "newDate", reason, source, "createdAt") VALUES ($1, 'upgrade-tenant', 'po-issued', 'revised', $2, $3, 'Carrier delay', 'test', $4)`, [id, previousDate, newDate, createdAt])
+    await revision('rev-2', '2026-08-06T12:00:00Z', '2026-08-09T12:00:00Z', '2026-08-02T10:00:00Z')
+    await revision('rev-1', '2026-08-03T12:00:00Z', '2026-08-06T12:00:00Z', '2026-08-01T10:00:00Z')
+
+    await client.query(migrationSql(backfillName))
+
+    const rows = (await client.query(`SELECT id, to_char("originalPromisedDate", 'YYYY-MM-DD HH24:MI') AS original FROM "PurchaseOrderLine" ORDER BY id`)).rows
+    assert.deepEqual(Object.fromEntries(rows.map((row) => [row.id, row.original])), {
+      'approved-line': '2026-09-15 12:00',
+      'bad-date': '2026-08-01 12:00',
+      'cancelled-line': null,
+      'draft-line': null,
+      'header-date': '2026-08-01 12:00',
+      'own-date': '2026-08-03 12:00',
+      'received-line': '2026-07-10 12:00',
+      recorded: '2026-07-30 12:00',
+      revised: '2026-08-03 12:00',
+      undated: null,
+    })
+    // The helper function is gone and the promise is still fixed once set.
+    assert.equal((await client.query(`SELECT count(*)::int AS count FROM pg_proc WHERE proname = 'flowchain_backfill_promise_day'`)).rows[0].count, 0)
+    await assert.rejects(client.query(`UPDATE "PurchaseOrderLine" SET "originalPromisedDate" = '2026-08-20T12:00:00Z' WHERE id = 'own-date'`), /cannot be changed/)
+  })
 })
 
 test('issuing records the original promise; a later revision keeps it and writes a revision and an audit row', async (t) => {
@@ -169,6 +242,31 @@ test('issuing records the original promise; a later revision keeps it and writes
     await t.test('a PO that is not issued yet is not revised through the command', async () => {
       await approvedPo(prisma, 'PROMISE-PO-3', { lines: [{ promisedDate: '2026-10-05' }] })
       await assert.rejects(service.revisePromisedDates('PROMISE-PO-3', { expectedVersion: 0, idempotencyKey: 'revise-approved', lines: [{ purchaseOrderLineId: 'PROMISE-PO-3-L1', promisedDate: '2026-10-08' }], reason: 'Too early' }, contextOf(people.buyer)), (error) => error.code === 'PURCHASE_ORDER_NOT_ISSUED')
+    })
+
+    await t.test('approval records the original promise; issue keeps it after the date moves', async () => {
+      // L1 has its own date, L2 reads the header date.
+      await approvedPo(prisma, 'PROMISE-PO-4', { status: 'pending_approval', expectedDate: '2026-10-20', lines: [{ promisedDate: '2026-10-12' }, {}] })
+      await approvedPo(prisma, 'PROMISE-PO-5', { status: 'pending_approval', expectedDate: null, lines: [{}] })
+      const approved = await service.approvePurchaseOrder('PROMISE-PO-4', { expectedVersion: 0, idempotencyKey: 'approve-4' }, contextOf(people.approver))
+      assert.deepEqual(approved.purchaseOrder.lines.map((line) => [line.id, line.originalPromisedDate]), [['PROMISE-PO-4-L1', '2026-10-12'], ['PROMISE-PO-4-L2', '2026-10-20']])
+      const approveAudit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityId: 'PROMISE-PO-4', action: 'purchase_order_approve' } })
+      assert.deepEqual(approveAudit.metadata.originalPromisesRecorded.map((row) => row.originalPromisedDate), ['2026-10-12', '2026-10-20'])
+      // An undated line has no promise to record.
+      const undated = await service.approvePurchaseOrder('PROMISE-PO-5', { expectedVersion: 0, idempotencyKey: 'approve-5' }, contextOf(people.approver))
+      assert.equal(undated.purchaseOrder.lines[0].originalPromisedDate, null)
+
+      // Before issue a date simply moves: no revision, and the original stays.
+      await prisma.$transaction(async (tx) => {
+        const row = await tx.purchaseOrder.findUnique({ where: { id: 'PROMISE-PO-4' }, include: { lines: { orderBy: { id: 'asc' } } } })
+        await applyPromisedDateChanges(tx, { tenantId: tenantA, purchaseOrder: row, changes: [{ purchaseOrderLineId: 'PROMISE-PO-4-L1', promisedDate: '2026-10-15' }], source: 'test' })
+      })
+      assert.equal(await prisma.purchaseOrderPromiseRevision.count({ where: { purchaseOrderId: 'PROMISE-PO-4' } }), 0)
+      const current = await prisma.purchaseOrder.findUnique({ where: { id: 'PROMISE-PO-4' } })
+      const issued = await service.issuePurchaseOrder('PROMISE-PO-4', { expectedVersion: current.version, idempotencyKey: 'issue-4' }, contextOf(people.buyer))
+      assert.deepEqual(issued.purchaseOrder.lines.map((line) => [line.id, line.originalPromisedDate, line.promisedDate]), [['PROMISE-PO-4-L1', '2026-10-12', '2026-10-15'], ['PROMISE-PO-4-L2', '2026-10-20', '2026-10-20']])
+      const issueAudit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityId: 'PROMISE-PO-4', action: 'purchase_order_issue' } })
+      assert.deepEqual(issueAudit.metadata.originalPromisesRecorded, [])
     })
   } finally {
     await prisma.$disconnect()

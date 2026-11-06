@@ -57,7 +57,8 @@ function knownError(ctx, error) {
     error instanceof CustomerReturnCommandError ||
     error instanceof QuarantineReleaseCommandError ||
     error instanceof PilotIdentityError ||
-    error?.name === "AuthorizationError"
+    error?.name === "AuthorizationError" ||
+    error?.name === "RequestBodyError"
   ) {
     ctx.send(ctx.res, error.status || 400, {
       code: error.code || "RETURN_GOVERNANCE_FAILED",
@@ -66,6 +67,7 @@ function knownError(ctx, error) {
     });
     return;
   }
+  ctx.reportError?.(error);
   ctx.send(ctx.res, 500, {
     code: "RETURN_GOVERNANCE_FAILED",
     message: "Return governance could not be completed.",

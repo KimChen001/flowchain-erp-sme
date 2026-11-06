@@ -56,6 +56,7 @@ try {
   Object.assign(process.env, {
     DATABASE_URL: url,
     DATABASE_URL_TEST: url,
+    FLOWCHAIN_APPROVAL_EMAILS: process.env.FLOWCHAIN_APPROVAL_EMAILS || "off",
     FLOWCHAIN_PERSISTENCE_MODE: "database",
     FLOWCHAIN_DEFAULT_TENANT_ID: tenantId,
     FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: "false",
@@ -63,6 +64,12 @@ try {
     SCM_API_PORT: String(apiPort),
     NODE_ENV: "test",
     FLOWCHAIN_INTAKE_LOCAL_STORAGE_DIR: join(directory, "intake-artifacts"),
+    FLOWCHAIN_ENABLE_DATA_IMPORT: "true",
+    // Contracts sit beside the supplier pages these specs cover
+    // (tests/browser/contracts.spec.ts); signed files go to a disposable folder
+    // inside the cluster directory, so they are removed together with it.
+    FLOWCHAIN_ENABLE_CONTRACTS: "true",
+    FLOWCHAIN_UPLOAD_STORAGE_DIR: join(directory, "uploads"),
   });
   await execFileAsync(node, [prismaCli, "migrate", "deploy"], { cwd: root, env: process.env, maxBuffer: 10 * 1024 * 1024 });
   prisma = await createPrismaClient(process.env);

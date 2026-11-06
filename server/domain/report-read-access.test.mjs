@@ -83,7 +83,7 @@ test('the operations specialist sees invoices without amounts; the procurement s
   assert.equal(kpi(procurement.payload, 'purchase_order_amount').currentValue, 12500)
   // Inventory still counts every order's demand, without showing the orders.
   const inventory = await report('inventory', buyer)
-  assert.equal(inventory.payload.details.find(row => row.sku === 'SKU-1').reserved !== undefined, true)
+  assert.equal(inventory.payload.details.find(row => row.id === 'SKU-1').reserved !== undefined, true)
 })
 
 test('the open purchase orders report needs purchase order read and hides amounts without prices', async () => {

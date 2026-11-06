@@ -19,7 +19,8 @@ test('login product claims match current finance capability boundary', () => {
     assert.doesNotMatch(source, /会计净利润|完整财务闭环/)
   }
   // The sign-in page carries the product claims, in both languages.
-  assert.match(signInSource, /当前连接基础资料、采购、销售、库存、经营分析和运营财务/)
+  assert.match(signInSource, /基础资料、采购、销售、库存、经营分析与运营财务共用同一套数据/)
+  assert.match(signInSource, /Master data, purchasing, sales, inventory, analytics, and operational finance share one set of records/)
   assert.match(signInSource, /付款、收款、退款、税务与总账执行尚未启用/)
   assert.match(signInSource, /Payment, collection, refund, tax, and general-ledger execution are not enabled/)
   const finance = capabilityFor('finance')

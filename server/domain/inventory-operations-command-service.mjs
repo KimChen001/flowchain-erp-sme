@@ -16,7 +16,9 @@ import {
   buildStockTransferReversalPlan,
   inventoryOperationDecimalString as fixed,
   inventoryOperationDecimalUnits as units,
+  inventoryStockRecordHasHistory,
 } from "./inventory-operations-policy.mjs";
+import { isPrismaConcurrencyError } from "./prisma-concurrency-error.mjs";
 
 export class InventoryOperationsError extends Error {
   constructor(code, message, status = 400, details) {
@@ -59,8 +61,13 @@ const reasonCodes = new Set([
   "found_stock",
   "data_correction",
   "quality_disposition",
+  "opening_balance",
   "other",
 ]);
+// Only these reasons may add an item at a location with no stock record.
+const newBalanceReasonCodes = new Set(["opening_balance", "found_stock"]);
+const balanceKey = (sku, warehouseId, key) =>
+  `${text(sku)}|${text(warehouseId)}|${text(key)}`;
 
 function stable(value, parentKey = "") {
   if (Array.isArray(value)) {
@@ -107,8 +114,11 @@ const replay = (execution, hash) => {
     );
   return { ...execution.resultPayload, idempotentReplay: true };
 };
+// A losing serializable transaction, whichever shape Prisma gives it: P2034
+// from its own queries, or P2010 with SQLSTATE 40001/40P01 from the raw
+// `SELECT ... FOR UPDATE` row locks (lockTenantRows).
 const concurrencyError = (error) =>
-  error?.code === "P2034" ||
+  isPrismaConcurrencyError(error) ||
   /serialization|deadlock|write conflict/i.test(text(error?.message));
 const uniqueError = (error) => error?.code === "P2002";
 
@@ -145,6 +155,88 @@ async function lockTenantRows(tx, table, tenantId, ids) {
 
 async function lockBalanceIds(tx, tenantId, ids) {
   return lockTenantRows(tx, "InventoryBalance", tenantId, ids);
+}
+
+// Posting creates the stock records that opening stock, found stock and
+// transfers to a new location need, with the same key receiving uses. The
+// zero row starts at version 0; the posting update then takes it to 1. A
+// concurrent create of the same key fails the unique index and the
+// transaction returns a refresh-and-retry conflict. A new record is only
+// created while its item and warehouse are still active; `inactive` is the
+// refusal used when one was retired after the document was readied.
+async function ensureBalanceRows(tx, actor, idFactory, rows, inactive) {
+  const byKey = new Map();
+  for (const row of rows)
+    byKey.set(balanceKey(row.sku, row.warehouseId, row.locationKey), row);
+  const balances = new Map(),
+    createdBalanceIds = [];
+  for (const key of [...byKey.keys()].sort()) {
+    const row = byKey.get(key);
+    let balance = await tx.inventoryBalance.findUnique({
+      where: {
+        tenantId_sku_warehouseKey_locationKey: {
+          tenantId: actor.tenantId,
+          sku: row.sku,
+          warehouseKey: row.warehouseId,
+          locationKey: row.locationKey,
+        },
+      },
+    });
+    if (!balance) {
+      const [item, warehouse] = await Promise.all([
+        tx.item.findFirst({
+          where: {
+            tenantId: actor.tenantId,
+            id: text(row.itemId),
+            status: "active",
+          },
+          select: { id: true },
+        }),
+        tx.warehouse.findFirst({
+          where: {
+            tenantId: actor.tenantId,
+            id: text(row.warehouseId),
+            status: "active",
+          },
+          select: { id: true },
+        }),
+      ]);
+      if (!item || !warehouse)
+        fail(inactive.code, inactive.message, inactive.status);
+      balance = await tx.inventoryBalance.create({
+        data: {
+          id: idFactory(),
+          tenantId: actor.tenantId,
+          itemId: row.itemId,
+          sku: row.sku,
+          itemName: row.itemName,
+          warehouseId: row.warehouseId,
+          warehouseKey: row.warehouseId,
+          location: row.location || null,
+          locationKey: row.locationKey,
+          onHandQuantity: "0",
+          reservedQuantity: "0",
+          availableQuantity: "0",
+          unit: row.unit,
+          status: "available",
+          version: 0,
+        },
+      });
+      createdBalanceIds.push(balance.id);
+    }
+    balances.set(key, balance);
+  }
+  return { balances, createdBalanceIds };
+}
+
+function assertNoPendingBalances(plan) {
+  if (plan.balanceImpacts.some((row) => row.createsBalance))
+    fail(
+      "INVENTORY_OPERATIONS_CONCURRENT_TRANSACTION_CONFLICT",
+      "A stock record could not be created for posting. Refresh and retry.",
+      409,
+    );
+  return plan;
 }
 
 function audit({
@@ -350,13 +442,11 @@ export function createInventoryOperationsCommandService({
       };
     });
     if (requireBalances) {
-      const keys = normalized.flatMap((line) =>
-        [line.source, line.destination].map((leg) => ({
-          sku: line.sku,
-          warehouseKey: leg.warehouseId,
-          locationKey: leg.locationKey,
-        })),
-      );
+      const keys = normalized.map((line) => ({
+        sku: line.sku,
+        warehouseKey: line.source.warehouseId,
+        locationKey: line.source.locationKey,
+      }));
       const balances = await tx.inventoryBalance.findMany({
         where: { tenantId: actor.tenantId, OR: keys },
       });
@@ -365,6 +455,8 @@ export function createInventoryOperationsCommandService({
           (row) => `${row.sku}|${row.warehouseKey}|${row.locationKey}`,
         ),
       );
+      // Only the source needs a stock record. Posting creates a missing
+      // destination record.
       for (const line of normalized) {
         if (
           !found.has(
@@ -374,16 +466,6 @@ export function createInventoryOperationsCommandService({
           fail(
             "TRANSFER_SOURCE_BALANCE_NOT_FOUND",
             `Source balance for ${line.sku} was not found.`,
-            409,
-          );
-        if (
-          !found.has(
-            `${line.sku}|${line.destination.warehouseId}|${line.destination.locationKey}`,
-          )
-        )
-          fail(
-            "TRANSFER_DESTINATION_BALANCE_NOT_FOUND",
-            `Destination balance for ${line.sku} was not found.`,
             409,
           );
       }
@@ -659,20 +741,51 @@ export function createInventoryOperationsCommandService({
           ),
           "operate",
         );
-        const balanceIds = (
-          await buildStockTransferPostingPlan({
-            prisma: tx,
-            tenantId: actor.tenantId,
-            transferId: aggregate.id,
-          })
-        ).balanceImpacts.map((row) => row.balanceId);
-        await lockBalanceIds(tx, actor.tenantId, balanceIds);
-        const plan = enforce(
+        const first = enforce(
           await buildStockTransferPostingPlan({
             prisma: tx,
             tenantId: actor.tenantId,
             transferId: aggregate.id,
           }),
+        );
+        const { createdBalanceIds } = await ensureBalanceRows(
+          tx,
+          actor,
+          idFactory,
+          aggregate.lines.flatMap((line) =>
+            line.legs
+              .filter((leg) => leg.direction === "destination")
+              .map((leg) => ({
+                itemId: line.itemId,
+                sku: line.sku,
+                itemName: line.itemName,
+                unit: line.unit,
+                warehouseId: leg.warehouseId,
+                location: leg.location,
+                locationKey: leg.locationKey,
+              })),
+          ),
+          {
+            code: "TRANSFER_INVALID_ROUTE",
+            message:
+              "Transfer items and warehouses must be active in the signed tenant.",
+            status: 422,
+          },
+        );
+        await lockBalanceIds(tx, actor.tenantId, [
+          ...first.balanceImpacts
+            .map((row) => row.balanceId)
+            .filter(Boolean),
+          ...createdBalanceIds,
+        ]);
+        const plan = assertNoPendingBalances(
+          enforce(
+            await buildStockTransferPostingPlan({
+              prisma: tx,
+              tenantId: actor.tenantId,
+              transferId: aggregate.id,
+            }),
+          ),
         );
         const postingBatchId = idFactory(),
           movementIds = [];
@@ -749,7 +862,7 @@ export function createInventoryOperationsCommandService({
             summary: `Stock transfer ${aggregate.transferNumber} posted.`,
             commandType: "post_stock_transfer",
             idempotencyKey: payload.idempotencyKey,
-            metadata: { postingBatchId, movementIds },
+            metadata: { postingBatchId, movementIds, createdBalanceIds },
           }),
         });
         return commandResult("StockTransferDocument", aggregate.id, {
@@ -1437,6 +1550,7 @@ export function createInventoryOperationsCommandService({
         "At least one adjustment line is required.",
         422,
       );
+    const opening = reasonCode === "opening_balance";
     const ids = [
       ...new Set(
         payload.lines
@@ -1460,19 +1574,95 @@ export function createInventoryOperationsCommandService({
       "operate",
     );
     const map = new Map(balances.map((row) => [row.id, row]));
-    return {
-      reasonCode,
-      notes: text(payload.notes) || null,
-      lines: payload.lines.map((line) => {
-        const balance = map.get(text(line.inventoryBalanceId)),
-          delta = units(line.adjustmentQuantity);
-        if (delta === 0n)
-          fail(
-            "ADJUSTMENT_NEGATIVE_INVENTORY",
-            "Adjustment quantity cannot be zero.",
-            422,
+    // A line with no stock record names an item, warehouse and location
+    // instead. Posting creates the record if it still does not exist then.
+    const keyLines = payload.lines.filter(
+      (line) => !text(line.inventoryBalanceId),
+    );
+    const itemMap = new Map(),
+      keyBalances = new Map();
+    if (keyLines.length) {
+      if (!newBalanceReasonCodes.has(reasonCode))
+        fail(
+          "ADJUSTMENT_BALANCE_REQUIRED",
+          "Choose an existing stock record. Only opening stock and found stock can add an item at a location with no stock record.",
+          422,
+        );
+      if (
+        keyLines.some((line) => !text(line.itemId) || !text(line.warehouseId))
+      )
+        fail(
+          "ADJUSTMENT_BALANCE_REQUIRED",
+          "Choose an item and a warehouse for each line.",
+          422,
+        );
+      const itemIds = [...new Set(keyLines.map((line) => text(line.itemId)))],
+        warehouseIds = [
+          ...new Set(keyLines.map((line) => text(line.warehouseId))),
+        ];
+      const [items, warehouses] = await Promise.all([
+        tx.item.findMany({
+          where: {
+            tenantId: actor.tenantId,
+            id: { in: itemIds },
+            status: "active",
+          },
+        }),
+        tx.warehouse.findMany({
+          where: {
+            tenantId: actor.tenantId,
+            id: { in: warehouseIds },
+            status: "active",
+          },
+        }),
+      ]);
+      if (
+        items.length !== itemIds.length ||
+        warehouses.length !== warehouseIds.length
+      )
+        fail(
+          "ADJUSTMENT_NOT_FOUND",
+          "The item or warehouse was not found or is not active.",
+          404,
+        );
+      assertWarehouseAccess(actor, warehouseIds, "operate");
+      for (const row of items) itemMap.set(row.id, row);
+      for (const line of keyLines) {
+        const item = itemMap.get(text(line.itemId)),
+          key = balanceKey(
+            item.sku,
+            line.warehouseId,
+            locationKey(line.location),
           );
-        return {
+        if (!keyBalances.has(key))
+          keyBalances.set(
+            key,
+            await tx.inventoryBalance.findUnique({
+              where: {
+                tenantId_sku_warehouseKey_locationKey: {
+                  tenantId: actor.tenantId,
+                  sku: item.sku,
+                  warehouseKey: text(line.warehouseId),
+                  locationKey: locationKey(line.location),
+                },
+              },
+            }),
+          );
+      }
+    }
+    const lines = [];
+    for (const line of payload.lines) {
+      const delta = units(line.adjustmentQuantity);
+      if (delta === 0n)
+        fail(
+          "ADJUSTMENT_NEGATIVE_INVENTORY",
+          "Adjustment quantity cannot be zero.",
+          422,
+        );
+      let balance, normalized;
+      if (text(line.inventoryBalanceId)) {
+        balance = map.get(text(line.inventoryBalanceId));
+        normalized = {
           id: line.id,
           inventoryBalanceId: balance.id,
           itemId: balance.itemId,
@@ -1484,7 +1674,56 @@ export function createInventoryOperationsCommandService({
           adjustmentQuantity: fixed(delta),
           unit: balance.unit,
         };
-      }),
+      } else {
+        if (delta < 0n)
+          fail(
+            "ADJUSTMENT_NEGATIVE_INVENTORY",
+            "Stock added at a location with no stock record must be greater than zero.",
+            422,
+          );
+        const item = itemMap.get(text(line.itemId));
+        balance =
+          keyBalances.get(
+            balanceKey(item.sku, line.warehouseId, locationKey(line.location)),
+          ) || null;
+        normalized = {
+          id: line.id,
+          inventoryBalanceId: balance?.id || null,
+          itemId: item.id,
+          sku: item.sku,
+          itemName: item.name,
+          warehouseId: text(line.warehouseId),
+          location: balance ? balance.location : text(line.location) || null,
+          locationKey: locationKey(line.location),
+          adjustmentQuantity: fixed(delta),
+          unit: balance?.unit || item.unit,
+        };
+      }
+      // Opening stock always adds stock, once, to a stock record that holds
+      // nothing and has no history yet (a reversed opening entry aside).
+      if (opening && delta < 0n)
+        fail(
+          "ADJUSTMENT_NEGATIVE_INVENTORY",
+          "Opening stock must be greater than zero.",
+          422,
+        );
+      if (
+        opening &&
+        balance &&
+        (units(balance.onHandQuantity || 0) !== 0n ||
+          (await inventoryStockRecordHasHistory(tx, actor.tenantId, balance)))
+      )
+        fail(
+          "ADJUSTMENT_OPENING_BALANCE_EXISTS",
+          `${normalized.sku} already has stock or stock history at this location. Use another reason to correct it.`,
+          409,
+        );
+      lines.push(normalized);
+    }
+    return {
+      reasonCode,
+      notes: text(payload.notes) || null,
+      lines,
     };
   }
 
@@ -1711,23 +1950,55 @@ export function createInventoryOperationsCommandService({
           current.lines.map((line) => line.warehouseId),
           "operate",
         );
-        const first = await buildInventoryAdjustmentPostingPlan({
-          prisma: tx,
-          tenantId: actor.tenantId,
-          adjustmentId: current.id,
-        });
-        await lockBalanceIds(
-          tx,
-          actor.tenantId,
-          first.balanceImpacts.map((row) => row.balanceId),
-        );
-        const plan = enforce(
+        const first = enforce(
           await buildInventoryAdjustmentPostingPlan({
             prisma: tx,
             tenantId: actor.tenantId,
             adjustmentId: current.id,
           }),
         );
+        // Lines saved without a stock record get one now: an existing record
+        // for the key, or a new zero record created inside this transaction.
+        const keyLines = current.lines.filter(
+          (line) => !line.inventoryBalanceId,
+        );
+        const { balances, createdBalanceIds } = await ensureBalanceRows(
+          tx,
+          actor,
+          idFactory,
+          keyLines,
+          {
+            code: "ADJUSTMENT_NOT_FOUND",
+            message: "The item or warehouse was not found or is not active.",
+            status: 404,
+          },
+        );
+        for (const line of keyLines)
+          await tx.inventoryAdjustmentLine.update({
+            where: { id: line.id },
+            data: {
+              inventoryBalanceId: balances.get(
+                balanceKey(line.sku, line.warehouseId, line.locationKey),
+              ).id,
+              version: { increment: 1 },
+            },
+          });
+        await lockBalanceIds(tx, actor.tenantId, [
+          ...first.balanceImpacts
+            .map((row) => row.balanceId)
+            .filter(Boolean),
+          ...createdBalanceIds,
+        ]);
+        const plan = assertNoPendingBalances(
+          enforce(
+            await buildInventoryAdjustmentPostingPlan({
+              prisma: tx,
+              tenantId: actor.tenantId,
+              adjustmentId: current.id,
+            }),
+          ),
+        );
+        const created = new Set(createdBalanceIds);
         const postingBatchId = idFactory(),
           movementIds = [];
         for (const impact of plan.balanceImpacts) {
@@ -1775,7 +2046,12 @@ export function createInventoryOperationsCommandService({
               unit: fact.unit,
               actorId: actor.user.id,
               occurredAt: now(),
-              metadata: { balanceId: fact.balanceId },
+              reason: current.reasonCode,
+              metadata: {
+                balanceId: fact.balanceId,
+                reasonCode: current.reasonCode,
+                createdBalance: created.has(fact.balanceId),
+              },
             },
           });
           movementIds.push(movement.id);
@@ -1800,7 +2076,7 @@ export function createInventoryOperationsCommandService({
             summary: `Inventory adjustment ${current.adjustmentNumber} posted.`,
             commandType: "post_inventory_adjustment",
             idempotencyKey: payload.idempotencyKey,
-            metadata: { postingBatchId, movementIds },
+            metadata: { postingBatchId, movementIds, createdBalanceIds },
           }),
         });
         return commandResult("InventoryAdjustmentDocument", current.id, {

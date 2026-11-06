@@ -156,7 +156,7 @@ test('supplier status query returns supplier card, evidence, and actions', () =>
   assert.equal(response.intent.slots.supplier, 'SUP-001')
   assert.equal(response.cards[0].type, 'supplier_status')
   assert.equal(response.cards[0].data.supplierId, 'SUP-001')
-  assert.equal(response.cards[0].data.scoreSource, 'derived_performance_fallback')
+  assert.equal(response.cards[0].data.scoreSource, 'missing')
   assert.equal(response.cards[0].data.openPoCount, 1)
   assert.equal(response.cards[0].data.overduePoCount, 1)
   assert.ok(response.cards.some((card) => card.type === 'evidence'))

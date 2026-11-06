@@ -9,7 +9,7 @@ import {
   runEnvCheck,
 } from '../../scripts/ai-runtime-provider-env-check.mjs'
 
-const providerKinds = ['generic_http', 'openai_responses', 'deepseek_chat', 'doubao_chat']
+const providerKinds = ['generic_http', 'openai_responses', 'deepseek_chat', 'doubao_chat', 'qwen_chat', 'parley_chat', 'anthropic_chat']
 const forbiddenDefaultText = /API key|token|endpoint URL|JSON|payload|raw|provider|model|endpoint|OpenAI|DeepSeek|Doubao|豆包|system prompt|prompt package/i
 const realValues = /https:\/\/private\.example|LOCAL_ACCESS_VALUE|LOCAL_MODEL_VALUE|Bearer|secret-value/i
 const forbiddenActions = /自动批准|自动下单|发送|付款|写库存|写财务凭证|改主数据|覆盖数据/
@@ -25,6 +25,16 @@ function assertDefaultSafe(summary) {
   assert.doesNotMatch(summary, forbiddenActions)
   assert.doesNotMatch(summary, /\{|\}|\[|\]/)
 }
+
+test('every kind the runtime can call counts as supported, Parley, Qwen and Anthropic included', () => {
+  const complete = { FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted', FLOWCHAIN_AI_PROVIDER_ENDPOINT: 'https://private.example/v1', FLOWCHAIN_AI_PROVIDER_API_KEY: 'LOCAL_ACCESS_VALUE', FLOWCHAIN_AI_PROVIDER_MODEL: 'LOCAL_MODEL_VALUE' }
+  for (const kind of ['parley_chat', 'qwen_chat', 'anthropic_chat', 'deepseek_chat']) {
+    const inspected = inspectProviderEnv({ ...complete, FLOWCHAIN_AI_PROVIDER_KIND: kind })
+    assert.equal(inspected.supportedKind, true, kind)
+    assert.equal(inspected.complete, true, kind)
+  }
+  assert.equal(inspectProviderEnv({ ...complete, FLOWCHAIN_AI_PROVIDER_KIND: 'made_up_chat' }).supportedKind, false)
+})
 
 test('arg parser supports default help and verbose mode', () => {
   assert.deepEqual(parseEnvCheckArgs([]), { verbose: false })

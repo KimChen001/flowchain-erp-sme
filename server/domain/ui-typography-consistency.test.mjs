@@ -37,9 +37,8 @@ test('typography tokens expose consolidated operational scale', () => {
 test('primary procurement table id links use table link class', () => {
   const purchasing = readSource('src', 'modules', 'purchasing', 'Page.tsx')
   const requests = readSource('src', 'modules', 'purchase-requests', 'CanonicalProcurementPanel.tsx')
-  const rfq = readSource('src', 'modules', 'rfq', 'Page.tsx')
 
-  for (const source of [purchasing, requests, rfq]) {
+  for (const source of [purchasing, requests]) {
     assert.match(source, /tableLinkClass/)
     assert.match(source, /className=\{tableLinkClass\}/)
   }
@@ -66,15 +65,6 @@ test('action draft review shell keeps evidence links and draft actions on shared
   assert.match(source, /draftEvidenceLinkClass = `text-left \$\{draftEvidenceTitleClass\} hover:underline`/)
   assert.match(source, /draftEvidenceMetaClass = typography\.compactMetadata/)
   assert.match(source, /className=\{draftEvidenceLinkClass\}/)
-})
-
-test('today cockpit recent document table uses standard table body scale', () => {
-  const source = readSource('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
-
-  assert.match(source, /tableBodyTextClass/)
-  assert.match(source, /thRightClass/)
-  assert.match(source, /tdNumericRightClass/)
-  assert.match(source, /className=\{tableLinkClass\}/)
 })
 
 test('Forecast MRP and S&OP tables use shared workbench typography scale', () => {

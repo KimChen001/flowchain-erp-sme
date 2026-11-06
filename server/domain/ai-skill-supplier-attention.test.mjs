@@ -40,8 +40,8 @@ test('suppliers are ordered by the date of their most urgent record, five at mos
   // Recent activity names who the workspace dealt with this week, problems or not.
   assert.match(answer.conclusion.summary, /In the last 7 days: Supplier S1 \(1 invoice\), Supplier S5 \(1 receipt\) and Supplier S8 \(1 new order\)\./)
   // The first three say which record is most urgent and its date; the others only count.
-  assert.equal(answer.keyEvidence[0].summary, '1 overdue purchase order. Most urgent: PO-1. 18 days past the promised date; 10 pcs still to receive from Supplier S1.')
-  assert.equal(answer.keyEvidence[1].summary, '2 overdue purchase orders. Most urgent: PO-2. 3 days past the promised date; 10 pcs still to receive from Supplier S2.')
+  assert.equal(answer.keyEvidence[0].summary, '1 overdue purchase order. Most urgent: PO-1. 18 days past the promised date (Sep 15, 2026); 10 pcs still to receive from Supplier S1.')
+  assert.equal(answer.keyEvidence[1].summary, '2 overdue purchase orders. Most urgent: PO-2. 3 days past the promised date (Sep 30, 2026); 10 pcs still to receive from Supplier S2.')
   assert.equal(answer.keyEvidence[3].summary, '1 purchase order due within 7 days.')
   assert.deepEqual(answer.navigationLinks.map((link) => link.moduleId), ['master-data:suppliers', 'master-data:suppliers', 'master-data:suppliers', 'reports:suppliers'])
   assert.equal(answer.navigationLinks.at(-1).label, 'View all suppliers (scorecard)')

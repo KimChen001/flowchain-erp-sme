@@ -159,9 +159,55 @@ test('workbook metric summary formats each money metric in its own currency', ()
   }), { subject: 'sales', measures: ['sales_order_count', 'purchase_order_amount'] })
   const copy = value => analyticsCopy(value, 'en-US')
   const summary = reportWorkbook(report, {}, copy, [], { locale: 'en-US', language: 'en-US' })[0].rows
-  const row = summary.find(item => item.Metric === 'Purchase order amount' || item.Metric === '采购订单金额')
+  const row = summary.find(item => item.Metric === 'Committed PO amount')
   assert.match(String(row['Current value']), /€300/)
   assert.equal(row['Currency code'], 'EUR')
+})
+
+test('workbook metric summary reads each KPI as the dashboard shows it', () => {
+  const copy = value => analyticsCopy(value, 'en-US')
+  const valueOf = (salesOrders, language = 'en-US') => {
+    const report = buildRuntimeGovernedReport(context({ salesOrders }), { subject: 'sales', measures: ['open_sales_demand'] })
+    const tr = value => analyticsCopy(value, language)
+    return reportWorkbook(report, {}, tr, [], { locale: language, language })[0].rows[0][tr('Current value')]
+  }
+  const order = (id, lines) => ({ id, status: 'confirmed', currency: 'USD', totalAmount: 10, lines })
+  // One SKU in one unit: the total carries its unit, as on the KPI card.
+  assert.equal(valueOf([order('SO-1', [{ sku: 'A', unit: 'pcs', orderedQuantity: 14, fulfilledQuantity: 0 }])]), '14 pcs')
+  // Two units, or two SKUs: no total, and the reason instead of a blank.
+  assert.equal(valueOf([order('SO-2', [{ sku: 'A', unit: 'pcs', orderedQuantity: 1, fulfilledQuantity: 0 }, { sku: 'B', unit: 'ft', orderedQuantity: 5, fulfilledQuantity: 0 }])]), copy('Mixed units'))
+  assert.equal(valueOf([order('SO-3', [{ sku: 'A', unit: 'pcs', orderedQuantity: 9, fulfilledQuantity: 0 }, { sku: 'B', unit: 'pcs', orderedQuantity: 5, fulfilledQuantity: 0 }])]), 'Multiple SKUs')
+  assert.equal(valueOf([order('SO-4', [{ sku: 'A', unit: 'pcs', orderedQuantity: 9, fulfilledQuantity: 0 }, { sku: 'B', unit: 'pcs', orderedQuantity: 5, fulfilledQuantity: 0 }])], 'zh-CN'), '多个 SKU')
+  // On hand reads the same way: one SKU with its unit, else the reason.
+  const onHandOf = (inventoryItems, language = 'en-US') => {
+    const report = buildRuntimeGovernedReport(context({ inventoryItems }), { subject: 'inventory', measures: ['inventory_on_hand'] })
+    const tr = value => analyticsCopy(value, language)
+    return reportWorkbook(report, {}, tr, [], { locale: language, language })[0].rows[0][tr('Current value')]
+  }
+  assert.equal(onHandOf([{ sku: 'A', unit: 'pcs', onHandQuantity: 8 }]), '8 pcs')
+  assert.equal(onHandOf([{ sku: 'A', unit: 'pcs', onHandQuantity: 8 }, { sku: 'B', unit: 'pcs', onHandQuantity: 2 }]), 'Multiple SKUs')
+  assert.equal(onHandOf([{ sku: 'A', unit: 'pcs', onHandQuantity: 8 }, { sku: 'B', unit: 'pcs', onHandQuantity: 2 }], 'zh-CN'), '多个 SKU')
+  assert.equal(onHandOf([{ sku: 'A', unit: 'pcs', onHandQuantity: 8 }, { sku: 'B', unit: 'ft', onHandQuantity: 2 }]), 'Mixed units')
+  // Too few promised deliveries for an on-time rate.
+  const line = id => ({ id, sku: 'A', unit: 'pcs', orderedQuantity: 1, receivedQuantity: 0, originalPromisedDate: '2026-09-10' })
+  const onTime = buildRuntimeGovernedReport(context({ purchaseOrders: [po('PO-1', 'issued', 10, { lines: [line('L1'), line('L2')] })] }), { subject: 'procurement', measures: ['on_time_receipt_rate'] }, { now: new Date('2026-10-05T16:00:00.000Z') })
+  assert.equal(reportWorkbook(onTime, {}, copy, [], { locale: 'en-US', language: 'en-US' })[0].rows[0]['Current value'], 'Fewer than 5 deliveries')
+})
+
+test('workbook detail rows name an order without a quantity total as the dashboard does', () => {
+  const poLine = (sku, unit) => ({ sku, unit, orderedQuantity: 5, receivedQuantity: 0 })
+  const report = buildRuntimeGovernedReport(context({ purchaseOrders: [
+    po('PO-SKUS', 'issued', 10, { lines: [poLine('BOLT', 'pcs'), poLine('MOTOR', 'pcs')] }),
+    po('PO-UNITS', 'issued', 10, { lines: [poLine('BOLT', 'pcs'), poLine('BOLT', 'box')] }),
+    po('PO-ONE', 'issued', 10, { lines: [poLine('BOLT', 'pcs')] }),
+  ] }), { subject: 'procurement' })
+  for (const [language, skus, units] of [['en-US', 'Multiple SKUs', 'Mixed units'], ['zh-CN', '多个 SKU', '混合计量单位']]) {
+    const tr = value => analyticsCopy(value, language)
+    const detail = reportWorkbook(report, {}, tr, [], { locale: language, language })[2].rows
+    const unitOf = id => detail.find(row => row[tr('业务编号')] === id)[tr('单位')]
+    assert.deepEqual([unitOf('PO-SKUS'), unitOf('PO-UNITS'), unitOf('PO-ONE')], [skus, units, 'pcs'], language)
+    assert.doesNotMatch(JSON.stringify(detail), /multiple_skus|"mixed"/)
+  }
 })
 
 // Filters and business dates.
@@ -257,4 +303,21 @@ test('the activity chart explains the business date in both languages', () => {
   const english = "Activity uses each order's order date, falling back to its creation date. Counts are orders, not revenue."
   assert.equal(analyticsCopy(english, 'zh-CN'), '活动按订单日期统计，缺失时使用创建日期。数量表示订单数，并非收入。')
   assert.equal(analyticsCopy(analyticsCopy(english, 'zh-CN'), 'en-US'), english)
+})
+
+test('a sales order without an amount is missing, not zero', () => {
+  const sales = (id, totalAmount) => ({ id, salesOrderId: id, workflowStatus: 'confirmed', status: 'confirmed', customerName: 'Northwind', currency: 'USD', orderDate: '2026-09-05', totalAmount, lines: [{ sku: 'A', unit: 'pcs', orderedQuantity: 1, fulfilledQuantity: 0 }] })
+  const report = buildRuntimeGovernedReport(context({ salesOrders: [sales('SO-1', 120), sales('SO-2', null)] }), { subject: 'sales' })
+  assert.equal(kpi(report, 'sales_order_amount').currentValue, null)
+  assert.equal(kpi(report, 'sales_order_amount').dataStatus, 'incomplete')
+  assert.ok(kpi(report, 'sales_order_amount').limitations.includes('amount_missing'))
+  assert.ok(report.limitations.includes('amount_missing'))
+  assert.deepEqual(report.details.map(row => row.amount), [120, null])
+})
+
+test('a purchase order quantity is totalled only within one unit', () => {
+  const lines = (...units) => units.map(unit => ({ sku: `SKU-${unit}`, orderedQuantity: 10, receivedQuantity: 0, unit }))
+  const report = buildRuntimeGovernedReport(context({ purchaseOrders: [po('PO-PCS', 'issued', 1, { lines: lines('pcs', 'pcs') }), po('PO-MIXED', 'issued', 1, { lines: lines('pcs', 'ft') }), po('PO-NO-UNIT', 'issued', 1, { lines: lines('') })] }), { subject: 'procurement' })
+  assert.deepEqual(report.details.map(row => [row.id, row.quantity, row.unit]), [['PO-PCS', 20, 'pcs'], ['PO-MIXED', null, 'mixed'], ['PO-NO-UNIT', null, '']])
+  assert.ok(report.columnDefinitions.some(column => column.key === 'unit' && column.label === '单位'))
 })

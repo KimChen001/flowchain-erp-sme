@@ -4,6 +4,18 @@ const ZERO = 0n
 export const outboundText = (value = '') => String(value ?? '').trim()
 export const outboundLocationKey = (value = '') => outboundText(value).toLowerCase()
 
+// Customer invoice statuses in which an invoice holds the shipment it bills.
+// Operational finance counts these when preventing a shipment from being
+// invoiced twice, and shipment reversal refuses to undo a shipment that any of
+// them still holds. One definition, so the two rules cannot disagree. A draft
+// does not hold the shipment: submitting it re-validates the shipment.
+export const SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES = Object.freeze([
+  'submitted',
+  'approved',
+  'issued',
+  'disputed',
+])
+
 export function outboundDecimalUnits(value) {
   const raw = outboundText(value ?? '0') || '0'
   if (!/^-?\d+(?:\.\d+)?$/.test(raw)) throw Object.assign(new Error(`Invalid decimal quantity: ${raw}`), { code: 'RESERVATION_VALIDATION_FAILED' })
@@ -391,6 +403,18 @@ export async function buildShipmentReversalPlan({ prisma, tenantId, shipmentId, 
   if (!outboundText(reason)) blockingIssues.push(policyError('RESERVATION_VALIDATION_FAILED', 'A reversal reason is required.'))
   if (shipment.postingStatus === 'reversed') blockingIssues.push(policyError('SHIPMENT_ALREADY_REVERSED', 'Shipment is already reversed.', 409))
   else if (shipment.postingStatus !== 'posted') blockingIssues.push(policyError('SHIPMENT_REVERSAL_NOT_SAFE', 'Only a posted shipment can be reversed.', 409))
+  // A submitted, approved or issued customer invoice bills this shipment, and
+  // an issued one has already produced a receivable. Undoing the shipment
+  // underneath it would leave the customer owing money for goods the system
+  // then records as never shipped. Customer invoices have no cancel, so the
+  // refusal is permanent; the correction for billed goods is a customer return
+  // and credit note, which the message says.
+  const holdingInvoice = await prisma.customerInvoice.findFirst({
+    where: { tenantId, shipmentId: shipment.id, status: { in: [...SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES] } },
+    select: { id: true, invoiceNumber: true, status: true },
+    orderBy: { id: 'asc' },
+  })
+  if (holdingInvoice) blockingIssues.push(policyError('SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE', 'A customer invoice already bills this shipment, so it can no longer be reversed. To take these goods back, use a customer return and credit note.', 409, { customerInvoiceId: holdingInvoice.id, invoiceNumber: holdingInvoice.invoiceNumber, invoiceStatus: holdingInvoice.status }))
   const allocations = shipment.lines.flatMap((line) => line.allocations.map((allocation) => ({ ...allocation, shipmentLine: line })))
   const originalMovements = await prisma.inventoryMovement.findMany({ where: { tenantId, sourceDocumentId: shipment.id, movementType: 'shipment_posting' }, orderBy: { sourceDocumentLineId: 'asc' } })
   const movementMap = new Map(originalMovements.map((movement) => [movement.sourceDocumentLineId, movement]))

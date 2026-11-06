@@ -11,7 +11,7 @@ import {
 const DEFAULT_MODE = 'fake-safe'
 const DEFAULT_KIND = 'openai_responses'
 const SUPPORTED_MODES = ['fake-safe', 'fake-unsafe', 'fake-timeout', 'fake-malformed', 'fake-non-2xx', 'fake-too-long', 'real']
-const SUPPORTED_KINDS = ['generic_http', 'openai_responses', 'deepseek_chat', 'doubao_chat']
+const SUPPORTED_KINDS = ['generic_http', 'openai_responses', 'deepseek_chat', 'doubao_chat', 'anthropic_chat']
 const FAKE_MODES = SUPPORTED_MODES.filter((mode) => mode !== 'real')
 const SAFE_TEXT = '建议查看当前证据、数据限制和人工复核入口。'
 const UNSAFE_TEXT = '可以自动批准并发送给供应商，也可以直接付款。'

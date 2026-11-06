@@ -3,7 +3,7 @@ export type BusinessEntityType =
   | "supplier_invoice" | "three_way_match" | "reconciliation_statement" | "settlement_document"
   | "supplier" | "item" | "customer" | "sales_order" | "delivery_note" | "sign_receipt"
   | "warehouse" | "bin" | "payment_term" | "tax_code"
-  | "inventory_adjustment" | "purchase_return" | "credit_memo";
+  | "inventory_adjustment" | "purchase_return" | "credit_memo" | "contract";
 
 export type BusinessEntityRoute = {
   entityType: BusinessEntityType;
@@ -20,7 +20,7 @@ export const businessEntityRouteRegistry: Record<BusinessEntityType, BusinessEnt
   rfq: { entityType: "rfq", routeId: "procurement:rfq-detail", path: "/app/procurement/rfq/:id", listRouteId: "procurement:rfq", listPath: "/app/procurement/rfq", label: "RFQ", returnLabel: "返回 RFQ" },
   purchase_order: { entityType: "purchase_order", routeId: "procurement:order-detail", path: "/app/procurement/orders/:id", listRouteId: "procurement:orders", listPath: "/app/procurement/orders", label: "采购订单", returnLabel: "返回采购订单" },
   receiving_doc: { entityType: "receiving_doc", routeId: "procurement:receiving-detail", path: "/app/procurement/receiving/:id", listRouteId: "procurement:receiving", listPath: "/app/procurement/receiving", label: "收货单", returnLabel: "返回采购收货" },
-  supplier_invoice: { entityType: "supplier_invoice", routeId: "procurement:invoice-detail", path: "/app/procurement/invoices/:id", listRouteId: "procurement:invoices", listPath: "/app/procurement/invoices", label: "供应商发票", returnLabel: "返回供应商发票" },
+  supplier_invoice: { entityType: "supplier_invoice", routeId: "procurement:bill-detail", path: "/app/procurement/bills/:id", listRouteId: "procurement:bills", listPath: "/app/procurement/bills", label: "采购发票", returnLabel: "返回采购发票" },
   three_way_match: { entityType: "three_way_match", routeId: "procurement:match-detail", path: "/app/procurement/three-way-match/:id", listRouteId: "procurement:match", listPath: "/app/procurement/three-way-match", label: "三单匹配", returnLabel: "返回三单匹配" },
   reconciliation_statement: { entityType: "reconciliation_statement", routeId: "finance:reconciliation-detail", path: "/app/finance/reconciliation/:id", listRouteId: "finance:reconciliation", listPath: "/app/finance/reconciliation", label: "供应商对账单", returnLabel: "返回供应商对账" },
   settlement_document: { entityType: "settlement_document", routeId: "finance:settlement-detail", path: "/app/finance/settlement/:id", listRouteId: "finance:settlement", listPath: "/app/finance/settlement", label: "结算单", returnLabel: "返回结算单" },
@@ -37,6 +37,7 @@ export const businessEntityRouteRegistry: Record<BusinessEntityType, BusinessEnt
   inventory_adjustment: { entityType: "inventory_adjustment", routeId: "inventory:adjustment-detail", path: "/app/inventory/adjustments/:id", listRouteId: "inventory:adjustments", listPath: "/app/inventory/adjustments", label: "库存调整单", returnLabel: "返回库存调整单" },
   purchase_return: { entityType: "purchase_return", routeId: "procurement:returns", path: "/app/procurement/returns?record=:id", listRouteId: "procurement:returns", listPath: "/app/procurement/returns", label: "采购退货单", returnLabel: "返回采购退货" },
   credit_memo: { entityType: "credit_memo", routeId: "finance:credit-memo-detail", path: "/app/finance/credit-memos/:id", listRouteId: "finance:credits", listPath: "/app/finance/credits", label: "贷项通知", returnLabel: "返回贷项通知" },
+  contract: { entityType: "contract", routeId: "contracts:detail", path: "/app/contracts/:id", listRouteId: "contracts:list", listPath: "/app/contracts/list", label: "合同", returnLabel: "返回合同" },
 };
 
 export function businessEntityPath(entityType: BusinessEntityType, id: string) {

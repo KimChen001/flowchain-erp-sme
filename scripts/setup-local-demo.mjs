@@ -1,10 +1,11 @@
 import { getPrismaClient, disconnectPrismaClient } from '../server/persistence/prisma-client.mjs'
 import { assertLocalDevelopment } from '../server/domain/local-development-contract.mjs'
+import { applySupplierTierChange } from '../server/domain/supplier-tier-command.mjs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 
-export const LOCAL_DEMO_VERSION = 4
+export const LOCAL_DEMO_VERSION = 5
 export const LOCAL_DEMO_COUNTS = Object.freeze({ suppliers: 10, items: 6, customers: 3, warehouses: 1, locations: 3, paymentTerms: 2, taxCodes: 2, knowledgeDocuments: 2 })
 const tenantId = process.env.FLOWCHAIN_DEFAULT_TENANT_ID || 'tenant-flowchain-local'
 const marker = { localDemo: true, localDemoVersion: LOCAL_DEMO_VERSION }
@@ -37,14 +38,38 @@ export function localDemoSupplier(id) {
   }
   return supplier
 }
+// The tiers the walkthrough starts with, set by hand for its scenario with a
+// reason each (FlowChain suggests no tier). They are set once, with an audit
+// row each; a tier someone has since changed is kept on a rerun.
+const supplierTiers = [
+  ['LOCAL-DEMO-SUP-005', 1, 'The largest share of committed spend in the walkthrough, about a quarter.'],
+  ['LOCAL-DEMO-SUP-001', 1, 'Preferred source of LDM-001, LDM-002 and LDM-005, and about a quarter of committed spend.'],
+  ['LOCAL-DEMO-SUP-006', 1, 'One of the suppliers that together make up half of committed spend.'],
+  ['LOCAL-DEMO-SUP-002', 2, 'Regular purchase orders; preferred source of LDM-003 and LDM-006.'],
+  ['LOCAL-DEMO-SUP-003', 2, 'Regular purchase orders; preferred source of LDM-004.'],
+  ['LOCAL-DEMO-SUP-007', 2, 'Regular purchase orders in the last 12 months.'],
+  ['LOCAL-DEMO-SUP-004', 3, 'No purchase orders in the last 12 months.'],
+  ['LOCAL-DEMO-SUP-008', 3, 'No purchase orders in the last 12 months.'],
+  ['LOCAL-DEMO-SUP-009', 3, 'No purchase orders in the last 12 months.'],
+  ['LOCAL-DEMO-SUP-010', 3, 'No purchase orders in the last 12 months.'],
+]
+// Planning thresholds (safety stock, reorder point) in the stock unit. The
+// walkthrough keeps Flow Controller short with a reorder point of 40 under
+// about 5 pieces a day of demand over a 14-day lead time. The others are about
+// the walkthrough's daily demand times the preferred source's lead time plus
+// the safety stock (scripts/setup-local-scenario.mjs). Temperature Sensor's
+// reorder point of 270 (about 10 a day over Acme's 17 days, plus 100) is set
+// so the walkthrough has one item to order now: 150 on hand and 115 on order
+// are 5 short of it, raised to Acme's minimum order of 50. The same values go to
+// the item's metadata and, in the walkthrough scenario, to its stock record,
+// so every place a reorder point is read agrees.
 const items = [
-  // The walkthrough keeps Flow Controller short: its planning thresholds are higher.
   ['LOCAL-DEMO-ITEM-001', 'LDM-001', 'Flow Controller', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001', { safetyStock: 30, reorderPoint: 40 }],
-  ['LOCAL-DEMO-ITEM-002', 'LDM-002', 'Temperature Sensor', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001'],
-  ['LOCAL-DEMO-ITEM-003', 'LDM-003', 'Shipping Carton', 'Packaging materials', 'box', 'LOCAL-DEMO-SUP-002'],
-  ['LOCAL-DEMO-ITEM-004', 'LDM-004', 'Stainless Steel Fastener', 'Industrial supplies', 'pcs', 'LOCAL-DEMO-SUP-003'],
-  ['LOCAL-DEMO-ITEM-005', 'LDM-005', 'Shielded Control Cable', 'Electronic components', 'ft', 'LOCAL-DEMO-SUP-001'],
-  ['LOCAL-DEMO-ITEM-006', 'LDM-006', 'Product Label Roll', 'Packaging materials', 'roll', 'LOCAL-DEMO-SUP-002'],
+  ['LOCAL-DEMO-ITEM-002', 'LDM-002', 'Temperature Sensor', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001', { safetyStock: 100, reorderPoint: 270 }],
+  ['LOCAL-DEMO-ITEM-003', 'LDM-003', 'Shipping Carton', 'Packaging materials', 'box', 'LOCAL-DEMO-SUP-002', { safetyStock: 50, reorderPoint: 180 }],
+  ['LOCAL-DEMO-ITEM-004', 'LDM-004', 'Stainless Steel Fastener', 'Industrial supplies', 'pcs', 'LOCAL-DEMO-SUP-003', { safetyStock: 2400, reorderPoint: 5000 }],
+  ['LOCAL-DEMO-ITEM-005', 'LDM-005', 'Shielded Control Cable', 'Electronic components', 'ft', 'LOCAL-DEMO-SUP-001', { safetyStock: 400, reorderPoint: 1200 }],
+  ['LOCAL-DEMO-ITEM-006', 'LDM-006', 'Product Label Roll', 'Packaging materials', 'roll', 'LOCAL-DEMO-SUP-002', { safetyStock: 15, reorderPoint: 45 }],
 ]
 const customers = [
   ['LOCAL-DEMO-CUS-001', 'LDC-001', 'Redwood Retail'],
@@ -91,10 +116,10 @@ export async function seedLocalDemo(prisma, env = process.env) {
       const data = { name, category, riskLevel: 'low', metadata: { ...marker, defaultCurrency: 'USD', paymentTermsId: 'LOCAL-DEMO-NET30', ...profile } }
       await tx.supplier.upsert({ where: { id }, create: { id, tenantId, code, ...data }, update: data })
     }
-    for (const [id, sku, name, category, unit, preferredSupplierId, thresholds = { safetyStock: 10, reorderPoint: 20 }] of items) {
+    for (const [id, sku, name, category, unit, preferredSupplierId, thresholds] of items) {
       const collision = await tx.item.findFirst({ where: { tenantId, sku } })
       if (collision && collision.id !== id) throw new Error(`Refusing to overwrite non-demo item SKU ${sku}.`)
-      const data = { name, category, unit, preferredSupplierId, ...thresholds, metadata: { ...marker, defaultWarehouseId: 'LOCAL-DEMO-WH-001' } }
+      const data = { name, category, unit, preferredSupplierId, ...thresholds, metadata: { ...marker, defaultWarehouseId: 'LOCAL-DEMO-WH-001', ...thresholds } }
       await tx.item.upsert({ where: { id }, create: { id, tenantId, sku, ...data }, update: data })
     }
     for (const [id, recordKey, name] of customers) {
@@ -133,6 +158,18 @@ export async function seedLocalDemo(prisma, env = process.env) {
       })
       await tx.aiKnowledgeChunk.deleteMany({ where: { documentId: document.id } })
       await tx.aiKnowledgeChunk.create({ data: { id: `${document.id}-CHUNK-001`, documentId: document.id, position: 0, content: document.content, contentHash: createHash('sha256').update(document.content).digest('hex') } })
+    }
+    // Tier 1 suppliers get the first active user, by email, as their owner.
+    const owner = await tx.user.findFirst({ where: { tenantId, status: 'active' }, orderBy: { email: 'asc' }, select: { id: true } })
+    for (const [id, tier, reason] of supplierTiers) {
+      const supplier = await tx.supplier.findUnique({ where: { id } })
+      if (supplier.tier === null && !await tx.auditLog.findFirst({ where: { tenantId, entityType: 'supplier', entityId: id, action: 'tier_change' } })) {
+        await applySupplierTierChange(tx, supplier, { tier, reason, source: 'local-walkthrough-setup' })
+      }
+      if (tier === 1 && !supplier.businessOwnerId && !await tx.auditLog.findFirst({ where: { tenantId, entityType: 'supplier', entityId: id, action: 'owner_change' } })) {
+        await tx.supplier.update({ where: { id }, data: { businessOwnerId: owner.id } })
+        await tx.auditLog.create({ data: { id: `LOCAL-DEMO-OWNER-${id}`, tenantId, source: 'local-walkthrough-setup', module: 'srm', action: 'owner_change', entityType: 'supplier', entityId: id, summary: 'Supplier business owner changed', metadata: { fromOwnerId: null, toOwnerId: owner.id } } })
+      }
     }
     return LOCAL_DEMO_COUNTS
   })

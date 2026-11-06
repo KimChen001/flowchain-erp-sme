@@ -6,14 +6,14 @@ import {
 import { detectBusinessTimeWindow } from './ai-business-time-window.mjs'
 import { callConfiguredProvider, providerRuntimeConfig } from './ai-runtime-provider-adapter-v2.mjs'
 import { isAuthoritativeBusinessId, partitionBusinessRecords } from './ai-business-record-validity.mjs'
+import { PROMPT_INJECTION } from './ai-injection-guard.mjs'
 
 const GOAL_ORDER = new Map(BUSINESS_QUERY_GOALS.map((goal, index) => [goal, index]))
 // No truncation here: a merged plan over the goal limit fails validation instead of losing goals.
 const goalsInPlanOrder = (goals) => [...new Set(goals)].sort((a, b) => GOAL_ORDER.get(a) - GOAL_ORDER.get(b))
 const GENERIC_SUPPLIER_WORDS = new Set(['supplier', 'suppliers', 'vendor', 'vendors', '供应商', '供方', '付款', '跟进', '风险', '状态'])
-const GENERIC_SUPPLIER_TAIL = /^(?:payment|payments|payable|payables|pay|work|follow.?ups?|priorities?|priority|invoice|invoices|receiving|rfqs?|quotation(?:s)?|information|status|risk|issues?|purchase(?:\s+orders?)?|orders?|po|grn|bank|reconciliation|exception(?:s)?|readiness|due|overdue|blocked|hold|供应商|付款|应付|跟进|待办|风险|状态|发票|收货|到货|询价|报价|订单|采购订单|延期|异常|银行|对账)(?:\s|$)/i
+const GENERIC_SUPPLIER_TAIL = /^(?:payment|payments|payable|payables|pay|work|follow.?ups?|priorities?|priority|invoice|invoices|bills?|receiving|deliver(?:y|ies)|shipments?|rfqs?|quotes?|quotation(?:s)?|information|status|risk|issues?|purchase(?:\s+orders?)?|orders?|po|grn|bank|reconciliation|exception(?:s)?|readiness|due|overdue|blocked|hold|供应商|付款|应付|跟进|待办|风险|状态|发票|收货|到货|询价|报价|订单|采购订单|延期|异常|银行|对账)(?:\s|$)/i
 const GENERIC_SUPPLIER_CJK_TAIL = /^(?:供应商|付款|应付|跟进|待办|风险|状态|发票|收货|到货|询价|报价|订单|采购订单|延期|异常|银行|对账)/i
-export const PROMPT_INJECTION = /ignore (?:all |previous )?instructions|system prompt|developer message|chain of thought|绕过|忽略(?:以上|之前).*指令|输出.*(?:SQL|数据库|密码)|越权/i
 
 const text = (value) => String(value ?? '').trim()
 const normalize = (value) => text(value).toLowerCase().replace(/[，。！？,.!?；;：:（）()【】\[\]"']/g, ' ').replace(/\s+/g, ' ').trim()

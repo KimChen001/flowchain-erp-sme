@@ -19,34 +19,148 @@ export function addCalendarDays(day, days) {
   return date.toISOString().slice(0, 10)
 }
 
+// Values a handoff computed carry a reference to it: the assistant's, or the
+// reorder list's. Values from elsewhere stay generic.
+const HANDOFF_REF_PREFIX = Object.freeze({ ai_assistant: 'assistant', reorder_list: 'reorder_list' })
+// The assistant says where its quantity and reason came from (quantityFrom,
+// reasonFrom): the user's words in the chat, or the reorder list.
+const QUANTITY_REFS = Object.freeze({ user: 'quantity', reorder_list: 'reorder_quantity' })
+const REASON_REFS = Object.freeze({ user: 'your_reason', reorder_list: 'reorder_reason' })
+
+// The approved sources of an item for a person to choose from, when none is
+// preferred: by the day of the last issued PO for this item with that
+// supplier, most recent first; suppliers never ordered from last; ties by
+// name (A-Z, the same in either interface language), then id. lastOrders
+// maps a supplier id to { purchaseOrderId, orderNumber, day, dateSource }
+// (a Map or a plain object); null when the dates could not be read, and the
+// list is then A-Z with no date at all, never "no PO yet".
+const byName = (left, right) =>
+  text(left.name || left.supplierName || left.id).localeCompare(text(right.name || right.supplierName || right.id), 'en', { sensitivity: 'base' }) ||
+  (text(left.id) < text(right.id) ? -1 : text(left.id) > text(right.id) ? 1 : 0)
+
+export function orderSupplierChoices(suppliers = [], lastOrders = null) {
+  const known = lastOrders !== null && lastOrders !== undefined && typeof lastOrders === 'object'
+  const lookup = (id) => {
+    if (!known) return undefined
+    const entry = lastOrders instanceof Map ? lastOrders.get(id) : lastOrders[id]
+    return entry && isDay(text(entry.day))
+      ? { purchaseOrderId: text(entry.purchaseOrderId), orderNumber: text(entry.orderNumber) || text(entry.purchaseOrderId), day: text(entry.day), dateSource: text(entry.dateSource) || 'issue_date' }
+      : null
+  }
+  const choices = suppliers.map((row) => ({ id: text(row.id), name: text(row.name || row.supplierName || row.id), ...(known ? { lastOrder: lookup(text(row.id)) } : {}) }))
+  return choices.sort((left, right) => {
+    if (known) {
+      const a = left.lastOrder?.day || ''
+      const b = right.lastOrder?.day || ''
+      if (a !== b) return a ? (b ? (a < b ? 1 : -1) : -1) : 1
+    }
+    return byName(left, right)
+  })
+}
+
+// A non-catalog line ("Other") from a handoff: the assistant, when the user
+// asks for an item the workspace does not have (owner, 2026-11-04). Only what
+// the user wrote fills it, each field marked as theirs: the description, the
+// quantity, a unit or supplier only when it is one the workspace has, a date
+// and a reason. No SKU, price or category is ever filled, and a blank request
+// (no description) opens the line empty.
+// query: lineType=non_catalog, description, quantity, unit, suppliers, due,
+// reason, reasonFrom, origin. units: the unit options ({ id, code, label });
+// suppliers: the supplier options ({ id, name, supplierCode }).
+export function planNonCatalogPrefill({ query = {}, units = [], suppliers = [], defaultDate } = {}) {
+  const origin = prefillOrigin(query.origin)
+  const prefix = HANDOFF_REF_PREFIX[origin]
+  const tag = (ref) => (prefix ? { ref: `${prefix}:${ref}` } : {})
+  const fields = {}
+  const values = { itemNameSnapshot: '', quantity: '', unitSnapshot: '', supplierId: '', needByDate: text(defaultDate), internalLineComment: '' }
+  const named = (rows, keys, wanted) => (wanted ? rows.find((row) => keys.some((key) => text(row[key]).toLowerCase() === wanted)) : undefined)
+  const description = text(query.description).slice(0, 200)
+  if (description) {
+    values.itemNameSnapshot = description
+    fields.itemNameSnapshot = { source: 'record', ...tag('your_description'), value: description }
+  }
+  const quantity = positive(query.quantity)
+  if (quantity !== null) {
+    values.quantity = String(quantity)
+    fields.quantity = { source: 'record', ...tag('quantity'), value: values.quantity }
+  }
+  const unit = named(units, ['id', 'code', 'label'], text(query.unit).toLowerCase())
+  if (unit) {
+    values.unitSnapshot = text(unit.id)
+    fields.unitSnapshot = { source: 'record', ...tag('your_unit'), value: values.unitSnapshot }
+  }
+  const supplier = named(suppliers, ['id', 'supplierCode', 'name', 'supplierName'], (text(query.suppliers).split(',')[0] || '').trim().toLowerCase())
+  if (supplier) {
+    values.supplierId = text(supplier.id)
+    fields.supplierId = { source: 'record', ...tag('your_supplier'), value: values.supplierId }
+  }
+  if (isDay(text(query.due))) {
+    values.needByDate = text(query.due)
+    fields.needByDate = { source: 'record', ...tag('your_date'), value: values.needByDate }
+  }
+  const reason = text(query.reason).slice(0, 500)
+  if (reason) {
+    values.internalLineComment = reason
+    fields.internalLineComment = { source: 'template', ...tag(REASON_REFS[text(query.reasonFrom)] || 'reason'), value: reason }
+  }
+  return { origin, intent: null, values, fields, supplierChoices: [] }
+}
+
 // query: itemId, sku, quantity, reason, due, suppliers, origin, intent.
 // suppliers: the item's approved sources, preferred first, as the item
 // supplier API returns them (prices already masked for the reader).
-export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = [], today, defaultDate } = {}) {
+// lastOrders: see orderSupplierChoices.
+//
+// The supplier: one the handoff names (the assistant or the reorder list),
+// if it is approved; else the item's preferred supplier, a choice a person
+// recorded; else the only approved source. With several approved sources and
+// none preferred the supplier stays empty and the sources are listed for a
+// person to choose; no price, lead time or minimum order quantity of a
+// supplier nobody chose is filled. Master data can mark more than one source
+// preferred (the item's default supplier and a link flagged preferred); then
+// none is picked over the other: the supplier stays empty and only the
+// preferred sources are listed, the same way.
+export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = [], today, defaultDate, lastOrders = null } = {}) {
   const origin = prefillOrigin(query.origin)
-  // Assistant values name the assistant; values from elsewhere stay generic.
-  const tag = (ref) => (origin === 'ai_assistant' ? { ref } : {})
+  const prefix = HANDOFF_REF_PREFIX[origin]
+  const tag = (ref) => (prefix ? { ref: `${prefix}:${ref}` } : {})
   const itemId = text(item.itemId || item.id)
-  const fields = { itemId: { source: 'record', ...tag('assistant:item'), value: itemId } }
+  const fields = { itemId: { source: 'record', ...tag('item'), value: itemId } }
 
   const wanted = text(query.suppliers).split(',')[0]?.trim() || ''
   const named = wanted ? suppliers.find((row) => [row.id, row.supplierCode, row.name, row.supplierName].map(text).includes(wanted)) : undefined
-  const preferred = suppliers.find((row) => row.preferred)
-  const chosen = named || preferred || suppliers[0]
-  if (chosen) {
-    fields.supplierId = named
-      ? { source: 'record', ...tag('assistant:supplier'), value: chosen.id }
-      : { source: 'default', ref: chosen === preferred ? 'item_supplier:preferred' : 'item_supplier:first_approved', value: chosen.id }
+  const preferredRows = suppliers.filter((row) => row.preferred)
+  const preferred = preferredRows.length === 1 ? preferredRows[0] : undefined
+  const only = suppliers.length === 1 ? suppliers[0] : undefined
+  const chosen = named || preferred || only
+  let supplierChoices = []
+  if (named) fields.supplierId = { source: 'record', ...tag('supplier'), value: chosen.id }
+  else if (preferred) fields.supplierId = { source: 'default', ref: 'item_supplier:preferred', value: chosen.id }
+  else if (only) fields.supplierId = { source: 'default', ref: 'item_supplier:only_approved', value: chosen.id }
+  else if (preferredRows.length > 1) {
+    fields.supplierId = { source: 'template', ref: 'item_supplier:choose_preferred', value: '' }
+    supplierChoices = orderSupplierChoices(preferredRows, lastOrders)
+  } else if (suppliers.length > 1) {
+    fields.supplierId = { source: 'template', ref: 'item_supplier:choose', value: '' }
+    supplierChoices = orderSupplierChoices(suppliers, lastOrders)
   }
 
   // The shortfall the handoff computed, raised to the supplier's minimum
-  // order quantity. Without a quantity the line starts at 1, unlabelled.
+  // order quantity. Without a quantity the line starts at 1, unlabelled;
+  // a reorder list row without a shortfall (above its reorder point, or a
+  // purchase unit other than the stock unit) leaves it empty and says so.
   const asked = positive(query.quantity)
   const moq = positive(chosen?.minimumOrderQuantity)
-  const gap = asked ?? 1
-  const quantity = String(moq && moq > gap ? moq : gap)
-  if (moq && moq > gap) fields.quantity = { source: 'default', ref: 'item_supplier:moq', value: quantity }
-  else if (asked) fields.quantity = { source: 'record', ...tag('assistant:gap'), value: quantity }
+  let quantity
+  if (asked === null && origin === 'reorder_list') {
+    quantity = ''
+    fields.quantity = { source: 'template', ref: 'reorder_list:enter_quantity', value: quantity }
+  } else {
+    const gap = asked ?? 1
+    quantity = String(moq && moq > gap ? moq : gap)
+    if (moq && moq > gap) fields.quantity = { source: 'default', ref: 'item_supplier:moq', value: quantity }
+    else if (asked) fields.quantity = { source: 'record', ...tag(QUANTITY_REFS[text(query.quantityFrom)] || 'gap'), value: quantity }
+  }
 
   // Prices come only from master data, never from history (owner decision 6).
   const price = chosen?.referencePrice ? String(chosen.referencePrice) : ''
@@ -62,11 +176,11 @@ export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = 
     ? addCalendarDays(text(today), leadTime)
     : null
   const needByDate = isDay(due) ? due : leadDate || text(defaultDate)
-  if (isDay(due)) fields.needByDate = { source: 'record', ...tag('assistant:due'), value: needByDate }
+  if (isDay(due)) fields.needByDate = { source: 'record', ...tag('due'), value: needByDate }
   else if (leadDate) fields.needByDate = { source: 'default', ref: 'item_supplier:lead_time', value: needByDate }
 
   const reason = text(query.reason).slice(0, 500)
-  if (reason) fields.internalLineComment = { source: 'template', ...tag('assistant:reason'), value: reason }
+  if (reason) fields.internalLineComment = { source: 'template', ...tag(REASON_REFS[text(query.reasonFrom)] || 'reason'), value: reason }
 
   return {
     origin,
@@ -82,5 +196,6 @@ export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = 
       internalLineComment: reason,
     },
     fields,
+    supplierChoices,
   }
 }

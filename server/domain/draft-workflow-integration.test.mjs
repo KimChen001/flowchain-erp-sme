@@ -22,19 +22,6 @@ test('inventory replenishment enters canonical PR form without auto-submit or le
   assert.doesNotMatch(inventory, /submit|purchase_request_draft|rfq_draft/)
 })
 
-test('Today Cockpit maps reviewable actions to supported draft previews with fallback copy', () => {
-  const cockpit = readSource('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
-
-  assert.match(cockpit, /function actionDraftRequest/)
-  assert.match(cockpit, /purchase_request_draft/)
-  assert.match(cockpit, /rfq_draft/)
-  assert.match(cockpit, /po_followup_draft/)
-  assert.match(cockpit, /supplier_followup_draft/)
-  assert.match(cockpit, /当前动作需要人工复核，尚未接入草稿预览。/)
-  assert.doesNotMatch(cockpit, /\/api\/purchase-requests/)
-  assert.doesNotMatch(cockpit, /JSON\.stringify/)
-})
-
 test('Forecast MRP release opens purchase request draft preview instead of creating purchase requests', () => {
   const app = readSource('src', 'app', 'FlowChainApp.tsx')
   const forecast = readSource('src', 'modules', 'forecast', 'Page.tsx')

@@ -37,7 +37,9 @@ export async function selectMasterData(repository, selector) {
       metadata: value => ({ bin: value.bin || null }),
     }))
   }
-  if (selector === 'payment-terms') return active(await repository.listPaymentTerms()).map(row => option(row))
+  if (selector === 'payment-terms') return active(await repository.listPaymentTerms()).map(row => option(row, {
+    metadata: value => ({ recordId: value.recordId ?? null }),
+  }))
   if (selector === 'tax-codes') return active(await repository.listTaxCodes()).map(row => option(row, {
     metadata: value => ({ rate: value.rate ?? value.taxRate ?? null }),
   }))

@@ -119,7 +119,7 @@ function detailModel(aggregate, capabilities = {}, availableActions = {}) {
     postingSummary: { lineCount: lines.length, acceptedQuantity: receivingDecimalString(lines.reduce((sum, line) => sum + receivingDecimalUnits(line.acceptedQuantity), ZERO)), rejectedQuantity: receivingDecimalString(lines.reduce((sum, line) => sum + receivingDecimalUnits(line.rejectedQuantity), ZERO)) },
     capabilities,
     availableActions,
-    limitations: ['Lot/Serial posting is not connected in this beta.', 'PO workflow and fulfillment are derived separately while the legacy status column remains mixed.'],
+    limitations: ['Lot/Serial posting is not connected in this beta.'],
   }
 }
 
@@ -192,11 +192,15 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
       prisma.auditLog.findMany({ where: { tenantId: scope.tenantId, entityType: 'ReceivingDocument', entityId: receivingDocumentId }, orderBy: { createdAt: 'asc' } }),
       prisma.businessCommandExecution.findMany({ where: { tenantId: scope.tenantId, entityType: 'ReceivingDocument', entityId: receivingDocumentId }, orderBy: { createdAt: 'asc' } }),
     ])
+    // Audit rows name the person by user id; the timeline shows their name.
+    const actorIds = [...new Set(audits.map((audit) => audit.actorId).filter(Boolean))]
+    const people = actorIds.length ? await prisma.user.findMany({ where: { tenantId: scope.tenantId, id: { in: actorIds } }, select: { id: true, name: true, email: true } }) : []
+    const actorNames = new Map(people.map((person) => [person.id, text(person.name) || text(person.email)]))
     const events = [{ id: `created-${receivingDocumentId}`, type: 'business_fact', event: 'receiving_created', occurredAt: iso(aggregate.receivingDocument.createdAt), label: `Receiving ${aggregate.receivingDocument.documentNumber || receivingDocumentId} created`, postedFact: true }]
     for (const movement of movements) events.push({ id: movement.id, type: 'business_fact', event: 'inventory_movement_created', occurredAt: iso(movement.occurredAt), label: `${movementText(movement.movementType)} · ${movement.sku} · ${receivingDecimalString(receivingDecimalUnits(movement.quantityIn) - receivingDecimalUnits(movement.quantityOut))}`, actorId: movement.actorId, postedFact: true, data: { movementId: movement.id, postingBatchId: movement.postingBatchId, quantityIn: decimal(movement.quantityIn), quantityOut: decimal(movement.quantityOut), reversalOfMovementId: movement.reversalOfMovementId } })
     for (const audit of audits) {
       const metadata = audit.metadata && typeof audit.metadata === 'object' ? audit.metadata : {}
-      events.push({ id: audit.id, type: 'audit', event: audit.action, occurredAt: iso(audit.createdAt), label: audit.summary, actorId: audit.actorId, postedFact: false, data: metadata })
+      events.push({ id: audit.id, type: 'audit', event: audit.action, occurredAt: iso(audit.createdAt), label: audit.summary, actorId: audit.actorId, actorName: actorNames.get(audit.actorId) || null, postedFact: false, data: metadata })
       for (const [index, change] of (metadata.balanceChanges || []).entries()) {
         events.push({ id: `${audit.id}-balance-${index}`, type: 'business_fact', event: 'inventory_balance_changed', occurredAt: iso(audit.createdAt), label: `Inventory ${change.sku} balance ${change.before.onHandQuantity} → ${change.after.onHandQuantity}`, actorId: audit.actorId, postedFact: true, data: change })
       }

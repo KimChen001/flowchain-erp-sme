@@ -145,7 +145,7 @@ export function resolveInvoiceMatchingEvidence(context: RelationshipResolverCont
       metric: variance,
       riskLevel: variance || /差异|人工复核|未匹配/.test(status) ? "high" : "low",
       reason: variance ? `Variance amount ${variance} must be resolved before approval, AP posting, or payment.` : "No variance amount found in current invoice matching data.",
-      route: "procurement:invoices",
+      route: "procurement:bills",
     }),
   ]);
 }

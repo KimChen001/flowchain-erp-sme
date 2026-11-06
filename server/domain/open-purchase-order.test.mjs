@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isOpenPurchaseOrder, purchaseOrderLineRemaining } from './open-purchase-order.mjs'
+import { isOpenPurchaseOrder, purchaseOrderBusinessDate, purchaseOrderLineRemaining, reportCalendarDay } from './open-purchase-order.mjs'
+import { instantCalendarDay } from './tenant-calendar-day.mjs'
 
 const line = (orderedQuantity, receivedQuantity) => ({ orderedQuantity, receivedQuantity })
 const po = (status, lines = [line('10', '0')]) => ({ status, lines })
@@ -61,4 +62,27 @@ test('line remaining quantity is exact to four decimals and never negative', () 
   assert.equal(purchaseOrderLineRemaining({ quantity: '8', receivedQuantity: '3' }), 5, 'falls back to quantity')
   assert.equal(purchaseOrderLineRemaining(line('', '0')), null)
   assert.equal(purchaseOrderLineRemaining(line('10', 'x')), null)
+})
+
+test('a creation time counts on its calendar day in the workspace timezone', () => {
+  // Entered at 21:00 on Sep 30 in New York, which is already Oct 1 in UTC.
+  const lateEvening = { status: 'issued', createdAt: '2026-10-01T01:00:00.000Z' }
+  assert.equal(purchaseOrderBusinessDate(lateEvening, 'America/New_York'), '2026-09-30')
+  assert.equal(purchaseOrderBusinessDate(lateEvening, 'UTC'), '2026-10-01')
+  assert.equal(purchaseOrderBusinessDate(lateEvening), '2026-09-30', 'the product default is New York')
+  // Midnight in New York is 04:00 UTC during daylight saving time.
+  assert.equal(instantCalendarDay('2026-10-01T03:59:59.000Z', 'America/New_York'), '2026-09-30')
+  assert.equal(instantCalendarDay('2026-10-01T04:00:00.000Z', 'America/New_York'), '2026-10-01')
+  assert.equal(instantCalendarDay(new Date('2026-10-01T04:00:00.000Z'), 'America/Los_Angeles'), '2026-09-30')
+})
+
+test('date-only values keep the day they hold in every timezone', () => {
+  // An order date or an expected date is a calendar day, stored at 00:00 or
+  // 12:00 UTC; converting it would move it a day earlier in New York.
+  assert.equal(purchaseOrderBusinessDate({ orderDate: '2026-10-01T00:00:00.000Z', createdAt: '2026-09-20T12:00:00.000Z' }, 'America/New_York'), '2026-10-01')
+  assert.equal(reportCalendarDay('2026-10-01T00:00:00.000Z'), '2026-10-01')
+  assert.equal(instantCalendarDay('2026-10-01', 'America/New_York'), '2026-10-01')
+  assert.equal(instantCalendarDay('not a date', 'America/New_York'), '')
+  assert.equal(instantCalendarDay(null), '')
+  assert.equal(purchaseOrderBusinessDate({ createdAt: null }), '')
 })

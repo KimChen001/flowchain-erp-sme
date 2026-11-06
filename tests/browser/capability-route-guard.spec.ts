@@ -17,7 +17,7 @@ async function authenticate(page: Page, experimentalModules: string[] = []) {
 
 test("finance direct URL is blocked while its database capability is disabled", async ({ page }) => {
   await authenticate(page);
-  await page.goto("/app/finance/invoices");
+  await page.goto("/app/finance/payables");
   const blocked = page.getByTestId("capability-route-blocked");
   await expect(blocked).toContainText("能力暂不可用");
   await expect(blocked).toContainText("权限已具备，但该业务能力当前未启用。");
@@ -42,7 +42,7 @@ test("stable procurement direct URL renders normally", async ({ page }) => {
 test("capability API failure closes capability-gated routes while stable routes stay available", async ({ page }) => {
   await authenticate(page);
   await page.route("**/api/capabilities", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "unavailable" }) }));
-  await page.goto("/app/finance/invoices");
+  await page.goto("/app/finance/payables");
   await expect(page.getByTestId("capability-registry-unavailable")).toContainText("能力注册表暂不可用");
   await page.goto("/app/procurement/requests");
   await expect(page.getByTestId("capability-registry-unavailable")).toHaveCount(0);
@@ -51,15 +51,15 @@ test("capability API failure closes capability-gated routes while stable routes 
 
 test("refreshing a disabled route never renders its internal panel", async ({ page }) => {
   await authenticate(page);
-  await page.goto("/app/finance/invoices");
+  await page.goto("/app/finance/payables");
   await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
   await page.reload();
   await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
-  await expect(page.getByText("暂无供应商发票", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("operational-finance-payable-list")).toHaveCount(0);
 });
 
 test("unauthenticated direct URL shows login before capability state", async ({ page }) => {
-  await page.goto("/app/finance/invoices");
+  await page.goto("/app/finance/payables");
   await expect(page.getByRole("button", { name: /Email me a sign-in link|发送登录链接/ })).toBeVisible();
   await expect(page.getByTestId("capability-route-blocked")).toHaveCount(0);
 });

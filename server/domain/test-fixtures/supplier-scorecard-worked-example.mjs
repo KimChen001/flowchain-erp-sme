@@ -1,7 +1,10 @@
 // The business rules worked example as real PO lines and posted receipts:
 // one supplier, one quarter, 12 lines of 100 pcs, all originally promised for
-// 2026-08-10 and none revised. It satisfies the scorecard definitions
-// (server/domain/supplier-scorecard.mjs) and gives the example's figures:
+// 2026-08-10 and none revised. The scorecard counts deliveries (one PO, one
+// promised date), so on one PO the 12 lines are a single delivery: late, not in
+// full, not OTIF, and too few for a rate. With one PO per line
+// (onePurchaseOrderPerLine) they are 12 deliveries, which satisfy the scorecard
+// definitions (server/domain/supplier-scorecard.mjs) with the example's figures:
 //   on time  9 of 12 = 75.0%  (L10, L11, L12 first arrive 2, 5 and 8 days late)
 //   in full 10 of 12 = 83.3%  (L11 and L12 were closed short)
 //   OTIF     8 of 12 = 66.7%  (L9 was topped up after the promise, L10 was late)
@@ -30,7 +33,7 @@ const plan = [
 ]
 const closedShort = { L11: '2026-08-20', L12: '2026-08-25' }
 
-export function workedExampleRows() {
+export function workedExampleRows({ onePurchaseOrderPerLine = false } = {}) {
   const purchaseOrder = {
     id: 'EXAMPLE-PO', tenantId: 'example-tenant', supplierId: 'EXAMPLE-SUP', supplierName: 'Example Supplier', currency: 'USD', status: 'partially_received', expectedDate: promise,
     lines: plan.map(([id]) => ({
@@ -38,9 +41,13 @@ export function workedExampleRows() {
       metadata: { promisedDate: WORKED_EXAMPLE_PROMISE, ...(closedShort[id] ? { closedAt: closedShort[id], closeReason: 'Supplier cannot supply the balance' } : {}) },
     })),
   }
+  const purchaseOrders = onePurchaseOrderPerLine
+    ? purchaseOrder.lines.map((line) => ({ ...purchaseOrder, id: `${purchaseOrder.id}-${line.id}`, lines: [line] }))
+    : [purchaseOrder]
+  const orderOf = (lineId) => purchaseOrders.find((row) => row.lines.some((line) => line.id === lineId)).id
   const receipts = plan.flatMap(([id, lines]) => lines.map(([day, accepted, rejected], index) => ({
-    id: `EXAMPLE-GRN-${id}-${index + 1}`, poId: purchaseOrder.id, supplierId: 'EXAMPLE-SUP', postingStatus: 'posted', arrivedAt: at(day),
+    id: `EXAMPLE-GRN-${id}-${index + 1}`, poId: orderOf(`EXAMPLE-${id}`), supplierId: 'EXAMPLE-SUP', postingStatus: 'posted', arrivedAt: at(day),
     lines: [{ purchaseOrderLineId: `EXAMPLE-${id}`, acceptedQty: accepted, rejectedQty: rejected }],
   })))
-  return { purchaseOrders: [purchaseOrder], receipts, suppliers: [{ id: 'EXAMPLE-SUP', name: 'Example Supplier' }] }
+  return { purchaseOrders, receipts, suppliers: [{ id: 'EXAMPLE-SUP', name: 'Example Supplier' }] }
 }

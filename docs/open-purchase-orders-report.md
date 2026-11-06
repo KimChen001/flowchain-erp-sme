@@ -9,7 +9,8 @@ Cancelled, rejected, closed, completed and fully received orders are excluded.
 Date filters use order creation dates. Overdue days use the earliest promise
 among outstanding lines, falling back to the order expected date, measured at
 the displayed UTC reporting date. Missing dates and receipt quantities remain
-unknown. Quantities with different units are not added together.
+unknown. Quantities of different SKUs or units are not added together: such an
+order reads Multiple SKUs or Mixed units and has no order total.
 
 Filters, sort order, page size and column visibility are stored in the URL and
 can be bookmarked. Amounts represent full order amounts, not payable balances;

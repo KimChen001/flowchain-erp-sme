@@ -63,6 +63,8 @@ const HISTORICAL_TECHNICAL_DOCS = new Set([
 const TECHNICAL_FILE_PATTERNS = [
   // These browser tests deliberately exercise supplied names and fictional records.
   /^tests\/browser\/(ai-knowledge-readiness|analytics-english|home-overview-language|operations-language|supplier-form)\.spec\.ts$/,
+  // The knowledge evaluation imports the AI master plan's fictional sample documents verbatim.
+  /^tests\/ai-eval\/knowledge\//,
   /^package\.json$/,
   /^server\/domain\/product-terminology-governance\.test\.mjs$/,
   /^server\/domain\/authoritative-runtime-initialization\.test\.mjs$/,

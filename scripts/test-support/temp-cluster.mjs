@@ -30,10 +30,13 @@ const HARNESS_CLUSTER_PREFIXES = [
   "flowchain-receiving-browser-",
   "flowchain-returns-browser-",
   "flowchain-settings-browser-",
-  // The settings harness kept its intake artifacts in a sibling directory
-  // before they moved inside the cluster directory. These never had a
-  // postmaster.pid, so the age rule decides.
+  // The settings and product-recovery harnesses kept intake artifacts and
+  // uploaded files in sibling directories before they moved inside the
+  // cluster directory. These never had a postmaster.pid, so the age rule
+  // decides.
   "flowchain-intake-browser-artifacts-",
+  "flowchain-settings-browser-uploads-",
+  "flowchain-product-recovery-uploads-",
 ];
 
 // Playwright output folders that used to be named after a process id.

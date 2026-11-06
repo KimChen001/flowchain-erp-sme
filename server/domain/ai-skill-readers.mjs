@@ -3,11 +3,15 @@ import { reportReadAccessFor, scopeBusinessContext } from './report-read-access.
 import { buildOpenPurchaseOrdersReport, purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
+import { createSupplierScorecardReadService } from './supplier-scorecard.mjs'
 import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-inventory-allocation-read-model.mjs'
 import { PURCHASE_ORDER_STATUS, RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 import { classifyBusinessRecord } from './ai-business-record-validity.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
 import { AI_SKILL_RECENT_DAYS, aiSkillDaysBetween } from './ai-skill-signals.mjs'
+import { itemStockUnit, preferredSupplierFor, requestMinimumOf } from './reorder-list.mjs'
+import { listItemSupplierRecords } from './master-data-commands.mjs'
+import { OPEN_PURCHASE_REQUEST_STATUSES } from '../../shared/purchase-suggestion.mjs'
 
 // The facts every workspace skill reads, through the same definitions the
 // reports use, so an answer can never disagree with a report:
@@ -72,10 +76,35 @@ async function rawRecordColumns(prisma, tenantId, visible, limitations, warehous
   if (!prisma || !visible.inventory) return { items: null, balances: null }
   const balanceWhere = warehouseIds ? { tenantId, warehouseId: { in: warehouseIds } } : { tenantId }
   const [items, balances] = await Promise.all([
-    boundedRaw(prisma.item, { where: { tenantId }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'items', limitations),
+    boundedRaw(prisma.item, { where: { tenantId }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, safetyStock: true, reorderPoint: true, metadata: true }, orderBy: [{ id: 'asc' }] }, 'items', limitations),
     boundedRaw(prisma.inventoryBalance, { where: balanceWhere, select: { id: true, sku: true, itemId: true, availableQuantity: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'inventory', limitations),
   ])
   return { items, balances }
+}
+
+// The preferred supplier's minimum order of each item, by SKU: the reorder
+// list's own rule (requestMinimumOf, preferredSupplierFor in reorder-list.mjs)
+// over the same reads (reorder-list-read-service.mjs). A purchase request the
+// assistant suggests asks for at least it. The supplier is named only for
+// readers who may see suppliers. Empty when it cannot be read.
+async function orderMinimums(prisma, tenantId, items, { names = false } = {}) {
+  if (!prisma || !array(items).length) return new Map()
+  try {
+    const [links, suppliers] = await Promise.all([
+      listItemSupplierRecords(prisma, tenantId),
+      prisma.supplier.findMany({ where: { tenantId }, select: { id: true, code: true, name: true, status: true } }),
+    ])
+    const suppliersById = new Map(array(suppliers).map((row) => [text(row.id), row]))
+    const minimums = new Map()
+    for (const item of array(items)) {
+      const supplier = preferredSupplierFor(item, links, suppliersById)
+      const quantity = requestMinimumOf(item, supplier, itemStockUnit(item))
+      if (quantity > 0) minimums.set(text(item.sku), { quantity, supplier: names ? text(supplier.name) || null : null })
+    }
+    return minimums
+  } catch {
+    return new Map()
+  }
 }
 
 // RFQ responses and awards from their own tables: the RFQ row's response
@@ -165,7 +194,12 @@ function recordsNeedingData({ reportRows, openReport, business, raw, visible, vi
   return { records, checked }
 }
 
-export async function readAiSkillFacts(skillContext) {
+// openPurchaseRequests (assistant v2 only): also every open purchase request,
+// draft, submitted or approved, with all its lines, as facts.purchaseRequests
+// .open. A request the assistant created as a draft then counts as cover, so
+// it is not suggested twice. The skills and the model-first loop read without
+// it, so their answers stay as they are.
+export async function readAiSkillFacts(skillContext, { openPurchaseRequests = false } = {}) {
   const { actor, tenantId, tenant, now, today, prisma, routeContext = {} } = skillContext
   const visibility = aiSkillVisibility(actor)
   const visible = visibility.sources
@@ -203,18 +237,49 @@ export async function readAiSkillFacts(skillContext) {
     purchaseOrders: null, inventory: null, invoices: null, purchaseRequests: null, rfqs: null, receipts: null, suppliers: null,
   }
 
-  const overview = buildRuntimeGovernedReport(business, { subject: 'overview' }, { allocationContext })
+  const overview = buildRuntimeGovernedReport(business, { subject: 'overview' }, { allocationContext, now, timeZone: tenant.timezone })
   const kpi = (report, id) => array(report.kpis).find((row) => row.id === id)
+  // The procurement dashboard's own report, built from the same scoped read
+  // as the dashboard's route, with the question's period and currency as its
+  // filters: the spend analysis (ai-skill-spend-analysis.mjs) reads its
+  // charts, so its figures are the dashboard's. A function, so only a spend
+  // question builds it, and not enumerable, so it is never read as a fact.
+  // The supplier scorecard (supplier-scorecard.mjs), the one the supplier page
+  // and Reports › Supplier analytics show, for the supplier comparison
+  // (ai-skill-supplier-comparison.mjs): delivery performance against the
+  // original promise, for a period. It reads the database itself, under the
+  // same permission checks as its route, so the runtime reads it before the
+  // skill answers (aiSkillPrepareRoute). A reader who may not see purchase
+  // orders and receipts has none.
+  if (visible.purchase_orders && visible.receipts && prisma) {
+    Object.defineProperty(facts, 'supplierScorecard', {
+      enumerable: false,
+      value: (query = {}) => createSupplierScorecardReadService({ prisma, now: () => now }).read(query, { actor }),
+    })
+  }
+  if (visible.purchase_orders) {
+    Object.defineProperty(facts, 'procurementReport', {
+      enumerable: false,
+      value: (filters = {}) => buildRuntimeGovernedReport(business, { subject: 'procurement', filters }, { allocationContext, now, timeZone: tenant.timezone, warehouseIds: access.warehouseIds }),
+    })
+  }
   // Overdue days count to the tenant's calendar day, as in the report itself.
   const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now, { timeZone: tenant.timezone })
   facts.asOf = openReport.asOf
   // The report and the assistant share one day; say so if they ever differ.
   if (visible.purchase_orders && openReport.asOf !== today) limitations.push({ code: 'report_day', date: openReport.asOf })
 
-  // Suppliers by id, code and name, to resolve a supplier named in a question:
+  // Suppliers by id, code and name, to resolve a supplier named in a question,
+  // with their tier (1 to 3, null when not tiered) to label and filter by:
   // for readers of purchase orders, or of invoices with the partner snapshot.
   if (visible.purchase_orders || (visible.supplier_invoices && visibility.partner)) {
-    facts.suppliers = array(business.suppliers).map((row) => ({ id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName) })).filter((row) => row.id && row.name)
+    // The contact a draft is addressed to, from master data, only for readers
+    // who may prepare drafts.
+    const tierOf = (value) => ([1, 2, 3].includes(Number(value)) ? Number(value) : null)
+    facts.suppliers = array(business.suppliers).map((row) => ({
+      id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName), tier: tierOf(row.tier),
+      ...(visibility.canDraft ? { email: text(row.email) || null, contactName: text(row.contactName) || null } : {}),
+    })).filter((row) => row.id && row.name)
   }
 
   if (visible.purchase_orders) {
@@ -223,13 +288,14 @@ export async function readAiSkillFacts(skillContext) {
     // The lines still to receive, by the report's line rules, each with its
     // own remaining quantity, unit and promised day. The order's sku is its
     // first line, which may be fully received, and its remaining quantity is
-    // the order total: a follow-up names these lines instead. Quantities and
-    // dates only, no prices.
+    // the order total, which the report gives only for one SKU in one unit: a
+    // follow-up, and an answer about an order of several SKUs, names these
+    // lines instead. Quantities and dates only, no prices.
     const openLinesById = new Map(reportRows.map((po) => [text(po.id), array(po.lines).flatMap((line) => {
       const read = purchaseOrderReportLine(line, po)
       return read.open ? [{
         lineId: text(line.id) || null, sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName || line.itemNameSnapshot) || null,
-        remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
+        ordered: read.ordered, received: read.received, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
       }] : []
     })]))
     const rawStatusById = new Map(reportRows.map((po) => [text(po.id), text(po.status)]))
@@ -249,7 +315,7 @@ export async function readAiSkillFacts(skillContext) {
     // Every purchase order, whatever its status, by the open purchase orders
     // report's line rules (scope all), for questions about one order. Open
     // orders carry the same figures as the rows above.
-    const allOrders = buildOpenPurchaseOrdersReport(reportRows, { export: 'true', scope: 'all' }, now)
+    const allOrders = buildOpenPurchaseOrdersReport(reportRows, { export: 'true', scope: 'all' }, now, { timeZone: tenant.timezone })
     facts.purchaseOrders.index = array(allOrders.exportRows).map((row) => ({
       id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: purchaseOrderStatus(row.status),
       createdDate: row.createdDate || null, dueDate: row.dueDate || null, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received,
@@ -264,7 +330,10 @@ export async function readAiSkillFacts(skillContext) {
   if (visible.inventory) {
     const allocation = buildRuntimeInventoryAllocation(access.collections.inventoryItems ? allocationContext : business)
     const unitBySku = new Map(array(business.items).map((row) => [text(row.sku), text(row.unit) || null]))
+    const minimums = await orderMinimums(prisma, tenantId, raw.items ?? array(business.items), { names: visible.purchase_orders })
     const rows = allocation.availability.map((row) => ({
+      // The preferred supplier's minimum order ({ quantity, supplier }), or null.
+      orderMinimum: minimums.get(text(row.sku)) || null,
       sku: row.sku, itemId: row.itemId, itemName: row.itemName, unit: unitBySku.get(text(row.sku)) || null, onHand: row.onHand, reserved: row.reserved, available: row.available,
       openSalesDemand: row.openSalesDemand, incomingApprovedPo: row.incomingApprovedPo, shortage: row.shortage,
       availableToPromise: row.availableToPromise, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint,
@@ -272,6 +341,10 @@ export async function readAiSkillFacts(skillContext) {
       // quantity is part of available to promise, which inventory shows.
       // Sales order ids only for readers of sales orders.
       stockStatus: row.stockStatus, riskLevel: row.riskLevel, purchaseOrderIds: visible.purchase_orders ? row.purchaseOrderIds : [], salesOrderIds: access.collections.salesOrders ? row.salesOrderIds : [],
+      // Open purchase order lines in another unit than the item's stock unit:
+      // not counted as incoming, but still on order, so the answers name them.
+      // The order number only for readers of purchase orders.
+      incomingOtherUnit: array(row.incomingExcluded).map((line) => ({ purchaseOrderId: visible.purchase_orders ? text(line.purchaseOrderId) || null : null, orderNumber: visible.purchase_orders ? text(line.orderNumber) || null : null, unit: text(line.unit) || null, remaining: line.remaining ?? null })),
     }))
     // Master items with no stock, sales or purchase line: known items the
     // allocation has no row for, so a question about one is not "not found".
@@ -283,10 +356,22 @@ export async function readAiSkillFacts(skillContext) {
       atRisk: rows.filter(isInventoryRiskSku).map((row) => row.sku).sort(),
       atRiskCount: kpi(overview, 'inventory_risk_sku')?.currentValue ?? rows.filter(isInventoryRiskSku).length,
     }
+    // The open sales orders the stock is set against, for readers of sales
+    // orders: each with its customer, the day promised to the customer and, per
+    // SKU, the quantity not yet shipped or reserved (the allocation's unreserved
+    // demand). The late order impact (ai-skill-late-order-impact.mjs) names them.
+    if (access.collections.salesOrders) {
+      const open = new Set(rows.flatMap((row) => row.salesOrderIds))
+      const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
+      facts.salesOrders = array(business.salesOrders).filter((row) => open.has(text(row.salesOrderId || row.id))).map((row) => ({
+        id: text(row.salesOrderId || row.id), number: text(row.orderNumber || row.salesOrderId || row.id), customer: text(row.customerName) || null, promisedDate: dayOf(row.promisedDate),
+        lines: array(row.lines).map((line) => ({ sku: text(line.sku || line.itemId), open: Math.max(0, count(line.orderedQuantity ?? line.orderedQty ?? line.quantity) - count(line.fulfilledQuantity ?? line.fulfilledQty ?? line.shippedQty) - count(line.reservedQuantity ?? line.reservedQty)) })).filter((line) => line.sku),
+      }))
+    }
   }
 
   if (visible.supplier_invoices) {
-    const finance = buildRuntimeGovernedReport(business, { subject: 'finance' })
+    const finance = buildRuntimeGovernedReport(business, { subject: 'finance' }, { now, timeZone: tenant.timezone })
     const committed = array(business.supplierInvoices).filter((row) => committedInvoiceStatuses.has(text(row.status).toLowerCase()))
     facts.invoices = {
       committed: visibility.amounts.invoice_amounts ? kpiMoney(kpi(finance, 'invoice_amount')) : null,
@@ -309,6 +394,12 @@ export async function readAiSkillFacts(skillContext) {
         const line = array(row.lines)[0] || {}
         return { id: text(row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, skus: [...new Set(array(row.lines).map((entry) => text(entry.sku)).filter(Boolean))], itemIds: [...new Set(array(row.lines).map((entry) => text(entry.itemId)).filter(Boolean))], quantity: amount(line.quantity), unit: text(line.unit) || null }
       }),
+    }
+    if (openPurchaseRequests) {
+      facts.purchaseRequests.open = array(business.purchaseRequests).filter((row) => OPEN_PURCHASE_REQUEST_STATUSES.includes(text(row.status))).map((row) => ({
+        id: text(row.id), status: text(row.status), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null,
+        lines: array(row.lines).map((line) => ({ sku: text(line.sku) || null, itemId: text(line.itemId) || null, quantity: amount(line.quantity), unit: text(line.unit) || null })),
+      }))
     }
   }
 

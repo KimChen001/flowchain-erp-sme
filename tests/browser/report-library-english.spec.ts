@@ -38,7 +38,7 @@ test('English create, clone, share and delete preserve report identity', async (
   const dialog = page.getByRole('dialog', { name: 'Create report' });
   const name = `Purchasing review ${Date.now()}`;
   await dialog.getByLabel('Report name', { exact: true }).fill(name);
-  await dialog.getByRole('checkbox', { name: 'Purchase order amount', exact: true }).check();
+  await dialog.getByRole('checkbox', { name: 'Committed PO amount', exact: true }).check();
   await dialog.getByRole('button', { name: 'Save private report' }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText('Report created', { exact: true })).toBeVisible();

@@ -9,13 +9,30 @@ export function isStructuredDraftType(type?: string | null) {
   return type === "purchase_request_draft" || type === "rfq_draft" || type === "task_draft";
 }
 
+// The card an answer opens as it arrives: a structured draft the server marked
+// autoOpen, when the user asked for an order and the choice was clear. The
+// assistant panel opens it once, when the answer arrives; a restored or
+// re-rendered answer never opens it again. The form still saves only through
+// its own button.
+export function autoOpenDraftCard<T extends { autoOpen?: boolean; draftType?: string | null }>(cards: T[] | null | undefined) {
+  return (cards || []).find((card) => card.autoOpen === true && isStructuredDraftType(card.draftType)) || null;
+}
+
 export function structuredDraftTarget(type: string, payload: Record<string, unknown> = {}, source?: string | null) {
   const query = Object.fromEntries(Object.entries({
     mode: "create",
+    // An item the workspace does not have: one "Other" line from the user's words.
+    lineType: payload.nonCatalog ? "non_catalog" : undefined,
+    description: payload.nonCatalog ? payload.description : undefined,
+    unit: payload.nonCatalog ? payload.unit : undefined,
     itemId: payload.itemIdOrSku,
     sku: payload.itemIdOrSku,
     quantity: payload.quantity,
+    // Where the assistant's quantity and reason came from (the user, or the
+    // reorder list), so the form labels each field.
+    quantityFrom: payload.quantity ? payload.quantitySource : undefined,
     reason: payload.reason,
+    reasonFrom: payload.reason ? payload.reasonSource : undefined,
     suppliers: Array.isArray(payload.supplierCandidates) ? payload.supplierCandidates.join(",") : payload.supplierCandidates || payload.supplierId,
     due: payload.quotationDeadline || payload.requestedDeliveryDate,
     origin: prefillOrigin(source),

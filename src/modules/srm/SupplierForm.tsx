@@ -3,26 +3,36 @@ import { useI18n } from '../../i18n/I18n';
 import { supplierCopy } from './supplierCopy';
 import { orderedCurrencyCodes } from '../../lib/currencyOptions';
 
-type Props = { form: Record<string, any>; editing: boolean; saving: boolean; errors: Array<{ field?: string; message?: string }>; currencyWarning: boolean; workspaceCurrency?: string; onChange: (key: string, value: string) => void; onSave: () => void; onCancel: () => void };
+// A workspace payment term: its code is what the supplier stores.
+// A workspace payment term: its code is what the form stores. A supplier
+// imported from a file may hold the term's row id (recordId) instead.
+export type PaymentTermOption = { id: string; label: string; recordId?: string | null };
+type Props = { form: Record<string, any>; editing: boolean; saving: boolean; errors: Array<{ field?: string; message?: string }>; currencyWarning: boolean; workspaceCurrency?: string; paymentTerms?: PaymentTermOption[] | null; onChange: (key: string, value: string) => void; onSave: () => void; onCancel: () => void };
 const basic = [['supplierCode', 'Supplier code'], ['supplierName', 'Supplier name'], ['shortName', 'Short name'], ['businessType', 'Business type'], ['categories', 'Categories']];
 const contact = [['contactName', 'Contact name'], ['telephone', 'Phone'], ['email', 'Email'], ['address', 'Address'], ['postalCode', 'Postal / ZIP code']];
 const commercial = [['defaultCurrency', 'Default currency'], ['paymentTermsId', 'Payment terms'], ['deliveryCycleDays', 'Delivery lead time (days)'], ['settlementMethod', 'Settlement method']];
 const tax = [['creditCode', 'Business registration ID'], ['taxIdentificationNumber', 'Tax ID'], ['bankName', 'Bank name'], ['bankAccountName', 'Account holder'], ['bankAccountNumber', 'Account number']];
 const control = 'mt-1.5 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50';
 
-export function SupplierForm({ form, editing, saving, errors, currencyWarning, workspaceCurrency, onChange, onSave, onCancel }: Props) {
+export function SupplierForm({ form, editing, saving, errors, currencyWarning, workspaceCurrency, paymentTerms, onChange, onSave, onCancel }: Props) {
   const { language } = useI18n();
   const t = (value: string) => supplierCopy(value, language);
+  // The empty choice means "not recorded"; a stored term that is not among
+  // the workspace's terms (or the terms could not load) stays selectable.
+  const stored = String(form.paymentTermsId ?? '');
+  const termOptions = (paymentTerms || []).map(term => (stored && term.recordId === stored ? { ...term, id: stored } : term));
+  if (stored && !termOptions.some(term => term.id === stored)) termOptions.push({ id: stored, label: stored });
   function field([key, label]: string[]) {
     const required = ['supplierCode', 'supplierName', 'defaultCurrency'].includes(key);
     const error = errors.find(item => item.field === key);
     const props = { id: `supplier-${key}`, 'aria-label': t(label), 'aria-invalid': !!error, 'aria-describedby': error ? `supplier-error-${key}` : undefined, required, value: form[key] ?? '', onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => onChange(key, event.target.value), className: control };
     return <div key={key} className={key === 'address' || key === 'categories' ? 'md:col-span-2' : ''}>
       <label htmlFor={props.id} className="text-sm font-medium text-slate-600">{t(label)}{required && <span className="ml-1 text-blue-600">*</span>}</label>
-      {key === 'defaultCurrency' ? <select {...props}><option value="">{t('Choose currency')}</option>{orderedCurrencyCodes(workspaceCurrency, null, form.defaultCurrency).map(code => <option key={code} value={code}>{code}</option>)}</select> : <input {...props} type={key === 'email' ? 'email' : key === 'telephone' ? 'tel' : key === 'deliveryCycleDays' ? 'number' : 'text'} min={key === 'deliveryCycleDays' ? 0 : undefined} step={key === 'deliveryCycleDays' ? 1 : undefined} maxLength={key === 'internalComment' ? 4000 : 500} />}
+      {key === 'defaultCurrency' ? <select {...props}><option value="">{t('Choose currency')}</option>{orderedCurrencyCodes(workspaceCurrency, null, form.defaultCurrency).map(code => <option key={code} value={code}>{code}</option>)}</select> : key === 'paymentTermsId' ? <select {...props}><option value="">{t('Not recorded')}</option>{termOptions.map(term => <option key={term.id} value={term.id}>{term.label === term.id ? term.id : `${term.label} (${term.id})`}</option>)}</select> : <input {...props} type={key === 'email' ? 'email' : key === 'telephone' ? 'tel' : key === 'deliveryCycleDays' ? 'number' : 'text'} min={key === 'deliveryCycleDays' ? 0 : undefined} step={key === 'deliveryCycleDays' ? 1 : undefined} maxLength={key === 'internalComment' ? 4000 : 500} />}
       {error && <p id={`supplier-error-${key}`} className="mt-1 text-xs text-red-600">{t(error.message || 'Check the highlighted fields.')}</p>}
       {key === 'supplierCode' && <p className="mt-1 text-xs text-slate-500">{t('Use a unique code, such as SUP-001.')}</p>}
       {key === 'categories' && <p className="mt-1 text-xs text-slate-500">{t('Separate categories with commas.')}</p>}
+      {key === 'paymentTermsId' && <p className="mt-1 text-xs text-slate-500">{t(paymentTerms === null ? 'Could not load the workspace payment terms. The stored term is kept.' : 'Leave empty when the term is not agreed yet.')}</p>}
     </div>;
   }
   const section = (title: string, fields: string[][]) => <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="text-base font-semibold text-slate-900">{t(title)}</h2><div className="mt-4 grid gap-x-5 gap-y-4 md:grid-cols-2">{fields.map(field)}{title === 'Basic information' && <div><label htmlFor="supplier-status" className="text-sm font-medium text-slate-600">{t('Status')}</label><select id="supplier-status" aria-label={t('Status')} className={control} value={form.status} onChange={event => onChange('status', event.target.value)}>{[['active', 'Active'], ['draft', 'Draft'], ['inactive', 'Inactive']].map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select></div>}</div></section>;

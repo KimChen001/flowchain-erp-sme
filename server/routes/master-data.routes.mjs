@@ -1,8 +1,9 @@
 import { assertAuthorized } from '../auth/authorization-service.mjs'
 import { selectMasterData } from '../domain/master-data-selectors.mjs'
 import { maskReferencePrice, maskSupplier, masterDataReadAccess } from '../domain/master-data-read-access.mjs'
-import { PilotIdentityError, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
+import { PilotIdentityError, hasWarehouseAccess, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
+import { createSupplierInsightsReadService } from '../domain/supplier-insights.mjs'
 
 // Writes are decided by Roles & permissions, never by the legacy User.role, so
 // an administrator who narrows someone's roles narrows what they can change.
@@ -12,6 +13,8 @@ const WRITE_RULES = Object.freeze({
   'item-supplier-relationship': { permission: 'master_data.item.manage', records: "an item's suppliers" },
   'supplier-master': { permission: 'master_data.supplier.manage', records: 'suppliers' },
   'customer-master': { permission: 'master_data.customer.manage', records: 'customers' },
+  // Warehouses and bins are workspace setup, kept by a workspace administrator.
+  'warehouse-master': { permission: 'settings.workspace.manage', records: 'warehouses and bins' },
 })
 
 function masterDataRepository(ctx) {
@@ -237,7 +240,101 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/suppliers') {
-    send(res, 200, { suppliers: await suppliersFor(await repository.listSuppliers(tenantScope({ query:url.searchParams.get('query')||'', status:url.searchParams.get('status')||'', category:url.searchParams.get('category')||'' }))) })
+    // Search, status and category narrow every view; tier (1, 2, 3, none),
+    // the Supplier evaluation filter, and owner (a user id, me, none), the
+    // list's Managed by me tab, narrow further. The counts cover each tier
+    // and owner view under the search, status and category.
+    const filters = tenantScope({
+      query: url.searchParams.get('query') || '',
+      status: url.searchParams.get('status') || '',
+      category: url.searchParams.get('category') || '',
+      tier: url.searchParams.get('tier') || '',
+      owner: url.searchParams.get('owner') || '',
+      currentUserId: ctx.identity?.userId || '',
+    })
+    const [suppliers, counts] = await Promise.all([
+      repository.listSuppliers(filters),
+      typeof repository.supplierTabCounts === 'function' ? repository.supplierTabCounts(filters) : null,
+    ])
+    send(res, 200, { suppliers: await suppliersFor(suppliers), ...(counts ? { counts } : {}) })
+    return true
+  }
+
+  // Every supplier's list metrics, for the signed-in reader: what they may
+  // not see comes back null. Read once per list load, not per search.
+  if (req.method === 'GET' && url.pathname === '/api/master-data/supplier-insights') {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read supplier metrics.' })
+      return true
+    }
+    try {
+      const service = ctx.supplierInsightsService || createSupplierInsightsReadService({
+        prisma: await getPrismaClient(ctx.env || process.env),
+        listPurchaseOrders: ctx.repositories?.procurementRuntime?.listForReport,
+      })
+      send(res, 200, await service.read(ctx))
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'SUPPLIER_INSIGHTS_UNAVAILABLE', message: error.status ? error.message : 'Supplier metrics are unavailable. Try again.' })
+    }
+    return true
+  }
+
+  // Every supplier's open issues for Supplier risks, the earliest date first,
+  // with the reader's access (supplier-insights.mjs readRisks).
+  if (req.method === 'GET' && url.pathname === '/api/master-data/supplier-risks') {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read supplier risks.' })
+      return true
+    }
+    try {
+      const service = ctx.supplierInsightsService || createSupplierInsightsReadService({
+        prisma: await getPrismaClient(ctx.env || process.env),
+        listPurchaseOrders: ctx.repositories?.procurementRuntime?.listForReport,
+      })
+      send(res, 200, await service.readRisks(ctx))
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'SUPPLIER_RISKS_UNAVAILABLE', message: error.status ? error.message : 'Supplier risks are unavailable. Try again.' })
+    }
+    return true
+  }
+
+  // One supplier's purchase records and open issues for its detail page, with
+  // the reader's access (supplier-insights.mjs readActivity).
+  const supplierActivityMatch = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/activity$/)
+  if (req.method === 'GET' && supplierActivityMatch) {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read supplier activity.' })
+      return true
+    }
+    try {
+      const service = ctx.supplierInsightsService || createSupplierInsightsReadService({
+        prisma: await getPrismaClient(ctx.env || process.env),
+        listPurchaseOrders: ctx.repositories?.procurementRuntime?.listForReport,
+      })
+      send(res, 200, await service.readActivity(ctx, decodeURIComponent(supplierActivityMatch[1])))
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'SUPPLIER_ACTIVITY_UNAVAILABLE', message: error.status ? error.message : 'Supplier activity is unavailable. Try again.' })
+    }
+    return true
+  }
+
+  // The people a supplier can be assigned to. Only those who may change a
+  // supplier pick an owner, so listing them needs no user administration.
+  if (req.method === 'GET' && url.pathname === '/api/master-data/supplier-owners') {
+    if (!(await authorizeWrite('supplier-master'))) return true
+    send(res, 200, { owners: await repository.listSupplierOwners(tenantScope()) })
+    return true
+  }
+
+  const supplierTierMatch = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/(tier|owner)$/)
+  if (req.method === 'PATCH' && supplierTierMatch) {
+    if (!(await authorizeWrite('supplier-master'))) return true
+    const change = supplierTierMatch[2] === 'tier' ? repository.setSupplierTier : repository.setSupplierOwner
+    try {
+      send(res, 200, { supplier: await supplierFor(await change(supplierTierMatch[1], await readBody(req), actor(), tenantScope())) })
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
+    }
     return true
   }
 
@@ -280,7 +377,8 @@ export async function handleMasterDataRoute(ctx) {
       send(res, 404, { error: 'Supplier not found' })
       return true
     }
-    send(res, 200, { supplier: await supplierFor(supplier) })
+    const tierHistory = typeof repository.supplierTierHistory === 'function' ? await repository.supplierTierHistory(supplier.id, tenantScope()) : []
+    send(res, 200, { supplier: { ...(await supplierFor(supplier)), tierHistory } })
     return true
   }
 
@@ -305,6 +403,36 @@ export async function handleMasterDataRoute(ctx) {
     return true
   }
 
+  // Every item-supplier link across items, for Supplier prices: search,
+  // supplierId and itemId narrow it, limit and offset page it. Read only.
+  // A reference price needs procurement.prices.read, exactly as on the
+  // per-item read; without it the price is null and named in restrictedFields.
+  if (req.method === 'GET' && url.pathname === '/api/master-data/item-suppliers') {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read supplier prices.' })
+      return true
+    }
+    if (typeof repository.listItemSupplierLinks !== 'function') {
+      send(res, 501, {
+        code: 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED',
+        capability: 'item-supplier-relationships',
+        message: 'Item supplier relationships are not available in this workspace.',
+        limitations: ['Items and suppliers can be read, but the links between them cannot.'],
+      })
+      return true
+    }
+    const page = await repository.listItemSupplierLinks(tenantScope({
+      query: url.searchParams.get('query') || '',
+      supplierId: url.searchParams.get('supplierId') || '',
+      itemId: url.searchParams.get('itemId') || '',
+      limit: url.searchParams.get('limit') ?? '',
+      offset: url.searchParams.get('offset') ?? '',
+    }))
+    const rows = await pricesFor(page.rows)
+    send(res, 200, { ...page, rows, visibility: { prices: Boolean((await readAccess())?.prices) } })
+    return true
+  }
+
   const itemSuppliers = url.pathname.match(/^\/api\/master-data\/items\/([^/]+)\/suppliers$/)
   if (req.method === 'GET' && itemSuppliers) {
     if (typeof repository.listItemSuppliers !== 'function' || typeof repository.approvedSuppliersForItem !== 'function') {
@@ -323,6 +451,104 @@ export async function handleMasterDataRoute(ctx) {
   if (req.method === 'POST' && itemSuppliers) { if (!(await authorizeWrite('item-supplier-relationship'))) return true; try{send(res,201,{relationship:(await pricesFor([await repository.createItemSupplier(decodeURIComponent(itemSuppliers[1]),await readBody(req),actor(),tenantScope())]))[0]})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})} return true }
   const relationshipMatch=url.pathname.match(/^\/api\/master-data\/items\/([^/]+)\/suppliers\/([^/]+)$/)
   if(req.method==='PATCH'&&relationshipMatch){if (!(await authorizeWrite('item-supplier-relationship'))) return true;try{send(res,200,{relationship:(await pricesFor([await repository.updateItemSupplier(decodeURIComponent(relationshipMatch[1]),decodeURIComponent(relationshipMatch[2]),await readBody(req),actor(),tenantScope())]))[0]})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})}return true}
+
+  // Warehouses and bins. Creating one needs settings.workspace.manage; every
+  // other change also needs operate access to that warehouse, and reading its
+  // bins needs read access. A warehouse outside the user's access is refused
+  // the same way whether or not it exists.
+  const warehouseScopeDenied = (level) => send(res, 403, {
+    code: 'WAREHOUSE_SCOPE_DENIED',
+    message: `You need ${level} access to this warehouse. A workspace administrator can grant it in Warehouse access.`,
+    action: level === 'read' ? 'read' : 'maintain',
+    resource: 'warehouse-master',
+  })
+  const requireWarehouseScope = async (warehouseId, level) => {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read warehouses.', action: 'read', resource: 'warehouse-master' })
+      return false
+    }
+    let current
+    try {
+      current = await provisionedActor()
+    } catch (error) {
+      if (!(error instanceof PilotIdentityError)) throw error
+      send(res, error.status, { code: error.code, message: error.message, action: level === 'read' ? 'read' : 'maintain', resource: 'warehouse-master' })
+      return false
+    }
+    if (current?.complete && current.tenantId === ctx.identity.tenantId && hasWarehouseAccess(current, [warehouseId], level)) return true
+    warehouseScopeDenied(level)
+    return false
+  }
+  const warehouseWritesUnsupported = () => {
+    if (typeof repository.createWarehouse === 'function') return false
+    send(res, 501, { code: 'ADAPTER_WRITE_UNSUPPORTED', message: 'Warehouse writes are not available in this workspace.' })
+    return true
+  }
+  const sendWarehouseError = (error) => error instanceof SyntaxError
+    ? send(res, 400, { code: 'INVALID_JSON', message: 'The request body is not valid JSON.', details: [] })
+    : send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
+
+  if (req.method === 'POST' && url.pathname === '/api/master-data/warehouses') {
+    if (!(await authorizeWrite('warehouse-master'))) return true
+    if (warehouseWritesUnsupported()) return true
+    try {
+      send(res, 201, { warehouse: await repository.createWarehouse(await readBody(req), actor(), tenantScope()) })
+    } catch (error) {
+      sendWarehouseError(error)
+    }
+    return true
+  }
+
+  const warehouseWriteMatch = url.pathname.match(/^\/api\/master-data\/warehouses\/([^/]+)(?:\/(activate|deactivate))?$/)
+  if (warehouseWriteMatch && ((req.method === 'PATCH' && !warehouseWriteMatch[2]) || (req.method === 'POST' && warehouseWriteMatch[2]))) {
+    const warehouseId = decodeURIComponent(warehouseWriteMatch[1])
+    if (!(await authorizeWrite('warehouse-master'))) return true
+    if (!(await requireWarehouseScope(warehouseId, 'operate'))) return true
+    if (warehouseWritesUnsupported()) return true
+    try {
+      const body = await readBody(req)
+      if (warehouseWriteMatch[2]) {
+        const status = warehouseWriteMatch[2] === 'activate' ? 'active' : 'inactive'
+        send(res, 200, await repository.setWarehouseStatus(warehouseId, { status, expectedVersion: body.expectedVersion }, actor(), tenantScope()))
+      } else {
+        send(res, 200, { warehouse: await repository.updateWarehouse(warehouseId, body, actor(), tenantScope()) })
+      }
+    } catch (error) {
+      sendWarehouseError(error)
+    }
+    return true
+  }
+
+  const warehouseBinsMatch = url.pathname.match(/^\/api\/master-data\/warehouses\/([^/]+)\/bins(?:\/([^/]+)(?:\/(activate|deactivate))?)?$/)
+  if (warehouseBinsMatch) {
+    const warehouseId = decodeURIComponent(warehouseBinsMatch[1])
+    const binId = warehouseBinsMatch[2] ? decodeURIComponent(warehouseBinsMatch[2]) : ''
+    const statusChange = warehouseBinsMatch[3]
+    if (req.method === 'GET' && !binId) {
+      if (!(await requireWarehouseScope(warehouseId, 'read'))) return true
+      if (typeof repository.listWarehouseBins !== 'function') {
+        send(res, 501, { code: 'ADAPTER_WRITE_UNSUPPORTED', message: 'Warehouse bins are not available in this workspace.' })
+        return true
+      }
+      send(res, 200, { bins: await repository.listWarehouseBins(warehouseId, tenantScope()) })
+      return true
+    }
+    const kind = req.method === 'POST' && !binId ? 'create' : req.method === 'PATCH' && binId && !statusChange ? 'update' : req.method === 'POST' && binId && statusChange ? 'status' : ''
+    if (kind) {
+      if (!(await authorizeWrite('warehouse-master'))) return true
+      if (!(await requireWarehouseScope(warehouseId, 'operate'))) return true
+      if (warehouseWritesUnsupported()) return true
+      try {
+        const body = await readBody(req)
+        if (kind === 'create') send(res, 201, { bin: await repository.createWarehouseBin(warehouseId, body, actor(), tenantScope()) })
+        else if (kind === 'update') send(res, 200, { bin: await repository.updateWarehouseBin(warehouseId, binId, body, actor(), tenantScope()) })
+        else send(res, 200, { bin: await repository.setWarehouseBinStatus(warehouseId, binId, { status: statusChange === 'activate' ? 'active' : 'inactive', expectedUpdatedAt: body.expectedUpdatedAt }, actor(), tenantScope()) })
+      } catch (error) {
+        sendWarehouseError(error)
+      }
+      return true
+    }
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/warehouses') {
     send(res, 200, { warehouses: await repository.listWarehouses(tenantScope()) })

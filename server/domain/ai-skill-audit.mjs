@@ -13,7 +13,14 @@ export function aiSkillQueryHash(message) {
   return createHash('sha256').update(String(message ?? '')).digest('hex').slice(0, 32)
 }
 
-export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal = false, intentShadow = null, intentRouting = null, followUp = null, agent = null }) {
+// A knowledge answer's mode and the documents it cited: ids and counts only,
+// never passages or the answer's text.
+export function aiKnowledgeAuditBlock(rag) {
+  const citations = array(rag?.citations)
+  return { mode: rag?.mode || null, citationCount: citations.length, documentIds: [...new Set(citations.map((citation) => citation.documentId).filter(Boolean))].slice(0, 10) }
+}
+
+export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal = false, intentShadow = null, intentRouting = null, followUp = null, agent = null, knowledge = null, compose = null, modelFirst = null, assistantV2 = null }) {
   const recordIds = [...new Set([...array(response.keyEvidence).map((item) => item.entityId), ...array(response.reviewCards).map((card) => card.targetEntityId)].filter(Boolean))].slice(0, 25)
   const rowCounts = facts ? {
     purchase_orders: facts.purchaseOrders ? facts.purchaseOrders.rows.length : null,
@@ -29,7 +36,7 @@ export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal
     module: 'ai-assistant',
     action: 'ai_skill_answered',
     entity: { type: 'ai_skill', id: response.intent },
-    summary: `Assistant answered with ${response.intent} from workspace data.`,
+    summary: `Assistant answered with ${response.intent} from workspace ${knowledge ? 'documents' : 'data'}.`,
     metadata: {
       skillId: response.intent,
       skillVersion: response.skill?.version || null,
@@ -51,10 +58,26 @@ export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal
       ...(followUp ? { followUp } : {}),
       // A compound answer: the skills and modes of its sections, never the parts' text.
       ...(agent ? { agent } : {}),
+      // A knowledge answer: its mode and the documents it cited.
+      ...(knowledge ? { knowledge } : {}),
+      // P3 wording: composed, rejected (with the verifier's reason code),
+      // degraded or skipped; counts and tokens, never the text.
+      ...(compose ? { compose } : {}),
+      // Model-first (docs/ai-model-first-design.md §3): answered, guarded or
+      // fallen back, with tools, rounds, the grounding outcome by kind,
+      // tokens, cost and model; codes and counts, never the text.
+      ...(modelFirst ? { modelFirst } : {}),
+      // Assistant v2 (docs/ai-assistant-v2-design.md §3.11): answered, refused
+      // by a guard, or fallen back to the rules, with the loop's model, rounds,
+      // tools, flag and replace counts, usage and cost; codes and counts only.
+      ...(assistantV2 ? { assistantV2 } : {}),
     },
   }
 }
 
+// A request the model-first loop or assistant v2 saw (ctx.aiModelFirstAudit,
+// ctx.aiAssistantV2Audit: guarded, or fallen back to the rules) records that
+// on whichever path then answered.
 export async function recordAiSkillAudit(ctx, input) {
-  return await recordDatabaseAuditBestEffort(ctx, aiSkillAuditEntry(input))
+  return await recordDatabaseAuditBestEffort(ctx, aiSkillAuditEntry({ ...input, modelFirst: input.modelFirst || ctx?.aiModelFirstAudit || null, assistantV2: input.assistantV2 || ctx?.aiAssistantV2Audit || null }))
 }

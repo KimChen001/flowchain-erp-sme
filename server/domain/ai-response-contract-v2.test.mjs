@@ -100,3 +100,22 @@ test('data limitation appears when invoice data is incomplete', () => {
   // The retired imports pages are unavailable, so the answer does not link there.
   assert.ok(!contract.navigationLinks.some((item) => item.moduleId === 'imports'))
 })
+
+test('supplier risk lists suppliers by their oldest open problem, with no score or points', () => {
+  const db = createAiUserScenarioDb()
+  db.suppliers.push(
+    // Stored score 60 and no open problem: labelled as master data stores it
+    // (medium by default), never high from the score, and listed last.
+    { id: 'SUP-USER-0009', code: 'SUP-USER-0009', name: '用户供应商九号', category: '用户物料', score: 60, status: 'active' },
+    // One PO late since May 1, before supplier one's Jun 28.
+    { id: 'SUP-USER-0002', code: 'SUP-USER-0002', name: '用户供应商二号', category: '用户物料', status: 'active' },
+  )
+  db.purchaseOrders.push({ po: 'PO-USER-0099', supplier: '用户供应商二号', eta: '2026-05-01', amount: 10, currency: 'CNY', items: 10, received: 0, status: '已发出', lines: [] })
+  const contract = contractFor('哪些供应商有潜在风险？', db)
+  const suppliers = contract.keyEvidence.filter((item) => item.entityType === 'supplier')
+  assert.deepEqual(suppliers.map((item) => [item.entityLabel, item.status]), [['用户供应商二号', '中'], ['用户供应商一号', '高'], ['用户供应商九号', '中']])
+  assert.match(suppliers[0].summary, /最早 2026-05-01/)
+  assert.ok(suppliers.every((item) => item.value === null), 'no stored score is shown')
+  const recent = contractFor('这个供应商最近有什么问题？', db)
+  assert.equal(recent.keyEvidence.find((item) => item.entityType === 'supplier').entityLabel, '用户供应商二号')
+})

@@ -40,7 +40,7 @@ const LABELS: Record<string, [string, string]> = {
   dueAmount: ["Amount due", "到期应付"], overdueAmount: ["Overdue amount", "逾期金额"],
   label: ["Name", "名称"], rate: ["Rate", "税率"], taxType: ["Tax type", "税种"], region: ["Region", "地区"],
   isDefault: ["Default", "默认"], days: ["Days", "天数"], contact: ["Contact", "联系人"], phone: ["Phone", "电话"],
-  email: ["Email", "邮箱"], address: ["Address", "地址"], paymentTerms: ["Payment terms", "付款条款"], creditStatus: ["Credit status", "信用状态"],
+  email: ["Email", "邮箱"], address: ["Address", "地址"], paymentTerms: ["Payment terms", "付款条款"], paymentTermsId: ["Payment terms", "付款条款"], creditStatus: ["Credit status", "信用状态"],
 };
 
 // Internal bookkeeping fields that are not business information.
@@ -51,10 +51,12 @@ const VALUE_LABELS: Record<string, [string, string]> = {
   active: ["Active", "启用"], inactive: ["Inactive", "停用"], draft: ["Draft", "草稿"], archived: ["Archived", "已归档"],
   sales_tax: ["Sales tax", "销售税"], vat: ["VAT", "增值税"], exempt: ["Exempt", "免税"], warehouse: ["Warehouse", "仓库"], bin: ["Location", "库位"],
 };
+// Terms a record has no value for were never agreed, so say so instead of "—".
+const NOT_RECORDED_KEYS = new Set(["paymentTerms", "paymentTermsId"]);
 const CODE_KEYS = new Set(["status", "matchStatus", "settlementStatus", "taxType", "type", "creditStatus"]);
 
 const COPY = {
-  yes: ["Yes", "是"], no: ["No", "否"], loading: ["Loading {label}…", "正在读取 {label}…"], notFound: ["{label} {id} was not found", "未找到 {label} {id}"],
+  yes: ["Yes", "是"], no: ["No", "否"], notRecorded: ["Not recorded", "未记录"], loading: ["Loading {label}…", "正在读取 {label}…"], notFound: ["{label} {id} was not found", "未找到 {label} {id}"],
   notFoundHint: ["This number does not exist, so it is shown as missing instead of as a link.", "该编号不存在，已按缺失对象处理，没有伪装为可用链接。"],
   related: ["Related records", "关联业务对象"], back: ["Back to {label} {id}", "返回 {label} {id}"], details: ["Details", "业务信息"],
   lines: ["Lines", "行级明细"], comments: ["Comments", "备注"], noComments: ["No comments.", "暂无备注。"], history: ["History", "操作历史"],
@@ -69,7 +71,7 @@ const NON_MONEY_KEYS = { test: (key: string) => keyWords(key).some((word) => NON
 type FormatContext = { locale: string; currency: string; zh: boolean };
 
 function formatValue(key: string, value: unknown, { locale, currency, zh }: FormatContext) {
-  if (value == null || value === "") return "—";
+  if (value == null || value === "") return NOT_RECORDED_KEYS.has(key) ? COPY.notRecorded[zh ? 1 : 0] : "—";
   if (typeof value === "boolean") return (value ? COPY.yes : COPY.no)[zh ? 1 : 0];
   // A tax rate is stored as a fraction (0.0825); show it as a percent without losing digits.
   if (key === "rate" && typeof value === "number") return value.toLocaleString(locale, { style: "percent", maximumFractionDigits: 4 });

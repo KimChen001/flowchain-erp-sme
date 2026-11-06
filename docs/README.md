@@ -11,6 +11,7 @@
 
 - [Product language and positioning](product-language-and-positioning-v1.md)
 - [Product narrative](product-narrative-v1.md)
+- [Trial user guide](trial-user-guide.md): for the people using FlowChain in a trial
 - [Current development limitations](current-development-limitations-v1.md)
 - [Product scope / IA review](product-scope-ia-review.md)
 - [System harness and product review](system-harness-and-product-review-v1.md)
@@ -28,6 +29,7 @@
   business commit adapters remain reserved for Phase 5.4C.
 - [Architecture overview](architecture-overview-v1.md)
 - [Repository boundary](repository-boundary-v1.md)
+- [Proposal: browser session in an HttpOnly cookie](session-cookie-migration-proposal.md)
 - [JSON adapter contract tests](json-adapter-contract-tests-v1.md)
 - [Persistence mode and adapter registry](persistence-mode-and-adapter-registry-v1.md)
 - [Full repository risk scan](full-repo-risk-scan-v1.md)
@@ -66,6 +68,8 @@
 
 ## AI
 
+- [AI assistant plan, v4.0](ai-assistant-plan.md): decisions, state, roadmap and stop points for the assistant and knowledge work
+- [Model-first assistant design](ai-model-first-design.md): proposal of 2026-10-28; the model reads through tools and writes the answer, with a grounding check; decisions M1–M7 open
 - [AI safety and draft-first explainer](ai-safety-and-draft-first-explainer-v1.md)
 - [AI provider safety gate](ai-provider-safety-gate-v1.md)
 - [AI provider adapter plan](ai-provider-adapter-v1-plan.md)
@@ -74,6 +78,8 @@
 - [AI timeout diagnostics and cockpit fast path](ai-timeout-diagnostics-and-cockpit-fast-path-v1.md)
 - [AI response latency notes](ai-response-latency-notes.md)
 - [AI chat copilot plan](ai-chat-copilot-v1-plan.md)
+- [AI provider baseline, 2026-10-04](ai-provider-baseline-2026-10-04.md)
+- [Onboarding and standing instructions (L3) design](ai-onboarding-and-automation-design.md): proposal of 2026-10-29; setup by chat on the existing import, scheduled rules that leave drafts; decisions O1–O6 and A1–A8 approved 2026-10-29
 
 ## UI
 
@@ -88,8 +94,10 @@
 
 ## Domain Notes
 
+- [Order changes, history import and reverse flows](order-changes-history-reverse-design.md): proposal of 2026-11-01; PO revisions and sales order remainder close, importing past and open orders, returns and credits; decisions OC1–OC8, HI1–HI8, RV1–RV6 approved 2026-11-01
 - [Global business search](global-business-search-v1.md)
 - [Supplier operational search](supplier-operational-search-v1.md)
+- [Supplier tiers and the supplier list: design](supplier-tiers-design.md)
 - [SRM supplier API migration notes](srm-supplier-api-migration-notes.md)
 - [Receiving GRN list/detail safe plan](receiving-grn-list-detail-safe-plan.md)
 - [ERPNext reference notes](erpnext-reference-notes-for-flowchain.md)

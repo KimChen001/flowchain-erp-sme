@@ -1,4 +1,5 @@
 import { assertAuthorized, can } from "../auth/authorization-service.mjs";
+import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { financeFixed as fixed, financeUnits as units } from "./operational-finance-policy.mjs";
 
@@ -108,7 +109,7 @@ export function createInternalSettlementReadService({ prisma, capabilities = {} 
     const current = await actor(context);
     assertAuthorized({ actor: current, permission: "finance.settlement.read", tenantId: current.tenantId });
     const paging = page(query);
-    const search = text(query.search);
+    const search = escapeLikePattern(text(query.search));
     const where = { tenantId: current.tenantId, ...(text(query.status) ? { OR: [{ status: text(query.status) }, { workflowStatus: text(query.status) }] } : {}), ...(text(query.direction) ? { direction: text(query.direction) } : {}), ...(text(query.currency) ? { currency: text(query.currency).toUpperCase() } : {}), ...(search ? { AND: [{ OR: [{ settlementNumber: { contains: search, mode: "insensitive" } }, { counterpartyNameSnapshot: { contains: search, mode: "insensitive" } }, { externalReference: { contains: search, mode: "insensitive" } }] }] } : {}) };
     const [total, rows, policy] = await Promise.all([prisma.settlementDocument.count({ where }), prisma.settlementDocument.findMany({ where, include: { cashbookAccount: true }, orderBy: [{ settlementDate: "desc" }, { id: "asc" }], skip: paging.skip, take: paging.pageSize }), policyFor(current.tenantId)]);
     return { ...paging, total, items: rows.map((row) => settlementSummary(row, current, capabilities, policy)), capability: capabilities["internal-settlement"], workflowCapability: capabilities["settlement-workflow"] };

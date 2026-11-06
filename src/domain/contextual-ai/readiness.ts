@@ -5,7 +5,6 @@ import type { EvidenceBundle } from "../relationships";
 import {
   resolveInvoiceMatchingEvidence,
   resolvePoDelayEvidence,
-  resolveReceivingExceptionEvidence,
   resolveSkuShortageEvidence,
 } from "../relationships";
 
@@ -129,40 +128,6 @@ export function makeSkuInsight(input: {
   };
 }
 
-export function makeGrnInsight(input: {
-  grn: string;
-  po: string;
-  supplier: string;
-  status: string;
-  receivedQty: number;
-  rejectedQty: number;
-  invoices: string[];
-}): ContextualAIInsight {
-  const evidenceBundle = resolveReceivingExceptionEvidence({
-    receivingDocs: [{ grn: input.grn, po: input.po, supplier: input.supplier, status: input.status, items: input.receivedQty, failed: input.rejectedQty }],
-    supplierInvoices: input.invoices.map((invoiceNumber) => ({ invoiceNumber, relatedPo: input.po, relatedGrn: input.grn, supplier: input.supplier })),
-  }, { grn: input.grn, po: input.po, supplier: input.supplier, status: input.status, items: input.receivedQty, failed: input.rejectedQty });
-  const records = recordsFromEvidence(evidenceBundle).length ? recordsFromEvidence(evidenceBundle) : [{ type: "purchase_order", id: input.po }, ...input.invoices.map((id) => ({ type: "supplier_invoice", id }))];
-  return {
-    title: `GRN insight · ${input.grn}`,
-    sourceContext: `Receiving / GRN ${input.grn}`,
-    trigger: "Explain receiving exception",
-    conclusion: input.rejectedQty > 0 || input.status === "异常处理" ? `${input.grn} has receiving exception impact to review.` : `${input.grn} has no rejected quantity in current detail.`,
-    riskLevel: input.rejectedQty > 0 ? "高" : "中",
-    reason: `Received ${input.receivedQty}, rejected ${input.rejectedQty}, status ${input.status}.`,
-    evidence: evidenceSummaries(evidenceBundle, [`Supplier ${input.supplier}`, `Linked PO ${input.po}`, `${input.invoices.length} linked invoice(s)`]),
-    impact: input.rejectedQty > 0 ? ["Rejected quantity can affect inventory posting, supplier follow-up, and invoice matching."] : ["Receiving status should still be checked before invoice matching closes."],
-    recommendedActions: [
-      buildContextualAiAction({ intent: "trace_receiving_exception", sourceModule: "receiving", sourceEntityType: "receiving_doc", sourceEntityId: input.grn, sourceRoute: "receiving", linkedRecords: records }),
-      buildContextualAiAction({ intent: "preview_exception_note", sourceModule: "receiving", sourceEntityType: "receiving_doc", sourceEntityId: input.grn, sourceRoute: "receiving", linkedRecords: records, allowedOutputType: "draft_preview" }),
-    ],
-    linkedRecords: records,
-    limitations: limitationMessages(evidenceBundle, input.invoices.length ? ["Invoice impact is based on currently linked invoices."] : ["No linked invoice found in current data."]),
-    provenance: "GRN detail, receipt lines, and linked invoice records.",
-    auditPreview: "ai_contextual_grn_insight_previewed",
-  };
-}
-
 export function makeInvoiceInsight(input: {
   invoiceNumber: string;
   supplier: string;
@@ -186,8 +151,8 @@ export function makeInvoiceInsight(input: {
     evidence: evidenceSummaries(evidenceBundle, [`Supplier ${input.supplier}`, `PO ${input.po || "missing"}`, `GRN ${input.grn || "missing"}`]),
     impact: input.varianceAmount ? ["Do not approve, pay, or post until PO/GRN/invoice variance is resolved."] : ["Keep standard AP review before posting or payment."],
     recommendedActions: [
-      buildContextualAiAction({ intent: "trace_invoice_matching_failure", sourceModule: "finance", sourceEntityType: "supplier_invoice", sourceEntityId: input.invoiceNumber, sourceRoute: "finance:invoices", linkedRecords: records }),
-      buildContextualAiAction({ intent: "preview_invoice_resolution_note", sourceModule: "finance", sourceEntityType: "supplier_invoice", sourceEntityId: input.invoiceNumber, sourceRoute: "finance:invoices", linkedRecords: records, allowedOutputType: "draft_preview" }),
+      buildContextualAiAction({ intent: "trace_invoice_matching_failure", sourceModule: "finance", sourceEntityType: "supplier_invoice", sourceEntityId: input.invoiceNumber, sourceRoute: "procurement:bills", linkedRecords: records }),
+      buildContextualAiAction({ intent: "preview_invoice_resolution_note", sourceModule: "finance", sourceEntityType: "supplier_invoice", sourceEntityId: input.invoiceNumber, sourceRoute: "procurement:bills", linkedRecords: records, allowedOutputType: "draft_preview" }),
     ],
     linkedRecords: records,
     limitations: limitationMessages(evidenceBundle, records.length === 2 ? ["Variance depends on available PO and GRN line fields."] : ["Missing PO or GRN link limits variance explanation."]),

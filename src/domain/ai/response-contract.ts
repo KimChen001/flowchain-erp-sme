@@ -41,6 +41,8 @@ export type AiResponseV2EvidenceItem = {
   // status code. `status` is then the label in the answer language.
   rank?: number | null;
   statusCode?: string;
+  // What to do next about this record, in the answer language.
+  nextStep?: string;
 };
 
 export type AiResponseV2BusinessImpactItem = {
@@ -81,6 +83,8 @@ export type AiResponseV2NavigationLink = {
 };
 
 export type AiResponseV2DataLimitation = {
+  // Machine code behind the description; never shown.
+  code?: string;
   label: string;
   description: string;
   severity: AiResponseV2Severity;
@@ -102,7 +106,15 @@ export type AiResponseV2ReviewCard = {
   draftType?: string;
   draftTitle?: string;
   payload?: Record<string, unknown>;
+  // The answer line (evidence id) this draft belongs to, when it was offered on a line.
+  lineEvidenceId?: string;
+  // Which payload fields were suggested, and from where (record, default, template).
+  prefill?: Record<string, { source: "record" | "default" | "template" | "history" | "workspace_history" | "model"; ref?: string; value: string }>;
   originEvidence?: Record<string, unknown>[];
+  // Set on the cards of an order the assistant was asked to start
+  // (prepare_action_draft, mode order): true opens the card's form as the
+  // answer arrives. Their allowedNextStep names the SKU and is the button label.
+  autoOpen?: boolean;
 };
 
 export type AiRuntimeContextBreadcrumb = {
@@ -144,7 +156,9 @@ export type AiBusinessQuerySectionCard = {
   counts: Record<string, number | null>;
   amounts: Record<string, number | null>;
   rows: Array<Record<string, unknown>>;
+  // Sentences in the answer language; the machine codes behind them, never shown, are in limitationCodes.
   limitations: string[];
+  limitationCodes?: string[];
 };
 
 export type AiBusinessQueryPresentation = {
@@ -174,8 +188,8 @@ export type AiResponseV2Section = {
 };
 
 export type AiResponseV2 = {
-  supplementalKnowledge?: { title: string; summary: string; rag: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> } };
-  rag?: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> };
+  supplementalKnowledge?: { title: string; summary: string; rag: { mode: string; citations: Array<{ id: string; documentId: string; title: string; heading?: string | null; position: number; excerpt: string; sourceNumber?: number }> } };
+  rag?: { mode: string; citations: Array<{ id: string; documentId: string; title: string; heading?: string | null; position: number; excerpt: string; sourceNumber?: number }> };
   version: "v2";
   query: string;
   intent: string;
@@ -202,9 +216,25 @@ export type AiResponseV2 = {
   answerSourceLabel?: string;
   checked?: string[];
   checkedLabel?: string;
+  // A model-first answer's bases and caveats, shown folded under its trust line.
+  answerBasis?: string[];
+  // Items a model-first answer offers to order: each chip sends its request.
+  orderChoices?: Array<{ sku: string; prompt: string }>;
+  // The order a model-first answer offered to confirm; the panel sends it back
+  // with the next question, so a reply with a purpose confirms it.
+  pendingOrder?: { sku: string; quantity?: number };
   skill?: { id: string; version: string; asOf?: string | null; timezone?: string | null; signalVersion?: string };
+  // Set when the workspace reached this month's AI limit (over_cap), or when a
+  // model call for this answer failed (unavailable; reason budget when the
+  // provider's own spending limit refused it; unchecked when a model-first
+  // answer could not be finished and checked): the answer comes from the rules.
+  aiModelAccess?: { status: "over_cap" } | { status: "unavailable"; reason?: "budget" | "unchecked" };
   // A compound answer has a section per part; a one-part answer has none.
   sections?: AiResponseV2Section[];
+  // Which path chose the skills: rules, or a model (pick-one routing or agent planning).
+  skillRouting?: { source: "rules" | "model"; modelStatus: string };
+  // Set only when agent planning was tried and failed: the rules answered.
+  agentPlanning?: { status: "degraded"; entry?: "unmatched" | "multi_part" | null };
   metrics?: {
     asOf?: string;
     openPurchaseOrders: number | null;

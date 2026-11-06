@@ -6,7 +6,10 @@ import {
   agingBucket,
   agingDays,
   createOperationalFinanceO2cReadService,
+  overdueBefore,
+  overdueReceivableWhere,
 } from "./operational-finance-o2c-read-service.mjs";
+import { buildShipmentReversalPlan } from "./outbound-transaction-policy.mjs";
 
 const databaseUrl =
   process.env.DATABASE_URL_TEST || process.env.DATABASE_URL || "";
@@ -539,6 +542,51 @@ test(
         14,
       );
 
+      // Overdue is derived from the due date: both receivables are past due on
+      // 2026-07-17, though only the CNY one has the stored status "overdue".
+      // The landing count and the list filter it links to must agree, and a
+      // receivable not yet due stays out of both.
+      const notDue = await shipment(prisma, "NOT-DUE", "CNY");
+      await issueInvoice(
+        command,
+        { ...invoiceInput(notDue, "NOT-DUE"), dueDate: "2026-08-10T00:00:00.000Z" },
+        "NOT-DUE",
+      );
+      const overdueLanding = await read.landing(viewer);
+      assert.equal(overdueLanding.cards.overdueReceivables, 2);
+      const overdueList = await read.listReceivables({ status: "overdue" }, viewer);
+      assert.equal(overdueList.total, overdueLanding.cards.overdueReceivables);
+      assert.deepEqual(
+        overdueList.items.map((row) => row.customerInvoiceNumber).sort(),
+        ["CUS-INV-CNY", "CUS-INV-USD"],
+      );
+      const openList = await read.listReceivables({ status: "open" }, viewer);
+      assert.deepEqual(
+        openList.items.map((row) => row.customerInvoiceNumber).sort(),
+        ["CUS-INV-NOT-DUE", "CUS-INV-USD"],
+      );
+      const disputedList = await read.listReceivables({ disputeStatus: "resolved" }, viewer);
+      assert.deepEqual(disputedList.items.map((row) => row.customerInvoiceNumber), ["CUS-INV-CNY"]);
+
+      // A shipment billed by a submitted-or-later invoice cannot be reversed;
+      // one with only a draft invoice, or none, is not held.
+      const reversalIssues = async (shipmentId) =>
+        (await buildShipmentReversalPlan({ prisma, tenantId, shipmentId, reason: "Correction" }))
+          .blockingIssues.map((issue) => issue.code);
+      const billed = await buildShipmentReversalPlan({ prisma, tenantId, shipmentId: cny.shipmentId, reason: "Correction" });
+      const block = billed.blockingIssues.find((issue) => issue.code === "SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE");
+      assert.equal(block.status, 409);
+      assert.equal(block.details.invoiceNumber, "CUS-INV-CNY");
+      assert.equal(block.details.invoiceStatus, "issued");
+      const draftOnly = await shipment(prisma, "DRAFT-ONLY", "CNY");
+      await command.createCustomerInvoice(
+        { ...invoiceInput(draftOnly, "DRAFT-ONLY"), idempotencyKey: "create-DRAFT-ONLY" },
+        specialist,
+      );
+      assert.ok(!(await reversalIssues(draftOnly.shipmentId)).includes("SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE"));
+      const unbilled = await shipment(prisma, "UNBILLED", "CNY");
+      assert.ok(!(await reversalIssues(unbilled.shipmentId)).includes("SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE"));
+
       const otherRead = await createOperationalFinanceO2cReadService({
         prisma,
         capabilities,
@@ -559,10 +607,23 @@ test(
   },
 );
 
-test("aging uses workspace-local calendar boundaries", () => {
-  const asOf = new Date("2026-03-09T03:30:00.000Z");
-  const due = new Date("2026-03-08T04:30:00.000Z");
-  assert.equal(agingDays(due, asOf, "America/New_York"), 1);
+test("aging reads the due date as its calendar day and today in the workspace", () => {
+  // The invoice form stores a due date of Nov 6 as 00:00 UTC.
+  const due = new Date("2026-11-06T00:00:00.000Z");
+  const newYork = (local) => new Date(`${local}-05:00`);
+  // Before this, the due day read in New York was Nov 5, so the invoice aged
+  // a day on its own due date.
+  assert.equal(agingDays(due, newYork("2026-11-06T09:00:00"), "America/New_York"), 0);
+  // 23:30 in New York is already Nov 7 in UTC; it is still the due day.
+  assert.equal(agingDays(due, newYork("2026-11-06T23:30:00"), "America/New_York"), 0);
+  assert.equal(agingDays(due, newYork("2026-11-07T00:30:00"), "America/New_York"), 1);
+  assert.equal(agingDays(due, newYork("2026-11-05T20:00:00"), "America/New_York"), -1);
+  // Overdue starts on the workspace's next day, not at 19:00 the day before.
+  assert.equal(overdueBefore(newYork("2026-11-05T20:00:00"), "America/New_York").toISOString(), "2026-11-05T00:00:00.000Z");
+  assert.equal(overdueBefore(newYork("2026-11-06T23:30:00"), "America/New_York").toISOString(), "2026-11-06T00:00:00.000Z");
+  assert.ok(due >= overdueBefore(newYork("2026-11-06T23:30:00"), "America/New_York"));
+  assert.ok(due < overdueBefore(newYork("2026-11-07T00:30:00"), "America/New_York"));
+  assert.deepEqual(overdueReceivableWhere(newYork("2026-11-07T00:30:00"), "America/New_York").dueDate, { lt: new Date("2026-11-07T00:00:00.000Z") });
   assert.equal(agingBucket(0), "current");
   assert.equal(agingBucket(30), "1_30");
   assert.equal(agingBucket(31), "31_60");

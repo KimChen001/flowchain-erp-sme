@@ -49,6 +49,23 @@ export function formatDateTimeInTimeZone(value: string | null | undefined, local
   }
 }
 
+// A date-only business value (a due date, a promised date) as the calendar day
+// it was entered as ("Nov 6, 2026"). Such days arrive as "YYYY-MM-DD" or as UTC
+// midnight ("2026-11-06T00:00:00.000Z"), so they are read in UTC: the browser's
+// or the workspace's timezone would show the day before anywhere west of UTC.
+// A value that is not a date is shown as is.
+export function formatCalendarDay(value: string | Date | null | undefined, locale?: string, options: Intl.DateTimeFormatOptions = { dateStyle: "medium" }) {
+  if (value === null || value === undefined || value === "") return "—";
+  const text = value instanceof Date ? "" : String(value).trim();
+  const parsed = value instanceof Date ? value : new Date(/^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text}T00:00:00Z` : text);
+  if (!Number.isFinite(parsed.getTime())) return text || "—";
+  try {
+    return new Intl.DateTimeFormat(locale || "en-US", { ...options, timeZone: "UTC" }).format(parsed);
+  } catch {
+    return text || parsed.toISOString().slice(0, 10);
+  }
+}
+
 export const DEFAULT_WORKSPACE_TIMEZONE = "America/New_York";
 
 // Today's calendar date (YYYY-MM-DD) in the workspace timezone, not UTC or the browser.
@@ -66,6 +83,15 @@ export function todayInTimeZone(timeZone?: string, now: Date = new Date()) {
   } catch {
     return new Intl.DateTimeFormat("en-CA", { timeZone: DEFAULT_WORKSPACE_TIMEZONE }).format(now);
   }
+}
+
+// The workspace calendar day (YYYY-MM-DD) of a stored instant, such as the
+// time a purchase order was issued. "" when the value is not an instant.
+export function instantDayInTimeZone(value: string | null | undefined, timeZone?: string) {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? todayInTimeZone(timeZone, parsed) : "";
 }
 
 // Amount in the workspace locale. A currency symbol is shown only when the

@@ -64,12 +64,18 @@ that is already used is refused with `PAYABLE_OBLIGATION_NUMBER_DUPLICATE`
 (409).
 
 Approval looks the candidate numbers up by exact value inside its
-serializable transaction. Two approvals in the same workspace can still
-conflict there, even when their numbers differ, and two approvals can race
-for the same number. In both cases the approval is retried automatically up to
-two times, and the retry assigns the next free number. Only when the retries
-run out does the user get a retryable 409 (`FINANCE_CONCURRENCY_CONFLICT` or
-`PAYABLE_OBLIGATION_NUMBER_CONFLICT`). The other P2P commands are not retried.
+serializable transaction. Approvals running at the same time can still
+conflict there, even when their numbers differ and even in different
+workspaces, because Postgres guards the idempotency key and number lookups
+with index page locks that the other approvals write to. Often only one of
+them commits and the others abort, so with several approvals at once the last
+one can need a retry for each approval ahead of it. Two approvals can also
+race for the same number. In both cases the approval is retried automatically
+up to five times, waiting about twice as long before each retry (25-50 ms at
+first, up to 400-800 ms), and the retry assigns the next free number. Only
+when the retries run out does the user get a retryable 409
+(`FINANCE_CONCURRENCY_CONFLICT` or `PAYABLE_OBLIGATION_NUMBER_CONFLICT`). The
+other P2P commands are not retried.
 
 A collision number such as `AP-SUP-001-1001` contains the supplier code.
 The payable number is the payable's business identifier and is never masked,
