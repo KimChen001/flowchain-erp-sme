@@ -5,7 +5,6 @@ import { createDbAuditLogRepository } from '../repositories/db-audit-log-reposit
 import { DATABASE_CONFIG_ERROR } from '../persistence/persistence-config.mjs'
 import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
 import { handleAuditLogRoute } from '../routes/audit-log.routes.mjs'
-import { handleAiRoute } from '../routes/ai.routes.mjs'
 import {
   legacyMutationBlockedAuditEntry,
   recordDatabaseAuditBestEffort,
@@ -266,23 +265,6 @@ test('best-effort audit entries are attributed to the signed-in tenant and user'
   assert.doesNotMatch(JSON.stringify(writes[0]), /buyer@example\.com/)
   assert.equal('tenantId' in writes[1], false)
   assert.equal('actorId' in writes[1], false)
-})
-
-test('read-only AI answer survives DB audit adapter failure', async () => {
-  const repositories = {
-    auditLog: {
-      mode: 'database',
-      recordAiEventBestEffort: async () => ({ ok: false, errorCode: 'FLOWCHAIN_DATABASE_CONFIG_MISSING' }),
-    },
-  }
-  const route = createAiRoute({ repositories })
-
-  await handleAiRoute(route.ctx)
-
-  assert.equal(route.response.status, 200)
-  assert.equal(route.response.payload.intent.name, 'supplier_status_query')
-  assert.ok(route.response.payload.cards.length > 0)
-  assert.doesNotMatch(JSON.stringify(route.response.payload), /FLOWCHAIN_DATABASE_CONFIG_MISSING|DATABASE_URL|Bearer/)
 })
 
 test('audit log read route uses injected repository filters without mutating JSON data', async () => {

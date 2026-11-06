@@ -7,7 +7,7 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { buildSupplierScorecard, createSupplierScorecardReadService } from './supplier-scorecard.mjs'
 import { presentSupplierComparison, runSupplierComparison } from './ai-skill-supplier-comparison.mjs'
 import { aiSkillComparisonSignals, routeSkill } from './ai-skill-router.mjs'
-import { aiSkillById, toolsFor } from './ai-skills.mjs'
+import { aiSkillById, toolsFor } from './ai-skill-registry.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 
 // Two suppliers from the scorecard's worked example: A is the example itself
@@ -89,29 +89,6 @@ test('named suppliers are compared side by side, with no rate below the minimum 
   // One named supplier: its own line.
   const one = runSupplierComparison(facts, { route: { scorecard: card, entities: { suppliers: [{ id: 'SUP-B', name: 'Bravo Parts' }] } } })
   assert.equal(answer(one, facts).conclusion.title, 'Bravo Parts: on time 100% (6 of 6 deliveries, Jul 17, 2026 – Oct 14, 2026)')
-})
-
-test('the gateway reads the scorecard the supplier page reads, for the same period', async () => {
-  const scenario = aiSkillScenario()
-  const sent = []
-  const ctx = {
-    ...scenario.ctx,
-    req: { method: 'POST', headers: {} }, res: {}, url: new URL('http://local/api/ai-runtime/respond'),
-    db: { __dataMode: 'user', purchaseOrders: [], products: [], suppliers: [] },
-    env: { FLOWCHAIN_PERSISTENCE_MODE: 'database' },
-    send: (_res, status, payload) => sent.push({ status, payload }),
-  }
-  ctx.repositories = { ...ctx.repositories, auditLog: { mode: 'database', recordAuditEntry: async (entry) => entry } }
-  ctx.readBody = async () => ({ message: 'Which supplier is most reliable?', answerLanguage: 'en-US' })
-  assert.equal(await handleAiRuntimeGatewayRoute(ctx), true)
-  const { payload } = sent.at(-1)
-  assert.equal(payload.intent, 'supplier_comparison')
-  // The scorecard's own read for the actor: the default 90 days to today. The
-  // fixture lines record no original promise, so nobody is rated, as on the page.
-  const expected = await createSupplierScorecardReadService({ prisma: scenario.ctx.aiSkillPrisma, now: () => scenario.ctx.aiSkillNow }).read({}, { actor: scenario.actor })
-  assert.deepEqual(expected.period, { from: '2026-07-02', to: '2026-09-29' })
-  assert.equal(payload.conclusion.title, 'No supplier has 5 or more deliveries due in Jul 2, 2026 – Sep 29, 2026')
-  assert.ok(scenario.calls.prisma.some(([model]) => model === 'purchaseOrder'))
 })
 
 test('the comparison needs both purchase orders and receipts, as the scorecard does', async () => {

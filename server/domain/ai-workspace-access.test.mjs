@@ -121,8 +121,9 @@ test('over the cap, the assistant answers without a model and says so', async ()
   assert.equal(await handleAiRuntimeGatewayRoute(ctx), true)
   const { status, payload } = sent.at(-1)
   assert.equal(status, 200)
-  assert.deepEqual(payload.aiModelAccess, { status: 'over_cap' })
-  assert.equal(picks.length, 0, 'intent routing is off over the cap')
+  // The over_cap notice (no rules answer since 2026-11-06), with no model call.
+  assert.match(payload.conclusion.summary, /used this month's assistant allowance/)
+  assert.equal(picks.length, 0, 'no model call over the cap')
   // Other routes are not looked at, and pass through untouched.
   assert.equal(await handleAiRuntimeGatewayRoute({ ...ctx, url: new URL('http://local/api/reports/overview') }), false)
 })
@@ -148,33 +149,6 @@ test('a failed model call is noted for the answer, and a provider out of budget 
   // Each request starts afresh, and outside one nothing is noted.
   await withAiWorkspaceAccess(ctx, async () => assert.deepEqual(aiProviderFailures(), []))
   assert.deepEqual(aiProviderFailures(), [])
-})
-
-test('an answer whose model call failed says the rules answered, and why when the provider is out of budget', async () => {
-  const scenario = aiSkillScenario()
-  const sent = []
-  const status = (code) => async () => new Response('{}', { status: code, headers: { 'content-type': 'application/json' } })
-  const ask = async (code) => {
-    const ctx = {
-      ...scenario.ctx,
-      req: { method: 'POST', headers: {} }, res: {}, url: new URL('http://local/api/ai-runtime/respond'),
-      db: { __dataMode: 'user', purchaseOrders: [], products: [], suppliers: [] },
-      env: { ...PROVIDER, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_AI_INTENT_ROUTING: 'true' },
-      aiWorkspacePrisma: fakePrisma({ tenantId: scenario.ctx.identity.tenantId }),
-      // Intent routing calls the provider, which refuses with this status.
-      aiSkillIntentProvider: async (input, env) => callConfiguredProvider(input, env, status(code)),
-      send: (_res, statusCode, payload) => sent.push({ status: statusCode, payload }),
-      readBody: async () => ({ message: 'is there anything I should chase with the warehouse folks', answerLanguage: 'en-US' }),
-    }
-    ctx.repositories = { ...ctx.repositories, auditLog: { mode: 'database', recordAuditEntry: async (entry) => entry } }
-    assert.equal(await handleAiRuntimeGatewayRoute(ctx), true)
-    return sent.at(-1)
-  }
-  const budget = await ask(402)
-  assert.equal(budget.status, 200)
-  assert.deepEqual(budget.payload.aiModelAccess, { status: 'unavailable', reason: 'budget' })
-  const down = await ask(503)
-  assert.deepEqual(down.payload.aiModelAccess, { status: 'unavailable' })
 })
 
 test('provider calls say they come from FlowChain, and share one session id per request when the provider asks for it', async () => {

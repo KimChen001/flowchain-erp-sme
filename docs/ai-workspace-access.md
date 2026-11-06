@@ -14,13 +14,15 @@ stays model-free"). On 2026-11-04 the owner chose MIT Parley with Claude Sonnet
 - **One decision per assistant request.** Every `/api/ai-runtime/` request
   (answers, knowledge, readiness) runs with the access its workspace has
   (`server/domain/ai-workspace-access.mjs`).
-  - A workspace that is not switched on, or is over its monthly cap, gets a
-    model-free environment: no provider mode, no knowledge or embedding
-    provider, and intent routing, the business query planner and agent
-    planning all off.
-  - Its answers are the rules' answers, exactly as without a provider.
-  - Over the cap, answers carry `aiModelAccess: { status: 'over_cap' }` and the
-    panel says so.
+  - A workspace that is not switched on, or is over its monthly cap, calls no
+    model.
+  - Since 2026-11-06 assistant v2 answers every question; the rules engine was
+    removed at the owner's direction. When v2 cannot answer, the answer is a
+    notice that says why, in the question's language: `ai_off` (the workspace
+    has not switched AI on), `no_provider` (no model set up on this server or
+    the mode is not `assistant_v2`), `over_cap` (the month's cap is used) or
+    `unavailable` (the provider failed before anything was shown). Readiness
+    returns the same code as `notice`.
 - **Usage counted per call.** Every provider call made inside an assistant
   request adds to its workspace's row for the month in `AiUsageMonthly`:
   calls, input and output tokens, and cost in millionths of a dollar. The
@@ -43,7 +45,7 @@ stays model-free"). On 2026-11-04 the owner chose MIT Parley with Claude Sonnet
 | `FLOWCHAIN_AI_PROVIDER_API_KEY` | — | The provider key (the Parley key on the trial servers). Set it as a secret, never in a file in the repository. While it is empty the server calls no model. |
 | `FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION` | off | `true` lets assistant v2 use Parley when `NODE_ENV=production`. Without it production refuses Parley, and it always refuses OpenCode. |
 | `FLOWCHAIN_AI_RUNTIME_MODE` | `local` | `provider_assisted` |
-| `FLOWCHAIN_AI_ASSISTANT_MODE` | off | `assistant_v2` (the trial servers): the assistant v2 agent loop answers, and needs `FLOWCHAIN_AI_WORKSPACE_OPT_IN=required` outside local development. `model_first`: free-text questions go to the model-first tool loop (below). |
+| `FLOWCHAIN_AI_ASSISTANT_MODE` | off | `assistant_v2` (the trial servers): the assistant v2 agent loop answers, and needs `FLOWCHAIN_AI_WORKSPACE_OPT_IN=required` outside local development. Any other value: the assistant answers with the `no_provider` notice (`model_first` and the rules were removed on 2026-11-06). |
 | `FLOWCHAIN_AI_ASSISTANT_REASONING_EFFORT` | `low` (native), `none` (chat completions) | How much the loop's model reasons: `none`, `low`, `medium` or `high`. |
 | `FLOWCHAIN_AI_ASSISTANT_CHAT_CACHE` | on for a Claude model on Parley, otherwise off | Assistant v2 on chat completions: `on` marks the system prompt for the provider's prompt cache (Anthropic's `cache_control`), `off` never does. Verified on Parley only. |
 | `FLOWCHAIN_AI_ASSISTANT_TIMEOUT_MS`, `FLOWCHAIN_AI_ASSISTANT_TOKEN_BUDGET` | `20000`, `80000` | One answer's time (at most 30 s) and tokens read and written. |
@@ -68,7 +70,11 @@ Check a configuration without calling the provider: `npm run check:ai-provider-e
 - **No embeddings:** Anthropic has no embeddings endpoint, so knowledge search
   stays keyword search; the answer is written by the model.
 
-## The model-first assistant
+## The model-first assistant (removed)
+
+**Removed 2026-11-06:** the gateway no longer routes questions to this loop;
+assistant v2 replaced it. The section stays as the record of what it did, and
+its remaining code is removed in a later step.
 
 Step S2 of `docs/ai-model-first-design.md` (decisions M1–M7, 2026-10-28), off
 unless `FLOWCHAIN_AI_ASSISTANT_MODE=model_first`, and only where the switch above

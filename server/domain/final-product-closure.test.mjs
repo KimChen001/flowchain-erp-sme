@@ -3,11 +3,6 @@ import { createProductReviewScenarioDb } from './test-fixtures/product-review-sc
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import {
-  buildAiRuntimeResponseV2,
-  FORBIDDEN_AI_RUNTIME_ACTION_PATTERN,
-  FORBIDDEN_AI_RUNTIME_TECHNICAL_PATTERN,
-} from './ai-runtime-gateway-v2.mjs'
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..')
 const docs = {
@@ -116,22 +111,6 @@ function positiveDangerousLines(text = '') {
   )
 }
 
-function assertRuntimeResponse(body, prompt) {
-  assert.equal(body.version, 'v2', prompt)
-  assert.ok(body.conclusion?.title, prompt)
-  assert.ok(body.keyEvidence?.length > 0, prompt)
-  assert.ok(body.businessImpact?.length > 0, prompt)
-  assert.ok(body.recommendedActions?.length > 0, prompt)
-  assert.ok(body.navigationLinks?.length > 0, prompt)
-  assert.ok(Array.isArray(body.dataLimitations), prompt)
-  assert.ok(Array.isArray(body.reviewCards), prompt)
-  assert.ok(body.reviewCards.every((card) => card.previewOnly && card.reviewRequired && card.requiresHumanReview), prompt)
-  const text = visibleText(body)
-  assert.doesNotMatch(text, /AI 助手暂不可用|当前未能读取工作区证据|请稍后重试/i, prompt)
-  assert.doesNotMatch(text, FORBIDDEN_AI_RUNTIME_TECHNICAL_PATTERN, prompt)
-  assert.doesNotMatch(text, FORBIDDEN_AI_RUNTIME_ACTION_PATTERN, prompt)
-}
-
 test('final docs exist', () => {
   for (const relativePath of Object.values(docs).slice(0, 4)) {
     assert.equal(fs.existsSync(path.join(repoRoot, relativePath)), true, relativePath)
@@ -162,21 +141,3 @@ test('final docs state boundaries and scope without old product wording', () => 
   assert.deepEqual(positiveDangerousLines(finalDocs), [])
 })
 
-test('AI assistant final core questions remain structured and review-first', () => {
-  const prompts = [
-    '今天最需要处理什么？',
-    '今天有哪些收货异常？',
-    '哪些库存项目需要关注？',
-    '这个 PO 为什么优先？',
-    '这条核心业务链有什么证据？',
-    '这条链路哪里证据不足？',
-  ]
-  for (const message of prompts) {
-    const result = buildAiRuntimeResponseV2(readDb(), { message, activeModuleId: 'overview' })
-    assert.equal(result.status, 200, message)
-    assertRuntimeResponse(result.body, message)
-  }
-  const targetlessDraft = buildAiRuntimeResponseV2(readDb(), { message: '打开这条链路的人工复核草稿。', activeModuleId: 'overview' })
-  assert.equal(targetlessDraft.status, 200)
-  assert.equal(targetlessDraft.body.reviewCards.length, 0)
-})

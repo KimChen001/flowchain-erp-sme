@@ -10,7 +10,6 @@ import { createAssistantV2ModelClient } from "./ai-assistant-v2-model/index.mjs"
 import { canCallEmbeddingProvider } from "./ai-embedding-provider.mjs";
 import { knowledgeProviderEnv } from "./ai-knowledge-config.mjs";
 import { aiModelFirstEnabled } from "./ai-model-first.mjs";
-import { isAiProviderEnabled } from "./ai-provider-safety.mjs";
 import { canCallConfiguredProvider } from "./ai-runtime-provider-adapter-v2.mjs";
 import { aiMonthlyCapUsd, aiOptInRequired, aiProviderConfigured, assertAiAssistantV2Deployment, modelFreeEnv } from "./ai-workspace-access.mjs";
 
@@ -282,7 +281,6 @@ for (const environment of environments) {
     assert.equal(env.FLOWCHAIN_KNOWLEDGE_PROVIDER, undefined);
     assert.equal(canCallEmbeddingProvider(knowledgeProviderEnv(env)), false, "knowledge embeddings");
     assert.equal(aiModelFirstEnabled(env), false, "model-first");
-    assert.equal(isAiProviderEnabled(env), false, "legacy /api/ai provider path");
     assert.equal(canCallConfiguredProvider(env), true, "the assistant provider itself");
   });
 
