@@ -59,6 +59,9 @@ await phase("english trial empty", "tests/browser/english-trial.spec.ts", {
 await phase("supplier performance", ["tests/browser/supplier-performance-english.spec.ts", "tests/browser/supplier-activity.spec.ts"]);
 // The PO document: printed alone, labels in the document language, figures unchanged.
 await phase("po document", "tests/browser/purchase-order-document.spec.ts");
+// The reorder list page: ranking, inputs, suggested reorder points and the
+// prefilled request, over a stubbed list (signs in as the walkthrough admin).
+await phase("reorder list", "tests/browser/inventory-reorder-list.spec.ts");
 // The assistant answers the walkthrough prompt chips in English from workspace data.
 await phase("english assistant", "tests/browser/ai-assistant-english.spec.ts");
 // Assistant v2 on the walkthrough data with the reorder showcase seed: the
