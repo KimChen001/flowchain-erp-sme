@@ -97,6 +97,7 @@
 - [Order changes, history import and reverse flows](order-changes-history-reverse-design.md): proposal of 2026-11-01; PO revisions and sales order remainder close, importing past and open orders, returns and credits; decisions OC1–OC8, HI1–HI8, RV1–RV6 approved 2026-11-01
 - [Global business search](global-business-search-v1.md)
 - [Supplier operational search](supplier-operational-search-v1.md)
+- [Supplier tiers and the supplier list: design](supplier-tiers-design.md)
 - [SRM supplier API migration notes](srm-supplier-api-migration-notes.md)
 - [Receiving GRN list/detail safe plan](receiving-grn-list-detail-safe-plan.md)
 - [ERPNext reference notes](erpnext-reference-notes-for-flowchain.md)
