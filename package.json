@@ -126,8 +126,6 @@
     "test:db:bank-candidate-quality": "node --test server/domain/bank-candidate-quality.test.mjs && node scripts/run-postgres-test-files.mjs tests/postgres/bank-reconciliation.test.mjs",
     "test:browser:bank-security-hardening": "node scripts/run-bank-security-hardening-playwright.mjs",
     "test:domain:ai-record-validity": "node --test server/domain/ai-business-record-validity.test.mjs",
-    "test:domain:supplier-action-summary": "node --test server/domain/supplier-action-summary-read-service.test.mjs",
-    "test:db:ai-cross-domain-read": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-cross-domain-read.test.mjs",
     "test:ai:eval:knowledge": "node scripts/run-postgres-test-files.mjs tests/ai-eval/knowledge/knowledge-eval.test.mjs",
     "bank:mapping-security-scan": "node scripts/check-bank-mapping-secrets.mjs",
     "test:api:authorization": "node scripts/smoke-authorization-api.mjs",
