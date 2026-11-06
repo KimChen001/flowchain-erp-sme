@@ -82,7 +82,8 @@ node scripts/replenishment-solver.mjs export.json --params=llm-params.json --lab
 - "OR plan given to the LLM" is the same output, or the assistant tool's result, shown to the model.
 - Each call can be logged as one JSON line, with the inputs, options, full result and a sha256 of the inputs, so the
   arms can be matched by instance. Use `--log=<file>` for the script, or `FLOWCHAIN_REPLENISHMENT_SOLVER_LOG=<file>`
-  for the server, where the log records the assistant's tool arguments too. Logging is off by default.
+  for the server. There the log also records the assistant's tool arguments and the result the model was shown
+  (`toolResult`), which is the "OR plan given to the LLM" arm's input. Logging is off by default.
 
 ## Reproduction
 

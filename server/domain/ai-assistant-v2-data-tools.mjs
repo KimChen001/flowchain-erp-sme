@@ -766,8 +766,10 @@ const optimizeOrderPlan = defineAiTool({
       if (error instanceof ReplenishmentInputError) return { error: 'invalid_plan', details: [error.message] }
       throw error
     }
-    logReplenishmentCall({ caller: 'assistant_v2', tenantId: context.tenantId, args, input, options, result }, { path: (context.routeContext?.env || process.env).FLOWCHAIN_REPLENISHMENT_SOLVER_LOG })
-    return orderPlanResult(result, { facts, records, items, args })
+    const shown = orderPlanResult(result, { facts, records, items, args })
+    // For a study: the solver's full result and what the model was shown.
+    logReplenishmentCall({ caller: 'assistant_v2', tenantId: context.tenantId, args, input, options, result, toolResult: shown }, { path: (context.routeContext?.env || process.env).FLOWCHAIN_REPLENISHMENT_SOLVER_LOG })
+    return shown
   },
 })
 
@@ -790,6 +792,9 @@ function orderPlanResult(result, { facts, records, items, args }) {
     expectedCost: round(cost(entry).total),
     costAboveOptimal: entry.costAboveOptimal === null ? null : round(entry.costAboveOptimal),
     withinBudget: entry.withinBudget,
+    // So "over budget by" is a figure the result gives (2026-11-06: an
+    // answer worked it out itself).
+    overBudgetAmount: args.budget !== undefined && args.budget !== null && entry.spend > args.budget ? round(entry.spend - args.budget) : null,
     issues: entry.issues.map((issue) => (issue.sku ? `${issue.sku} ${issue.code}` : issue.code)),
   })
   const rows = [
@@ -842,6 +847,7 @@ function orderPlanResult(result, { facts, records, items, args }) {
     minimumOrders: result.binding ? { raised: result.binding.raisedToMinimumOrder, skippedAsTooCostly: result.binding.skippedForMinimumOrder } : null,
     plans: rows,
     items: itemRows.slice(0, PLAN_ROWS),
+    itemsPlanned: itemRows.length,
     moreItems: Math.max(0, itemRows.length - PLAN_ROWS),
     assumptions: {
       holdingRatePercent: p.holdingRatePercent, holdingRateSource: p.sources.holdingRate,

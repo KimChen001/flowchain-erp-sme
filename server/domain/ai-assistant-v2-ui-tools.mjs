@@ -175,7 +175,7 @@ const MONEY_COLUMNS = Object.freeze({
   spend_analysis: ['value'],
   list_receivables: ['current', '1_30', '31_60', '61_90', '90_plus', 'total'],
   suggest_purchase_lines: ['estimatedUnitPrice.value'],
-  optimize_order_plan: ['spend', 'holdingCost', 'shortageCost', 'expectedCost', 'costAboveOptimal', 'orderValue', 'minimumOrderValue'],
+  optimize_order_plan: ['spend', 'holdingCost', 'shortageCost', 'expectedCost', 'costAboveOptimal', 'orderValue', 'minimumOrderValue', 'overBudgetAmount'],
 })
 const QUANTITY_COLUMNS = new Set([
   'ordered', 'received', 'remaining', 'onHand', 'reserved', 'available', 'openSalesDemand', 'incomingOnPurchaseOrders', 'availableToPromise', 'shortage',

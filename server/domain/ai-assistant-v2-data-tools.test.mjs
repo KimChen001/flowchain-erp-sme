@@ -315,7 +315,9 @@ test('optimize_order_plan solves the order from the records and costs it beside 
   assert.deepEqual(tight.plans.map((plan) => plan.plan), ['optimal', 'without_budget_limit', 'no_order', 'reorder_list'])
   // A plan the user proposes, below the minimum order.
   const yours = (await run('optimize_order_plan', { plan: [{ sku: 'ldm-001', quantity: 50 }] })).result
-  assert.deepEqual(yours.plans.at(-1), { plan: 'your_plan', lines: 'LDM-001 50', spend: 4750, holdingCost: yours.plans.at(-1).holdingCost, shortageCost: yours.plans.at(-1).shortageCost, expectedCost: 626.06, costAboveOptimal: 211.69, withinBudget: true, issues: ['LDM-001 below_minimum_order'] })
+  assert.deepEqual(yours.plans.at(-1), { plan: 'your_plan', lines: 'LDM-001 50', spend: 4750, holdingCost: yours.plans.at(-1).holdingCost, shortageCost: yours.plans.at(-1).shortageCost, expectedCost: 626.06, costAboveOptimal: 211.69, withinBudget: true, overBudgetAmount: null, issues: ['LDM-001 below_minimum_order'] })
+  // Over a budget: by how much, so the answer need not work it out.
+  assert.equal((await run('optimize_order_plan', { budget: 4000, plan: [{ sku: 'LDM-001', quantity: 100 }] })).result.plans.at(-1).overBudgetAmount, 5500)
   assert.deepEqual([yours.decision.savingVsYourPlan, yours.items[0].planQuantity], [211.69, 50])
   // A service level the user gives sets the shortage cost: 95% is 19 x holding.
   const strict = (await run('optimize_order_plan', { serviceLevelPercent: 95 })).result
@@ -344,6 +346,8 @@ test('optimize_order_plan refuses what the role may not see, and logs each call 
     await run('optimize_order_plan', { budget: 25000 })
     const [line] = readFileSync(log, 'utf8').trim().split('\n').map((entry) => JSON.parse(entry))
     assert.deepEqual([line.caller, line.args, line.options.budget, line.input.items.map((entry) => [entry.sku, entry.openRequests]), line.result.optimal.quantities], ['assistant_v2', { budget: 25000 }, 25000, [['LDM-001', 50]], [202]])
+    // And what the model was shown, for the study's "plan given to the LLM" arm.
+    assert.deepEqual([line.toolResult.decision.lines.map((entry) => entry.quantity), line.toolResult.budget.binds], [[202], false])
   } finally {
     rmSync(folder, { recursive: true, force: true })
   }
