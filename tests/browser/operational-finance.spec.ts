@@ -489,10 +489,10 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   await expect(viewerPage.getByTestId("customer-invoice-workbench")).toBeVisible();
   const salesTabs = viewerPage.getByTestId("module-subnav");
   await expect(
-    salesTabs.getByRole("link", { name: "Invoices", exact: true }),
+    salesTabs.getByRole("link", { name: "Customer invoices", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await expect(
-    viewerPage.getByRole("link", { name: "New invoice" }),
+    viewerPage.getByRole("link", { name: "New customer invoice" }),
   ).toHaveAttribute("aria-disabled", "true");
   await viewerPage.goto("/app/finance/overview");
   const financeTabs = viewerPage.getByTestId("module-subnav");
@@ -500,11 +500,11 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
     financeTabs.getByRole("link", { name: "Overview", exact: true }),
   ).toBeVisible();
   await expect(
-    financeTabs.getByRole("link", { name: "Bills to pay", exact: true }),
+    financeTabs.getByRole("link", { name: "Supplier invoices to pay", exact: true }),
   ).toBeVisible();
-  // Bills and invoices are not repeated under Payables & receivables.
-  await expect(financeTabs.getByRole("link", { name: "Bills", exact: true })).toHaveCount(0);
-  await expect(financeTabs.getByRole("link", { name: "Invoices", exact: true })).toHaveCount(0);
+  // Supplier and customer invoices are not repeated under Payables & receivables.
+  await expect(financeTabs.getByRole("link", { name: "Supplier invoices", exact: true })).toHaveCount(0);
+  await expect(financeTabs.getByRole("link", { name: "Customer invoices", exact: true })).toHaveCount(0);
   await expect(viewerPage.getByRole("link", { name: "采购发票" })).toHaveCount(0);
   const viewerWrite = await request.post("/api/finance/customer-invoices", {
     headers: { Authorization: `Bearer ${viewer.token}` },

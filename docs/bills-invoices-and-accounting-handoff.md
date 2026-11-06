@@ -1,5 +1,13 @@
 # Bills, invoices and the accounting handoff
 
+> **2026-10-10: English UI names changed.** The owner replaced the
+> QuickBooks/Xero names below with procurement-system wording (SAP, Coupa): the
+> English UI now says "Supplier invoice(s)" instead of "Bill(s)" and "Customer
+> invoice(s)" instead of "Invoice(s)". The Chinese UI is unchanged (采购发票,
+> 销售发票). Route paths, ids, permission codes and stored values (for example
+> `/app/procurement/bills`, `procurement:bills`) are unchanged. The rest of this
+> document is kept as agreed on 2026-10-03.
+
 Status: design agreed with the owner on 2026-10-03. Steps 1a (names,
 navigation, redirects), 1b (entry from source documents, invoice actions), 1c
 (bills recorded before the receipt) and 2 (light payment records) are

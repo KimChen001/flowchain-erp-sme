@@ -35,6 +35,7 @@ type ApiMasterSupplier = {
 
 type ApiMasterWarehouse = {
   id?: string;
+  code?: string;
   name?: string;
   type?: string;
   status?: string;
@@ -219,7 +220,8 @@ export function normalizeWarehouseRows(
     const status = text(apiWarehouse.status).toLowerCase();
     const blocked = ["inactive", "disabled", "frozen", "停用", "冻结"].includes(status);
     return {
-      warehouseCode: text(apiWarehouse.id, fallback?.warehouseCode || `WH-${index + 1}`),
+      warehouseId: text(apiWarehouse.id) || undefined,
+      warehouseCode: text(apiWarehouse.code || apiWarehouse.id, fallback?.warehouseCode || `WH-${index + 1}`),
       warehouseName: text(apiWarehouse.name, fallback?.warehouseName || text(apiWarehouse.id, `仓库 ${index + 1}`)),
       zone: fallback?.zone || "",
       bin: fallback?.bin || "",

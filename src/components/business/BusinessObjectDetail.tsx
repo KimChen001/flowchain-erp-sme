@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
-import { CheckCircle2, FileText, ShieldCheck } from "lucide-react";
+import type { ReactNode } from "react";
+import { FileText } from "lucide-react";
 import { A, Card, Chip, Modal, SectionHeader } from "../ui";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 
@@ -10,18 +10,6 @@ export type DetailField = {
   value: string | number | undefined | null;
   tone?: "default" | "good" | "warning" | "danger" | "info";
 };
-
-type ReviewDecision = "approve" | "reject" | "request_changes" | "defer" | "cancel";
-
-const decisionLabels: Record<ReviewDecision, string> = {
-  approve: "通过复核",
-  reject: "拒绝",
-  request_changes: "要求补充",
-  defer: "暂缓",
-  cancel: "取消",
-};
-
-const decisionRequiresReason = new Set<ReviewDecision>(["reject", "request_changes", "cancel"]);
 
 function toneColor(tone: DetailField["tone"] = "default") {
   if (tone === "good") return A.green;
@@ -139,67 +127,6 @@ export function DataLimitationsPanel({
             {copy(labelFor(item))}
           </span>
         ))}
-      </div>
-    </DetailSection>
-  );
-}
-
-export function ReviewActionPanel({ objectLabel }: { objectLabel: string }) {
-  const [decision, setDecision] = useState<ReviewDecision>("approve");
-  const [reason, setReason] = useState("");
-  const [message, setMessage] = useState("");
-
-  function preview() {
-    const trimmed = reason.trim();
-    if (decisionRequiresReason.has(decision) && !trimmed) {
-      setMessage(`${decisionLabels[decision]}需要填写原因，当前不会写入业务数据。`);
-      return;
-    }
-    const reasonText = trimmed ? `，原因：${trimmed}` : "";
-    setMessage(`${objectLabel}已生成${decisionLabels[decision]}复核记录预览${reasonText}。该操作仅供负责人确认前查看。`);
-  }
-
-  return (
-    <DetailSection title="复核动作" right={<Chip label="预览模式" color={A.green} bg="#f0faf4" />}>
-      <div className="space-y-3">
-        <div className="grid grid-cols-5 gap-2">
-          {(Object.keys(decisionLabels) as ReviewDecision[]).map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setDecision(item)}
-              className="h-8 rounded-lg text-[11px] font-semibold"
-              style={decision === item ? { background: "#0f172a", color: A.white } : { background: A.white, color: A.gray1 }}
-            >
-              {copy(decisionLabels[item])}
-            </button>
-          ))}
-        </div>
-        <textarea
-          value={reason}
-          onChange={(event) => setReason(event.target.value)}
-          className="w-full min-h-[72px] rounded-lg px-3 py-2 text-xs outline-none"
-          style={{ background: A.white, color: A.label, boxShadow: "0 0 0 0.5px rgba(15,23,42,0.12)" }}
-          placeholder={copy("填写复核原因、补充资料要求或暂缓说明")}
-        />
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5 text-[11px]" style={{ color: A.sub }}>
-            <ShieldCheck size={13} /> {copy("所有动作仅生成内部复核预览，不自动改主档、不发外部通知。")}
-          </div>
-          <button
-            type="button"
-            onClick={preview}
-            className="h-8 px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
-            style={{ background: "#f0f6ff", color: A.blue }}
-          >
-            <CheckCircle2 size={13} /> {copy("生成复核预览")}
-          </button>
-        </div>
-        {message && (
-          <div className="rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: A.white, color: message.includes("需要填写原因") ? A.red : A.green }}>
-            {message}
-          </div>
-        )}
       </div>
     </DetailSection>
   );

@@ -8,7 +8,8 @@ import { getPrismaClient } from "../persistence/prisma-client.mjs";
 function knownError(error) {
   return error instanceof RfqSupplierResponseCommandError ||
     error instanceof PilotIdentityError ||
-    error?.name === "AuthorizationError";
+    error?.name === "AuthorizationError" ||
+    error?.name === "RequestBodyError";
 }
 
 function sendError(ctx, error) {
@@ -27,6 +28,7 @@ function sendError(ctx, error) {
     });
     return;
   }
+  ctx.reportError?.(error);
   ctx.send(ctx.res, 500, {
     code: "RFQ_SUPPLIER_RESPONSE_COMMAND_FAILED",
     message: "The supplier response command could not be completed.",

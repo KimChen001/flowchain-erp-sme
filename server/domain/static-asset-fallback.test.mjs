@@ -1,7 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import http from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
 import { createScmServer } from '../bootstrap/scm-server.mjs'
+
+// The built SPA's index.html in a folder of its own, so this test passes in a
+// checkout with no dist/ (no `npm run build` before `npm test`).
+async function fixtureDist() {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'flowchain-dist-'))
+  await mkdir(path.join(dir, 'assets'))
+  await writeFile(path.join(dir, 'index.html'), '<!doctype html><html><head><title>FlowChain</title></head><body><div id="root"></div></body></html>\n')
+  return dir
+}
 
 async function listen(server) {
   await new Promise((resolve, reject) => {
@@ -30,7 +42,8 @@ async function request(port, method, pathname) {
 test('SPA routes fall back to index while missing static assets return real 404 responses', async () => {
   const previousDatabaseUrl = process.env.DATABASE_URL
   process.env.DATABASE_URL = 'postgresql://user:pass@127.0.0.1:5432/flowchain_static_asset_test'
-  const server = createScmServer()
+  const staticDir = await fixtureDist()
+  const server = createScmServer({ staticDir })
   try {
     const port = await listen(server)
     for (const method of ['GET', 'HEAD']) {
@@ -38,6 +51,7 @@ test('SPA routes fall back to index while missing static assets return real 404 
       assert.equal(app.status, 200)
       assert.match(app.headers['content-type'], /^text\/html/)
       assert.equal(app.headers['cache-control'], 'no-cache')
+      assert.equal(app.headers['x-content-type-options'], 'nosniff')
       if (method === 'GET') assert.match(app.body, /<!doctype html>/i)
       else assert.equal(app.body, '')
 
@@ -45,12 +59,14 @@ test('SPA routes fall back to index while missing static assets return real 404 
         const missing = await request(port, method, asset)
         assert.equal(missing.status, 404)
         assert.doesNotMatch(missing.headers['content-type'] || '', /^text\/html/)
+        assert.equal(missing.headers['x-content-type-options'], 'nosniff')
         assert.doesNotMatch(missing.body, /<!doctype html>/i)
         if (method === 'HEAD') assert.equal(missing.body, '')
       }
     }
   } finally {
     await close(server)
+    await rm(staticDir, { recursive: true, force: true })
     if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL
     else process.env.DATABASE_URL = previousDatabaseUrl
   }

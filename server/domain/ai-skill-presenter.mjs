@@ -80,7 +80,7 @@ export function aiSkillMetricSentences(facts, language, { spend = true, invoices
   const fmt = aiSkillFormatter(facts, language)
   const sentences = []
   const po = facts.purchaseOrders
-  if (po) sentences.push(aiSkillText(po.overdue ? 'metrics.open_pos' : 'metrics.no_overdue', language, { open: fmt.number(po.open), overdue: fmt.number(po.overdue) }))
+  if (po) sentences.push(aiSkillCountText(po.overdue ? 'metrics.open_pos' : 'metrics.no_overdue', po.open, language, { open: fmt.number(po.open), overdue: fmt.number(po.overdue) }))
   if (spend && po?.committedSpend?.amounts?.length) sentences.push(aiSkillText('metrics.committed_spend', language, { amounts: fmt.moneyList(po.committedSpend.amounts) }))
   if (invoices && facts.invoices?.committed?.amounts?.length) sentences.push(aiSkillText('metrics.committed_invoices', language, { amounts: fmt.moneyList(facts.invoices.committed.amounts) }))
   if (atRisk && facts.inventory) sentences.push(aiSkillCountText('metrics.at_risk', facts.inventory.atRisk.length, language, { skus: aiSkillList(facts.inventory.atRisk, language) }))
@@ -216,6 +216,10 @@ function limitationEntries(facts, language, { money: includeMoney = true } = {})
   if (money.some((row) => row.limitations.includes('amount_missing'))) push('amount_missing', {}, [])
   return entries
 }
+
+// The same notices for an answer written outside the skills (the model-first
+// assistant): what the role cannot see, truncation, currencies.
+export const aiSkillLimitations = (facts, language, options) => limitationEntries(facts, language, options)
 
 function followUps(ids, language) {
   const key = { today_priorities: 'today', highest_risk_items: 'risk', records_needing_data: 'records', prepare_action_draft: 'draft', workspace_metrics: 'metrics', purchase_orders: 'orders', pending_approvals: 'approvals', inventory_availability: 'stock', invoice_summary: 'invoices', rfq_followups: 'rfqs', receiving_issues: 'receiving', supplier_attention: 'suppliers' }

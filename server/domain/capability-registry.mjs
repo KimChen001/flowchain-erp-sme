@@ -45,6 +45,7 @@ export const capabilityRegistry = [
   capability('finance', 'beta', true, true, 'Database-only operational P2P and O2C finance without payment, collection, refund, FX, tax filing, or general-ledger execution', { databaseOnly: true, requiresExplicitEnable: true, environmentFlag: 'FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE' }),
   capability('reports', 'stable', true, false, 'Authoritative runtime analytics'),
   capability('settings', 'beta', true, true, 'Local/UAT workspace settings'),
+  capability('contracts', 'beta', true, true, 'Database-only supplier contract records: terms, dates, signed files and reminders on Today', { databaseOnly: true, requiresExplicitEnable: true, environmentFlag: 'FLOWCHAIN_ENABLE_CONTRACTS' }),
   capability('data-import', 'beta', true, true, 'CSV import of items, suppliers, customers, item suppliers and opening stock through the manual-entry commands', { databaseOnly: true, requiresExplicitEnable: true, environmentFlag: 'FLOWCHAIN_ENABLE_DATA_IMPORT' }),
   capability('imports', 'unavailable', false, false, 'Legacy direct imports are retired; use Universal Intake.', { businessCommitReady: false }),
   capability('universal-intake', 'preview', true, true, 'Tenant-scoped Intake foundation without parsing or business commit adapters', { databaseOnly: true, requiresExplicitEnable: true, environmentFlag: 'FLOWCHAIN_ENABLE_UNIVERSAL_INTAKE', businessCommitReady: false }),

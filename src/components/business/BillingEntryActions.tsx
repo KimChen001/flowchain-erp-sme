@@ -13,9 +13,9 @@ import { usePermissionSet } from "../../lib/usePermissionSet";
 
 // English source copy with its Chinese translation.
 const COPY = {
-  recordBill: ["Record bill", "录入采购发票"],
+  recordBill: ["Record supplier invoice", "录入采购发票"],
   recordBillNote: ["Paid only after the three-way match", "三单匹配后才能付款"],
-  createInvoice: ["Create invoice", "开销售发票"],
+  createInvoice: ["Create customer invoice", "开销售发票"],
   createInvoiceNote: ["For goods already shipped", "按已发出的货物开票"],
 } as const;
 

@@ -1,24 +1,31 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiJson } from "./api-client";
 
-type WarehouseOption = { id: string; code?: string; label?: string };
+type WarehouseRow = { id: string; code?: string; name?: string };
 
-// One request per page load: every page that shows a warehouse id asks the
-// same selector, so the names are read once and shared.
+// One request per page load: every page that shows a warehouse id asks for
+// the same list, so the names are read once and shared. The full list is read,
+// not the selector of active warehouses, so history on a warehouse that was
+// later set inactive still shows its name.
 let pending: Promise<Record<string, string>> | null = null;
 
 function loadWarehouseNames() {
-  pending ??= apiJson<{ options?: WarehouseOption[] }>("/api/master-data/warehouses/select")
-    .then((payload) => Object.fromEntries((payload?.options || []).flatMap((option) => {
-      const name = String(option.label || "").trim();
-      if (!name) return [];
-      return [[option.id, name], ...(option.code && option.code !== option.id ? [[option.code, name]] : [])];
+  pending ??= apiJson<{ warehouses?: WarehouseRow[] }>("/api/master-data/warehouses")
+    .then((payload) => Object.fromEntries((payload?.warehouses || []).flatMap((row) => {
+      const name = String(row.name || "").trim();
+      if (!name || !row.id) return [];
+      return [[row.id, name], ...(row.code && row.code !== row.id ? [[row.code, name]] : [])];
     })))
     .catch(() => {
       pending = null;
       return {};
     });
   return pending;
+}
+
+/** Reads the names again on the next page that asks, after a warehouse is added or renamed. */
+export function forgetWarehouseNames() {
+  pending = null;
 }
 
 /**

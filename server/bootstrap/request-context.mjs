@@ -8,10 +8,12 @@ export function createRouteContext({
   repositories,
   identity,
   sessionStore,
+  approvalNotifier = null,
   dataMode,
   runtime,
   domain,
   env = process.env,
+  errorReporter = null,
 }) {
   return {
     req,
@@ -25,6 +27,11 @@ export function createRouteContext({
     env,
     identity,
     sessionStore,
+    // A route that answers 500 itself calls this first, so the error is
+    // logged with its stack and can raise an alert.
+    reportError: (error) => errorReporter?.report(error, { req, status: 500, phase: "route" }),
+    // Tells approvers a document is waiting (server/notifications).
+    approvalNotifier,
     ...domain,
     ...runtime,
   };

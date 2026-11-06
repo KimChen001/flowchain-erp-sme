@@ -144,6 +144,11 @@ test("an unhandled error returns its request id and logs it once, sanitized", as
   assert.equal(errorLogger.lines[0].entry.event, "server_error");
   assert.equal(errorLogger.lines[0].entry.requestId, "failing-request-id");
   assert.match(errorLogger.lines[0].entry.error, /^P1001: connect failed/);
+  assert.deepEqual(
+    (({ method, path, status, phase, errorName, errorCode }) => ({ method, path, status, phase, errorName, errorCode }))(errorLogger.lines[0].entry),
+    { method: "GET", path: "/api/home/overview", status: 500, phase: "boundary", errorName: "Error", errorCode: "P1001" },
+  );
+  assert.match(errorLogger.lines[0].entry.stack, /^at /);
   assert.doesNotMatch(JSON.stringify(errorLogger.lines), /hunter2|sk-live-123|postgres:\/\//);
   assert.deepEqual(requestLogger.lines.map(({ level, entry }) => [level, entry.status, entry.requestId]), [["error", 500, "failing-request-id"]]);
 });
@@ -160,6 +165,10 @@ test("an error after the response started is still logged", async () => {
     assert.equal(response.body, "partial");
   });
   assert.deepEqual(errorLogger.lines.map(({ entry }) => [entry.requestId, entry.error]), [["streaming-request-id", "Error: stream broke"]]);
+  assert.deepEqual(
+    errorLogger.lines.map(({ entry }) => [entry.method, entry.path, entry.status, entry.phase]),
+    [["GET", "/api/exports/items", 200, "after_headers"]],
+  );
 });
 
 test("the composed server tags responses with an id and logs only when asked", async () => {

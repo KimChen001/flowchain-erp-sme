@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Download, FileUp, Upload } from "lucide-react";
 import { A, Card, Chip } from "../../components/ui";
+import { tableBodyTextClass, tdIdClass, tdNumericClass, thClass } from "../../components/ui/workbenchTable";
 import { ApiError, apiJson, AUTH_TOKEN_KEY } from "../../lib/api-client";
 import { DATA_IMPORT_COLUMNS, dataImportCsv } from "../../../shared/data-import-columns.mjs";
 import { useDataImportCopy } from "./dataImportCopy";
@@ -53,9 +54,10 @@ const TYPES: Array<{ type: DataImportType; label: string }> = [
   { type: "opening-stock", label: "Opening stock" },
 ];
 const RETRY_CODES = new Set(["VERSION_CONFLICT", "INVENTORY_OPERATIONS_CONCURRENT_TRANSACTION_CONFLICT", "COMMAND_EXECUTION_IN_PROGRESS"]);
-const button = "inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40";
-const secondary = "inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40";
-const field = "h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-400";
+// Button and field sizes of the other list and search cards.
+const button = "inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-40";
+const secondary = "inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-40";
+const field = "h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-400";
 
 const isType = (value: string | null): value is DataImportType => TYPES.some((entry) => entry.type === value);
 
@@ -250,11 +252,14 @@ export default function DataImportPage() {
   const toSend = preview ? preview.counts.create : 0;
 
   return (
-    <div className="space-y-4" data-testid="data-import-page">
+    <div className="space-y-5" data-testid="data-import-page">
+      {/* One card for the record type and the file, like the search card on
+          the list pages; the module shell already shows the page title. */}
+      <Card className="space-y-4 p-5">
       <div>
-        <h2 className="text-lg font-semibold">{copy("Import data")}</h2>
-        <p className="mt-1 text-xs text-slate-500">{copy("Create records from a CSV or XLSX file. Existing records are skipped, never changed.")}</p>
-        <p className="mt-1 text-xs text-slate-500">{copy("Import in this order: items, suppliers, customers, item suppliers, then opening stock.")}</p>
+        <h2 className="fc-section-title" style={{ color: A.label }}>{copy("Import a file")}</h2>
+        <p className="mt-1 text-xs" style={{ color: A.sub }}>{copy("Create records from a CSV or XLSX file. Existing records are skipped, never changed.")}</p>
+        <p className="mt-0.5 text-xs" style={{ color: A.sub }}>{copy("Import in this order: items, suppliers, customers, item suppliers, then opening stock.")}</p>
       </div>
 
       <div role="tablist" aria-label={copy("Import data")} className="flex flex-wrap gap-1 border-b" style={{ borderColor: A.border }}>
@@ -266,7 +271,6 @@ export default function DataImportPage() {
         ))}
       </div>
 
-      <Card className="space-y-3 p-4">
         {opening ? <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800" data-testid="data-import-opening-note">{copy("Opening stock is created as a draft adjustment. A person approves and posts it in Inventory.")}</p> : null}
         <div className="flex flex-wrap items-end gap-3">
           <button type="button" className={secondary} onClick={() => void downloadTemplate()} data-testid="data-import-template">
@@ -302,7 +306,7 @@ export default function DataImportPage() {
       </Card>
 
       {preview && !results ? (
-        <Card className="space-y-3 p-4" data-testid="data-import-preview">
+        <Card className="space-y-3 p-5" data-testid="data-import-preview">
           <p className="text-sm font-semibold" data-testid="data-import-counts">
             {copy("{rows} rows: {create} to create, {skip} already exist, {error} with errors", { rows: preview.counts.rows, create: preview.counts.create, skip: preview.counts.skip_existing, error: preview.counts.error })}
           </p>
@@ -327,36 +331,36 @@ export default function DataImportPage() {
             {copy("Errors only")}
           </label>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-xs" data-testid="data-import-preview-table">
+            <table className={`w-full min-w-[760px] text-left ${tableBodyTextClass}`} data-testid="data-import-preview-table">
               <thead>
-                <tr className="border-b text-left" style={{ color: A.gray1 }}>
-                  <th className="px-3 py-2">{copy("Row")}</th>
-                  <th className="px-3 py-2">{copy("Key")}</th>
-                  <th className="px-3 py-2">{copy("Action")}</th>
-                  {opening ? <><th className="px-3 py-2">{copy("Quantity")}</th><th className="px-3 py-2">{copy("Unit")}</th><th className="px-3 py-2">{copy("Stock record")}</th></> : null}
-                  {type === "suppliers" || type === "customers" || type === "item-suppliers" ? <th className="px-3 py-2">{copy("Currency")}</th> : null}
-                  <th className="px-3 py-2">{copy("Issues")}</th>
+                <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)", color: A.gray1 }}>
+                  <th className={thClass}>{copy("Row")}</th>
+                  <th className={thClass}>{copy("Key")}</th>
+                  <th className={thClass}>{copy("Action")}</th>
+                  {opening ? <><th className={thClass}>{copy("Quantity")}</th><th className={thClass}>{copy("Unit")}</th><th className={thClass}>{copy("Stock record")}</th></> : null}
+                  {type === "suppliers" || type === "customers" || type === "item-suppliers" ? <th className={thClass}>{copy("Currency")}</th> : null}
+                  <th className={thClass}>{copy("Issues")}</th>
                 </tr>
               </thead>
               <tbody>
                 {shown.map((row) => (
-                  <tr key={row.rowNumber} className="border-b align-top" data-testid={`data-import-row-${row.rowNumber}`}>
-                    <td className="px-3 py-2 tabular-nums">{row.rowNumber}</td>
-                    <td className="px-3 py-2 font-medium">{row.key || "—"}</td>
-                    <td className="px-3 py-2">
+                  <tr key={row.rowNumber} className="align-top" style={{ borderTop: "0.5px solid rgba(0,0,0,0.04)" }} data-testid={`data-import-row-${row.rowNumber}`}>
+                    <td className={tdNumericClass}>{row.rowNumber}</td>
+                    <td className={tdIdClass}>{row.key || "—"}</td>
+                    <td className="px-4 py-3">
                       <Chip label={actionLabel(row)} color={row.action === "error" ? A.red : row.action === "create" ? A.green : A.gray1} bg={row.action === "error" ? "#fff1f0" : row.action === "create" ? "#edf9f2" : "#f4f5f7"} />
                       {row.existing ? <div className="mt-1 text-slate-500">{existingNote(row.existing)}</div> : null}
                       {row.action === "create" && row.details?.preferredSource === "item" ? <div className="mt-1 text-slate-500">{copy("Stays the item's preferred supplier")}</div> : null}
                     </td>
                     {opening ? (
                       <>
-                        <td className="px-3 py-2 tabular-nums">{row.details?.quantity ?? "—"}</td>
-                        <td className="px-3 py-2">{row.details?.unit || "—"}</td>
-                        <td className="px-3 py-2">{row.action === "create" ? copy(row.details?.stockRecord === "new" ? "New stock record" : "Existing stock record") : "—"}</td>
+                        <td className={tdNumericClass}>{row.details?.quantity ?? "—"}</td>
+                        <td className="px-4 py-3">{row.details?.unit || "—"}</td>
+                        <td className="px-4 py-3">{row.action === "create" ? copy(row.details?.stockRecord === "new" ? "New stock record" : "Existing stock record") : "—"}</td>
                       </>
                     ) : null}
-                    {type === "suppliers" || type === "customers" || type === "item-suppliers" ? <td className="px-3 py-2">{row.action === "error" ? "—" : currencyNote(row.details)}</td> : null}
-                    <td className="px-3 py-2" style={{ color: row.issues.length ? A.red : undefined }}>
+                    {type === "suppliers" || type === "customers" || type === "item-suppliers" ? <td className="px-4 py-3">{row.action === "error" ? "—" : currencyNote(row.details)}</td> : null}
+                    <td className="px-4 py-3" style={{ color: row.issues.length ? A.red : undefined }}>
                       {row.issues.length ? <ul className="space-y-0.5">{row.issues.map((issue, index) => <li key={index}>{issueLine(issue)}</li>)}</ul> : "—"}
                     </td>
                   </tr>
@@ -379,7 +383,7 @@ export default function DataImportPage() {
       ) : null}
 
       {preview && results ? (
-        <Card className="space-y-3 p-4" data-testid="data-import-results">
+        <Card className="space-y-3 p-5" data-testid="data-import-results">
           <p className="text-sm font-semibold" data-testid="data-import-result-counts">
             {copy("{rows} rows: {created} created, {skipped} already existed, {error} not imported", {
               rows: preview.counts.rows,
@@ -411,22 +415,22 @@ export default function DataImportPage() {
             </div>
           ) : null}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-xs" data-testid="data-import-results-table">
+            <table className={`w-full min-w-[640px] text-left ${tableBodyTextClass}`} data-testid="data-import-results-table">
               <thead>
-                <tr className="border-b text-left" style={{ color: A.gray1 }}>
-                  <th className="px-3 py-2">{copy("Row")}</th>
-                  <th className="px-3 py-2">{copy("Key")}</th>
-                  <th className="px-3 py-2">{copy("Outcome")}</th>
-                  <th className="px-3 py-2">{copy("Details")}</th>
+                <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)", color: A.gray1 }}>
+                  <th className={thClass}>{copy("Row")}</th>
+                  <th className={thClass}>{copy("Key")}</th>
+                  <th className={thClass}>{copy("Outcome")}</th>
+                  <th className={thClass}>{copy("Details")}</th>
                 </tr>
               </thead>
               <tbody>
                 {results.rows.map((row) => (
-                  <tr key={row.rowNumber} className="border-b align-top" data-testid={`data-import-result-${row.rowNumber}`}>
-                    <td className="px-3 py-2 tabular-nums">{row.rowNumber}</td>
-                    <td className="px-3 py-2 font-medium">{row.key}</td>
-                    <td className="px-3 py-2">{outcomeLabel(row)}</td>
-                    <td className="px-3 py-2" style={{ color: row.issues.length ? A.red : undefined }}>
+                  <tr key={row.rowNumber} className="align-top" style={{ borderTop: "0.5px solid rgba(0,0,0,0.04)" }} data-testid={`data-import-result-${row.rowNumber}`}>
+                    <td className={tdNumericClass}>{row.rowNumber}</td>
+                    <td className={tdIdClass}>{row.key}</td>
+                    <td className="px-4 py-3">{outcomeLabel(row)}</td>
+                    <td className="px-4 py-3" style={{ color: row.issues.length ? A.red : undefined }}>
                       {row.issues.length ? row.issues.map(issueLine).join("; ") : row.document ? row.document.number : existingNote(row) || row.entity?.label || "—"}
                     </td>
                   </tr>

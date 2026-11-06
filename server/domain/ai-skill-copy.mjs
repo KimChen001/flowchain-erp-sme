@@ -69,7 +69,29 @@ const entries = {
   'scope.label': ['Your workspace data', '当前工作区数据'],
   'answer.source': ['Answered from your workspace data', '基于当前工作区数据回答'],
   // P3: the model worded the answer around the workspace's own figures, which the server checked (docs/ai-agent-mode-design.md §4).
+  // The help answer reads no business data, so it never says it did.
+  'answer.source_none': ['No workspace data was read for this answer', '本次回答没有读取工作区数据'],
   'answer.source_agent': ['Answered from your workspace data. Worded by AI; figures checked.', '基于当前工作区数据回答，由 AI 组织语言，数字已核对'],
+  // Model-first: the model read the records through tools and wrote the answer; the server checked every figure, date and name against what the tools returned (docs/ai-model-first-design.md §3).
+  'answer.source_model_first': ['Written by AI from your records; figures checked', '由 AI 根据你的记录撰写，数字已核对'],
+  // Model-first: the user says they did not say a word their earlier question has; the answer quotes it (2026-11-04).
+  'model_first.user_said': ['Your earlier question was "{quote}".', '你上一轮说的是“{quote}”。'],
+  // Assistant v2: the model wrote the answer from the records it read; figures it could not match are underlined, not checked (docs/ai-assistant-v2-design.md §3.9).
+  'answer.source_assistant_v2': ['Written by AI from your records', '由 AI 根据你的记录撰写'],
+  // Assistant v2's hard replacements (§3.9): a part that read as if the assistant acted, and a value the role may not see.
+  'assistant_v2.replace.action_claim': ['This part of the answer is not shown because it read as if something had been done for you. The assistant changes nothing: open the record to see its status and act there.', '这部分回答读起来像是已替你执行了操作，因此不显示。助手不会修改任何内容：请打开相关记录查看状态，并在那里操作。'],
+  'assistant_v2.replace.withheld': ['[not shown]', '[不显示]'],
+  // One sentence of a part left out for the same reason; the rest stays.
+  'assistant_v2.replace.action_claim_sentence': ['(A sentence is left out here because it read as if something had been done for you. Open the record to see its status.)', '（此处略去一句：它读起来像是已替你执行了操作。请打开记录查看状态。）'],
+  // Assistant v2's refusals before the model (§3.2), for a client that reads the folded answer; the panel words the notice code itself.
+  'assistant_v2.notice.injection_refused': ['This question asks the assistant to ignore its rules, so it was not answered.', '该问题要求助手忽略它的规则，因此没有回答。'],
+  'assistant_v2.notice.rate_limited': ['You have asked many questions in a short time. Wait a few minutes, then ask again.', '短时间内提问较多，请几分钟后再问。'],
+  'assistant_v2.notice.too_long_for_rules': ['The assistant model cannot answer just now, and without it a question can have at most 1,200 characters. Try again later, shorten the question, or use the import page for many rows.', '助手模型暂时无法回答；没有模型时，问题最多 1,200 个字符。请稍后再试、缩短问题，或使用导入页面一次导入多行。'],
+  // A purchase request the model-first assistant proposed: the reason line of the prefilled form.
+  'model_first.request.reason': ['Requested in the assistant. Review it before you submit.', '在 AI 助手中提出，提交前请核对。'],
+  // The reason line when the user gave none: the reorder list's basis for the quantity.
+  'model_first.request.reason_reorder': ['Reorder list: order by {date}; {quantity} {unit} brings the stock position back to the reorder point.', '补货清单：最晚下单日 {date}；{quantity} {unit}可补回再订货点。'],
+  'model_first.request.reason_reorder_minimum': ['Reorder list: order by {date}; shortfall {shortfall} {unit}, raised to the supplier minimum of {quantity} {unit}.', '补货清单：最晚下单日 {date}；缺口 {shortfall} {unit}，按供应商最小起订量提到 {quantity} {unit}。'],
   'answer.checked': ['Checked: {sources}', '已检查：{sources}'],
   'answer.review_boundary': ['This answer does not send, approve or change anything.', '本回答不会发送、批准或修改任何内容。'],
   // A question with several parts, answered part by part (ai-skill-compound.mjs).
@@ -102,6 +124,10 @@ const entries = {
   'skill.supplier_attention.description': ['Lists the suppliers with open work, ordered by date: overdue purchase orders, orders due within 7 days, receipts with rejected quantities or not posted, and invoice variances, each with its most urgent record; and the suppliers with new orders, receipts or invoices in the last 7 days. Answers general questions about suppliers.', '按日期列出有待处理事项的供应商：逾期采购订单、7 天内到期的订单、有拒收或未过账的收货单、有差异的发票，并说明每家最急的一条；以及最近 7 天有新下单、到货或发票的供应商。用于回答关于供应商的笼统问题。'],
   'skill.spend_analysis.title': ['Spend by supplier, item and month', '按供应商、物料和月份看采购花费'],
   'skill.spend_analysis.description': ['Breaks committed purchase order spend down by supplier (each one\'s share and ABC class), by item for one named supplier, or by month, for a period the question names, exactly as the procurement dashboard counts it. Amounts in different currencies are never added together.', '按采购看板的口径拆分已承诺采购订单金额：按供应商（含占比和 ABC 分类）、按某个指定供应商的物料，或按月份，时间范围按问题所说。不同币种的金额不会相加。'],
+  'skill.supplier_comparison.title': ['Supplier delivery performance', '供应商交付表现'],
+  'skill.supplier_comparison.description': ['Compares how suppliers deliver over a period, from the supplier scorecard: on time, in full and OTIF against the original promised date, the rejection rate, the average delay and invoice price variances, with committed spend. Rates need at least 5 deliveries. Answers which supplier is most or least reliable, how one supplier performs, or compares named suppliers.', '基于供应商评分卡比较一段时间内的交付表现：按原承诺日期计的准时率、足量率和 OTIF、拒收率、平均延误和发票价格差异，以及已承诺采购金额。比率至少需要 5 次交付。回答哪家供应商最可靠或最不可靠、某家供应商表现如何，或比较指定的供应商。'],
+  'skill.late_order_impact.title': ['What a late order affects', '订单延误的影响'],
+  'skill.late_order_impact.description': ['Works out what a late purchase order puts at risk, in the inventory page\'s terms: whether the open sales orders for each item it brings can still ship without it, by how much they would fall short, and which sales orders and customers wait on that item. With no order named, the overdue purchase orders.', '按库存页面的口径推算一张采购订单延误会影响什么：没有它，所带物料的未结销售订单能否全部发货、会缺多少，以及哪些销售订单和客户在等这个物料。没有指定订单时，看逾期的采购订单。'],
   'skill.capability_overview.title': ['What I can help with', '我可以帮你做什么'],
   'skill.capability_overview.description': ['Explains what the assistant can answer from workspace data.', '说明助手能基于工作区数据回答哪些问题。'],
 
@@ -110,8 +136,16 @@ const entries = {
   'capability.summary': ['Ask me about priorities, risks, purchase orders, suppliers, invoices, RFQs, receiving or stock, or try a suggestion below.', '可以问我优先事项、风险、采购订单、供应商、发票、询价、收货或库存，也可以试试下面的建议。'],
   'capability.unsupported_id': ["I can't look up {id} by its number yet.", '暂时无法按编号查询 {id}。'],
   'capability.unsupported_ids': ["I can't look up {id} by their numbers yet.", '暂时无法按编号查询 {id}。'],
+  'capability.unmatched.title': ["I can't answer that from your workspace data yet", '这个问题我还不能用工作区数据回答'],
+  // Contracts have their own module (#218); no skill reads them yet.
+  'capability.contracts.title': ["I can't read contracts yet", '我暂时还不能读取合同'],
+  'capability.contracts': ['Contracts are in their own module for now: open it to see them.', '合同目前在单独的“合同”模块中，可以打开查看。'],
+  'capability.contracts.open': ['Open Contracts', '打开合同'],
   'capability.outside': ['I can only answer questions about your workspace data.', '我只能回答与当前工作区数据有关的问题。'],
   'capability.topic': ["I couldn't tell what you want to know about {topic}.", '我没能确定你想了解{topic}的哪方面。'],
+  // No skill reads sales orders, shipments or what customers owe yet.
+  'capability.sales': ["I don't answer questions about sales orders, shipments or customer payments yet.", '销售订单、发货和客户付款的问题，我暂时还答不了。'],
+  'topic.sales': ['sales orders and customers', '销售订单和客户'],
   'topic.suppliers': ['suppliers', '供应商'],
   'topic.purchase_orders': ['purchase orders', '采购订单'],
   'topic.inventory': ['stock', '库存'],
@@ -123,17 +157,27 @@ const entries = {
 
   // Report figures, shared by several skills
   'metrics.open_pos': ['{open} open purchase orders, {overdue} overdue.', '未结采购订单 {open} 张，其中逾期 {overdue} 张。'],
+  'metrics.open_pos_one': ['1 open purchase order, and it is overdue.', '未结采购订单 1 张，已逾期。'],
   'metrics.no_overdue': ['{open} open purchase orders; none are overdue.', '未结采购订单 {open} 张，没有逾期。'],
+  'metrics.no_overdue_one': ['1 open purchase order; it is not overdue.', '未结采购订单 1 张，没有逾期。'],
   'metrics.committed_spend': ['Committed PO spend: {amounts}.', '已承诺采购金额：{amounts}。'],
-  'metrics.committed_invoices': ['Committed supplier invoices: {amounts}.', '已提交供应商发票金额：{amounts}。'],
+  'metrics.committed_invoices': ['Supplier invoices submitted, paid ones included: {amounts}.', '已提交的供应商发票（含已付）：{amounts}。'],
   'metrics.at_risk': ['{count} SKUs are short against open sales orders: {skus}.', '{count} 个 SKU 无法满足未结销售订单：{skus}。'],
   'metrics.at_risk_one': ['1 SKU is short against open sales orders: {skus}.', '1 个 SKU 无法满足未结销售订单：{skus}。'],
   'metrics.at_risk_none': ['No SKU is short against open sales orders.', '没有 SKU 无法满足未结销售订单。'],
   'metrics.amounts_hidden': ['Amounts are hidden for your role.', '你的角色无法查看金额。'],
   'metrics.title': ['{open} open purchase orders, {overdue} overdue (as of {date})', '未结采购订单 {open} 张，逾期 {overdue} 张（截至 {date}）'],
+  'metrics.title_one': ['1 open purchase order, {overdue} overdue (as of {date})', '未结采购订单 1 张，逾期 {overdue} 张（截至 {date}）'],
 
   // today_priorities
   'today.title': ['{count} items need attention today (as of {date})', '今天需要关注 {count} 项（截至 {date}）'],
+  'answer.showing': ['Showing the first {shown} of {total}, earliest date first.', '按日期先列出 {total} 项中的 {shown} 项。'],
+  'answer.showing_plain': ['Showing {shown} of {total}.', '列出 {total} 项中的 {shown} 项。'],
+  // A user under pressure ("I'm stressed", 我压力大): the first few only.
+  'today.calm_title': ["That's a lot at once. Start with these {count}", '事情确实不少，先从这 {count} 件开始'],
+  'today.calm_title_one': ["That's a lot at once. Start with this one", '事情确实不少，先从这一件开始'],
+  'today.calm_more': ["These are the earliest of {total} open items. Take them one at a time; the rest stay on Today's priorities.", '这是 {total} 项待办里最早的几项。一件一件来，其余的都在“今日优先事项”里。'],
+  'today.calm_all': ['That is everything open today.', '今天待处理的就是这些。'],
   'today.title_one': ['1 item needs attention today (as of {date})', '今天需要关注 1 项（截至 {date}）'],
   'today.title_none': ['Nothing needs attention today (as of {date})', '今天没有需要优先处理的事项（截至 {date}）'],
   'today.focus_title': ['Why {id} needs attention', '{id} 需要关注的原因'],
@@ -182,6 +226,8 @@ const entries = {
   'draft.invoice.message': ['Invoice {invoice} differs from the purchase order by {amount}. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单相差 {amount}。请提供更正后的发票或差异原因。'],
   'draft.invoice.message_hidden': ['Invoice {invoice} differs from the purchase order. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单存在差异。请提供更正后的发票或差异原因。'],
   'draft.pr.title': ['Request {quantity} {unit} of {sku}', '申请采购 {sku} {quantity} {unit}'],
+  'draft.pr.minimum': ['{supplier} takes orders of at least {minimum}, so the request is for {minimum} rather than {gap}.', '{supplier} 的最小起订量是 {minimum}，因此按 {minimum} 申请，而不是 {gap}。'],
+  'draft.pr.minimum_unnamed': ['The supplier takes orders of at least {minimum}, so the request is for {minimum} rather than {gap}.', '供应商的最小起订量是 {minimum}，因此按 {minimum} 申请，而不是 {gap}。'],
   'draft.pr.reason': ['{available} available against a target of {target}; nothing incoming covers it.', '可用 {available}，目标 {target}；没有在途订单覆盖。'],
   'draft.review': ['Review draft', '复核草稿'],
   // A supplier message draft: greeting, body and closing, each line of the
@@ -208,10 +254,14 @@ const entries = {
   'next.po_followup': ['Next: ask {supplier} to confirm a delivery date.', '下一步：请 {supplier} 确认交货日期。'],
   'next.chase_po': ['Next: chase {po}, which brings this item.', '下一步：跟进带来该物料的 {po}。'],
   'next.send_po': ['Next: send {po} to the supplier; it has not been issued yet.', '下一步：把 {po} 发给供应商，它尚未发出。'],
+  // An approved order the answer names that is not due soon: send it, then mark it issued on its page.
+  'next.issue_po': ['Next: send {po} to the supplier (print or save the PO document), then mark it issued on its page.', '下一步：把 {po} 发给供应商（打印或另存订单文件后自行发送），再在订单页面标记为下达。'],
   'next.not_due': ['Next: no follow-up yet; it is due {date} and not overdue.', '下一步：暂不需要跟进，{date} 到期，尚未逾期。'],
   'next.on_order': ['Next: no follow-up yet; it is on order on {po}, due {date}.', '下一步：暂不需要跟进，已在 {po} 订购，{date} 到期。'],
   'next.on_order_no_date': ['Next: no follow-up yet; it is on order on {po}.', '下一步：暂不需要跟进，已在 {po} 订购。'],
   'next.raise_pr': ['Next: raise a purchase request for {quantity}.', '下一步：申请采购 {quantity}。'],
+  'next.raise_pr_minimum': ['Next: raise a purchase request for {quantity}, {supplier}\'s minimum order.', '下一步：按 {supplier} 的最小起订量申请采购 {quantity}。'],
+  'next.raise_pr_minimum_unnamed': ['Next: raise a purchase request for {quantity}, the supplier\'s minimum order.', '下一步：按供应商的最小起订量申请采购 {quantity}。'],
   'next.await_pr': ['Next: get the pending purchase request approved.', '下一步：推动待审批的采购申请通过。'],
   'next.invoice_query': ['Next: ask {supplier} about the difference.', '下一步：就差异询问 {supplier}。'],
   'next.rejected': ['Next: tell {supplier} about the rejected quantity.', '下一步：告知 {supplier} 拒收数量。'],
@@ -231,6 +281,11 @@ const entries = {
   'order.title_advice_no_levels': ['{sku} has no stock levels to judge by', '{sku} 没有可供判断的库存水平'],
   'order.advice_summary': ['The button below opens the purchase request, filled in; nothing is saved until you save it.', '下面的按钮会打开预填好的采购申请；在你保存之前不会保存任何内容。'],
   'order.title_several': ['{count} SKUs need ordering', '{count} 个 SKU 需要采购'],
+  'order.title_choose': ['Which item is the purchase request for?', '要为哪个物料建采购申请？'],
+  'order.choose_lead': ['You did not name an item, so I have not picked one.', '你没有说是哪个物料，我不替你选。'],
+  'order.choice_short': ['{sku} is short by {gap}.', '{sku} 还缺 {gap}。'],
+  'order.choice_covered': ['{sku} is below its target, but open orders or requests already cover it.', '{sku} 低于目标，但在途订单或待审批申请已经覆盖。'],
+  'order.choose_next': ['Pick an item below or start a blank request. FlowChain creates a purchase request first; it becomes a purchase order once approved.', '从下面选一个物料，或新建空白申请。FlowChain 先建采购申请，审批通过后再生成采购订单。'],
   'order.several_summary': ['Pick one and I will open its purchase request, filled in. Nothing is saved until you save it.', '选一个，我会打开预填好的采购申请。在你保存之前不会保存任何内容。'],
   'order.title_covered': ['{sku} already has open orders on the way', '{sku} 已有在途订单'],
   'order.title_covered_requested': ['{sku} already has a request awaiting approval', '{sku} 已有待审批的采购申请'],
@@ -263,6 +318,13 @@ const entries = {
   'order.card.title_no_quantity': ['Request {sku}', '申请采购 {sku}'],
   'order.action.open': ['Open request: {quantity} of {sku}', '打开采购申请：{sku} {quantity}'],
   'order.action.open_no_quantity': ['Open a request for {sku}', '打开 {sku} 的采购申请'],
+  // An item the workspace does not have: one Other (non-catalog) line from the user's words.
+  'order.card.new_item_quantity': ['Request {quantity} of {description} (not in the catalog)', '申请采购 {description} {quantity}（非目录）'],
+  'order.card.new_item_named': ['Request {description} (not in the catalog)', '申请采购 {description}（非目录）'],
+  'order.card.new_item_blank': ['Request a new item (not in the catalog)', '申请采购新物料（非目录）'],
+  'order.action.new_item_quantity': ['Open request: {quantity} of {description}', '打开采购申请：{description} {quantity}'],
+  'order.action.new_item_named': ['Open request: {description}', '打开采购申请：{description}'],
+  'order.action.new_item_blank': ['Open a blank request for a new item', '打开空白的新物料采购申请'],
   'order.action.anyway': ['Open a request for {sku} anyway', '仍然新建 {sku} 的采购申请'],
   'order.action.blank': ['Open a blank purchase request', '新建空白采购申请'],
   'order.action.follow_up': ['Draft a follow-up on {po}', '起草 {po} 的跟进消息'],
@@ -395,6 +457,7 @@ const entries = {
   // Areas
   'area.purchasing': ['Purchasing', '采购'],
   'area.inventory': ['Inventory', '库存'],
+  'area.sales': ['Sales', '销售'],
   'area.finance': ['Finance', '财务'],
   'area.receiving': ['Receiving', '收货'],
   'area.sourcing': ['Sourcing', '寻源'],
@@ -410,6 +473,9 @@ const entries = {
   'source.items': ['items', '物料'],
   'source.suppliers': ['suppliers', '供应商'],
   'source.sales_orders': ['sales orders', '销售订单'],
+  'source.documents': ['documents', '文档'],
+  'source.contracts': ['contracts', '合同'],
+  'source.supplier_risks': ['supplier risks', '供应商风险'],
   'source.workspace': ['workspace skills', '工作区技能'],
 
   // Fields checked by records_needing_data
@@ -707,6 +773,82 @@ const entries = {
   'spend.impact.spend_item': ['Committed spend on this item with the supplier, as net order line values.', '向该供应商订购此物料的已承诺金额（订单行净额）。'],
   'spend.impact.spend_month': ['Committed spend in this month, by order date.', '按下单日期计入当月的已承诺采购金额。'],
 
+  // Supplier comparison (ai-skill-supplier-comparison.mjs)
+  'compare.on_time': ['on time {rate} ({count} of {of} deliveries)', '准时 {rate}（{of} 次交付中 {count} 次）'],
+  'compare.too_few': ['{count} deliveries, too few to rate (5 needed)', '{count} 次交付，不足 5 次，不计算比率'],
+  'compare.too_few_one': ['1 delivery, too few to rate (5 needed)', '1 次交付，不足 5 次，不计算比率'],
+  'compare.no_deliveries': ['no deliveries due in this period', '这段时间没有到期的交付'],
+  'compare.in_full': ['in full {rate}', '足量 {rate}'],
+  'compare.otif': ['OTIF {rate}', 'OTIF {rate}'],
+  'compare.rejection': ['{rate} of the received quantity rejected', '收货数量拒收率 {rate}'],
+  'compare.delay': ['{count} late deliveries, {days} days late on average', '{count} 次迟到，平均晚 {days} 天'],
+  'compare.delay_one': ['1 late delivery, {days} days late', '1 次迟到，晚 {days} 天'],
+  'compare.variances': ['{count} invoices with a price variance', '{count} 张发票有价格差异'],
+  'compare.variances_one': ['1 invoice with a price variance', '1 张发票有价格差异'],
+  'compare.spend': ['{amount} committed ({share} of spend)', '已承诺 {amount}（占花费 {share}）'],
+  'compare.detail': ['Also: {parts}.', '另外：{parts}。'],
+  'compare.status_on_time': ['On time {rate}', '准时 {rate}'],
+  'compare.status_too_few': ['Too few deliveries', '交付次数不足'],
+  'compare.n_a': ['not rated', '未评'],
+  'compare.title_compare': ['On time: {list} ({period})', '准时率：{list}（{period}）'],
+  'compare.title_one': ['{supplier}: {value} ({period})', '{supplier}：{value}（{period}）'],
+  'compare.title_best': ['Most reliable: {supplier}, {value} ({period})', '最可靠的是 {supplier}：{value}（{period}）'],
+  'compare.title_worst': ['Least reliable: {supplier}, {value} ({period})', '最不可靠的是 {supplier}：{value}（{period}）'],
+  'compare.title_none': ['No supplier has 5 or more deliveries due in {period}', '{period} 没有供应商有 5 次以上到期交付'],
+  'compare.more': ['{count} more suppliers are rated in Supplier analytics.', '另外 {count} 家供应商的评分见供应商分析。'],
+  'compare.more_one': ['1 more supplier is rated in Supplier analytics.', '另外 1 家供应商的评分见供应商分析。'],
+  'compare.few': ['{count} suppliers have too few deliveries to rate: {list}.', '{count} 家供应商交付次数不足，未评分：{list}。'],
+  'compare.few_one': ['1 supplier has too few deliveries to rate: {list}.', '1 家供应商交付次数不足，未评分：{list}。'],
+  'compare.minimum': ['A rate needs at least 5 deliveries in the period.', '比率至少需要这段时间内有 5 次交付。'],
+  'compare.variances_hidden': ['Invoice price variances are not shown with your access.', '你的权限看不到发票价格差异。'],
+  'compare.warehouses': ['Only receipts in your warehouses are counted.', '只计入你所在仓库的收货。'],
+  'compare.basis': ['Each delivery is judged against its original promised date, as the supplier scorecard judges it.', '每次交付都按原承诺日期判断，与供应商评分卡一致。'],
+  'compare.title_hidden': ['Supplier performance needs access to purchase orders and receipts', '查看供应商交付表现需要采购订单和收货权限'],
+  'compare.summary_hidden': ['Your access does not include both purchase orders and receipts, so delivery performance cannot be shown.', '你的权限不同时包括采购订单和收货，因此无法显示交付表现。'],
+  'compare.title_unavailable': ['Supplier performance could not be read', '无法读取供应商交付表现'],
+  'compare.summary_unavailable': ['The supplier scorecard could not be read for this question. Try again, or open Supplier analytics.', '这个问题无法读取供应商评分卡。请重试，或打开供应商分析。'],
+  'compare.period_too_long': ['The supplier scorecard covers at most 731 days. Ask about a shorter period.', '供应商评分卡最多覆盖 731 天，请换一个更短的时间范围。'],
+  'compare.impact': ['Delivery performance against the original promised dates, as the supplier scorecard measures it.', '按原承诺日期衡量的交付表现，与供应商评分卡一致。'],
+  'compare.view_analytics': ['Open Supplier analytics', '打开供应商分析'],
+
+  // Late order impact (ai-skill-late-order-impact.mjs)
+  'impact.customer_unknown': ['an unnamed customer', '未命名客户'],
+  'impact.title_hidden': ['The effect of a late order needs purchase orders and stock', '推算订单延误的影响需要采购订单和库存权限'],
+  'impact.summary_hidden': ['Your access does not include both purchase orders and stock, so the effect of a late order cannot be worked out.', '你的权限不同时包括采购订单和库存，因此无法推算订单延误的影响。'],
+  'impact.title_no_late': ['No purchase order is overdue (as of {date})', '截至 {date} 没有逾期的采购订单'],
+  'impact.title_no_lines': ['{po} has no open lines left to deliver', '{po} 没有待交付的行'],
+  'impact.days_late': ['{days} days late', '逾期 {days} 天'],
+  'impact.days_late_one': ['1 day late', '逾期 1 天'],
+  'impact.value_unknown': ['Stock not known', '库存未知'],
+  'impact.line_unknown': ['{sku} has no stock figures, so the effect cannot be worked out.', '{sku} 没有库存数据，无法推算影响。'],
+  'impact.value_short': ['{sku} short {quantity}', '{sku} 缺 {quantity}'],
+  'impact.line_short': ['Without the {remaining} on {po}, {sku} goes from {atp} to {without} available to promise, so the open sales orders cannot all ship.', '少了 {po} 的 {remaining}，{sku} 的可承诺量从 {atp} 降到 {without}，未结销售订单无法全部发货。'],
+  'impact.value_not_counted': ['Not counted as coming', '未计入在途'],
+  'impact.line_not_counted': ['This line is in another unit than {sku} is stocked in, so the stock figures never counted it and a delay does not change them.', '这一行的单位与 {sku} 的库存单位不同，库存数字从未计入它，延误不会改变库存数字。'],
+  'impact.value_covered': ['Still covered', '仍可覆盖'],
+  'impact.line_covered': ['Without the {remaining} on {po}, {sku} still has {without} available to promise, so the open sales orders are covered.', '即使没有 {po} 的 {remaining}，{sku} 的可承诺量仍有 {without}，未结销售订单可以覆盖。'],
+  'impact.po_late': ['{po} is {late}.', '{po} 已{late}。'],
+  'impact.label_sales_order': ['Sales order waiting', '等待中的销售订单'],
+  'impact.sales_order': ['{customer}, promised {date}: {quantity} of {sku} not yet shipped or reserved.', '{customer}，承诺 {date}：{sku} 还有 {quantity} 未发货或未预留。'],
+  'impact.sales_order_undated': ['{customer}, no promised date: {quantity} of {sku} not yet shipped or reserved.', '{customer}，没有承诺日期：{sku} 还有 {quantity} 未发货或未预留。'],
+  'impact.waiting': ['{count} open sales orders wait on {sku}: {list}.', '{count} 张未结销售订单在等 {sku}：{list}。'],
+  'impact.waiting_one': ['1 open sales order waits on {sku}: {list}.', '1 张未结销售订单在等 {sku}：{list}。'],
+  'impact.order_customer': ['{order} for {customer}', '{order}（{customer}）'],
+  'impact.title_short': ['If {po} is late, {sku} falls {quantity} short of open sales orders', '如果 {po} 延误，{sku} 将比未结销售订单少 {quantity}'],
+  'impact.title_covered': ['If {po} is late, the open sales orders are still covered', '即使 {po} 延误，未结销售订单仍可覆盖'],
+  'impact.title_late_short': ['If the {count} late purchase orders do not arrive, {sku} falls {quantity} short of open sales orders', '如果 {count} 张逾期采购订单不到货，{sku} 将比未结销售订单少 {quantity}'],
+  'impact.title_late_short_one': ['If the late purchase order does not arrive, {sku} falls {quantity} short of open sales orders', '如果这张逾期采购订单不到货，{sku} 将比未结销售订单少 {quantity}'],
+  'impact.title_late_covered': ['Even without the {count} late purchase orders, the open sales orders are covered', '即使 {count} 张逾期采购订单不到货，未结销售订单仍可覆盖'],
+  'impact.title_late_covered_one': ['Even without the late purchase order, the open sales orders are covered', '即使这张逾期采购订单不到货，未结销售订单仍可覆盖'],
+  'impact.customers': ['{count} customers are affected: {list}.', '受影响的客户有 {count} 家：{list}。'],
+  'impact.customers_one': ['1 customer is affected: {list}.', '受影响的客户有 1 家：{list}。'],
+  'impact.sales_hidden': ['Sales orders are not visible with your access, so the orders and customers are not named.', '你的权限看不到销售订单，因此不列出订单和客户。'],
+  'impact.more': ['{count} more items on these orders are not listed here.', '这些订单还有 {count} 个物料未在此列出。'],
+  'impact.more_one': ['1 more item on these orders is not listed here.', '这些订单还有 1 个物料未在此列出。'],
+  'impact.basis': ['Worked out in the inventory page\'s terms: available stock plus open purchase orders, less the open sales demand not yet reserved. No arrival dates are guessed.', '按库存页面的口径推算：可用库存加在途采购订单，减去尚未预留的未结销售需求，不推测到货日期。'],
+  'impact.explain_po': ['What this order brings, set against the open sales demand for the item.', '这张订单带来的数量与该物料未结销售需求的对比。'],
+  'impact.explain_sales_order': ['A customer order waiting on the same item.', '等待同一物料的客户订单。'],
+
   // Navigation
   'nav.open': ['Open {id}', '打开 {id}'],
   'nav.open_pos_report': ['Open purchase orders report', '未结采购订单报表'],
@@ -716,8 +858,13 @@ export const AI_SKILL_COPY = Object.freeze(Object.fromEntries(Object.entries(ent
 
 // Fills {name} placeholders. A missing value renders as an empty string, never
 // as the placeholder or "undefined".
+// A value that ends with its own period ("Acme Valve Co.") stands in for the
+// template's period after it, so a sentence never ends "Co..".
 function fill(template, values = {}) {
-  return template.replace(/\{(\w+)\}/g, (_, name) => (values[name] === undefined || values[name] === null ? '' : String(values[name])))
+  return template.replace(/\{(\w+)\}(\.?)/g, (_, name, dot) => {
+    const value = values[name] === undefined || values[name] === null ? '' : String(values[name])
+    return value + (dot && value.endsWith('.') ? '' : dot)
+  })
 }
 
 export function aiSkillText(key, language, values) {

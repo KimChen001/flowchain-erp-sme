@@ -15,12 +15,15 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
   CORE: ids(`
     overview overview:risks overview:ai
     master-data master-data:items master-data:suppliers master-data:customers
+    master-data:supplier-evaluation master-data:supplier-risks
+    master-data:item-suppliers
     master-data:warehouses master-data:bins master-data:payment-terms
     master-data:tax-codes master-data:print-templates
     master-data:supplier-detail master-data:item-detail
     master-data:customer-detail master-data:warehouse-detail
     master-data:bin-detail master-data:payment-term-detail
     master-data:tax-code-detail
+    contracts contracts:list contracts:ending contracts:new contracts:detail
     procurement procurement:workbench procurement:requests procurement:rfq
     procurement:orders procurement:receiving procurement:order-lines
     procurement:bills procurement:bill-detail
@@ -81,7 +84,6 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
   // (FROZEN_PRODUCT_ROUTE_IDS); forecast / MRP is unavailable.
   FROZEN: new Set([
     ...ids(`
-    procurement:contracts
     forecast forecast:cockpit forecast:demand forecast:mrp
     forecast:replenishment forecast:parameters
   `),
@@ -94,6 +96,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     finance:three-way-match
     finance:customer-invoices finance:customer-invoice-new
     finance:customer-invoice-detail
+    procurement:contracts
   `),
 };
 
@@ -124,6 +127,10 @@ const primaryNavigation: Record<
     navigationOrder: 60,
     navigationLabel: "供应商",
   },
+  // Contracts sit right after Suppliers (docs/contracts-module-design.md, D8),
+  // shown only while the contracts capability and contracts.contract.read are
+  // both present.
+  contracts: { navigationOrder: 65, navigationLabel: "合同" },
   "master-data:items": { navigationOrder: 70, navigationLabel: "物料" },
   // Money owed to suppliers and by customers. Shown only while the
   // operational finance capability and the finance.overview.read permission
@@ -153,6 +160,9 @@ export const legacyRouteRedirects: Record<
   "finance:customer-invoices": { to: "sales:invoices" },
   "finance:customer-invoice-new": { to: "sales:invoice-new" },
   "finance:customer-invoice-detail": { to: "sales:invoice-detail" },
+  // The frozen "framework agreements" placeholder gave way to the Contracts
+  // module on 2026-10-09 (docs/contracts-module-design.md).
+  "procurement:contracts": { to: "contracts:list" },
 };
 
 // Bill and invoice pages anyone with the read permission can open; recording,
@@ -165,8 +175,14 @@ const compatibilityRouteIds = ids(`
   finance:bank-statements finance:bank-reconciliation
 `);
 
+// Supplier evaluation writes a supplier's tier (master_data.supplier.manage,
+// with a reason and an audit row). The contract form and detail page record,
+// activate, renew and terminate contracts and their files
+// (contracts.contract.manage).
 const authoritativeWriteRouteIds = ids(`
   master-data master-data:items master-data:suppliers master-data:customers
+  master-data:supplier-evaluation
+  contracts:new contracts:detail
   master-data:warehouses master-data:payment-terms master-data:tax-codes
   master-data:supplier-detail master-data:item-detail
   master-data:customer-detail master-data:warehouse-detail
@@ -187,6 +203,7 @@ const businessDocumentRouteIds = ids(`
 const ownerByModule: Record<string, string> = {
   overview: "src/modules/overview",
   "master-data": "src/modules/master-data",
+  contracts: "src/modules/contracts",
   procurement: "src/modules/procurement",
   sales: "src/modules/sales",
   inventory: "src/modules/inventory",
@@ -207,6 +224,7 @@ const ownerByModule: Record<string, string> = {
 const apiByModule: Record<string, string> = {
   overview: "/api/business-read-context",
   "master-data": "/api/master-data/*",
+  contracts: "/api/contracts/*",
   procurement: "/api/procurement/*",
   sales: "/api/sales-orders/*",
   inventory: "/api/inventory-*",
@@ -309,6 +327,11 @@ mapCapability("data-import", "master-data:import");
 mapCapability(
   "review-actions",
   "review-actions review-actions:waiting review-actions:data-limited",
+);
+// Off in the trial and on in the walkthrough until verified (D10).
+mapCapability(
+  "contracts",
+  "contracts contracts:list contracts:ending contracts:new contracts:detail",
 );
 
 const routePermission = new Map<string, string>();
@@ -416,6 +439,10 @@ mapPermission("custom_field.read", "settings:custom-fields");
 mapPermission("settings.review_policy.read", "settings:review");
 mapPermission("settings.modules.read", "settings:modules");
 mapPermission("audit.read", "settings:audit audit-history audit-history:ai audit-history:drafts audit-history:data audit-history:objects");
+mapPermission(
+  "contracts.contract.read",
+  "contracts contracts:list contracts:ending contracts:new contracts:detail",
+);
 
 export function classificationForRouteId(routeId: string) {
   return classificationById.get(routeId);
@@ -517,6 +544,16 @@ function limitationFor(
     return "Read-only PO document to print or save as PDF; printable from approval on and only with procurement.prices.read. FlowChain does not send it.";
   if (route.id === "sales:invoice-document")
     return "Read-only invoice document to print or save as PDF; printable once issued and only with finance.amounts.read and finance.partner_snapshot.read. FlowChain does not send it.";
+  // Readable by every signed-in user, like the supplier list; what each
+  // reader may not see is hidden by the API, never shown as 0.
+  if (route.id === "master-data:supplier-evaluation")
+    return "Indicators follow the reader's purchase order, price, scorecard and issue access; a hidden one shows as —. Setting a tier needs master_data.supplier.manage and a reason; FlowChain suggests no tier.";
+  if (route.id === "master-data:supplier-risks")
+    return "Read only. Lists the open issues behind the supplier list's Open issues, earliest date first, never by a score; each kind follows the reader's purchase order, receipt or supplier invoice access.";
+  if (route.id === "master-data:item-suppliers")
+    return "Read only; links are edited where they are today. A reference price needs procurement.prices.read, as on the per-item read; without it the price is hidden, never 0.";
+  if (route.moduleId === "contracts")
+    return "Needs the contracts capability and contracts.contract.read; recording, activating, renewing, terminating and files need contracts.contract.manage; the total value needs procurement.prices.read and is hidden, never 0, without it. States are read from the dates on the workspace day; FlowChain never moves a date.";
   if (compatibilityRouteIds.has(route.id))
     return "Compatibility extension; not part of the default SME Core surface.";
   if (route.id === "imports")
@@ -566,6 +603,14 @@ export function authorityForRoute(
     apiDependency:
       route.id === "master-data:import"
         ? "/api/data-import/*"
+        : route.id === "master-data:supplier-evaluation"
+        ? "/api/master-data/suppliers, /api/master-data/supplier-insights, /api/master-data/suppliers/:id/tier"
+        : route.id === "master-data:supplier-risks"
+        ? "/api/master-data/supplier-risks"
+        : route.id === "master-data:item-suppliers"
+        ? "/api/master-data/item-suppliers"
+        : route.id === "contracts:detail"
+        ? "/api/contracts/:id, /api/uploads/stage, /api/attachments/:id/download"
         : route.id === "procurement:rfq"
         ? "/api/procurement/documents?type=rfq"
         : route.id === "procurement:rfq-detail"

@@ -26,6 +26,11 @@ import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from '
 //   sales orders      confirmed orders with quantity still to reserve or ship.
 //   purchasing        purchase requests to approve or convert, purchase orders
 //                     to approve and draft purchase orders to review.
+//   contracts         the shown state of each contract
+//                     (shared/contract-status.mjs): notice due by its last day
+//                     to give notice, ending by its end date, and past its end
+//                     (renews automatically, or ended with no renewal or
+//                     termination recorded) since its end date.
 //
 // Every row carries the date that orders it and nothing else orders the list
 // (owner decision 2026-10-03: by date, not by a score): the earliest date
@@ -55,6 +60,9 @@ export const TODAY_WORK_KINDS = Object.freeze([
   'purchase_request_to_approve',
   'purchase_request_to_convert',
   'draft_purchase_order',
+  'contract_notice_due',
+  'contract_ending',
+  'contract_past_end',
 ])
 const KIND_RANK = new Map(TODAY_WORK_KINDS.map((kind, index) => [kind, index]))
 // How many rows the response carries; the total is always reported.
@@ -316,6 +324,34 @@ function purchasingWork(purchaseRequests, purchaseOrders) {
   return [...requestRows, ...orderRows]
 }
 
+// Contracts (docs/contracts-module-design.md §5), as readContractWork reads
+// them for this reader. Each row names the contract number (label), its
+// title, the supplier and the key date, and opens the contract.
+const CONTRACT_WORK_KIND = Object.freeze({ notice_due: 'contract_notice_due', ending: 'contract_ending', past_end: 'contract_past_end', ended: 'contract_past_end' })
+const CONTRACT_DATE_KIND = Object.freeze({ contract_notice_due: 'notice_by', contract_ending: 'ends', contract_past_end: 'ended' })
+function contractWork(contracts, today) {
+  return array(contracts).flatMap((contract) => {
+    const kind = CONTRACT_WORK_KIND[text(contract.state)]
+    if (!kind) return []
+    const id = text(contract.id)
+    const date = calendarDay(contract.keyDate) || null
+    return [row(kind, 'contract', id, {
+      label: text(contract.number) || id,
+      name: text(contract.supplierName) || null,
+      href: `/app/contracts/${encode(id)}`,
+      date,
+      dateKind: CONTRACT_DATE_KIND[kind],
+      overdueDays: kind === 'contract_past_end' ? daysLate(date, today) : 0,
+      detail: {
+        title: text(contract.title) || null,
+        renewal: text(contract.renewal) || null,
+        endDate: calendarDay(contract.endDate) || null,
+        noticeDeadline: calendarDay(contract.noticeDeadline) || null,
+      },
+    })]
+  })
+}
+
 // Earliest date first, undated last; ties by kind, then label, then id.
 export function compareTodayWork(a, b) {
   if (a.date !== b.date) return !a.date ? 1 : !b.date ? -1 : a.date < b.date ? -1 : 1
@@ -340,6 +376,7 @@ export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFA
     ...receivableWork(sources.receivables, today),
     ...salesOrderWork(sources.salesOrders, today),
     ...purchasingWork(sources.purchaseRequests, sources.purchaseOrders),
+    ...contractWork(sources.contracts, today),
   ].sort(compareTodayWork)
   return {
     today,
@@ -357,7 +394,14 @@ export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFA
 // adjustment, if adjustments are turned on. Invitations are made in Users &
 // Roles. A reader who may not do a step gets no link ('permission'), and a
 // step this workspace has no page for gets none either ('unavailable').
-export function buildFirstRunChecklist(setup, { permissions = {}, importEnabled = false, adjustmentsEnabled = false } = {}) {
+export function buildFirstRunChecklist(setup, options = {}) {
+  const checklist = firstRunSetupSteps(setup, options)
+  return checklist && checklist.done < checklist.total ? checklist : null
+}
+
+// Every step of the checklist, also once all are done: Today hides a
+// finished checklist, the assistant's setup_status still reports it.
+export function firstRunSetupSteps(setup, { permissions = {}, importEnabled = false, adjustmentsEnabled = false } = {}) {
   if (!setup) return null
   const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
   const importPage = (type, fallback) => (importEnabled ? `/app/master-data/import?type=${type}` : fallback)
@@ -374,8 +418,7 @@ export function buildFirstRunChecklist(setup, { permissions = {}, importEnabled 
     href: permitted && href ? href : null,
     blocked: !permitted ? 'permission' : !href ? 'unavailable' : null,
   }))
-  const done = steps.filter((step) => step.done).length
-  return done === steps.length ? null : { steps, done, total: steps.length }
+  return { steps, done: steps.filter((step) => step.done).length, total: steps.length }
 }
 
 // How many documents the reader can open were last changed on the workspace

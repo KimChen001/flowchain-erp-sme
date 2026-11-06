@@ -25,7 +25,7 @@ const tenantId = "tenant-rfq-award-api";
 const otherTenantId = "tenant-rfq-award-api-other";
 const database = "flowchain_rfq_award_api";
 const url = `postgresql://flowchain_rfq_award_api:${encodeURIComponent(password)}@127.0.0.1:${pgPort}/${database}?schema=public`;
-const env = { ...process.env, DATABASE_URL: url, DATABASE_URL_TEST: url, FLOWCHAIN_PERSISTENCE_MODE: "database",
+const env = { ...process.env, DATABASE_URL: url, DATABASE_URL_TEST: url, FLOWCHAIN_APPROVAL_EMAILS: process.env.FLOWCHAIN_APPROVAL_EMAILS || "off", FLOWCHAIN_PERSISTENCE_MODE: "database",
   FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS: "true",
   FLOWCHAIN_LOCAL_SESSION_SECRET: "rfq-award-api-session-secret-at-least-32-characters", NODE_ENV: "test", SCM_API_PORT: String(apiPort) };
 const pg = new EmbeddedPostgres({ databaseDir: directory, user: "flowchain_rfq_award_api", password, port: pgPort, persistent: false, onLog: () => {}, onError: () => {} });

@@ -2,7 +2,7 @@
 // language (US English unless their preference is zh-CN), as text and HTML.
 export const SIGN_IN_LINK_TTL_MINUTES = 15;
 
-const escapeHtml = (value) => String(value ?? "")
+export const escapeHtml = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
   .replace(/</g, "&lt;")
   .replace(/>/g, "&gt;")

@@ -47,9 +47,16 @@ export function Notice({ children, tone = "warning" }: { children: ReactNode; to
   );
 }
 
-export function StatusChip({ status }: { status: string }) {
+// A stored finance status code in the interface language, as the status chip
+// shows it; an unknown code is shown as stored.
+export function useFinanceStatusLabel() {
   const { t } = useI18n();
-  return <Chip label={STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status || "—"} color={A.blue} bg="#eff6ff" />;
+  return (status: string) => (STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status || "—");
+}
+
+export function StatusChip({ status }: { status: string }) {
+  const label = useFinanceStatusLabel();
+  return <Chip label={label(status)} color={A.blue} bg="#eff6ff" />;
 }
 
 // One operation: an optional reason, a preview of the server's plan, then a

@@ -161,3 +161,63 @@ test("a member who may only read warehouse access sees a teammate's access on ev
   await expect(page.getByTestId("warehouse-access-save")).toHaveCount(0);
   await expect(page.getByLabel("MAIN Warehouse scope", { exact: true })).toHaveCount(0);
 });
+
+// Warehouses and bins are kept in Settings > Warehouse access by whoever may
+// manage the workspace. The warehouse added here is left inactive, so it is
+// not offered to the specs that run after this one.
+test("a workspace administrator adds a warehouse and a bin and sets both inactive", async ({ page, request }) => {
+  const admin = await login(request, "admin@example.com");
+  await session(page, admin);
+  await forceLanguage(page, "en-US");
+  const code = `PW-${Date.now().toString(36).toUpperCase()}`;
+
+  await page.goto("/app/settings/warehouse-access");
+  await page.getByTestId("warehouse-new").click();
+  await page.getByTestId("warehouse-field-code").fill(code.toLowerCase());
+  await page.getByTestId("warehouse-field-name").fill("Playwright Depot");
+  await page.getByTestId("warehouse-save").click();
+  await expect(page.getByTestId("warehouse-notice")).toContainText(`${code} added`);
+  await expect(page.getByTestId(`warehouse-status-${code}`)).toHaveText("Active");
+  // The creator has operate access to it, so it is listed with its access.
+  await expect(page.getByTestId("warehouse-access")).toContainText(`${code} · Playwright Depot`);
+
+  await page.getByTestId(`warehouse-bins-${code}`).click();
+  await page.getByTestId(`bin-field-code-${code}`).fill("A-01");
+  await page.getByTestId(`bin-new-${code}`).click();
+  await expect(page.getByTestId(`bin-status-${code}-A-01`)).toHaveText("Active");
+  await page.getByTestId(`bin-toggle-${code}-A-01`).click();
+  await expect(page.getByTestId(`bin-status-${code}-A-01`)).toHaveText("Inactive");
+  // Bins are names only; the page says so.
+  await expect(page.getByTestId(`bin-advisory-${code}`)).toContainText("does not block receiving or transfers");
+
+  page.once("dialog", (dialog: any) => dialog.accept());
+  await page.getByTestId(`warehouse-toggle-${code}`).click();
+  await expect(page.getByTestId(`warehouse-status-${code}`)).toHaveText("Inactive");
+  await expect(page.getByTestId("warehouse-access")).toContainText(`${code} · Playwright Depot · Inactive`);
+  const listed = await (await request.get("/api/master-data/warehouses", auth(admin.token))).json();
+  expect(listed.warehouses.find((row: any) => row.code === code).status).toBe("inactive");
+  const options = (await (await request.get("/api/master-data/warehouses/select", auth(admin.token))).json()).options;
+  expect(options.some((row: any) => row.code === code)).toBe(false);
+
+  // The same section in Chinese.
+  await forceLanguage(page, "zh-CN");
+  await page.goto("/app/settings/warehouse-access");
+  await expect(page.getByTestId(`warehouse-status-${code}`)).toHaveText("停用");
+  await expect(page.getByTestId(`warehouse-toggle-${code}`)).toHaveText("设为启用");
+});
+
+test("a member without Manage workspace settings sees no warehouse controls", async ({ page, request }) => {
+  const { reader } = await setUpUsers(request);
+  const value = await login(request, reader);
+  await session(page, value);
+  await forceLanguage(page, "en-US");
+
+  await page.goto("/app/settings/warehouse-access");
+  await expect(page.getByTestId("warehouse-access-user")).toBeVisible();
+  await expect(page.getByTestId("warehouse-master")).toHaveCount(0);
+  await expect(page.getByTestId("warehouse-new")).toHaveCount(0);
+  // The server refuses it as well.
+  const refused = await request.post("/api/master-data/warehouses", { ...auth(value.token), data: { code: "FORGED", name: "Forged" } });
+  expect(refused.status()).toBe(403);
+  expect((await refused.json()).permission).toBe("settings.workspace.manage");
+});

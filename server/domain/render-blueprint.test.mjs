@@ -5,6 +5,14 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import { capabilityRegistryForEnvironment } from "./capability-registry.mjs";
+import { assistantV2ModelClient } from "./ai-assistant-v2-controls.mjs";
+import { createAssistantV2ModelClient } from "./ai-assistant-v2-model/index.mjs";
+import { canCallEmbeddingProvider } from "./ai-embedding-provider.mjs";
+import { knowledgeProviderEnv } from "./ai-knowledge-config.mjs";
+import { aiModelFirstEnabled } from "./ai-model-first.mjs";
+import { isAiProviderEnabled } from "./ai-provider-safety.mjs";
+import { canCallConfiguredProvider } from "./ai-runtime-provider-adapter-v2.mjs";
+import { aiMonthlyCapUsd, aiOptInRequired, aiProviderConfigured, assertAiAssistantV2Deployment, modelFreeEnv } from "./ai-workspace-access.mjs";
 
 const repoFile = (relativePath) => readFileSync(resolve(import.meta.dirname, "../..", relativePath), "utf8");
 
@@ -109,7 +117,26 @@ const IMAGE_ENV = { NODE_ENV: "production", FLOWCHAIN_DEPLOYMENT_PROFILE: "produ
 const RENDER_PLATFORM_ENV = { RENDER: "true", RENDER_GIT_COMMIT: RENDER_SHA, RENDER_GIT_BRANCH: "main" };
 // Keys the guard requires that Render satisfies without a Blueprint entry.
 const PLATFORM_SATISFIED = { FLOWCHAIN_COMMIT_SHA: "RENDER_GIT_COMMIT" };
-const SECRET_KEYS = ["POSTMARK_SERVER_TOKEN", "RESEND_API_KEY", "OPENAI_API_KEY"];
+// FLOWCHAIN_ERROR_WEBHOOK_URL is a credential too: anyone holding it can post to the channel.
+const SECRET_KEYS = ["POSTMARK_SERVER_TOKEN", "RESEND_API_KEY", "FLOWCHAIN_ERROR_WEBHOOK_URL"];
+// Any setting that would let a deployed site call a model: provider keys and
+// endpoints, the knowledge presets and the model switches.
+const AI_PROVIDER_SETTING = /^(OPENAI_|ARK_|DOUBAO_|DASHSCOPE_|PARLEY_|AI_PROVIDER|FLOWCHAIN_AI_|FLOWCHAIN_KNOWLEDGE_|FLOWCHAIN_PARLEY_|FLOWCHAIN_ENABLE_AI_)/;
+// The only ones render.yaml declares: assistant v2 on MIT Parley with Claude
+// Sonnet 5.5, for switched-on workspaces only (owner decision, 2026-11-04,
+// replacing V4 of 2026-10-04, "the trial calls no model"). No other provider,
+// knowledge preset, embeddings, answer wording (P3) or model-first mode.
+const AI_SETTINGS = Object.freeze({
+  FLOWCHAIN_AI_ASSISTANT_MODE: { value: "assistant_v2" },
+  FLOWCHAIN_AI_WORKSPACE_OPT_IN: { value: "required" },
+  FLOWCHAIN_AI_RUNTIME_MODE: { value: "provider_assisted" },
+  FLOWCHAIN_AI_PROVIDER_KIND: { value: "parley_chat" },
+  FLOWCHAIN_AI_PROVIDER_ENDPOINT: { value: "https://parley.api.mit.edu/v1/chat/completions" },
+  FLOWCHAIN_AI_PROVIDER_MODEL: { value: "claude-sonnet-5-5" },
+  FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION: { value: "true" },
+  FLOWCHAIN_AI_PROVIDER_API_KEY: { sync: false },
+  FLOWCHAIN_AI_MONTHLY_CAP_USD: { value: "25" },
+});
 const OPERATOR_KEYS = ["FLOWCHAIN_DEFAULT_TENANT_ID", "FLOWCHAIN_MAIL_PROVIDER", "FLOWCHAIN_MAIL_FROM", "FLOWCHAIN_PUBLIC_BASE_URL"];
 
 // Every key the production guard reports when nothing is configured.
@@ -231,9 +258,43 @@ for (const environment of environments) {
     for (const key of [...SECRET_KEYS, ...OPERATOR_KEYS]) assert.equal(byKey[key]?.sync, false, key);
   });
 
+  test(`${environment.name}: only assistant v2 calls a model, on Parley, and only for switched-on workspaces`, () => {
+    const declared = service.envVars.filter((entry) => AI_PROVIDER_SETTING.test(entry.key));
+    assert.deepEqual(Object.fromEntries(declared.map(({ key, ...source }) => [key, source])), AI_SETTINGS);
+    // With every dashboard prompt filled in (the Parley key included).
+    const env = simulatedRenderEnv(service, database);
+    // The startup check passes: v2 with the workspace opt-in required.
+    assert.doesNotThrow(() => assertAiAssistantV2Deployment(env));
+    assert.equal(aiOptInRequired(env), true);
+    assert.equal(aiMonthlyCapUsd(env), 25);
+    // Production runs Parley only because the deployment allows it.
+    assert.equal(createAssistantV2ModelClient(env).kind, "chat_completions");
+    assert.throws(() => createAssistantV2ModelClient({ ...env, FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION: "false" }), (error) => error.reason === "local_only_provider");
+    // A workspace that is not switched on gets no model, and neither do the
+    // rules when v2 hands a question back (both run on modelFreeEnv).
+    const identity = { authenticated: true, tenantId: "tenant-render-blueprint" };
+    assert.ok(assistantV2ModelClient({ env, identity, aiWorkspaceAccessStatus: "on" }));
+    assert.equal(assistantV2ModelClient({ env, identity, aiWorkspaceAccessStatus: "off" }), null);
+    assert.equal(aiProviderConfigured(modelFreeEnv(env)), false, "model-free environment");
+    // Until the key is entered, nothing can call a model.
+    assert.equal(aiProviderConfigured({ ...env, FLOWCHAIN_AI_PROVIDER_API_KEY: "" }), false, "no key");
+    // No other model path: knowledge provider and embeddings, model-first, the legacy /api/ai path.
+    assert.equal(env.FLOWCHAIN_KNOWLEDGE_PROVIDER, undefined);
+    assert.equal(canCallEmbeddingProvider(knowledgeProviderEnv(env)), false, "knowledge embeddings");
+    assert.equal(aiModelFirstEnabled(env), false, "model-first");
+    assert.equal(isAiProviderEnabled(env), false, "legacy /api/ai provider path");
+    assert.equal(canCallConfiguredProvider(env), true, "the assistant provider itself");
+  });
+
   test(`${environment.name}: the US trial capability set matches deploy/env.production.example`, () => {
     const env = simulatedRenderEnv(service, database);
     assert.deepEqual(enabledCapabilities(env), enabledCapabilities(parseExample("deploy/env.production.example")));
+  });
+
+  test(`${environment.name}: contracts are off in the trial (D10)`, () => {
+    const env = simulatedRenderEnv(service, database);
+    assert.equal(env.FLOWCHAIN_ENABLE_CONTRACTS, "false");
+    assert.equal(enabledCapabilities(env).includes("contracts"), false);
   });
 }
 

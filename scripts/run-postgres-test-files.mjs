@@ -33,6 +33,8 @@ const env = {
   ...process.env,
   DATABASE_URL: url,
   DATABASE_URL_TEST: url,
+  // Approval emails stay off unless a suite turns them on (approval-email.test.mjs does).
+  FLOWCHAIN_APPROVAL_EMAILS: process.env.FLOWCHAIN_APPROVAL_EMAILS || "off",
   FLOWCHAIN_PERSISTENCE_MODE: "database",
   FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: "true",
   FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "true",

@@ -47,7 +47,7 @@ if (localFiles.length) {
 // The opt-in model provider (see the top of this file).
 const AI_ENV_KEYS = new Set([
   "FLOWCHAIN_AI_RUNTIME_MODE", "FLOWCHAIN_AI_PROVIDER_KIND", "FLOWCHAIN_AI_PROVIDER_ENDPOINT", "FLOWCHAIN_AI_PROVIDER_MODEL",
-  "FLOWCHAIN_AI_PROVIDER_API_KEY", "FLOWCHAIN_AI_PROVIDER_TIMEOUT_MS", "FLOWCHAIN_AI_PROVIDER_MAX_OUTPUT_CHARS",
+  "FLOWCHAIN_AI_PROVIDER_API_KEY", "FLOWCHAIN_AI_PROVIDER_TIMEOUT_MS", "FLOWCHAIN_AI_PROVIDER_MAX_OUTPUT_CHARS", "FLOWCHAIN_AI_PROVIDER_SESSION_HEADER",
   "FLOWCHAIN_KNOWLEDGE_PROVIDER", "FLOWCHAIN_ENABLE_AI_SEMANTIC_PLANNER",
 ]);
 const aiEnvArg = process.argv.find((arg) => arg.startsWith("--ai-env="));
@@ -105,8 +105,11 @@ const env = {
   FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: "true",
   FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: "true",
   FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
-  FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "true",
+  FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "false",
   FLOWCHAIN_ENABLE_DATA_IMPORT: "true",
+  // Contracts are on in the walkthrough and off in the trial
+  // (docs/contracts-module-design.md, D10).
+  FLOWCHAIN_ENABLE_CONTRACTS: "true",
   // No model provider: the assistant answers from workspace data only,
   // unless --ai-env opts in.
   OPENAI_API_KEY: "",

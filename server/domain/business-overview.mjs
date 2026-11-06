@@ -10,7 +10,10 @@ export const ALL_PURCHASE_ORDERS = 'All purchase orders in range, every status.'
 // salesDemand holds the open demand of each sales order line in scope
 // ({ orderId, open }); an order is unfulfilled while any of its lines has
 // demand left, so lines in different units are never added to decide it.
-export function buildBusinessOverview(all, { salesDemand = null } = {}) {
+// reorder is the reorder list's summary ({ orderNow }), read as the reorder
+// list and Today read it, so the three show the same count; without it (no
+// database, a reader of only some warehouses) the card is left out.
+export function buildBusinessOverview(all, { salesDemand = null, reorder = null } = {}) {
   const purchases = all.purchase_orders;
   const sales = all.sales_orders;
   const active = row => !['closed', 'cancelled', 'canceled', 'completed', 'fully_received', 'rejected'].includes(row.status);
@@ -41,7 +44,10 @@ export function buildBusinessOverview(all, { salesDemand = null } = {}) {
       // full record, using the shared definition, so this card and the open
       // purchase orders report it links to always count the same orders.
       { id: 'open_orders', label: 'Open purchase orders', count: purchases.filter(row => row.isOpen).length, path: '/app/reports/procurement?status=open', action: 'Review orders' },
-      { id: 'inventory_shortages', label: 'Inventory shortages', count: all.inventory_balances.filter(row => row.shortage !== null && row.shortage > 0).length, path: '/app/inventory?risk=high', action: 'Review inventory' },
+      ...(Number.isInteger(reorder?.orderNow) ? [{ id: 'items_to_reorder', label: 'Items to reorder', count: reorder.orderNow, path: '/app/inventory/reorder', action: 'Open reorder list' }] : []),
+      // Short against open sales orders, as the "SKUs short for sales orders"
+      // KPI counts; an item below its reorder point is in the card above.
+      { id: 'inventory_shortages', label: 'Short for sales orders', count: all.inventory_balances.filter(row => row.shortage !== null && row.shortage > 0).length, path: '/app/inventory?risk=high', action: 'Review inventory' },
       { id: 'unfulfilled_sales', label: 'Unfulfilled sales orders', count: sales.filter(row => active(row) && row.status !== 'draft' && unfulfilled(row)).length, path: '/app/sales/orders', action: 'Review orders' },
     ],
   };

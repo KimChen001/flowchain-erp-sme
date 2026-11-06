@@ -80,14 +80,8 @@ test('AI evidence navigation supports object-specific PO SKU RFQ GRN and PR focu
   assert.doesNotMatch(ai, /onClick=\{\(\) => askAi\(action\.target/)
 })
 
-test('Today Cockpit renders evidence through canonical links', () => {
+test('AI panel does not render evidence through raw internal hrefs', () => {
   const ai = readSource('src', 'modules', 'ai-assistant', 'Panel.tsx')
-  const cockpit = readSource('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
 
   assert.doesNotMatch(ai, /href=\{safeInternalTarget/)
-  assert.match(cockpit, /normalizeTodayCockpitTarget\(card\)/)
-  assert.match(cockpit, /normalizeTodayCockpitTarget\(doc\)/)
-  assert.match(cockpit, /onNavigate\(moduleId, link\?\.focusTarget \|\| null, \{/)
-  assert.match(cockpit, /returnTo:\s*"overview"/)
-  assert.match(cockpit, /returnLabel:\s*"返回 今日行动"/)
 })

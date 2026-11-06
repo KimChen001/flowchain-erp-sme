@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSupplierInsights, spendConcentration, suggestSupplierTiers, supplierItemSources, supplierPurchaseRecords, supplierPurchaseTotals } from './supplier-insights.mjs'
+import * as insights from './supplier-insights.mjs'
+import { buildSupplierInsights, supplierPurchaseRecords, supplierPurchaseTotals } from './supplier-insights.mjs'
 
 const window = { from: '2025-10-05', to: '2026-10-04' }
 const po = (supplierId, amount, extra = {}) => ({ supplierId, status: 'issued', totalAmount: amount, currency: 'USD', createdAt: '2026-09-01', lines: [], ...extra })
 const suppliers = ['A', 'B', 'C', 'D'].map((id) => ({ id, name: `Supplier ${id}`, status: 'active' }))
-const noSources = { only: new Map(), shared: new Map(), unrecorded: new Map() }
 
 test('12-month totals count committed orders by business date, per currency', () => {
   const totals = supplierPurchaseTotals([
@@ -18,61 +18,20 @@ test('12-month totals count committed orders by business date, per currency', ()
   assert.equal(totals.has(''), false)
 })
 
-test('the suppliers that make the first half of spend are concentrated, the one crossing half included', () => {
-  const totals = supplierPurchaseTotals([po('A', 40), po('B', 35), po('C', 25)], window)
-  assert.deepEqual([...spendConcentration(suppliers, totals, { amounts: true })], [
-    ['A', { share: 0.4, rank: 1, of: 3, basis: 'amount', currency: 'USD' }],
-    ['B', { share: 0.35, rank: 2, of: 3, basis: 'amount', currency: 'USD' }],
-  ])
-  // Exactly half from one supplier stops there.
-  assert.deepEqual([...spendConcentration(suppliers, supplierPurchaseTotals([po('A', 50), po('B', 30), po('C', 20)], window), { amounts: true }).keys()], ['A'])
-  // Several currencies, or amounts the reader may not see, fall back to order counts.
-  const mixed = supplierPurchaseTotals([po('A', 900), po('B', 10, { currency: 'EUR' }), po('B', 10, { currency: 'EUR' })], window)
-  assert.deepEqual(spendConcentration(suppliers, mixed, { amounts: true }).get('B'), { share: 0.667, rank: 1, of: 2, basis: 'orders' })
-  assert.equal(spendConcentration(suppliers, totals, { amounts: false }).get('A').basis, 'orders')
-})
-
-test('only recorded links make an only source; a preferred supplier alone is "sources not recorded"', () => {
-  const items = [
-    { id: 'I1', sku: 'SKU-1', status: 'active' }, { id: 'I2', sku: 'SKU-2', status: 'active' },
-    { id: 'I3', sku: 'SKU-3', status: 'active', preferredSupplierId: 'C' }, { id: 'I4', sku: 'SKU-4', status: 'inactive' },
-  ]
-  const links = [
-    { itemId: 'I1', supplierId: 'A' }, { itemId: 'I2', supplierId: 'A' }, { itemId: 'I2', supplierId: 'B' },
-    { itemId: 'I4', supplierId: 'D' }, { itemId: 'I1', supplierId: 'D', approved: false },
-  ]
-  const sources = supplierItemSources({ suppliers, items, links })
-  assert.deepEqual(Object.fromEntries(sources.only), { A: ['SKU-1'] })
-  assert.deepEqual(Object.fromEntries(sources.shared), { A: ['SKU-2'], B: ['SKU-2'] })
-  assert.deepEqual(Object.fromEntries(sources.unrecorded), { C: ['SKU-3'] })
-  // A link to an inactive supplier is no source.
-  const inactive = supplierItemSources({ suppliers: [...suppliers.slice(0, 3), { id: 'D', status: 'inactive' }], items, links: [{ itemId: 'I1', supplierId: 'D' }] })
-  assert.equal(inactive.only.size, 0)
-})
-
-test('suggestions: Tier 1 by concentration or only source, Tier 3 for no orders and no items, else Tier 2', () => {
-  const totals = supplierPurchaseTotals([po('A', 60), po('B', 30), po('B', 10)], window)
-  const sources = { only: new Map([['C', ['SKU-1']]]), shared: new Map([['B', ['SKU-2']]]), unrecorded: new Map() }
-  const full = suggestSupplierTiers({ suppliers, totals, sources, visibility: { orders: true, amounts: true } })
-  assert.deepEqual(full.get('A'), { tier: 1, partial: false, reasons: [{ code: 'spend_share', share: 0.6, rank: 1, of: 2, basis: 'amount', currency: 'USD' }] })
-  assert.deepEqual(full.get('B'), { tier: 2, partial: false, reasons: [{ code: 'orders', orders: 2 }, { code: 'other_sources', skus: ['SKU-2'], more: 0 }] })
-  assert.deepEqual(full.get('C'), { tier: 1, partial: false, reasons: [{ code: 'only_source', skus: ['SKU-1'], more: 0 }, { code: 'no_orders' }] })
-  assert.deepEqual(full.get('D'), { tier: 3, partial: false, reasons: [{ code: 'no_orders' }, { code: 'not_a_source' }] })
-  // Without purchase orders only sources show, and "no orders" is never claimed.
-  const partial = suggestSupplierTiers({ suppliers, totals, sources, visibility: { orders: false } })
-  assert.deepEqual([...partial.values()].map((row) => [row.tier, row.partial]), [[null, true], [2, true], [1, true], [null, true]])
-  assert.ok([...partial.values()].every((row) => row.reasons.every((reason) => !['orders', 'no_orders', 'spend_share', 'not_a_source'].includes(reason.code))))
-})
-
 test('metrics are null when the reader may not see them', () => {
   const totals = supplierPurchaseTotals([po('A', 100)], window)
   const openRows = [{ supplierId: 'A', isOpen: true, overdueDays: 3 }, { supplierId: 'A', isOpen: true, overdueDays: 0 }]
   const signals = [{ type: 'po_overdue', supplierId: 'A' }, { type: 'po_due_7d', supplierId: 'A' }, { type: 'invoice_variance', supplierId: 'A' }, { type: 'invoice_variance', supplierId: '' }]
-  const suggestions = suggestSupplierTiers({ suppliers, totals, sources: noSources, visibility: { orders: true, amounts: true } })
-  const seen = buildSupplierInsights({ suppliers, totals, openRows, signals, suggestions, visibility: { orders: true, amounts: true, onTime: false, issues: true } }).A
+  const seen = buildSupplierInsights({ suppliers, totals, openRows, signals, visibility: { orders: true, amounts: true, onTime: false, issues: true } }).A
   assert.deepEqual([seen.spend12m, seen.openPos, seen.overduePos, seen.onTime, seen.openIssues], [[{ currency: 'USD', amount: 100 }], 2, 1, null, 2])
-  const hidden = buildSupplierInsights({ suppliers, totals, openRows, signals, suggestions, visibility: { orders: false, amounts: false, onTime: false, issues: false } }).A
+  const hidden = buildSupplierInsights({ suppliers, totals, openRows, signals, visibility: { orders: false, amounts: false, onTime: false, issues: false } }).A
   assert.deepEqual([hidden.spend12m, hidden.orders12m, hidden.openPos, hidden.overduePos, hidden.onTime, hidden.openIssues], [null, null, null, null, null, null])
+})
+
+test('FlowChain suggests no tier: tiers are set by a person (owner decision 2026-10-09)', () => {
+  const row = buildSupplierInsights({ suppliers, totals: supplierPurchaseTotals([po('A', 100)], window), visibility: { orders: true, amounts: true, onTime: true, issues: true } }).A
+  assert.equal('suggestion' in row, false)
+  assert.equal(Object.keys(insights).some((name) => /suggest|concentration|itemSources/i.test(name)), false)
 })
 
 test('purchase records use the workspace day and the due day the open purchase orders report counts from', () => {
@@ -87,4 +46,27 @@ test('purchase records use the workspace day and the due day the open purchase o
   assert.equal(rows.find((row) => row.id === 'PO-EVENING').date, '2026-09-30')
   assert.equal(rows.find((row) => row.id === 'PO-SPLIT').promisedDate, '2026-09-20')
   assert.equal(supplierPurchaseRecords([late], 'A', { timeZone: 'Asia/Shanghai' }).rows[0].date, '2026-10-01')
+})
+
+test('supplier risks list every supplier issue the earliest date first, never by a score, with the supplier named', () => {
+  const when = (kind, date, days) => ({ kind, date, days })
+  const signals = [
+    { id: 'invoice_variance:INV-9', type: 'invoice_variance', supplierId: 'B', entityType: 'supplier_invoice', entityId: 'INV-9', label: 'INV-9', when: when('open', '2026-09-20', 14), data: { variance: 12.5, currency: 'USD' }, severity: 'risk' },
+    { id: 'po_overdue:PO-2', type: 'po_overdue', supplierId: 'A', entityType: 'purchase_order', entityId: 'PO-2', label: 'PO-2', when: when('overdue', '2026-09-28', 6), data: { days: 6 }, severity: 'risk' },
+    { id: 'po_overdue:PO-1', type: 'po_overdue', supplierId: 'A', entityType: 'purchase_order', entityId: 'PO-1', label: 'PO-1', when: when('overdue', '2026-09-01', 33), data: { days: 33 }, severity: 'risk' },
+    { id: 'grn_received_unposted:GRN-4', type: 'grn_received_unposted', supplierId: 'C', entityType: 'receiving_doc', entityId: 'GRN-4', label: 'GRN-4', when: when('open', '2026-10-01', 3), data: {}, severity: 'info' },
+    // Not a supplier issue, and an issue of a supplier not in the master: neither is listed.
+    { id: 'po_due_7d:PO-3', type: 'po_due_7d', supplierId: 'A', entityType: 'purchase_order', entityId: 'PO-3', label: 'PO-3', when: when('due', '2026-10-06', 2), data: {} },
+    { id: 'po_overdue:PO-X', type: 'po_overdue', supplierId: 'GONE', entityType: 'purchase_order', entityId: 'PO-X', label: 'PO-X', when: when('overdue', '2026-08-01', 64), data: { days: 64 } },
+  ]
+  const master = [{ id: 'A', code: 'SUP-A', name: 'Acme' }, { id: 'B', code: '', name: 'Birch' }, { id: 'C', code: 'SUP-C', name: '' }]
+  const rows = insights.supplierRiskRows(signals, master)
+  assert.deepEqual(rows.map((row) => row.entityId), ['PO-1', 'INV-9', 'PO-2', 'GRN-4'])
+  assert.deepEqual(rows.map((row) => row.when.date), [...rows.map((row) => row.when.date)].sort())
+  assert.deepEqual(rows.map((row) => [row.supplierId, row.supplierCode, row.supplierName]), [['A', 'SUP-A', 'Acme'], ['B', 'B', 'Birch'], ['A', 'SUP-A', 'Acme'], ['C', 'SUP-C', 'C']])
+  assert.deepEqual(rows[0], { id: 'po_overdue:PO-1', type: 'po_overdue', entityType: 'purchase_order', entityId: 'PO-1', label: 'PO-1', when: when('overdue', '2026-09-01', 33), data: { days: 33 }, supplierId: 'A', supplierCode: 'SUP-A', supplierName: 'Acme' })
+  // No score, weight or severity rank travels with a row.
+  assert.ok(rows.every((row) => !('severity' in row) && !('score' in row) && !('rank' in row)))
+  // The rows are exactly what each supplier's detail page lists.
+  for (const id of ['A', 'B', 'C']) assert.equal(rows.filter((row) => row.supplierId === id).length, insights.supplierIssueSignals(signals, id).length)
 })

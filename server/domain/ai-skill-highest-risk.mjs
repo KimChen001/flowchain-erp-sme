@@ -1,7 +1,7 @@
 import { aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, compareSignalsByPrintedDate, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
-import { aiSkillFocusName, matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
+import { aiSkillFocusName, matchesAiSkillFocus, showingSentence } from './ai-skill-today-priorities.mjs'
 
 const TOP = 5
 // The open problems this list names: late orders, stock below its levels,
@@ -31,14 +31,15 @@ function supplierExposure(signals) {
   })
 }
 
-export function runHighestRisk(facts, { focus = null } = {}) {
+// `top` as for runTodayPriorities.
+export function runHighestRisk(facts, { focus = null, top = TOP } = {}) {
   const signals = buildAiSkillSignals(facts)
   const exposure = signals.filter((item) => EXPOSURE_TYPES.has(item.type))
   const ranked = [...rankAiSkillItemsByDate(exposure), ...supplierExposure(exposure)]
     .filter((item) => matchesAiSkillFocus(item, focus))
     .sort(compareSignalsByPrintedDate)
     .map((item, index) => ({ ...item, also: item.also || [], rank: index + 1 }))
-  return { skillId: 'highest_risk_items', focus, total: ranked.length, items: ranked.slice(0, TOP) }
+  return { skillId: 'highest_risk_items', focus, total: ranked.length, items: ranked.slice(0, top) }
 }
 
 export function presentHighestRisk(result, facts, { skill, language, query }) {
@@ -54,7 +55,8 @@ export function presentHighestRisk(result, facts, { skill, language, query }) {
     : first ? aiSkillText('risk.title', language, { first: firstText }) : aiSkillText('risk.title_none', language, { date: fmt.day(facts.asOf) })
   const summary = aiSkillSentences([
     ...(result.total ? [aiSkillText('risk.summary', language, { count: fmt.number(result.total) })] : []),
+    showingSentence(result, fmt, language, 'answer.showing'),
     ...aiSkillMetricSentences(facts, language, { spend: false, invoices: false }),
   ], language)
-  return presentAiSkillAnswer({ skill, facts, language, query, title, summary, severity: first?.severity || 'success', items: result.items, followUpIds: ['prepare_action_draft', 'today_priorities'] })
+  return presentAiSkillAnswer({ skill, facts, language, query, title, summary, severity: first?.severity || 'success', items: result.items, figures: [{ key: 'risk_item_count', code: 'risk_item_count', entityId: null, value: result.total }], followUpIds: ['prepare_action_draft', 'today_priorities'] })
 }

@@ -6,6 +6,8 @@ import { execFileSync } from "node:child_process";
 import { loadEnv } from "../config/env.mjs";
 import { resolveBuildIdentity, validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import { validateDatabasePersistenceConfig } from "../persistence/persistence-config.mjs";
+import { assertAiAssistantV2Deployment } from "../domain/ai-workspace-access.mjs";
+import { withSecurityHeaders } from "./security-headers.mjs";
 import { createHttpRequestHandler } from "./http-request-handler.mjs";
 import { requestLogEnabled, withRequestLogging } from "./request-logging.mjs";
 import { withServerErrorBoundary } from "./server-error-boundary.mjs";
@@ -14,8 +16,11 @@ import {
 } from "../domain/local-signed-session.mjs";
 import { createWorkspaceSessionStore } from "../auth/workspace-sessions.mjs";
 import { createEmailLinkService } from "../auth/email-link-sign-in.mjs";
+import { createLazyMailer } from "../mail/mailer.mjs";
+import { createApprovalNotifier } from "../notifications/approval-notifier.mjs";
 import { checkRuntimeReadiness } from "../domain/runtime-readiness.mjs";
-import { createServerLifecycle, registerShutdownSignals } from "./server-lifecycle.mjs";
+import { createServerLifecycle, registerProcessErrorHandlers, registerShutdownSignals } from "./server-lifecycle.mjs";
+import { createErrorReporter } from "../observability/error-reporter.mjs";
 import {
   actorFromBody,
   applyWorkflowTransition,
@@ -738,29 +743,41 @@ function supplierRecommendations() {
 }
 // requestLogger enables the one-line-per-request access log. It is off unless
 // supplied, so in-process test servers stay quiet; startScmServer supplies it.
-// Unhandled errors are always logged, to errorLogger or the console.
-// mailer replaces the provider FLOWCHAIN_MAIL_PROVIDER selects; tests and
-// harnesses pass one so they never reach a real mail service.
+// Unhandled errors are always logged, to errorLogger or the console, by
+// errorReporter, which also sends alerts when FLOWCHAIN_ERROR_WEBHOOK_URL is set.
+// mailer replaces the provider FLOWCHAIN_MAIL_PROVIDER selects for sign-in
+// links and approval emails; tests and harnesses pass one so they never reach
+// a real mail service.
+// staticDir is the built SPA the server serves (dist/ by default); tests pass
+// a folder of their own, so they need no prior `npm run build`.
 export function createScmServer({
   readinessCheck = checkRuntimeReadiness,
   requestLogger = null,
   errorLogger,
   mailer = null,
+  staticDir = distDir,
+  errorReporter = createErrorReporter({ logger: errorLogger || console, env: process.env, commitSha: buildIdentity.commitSha }),
 } = {}) {
   validateProductionRuntimeConfig(process.env);
   validateDatabasePersistenceConfig(process.env);
+  assertAiAssistantV2Deployment(process.env);
   // Sessions are rows in PostgreSQL, so they outlive this process.
   const sessionStore = createWorkspaceSessionStore({ env: process.env });
-  const emailLinks = createEmailLinkService({ env: process.env, sessionStore, mailer, logger: errorLogger || console });
+  // Sign-in links and approval emails share one provider (or the override).
+  const sharedMailer = mailer || createLazyMailer(process.env);
+  const emailLinks = createEmailLinkService({ env: process.env, sessionStore, mailer: sharedMailer, logger: errorLogger || console });
+  const approvalNotifier = createApprovalNotifier({ env: process.env, mailer: sharedMailer, logger: errorLogger || console });
   const localSessionSecret = createLocalSessionSecret(process.env);
   const handleRequest = createHttpRequestHandler({
     port,
-    distDir,
+    distDir: staticDir,
     buildIdentity,
     readinessCheck,
     sessionStore,
     emailLinks,
+    approvalNotifier,
     localSessionSecret,
+    errorReporter,
     domain: {
       event,
       todayLabel,
@@ -803,17 +820,19 @@ export function createScmServer({
     env: process.env,
   });
   return http.createServer(withRequestLogging(
-    withServerErrorBoundary(handleRequest, { logger: errorLogger }),
+    withSecurityHeaders(withServerErrorBoundary(handleRequest, { logger: errorLogger }), { env: process.env }),
     { logger: requestLogger },
   ));
 }
 
 export function startScmServer(listenPort = port, options = {}) {
   const logger = options.logger || console;
+  const errorReporter = createErrorReporter({ logger, env: process.env, commitSha: buildIdentity.commitSha });
   const server = createScmServer({
     readinessCheck: options.readinessCheck || checkRuntimeReadiness,
     requestLogger: requestLogEnabled(process.env) ? logger : null,
     errorLogger: logger,
+    errorReporter,
   });
   const lifecycle = createServerLifecycle({
     server,
@@ -821,12 +840,14 @@ export function startScmServer(listenPort = port, options = {}) {
     shutdownTimeoutMs: options.shutdownTimeoutMs,
   });
   const unregisterSignals = registerShutdownSignals({ lifecycle, logger });
+  const unregisterProcessErrors = registerProcessErrorHandlers({ reporter: errorReporter });
   server.lifecycle = lifecycle;
   server.shutdown = async (reason = "manual") => {
     try {
       await lifecycle.shutdown(reason);
     } finally {
       unregisterSignals();
+      unregisterProcessErrors();
     }
   };
   server.listen(listenPort, () => {

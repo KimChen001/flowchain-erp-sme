@@ -18,7 +18,8 @@ type Navigate = (moduleId: string, focus?: { entityType: string; entityId: strin
 type WorkKind =
   | "purchase_order_overdue" | "purchase_order_due" | "reorder_now" | "bill_exception" | "bill_to_approve" | "bill_to_match"
   | "bill_awaiting_receipt" | "customer_invoice_to_issue" | "receivable_overdue" | "sales_order_to_reserve" | "sales_order_to_ship"
-  | "purchase_order_to_approve" | "purchase_request_to_approve" | "purchase_request_to_convert" | "draft_purchase_order";
+  | "purchase_order_to_approve" | "purchase_request_to_approve" | "purchase_request_to_convert" | "draft_purchase_order"
+  | "contract_notice_due" | "contract_ending" | "contract_past_end";
 type WorkItem = {
   id: string;
   kind: WorkKind;
@@ -29,7 +30,7 @@ type WorkItem = {
   href: string;
   actionHref: string | null;
   date: string | null;
-  dateKind: "due" | "order_by" | "invoice" | "promised" | "required";
+  dateKind: "due" | "order_by" | "invoice" | "promised" | "required" | "notice_by" | "ends" | "ended";
   overdueDays: number;
   detail: Record<string, any>;
 };
@@ -48,7 +49,8 @@ type HomeOverview = {
   generatedAt: string;
 };
 
-const COLLAPSED = 10;
+// Today shows its five earliest rows; "Show all" opens the rest.
+const COLLAPSED = 5;
 const HIDDEN_KEYS: Record<string, TodayCopyKey> = {
   purchasing: "hiddenPurchasing",
   inventory: "hiddenInventory",
@@ -56,6 +58,7 @@ const HIDDEN_KEYS: Record<string, TodayCopyKey> = {
   sales_orders: "hiddenSalesOrders",
   customer_invoices: "hiddenCustomerInvoices",
   receivables: "hiddenReceivables",
+  contracts: "hiddenContracts",
 };
 const SOURCE_KEYS: Record<string, TodayCopyKey> = {
   reorder_list: "sourceReorder",
@@ -64,6 +67,7 @@ const SOURCE_KEYS: Record<string, TodayCopyKey> = {
   purchase_orders: "sourcePurchaseOrders",
   setup_counts: "sourceSetup",
   database: "sourceDatabase",
+  contracts: "sourceContracts",
 };
 const LINK = "fc-entity-link font-semibold text-blue-600 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
 
@@ -128,6 +132,9 @@ function RuntimeHomepage() {
     if (item.dateKind === "order_by") return item.date <= today ? t("orderToday") : t("orderBy", { date: day(item.date) });
     if (item.dateKind === "promised") return item.overdueDays > 0 ? t.count("lateDays", item.overdueDays) : item.date === today ? t("promisedToday") : t("promisedOn", { date: day(item.date) });
     if (item.dateKind === "required") return t("neededBy", { date: day(item.date) });
+    if (item.dateKind === "notice_by") return item.date === today ? t("noticeToday") : t("noticeBy", { date: day(item.date) });
+    if (item.dateKind === "ends") return item.date === today ? t("endsToday") : t("endsOn", { date: day(item.date) });
+    if (item.dateKind === "ended") return t.count("endedDays", item.overdueDays);
     return t("invoiceOn", { date: day(item.date) });
   };
   // Red for what is late or an exception, orange for today and for approvals
@@ -172,6 +179,9 @@ function RuntimeHomepage() {
         case "purchase_request_to_approve": return [amount === null ? null : t("requestAmount", { amount: money(d.amount, d.currency) })];
         case "purchase_request_to_convert": return [t("requestConvert")];
         case "draft_purchase_order": return [supplier];
+        case "contract_notice_due": return [d.title, supplier, d.endDate ? t("renewsUnlessNotice", { date: day(d.endDate) }) : null];
+        case "contract_ending": return [d.title, supplier, d.renewal === "by_agreement" ? t("renewByAgreement") : null];
+        case "contract_past_end": return [d.title, supplier, d.renewal === "automatic" ? t("recordNewEnd") : t("recordOutcome")];
         default: return [];
       }
     })();
@@ -184,21 +194,21 @@ function RuntimeHomepage() {
   const unavailable = (overview?.limitations || []).filter((code) => code.startsWith("today_source_unavailable:")).map((code) => code.slice("today_source_unavailable:".length));
   if (overview?.limitations?.includes("today_database_sources_unavailable")) unavailable.push("database");
   if (unavailable.length) notes.push(t("notChecked", { sources: [...new Set(unavailable)].map((code) => (SOURCE_KEYS[code] ? t(SOURCE_KEYS[code]) : code)).join(", ") }));
-  const truncated = (overview?.limitations || []).filter((code) => /^truncated:(customer_invoices|receivables)$/.test(code));
-  if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
+  const truncated = (overview?.limitations || []).filter((code) => /^truncated:(customer_invoices|receivables|contracts)$/.test(code));
+  if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("contracts") ? "sourceContracts" : code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
 
   const tiles = [
-    { id: "all" as const, label: t("tileWork"), value: overview?.workTotal ?? 0 },
-    { id: "overdue" as const, label: t("tileOverdue"), value: overview?.overdue ?? 0 },
+    { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: overview?.workTotal ?? 0 },
+    { id: "overdue" as const, label: t("tileOverdue"), note: t("tileOverdueNote"), value: overview?.overdue ?? 0 },
   ];
+
+  // The tiles read like the cards on top of every list page, white and
+  // full-width; the two counts filter the list below.
+  const tileClass = "flex flex-col items-start justify-start rounded-xl border bg-white p-4 text-left";
+  const tileStyle = { borderColor: A.border, boxShadow: "0 1px 2px rgba(15,23,42,0.04)" };
 
   return (
     <div data-testid="runtime-homepage" className="space-y-4">
-      <div>
-        <h2 className="text-lg font-semibold">{t("title")}</h2>
-        <p className="text-xs" style={{ color: A.sub }}>{t("subtitle")}</p>
-      </div>
-
       {overview?.firstRun ? (
         <Card className="p-5" data-testid="first-run-checklist">
           <h2 className="text-sm font-semibold">{t("setupTitle")}</h2>
@@ -218,76 +228,77 @@ function RuntimeHomepage() {
         </Card>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-        <Card className="p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold">{t("workTitle")}</h2>
-              <p className="mt-0.5 text-xs" style={{ color: A.sub }}>{t("workNote")}</p>
-            </div>
-            <button onClick={load} aria-label={t("refresh")}><RefreshCw size={15} /></button>
-          </div>
-          {state === "loading" ? (
-            <div className="py-10 text-center text-xs">{t("loading")}</div>
-          ) : shown.length === 0 ? (
-            <div className="py-10 text-center text-sm" style={{ color: A.sub }}>
-              <p>{filter === "overdue" ? t("noOverdueWork") : t("noWork")}</p>
-              {filter === "all" ? <div className="mx-auto mt-1 max-w-md text-xs">{t("noWorkHint")}</div> : null}
-            </div>
-          ) : (
-            <ul className="mt-3 divide-y" data-testid="today-work-list">
-              {visible.map((item) => (
-                <li key={item.id} className="flex items-start gap-3 py-3" data-testid="today-work-item" data-kind={item.kind}>
-                  <span className="mt-0.5 shrink-0 rounded px-2 py-1 text-xs font-medium" style={tone(item)}>{dateText(item)}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">{t(`kind_${item.kind}` as TodayCopyKey)}</div>
-                    <Link to={item.href} className={`mt-0.5 inline-block text-xs ${LINK}`}>{item.label}</Link>
-                    <div className="text-xs" style={{ color: A.sub }}>{reasons(item).join(" · ")}</div>
-                    {item.actionHref ? <Link to={item.actionHref} className={`text-xs ${LINK}`}>{t("openReorderList")}</Link> : null}
-                  </div>
-                  <Link to={item.href} className="p-1" aria-label={item.label}><ArrowRight size={16} /></Link>
-                </li>
-              ))}
-            </ul>
-          )}
-          {state === "loaded" && shown.length > COLLAPSED ? (
-            <button className="mt-2 text-xs text-blue-600" onClick={() => setExpanded((value) => !value)}>{expanded ? t("showFewer") : t("showAll", { n: shown.length })}</button>
-          ) : null}
-          {state === "loaded" && filter === "all" && overview && overview.workTotal > items.length ? (
-            <div className="mt-2 text-xs" style={{ color: A.sub }}>{t("moreNotShown", { n: overview.workTotal - items.length })}</div>
-          ) : null}
-          {state === "loaded" && notes.length ? (
-            <div className="mt-3 space-y-1 border-t pt-3 text-xs" style={{ color: A.sub }} data-testid="today-work-notes">
-              {notes.map((note, index) => <p key={index}>{note}</p>)}
-            </div>
-          ) : null}
-        </Card>
-
-        <Card className="p-5">
-          <h2 className="text-sm font-semibold">{t("statusTitle")}</h2>
-          <div className="mt-3 grid gap-2">
-            {tiles.map((tile) => (
-              <button
-                key={tile.id}
-                type="button"
-                aria-pressed={filter === tile.id}
-                onClick={() => { setFilter(tile.id); setExpanded(false); }}
-                className="rounded-md border p-4 text-left outline-none transition hover:bg-slate-50 focus:ring-2 focus:ring-blue-500"
-                style={{ background: filter === tile.id ? "#f0f6ff" : A.white }}
-                data-testid={`today-tile-${tile.id}`}
-              >
-                <div className="text-xs" style={{ color: A.sub }}>{tile.label}</div>
-                <div className="mt-1 text-2xl font-semibold">{tile.value}</div>
-              </button>
-            ))}
-            <div className="rounded-md border p-4" data-testid="today-tile-changes">
-              <div className="text-xs" style={{ color: A.sub }}>{t("tileChanges")}</div>
-              <div className="mt-1 text-2xl font-semibold">{overview?.todayChanges ?? 0}</div>
-              {today ? <div className="mt-1 text-xs" style={{ color: A.sub }}>{t("changesNote", { date: day(today) })}</div> : null}
-            </div>
-          </div>
-        </Card>
+      <div className="grid gap-4 md:grid-cols-3" data-testid="today-tiles">
+        {tiles.map((tile) => (
+          <button
+            key={tile.id}
+            type="button"
+            aria-pressed={filter === tile.id}
+            onClick={() => { setFilter(tile.id); setExpanded(false); }}
+            className={`${tileClass} outline-none transition hover:bg-slate-50 focus:ring-2 focus:ring-blue-500`}
+            style={{ ...tileStyle, background: filter === tile.id ? "#f0f6ff" : A.white, borderColor: filter === tile.id ? "#bfdbfe" : A.border }}
+            data-testid={`today-tile-${tile.id}`}
+          >
+            <div className="text-xs" style={{ color: A.sub }}>{tile.label}</div>
+            <div className="mt-1 text-2xl font-semibold">{tile.value}</div>
+            <div className="mt-1 text-xs" style={{ color: A.gray2 }}>{tile.note}</div>
+          </button>
+        ))}
+        <div className={tileClass} style={tileStyle} data-testid="today-tile-changes" title={today ? t("changesNote", { date: day(today) }) : undefined}>
+          <div className="text-xs" style={{ color: A.sub }}>{t("tileChanges")}</div>
+          <div className="mt-1 text-2xl font-semibold">{overview?.todayChanges ?? 0}</div>
+          {today ? <div className="mt-1 text-xs" style={{ color: A.gray2 }}>{t("changesShort", { date: day(today) })}</div> : null}
+        </div>
       </div>
+
+      <Card className="p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold">{t("workTitle")}</h2>
+            <p className="mt-0.5 text-xs" style={{ color: A.sub }}>{t("workNote")}</p>
+          </div>
+          <button onClick={load} aria-label={t("refresh")}><RefreshCw size={15} /></button>
+        </div>
+        {state === "loading" ? (
+          <div className="py-10 text-center text-xs">{t("loading")}</div>
+        ) : shown.length === 0 ? (
+          <div className="py-10 text-center text-sm" style={{ color: A.sub }}>
+            <p>{filter === "overdue" ? t("noOverdueWork") : t("noWork")}</p>
+            {filter === "all" ? <div className="mx-auto mt-1 max-w-md text-xs">{t("noWorkHint")}</div> : null}
+          </div>
+        ) : (
+          <ul className="mt-3 divide-y" data-testid="today-work-list">
+            {visible.map((item) => (
+              <li key={item.id} className="flex items-start gap-3 py-3" data-testid="today-work-item" data-kind={item.kind}>
+                {/* A fixed column, so every row's title starts at the same place;
+                    on a phone the date sits above the title instead. */}
+                <div className="mt-0.5 hidden w-48 shrink-0 sm:block" data-testid="today-work-date">
+                  <span className="inline-block max-w-full rounded px-2 py-1 text-xs font-medium" style={tone(item)}>{dateText(item)}</span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="mb-1 inline-block rounded px-2 py-0.5 text-xs font-medium sm:hidden" style={tone(item)}>{dateText(item)}</span>
+                  <div className="text-sm font-medium">{t(`kind_${item.kind}` as TodayCopyKey)}</div>
+                  <Link to={item.href} className={`mt-0.5 inline-block text-xs ${LINK}`}>{item.label}</Link>
+                  <div className="text-xs" style={{ color: A.sub }}>{reasons(item).join(" · ")}</div>
+                  {item.actionHref ? <Link to={item.actionHref} className={`text-xs ${LINK}`}>{t("openReorderList")}</Link> : null}
+                </div>
+                <Link to={item.href} className="p-1" aria-label={item.label}><ArrowRight size={16} /></Link>
+              </li>
+            ))}
+          </ul>
+        )}
+        {state === "loaded" && shown.length > COLLAPSED ? (
+          <button className="mt-2 text-xs text-blue-600" onClick={() => setExpanded((value) => !value)}>{expanded ? t("showFewer") : t("showAll", { n: shown.length })}</button>
+        ) : null}
+        {state === "loaded" && filter === "all" && overview && overview.workTotal > items.length ? (
+          <div className="mt-2 text-xs" style={{ color: A.sub }}>{t("moreNotShown", { n: overview.workTotal - items.length })}</div>
+        ) : null}
+        {state === "loaded" && notes.length ? (
+          <div className="mt-3 space-y-1 border-t pt-3 text-xs" style={{ color: A.sub }} data-testid="today-work-notes">
+            {notes.map((note, index) => <p key={index}>{note}</p>)}
+          </div>
+        ) : null}
+      </Card>
 
       <Card className="overflow-hidden">
         <div className="border-b p-5">

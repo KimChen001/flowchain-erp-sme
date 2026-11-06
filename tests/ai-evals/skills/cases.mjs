@@ -22,7 +22,7 @@ export const aiSkillRoutingCases = [
   { id: 'po-why', prompt: 'Why does this PO need attention?', focusTarget: po, expected: 'today_priorities', focus: po },
   { id: 'po-why-zh', prompt: '这个 PO 为什么需要关注？', focusTarget: po, expected: 'today_priorities', focus: po },
   { id: 'po-evidence', prompt: 'Which receipt or invoice evidence is missing?', focusTarget: po, expected: 'records_needing_data', focus: po },
-  { id: 'po-delay', prompt: 'What will a delay affect?', focusTarget: po, expected: 'highest_risk_items', focus: po },
+  { id: 'po-delay', prompt: 'What will a delay affect?', focusTarget: po, expected: 'late_order_impact', focus: po },
   { id: 'po-next', prompt: 'What should happen next?', focusTarget: po, expected: 'prepare_action_draft', focus: po },
   { id: 'po-next-zh', prompt: '建议下一步是什么？', focusTarget: po, expected: 'prepare_action_draft', focus: po },
   { id: 'sku-replenish', prompt: 'Does this SKU need replenishment?', focusTarget: sku, expected: 'today_priorities', focus: sku },
@@ -102,4 +102,13 @@ export const aiSkillRoutingCases = [
   { id: 'negative-delivered', prompt: 'delivered quantity', expected: null },
   { id: 'negative-schedule', prompt: 'production schedule', expected: null },
   { id: 'empty', prompt: '   ', expected: null },
+  // Found by the capability probe of 2026-10-28.
+  { id: 'help-en', prompt: 'What can you do?', expected: 'capability' },
+  { id: 'help-zh', prompt: '你能帮我做什么？', expected: 'capability' },
+  { id: 'help-about-record', prompt: 'What can you do about PO-020?', expected: null },
+  { id: 'order-pr-named-zh', prompt: '帮我给 Acme Components 建一个 200 件 LDM-001 的采购申请', expected: 'prepare_action_draft', mode: 'order' },
+  { id: 'orders-zh-caigoudan', prompt: '哪些采购单逾期了', expected: 'purchase_orders' },
+  { id: 'unit-price-not-order', prompt: '采购单价是多少？', expected: null },
+  { id: 'components-not-po', prompt: 'Compare Acme Components and Precision Fastener Works on late deliveries', expected: 'supplier_comparison' },
+  { id: 'customer-payments-zh', prompt: '哪些客户还没付款？', expected: null },
 ]

@@ -40,6 +40,7 @@ export function aiSkillKnownValues(facts) {
   for (const row of [...array(facts.rfqs?.readyToAward), ...array(facts.rfqs?.open)]) { add(row.id); keep(row.title) }
   for (const row of [...array(facts.receipts?.rejected), ...array(facts.receipts?.unposted)]) { add(row.id, row.documentNumber, row.poId, row.supplierId); keep(row.supplier, row.documentNumber, row.unit) }
   for (const row of array(facts.records)) { add(row.entityId); keep(row.label) }
+  for (const row of array(facts.salesOrders)) { add(row.id, row.number); keep(row.number, row.customer) }
   for (const value of ids) stored.add(value)
   return { ids, stored }
 }

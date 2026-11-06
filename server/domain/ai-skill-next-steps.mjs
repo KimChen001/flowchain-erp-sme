@@ -23,9 +23,11 @@ function signalFor(evidence, byId, byEntity, bySupplier) {
 
 // Lines that state a figure (the spend analysis' suppliers, items and months)
 // name no problem, so they get no next step and offer no draft.
-const FIGURE_LINES = new Set(['spend', 'spend_item', 'spend_month'])
+const FIGURE_LINES = new Set(['spend', 'spend_item', 'spend_month', 'supplier_performance'])
 
-export function attachAiSkillNextSteps(response, facts) {
+// With `drafts: false` the lines get their next step only (the model-first
+// loop offers its own forms).
+export function attachAiSkillNextSteps(response, facts, { drafts = true } = {}) {
   if (!facts || !response || !array(response.keyEvidence).length) return response
   const language = response.language
   const signals = [...buildAiSkillSignals(facts)].sort(compareSignalsByDate)
@@ -48,7 +50,7 @@ export function attachAiSkillNextSteps(response, facts) {
     if (!signal) return evidence
     const candidate = aiSkillDraftCandidate(signal, facts)
     const nextStep = evidence.nextStep || aiSkillNextStepText(candidate, facts, language)
-    if (canDraft && candidate.kind !== 'link' && reviewCards.length < MAX_DRAFTS) {
+    if (drafts && canDraft && candidate.kind !== 'link' && reviewCards.length < MAX_DRAFTS) {
       const card = aiSkillDraftCard(candidate, facts, language)
       // The card names the line it belongs to, so the answer can show it there.
       if (!taken.has(cardKey(card)) && !aiSkillDraftOrders(card).some((id) => covered.has(id))) {

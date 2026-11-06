@@ -75,19 +75,14 @@ function withClasses(rows) {
   })
 }
 
-export function runSpendAnalysis(facts, { route = null } = {}) {
-  if (!facts?.purchaseOrders || typeof facts.procurementReport !== 'function') return { skillId: 'spend_analysis', hidden: true }
-  const signals = route?.signals?.spend || {}
-  const named = array(route?.entities?.suppliers)
-  const supplier = named.length === 1 ? named[0] : null
-  const mode = signals.mode === 'trend' ? 'trend' : supplier ? 'supplier' : 'suppliers'
-  const period = aiSkillSpendPeriod(signals.period, facts.today)
-  const filters = period ? { from: period.from, to: period.to } : {}
-  let currency = text(signals.currency).toUpperCase() || null
+// The procurement report for these filters in one currency: the one asked
+// for; with orders in several currencies, the workspace's (or the one with the
+// most orders), as the dashboard's currency filter shows them, with the other
+// currencies' totals. Shared with the supplier comparison.
+export function aiSkillSpendReport(facts, filters = {}, requested = null) {
+  let currency = text(requested).toUpperCase() || null
   let report = facts.procurementReport(currency ? { ...filters, currency } : filters)
   let others = []
-  // Orders in several currencies: one currency at a time, as the dashboard's
-  // currency filter shows them, and the others' totals named.
   if (!currency && array(chart(report, 'procurement_spend_treemap')?.limitations).includes('multi_currency_unconverted')) {
     const amounts = array(spendKpi(report)?.currencyAmounts).filter((row) => row.currencyCode)
     const preferred = amounts.find((row) => row.currencyCode === text(facts.currency).toUpperCase())
@@ -99,6 +94,18 @@ export function runSpendAnalysis(facts, { route = null } = {}) {
     }
   }
   const treemap = chart(report, 'procurement_spend_treemap')
+  return { report, treemap, currency: treemap?.unit === 'currency' ? (currency || treemap?.currencyCode || null) : null, others }
+}
+
+export function runSpendAnalysis(facts, { route = null } = {}) {
+  if (!facts?.purchaseOrders || typeof facts.procurementReport !== 'function') return { skillId: 'spend_analysis', hidden: true }
+  const signals = route?.signals?.spend || {}
+  const named = array(route?.entities?.suppliers)
+  const supplier = named.length === 1 ? named[0] : null
+  const mode = signals.mode === 'trend' ? 'trend' : supplier ? 'supplier' : 'suppliers'
+  const period = aiSkillSpendPeriod(signals.period, facts.today)
+  const filters = period ? { from: period.from, to: period.to } : {}
+  const { report, treemap, currency, others } = aiSkillSpendReport(facts, filters, signals.currency)
   const trend = chart(report, 'procurement_spend_trend')
   const amounts = treemap?.unit === 'currency'
   const limitations = array(treemap?.limitations)
@@ -109,7 +116,7 @@ export function runSpendAnalysis(facts, { route = null } = {}) {
   // amount); otherwise the sum of the suppliers.
   const total = amounts ? (kpi?.currentValue ?? Math.round(sum * 100) / 100) : sum
   const base = {
-    skillId: 'spend_analysis', hidden: false, mode, period, currency: amounts ? (currency || treemap?.currencyCode || null) : null,
+    skillId: 'spend_analysis', hidden: false, mode, period, currency,
     amounts, countReason: amounts ? null : limitations.find((code) => ['amount_restricted', 'currency_missing_or_invalid', 'multi_currency_unconverted'].includes(code)) || null,
     amountMissing: limitations.includes('amount_missing'), others, total, supplierCount: rows.filter((row) => row.name !== UNSPECIFIED).length,
   }

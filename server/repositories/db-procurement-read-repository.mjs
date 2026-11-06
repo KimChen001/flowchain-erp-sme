@@ -120,6 +120,12 @@ function documentWhere(tenantId, id) {
   }
 }
 
+// The request with its requester's name, when the user is known.
+function withRequesterName(request, names) {
+  const name = names.get(request.requesterId)
+  return name ? { ...request, requesterName: name } : request
+}
+
 export function mapPurchaseRequest(record = {}) {
   const line = firstLine(record)
   const meta = metadata(record)
@@ -482,6 +488,7 @@ function mapReceivingDocument(record = {}) {
   const meta = metadata(record)
   return {
     grn: record.id,
+    documentNumber: text(record.documentNumber),
     po: text(record.poId),
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
@@ -507,6 +514,7 @@ function mapReceivingDocument(record = {}) {
       acceptedQty: numberFrom(entry.acceptedQty, 0),
       rejectedQty: numberFrom(entry.rejectedQty, 0),
       unit: text(entry.unit),
+      lotNumber: text(entry.lotNumber),
       warehouseId: text(entry.warehouseId || record.warehouseId),
       location: text(entry.location),
       status: numberFrom(entry.rejectedQty, 0) > 0 ? 'exception' : 'received',
@@ -768,8 +776,13 @@ async function loadProcurementSnapshot(client, filters = {}) {
     client.procurementFollowup.findMany({ where, orderBy: [{ createdAt: 'desc' }], take }),
   ])
 
+  // The requesters' names, so the request list shows a person, not a user id.
+  const requesterIds = [...new Set(purchaseRequests.map((record) => text(metadata(record).requesterId || record.requester)).filter(Boolean))]
+  const requesters = requesterIds.length && typeof client.user?.findMany === 'function'
+    ? new Map((await client.user.findMany({ where: { ...where, id: { in: requesterIds } }, select: { id: true, name: true } })).map((user) => [user.id, text(user.name)]))
+    : new Map()
   return {
-    purchaseRequests: purchaseRequests.map(mapPurchaseRequest),
+    purchaseRequests: purchaseRequests.map((record) => withRequesterName(mapPurchaseRequest(record), requesters)),
     rfqs: rfqs.map((rfq) => mapRfq(rfq, supplierQuotations)),
     purchaseOrders: purchaseOrders.map(mapPurchaseOrder),
     receivingDocs: receivingDocuments.map(mapReceivingDocument),

@@ -149,6 +149,8 @@ export function presentSupplierAttention(result, facts, { skill, language, query
     evidence,
     // One impact per listed supplier: its most urgent record's.
     impacts: result.suppliers.map((group) => ({ ...aiSkillImpact(group.items[0], language), affectedObjects: [group.supplierId] })),
+    // How many suppliers have open work, of which the answer lists the first.
+    figures: result.hidden ? [] : [{ key: 'supplier_attention_count', code: 'supplier_attention_count', entityId: null, value: result.total }],
     navigation, followUpIds,
   })
 }

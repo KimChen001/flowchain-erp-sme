@@ -32,7 +32,3 @@ export function grnLinesOf(grn?: ReceivingDoc | null): ReceivingDocLine[] {
     status: grn.status,
   }];
 }
-
-export function isPostedGrn(grn?: ReceivingDoc | null) {
-  return Boolean(grn?.postedAt || grn?.inventoryApplied || grn?.status === "已入库" || grn?.status === "异常处理");
-}

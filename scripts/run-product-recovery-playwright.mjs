@@ -3,7 +3,8 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-const cli = join(resolve(import.meta.dirname, ".."), "node_modules", "playwright", "cli.js");
+const root = resolve(import.meta.dirname, "..");
+const cli = join(root, "node_modules", "playwright", "cli.js");
 function run(specs, extraEnv = {}) {
   return new Promise((resolveRun) => {
     const child = spawn(process.execPath, [cli, "test", ...[specs].flat()], {
@@ -44,14 +45,29 @@ async function phase(name, specs, extraEnv) {
 
 await phase("acceptance", "tests/browser/product-recovery-acceptance.spec.ts");
 // The US walkthrough must stay free of Chinese in the English interface, and
-// Today lists its work by the report and reorder rules.
-await phase("english walkthrough", ["tests/browser/english-walkthrough.spec.ts", "tests/browser/today-work.spec.ts"]);
+// Today lists its work by the report and reorder rules. Contracts are on, as
+// in the local walkthrough.
+await phase("english walkthrough", ["tests/browser/english-walkthrough.spec.ts", "tests/browser/today-work.spec.ts"], { PLAYWRIGHT_CONTRACTS: "true" });
+// The US trial screens (finance, sales, inventory operations on) in English,
+// with the walkthrough data and with an empty workspace.
+await phase("english trial", "tests/browser/english-trial.spec.ts", { PLAYWRIGHT_US_TRIAL: "true" });
+await phase("english trial empty", "tests/browser/english-trial.spec.ts", {
+  PLAYWRIGHT_US_TRIAL: "true",
+  PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY: "true",
+});
 // Supplier performance against the original promise, in English.
 await phase("supplier performance", ["tests/browser/supplier-performance-english.spec.ts", "tests/browser/supplier-activity.spec.ts"]);
 // The PO document: printed alone, labels in the document language, figures unchanged.
 await phase("po document", "tests/browser/purchase-order-document.spec.ts");
 // The assistant answers the walkthrough prompt chips in English from workspace data.
 await phase("english assistant", "tests/browser/ai-assistant-english.spec.ts");
+// Assistant v2 on the walkthrough data with the reorder showcase seed: the
+// recorded model turns replayed, the in-chat form on the procurement routes.
+await phase("assistant v2 showcase", "tests/browser/assistant-v2-showcase.spec.ts", {
+  PLAYWRIGHT_ASSISTANT_V2: "true",
+  FLOWCHAIN_AI_ASSISTANT_MODE: "assistant_v2",
+  FLOWCHAIN_AI_ASSISTANT_SCRIPTED: join(root, "tests", "browser", "fixtures", "assistant-v2", "showcase-turns.json"),
+});
 // Shell, routing, capability and authorization checks on the walkthrough data.
 await phase("shell and routing", [
   "tests/browser/frontend-route-governance.spec.ts",

@@ -32,7 +32,7 @@ const CHIPS = [
   // Purchase order page chips.
   ['Why does this PO need attention?', '这个 PO 为什么需要关注？', 'today_priorities', 'page'],
   ['Which receipt or invoice evidence is missing?', '还差哪些收货或发票证据？', 'records_needing_data', 'page'],
-  ['What will a delay affect?', '延误会影响什么？', 'highest_risk_items', 'page'],
+  ['What will a delay affect?', '延误会影响什么？', 'late_order_impact', 'page'],
   ['What should happen next?', '建议下一步是什么？', 'prepare_action_draft', 'page'],
   // SKU page chips.
   ['Does this SKU need replenishment?', '这个 SKU 需要补货吗？', 'today_priorities', 'page'],
@@ -87,6 +87,9 @@ const ORDER_START = [
   /(?<!已|已经|是否|有没有)下(?:个|一个|一)?单(?!了|日期|时间|日|数|量|人|员|号)/,
   /(?:生成|创建|新建|新开|发起|起草)[^。？！草]{0,20}?(?:采购单|采购订单|订单|采购申请|请购单|补货单|PO|PR)(?![-\s]*\d)/i,
   /(?:开|建立?|做|拟|准备|提(?!交))\s*(?:一?(?:张|个|份|笔))?\s*(?:新的?)?\s*(?:采购单|采购订单|订单|采购申请|请购单|补货单|PO|PR)(?![-\s]*\d)/i,
+  // With what to order between: 建一个 200 件 LDM-001 的采购申请, 开一张 Acme 的采购单.
+  // Each token ends where its number or word ends, so the match stays short.
+  /(?:开|建立?|做|拟|准备|提(?!交))\s*一?(?:张|个|份|笔)(?:\s*(?:\d[\d,.]*(?![\d,.])\s*(?:个|件|箱|卷|只|套|台|片|米|根|pcs\b)?|[A-Za-z][\w-]*(?![\w-]))){1,6}\s*的?\s*(?:新的?)?\s*(?:采购单|采购订单|采购申请|请购单|补货单)/i,
   /补(?:个|一下|一点|点|些)?货(?![吗么情])/,
   /(?:帮我|给我|替我|请|我要|我想|我需要|安排)再?(?:订购|订货|采购|买|订)(?!单号)/,
 ]
@@ -158,6 +161,13 @@ const RECORDS = [
   /\b(missing|incomplete|blank|empty fields?|data quality|fill in|need(s)? (more )?data|lacks?)\b/i,
   /补齐|缺失|缺少|不完整|数据质量|补充数据|还差哪些/,
 ]
+// What a late order affects (ai-skill-late-order-impact.mjs): a delay and its
+// consequences together. "What will a delay of PO-001 affect?", "If PO-001 is
+// late, which customers are hit?", PO-001 延误会影响哪些客户？
+const LATE_IMPACT = [
+  /\b(?:delay\w*|late|slip\w*|overdue|held up)\b[^.?!]*\b(?:affect\w*|impact\w*|hit|knock.?on|consequence\w*|put at risk|which (?:customers?|sales orders?|orders?)|who)\b|\b(?:affect\w*|impact\w*)\b[^.?!]*\b(?:delay\w*|late|slip\w*)\b/i,
+  /(?:延误|延迟|晚到|拖期|迟到|逾期|推迟)[^。？！]{0,20}(?:影响|波及|耽误|连累)|(?:影响|波及)[^。？！]{0,10}(?:哪些|什么)(?:客户|销售订单|订单)/,
+]
 const RISK = [
   /\b(risks?|riskiest|risky|exposure|at risk)\b/i,
   /风险|敞口|受影响/,
@@ -228,6 +238,26 @@ const isSpendQuestion = (intent) => !matches(NOT_SPEND, intent) && (
   matches(SPEND_ITEMS, intent) || matches(TOP_SUPPLIERS, intent)
   || (matches(SPEND, intent) && (matches(SPEND_BREAKDOWN, intent) || Boolean(spendPeriodOf(intent)) || Boolean(aiSkillSpendSignals(intent).currency) || matches(SUPPLIER, intent))))
 
+// Supplier comparison (ai-skill-supplier-comparison.mjs): how suppliers
+// deliver over time. A performance word ("on-time rate", "reliable", OTIF,
+// 准时率, 交付表现), or comparing suppliers ("compare Acme and Summit", 对比两家
+// 供应商). Open late orders ("which suppliers are late?") stay with the
+// purchase orders and the suppliers needing attention.
+const PERFORMANCE = [
+  /\b(?:otif|reliab\w*|unreliable|scorecard|perform(?:s|ing|ance)?|on.?time (?:rate|delivery|deliveries|performance|record|percentage)|delivery (?:rate|record|performance|reliability)|in.?full rate|fill rate|rejection rate|deliver(?:s|ed)? (?:on time|late) (?:most|more|least|less)\b|(?:most|least) (?:often )?(?:on time|late))\b/i,
+  /准时率|准时交货|按时交货|交付表现|交付绩效|供应商绩效|绩效|靠谱|可靠|评分卡|表现(?:怎么样|如何|好不好)|拒收率|最准时|最不准时|经常(?:迟到|延误|晚到)/,
+]
+const COMPARE = [/\b(?:compare|comparison|versus|vs\.?|better|worse)\b/i, /比较|对比|相比|哪家更|谁更/]
+const PAIR = [/\b(?:and|or|vs\.?|versus)\b/i, /和|与|跟|还是/]
+const WORST = [/\b(?:least|worst|less|unreliable|poor\w*|most (?:often )?late|latest|late (?:most|more) often|delivers? late|(?:is|are|runs?) late)\b/i, /最差|最不|最晚|最慢|不可靠|不靠谱|经常(?:迟到|延误|晚到)|总是(?:迟到|延误|晚)/]
+const isComparisonQuestion = (intent) => !matches(SPEND, intent) && (matches(PERFORMANCE, intent) || (matches(COMPARE, intent) && (matches(SUPPLIER, intent) || matches(PAIR, intent))))
+
+// What a comparison asks: the best or the worst first, and the period.
+export function aiSkillComparisonSignals(message) {
+  const raw = text(message)
+  return { mode: matches(WORST, raw) ? 'worst' : 'best', period: spendPeriodOf(raw) }
+}
+
 // Today's priorities: a task cue, or "today"/"first" together with doing
 // something. A bare "today" ("Apple's stock price today") is not a task.
 const TODAY = [
@@ -273,7 +303,9 @@ const APPROVAL = [
 // Orders that are late now. Deliveries that arrived late are a past fact this
 // skill does not measure, so "delivered late" is left alone.
 const LATE = [/\b(overdue|late|past due|past (?:their|the|its) (?:due|promised) dates?|delayed|behind schedule|missed (?:their|the|its) (?:due|promised) dates?)\b/i, /逾期|延期|延误|拖期/]
-const ORDER_NOUN = [/\b(purchase orders?|pos?|orders?)\b/i, /采购订单|订单|PO/i]
+// "PO" only as a word of its own, never inside "components" or "policy"; 采购单
+// is a purchase order, 采购单价 a unit price.
+const ORDER_NOUN = [/\b(purchase orders?|pos?|orders?)\b/i, /采购订单|采购单(?!价)|订单|(?<![a-z])PO(?![a-z])/i]
 const REQUEST_NOUN = [/\b(purchase requests?|requests?|prs?|purchase orders?|pos?|orders?)\b/i, /采购订单|采购申请|申请|订单|PO|PR/i]
 const COUNT_QUESTION = [/\bhow many\b/i, /多少|几张|几个/]
 const DELIVERED = [/\b(delivered|arrived|received|shipped)\b[^.?!]{0,20}\blate\b/i, /到货晚了|迟到货/]
@@ -297,8 +329,27 @@ const RECEIVING = [/\b(?:receipts?|receiving|grns?|goods receipts?)\b/i, /收货
 // which names the topic, and is never sent to a model.
 const GREETING_OR_TEST = [/\b(?:hi|hello|hey|test|testing|ping)\b/i, /你好|您好|测试|在吗/]
 const isGreetingOrTest = (raw) => !/[?？]/.test(raw) && raw.split(/\s+/).filter(Boolean).length <= 3 && matches(GREETING_OR_TEST, raw)
+// Asking what the assistant can do, as the whole question ("What can you do?",
+// 你能帮我做什么？). It gets the capability answer under its own title, not
+// "I can't answer that". "What can you do about PO-020?" asks about the order.
+const HELP = [
+  /^\s*(?:so|ok(?:ay)?|hi|hello|hey)?[\s,]*(?:what|how)\s+(?:else\s+)?(?:can|could|do)\s+you\s+(?:do|help(?:\s+me)?(?:\s+with)?)(?:\s+for\s+(?:me|us))?\s*[?？.!]*\s*$/i,
+  /^\s*(?:what\s+can\s+i\s+ask(?:\s+you)?|what\s+are\s+you\s+able\s+to\s+do|how\s+do\s+i\s+use\s+you)\s*[?？.!]*\s*$/i,
+  /^\s*(?:那|请问)?(?:你|您)?(?:能|可以|会)(?:帮我|帮我们|为我)?(?:做|干)(?:些|点)?(?:什么|啥)(?:事|呢)?\s*[?？。!！]*\s*$/,
+  /^\s*(?:你|您)(?:有|都有)(?:什么|哪些)(?:功能|本事|用处|能力)\s*[?？。!！]*\s*$/,
+  /^\s*(?:我)?(?:可以|能)问(?:你|您)?(?:些|点)?(?:什么|啥|哪些问题)\s*[?？。!！]*\s*$/,
+]
 // Sales orders are not purchase orders; no skill answers for them yet.
+// A user under pressure ("I'm stressed", "i had the big pressure", 我压力大)
+// gets the first few of today's priorities, when no other rule matched.
+const UNDER_PRESSURE = [/\b(?:stress(?:ed|ful)?|overwhelm(?:ed|ing)?|swamped|burn(?:ed|t)[ -]?out|exhausted)\b|\b(?:big|huge|lot of|so much|too much|under)\s+(?:the\s+)?pressure\b|\bi(?:'m|’m| am| had| have| feel)\b[^.?!]{0,20}\bpressure\b/i, /压力|焦虑|崩溃|忙不过来|做不完|太累|好累|累死|头大|烦死|喘不过气/]
+// Contracts have their own module; no skill reads them yet, so a question
+// about them gets the help answer that says so, never another skill's.
+const CONTRACT = [/\b(?:contracts?|agreements?|bpas?)\b/i, /合同|协议/]
 const SALES_ORDER = [/\b(?:sales|customer) orders?\b/i, /销售订单|客户订单/]
+// Customers, their orders and what they owe us, not suppliers.
+const CUSTOMER = [/\b(?:customers?|clients?|sales orders?|receivables?|accounts receivable)\b/i, /客户|销售订单|应收|回款/]
+export const aiSkillAboutCustomers = (message) => matches(CUSTOMER, text(message)) && !matches(SUPPLIER, text(message))
 const NOT_RECEIPT = [/\b(?:invoices?|payments?|payables?|sales orders?|rfqs?|quotes?|quotations?)\b/i, /发票|付款|应付|销售订单|询价|报价/]
 const AVAILABLE = [/\b(available|availability|promise|short)\b/i, /可用|可以承诺|能承诺/]
 const AVAILABLE_CONTEXT = [/\b(skus?|items?|units?|quantity|stock)\b/i, /库存|数量|物料/]
@@ -384,6 +435,8 @@ function excludedSkills(intent) {
   if (matches(SALES_ORDER, intent)) add('purchase_orders', 'pending_approvals', 'workspace_metrics')
   if (matches(DELIVERED, intent)) add('purchase_orders', 'workspace_metrics', 'receiving_issues')
   if (matches(OTHER_RECORD, intent) && (matches(APPROVAL, intent) || matches(LATE, intent))) add('purchase_orders', 'pending_approvals')
+  // What customers owe is not a supplier invoice or a purchase order.
+  if (aiSkillAboutCustomers(intent) && matches(PAYMENT, intent)) add('invoice_summary', 'purchase_orders', 'pending_approvals', 'workspace_metrics')
   return [...excluded]
 }
 
@@ -392,6 +445,7 @@ function intentRoute(intent, base) {
   const route = (skillId) => ({ ...base, skillId, signals: signalsOf(intent) })
   if (matches(OUTSIDE, intent) && !matches(WORKSPACE_NOUN, intent)) return { capability: true, outOfDomain: true }
   if (matches(RECORDS, intent)) return route('records_needing_data')
+  if (matches(LATE_IMPACT, intent)) return route('late_order_impact')
   if (matches(RISK, intent)) return route('highest_risk_items')
   const otherRecord = matches(OTHER_RECORD, intent)
   if (matches(APPROVAL, intent) && matches(REQUEST_NOUN, intent) && !otherRecord) return route('pending_approvals')
@@ -407,6 +461,7 @@ function intentRoute(intent, base) {
   if (!base.ids.length && matches(RECEIVING, intent) && !matches(NOT_RECEIPT, intent) && !matches(PAYMENT, intent)) return route('receiving_issues')
   if (matches(STOCK, intent) || (matches(AVAILABLE, intent) && (base.ids.length || matches(AVAILABLE_CONTEXT, intent)))) return route('inventory_availability')
   if (isSpendQuestion(intent)) return { ...route('spend_analysis'), signals: { ...signalsOf(intent), spend: aiSkillSpendSignals(intent) } }
+  if (isComparisonQuestion(intent)) return { ...route('supplier_comparison'), signals: { ...signalsOf(intent), compare: aiSkillComparisonSignals(intent) } }
   if (matches(METRICS, intent) || (late && matches(ORDER_NOUN, intent) && !otherRecord)) return route('workspace_metrics')
   // A tier ("Which Tier 1 suppliers do we have?") is cue enough.
   if (matches(SUPPLIER, intent) && (matches(SUPPLIER_CUE, intent) || tier) && !base.ids.length && !matches(SPECIFIC_ASPECT, intent) && !matches(PREVIOUS_RESULT, intent)) return route('supplier_attention')
@@ -429,11 +484,15 @@ export function routeSkill({ message, skillHint, focusTarget } = {}) {
   if (!raw) return null
   const chip = chipSkill.get(normalize(raw))
   if (chip) return { skillId: chip, focus, ids, explicit: true, signals: signalsOf(normalize(raw)) }
+  if (matches(HELP, raw)) return { capability: true }
   const order = aiSkillOrderRequest(raw)
   if (order) return { skillId: 'prepare_action_draft', mode: 'order', order, focus, ids }
   // A draft request keeps its signals, so a tier it names narrows the drafts.
   if (matches(DRAFT, raw)) return { skillId: 'prepare_action_draft', focus, ids, signals: signalsOf(raw.toLowerCase()) }
   const base = { focus, ids }
+  // Contracts first: "supplier agreements" asks about contracts, not about
+  // the suppliers' open work.
+  if (matches(CONTRACT, raw)) return { capability: true, contracts: true }
   // The question as typed first. With misspelled workspace words corrected
   // only when that matches nothing, or only a general rule that a corrected
   // reading makes specific ("how many POs are pendng aproval").
@@ -443,6 +502,7 @@ export function routeSkill({ message, skillHint, focusTarget } = {}) {
   const corrected = general ? intentRoute(aiSkillIntentText(raw), base) : null
   const route = corrected && (!typed || (corrected.skillId && !['workspace_metrics', 'today_priorities'].includes(corrected.skillId))) ? corrected : typed
   if (route) return route
+  if (matches(UNDER_PRESSURE, raw)) return { ...base, skillId: 'today_priorities', signals: { ...signalsOf(plain), calm: true } }
   // No rule matched. The entity step may still find a record the question
   // names (a supplier, a SKU, an order) once it has read the data.
   return { skillId: null, focus, ids, signals: signalsOf(plain), excluded: excludedSkills(plain), ...(isGreetingOrTest(raw) ? { greeting: true } : {}) }

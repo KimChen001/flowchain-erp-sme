@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
-export type EntityKind = "item" | "sales_order" | "purchase_request" | "rfq" | "purchase_order" | "supplier" | "customer" | "receiving_doc" | "supplier_invoice";
+export type EntityKind = "item" | "sales_order" | "purchase_request" | "rfq" | "purchase_order" | "supplier" | "customer" | "receiving_doc" | "supplier_invoice" | "contract";
 
 const routeFor: Record<EntityKind, (id: string) => string> = {
   item: (id) => `/app/master-data/items/${encodeURIComponent(id)}`,
@@ -13,6 +13,7 @@ const routeFor: Record<EntityKind, (id: string) => string> = {
   customer: (id) => `/app/master-data/customers/${encodeURIComponent(id)}`,
   receiving_doc: (id) => `/app/procurement/receiving/${encodeURIComponent(id)}`,
   supplier_invoice: (id) => `/app/procurement/bills/${encodeURIComponent(id)}`,
+  contract: (id) => `/app/contracts/${encodeURIComponent(id)}`,
 };
 
 export function EntityLink({ kind, id, children, className = "" }: { kind: EntityKind; id?: string | null; children?: ReactNode; className?: string }) {

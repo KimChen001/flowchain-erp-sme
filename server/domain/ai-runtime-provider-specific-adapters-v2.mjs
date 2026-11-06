@@ -1,4 +1,5 @@
 import businessQueryPlanSchema from "./ai-business-query-plan.schema.json" with { type: "json" };
+import { aiProviderSessionId } from './ai-usage-meter.mjs'
 const DATA_SCOPE = '当前工作区数据'
 const DEFAULT_TIMEOUT_MS = 8000
 const MAX_TIMEOUT_MS = 15000
@@ -24,6 +25,7 @@ function providerConfig(env = {}) {
     model: text(env.FLOWCHAIN_AI_PROVIDER_MODEL),
     timeoutMs: clampNumber(env.FLOWCHAIN_AI_PROVIDER_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS),
     maxOutputChars: clampNumber(env.FLOWCHAIN_AI_PROVIDER_MAX_OUTPUT_CHARS, DEFAULT_MAX_OUTPUT_CHARS, MAX_OUTPUT_CHARS),
+    identityHeaders: aiProviderIdentityHeaders(env),
   }
 }
 function boundedEvidencePackage(input = {}) {
@@ -163,7 +165,7 @@ function instructionText(input = {}) {
     + 'When previousQuestion is given, it is what the user asked just before, and this question may follow on from it (for example "why is it first?" asks why it heads that list). '
     + 'Return only JSON: {"title": string, "summary": string}, with no text before or after it. '
     + 'Facts enter only through slots: write {key} with a key exactly as supplied in facts.slots, and the server puts the value there. Every number, count, quantity, amount, date, record number, SKU, supplier or item name, and status must be a slot. '
-    + 'For counts use the count slots: count.<kind> counts the records of a kind, count.<reason> those cited for a reason (for example "{count.po_overdue} orders are late"). Outside the slots never write a digit, a number word (two, three, 三, 两) or a name, not even one you read in a slot value. '
+    + 'For counts use the count and total slots. total.<name> counts everything: the whole workspace or the whole list (for example "{total.overdue_purchase_orders} orders are overdue"). count.<kind> and count.<reason> count the records supplied, and are offered only when they are all there is. The records supplied may be only the first of a longer list, so never count them yourself. Outside the slots never write a digit, a number word (two, three, 三, 两) or a name, not even one you read in a slot value. '
     + 'Each detail slot is already a whole sentence with the numbers, but it does not name its record: write the record slot first ("{r1}: {r1.detail}"). Value slots already carry their own label (for example "short 7"), so do not repeat that label. Use either the value slot or the detail slot of a record, not both, and never put a detail in brackets. Do not list every record: pick the ones that answer the question. '
     + 'Do not predict. If the user asks about the future (next week, next month), say what the facts show now and that the workspace holds no forecast. '
     + 'answer.title and answer.summary are the standard wording; use them only when nothing better fits, and never mention slots, the standard wording or these instructions. '
@@ -197,10 +199,23 @@ function chatMessages(input = {}) {
     { role: 'user', content: JSON.stringify(core) },
   ]
 }
+// Every provider call says it comes from FlowChain, not from a generic HTTP
+// library. A provider that routes by conversation (OpenCode Go asks for
+// `x-opencode-session`) gets the request's random session id in the header
+// FLOWCHAIN_AI_PROVIDER_SESSION_HEADER names: one id per assistant request,
+// shared by its planning, wording and knowledge calls, and nothing else.
+export const AI_PROVIDER_USER_AGENT = 'FlowChain-assistant/1.0'
+const SESSION_HEADER = /^x-[a-z0-9-]{1,60}$/i
+export function aiProviderIdentityHeaders(env = {}) {
+  const name = text(env.FLOWCHAIN_AI_PROVIDER_SESSION_HEADER).toLowerCase()
+  const session = SESSION_HEADER.test(name) ? aiProviderSessionId() : null
+  return { 'user-agent': AI_PROVIDER_USER_AGENT, ...(session ? { [name]: session } : {}) }
+}
 function jsonHeaders(config) {
   return {
     'content-type': 'application/json',
     authorization: `Bearer ${config.apiKey}`,
+    ...config.identityHeaders,
   }
 }
 function extractString(value) {
@@ -235,7 +250,7 @@ function extractToolCalls(raw) {
 // OpenAI-style reply counts cached tokens inside prompt_tokens. So when the
 // total is more than prompt plus completion, input is the total less the
 // completion. For the spend cap a cache read counts as a full input token.
-function extractUsage(raw) {
+export function extractUsage(raw) {
   const usage = raw?.usage
   if (!usage || typeof usage !== 'object') return null
   const number = (value) => (Number.isFinite(Number(value)) ? Number(value) : null)
@@ -254,8 +269,9 @@ export function extractCandidateFromProviderResponse(rawResponse) {
   if (!candidate) return { ok: false, reason: 'malformed_output', ...reported }
   return { ok: true, ...reported, rawOutput: { conclusion: { summary: candidate } } }
 }
-async function parseResponse(response, config) {
-  if (!response.ok) return { ok: false, reason: 'non_success_status' }
+async function parseResponse(response, config, extract = extractCandidateFromProviderResponse) {
+  // 402: the provider's spending limit is reached (the answer says so).
+  if (!response.ok) return { ok: false, reason: 'non_success_status', ...(response.status === 402 ? { budgetExceeded: true } : {}) }
   const contentType = response.headers?.get?.('content-type') || ''
   let raw
   if (/application\/json/i.test(contentType)) raw = await response.json()
@@ -264,7 +280,7 @@ async function parseResponse(response, config) {
   if (raw?.status === 'incomplete' || raw?.status === 'failed') return { ok: false, reason: 'incomplete_output' }
   const serialized = typeof raw === 'string' ? raw : JSON.stringify(raw)
   if (serialized.length > config.maxOutputChars) return { ok: false, reason: 'output_too_long' }
-  return extractCandidateFromProviderResponse(raw)
+  return extract(raw)
 }
 async function callSpecificAdapter(adapter, providerInputPackage, env = {}, fetchImpl = globalThis.fetch) {
   const config = providerConfig(env)
@@ -278,7 +294,7 @@ async function callSpecificAdapter(adapter, providerInputPackage, env = {}, fetc
       body: JSON.stringify(adapter.buildRequestBody(providerInputPackage, config)),
       signal: controller.signal,
     })
-    return await parseResponse(response, config)
+    return await parseResponse(response, config, adapter.extractCandidateFromResponse)
   } catch (error) {
     return { ok: false, reason: error?.name === 'AbortError' ? 'timeout' : 'network_error' }
   } finally {
@@ -348,13 +364,58 @@ export const openaiResponsesAdapter = {
   extractCandidateFromResponse: extractCandidateFromProviderResponse,
   call(providerInputPackage, env, fetchImpl) { return callSpecificAdapter(this, providerInputPackage, env, fetchImpl) },
 }
+// Anthropic's native Messages API (anthropic_messages), the trial provider of
+// the model-first assistant (docs/ai-model-first-design.md §5). The
+// model-first loop builds its own requests (ai-model-first-provider.mjs); the
+// other paths send one system and one user message, as to a chat model.
+// Current Claude models reject sampling settings, so none is sent, and the
+// reply is read by content block type: it may start with thinking blocks.
+export const ANTHROPIC_MESSAGES_VERSION = '2023-06-01'
+export function anthropicMessagesHeaders(config) {
+  return { 'content-type': 'application/json', 'x-api-key': config.apiKey, 'anthropic-version': ANTHROPIC_MESSAGES_VERSION, ...config.identityHeaders }
+}
+// Tokens as the meter counts them: input is every prompt token, cached or not,
+// with the cache reads and writes inside it, so they can be priced apart.
+export function anthropicMessagesUsage(raw) {
+  const usage = raw?.usage
+  if (!usage || typeof usage !== 'object') return null
+  const number = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
+  const cacheReadTokens = number(usage.cache_read_input_tokens)
+  const cacheWriteTokens = number(usage.cache_creation_input_tokens)
+  return { inputTokens: number(usage.input_tokens) + cacheReadTokens + cacheWriteTokens, outputTokens: number(usage.output_tokens), cacheReadTokens, cacheWriteTokens }
+}
+export const anthropicMessagesText = (raw) => asArray(raw?.content).filter((block) => block?.type === 'text').map((block) => block.text || '').join('')
+export const anthropicMessagesAdapter = {
+  kind: 'anthropic_messages',
+  label: 'server-side messages adapter',
+  isEnabled(config) { return config.mode === 'provider_assisted' && config.kind === this.kind },
+  canCall: canCallProvider,
+  buildRequestBody(input, config) {
+    return {
+      model: config.model,
+      max_tokens: input.task?.type === 'agent_planning' ? 1000 : 2000,
+      output_config: { effort: 'low' },
+      system: instructionText(input),
+      messages: [{ role: 'user', content: JSON.stringify(buildBoundedProviderRequestCore(input)) }],
+    }
+  },
+  buildHeaders: anthropicMessagesHeaders,
+  extractCandidateFromResponse(raw) {
+    const candidate = text(anthropicMessagesText(raw))
+    const usage = anthropicMessagesUsage(raw)
+    if (!candidate) return { ok: false, reason: 'malformed_output', ...(usage ? { usage } : {}) }
+    return { ok: true, ...(usage ? { usage } : {}), rawOutput: { conclusion: { summary: candidate } } }
+  },
+  call(providerInputPackage, env, fetchImpl) { return callSpecificAdapter(this, providerInputPackage, env, fetchImpl) },
+}
+
 export const deepseekChatAdapter = createChatAdapter('deepseek_chat', 'server-side chat adapter')
 export const doubaoChatAdapter = createChatAdapter('doubao_chat', 'server-side chat adapter')
 export const qwenChatAdapter = createChatAdapter('qwen_chat', 'server-side chat adapter')
 export const parleyChatAdapter = createChatAdapter('parley_chat', 'server-side chat adapter')
 export const anthropicChatAdapter = createChatAdapter('anthropic_chat', 'server-side chat adapter')
 
-export const providerSpecificAdapters = [openaiResponsesAdapter, deepseekChatAdapter, doubaoChatAdapter, qwenChatAdapter, parleyChatAdapter, anthropicChatAdapter]
+export const providerSpecificAdapters = [openaiResponsesAdapter, deepseekChatAdapter, doubaoChatAdapter, qwenChatAdapter, parleyChatAdapter, anthropicChatAdapter, anthropicMessagesAdapter]
 
 export function selectProviderSpecificAdapter(kind = '') {
   return providerSpecificAdapters.find((adapter) => adapter.kind === kind) || null

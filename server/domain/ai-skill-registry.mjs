@@ -57,6 +57,7 @@ export const AI_SKILL_MODES = Object.freeze({
   inventory_availability: Object.freeze(['single', 'overview', 'short', 'not_found', 'hidden']),
   pending_approvals: Object.freeze(['all', 'not_found']),
   spend_analysis: Object.freeze(['suppliers', 'items', 'trend']),
+  supplier_comparison: Object.freeze(['best', 'worst']),
 })
 
 const definitions = [
@@ -79,6 +80,14 @@ const definitions = [
   // Committed spend by supplier, item or month, from the procurement
   // dashboard's report (ai-skill-spend-analysis.mjs). Needs purchase orders.
   { id: 'spend_analysis', version: '1', requiredAnyPermission: [AI_SKILL_SOURCES.purchase_orders.permission], sources: ['purchase_orders'], fieldGroups: ['purchase_order_amounts'], inputSchema: entityInput(AI_SKILL_MODES.spend_analysis, ['supplierIds']), outputSchema: evidenceOutput },
+  // Delivery performance by supplier, from the supplier scorecard
+  // (ai-skill-supplier-comparison.mjs). Like the scorecard's route, it needs
+  // both purchase orders and receipts (requiredAllPermissions).
+  { id: 'supplier_comparison', version: '1', requiredAnyPermission: [AI_SKILL_SOURCES.purchase_orders.permission], requiredAllPermissions: [AI_SKILL_SOURCES.purchase_orders.permission, AI_SKILL_SOURCES.receipts.permission], sources: ['purchase_orders', 'receipts', 'supplier_invoices'], fieldGroups: ['purchase_order_amounts', 'invoice_amounts'], inputSchema: entityInput(AI_SKILL_MODES.supplier_comparison, ['supplierIds']), outputSchema: evidenceOutput },
+  // What a late purchase order puts at risk, in the inventory page's terms
+  // (ai-skill-late-order-impact.mjs). Needs purchase orders and stock; sales
+  // orders and customers are named only for their readers.
+  { id: 'late_order_impact', version: '1', requiredAnyPermission: [AI_SKILL_SOURCES.purchase_orders.permission], requiredAllPermissions: [AI_SKILL_SOURCES.purchase_orders.permission, AI_SKILL_SOURCES.inventory.permission], sources: ['purchase_orders', 'inventory'], fieldGroups: [], inputSchema: entityInput(['named', 'late'], ['purchaseOrderIds']), outputSchema: evidenceOutput },
   // Needs only sign-in: it reads no business data.
   { id: 'capability_overview', version: '1', requiredAnyPermission: [], sources: [], fieldGroups: [], inputSchema: noInput, outputSchema: { skills: 'skill[]' } },
 ]
@@ -126,8 +135,11 @@ export function aiSkillVisibility(actor) {
 
 // The skills this actor may use. A skill that reads business data needs at
 // least one of its read permissions; its hidden sources become limitations.
+// A skill the actor may use: any of requiredAnyPermission, and every one of
+// requiredAllPermissions when it has them.
 export function toolsFor(actor) {
-  return AI_SKILL_REGISTRY.filter((entry) => !entry.requiredAnyPermission.length || entry.requiredAnyPermission.some((permission) => allowed(actor, permission)))
+  return AI_SKILL_REGISTRY.filter((entry) => (!entry.requiredAnyPermission.length || entry.requiredAnyPermission.some((permission) => allowed(actor, permission)))
+    && (entry.requiredAllPermissions || []).every((permission) => allowed(actor, permission)))
 }
 
 // Descriptors for a future tool-calling model, in the field names of the

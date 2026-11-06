@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { createScmServer } from "../bootstrap/scm-server.mjs";
+
+// The built SPA's index.html in a folder of its own, so this test passes in a
+// checkout with no dist/ (no `npm run build` before `npm test`).
+async function fixtureDist() {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "flowchain-dist-"));
+  await mkdir(path.join(dir, "assets"));
+  await writeFile(path.join(dir, "index.html"), '<!doctype html><html><head><title>FlowChain</title></head><body><div id="root"></div></body></html>\n');
+  return dir;
+}
 
 async function listen(server) {
   await new Promise((resolve, reject) => {
@@ -34,7 +46,8 @@ async function request(port, method, pathname) {
 test("server bootstrap preserves health, preflight, session, API 404, and SPA boundaries", async () => {
   const previousDatabaseUrl = process.env.DATABASE_URL;
   process.env.DATABASE_URL = "postgresql://user:pass@127.0.0.1:5432/flowchain_server_characterization";
-  const server = createScmServer();
+  const staticDir = await fixtureDist();
+  const server = createScmServer({ staticDir });
   try {
     const port = await listen(server);
     const health = await request(port, "GET", "/api/health");
@@ -73,8 +86,17 @@ test("server bootstrap preserves health, preflight, session, API 404, and SPA bo
     assert.equal(spa.headers["cache-control"], "no-cache");
     assert.equal(missingAsset.status, 404);
     assert.doesNotMatch(missingAsset.headers["content-type"] || "", /^text\/html/);
+    // Browser security headers (server/bootstrap/security-headers.mjs) reach
+    // every kind of answer; outside production there is no HSTS.
+    for (const [label, response] of Object.entries({ health, preflight, session, missingApi, spa, missingAsset })) {
+      assert.match(response.headers["content-security-policy"] || "", /^default-src 'self'; .*frame-ancestors 'none'/, label);
+      assert.equal(response.headers["x-content-type-options"], "nosniff", label);
+      assert.equal(response.headers["x-frame-options"], "DENY", label);
+      assert.equal(response.headers["strict-transport-security"], undefined, label);
+    }
   } finally {
     await close(server);
+    await rm(staticDir, { recursive: true, force: true });
     if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previousDatabaseUrl;
   }

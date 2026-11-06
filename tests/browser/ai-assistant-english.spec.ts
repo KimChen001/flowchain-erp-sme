@@ -47,38 +47,70 @@ const chineseLines = async (locator: Locator) => (await locator.innerText()).spl
 test("the assistant answers every prompt chip in English from the workspace data", async ({ page }) => {
   await signIn(page);
   const panel = await openAssistant(page);
+  // Docked to the right at full height beside the page; the launcher is hidden.
+  await expect(panel).toHaveAttribute("data-docked", "true");
+  const box = await panel.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box && viewport && Math.round(box.x + box.width)).toBe(viewport?.width);
+  expect(box?.height).toBe(viewport?.height);
+  await expect(page.getByTestId("ai-assistant-toggle")).toHaveCount(0);
+  await expect(panel.getByTestId("ai-query-mode")).toHaveCount(0);
+  await expect(panel.getByTestId("ai-welcome")).toContainText("I can look up purchasing, inventory and invoices");
   for (const [chip, headline] of [
     ["What should I handle first today?", /items? needs? attention today|Nothing needs attention today/],
-    ["What is at risk right now?", /^Oldest open problem: |No open problems found/],
-    ["Which records need more data?", /records? needs? more data|No records are missing required fields/],
-    ["Prepare an action draft", /drafts? ready for your review|No draft is needed right now/],
+    ["Which purchase orders are overdue?", /purchase orders? (?:is|are) overdue/],
   ] as const) {
     const answer = await askChip(panel, chip);
     await expect(answer.getByTestId("ai-answer-source")).toContainText("Answered from your workspace data");
     await expect(answer.getByTestId("ai-answer-checked")).toContainText("Checked:");
     await expect(answer.getByTestId("ai-focused-conclusion").locator("h3")).toHaveText(headline);
+    // One trust line, no severity chip or evidence count.
+    await expect(answer.getByTestId("ai-trust-line").locator("summary")).toContainText("From your records");
+    await expect(answer).not.toContainText(/Verifiable records|View key evidence/);
     expect(await chineseLines(panel), chip).toEqual([]);
-    if (chip === "Prepare an action draft") {
+    if (chip === "Which purchase orders are overdue?") {
       const draft = answer.getByTestId("ai-action-draft-preview").first();
       await expect(draft).toHaveText("Review draft");
     }
     await newConversation(panel, "New conversation");
   }
 
-  // An evidence link opens the record and minimizes the assistant.
+  // The request card is asked as typed: without an item, the assistant asks which one.
+  const request = await askChip(panel, "Draft a purchase request");
+  await expect(request.getByTestId("ai-focused-conclusion")).toBeVisible();
+  expect(await chineseLines(panel)).toEqual([]);
+  await newConversation(panel, "New conversation");
+
+  // A record chip opens the record; docked beside the page, the assistant stays open.
   const answer = await askChip(panel, "What should I handle first today?");
   const link = answer.getByTestId("ai-focused-primary-items").locator('[data-action-kind="view_evidence"]').first();
   await expect(link).toBeVisible();
   const before = page.url();
   await link.click();
   await expect(page).not.toHaveURL(before);
+  await expect(page.getByTestId("ai-assistant-panel")).toBeVisible();
+});
+
+test("on a phone the assistant fills the screen and gets out of the way when a record opens", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page);
+  const panel = await openAssistant(page);
+  await expect(panel).toHaveAttribute("data-docked", "false");
+  const box = await panel.boundingBox();
+  expect(box?.width).toBe(390);
+  expect(box?.height).toBe(844);
+  const answer = await askChip(panel, "What should I handle first today?");
+  const before = page.url();
+  await answer.getByTestId("ai-focused-primary-items").locator('[data-action-kind="view_evidence"]').first().click();
+  await expect(page).not.toHaveURL(before);
   await expect(page.getByTestId("ai-assistant-panel")).toHaveCount(0);
+  await expect(page.getByTestId("ai-assistant-toggle")).toBeVisible();
 });
 
 test("a prepared draft opens as a supplier message for the user's own mail app", async ({ page }) => {
   await signIn(page);
   const panel = await openAssistant(page);
-  const answer = await askChip(panel, "Prepare an action draft");
+  const answer = await askChip(panel, "Which purchase orders are overdue?");
   await answer.getByTestId("ai-action-draft-preview").first().click();
   const shell = page.getByTestId("action-draft-review-shell");
   await expect(shell.getByTestId("action-draft-message")).toContainText("Supplier message");
@@ -125,8 +157,7 @@ test("one message to a supplier covers its overdue orders, says how much arrived
 
   // Asked under the purchasing policy, the answer cites the workspace's policy
   // document, and the draft review shows it as the basis, outside the message.
-  // (Reviewing a draft closed the assistant; it opens again on the same conversation.)
-  await page.getByTestId("ai-assistant-toggle").click();
+  // (Docked beside the page, the assistant stays open while a draft is reviewed.)
   await expect(panel).toBeVisible();
   const count = await answers.count();
   await page.getByTestId("ai-assistant-input").fill("Under our purchasing policy, prepare a message to Acme Components about its overdue orders.");
@@ -150,6 +181,8 @@ test("every line that needs attention states its next step and offers its draft 
 });
 
 test("a failed or slow answer shows an English recovery message", async ({ page }) => {
+  // It waits out the client's 25 second limit.
+  test.setTimeout(90_000);
   await signIn(page);
   const panel = await openAssistant(page);
   await page.route("**/api/ai-runtime/respond", (route) => route.fulfill({ status: 503, json: { code: "AI_SKILL_UNAVAILABLE", error: "The assistant could not read your workspace data just now. Please try again." } }));
@@ -161,11 +194,108 @@ test("a failed or slow answer shows an English recovery message", async ({ page 
 
   await page.unroute("**/api/ai-runtime/respond");
   await newConversation(panel, "New conversation");
-  // No answer within the client's 12 second limit.
+  // No answer within the client's 25 second limit (a chip may go to the model too).
   await page.route("**/api/ai-runtime/respond", () => new Promise(() => {}));
   await panel.getByTestId("ai-empty-prompt-chip").first().click();
-  await expect(panel.getByTestId("ai-message-assistant").last()).toContainText("took too long to answer", { timeout: 20_000 });
+  await expect(panel.getByTestId("ai-message-assistant").last()).toContainText("took too long to answer", { timeout: 35_000 });
   expect(await chineseLines(panel)).toEqual([]);
+});
+
+// The model-first assistant's progress stream (server/routes/ai-runtime-stream.mjs),
+// played line by line through the page's fetch: no model runs here.
+async function streamAnswers(page: Page) {
+  await page.evaluate(() => {
+    const original = window.fetch.bind(window);
+    const state = window as unknown as { __aiAccepts: string[]; __aiPush: (line: unknown) => void; __aiClose: () => void };
+    state.__aiAccepts = [];
+    window.fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const accept = String(new Headers(init?.headers).get("accept") || "");
+      if (!url.includes("/api/ai-runtime/respond")) return original(input, init);
+      state.__aiAccepts.push(accept);
+      if (!accept.includes("application/x-ndjson")) return original(input, init);
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({
+        start(controller) {
+          state.__aiPush = (line) => controller.enqueue(encoder.encode(`${JSON.stringify(line)}\n`));
+          state.__aiClose = () => controller.close();
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "application/x-ndjson; charset=utf-8" } });
+    };
+  });
+  return {
+    push: (line: unknown) => page.evaluate((value) => (window as unknown as { __aiPush: (line: unknown) => void }).__aiPush(value), line),
+    close: () => page.evaluate(() => (window as unknown as { __aiClose: () => void }).__aiClose()),
+    accepts: () => page.evaluate(() => (window as unknown as { __aiAccepts: string[] }).__aiAccepts),
+  };
+}
+
+test("a typed question shows what the assistant reads, then its checked answer with a contract link", async ({ page }) => {
+  await signIn(page);
+  const panel = await openAssistant(page);
+  const stream = await streamAnswers(page);
+  await panel.getByTestId("ai-assistant-input").fill("When does our contract with Acme end?");
+  await panel.getByTestId("ai-assistant-input").press("Enter");
+  const progress = panel.getByTestId("ai-progress-line");
+  await expect(progress).toBeVisible();
+  await stream.push({ type: "progress", step: "reading", sources: ["contracts", "purchase_orders"] });
+  await expect(progress).toHaveText("Reading contracts and purchase orders…");
+  await stream.push({ type: "progress", step: "writing" });
+  await expect(progress).toHaveText("Writing the answer…");
+  await stream.push({ type: "progress", step: "checking" });
+  await expect(progress).toHaveText("Checking the figures…");
+  await stream.push({ type: "answer", status: 200, body: {
+    version: "v2", responseId: "ai-model-first-test", query: "When does our contract with Acme end?", intent: "model_first", language: "en-US",
+    answerSource: "workspace_model", answerSourceLabel: "Written by AI from your records; figures checked", runtimeModeLabel: "Written by AI from your records; figures checked",
+    checked: ["contracts"], checkedLabel: "Checked: contracts", figures: [],
+    scope: { module: "workspace", dataScopeLabel: "Your workspace" },
+    conclusion: { title: "The Acme agreement ends on 2026-12-31", summary: "Contract CT-ACME0001 with Acme Components ends on 2026-12-31 and needs 60 days of notice.", severity: "info", confidence: "medium" },
+    keyEvidence: [{ id: "mf-1", label: "CT-ACME0001", entityLabel: "CT-ACME0001", entityType: "contract", entityId: "CT-1", moduleId: "contracts:list", severity: "info", sourceLabel: "Your workspace" }],
+    contextCards: [], realEvidenceCount: 1, contextCardCount: 0, limitationCount: 0, businessImpact: [], recommendedActions: [],
+    navigationLinks: [{ label: "Open CT-ACME0001", moduleId: "contracts:list", entityType: "contract", entityId: "CT-1", returnTo: "ai-assistant", source: "ai" }],
+    dataLimitations: [], reviewCards: [], followUpQuestions: [], followUpSuggestions: [], contextBreadcrumbs: [],
+    safetyBoundaries: [], sourceSummary: [], readinessSignals: [], generatedAt: new Date().toISOString(), dataScopeLabel: "Your workspace",
+  } });
+  await stream.close();
+  const answer = panel.locator('[data-answer-source="workspace_model"]');
+  await expect(answer.getByTestId("ai-answer-source")).toContainText("Written by AI from your records; figures checked");
+  await expect(answer.getByTestId("ai-focused-conclusion").locator("h3")).toHaveText("The Acme agreement ends on 2026-12-31");
+  // The contract number in the text is a chip; one line says the figures were checked.
+  await expect(answer.getByTestId("ai-answer-text").getByTestId("ai-record-chip")).toHaveText("CT-ACME0001");
+  await expect(answer.getByTestId("ai-trust-line").locator("summary")).toHaveText(/Figures checked\s*· 1 source/);
+  await expect(progress).toHaveCount(0);
+  expect(await chineseLines(panel)).toEqual([]);
+  // A chip keeps the plain JSON answer.
+  await newConversation(panel, "New conversation");
+  await askChip(panel, "What should I handle first today?");
+  const accepts = await stream.accepts();
+  expect(accepts[0]).toContain("application/x-ndjson");
+  expect(accepts[1]).not.toContain("application/x-ndjson");
+});
+
+test("the record link of a model-first answer opens the contract", async ({ page }) => {
+  await signIn(page);
+  const panel = await openAssistant(page);
+  const stream = await streamAnswers(page);
+  await panel.getByTestId("ai-assistant-input").fill("When does our contract with Acme end?");
+  await panel.getByTestId("ai-assistant-input").press("Enter");
+  await expect(panel.getByTestId("ai-progress-line")).toBeVisible();
+  await stream.push({ type: "answer", status: 200, body: {
+    version: "v2", responseId: "ai-model-first-link", query: "When does our contract with Acme end?", intent: "model_first", language: "en-US",
+    answerSource: "workspace_model", answerSourceLabel: "Written by AI from your records; figures checked", runtimeModeLabel: "Written by AI from your records; figures checked",
+    checked: ["contracts"], checkedLabel: "Checked: contracts", figures: [], scope: { module: "workspace", dataScopeLabel: "Your workspace" },
+    conclusion: { title: "The Acme agreement ends on 2026-12-31", summary: "Contract CT-ACME0001 ends on 2026-12-31.", severity: "info", confidence: "medium" },
+    keyEvidence: [], contextCards: [], realEvidenceCount: 0, contextCardCount: 0, limitationCount: 0, businessImpact: [], recommendedActions: [],
+    navigationLinks: [{ label: "Open CT-ACME0001", moduleId: "contracts:list", entityType: "contract", entityId: "CT-1", returnTo: "ai-assistant", source: "ai" }],
+    dataLimitations: [], reviewCards: [], followUpQuestions: [], followUpSuggestions: [], contextBreadcrumbs: [],
+    safetyBoundaries: [], sourceSummary: [], readinessSignals: [], generatedAt: new Date().toISOString(), dataScopeLabel: "Your workspace",
+  } });
+  await stream.close();
+  // The chip in the text is the link; it is not repeated as an "Open" button.
+  await expect(panel.getByTestId("ai-business-navigation-action")).toHaveCount(0);
+  await panel.getByTestId("ai-record-chip").filter({ hasText: "CT-ACME0001" }).click();
+  await expect(page).toHaveURL(/\/app\/contracts\/CT-1$/);
 });
 
 test("in Chinese the same chip answers in Chinese", async ({ page }) => {

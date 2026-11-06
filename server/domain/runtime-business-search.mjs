@@ -44,7 +44,9 @@ export function searchRuntimeBusinessContext(context, query, { limit = 15 } = {}
         sourceRepository,
         score: exact ? 120 : lower(entityId).includes(normalized) ? 95 : 72,
         matchedFields: exact ? ['entityId'] : ['runtimeRecord'],
-        evidence: [{ label: '来源', value: sourceRepository }],
+        // sourceRepository names the internal repository the row came from; it is
+        // for diagnostics and never shown, so the result carries no evidence row.
+        evidence: [],
       })
     }
   }

@@ -231,6 +231,8 @@ export type SupplierMaster = {
 };
 
 export type WarehouseBin = {
+  // The record id, for links; the code is what people read. Absent on fallback rows.
+  warehouseId?: string;
   warehouseCode: string;
   warehouseName: string;
   zone: string;
@@ -291,45 +293,6 @@ export type RfqRecord = {
   auditTrailIds?: string[];
 };
 
-export type SupplierRecommendationResult = {
-  sku: string;
-  quantity: number;
-  currentSupplier: string;
-  primary: {
-    supplier: string;
-    unitPrice: number;
-    listPrice?: number;
-    listPriceCny?: number;
-    currency?: string;
-    fxRate?: number;
-    contractId?: string;
-    contractLabel?: string;
-    contractDiscount?: number;
-    contractTierMinQty?: number;
-    leadTimeDays: number;
-    responseScore: number;
-    capacity: number;
-    availableCapacity?: number;
-    capacityWindow?: string;
-    capacityReliability?: number;
-    capacityStatus?: "可承诺" | "紧张" | "不足" | string;
-    risk: string;
-    performanceScore: number;
-    quality: number;
-    rejectRate: number;
-    flag: string;
-    score: number;
-    amount: number;
-    isCurrent: boolean;
-    note: string;
-  } | null;
-  backup: SupplierRecommendationResult["primary"];
-  candidates: NonNullable<SupplierRecommendationResult["primary"]>[];
-  split: { supplier: string; quantity: number; unitPrice: number }[];
-  needsRfq: boolean;
-  rfqReason: string;
-};
-
 export type WorkspaceUser = {
   id: string;
   company: string;
@@ -356,11 +319,15 @@ export type ReceivingDocLine = {
   rejectedQty: number;
   warehouseId?: string;
   unit?: string;
+  // The lot number recorded on the receiving line, when one was.
+  lotNumber?: string;
   status?: string;
 };
 
 export type ReceivingDoc = {
   grn: string;
+  // The receipt number recorded on the document; grn is its id.
+  documentNumber?: string;
   po: string;
   supplier: string;
   arrived: string;
