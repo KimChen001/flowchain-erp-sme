@@ -20,9 +20,10 @@ export const PROGRESS_STEPS = Object.freeze(['reading', 'writing', 'checking'])
 export const TOOL_STATES = Object.freeze(['running', 'done', 'error'])
 export const FLAG_KINDS = Object.freeze(['number', 'date', 'name', 'record'])
 export const REPLACE_CODES = Object.freeze(['unbacked_action_claim', 'foreign_record', 'hidden_value'])
-// too_long_for_rules: assistant v2 handed a question back to the rules (over
-// the cap, or the provider down) that is longer than the rules can read.
-export const NOTICE_CODES = Object.freeze(['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused', 'too_long_for_rules'])
+// ai_off: the workspace has not switched AI on; no_provider: no model is set
+// up on this server. Assistant v2 answers every question; when it cannot, a
+// notice says why (owner direction 2026-11-05: no rules answer behind it).
+export const NOTICE_CODES = Object.freeze(['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused', 'ai_off', 'no_provider'])
 // The longest question each path reads, in characters: assistant v2 takes
 // rows pasted from a spreadsheet; the rules and the model-first loop do not.
 export const QUESTION_LIMITS = Object.freeze({ rules: 1200, assistantV2: 8000 })
