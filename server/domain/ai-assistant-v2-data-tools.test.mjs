@@ -228,6 +228,60 @@ test('suggest_purchase_lines with coverDays sizes a line from recorded demand an
   assert.equal(before.suggestedQuantity.source, 'covered_by_open_orders')
 })
 
+// 2026-11-05: "order 100 instead of 50, is it cheaper?" got the price and the
+// cash tied up, never the trade between ordering less often and holding more.
+// LDM-001: 10 a day (3,650 a year), reference price 95, minimum order 100.
+test('order_quantity_costs weighs orders a year against holding cost, with the assumption it makes', async () => {
+  const { run } = await v2({ change: shipping, actor: everyWarehouse })
+  const result = (await run('order_quantity_costs', { sku: 'LDM-001', quantities: [200, 100, 50] })).result
+  assert.deepEqual([result.unitPrice, result.currency, result.unitPriceSource, result.priceBreaksRecorded], [95, 'USD', 'reference_price', false])
+  assert.deepEqual(result.demand, { averageDailyDemand: 10, annualDemand: 3650, basis: 'recorded_demand', windowDays: 90, shipmentDays: 18 })
+  assert.deepEqual(result.supplier, { name: 'Acme Components', preferred: true, minimumOrderQuantity: 100, leadTimeDays: 12 })
+  // 25% a year of 95 is 23.75 a unit; nothing the user gave.
+  assert.deepEqual(result.assumptions, { holdingRatePercent: 25, holdingRateSource: 'assumed_planning_value', holdingCostCovers: ['capital', 'storage', 'insurance', 'obsolescence'], holdingCostPerUnitPerYear: 23.75, costPerOrder: null, costPerOrderSource: 'not_recorded' })
+  // Sorted, each with its cycle stock held half the time.
+  assert.deepEqual(result.options.map((row) => [row.quantity, row.belowSupplierMinimum, row.orderValue, row.daysOfDemand, row.ordersPerYear, row.averageCycleStock, row.holdingCostPerYear, row.orderingCostPerYear, row.totalCostPerYear]), [
+    [50, true, 4750, 5, 73, 25, 593.75, null, null],
+    [100, false, 9500, 10, 36.5, 50, 1187.5, null, null],
+    [200, false, 19000, 20, 18.3, 100, 2375, null, null],
+  ])
+  // 100 → 200 saves 18.25 orders for 1,187.50 more holding: worth it above 23.75 × 100 × 200 / (2 × 3,650) = 65.07 an order.
+  assert.deepEqual(result.comparisons[1], { smaller: 100, larger: 200, ordersSavedPerYear: 18.3, extraHoldingCostPerYear: 1187.5, breakEvenCostPerOrder: 65.07, cheaperAtUserCostPerOrder: null })
+  // EOQ = √(2 × 3,650 × cost / 23.75), never below the minimum order.
+  assert.deepEqual(result.economicOrderQuantity, { atUserCostPerOrder: null, examples: [{ costPerOrder: 25, quantity: 100, daysOfDemand: 10, ordersPerYear: 36.5 }, { costPerOrder: 50, quantity: 124, daysOfDemand: 12.4, ordersPerYear: 29.4 }, { costPerOrder: 100, quantity: 175, daysOfDemand: 17.5, ordersPerYear: 20.9 }], raisedToSupplierMinimum: true })
+  // With the user's own figures: 20% a year and 80 an order make 200 the cheaper.
+  const own = (await run('order_quantity_costs', { sku: 'LDM-001', quantities: [100, 200], holdingRatePercent: 20, costPerOrder: 80 })).result
+  assert.deepEqual([own.assumptions.holdingRateSource, own.assumptions.costPerOrderSource, own.assumptions.holdingCostPerUnitPerYear], ['user', 'user', 19])
+  assert.deepEqual(own.options.map((row) => [row.holdingCostPerYear, row.orderingCostPerYear, row.totalCostPerYear]), [[950, 2920, 3870], [1900, 1460, 3360]])
+  assert.deepEqual([own.comparisons[0].breakEvenCostPerOrder, own.comparisons[0].cheaperAtUserCostPerOrder], [52.05, 200])
+  assert.deepEqual(own.economicOrderQuantity, { atUserCostPerOrder: { quantity: 175, daysOfDemand: 17.5, ordersPerYear: 20.9 }, examples: [], raisedToSupplierMinimum: true })
+  // An approved supplier by name, and one that is not approved for the item.
+  assert.equal((await run('order_quantity_costs', { sku: 'LDM-001', quantities: [100], supplier: 'acme' })).result.supplier.name, 'Acme Components')
+  assert.deepEqual(await run('order_quantity_costs', { sku: 'LDM-001', quantities: [100], supplier: 'Northstar' }), { ok: false, error: 'supplier_not_approved_for_item', details: ['Acme Components'] })
+  assert.equal((await run('order_quantity_costs', { sku: 'NOPE-1', quantities: [1] })).error, 'not_found')
+})
+
+test('order_quantity_costs without recorded demand gives the order values and says why there is no yearly view', async () => {
+  const { run } = await v2({ actor: everyWarehouse })
+  const result = (await run('order_quantity_costs', { sku: 'LDM-001', quantities: [100, 200] })).result
+  assert.deepEqual(result.demand, { averageDailyDemand: null, basis: 'not_enough_shipment_history', windowDays: 90 })
+  assert.deepEqual(result.options.map((row) => [row.quantity, row.orderValue, row.ordersPerYear, row.holdingCostPerYear]), [[100, 9500, null, null], [200, 19000, null, null]])
+  assert.deepEqual([result.comparisons, result.economicOrderQuantity], [[], null])
+})
+
+// 2026-11-05: "what does holding my stock cost me?" got "I can't tell".
+test('inventory_value values stock at reference prices and states the holding rate it assumed', async () => {
+  const { run, facts } = await v2()
+  const result = (await run('inventory_value')).result
+  const onHand = Number(facts.inventory.rows.find((row) => row.sku === 'LDM-001').onHand)
+  // Only LDM-001 has an approved supplier with a price; the others are counted, not valued.
+  assert.deepEqual(result.rows.map((row) => [row.sku, row.onHand, row.unitPrice, row.currency, row.value, row.sharePercent, row.cumulativeSharePercent, row.supplier]), [['LDM-001', onHand, 95, 'USD', onHand * 95, 100, 100, 'Acme Components']])
+  assert.deepEqual(result.totals, [{ currency: 'USD', value: onHand * 95, holdingCostPerYear: Math.round(onHand * 95 * 25) / 100, holdingCostPerMonth: Math.round((onHand * 95 * 0.25 / 12) * 100) / 100, holdingCostPerDay: Math.round((onHand * 95 * 0.25 / 365) * 100) / 100 }])
+  assert.deepEqual([result.itemsValued, result.itemsWithoutPrice, result.assumptions.holdingRatePercent, result.assumptions.holdingRateSource], [1, result.itemsWithStock - 1, 25, 'assumed_planning_value'])
+  assert.equal((await run('inventory_value', { holdingRatePercent: 30 })).result.totals[0].holdingCostPerYear, Math.round(onHand * 95 * 30) / 100)
+  assert.equal((await run('inventory_value', { skus: ['NOPE-1'] })).error, 'not_found')
+})
+
 test('suggest_purchase_lines with coverDays reads no demand for a reader of only some warehouses', async () => {
   const { run } = await v2({ change: (data) => { shipping(data); data.warehouses = [{ id: 'WH-1' }, { id: 'WH-2' }] }, ctx: { routeContext: { reportReadAccess: { warehouseIds: ['WH-1'] } } } })
   const [row] = (await run('suggest_purchase_lines', { skus: ['LDM-001'], coverDays: 14 })).result.rows
@@ -426,7 +480,7 @@ test('every data tool declares its columns, and each declared column is in its r
   const items = scenario.data.items.map((row) => ({ ...row, status: 'active', reorderPoint: row.sku === 'LDM-001' ? 200 : row.reorderPoint }))
   const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
   const reorderList = { read: async (input) => buildReorderList({ allocationRows: input.allocationRows, items, supplierLinks: [link()], suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }) }
-  const { facts, context, run } = await v2({ change: highReorderPoint, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList } } })
+  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList } } })
   // The calls that fill each table; a tool not named here is called once
   // without arguments.
   const calls = {
@@ -441,6 +495,7 @@ test('every data tool declares its columns, and each declared column is in its r
     list_receivables: [{}, { view: 'aging' }],
     price_history: [{ sku: 'LDM-001' }],
     search_documents: [{ query: 'supplier past the promised date escalate' }],
+    order_quantity_costs: [{ sku: 'LDM-001', quantities: [50, 100] }],
   }
   // A nested column under a null value (a rate with too few deliveries) is
   // there, and null.

@@ -62,6 +62,8 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   records_missing_data: { rows: ['type', 'label', 'source', 'missing'] },
   suggest_purchase_lines: { rows: ['item.sku', 'item.name', 'item.unit', 'onHand', 'safetyStock', 'reorderPoint', 'suggestedQuantity.value', 'suggestedQuantity.source', 'supplier.name', 'needByDate.value', 'estimatedUnitPrice.value', 'estimatedUnitPrice.currency'] },
   setup_status: { steps: ['id', 'done', 'count'] },
+  order_quantity_costs: { options: ['quantity', 'orderValue', 'daysOfDemand', 'ordersPerYear', 'averageCycleStock', 'holdingCostPerYear', 'orderingCostPerYear', 'totalCostPerYear', 'belowSupplierMinimum'], comparisons: ['smaller', 'larger', 'ordersSavedPerYear', 'extraHoldingCostPerYear', 'breakEvenCostPerOrder', 'cheaperAtUserCostPerOrder'] },
+  inventory_value: { rows: ['sku', 'itemName', 'onHand', 'unit', 'unitPrice', 'currency', 'value', 'sharePercent', 'cumulativeSharePercent', 'supplier'], totals: ['currency', 'value', 'holdingCostPerYear', 'holdingCostPerMonth', 'holdingCostPerDay'] },
 })
 
 export function aiReadToolsFor(facts, context = null, { assistantV2 = false } = {}) {
