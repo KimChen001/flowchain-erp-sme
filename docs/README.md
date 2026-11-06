@@ -69,6 +69,7 @@
 ## AI
 
 - [AI assistant plan, v4.0](ai-assistant-plan.md): decisions, state, roadmap and stop points for the assistant and knowledge work
+- [Model-first assistant design](ai-model-first-design.md): proposal of 2026-10-28; the model reads through tools and writes the answer, with a grounding check; decisions M1–M7 open
 - [AI safety and draft-first explainer](ai-safety-and-draft-first-explainer-v1.md)
 - [AI provider safety gate](ai-provider-safety-gate-v1.md)
 - [AI provider adapter plan](ai-provider-adapter-v1-plan.md)
