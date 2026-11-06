@@ -60,7 +60,8 @@ test('currency labels never reach Intl.NumberFormat', () => {
 })
 
 test('metrics follow the workspace locale and the interface language, not a fixed zh-CN', () => {
-  assert.equal(formatMetric(1234, 'currency', 'USD', { locale: 'en-US' }), '$1,234')
+  assert.equal(formatMetric(1234, 'currency', 'USD', { locale: 'en-US' }), '$1,234.00')
+  assert.equal(formatMetric(79692.5, 'currency', 'USD', { locale: 'en-US' }), '$79,692.50')
   assert.equal(formatMetric(12.5, 'days', null, { locale: 'en-US', language: 'en-US' }), '12.5 days')
   assert.equal(formatMetric(12.5, 'days', null, { locale: 'zh-CN', language: 'zh-CN' }), '12.5 天')
   assert.equal(formatMetric(1234.56, 'number', null, { locale: 'de-DE' }), '1.234,6')

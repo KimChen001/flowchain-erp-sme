@@ -2,12 +2,12 @@ import { useState } from "react";
 import { Copy, Eye } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { apiErrorText } from "../../lib/apiErrorText";
-import { A, Chip } from "../../components/ui";
+import { A, Chip, useConfirm } from "../../components/ui";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import type { CustomerMaster, PrintTemplateCatalogItem } from "./standardData";
 import { orNotProvided, useMasterDataCopy } from "./masterDataCopy";
 import { useMasterDataWriteAccess } from "./writeAccess";
-import { tableBodyTextClass, tableMinSmClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, thClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableBodyTextClass, tableMinSmClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, thClass } from "../../components/ui/workbenchTable";
 
 function creditStyle(status: string) {
   if (status === "正常") return { color: A.green, bg: "#f0faf4" };
@@ -85,7 +85,24 @@ export function CustomerTable({ customers, onChanged, creating = false, onCreati
   // Changing a customer's status needs master_data.customer.manage.
   const canEdit = useMasterDataWriteAccess().customers;
   const [error, setError] = useState("");
+  const confirmDialog = useConfirm();
+  const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
+  // Changing a customer's status asks first, as it does for a supplier.
   const setStatus = async (item: CustomerMaster, active: boolean) => {
+    const name = item.name || item.code;
+    const confirmed = await confirmDialog.confirm({
+      title: active ? say(`Set ${name} active?`, `启用 ${name}？`) : say(`Set ${name} inactive?`, `停用 ${name}？`),
+      description: active
+        ? say("It can be chosen for new sales orders again.", "启用后可以在新的销售订单中再次选择。")
+        : say(
+          "It can't be chosen for new sales orders. Orders that already use it don't change. You can set it active again later.",
+          "停用后不能在新的销售订单中选择；已使用它的订单不变。之后可以重新启用。",
+        ),
+      confirmLabel: copy(active ? "Set active" : "Set inactive"),
+      tone: active ? "primary" : "danger",
+      testId: "customer-status-dialog",
+    });
+    if (!confirmed) return;
     setError("");
     try {
       await apiJson(`/api/master-data/customers/${encodeURIComponent(item.id || item.code)}/${active ? "activate" : "deactivate"}`, { method: "POST", body: JSON.stringify({ expectedVersion: item.version }) });
@@ -96,10 +113,11 @@ export function CustomerTable({ customers, onChanged, creating = false, onCreati
   };
   return (
     <div>
+      {confirmDialog.element}
       {error ? <p role="alert" className="px-5 pt-3 text-xs" style={{ color: A.red }}>{error}</p> : null}
       {creating ? <NewCustomerForm onCancel={() => onCreatingDone?.()} onSaved={() => { onCreatingDone?.(); onChanged?.(); }} /> : null}
       {customers.length > 0 && (
-        <div className={tableScrollClass}>
+        <div className={tableScrollClass} ref={listTableCardsRef}>
           <table className={tableMinSmClass}>
             <thead><tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
               {["Customer code", "Customer name", "Contact", "Phone", "Address", "Credit status", "Payment terms", "Status", "Actions"].map((item) => <th key={item} className={item === "Actions" ? `${thClass} sticky right-0 z-20 bg-white` : thClass} style={{ color: A.gray1 }}>{copy(item)}</th>)}

@@ -436,7 +436,7 @@ export function ProcurementDocumentDetailPage({
           <>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-xl font-semibold" title={record.id || documentId} data-testid="procurement-document-heading">{heading}</h2>
+                <h1 className="fc-page-title" style={{ color: A.label }} title={record.id || documentId} data-testid="procurement-document-heading">{heading}</h1>
                 <p className="mt-1 text-sm" style={{ color: A.sub }}>{record.supplierName || copy("No linked supplier")}</p>
               </div>
               {statusChip(status === "—" ? undefined : status)}

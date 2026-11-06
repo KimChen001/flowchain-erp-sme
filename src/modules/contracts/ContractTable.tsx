@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { A } from "../../components/ui";
-import { tableBodyTextClass, tableLinkClass, tableScrollClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableBodyTextClass, tableLinkClass, tableScrollClass } from "../../components/ui/workbenchTable";
 import { typography } from "../../components/ui/typography";
 import { EntityLink } from "../../components/business/EntityLink";
 import { ContractStateChip, TYPE_LABEL, keyDateLabel, useContractCopy, useContractFormat, type ContractView } from "./contractShared";
@@ -20,7 +20,7 @@ export function ContractTable({ contracts, canManage, showSupplier = true, testI
   const t = useContractCopy();
   const f = useContractFormat();
   return (
-    <div className={tableScrollClass}>
+    <div className={tableScrollClass} ref={listTableCardsRef}>
       <table className={`w-full ${showSupplier ? "min-w-[1080px]" : "min-w-[940px]"} text-left ${tableBodyTextClass}`} data-testid={testId}>
         <thead>
           <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>

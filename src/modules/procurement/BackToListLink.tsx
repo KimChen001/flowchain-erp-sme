@@ -5,7 +5,7 @@ import { useI18n } from "../../i18n/I18n";
 // The purchasing lists a detail page returns to, with the link's wording.
 const LISTS = {
   orders: { to: "/app/procurement/orders", label: ["Back to purchase orders", "返回采购订单"] },
-  rfq: { to: "/app/procurement/rfq", label: ["Back to RFQs", "返回询价与报价"] },
+  rfq: { to: "/app/procurement/rfq", label: ["Back to RFQs", "返回询价单与报价"] },
   receiving: { to: "/app/procurement/receiving", label: ["Back to receipts", "返回收货记录"] },
   bills: { to: "/app/procurement/bills", label: ["Back to supplier invoices", "返回采购发票"] },
   match: { to: "/app/procurement/three-way-match", label: ["Back to three-way match", "返回三单匹配"] },

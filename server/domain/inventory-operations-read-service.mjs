@@ -245,6 +245,8 @@ export function createInventoryOperationsReadService({
           postingStatus: row.postingStatus,
           version: row.version,
           lineCount: row.lines.length,
+          // The list page searches by SKU.
+          skus: [...new Set(row.lines.map((line) => line.sku))],
           sourceWarehouses: [
             ...new Set(
               row.lines.flatMap((line) =>
@@ -624,6 +626,8 @@ export function createInventoryOperationsReadService({
         blindCount: row.blindCount,
         version: row.version,
         lineCount: row.lines.length,
+        // The list page searches by SKU.
+        skus: [...new Set(row.lines.map((line) => line.sku))],
         createdAt: iso(row.createdAt),
         updatedAt: iso(row.updatedAt),
       })),
@@ -849,6 +853,8 @@ export function createInventoryOperationsReadService({
           postingStatus: row.postingStatus,
           version: row.version,
           lineCount: row.lines.length,
+          // The list page searches by SKU.
+          skus: [...new Set(row.lines.map((line) => line.sku))],
           createdAt: iso(row.createdAt),
           updatedAt: iso(row.updatedAt),
         })),

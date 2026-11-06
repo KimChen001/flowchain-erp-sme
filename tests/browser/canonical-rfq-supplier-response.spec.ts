@@ -58,7 +58,7 @@ test("the response editor shows the item's earlier PO prices beside the unit pri
   await page.goto(`/app/procurement/rfq/${RFQ_ID}`);
   await page.getByTestId(`rfq-response-action-${SUPPLIER_B}`).click();
   const firstRow = page.getByTestId(`rfq-response-editor-line-${LINE_1}`);
-  await expect(page.getByTestId(`rfq-response-price-history-${LINE_1}`)).toContainText("上次采购订单价 CNY 90.00 / pcs · PO-0031 · Sep 14, 2026 · Acme");
+  await expect(page.getByTestId(`rfq-response-price-history-${LINE_1}`)).toContainText("上次采购订单价 CN¥90.00 / 件 · PO-0031 · Sep 14, 2026 · Acme");
   await expect(firstRow.getByLabel(`单价 ${LINE_1}`)).toHaveValue("");
   expect(historyKeys[0]).toContain(`LOCAL-DEMO-ITEM-001|pcs|CNY`);
 });

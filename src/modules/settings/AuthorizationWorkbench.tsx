@@ -32,6 +32,17 @@ export default function AuthorizationWorkbench() {
   const confirmDialog = useConfirm();
   const roleName = (role: Role) => roleDisplayName(role, language);
   const accessName = (access: string) => access === "operate" ? tr("可操作", "Operate") : access === "read" ? tr("只读", "Read") : access;
+  // A warehouse scope is shown by the warehouse's name, else its code; the
+  // stored id only for a warehouse the list does not have.
+  const [warehouseLabels, setWarehouseLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let active = true;
+    apiJson<{ warehouses?: Array<{ id: string; code?: string; name?: string }> }>("/api/master-data/warehouses")
+      .then((payload) => { if (active) setWarehouseLabels(Object.fromEntries((payload?.warehouses || []).filter((row) => row.id).map((row) => [row.id, String(row.name || "").trim() || String(row.code || "").trim() || row.id]))); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  const warehouseLabel = (id: string) => warehouseLabels[id] || id;
   const load = async () => { try { const next = await apiJson<Model>("/api/authorization/roles"); setModel(next); const id = selectedId || next.roles[0]?.id || ""; setSelectedId(id); setDraft(next.roles.find((role) => role.id === id) || null); setNotice(""); } catch (error) { setNotice(error instanceof Error ? error.message : tr("无权访问或加载失败", "Access denied or failed to load")); } };
   useEffect(() => { void load(); }, []);
   useEffect(() => { setDraft(model?.roles.find((role) => role.id === selectedId) || null); }, [selectedId, model]);
@@ -50,7 +61,21 @@ export default function AuthorizationWorkbench() {
     });
     if (!name) return;
     try { const role = await apiJson<Role>("/api/authorization/roles", { method: "POST", body: JSON.stringify({ name, copyFromRoleId }) }); await load(); setSelectedId(role.id); } catch (error) { setNotice(error instanceof Error ? error.message : tr("创建失败", "Create failed")); } };
-  const assign = async (user: User, roleId: string, enabled: boolean) => { const roleIds = enabled ? [...new Set([...user.roleIds, roleId])] : user.roleIds.filter((id) => id !== roleId); try { await apiJson(`/api/authorization/users/${encodeURIComponent(user.id)}/roles`, { method: "PUT", body: JSON.stringify({ roleIds }) }); await load(); } catch (error) { setNotice(error instanceof Error ? error.message : tr("分配失败", "Assignment failed")); } };
+  // Ticking a role changes the member's access at once and ends their
+  // sessions, so it names the change and asks first.
+  const assign = async (user: User, roleId: string, enabled: boolean) => {
+    const role = model?.roles.find((item) => item.id === roleId);
+    const who = user.name || user.email;
+    const what = role ? roleName(role) : "";
+    const confirmed = await confirmDialog.confirm({
+      title: enabled ? tr(`为 ${who} 分配“${what}”角色？`, `Give ${who} the ${what} role?`) : tr(`移除 ${who} 的“${what}”角色？`, `Remove the ${what} role from ${who}?`),
+      description: tr("权限立即生效；该成员需要重新登录。", "Their permissions change straight away, and they'll need to sign in again."),
+      confirmLabel: enabled ? tr("分配角色", "Give role") : tr("移除角色", "Remove role"),
+      tone: enabled ? "primary" : "danger",
+      testId: "role-assignment-dialog",
+    });
+    if (!confirmed) return;
+    const roleIds = enabled ? [...new Set([...user.roleIds, roleId])] : user.roleIds.filter((id) => id !== roleId); try { await apiJson(`/api/authorization/users/${encodeURIComponent(user.id)}/roles`, { method: "PUT", body: JSON.stringify({ roleIds }) }); await load(); } catch (error) { setNotice(error instanceof Error ? error.message : tr("分配失败", "Assignment failed")); } };
   if (!model) return <Card className="p-6" data-testid="authorization-workbench">{notice || tr("正在加载用户与角色…", "Loading users and roles…")}</Card>;
   return <div className="space-y-5" data-testid="authorization-workbench">
     {confirmDialog.element}
@@ -62,6 +87,6 @@ export default function AuthorizationWorkbench() {
         <div className="mt-5 rounded-xl bg-slate-50 p-4"><h3 className="font-semibold">{tr("模块可见性预览", "Module visibility preview")}</h3><div className="mt-2 flex flex-wrap gap-2">{previewModules.map((module) => { const visible = model.permissionCatalog.some((permission) => permission.module === module && (permission.action === "read" || permission.action === "manage") && draft.permissionCodes.includes(permission.code)); return <span key={module} className={`rounded-full px-3 py-1 text-xs ${visible ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-500"}`}>{moduleLabels[module]?.[en ? 1 : 0] || module}</span>; })}</div></div>
       </Card>}
     </div>
-    <Card className="p-5"><h3 className="flex items-center gap-2 font-semibold"><Users size={17}/>{tr("用户分配与有效权限", "User assignment & effective permissions")}</h3><p className="mt-1 text-sm text-slate-500">{tr("角色与仓库权限分开设置。成员在仓库中操作还需要该仓库的访问权限。", "Roles and warehouse access are set separately. To act in a warehouse, a member also needs access to it.")}</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead className="bg-slate-50 text-left"><tr><th className="p-2">{tr("用户", "User")}</th>{model.roles.map((role) => <th className="p-2" key={role.id}>{roleName(role)}</th>)}<th>{tr("仓库范围", "Warehouse scope")}</th></tr></thead><tbody>{model.users.map((user) => <tr className="border-t" key={user.id}><td className="p-2"><div className="font-medium">{user.name}</div><div className="text-xs text-slate-500">{user.email}</div></td>{model.roles.map((role) => <td className="p-2" key={role.id}><input aria-label={`${user.email} ${roleName(role)}`} type="checkbox" checked={user.roleIds.includes(role.id)} disabled={role.status !== "active"} onChange={(event) => void assign(user, role.id, event.target.checked)}/></td>)}<td className="text-xs">{user.warehouseScopes.map((scope) => `${scope.warehouseId} · ${accessName(scope.accessLevel)}`).join(", ") || tr("无", "None")}</td></tr>)}</tbody></table></div></Card>
+    <Card className="p-5"><h3 className="flex items-center gap-2 font-semibold"><Users size={17}/>{tr("用户分配与有效权限", "User assignment & effective permissions")}</h3><p className="mt-1 text-sm text-slate-500">{tr("角色与仓库权限分开设置。成员在仓库中操作还需要该仓库的访问权限。", "Roles and warehouse access are set separately. To act in a warehouse, a member also needs access to it.")}</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead className="bg-slate-50 text-left"><tr><th className="p-2">{tr("用户", "User")}</th>{model.roles.map((role) => <th className="p-2" key={role.id}>{roleName(role)}</th>)}<th>{tr("仓库范围", "Warehouse scope")}</th></tr></thead><tbody>{model.users.map((user) => <tr className="border-t" key={user.id}><td className="p-2"><div className="font-medium">{user.name}</div><div className="text-xs text-slate-500">{user.email}</div></td>{model.roles.map((role) => <td className="p-2" key={role.id}><input aria-label={`${user.email} ${roleName(role)}`} type="checkbox" checked={user.roleIds.includes(role.id)} disabled={role.status !== "active"} onChange={(event) => void assign(user, role.id, event.target.checked)}/></td>)}<td className="text-xs">{user.warehouseScopes.map((scope) => `${warehouseLabel(scope.warehouseId)} · ${accessName(scope.accessLevel)}`).join(", ") || tr("无", "None")}</td></tr>)}</tbody></table></div></Card>
   </div>;
 }

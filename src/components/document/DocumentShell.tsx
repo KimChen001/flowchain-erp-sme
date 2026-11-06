@@ -96,7 +96,8 @@ export function DocumentShell({
             {moduleLabel && <Chip label={String(moduleLabel)} color={A.blue} bg="#f0f6ff" />}
             {status && <Chip label={copy(status)} color={style.color} bg={style.bg} />}
           </div>
-          <h2 className="text-lg font-semibold tracking-tight" style={{ color: A.label }}>{copy(title)}</h2>
+          {/* The detail page's one title (the PO number): H1 in the shared page-title style. */}
+          <h1 className="fc-page-title" style={{ color: A.label }}>{copy(title)}</h1>
           <div className="text-xs mt-1" style={{ color: A.sub }}>
             {documentNo && <span className="font-semibold tabular-nums" style={{ color: A.blue }}>{documentNo}</span>}
             {documentNo && subtitle ? <span> · </span> : null}

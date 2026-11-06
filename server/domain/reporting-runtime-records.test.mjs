@@ -69,6 +69,14 @@ test('report pages describe their scope in customer-facing terms', async () => {
   assert.equal(dateRangeLabel('', '2026-09-30', english), 'Through 2026-09-30');
   assert.equal(dateRangeLabel('2026-09-01', '2026-09-30', english), '2026-09-01 — 2026-09-30');
   assert.equal(dateRangeLabel('', '', value => analyticsCopy(value, 'zh-CN')), '全部日期');
+  // The page shows each day in the workspace date format; the export keeps YYYY-MM-DD.
+  const { formatCalendarDay } = await import('../../src/lib/format.ts');
+  const day = (value) => formatCalendarDay(value, 'en-US');
+  assert.equal(dateRangeLabel('2026-08-09', '2026-11-06', english, day), 'Aug 9, 2026 — Nov 6, 2026');
+  assert.equal(dateRangeLabel('2026-09-01', '', english, day), 'From Sep 1, 2026');
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../../src/modules/reports/BiDashboard.tsx', import.meta.url), 'utf8');
+  assert.match(source, /dateRangeLabel\(report\.dataScope\.from, report\.dataScope\.to, copy, \(day\) => formatCalendarDay\(day, locale\)\)/);
   // Inventory rows name the item and its unit; the SKU is the business ID, and the risk column says so.
   assert.deepEqual(inventory.details[0], { id: 'A', itemName: 'Valve', unit: 'pcs', quantity: 4, reserved: 0, available: 4, shortage: 0, availableToPromise: 4, stockStatus: 'ok', status: 'low' });
   assert.deepEqual(inventory.columnDefinitions.filter(column => ['id', 'status'].includes(column.key)).map(column => column.label), ['SKU', 'Risk']);

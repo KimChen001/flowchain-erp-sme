@@ -3,6 +3,7 @@ import { Boxes, Pencil, Plus, Save } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { forgetWarehouseNames } from "../../lib/useWarehouseNames";
 import { A, useConfirm } from "../../components/ui";
+import { listTableCardsRef } from "../../components/ui/workbenchTable";
 import { useI18n } from "../../i18n/I18n";
 
 // Warehouses and their bins, kept by a workspace administrator: add one,
@@ -204,7 +205,7 @@ export default function WarehouseMaster({ operateIds, onChanged }: { operateIds:
       <p className="w-full text-xs text-slate-500">{t("settings.warehouseCodeHint")}</p>
     </form>}
 
-    <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[640px] text-sm" data-testid="warehouse-table">
+    <div className="mt-3 overflow-x-auto" ref={listTableCardsRef}><table className="w-full min-w-[640px] text-sm" data-testid="warehouse-table">
       <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr><th className="p-2">{t("settings.warehouseCode")}</th><th className="p-2">{t("settings.warehouseName")}</th><th className="p-2">{t("settings.status")}</th><th className="p-2" /></tr></thead>
       <tbody>{warehouses.length === 0 && <tr><td colSpan={4} className="p-2 text-slate-500">{t("settings.warehouseEmpty")}</td></tr>}
         {warehouses.map(warehouse => {

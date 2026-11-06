@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import { FileSpreadsheet, Plus, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { A, Card } from "./index";
 import { typography } from "./typography";
+import { listTableCardsRef } from "./workbenchTable";
 import { useI18n } from "../../i18n/I18n";
 
 // The list page layout every procurement tab shares, taken from the purchase
@@ -118,8 +119,84 @@ export function ListCard({ title, total, shown, right, children, testId }: {
         </div>
         {right && <div className="ml-auto flex items-center gap-2">{right}</div>}
       </div>
-      {children}
+      <div ref={listTableCardsRef}>{children}</div>
     </Card>
+  );
+}
+
+// The phone card layout of list tables (workbenchTable.ts): ListCard applies
+// it to its body; other list tables put listTableCardsRef on their scroll box.
+export { listTableCardsRef };
+
+// A row's "More" menu. The menu stays inside the row, so the row's buttons
+// are found there, but is placed against the window: the table's scroll box
+// cannot clip it, and it opens upward when the row is near the bottom. It
+// closes on a choice, a click elsewhere or Escape, and follows the row while
+// the page scrolls.
+export function RowMenu({ label, children, testId }: { label: string; children: React.ReactNode; testId?: string }) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const close = () => {
+    if (detailsRef.current) detailsRef.current.open = false;
+  };
+  useLayoutEffect(() => {
+    const details = detailsRef.current, menu = menuRef.current;
+    const summary = details?.querySelector("summary");
+    if (!open || !details || !menu || !summary) return;
+    const place = () => {
+      const anchor = summary.getBoundingClientRect();
+      const gap = 4, edge = 8;
+      const roomBelow = window.innerHeight - anchor.bottom;
+      const up = roomBelow < menu.offsetHeight + gap + edge && anchor.top > roomBelow;
+      const top = up ? anchor.top - gap - menu.offsetHeight : anchor.bottom + gap;
+      const left = Math.max(edge, Math.min(anchor.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - edge));
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+      // A transformed ancestor would make "fixed" relative to itself.
+      const placed = menu.getBoundingClientRect();
+      if (Math.abs(placed.left - left) > 0.5 || Math.abs(placed.top - top) > 0.5) {
+        menu.style.left = `${2 * left - placed.left}px`;
+        menu.style.top = `${2 * top - placed.top}px`;
+      }
+    };
+    place();
+    // Rows below a sticky cell would otherwise paint over the open menu.
+    const cell = details.closest("td, th") as HTMLElement | null;
+    const zIndex = cell?.style.zIndex ?? "";
+    if (cell) cell.style.zIndex = "40";
+    const outside = (event: Event) => {
+      if (!details.contains(event.target as Node)) close();
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      close();
+      summary.focus();
+    };
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+      if (cell) cell.style.zIndex = zIndex;
+    };
+  }, [open]);
+  return (
+    <details ref={detailsRef} className="relative" onToggle={(event) => setOpen(event.currentTarget.open)} data-testid={testId}>
+      <summary className={`cursor-pointer list-none ${rowActionClass.neutral}`}>{label}</summary>
+      <div
+        ref={menuRef}
+        className="fixed z-50 flex w-max min-w-40 max-w-64 flex-col whitespace-normal rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+        style={{ visibility: open ? "visible" : "hidden" }}
+        onClick={close}
+      >
+        {children}
+      </div>
+    </details>
   );
 }
 

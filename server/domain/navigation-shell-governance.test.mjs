@@ -32,7 +32,15 @@ test("module shell owns breadcrumb, secondary navigation, page title and recover
   assert.match(shell, /NotFoundRecovery/);
   assert.match(breadcrumb, /breadcrumbRoutes\(route\)/);
   assert.match(breadcrumb, /aria-current="page"/);
-  assert.match(breadcrumb, /<Link[^>]+to=\{item\.path\}/);
+  // A parent detail crumb (the PO above its document, the RFQ above its
+  // comparison) fills :id from the current address; it never links a pattern.
+  assert.match(breadcrumb, /matchPath\(route\.path, location\.pathname\)/);
+  assert.match(breadcrumb, /generatePath\(item\.path, params\)/);
+  assert.match(breadcrumb, /<Link[^>]+to=\{href\}/);
+  assert.doesNotMatch(breadcrumb, /to=\{item\.path\}/);
+  // The current crumb names a page whose address ends in a fixed word
+  // (/orders/:id/document) by its label, not "document".
+  assert.match(breadcrumb, /const keyed = \(item\.path\.split\("\/"\)\.at\(-1\) \|\| ""\)\.startsWith\(":"\)/);
   assert.doesNotMatch(breadcrumb, /preventDefault/);
 });
 

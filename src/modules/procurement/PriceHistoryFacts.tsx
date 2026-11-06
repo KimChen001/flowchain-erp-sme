@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { A } from "../../components/ui";
 import { ApiError } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
-import { formatCalendarDay } from "../../lib/format";
+import { formatCalendarDay, formatLocaleAmount } from "../../lib/format";
+import { unitLabel } from "../../i18n/unitLabels";
 import { PRICE_HISTORY_MAX_KEYS, compareQuote, priceHistoryKeyString, type PriceFact, type PriceHistory, type QuoteComparison } from "../../../shared/price-history.mjs";
 import { procurementApi } from "./procurementApi";
 import { usePriceHistoryCopy } from "./priceHistoryCopy";
@@ -56,21 +57,27 @@ export function usePriceHistory(keys: string[], { excludePurchaseOrderId }: { ex
   return { state, histories };
 }
 
-// A PO price as "USD 4.20": the currency code, then the stored decimal with
-// 2 to 4 decimals in the interface locale. Never converted.
+// A unit price in the workspace money format ("$4.20", "$71.7778"): the
+// currency's own decimals (2 for USD), and up to 4 only when the stored
+// price has them. Never converted.
+export function formatUnitPrice(amount: number, currency: string | null | undefined, locale?: string) {
+  let digits = 2;
+  try { digits = new Intl.NumberFormat("en-US", { style: "currency", currency: String(currency || "").trim().toUpperCase() || "USD" }).resolvedOptions().maximumFractionDigits ?? 2; } catch { /* an unknown code keeps 2 */ }
+  return formatLocaleAmount(amount, currency, locale, { minimumFractionDigits: digits, maximumFractionDigits: Math.max(digits, 4) });
+}
+
 export function usePoPrice() {
   const { locale } = useI18n();
   const copy = usePriceHistoryCopy();
   return (value: string | null | undefined, currency: string | null | undefined) => {
     if (value === null || value === undefined || value === "") return copy("pricesHidden");
     const amount = Number(value);
-    const number = Number.isFinite(amount) ? new Intl.NumberFormat(locale || "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(amount) : value;
-    return `${currency || ""} ${number}`.trim();
+    return Number.isFinite(amount) ? formatUnitPrice(amount, currency, locale) : `${currency || ""} ${value}`.trim();
   };
 }
 
 export function usePriceFactText() {
-  const { locale } = useI18n();
+  const { locale, language } = useI18n();
   const copy = usePriceHistoryCopy();
   const price = usePoPrice();
   const date = (fact: PriceFact) => {
@@ -83,7 +90,8 @@ export function usePriceFactText() {
     price,
     fact: (key: "lastPoPrice" | "earlierPo", fact: PriceFact) => copy(fact.unitPrice === null ? (key === "lastPoPrice" ? "lastPoPriceHidden" : "earlierPoHidden") : key, {
       price: price(fact.unitPrice, fact.currency),
-      unit: fact.unit || "—",
+      // A price per one unit: "$4.20 / box", "/ 箱".
+      unit: fact.unit ? unitLabel(fact.unit, language, 1) : "—",
       po: fact.orderNumber,
       date: date(fact),
       supplier: fact.supplierName || copy("supplierNotRecorded"),
@@ -121,7 +129,7 @@ export function PriceHistoryFacts({
   if (!history) return null;
   const notes = [
     ...(history.otherCurrencies.length ? [copy("otherCurrency", { list: history.otherCurrencies.join(", ") })] : []),
-    ...(history.otherUnits.length ? [copy("otherUnit", { list: history.otherUnits.join(", ") })] : []),
+    ...(history.otherUnits.length ? [copy("otherUnit", { list: history.otherUnits.map((unit) => unitLabel(unit, copy.language, 1)).join(", ") })] : []),
     ...(history.unitNotRecordedCount ? [copy.count("unitNotRecordedLines", history.unitNotRecordedCount)] : []),
   ];
   return box(
@@ -144,8 +152,8 @@ export function PriceHistoryFacts({
 }
 
 // A quoted price set against the same item's last PO price and the average of
-// up to 3 in the same currency and unit, as plain text: "vs last PO USD 4.20
-// (PO-0031, 2026-09-14): +7.1%; average of 3: USD 4.31". No colour, ranking
+// up to 3 in the same currency and unit, as plain text: "vs last PO $4.20
+// (PO-0031, Sep 14, 2026): +7.1%; average of 3: $4.31". No colour, ranking
 // or action.
 export function useQuoteComparisonText() {
   const copy = usePriceHistoryCopy();

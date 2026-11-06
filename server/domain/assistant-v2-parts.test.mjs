@@ -294,7 +294,9 @@ test('the form ticks nothing for the user, and a covered row needs "Order anyway
   assert.match(ticked('zh-CN'), />数量（件）</)
   assert.match(ticked('en-US', 'box'), />Quantity \(boxes\)</)
   assert.match(ticked('zh-CN', 'box'), />数量（箱）</)
-  assert.match(ticked('zh-CN', 'drum'), />数量（drum）</)
+  assert.match(ticked('zh-CN', 'drum'), />数量（桶）</)
+  // A unit the labels do not list shows as stored.
+  assert.match(ticked('zh-CN', 'tote'), />数量（tote）</)
   assert.match(client.form({ props: formProps(), language: 'zh-CN' }), /建议 600 件/)
   assert.doesNotMatch(markup, /Submit for approval|data-testid="ai-v2-pr-submit"/)
 })

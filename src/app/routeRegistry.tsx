@@ -501,7 +501,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     path: "/app/procurement/rfq",
     moduleId: "procurement",
     moduleLabel: "采购管理",
-    label: "询价与报价",
+    label: "询价单与报价",
     description: "管理询价单、报价和比价。",
     parentId: "procurement",
     pageType: "list",
@@ -1364,6 +1364,8 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     description: "管理受控库存调整。",
     parentId: "inventory",
     pageType: "list",
+    // Reached from Inventory operations, whose tab stays highlighted.
+    currentActiveMenuId: "inventory:operations",
     order: 53,
   },
   {
@@ -1409,6 +1411,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     description: "管理盘点快照、录入、复核和过账。",
     parentId: "inventory",
     pageType: "list",
+    currentActiveMenuId: "inventory:operations",
     order: 54,
   },
   {
@@ -1482,6 +1485,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     description: "管理原子式库存调拨。",
     parentId: "inventory",
     pageType: "list",
+    currentActiveMenuId: "inventory:operations",
     order: 56,
   },
   {

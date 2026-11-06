@@ -80,7 +80,7 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   // supplier's reference price (4.25): nothing is filled in from history.
   await page.goto('/app/procurement/requests?mode=create')
   await page.getByLabel('SKU 1').selectOption('browser-pr-item')
-  await expect(page.getByTestId('pr-line-price-history-1-latest')).toContainText(`Last PO price USD 4.10 / EA · ${po.number || po.id}`)
+  await expect(page.getByTestId('pr-line-price-history-1-latest')).toContainText(`Last PO price $4.10 / ea · ${po.number || po.id}`)
   await expect(page.getByTestId('pr-line-price-history-1-note')).toContainText('not invoiced or paid prices')
   await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('4.25')
 })

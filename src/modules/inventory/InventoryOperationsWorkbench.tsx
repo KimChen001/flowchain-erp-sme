@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
+import { Plus } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
-import { A, Card, Chip } from "../../components/ui";
+import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
+import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle } from "../../components/ui/listLayout";
+import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, thClass } from "../../components/ui/workbenchTable";
 import { createSecureClientMutationId } from "../../lib/client-id";
 
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { useInventoryOperationsCopy } from "./inventoryOperationsCopy";
-import { formatQuantity } from "../../lib/format";
+import { formatDateTimeInTimeZone, formatQuantity } from "../../lib/format";
+import { unitLabel } from "../../i18n/unitLabels";
 import { movementTypeLabel } from "../../i18n/statusLabels";
 import { useI18n } from "../../i18n/I18n";
 import { DataImportLink } from "../master-data/DataImportLink";
@@ -192,23 +196,37 @@ function OperationList({
   kind: "transfer" | "count" | "adjustment";
 }) {
   const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
+  const { language, locale, timezone } = useI18n();
+  const say = (en: string, zh: string) => (language === "en-US" ? en : zh);
+  const warehouseName = useWarehouseNames();
+  // The page title (from the route) names the list; the cards below carry
+  // the search and the list, as on the purchase order list.
   const config = {
     transfer: {
-      title: copy("库存调拨"),
+      search: say("Search transfers", "查询库存调拨"),
+      list: say("Transfer list", "库存调拨列表"),
+      context: say("From → to", "调出 → 调入"),
+      newLabel: say("New transfer", "新建调拨"),
       url: "/api/inventory/transfers",
       key: "transfers",
       number: "transferNumber",
       newPath: "/app/inventory/transfers/new",
     },
     count: {
-      title: copy("循环盘点"),
+      search: say("Search counts", "查询循环盘点"),
+      list: say("Count list", "循环盘点列表"),
+      context: say("Warehouse", "仓库"),
+      newLabel: say("New count", "新建盘点"),
       url: "/api/inventory/counts",
       key: "counts",
       number: "countNumber",
       newPath: "/app/inventory/counts/new",
     },
     adjustment: {
-      title: copy("库存调整"),
+      search: say("Search adjustments", "查询库存调整"),
+      list: say("Adjustment list", "库存调整列表"),
+      context: say("Reason", "原因"),
+      newLabel: say("New adjustment", "新建调整"),
       url: "/api/inventory/adjustments",
       key: "adjustments",
       number: "adjustmentNumber",
@@ -216,68 +234,127 @@ function OperationList({
     },
   }[kind];
   const [rows, setRows] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
+  const [reload, setReload] = useState(0);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
   useEffect(() => {
-    apiJson<any>(config.url).then((data) => setRows(data[config.key] || []));
-  }, [config.url, config.key]);
+    let active = true;
+    setState("loading");
+    // The 100 most recently changed records (the API's largest page).
+    apiJson<any>(`${config.url}?pageSize=100`)
+      .then((data) => {
+        if (!active) return;
+        const list = data[config.key] || [];
+        setRows(list);
+        setTotal(Number(data.total ?? list.length));
+        setState("loaded");
+      })
+      .catch(() => { if (active) setState("error"); });
+    return () => { active = false; };
+  }, [config.url, config.key, reload]);
+  const contextText = (row: any) =>
+    kind === "adjustment" ? (row.reasonCode ? inventoryCodeLabel(row.reasonCode) : "—")
+      : kind === "count" ? warehouseName(row.warehouseId) || "—"
+        : `${(row.sourceWarehouses || []).map(warehouseName).join(", ") || "—"} → ${(row.destinationWarehouses || []).map(warehouseName).join(", ") || "—"}`;
+  const skuText = (row: any) => {
+    const skus: string[] = row.skus || [];
+    return skus.length ? `${skus.slice(0, 3).join(", ")}${skus.length > 3 ? ` +${skus.length - 3}` : ""}` : "—";
+  };
+  // Workflow and posting statuses both filter: "Posted" is a posting status.
+  const statuses = [...new Set(rows.flatMap((row) => [row.workflowStatus, row.postingStatus]).filter(Boolean))] as string[];
+  const needle = query.trim().toLowerCase();
+  const shown = rows.filter((row) => {
+    if (status && row.workflowStatus !== status && row.postingStatus !== status) return false;
+    if (!needle) return true;
+    const haystack = [row[config.number], ...(row.skus || []), row.reasonCode, contextText(row)].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(needle);
+  });
+  const columns = [
+    say("Number", "单号"),
+    say("Workflow status", "流程状态"),
+    ...(kind === "count" ? [] : [say("Posting status", "过账状态")]),
+    config.context,
+    say("SKUs", "物料"),
+    say("Lines", "行数"),
+    say("Updated", "更新时间"),
+  ];
+  const reset = () => {
+    setQuery("");
+    setStatus("");
+  };
   return (
-    <div className="space-y-4" data-testid={`inventory-${kind}-list`}>
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{config.title}</h2>
-        <div className="flex items-center gap-2">
-          {kind === "adjustment" ? <DataImportLink type="opening-stock" className={secondary} /> : null}
-          <Link className={button} to={config.newPath}>
-            {copy("新建")}
+    <div className="space-y-5" data-testid={`inventory-${kind}-list`}>
+      <ListSearchCard
+        title={config.search}
+        actions={<>
+          <ResetButton onClick={reset} />
+          <RefreshButton onClick={() => setReload((value) => value + 1)} />
+          {kind === "adjustment" ? <DataImportLink type="opening-stock" className={listButtonClass.secondary} /> : null}
+          <Link className={listButtonClass.primary} to={config.newPath} data-testid={`inventory-${kind}-new`}>
+            <Plus size={13} />
+            {config.newLabel}
           </Link>
-        </div>
-      </div>
-      <Card className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-xs">
-          <thead>
-            <tr className="border-b">
-              {[copy("单号"), copy("流程状态"), copy("过账状态"), copy("行数"), copy("更新时间")].map(
-                (label) => (
-                  <th key={label} className="px-4 py-3 text-left">
-                    {label}
-                  </th>
-                ),
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id} className="border-b">
-                <td className="px-4 py-3">
-                  <Link
-                    className="font-semibold text-blue-600"
-                    to={`${config.url.replace("/api", "/app")}/${encodeURIComponent(row.id)}`}
-                  >
-                    {row[config.number]}
-                  </Link>
-                </td>
-                <td className="px-4 py-3">
-                  <Status value={row.workflowStatus} />
-                </td>
-                <td className="px-4 py-3">
-                  {row.postingStatus ? (
-                    <Status value={row.postingStatus} />
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td className="px-4 py-3">{row.lineCount}</td>
-                <td className="px-4 py-3">
-                  {row.updatedAt?.slice(0, 19).replace("T", " ")}
-                </td>
+        </>}
+      >
+        <Field label={say("Search", "搜索")}>
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={kind === "adjustment" ? say("Number, SKU or reason", "单号、SKU 或原因") : say("Number, SKU or warehouse", "单号、SKU 或仓库")}
+            style={inputStyle}
+            data-testid={`inventory-${kind}-search`}
+          />
+        </Field>
+        <Field label={say("Status", "状态")}>
+          <select value={status} onChange={(event) => setStatus(event.target.value)} style={inputStyle} data-testid={`inventory-${kind}-status`}>
+            <option value="">{say("All statuses", "全部状态")}</option>
+            {statuses.map((code) => <option key={code} value={code}>{inventoryCodeLabel(code)}</option>)}
+          </select>
+        </Field>
+      </ListSearchCard>
+      <ListCard title={config.list} total={state === "loaded" ? total : undefined} shown={shown.length}>
+        <div className={tableScrollClass}>
+          <table className={`w-full min-w-[900px] text-left ${tableBodyTextClass}`}>
+            <thead>
+              <tr style={listHeadRowStyle}>
+                {columns.map((label) => <th key={label} className={thClass} style={{ color: A.gray1 }}>{label}</th>)}
               </tr>
-            ))}
-          </tbody>
-        </table>
-        {!rows.length && (
-          <div className="p-8 text-center text-sm text-slate-500">
-            {copy("暂无正式记录")}
-          </div>
-        )}
-      </Card>
+            </thead>
+            <tbody>
+              {state === "loading" && <ListStateRow colSpan={columns.length} state="loading" />}
+              {state === "error" && <ListStateRow colSpan={columns.length} state="error" title={say("The list could not be loaded", "列表加载失败")} detail={say("Try again in a moment.", "请稍后重试。")} onRetry={() => setReload((value) => value + 1)} />}
+              {state === "loaded" && shown.length === 0 && (
+                <ListStateRow colSpan={columns.length} state="empty" title={rows.length ? say("No records match these filters.", "没有符合条件的记录。") : copy("暂无正式记录")} />
+              )}
+              {state === "loaded" && shown.map((row, index) => (
+                <tr key={row.id} className={listRowClass} style={listRowStyle(index, shown.length)}>
+                  <td className={tdIdClass}>
+                    <Link className={tableLinkClass} style={{ color: A.blue }} to={`${config.url.replace("/api", "/app")}/${encodeURIComponent(row.id)}`}>
+                      {row[config.number]}
+                    </Link>
+                  </td>
+                  <td className={tdNowrapClass}>
+                    <Status value={row.workflowStatus} />
+                  </td>
+                  {kind !== "count" && (
+                    <td className={tdNowrapClass}>
+                      {row.postingStatus ? <Status value={row.postingStatus} /> : "—"}
+                    </td>
+                  )}
+                  <td className={tdNameClass}>{contextText(row)}</td>
+                  <td className={tdNowrapClass} style={{ color: A.sub }} title={(row.skus || []).join(", ")}>{skuText(row)}</td>
+                  <td className={tdNumericClass}>{row.lineCount}</td>
+                  <td className={tdNowrapClass} style={{ color: A.sub }}>
+                    {row.updatedAt ? formatDateTimeInTimeZone(row.updatedAt, locale, timezone) : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </ListCard>
     </div>
   );
 }
@@ -508,6 +585,7 @@ function CancelLink({ to }: { to: string }) {
 
 function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
   const { copy, inventoryCodeLabel, errorText } = useInventoryOperationsCopy();
+  const { language } = useI18n();
   const navigate = useNavigate(),
     [warehouseId, setWarehouseId] = useState(""),
     [blind, setBlind] = useState(true),
@@ -595,7 +673,7 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
                 }
               />
               <span>
-                {row.sku} · {row.location} · {copy("可用 {n}", { n: row.availableQuantity })}
+                {row.sku} · {row.location} · {copy("可用 {n}", { n: `${formatQuantity(row.availableQuantity)}${row.unit ? ` ${unitLabel(row.unit, language, Number(row.availableQuantity))}` : ""}` })}
               </span>
             </label>
           ))}
@@ -641,6 +719,10 @@ const blankAdjustmentLine = (reasonCode: string): AdjustmentLine => ({
 function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
   const { copy, inventoryCodeLabel, errorText } = useInventoryOperationsCopy();
   const warehouseName = useWarehouseNames();
+  const { language } = useI18n();
+  // A stored quantity as shown: grouped, trailing zeros dropped, with the
+  // unit's label ("19,500 pcs", "19,500 件").
+  const quantityText = (value: string, unit?: string) => `${formatQuantity(value)}${unit ? ` ${unitLabel(unit, language, Number(value))}` : ""}`;
   const navigate = useNavigate(),
     [reasonCode, setReasonCode] = useState("damage"),
     [notes, setNotes] = useState(""),
@@ -832,7 +914,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                       .map((row) => (
                         <option key={row.id} value={row.id}>
                           {row.sku} · {warehouseName(row.warehouseId)} · {row.location} ·{" "}
-                          {row.onHandQuantity}
+                          {quantityText(row.onHandQuantity, row.unit)}
                         </option>
                       ))}
                   </select>
@@ -853,7 +935,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                       {entry.items.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.sku} · {item.name}
-                          {item.unit ? ` · ${item.unit}` : ""}
+                          {item.unit ? ` · ${unitLabel(item.unit, language)}` : ""}
                         </option>
                       ))}
                     </select>
@@ -924,7 +1006,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                     ? copy(
                         "This item already holds {qty} here. Opening stock cannot be added on top of it. Choose another reason to correct it.",
                         {
-                          qty: `${match.onHandQuantity}${match.unit ? ` ${match.unit}` : ""}`,
+                          qty: quantityText(match.onHandQuantity, match.unit),
                         },
                       )
                     : copy(

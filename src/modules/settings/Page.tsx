@@ -6,6 +6,7 @@ import { businessEntityRouteRegistry, type BusinessEntityType } from '../../comp
 import { fetchAiWorkspaceStatus, fetchSettingsAudit, fetchSettingsRuntime, saveSettingsSection, type AiWorkspaceStatus, type SettingsAuditEntry, type SettingsRuntime } from './settingsRuntime';
 import WorkspaceSettings from './WorkspaceSettings';
 import { isTranslationKey, useI18n } from '../../i18n/I18n';
+import { auditEntityIdText, auditEntityLabel, auditSummaryText } from '../../i18n/auditSummaries';
 import { roleLabel } from '../../../shared/roles.mjs';
 import CustomFieldsSettings from './CustomFieldsSettings';
 import { DOCUMENT_NUMBER_PREFIX_PATTERN, DOCUMENT_NUMBER_TYPES, formatDocumentNumber, numberingPeriod } from '../../../shared/document-numbering.mjs';
@@ -17,7 +18,7 @@ type TranslationKey = Parameters<Translate>[0];
 
 // Seeded labels are stored per tenant in Chinese, so known ids are shown
 // through the dictionary and anything a tenant added keeps its own label.
-function labelFor(t: Translate, prefix: 'settings.module' | 'settings.capability', id: string, stored: string) {
+function labelFor(t: Translate, prefix: 'settings.module' | 'settings.capability' | 'settings.policy', id: string, stored: string) {
   const key = `${prefix}.${id}`;
   return isTranslationKey(key) ? t(key) : stored;
 }
@@ -32,13 +33,10 @@ const AUDIT_MODULES: Record<string, [string, string]> = {
   purchasing: ['Purchasing', '采购'], receiving: ['Receiving', '收货'], inventory: ['Inventory', '库存'], sales: ['Sales', '销售'],
   finance: ['Payables & receivables', '应付与应收'], master_data: ['Master data', '基础资料'], 'master-data': ['Master data', '基础资料'],
   contracts: ['Contracts', '合同'], reports: ['Reports', '报表'], auth: ['Sign-in', '登录'], workspace: ['Workspace', '工作区'],
-  ai_assistant: ['AI assistant', 'AI 助手'], 'ai-assistant': ['AI assistant', 'AI 助手'],
-};
-const AUDIT_ENTITIES: Record<string, [string, string]> = {
-  ai_skill: ['Assistant answer', '助手回答'], purchase_order: ['Purchase order', '采购订单'], purchase_request: ['Purchase request', '采购申请'],
-  supplier: ['Supplier', '供应商'], item: ['Item', '物料'], customer: ['Customer', '客户'], receiving_doc: ['Receipt', '收货单'],
-  supplier_invoice: ['Supplier invoice', '采购发票'], customer_invoice: ['Customer invoice', '销售发票'], sales_order: ['Sales order', '销售订单'],
-  rfq: ['RFQ', '询价单'], warehouse: ['Warehouse', '仓库'], contract: ['Contract', '合同'], settings: ['Settings', '设置'], user: ['User', '用户'], role: ['Role', '角色'],
+  ai_assistant: ['AI assistant', 'AI 助手'], 'ai-assistant': ['AI assistant', 'AI 助手'], 'ai-retrieval': ['AI assistant', 'AI 助手'],
+  srm: ['Suppliers', '供应商'], procurement_receiving: ['Receiving', '收货'], sales_outbound: ['Sales', '销售'], returns: ['Returns', '退货'],
+  overview: ['Today', '今日'], 'action-drafts': ['Action drafts', '行动草稿'], 'user-data': ['Data import', '数据导入'], imports: ['Data import', '数据导入'],
+  'universal-intake': ['Data import', '数据导入'], evidence: ['Evidence', '证据链'], notifications: ['Notifications', '通知'], 'exception-cases': ['Exception cases', '异常工单'], system: ['System', '系统'],
 };
 const ACRONYMS: Record<string, string> = { ai: 'AI', po: 'PO', pr: 'PR', rfq: 'RFQ', grn: 'GRN', sku: 'SKU', id: 'ID' };
 const humanizeCode = (code: string) => {
@@ -46,8 +44,6 @@ const humanizeCode = (code: string) => {
   const text = words.join(' ');
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
 };
-// Codes inside a recorded summary ("today_priorities") read as words.
-const readableSummary = (summary: string) => summary.replace(/\b[a-z]+(?:_[a-z]+)+\b/g, (code) => code.split('_').map((word) => ACRONYMS[word] || word).join(' '));
 
 const AI_LEVELS = ['allow', 'review_required', 'draft_only', 'deny'] as const;
 const splitRoles = (value: string) => value.split(/[、,，]\s*/).map((role) => role.trim()).filter(Boolean);
@@ -178,7 +174,7 @@ function Review({ value, onChange }: { value: SettingsRuntime['review']; onChang
     <div className="text-sm">{t('settings.riskLevels')}<div className={`${fieldClass} mt-1 bg-slate-50`} title={value.riskLevels.join(', ')}>{riskNames || t('settings.none')}</div></div>
     <div className="text-sm">{t('settings.reviewerRoles')}<div className={`${fieldClass} mt-1 bg-slate-50`} title={value.reviewerRoles.join(', ')}>{reviewerNames || t('settings.none')}</div></div>
     <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value.enabled} onChange={e => onChange({ ...value, enabled: e.target.checked })} />{t('settings.enableReview')}</label>
-    <div className="md:col-span-2"><div className="mb-2 text-sm font-medium">{t('settings.reviewPolicyList')}</div><div className="grid gap-2">{(value.policies || []).map(policy => <label key={policy.id} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3 text-sm"><input type="checkbox" checked={policy.enabled} onChange={e => onChange({ ...value, policies: value.policies.map(row => row.id === policy.id ? { ...row, enabled: e.target.checked } : row) })} />{policy.name}</label>)}</div></div>
+    <div className="md:col-span-2"><div className="mb-2 text-sm font-medium">{t('settings.reviewPolicyList')}</div><div className="grid gap-2">{(value.policies || []).map(policy => <label key={policy.id} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3 text-sm"><input type="checkbox" checked={policy.enabled} onChange={e => onChange({ ...value, policies: value.policies.map(row => row.id === policy.id ? { ...row, enabled: e.target.checked } : row) })} />{labelFor(t, 'settings.policy', policy.id, policy.name)}</label>)}</div></div>
   </div><div className="rounded-xl bg-slate-50 p-4"><div className="font-medium">{t('settings.policySimulation')}</div><label className="mt-3 block text-xs">{t('settings.simulatedAmount')}<input type="number" className={`${fieldClass} mt-1`} value={amount} onChange={e => setAmount(Number(e.target.value))} /></label><div className={`mt-3 rounded-lg p-3 text-sm ${requires ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>{requires ? t('settings.reviewRequired', { roles: reviewerNames }) : t('settings.standardFlow')}</div></div></div></NotInEffect></section></div>;
 }
 
@@ -232,13 +228,15 @@ function Audit() {
   const { t, language, formatDateTime } = useI18n();
   const english = language === 'en-US';
   const moduleName = (code: string) => AUDIT_MODULES[code]?.[english ? 0 : 1] || humanizeCode(code);
-  const entityName = (code: string) => AUDIT_ENTITIES[code]?.[english ? 0 : 1] || humanizeCode(code);
-  // An entity id that is itself a code (a skill name) reads as words; a record id stays as recorded.
-  const entityId = (id: string) => /^[a-z]+(?:_[a-z]+)+$/.test(id) ? humanizeCode(id) : id;
+  // Entity types (snake_case or class names) as words; session, link and
+  // assistant skill ids and uuids are not shown (src/i18n/auditSummaries.ts).
+  const entityName = (code: string) => auditEntityLabel(code, language);
+  // A record id stays as recorded; an internal one is left out.
+  const entityId = (type: string, id: string) => auditEntityIdText(type, id);
   const [entries, setEntries] = useState<SettingsAuditEntry[]>([]); const [query, setQuery] = useState(''); const [module, setModule] = useState(''); const [expanded, setExpanded] = useState<string | null>(null);
   useEffect(() => { fetchSettingsAudit().then(setEntries).catch(() => setEntries([])); }, []);
   const filtered = useMemo(() => entries.filter(e => (!module || e.module === module) && (!query || JSON.stringify(e).toLowerCase().includes(query.toLowerCase()))), [entries, query, module]);
-  return <><div className="mb-4 flex flex-wrap gap-2"><label className="relative min-w-[260px] flex-1"><Search className="absolute left-3 top-2.5 text-slate-400" size={16} /><input aria-label={t('settings.searchAudit')} className={`${fieldClass} pl-9`} value={query} onChange={e => setQuery(e.target.value)} placeholder={t('settings.auditPlaceholder')} /></label><select aria-label={t('settings.moduleFilter')} className={`${fieldClass} w-44`} value={module} onChange={e => setModule(e.target.value)}><option value="">{t('settings.allModules')}</option>{[...new Set(entries.map(e => e.module))].map(x => <option key={x} value={x}>{moduleName(x)}</option>)}</select></div><div className="space-y-2">{filtered.map(entry => { const type = entry.entity?.type as BusinessEntityType | undefined; return <div key={entry.id} className="rounded-xl border border-slate-200 p-4"><button className="w-full text-left" onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}><div className="flex flex-wrap justify-between gap-2"><span className="font-medium" title={entry.action}>{entry.summary ? readableSummary(entry.summary) : humanizeCode(entry.action)}</span><time className="text-xs text-slate-500" dateTime={entry.timestamp}>{entry.timestamp && !Number.isNaN(new Date(entry.timestamp).getTime()) ? formatDateTime(entry.timestamp) : entry.timestamp}</time></div><div className="mt-1 text-xs text-slate-500">{entry.actor?.name || t('settings.systemActor')} · <span title={entry.module}>{moduleName(entry.module)}</span>{entry.entity?.type ? <> · <span title={entry.entity.type}>{entityName(entry.entity.type)}</span> <span title={entry.entity.id || undefined}>{entityId(entry.entity.id || '')}</span></> : null}</div></button>{expanded === entry.id && <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 md:grid-cols-2"><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.before')}{`\n`}{JSON.stringify(entry.before, null, 2)}</pre><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.after')}{`\n`}{JSON.stringify(entry.after, null, 2)}</pre>{entry.entity?.id && type && type in businessEntityRouteRegistry && <BusinessEntityLink entityType={type} entityId={entry.entity.id}>{t('settings.openEntity')}</BusinessEntityLink>}</div>}</div>; })}{!filtered.length && <div className="py-12 text-center text-sm text-slate-500">{t('settings.noAudit')}</div>}</div></>;
+  return <><div className="mb-4 flex flex-wrap gap-2"><label className="relative min-w-[260px] flex-1"><Search className="absolute left-3 top-2.5 text-slate-400" size={16} /><input aria-label={t('settings.searchAudit')} className={`${fieldClass} pl-9`} value={query} onChange={e => setQuery(e.target.value)} placeholder={t('settings.auditPlaceholder')} /></label><select aria-label={t('settings.moduleFilter')} className={`${fieldClass} w-44`} value={module} onChange={e => setModule(e.target.value)}><option value="">{t('settings.allModules')}</option>{[...new Set(entries.map(e => e.module))].map(x => <option key={x} value={x}>{moduleName(x)}</option>)}</select></div><div className="space-y-2">{filtered.map(entry => { const type = entry.entity?.type as BusinessEntityType | undefined; return <div key={entry.id} className="rounded-xl border border-slate-200 p-4"><button className="w-full text-left" onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}><div className="flex flex-wrap justify-between gap-2"><span className="font-medium" title={entry.action}>{auditSummaryText(entry, language)}</span><time className="text-xs text-slate-500" dateTime={entry.timestamp}>{entry.timestamp && !Number.isNaN(new Date(entry.timestamp).getTime()) ? formatDateTime(entry.timestamp) : entry.timestamp}</time></div><div className="mt-1 text-xs text-slate-500">{entry.actor?.name || t('settings.systemActor')} · <span title={entry.module}>{moduleName(entry.module)}</span>{entry.entity?.type ? <> · <span>{entityName(entry.entity.type)}</span> <span>{entityId(entry.entity.type, entry.entity.id || '')}</span></> : null}</div></button>{expanded === entry.id && <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 md:grid-cols-2"><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.before')}{`\n`}{JSON.stringify(entry.before, null, 2)}</pre><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.after')}{`\n`}{JSON.stringify(entry.after, null, 2)}</pre>{entry.entity?.id && type && type in businessEntityRouteRegistry && <BusinessEntityLink entityType={type} entityId={entry.entity.id}>{t('settings.openEntity')}</BusinessEntityLink>}</div>}</div>; })}{!filtered.length && <div className="py-12 text-center text-sm text-slate-500">{t('settings.noAudit')}</div>}</div></>;
 }
 
 export default function SettingsPage({ initialView }: { initialView?: string; onNavigate: NavigateFn }) {

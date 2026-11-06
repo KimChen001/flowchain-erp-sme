@@ -201,6 +201,13 @@ names, or supplier names in place. Translate their presentation where appropriat
   saved to the workspace keeps the text it was saved with in either language. The
   receive sheet opens from a receipt's detail page (`/app/procurement/receiving/:id`,
   **Print receive sheet**); the delivery note and sign receipt pages have no route yet.
+- Settings › Audit log shows the stored English summaries from their action and the
+  record numbers inside them in the active language (`src/i18n/auditSummaries.ts`):
+  assistant answers by topic, never a skill or plan id; sign-in rows without session
+  ids; entity types in words, never class names. A summary the file does not know
+  keeps its recorded English. The sales order timeline titles its audit events by
+  action (`OUTBOUND_AUDIT_TITLES`). Stored audit rows do not change. Review policies
+  show a label per policy id; the stored name is kept.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.

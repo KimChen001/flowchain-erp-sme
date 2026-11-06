@@ -116,7 +116,10 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.getByTestId("confirm-outbound-action").click();
   const postedNumber = await createdShipmentNumber(page);
   expect(postedNumber).not.toBe(cancelledNumber);
-  await page.getByRole("button", { name: "暂停订单" }).click();
+  // Putting the order on hold asks first, as cancelling does.
+  await page.getByTestId("hold-sales-order").click();
+  await expect(page.getByTestId("hold-order-dialog")).toContainText("暂停订单 SO-");
+  await page.getByTestId("hold-order-dialog-confirm").click();
   await expect(page.getByText("暂停", { exact: true }).first()).toBeVisible();
   await page.getByText(postedNumber, { exact: true }).click();
   await expect(page.getByTestId("open-post")).toHaveCount(0);

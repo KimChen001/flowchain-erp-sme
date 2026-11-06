@@ -102,6 +102,20 @@ export const outboundEnglish: Record<string, string> = {
   "库存预留已更新": "Reservation updated",
   "发货出库流水已创建": "Stock shipped out",
   "发货冲销流水已创建": "Shipment reversed, stock returned",
+  // Audit events, titled by their action when the timeline is read; the
+  // recorded summary stays in the audit log (OUTBOUND_AUDIT_TITLES).
+  "已为订单预留库存": "Stock reserved for the order",
+  "已释放库存预留": "Reservation released",
+  "发货单已创建": "Shipment created",
+  "发货单已取消": "Shipment cancelled",
+  "发货单已过账": "Shipment posted",
+  "发货单已冲销": "Shipment reversed",
+  "销售订单草稿已创建": "Sales order draft created",
+  "销售订单草稿已修改": "Sales order draft revised",
+  "销售订单已确认": "Sales order confirmed",
+  "销售订单已暂停": "Sales order put on hold",
+  "销售订单已恢复": "Sales order resumed",
+  "销售订单已取消": "Sales order cancelled",
   // Quantity issues a reserve or delivery preview can report.
   "数量超过该订单行尚待预留的数量。": "That is more than this order line still needs reserved.",
   "预留数量不足，请调整数量。": "Not enough reserved stock for this quantity. Adjust the quantity.",

@@ -292,3 +292,56 @@ button, input, select, textarea { font-family: var(--fc-font-family); font-size:
     box-shadow: inset -1px 0 0 rgba(15, 23, 42, 0.08), 10px 0 12px -12px rgba(15, 23, 42, 0.45);
   }
 }
+
+/* Phones (below 640 px): a list table shows each row as a card. The first
+   line holds the record's number or name and its status, the other cells
+   follow as label/value pairs and the row's actions come last. The roles and
+   labels (the column headers) are set by listTableCardsRef in
+   src/components/ui/listLayout.tsx; wider screens keep the table. */
+@media (max-width: 639.98px) {
+  table[data-list-cards] { display: block; width: 100% !important; min-width: 0 !important; }
+  table[data-list-cards] > thead { display: none; }
+  table[data-list-cards] > tbody,
+  table[data-list-cards] > tfoot { display: block; }
+  table[data-list-cards] tr[data-card-row="full"],
+  table[data-list-cards] tr[data-card-row="full"] > [data-card-role="full"] { display: block; }
+  table[data-list-cards] tr[data-card-row="record"] {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    row-gap: 6px;
+    padding: 12px 16px;
+  }
+  table[data-list-cards] tr[data-card-row="record"] > [data-card-role] {
+    display: block;
+    grid-column: 1 / -1;
+    position: relative !important;
+    left: auto !important;
+    right: auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    padding: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-align: left !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+  table[data-list-cards] tr[data-card-row="record"] > [data-card-role="select"] { grid-column: 1; order: -3; margin-right: 10px; }
+  table[data-list-cards] tr[data-card-row="record"] > [data-card-role="title"] { grid-column: 2; order: -2; }
+  table[data-list-cards] tr[data-card-row="record"] > [data-card-role="status"] { grid-column: 3; order: -1; justify-self: end; margin-left: 12px; }
+  table[data-list-cards] tr[data-card-row="record"] > [data-card-role="actions"] { order: 1; padding-top: 4px !important; }
+  table[data-list-cards] tr[data-card-row="record"] > [data-card-role="actions"]:empty { display: none; }
+  table[data-list-cards] tr[data-card-row="record"] > [data-card-role][data-label] { padding-left: 124px !important; min-height: 20px; }
+  table[data-list-cards] tr[data-card-row="record"] > [data-label]::before {
+    content: attr(data-label);
+    float: left;
+    width: 112px;
+    margin-left: -124px;
+    color: #6e6e73;
+    font-weight: 400;
+    text-align: left;
+    white-space: normal;
+  }
+}

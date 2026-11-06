@@ -1,6 +1,7 @@
 import { A } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
+import { formatLocaleAmount } from "../../lib/format";
 import { supplierCopy } from "./supplierCopy";
 import type { SupplierInsight } from "./supplierInsights";
 
@@ -14,10 +15,8 @@ export function useSupplierMetricCells() {
   const t = (value: string) => supplierCopy(value, language);
   const hiddenCell = <span title={t("Hidden for your role")} style={{ color: A.sub }}>—</span>;
   const count = (value: number | null | undefined) => (value === null || value === undefined ? hiddenCell : <span className="tabular-nums">{value}</span>);
-  const moneyText = (amount: number, currency: string) => {
-    try { return new Intl.NumberFormat(locale, { style: "currency", currency, maximumFractionDigits: 0 }).format(amount); }
-    catch { return `${currency} ${amount}`; }
-  };
+  // The app's money format, with the currency's decimals ("$19,120.00").
+  const moneyText = (amount: number, currency: string) => formatLocaleAmount(amount, currency, locale);
   const spendCell = (insight?: SupplierInsight) => {
     if (!insight || insight.spend12m === null) return hiddenCell;
     // No committed spend: zero in the workspace currency, styled as the amounts beside it.

@@ -97,7 +97,7 @@ test("the reorder list ranks by order-by date and prints every input, in English
   await expect(d.getByTestId("reorder-supplier")).toContainText("MOQ 2 CASE");
   await expect(d.getByTestId("reorder-supplier")).toContainText("Lead time 1 day");
   await expect(d.getByTestId("reorder-flags")).toContainText("Purchase unit differs (CASE); enter the quantity");
-  await expect(d.getByTestId("reorder-flags")).toContainText("PO-0038 was due 2026-10-01: late, counted; confirm with the supplier");
+  await expect(d.getByTestId("reorder-flags")).toContainText("PO-0038 was due Oct 1, 2026: late, counted; confirm with the supplier");
   await expect(d).toContainText("405 pcs");
   // The suggested reorder point beside the recorded one: 9 on 8 days in a
   // row, 10 days' lead time + 7 = 17-day stretches, the 75th of 90 holds 45.
@@ -188,8 +188,10 @@ test("the reorder list is available in Chinese and says when nothing needs order
   await expect(page.getByTestId("reorder-list-page").getByRole("heading", { name: "补货清单" })).toBeVisible();
   await expect(page.getByTestId("reorder-row-RL-C")).toContainText("立即下单");
   await expect(page.getByTestId("reorder-list-horizon")).toContainText("所有未到货的采购订单行都计入在途");
-  await expect(page.getByTestId("reorder-row-RL-D").getByTestId("reorder-flags")).toContainText("PO-0038 应于 2026-10-01 到货，已逾期，已计入；请与供应商确认");
-  await expect(page.getByTestId("reorder-row-RL-A").getByTestId("reorder-suggestion")).toContainText("建议 45 pcs");
+  // The workspace locale here is zh-CN, so the day reads in Chinese; units
+  // show their Chinese label.
+  await expect(page.getByTestId("reorder-row-RL-D").getByTestId("reorder-flags")).toContainText("PO-0038 应于 2026年10月1日 到货，已逾期，已计入；请与供应商确认");
+  await expect(page.getByTestId("reorder-row-RL-A").getByTestId("reorder-suggestion")).toContainText("建议 45 件");
   await expect(page.getByTestId("reorder-row-RL-A").getByTestId("reorder-suggestion")).toContainText("过去每 6 段中有 5 段够用 17 天的需求");
   await expect(page.getByTestId("reorder-row-RL-C").getByTestId("reorder-suggestion")).toContainText("无建议值：发货日少于 8 天");
   await page.unrouteAll();

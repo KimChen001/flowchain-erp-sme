@@ -43,15 +43,18 @@ for (const language of ['en-US', 'zh-CN']) {
       await expect(root).not.toContainText(/[㐀-鿿]/);
       await expect(rows.nth(0)).toContainText('3 days overdue');
       await expect(rows.nth(0)).toContainText('Purchase order overdue');
-      await expect(rows.nth(0)).toContainText('20 EA still to receive · 30 of 50 EA received · Supplier Acme Components');
+      // Units read in the interface language (unitLabel): EA is "ea", 个 in Chinese.
+      await expect(rows.nth(0)).toContainText('20 ea still to receive · 30 of 50 ea received · Supplier Acme Components');
       await expect(rows.nth(1)).toContainText('Order today');
-      await expect(rows.nth(1)).toContainText('Ball valve · Stock position 20 EA, reorder point 20 EA · Below safety stock');
+      await expect(rows.nth(1)).toContainText('Ball valve · Stock position 20 ea, reorder point 20 ea · Below safety stock');
       await expect(rows.nth(2)).toContainText('Needed by Oct 9, 2026');
       await expect(rows.nth(2)).toContainText('Request amount $1,200.00');
       await expect(rows.nth(3)).toContainText('No date');
       await expect(root.getByTestId('today-tile-all')).toContainText('Needs action4');
       await expect(root.getByTestId('today-tile-overdue')).toContainText('Overdue1');
       await expect(root.getByTestId('today-tile-changes')).toContainText('Documents updated today2');
+      // The note under the count is the last change, not just today's date.
+      await expect(root.getByTestId('today-tile-changes-note')).toHaveText('Last change Oct 7, 2026, 12:59 PM');
       await expect(root.getByTestId('today-work-notes')).toContainText('Not listed for your role: receivables.');
       await expect(root.getByText('Fully received', { exact: true })).toBeVisible();
       await expect(root.getByText('Pending approval', { exact: true })).toBeVisible();
@@ -74,7 +77,7 @@ for (const language of ['en-US', 'zh-CN']) {
       await expect(page).toHaveURL(/\/app\/master-data\/import\?type=customers$/);
     } else {
       await expect(rows.nth(0)).toContainText('逾期 3 天');
-      await expect(rows.nth(0)).toContainText('仍待收货 20 EA');
+      await expect(rows.nth(0)).toContainText('仍待收货 20 个');
       await expect(root.getByText('全部收货', { exact: true })).toBeVisible();
       await expect(root.getByText('待审批', { exact: true })).toBeVisible();
       await expect(root.getByText('已确认', { exact: true })).toBeVisible();

@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle, useConfirm } from "../../components/ui";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
-import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass } from "../../components/ui/listLayout";
+import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -519,7 +519,7 @@ export default function SupplierMasterPage({
         {detailTab === "performance" ? <SupplierPerformancePanel supplierId={selected.id} /> : detailTab === "contracts" && canReadContracts ? <SupplierContractsPanel supplierId={selected.id} /> : <>
         <Card className="p-5">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-lg font-semibold">{selected.supplierName}</h1>
+            <h1 className="fc-page-title">{selected.supplierName}</h1>
             <TierChip tier={selected.tier} />
             <StatusChip label={copy(statusLabel[selected.status])} tone={selected.status === "active" ? "success" : "neutral"} />
           </div>
@@ -627,10 +627,14 @@ export default function SupplierMasterPage({
               />
               {relationFormHistoryKey && <PriceHistoryFacts history={relationshipHistory.histories.get(relationFormHistoryKey)} state={relationshipHistory.state} testId="supplied-item-form-price-history" />}
             </div>
+            {/* Nothing to add until an item is picked; the button says so. */}
             <button
               type="button"
+              data-testid="add-supplied-item"
               onClick={addRelationship}
-              className={`${listButtonClass.primary} h-9 justify-center`}
+              disabled={!relationForm.itemId}
+              title={relationForm.itemId ? undefined : en ? "Pick an item first" : "请先选择物料"}
+              className={`${listButtonClass.primary} h-9 justify-center disabled:cursor-not-allowed`}
             >
               <Plus size={13} />
               {copy("Add supplied item")}</button>
@@ -844,7 +848,7 @@ export default function SupplierMasterPage({
             </>}
           </div>
         ) : (
-          <div className={tableScrollClass}>
+          <div className={tableScrollClass} ref={listTableCardsRef}>
             <table className={`w-full min-w-[1060px] text-left ${tableBodyTextClass}`}>
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>

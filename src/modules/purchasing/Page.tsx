@@ -1,6 +1,7 @@
 import { invoiceVarianceLabelKey, isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useI18n } from "../../i18n/I18n";
+import { unitLabel } from "../../i18n/unitLabels";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -67,7 +68,7 @@ import {
   tableBodyTextClass,
 } from "../../components/ui/workbenchTable";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
-import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, metricGridClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, RowMenu, StatusChip, metricGridClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import { BackToListLink } from "../procurement/BackToListLink";
 import { procurementErrorCode, procurementErrorText } from "../procurement/procurementErrors";
 import { PurchaseOrderReceiveAction, PurchaseOrderWorkflowActions, poSecondaryButtonClass, usePurchaseOrderActionNotes } from "./components/PurchaseOrderWorkflowActions";
@@ -257,7 +258,7 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
   const say = useSay();
   const day = useCalendarDay();
   const lineName = useLineName();
-  const { formatNumber } = useI18n();
+  const { formatNumber, language } = useI18n();
   if (!rows.length) {
     return <Card className="p-8 text-center text-xs" style={{ color: A.gray2 }}>{copy("当前采购订单没有明细行。")}</Card>;
   }
@@ -284,8 +285,8 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
           {
             title: "履约",
             facts: [
-              ["已收 / 未收", `${formatNumber(line.receivedQty)} / ${formatNumber(line.remainingQty)} ${line.unit}`],
-              ["已开票 / 未开票", `${formatNumber(line.invoicedQty)} / ${formatNumber(line.uninvoicedQty)} ${line.unit}`],
+              ["已收 / 未收", `${formatNumber(line.receivedQty)} / ${formatNumber(line.remainingQty)} ${unitLabel(line.unit, language, line.remainingQty)}`],
+              ["已开票 / 未开票", `${formatNumber(line.invoicedQty)} / ${formatNumber(line.uninvoicedQty)} ${unitLabel(line.unit, language, line.uninvoicedQty)}`],
             ],
           },
           {
@@ -1104,7 +1105,7 @@ export default function PurchasingOrdersPage({
       </> },
       { key: "lineAmount", label: copy("行金额"), width: 130, align: "right", render: (row) => <>
         <div className="whitespace-nowrap">{fmt(hideAmounts ? null : amountOrNull(row.lineAmount))}</div>
-        <Sub><span className="whitespace-nowrap">{fmt(hideAmounts ? null : amountOrNull(row.unitPrice))} / {copy(row.unit)}</span></Sub>
+        <Sub><span className="whitespace-nowrap">{fmt(hideAmounts ? null : amountOrNull(row.unitPrice))} / {unitLabel(row.unit, language, 1)}</span></Sub>
       </> },
       { key: "status", label: copy("收货状态"), width: 150, render: (row) => <>
         {statusChip(row.status === "partial" ? "部分收货" : row.status)}
@@ -1382,7 +1383,7 @@ export default function PurchasingOrdersPage({
       >
         <Field label={copy("PO 编号")}>
           <input value={filters.poNumber} onChange={(event) => updateFilter("poNumber", event.target.value)}
-            placeholder="PO-2026-1287" style={inputStyle} />
+            placeholder="PO-202611-0001" style={inputStyle} />
         </Field>
         <Field label={supplierLabel}>
           <input value={filters.supplier} onChange={(event) => updateFilter("supplier", event.target.value)}
@@ -1412,12 +1413,12 @@ export default function PurchasingOrdersPage({
             placeholder={copy("采购负责人")} style={inputStyle} />
         </Field>
         <Field label={copy("ETA 起始")}>
-          <input value={filters.etaFrom} onChange={(event) => updateFilter("etaFrom", event.target.value)}
-            placeholder="2026-06-01" style={inputStyle} />
+          <input type="date" value={filters.etaFrom} max={filters.etaTo || undefined} onChange={(event) => updateFilter("etaFrom", event.target.value)}
+            style={inputStyle} />
         </Field>
         <Field label={copy("ETA 结束")}>
-          <input value={filters.etaTo} onChange={(event) => updateFilter("etaTo", event.target.value)}
-            placeholder="2026-06-30" style={inputStyle} />
+          <input type="date" value={filters.etaTo} min={filters.etaFrom || undefined} onChange={(event) => updateFilter("etaTo", event.target.value)}
+            style={inputStyle} />
         </Field>
       </ListSearchCard>
 
@@ -1465,13 +1466,13 @@ export default function PurchasingOrdersPage({
                     <td className={`${tdActionClass} sticky right-0 z-10 !min-w-0 bg-white`}>
                       <div className="flex items-center gap-1.5">
                         <button onClick={() => openDetail(order.po)} className={rowActionClass.primary}>{copy("查看")}</button>
-                        <details className="relative"><summary className={`cursor-pointer list-none ${rowActionClass.neutral}`}>{copy("更多")}</summary><div className="absolute right-0 top-7 z-30 w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                        <RowMenu label={copy("更多")} testId={`po-row-more-${order.po}`}>
                           {firstGrn && <button onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, firstGrn.grn)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看收货单")}</button>}
                           {firstInvoice && canOpenRoute("procurement:bills") && <button onClick={() => navigateOrderWithReturn(order, "procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看采购发票")}</button>}
                           {canOpenRoute("procurement:match") && <button onClick={() => navigateOrderWithReturn(order, "procurement:match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看三单匹配")}</button>}
                           {order.sourceRequest && <button onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, documentNumberFor("purchase_request", order.sourceRequest, order.prNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{say("View source PR", "查看来源采购申请")}</button>}
                           {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, documentNumberFor("rfq", order.sourceRfq, order.rfqNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{say("View source RFQ", "查看来源询价单")}</button>}
-                        </div></details>
+                        </RowMenu>
                       </div>
                     </td>
                   </tr>

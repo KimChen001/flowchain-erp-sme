@@ -25,7 +25,7 @@ test('the list shows metrics without tiers or suggestions, and metrics follow th
   const row = (name: string) => page.getByRole('row').filter({ hasText: name });
   await expect(row(source)).toHaveCount(1);
   // Columns: supplier (code and name), categories, owner, spend, open POs, ...
-  await expect(row(source).locator('td').nth(3)).toHaveText('CN¥0');
+  await expect(row(source).locator('td').nth(3)).toHaveText('CN¥0.00');
   await expect(row(source).getByTestId('supplier-tier-chip')).toHaveCount(0);
   await expect(page.getByTestId('supplier-suggestion-differs')).toHaveCount(0);
   await expect(page.getByTestId('supplier-review-suggestions-open')).toHaveCount(0);
@@ -74,7 +74,7 @@ test('Supplier evaluation filters by tier, and a manager sets a tier there with 
   await expect(row(brook).getByTestId('supplier-tier-chip')).toHaveText('Tier 2');
   await expect(row(alder).getByTestId('supplier-tier-chip')).toHaveText('Not tiered');
   // The indicators sit beside the tier: no orders yet, so no spend and no open POs.
-  await expect(row(alder).locator('td').nth(3)).toHaveText('CN¥0');
+  await expect(row(alder).locator('td').nth(3)).toHaveText('CN¥0.00');
   await expect(row(alder).locator('td').nth(4)).toHaveText('0');
   await expect(page.getByTestId('supplier-evaluation-count')).toHaveText('2 suppliers, 2 shown');
 

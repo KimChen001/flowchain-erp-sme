@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
-import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
@@ -215,7 +215,7 @@ export default function SupplierEvaluationPage() {
             <span className="text-xs">{t(filtered ? "Reset the filters to see every supplier." : "Add suppliers on the Suppliers tab, or import a file of suppliers, to evaluate them here.")}</span>
           </div>
         ) : (
-          <div className={tableScrollClass}>
+          <div className={tableScrollClass} ref={listTableCardsRef}>
             <table className={`w-full min-w-[1080px] text-left ${tableBodyTextClass}`} data-testid="supplier-evaluation-table">
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>

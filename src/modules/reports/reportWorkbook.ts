@@ -4,11 +4,13 @@ import { reportStatusCopy } from './analyticsCopy.ts';
 import { chartTable } from './charts/chartTable.ts';
 import { metricDisplayValue } from './metricDisplay.ts';
 
-// A report's date range in words: both ends, one end, or all dates.
-export function dateRangeLabel(from: string | null | undefined, to: string | null | undefined, copy: (value: string) => string) {
-  if (from && to) return `${from} — ${to}`;
-  if (from) return `${copy('From')} ${from}`;
-  if (to) return `${copy('Through')} ${to}`;
+// A report's date range in words: both ends, one end, or all dates. The page
+// passes formatDay to show each day in the workspace format ("Aug 9, 2026");
+// an exported workbook keeps the stored YYYY-MM-DD in its data cells.
+export function dateRangeLabel(from: string | null | undefined, to: string | null | undefined, copy: (value: string) => string, formatDay: (day: string) => string = (day) => day) {
+  if (from && to) return `${formatDay(from)} — ${formatDay(to)}`;
+  if (from) return `${copy('From')} ${formatDay(from)}`;
+  if (to) return `${copy('Through')} ${formatDay(to)}`;
   return copy('All dates');
 }
 

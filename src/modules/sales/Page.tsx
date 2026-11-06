@@ -13,7 +13,7 @@ import { BusinessDocumentForm } from "../../components/business/BusinessDocument
 import { Link, useLocation, useSearchParams } from "react-router";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
-import { ListCard, ListSearchCard, ListStateRow, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { ListCard, ListSearchCard, ListStateRow, ResetButton, StatusChip, listButtonClass, listTableCardsRef, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import {
   tableBodyTextClass,
   tableLinkClass,
@@ -318,7 +318,7 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
             </div>
             <span className="text-xs" style={{ color: A.sub }}>{say(`${riskOrders.length} ${riskOrders.length === 1 ? "order" : "orders"} at risk`, `${riskOrders.length} 条风险订单`)}</span>
           </div>
-          <div className={tableScrollClass}>
+          <div className={tableScrollClass} ref={listTableCardsRef}>
             <table className={`w-full min-w-[1080px] text-left ${tableBodyTextClass}`}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${A.border}` }}>
@@ -526,8 +526,8 @@ function EvidenceChainView({
         <Field label={say("Search", "搜索")}>
           <input aria-label={say("Search sales orders", "搜索销售订单")} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder={say("Order, customer or SKU", "订单、客户或 SKU")} style={inputStyle} />
         </Field>
-        <Field label={say("Delivery risk", "交付风险")}>
-          <select aria-label={say("Delivery risk filter", "交付风险筛选")} value={risk} onChange={(event) => { setRisk(event.target.value); setPage(1); }} style={inputStyle}>
+        <Field label={say("Shipment risk", "交付风险")}>
+          <select aria-label={say("Shipment risk filter", "交付风险筛选")} value={risk} onChange={(event) => { setRisk(event.target.value); setPage(1); }} style={inputStyle}>
             <option value="">{say("All risk levels", "全部风险")}</option>
             <option value="blocked">{copy("已阻塞")}</option>
             <option value="high">{copy("高风险")}</option>

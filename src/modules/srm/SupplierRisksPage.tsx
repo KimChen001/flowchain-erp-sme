@@ -5,7 +5,7 @@ import { useSearchParams } from "react-router";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { RefreshButton, ResetButton } from "../../components/ui/listLayout";
-import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableBodyTextClass, tableLinkClass, tableScrollClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { supplierCopy } from "./supplierCopy";
@@ -145,7 +145,7 @@ export default function SupplierRisksPage() {
             <span className="text-xs">{t(filtered ? "Reset the filters to see every open issue." : "Overdue purchase orders, rejected or unposted receipts and invoice variances are listed here when they happen. Nothing needs following up now.")}</span>
           </div>
         ) : (
-          <div className={tableScrollClass}>
+          <div className={tableScrollClass} ref={listTableCardsRef}>
             <table className={`w-full min-w-[960px] text-left ${tableBodyTextClass}`} data-testid="supplier-risks-table">
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>

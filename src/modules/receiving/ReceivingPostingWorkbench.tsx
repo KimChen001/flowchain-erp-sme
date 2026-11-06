@@ -330,7 +330,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert" title={errorCode}>{error}</div>}
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><h1 className="text-xl font-semibold">{grn.documentNumber}</h1><p className="mt-1 text-sm text-gray-500">{grn.supplier?.name || say("Unknown supplier", "未知供应商")} · {say("Purchase order", "采购订单")} <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}><DocumentNumber type="purchase_order" id={detail.purchaseOrder.id} number={detail.purchaseOrder.number} /></a></p></div>
+        <div><h1 className="fc-page-title">{grn.documentNumber}</h1><p className="mt-1 text-sm text-gray-500">{grn.supplier?.name || say("Unknown supplier", "未知供应商")} · {say("Purchase order", "采购订单")} <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}><DocumentNumber type="purchase_order" id={detail.purchaseOrder.id} number={detail.purchaseOrder.number} /></a></p></div>
         {/* Non-destructive actions first; cancelling or reversing the receipt comes last, tinted red. */}
         <div className="flex flex-wrap items-center gap-2">
           <button data-testid="receiving-print-sheet" aria-label={say(`Print receive sheet ${grn.documentNumber}`, `打印入库单 ${grn.documentNumber}`)} onClick={() => setPrinting(true)} className={BUTTON.secondary}><Printer size={14} />{say("Print receive sheet", "打印入库单")}</button>

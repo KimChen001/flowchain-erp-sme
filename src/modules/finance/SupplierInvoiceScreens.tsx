@@ -587,7 +587,7 @@ export function SupplierInvoiceDetail() {
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="font-semibold">{data.invoiceNumber}</h2>
+            <h1 className="fc-page-title" style={{ color: A.label }}>{data.invoiceNumber}</h1>
             <p className="mt-1 text-sm text-slate-500" data-testid="supplier-invoice-sources">
               {data.supplierName || "—"}
               {" · "}{t("finance.purchaseOrder")} {data.relatedPoId ? <BusinessEntityLink entityType="purchase_order" entityId={data.relatedPoId} number={data.relatedPoNumber || data.poNumber} /> : "—"}
