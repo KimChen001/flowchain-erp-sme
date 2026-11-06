@@ -1,4 +1,4 @@
-import { procurementReadAccessFor } from './procurement-read-access.mjs'
+import { maskProcurementRecord, procurementReadAccessFor } from './procurement-read-access.mjs'
 import { aiSkillActor } from './test-fixtures/ai-skill-scenario.mjs'
 // These checks are about routing and tenant scope: the actor may read everything.
 const fullAccess = (tenantId) => procurementReadAccessFor(aiSkillActor('workspace-administrator', tenantId))
@@ -168,6 +168,127 @@ test('three-way match clarifies amount, variance, currency, and related ids', ()
   assert.equal(match.matchStatus, '存在差异')
   assert.equal(typeof match.receivedQuantity, 'number')
   assert.equal(match.receivedAmount, null)
+})
+
+// LOCAL-DEMO-PO-001 as the database repository maps it: 50 ordered at 100, 20
+// received, and an invoice for those 20 at 110 (2,200 net, 181.50 tax).
+function partialInvoiceFixture({ recordedVariance = true, invoiceLine = {} } = {}) {
+  return {
+    purchaseOrders: [{
+      id: 'PO-LINE-1', po: 'PO-LINE-1', supplier: 'Acme', amount: 5000, currency: 'USD', items: 50, received: 20, totalOrderedQty: 50, totalReceivedQty: 20,
+      lines: [{ poLineId: 'PO-LINE-1-L1', sku: 'LDM-001', itemName: 'Flow Controller', quantityOrdered: 50, quantityReceived: 20, unit: 'pcs', unitPrice: 100, lineAmount: 5000 }],
+    }],
+    receivingDocs: [{ grn: 'GRN-LINE-1', po: 'PO-LINE-1', items: 20, passed: 20, failed: 0, lines: [{ grnLineId: 'GRN-LINE-1-L1', poLineId: 'PO-LINE-1-L1', acceptedQty: 20, rejectedQty: 0 }] }],
+    supplierInvoices: [{
+      id: 'INV-LINE-1', invoiceNumber: 'INV-LINE-1', supplier: 'Acme', relatedPo: 'PO-LINE-1', relatedGrn: 'GRN-LINE-1',
+      amount: 2381.5, subtotal: 2200, tax: 181.5, total: 2381.5, currency: 'USD',
+      ...(recordedVariance ? { varianceAmount: 200, matchStatus: '差异待处理' } : {}),
+      lines: [{ lineId: 'INV-LINE-1-L1', sku: 'LDM-001', poLine: 'PO-LINE-1-L1', grnLine: 'GRN-LINE-1-L1', quantity: 20, unit: 'pcs', unitPrice: 110, taxAmount: 181.5, lineSubtotal: 2200, ...invoiceLine }],
+    }],
+  }
+}
+
+test('three-way match compares each invoice line with its PO line, not the whole PO', () => {
+  const match = getProcurementDocument(partialInvoiceFixture(), 'threeWayMatch', 'MATCH-INV-LINE-1')
+  assert.equal(match.lines.length, 1)
+  assert.deepEqual({ ...match.lines[0] }, {
+    invoiceLineId: 'INV-LINE-1-L1',
+    poLineId: 'PO-LINE-1-L1',
+    grnLineId: 'GRN-LINE-1-L1',
+    sku: 'LDM-001',
+    itemName: 'Flow Controller',
+    unit: 'pcs',
+    orderedQty: 50,
+    receivedQty: 20,
+    invoicedQty: 20,
+    receivingGapQty: 30,
+    quantityVariance: 0,
+    poUnitPrice: 100,
+    invoiceUnitPrice: 110,
+    expectedAmount: 2000,
+    invoiceLineAmount: 2200,
+    taxAmount: 181.5,
+    priceVariance: 200,
+    varianceAmount: 200,
+    quantityVarianceAmount: 0,
+    status: 'price_variance',
+    uninvoicedReceivedQty: 0,
+  })
+  // The totals add up: expected 2,000 + variance 200 = invoiced net 2,200; tax apart.
+  assert.equal(match.expectedAmount, 2000)
+  assert.equal(match.invoiceNetAmount, 2200)
+  assert.equal(match.taxAmount, 181.5)
+  assert.equal(match.lineVarianceAmount, 200)
+  assert.equal(match.receivingGapQty, 30)
+  assert.equal(match.lineMatchStatus, 'variance')
+  // Existing fields keep their meaning.
+  assert.equal(match.poAmount, 5000)
+  assert.equal(match.invoiceAmount, 2381.5)
+  assert.equal(match.varianceAmount, 200)
+  assert.equal(match.blockingReason, 'PO 金额与发票金额存在差异，需复核后处理。')
+})
+
+test('three-way match variance falls back to the line-level total when the invoice records none', () => {
+  // Not |invoice total - PO total| (2,381.50 against 5,000).
+  const priced = getProcurementDocument(partialInvoiceFixture({ recordedVariance: false }), 'threeWayMatch', 'MATCH-INV-LINE-1')
+  assert.equal(priced.varianceAmount, 200)
+  assert.equal(priced.blockingReason, 'PO 金额与发票金额存在差异，需复核后处理。')
+  // The match status stays the invoice's own (not matched yet).
+  assert.equal(priced.matchStatus, '待匹配')
+
+  // Invoiced less than received at the PO price: received, not yet fully invoiced, not a variance.
+  const under = getProcurementDocument(partialInvoiceFixture({ recordedVariance: false, invoiceLine: { quantity: 15, unitPrice: 100, lineSubtotal: 1500 } }), 'threeWayMatch', 'MATCH-INV-LINE-1')
+  assert.equal(under.varianceAmount, 0)
+  assert.equal(under.blockingReason, '')
+  assert.equal(under.lineMatchStatus, 'matched')
+  assert.equal(under.lines[0].status, 'matched')
+  assert.equal(under.lines[0].uninvoicedReceivedQty, 5)
+  assert.equal(under.lines[0].receivingGapQty, 30)
+
+  // Invoiced more than received: a quantity variance at the PO price.
+  const over = getProcurementDocument(partialInvoiceFixture({ recordedVariance: false, invoiceLine: { quantity: 25, unitPrice: 100, lineSubtotal: 2500 } }), 'threeWayMatch', 'MATCH-INV-LINE-1')
+  assert.equal(over.lines[0].status, 'quantity_variance')
+  assert.equal(over.lines[0].quantityVariance, 5)
+  assert.equal(over.lines[0].quantityVarianceAmount, 500)
+  assert.equal(over.lines[0].varianceAmount, 0)
+  assert.equal(over.varianceAmount, 500)
+
+  // Two lines on one PO line: quantity is checked across them, and offsetting
+  // prices do not cancel the variance out.
+  const split = partialInvoiceFixture({ recordedVariance: false })
+  split.supplierInvoices[0].lines = [
+    { lineId: 'A', poLine: 'PO-LINE-1-L1', quantity: 10, unitPrice: 110, lineSubtotal: 1100 },
+    { lineId: 'B', poLine: 'PO-LINE-1-L1', quantity: 15, unitPrice: 90, lineSubtotal: 1350 },
+  ]
+  const both = getProcurementDocument(split, 'threeWayMatch', 'MATCH-INV-LINE-1')
+  assert.deepEqual(both.lines.map((line) => [line.status, line.quantityVariance, line.varianceAmount]), [['price_variance', 0, 100], ['price_and_quantity_variance', 5, -150]])
+  assert.equal(both.lineVarianceAmount, -50)
+  assert.equal(both.varianceAmount, 750)
+  assert.equal(both.receivingGapQty, 30)
+})
+
+test('three-way match lines without a PO line are not guessed, and no lines means no line totals', () => {
+  const unknown = getProcurementDocument(partialInvoiceFixture({ recordedVariance: false, invoiceLine: { poLine: 'NOT-ON-PO', sku: 'OTHER' } }), 'threeWayMatch', 'MATCH-INV-LINE-1')
+  assert.equal(unknown.lines[0].status, 'po_line_unavailable')
+  assert.equal(unknown.lines[0].expectedAmount, null)
+  assert.equal(unknown.expectedAmount, null)
+  assert.equal(unknown.varianceAmount, 0)
+
+  const match = getProcurementDocument(fixture, 'threeWayMatch', 'MATCH-INV-JS-260620')
+  assert.deepEqual(match.lines, [])
+  assert.equal(match.lineMatchStatus, 'no_lines')
+  assert.equal(match.expectedAmount, null)
+  assert.equal(match.lineVarianceAmount, null)
+})
+
+test('three-way match line amounts are hidden from a reader without finance amounts', () => {
+  const match = getProcurementDocument(partialInvoiceFixture(), 'threeWayMatch', 'MATCH-INV-LINE-1')
+  const masked = maskProcurementRecord(match, 'threeWayMatch', { types: { threeWayMatch: true }, prices: true, amounts: false, partner: true })
+  for (const key of ['expectedAmount', 'invoiceNetAmount', 'taxAmount', 'lineVarianceAmount', 'lineVarianceTotal', 'quantityVarianceAmount']) assert.equal(masked[key], null, key)
+  for (const key of ['poUnitPrice', 'invoiceUnitPrice', 'expectedAmount', 'invoiceLineAmount', 'taxAmount', 'priceVariance', 'varianceAmount', 'quantityVarianceAmount']) assert.equal(masked.lines[0][key], null, `line ${key}`)
+  // Quantities are not amounts.
+  assert.equal(masked.lines[0].invoicedQty, 20)
+  assert.deepEqual(masked.restrictedFields, ['amounts'])
 })
 
 test('procurement document links are deterministic and omit broken empty ids', () => {

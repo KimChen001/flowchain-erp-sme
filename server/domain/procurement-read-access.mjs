@@ -41,6 +41,8 @@ const MONEY_KEYS = new Set([
   'lineAmount', 'lineSubtotal', 'lineTotal', 'bestPrice', 'amountSummary', 'varianceAmount', 'lineVarianceAmount', 'price',
   'budget', 'budgetAmount', 'invoiceAmount', 'poAmount', 'receivedAmount', 'matchedAmount', 'openAmount', 'invoiceTotal',
   'poUnitPrice', 'invoiceUnitPrice', 'priceVariance', 'amountVariance',
+  // The three-way match line amounts and their totals.
+  'expectedAmount', 'invoiceLineAmount', 'invoiceNetAmount', 'quantityVarianceAmount', 'lineVarianceTotal',
 ])
 const PARTNER_KEYS = new Set(['supplier', 'supplierName', 'supplierSnapshot', 'supplierId'])
 

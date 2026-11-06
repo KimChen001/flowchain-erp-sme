@@ -1,17 +1,17 @@
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useI18n } from "../../i18n/I18n";
 import { salesDemandEnglish } from "./salesDemandCopy";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Boxes, ClipboardList, FileText, PackageSearch, ShoppingCart, Truck, Users } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
-import { A, Card, Chip, SectionHeader } from "../../components/ui";
+import { A, Card, Chip, Field, SectionHeader, inputStyle } from "../../components/ui";
 import EvidenceGraphPanel, { type EvidenceGraphResponse, type EvidenceNavigate } from "../../components/evidence/EvidenceGraphPanel";
 import SalesReturnPage from "./SalesReturnPage";
 import { BusinessDocumentForm } from "../../components/business/BusinessDocumentForm";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
-import { rowActionClass } from "../../components/ui/listLayout";
+import { ListCard, ListSearchCard, ListStateRow, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import {
   tableBodyTextClass,
   tableLinkClass,
@@ -88,6 +88,10 @@ const riskColor: Record<string, string> = {
   medium: A.orange,
   low: A.green,
 };
+
+// Brand tones for the risk levels; order status labels use statusToneOf.
+const RISK_TONE: Record<string, StatusTone> = { blocked: "danger", high: "danger", medium: "warning", low: "neutral" };
+const EVIDENCE_PAGE_SIZE = 15;
 
 const riskRank: Record<SalesOrder["deliveryRiskLevel"], number> = {
   blocked: 0,
@@ -389,6 +393,11 @@ function EvidenceChainView({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const { t } = useI18n();
+  const [query, setQuery] = useState("");
+  const [risk, setRisk] = useState("");
+  const [status, setStatus] = useState("");
+  const [page, setPage] = useState(1);
+  const evidenceRef = useRef<HTMLDivElement>(null);
   // A 403 means the reader's role cannot open this record's evidence chain;
   // it is translated when shown so a language change applies to it.
   const graphError = (reason: unknown) => reason instanceof ApiError && reason.status === 403
@@ -455,56 +464,32 @@ function EvidenceChainView({
     </Card>
   ) : null;
 
-  return (
-    <div className="space-y-4">
-      <Card>
-        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${A.border}` }}>
-          <div>
-            <SectionHeader title={copy("订单证据查询")} />
-            <p className="mt-1 text-xs" style={{ color: A.sub }}>{copy("选择销售订单后读取其真实关联记录、风险信号和数据限制。")}</p>
-          </div>
-          <Chip label={copy("只读证据")} color={A.blue} bg="#f0f6ff" />
-        </div>
-        <div className={tableScrollClass}>
-          <table className={tableBaseClass}>
-            <thead>
-              <tr style={{ borderBottom: `1px solid ${A.border}` }}>
-                {[copy("销售订单"), copy("客户"), copy("SKU / 物料"), copy("状态"), copy("交付风险"), copy("缺口"), copy("操作")].map((header) => (
-                  <th key={header} className={thClass}>{header}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {allOrders.map((order) => (
-                <tr key={order.salesOrderId} style={{ borderBottom: `1px solid ${A.border}`, background: selectedOrderId === order.salesOrderId ? "#f0f6ff" : A.white }}>
-                  <td className={tdIdClass}><EntityLink kind="sales_order" id={order.salesOrderId}>{order.salesOrderId}</EntityLink></td>
-                  <td className={tdNameClass}>{customerLabel(order)}</td>
-                  <td className={tdNameClass}>
-                    <EntityLink kind="item" id={order.itemId}>{order.sku}</EntityLink>
-                    <div className="max-w-[200px] truncate text-xs" style={{ color: A.sub }}>{itemLabel(order)}</div>
-                  </td>
-                  <td className={tdNowrapClass}>{copy(order.statusLabel)}</td>
-                  <td className={tdNowrapClass}><Chip label={copy(order.deliveryRiskLabel)} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
-                  <td className={tdNumericClass}>{qty(order.shortageQty)}</td>
-                  <td className={tdActionClass}>
-                    <button
-                      type="button"
-                      onClick={() => onSelectOrder(order.salesOrderId)}
-                      disabled={selectedOrderId === order.salesOrderId}
-                      className="rounded-md bg-blue-50 px-3 py-1.5 font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-default disabled:bg-slate-100 disabled:text-slate-500"
-                    >
-                      {copy(selectedOrderId === order.salesOrderId ? "已选择" : "查看证据")}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+  // The list: searched, filtered and shown a page at a time, so the evidence
+  // of a chosen order sits above it instead of below every order.
+  const statuses = useMemo(() => [...new Set(allOrders.map((order) => order.statusLabel).filter(Boolean))], [allOrders]);
+  const needle = query.trim().toLowerCase();
+  const shown = allOrders.filter((order) =>
+    (!risk || order.deliveryRiskLevel === risk)
+    && (!status || order.statusLabel === status)
+    && (!needle || [order.salesOrderId, order.customerName, customerLabel(order), order.sku, order.itemName, itemLabel(order)].some((value) => String(value || "").toLowerCase().includes(needle))),
+  );
+  const pages = Math.max(1, Math.ceil(shown.length / EVIDENCE_PAGE_SIZE));
+  const current = Math.min(page, pages);
+  const pageRows = shown.slice((current - 1) * EVIDENCE_PAGE_SIZE, current * EVIDENCE_PAGE_SIZE);
+  const reset = () => { setQuery(""); setRisk(""); setStatus(""); setPage(1); };
+  const choose = (orderId: string) => {
+    onSelectOrder(orderId);
+    requestAnimationFrame(() => evidenceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
 
-      {hasSelectedOrder ? (
-        <>
+  return (
+    <div className="space-y-5">
+      {hasSelectedOrder && (
+        <div ref={evidenceRef} className="scroll-mt-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-semibold" style={{ color: A.label }}>{say(`Evidence for sales order ${selectedOrderId}`, `销售订单 ${selectedOrderId} 的证据`)}</div>
+            <button type="button" onClick={() => onSelectOrder("")} className={listButtonClass.secondary}>{say("Close", "关闭")}</button>
+          </div>
           <EvidenceGraphPanel
             graph={graph}
             loading={loading}
@@ -521,10 +506,92 @@ function EvidenceChainView({
             showNavigationHints={false}
           />
           {error && fallbackSummary}
-        </>
-      ) : (
-        <Card className="p-5 text-sm leading-6" style={{ color: A.sub }}>{copy("请选择一条销售订单读取证据。页面只展示当前工作区能够核验的关联记录、风险信号和数据限制。")}</Card>
+        </div>
       )}
+
+      <ListSearchCard
+        title={copy("订单证据查询")}
+        subtitle={copy("选择销售订单后读取其真实关联记录、风险信号和数据限制。")}
+        actions={<>
+          <StatusChip label={copy("只读证据")} tone="info" />
+          <ResetButton onClick={reset} />
+        </>}
+      >
+        <Field label={say("Search", "搜索")}>
+          <input aria-label={say("Search sales orders", "搜索销售订单")} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder={say("Order, customer or SKU", "订单、客户或 SKU")} style={inputStyle} />
+        </Field>
+        <Field label={say("Delivery risk", "交付风险")}>
+          <select aria-label={say("Delivery risk filter", "交付风险筛选")} value={risk} onChange={(event) => { setRisk(event.target.value); setPage(1); }} style={inputStyle}>
+            <option value="">{say("All risk levels", "全部风险")}</option>
+            <option value="blocked">{copy("已阻塞")}</option>
+            <option value="high">{copy("高风险")}</option>
+            <option value="medium">{copy("需关注")}</option>
+            <option value="low">{copy("正常")}</option>
+          </select>
+        </Field>
+        <Field label={say("Status", "状态")}>
+          <select aria-label={say("Status filter", "状态筛选")} value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} style={inputStyle}>
+            <option value="">{say("All statuses", "全部状态")}</option>
+            {statuses.map((label) => <option key={label} value={label}>{copy(label)}</option>)}
+          </select>
+        </Field>
+      </ListSearchCard>
+
+      <ListCard title={say("Sales orders", "销售订单")} total={allOrders.length} shown={shown.length}>
+        <div className={tableScrollClass}>
+          <table className={`w-full min-w-[960px] text-left ${tableBodyTextClass}`}>
+            <thead>
+              <tr style={listHeadRowStyle}>
+                <th className={thClass} style={{ color: A.gray1 }}>{copy("销售订单")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{copy("客户")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{copy("SKU / 物料")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{copy("状态")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{copy("交付风险")}</th>
+                <th className={thRightClass} style={{ color: A.gray1 }}>{copy("缺口")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{copy("操作")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.length === 0 && <ListStateRow colSpan={7} state="empty" title={say("No sales orders match these filters", "没有符合筛选条件的销售订单")} />}
+              {pageRows.map((order, index) => {
+                const chosen = selectedOrderId === order.salesOrderId;
+                return (
+                  <tr key={order.salesOrderId} className={listRowClass} style={{ ...listRowStyle(index, pageRows.length), background: chosen ? "#f0f6ff" : undefined }}>
+                    <td className={tdIdClass}><EntityLink kind="sales_order" id={order.salesOrderId} className={tableLinkClass}>{order.salesOrderId}</EntityLink></td>
+                    <td className={`${tdNameClass} max-w-[200px] truncate`} title={customerLabel(order)}>{customerLabel(order)}</td>
+                    <td className={tdNameClass}>
+                      <EntityLink kind="item" id={order.itemId} className={tableLinkClass}>{order.sku}</EntityLink>
+                      <div className="max-w-[220px] truncate text-[11px]" style={{ color: A.sub }} title={itemLabel(order)}>{itemLabel(order)}</div>
+                    </td>
+                    <td className={tdNowrapClass}><StatusChip label={copy(order.statusLabel)} tone={statusToneOf(order.statusLabel)} /></td>
+                    <td className={tdNowrapClass}><StatusChip label={copy(order.deliveryRiskLabel)} tone={RISK_TONE[order.deliveryRiskLevel] || "neutral"} /></td>
+                    <td className={`${tdNumericRightClass}${order.shortageQty > 0 ? " font-semibold text-red-700" : ""}`} style={order.shortageQty > 0 ? undefined : { color: A.gray2 }}>{qty(order.shortageQty)}</td>
+                    <td className={tdNowrapClass}>
+                      <button
+                        type="button"
+                        onClick={() => choose(order.salesOrderId)}
+                        disabled={chosen}
+                        className={`${rowActionClass.primary} disabled:cursor-default disabled:bg-slate-100 disabled:text-slate-500`}
+                      >
+                        {copy(chosen ? "已选择" : "查看证据")}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {shown.length > EVIDENCE_PAGE_SIZE && (
+          <div className="flex items-center justify-between px-5 py-3 text-xs" style={{ borderTop: "0.5px solid rgba(0,0,0,0.06)", color: A.sub }}>
+            <span>{say(`Page ${current} of ${pages}`, `第 ${current} / ${pages} 页`)}</span>
+            <div className="flex gap-2">
+              <button type="button" className={listButtonClass.secondary} disabled={current <= 1} onClick={() => setPage(current - 1)}>{copy("上一页")}</button>
+              <button type="button" className={listButtonClass.secondary} disabled={current >= pages} onClick={() => setPage(current + 1)}>{copy("下一页")}</button>
+            </div>
+          </div>
+        )}
+      </ListCard>
     </div>
   );
 }

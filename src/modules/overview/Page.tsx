@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ArrowRight, CheckCircle2, Circle, RefreshCw } from "lucide-react";
 import { A, Card } from "../../components/ui";
+import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
+import { tableBodyTextClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import AiSuggestionsPage from "./AiSuggestionsPage";
 import { useI18n } from "../../i18n/I18n";
@@ -311,19 +313,19 @@ function RuntimeHomepage() {
           <div className="py-12 text-center text-sm" style={{ color: A.sub }}><p>{t("recentEmpty")}</p><p className="text-xs">{t("recentEmptyHint")}</p></div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs" data-testid="recent-documents">
+            <table className={`w-full min-w-[860px] text-left ${tableBodyTextClass}`} data-testid="recent-documents">
               <thead>
-                <tr>{(["colType", "colNumber", "colStatus", "colPartner", "colAmount", "colUpdated"] as const).map((key) => <th key={key} className="p-3 text-left">{t(key)}</th>)}</tr>
+                <tr style={listHeadRowStyle}>{(["colType", "colNumber", "colStatus", "colPartner", "colAmount", "colUpdated"] as const).map((key) => <th key={key} className={key === "colAmount" ? thRightClass : thClass} style={{ color: A.gray1 }}>{t(key)}</th>)}</tr>
               </thead>
               <tbody>
-                {recent.map((row) => (
-                  <tr key={`${row.type}-${row.id}`} className="border-t">
-                    <td className="p-3">{t(`type_${row.type}` as TodayCopyKey) || row.type}</td>
-                    <td className="p-3"><Link to={row.canonicalRoute} className={LINK}>{row.number}</Link></td>
-                    <td className="p-3">{t.status(row.status)}</td>
-                    <td className="p-3">{row.partner || "—"}</td>
-                    <td className="p-3">{money(row.amount, row.currency)}</td>
-                    <td className="p-3">{formatDateTimeInTimeZone(row.updatedAt, locale, timezone)}</td>
+                {recent.map((row, index) => (
+                  <tr key={`${row.type}-${row.id}`} className={listRowClass} style={listRowStyle(index, recent.length)}>
+                    <td className={tdNameClass} style={{ color: A.sub }}>{t(`type_${row.type}` as TodayCopyKey) || row.type}</td>
+                    <td className={tdIdClass}><Link to={row.canonicalRoute} className={LINK}>{row.number}</Link></td>
+                    <td className={tdNowrapClass}><StatusChip label={t.status(row.status)} tone={statusToneOf(row.status)} /></td>
+                    <td className={`${tdNameClass} max-w-[240px] truncate`} title={row.partner || undefined}>{row.partner || "—"}</td>
+                    <td className={tdNumericRightClass}>{money(row.amount, row.currency)}</td>
+                    <td className={tdNowrapClass} style={{ color: A.sub }}>{formatDateTimeInTimeZone(row.updatedAt, locale, timezone)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -9,6 +9,7 @@ import { dateTimeInputInTimeZone, dateTimeInputToIso } from "../../lib/format";
 import { receivingApi, type ReceivableLine, type ReceivablePurchaseOrder, type ReceiptInput, type ReceivingWarehouse } from "./receivingApi";
 import { PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { buildSuggestionTrail, type PrefillEntry } from "../../lib/prefill";
+import { ReceivablePurchaseOrderChooser } from "./ReceivablePurchaseOrderChooser";
 
 // English source copy with its Chinese translation.
 const COPY: Record<string, [string, string]> = {
@@ -18,7 +19,6 @@ const COPY: Record<string, [string, string]> = {
   loading: ["Loading the purchase order…", "正在读取采购订单…"],
   loadFailed: ["The purchase order could not be loaded for receiving.", "无法读取可收货的采购订单。"],
   retry: ["Retry", "重试"],
-  missingPo: ["Open this form from a purchase order.", "请从采购订单进入收货。"],
   notReceivable: ["This purchase order cannot be received in its current status.", "该采购订单当前状态不可收货。"],
   purchaseOrder: ["Purchase order", "采购订单"],
   supplier: ["Supplier", "供应商"],
@@ -77,7 +77,17 @@ const units = (value: string) => {
   return BigInt(whole || "0") * 10000n + BigInt((fraction + "0000").slice(0, 4));
 };
 
-export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { mode: "new" | "edit"; purchaseOrderId?: string; receiptId?: string }) {
+type ReceivingFormProps = { mode: "new" | "edit"; purchaseOrderId?: string; receiptId?: string };
+
+// A new receipt opened without an order shows the orders that can be received
+// now; choosing one opens the form. Each order or receipt gets a form of its
+// own, so its state and its create key never carry over to another.
+export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: ReceivingFormProps) {
+  if (mode === "new" && !purchaseOrderId) return <ReceivablePurchaseOrderChooser />;
+  return <ReceivingFormBody key={`${mode}:${purchaseOrderId}:${receiptId}`} mode={mode} purchaseOrderId={purchaseOrderId} receiptId={receiptId} />;
+}
+
+function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: ReceivingFormProps) {
   const { language, timezone, formatNumber } = useI18n();
   const tr = (key: string) => COPY[key][language === "en-US" ? 0 : 1];
   const navigate = useNavigate();
@@ -244,8 +254,8 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
   if (state === "loading") return <Card className="flex items-center justify-center gap-2 py-16 text-sm" style={{ color: A.sub }}><Loader2 className="animate-spin" size={16} />{tr("loading")}</Card>;
   if (state === "error" || !po) return (
     <Card className="py-16 text-center" data-testid="receiving-form-error">
-      <div className="text-sm font-semibold">{purchaseOrderId || mode === "edit" ? tr("loadFailed") : tr("missingPo")}</div>
-      {(purchaseOrderId || mode === "edit") && <button type="button" onClick={() => void load()} className="mt-3 text-sm font-semibold text-blue-600">{tr("retry")}</button>}
+      <div className="text-sm font-semibold">{tr("loadFailed")}</div>
+      <button type="button" onClick={() => void load()} className="mt-3 text-sm font-semibold text-blue-600">{tr("retry")}</button>
     </Card>
   );
 

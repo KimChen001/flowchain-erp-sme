@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Truck } from "lucide-react";
+import { useSearchParams } from "react-router";
+import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
-import { A, Card, Chip, Field, KpiCard, inputStyle } from "../../components/ui";
+import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
+import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
+import { RefreshButton, ResetButton, listButtonClass } from "../../components/ui/listLayout";
 import {
   tableBodyTextClass,
   tableLinkClass,
@@ -18,6 +21,8 @@ import { useMasterDataWriteAccess } from "./writeAccess";
 import { DataImportLink } from "./DataImportLink";
 import { exportMasterDataCsv } from "./export";
 import { NOT_PROVIDED, useMasterDataCopy } from "./masterDataCopy";
+import { useI18n } from "../../i18n/I18n";
+import { useWarehouseNames } from "../../lib/useWarehouseNames";
 
 export type MasterItem = {
   itemId: string;
@@ -155,6 +160,8 @@ export default function ItemMasterWorkbench({
   onNavigate?: (routeId: string, focus?: unknown) => void;
 }) {
   const { copy, language, locale } = useMasterDataCopy();
+  const { formatDateTime } = useI18n();
+  const warehouseName = useWarehouseNames();
   // Creating and editing items needs master_data.item.manage.
   const canEdit = useMasterDataWriteAccess().items;
   const [items, setItems] = useState<MasterItem[]>([]);
@@ -164,7 +171,15 @@ export default function ItemMasterWorkbench({
   const [selected, setSelected] = useState<MasterItem | null>(null);
   const [editing, setEditing] = useState<Partial<MasterItem> | null>(null);
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const status = searchParams.get("status") || "";
+  const gap = searchParams.get("gap") || "";
+  const setParam = (name: string, value: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (value) params.set(name, value); else params.delete(name);
+    setSearchParams(params, { replace: true });
+  };
+  const setStatus = (value: string) => setParam("status", value);
   const [type, setType] = useState("");
   const [category, setCategory] = useState("");
   const [error, setError] = useState("");
@@ -200,9 +215,10 @@ export default function ItemMasterWorkbench({
               .includes(query.toLowerCase())) &&
           (!status || item.status === status) &&
           (!type || item.itemType === type) &&
-          (!category || item.category === category),
+          (!category || item.category === category) &&
+          (!gap || (item.status === "active" && (gap === "reorder" ? !hasReorderPoint(item) : gap === "supplier" ? !item.defaultSupplierId : true))),
       ),
-    [items, query, status, type, category],
+    [items, query, status, type, category, gap],
   );
   const distinct = (values: string[]) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, locale));
   const types = useMemo(() => distinct(items.map((item) => item.itemType)), [items, locale]);
@@ -217,8 +233,13 @@ export default function ItemMasterWorkbench({
   const quantity = (value: number) => value.toLocaleString(locale);
   const statusLabel = (code: string) => copy(code === "active" ? "Active" : code === "inactive" ? "Inactive" : code);
   const activeCount = items.filter((item) => item.status === "active").length;
-  const filtered = Boolean(query || status || type || category);
-  const resetFilters = () => { setQuery(""); setStatus(""); setType(""); setCategory(""); };
+  const filtered = Boolean(query || status || type || category || gap);
+  const resetFilters = () => {
+    setQuery(""); setType(""); setCategory("");
+    const params = new URLSearchParams(searchParams);
+    params.delete("status"); params.delete("gap");
+    setSearchParams(params, { replace: true });
+  };
   const save = async () => {
     if (!editing) return;
     try {
@@ -320,10 +341,26 @@ export default function ItemMasterWorkbench({
         </div>
       </Card>
     );
+  // A detail value as a person reads it: the type and unit labels, the
+  // warehouse name and workspace-formatted numbers. Stored values are unchanged.
+  const detailValue = (item: MasterItem, key: keyof MasterItem) => {
+    const value = item[key];
+    if (value === null || value === undefined || value === "") return NOT_PROVIDED;
+    if (key === "itemType") return typeLabel(String(value));
+    if (key === "baseUnit" || key === "purchaseUnit") return unitLabel(String(value));
+    if (key === "defaultWarehouseId") return warehouseName(String(value)) || NOT_PROVIDED;
+    if (typeof value === "number") return quantity(value);
+    return String(value);
+  };
+  // Audit times in the workspace locale and timezone.
+  const auditTime = (value: string) => {
+    if (!value || Number.isNaN(new Date(value).getTime())) return NOT_PROVIDED;
+    return formatDateTime(value);
+  };
   if (selected)
     return (
       <Card className="p-5">
-        <div className="flex justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <button
               className="text-xs text-blue-600"
@@ -340,9 +377,11 @@ export default function ItemMasterWorkbench({
           </div>
           {canEdit && (
             <button
+              type="button"
               onClick={() => setEditing(selected)}
-              className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
+              className={listButtonClass.primary}
             >
+              <Pencil size={13} />
               {copy("编辑 SKU")}
             </button>
           )}
@@ -352,15 +391,15 @@ export default function ItemMasterWorkbench({
             <div key={key} className="rounded-lg bg-slate-50 p-3">
               <div className="text-[11px] text-slate-500">{copy(label)}</div>
               <div className="mt-1 text-xs font-medium">
-                {String(selected[key] ?? "—") || "—"}
+                {detailValue(selected, key)}
               </div>
             </div>
           ))}
         </div>
         <div className="mt-4 text-xs text-slate-500">
-          {language === "en-US" ? "Created: " : "创建："}{selected.createdBy} · {selected.createdAt}
+          {copy("Created: {by} · {at}", { by: selected.createdBy, at: auditTime(selected.createdAt) })}
           <br />
-          {language === "en-US" ? "Updated: " : "更新："}{selected.updatedBy} · {selected.updatedAt}
+          {copy("Updated: {by} · {at}", { by: selected.updatedBy, at: auditTime(selected.updatedAt) })}
         </div>
       </Card>
     );
@@ -369,10 +408,10 @@ export default function ItemMasterWorkbench({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiCard label={copy("Items")} value={String(items.length)} sub={copy("{count} active", { count: activeCount })} icon={Package} color={A.blue} />
-        <KpiCard label={copy("Inactive items")} value={String(items.length - activeCount)} sub={copy("Kept for history, not offered on new documents")} icon={CheckCircle2} color={A.gray1} />
-        <KpiCard label={copy("No reorder point")} value={String(items.filter((item) => item.status === "active" && !hasReorderPoint(item)).length)} sub={copy("Active items the reorder list cannot check")} icon={AlertCircle} color={A.orange} />
-        <KpiCard label={copy("No preferred supplier")} value={String(items.filter((item) => item.status === "active" && !item.defaultSupplierId).length)} sub={copy("Active items without a supplier to order from")} icon={Truck} color={A.purple} />
+        <ActionableMetricCard label={copy("Items")} value={loaded ? String(items.length) : "—"} description={copy("{count} active", { count: activeCount })} to="/app/master-data/items" icon={Package} color={A.blue} />
+        <ActionableMetricCard label={copy("Inactive items")} value={loaded ? String(items.length - activeCount) : "—"} description={copy("Kept for history, not offered on new documents")} to="/app/master-data/items?status=inactive" icon={CheckCircle2} color={A.gray1} />
+        <ActionableMetricCard label={copy("No reorder point")} value={loaded ? String(items.filter((item) => item.status === "active" && !hasReorderPoint(item)).length) : "—"} description={copy("Active items the reorder list cannot check")} to="/app/master-data/items?gap=reorder" icon={AlertCircle} color={A.orange} />
+        <ActionableMetricCard label={copy("No preferred supplier")} value={loaded ? String(items.filter((item) => item.status === "active" && !item.defaultSupplierId).length) : "—"} description={copy("Active items without a supplier to order from")} to="/app/master-data/items?gap=supplier" icon={Truck} color={A.purple} />
       </div>
 
       <Card className="p-5">
@@ -382,28 +421,27 @@ export default function ItemMasterWorkbench({
             <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("Search items by SKU, name, status, type and category.")}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={resetFilters} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>
-              {copy("Reset")}
-            </button>
-            <button type="button" onClick={() => exportMasterDataCsv("items", { items: shown.map((item) => ({ ...item, preferredSupplierName: item.defaultSupplierId ? supplierLabel(item.defaultSupplierId) : "" })) }, copy)} className="flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium" style={{ background: "#f0f6ff", color: A.blue }}>
+            <ResetButton onClick={resetFilters} />
+            <RefreshButton onClick={() => { load().catch((cause) => setError(cause.message)); }} />
+            <button type="button" onClick={() => exportMasterDataCsv("items", { items: shown.map((item) => ({ ...item, preferredSupplierName: item.defaultSupplierId ? supplierLabel(item.defaultSupplierId) : "" })) }, copy)} className={listButtonClass.export}>
               <FileSpreadsheet size={13} /> {copy("Export results")}
             </button>
-            <DataImportLink type="items" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700" />
+            <DataImportLink type="items" className={listButtonClass.secondary} />
             {canEdit && (
               <button
                 type="button"
-                className="h-8 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white"
+                className={listButtonClass.primary}
                 onClick={() => {
                   setSelected(null);
                   setEditing({ ...empty });
                 }}
               >
-                {copy("新建 SKU")}
+                <Plus size={13} />{copy("新建 SKU")}
               </button>
             )}
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
           <Field label={copy("Search")}>
             <input aria-label={copy("搜索 SKU")} placeholder={copy("搜索 SKU 编码或物料名称")} value={query} onChange={(e) => setQuery(e.target.value)} style={inputStyle} />
           </Field>
@@ -424,6 +462,13 @@ export default function ItemMasterWorkbench({
             <select aria-label={copy("Filter by category")} value={category} onChange={(e) => setCategory(e.target.value)} style={inputStyle}>
               <option value="">{copy("All categories")}</option>
               {categories.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </Field>
+          <Field label={copy("Setup gap")}>
+            <select aria-label={copy("Filter by setup gap")} value={gap} onChange={(e) => setParam("gap", e.target.value)} style={inputStyle}>
+              <option value="">{copy("All items")}</option>
+              <option value="reorder">{copy("No reorder point")}</option>
+              <option value="supplier">{copy("No preferred supplier")}</option>
             </select>
           </Field>
         </div>

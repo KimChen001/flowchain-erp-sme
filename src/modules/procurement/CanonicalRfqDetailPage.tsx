@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, ExternalLink, FilePlus2, RefreshCw, Scale, TriangleAlert } from "lucide-react";
 import { Link, useNavigate } from "react-router";
-import { A, Card, Chip } from "../../components/ui";
+import { A, Card } from "../../components/ui";
+import { StatusChip, listHeadRowStyle, statusToneOf } from "../../components/ui/listLayout";
+import { thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
 import { RfqSupplierResponseDialog } from "./RfqSupplierResponseDialog";
 import { useI18n } from "../../i18n/I18n";
-import { formatLocaleAmount } from "../../lib/format";
+import { formatCalendarDay, formatDateTimeInTimeZone, formatLocaleAmount } from "../../lib/format";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import type { ProcurementQuotationRevision, ProcurementRfqDocument, ProcurementRfqQuotation } from "./procurementTypes";
 
@@ -62,10 +64,21 @@ const RELATION_LABELS: Labels = {
   quotation: ["供应商报价", "Supplier quotation"],
 };
 
-const LIMITATION_ENGLISH: Record<string, string> = {
-  "RFQ Supplier Participation 仅表达内部采购参与事实；invited_internal 不证明邮件送达、Supplier Portal 身份或外部登录。": "Supplier participation is an internal purchasing record. An internal invitation does not prove email delivery, a supplier portal account, or an external sign-in.",
-  "报价 latest authority 仅由最大 revisionNumber 决定；模型不维护 isLatest 标志或 current revision 指针。": "The quotation revision with the highest revision number is the current one.",
-  "Supplier Response 与 Append Revision HTTP 写入仅可通过内部授权命令内核；当前 RFQ 页面仍保持只读。": "Supplier response and append-revision writes use the authorized internal command kernel. The RFQ page itself remains read-only.",
+// The server's data limitation notes (keyed by its text) in plain business
+// language, [Chinese, English]. A note not listed is shown as sent.
+const LIMITATION_LABELS: Labels = {
+  "RFQ Supplier Participation 仅表达内部采购参与事实；invited_internal 不证明邮件送达、Supplier Portal 身份或外部登录。": [
+    "供应商参与情况是内部采购记录：记录了邀请，不代表邮件已送达，也不代表供应商已开通门户账号或已登录。",
+    "Supplier participation is an internal purchasing record. A recorded invitation does not mean an email was delivered or that the supplier has a portal account or has signed in.",
+  ],
+  "报价 latest authority 仅由最大 revisionNumber 决定；模型不维护 isLatest 标志或 current revision 指针。": [
+    "每份报价以修订号最大的版本为当前版本。",
+    "Each quotation's current version is the one with the highest revision number.",
+  ],
+  "Supplier Response 与 Append Revision HTTP 写入仅可通过内部授权命令内核；当前 RFQ 页面仍保持只读。": [
+    "供应商响应和新的报价修订只能由有权限的同事录入；询价单本身在此页不能修改。",
+    "Supplier responses and new quotation revisions can only be recorded by colleagues with permission. The RFQ itself cannot be changed on this page.",
+  ],
 };
 
 function failureState(error: unknown): Exclude<ReadState, "loading" | "loaded" | "malformed"> {
@@ -109,14 +122,16 @@ function money(value: number | string | null | undefined, currency: string | nul
   return formatLocaleAmount(value, code, locale, { maximumFractionDigits: 2 });
 }
 
-function date(value?: string | null) {
-  if (!value) return "—";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) return value;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? value
-    : parsed.toISOString().replace("T", " ").replace("Z", " UTC");
+const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+// Dates in the workspace locale: a calendar day (due, required, delivery,
+// valid until) as that day ("Nov 5, 2026"); a recorded time (submitted) in
+// the workspace timezone ("Oct 30, 2026, 8:30 AM"). Other text is shown as is.
+function useRfqDates() {
+  const { locale, timezone } = useI18n();
+  const day = (value?: string | null) => (value ? formatCalendarDay(value, locale) : "—");
+  const when = (value?: string | null) => (!value ? "—" : CALENDAR_DAY.test(value) ? day(value) : formatDateTimeInTimeZone(value, locale, timezone));
+  return { day, when };
 }
 
 function RelatedEvidence({ record }: { record: ProcurementRfqDocument }) {
@@ -157,14 +172,15 @@ function RelatedEvidence({ record }: { record: ProcurementRfqDocument }) {
 function RevisionSummary({ revision, currency }: { revision: ProcurementQuotationRevision; currency: string }) {
   const { language, locale } = useI18n();
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
+  const { when } = useRfqDates();
   return (
-    <div className="border-t py-2 first:border-t-0" data-testid={`rfq-revision-${revision.id}`}>
+    <div className="border-t py-2 first:border-t-0 first:pt-0" data-testid={`rfq-revision-${revision.id}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="font-medium">Revision {revision.revisionNumber} · {revision.isLatest ? tr("当前版本", "Current") : tr("历史版本", "Historical")}</span>
-        <span>{statusLabel(revision.status, QUOTATION_STATUS_LABELS, language)} · {money(revision.quotedAmount, revision.currency || currency, locale)}</span>
+        <span>{statusLabel(revision.status, QUOTATION_STATUS_LABELS, language)} · <span className="whitespace-nowrap tabular-nums">{money(revision.quotedAmount, revision.currency || currency, locale)}</span></span>
       </div>
       <div className="mt-1 text-[11px]" style={{ color: A.sub }}>
-        {date(revision.submittedAt || revision.createdAt)} · {revision.source ? REVISION_SOURCE_LABELS[revision.source]?.[language === "en-US" ? 1 : 0] || revision.source : tr("未提供来源", "Source not provided")}
+        <span className="whitespace-nowrap">{when(revision.submittedAt || revision.createdAt)}</span> · {revision.source ? REVISION_SOURCE_LABELS[revision.source]?.[language === "en-US" ? 1 : 0] || revision.source : tr("未提供来源", "Source not provided")}
       </div>
       {revision.lines.map((line) => (
         <div key={line.id} className="mt-1 text-[11px]" style={{ color: A.sub }} data-testid={`rfq-revision-line-${line.id}`}>
@@ -179,16 +195,17 @@ function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotat
   const { language, locale } = useI18n();
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
   const hasAuthority = quotation.authorityState === "revision_authoritative";
+  const { day, when } = useRfqDates();
   return (
     <tr className="border-t align-top" data-testid={`rfq-quotation-${quotation.id}`}>
-      <td className="p-3 font-medium">{quotation.id}</td>
-      <td className="p-3"><div>{quotation.supplierName || quotation.supplierId || tr("未提供", "Not provided")}</div>{quotation.lines.length > 0 && <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: A.sub }}>{quotation.lines.map((line) => <div key={line.id} data-testid={`rfq-quotation-line-${line.id}`}>{line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity, locale)} {line.unit || ""} · {money(line.unitPrice, quotation.currency || currency, locale)}</div>)}</div>}</td>
-      <td className="p-3">{hasAuthority ? statusLabel(quotation.status, QUOTATION_STATUS_LABELS, language) : tr("Revision 缺失", "Revision missing")}</td>
-      <td className="p-3 tabular-nums">{hasAuthority ? money(quotation.quotedAmount, quotation.currency || currency, locale) : tr("不可用", "Unavailable")}</td>
-      <td className="p-3">{hasAuthority ? <><div>{date(quotation.submittedAt)}</div><div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("交期", "Delivery")}: {quotation.deliveryDate || tr("未提供", "Not provided")}</div><div className="text-[11px]" style={{ color: A.sub }}>{tr("付款", "Payment")}: {quotation.paymentTerms || tr("未提供", "Not provided")} · {tr("有效期", "Valid until")}: {quotation.validity || tr("未提供", "Not provided")}</div></> : <div style={{ color: A.sub }}>{tr("无权威商业字段", "No authoritative commercial fields")}</div>}</td>
-      <td className="p-3">
+      <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums">{quotation.id}</td>
+      <td className="px-4 py-3"><div>{quotation.supplierName || quotation.supplierId || tr("未提供", "Not provided")}</div>{quotation.lines.length > 0 && <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: A.sub }}>{quotation.lines.map((line) => <div key={line.id} data-testid={`rfq-quotation-line-${line.id}`}>{line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity, locale)} {line.unit || ""} · <span className="whitespace-nowrap">{money(line.unitPrice, quotation.currency || currency, locale)}</span></div>)}</div>}</td>
+      <td className="px-4 py-3">{hasAuthority ? <StatusChip label={statusLabel(quotation.status, QUOTATION_STATUS_LABELS, language)} tone={statusToneOf(quotation.status)} /> : <StatusChip label={tr("缺少修订", "Revision missing")} tone="warning" />}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-right font-medium tabular-nums">{hasAuthority ? money(quotation.quotedAmount, quotation.currency || currency, locale) : tr("不可用", "Unavailable")}</td>
+      <td className="px-4 py-3">{hasAuthority ? <><div className="whitespace-nowrap">{when(quotation.submittedAt)}</div><div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("交期", "Delivery")}: <span className="whitespace-nowrap">{quotation.deliveryDate ? day(quotation.deliveryDate) : tr("未提供", "Not provided")}</span></div><div className="text-[11px]" style={{ color: A.sub }}>{tr("付款", "Payment")}: {quotation.paymentTerms || tr("未提供", "Not provided")} · {tr("有效期", "Valid until")}: <span className="whitespace-nowrap">{quotation.validity ? day(quotation.validity) : tr("未提供", "Not provided")}</span></div></> : <div style={{ color: A.sub }}>{tr("尚无可用的报价条款", "No quotation terms recorded")}</div>}</td>
+      <td className="px-4 py-3">
         {quotation.revisions.length === 0
-          ? <div style={{ color: A.sub }}>{tr("尚无权威 Revision", "No authoritative revision")}</div>
+          ? <div style={{ color: A.sub }}>{tr("尚无报价修订", "No revision recorded")}</div>
           : quotation.revisions.map((revision) => <RevisionSummary key={revision.id} revision={revision} currency={currency} />)}
       </td>
     </tr>
@@ -198,6 +215,7 @@ function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotat
 function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload, onSuccessReload }: { record: ProcurementRfqDocument; canCompare: boolean; canCreate: boolean; canRevise: boolean; notice: string | null; onReload: () => Promise<void>; onSuccessReload: () => Promise<void> }) {
   const { language, locale } = useI18n();
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
+  const { day, when } = useRfqDates();
   const warehouseName = useWarehouseNames();
   const [editor, setEditor] = useState<{ supplier: typeof record.suppliers.knownParticipants[number]; mode: "initial" | "append" } | null>(null);
   const quotationFor = (supplierId: string) => record.quotations.find((quotation) => quotation.supplierId === supplierId) || null;
@@ -223,7 +241,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
             {record.description && <p className="mt-2 text-sm" style={{ color: A.sub }}>{record.description}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Chip label={statusLabel(record.status, RFQ_STATUS_LABELS, language)} color={A.blue} bg="#eff6ff" />
+            <StatusChip label={statusLabel(record.status, RFQ_STATUS_LABELS, language)} tone={statusToneOf(record.status)} />
             {canCompare && <Link
               className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700"
               data-testid="rfq-comparison-link"
@@ -237,11 +255,11 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
         <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
             [tr("RFQ 编号", "RFQ ID"), record.id],
-            [tr("截止日期", "Due date"), record.dueDate || "—"],
+            [tr("截止日期", "Due date"), day(record.dueDate)],
             [tr("币种", "Currency"), record.currency || "—"],
             [tr("来源 PR", "Source purchase request"), record.linkedPr || "—"],
-            [tr("创建时间", "Created at"), date(record.createdAt)],
-            [tr("更新时间", "Updated at"), date(record.updatedAt)],
+            [tr("创建时间", "Created at"), when(record.createdAt)],
+            [tr("更新时间", "Updated at"), when(record.updatedAt)],
             [tr("已记录响应", "Responses recorded"), `${record.suppliers.responseRecordedCount} / ${record.suppliers.participantCount}`],
             [tr("关联 PO", "Linked purchase order"), record.linkedPo || "—"],
           ].map(([label, value]) => (
@@ -257,15 +275,15 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
         <div className="border-b p-4"><h2 className="text-sm font-semibold">{tr("RFQ 行项目", "RFQ line items")}</h2></div>
         {record.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有权威行项目。", "This RFQ has no authoritative line items.")}</div> : (
           <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs">
-            <thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("行 ID", "Line ID"), tr("物料 / SKU", "Item / SKU"), tr("数量", "Quantity"), tr("单位", "Unit"), tr("目标 / 参考单价", "Target / reference unit price"), tr("要求日期", "Required date"), tr("交付地点", "Delivery location")].map((label) => <th key={label} className="p-3 font-medium">{label}</th>)}</tr></thead>
-            <tbody>{record.lines.map((line) => <tr key={line.id} className="border-t" data-testid={`rfq-line-${line.id}`}>
-              <td className="p-3 font-medium">{line.id}</td>
-              <td className="p-3"><div>{line.itemName || "—"}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || line.itemId || "—"}</div></td>
-              <td className="p-3 tabular-nums">{number(line.quantity, locale)}</td>
-              <td className="p-3">{line.unit || "—"}</td>
-              <td className="p-3 tabular-nums">{money(line.targetUnitPrice, record.currency, locale)}</td>
-              <td className="p-3">{line.requiredDate || "—"}</td>
-              <td className="p-3">{warehouseName(line.deliveryLocation) || "—"}</td>
+            <thead><tr style={listHeadRowStyle}>{([[tr("行 ID", "Line ID")], [tr("物料 / SKU", "Item / SKU")], [tr("数量", "Quantity"), "right"], [tr("单位", "Unit")], [tr("目标 / 参考单价", "Target / reference unit price"), "right"], [tr("要求日期", "Required date")], [tr("交付地点", "Delivery location")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
+            <tbody>{record.lines.map((line) => <tr key={line.id} className="border-t align-top" data-testid={`rfq-line-${line.id}`}>
+              <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums">{line.id}</td>
+              <td className="px-4 py-3"><div>{line.itemName || "—"}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || line.itemId || "—"}</div></td>
+              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{number(line.quantity, locale)}</td>
+              <td className="px-4 py-3">{line.unit || "—"}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{money(line.targetUnitPrice, record.currency, locale)}</td>
+              <td className="whitespace-nowrap px-4 py-3">{line.requiredDate ? day(line.requiredDate) : "—"}</td>
+              <td className="px-4 py-3">{warehouseName(line.deliveryLocation) || "—"}</td>
             </tr>)}</tbody>
           </table></div>
         )}
@@ -277,23 +295,23 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
           {record.suppliers.knownParticipants.map((supplier) => {
             const quotation = quotationFor(supplier.supplierId);
             const disabledByStatus = !responseWorkflowOpen || ["declined", "withdrawn", "closed"].includes(supplier.status || "");
-            const actionLabel = quotation ? tr("新增 Revision", "Add revision") : tr("录入报价", "Record quotation");
+            const actionLabel = quotation ? tr("新增修订", "Add revision") : tr("录入报价", "Record quotation");
             const allowed = quotation ? canRevise : canCreate;
-            return <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="flex items-start justify-between gap-2"><div><div className="font-medium">{supplier.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{supplier.supplierId} · {statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS, language)}</div></div>{!disabledByStatus && allowed && <button type="button" data-testid={`rfq-response-action-${supplier.supplierId}`} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-blue-200 px-2 py-1 font-semibold text-blue-700" onClick={() => openEditor(supplier)}><FilePlus2 size={13} />{actionLabel}</button>}</div><div className="mt-1 font-medium">{statusLabel(supplier.responseState, RESPONSE_STATE_LABELS, language)}</div>{quotation && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("当前 Revision", "Current revision")}: {quotation.latestRevision?.revisionNumber || quotation.revisionNumber || "—"} · {tr("历史版本只读", "Historical revisions are read-only")}</div>}</div>;
+            return <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="flex items-start justify-between gap-2"><div><div className="font-medium">{supplier.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{supplier.supplierId} · {statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS, language)}</div></div>{!disabledByStatus && allowed && <button type="button" data-testid={`rfq-response-action-${supplier.supplierId}`} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-blue-200 px-2 py-1 font-semibold text-blue-700" onClick={() => openEditor(supplier)}><FilePlus2 size={13} />{actionLabel}</button>}</div><div className="mt-1 font-medium">{statusLabel(supplier.responseState, RESPONSE_STATE_LABELS, language)}</div>{quotation && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("当前修订", "Current revision")}: {quotation.latestRevision?.revisionNumber || quotation.revisionNumber || "—"} · {tr("历史版本只读", "Historical revisions are read-only")}</div>}</div>;
           })}
           {record.suppliers.knownParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有权威供应商参与记录。", "This RFQ has no authoritative supplier participation records.")}</div>}
         </div>
-        <p className="mt-3 text-xs" style={{ color: A.sub }}>{tr("参与状态来自 RFQ Supplier Participation；内部邀请时间仅表示内部记录，不代表邮件送达、Supplier Portal 账号或外部提交。", "Participation status comes from RFQ Supplier Participation. An internal invitation timestamp does not prove email delivery, a supplier portal account, or an external submission.")}</p>
+        <p className="mt-3 text-xs" style={{ color: A.sub }}>{tr("参与状态是内部采购记录；记录的邀请时间不代表邮件已送达、供应商已开通门户账号或已在外部提交报价。", "Participation status is an internal purchasing record. A recorded invitation time does not mean an email was delivered, the supplier has a portal account, or a quotation was submitted outside FlowChain.")}</p>
       </Card>
 
       <Card className="overflow-hidden" data-testid="rfq-quotations">
-        <div className="flex items-center justify-between gap-3 border-b p-4"><h2 className="text-sm font-semibold">{tr("供应商报价", "Supplier quotations")}</h2><span className="text-xs" style={{ color: A.sub }}>{tr(`${record.quotations.length} 条报价 · latest 取最大 revisionNumber`, `${record.quotations.length} quotations · latest uses the highest revision number`)}</span></div>
-        {record.quotations.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有权威报价记录。", "This RFQ has no authoritative quotation records.")}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("报价 ID", "Quotation ID"), tr("供应商", "Supplier"), tr("状态", "Status"), tr("报价总额", "Quoted total"), tr("提交时间", "Submitted at"), "Revision"].map((label) => <th key={label} className="p-3 font-medium">{label}</th>)}</tr></thead><tbody>{record.quotations.map((quotation) => <QuotationRow key={quotation.id} quotation={quotation} currency={record.currency || ""} />)}</tbody></table></div>}
+        <div className="flex items-center justify-between gap-3 border-b p-4"><h2 className="text-sm font-semibold">{tr("供应商报价", "Supplier quotations")}</h2><span className="text-xs" style={{ color: A.sub }}>{tr(`${record.quotations.length} 条报价 · 以修订号最大的版本为当前版本`, `${record.quotations.length} quotations · the highest revision is current`)}</span></div>
+        {record.quotations.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有权威报价记录。", "This RFQ has no authoritative quotation records.")}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[960px] text-left text-xs"><thead><tr style={listHeadRowStyle}>{([[tr("报价 ID", "Quotation ID")], [tr("供应商", "Supplier")], [tr("状态", "Status")], [tr("报价总额", "Quoted total"), "right"], [tr("提交时间", "Submitted at")], [tr("修订记录", "Revisions")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead><tbody>{record.quotations.map((quotation) => <QuotationRow key={quotation.id} quotation={quotation} currency={record.currency || ""} />)}</tbody></table></div>}
       </Card>
 
       <Card className="p-4" data-testid="rfq-data-limitations">
         <div className="flex items-center gap-2"><TriangleAlert size={16} className="text-amber-600" /><h2 className="text-sm font-semibold">{tr("数据边界", "Data boundaries")}</h2></div>
-        <ul className="mt-3 space-y-2 text-xs" style={{ color: A.sub }}>{record.limitations.map((limitation) => <li key={limitation}>· {language === "en-US" ? LIMITATION_ENGLISH[limitation] || limitation : limitation}</li>)}</ul>
+        <ul className="mt-3 space-y-2 text-xs" style={{ color: A.sub }}>{record.limitations.map((limitation) => <li key={limitation}>· {LIMITATION_LABELS[limitation]?.[language === "en-US" ? 1 : 0] || limitation}</li>)}</ul>
       </Card>
 
       <RelatedEvidence record={record} />

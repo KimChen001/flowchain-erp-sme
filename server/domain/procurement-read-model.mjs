@@ -353,13 +353,216 @@ export function buildProcurementSupplierInvoices(data = {}) {
   })
 }
 
+// The first value that is a recorded number, or null when none is.
+function firstNumber(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue
+    const parsed = Number(typeof value?.toNumber === 'function' ? value.toNumber() : value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+function roundMoney(value) {
+  return value === null ? null : Math.round((value + Number.EPSILON) * 100) / 100
+}
+
+function roundQty(value) {
+  return value === null ? null : Math.round((value + Number.EPSILON) * 10000) / 10000
+}
+
+function sumOrNull(values = []) {
+  return values.some((value) => value === null) ? null : values.reduce((sum, value) => sum + value, 0)
+}
+
+// Below a cent (or a ten-thousandth of a unit) a difference is rounding.
+const MONEY_EPSILON = 0.005
+const QTY_EPSILON = 0.00005
+
+function recordedVariance(invoice = {}) {
+  return firstNumber(invoice.varianceAmount, invoice.variance, invoice.priceVariance) !== null
+}
+
+function rawPoLineId(line = {}, index = 0, id = '') {
+  return text(line.poLineId || line.lineId || line.id, `${id}-LINE-${String(index + 1).padStart(3, '0')}`)
+}
+
+// The PO line an invoice line bills: by its PO line reference, else by SKU when
+// one PO line has it, else the only line of a single-line PO.
+function findPoLine(poLines = [], invoiceLine = {}) {
+  const ref = text(invoiceLine.poLineId || invoiceLine.poLine || invoiceLine.purchaseOrderLineId)
+  const byRef = ref ? poLines.find((line) => line.poLineId === ref) : null
+  if (byRef) return byRef
+  const sku = text(invoiceLine.sku)
+  const bySku = sku ? poLines.filter((line) => line.sku === sku) : []
+  if (bySku.length === 1) return bySku[0]
+  // A reference to a line the PO does not have is not guessed.
+  return !ref && poLines.length === 1 ? poLines[0] : null
+}
+
+// The PO's lines with what was ordered, received (accepted) and the unit price.
+// Received comes from the PO line, else from the accepted quantity on the
+// receipt lines for it, else, for a single-line PO, from the PO header.
+function matchPoLines(rawPo, rawGrns = []) {
+  if (!rawPo) return []
+  const id = poId(rawPo)
+  const lines = asArray(rawPo.lines)
+  const acceptedByLine = new Map()
+  for (const grn of rawGrns) {
+    for (const line of asArray(grn.lines)) {
+      const key = text(line.poLineId || line.purchaseOrderLineId)
+      if (!key) continue
+      acceptedByLine.set(key, (acceptedByLine.get(key) || 0) + toNumber(line.acceptedQty ?? line.passed, 0))
+    }
+  }
+  return lines.map((line, index) => {
+    const poLineId = rawPoLineId(line, index, id)
+    const orderedQty = firstNumber(line.quantityOrdered, line.orderedQuantity, line.orderedQty, line.quantity)
+      ?? (lines.length === 1 ? firstNumber(rawPo.totalOrderedQty, rawPo.items) : null)
+    const receivedQty = firstNumber(line.quantityReceived, line.receivedQuantity, line.receivedQty, line.received)
+      ?? (acceptedByLine.has(poLineId) ? acceptedByLine.get(poLineId) : null)
+      ?? (lines.length === 1 ? firstNumber(rawPo.totalReceivedQty, rawPo.received) : null)
+    const lineAmount = firstNumber(line.lineAmount, line.amount)
+    const unitPrice = firstNumber(line.unitPrice) ?? (lineAmount !== null && orderedQty ? lineAmount / orderedQty : null)
+    return {
+      poLineId,
+      sku: text(line.sku || rawPo.sourceSku),
+      itemName: text(line.itemName || line.name || line.itemNameSnapshot || rawPo.sourceName),
+      unit: text(line.unit || rawPo.unit),
+      orderedQty,
+      receivedQty,
+      unitPrice,
+    }
+  })
+}
+
+function lineStatus({ poLine, priceVariance, varianceAmount, quantityVariance }) {
+  if (!poLine) return 'po_line_unavailable'
+  const priced = priceVariance !== null && Math.abs(priceVariance) >= MONEY_EPSILON
+  const amount = varianceAmount !== null && Math.abs(varianceAmount) >= MONEY_EPSILON
+  const quantity = quantityVariance > QTY_EPSILON
+  if (quantity && (priced || amount)) return 'price_and_quantity_variance'
+  if (quantity) return 'quantity_variance'
+  if (priced) return 'price_variance'
+  if (amount) return 'amount_variance'
+  return 'matched'
+}
+
+// Three-way match line by line. For each invoice line on a PO line:
+//   expected amount  = invoiced quantity x PO unit price
+//   price variance   = (invoice unit price - PO unit price) x invoiced quantity
+//   variance amount  = invoice line amount (net of tax) - expected amount
+//   quantity check   = invoiced vs received (accepted) on that PO line, across
+//                      this invoice's lines in order: invoicing more than was
+//                      received is a quantity variance; less is just received,
+//                      not yet fully invoiced.
+// What the PO ordered but has not received is a receiving gap, shown for
+// information and never a match variance. Other invoices for the same PO line
+// are not deducted here; the match run (operational-finance-policy) does that.
+function buildThreeWayMatchLines(rawInvoice = {}, rawPo = null, rawGrns = []) {
+  const poLines = matchPoLines(rawPo, rawGrns)
+  const invoicedSoFar = new Map()
+  return asArray(rawInvoice.lines).map((line, index) => {
+    const poLine = findPoLine(poLines, line)
+    const invoicedQty = firstNumber(line.quantity, line.invoicedQty, line.invoiceQty, line.qty) ?? 0
+    const taxAmount = firstNumber(line.taxAmount, line.enteredTaxAmount, line.tax)
+    const grossAmount = firstNumber(line.amount)
+    const invoiceUnitPrice = firstNumber(line.unitPrice)
+    const invoiceLineAmount = roundMoney(firstNumber(line.lineSubtotal, line.lineAmount, line.subtotal)
+      ?? (grossAmount !== null ? grossAmount - (taxAmount ?? 0) : null)
+      ?? (invoiceUnitPrice !== null ? invoicedQty * invoiceUnitPrice : null))
+    const poUnitPrice = poLine?.unitPrice ?? null
+    const expectedAmount = poUnitPrice !== null ? roundMoney(invoicedQty * poUnitPrice) : null
+    const unitPrice = invoiceUnitPrice ?? (invoiceLineAmount !== null && invoicedQty ? invoiceLineAmount / invoicedQty : null)
+    const priceVariance = unitPrice !== null && poUnitPrice !== null ? roundMoney((unitPrice - poUnitPrice) * invoicedQty) : null
+    const varianceAmount = invoiceLineAmount !== null && expectedAmount !== null ? roundMoney(invoiceLineAmount - expectedAmount) : null
+    const receivedQty = poLine ? (poLine.receivedQty ?? 0) : null
+    const before = poLine ? (invoicedSoFar.get(poLine.poLineId) || 0) : 0
+    if (poLine) invoicedSoFar.set(poLine.poLineId, before + invoicedQty)
+    // This line's share of what is invoiced beyond the received quantity.
+    const quantityVariance = poLine ? roundQty(Math.max(0, Math.min(invoicedQty, before + invoicedQty - receivedQty))) : 0
+    const quantityVarianceAmount = poUnitPrice !== null ? roundMoney(quantityVariance * poUnitPrice) : null
+    return {
+      invoiceLineId: text(line.lineId || line.invoiceLineId || line.id, `${invoiceId(rawInvoice)}-LINE-${String(index + 1).padStart(3, '0')}`),
+      poLineId: poLine?.poLineId || text(line.poLineId || line.poLine || line.purchaseOrderLineId),
+      grnLineId: text(line.grnLine || line.grnLineId || line.receivingLineId),
+      sku: text(line.sku || poLine?.sku),
+      itemName: text(line.itemName || line.name || line.description || poLine?.itemName),
+      unit: text(line.unit || poLine?.unit),
+      orderedQty: poLine ? poLine.orderedQty : null,
+      receivedQty,
+      invoicedQty,
+      receivingGapQty: poLine && poLine.orderedQty !== null ? roundQty(Math.max(0, poLine.orderedQty - (poLine.receivedQty ?? 0))) : null,
+      quantityVariance,
+      poUnitPrice,
+      invoiceUnitPrice: unitPrice === null ? null : roundMoney(unitPrice),
+      expectedAmount,
+      invoiceLineAmount,
+      taxAmount,
+      priceVariance,
+      varianceAmount,
+      quantityVarianceAmount,
+      status: lineStatus({ poLine, priceVariance, varianceAmount, quantityVariance }),
+    }
+  }).map((line, _index, lines) => {
+    // Received but not yet invoiced on this PO line, after all of this invoice's lines for it.
+    const invoicedOnLine = lines.filter((other) => other.poLineId && other.poLineId === line.poLineId).reduce((sum, other) => sum + other.invoicedQty, 0)
+    return { ...line, uninvoicedReceivedQty: line.receivedQty === null ? null : roundQty(Math.max(0, line.receivedQty - invoicedOnLine)) }
+  })
+}
+
+// Line totals for the match: expected at PO prices, invoiced net of tax, tax,
+// and the net variance (invoiced net - expected). Null when a line lacks the
+// facts, so a partial total is never shown as the whole.
+function threeWayMatchLineTotals(lines = [], rawInvoice = {}) {
+  const expectedAmount = lines.length ? roundMoney(sumOrNull(lines.map((line) => line.expectedAmount))) : null
+  const invoiceNetAmount = lines.length
+    ? roundMoney(sumOrNull(lines.map((line) => line.invoiceLineAmount)))
+    : roundMoney(firstNumber(rawInvoice.subtotal, rawInvoice.subtotalAmount))
+  const lineTaxes = lines.map((line) => line.taxAmount).filter((value) => value !== null)
+  const invoiceTaxAmount = roundMoney(firstNumber(rawInvoice.tax, rawInvoice.taxAmount, rawInvoice.enteredTaxAmount)
+    ?? (lineTaxes.length ? lineTaxes.reduce((sum, value) => sum + value, 0) : null))
+  const lineVarianceAmount = expectedAmount !== null && invoiceNetAmount !== null && lines.length ? roundMoney(invoiceNetAmount - expectedAmount) : null
+  const quantityVarianceAmount = lines.length ? roundMoney(sumOrNull(lines.map((line) => line.quantityVarianceAmount))) : null
+  // Absolute line variances plus over-invoiced quantities at PO price, so lines
+  // that offset each other do not hide a variance.
+  const lineVarianceTotal = lines.length && lines.every((line) => line.varianceAmount !== null && line.quantityVarianceAmount !== null)
+    ? roundMoney(lines.reduce((sum, line) => sum + Math.abs(line.varianceAmount) + line.quantityVarianceAmount, 0))
+    : null
+  const lineMatchStatus = !lines.length ? 'no_lines' : lines.every((line) => line.status === 'matched') ? 'matched' : 'variance'
+  return {
+    expectedAmount,
+    invoiceNetAmount,
+    taxAmount: invoiceTaxAmount,
+    lineVarianceAmount,
+    quantityVarianceAmount,
+    lineVarianceTotal,
+    receivingGapQty: lines.length ? roundQty(sumOrNull(lines.filter((line, index) => line.poLineId && lines.findIndex((other) => other.poLineId === line.poLineId) === index).map((line) => line.receivingGapQty))) : null,
+    lineMatchStatus,
+  }
+}
+
 export function buildProcurementThreeWayMatches(data = {}) {
   const pos = new Map(buildProcurementPurchaseOrders(data).map((po) => [po.id, po]))
   const grns = new Map(buildProcurementReceivingDocs(data).map((grn) => [grn.id, grn]))
-  return buildProcurementSupplierInvoices(data).map((invoice) => {
+  const rawPos = new Map(asArray(data.purchaseOrders).map((po, index) => [poId(po, index), po]))
+  const rawGrnsByPo = new Map()
+  for (const grn of asArray(data.receivingDocs)) {
+    const key = text(grn.po || grn.poId)
+    if (!key) continue
+    if (!rawGrnsByPo.has(key)) rawGrnsByPo.set(key, [])
+    rawGrnsByPo.get(key).push(grn)
+  }
+  const rawInvoices = asArray(data.supplierInvoices)
+  return buildProcurementSupplierInvoices(data).map((invoice, index) => {
     const po = pos.get(invoice.relatedPo) || null
     const grn = grns.get(invoice.relatedGrn) || null
-    const varianceAmount = toNumber(invoice.varianceAmount, Math.abs(toNumber(invoice.amount) - toNumber(po?.amount)))
+    const rawInvoice = rawInvoices[index] || {}
+    const lines = buildThreeWayMatchLines(rawInvoice, rawPos.get(invoice.relatedPo) || null, asArray(rawGrnsByPo.get(invoice.relatedPo)))
+    const lineTotals = threeWayMatchLineTotals(lines, rawInvoice)
+    // The recorded variance when the invoice has one; otherwise the line-level
+    // total, never the whole PO against a partial invoice.
+    const varianceAmount = recordedVariance(rawInvoice) ? toNumber(invoice.varianceAmount, 0) : toNumber(lineTotals.lineVarianceTotal, 0)
     const poAmount = toNumber(po?.amount, 0)
     const invoiceAmount = toNumber(invoice.amount, 0)
     const varianceRate = poAmount > 0 ? Number((varianceAmount / poAmount).toFixed(4)) : null
@@ -392,6 +595,9 @@ export function buildProcurementThreeWayMatches(data = {}) {
       status,
       blockingReason: varianceAmount ? 'PO 金额与发票金额存在差异，需复核后处理。' : '',
       exceptionReason: varianceAmount ? `差异金额 ${varianceAmount}` : '',
+      // Line by line: one entry per invoice line, against its PO line.
+      lines,
+      ...lineTotals,
       relatedDocuments: compactRelatedDocuments([
         related('pr', po?.sourceRequest),
         related('rfq', po?.linkedRfq),

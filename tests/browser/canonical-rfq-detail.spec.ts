@@ -60,7 +60,7 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(detail).toBeVisible();
   await expect(detail).toContainText("Flow Controller RFQ");
   await expect(detail.getByText("收集报价", { exact: true })).toBeVisible();
-  await expect(detail).toContainText("2030-01-10");
+  await expect(detail).toContainText("Jan 10, 2030");
   await expect(detail).toContainText("CNY");
   await expect(detail).toContainText("LOCAL-DEMO-PR-001");
 
@@ -68,7 +68,7 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(line).toContainText("LDM-001");
   await expect(line).toContainText("50");
   await expect(line).toContainText("pcs");
-  await expect(line).toContainText("2030-01-15");
+  await expect(line).toContainText("Jan 15, 2030");
   // The delivery location shows the warehouse name, not its stored id.
   const { options } = await (await request.get("/api/master-data/warehouses/select", { headers: { authorization: `Bearer ${token}` } })).json();
   await expect(line).toContainText(options.find((option: { id: string }) => option.id === "LOCAL-DEMO-WH-001").label);
@@ -78,7 +78,7 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(quotation).toContainText("Acme Components");
   await expect(quotation).toContainText("已提交");
   await expect(quotation).toContainText("4,900");
-  await expect(quotation).toContainText("2030-01-05 08:30:00.000 UTC");
+  await expect(quotation).toContainText(/Jan 5, 2030, \d{1,2}:30\s?[AP]M/);
   await expect(page.getByTestId("rfq-quotation-line-LOCAL-DEMO-REVLINE-002")).toContainText("LDM-001 · 50 pcs");
   await expect(page.getByTestId("rfq-revision-LOCAL-DEMO-REV-002")).toContainText("Revision 2 · 当前版本");
   await expect(page.getByTestId("rfq-revision-LOCAL-DEMO-REV-001")).toContainText("Revision 1 · 历史版本");
@@ -96,10 +96,11 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(evidence.getByRole("link", { name: "打开记录" })).toHaveCount(2);
 
   const limitations = page.getByTestId("rfq-data-limitations");
-  await expect(limitations).toContainText("RFQ Supplier Participation");
-  await expect(limitations).toContainText("不证明邮件送达");
-  await expect(limitations).toContainText("最大 revisionNumber");
-  await expect(limitations).toContainText("内部授权命令内核");
+  await expect(limitations).toContainText("供应商参与情况是内部采购记录");
+  await expect(limitations).toContainText("不代表邮件已送达");
+  await expect(limitations).toContainText("修订号最大的版本");
+  await expect(limitations).toContainText("有权限的同事录入");
+  await expect(limitations).not.toContainText(/revisionNumber|isLatest|HTTP|invited_internal/);
   await expectNoWriteActions(page);
 
   expect(documentRequests.filter((path) => path === "/api/procurement/documents?type=rfq")).toHaveLength(1);

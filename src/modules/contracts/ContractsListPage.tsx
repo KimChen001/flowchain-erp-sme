@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router";
-import { AlarmClock, CalendarClock, FilePen, FileSignature, Plus, RefreshCw, Search } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router";
+import { AlarmClock, CalendarClock, FilePen, FileSignature, Plus, Search } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
-import { A, Card, Field, KpiCard, inputStyle } from "../../components/ui";
+import { A, Card, Field, inputStyle } from "../../components/ui";
+import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
+import { RefreshButton, ResetButton, listButtonClass } from "../../components/ui/listLayout";
 import { CONTRACT_TYPES } from "../../../shared/contract-status.mjs";
 import { ContractTable } from "./ContractTable";
 import {
@@ -30,6 +32,7 @@ import {
 
 type SupplierOption = { id: string; name: string; code: string };
 const LIST_STATES: ContractState[] = ["draft", "active", "notice_due", "ending", "past_end", "ended", "renewed", "terminated"];
+const IN_FORCE = "active,notice_due,ending,past_end";
 
 export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
   const t = useContractCopy();
@@ -40,7 +43,13 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
   const [error, setError] = useState<unknown>(null);
   const [query, setQuery] = useState("");
   const [type, setType] = useState("");
-  const [state, setState] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const state = ending ? "" : searchParams.get("state") || "";
+  const setState = (value: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (value) params.set("state", value); else params.delete("state");
+    setSearchParams(params, { replace: true });
+  };
   const [owner, setOwner] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
@@ -95,7 +104,7 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
   const canManage = Boolean(data?.access.manage);
   const resetFilters = () => { setQuery(""); setType(""); setState(""); setOwner(""); setSupplierId(""); };
   const newButton = (testId: string) => canManage ? (
-    <button type="button" data-testid={testId} onClick={() => navigate("/app/contracts/new")} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white">
+    <button type="button" data-testid={testId} onClick={() => navigate("/app/contracts/new")} className={listButtonClass.primary}>
       <Plus size={13} /> {t("New contract")}
     </button>
   ) : null;
@@ -118,10 +127,10 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
         </Card>
       ) : (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <KpiCard label={t("In force")} value={counts ? String(counts.active + counts.notice_due + counts.ending + counts.past_end) : "—"} sub={t("Active, including those with a date coming up")} icon={FileSignature} color={A.green} />
-          <KpiCard label={t("Ending soon")} value={count(counts?.ending)} sub={t("End date within the reminder window")} icon={CalendarClock} color={A.orange} />
-          <KpiCard label={t("Notice due")} value={count(counts?.notice_due)} sub={t("Renews automatically unless notice is given")} icon={AlarmClock} color={A.orange} />
-          <KpiCard label={t("Drafts")} value={count(counts?.draft)} sub={t("Not active yet")} icon={FilePen} color={A.gray1} />
+          <ActionableMetricCard label={t("In force")} value={counts ? String(counts.active + counts.notice_due + counts.ending + counts.past_end) : "—"} description={t("Active, including those with a date coming up")} to={`/app/contracts/list?state=${IN_FORCE}`} icon={FileSignature} color={A.green} />
+          <ActionableMetricCard label={t("Ending soon")} value={count(counts?.ending)} description={t("End date within the reminder window")} to="/app/contracts/list?state=ending" icon={CalendarClock} color={A.orange} />
+          <ActionableMetricCard label={t("Notice due")} value={count(counts?.notice_due)} description={t("Renews automatically unless notice is given")} to="/app/contracts/list?state=notice_due" icon={AlarmClock} color={A.orange} />
+          <ActionableMetricCard label={t("Drafts")} value={count(counts?.draft)} description={t("Not active yet")} to="/app/contracts/list?state=draft" icon={FilePen} color={A.gray1} />
         </div>
       )}
 
@@ -132,10 +141,8 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
             <div className="mt-1 text-xs" style={{ color: A.sub }}>{t("Search contracts by number, their reference, title, supplier, type, state and owner.")}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={resetFilters} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>{t("Reset")}</button>
-            <button type="button" onClick={load} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>
-              <RefreshCw size={13} /> {t("Refresh")}
-            </button>
+            <ResetButton onClick={resetFilters} />
+            <RefreshButton onClick={load} />
             {newButton("contract-new")}
           </div>
         </div>
@@ -156,6 +163,7 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
             <Field label={t("State")}>
               <select aria-label={t("State filter")} value={state} onChange={(event) => setState(event.target.value)} style={inputStyle}>
                 <option value="">{t("All states")}</option>
+                <option value={IN_FORCE}>{t("In force")}</option>
                 {LIST_STATES.map((value) => <option key={value} value={value}>{t(STATE_LABEL[value])}{counts ? ` (${counts[value] ?? 0})` : ""}</option>)}
               </select>
             </Field>

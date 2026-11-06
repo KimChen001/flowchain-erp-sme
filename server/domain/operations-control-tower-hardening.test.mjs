@@ -182,7 +182,7 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
   assert.match(uiSource, /可用量/)
   assert.match(uiSource, /风险与异常/)
   assert.match(uiSource, /供应商跟进备注草稿/)
-  assert.match(uiSource, /新增供应商关系/)
+  assert.match(uiSource, /Add supplied item/)
   assert.match(uiSource, /设为首选/)
   assert.match(uiSource, /暂无采购交易记录/)
   for (const forbidden of [

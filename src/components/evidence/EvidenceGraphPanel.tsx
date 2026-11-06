@@ -96,6 +96,8 @@ const limitationLabels: Record<string, string> = {
   bin_runtime_not_connected: "库位运行时关系尚未接入证据图",
   receipt_runtime_has_no_records: "当前工作区暂无可关联的收货记录",
   invoice_runtime_has_no_records: "当前工作区暂无可关联的发票记录",
+  // business-read-context-service: a reader limited to some warehouses.
+  inventory_scoped_to_reader_warehouses: "库存仅包含你可查看的仓库",
 };
 
 // English display copy for this panel. Record labels and summaries from the API
@@ -117,6 +119,7 @@ const english: Record<string, string> = {
   "库位运行时关系尚未接入证据图": "Location relationships are not in the evidence graph yet.",
   "当前工作区暂无可关联的收货记录": "No receiving records in this workspace can be linked.",
   "当前工作区暂无可关联的发票记录": "No invoice records in this workspace can be linked.",
+  "库存仅包含你可查看的仓库": "Inventory covers only the warehouses you can see.",
   "需复核": "Needs review", "查看": "View", "证据链锚点": "Evidence anchor", "请选择业务对象": "Select a business record",
   "来源：": "Source: ", "返回上一级": "Back", "返回来源对象": "Back to source record", "返回列表": "Back to list",
   "主证据链": "Primary evidence path", "{count} 个节点": "{count} nodes", "相关记录": "Related records", "可跳转": "Linked",

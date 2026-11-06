@@ -1,7 +1,9 @@
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useI18n } from "../../i18n/I18n";
-import { formatLocaleAmount, todayInTimeZone } from "../../lib/format";
+import { formatCalendarDay, formatLocaleAmount, todayInTimeZone } from "../../lib/format";
+import { formatInstantDay } from "../business-documents/documentFormat";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
+import { usePermissionSet } from "../../lib/usePermissionSet";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
@@ -166,6 +168,9 @@ const COPY = {
   lines: ["Purchase lines", "采购行"],
   lineAmount: ["Line amount", "行金额"],
   preferred: ["Preferred", "首选"],
+  edit: ["Edit", "编辑"],
+  submitForApproval: ["Submit for approval", "提交审批"],
+  backToRequest: ["Back to the purchase request", "返回采购申请"],
 } as const;
 const request = <T,>(url: string, method = "GET", body?: unknown) =>
   apiJson<T>(url, {
@@ -188,6 +193,7 @@ export default function CanonicalProcurementPanel({
     value === null || value === undefined || value === "" || !Number.isFinite(Number(value))
       ? "—"
       : formatLocaleAmount(Number(value), currencyCode, locale, { maximumFractionDigits: 2 });
+  const dayText = (value?: string | null) => !value ? "—" : /^\d{4}-\d{2}-\d{2}$/.test(value) ? formatCalendarDay(value, locale) : formatInstantDay(value, locale, timezone);
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   // The navigation the form was last filled from: each handoff is a new one,
@@ -219,6 +225,13 @@ export default function CanonicalProcurementPanel({
     // non-catalog handoff matching its unit and supplier, wait on it.
     [loaded, setLoaded] = useState(false);
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
+  // Editing and submitting a draft need the permission the server checks for
+  // them (PURCHASE_REQUEST_PERMISSIONS: update and submit follow PO revise).
+  const permissions = usePermissionSet();
+  const canRevise = Boolean(permissions?.has("procurement.purchase_order.revise"));
+  // The request whose detail page opened the edit form, if any.
+  const detailEdit = useRef("");
+  const [submitting, setSubmitting] = useState(false);
   const statusLabel = (status: string) => statusCodeLabel(status, language) || copy(status);
   // The list shows first; the form opens from "New purchase request", Edit,
   // or a link that asks for it.
@@ -532,6 +545,7 @@ export default function CanonicalProcurementPanel({
   };
   // Back to the list; a link's form query is dropped so it does not reopen.
   const closeForm = () => {
+    detailEdit.current = "";
     reset();
     setFormOpen(false);
     if (opensForm(searchParams)) setSearchParams({}, { replace: true });
@@ -693,6 +707,38 @@ export default function CanonicalProcurementPanel({
     setFormOpen(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+  // An edit opened from a request's detail page belongs to that page: moving
+  // to another request or to the list closes it (a link there that opens the
+  // form still does).
+  const focusedRequestId = focus?.entityType === "purchase_request" ? focus.entityId : "";
+  useEffect(() => {
+    if (!detailEdit.current || detailEdit.current === focusedRequestId) return;
+    detailEdit.current = "";
+    reset();
+    setFormOpen(opensForm(searchParams));
+  }, [focusedRequestId]);
+  const editFromDetail = (pr: PR) => {
+    detailEdit.current = pr.id;
+    edit(pr).catch((error) => {
+      detailEdit.current = "";
+      toast.error(copy(error instanceof Error ? error.message : "供应商关系读取失败"));
+    });
+  };
+  // Submits a saved draft as it is, the same command as the list's Submit.
+  const submitDraft = async (pr: PR) => {
+    setSubmitting(true);
+    try {
+      await request(`/api/procurement/requests/${encodeURIComponent(pr.id)}/submit`, "POST", { expectedVersion: pr.version });
+      toast.success(copy("采购申请已提交"));
+      await load();
+    } catch (error: unknown) {
+      toast.error(copy(error instanceof Error ? error.message : "保存失败"));
+      // Changed elsewhere (a newer version or no longer a draft): show it as it is now.
+      if (error instanceof ApiError && error.status === 409) await load().catch(() => undefined);
+    } finally {
+      setSubmitting(false);
+    }
+  };
   const requesterOf = (pr: PR) => pr.requesterName || pr.requester || pr.requesterId || "—";
   const suppliersOf = (pr: PR) =>
     [...new Set(pr.lines.map((line) => line.supplierSnapshot?.supplierName).filter(Boolean))].join(", ");
@@ -735,7 +781,8 @@ export default function CanonicalProcurementPanel({
         >{copy("重试")}</button>
       </Card>
     );
-  if (selected)
+  const editingSelected = Boolean(selected && formOpen && editing?.id === selected.id);
+  if (selected && !editingSelected)
     return (
       <div className="space-y-5 pb-16">
         <Card className="p-5">
@@ -749,12 +796,20 @@ export default function CanonicalProcurementPanel({
                 <StatusChip label={statusLabel(selected.status)} tone={statusToneOf(selected.status)} />
               </div>
               <p className="mt-1 text-xs" style={{ color: A.sub }}>
-                {tr("requester")}: {requesterOf(selected)} · {tr("created")}: {selected.createdAt || "—"} · v{selected.version}
+                {tr("requester")}: {requesterOf(selected)} · {tr("created")}: {dayText(selected.createdAt)} · v{selected.version}
               </p>
             </div>
-            <div className="text-right">
-              <div className="text-[11px]" style={{ color: A.sub }}>{copy("预计总额")}</div>
-              <strong className="text-lg tabular-nums" style={{ color: A.label }}>{amount(selected.totalAmount, selected.defaultCurrency)}</strong>
+            <div className="flex flex-col items-end gap-3">
+              {selected.status === "draft" && canRevise && (
+                <div className="flex flex-wrap items-center justify-end gap-2" data-testid="pr-detail-actions">
+                  <button type="button" data-testid="pr-detail-edit" disabled={submitting} onClick={() => editFromDetail(selected)} className={listButtonClass.secondary}>{tr("edit")}</button>
+                  <button type="button" data-testid="pr-detail-submit" disabled={submitting} onClick={() => void submitDraft(selected)} className={listButtonClass.primary}>{tr("submitForApproval")}</button>
+                </div>
+              )}
+              <div className="text-right">
+                <div className="text-[11px]" style={{ color: A.sub }}>{copy("预计总额")}</div>
+                <strong className="text-lg tabular-nums" style={{ color: A.label }}>{amount(selected.totalAmount, selected.defaultCurrency)}</strong>
+              </div>
             </div>
           </div>
         </Card>
@@ -783,7 +838,7 @@ export default function CanonicalProcurementPanel({
                         ? `${line.quantity} ${line.unitSnapshot || ""} × ${amount(line.estimatedUnitPrice, line.currency || selected.defaultCurrency)}`
                         : copy("金额 / 服务型")}
                     </td>
-                    <td className={tdNowrapClass} style={{ color: A.sub }}>{line.needByDate || selected.defaultNeedByDate || "—"}</td>
+                    <td className={tdNowrapClass} style={{ color: A.sub }}>{dayText(line.needByDate || selected.defaultNeedByDate)}</td>
                     <td className={tdNowrapClass}>{warehouseName(line.targetWarehouseId) || "—"}</td>
                     <td className={`${tdNameClass} max-w-[220px] truncate`} title={line.internalLineComment}>{line.internalLineComment || "—"}</td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{amount(line.estimatedAmount, line.currency || selected.defaultCurrency)}</td>
@@ -875,7 +930,7 @@ export default function CanonicalProcurementPanel({
                         <EntityLink kind="purchase_request" id={pr.id} className={tableLinkClass}>
                           {pr.id}
                         </EntityLink>
-                        {pr.createdAt && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr("created")} {pr.createdAt}</div>}
+                        {pr.createdAt && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr("created")} {dayText(pr.createdAt)}</div>}
                       </td>
                       <td className={`${tdNameClass} max-w-[240px]`}>
                         <div className="truncate font-medium" style={{ color: A.label }} title={pr.lines[0]?.itemNameSnapshot}>{pr.lines[0]?.itemNameSnapshot || "—"}</div>
@@ -885,7 +940,7 @@ export default function CanonicalProcurementPanel({
                       </td>
                       <td className={`${tdNameClass} max-w-[200px] truncate`} title={suppliers}>{suppliers || <span style={{ color: A.gray2 }}>{tr("notChosen")}</span>}</td>
                       <td className={tdNowrapClass}>{requesterOf(pr)}</td>
-                      <td className={tdNowrapClass} style={{ color: A.sub }}>{needByOf(pr) || "—"}</td>
+                      <td className={tdNowrapClass} style={{ color: A.sub }}>{dayText(needByOf(pr))}</td>
                       <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{amount(pr.totalAmount, pr.defaultCurrency)}</td>
                       <td className={tdNameClass}>
                         <StatusChip label={statusLabel(pr.status)} tone={statusToneOf(pr.status)} />
@@ -946,7 +1001,7 @@ export default function CanonicalProcurementPanel({
     <div className="space-y-5 pb-16" data-testid="purchase-request-form">
       <Card className="p-5">
         <button type="button" onClick={closeForm} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline">
-          <ArrowLeft size={13} />{copy("返回采购申请列表")}
+          <ArrowLeft size={13} />{editingSelected ? tr("backToRequest") : copy("返回采购申请列表")}
         </button>
         <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -1088,7 +1143,7 @@ export default function CanonicalProcurementPanel({
                   style={inputStyle}
                 >
                   <option value="catalog_item">{copy("目录物料")}</option>
-                  <option value="non_catalog_item">{copy("Other / 非目录")}</option>
+                  <option value="non_catalog_item">{copy("其他（非目录物料）")}</option>
                 </select>
               </Field>
               <Field label={copy("计价方式")}>
@@ -1109,7 +1164,7 @@ export default function CanonicalProcurementPanel({
                 </select>
               </Field>
               <div className="md:col-span-1 xl:col-span-2">
-                <Field label="SKU / Other">
+                <Field label="SKU / 其他">
                   {line.sourceType === "catalog_item" ? (
                     <select
                       aria-label={`SKU ${index + 1}`}

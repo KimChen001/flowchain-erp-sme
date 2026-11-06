@@ -495,18 +495,20 @@ export function SupplierPerformanceTable() {
                 {data.suppliers.map((row) => (
                   <Fragment key={row.supplierId}>
                     <tr className="border-t" data-testid={`supplier-performance-row-${row.supplierId}`}>
-                      <td className="p-2"><EntityLink kind="supplier" id={row.supplierId}>{row.supplierName}</EntityLink></td>
+                      <td className="whitespace-nowrap p-2"><EntityLink kind="supplier" id={row.supplierId}>{row.supplierName}</EntityLink></td>
                       <td className="p-2 tabular-nums">{row.sampleSize}</td>
-                      <td className="p-2 tabular-nums">{cell(row, format.percent(row.metrics.onTime.rate))}</td>
-                      <td className="p-2 tabular-nums">{cell(row, format.percent(row.metrics.onTimeCurrent.rate))}</td>
-                      <td className="p-2 tabular-nums">{rateText(row.metrics.inFull, row.sampleStatus, format, tr)}</td>
-                      <td className="p-2 tabular-nums">{rateText(row.metrics.otif, row.sampleStatus, format, tr)}</td>
-                      <td className="p-2 tabular-nums">{cell(row, format.percent(row.metrics.otifCurrent.rate))}</td>
-                      <td className="p-2 tabular-nums">{cell(row, format.percent(row.metrics.early.rate))}</td>
-                      <td className="p-2 tabular-nums">{rejectionText(row, format, tr)}</td>
+                      {row.sampleStatus === "ok" ? <>
+                        <td className="p-2 tabular-nums">{cell(row, format.percent(row.metrics.onTime.rate))}</td>
+                        <td className="p-2 tabular-nums">{cell(row, format.percent(row.metrics.onTimeCurrent.rate))}</td>
+                        <td className="p-2 tabular-nums">{rateText(row.metrics.inFull, row.sampleStatus, format, tr)}</td>
+                        <td className="p-2 tabular-nums">{rateText(row.metrics.otif, row.sampleStatus, format, tr)}</td>
+                        <td className="p-2 tabular-nums">{cell(row, format.percent(row.metrics.otifCurrent.rate))}</td>
+                        <td className="p-2 tabular-nums">{cell(row, format.percent(row.metrics.early.rate))}</td>
+                        <td className="p-2 tabular-nums">{rejectionText(row, format, tr)}</td>
+                      </> : <td colSpan={7} className="p-2" style={{ color: A.gray2 }}>{tr("insufficient")}</td>}
                       <td className="p-2 tabular-nums">{row.metrics.averageDelayDays.value === null ? "—" : tr("days", { n: format.number(row.metrics.averageDelayDays.value) })}</td>
                       <td className="p-2 tabular-nums">{row.metrics.priceVariances.visible ? format.number(row.metrics.priceVariances.count) : tr("hidden")}</td>
-                      <td className="p-2"><button type="button" onClick={() => setOpen(open === row.supplierId ? null : row.supplierId)} style={{ color: A.blue }} aria-expanded={open === row.supplierId}>{tr("view")}</button></td>
+                      <td className="whitespace-nowrap p-2"><button type="button" onClick={() => setOpen(open === row.supplierId ? null : row.supplierId)} style={{ color: A.blue }} aria-expanded={open === row.supplierId}>{tr("view")}</button></td>
                     </tr>
                     {open === row.supplierId && <tr><td colSpan={12} className="p-2"><SupplierFigures row={row} limitations={data.limitations} /></td></tr>}
                   </Fragment>
