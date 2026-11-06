@@ -66,6 +66,8 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   setup_status: { steps: ['id', 'done', 'count'] },
   item_suppliers: { suppliers: ['name', 'preferred', 'leadTimeDays', 'minimumOrderQuantity', 'referencePrice', 'currency'] },
   rfq_quotes: { rows: ['rfq', 'supplier', 'sku', 'quantity', 'unitPrice', 'currency', 'deliveryDate', 'validUntil'], rfqs: ['rfq', 'title', 'due', 'quotes'] },
+  order_quantity_costs: { options: ['quantity', 'orderValue', 'daysOfDemand', 'ordersPerYear', 'averageCycleStock', 'holdingCostPerYear', 'orderingCostPerYear', 'totalCostPerYear', 'belowSupplierMinimum'], comparisons: ['smaller', 'larger', 'ordersSavedPerYear', 'extraHoldingCostPerYear', 'breakEvenCostPerOrder', 'cheaperAtUserCostPerOrder'] },
+  inventory_value: { rows: ['sku', 'itemName', 'onHand', 'unit', 'unitPrice', 'currency', 'value', 'sharePercent', 'cumulativeSharePercent', 'supplier'], totals: ['currency', 'value', 'holdingCostPerYear', 'holdingCostPerMonth', 'holdingCostPerDay'] },
 })
 
 export function aiReadToolsFor(facts, context = null, { assistantV2 = false } = {}) {

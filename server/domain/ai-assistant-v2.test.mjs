@@ -66,6 +66,22 @@ const lastToolResults = (request) => request.messages.at(-1).content.filter((blo
 // Every event is valid on the wire once the transport numbers it.
 const assertProtocol = (events) => events.forEach((event, seq) => assert.ok(safeParseStreamEvent({ v: 2, seq, ...event }).success, JSON.stringify(event).slice(0, 300)))
 
+// 2026-11-05: a short reply ("ok 100", 好) took the interface language and
+// flipped the conversation into the other language.
+test('a short reply keeps the conversation\'s language, and a clear question sets it', async () => {
+  const thread = { messages: [], results: new Map() }
+  const language = async (question) => (await ask([[...say('OK.'), end()]], { question, thread })).events[0].language
+  assert.equal(await language('LDM-002 这次要加到 100 个，划算吗？'), 'zh-CN')
+  for (const reply of ['ok 100', 'yes', 'LDM-002 100']) assert.equal(await language(reply), 'zh-CN', reply)
+  assert.equal(await language('What does holding LDM-002 cost a year?'), 'en-US')
+  for (const reply of ['好', '嗯', '100']) assert.equal(await language(reply), 'en-US', reply)
+  // A whole sentence in the other language switches it.
+  assert.equal(await language('行，就 100 个'), 'zh-CN')
+  // A new conversation: a short reply's own script, then the interface language.
+  const fresh = async (question, ui) => (await ask([[...say('OK.'), end()]], { question, body: { answerLanguage: ui } })).events[0].language
+  assert.deepEqual([await fresh('ok 100', 'zh-CN'), await fresh('好', 'en-US'), await fresh('100', 'zh-CN'), await fresh('100', 'en-US')], ['en-US', 'zh-CN', 'zh-CN', 'en-US'])
+})
+
 test('text streams as deltas in order, the start comes first and the answer last', async () => {
   const { events, body, audit, client } = await ask([[...say('PO-001 is ', '4 days overdue', ' and PO-008 is 2.'), end()]], { question: 'Which purchase orders are overdue? PO-001 and PO-008?' })
   assertProtocol(events)
@@ -331,7 +347,8 @@ test('a call the provider reports no usage for is metered by estimate, so the ce
       FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted', FLOWCHAIN_AI_PROVIDER_KIND: 'deepseek_chat', FLOWCHAIN_AI_PROVIDER_ENDPOINT: `http://127.0.0.1:${server.address().port}/v1/chat/completions`,
       FLOWCHAIN_AI_PROVIDER_API_KEY: 'placeholder-key', FLOWCHAIN_AI_PROVIDER_MODEL: 'claude-sonnet-5-5',
     })
-    const ceiling = 100000
+    // Sized to the prompt and tools (raised from 100,000 when the cost tools came, 2026-11-06).
+    const ceiling = 120000
     const chat = await ask(null, { client, limits: { costCeilingMicros: ceiling } })
     assertProtocol(chat.events)
     assert.ok(requests.length < ASSISTANT_V2_LIMITS.rounds, 'the cost stopped the answer, not the round limit')

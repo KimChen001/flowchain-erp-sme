@@ -34,7 +34,19 @@ const CHINESE_QUESTION = /吗|呢|吧|哪些|哪个|哪家|哪张|哪里|哪儿|
 const CHINESE_FINAL_PARTICLE = /[吗呢吧][\s?？!！。.]*$/u
 
 export function aiSkillQuestionLanguage(message, interfaceLanguage) {
+  const signal = aiSkillQuestionLanguageSignal(message)
+  return signal?.strength === 'strong' ? signal.language : aiSkillLanguage(interfaceLanguage)
+}
+
+// The language a message signals: { language, strength } or null. strong: the
+// rules above decide it. weak: a short reply in one script only ("ok", "yes",
+// 好, 行), which the rules leave to the interface language; assistant v2 lets
+// the conversation's own language win over it (2026-11-05: a short reply in
+// one language flipped the answer to the interface language). null: no
+// letters at all ("100", "LDM-002 100") or an even mix.
+export function aiSkillQuestionLanguageSignal(message) {
   const stripped = String(message || '').slice(0, 1200).replace(RECORD_ID, ' ').replace(/\d+/g, ' ')
+  const strong = (language) => ({ language, strength: 'strong' })
   // Short all-capital tokens (SKU, PO, ATP, US) are acronyms, unless the
   // whole question is written in capitals.
   const shouting = !/[a-z]/.test(stripped)
@@ -49,19 +61,21 @@ export function aiSkillQuestionLanguage(message, interfaceLanguage) {
     return ENGLISH_OPENER.has(word) && /(^|[.!?;:,，。？！；：])\s*$/u.test(stripped.slice(0, match.index))
   }).map((match) => match.index)
   const chinese = [...stripped.matchAll(CHINESE_QUESTION)].map((match) => match.index)
-  if (english.length && !chinese.length) return 'en-US'
-  if (chinese.length && !english.length) return 'zh-CN'
+  if (english.length && !chinese.length) return strong('en-US')
+  if (chinese.length && !english.length) return strong('zh-CN')
   if (english.length) {
-    if (CHINESE_FINAL_PARTICLE.test(stripped)) return 'zh-CN'
-    if (english.length !== chinese.length) return english.length > chinese.length ? 'en-US' : 'zh-CN'
-    return Math.min(...english) < Math.min(...chinese) ? 'en-US' : 'zh-CN'
+    if (CHINESE_FINAL_PARTICLE.test(stripped)) return strong('zh-CN')
+    if (english.length !== chinese.length) return strong(english.length > chinese.length ? 'en-US' : 'zh-CN')
+    return strong(Math.min(...english) < Math.min(...chinese) ? 'en-US' : 'zh-CN')
   }
   // No question words: "overdue POs" or "逾期订单".
   const cjkWords = (stripped.match(CJK_CHAR) || []).length / 2
   const latinWords = words.filter((match) => !acronym(match[0])).length
-  if (latinWords >= 2 && latinWords > cjkWords) return 'en-US'
-  if (cjkWords >= 1 && cjkWords > latinWords) return 'zh-CN'
-  return aiSkillLanguage(interfaceLanguage)
+  if (latinWords >= 2 && latinWords > cjkWords) return strong('en-US')
+  if (cjkWords >= 1 && cjkWords > latinWords) return strong('zh-CN')
+  if (cjkWords > 0 && !latinWords) return { language: 'zh-CN', strength: 'weak' }
+  if (latinWords > 0 && !cjkWords) return { language: 'en-US', strength: 'weak' }
+  return null
 }
 
 const entries = {

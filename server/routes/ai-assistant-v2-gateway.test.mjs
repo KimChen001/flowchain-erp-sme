@@ -16,6 +16,14 @@ import { aiUsageMonth } from '../domain/ai-usage-meter.mjs'
 import { safeParseStreamLine } from '../../shared/assistant-protocol.mjs'
 import { handleAiRuntimeGatewayRoute } from './ai-runtime-gateway.routes.mjs'
 import { aiRuntimeEvaluateAllowed, handleAiRuntimeObservabilityRoute } from './ai-runtime-observability.routes.mjs'
+import { validateAssistantV2Question } from './ai-assistant-v2-gateway.mjs'
+
+// 2026-11-06: "好" as a reply was refused with a 400 (too short).
+test('a one-character reply is a question; only an empty one is too short', () => {
+  for (const message of ['好', '行', 'y', '1']) assert.deepEqual(validateAssistantV2Question({ message }), { ok: true, status: 200 }, message)
+  for (const message of ['', '   ']) assert.deepEqual(validateAssistantV2Question({ message }), { ok: false, status: 400, tooLong: false }, JSON.stringify(message))
+  assert.equal(validateAssistantV2Question({ message: 'x'.repeat(8001) }).tooLong, true)
+})
 
 // The assistant v2 gateway (docs/ai-assistant-v2-design.md §3.1, §3.2, §3.5,
 // §3.8, §3.11, §8.5) against the fixture workspace and the scripted model

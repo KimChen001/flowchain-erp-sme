@@ -9,7 +9,7 @@ import { createRfqSupplierComparisonService } from './rfq-supplier-comparison-se
 import { listItemSupplierRecords, mapItemSupplierRecord } from './master-data-commands.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
 import { maskReferencePrice, masterDataReadAccessFor } from './master-data-read-access.mjs'
-import { DEMAND_WINDOW_DAYS, dailyDemand, isActiveItem, itemStockUnit, requestMinimumOf } from './reorder-list.mjs'
+import { DEMAND_WINDOW_DAYS, boughtInStockUnit, dailyDemand, isActiveItem, itemStockUnit, requestMinimumOf } from './reorder-list.mjs'
 import { addCalendarDays, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
 import { OPEN_PURCHASE_REQUEST_STATUSES, PURCHASE_SUGGESTION_SOURCES, openRequestQuantity, requestLineCountsFor, suggestNeedByDate, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
 
@@ -533,4 +533,183 @@ const rfqQuotes = defineAiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes])
+// Cost reasoning (2026-11-05: "should I order 100 instead of 50, is it cheaper?"
+// got the price and the cash tied up, never the trade between ordering less
+// often and holding more; "what does my stock cost me to hold?" got "I can't
+// tell"). FlowChain records one reference price per approved supplier and no
+// holding rate, cost per order or price breaks. So the tools below work from
+// the recorded demand and reference prices, and where the workspace records
+// no rate they use a common planning value, returned as an assumption for the
+// answer to state (owner decision 2026-11-05: labelled assumptions are fine).
+export const DEFAULT_HOLDING_RATE_PERCENT = 25
+const EOQ_EXAMPLE_ORDER_COSTS = [25, 50, 100]
+const VALUE_ITEMS_MAX = 200
+const round = (value, places = 2) => (value === null || value === undefined || !Number.isFinite(value) ? null : Math.round(value * 10 ** places) / 10 ** places)
+const holdingRateParam = { type: 'number', minimum: 1, maximum: 100, description: `The yearly holding (carrying) cost as a percent of the item's value, when the user gives one. Without it, ${DEFAULT_HOLDING_RATE_PERCENT} (a common planning value, returned as an assumption).` }
+const holdingAssumption = (args) => ({
+  holdingRatePercent: args.holdingRatePercent ?? DEFAULT_HOLDING_RATE_PERCENT,
+  holdingRateSource: args.holdingRatePercent === undefined || args.holdingRatePercent === null ? 'assumed_planning_value' : 'user',
+  holdingCostCovers: ['capital', 'storage', 'insurance', 'obsolescence'],
+})
+// The price per stock unit from an approved source: its reference price, only
+// when the item is bought in its stock unit and the user may see prices.
+const unitPriceOf = (item, source, prices) => (prices && source && boughtInStockUnit(item, itemStockUnit(item)) && source.referencePrice !== null && source.referencePrice !== undefined && Number.isFinite(Number(source.referencePrice)) ? Number(source.referencePrice) : null)
+const preferredSource = (sources) => sources.find((source) => source.preferred) || sources[0] || null
+
+const orderQuantityCosts = defineAiTool({
+  name: 'order_quantity_costs',
+  description: `Compares order quantities for one item over a year: for each quantity the days of demand it covers, orders a year, average cycle stock, the order's value, the yearly holding cost and, when the user gives a cost per order, the yearly ordering cost and the total. For each pair, the extra holding cost of the larger one, the orders it saves and the break-even cost per order (the larger is cheaper overall when placing and receiving one order costs more than that). Also the economic order quantity (EOQ) at the user's cost per order, or at example costs per order of ${EOQ_EXAMPLE_ORDER_COSTS.join(', ')}. Demand is the item's recorded average daily demand (posted shipments over the last ${DEMAND_WINDOW_DAYS} days); price is the approved supplier's reference price. FlowChain records no price breaks and no cost per order, so the result says what it assumed. Use it for "order 100 instead of 50?", "is a bigger order cheaper?", "what quantity should I order?".`,
+  parameters: {
+    sku: { type: 'string', description: 'The item\'s SKU.' },
+    quantities: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 10000000 }, maxItems: 5, description: 'The order quantities to compare, in the item\'s stock unit (for example [50, 100]).' },
+    supplier: { type: 'string', description: 'An approved supplier\'s name; the preferred one by default.' },
+    holdingRatePercent: holdingRateParam,
+    costPerOrder: { type: 'number', minimum: 0, maximum: 1000000, description: 'What placing and receiving one order costs, when the user gives it (admin time, freight, receiving).' },
+  },
+  required: ['sku', 'quantities'],
+  available: (facts, context) => Boolean(facts.inventory) && Boolean(context?.actor && context.prisma),
+  assistantV2Only: true,
+  async run(args, { facts, context }) {
+    const row = stockRow(facts, args.sku) || array(facts.inventory.masterOnly).find((entry) => fold(entry.sku) === fold(args.sku))
+    if (!row) return { error: 'not_found', details: [args.sku] }
+    const quantities = [...new Set(array(args.quantities))].sort((a, b) => a - b)
+    if (!quantities.length) return { error: 'quantities_required' }
+    const stored = await storedItems(context, [text(row.itemId)].filter(Boolean))
+    const item = stored.get(text(row.itemId)) || null
+    if (!item) return { error: 'not_found', details: [args.sku] }
+    const [demand, { byItem, prices }] = await Promise.all([recordedDemand(context, facts, [item]), itemSources(context, [item])])
+    const sources = byItem.get(text(item.id)) || []
+    let chosen = preferredSource(sources)
+    if (args.supplier) {
+      chosen = sources.find((source) => fold(source.name) === fold(args.supplier) || fold(source.id) === fold(args.supplier))
+        || sources.find((source) => fold(source.name).includes(fold(args.supplier))) || null
+      if (!chosen) return { error: 'supplier_not_approved_for_item', details: sources.map((source) => source.name) }
+    }
+    const daily = demand.byItem.get(text(item.id))?.averageDailyDemand ?? null
+    const rate = daily !== null && daily > 0 ? daily : null
+    const annual = rate === null ? null : rate * 365
+    const minimum = chosen ? requestMinimumOf(item, chosen, itemStockUnit(item)) : 0
+    const unitPrice = unitPriceOf(item, chosen, prices)
+    const assumptions = holdingAssumption(args)
+    const costPerOrder = args.costPerOrder ?? null
+    const holdingPerUnit = unitPrice === null ? null : unitPrice * assumptions.holdingRatePercent / 100
+    const options = quantities.map((quantity) => {
+      const holding = holdingPerUnit === null ? null : (quantity / 2) * holdingPerUnit
+      const ordering = annual === null || costPerOrder === null ? null : (annual / quantity) * costPerOrder
+      return {
+        quantity,
+        belowSupplierMinimum: minimum > 0 && quantity < minimum,
+        orderValue: unitPrice === null ? null : round(quantity * unitPrice),
+        daysOfDemand: rate === null ? null : round(quantity / rate, 1),
+        ordersPerYear: annual === null ? null : round(annual / quantity, 1),
+        averageCycleStock: round(quantity / 2, 1),
+        holdingCostPerYear: annual === null ? null : round(holding),
+        orderingCostPerYear: round(ordering),
+        totalCostPerYear: holding === null || ordering === null || annual === null ? null : round(holding + ordering),
+      }
+    })
+    const comparisons = annual === null ? [] : quantities.slice(1).map((larger, index) => {
+      const smaller = quantities[index]
+      const breakEven = holdingPerUnit === null ? null : (holdingPerUnit * smaller * larger) / (2 * annual)
+      return {
+        smaller, larger,
+        ordersSavedPerYear: round(annual / smaller - annual / larger, 1),
+        extraHoldingCostPerYear: holdingPerUnit === null ? null : round(((larger - smaller) / 2) * holdingPerUnit),
+        breakEvenCostPerOrder: round(breakEven),
+        cheaperAtUserCostPerOrder: costPerOrder === null || breakEven === null ? null : costPerOrder > breakEven ? larger : costPerOrder < breakEven ? smaller : 'equal',
+      }
+    })
+    const eoqQuantity = (cost) => (annual === null || !holdingPerUnit ? null : Math.max(minimum, Math.round(Math.sqrt((2 * annual * cost) / holdingPerUnit))))
+    // With the days of demand it covers, so the answer need not work them out.
+    const eoqAt = (cost) => {
+      const quantity = eoqQuantity(cost)
+      return quantity === null ? null : { quantity, daysOfDemand: round(quantity / rate, 1), ordersPerYear: round(annual / quantity, 1) }
+    }
+    return {
+      asOf: facts.asOf,
+      sku: row.sku, itemName: row.itemName || item.name || null, unit: row.unit || itemStockUnit(item) || null,
+      supplier: chosen ? { name: chosen.name, preferred: chosen.preferred, minimumOrderQuantity: minimum || null, leadTimeDays: chosen.leadTimeDays ?? null } : null,
+      unitPrice, currency: chosen?.currency || facts.currency || null,
+      unitPriceSource: unitPrice === null ? (prices ? 'no_reference_price_in_stock_unit' : 'prices_hidden') : 'reference_price',
+      pricesHidden: !prices,
+      priceBreaksRecorded: false,
+      demand: rate === null
+        ? { averageDailyDemand: null, basis: demand.scoped ? 'warehouse_scope' : 'not_enough_shipment_history', windowDays: DEMAND_WINDOW_DAYS }
+        : { averageDailyDemand: round(rate), annualDemand: Math.round(annual), basis: 'recorded_demand', windowDays: DEMAND_WINDOW_DAYS, shipmentDays: demand.byItem.get(text(item.id))?.shipmentDays ?? null },
+      assumptions: { ...assumptions, holdingCostPerUnitPerYear: round(holdingPerUnit), costPerOrder, costPerOrderSource: costPerOrder === null ? 'not_recorded' : 'user' },
+      options,
+      comparisons,
+      economicOrderQuantity: annual === null || !holdingPerUnit ? null : {
+        atUserCostPerOrder: costPerOrder === null ? null : eoqAt(costPerOrder),
+        examples: costPerOrder === null ? EOQ_EXAMPLE_ORDER_COSTS.map((cost) => ({ costPerOrder: cost, ...eoqAt(cost) })) : [],
+        raisedToSupplierMinimum: minimum > 0,
+      },
+      ref: aiToolRef('item', row.itemId || row.sku, row.sku),
+    }
+  },
+})
+
+const inventoryValue = defineAiTool({
+  name: 'inventory_value',
+  description: `What the stock on hand is worth and what holding it costs: on-hand quantity times the preferred approved supplier's reference price per item, totals per currency, and the yearly, monthly and daily holding cost at the holding rate (the user's, or a common planning value of ${DEFAULT_HOLDING_RATE_PERCENT}% a year, returned as an assumption). Items without a usable price are counted, not valued. Rows: the most valuable items first. Use it for "what is my inventory worth?", "what does holding my stock cost me?", "where is my cash tied up?".`,
+  parameters: {
+    skus: { type: 'array', items: { type: 'string' }, maxItems: AI_TOOL_LIMITS.items, description: 'Only these items.' },
+    holdingRatePercent: holdingRateParam,
+    limit: { type: 'integer', minimum: 1, maximum: 20, description: '10 rows by default.' },
+  },
+  available: (facts, context) => Boolean(facts.inventory) && Boolean(context?.actor && context.prisma),
+  assistantV2Only: true,
+  async run(args, { facts, context }) {
+    const named = array(args.skus)
+    let rows = array(facts.inventory.rows).filter((row) => !row.noStock && Number(row.onHand) > 0)
+    if (named.length) {
+      const missing = named.filter((sku) => !rows.some((row) => fold(row.sku) === fold(sku)))
+      if (missing.length) return { error: 'not_found', details: missing }
+      rows = rows.filter((row) => named.some((sku) => fold(sku) === fold(row.sku)))
+    }
+    const considered = rows.slice(0, VALUE_ITEMS_MAX)
+    const stored = await storedItems(context, [...new Set(considered.map((row) => text(row.itemId)).filter(Boolean))])
+    const { byItem, prices } = await itemSources(context, [...stored.values()])
+    const assumptions = holdingAssumption(args)
+    const valued = []
+    const withoutPrice = []
+    for (const row of considered) {
+      const item = stored.get(text(row.itemId))
+      const source = item ? preferredSource(byItem.get(text(item.id)) || []) : null
+      const unitPrice = item ? unitPriceOf(item, source, prices) : null
+      if (unitPrice === null) { withoutPrice.push(row.sku); continue }
+      valued.push({ sku: row.sku, itemName: row.itemName || null, onHand: Number(row.onHand), unit: row.unit || null, unitPrice, currency: source.currency || facts.currency || null, value: round(Number(row.onHand) * unitPrice), supplier: source.name, ref: aiToolRef('item', row.itemId || row.sku, row.sku) })
+    }
+    const byCurrency = new Map()
+    for (const row of valued) byCurrency.set(row.currency, (byCurrency.get(row.currency) || 0) + row.value)
+    const totals = [...byCurrency].map(([currency, value]) => {
+      const yearly = (value * assumptions.holdingRatePercent) / 100
+      return { currency, value: round(value), holdingCostPerYear: round(yearly), holdingCostPerMonth: round(yearly / 12), holdingCostPerDay: round(yearly / 365) }
+    })
+    const limit = args.limit || 10
+    const ranked = valued.sort((a, b) => b.value - a.value)
+    // The running share within each currency, most valuable first, so "the
+    // top three hold 88%" is a figure the result gives (an ABC view).
+    const running = new Map()
+    for (const row of ranked) {
+      running.set(row.currency, (running.get(row.currency) || 0) + row.value)
+      row.cumulativeSharePercent = round((running.get(row.currency) / (byCurrency.get(row.currency) || 1)) * 100, 1)
+    }
+    return {
+      asOf: facts.asOf,
+      pricesHidden: !prices,
+      priceSource: 'reference_price_of_preferred_supplier',
+      assumptions,
+      itemsWithStock: rows.length,
+      itemsValued: valued.length,
+      itemsWithoutPrice: withoutPrice.length,
+      withoutPrice: withoutPrice.slice(0, 10),
+      notConsidered: Math.max(0, rows.length - considered.length),
+      totals,
+      rows: ranked.slice(0, limit).map((row) => ({ ...row, sharePercent: round((row.value / (byCurrency.get(row.currency) || 1)) * 100, 1) })),
+      more: Math.max(0, ranked.length - limit),
+    }
+  },
+})
+
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue])
