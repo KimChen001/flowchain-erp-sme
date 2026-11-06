@@ -343,7 +343,7 @@ export function AuditIntegrationHistoryV2({ payload, onNavigate }: { payload: Au
           <Chip label="只读历史" color={A.blue} bg="#eef4ff" />
         </div>
         <div className="mt-2 max-w-5xl rounded-md px-3 py-2 text-[13px] leading-5" style={{ background: "#eef4ff", color: A.blue }}>
-          当前仅展示只读历史，不改变业务对象状态，不形成正式业务处理，不外发，不写库存，不写财务凭证，不处理资金，不改主数据，不覆盖当前工作区数据。
+          当前仅展示只读历史，不改变业务对象状态，不形成正式业务处理，不外发，不写库存，不写财务凭证，不处理资金，不改基础资料，不覆盖当前工作区数据。
         </div>
       </section>
       <SummaryCards payload={payload} />

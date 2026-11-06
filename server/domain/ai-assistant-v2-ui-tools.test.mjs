@@ -464,9 +464,11 @@ test('suggest_purchase_request puts a named supplier the item has not approved o
   const [line] = props.lines
   assert.deepEqual(line.supplier, { id: 'SUP-003', name: 'Northstar Electronics', source: 'user_named', link: 'new' })
   assert.deepEqual(line.suppliers, [ACME_OPTION, { id: 'SUP-003', name: 'Northstar Electronics', preferred: false, leadTimeDays: null, unitPrice: null, currency: 'USD', link: 'new' }])
-  // No price or lead time the user did not give: the need-by date falls back to today.
+  // No price the user did not give; with no lead time of its own the need-by
+  // date keeps the preferred supplier's (12 days), never today (2026-11-05).
   assert.deepEqual(line.estimatedUnitPrice, { value: null, currency: null, source: 'missing' })
-  assert.deepEqual(line.needByDate, { value: ctx.facts.today, source: 'today', leadTimeDays: null, shortWeekOf: null })
+  assert.deepEqual(line.needByDate, { value: '2026-10-11', source: 'lead_time', leadTimeDays: 12, shortWeekOf: null })
+  assert.notEqual(line.needByDate.value, ctx.facts.today)
   assert.deepEqual([line.suggestedQuantity, line.checked], [{ value: 200, source: 'user_named' }, true])
   assert.deepEqual([props.canLinkSuppliers, props.workspaceCurrency], [true, 'USD'])
   assert.ok(built.refs.some((ref) => ref.type === 'supplier' && ref.id === 'SUP-003' && ref.label === 'Northstar Electronics'))
@@ -845,6 +847,13 @@ test('an item the user described in their own words and the model resolved arriv
   assert.equal(suggested.lines.length, 0)
 })
 
+test('an attention item\'s details are columns of their own', async () => {
+  const { call, build } = await workspace()
+  await call('toolu_attention', 'attention_list', { limit: 10 })
+  const props = assertPart(build('show_table', { source: 'toolu_attention', columns: ['label', 'type', 'details.remaining', 'details.shortage'] }), 'table')
+  assert.deepEqual(props.columns.map((column) => [column.code, column.kind]), [['label', 'ref'], ['type', 'status'], ['remaining_quantity', 'quantity'], ['shortage', 'quantity']])
+  assert.ok(props.rows.some((row) => typeof row.remaining_quantity === 'number' && row.unit === 'pcs'), JSON.stringify(props.rows))
+})
 
 // ---------------------------------------------------------------- record actions
 

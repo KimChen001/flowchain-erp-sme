@@ -7,7 +7,7 @@ const statusCodes: Record<string, [string, string]> = {
   pending: ["Pending", "待处理"],
   pending_approval: ["Pending approval", "待审批"],
   approved: ["Approved", "已批准"],
-  rejected: ["Rejected", "已拒绝"],
+  rejected: ["Rejected", "已驳回"],
   cancelled: ["Cancelled", "已取消"],
   canceled: ["Cancelled", "已取消"],
   withdrawn: ["Withdrawn", "已撤回"],
@@ -15,7 +15,7 @@ const statusCodes: Record<string, [string, string]> = {
   sent: ["Sent", "已发送"],
   not_sent: ["Not sent", "未发送"],
   issued_outside_flowchain: ["Sent outside FlowChain", "已在 FlowChain 外发出"],
-  open: ["Open", "进行中"],
+  open: ["Open", "未结"],
   closed: ["Closed", "已关闭"],
   completed: ["Completed", "已完成"],
   converted: ["Converted", "已转换"],
@@ -91,7 +91,16 @@ export function movementTypeLabel(code: string, language: string, reason?: strin
   return reasonPair ? `${label} · ${reasonPair[index]}` : label;
 }
 
+// Statuses some older records store in Chinese, shown in today's words: an
+// issued purchase order reads 已下达 (owner's terminology, 2026-11-05). The
+// stored value does not change.
+const storedChineseStatuses: Record<string, [string, string]> = {
+  已发出: ["Issued", "已下达"],
+  已审批: ["Approved", "已批准"],
+};
+
 export function statusCodeLabel(code: string, language: string): string | undefined {
-  const pair = statusCodes[String(code || "").trim()];
+  const key = String(code || "").trim();
+  const pair = statusCodes[key] || storedChineseStatuses[key];
   return pair ? pair[language === "en-US" ? 0 : 1] : undefined;
 }

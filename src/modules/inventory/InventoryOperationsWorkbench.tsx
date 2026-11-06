@@ -98,7 +98,7 @@ export default function InventoryOperationsWorkbench() {
       .then(setEntry)
       .catch((reason) =>
         setError(
-          errorText(reason, "库存操作入口读取失败"),
+          errorText(reason, "库存操作入口加载失败"),
         ),
       );
   }, [refresh]);
@@ -1011,7 +1011,7 @@ function OperationDetail({
       })
       .catch((reasonValue) =>
         setError(
-          errorText(reasonValue, "读取失败"),
+          errorText(reasonValue, "加载失败"),
         ),
       );
   useEffect(() => {

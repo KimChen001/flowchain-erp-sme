@@ -87,9 +87,9 @@ const PROGRESS_COPY = {
   },
   "zh-CN": {
     sources: {
-      purchase_orders: "采购订单", purchase_requests: "采购申请", rfqs: "询价单", inventory: "库存", supplier_invoices: "供应商发票",
+      purchase_orders: "采购订单", purchase_requests: "采购申请", rfqs: "询价单", inventory: "库存", supplier_invoices: "采购发票",
       receipts: "收货单", suppliers: "供应商", sales_orders: "销售订单", documents: "文档", contracts: "合同", supplier_risks: "供应商风险",
-      receivables: "客户发票", workspace: "工作区概况", records: "记录",
+      receivables: "销售发票", workspace: "工作区概况", records: "记录",
     } as Record<string, string>,
     reading: "正在读取{sources}…",
     documents: "正在检索文档…",

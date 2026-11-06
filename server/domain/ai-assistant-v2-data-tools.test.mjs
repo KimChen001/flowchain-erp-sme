@@ -471,6 +471,17 @@ const RECORDED_SERVICES = {
     list: async () => ({ items: [{ id: 'DOC-1', title: 'Purchasing Policy', language: 'en-US' }] }),
     documents: async () => [{ pageContent: 'Escalate to the buyer manager when a supplier is 3 business days past the promised date.', metadata: { id: 'DOC-1-0', documentId: 'DOC-1', title: 'Purchasing Policy', heading: 'Follow-up and escalation', position: 0, language: 'en-US', contentHash: 'h1' } }],
   },
+  // The RFQ page's comparison, as rfq-supplier-comparison-service.mjs returns it.
+  rfqComparison: {
+    getComparison: async (rfqId) => ({
+      rfqId,
+      responses: [{
+        supplierId: 'SUP-002', supplierName: 'Summit Packaging',
+        latestRevision: { currency: 'USD', validUntil: '2026-11-30T00:00:00.000Z', deliveryDate: '2026-11-20T00:00:00.000Z', lines: [{ sku: 'LDM-001', quantity: '50', unit: 'pcs', unitPrice: '92.5', deliveryDate: null }] },
+      }],
+      nonResponseParticipants: [{ supplierId: 'SUP-001', supplierName: 'Acme Components' }],
+    }),
+  },
 }
 
 test('every data tool declares its columns, and each declared column is in its result', async () => {
@@ -495,22 +506,33 @@ test('every data tool declares its columns, and each declared column is in its r
     list_receivables: [{}, { view: 'aging' }],
     price_history: [{ sku: 'LDM-001' }],
     search_documents: [{ query: 'supplier past the promised date escalate' }],
+    // A row's details depend on its signal: today's list and the problems
+    // between them hold every detail column.
+    attention_list: [{ limit: 10 }, { kind: 'problems', limit: 10 }],
+    item_suppliers: [{ sku: 'LDM-001' }],
+    rfq_quotes: [{}],
     order_quantity_costs: [{ sku: 'LDM-001', quantities: [50, 100] }],
   }
   // A nested column under a null value (a rate with too few deliveries) is
-  // there, and null.
+  // there, and null. Each column must be in a row of one of the tool's calls.
   const at = (value, path) => (path ? path.split('.').reduce((entry, key) => (entry === null || entry === undefined ? entry : entry[key]), value) : value)
   const checked = new Set()
   for (const tool of aiReadToolsFor(facts, context, { assistantV2: true })) {
+    const seen = new Map()
     for (const args of calls[tool.name] || [{}]) {
       const output = await run(tool.name, args)
       assert.ok(output.ok, `${tool.name} ${JSON.stringify(args)}: ${output.error}`)
       for (const [path, columns] of Object.entries(AI_READ_TOOL_COLUMNS[tool.name])) {
         const rows = path ? at(output.result, path) : [output.result]
         if (!Array.isArray(rows) || !rows.length) continue
-        for (const column of columns) assert.ok(rows.some((row) => at(row, column) !== undefined), `${tool.name} ${path} has ${column}`)
+        if (!seen.has(path)) seen.set(path, new Set())
+        for (const column of columns) if (rows.some((row) => at(row, column) !== undefined)) seen.get(path).add(column)
         checked.add(`${tool.name} ${path}`)
       }
+    }
+    for (const [path, columns] of Object.entries(AI_READ_TOOL_COLUMNS[tool.name])) {
+      if (!seen.has(path)) continue
+      for (const column of columns) assert.ok(seen.get(path).has(column), `${tool.name} ${path} has ${column}`)
     }
   }
   // Every declared table, of every tool, had rows to check.
@@ -555,4 +577,31 @@ test('setup_status: without import a step opens its own page; a role that may no
   assert.deepEqual([all.open, all.done], [false, 5])
   const broken = await v2()
   assert.deepEqual(await runAiReadTool('setup_status', {}, { facts: broken.facts, context: { ...broken.context, prisma: swapped(broken.context.prisma, 'supplier', { count: async () => { throw new Error('down') } }) }, assistantV2: true }), { ok: false, error: 'setup_counts_unavailable' })
+})
+
+// A supplier switch was judged without the other supplier's terms, and open
+// quotes were out of reach (2026-11-05).
+test('item_suppliers gives an item\'s approved suppliers with lead time, minimum and reference price', async () => {
+  const { run } = await v2()
+  const output = await run('item_suppliers', { sku: 'LDM-001' })
+  assert.ok(output.ok, output.error)
+  const [first] = output.result.suppliers
+  assert.equal(output.result.sku, 'LDM-001')
+  assert.equal(first.preferred, true)
+  assert.equal(first.name, 'Acme Components')
+  assert.equal(first.leadTimeDays, 12)
+  assert.equal(typeof first.referencePrice, 'number')
+  assert.deepEqual(first.ref, { type: 'supplier', id: 'SUP-001', label: 'Acme Components' })
+  assert.equal((await run('item_suppliers', { sku: 'NOPE-9' })).error, 'not_found')
+})
+
+test('rfq_quotes reads each open RFQ\'s latest quotes through the RFQ comparison, only for a user who may see prices', async () => {
+  const { run, context, facts } = await v2({ ctx: { aiReadServices: RECORDED_SERVICES } })
+  const output = await run('rfq_quotes', {})
+  assert.ok(output.ok, output.error)
+  assert.deepEqual(output.result.rows[0], { rfq: output.result.rfqs[0].rfq, supplier: 'Summit Packaging', sku: 'LDM-001', quantity: 50, unit: 'pcs', unitPrice: 92.5, currency: 'USD', deliveryDate: '2026-11-20', validUntil: '2026-11-30', ref: output.result.rfqs[0].ref })
+  assert.deepEqual(output.result.rfqs[0].notQuoted, ['Acme Components'])
+  const tool = AI_ASSISTANT_V2_TOOLS.find((entry) => entry.name === 'rfq_quotes')
+  assert.equal(tool.available(facts, context), true)
+  assert.equal(tool.available(facts, { ...context, actor: { ...context.actor, permissionCodes: new Set() } }), false)
 })

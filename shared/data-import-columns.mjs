@@ -39,7 +39,7 @@ export const DATA_IMPORT_COLUMNS = Object.freeze({
     column('address', 'Address', '地址', { example: '1 Main St, Boston, MA' }),
     column('defaultCurrency', 'Default currency', '默认币种', { example: 'USD', aliases: ['currency', '币种', ...currencyAliases] }),
     column('paymentTermCode', 'Payment term code', '付款条款编码', { example: 'NET30', aliases: ['payment_terms', 'payment_term', 'payment terms', '付款条款', '付款条件', '账期'] }),
-    column('leadTimeDays', 'Lead time (days)', '送货周期（天）', { example: '7', aliases: ['delivery lead time (days)', 'lead_time_days'] }),
+    column('leadTimeDays', 'Lead time (days)', '送货提前期（天）', { example: '7', aliases: ['delivery lead time (days)', 'lead_time_days', '送货周期（天）'] }),
     column('status', 'Status', '状态', { example: 'Active', aliases: statusAliases }),
   ]),
   customers: Object.freeze([
@@ -60,7 +60,7 @@ export const DATA_IMPORT_COLUMNS = Object.freeze({
     column('referencePrice', 'Reference price', '参考价格', { example: '12.50', aliases: ['reference_price', 'price', '参考价'] }),
     column('currency', 'Currency', '币种', { example: 'USD', aliases: currencyAliases }),
     column('minimumOrderQuantity', 'Minimum order quantity', '最小起订量', { example: '10', aliases: ['moq', 'minimum_order_quantity'] }),
-    column('leadTimeDays', 'Lead time (days)', '交期（天）', { example: '14', aliases: ['lead_time_days', '交期'] }),
+    column('leadTimeDays', 'Lead time (days)', '提前期（天）', { example: '14', aliases: ['lead_time_days', '交期（天）', '交期'] }),
     column('preferred', 'Preferred', '首选', { example: 'Yes', aliases: ['preferred supplier', '是否首选'] }),
   ]),
   'opening-stock': Object.freeze([

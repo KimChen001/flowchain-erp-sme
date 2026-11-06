@@ -119,7 +119,7 @@ test('a thank-you gets a warm reply, and open sales orders are listed with custo
   assert.equal(sales.followUpSuggestions[0].label, 'Customer orders at risk')
   const zhSales = await ask('有哪些未结的销售订单？', 'zh-CN')
   assert.equal(zhSales.conclusion.title, '未结销售订单 1 张')
-  assert.equal(zhSales.keyEvidence[0].summary, 'Redwood Retail，没有承诺日期：LDM-001 还有 35 件未发货或未预留。')
+  assert.equal(zhSales.keyEvidence[0].summary, 'Redwood Retail，没有承诺交期：LDM-001 还有 35 件未发货或未预留。')
   // Creating a sales order, or short stock against them, is not this list.
   assert.equal(routeSkill({ message: 'Create a sales order for Redwood Retail' }).skillId, null)
   assert.notEqual(routeSkill({ message: 'Which SKUs are short against open sales orders?' }).signals?.salesOrders, true)

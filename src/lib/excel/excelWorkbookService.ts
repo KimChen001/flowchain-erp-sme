@@ -39,13 +39,13 @@ export async function downloadExcelTemplate(schema: ExcelBusinessSchema) {
   dataSheet["!cols"] = fitColumns([dataRow], schema.fields.map((item) => item.label));
   dataSheet["!autofilter"] = { ref: dataSheet["!ref"] || "A1:A2" };
   (dataSheet as Record<string, unknown>)["!freeze"] = { xSplit: 0, ySplit: 1 };
-  const definitions = schema.fields.map((item) => ({ 中文字段名: item.label, 系统字段名: item.key, 是否必填: item.required ? "是" : "否", 数据类型: item.type, 字段说明: item.description, 示例值: item.example, 可选值: item.options?.join("、") || "", 关联主数据对象: item.masterData || "", 校验规则: item.validation || "" }));
+  const definitions = schema.fields.map((item) => ({ 中文字段名: item.label, 系统字段名: item.key, 是否必填: item.required ? "是" : "否", 数据类型: item.type, 字段说明: item.description, 示例值: item.example, 可选值: item.options?.join("、") || "", 关联基础资料对象: item.masterData || "", 校验规则: item.validation || "" }));
   const definitionSheet = XLSX.utils.json_to_sheet(definitions);
   definitionSheet["!cols"] = fitColumns(definitions, Object.keys(definitions[0]));
   const guide = [
     { 项目: "日期格式", 说明: "统一使用 YYYY-MM-DD，例如 2026-07-11" }, { 项目: "金额格式", 说明: "使用 Excel 数值，不输入货币符号和千分位文本" },
     { 项目: "数量格式", 说明: "使用大于或等于 0 的数值，业务要求正数时不可为 0" }, { 项目: "编码规则", 说明: "编号在当前业务对象内唯一，关联编号必须存在" },
-    { 项目: "空值处理", 说明: "必填字段不可为空；可选字段留空，不使用 N/A" }, { 项目: "常见错误", 说明: "重复编号、日期格式错误、负数、未知主数据、币种或状态无效" },
+    { 项目: "空值处理", 说明: "必填字段不可为空；可选字段留空，不使用 N/A" }, { 项目: "常见错误", 说明: "重复编号、日期格式错误、负数、未知基础资料、币种或状态无效" },
     { 项目: "导入步骤", 说明: "选择文件 → 选择 Sheet → 字段映射 → 校验预览 → 确认导入" }, { 项目: "支持文件格式", 说明: ".xlsx、.xls、.csv" },
   ];
   const guideSheet = XLSX.utils.json_to_sheet(guide);

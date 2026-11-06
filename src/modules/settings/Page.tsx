@@ -37,7 +37,7 @@ const AUDIT_MODULES: Record<string, [string, string]> = {
 const AUDIT_ENTITIES: Record<string, [string, string]> = {
   ai_skill: ['Assistant answer', '助手回答'], purchase_order: ['Purchase order', '采购订单'], purchase_request: ['Purchase request', '采购申请'],
   supplier: ['Supplier', '供应商'], item: ['Item', '物料'], customer: ['Customer', '客户'], receiving_doc: ['Receipt', '收货单'],
-  supplier_invoice: ['Supplier invoice', '供应商发票'], customer_invoice: ['Customer invoice', '销售发票'], sales_order: ['Sales order', '销售订单'],
+  supplier_invoice: ['Supplier invoice', '采购发票'], customer_invoice: ['Customer invoice', '销售发票'], sales_order: ['Sales order', '销售订单'],
   rfq: ['RFQ', '询价单'], warehouse: ['Warehouse', '仓库'], contract: ['Contract', '合同'], settings: ['Settings', '设置'], user: ['User', '用户'], role: ['Role', '角色'],
 };
 const ACRONYMS: Record<string, string> = { ai: 'AI', po: 'PO', pr: 'PR', rfq: 'RFQ', grn: 'GRN', sku: 'SKU', id: 'ID' };

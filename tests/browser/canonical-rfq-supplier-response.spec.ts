@@ -82,7 +82,7 @@ test("planned Supplier progresses draft to submitted revisions with one idempote
   await page.getByTestId(`rfq-response-action-${SUPPLIER_B}`).click();
   await expect(page.getByLabel("提交模式", { exact: true })).toHaveCount(0);
   await expect(page.getByTestId("rfq-supplier-response-editor")).toContainText("保存草稿不会记录为供应商已响应");
-  await expect(page.getByTestId("rfq-supplier-response-editor")).toContainText("正式提交需要覆盖全部 RFQ 行项目");
+  await expect(page.getByTestId("rfq-supplier-response-editor")).toContainText("正式提交需要覆盖全部询价单行项目");
   // A first response starts from the RFQ's requested quantities, labelled as
   // such; prices are never prefilled.
   const firstRow = page.getByTestId(`rfq-response-editor-line-${LINE_1}`);
@@ -189,7 +189,7 @@ test("submitted quotation preserves date-only values and surfaces a real stale-v
   await expect(await quotationFor(page, "Acme Components")).toContainText("报价修订 4 · 当前版本");
 
   await page.goto("/app/procurement/rfq/LOCAL-DEMO-RFQ-CLOSED");
-  await expect(page.getByTestId("canonical-rfq-detail")).toContainText("当前 RFQ 状态不允许录入新的供应商响应");
+  await expect(page.getByTestId("canonical-rfq-detail")).toContainText("当前询价单状态不允许录入新的供应商响应");
   await expect(page.getByTestId(`rfq-response-action-${SUPPLIER_B}`)).toHaveCount(0);
 });
 
@@ -198,7 +198,7 @@ test("response editor renders explicit command failures safely", async ({ page, 
   const cases = [
     { status: 401, code: "AUTHENTICATION_REQUIRED", expected: "登录状态已失效" },
     { status: 403, code: "AUTHORIZATION_DENIED", expected: "没有执行此项报价操作的权限" },
-    { status: 404, code: "SUPPLIER_NOT_FOUND", expected: "当前工作区中找不到该 RFQ 或供应商" },
+    { status: 404, code: "SUPPLIER_NOT_FOUND", expected: "当前工作区中找不到该询价单或供应商" },
     { status: 409, code: "RFQ_RESPONSE_CONCURRENCY_CONFLICT", expected: "报价数据已发生变化" },
     { status: 422, code: "RFQ_RESPONSE_DECIMAL_INVALID", expected: "数量或单价格式无效" },
     { status: 500, code: "RFQ_SUPPLIER_RESPONSE_COMMAND_FAILED", expected: "报价服务暂时不可用" },

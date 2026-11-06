@@ -383,7 +383,7 @@ export function PilotReadinessGovernanceV2({ payload, onNavigate }: { payload: P
               当前工作区数据 · 当前仅展示试点准备度，试点事项只生成复核草稿，不改变业务对象状态，不形成正式业务处理。
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              {["不启用真实外部系统", "数据不搬移", "不外发", "不写库存", "不写财务凭证", "不处理资金", "不改主数据", "不覆盖当前工作区数据"].map((label) => (
+              {["不启用真实外部系统", "数据不搬移", "不外发", "不写库存", "不写财务凭证", "不处理资金", "不改基础资料", "不覆盖当前工作区数据"].map((label) => (
                 <Chip key={label} label={label} color={A.blue} bg="#eef4ff" />
               ))}
             </div>

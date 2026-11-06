@@ -5,13 +5,16 @@ import type { FlagSpan, PartRef } from "./types";
 
 // The model's prose, as it streams. Only a small part of markdown is read:
 // paragraphs, section headings (any level, all shown alike), numbered and
-// bulleted lists, pipe tables (the first row as the header), bold and inline
-// code. Images are
+// bulleted lists, pipe tables (the first row as the header), quoted blocks
+// ("> " lines, as a drafted message is written), fenced code blocks, bold
+// and inline code. Images are
 // dropped and links keep only their text, so nothing in an answer can load
 // from or send a click to another site; the only links are record chips for
 // the refs the server gave this answer.
 
-type Block = { kind: "p" | "h" | "ol" | "ul" | "table"; start: number; lines: string[] };
+type Block = { kind: "p" | "h" | "ol" | "ul" | "table" | "quote" | "pre"; start: number; lines: string[] };
+const QUOTE_LINE = /^>\s?/;
+const FENCE = /^```/;
 const LIST_LINE = /^(?:(\d{1,3})[.)]\s+|[-*+•]\s+)/;
 const HEADING = /^#{1,6}\s+/;
 // A table row is a line between pipes; the line of dashes under the header
@@ -23,12 +26,28 @@ const tableCells = (line: string) => line.replace(/^\||\|$/g, "").split("|").map
 function markdownBlocks(text: string): Block[] {
   const blocks: Block[] = [];
   let paragraph: string[] = [];
+  // A quote runs over its "> " lines; a fence keeps its lines as written.
+  let quote: Block | null = null;
+  let fence: Block | null = null;
   const flush = () => {
     if (paragraph.length) blocks.push({ kind: "p", start: 1, lines: [paragraph.join(" ")] });
     paragraph = [];
   };
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
+    if (fence) {
+      if (FENCE.test(line)) fence = null;
+      else fence.lines.push(raw.replace(/\s+$/, ""));
+      continue;
+    }
+    if (FENCE.test(line)) { flush(); quote = null; fence = { kind: "pre", start: 1, lines: [] }; blocks.push(fence); continue; }
+    if (QUOTE_LINE.test(line)) {
+      flush();
+      if (!quote) { quote = { kind: "quote", start: 1, lines: [] }; blocks.push(quote); }
+      quote.lines.push(line.replace(QUOTE_LINE, ""));
+      continue;
+    }
+    quote = null;
     if (!line) { flush(); continue; }
     if (HEADING.test(line)) { flush(); blocks.push({ kind: "h", start: 1, lines: [line.replace(HEADING, "")] }); continue; }
     if (TABLE_ROW.test(line)) {
@@ -120,9 +139,14 @@ export function StreamingText({ text, refs = [], flags = [], language, onNavigat
   const copy = usePartCopy(language);
   const d = decorator(refs, flags);
   const line = (value: string, key: string) => inline(value, d, copy, onNavigate, key);
-  return (
-    <div data-testid="ai-v2-text" lang={copy.language} className="space-y-2 text-sm leading-relaxed" style={{ color: A.label }}>
-      {markdownBlocks(withoutImagesAndLinks(text)).map((block, index) => block.kind === "p"
+  const render = (blocks: Block[], prefix: string): ReactNode[] => blocks.map((block, at) => {
+    const index = `${prefix}${at}`;
+    // A drafted message: its own blocks, set off from the answer.
+    if (block.kind === "quote") return <blockquote key={index} data-testid="ai-v2-text-quote" className="space-y-2 rounded-r-lg border-l-2 py-1 pl-3" style={{ borderColor: A.gray4, background: A.gray6 }}>{render(markdownBlocks(block.lines.join("\n")), `${index}-`)}</blockquote>;
+    if (block.kind === "pre") return <pre key={index} data-testid="ai-v2-text-pre" className="whitespace-pre-wrap rounded-lg px-3 py-2 text-[12.5px]" style={{ background: A.gray6 }}>{block.lines.join("\n")}</pre>;
+    return renderBlock(block, index);
+  });
+  const renderBlock = (block: Block, index: string): ReactNode => block.kind === "p"
         ? <p key={index}>{line(block.lines[0], `${index}`)}</p>
         : block.kind === "h"
           ? <p key={index} data-testid="ai-v2-text-heading" className="pt-1 font-semibold">{line(block.lines[0], `${index}`)}</p>
@@ -137,7 +161,10 @@ export function StreamingText({ text, refs = [], flags = [], language, onNavigat
           )
           : block.kind === "ol"
           ? <ol key={index} start={block.start} className="list-decimal space-y-1 pl-5">{block.lines.map((value, row) => <li key={row}>{line(value, `${index}-${row}`)}</li>)}</ol>
-          : <ul key={index} className="list-disc space-y-1 pl-5">{block.lines.map((value, row) => <li key={row}>{line(value, `${index}-${row}`)}</li>)}</ul>)}
+          : <ul key={index} className="list-disc space-y-1 pl-5">{block.lines.map((value, row) => <li key={row}>{line(value, `${index}-${row}`)}</li>)}</ul>;
+  return (
+    <div data-testid="ai-v2-text" lang={copy.language} className="space-y-2 text-sm leading-relaxed" style={{ color: A.label }}>
+      {render(markdownBlocks(withoutImagesAndLinks(text)), "")}
     </div>
   );
 }

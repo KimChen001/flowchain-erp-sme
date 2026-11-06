@@ -16,7 +16,7 @@ test('AI assistant UI has duplicate request guard, abort, and timeout fallback',
   assert.match(aiPanelSource, /setTimeout\(\(\) =>/)
   assert.match(aiPanelSource, /displaySafeAssistantRecoveryMessage/)
   // The recovery message is one bilingual line saying why the request failed.
-  assert.match(aiPanelSource, /暂时无法读取工作区数据，未修改任何内容。/)
+  assert.match(aiPanelSource, /工作区数据暂时加载失败，未修改任何内容。/)
   assert.match(aiPanelSource, /The assistant could not read your workspace data just now\. Nothing was changed\./)
   assert.doesNotMatch(aiPanelSource, /Review boundary|Where to look|人工复核边界/)
   assert.match(aiPanelSource, /error\.status === 401\) return \{ reason: "signed_out" \}/)

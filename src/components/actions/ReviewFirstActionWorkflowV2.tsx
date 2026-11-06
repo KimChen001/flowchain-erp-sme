@@ -108,7 +108,7 @@ export function ReviewFirstActionWorkflowV2({
         setSelectedId(result.drafts[0]?.id || "");
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "行动草稿读取失败");
+        if (!cancelled) setError(err instanceof Error ? err.message : "行动草稿加载失败");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -179,7 +179,7 @@ export function ReviewFirstActionWorkflowV2({
             </p>
           </div>
           <div className="rounded-md px-3 py-2 text-[12px] leading-5" style={{ background: "#f0f6ff", color: A.blue }}>
-            <ShieldCheck size={14} className="mr-1 inline" /> 草稿预览 · 人工确认 · 不外发 · 不写库存 · 不写财务凭证 · 不处理资金 · 不改主数据
+            <ShieldCheck size={14} className="mr-1 inline" /> 草稿预览 · 人工确认 · 不外发 · 不写库存 · 不写财务凭证 · 不处理资金 · 不改基础资料
           </div>
         </div>
       </header>

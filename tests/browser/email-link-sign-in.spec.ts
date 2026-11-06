@@ -123,3 +123,32 @@ test("the sign-in pages have Chinese copy", async ({ page }) => {
   await expect(page.getByText("登录链接无效或已过期")).toBeVisible();
   await expect(page.getByRole("link", { name: "返回登录" })).toBeVisible();
 });
+
+test("the language picked on the sign-in page stays after signing in, for a user who never chose one", async ({ page }) => {
+  const before = (await linksTo(email)).length;
+  await page.goto("/");
+  await page.getByLabel("Interface language / 界面语言").selectOption("zh-CN");
+  await page.getByLabel("工作邮箱").fill(email);
+  await page.getByRole("button", { name: "发送登录链接", exact: true }).click();
+  const link = await waitForLinkCount(email, before + 1);
+  await page.goto(link);
+  await page.getByRole("button", { name: /^登录 / }).click();
+  await expect(page).toHaveURL(/\/app\//);
+  await expect.poll(() => page.evaluate(() => document.documentElement.lang)).toBe("zh-CN");
+});
+
+test("a stored session the server refuses brings back the sign-in page with a notice", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("seeded")) return;
+    sessionStorage.setItem("seeded", "1");
+    localStorage.setItem("flowchain:auth-token", "not-a-real-session");
+    localStorage.setItem("flowchain:current-user", JSON.stringify({ id: "USR-x", email: "kim@example.com", name: "Kim" }));
+  });
+  await page.goto("/");
+  await expect(page.getByTestId("sign-in-email-form")).toBeVisible();
+  await expect(page.getByTestId("sign-in-signed-out")).toHaveText("Your session ended. Sign in again to continue.");
+  // Read once: a reload shows the plain sign-in page.
+  await page.reload();
+  await expect(page.getByTestId("sign-in-email-form")).toBeVisible();
+  await expect(page.getByTestId("sign-in-signed-out")).toHaveCount(0);
+});

@@ -157,7 +157,7 @@ const COPY = {
   exception: ["Exception", "异常单号"],
   impact: ["Quantity impact", "数量影响"],
   reason: ["Reason", "原因"],
-  loadFailed: ["Inventory could not be loaded", "库存数据读取失败"],
+  loadFailed: ["Inventory could not be loaded", "库存数据加载失败"],
   noMatch: ["Nothing matches these filters", "没有符合筛选条件的记录"],
   reorderList: ["Open the reorder list", "打开补货清单"],
   activeFilters: ["Filtered by", "当前筛选"],

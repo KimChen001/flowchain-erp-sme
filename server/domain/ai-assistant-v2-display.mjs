@@ -78,14 +78,15 @@ export function aiV2Formats({ locale = 'en-US', timezone = 'America/New_York', u
     return new Intl.DateTimeFormat(tag, { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(date)
   }
   const number = (value) => numberFormat.format(value)
-  const unitText =(unit, value) => (typeof unitLabel === 'function' && text(unit) ? text(unitLabel(text(unit), value)) : '') || text(unit)
+  // `language` words an English line of a Chinese answer in English.
+  const unitText = (unit, value, language) => (typeof unitLabel === 'function' && text(unit) ? text(unitLabel(text(unit), value, language)) : '') || text(unit)
   const quantity = (value, unit) => (text(unit) ? `${number(value)} ${unitText(unit, value)}` : number(value))
   return { locale: tag, timezone: zone, day, monthDay, money, number, quantity, unitText }
 }
 
 // The keys that hold an amount or a quantity in the data tools' results (as
 // the table builder reads them, ai-assistant-v2-ui-tools.mjs).
-const MONEY_KEYS = new Set(['amount', 'outstandingAmount', 'paidAmount', 'originalAmount', 'totalValue', 'difference', 'variance', 'unitPrice', 'spend', 'committed'])
+const MONEY_KEYS = new Set(['amount', 'outstandingAmount', 'paidAmount', 'originalAmount', 'totalValue', 'difference', 'variance', 'unitPrice', 'referencePrice', 'spend', 'committed'])
 const QUANTITY_KEYS = new Set([
   'ordered', 'received', 'remaining', 'onHand', 'reserved', 'available', 'openSalesDemand', 'incomingOnPurchaseOrders', 'availableToPromise', 'shortage',
   'safetyStock', 'reorderPoint', 'incoming', 'demand', 'endAvailable', 'quantity', 'rejected', 'stillToReceive', 'withoutTheseLines', 'additionalShortfall',
@@ -162,14 +163,14 @@ const POSITIONS = [
 // Status, severity, priority and signal codes in words, [English, Chinese].
 // The statuses use the assistant's own words (po_status in ai-skill-copy.mjs,
 // LABELS.purchase_request below), so the prose matches the tables of the same
-// answer. The app's pages word some of them otherwise (src/i18n/statusLabels.ts:
-// 已下达, 已批准, 已取消); the owner's terminology pass settles one set.
+// answer, and with the app's pages (src/i18n/statusLabels.ts: 已批准, 已下达,
+// 已驳回, 已取消; the owner's terminology of 2026-11-05).
 const CODE_LABELS = Object.freeze({
   risk: ['Risk', '风险'], warning: ['Warning', '警告'], info: ['Info', '提示'],
   matched: ['Matched', '已匹配'], variance: ['Variance', '有差异'], exception: ['Exception', '异常'], mismatch: ['Mismatch', '不一致'], not_matched: ['Not matched', '未匹配'],
   pending: ['Pending', '待处理'], pending_approval: ['Pending approval', '待审批'], submitted: ['Submitted', '已提交'], draft: ['Draft', '草稿'],
-  approved: ['Approved', '审批通过'], rejected: ['Rejected', '已驳回'], cancelled: ['Cancelled', '已作废'], canceled: ['Cancelled', '已作废'],
-  issued: ['Issued', '已发给供应商'], partially_received: ['Partially received', '部分收货'], fully_received: ['Fully received', '全部收货'], received: ['Received', '已收货'],
+  approved: ['Approved', '已批准'], rejected: ['Rejected', '已驳回'], cancelled: ['Cancelled', '已取消'], canceled: ['Cancelled', '已取消'],
+  issued: ['Issued', '已下达'], partially_received: ['Partially received', '部分收货'], fully_received: ['Fully received', '全部收货'], received: ['Received', '已收货'],
   closed: ['Closed', '已关闭'], posted: ['Posted', '已过账'], unposted: ['Not posted', '未过账'], overdue: ['Overdue', '已逾期'], disputed: ['Disputed', '有争议'],
   below_safety_stock: ['Below safety stock', '低于安全库存'], below_reorder_point: ['Below reorder point', '低于再订货点'], out_of_stock: ['Out of stock', '缺货'], shortage_risk: ['Shortage risk', '短缺风险'],
 })
@@ -211,13 +212,14 @@ const ZH_PUNCT = Object.freeze({ ',': '，', ':': '：', ';': '；', '!': '！',
 
 // A tidier for one answer's text. `records()` gives the labels of the records
 // this answer's tools returned (they grow as results come in), `units()` the
-// units they hold. tidy(piece, before) rewrites one piece of a text part,
-// `before` being the part's text already rewritten and sent.
+// units they hold. tidy(piece, before, after) rewrites one piece of a text
+// part, `before` being the part's text already rewritten and sent and `after`
+// the model's text after the piece so far (to know the line it ends in).
 export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), records = () => [], units = () => [], maxLength = Infinity } = {}) {
   const zh = language === 'zh-CN'
-  const tidy = (piece, before = '') => {
-    let out = String(piece ?? '')
-    if (!out) return out
+  // One stretch of a single line, in the rules of `lineZh`.
+  const tidyLine = (piece, before, lineZh) => {
+    let out = piece
     // Dates the app would show its own way, the Chinese way of writing them
     // too (2026年7月1日至9月30日): the workspace's date format holds in
     // either language.
@@ -251,7 +253,7 @@ export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), re
     if (stored.length) {
       const unitPattern = new RegExp(String.raw`(?<![\w.])(\d[\d,]*(?:\.\d+)?)\s?(${stored.sort((a, b) => b.length - a.length).map(escape).join('|')})(?![A-Za-z])([ \t](?=[㐀-鿿]|$))?`, 'gu')
       out = out.replace(unitPattern, (whole, figure, unit, gap) => {
-        const label = formats.unitText(unit, amountOf(figure))
+        const label = formats.unitText(unit, amountOf(figure), lineZh ? language : 'en-US')
         return `${figure} ${label}${gap && !HAN.test(label) ? gap : ''}`
       })
     }
@@ -271,9 +273,26 @@ export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), re
     for (const [pattern, replacement] of POSITIONS) out = out.replace(pattern, replacement)
     // A status, severity or signal code quoted, after "status", or written
     // as a code (partially_received), in words of the answer's language.
-    out = codesInWords(out, zh ? 1 : 0)
-    if (zh) out = zhSpacing(zhPunctuation(out, before), before)
+    out = codesInWords(out, lineZh ? 1 : 0)
+    if (lineZh) out = zhSpacing(zhPunctuation(out, before), before)
     return out
+  }
+  // A Chinese answer may hold English: a drafted message ("> " lines) or a
+  // line with no Chinese in it keeps English punctuation and units
+  // (2026-11-05: "30 件are still outstanding （20 of 50 received）").
+  const tidy = (piece, before = '', after = '') => {
+    const whole = String(piece ?? '')
+    if (!whole) return whole
+    if (!zh) return tidyLine(whole, before, false)
+    const segments = whole.split(/(?<=\n)/)
+    let done = ''
+    for (const [index, segment] of segments.entries()) {
+      const prior = before + done
+      const line = `${prior.slice(prior.lastIndexOf('\n') + 1)}${segment}${index === segments.length - 1 ? String(after).split('\n')[0] : ''}`
+      const english = /^\s*>/.test(line) || (!HAN.test(line) && (line.match(/[A-Za-z]{2,}/g) || []).length >= 3)
+      done += tidyLine(segment, prior, !english)
+    }
+    return done
   }
   // A single line (a follow-up question): tidied whole, and left as written
   // when the tidied form would not fit.
@@ -378,8 +397,8 @@ export function aiV2UserTypedDate(value, userText) {
 // was the code alone (a purchase request "has status: submitted"; 2026-11-05).
 const LABELS = Object.freeze({
   purchase_request: {
-    draft: ['Draft', '草稿'], submitted: ['Waiting for approval', '待审批'], approved: ['Approved', '审批通过'], rejected: ['Rejected', '已驳回'],
-    cancelled: ['Cancelled', '已作废'], converted: ['Converted to an order', '已转为订单'], closed: ['Closed', '已关闭'],
+    draft: ['Draft', '草稿'], submitted: ['Waiting for approval', '待审批'], approved: ['Approved', '已批准'], rejected: ['Rejected', '已驳回'],
+    cancelled: ['Cancelled', '已取消'], converted: ['Converted to an order', '已转为订单'], closed: ['Closed', '已关闭'],
   },
   type: {
     po_overdue: ['Overdue purchase order', '逾期采购订单'], po_due_7d: ['Due within 7 days', '7 天内到期'], po_partially_received: ['Partially received', '部分收货'],

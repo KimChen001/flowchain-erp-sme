@@ -157,6 +157,10 @@ const CODE_ALIASES = Object.freeze({
   'suggestedQuantity.source': 'suggested_quantity_source', 'supplier.name': 'supplier', 'needByDate.value': 'need_by_date', 'estimatedUnitPrice.value': 'unit_price',
   'estimatedUnitPrice.currency': 'currency', '1_30': 'days_1_30', '31_60': 'days_31_60', '61_90': 'days_61_90', '90_plus': 'days_90_plus',
   'purchaseOrders.open': 'open_purchase_orders', 'purchaseOrders.overdue': 'overdue_purchase_orders', 'purchaseOrders.waitingForApproval': 'pending_approvals',
+  'details.sku': 'sku', 'details.remaining': 'remaining_quantity', 'details.unit': 'unit', 'details.available': 'available', 'details.demand': 'demand',
+  'details.shortage': 'shortage', 'details.incoming': 'incoming', 'details.safety': 'safety_stock', 'details.reorder': 'reorder_point', 'details.pendingRequests': 'open_requests',
+  'details.covered': 'covered', 'details.variance': 'variance', 'details.currency': 'currency', 'details.rejected': 'rejected', 'details.quantity': 'quantity',
+  'details.priority': 'priority', 'details.requiredDate': 'required_date', 'details.responses': 'quotes', 'details.title': 'title', 'details.count': 'count', referencePrice: 'unit_price', leadTimeDays: 'lead_time_days',
 })
 
 const snakeCase = (key) => key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/\./g, '_').toLowerCase()
@@ -175,15 +179,18 @@ const MONEY_COLUMNS = Object.freeze({
   spend_analysis: ['value'],
   list_receivables: ['current', '1_30', '31_60', '61_90', '90_plus', 'total'],
   suggest_purchase_lines: ['estimatedUnitPrice.value'],
+  attention_list: ['details.variance'],
+  item_suppliers: ['referencePrice'],
 })
 const QUANTITY_COLUMNS = new Set([
   'ordered', 'received', 'remaining', 'onHand', 'reserved', 'available', 'openSalesDemand', 'incomingOnPurchaseOrders', 'availableToPromise', 'shortage',
   'safetyStock', 'reorderPoint', 'incoming', 'demand', 'endAvailable', 'quantity', 'rejected', 'stillToReceive', 'withoutTheseLines', 'additionalShortfall',
   'position', 'shortfall', 'minimumOrderQuantity', 'requestQuantity', 'orderedQuantity', 'averageDailyDemand', 'suggestedQuantity.value',
+  'details.remaining', 'details.available', 'details.demand', 'details.shortage', 'details.incoming', 'details.safety', 'details.reorder', 'details.covered', 'details.rejected', 'details.quantity',
 ])
 // A signal or record type (po_overdue, purchase_order) and a priority (high)
 // are codes too: the panel words them, never showing the code (2026-11-05).
-const STATUS_COLUMNS = new Set(['status', 'postingStatus', 'matchStatus', 'state', 'disputeStatus', 'severity', 'whenKind', 'suggestedQuantity.source', 'type', 'priority'])
+const STATUS_COLUMNS = new Set(['status', 'postingStatus', 'matchStatus', 'state', 'disputeStatus', 'severity', 'whenKind', 'suggestedQuantity.source', 'type', 'priority', 'details.priority'])
 const PRIORITY_TONES = Object.freeze({ urgent: 'danger', high: 'warning', medium: 'info', normal: 'neutral', low: 'neutral' })
 // Closed records are late no more: their days overdue are not shown.
 const CLOSED_STATES = new Set(['cancelled', 'canceled', 'closed', 'fully_received', 'received', 'completed', 'rejected'])
@@ -229,7 +236,7 @@ function cellOf(kind, row, key, output) {
   if (Array.isArray(value)) return value.every((entry) => typeof entry === 'string' || isNumber(entry)) ? value.join(', ').slice(0, MAX_TEXT) : null
   if (isObject(value)) return refOf(value) || (typeof value.name === 'string' ? value.name.slice(0, MAX_TEXT) : null)
   if (kind === 'status' && isCode(value) && key === 'type') return { code: value, tone: 'neutral' }
-  if (kind === 'status' && isCode(value) && key === 'priority') return { code: value, ...(PRIORITY_TONES[value] ? { tone: PRIORITY_TONES[value] } : {}) }
+  if (kind === 'status' && isCode(value) && (key === 'priority' || key === 'details.priority')) return { code: value, ...(PRIORITY_TONES[value] ? { tone: PRIORITY_TONES[value] } : {}) }
   if (kind === 'status' && isCode(value)) return { code: value }
   if (kind === 'date') return value.slice(0, 10)
   if (typeof value === 'string') {
@@ -420,7 +427,7 @@ const showTable = defineUiTool({
         if (one !== many) cell[`${code}_one`] = one
       }
       for (const [index, row] of shown.entries()) {
-        const unit = [row.unit, row.item?.unit].find((entry) => typeof entry === 'string' && entry.trim() && entry.length <= 20)
+        const unit = [row.unit, row.item?.unit, row.details?.unit].find((entry) => typeof entry === 'string' && entry.trim() && entry.length <= 20)
         if (unit) worded(cells[index], 'unit', unit.trim())
         if (typeof row.moqUnit === 'string' && row.moqUnit.trim() && row.moqUnit.length <= 20) worded(cells[index], 'moq_unit', row.moqUnit.trim())
       }
@@ -776,10 +783,15 @@ function formRow(row, output, { named, line, scope }) {
       // supplier the form adds has no reference price yet: the user enters
       // the price in the form (any price they typed is on its option).
       estimatedUnitPrice = !picked.link && picked.unitPrice !== null && picked.unitPrice !== undefined ? { value: picked.unitPrice, currency: picked.currency, source: 'reference_price' } : { value: null, currency: null, source: price.source === 'masked' && !picked.link ? 'masked' : 'missing' }
+      // A supplier with no lead time recorded keeps the item's need-by date
+      // from its preferred supplier's lead time, never today (2026-11-05:
+      // "from Northstar instead" set today while the answer said Nov 22).
       const moved = suggestNeedByDate({ today: output.today, leadTimeDays: picked.leadTimeDays ?? null, firstShortWeek: shortWeekOf })
-      lead = moved.leadTimeDays
-      leadDate = moved.source === PURCHASE_SUGGESTION_SOURCES.leadTime ? moved.value : null
-      shortWeekOf = moved.warning?.weekOf ?? null
+      if (moved.source === PURCHASE_SUGGESTION_SOURCES.leadTime) {
+        lead = moved.leadTimeDays
+        leadDate = moved.value
+        shortWeekOf = moved.warning?.weekOf ?? null
+      }
     }
   }
   const needByDate = named && line?.needByDate

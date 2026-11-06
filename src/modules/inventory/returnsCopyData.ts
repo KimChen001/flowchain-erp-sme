@@ -37,7 +37,7 @@ export const returnsChinese: Record<string, string> = {
   "Shown apart from available inventory and cannot be reserved.": "与可用库存分开显示，不可预留。",
 
   // Lists
-  "Could not load returns": "退货列表读取失败",
+  "Could not load returns": "退货列表加载失败",
   "Records: {n}": "共 {n} 条正式记录",
   "New return request": "新建退货申请",
   "Search returns": "搜索退货记录",
@@ -64,7 +64,7 @@ export const returnsChinese: Record<string, string> = {
   "Next": "下一页",
 
   // New return request
-  "Could not load source documents": "来源数据读取失败",
+  "Could not load source documents": "来源数据加载失败",
   "Could not load the preview": "预览失败",
   "Could not create the request": "创建失败",
   "← Back to return requests": "← 返回退货申请",
@@ -86,7 +86,7 @@ export const returnsChinese: Record<string, string> = {
   "Confirm request": "确认创建申请",
 
   // Request workbench
-  "Could not load the workbench": "工作台读取失败",
+  "Could not load the workbench": "工作台加载失败",
   "Preview submit": "预览提交",
   "Preview cancellation": "预览取消",
   "Action limits: {codes}": "动作限制：{codes}",
@@ -160,7 +160,7 @@ export const returnsChinese: Record<string, string> = {
   "In {in} / out {out}": "入 {in} / 出 {out}",
 
   // Quarantine inventory
-  "Could not load quarantine inventory": "隔离库存读取失败",
+  "Could not load quarantine inventory": "隔离库存加载失败",
   "Quarantined quantities are shown apart from available inventory and cannot be reserved or sold.":
     "隔离数量与普通可用库存分开显示，不能预留或销售。",
   "Quarantine SKU": "隔离库存 SKU",
@@ -188,7 +188,7 @@ export const returnsChinese: Record<string, string> = {
   "Return number": "退货单号",
   "Customer": "客户",
   "Sales order number": "销售订单号",
-  "Delivery number": "发货单号",
+  "Shipment number": "发货单号",
   "Return date": "退货日期",
   "Return quantity": "退货数量",
   "Return reason": "退货原因",
@@ -196,7 +196,7 @@ export const returnsChinese: Record<string, string> = {
   "View details": "查看详情",
   "Sales return details": "销售退货单详情",
   "Sales order": "销售订单",
-  "Delivery": "发货单",
+  "Shipment": "发货单",
   "Receiving warehouse": "收货仓库",
   "Created by": "创建人",
   "Reviewed by": "审核人",
@@ -242,7 +242,7 @@ export const returnsCodeLabels: Record<string, [string, string]> = {
   partially_executed: ["Partially executed", "部分执行"],
   executed: ["Executed", "已执行"],
   approved: ["Approved", "已批准"],
-  rejected: ["Rejected", "已拒绝"],
+  rejected: ["Rejected", "已驳回"],
   cancelled: ["Cancelled", "已取消"],
   expired: ["Expired", "已过期"],
   ready: ["Ready to post", "待过账"],
@@ -275,7 +275,7 @@ export const returnsCodeLabels: Record<string, [string, string]> = {
   return_request_revised: ["Return request revised", "退货申请已修改"],
   return_request_submitted: ["Return request submitted", "退货申请已提交"],
   return_request_cancelled: ["Return request cancelled", "退货申请已取消"],
-  return_request_rejected: ["Return request rejected", "退货申请已拒绝"],
+  return_request_rejected: ["Return request rejected", "退货申请已驳回"],
   return_request_authorized: ["Return request authorized", "退货申请已授权"],
   return_authorization_cancelled: ["Return authorization cancelled", "退货授权已取消"],
   return_authorization_expired: ["Return authorization expired", "退货授权已过期"],
@@ -346,23 +346,23 @@ export const returnsErrorLabels: Record<string, [string, string]> = {
   // Access and request handling
   AUTHENTICATION_REQUIRED: ["Sign in to continue.", "请先登录。"],
   PERMISSION_DENIED: ["Your role does not allow this action.", "当前角色无权执行此操作。"],
-  WAREHOUSE_SCOPE_DENIED: ["This warehouse is outside your access.", "该仓库不在您的访问范围内。"],
-  PARTIAL_WAREHOUSE_SCOPE: ["Some warehouses are outside your access, so not every line is shown.", "部分仓库不在您的访问范围内，未显示全部行。"],
+  WAREHOUSE_SCOPE_DENIED: ["This warehouse is outside your access.", "该仓库不在你的访问范围内。"],
+  PARTIAL_WAREHOUSE_SCOPE: ["Some warehouses are outside your access, so not every line is shown.", "部分仓库不在你的访问范围内，未显示全部行。"],
   METHOD_NOT_ALLOWED: ["This action is not supported here.", "此处不支持该操作。"],
   IDEMPOTENCY_KEY_REQUIRED: ["The request is missing its command key. Reload the page and try again.", "请求缺少命令标识，请刷新页面后重试。"],
   IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD: ["This command was already sent with different values. Reload the page and try again.", "该命令已用不同内容提交过，请刷新页面后重试。"],
   COMMAND_EXECUTION_IN_PROGRESS: ["This action is already in progress. Wait a moment, then refresh.", "该操作正在执行中，请稍后刷新。"],
   // Role and sign-in checks (authorization service, workspace identity)
   AUTHORIZATION_PERMISSION_DENIED: ["Your role does not allow this action.", "当前角色无权执行此操作。"],
-  AUTHORIZATION_WAREHOUSE_SCOPE_DENIED: ["This warehouse is outside your access.", "该仓库不在您的访问范围内。"],
-  AUTHORIZATION_ROLE_INACTIVE: ["Your role is inactive. Ask an administrator to activate it.", "您的角色已停用，请联系管理员启用。"],
+  AUTHORIZATION_WAREHOUSE_SCOPE_DENIED: ["This warehouse is outside your access.", "该仓库不在你的访问范围内。"],
+  AUTHORIZATION_ROLE_INACTIVE: ["Your role is inactive. Ask an administrator to activate it.", "你的角色已停用，请联系管理员启用。"],
   AUTHORIZATION_CONTEXT_INCOMPLETE: ["Your sign-in is incomplete. Sign in again.", "登录信息不完整，请重新登录。"],
   AUTHORIZATION_TENANT_MISMATCH: ["This record belongs to another workspace.", "该记录属于其他工作区。"],
   AUTHORIZATION_CAPABILITY_DISABLED: ["This feature is not enabled for this workspace.", "此工作区尚未启用该功能。"],
-  TENANT_CONTEXT_REQUIRED: ["Your workspace could not be identified. Sign in again.", "无法识别您的工作区，请重新登录。"],
-  ACTOR_NOT_PROVISIONED: ["Your account is not set up for this workspace. Ask an administrator.", "您的账户尚未在此工作区开通，请联系管理员。"],
-  USER_DISABLED: ["Your account in this workspace is disabled.", "您在此工作区的账户已停用。"],
-  SESSION_STALE: ["Your access changed. Sign in again.", "您的权限已变更，请重新登录。"],
+  TENANT_CONTEXT_REQUIRED: ["Your workspace could not be identified. Sign in again.", "无法识别你的工作区，请重新登录。"],
+  ACTOR_NOT_PROVISIONED: ["Your account is not set up for this workspace. Ask an administrator.", "你的账户尚未在此工作区开通，请联系管理员。"],
+  USER_DISABLED: ["Your account in this workspace is disabled.", "你在此工作区的账户已停用。"],
+  SESSION_STALE: ["Your access changed. Sign in again.", "你的权限已变更，请重新登录。"],
   RECEIVING_NOT_FOUND: ["Receiving document not found.", "未找到收货单。"],
   // Capabilities
   RETURN_GOVERNANCE_CAPABILITY_NOT_AVAILABLE: ["Returns are not enabled for this workspace.", "此工作区尚未启用退货。"],

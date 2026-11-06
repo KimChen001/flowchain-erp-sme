@@ -102,7 +102,7 @@ const fields: Array<[keyof MasterItem, string, string]> = [
   ["taxCodeId", "税码", "text"],
   ["safetyStock", "安全库存", "number"],
   ["reorderPoint", "再订货点", "number"],
-  ["minimumOrderQuantity", "最小订购量", "number"],
+  ["minimumOrderQuantity", "最小起订量", "number"],
   ["purchaseLeadTimeDays", "采购提前期（天）", "number"],
   ["barcode", "条码", "text"],
   ["manufacturerPartNumber", "制造商料号", "text"],

@@ -315,7 +315,7 @@ test('R99 AI assistant pilot UI keeps compact business-facing states', () => {
 
   assert.match(source, /正在查询业务数据/)
   assert.match(source, /displaySafeAssistantRecoveryMessage/)
-  assert.match(source, /暂时无法读取工作区数据，未修改任何内容。/)
+  assert.match(source, /工作区数据暂时加载失败，未修改任何内容。/)
   assert.doesNotMatch(source, /```|JSON\.stringify\(.*message|raw debug|tool_result|response_card/)
 })
 

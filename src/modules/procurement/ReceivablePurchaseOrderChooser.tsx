@@ -31,9 +31,9 @@ const COPY: Record<string, [string, string]> = {
   emptyDetail: ["Issued or partially received purchase orders with quantity still to receive show here.", "已下达或部分收货、仍有未收数量的采购订单会显示在这里。"],
   noMatch: ["No purchase order matches this search", "没有符合搜索条件的采购订单"],
   loadFailed: ["The purchase orders could not be loaded.", "采购订单加载失败。"],
-  cannotReceive: ["Your role cannot prepare receipts.", "您的角色无权准备收货单。"],
+  cannotReceive: ["Your role cannot prepare receipts.", "你的角色无权准备收货单。"],
   cannotReceiveDetail: ["Ask an administrator for receiving access, or ask someone who receives goods to record this delivery.", "请联系管理员开通收货权限，或请负责收货的同事登记本次到货。"],
-  cannotListOrders: ["Your role cannot view purchase orders.", "您的角色无权查看采购订单。"],
+  cannotListOrders: ["Your role cannot view purchase orders.", "你的角色无权查看采购订单。"],
   cannotListOrdersDetail: ["Open the receipt from the purchase order link you were given.", "请通过收到的采购订单链接进入收货。"],
 };
 
