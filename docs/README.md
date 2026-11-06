@@ -78,6 +78,7 @@
 - [AI response latency notes](ai-response-latency-notes.md)
 - [AI chat copilot plan](ai-chat-copilot-v1-plan.md)
 - [AI provider baseline, 2026-10-04](ai-provider-baseline-2026-10-04.md)
+- [Onboarding and standing instructions (L3) design](ai-onboarding-and-automation-design.md): proposal of 2026-10-29; setup by chat on the existing import, scheduled rules that leave drafts; decisions O1–O6 and A1–A8 approved 2026-10-29
 
 ## UI
 
