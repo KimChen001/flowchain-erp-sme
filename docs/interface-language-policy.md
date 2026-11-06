@@ -53,6 +53,43 @@ names, or supplier names in place. Translate their presentation where appropriat
   "Prefilled from…" banner and each field's source label in English and Chinese
   (`src/components/prefill/PrefillSource.tsx`). A reason the assistant wrote is kept in
   the language it was written in, as stored business text.
+- The six Purchasing tabs (workbench, purchase requests, RFQs, purchase orders,
+  supplier invoices, three-way match) share one list layout
+  (`src/components/ui/listLayout.tsx`): metric cards, a search card, a list card and
+  status chips, with English and Chinese copy. Server status text such as the match
+  status is shown through the workspace dictionary. Checked in both languages on
+  2026-11-03 with the walkthrough data.
+- The same list layout now covers the inventory tabs (balances, movements,
+  warnings, lots, serial numbers, exceptions), receipts, customer invoices,
+  receivables, receivables aging, customer credit notes, payables and supplier
+  credit memos. Supplier credit memos have their own notice: they do not record a
+  refund from the supplier. Finance status chips use the shared tones, so overdue
+  and disputed read red.
+- Order fulfillment lines and sales order evidence use the same layout, with English
+  and Chinese copy for their cards, filters, columns and empty states; the column
+  "关联 GRN / Invoice" became "Status and documents" / "履约状态与单据". The inventory
+  operations landing and the evidence data limitation for warehouse-scoped readers have
+  plain wording in both languages. Checked in both languages on 2026-11-04.
+- Detail pages and forms: the receipt detail (labels, cards, lines, related records,
+  timeline, review dialog), the purchase order detail (receipt, invoice and match
+  tables, overview, progress), the RFQ detail (revisions, data boundaries without
+  internal terms), the three-way match detail, the item and supplier detail, the
+  sales order form and detail, and the transfer, count and adjustment forms have
+  English and Chinese copy, with dates and quantities in the workspace format.
+  Receipt timeline events the page does not recognise still show the server's English
+  text, and the review dialog's before → after quantities stay as recorded. Checked in
+  both languages on 2026-11-04.
+- The three-way match by line (PO detail and match detail), the draft purchase request
+  actions (Edit, Submit for approval), the purchase order chooser on a new receipt
+  opened without an order, and the sales order facts (total, lines, promised date) and
+  folded empty sections have English and Chinese copy. Checked in both languages on
+  2026-11-04.
+- Dates on a Chinese page keep the workspace locale (en-US gives "Nov 2, 2026"):
+  the interface language does not change date or number formats.
+- Shared form labels (`Field`), metric cards (`KpiCard`, `ActionableMetricCard`),
+  section headers and dialogs translate with the interface language from the i18n
+  context. They used to read `<html lang>`, which changes one render later, so a
+  Chinese page could keep English labels until something else re-rendered.
 - The draft review shows supplier message drafts (recipient, subject, message, open
   lines, "Open in email") with English and Chinese labels. The message text is the
   assistant's, in the answer language.

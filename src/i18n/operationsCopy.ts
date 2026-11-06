@@ -35,7 +35,7 @@ export const operationsEnglish: Record<string, string> = {
   '刷新主数据': 'Refresh master data', '保存并提交': 'Save and submit', '申请人': 'Requester',
   '由服务端当前用户确定': 'Current signed-in user', '部门': 'Department', '默认需求日期': 'Default required date',
   '删除采购行': 'Delete purchase line', '确认删除该采购行？': 'Delete this purchase line?',
-  '采购类型': 'Purchase type', '目录物料': 'Catalog item', 'Other / 非目录': 'Other / non-catalog',
+  '采购类型': 'Purchase type', '目录物料': 'Catalog item', '其他（非目录物料）': 'Other / non-catalog', 'SKU / 其他': 'SKU / Other',
   '计价方式': 'Pricing method', '数量型': 'Quantity based', '金额 / 服务型': 'Amount / service based',
   '搜索或选择 SKU': 'Search or select SKU', '非目录': 'Non-catalog', '选择供应商': 'Select supplier',
   '维护 SKU 供应商': 'Manage SKU suppliers', '物料名称 / 描述': 'Item name / description',

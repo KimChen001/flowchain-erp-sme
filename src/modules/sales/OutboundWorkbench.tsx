@@ -4,16 +4,21 @@ import {
   AlertTriangle,
   CheckCircle2,
   Loader2,
+  PackageOpen,
+  PauseCircle,
+  Plus,
   RefreshCw,
   ShieldCheck,
+  ShoppingCart,
   Sparkles,
+  Truck,
 } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { outboundEnglish } from "./outboundCopy";
 import { outboundPreviewSentences, type OutboundPreviewLookup } from "./outboundPreviewText";
-import { formatQuantity } from "../../lib/format";
+import { formatCalendarDay, formatLocaleAmount, formatQuantity } from "../../lib/format";
 import { movementTypeLabel } from "../../i18n/statusLabels";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
@@ -22,6 +27,8 @@ import { BusinessEntityLink } from "../../components/business/BusinessEntityLink
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { CreateInvoiceAction } from "../../components/business/BillingEntryActions";
 import {
+  tableBodyTextClass,
+  tableLinkClass,
   tableMinSmClass,
   tableScrollClass,
   tdActionClass,
@@ -29,8 +36,13 @@ import {
   tdNameClass,
   tdNowrapClass,
   tdNumericClass,
+  tdNumericRightClass,
   thClass,
+  thRightClass,
 } from "../../components/ui/workbenchTable";
+import { A, Field, inputStyle } from "../../components/ui";
+import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
+import { ListCard, ListSearchCard, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 
 // The interface language for this render. OutboundWorkbench, the root of every
 // page here, sets it from the i18n context before its children render. The
@@ -288,6 +300,36 @@ const shortId = (id?: string | null) => {
   return value.length > 12 ? `${value.slice(0, 8)}…` : value || "—";
 };
 const hasQuantity = (value?: string | null) => Number(value) > 0;
+// A stored four-decimal value ("12.5000") as an exact count of ten-thousandths;
+// null when there is no value.
+const decimalUnits = (value?: string | null) => {
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(String(value ?? "").trim());
+  if (!match) return null;
+  const units = BigInt(match[2]) * 10000n + BigInt(`${match[3] || ""}0000`.slice(0, 4));
+  return match[1] ? -units : units;
+};
+const unitsText = (units: bigint) => {
+  const absolute = units < 0n ? -units : units;
+  return `${units < 0n ? "-" : ""}${absolute / 10000n}.${String(absolute % 10000n).padStart(4, "0")}`;
+};
+// The order total from its lines: ordered quantity times unit price, summed
+// exactly and rounded to cents only for display. A line without a unit price
+// is counted as unpriced, never as zero.
+function orderTotal(lines: Line[]) {
+  let total = 0n,
+    priced = 0;
+  for (const line of lines) {
+    const price = decimalUnits(line.unitPrice),
+      quantity = decimalUnits(line.orderedQuantity);
+    if (price === null || quantity === null) continue;
+    total += price * quantity;
+    priced += 1;
+  }
+  // price × quantity is in 1e-8 units; 1e6 of them make a cent.
+  const absolute = total < 0n ? -total : total,
+    cents = (absolute + 500000n) / 1000000n;
+  return { amount: (total < 0n ? -1 : 1) * (Number(cents) / 100), priced, unpriced: lines.length - priced };
+}
 // A warehouse by its name and its location, e.g. "Main Warehouse / A-01".
 function usePlace() {
   const warehouseName = useWarehouseNames();
@@ -300,6 +342,26 @@ function usePlace() {
 const reconciliationRuleLabels: Record<string, string> = {
   "available = onHand - reserved": "可用量 = 在库量 - 预留量",
   "reserved + fulfilled <= ordered": "预留量 + 已履约量不超过订购量",
+  "reservation quantities reconcile": "预留的消耗、释放与分配不超过预留量",
+  "posted quantity = posting movements - reversals": "发货过账数量与库存流水一致",
+};
+// What a check compared, in plain words. The server's two quantities are
+// shown as they are; only the wording around them depends on the rule.
+const reconciliationFacts = (check: { rule: string; calculated: string; recorded: string }) => {
+  const c = formatQuantity(check.calculated),
+    r = formatQuantity(check.recorded);
+  switch (check.rule) {
+    case "available = onHand - reserved":
+      return say(`On hand minus reserved: ${c} · Recorded as available: ${r}`, `在库减预留：${c} · 记录的可用量：${r}`);
+    case "reserved + fulfilled <= ordered":
+      return say(`Reserved and shipped: ${c} of ${r} ordered`, `已预留和已发货：${c}，订购 ${r}`);
+    case "reservation quantities reconcile":
+      return say(`Used, released and allocated: ${c} of ${r} reserved`, `已消耗、已释放和已分配：${c}，预留 ${r}`);
+    case "posted quantity = posting movements - reversals":
+      return say(`Shipped by stock movements: ${c} · Posted on the shipment: ${r}`, `库存流水出库：${c} · 发货单过账：${r}`);
+    default:
+      return say(`Worked out: ${c} · Recorded: ${r}`, `计算结果：${c} · 记录：${r}`);
+  }
 };
 const reconciliationRuleLabel = (value: string) =>
   reconciliationRuleLabels[value] ? copy(reconciliationRuleLabels[value]) : value;
@@ -368,10 +430,35 @@ const Section = ({
     {children}
   </section>
 );
+// One of the order's key facts in the header: a label, its value and an
+// optional note under it.
+const HeaderFact = ({
+  label,
+  children,
+  note,
+  tone = "default",
+  testId,
+}: {
+  label: string;
+  children: React.ReactNode;
+  note?: React.ReactNode;
+  tone?: "default" | "warning" | "muted";
+  testId?: string;
+}) => (
+  <div className="min-w-0" data-testid={testId}>
+    <dt className="text-xs text-slate-500">{label}</dt>
+    <dd
+      className={`mt-0.5 break-words text-sm tabular-nums ${
+        tone === "warning" ? "font-semibold text-amber-700" : tone === "muted" ? "text-slate-400" : "font-semibold text-slate-800"
+      }`}
+    >
+      {children}
+    </dd>
+    {note ? <dd className="mt-0.5 text-xs text-slate-500">{note}</dd> : null}
+  </div>
+);
 const Badge = ({ value }: { value: string }) => (
-  <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-    {status(value)}
-  </span>
+  <StatusChip label={status(value)} tone={statusToneOf(value)} />
 );
 const Button = ({
   children,
@@ -380,6 +467,7 @@ const Button = ({
   testId,
   ariaLabel,
   tone = "primary",
+  dense = false,
 }: {
   children: React.ReactNode;
   disabled?: boolean;
@@ -387,13 +475,17 @@ const Button = ({
   testId?: string;
   ariaLabel?: string;
   tone?: "primary" | "secondary" | "danger";
+  dense?: boolean;
 }) => (
   <button
+    type="button"
     data-testid={testId}
     aria-label={ariaLabel}
     disabled={disabled}
     onClick={onClick}
-    className={`${tone === "primary" ? "bg-blue-600 text-white" : tone === "danger" ? "bg-red-600 text-white" : "bg-slate-100 text-slate-800"} rounded-lg px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50`}
+    className={dense && tone !== "danger"
+      ? `${tone === "primary" ? listButtonClass.primary : listButtonClass.secondary} disabled:cursor-not-allowed disabled:opacity-50`
+      : `${tone === "primary" ? "bg-blue-600 text-white" : tone === "danger" ? "bg-red-600 text-white" : "bg-slate-100 text-slate-800"} rounded-lg px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50`}
   >
     {children}
   </button>
@@ -440,7 +532,8 @@ function OrderList() {
       dataSource: string;
       capabilities: { salesOrderLifecycle: LifecycleCapability };
     } | null>(null),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [counts, setCounts] = useState<Record<string, number | null>>({});
   const value = (name: string, fallback = "") => params.get(name) || fallback;
   const page = Math.max(1, Number(value("page", "1")) || 1),
     pageSize = 20;
@@ -483,128 +576,138 @@ function OrderList() {
   useEffect(() => {
     void load();
   }, [load]);
+  // The cards count every order on the server; the list shows one page.
+  useEffect(() => {
+    const read = (key: string, filter: string) =>
+      apiJson<{ total: number }>(`/api/sales/orders?pageSize=1&${filter}`)
+        .then((result) => [key, result.total] as const)
+        .catch(() => [key, null] as const);
+    void Promise.all(Object.entries(ORDER_CARDS).map(([key, card]) => read(key, card.filter)))
+      .then((entries) => setCounts(Object.fromEntries(entries)));
+  }, []);
   const totalPages = Math.max(1, Math.ceil((data?.total || 0) / pageSize));
-  const select = "rounded-lg border px-3 py-2 text-sm";
+  const filtered = ["search", "workflowStatus", "reservationStatus", "fulfillmentStatus", "currency"].some((name) => params.get(name));
   return (
-    <div className="space-y-4" data-testid="outbound-order-list">
+    <div className="space-y-5" data-testid="outbound-order-list">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Object.entries(ORDER_CARDS).map(([key, card]) => (
+          <ActionableMetricCard
+            key={key}
+            label={say(...card.label)}
+            value={counts[key] === undefined || counts[key] === null ? "—" : String(counts[key])}
+            description={say(...card.note)}
+            to={`/app/sales/orders${card.filter ? `?${card.filter}` : ""}`}
+            icon={card.icon}
+            color={card.color}
+          />
+        ))}
+      </div>
       {data && !data.capabilities.salesOrderLifecycle.enabled && (
-        <div role="status" className="rounded-lg bg-slate-100 p-3 text-slate-700">
+        <div role="status" className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
           {copy("销售订单当前为只读；订单、库存预留和履约事实来自 PostgreSQL。")}
         </div>
       )}
       {error && (
-        <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
+        <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
           {copy(error)}
         </div>
       )}
-      <Section title={copy("销售订单查询")}>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-slate-500">
-            {copy("查询订单、客户、库存预留、履约状态和承诺日期。")}
-          </p>
+      <ListSearchCard
+        title={copy("销售订单查询")}
+        subtitle={copy("查询订单、客户、库存预留、履约状态和承诺日期。")}
+        actions={<>
+          <ResetButton onClick={() => setParams({})} />
+          <RefreshButton onClick={() => void load()} />
           {data?.capabilities.salesOrderLifecycle.enabled && (
-            <Link
-              to="/app/sales/orders/new"
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white"
-            >
+            <Link to="/app/sales/orders/new" className={listButtonClass.primary}>
+              <Plus size={13} />
               {copy("新建销售订单")}
             </Link>
           )}
-        </div>
-        <div className="mb-3 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
-          <label className="text-xs">
-            {copy("搜索")}
-            <input
-              aria-label={copy("搜索销售订单")}
-              value={value("search")}
-              onChange={(e) => update({ search: e.target.value, page: 1 })}
-              className={`${select} mt-1 w-full`}
-              placeholder={copy("订单号或客户")}
-            />
-          </label>
-          <Filter
-            label={copy("流程状态")}
-            value={value("workflowStatus")}
-            onChange={(v) => update({ workflowStatus: v, page: 1 })}
-            values={["draft", "confirmed", "on_hold"]}
+        </>}
+      >
+        <Field label={copy("搜索")}>
+          <input
+            aria-label={copy("搜索销售订单")}
+            value={value("search")}
+            onChange={(e) => update({ search: e.target.value, page: 1 })}
+            style={inputStyle}
+            placeholder={copy("订单号或客户")}
           />
-          <Filter
-            label={copy("预留状态")}
-            value={value("reservationStatus")}
-            onChange={(v) => update({ reservationStatus: v, page: 1 })}
-            values={["not_reserved", "partially_reserved", "fully_reserved"]}
-          />
-          <Filter
-            label={copy("履约状态")}
-            value={value("fulfillmentStatus")}
-            onChange={(v) => update({ fulfillmentStatus: v, page: 1 })}
-            values={["not_fulfilled", "partially_fulfilled", "fully_fulfilled"]}
-          />
-          <label className="text-xs">
-            {copy("币种")}
-            <select
-              aria-label={copy("币种筛选")}
-              className={`${select} mt-1 w-full`}
-              value={value("currency")}
-              onChange={(e) => update({ currency: e.target.value, page: 1 })}
-            >
-              <option value="">{copy("全部")}</option>
-              {orderedCurrencyCodes(workspace.currency, ["USD", "EUR", "CNY"]).map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs">
-            {copy("排序")}
-            <select
-              aria-label={copy("订单排序")}
-              className={`${select} mt-1 w-full`}
-              value={`${value("sort", "updatedAt")}:${value("direction", "desc")}`}
-              onChange={(e) => {
-                const [sort, direction] = e.target.value.split(":");
-                update({ sort, direction, page: 1 });
-              }}
-            >
-              <option value="updatedAt:desc">{copy("更新时间（新到旧）")}</option>
-              <option value="updatedAt:asc">{copy("更新时间（旧到新）")}</option>
-              <option value="promisedDate:asc">{copy("承诺日期（升序）")}</option>
-              <option value="promisedDate:desc">{copy("承诺日期（降序）")}</option>
-              <option value="orderNumber:asc">{copy("订单号（升序）")}</option>
-              <option value="orderNumber:desc">{copy("订单号（降序）")}</option>
-            </select>
-          </label>
-        </div>
+        </Field>
+        <Filter
+          label={copy("流程状态")}
+          value={value("workflowStatus")}
+          onChange={(v) => update({ workflowStatus: v, page: 1 })}
+          values={["draft", "confirmed", "on_hold"]}
+        />
+        <Filter
+          label={copy("预留状态")}
+          value={value("reservationStatus")}
+          onChange={(v) => update({ reservationStatus: v, page: 1 })}
+          values={["not_reserved", "partially_reserved", "fully_reserved"]}
+        />
+        <Filter
+          label={copy("履约状态")}
+          value={value("fulfillmentStatus")}
+          onChange={(v) => update({ fulfillmentStatus: v, page: 1 })}
+          values={["not_fulfilled", "partially_fulfilled", "fully_fulfilled"]}
+        />
+        <Field label={copy("币种")}>
+          <select
+            aria-label={copy("币种筛选")}
+            style={inputStyle}
+            value={value("currency")}
+            onChange={(e) => update({ currency: e.target.value, page: 1 })}
+          >
+            <option value="">{copy("全部")}</option>
+            {orderedCurrencyCodes(workspace.currency, ["USD", "EUR", "CNY"]).map((x) => (
+              <option key={x}>{x}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label={copy("排序")}>
+          <select
+            aria-label={copy("订单排序")}
+            style={inputStyle}
+            value={`${value("sort", "updatedAt")}:${value("direction", "desc")}`}
+            onChange={(e) => {
+              const [sort, direction] = e.target.value.split(":");
+              update({ sort, direction, page: 1 });
+            }}
+          >
+            <option value="updatedAt:desc">{copy("更新时间（新到旧）")}</option>
+            <option value="updatedAt:asc">{copy("更新时间（旧到新）")}</option>
+            <option value="promisedDate:asc">{copy("承诺日期（升序）")}</option>
+            <option value="promisedDate:desc">{copy("承诺日期（降序）")}</option>
+            <option value="orderNumber:asc">{copy("订单号（升序）")}</option>
+            <option value="orderNumber:desc">{copy("订单号（降序）")}</option>
+          </select>
+        </Field>
+      </ListSearchCard>
+      <ListCard title={say("Sales order list", "销售订单列表")} total={data?.total} shown={data?.orders.length}>
         <div className={tableScrollClass}>
-          <table className={tableMinSmClass}>
+          <table className={`w-full min-w-[1040px] text-left ${tableBodyTextClass}`}>
             <thead>
-              <tr className="border-b">
-                {[
-                  copy("订单号"),
-                  copy("客户"),
-                  copy("流程"),
-                  copy("预留状态"),
-                  copy("履约状态"),
-                  copy("币种"),
-                  copy("行数"),
-                  copy("订购 / 预留 / 履约"),
-                  copy("更新时间"),
-                  copy("操作"),
-                ].map((x) => (
-                  <th className={thClass} key={x}>
-                    {x}
-                  </th>
+              <tr style={listHeadRowStyle}>
+                <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>{copy("订单号")}</th>
+                {[copy("客户"), copy("流程"), copy("预留状态"), copy("履约状态")].map((x) => (
+                  <th className={thClass} style={{ color: A.gray1 }} key={x}>{x}</th>
                 ))}
+                <th className={thRightClass} style={{ color: A.gray1 }}>{copy("订购 / 预留 / 履约")}</th>
+                <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{copy("操作")}</th>
               </tr>
             </thead>
             <tbody>
-              {data?.orders.map((row) => (
-                <tr key={row.id} className="border-b">
-                  <td className={tdIdClass}>
-                    <BusinessEntityLink entityType="sales_order" entityId={row.id}>
+              {data?.orders.map((row, index) => (
+                <tr key={row.id} className={listRowClass} style={listRowStyle(index, data.orders.length)}>
+                  <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                    <BusinessEntityLink entityType="sales_order" entityId={row.id} className={tableLinkClass}>
                       {row.orderNumber}
                     </BusinessEntityLink>
+                    <div className="text-[11px] font-normal" style={{ color: A.sub }}>{copy("更新时间")} {stamp(row.updatedAt)}</div>
                   </td>
-                  <td className={tdNameClass}>{row.customerName}</td>
+                  <td className={`${tdNameClass} max-w-[220px] truncate`} title={row.customerName}>{row.customerName}</td>
                   <td className={tdNowrapClass}>
                     <Badge value={row.workflowStatus} />
                   </td>
@@ -614,16 +717,16 @@ function OrderList() {
                   <td className={tdNowrapClass}>
                     <Badge value={row.fulfillmentStatus} />
                   </td>
-                  <td className={tdNowrapClass}>{row.currency}</td>
-                  <td className={tdNumericClass}>{row.totalLines}</td>
-                  <td className={tdNumericClass}>
-                    {formatQuantity(row.orderedQuantity)} / {formatQuantity(row.reservedQuantity)} /{" "}
-                    {formatQuantity(row.fulfilledQuantity)}
+                  <td className={tdNumericRightClass}>
+                    <span className="font-semibold" style={{ color: A.label }}>{formatQuantity(row.orderedQuantity)}</span>
+                    <span style={{ color: A.sub }}> / {formatQuantity(row.reservedQuantity)} / {formatQuantity(row.fulfilledQuantity)}</span>
+                    <div className="text-[11px]" style={{ color: A.sub }}>
+                      {say(`${row.totalLines} ${row.totalLines === 1 ? "line" : "lines"} · ${row.currency}`, `${row.totalLines} 行 · ${row.currency}`)}
+                    </div>
                   </td>
-                  <td className={tdNowrapClass}>{stamp(row.updatedAt)}</td>
-                  <td className={tdActionClass}>
+                  <td className={`${tdActionClass} sticky right-0 z-10 !min-w-0 bg-white`}>
                     <Link
-                      className="inline-flex rounded-md bg-blue-50 px-3 py-1.5 font-medium text-blue-700 hover:bg-blue-100"
+                      className={rowActionClass.primary}
                       to={`/app/sales/orders/${encodeURIComponent(row.id)}`}
                     >
                       {copy("查看")}
@@ -633,43 +736,48 @@ function OrderList() {
               ))}
             </tbody>
           </table>
+          {/* Outside the table body: an empty or failed read leaves no rows. */}
           {data && data.orders.length === 0 && (
-            <div className="p-8 text-center text-sm text-slate-500">
+            <div className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>
               {copy("暂无符合当前筛选条件的正式销售订单。")}
-              <button
-                className="ml-2 text-blue-700 underline"
-                onClick={() => setParams({})}
-              >
-                {copy("清除筛选")}
-              </button>
+              {filtered && (
+                <button
+                  className="ml-2 font-semibold text-blue-600"
+                  onClick={() => setParams({})}
+                >
+                  {copy("清除筛选")}
+                </button>
+              )}
             </div>
           )}
         </div>
-        <div className="mt-3 flex items-center justify-between text-sm">
-          <span>
-            {englishUi() ? `Page ${data?.page || page} of ${totalPages} · ${data?.total || 0} results` : `第 ${data?.page || page} / ${totalPages} 页 · 共 ${data?.total || 0} 条`}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              tone="secondary"
-              disabled={page <= 1}
-              onClick={() => update({ page: page - 1 })}
-            >
-              {copy("上一页")}
-            </Button>
-            <Button
-              tone="secondary"
-              disabled={page >= totalPages}
-              onClick={() => update({ page: page + 1 })}
-            >
-              {copy("下一页")}
-            </Button>
+        {data && data.total > 0 && (
+          <div className="flex items-center justify-between px-5 py-3 text-xs" style={{ borderTop: "0.5px solid rgba(0,0,0,0.06)", color: A.sub }}>
+            <span>
+              {englishUi() ? `Page ${data?.page || page} of ${totalPages} · ${data?.total || 0} results` : `第 ${data?.page || page} / ${totalPages} 页 · 共 ${data?.total || 0} 条`}
+            </span>
+            <div className="flex gap-2">
+              <button type="button" className={listButtonClass.secondary} disabled={page <= 1} onClick={() => update({ page: page - 1 })}>
+                {copy("上一页")}
+              </button>
+              <button type="button" className={listButtonClass.secondary} disabled={page >= totalPages} onClick={() => update({ page: page + 1 })}>
+                {copy("下一页")}
+              </button>
+            </div>
           </div>
-        </div>
-      </Section>
+        )}
+      </ListCard>
     </div>
   );
 }
+
+// The four counts above the list, each a filter of the list.
+const ORDER_CARDS: Record<string, { label: [string, string]; note: [string, string]; filter: string; icon: React.ElementType; color: string }> = {
+  all: { label: ["Sales orders", "销售订单"], note: ["Every order in this workspace", "当前工作区的全部订单"], filter: "", icon: ShoppingCart, color: A.blue },
+  toFulfill: { label: ["To fulfill", "待履约"], note: ["Confirmed, nothing shipped yet", "已确认，尚未发货"], filter: "workflowStatus=confirmed&fulfillmentStatus=not_fulfilled", icon: PackageOpen, color: A.orange },
+  partial: { label: ["Partly fulfilled", "部分履约"], note: ["Some lines shipped, some open", "部分已发货，部分未发"], filter: "fulfillmentStatus=partially_fulfilled", icon: Truck, color: A.purple },
+  onHold: { label: ["On hold", "暂停"], note: ["Paused until released", "暂停中，待恢复"], filter: "workflowStatus=on_hold", icon: PauseCircle, color: A.red },
+};
 
 function Filter({
   label,
@@ -683,11 +791,10 @@ function Filter({
   values: string[];
 }) {
   return (
-    <label className="text-xs">
-      {label}
+    <Field label={label}>
       <select
         aria-label={label}
-        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+        style={inputStyle}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
@@ -698,7 +805,7 @@ function Filter({
           </option>
         ))}
       </select>
-    </label>
+    </Field>
   );
 }
 
@@ -952,8 +1059,7 @@ function OrderEntry() {
     );
   if (!capability.enabled)
     return (
-      <div className="mx-auto max-w-3xl space-y-4" data-testid="sales-order-entry-readonly">
-        <h1 className="text-xl font-semibold">{copy("新建销售订单")}</h1>
+      <div className="max-w-4xl space-y-4" data-testid="sales-order-entry-readonly">
         <div role="status" className="rounded-lg bg-slate-100 p-4 text-slate-700">
           {copy("当前销售订单写入能力未启用，页面保持只读。")}
         </div>
@@ -963,13 +1069,13 @@ function OrderEntry() {
       </div>
     );
   return (
-    <div className="mx-auto max-w-3xl space-y-4" data-testid="sales-order-entry">
-      <div>
-        <h1 className="text-xl font-semibold">{copy("新建销售订单草稿")}</h1>
-        <p className="text-sm text-slate-500">
-          {copy("SKU、物料名称与单位由 PostgreSQL Item 主数据快照。")}
-        </p>
-      </div>
+    <div className="max-w-4xl space-y-4" data-testid="sales-order-entry">
+      <p className="text-sm text-slate-500">
+        {say(
+          "Saved as a draft. The SKU, item name and unit are taken from Items when you save.",
+          "保存为草稿。保存时会从物料资料带入 SKU、物料名称和单位。",
+        )}
+      </p>
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
           {copy(error)}
@@ -1021,7 +1127,7 @@ function OrderEntry() {
       </Section>
       <Section title={say("Lines", "订单行")}>
         <OrderLinesField items={entry.items} lines={lines} currency={currency} onChange={setLines} />
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           <Button
             testId="create-sales-order"
             disabled={saving || !customerId || !currency.trim() || !linesReady(lines)}
@@ -1042,6 +1148,7 @@ function OrderDetail({ id }: { id: string }) {
   const warehouseName = useWarehouseNames();
   const place = usePlace();
   const stamp = useStamp();
+  const { locale } = useI18n();
   const [data, setData] = useState<Workbench | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
@@ -1418,6 +1525,136 @@ function OrderDetail({ id }: { id: string }) {
       .replace("{c}", formatQuantity(x.consumedQuantity))
       .replace("{l}", formatQuantity(x.releasedQuantity))
       .replace("{v}", formatQuantity(x.allocatableQuantity))}`;
+  // One primary action in the header: the next step for the order.
+  const primaryAction = a.canConfirm
+    ? "confirm"
+    : a.canResume
+      ? "resume"
+      : a.canCreateShipment
+        ? "shipment"
+        : a.canReserve
+          ? "reserve"
+          : "";
+  const toneFor = (action: string) => (action === primaryAction ? "primary" : "secondary");
+  // The order total and quantities for the header, from the lines as read.
+  const total = orderTotal(data.lines),
+    money = (value: number) =>
+      formatLocaleAmount(value, data.order.currency, locale, { maximumFractionDigits: 2 }),
+    lineUnits = [...new Set(data.lines.map((line) => line.unit).filter(Boolean))],
+    orderedUnits = data.lines.reduce((sum, line) => sum + (decimalUnits(line.orderedQuantity) ?? 0n), 0n),
+    orderedText = formatQuantity(unitsText(orderedUnits));
+  // Reservations, shipments, movements and evidence: a section with records is
+  // shown in full; the empty ones share one short line where the first of them
+  // would be, with the order's next step when the page knows it.
+  const recordSections = [
+    { id: "reservations", empty: !data.reservations.length, name: say("reservations", "预留记录") },
+    { id: "shipments", empty: !data.shipments.length, name: say("shipments", "发货单") },
+    { id: "movements", empty: !data.movements.length, name: say("inventory movements", "库存流水") },
+    { id: "evidence", empty: !data.evidence.length, name: say("evidence events", "证据事件") },
+  ];
+  const emptySections = recordSections.filter((section) => section.empty),
+    emptyNames = emptySections.map((section) => section.name),
+    emptyList =
+      emptyNames.length < 2
+        ? emptyNames.join("")
+        : say(
+            `${emptyNames.slice(0, -1).join(", ")} or ${emptyNames[emptyNames.length - 1]}`,
+            `${emptyNames.slice(0, -1).join("、")}和${emptyNames[emptyNames.length - 1]}`,
+          );
+  const emptyNextStep = (() => {
+    const workflow = data.order.workflowStatus;
+    if (!emptySections.length) return "";
+    if (workflow === "cancelled") return say("The order was cancelled.", "订单已取消。");
+    if (a.canConfirm) return say(`Next: ${copy("确认订单")}.`, `下一步：${copy("确认订单")}。`);
+    if (workflow === "draft") return say("Stock can be reserved once the order is confirmed.", "订单确认后才能预留库存。");
+    if (workflow === "on_hold")
+      return say("The order is on hold. Resume it before reserving or shipping.", "订单已暂停，恢复后才能预留或发货。");
+    if (!data.reservations.length) {
+      if (a.canReserve) return say(`Next: ${copy("预留库存")}.`, `下一步：${copy("预留库存")}。`);
+      if (((a.blockingReasonCodes as string[]) || []).includes("WAREHOUSE_SCOPE_DENIED"))
+        return copy(codeMessages.WAREHOUSE_SCOPE_DENIED);
+      if (data.availability.every((row) => !hasQuantity(row.totalAvailable)))
+        return say("No stock is available to reserve.", "暂无可预留的库存。");
+      return "";
+    }
+    if (!data.shipments.length && a.canCreateShipment)
+      return say(`Next: ${copy("创建发货草稿")}.`, `下一步：${copy("创建发货草稿")}。`);
+    if (
+      !data.movements.length &&
+      data.shipments.some((x) => x.workflowStatus !== "cancelled" && x.postingStatus === "unposted")
+    )
+      return say("Stock moves when a shipment is posted.", "发货单过账后才会产生库存流水。");
+    return "";
+  })();
+  const sectionBody: Record<string, () => React.ReactNode> = {
+    reservations: () => (
+      <Section id="reservations" title={copy("预留记录")} key="reservations">
+        <Table
+          rows={data.reservations.map((x) => [
+            shortId(x.id),
+            warehouseName(x.warehouseId),
+            x.location || copy("默认库位"),
+            formatQuantity(x.reservedQuantity),
+            formatQuantity(x.allocatedQuantity),
+            formatQuantity(x.consumedQuantity),
+            formatQuantity(x.releasedQuantity),
+            formatQuantity(x.allocatableQuantity),
+            status(x.status),
+          ])}
+          numeric={[3, 4, 5, 6, 7]}
+          headers={[
+            copy("预留 ID"),
+            copy("仓库"),
+            copy("库位"),
+            copy("预留量"),
+            copy("已分配"),
+            copy("已消耗"),
+            copy("已释放"),
+            copy("可释放"),
+            copy("状态"),
+          ]}
+        />
+      </Section>
+    ),
+    shipments: () => (
+      <Section id="shipments" title={copy("发货单")} key="shipments">
+        <div className="space-y-2">
+          {data.shipments.map((x) => (
+            <Link
+              data-testid={`shipment-${x.id}`}
+              className="flex justify-between rounded-lg border p-3 text-sm text-blue-700"
+              to={`/app/sales/shipments/${encodeURIComponent(x.id)}`}
+              key={x.id}
+            >
+              <span>{x.shipmentNumber}</span>
+              <span>{status(shipmentStatus(x))}</span>
+            </Link>
+          ))}
+        </div>
+      </Section>
+    ),
+    movements: () => (
+      <Section id="movements" title={copy("库存流水")} key="movements">
+        <Table
+          rows={data.movements.map((x) => [
+            shortId(x.id),
+            x.sku,
+            warehouseName(x.warehouseId),
+            formatQuantity(x.quantityIn),
+            formatQuantity(x.quantityOut),
+            movementTypeLabel(x.movementType, activeLanguage),
+          ])}
+          numeric={[3, 4]}
+          headers={[copy("流水 ID"), "SKU", copy("仓库"), copy("入"), copy("出"), copy("类型")]}
+        />
+      </Section>
+    ),
+    evidence: () => (
+      <Section id="evidence" title={copy("订单证据与时间线")} key="evidence">
+        <Timeline rows={data.evidence} resolve={timelinePart} />
+      </Section>
+    ),
+  };
   return (
     <div className="space-y-4" data-testid="outbound-order-workbench">
       {error && (
@@ -1444,22 +1681,19 @@ function OrderDetail({ id }: { id: string }) {
         </div>
       )}
       <section className="rounded-xl border bg-white p-5">
-        <div className="flex flex-wrap justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold">{data.order.orderNumber}</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              {/* The order version is an internal edit counter, so it is not shown. */}
-              {data.order.customerName} · {data.order.currency} · {stamp(data.order.updatedAt)}
-            </p>
-            <div className="mt-2 flex gap-2">
+            <div className="mt-2 flex flex-wrap gap-2">
               <Badge value={data.order.workflowStatus} />
               <Badge value={data.order.reservationStatus} />
               <Badge value={data.order.fulfillmentStatus} />
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {a.canEditDraft && (
               <Button
+                dense
                 tone="secondary"
                 testId="open-edit"
                 disabled={saving}
@@ -1470,6 +1704,8 @@ function OrderDetail({ id }: { id: string }) {
             )}
             {a.canConfirm && (
               <Button
+                dense
+                tone={toneFor("confirm")}
                 disabled={saving}
                 testId="confirm-sales-order"
                 onClick={() => void lifecycle("confirm")}
@@ -1479,6 +1715,7 @@ function OrderDetail({ id }: { id: string }) {
             )}
             {a.canHold && (
               <Button
+                dense
                 tone="secondary"
                 disabled={saving}
                 onClick={() => void lifecycle("hold")}
@@ -1488,6 +1725,8 @@ function OrderDetail({ id }: { id: string }) {
             )}
             {a.canResume && (
               <Button
+                dense
+                tone={toneFor("resume")}
                 disabled={saving}
                 onClick={() => void lifecycle("resume")}
               >
@@ -1495,22 +1734,24 @@ function OrderDetail({ id }: { id: string }) {
               </Button>
             )}
             {a.canCancel && (
-              <Button tone="secondary" testId="open-cancel-order" onClick={() => { start("cancel"); setCancelReason(""); setCancelPreview(null); }}>
+              <Button dense tone="secondary" testId="open-cancel-order" onClick={() => { start("cancel"); setCancelReason(""); setCancelPreview(null); }}>
                 {say("Cancel order", "取消订单")}
               </Button>
             )}
             {a.canReserve && (
-              <Button testId="open-reserve" onClick={() => start("reserve")}>
+              <Button dense tone={toneFor("reserve")} testId="open-reserve" onClick={() => start("reserve")}>
                 {copy("预留库存")}
               </Button>
             )}
             {a.canRelease && (
-              <Button tone="secondary" onClick={() => start("release")}>
+              <Button dense tone="secondary" onClick={() => start("release")}>
                 {copy("释放预留")}
               </Button>
             )}
             {a.canCreateShipment && (
               <Button
+                dense
+                tone={toneFor("shipment")}
                 testId="open-shipment-draft"
                 onClick={() => start("shipment")}
               >
@@ -1521,11 +1762,57 @@ function OrderDetail({ id }: { id: string }) {
             {data.shipments.some((shipment) => shipment.postingStatus === "posted") && (
               <CreateInvoiceAction salesOrderId={id} />
             )}
-            <Button tone="secondary" onClick={() => void refresh()} ariaLabel={copy("刷新销售订单")}>
-              <RefreshCw size={15} />
+            <Button dense tone="secondary" onClick={() => void refresh()} ariaLabel={copy("刷新销售订单")}>
+              <RefreshCw size={13} />
             </Button>
           </div>
         </div>
+        {/* The order version is an internal edit counter, so it is not shown. */}
+        <dl
+          data-testid="sales-order-facts"
+          className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 border-t pt-4 md:grid-cols-3 xl:grid-cols-5"
+        >
+          <HeaderFact label={say("Customer", "客户")}>{data.order.customerName || "—"}</HeaderFact>
+          <HeaderFact
+            testId="sales-order-total"
+            label={say(`Order total (${data.order.currency})`, `订单总额（${data.order.currency}）`)}
+            tone={data.lines.length && total.unpriced ? "warning" : "default"}
+            note={
+              !data.lines.length
+                ? ""
+                : !total.priced
+                  ? say("No line has a unit price yet.", "订单行尚无单价。")
+                  : total.unpriced
+                    ? say(
+                        `${total.unpriced} of ${data.lines.length} lines ${total.unpriced === 1 ? "has" : "have"} no unit price · Priced lines ${money(total.amount)}`,
+                        `${data.lines.length} 行中有 ${total.unpriced} 行没有单价 · 已定价行 ${money(total.amount)}`,
+                      )
+                    : say("Ordered quantity × unit price", "订购数量 × 单价")
+            }
+          >
+            {!data.lines.length
+              ? "—"
+              : !total.priced
+                ? say("Not priced", "未定价")
+                : total.unpriced
+                  ? say("Incomplete", "不完整")
+                  : money(total.amount)}
+          </HeaderFact>
+          <HeaderFact
+            label={say("Lines", "订单行")}
+            note={
+              lineUnits.length === 1
+                ? say(`${orderedText} ${lineUnits[0]} ordered`, `订购 ${orderedText} ${lineUnits[0]}`)
+                : ""
+            }
+          >
+            {say(`${data.lines.length} ${data.lines.length === 1 ? "line" : "lines"}`, `${data.lines.length} 行`)}
+          </HeaderFact>
+          <HeaderFact label={say("Promised date", "承诺交期")} tone={data.order.promisedDate ? "default" : "muted"}>
+            {data.order.promisedDate ? formatCalendarDay(data.order.promisedDate, locale) : say("Not set", "未设置")}
+          </HeaderFact>
+          <HeaderFact label={say("Last updated", "更新时间")}>{stamp(data.order.updatedAt)}</HeaderFact>
+        </dl>
       </section>
       <Section title={copy("关联记录")}>
         <div className="flex flex-wrap gap-2">
@@ -1555,9 +1842,9 @@ function OrderDetail({ id }: { id: string }) {
       </Section>
       <Section title={copy("订单行与库存可用性")}>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
+          <table className={`w-full min-w-[900px] ${tableBodyTextClass}`}>
             <thead>
-              <tr>
+              <tr style={listHeadRowStyle}>
                 {[
                   copy("SKU / 物料"),
                   copy("订购"),
@@ -1568,21 +1855,21 @@ function OrderDetail({ id }: { id: string }) {
                   copy("现有量"),
                   copy("库存预留"),
                   copy("可用量"),
-                ].map((x) => (
-                  <th className="p-2 text-left" key={x}>
+                ].map((x, index) => (
+                  <th className={index === 0 ? thClass : thRightClass} style={{ color: A.sub }} key={x}>
                     {x}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {data.lines.map((line) => {
+              {data.lines.map((line, lineIndex) => {
                 const av = data.availability.find(
                   (x) => x.salesOrderLineId === line.id,
                 );
                 return (
-                  <tr className="border-t" key={line.id}>
-                    <td className="p-2">
+                  <tr className={listRowClass} style={listRowStyle(lineIndex, data.lines.length)} key={line.id}>
+                    <td className="px-4 py-3">
                       <BusinessEntityLink entityType="item" entityId={line.itemId}>
                         {line.sku}
                       </BusinessEntityLink>
@@ -1608,7 +1895,7 @@ function OrderDetail({ id }: { id: string }) {
                       av?.totalReserved,
                       av?.totalAvailable,
                     ].map((v, i) => (
-                      <td className="p-2 tabular-nums" key={i}>
+                      <td className={tdNumericRightClass} key={i}>
                         {v == null ? (i === 3 || i === 4 ? copy("受限") : "—") : formatQuantity(v)}
                       </td>
                     ))}
@@ -1618,86 +1905,58 @@ function OrderDetail({ id }: { id: string }) {
             </tbody>
           </table>
         </div>
-        {data.availability
-          .flatMap((x) => x.balances)
-          .map((b) => (
+        {/* Each stock balance for a line: where it is, its quantities and
+            what this user may do with it. */}
+        {data.availability.flatMap((x) =>
+          x.balances.map((b) => (
             <div
               data-testid="availability-balance"
-              className="mt-2 grid grid-cols-6 gap-2 rounded-lg bg-slate-50 p-2 text-xs"
-              key={b.id}
+              className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-slate-50 px-4 py-2 text-xs md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.6fr)_repeat(3,minmax(0,0.8fr))_minmax(0,2fr)]"
+              key={`${x.salesOrderLineId}-${b.id}`}
             >
-              <span>{warehouseName(b.warehouseId)}</span>
-              <span>{b.location || copy("默认库位")}</span>
-              <span>{copy("现有 {n}").replace("{n}", formatQuantity(b.onHandQuantity))}</span>
-              <span>{copy("预留 {n}").replace("{n}", formatQuantity(b.reservedQuantity))}</span>
-              <span>{copy("可用 {n}").replace("{n}", formatQuantity(b.availableQuantity))}</span>
-              <span>{copy(b.selectable ? "可操作" : "只读")}</span>
+              <span className="font-medium text-slate-700">
+                {data.lines.find((line) => line.id === x.salesOrderLineId)?.sku || "—"}
+              </span>
+              <span>{place(b.warehouseId, b.location)}</span>
+              <span className="tabular-nums">{copy("现有 {n}").replace("{n}", formatQuantity(b.onHandQuantity))}</span>
+              <span className="tabular-nums">{copy("预留 {n}").replace("{n}", formatQuantity(b.reservedQuantity))}</span>
+              <span className="tabular-nums">{copy("可用 {n}").replace("{n}", formatQuantity(b.availableQuantity))}</span>
+              <span className={b.selectable ? "text-slate-700" : "text-slate-500"}>
+                {!b.selectable
+                  ? say("View only: no access to this warehouse", "只读：无此仓库的操作权限")
+                  : ((a.blockingReasonCodes as string[]) || []).includes("PERMISSION_DENIED")
+                    ? say("View only: your role cannot reserve or ship", "只读：当前角色不能预留或发货")
+                    : say("You can reserve and ship from here", "可从此处预留和发货")}
+              </span>
             </div>
-          ))}
+          )),
+        )}
       </Section>
-      <Section id="reservations" title={copy("预留记录")}>
-        <Table
-          rows={data.reservations.map((x) => [
-            shortId(x.id),
-            warehouseName(x.warehouseId),
-            x.location || copy("默认库位"),
-            formatQuantity(x.reservedQuantity),
-            formatQuantity(x.allocatedQuantity),
-            formatQuantity(x.consumedQuantity),
-            formatQuantity(x.releasedQuantity),
-            formatQuantity(x.allocatableQuantity),
-            status(x.status),
-          ])}
-          headers={[
-            copy("预留 ID"),
-            copy("仓库"),
-            copy("库位"),
-            copy("预留量"),
-            copy("已分配"),
-            copy("已消耗"),
-            copy("已释放"),
-            copy("可释放"),
-            copy("状态"),
-          ]}
-        />
-      </Section>
-      <Section id="shipments" title={copy("发货单")}>
-        <div className="space-y-2">
-          {data.shipments.map((x) => (
-            <Link
-              data-testid={`shipment-${x.id}`}
-              className="flex justify-between rounded-lg border p-3 text-sm text-blue-700"
-              to={`/app/sales/shipments/${encodeURIComponent(x.id)}`}
-              key={x.id}
-            >
-              <span>{x.shipmentNumber}</span>
-              <span>{status(shipmentStatus(x))}</span>
-            </Link>
-          ))}
-          {!data.shipments.length && (
-            <p className="text-sm text-slate-500">{copy("暂无发货单。")}</p>
-          )}
-        </div>
-      </Section>
-      <Section id="movements" title={copy("库存流水")}>
-        <Table
-          rows={data.movements.map((x) => [
-            shortId(x.id),
-            x.sku,
-            warehouseName(x.warehouseId),
-            formatQuantity(x.quantityIn),
-            formatQuantity(x.quantityOut),
-            movementTypeLabel(x.movementType, activeLanguage),
-          ])}
-          headers={[copy("流水 ID"), "SKU", copy("仓库"), copy("入"), copy("出"), copy("类型")]}
-        />
-      </Section>
-      <Section id="evidence" title={copy("订单证据与时间线")}>
-        <Timeline rows={data.evidence} resolve={timelinePart} />
-      </Section>
+      {recordSections.map((section) =>
+        !section.empty ? (
+          sectionBody[section.id]()
+        ) : section === emptySections[0] ? (
+          <section
+            key="empty-records"
+            data-testid="sales-order-empty-records"
+            className="rounded-xl border bg-white px-4 py-3 shadow-sm"
+          >
+            {/* The empty sections keep their anchors, so a link to one lands here. */}
+            {emptySections.map((empty) => (
+              <span id={empty.id} className="block scroll-mt-20" key={empty.id} />
+            ))}
+            <p className="text-sm text-slate-500">
+              <span className="font-medium text-slate-700">
+                {say(`No ${emptyList} yet.`, `暂无${emptyList}。`)}
+              </span>
+              {emptyNextStep ? `${englishUi() ? " " : ""}${emptyNextStep}` : ""}
+            </p>
+          </section>
+        ) : null,
+      )}
       <Section id="reconciliation" title={copy("履约一致性检查")}>
         <div className="mb-2 flex items-center gap-2">
-          <CheckCircle2 size={17} />
+          {data.reconciliation.status === "mismatch" ? <AlertTriangle size={17} className="text-red-600" /> : <CheckCircle2 size={17} className="text-teal-600" />}
           <Badge value={data.reconciliation.status} />
         </div>
         {data.reconciliation.reasonCode === "PARTIAL_WAREHOUSE_SCOPE" && (
@@ -1707,13 +1966,12 @@ function OrderDetail({ id }: { id: string }) {
         )}
         {data.reconciliation.checks.map((x) => (
           <div
-            className="border-t py-2 text-xs"
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t py-2 text-xs"
             key={`${x.affectedEntity.type}-${x.affectedEntity.id}`}
           >
-            {reconciliationRuleLabel(x.rule)} · {status(x.status)} ·{" "}
-            {copy("计算 {calculated} / 记录 {recorded}")
-              .replace("{calculated}", formatQuantity(x.calculated))
-              .replace("{recorded}", formatQuantity(x.recorded))}
+            <span className="font-medium text-slate-800">{reconciliationRuleLabel(x.rule)}</span>
+            <Badge value={x.status} />
+            <span className="tabular-nums text-slate-500">{reconciliationFacts(x)}</span>
           </div>
         ))}
       </Section>
@@ -1869,7 +2127,7 @@ function OrderDetail({ id }: { id: string }) {
                         {copy("现有 {n}").replace("{n}", formatQuantity(x.onHandQuantity))} /{" "}
                         {copy("预留 {n}").replace("{n}", formatQuantity(x.reservedQuantity))} /{" "}
                         {copy("可用 {n}").replace("{n}", formatQuantity(x.availableQuantity))}
-                        {x.selectable ? "" : ` · ${copy("只读")}`}
+                        {x.selectable ? "" : ` · ${say("No access to this warehouse", "无此仓库的操作权限")}`}
                       </option>
                     ))}
                   </select>
@@ -2254,17 +2512,19 @@ function ShipmentDetail({ id }: { id: string }) {
 function Table({
   headers,
   rows,
+  numeric = [],
 }: {
   headers: string[];
   rows: Array<Array<string | number>>;
+  numeric?: number[];
 }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-sm">
+    <div className={tableScrollClass}>
+      <table className={`w-full min-w-[760px] ${tableBodyTextClass}`}>
         <thead>
-          <tr className="border-b text-left text-xs text-slate-500">
-            {headers.map((x) => (
-              <th className="p-2" key={x}>
+          <tr style={{ ...listHeadRowStyle, color: A.sub }}>
+            {headers.map((x, j) => (
+              <th className={numeric.includes(j) ? thRightClass : thClass} key={x}>
                 {x}
               </th>
             ))}
@@ -2272,9 +2532,9 @@ function Table({
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr className="border-b" key={i}>
+            <tr className={listRowClass} style={listRowStyle(i, rows.length)} key={i}>
               {row.map((x, j) => (
-                <td className="p-2 tabular-nums" key={j}>
+                <td className={numeric.includes(j) ? tdNumericRightClass : tdNumericClass} key={j}>
                   {x}
                 </td>
               ))}

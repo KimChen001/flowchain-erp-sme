@@ -1739,8 +1739,10 @@ export default function FlowChainApp() {
 
         {/* Content */}
         <div className="flex-1 flex overflow-hidden">
+          {/* Bottom room for the floating AI assistant button, so the last
+              row's actions can scroll clear of it. */}
           <main
-            className="flex-1 overflow-auto p-3 sm:p-6"
+            className="flex-1 overflow-auto p-3 pb-20 sm:p-6 sm:pb-24"
             data-testid="app-main"
           >
             <div

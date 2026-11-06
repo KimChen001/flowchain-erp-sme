@@ -284,11 +284,19 @@ export type RfqAwardDecisionInput = {
   decisionReason: string;
   idempotencyKey: string;
 };
-export type PurchaseRequestSummary = { id: string; status: string; totalAmount: number };
+export type PurchaseRequestSummary = {
+  id: string;
+  status: string;
+  totalAmount: number | null;
+  defaultCurrency?: string;
+  defaultNeedByDate?: string;
+  lines?: Array<{ itemNameSnapshot?: string; sku?: string | null; needByDate?: string; supplierSnapshot?: { supplierName?: string } | null }>;
+};
 export type PurchaseOrderLine = { sourcePurchaseRequestLineId: string; itemNameSnapshot: string; estimatedAmount: number };
-export type PurchaseOrder = { id: string; status: string; transmissionStatus: string; totalAmount: number; supplierId: string; supplierSnapshot?: { supplierName?: string }; targetWarehouseId?: string; sourcePrId?: string; sourcePurchaseRequestId?: string; lines: PurchaseOrderLine[] };
+export type PurchaseOrder = { id: string; status: string; transmissionStatus: string; totalAmount: number | null; currency?: string; supplier?: string; eta?: string; sourceName?: string; supplierId: string; supplierSnapshot?: { supplierName?: string }; targetWarehouseId?: string; sourcePrId?: string; sourcePurchaseRequestId?: string; lines: PurchaseOrderLine[] };
 export type ProcurementDocument = {
   id?: string;
+  category?: string;
   invoiceNumber?: string;
   relatedPo?: string;
   linkedPr?: string;
@@ -332,4 +340,18 @@ export type ProcurementDocument = {
   evidence?: Array<Record<string, unknown>>;
 };
 // signals are codes ("invoice_variance", "match_exception"), labelled when shown.
-export type ProcurementWorkItem = { id: string; status: string; amount: number; bucket: "approval" | "tracking"; kind: EntityKind; signals?: string[] };
+export type ProcurementWorkItem = {
+  id: string;
+  kind: EntityKind;
+  status: string;
+  transmissionStatus?: string;
+  bucket: "approval" | "tracking";
+  amount: number | null;
+  currency?: string;
+  item?: string;
+  moreLines?: number;
+  supplier?: string;
+  // A request's need-by date or an order's expected arrival.
+  dueDate?: string;
+  signals?: string[];
+};

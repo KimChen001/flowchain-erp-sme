@@ -210,14 +210,15 @@ for (const path of [
     const { options } = await (await page.request.get("/api/master-data/warehouses/select", { headers: await authHeaders(page) })).json();
     const warehouse = options.find((option: { id: string }) => option.id === "LOCAL-DEMO-WH-001").label;
     await page.goto(path);
-    await expect(page.getByText(warehouse).first()).toBeVisible();
+    // Not an <option>: the inventory pages also list it in the Warehouse filter.
+    await expect(page.getByText(warehouse).and(page.locator(":not(option)")).first()).toBeVisible();
     await expect(page.locator("main").first()).not.toContainText("LOCAL-DEMO-WH-001");
   });
 }
 
 test("the new purchase request defaults to the workspace currency and lists it first", async ({ page }) => {
   await signIn(page);
-  await page.goto("/app/procurement/requests");
+  await page.goto("/app/procurement/requests?mode=create");
   const currency = page.getByRole("combobox", { name: "Default currency" });
   await expect(currency).toHaveValue("USD");
   const codes = await currency.locator("option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value).filter(Boolean));

@@ -196,7 +196,7 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await page.goto("/app/procurement/workbench");
   // The walkthrough scenario has one submitted purchase request and 21 purchase
   // orders that still need work: 32 orders less 8 fully received and 3 cancelled.
-  await expect(page.getByRole("heading", { name: "今日采购待办：22", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^全部待办: 22,/ })).toBeVisible();
   const workbenchRow = (id: string) => page.getByRole("row").filter({ has: page.getByText(id, { exact: true }) });
   // Statuses read as labels in the interface language, not stored codes.
   await expect(workbenchRow("LOCAL-DEMO-PO-001")).toContainText("部分收货");

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
-import { A, Chip } from "../../components/ui";
+import { A } from "../../components/ui";
+import { StatusChip as ToneChip, statusToneOf } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
@@ -54,9 +55,10 @@ export function useFinanceStatusLabel() {
   return (status: string) => (STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status || "—");
 }
 
+// Coloured by the shared status tones: red overdue or disputed, teal settled.
 export function StatusChip({ status }: { status: string }) {
   const label = useFinanceStatusLabel();
-  return <Chip label={label(status)} color={A.blue} bg="#eff6ff" />;
+  return <ToneChip label={label(status)} tone={statusToneOf(status)} />;
 }
 
 // One operation: an optional reason, a preview of the server's plan, then a

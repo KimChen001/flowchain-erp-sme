@@ -24,7 +24,8 @@ test('the list shows metrics without tiers or suggestions, and metrics follow th
   await page.getByLabel('Search suppliers', { exact: true }).fill(String(stamp));
   const row = (name: string) => page.getByRole('row').filter({ hasText: name });
   await expect(row(source)).toHaveCount(1);
-  await expect(row(source).locator('td').nth(4)).toHaveText('0');
+  // Columns: supplier (code and name), categories, owner, spend, open POs, ...
+  await expect(row(source).locator('td').nth(3)).toHaveText('0');
   await expect(row(source).getByTestId('supplier-tier-chip')).toHaveCount(0);
   await expect(page.getByTestId('supplier-suggestion-differs')).toHaveCount(0);
   await expect(page.getByTestId('supplier-review-suggestions-open')).toHaveCount(0);
@@ -42,8 +43,8 @@ test('the list shows metrics without tiers or suggestions, and metrics follow th
   await viewer.goto('/app/master-data/suppliers');
   await viewer.getByLabel('Search suppliers', { exact: true }).fill(String(stamp));
   const viewerRow = viewer.getByRole('row').filter({ hasText: source });
-  await expect(viewerRow.locator('td').nth(4)).toHaveText('—');
-  await expect(viewerRow.locator('td').nth(5)).toHaveText('0');
+  await expect(viewerRow.locator('td').nth(3)).toHaveText('—');
+  await expect(viewerRow.locator('td').nth(4)).toHaveText('0');
 });
 
 async function createSupplier(page: Page, headers: Record<string, string>, code: string, name: string) {

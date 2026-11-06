@@ -5,6 +5,12 @@ import { useRouteAvailability } from "../../../app/routeAvailability";
 import { ApiError, apiJson } from "../../../lib/api-client";
 import { useI18n } from "../../../i18n/I18n";
 import { usePermissionSet } from "../../../lib/usePermissionSet";
+import { listButtonClass } from "../../../components/ui/listLayout";
+import { typography } from "../../../components/ui/typography";
+
+// A secondary header button: the list button height, with a border so it
+// shows on the page background beside the supplier invoice entry button.
+export const poSecondaryButtonClass = `inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 ${typography.denseButton} text-slate-700 hover:bg-slate-50 disabled:opacity-50`;
 
 type WorkflowAction = "submit" | "approve" | "reject" | "issue" | "cancel" | "close";
 
@@ -44,7 +50,11 @@ const COPY: Record<string, [string, string]> = {
   receive: ["Receive", "收货"],
   receiveNote: ["Record goods that arrived against this PO.", "登记该采购订单的到货。"],
   changed: ["This purchase order was changed elsewhere, so nothing was done. It has been reloaded; check it and try again.", "该采购订单已在别处被更改，本次操作未执行。页面已重新加载，请核对后重试。"],
+  billNote: ["Supplier invoices are paid only after the three-way match.", "采购发票须在三单匹配后才能付款。"],
 };
+
+// The step that moves the order forward is the page's one primary button.
+const PRIMARY_ACTIONS = new Set<WorkflowAction>(["submit", "approve", "issue"]);
 
 // The server refuses a command sent with an older version or for a status the
 // PO has left; both mean the page shows an order that changed elsewhere.
@@ -56,11 +66,14 @@ export function PurchaseOrderWorkflowActions({
   status,
   version,
   onChanged,
+  showNote = true,
 }: {
   poId: string;
   status: string;
   version?: number;
   onChanged: () => void;
+  // Off when the page shows the action notes on a line of their own.
+  showNote?: boolean;
 }) {
   const { language } = useI18n();
   const tr = (key: string) => COPY[key][language === "en-US" ? 0 : 1];
@@ -106,14 +119,12 @@ export function PurchaseOrderWorkflowActions({
           data-testid={`po-action-${action}`}
           disabled={Boolean(busy)}
           onClick={() => void run(action)}
-          className={action === "approve" || action === "submit" || action === "issue"
-            ? "rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-            : "rounded-lg border px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50"}
+          className={PRIMARY_ACTIONS.has(action) ? listButtonClass.primary : poSecondaryButtonClass}
         >
           {tr(action)}
         </button>
       ))}
-      {actions.includes("issue") && <span className="text-[11px] text-slate-500">{tr("issueNote")}</span>}
+      {showNote && actions.includes("issue") && <span className="text-[11px] text-slate-500">{tr("issueNote")}</span>}
     </div>
   );
 }
@@ -123,7 +134,7 @@ export function PurchaseOrderWorkflowActions({
 // receiving.prepare, warehouse scope and open quantities again.
 const RECEIVE_STATUSES = new Set(["issued", "partially_received"]);
 
-export function PurchaseOrderReceiveAction({ poId, status }: { poId: string; status: string }) {
+export function PurchaseOrderReceiveAction({ poId, status, showNote = true }: { poId: string; status: string; showNote?: boolean }) {
   const { language } = useI18n();
   const tr = (key: string) => COPY[key][language === "en-US" ? 0 : 1];
   const permissions = usePermissionSet();
@@ -136,11 +147,27 @@ export function PurchaseOrderReceiveAction({ poId, status }: { poId: string; sta
         type="button"
         data-testid="po-action-receive"
         onClick={() => navigate(`/app/procurement/receiving/new?po=${encodeURIComponent(poId)}`)}
-        className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white"
+        className={listButtonClass.primary}
       >
         {tr("receive")}
       </button>
-      <span className="text-[11px] text-slate-500">{tr("receiveNote")}</span>
+      {showNote && <span className="text-[11px] text-slate-500">{tr("receiveNote")}</span>}
     </div>
   );
+}
+
+// The notes for the actions the PO header shows, in the order of its buttons,
+// for a page that shows them under the buttons instead of between them. Same
+// conditions as the buttons; billable is whether a supplier invoice can be
+// recorded for the order's status.
+export function usePurchaseOrderActionNotes({ status, version, billable }: { status: string; version?: number; billable: boolean }) {
+  const { language } = useI18n();
+  const tr = (key: string) => COPY[key][language === "en-US" ? 0 : 1];
+  const permissions = usePermissionSet();
+  const canOpenRoute = useRouteAvailability();
+  const notes: string[] = [];
+  if (RECEIVE_STATUSES.has(status) && permissions?.has("receiving.prepare") && canOpenRoute("procurement:receiving:new")) notes.push(tr("receiveNote"));
+  if (Number.isInteger(version) && (ACTIONS_BY_STATUS[status] || []).includes("issue") && permissions?.has(PERMISSION.issue(status))) notes.push(tr("issueNote"));
+  if (billable && permissions?.has("finance.supplier_invoice.create") && canOpenRoute("procurement:bill-new")) notes.push(tr("billNote"));
+  return notes;
 }

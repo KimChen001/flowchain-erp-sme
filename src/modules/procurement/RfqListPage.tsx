@@ -1,24 +1,78 @@
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
-import { Link } from "react-router";
-import { A, Card } from "../../components/ui";
+import { Link, useSearchParams } from "react-router";
+import { CalendarClock, FileSearch, Inbox, MessageSquareQuote } from "lucide-react";
+import { A, Field, inputStyle } from "../../components/ui";
+import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
+import { EntityLink } from "../../components/business/EntityLink";
+import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
 import { useI18n } from "../../i18n/I18n";
+import { todayInTimeZone } from "../../lib/format";
 import type { ProcurementDocument } from "./procurementTypes";
 
 const RFQ_STATUS_LABELS: Record<string, readonly [string, string]> = {
-  draft: ["草稿", "Draft"],
-  open: ["开放", "Open"],
-  collecting_quotes: ["收集报价", "Collecting quotes"],
-  closed: ["已关闭", "Closed"],
-  cancelled: ["已取消", "Cancelled"],
+  draft: ["Draft", "草稿"],
+  open: ["Open", "开放"],
+  collecting_quotes: ["Collecting quotes", "收集报价"],
+  closed: ["Closed", "已关闭"],
+  cancelled: ["Cancelled", "已取消"],
 };
+const OPEN_STATUSES = ["draft", "open", "collecting_quotes"];
+
+const COPY = {
+  open: ["Open RFQs", "进行中的询价"],
+  openNote: ["Draft, open or collecting quotes", "草稿、开放或正在收集报价"],
+  collecting: ["Collecting quotes", "收集报价"],
+  collectingNote: ["Sent to suppliers, waiting for quotes", "已发给供应商，等待报价"],
+  complete: ["All quotes in", "报价已收齐"],
+  completeNote: ["Every invited supplier has responded", "所有受邀供应商均已回复"],
+  dueSoon: ["Due in 7 days", "7 天内截止"],
+  dueSoonNote: ["Open RFQs closing within a week", "一周内截止的进行中询价"],
+  searchTitle: ["RFQ search", "询价查询"],
+  searchSubtitle: ["Search requests for quotation by number, subject, item, status and due date.", "按询价单号、主题、物料、状态和截止日期查询询价。"],
+  search: ["Search", "搜索"],
+  searchPlaceholder: ["RFQ number, subject or item", "询价单号、主题或物料"],
+  status: ["Status", "状态"],
+  allStatuses: ["All statuses", "全部状态"],
+  quotes: ["Quotes", "报价"],
+  anyQuotes: ["Any", "全部"],
+  quotesComplete: ["All quotes in", "报价已收齐"],
+  quotesWaiting: ["Waiting for quotes", "等待报价"],
+  due: ["Due date", "截止日期"],
+  anyDue: ["Any time", "不限"],
+  listTitle: ["RFQ list", "询价列表"],
+  rfq: ["RFQ", "询价单"],
+  subject: ["Subject / item", "主题 / 物料"],
+  quantity: ["Quantity", "数量"],
+  responses: ["Supplier responses", "供应商回复"],
+  actions: ["Actions", "操作"],
+  view: ["View", "查看"],
+  compare: ["Compare quotes", "比较报价"],
+  fromRequest: ["From", "来源"],
+  loadFailed: ["RFQ records could not be loaded", "询价记录加载失败"],
+  empty: ["No RFQ records in this workspace", "当前工作区暂无询价记录"],
+  emptyDetail: ["This page shows formal RFQs for the current workspace. Quotations are never generated for missing records.", "页面只展示当前工作区的正式 RFQ，没有记录时不会自动补入报价。"],
+  noMatch: ["No RFQs match these filters", "没有符合筛选条件的询价"],
+} as const;
 
 export function RfqListPage() {
-  const { language } = useI18n();
-  const tr = (zh: string, en: string) => language === "en-US" ? en : zh;
+  const { language, timezone } = useI18n();
+  const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
+  const statusLabel = (status?: string) => status ? (RFQ_STATUS_LABELS[status] ? RFQ_STATUS_LABELS[status][language === "en-US" ? 0 : 1] : status) : "—";
   const [rows, setRows] = useState<ProcurementDocument[]>([]);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
+  const [query, setQuery] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Status, quotes and due live in the URL, so the metric cards can set them.
+  const status = searchParams.get("status") || "";
+  const quotes = searchParams.get("quotes") || "";
+  const due = searchParams.get("due") || "";
+  const setParam = (name: string, value: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (value) params.set(name, value); else params.delete(name);
+    setSearchParams(params, { replace: true });
+  };
 
   const load = useCallback(async () => {
     setState("loading");
@@ -35,75 +89,125 @@ export function RfqListPage() {
     void load();
   }, [load]);
 
-  return (
-    <div className="space-y-4" data-testid="procurement-rfq-list">
-      <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
-        <div>
-          <div className="text-sm font-semibold">{tr("询价记录", "Request for quotation records")}</div>
-          <div className="mt-1 text-xs" style={{ color: A.sub }}>
-            {tr("当前工作区的正式 RFQ；没有记录时不会自动补入报价。", "Formal RFQs in this workspace. Quotations are never generated for missing records.")}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          className="inline-flex items-center gap-1 rounded border px-3 py-2 text-xs"
-        >
-          <RefreshCw size={14} />
-          {tr("刷新", "Refresh")}
-        </button>
-      </Card>
+  const today = todayInTimeZone(timezone);
+  const inAWeek = new Date(Date.parse(`${today}T12:00:00Z`) + 7 * 86400000).toISOString().slice(0, 10);
+  const isOpen = (row: ProcurementDocument) => OPEN_STATUSES.includes(String(row.status || ""));
+  const quotesIn = (row: ProcurementDocument) => (row.supplierCount ?? 0) > 0 && (row.respondedSupplierCount ?? 0) >= (row.supplierCount ?? 0);
+  const dueSoon = (row: ProcurementDocument) => isOpen(row) && Boolean(row.dueDate) && String(row.dueDate) <= inAWeek;
+  const overdue = (row: ProcurementDocument) => isOpen(row) && Boolean(row.dueDate) && String(row.dueDate) < today;
+  const needle = query.trim().toLowerCase();
+  const shown = rows.filter((row) =>
+    (!status || row.status === status)
+    && (!quotes || (quotes === "complete" ? quotesIn(row) : !quotesIn(row)))
+    && (!due || dueSoon(row))
+    && (!needle || [row.id, row.title, row.itemName, row.category].some((value) => String(value || "").toLowerCase().includes(needle))),
+  );
+  const reset = () => {
+    setQuery("");
+    setSearchParams({}, { replace: true });
+  };
+  const value = (count: number) => state === "loaded" ? String(count) : "—";
 
-      <Card className="overflow-hidden">
-        {state === "loading" ? (
-          <div className="py-16 text-center text-sm" style={{ color: A.sub }}>{tr("正在读取询价记录…", "Loading RFQ records…")}</div>
-        ) : state === "error" ? (
-          <div className="py-16 text-center">
-            <div className="text-sm font-semibold">{tr("询价记录加载失败", "RFQ records could not be loaded")}</div>
-            <button type="button" onClick={() => void load()} className="mt-3 text-sm font-semibold text-blue-600">{tr("重试", "Retry")}</button>
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="py-16 text-center">
-            <div className="text-sm font-semibold">{tr("当前工作区暂无询价记录", "No RFQ records in this workspace")}</div>
-            <div className="mt-2 text-xs" style={{ color: A.sub }}>{tr("页面只展示当前工作区的正式 RFQ。", "This page shows formal RFQs for the current workspace.")}</div>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] text-left text-xs">
-              <thead className="bg-slate-50" style={{ color: A.sub }}>
-                <tr>
-                  <th className="p-3 font-medium">RFQ</th>
-                  <th className="p-3 font-medium">{tr("主题 / 物料", "Subject / item")}</th>
-                  <th className="p-3 font-medium">{tr("数量", "Quantity")}</th>
-                  <th className="p-3 font-medium">{tr("供应商响应", "Supplier responses")}</th>
-                  <th className="p-3 font-medium">{tr("截止日期", "Due date")}</th>
-                  <th className="p-3 font-medium">{tr("状态", "Status")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.id} className="border-t">
-                    <td className="p-3">
+  return (
+    <div className="space-y-5" data-testid="procurement-rfq-list">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <ActionableMetricCard label={tr("open")} value={value(rows.filter(isOpen).length)} description={tr("openNote")} to="/app/procurement/rfq" icon={FileSearch} color={A.blue} />
+        <ActionableMetricCard label={tr("collecting")} value={value(rows.filter((row) => row.status === "collecting_quotes").length)} description={tr("collectingNote")} to="/app/procurement/rfq?status=collecting_quotes" icon={Inbox} color={A.orange} />
+        <ActionableMetricCard label={tr("complete")} value={value(rows.filter((row) => isOpen(row) && quotesIn(row)).length)} description={tr("completeNote")} to="/app/procurement/rfq?quotes=complete" icon={MessageSquareQuote} color={A.purple} />
+        <ActionableMetricCard label={tr("dueSoon")} value={value(rows.filter(dueSoon).length)} description={tr("dueSoonNote")} to="/app/procurement/rfq?due=7" icon={CalendarClock} color={A.red} />
+      </div>
+
+      <ListSearchCard
+        title={tr("searchTitle")}
+        subtitle={tr("searchSubtitle")}
+        actions={<>
+          <ResetButton onClick={reset} />
+          <RefreshButton onClick={() => void load()} />
+        </>}
+      >
+        <Field label={tr("search")}>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("searchPlaceholder")} style={inputStyle} />
+        </Field>
+        <Field label={tr("status")}>
+          <select value={status} onChange={(event) => setParam("status", event.target.value)} style={inputStyle}>
+            <option value="">{tr("allStatuses")}</option>
+            {Object.keys(RFQ_STATUS_LABELS).map((code) => <option key={code} value={code}>{statusLabel(code)}</option>)}
+          </select>
+        </Field>
+        <Field label={tr("quotes")}>
+          <select value={quotes} onChange={(event) => setParam("quotes", event.target.value)} style={inputStyle}>
+            <option value="">{tr("anyQuotes")}</option>
+            <option value="complete">{tr("quotesComplete")}</option>
+            <option value="waiting">{tr("quotesWaiting")}</option>
+          </select>
+        </Field>
+        <Field label={tr("due")}>
+          <select value={due} onChange={(event) => setParam("due", event.target.value)} style={inputStyle}>
+            <option value="">{tr("anyDue")}</option>
+            <option value="7">{tr("dueSoon")}</option>
+          </select>
+        </Field>
+      </ListSearchCard>
+
+      <ListCard title={tr("listTitle")} total={state === "loaded" ? rows.length : undefined} shown={shown.length}>
+        <div className={tableScrollClass}>
+          <table className={`w-full min-w-[1040px] text-left ${tableBodyTextClass}`}>
+            <thead>
+              <tr style={listHeadRowStyle}>
+                <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>{tr("rfq")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{tr("subject")}</th>
+                <th className={thRightClass} style={{ color: A.gray1 }}>{tr("quantity")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{tr("responses")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{tr("due")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{tr("status")}</th>
+                <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{tr("actions")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state === "loading" && <ListStateRow colSpan={7} state="loading" />}
+              {state === "error" && <ListStateRow colSpan={7} state="error" title={tr("loadFailed")} onRetry={() => void load()} />}
+              {state === "loaded" && shown.length === 0 && (
+                rows.length === 0
+                  ? <ListStateRow colSpan={7} state="empty" title={tr("empty")} detail={tr("emptyDetail")} />
+                  : <ListStateRow colSpan={7} state="empty" title={tr("noMatch")} />
+              )}
+              {state === "loaded" && shown.map((row, index) => {
+                const responded = row.respondedSupplierCount ?? 0;
+                return (
+                  <tr key={row.id} className={listRowClass} style={listRowStyle(index, shown.length)}>
+                    <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                       <Link
-                        className="font-semibold tabular-nums text-blue-600 hover:underline"
+                        className={`${tableLinkClass} text-blue-600`}
                         to={`/app/procurement/rfq/${encodeURIComponent(row.id || "")}`}
                         data-testid={`rfq-id-link-${row.id}`}
                       >
                         {row.id}
                       </Link>
+                      {row.linkedPr && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr("fromRequest")} <EntityLink kind="purchase_request" id={row.linkedPr} className="text-[11px] font-medium">{row.linkedPr}</EntityLink></div>}
                     </td>
-                    <td className="p-3"><div className="font-medium">{row.title || "—"}</div>{row.itemName && <div className="mt-1" style={{ color: A.sub }}>{row.itemName}</div>}</td>
-                    <td className="p-3 tabular-nums">{Number.isFinite(row.quantity) ? Number(row.quantity).toLocaleString() : "—"} {row.unit || ""}</td>
-                    <td className="p-3 tabular-nums">{row.respondedSupplierCount ?? 0} / {row.supplierCount ?? 0}</td>
-                    <td className="p-3">{row.dueDate || "—"}</td>
-                    <td className="p-3"><span className="rounded bg-slate-100 px-2 py-1 font-semibold">{row.status ? (RFQ_STATUS_LABELS[row.status] ? RFQ_STATUS_LABELS[row.status][language === "en-US" ? 1 : 0] : row.status) : "—"}</span></td>
+                    <td className={`${tdNameClass} max-w-[280px]`}>
+                      <div className="truncate font-medium" style={{ color: A.label }} title={row.title}>{row.title || "—"}</div>
+                      <div className="truncate text-[11px]" style={{ color: A.sub }}>{[row.itemName, row.category].filter(Boolean).join(" · ")}</div>
+                    </td>
+                    <td className={tdNumericRightClass}>{Number.isFinite(row.quantity) ? Number(row.quantity).toLocaleString() : "—"} {row.unit || ""}</td>
+                    <td className={tdNowrapClass}>
+                      <StatusChip label={`${responded} / ${row.supplierCount ?? 0}`} tone={quotesIn(row) ? "success" : responded > 0 ? "info" : "neutral"} />
+                    </td>
+                    <td className={tdNowrapClass} style={{ color: overdue(row) ? "#b91c1c" : A.sub }}>{row.dueDate || "—"}</td>
+                    <td className={tdNowrapClass}><StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} /></td>
+                    <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
+                      <div className="flex items-center gap-1.5">
+                        <Link to={`/app/procurement/rfq/${encodeURIComponent(row.id || "")}`} className={rowActionClass.primary}>{tr("view")}</Link>
+                        {responded > 0 && <Link to={`/app/procurement/rfq/${encodeURIComponent(row.id || "")}/comparison`} className={rowActionClass.neutral}>{tr("compare")}</Link>}
+                      </div>
+                    </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </ListCard>
     </div>
   );
 }

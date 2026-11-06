@@ -38,7 +38,7 @@ test('settings, PO, master data and reports expose consolidated product surfaces
   ])
   for (const path of ['company', 'roles', 'numbering', 'review', 'modules', 'ai', 'audit', 'advanced']) assert.match(routes, new RegExp(`/app/settings/${path}`))
   assert.doesNotMatch(settings, /ControlledSettingsView/)
-  assert.match(purchasing, /min-w-\[1200px\]/)
+  assert.match(purchasing, /min-w-\[1150px\]/)
   assert.match(purchasing, /sticky left-0/)
   assert.match(purchasing, /sticky right-0/)
   assert.match(masterRoutes, /url\.pathname === '\/api\/master-data'/)

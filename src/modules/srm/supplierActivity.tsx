@@ -4,6 +4,8 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
+import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
+import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 
 // A supplier's purchase records and open risks on its detail page
 // (docs/supplier-tiers-design.md §5, T3), from
@@ -113,6 +115,10 @@ export function useSupplierIssueText() {
   };
 }
 
+// A status as a chip in the shared status colours; "—" when there is none.
+const Status = ({ code, label }: { code: string | null; label: string }) =>
+  code ? <StatusChip label={label} tone={statusToneOf(code)} /> : <>—</>;
+
 const Note = ({ children, testId }: { children: React.ReactNode; testId?: string }) => (
   <p data-testid={testId} className="mt-2 text-xs" style={{ color: A.sub }}>{children}</p>
 );
@@ -141,20 +147,20 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
         {data && !orders ? <Note testId="supplier-orders-hidden">{t("ordersHidden")}</Note> : null}
         {orders && !orders.rows.length ? <div className="py-8 text-center text-xs" style={{ color: A.sub }}>{empty.orders}</div> : null}
         {orders && orders.rows.length ? (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead><tr className="text-left" style={{ color: A.sub }}>
-                <th className="p-2 font-medium">{t("po")}</th><th className="p-2 font-medium">{t("date")}</th><th className="p-2 font-medium">{t("status")}</th><th className="p-2 font-medium">{t("promised")}</th>
-                {data?.visibility.orderAmounts ? <th className="p-2 text-right font-medium">{t("amount")}</th> : null}
+          <div className={`mt-3 ${tableScrollClass}`}>
+            <table className={`w-full ${tableBodyTextClass}`}>
+              <thead><tr style={{ ...listHeadRowStyle, color: A.sub }}>
+                <th className={thClass}>{t("po")}</th><th className={thClass}>{t("date")}</th><th className={thClass}>{t("status")}</th><th className={thClass}>{t("promised")}</th>
+                {data?.visibility.orderAmounts ? <th className={thRightClass}>{t("amount")}</th> : null}
               </tr></thead>
               <tbody>
-                {orders.rows.map((row) => (
-                  <tr key={row.id} className="border-t" data-testid="supplier-purchase-record">
-                    <td className="p-2"><EntityLink kind="purchase_order" id={row.id} className="text-blue-600">{row.orderNumber}</EntityLink></td>
-                    <td className="p-2">{f.day(row.date)}</td>
-                    <td className="p-2">{f.status(row.status)}</td>
-                    <td className="p-2">{f.day(row.promisedDate)}{row.overdueDays > 0 ? <span className="ml-2" style={{ color: A.red }}>{t("overdueBy", { n: row.overdueDays })}</span> : null}</td>
-                    {data?.visibility.orderAmounts ? <td className="p-2 text-right tabular-nums">{f.money(row.amount, row.currency)}</td> : null}
+                {orders.rows.map((row, index) => (
+                  <tr key={row.id} className={listRowClass} style={listRowStyle(index, orders.rows.length)} data-testid="supplier-purchase-record">
+                    <td className={tdIdClass}><EntityLink kind="purchase_order" id={row.id} className={tableLinkClass}>{row.orderNumber}</EntityLink></td>
+                    <td className={tdNowrapClass}>{f.day(row.date)}</td>
+                    <td className={tdNowrapClass}><Status code={row.status} label={f.status(row.status)} /></td>
+                    <td className={tdNowrapClass}>{f.day(row.promisedDate)}{row.overdueDays > 0 ? <span className="ml-2" style={{ color: A.red }}>{t("overdueBy", { n: row.overdueDays })}</span> : null}</td>
+                    {data?.visibility.orderAmounts ? <td className={tdNumericRightClass}>{f.money(row.amount, row.currency)}</td> : null}
                   </tr>
                 ))}
               </tbody>
@@ -167,20 +173,20 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
           <div className="mt-4" data-testid="supplier-invoice-records">
             <h3 className="text-xs font-semibold">{t("invoices")}</h3>
             {!invoices ? <Note testId="supplier-invoices-hidden">{t("invoicesHidden")}</Note> : !invoices.rows.length ? <Note>{t("noInvoices")}</Note> : (
-              <div className="mt-2 overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead><tr className="text-left" style={{ color: A.sub }}>
-                    <th className="p-2 font-medium">{t("invoice")}</th><th className="p-2 font-medium">{t("date")}</th><th className="p-2 font-medium">{t("status")}</th><th className="p-2 font-medium">{t("match")}</th>
-                    {data.visibility.invoiceAmounts ? <th className="p-2 text-right font-medium">{t("amount")}</th> : null}
+              <div className={`mt-2 ${tableScrollClass}`}>
+                <table className={`w-full ${tableBodyTextClass}`}>
+                  <thead><tr style={{ ...listHeadRowStyle, color: A.sub }}>
+                    <th className={thClass}>{t("invoice")}</th><th className={thClass}>{t("date")}</th><th className={thClass}>{t("status")}</th><th className={thClass}>{t("match")}</th>
+                    {data.visibility.invoiceAmounts ? <th className={thRightClass}>{t("amount")}</th> : null}
                   </tr></thead>
                   <tbody>
-                    {invoices.rows.map((row) => (
-                      <tr key={row.id} className="border-t" data-testid="supplier-invoice-record">
-                        <td className="p-2"><EntityLink kind="supplier_invoice" id={row.id} className="text-blue-600">{row.invoiceNumber}</EntityLink></td>
-                        <td className="p-2">{f.day(row.invoiceDate)}</td>
-                        <td className="p-2">{f.status(row.status)}</td>
-                        <td className="p-2">{f.status(row.matchStatus)}</td>
-                        {data.visibility.invoiceAmounts ? <td className="p-2 text-right tabular-nums">{f.money(row.amount, row.currency)}</td> : null}
+                    {invoices.rows.map((row, index) => (
+                      <tr key={row.id} className={listRowClass} style={listRowStyle(index, invoices.rows.length)} data-testid="supplier-invoice-record">
+                        <td className={tdIdClass}><EntityLink kind="supplier_invoice" id={row.id} className={tableLinkClass}>{row.invoiceNumber}</EntityLink></td>
+                        <td className={tdNowrapClass}>{f.day(row.invoiceDate)}</td>
+                        <td className={tdNowrapClass}><Status code={row.status} label={f.status(row.status)} /></td>
+                        <td className={tdNowrapClass}><Status code={row.matchStatus} label={f.status(row.matchStatus)} /></td>
+                        {data.visibility.invoiceAmounts ? <td className={tdNumericRightClass}>{f.money(row.amount, row.currency)}</td> : null}
                       </tr>
                     ))}
                   </tbody>

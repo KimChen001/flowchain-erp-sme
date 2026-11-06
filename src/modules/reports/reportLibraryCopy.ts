@@ -17,7 +17,7 @@ const english: Record<string, string> = {
   '已选字段': 'Selected columns', '受控字段': 'Report column', '选择字段': 'Choose columns', '选择指标': 'Choose metrics', '取消': 'Cancel', '保存为私有报表': 'Save private report',
   '请填写报表名称': 'Enter a report name', '基于受控业务主题和字段目录创建': 'Created from the business subject and column catalog',
   '我的报表已创建': 'Report created', '创建失败': 'Could not create report', '请重试': 'Please try again', '报表已复制': 'Report copied',
-  '业务编号': 'Business ID', '业务日期': 'Business date', '客户': 'Customer', '金额': 'Amount', '数量': 'Quantity', '状态': 'Status',
+  '业务编号': 'Business ID', '单据号': 'Document number', '业务日期': 'Business date', '客户': 'Customer', '金额': 'Amount', '数量': 'Quantity', '状态': 'Status',
   '销售订单数量': 'Sales order count', '未履约销售需求': 'Unfulfilled sales demand', '采购订单金额': 'Purchase order amount', '开放 PO': 'Open POs',
   '在手库存': 'On-hand inventory', '库存风险 SKU': 'Inventory risk SKUs', '供应商发票金额': 'Supplier invoice amount', '供应商数量': 'Supplier count',
   '关闭': 'Close', '无法加载报表库': 'Could not load the report library', '无法加载报表模板': 'Could not load report templates',
