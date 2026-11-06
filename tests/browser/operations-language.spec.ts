@@ -81,7 +81,7 @@ test('purchase request labels and defaults are English without changing selected
     await route.fulfill({ json: { ...data, company: { ...data.company, currency: 'USD' } } });
   });
   await page.route('**/api/procurement/requests', route => route.fulfill({ json: [] }));
-  await page.goto('/app/procurement/requests');
+  await page.goto('/app/procurement/requests?mode=create');
   const currency = page.getByRole('combobox', { name: 'Default currency', exact: true });
   await expect(currency).toHaveValue('USD');
   await expectEnglish(page);

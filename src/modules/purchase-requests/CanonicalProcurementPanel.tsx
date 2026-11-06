@@ -5,12 +5,16 @@ import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
-import { Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ClipboardCheck, FileText, Plus, RefreshCw, Trash2, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
-import { tableLinkClass } from "../../components/ui/workbenchTable";
+import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, PrimaryButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
+import { statusCodeLabel } from "../../i18n/statusLabels";
+import { exportRowsToCsv } from "../../lib/data-export";
 import { createClientTemporaryId } from "../../lib/client-id";
 import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { addCalendarDays, buildSuggestionTrail, planNonCatalogPrefill, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
@@ -88,6 +92,9 @@ type PR = {
   totalAmount: number;
   lines: Line[];
   linkedPurchaseOrderIds?: string[];
+  // Older requests recorded a name here rather than a user id.
+  requester?: string;
+  createdAt?: string;
 };
 type FieldError = { field?: string; code?: string; message?: string };
 const OVERRIDE_FIELD = /^lines\.(\d+)\.supplierOverride\.(reasonCode|note)$/;
@@ -118,6 +125,48 @@ const makeLine = (date = today()): Line => ({
   internalLineComment: "",
   supplierOverride: null,
 });
+const PR_STATUSES = ["draft", "submitted", "approved", "converted", "rejected", "withdrawn", "cancelled"];
+// A link that opens the form: "New purchase request", or a handoff that
+// fills it (the assistant, the reorder list).
+const opensForm = (params: URLSearchParams) =>
+  params.get("mode") === "create" || params.get("lineType") === "non_catalog" || Boolean(params.get("itemId") || params.get("sku"));
+const COPY = {
+  drafts: ["Drafts", "草稿"],
+  draftsNote: ["Saved, not yet submitted", "已保存，尚未提交"],
+  awaitingApproval: ["Awaiting approval", "待审批"],
+  awaitingApprovalNote: ["Submitted and waiting for an approver", "已提交，等待审批"],
+  readyForPo: ["Ready for a purchase order", "待生成采购订单"],
+  readyForPoNote: ["Approved, no purchase order yet", "已批准，尚未生成采购订单"],
+  converted: ["Converted to purchase orders", "已转采购订单"],
+  convertedNote: ["Purchase orders created from the request", "已据此生成采购订单"],
+  searchTitle: ["Purchase request search", "采购申请查询"],
+  searchSubtitle: ["Search requests by number, item, requester and status.", "按申请编号、物料、申请人和状态查询采购申请。"],
+  requestNumber: ["Request number", "申请编号"],
+  itemOrSku: ["Item / SKU", "物料 / SKU"],
+  itemPlaceholder: ["SKU or item name", "SKU 或物料名称"],
+  requester: ["Requester", "申请人"],
+  requesterPlaceholder: ["Requester name", "申请人姓名"],
+  status: ["Status", "状态"],
+  allStatuses: ["All statuses", "全部状态"],
+  listTitle: ["Purchase request list", "采购申请列表"],
+  item: ["Item", "物料"],
+  supplier: ["Supplier", "供应商"],
+  needBy: ["Need by", "需求日期"],
+  amount: ["Amount", "金额"],
+  purchaseOrders: ["Purchase orders", "采购订单"],
+  actions: ["Actions", "操作"],
+  view: ["View", "查看"],
+  created: ["Created", "创建于"],
+  moreLines: ["+{count} more lines", "另 {count} 行"],
+  notChosen: ["Not chosen", "未选择"],
+  nonCatalog: ["Non-catalog", "非目录"],
+  noMatch: ["No purchase requests match these filters", "没有符合筛选条件的采购申请"],
+  quantityPrice: ["Quantity × unit price", "数量 × 单价"],
+  requestDetails: ["Request details", "申请信息"],
+  lines: ["Purchase lines", "采购行"],
+  lineAmount: ["Line amount", "行金额"],
+  preferred: ["Preferred", "首选"],
+} as const;
 const request = <T,>(url: string, method = "GET", body?: unknown) =>
   apiJson<T>(url, {
     method,
@@ -139,7 +188,7 @@ export default function CanonicalProcurementPanel({
     value === null || value === undefined || value === "" || !Number.isFinite(Number(value))
       ? "—"
       : formatLocaleAmount(Number(value), currencyCode, locale, { maximumFractionDigits: 2 });
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   // The navigation the form was last filled from: each handoff is a new one,
   // so a handoff while the page is open (the assistant opening another
@@ -166,8 +215,25 @@ export default function CanonicalProcurementPanel({
   const [editing, setEditing] = useState<PR | null>(null),
     [errors, setErrors] = useState<FieldError[]>([]),
     [saving, setSaving] = useState(false),
-    // The selectors a non-catalog handoff matches its unit and supplier against.
+    // The list and the selectors have loaded: the list's loading row, and a
+    // non-catalog handoff matching its unit and supplier, wait on it.
     [loaded, setLoaded] = useState(false);
+  const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
+  const statusLabel = (status: string) => statusCodeLabel(status, language) || copy(status);
+  // The list shows first; the form opens from "New purchase request", Edit,
+  // or a link that asks for it.
+  const [formOpen, setFormOpen] = useState(() => opensForm(searchParams));
+  useEffect(() => {
+    if (opensForm(searchParams)) setFormOpen(true);
+  }, [location.key]);
+  const [filters, setFilters] = useState({ number: "", item: "", requester: "" });
+  // The status filter lives in the URL, so the metric cards can set it.
+  const statusFilter = searchParams.get("status") || "";
+  const setStatusFilter = (status: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (status) params.set("status", status); else params.delete("status");
+    setSearchParams(params, { replace: true });
+  };
   const currencyInitialized = useRef(false);
   // The default date is first set before the workspace timezone loads, on the
   // browser's own day. Once the timezone is known, a default nobody changed,
@@ -460,6 +526,16 @@ export default function CanonicalProcurementPanel({
     setLines([makeLine(defaultDate)]);
     setErrors([]);
   };
+  const openNewForm = () => {
+    reset();
+    setFormOpen(true);
+  };
+  // Back to the list; a link's form query is dropped so it does not reopen.
+  const closeForm = () => {
+    reset();
+    setFormOpen(false);
+    if (opensForm(searchParams)) setSearchParams({}, { replace: true });
+  };
   const save = async (submit = false) => {
     setSaving(true);
     setErrors([]);
@@ -515,7 +591,7 @@ export default function CanonicalProcurementPanel({
         await request(`/api/procurement/requests/${pr.id}/submit`, "POST", {
           expectedVersion: pr.version,
         });
-      reset();
+      closeForm();
       await load();
       toast.success(copy(submit ? "采购申请已提交" : "采购申请草稿已保存"));
     } catch (error: unknown) {
@@ -614,8 +690,38 @@ export default function CanonicalProcurementPanel({
         supplierOverride: l.itemId && payloads[l.itemId] ? keepOverride(l, payloads[l.itemId]) : l.supplierOverride || null,
       })),
     );
+    setFormOpen(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+  const requesterOf = (pr: PR) => pr.requesterName || pr.requester || pr.requesterId || "—";
+  const suppliersOf = (pr: PR) =>
+    [...new Set(pr.lines.map((line) => line.supplierSnapshot?.supplierName).filter(Boolean))].join(", ");
+  const needByOf = (pr: PR) => pr.lines.map((line) => line.needByDate).filter(Boolean).sort()[0] || pr.defaultNeedByDate;
+  const lineAmountOf = (line: Line) =>
+    line.lineBasis === "amount" ? Number(line.estimatedAmount || 0) : Number(line.quantity || 0) * Number(line.estimatedUnitPrice || 0);
+  const contains = (value: unknown, needle: string) => String(value || "").toLowerCase().includes(needle.trim().toLowerCase());
+  const shownRows = rows.filter((pr) =>
+    (!statusFilter || pr.status === statusFilter)
+    && (!filters.number.trim() || contains(pr.id, filters.number))
+    && (!filters.item.trim() || pr.lines.some((line) => contains(line.sku, filters.item) || contains(line.itemNameSnapshot, filters.item)))
+    && (!filters.requester.trim() || contains(requesterOf(pr), filters.requester)),
+  );
+  const resetFilters = () => {
+    setFilters({ number: "", item: "", requester: "" });
+    setStatusFilter("");
+  };
+  const exportRequests = () =>
+    exportRowsToCsv("purchase-requests-export.csv", shownRows.map((pr) => ({
+      [tr("requestNumber")]: pr.id,
+      [tr("item")]: pr.lines.map((line) => [line.sku, line.itemNameSnapshot].filter(Boolean).join(" ")).join("; "),
+      [tr("supplier")]: suppliersOf(pr),
+      [tr("requester")]: requesterOf(pr),
+      [tr("needBy")]: needByOf(pr) || "",
+      [tr("amount")]: pr.totalAmount ?? "",
+      Currency: pr.defaultCurrency,
+      [tr("status")]: statusLabel(pr.status),
+      [tr("purchaseOrders")]: (pr.linkedPurchaseOrderIds || []).join("; "),
+    })), timezone);
   if (loadError)
     return (
       <Card className="p-12 text-center">
@@ -631,46 +737,64 @@ export default function CanonicalProcurementPanel({
     );
   if (selected)
     return (
-      <div className="space-y-4 pb-16">
-        <button onClick={() => onNavigate?.("procurement:requests")}>{copy("返回采购申请列表")}</button>
+      <div className="space-y-5 pb-16">
         <Card className="p-5">
-          <div className="flex items-start justify-between">
+          <button type="button" onClick={() => onNavigate?.("procurement:requests")} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline">
+            <ArrowLeft size={13} />{copy("返回采购申请列表")}
+          </button>
+          <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h1 className="text-lg font-semibold">{selected.id}</h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-lg font-semibold" style={{ color: A.label }}>{selected.id}</h1>
+                <StatusChip label={statusLabel(selected.status)} tone={statusToneOf(selected.status)} />
+              </div>
               <p className="mt-1 text-xs" style={{ color: A.sub }}>
-                {copy(selected.status)} · v{selected.version} · {selected.requesterName || selected.requesterId}
+                {tr("requester")}: {requesterOf(selected)} · {tr("created")}: {selected.createdAt || "—"} · v{selected.version}
               </p>
             </div>
-            <strong>
-              {amount(selected.totalAmount, selected.defaultCurrency)}
-            </strong>
-          </div>
-          <h2 className="mt-5 text-sm font-semibold">{copy("采购行")}</h2>
-          <div className="mt-2 divide-y">
-            {selected.lines.map((line) => (
-              <div
-                key={line.lineId}
-                className="grid gap-2 py-3 text-xs md:grid-cols-6"
-              >
-                <span>{line.sku || "Other"}</span>
-                <span>{line.itemNameSnapshot}</span>
-                <span className="flex flex-col gap-1">
-                  <span>{line.supplierSnapshot?.supplierName || line.supplierId}</span>
-                  <SupplierOverrideFlag override={line.supplierOverride} testId="pr-line-supplier-override" />
-                </span>
-                <span>
-                  {line.lineBasis === "quantity"
-                    ? `${line.quantity} × ${amount(line.estimatedUnitPrice, line.currency || selected.defaultCurrency)}`
-                    : amount(line.estimatedAmount, line.currency || selected.defaultCurrency)}
-                </span>
-                <span>{warehouseName(line.targetWarehouseId) || "-"}</span>
-                <span>{line.internalLineComment || "-"}</span>
-              </div>
-            ))}
+            <div className="text-right">
+              <div className="text-[11px]" style={{ color: A.sub }}>{copy("预计总额")}</div>
+              <strong className="text-lg tabular-nums" style={{ color: A.label }}>{amount(selected.totalAmount, selected.defaultCurrency)}</strong>
+            </div>
           </div>
         </Card>
+        <ListCard title={tr("lines")}>
+          <div className={tableScrollClass}>
+            <table className={`w-full min-w-[980px] text-left ${tableBodyTextClass}`}>
+              <thead>
+                <tr style={listHeadRowStyle}>
+                  {[tr("item"), tr("supplier"), tr("quantityPrice"), tr("needBy"), copy("目标仓库或服务地点"), copy("行级内部备注")].map((label) => <th key={label} className={thClass} style={{ color: A.gray1 }}>{label}</th>)}
+                  <th className={thRightClass} style={{ color: A.gray1 }}>{tr("amount")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selected.lines.map((line, index) => (
+                  <tr key={line.lineId} className={listRowClass} style={listRowStyle(index, selected.lines.length)}>
+                    <td className={`${tdNameClass} max-w-[240px]`}>
+                      <div className="truncate font-medium" style={{ color: A.label }}>{line.itemNameSnapshot || "—"}</div>
+                      <div className="text-[11px]" style={{ color: A.sub }}>{line.sku || tr("nonCatalog")}</div>
+                    </td>
+                    <td className={tdNameClass}>
+                      <div>{line.supplierSnapshot?.supplierName || line.supplierId || "—"}</div>
+                      <SupplierOverrideFlag override={line.supplierOverride} testId="pr-line-supplier-override" />
+                    </td>
+                    <td className={tdNumericClass}>
+                      {line.lineBasis === "quantity"
+                        ? `${line.quantity} ${line.unitSnapshot || ""} × ${amount(line.estimatedUnitPrice, line.currency || selected.defaultCurrency)}`
+                        : copy("金额 / 服务型")}
+                    </td>
+                    <td className={tdNowrapClass} style={{ color: A.sub }}>{line.needByDate || selected.defaultNeedByDate || "—"}</td>
+                    <td className={tdNowrapClass}>{warehouseName(line.targetWarehouseId) || "—"}</td>
+                    <td className={`${tdNameClass} max-w-[220px] truncate`} title={line.internalLineComment}>{line.internalLineComment || "—"}</td>
+                    <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{amount(line.estimatedAmount, line.currency || selected.defaultCurrency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </ListCard>
         <Card className="p-5">
-          <h2 className="text-sm font-semibold">{copy("关联采购订单")}</h2>
+          <h2 className="fc-section-title" style={{ color: A.label }}>{copy("关联采购订单")}</h2>
           {!selected.linkedPurchaseOrderIds?.length ? (
             <div className="py-8 text-center text-xs" style={{ color: A.sub }}>{copy("暂无关联采购订单")}</div>
           ) : (
@@ -685,45 +809,206 @@ export default function CanonicalProcurementPanel({
         </Card>
       </div>
     );
+  if (!formOpen) {
+    const count = (status: string) => rows.filter((row) => row.status === status).length;
+    const statusLink = (status: string) => `/app/procurement/requests?status=${status}`;
+    return (
+      <div className="space-y-5 pb-16" data-testid="purchase-request-list-page">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <ActionableMetricCard label={tr("drafts")} value={String(count("draft"))} description={tr("draftsNote")} to={statusLink("draft")} icon={FileText} color={A.gray1} />
+          <ActionableMetricCard label={tr("awaitingApproval")} value={String(count("submitted"))} description={tr("awaitingApprovalNote")} to={statusLink("submitted")} icon={ClipboardCheck} color={A.orange} />
+          <ActionableMetricCard label={tr("readyForPo")} value={String(count("approved"))} description={tr("readyForPoNote")} to={statusLink("approved")} icon={CheckCircle2} color={A.blue} />
+          <ActionableMetricCard label={tr("converted")} value={String(count("converted"))} description={tr("convertedNote")} to={statusLink("converted")} icon={Truck} color={A.purple} />
+        </div>
+
+        <ListSearchCard
+          title={tr("searchTitle")}
+          subtitle={tr("searchSubtitle")}
+          actions={<>
+            <ResetButton onClick={resetFilters} />
+            <ExportButton onClick={exportRequests} />
+            <PrimaryButton onClick={openNewForm} testId="pr-new">{copy("新建采购申请")}</PrimaryButton>
+          </>}
+        >
+          <Field label={tr("requestNumber")}>
+            <input value={filters.number} onChange={(event) => setFilters({ ...filters, number: event.target.value })} placeholder="PR-…" style={inputStyle} />
+          </Field>
+          <Field label={tr("itemOrSku")}>
+            <input value={filters.item} onChange={(event) => setFilters({ ...filters, item: event.target.value })} placeholder={tr("itemPlaceholder")} style={inputStyle} />
+          </Field>
+          <Field label={tr("requester")}>
+            <input value={filters.requester} onChange={(event) => setFilters({ ...filters, requester: event.target.value })} placeholder={tr("requesterPlaceholder")} style={inputStyle} />
+          </Field>
+          <Field label={tr("status")}>
+            <select aria-label={tr("status")} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} style={inputStyle}>
+              <option value="">{tr("allStatuses")}</option>
+              {PR_STATUSES.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}
+            </select>
+          </Field>
+        </ListSearchCard>
+
+        <ListCard title={tr("listTitle")} total={rows.length} shown={shownRows.length} testId="purchase-request-list">
+          <div className={tableScrollClass}>
+            <table className={`w-full min-w-[1100px] text-left ${tableBodyTextClass}`}>
+              <thead>
+                <tr style={listHeadRowStyle}>
+                  <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>{tr("requestNumber")}</th>
+                  {[tr("item"), tr("supplier"), tr("requester"), tr("needBy")].map((label) => <th key={label} className={thClass} style={{ color: A.gray1 }}>{label}</th>)}
+                  <th className={thRightClass} style={{ color: A.gray1 }}>{tr("amount")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{tr("status")}</th>
+                  <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{tr("actions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!loaded && <ListStateRow colSpan={8} state="loading" />}
+                {loaded && shownRows.length === 0 && (
+                  rows.length === 0
+                    ? <ListStateRow colSpan={8} state="empty" title={copy("暂无采购申请")} detail={copy("点击“新建采购申请”开始录入。")} />
+                    : <ListStateRow colSpan={8} state="empty" title={tr("noMatch")} />
+                )}
+                {shownRows.map((pr, index) => {
+                  const overrides = pr.lines.filter((line) => hasSupplierOverride(line.supplierOverride));
+                  const suppliers = suppliersOf(pr);
+                  return (
+                    <tr key={pr.id} className={listRowClass} style={listRowStyle(index, shownRows.length)}>
+                      <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                        <EntityLink kind="purchase_request" id={pr.id} className={tableLinkClass}>
+                          {pr.id}
+                        </EntityLink>
+                        {pr.createdAt && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr("created")} {pr.createdAt}</div>}
+                      </td>
+                      <td className={`${tdNameClass} max-w-[240px]`}>
+                        <div className="truncate font-medium" style={{ color: A.label }} title={pr.lines[0]?.itemNameSnapshot}>{pr.lines[0]?.itemNameSnapshot || "—"}</div>
+                        <div className="text-[11px]" style={{ color: A.sub }}>
+                          {[pr.lines[0]?.sku, pr.lines.length > 1 ? tr("moreLines").replace("{count}", String(pr.lines.length - 1)) : ""].filter(Boolean).join(" · ")}
+                        </div>
+                      </td>
+                      <td className={`${tdNameClass} max-w-[200px] truncate`} title={suppliers}>{suppliers || <span style={{ color: A.gray2 }}>{tr("notChosen")}</span>}</td>
+                      <td className={tdNowrapClass}>{requesterOf(pr)}</td>
+                      <td className={tdNowrapClass} style={{ color: A.sub }}>{needByOf(pr) || "—"}</td>
+                      <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{amount(pr.totalAmount, pr.defaultCurrency)}</td>
+                      <td className={tdNameClass}>
+                        <StatusChip label={statusLabel(pr.status)} tone={statusToneOf(pr.status)} />
+                        <SupplierOverrideCount count={overrides.length} testId="pr-row-supplier-overrides" />
+                        {/* Approve on this row skips the detail, so the row shows each reason too. */}
+                        {overrides.length ? (
+                          <div className="mt-1 flex max-w-[280px] flex-col items-start gap-1 whitespace-normal">
+                            {overrides.map((line, lineIndex) => (
+                              <SupplierOverrideFlag
+                                key={line.lineId || lineIndex}
+                                override={line.supplierOverride}
+                                prefix={`${line.sku || line.itemNameSnapshot} · ${line.supplierSnapshot?.supplierName || line.supplierId}`}
+                                testId="pr-row-supplier-override"
+                              />
+                            ))}
+                          </div>
+                        ) : null}
+                        {pr.linkedPurchaseOrderIds?.length ? (
+                          <div className="mt-1 flex flex-wrap gap-x-2 text-[11px]">
+                            {pr.linkedPurchaseOrderIds.map((id) => <EntityLink key={id} kind="purchase_order" id={id} className="text-[11px] font-medium">{id}</EntityLink>)}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
+                        <div className="flex items-center gap-1.5">
+                          {pr.status === "draft" && (
+                            <>
+                              <button type="button" className={rowActionClass.primary} onClick={() => edit(pr)}>{copy("编辑")}</button>
+                              <button type="button" className={rowActionClass.neutral} onClick={() => act(pr, "submit")}>{copy("提交")}</button>
+                            </>
+                          )}
+                          {pr.status === "submitted" && (
+                            <>
+                              <button type="button" className={rowActionClass.primary} onClick={() => act(pr, "approve")}>{copy("批准")}</button>
+                              <button type="button" className={rowActionClass.danger} onClick={() => act(pr, "reject")}>{copy("拒绝")}</button>
+                              <button type="button" className={rowActionClass.neutral} onClick={() => act(pr, "withdraw")}>{copy("撤回")}</button>
+                            </>
+                          )}
+                          {pr.status === "approved" && (
+                            <button type="button" className={rowActionClass.primary} onClick={() => act(pr, "generate-purchase-orders")}>{copy("生成采购订单")}</button>
+                          )}
+                          {!["draft", "submitted", "approved"].includes(pr.status) && (
+                            <EntityLink kind="purchase_request" id={pr.id} className={`${rowActionClass.neutral} !font-medium !text-slate-700 !no-underline`}>{tr("view")}</EntityLink>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </ListCard>
+      </div>
+    );
+  }
   return (
-    <div className="space-y-4 pb-16">
-      <Card className="p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="space-y-5 pb-16" data-testid="purchase-request-form">
+      <Card className="p-5">
+        <button type="button" onClick={closeForm} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline">
+          <ArrowLeft size={13} />{copy("返回采购申请列表")}
+        </button>
+        <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold">
+            <h2 className="text-lg font-semibold" style={{ color: A.label }}>
               {editing ? `${copy("编辑采购申请")} ${editing.id}` : copy("新建采购申请")}
             </h2>
             <p className="mt-1 text-xs" style={{ color: A.sub }}>{copy("每一行均需明确物料或服务、供应商、金额、交付地点和需求日期。")}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
+              type="button"
               aria-label={copy("刷新主数据")}
               title={copy("刷新主数据")}
               onClick={() => load()}
-              className="rounded-md border p-2"
+              className={listButtonClass.secondary}
             >
-              <RefreshCw size={15} />
+              <RefreshCw size={13} />
             </button>
+            <button type="button" onClick={closeForm} className={listButtonClass.secondary}>{copy("取消")}</button>
             <button
+              type="button"
               disabled={saving}
               onClick={() => save(false)}
-              className="rounded-md bg-slate-100 px-3 py-2 text-xs"
+              className={listButtonClass.secondary}
             >{copy("保存草稿")}</button>
             <button
+              type="button"
               disabled={saving}
               onClick={() => save(true)}
-              className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
+              className={listButtonClass.primary}
             >{copy("保存并提交")}</button>
           </div>
         </div>
         {prefill && !editing ? <PrefillBanner origin={prefill.origin} intent={prefill.intent} /> : null}
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
+        {errors.length > 0 && (
+          <div
+            role="alert"
+            className="mt-3 rounded-lg bg-red-50 p-3 text-xs text-red-700"
+          >
+            {errors.map((e, i) => {
+              const override = OVERRIDE_FIELD.exec(e.field || "");
+              return (
+                <div key={i}>
+                  {override
+                    ? `${copy("采购行")} ${Number(override[1]) + 1}: ${supplierOverrideIssueText(e.code, language)}`
+                    : copy(e.message || e.field)}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-5">
+        <h3 className="fc-section-title mb-4" style={{ color: A.label }}>{tr("requestDetails")}</h3>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
           <Field label={copy("申请人")}>
             <input
               aria-label={copy("申请人")}
               readOnly
               value={copy("由服务端当前用户确定")}
-              style={{ ...inputStyle, background: A.gray6 }}
+              style={{ ...inputStyle, background: A.gray6, color: A.sub }}
             />
           </Field>
           <Field label={copy("部门")}>
@@ -757,79 +1042,73 @@ export default function CanonicalProcurementPanel({
             />
           </Field>
         </div>
-        {errors.length > 0 && (
-          <div
-            role="alert"
-            className="mt-3 rounded-md bg-red-50 p-3 text-xs text-red-700"
-          >
-            {errors.map((e, i) => {
-              const override = OVERRIDE_FIELD.exec(e.field || "");
-              return (
-                <div key={i}>
-                  {override
-                    ? `${copy("采购行")} ${Number(override[1]) + 1}: ${supplierOverrideIssueText(e.code, language)}`
-                    : copy(e.message || e.field)}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <div className="mt-4 space-y-3">
-          {lines.map((line, index) => (
-            <div key={line.lineId} className="rounded-md border p-3">
-              <div className="mb-3 flex items-center justify-between">
-                <strong className="text-xs">{copy("采购行")} {index + 1}</strong>
-                <button
-                  aria-label={`${copy("删除采购行")} ${index + 1}`}
-                  title={copy("删除采购行")}
-                  onClick={() => {
-                    if (
-                      lines.length > 1 &&
-                      window.confirm(copy("确认删除该采购行？"))
-                    )
-                      setLines(lines.filter((_, i) => i !== index));
+      </Card>
+
+      <ListCard
+        title={tr("lines")}
+        right={<span className="text-sm font-semibold tabular-nums" style={{ color: A.label }}>{copy("预计总额")} {amount(total, currency)}</span>}
+      >
+        {lines.map((line, index) => (
+          <div key={line.lineId} className="px-5 py-4" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
+            <div className="mb-3 flex items-center gap-3">
+              <span className="inline-flex h-6 items-center rounded-full bg-blue-50 px-2.5 text-xs font-semibold text-blue-700">{copy("采购行")} {index + 1}</span>
+              <span className="ml-auto text-xs tabular-nums" style={{ color: A.sub }}>
+                {tr("lineAmount")} <strong style={{ color: A.label }}>{amount(lineAmountOf(line), line.currency || currency)}</strong>
+              </span>
+              <button
+                type="button"
+                aria-label={`${copy("删除采购行")} ${index + 1}`}
+                title={copy("删除采购行")}
+                onClick={() => {
+                  if (
+                    lines.length > 1 &&
+                    window.confirm(copy("确认删除该采购行？"))
+                  )
+                    setLines(lines.filter((_, i) => i !== index));
+                }}
+                className="rounded-md p-1 text-red-600 hover:bg-red-50 disabled:opacity-40"
+                disabled={lines.length < 2}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
+              <Field label={copy("采购类型")}>
+                <select
+                  value={line.sourceType}
+                  onChange={(e) => {
+                    const sourceType = e.target.value as Line["sourceType"];
+                    patchLine(index, {
+                      ...makeLine(defaultDate),
+                      lineId: line.lineId,
+                      sourceType,
+                      currency,
+                    });
                   }}
-                  className="p-1 text-red-600"
+                  style={inputStyle}
                 >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-              <div className="grid gap-2 md:grid-cols-6">
-                <Field label={copy("采购类型")}>
-                  <select
-                    value={line.sourceType}
-                    onChange={(e) => {
-                      const sourceType = e.target.value as Line["sourceType"];
-                      patchLine(index, {
-                        ...makeLine(defaultDate),
-                        lineId: line.lineId,
-                        sourceType,
-                        currency,
-                      });
-                    }}
-                    style={inputStyle}
-                  >
-                    <option value="catalog_item">{copy("目录物料")}</option>
-                    <option value="non_catalog_item">{copy("Other / 非目录")}</option>
-                  </select>
-                </Field>
-                <Field label={copy("计价方式")}>
-                  <select
-                    value={line.lineBasis}
-                    onChange={(e) =>
-                      patchLine(index, {
-                        lineBasis: e.target.value as Line["lineBasis"],
-                        quantity: "",
-                        estimatedUnitPrice: "",
-                        estimatedAmount: "",
-                      })
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="quantity">{copy("数量型")}</option>
-                    <option value="amount">{copy("金额 / 服务型")}</option>
-                  </select>
-                </Field>
+                  <option value="catalog_item">{copy("目录物料")}</option>
+                  <option value="non_catalog_item">{copy("Other / 非目录")}</option>
+                </select>
+              </Field>
+              <Field label={copy("计价方式")}>
+                <select
+                  value={line.lineBasis}
+                  onChange={(e) =>
+                    patchLine(index, {
+                      lineBasis: e.target.value as Line["lineBasis"],
+                      quantity: "",
+                      estimatedUnitPrice: "",
+                      estimatedAmount: "",
+                    })
+                  }
+                  style={inputStyle}
+                >
+                  <option value="quantity">{copy("数量型")}</option>
+                  <option value="amount">{copy("金额 / 服务型")}</option>
+                </select>
+              </Field>
+              <div className="md:col-span-1 xl:col-span-2">
                 <Field label="SKU / Other">
                   {line.sourceType === "catalog_item" ? (
                     <select
@@ -846,13 +1125,28 @@ export default function CanonicalProcurementPanel({
                       ))}
                     </select>
                   ) : (
-                    <span className="block py-2 text-xs">{copy("非目录")}</span>
+                    <input readOnly value={copy("非目录")} style={{ ...inputStyle, background: A.gray6, color: A.sub }} />
                   )}
                   {prefillChip(line, "itemId")}
                 </Field>
-                <Field label={copy("供应商")}>
+              </div>
+              <div className="md:col-span-3 xl:col-span-2">
+                <Field label={copy("物料名称 / 描述")}>
+                  <input
+                    readOnly={line.sourceType === "catalog_item"}
+                    value={line.itemNameSnapshot}
+                    onChange={(e) =>
+                      patchLine(index, { itemNameSnapshot: e.target.value })
+                    }
+                    style={line.sourceType === "catalog_item" ? { ...inputStyle, background: A.gray6 } : inputStyle}
+                  />
+                  {prefillChip(line, "itemNameSnapshot")}
+                </Field>
+              </div>
+              <div className="md:col-span-3 xl:col-span-2">
+                <Field label={tr("supplier")}>
                   <select
-                    aria-label={`${copy("供应商")} ${index + 1}`}
+                    aria-label={`${tr("supplier")} ${index + 1}`}
                     value={line.supplierId}
                     onChange={(e) => chooseSupplier(index, e.target.value)}
                     style={inputStyle}
@@ -861,7 +1155,7 @@ export default function CanonicalProcurementPanel({
                     {supplierOptions(line).map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name}
-                        {s.preferred ? " · Preferred" : ""}
+                        {s.preferred ? ` · ${tr("preferred")}` : ""}
                       </option>
                     ))}
                   </select>
@@ -898,6 +1192,7 @@ export default function CanonicalProcurementPanel({
                     line.itemId &&
                     supplierOptions(line).length === 0 && (
                       <button
+                        type="button"
                         onClick={() =>
                           onNavigate?.("master-data:items", {
                             entityType: "item",
@@ -908,59 +1203,64 @@ export default function CanonicalProcurementPanel({
                       >{copy("维护 SKU 供应商")}</button>
                     )}
                 </Field>
-                <Field label={copy("物料名称 / 描述")}>
-                  <input
-                    readOnly={line.sourceType === "catalog_item"}
-                    value={line.itemNameSnapshot}
-                    onChange={(e) =>
-                      patchLine(index, { itemNameSnapshot: e.target.value })
-                    }
-                    style={inputStyle}
-                  />
-                  {prefillChip(line, "itemNameSnapshot")}
-                </Field>
+              </div>
+              <div className="md:col-span-1 xl:col-span-2">
                 <Field label={copy("品类")}>
-                  {line.sourceType === "catalog_item" ? <input readOnly value={line.commodityId} style={inputStyle} /> : <select value={line.commodityId} onChange={(e) => patchLine(index, { commodityId: e.target.value })} style={inputStyle}><option value="">{copy("选择品类")}</option>{commodities.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
+                  {line.sourceType === "catalog_item" ? <input readOnly value={line.commodityId} style={{ ...inputStyle, background: A.gray6 }} /> : <select value={line.commodityId} onChange={(e) => patchLine(index, { commodityId: e.target.value })} style={inputStyle}><option value="">{copy("选择品类")}</option>{commodities.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
                 </Field>
               </div>
-              <div className="mt-2 grid gap-2 md:grid-cols-6">
-                {line.lineBasis === "quantity" && (
-                  <>
-                    <Field label={copy("单位")}>
-                      {line.sourceType === "catalog_item" ? <input readOnly value={line.unitSnapshot || ""} style={inputStyle} /> : <select value={line.unitSnapshot || ""} onChange={(e) => patchLine(index, { unitSnapshot: e.target.value })} style={inputStyle}><option value="">{copy("选择单位")}</option>{units.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
-                      {prefillChip(line, "unitSnapshot")}
-                    </Field>
-                    <Field label={copy("数量")}>
-                      <input
-                        type="number"
-                        min="0"
-                        value={line.quantity}
-                        onChange={(e) =>
-                          patchLine(index, { quantity: e.target.value })
-                        }
-                        style={inputStyle}
-                      />
-                      {prefillChip(line, "quantity")}
-                    </Field>
-                    <Field label={copy("预计单价")}>
-                      <input
-                        aria-label={`${copy("预计单价")} ${index + 1}`}
-                        type="number"
-                        min="0"
-                        placeholder={copy("请输入")}
-                        value={line.estimatedUnitPrice}
-                        onChange={(e) =>
-                          patchLine(index, {
-                            estimatedUnitPrice: e.target.value,
-                          })
-                        }
-                        style={inputStyle}
-                      />
-                      {prefillChip(line, "estimatedUnitPrice")}
-                    </Field>
-                  </>
-                )}
-                {line.lineBasis === "amount" && (
+              <div className="md:col-span-2 xl:col-span-2">
+                <Field label={copy("规格")}>
+                  <input
+                    readOnly={line.sourceType === "catalog_item"}
+                    value={line.specificationSnapshot}
+                    onChange={(e) =>
+                      patchLine(index, {
+                        specificationSnapshot: e.target.value,
+                      })
+                    }
+                    style={line.sourceType === "catalog_item" ? { ...inputStyle, background: A.gray6 } : inputStyle}
+                  />
+                </Field>
+              </div>
+              {line.lineBasis === "quantity" && (
+                <>
+                  <Field label={copy("单位")}>
+                    {line.sourceType === "catalog_item" ? <input readOnly value={line.unitSnapshot || ""} style={{ ...inputStyle, background: A.gray6 }} /> : <select value={line.unitSnapshot || ""} onChange={(e) => patchLine(index, { unitSnapshot: e.target.value })} style={inputStyle}><option value="">{copy("选择单位")}</option>{units.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
+                    {prefillChip(line, "unitSnapshot")}
+                  </Field>
+                  <Field label={copy("数量")}>
+                    <input
+                      type="number"
+                      min="0"
+                      value={line.quantity}
+                      onChange={(e) =>
+                        patchLine(index, { quantity: e.target.value })
+                      }
+                      style={inputStyle}
+                    />
+                    {prefillChip(line, "quantity")}
+                  </Field>
+                  <Field label={copy("预计单价")}>
+                    <input
+                      aria-label={`${copy("预计单价")} ${index + 1}`}
+                      type="number"
+                      min="0"
+                      placeholder={copy("请输入")}
+                      value={line.estimatedUnitPrice}
+                      onChange={(e) =>
+                        patchLine(index, {
+                          estimatedUnitPrice: e.target.value,
+                        })
+                      }
+                      style={inputStyle}
+                    />
+                    {prefillChip(line, "estimatedUnitPrice")}
+                  </Field>
+                </>
+              )}
+              {line.lineBasis === "amount" && (
+                <div className="md:col-span-3 xl:col-span-3">
                   <Field label={copy("预计总金额")}>
                     <input
                       type="number"
@@ -972,19 +1272,9 @@ export default function CanonicalProcurementPanel({
                       style={inputStyle}
                     />
                   </Field>
-                )}
-                <Field label={copy("规格")}>
-                  <input
-                    readOnly={line.sourceType === "catalog_item"}
-                    value={line.specificationSnapshot}
-                    onChange={(e) =>
-                      patchLine(index, {
-                        specificationSnapshot: e.target.value,
-                      })
-                    }
-                    style={inputStyle}
-                  />
-                </Field>
+                </div>
+              )}
+              <div className="md:col-span-2 xl:col-span-2">
                 <Field label={copy("目标仓库或服务地点")}>
                   <select
                     value={line.targetWarehouseId}
@@ -1002,24 +1292,26 @@ export default function CanonicalProcurementPanel({
                   </select>
                   {prefillChip(line, "targetWarehouseId")}
                 </Field>
-                <Field label={copy("需求日期")}>
-                  <input
-                    type="date"
-                    value={line.needByDate}
-                    onChange={(e) =>
-                      patchLine(index, { needByDate: e.target.value })
-                    }
-                    style={inputStyle}
-                  />
-                  {prefillChip(line, "needByDate")}
-                </Field>
               </div>
-              {/* Earlier PO prices for the item, beside the estimated unit price. Display only. */}
-              {line.lineBasis === "quantity" && priceHistoryKeyOf(line) && (
-                <div className="mt-2">
-                  <PriceHistoryFacts history={priceHistory.histories.get(priceHistoryKeyOf(line))} state={priceHistory.state} testId={`pr-line-price-history-${index + 1}`} />
-                </div>
-              )}
+              <Field label={copy("需求日期")}>
+                <input
+                  type="date"
+                  value={line.needByDate}
+                  onChange={(e) =>
+                    patchLine(index, { needByDate: e.target.value })
+                  }
+                  style={inputStyle}
+                />
+                {prefillChip(line, "needByDate")}
+              </Field>
+            </div>
+            {/* Earlier PO prices for the item, beside the estimated unit price. Display only. */}
+            {line.lineBasis === "quantity" && priceHistoryKeyOf(line) && (
+              <div className="mt-3">
+                <PriceHistoryFacts history={priceHistory.histories.get(priceHistoryKeyOf(line))} state={priceHistory.state} testId={`pr-line-price-history-${index + 1}`} />
+              </div>
+            )}
+            <div className="mt-3">
               <Field label={copy("行级内部备注")}>
                 <textarea
                   aria-label={`${copy("行级内部备注")} ${index + 1}`}
@@ -1027,99 +1319,25 @@ export default function CanonicalProcurementPanel({
                   onChange={(e) =>
                     patchLine(index, { internalLineComment: e.target.value })
                   }
-                  className="mt-2 min-h-16 w-full rounded-md border p-2 text-xs"
+                  rows={2}
+                  style={{ ...inputStyle, resize: "vertical" }}
                 />
                 {prefillChip(line, "internalLineComment")}
               </Field>
             </div>
-          ))}
-        </div>
-        <div className="mt-3 flex items-center justify-between">
+          </div>
+        ))}
+        <div className="flex items-center justify-between px-5 py-3.5">
           <button
+            type="button"
             onClick={() => setLines([...lines, makeLine(defaultDate)])}
-            className="inline-flex items-center gap-1 rounded-md border px-3 py-2 text-xs"
+            className={listButtonClass.secondary}
           >
-            <Plus size={14} />{copy("新增采购行")}</button>
-          <strong className="text-sm">{copy("预计总额")} {amount(total, currency)}
+            <Plus size={13} />{copy("新增采购行")}</button>
+          <strong className="text-sm tabular-nums" style={{ color: A.label }}>{copy("预计总额")} {amount(total, currency)}
           </strong>
         </div>
-      </Card>
-      <Card className="overflow-hidden">
-        <div className="flex items-center justify-between border-b p-4">
-          <h2 className="text-sm font-semibold">{copy("采购申请")}</h2>
-          <span className="text-xs" style={{ color: A.sub }}>
-            {rows.length} {copy("张")}</span>
-        </div>
-        {rows.length === 0 ? (
-          <div className="py-12 text-center text-sm" style={{ color: A.sub }}>{copy("暂无采购申请")}<br />
-            <span className="text-xs">{copy("点击“新建采购申请”开始录入。")}</span>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr>
-                  {["申请编号", "申请人", "状态", "金额", "操作"].map((h) => (
-                    <th key={h} className="p-3 text-left">
-                      {copy(h)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((pr) => (
-                  <tr key={pr.id} className="border-t">
-                    <td className="p-3">
-                      <EntityLink kind="purchase_request" id={pr.id} className={tableLinkClass}>
-                        {pr.id}
-                      </EntityLink>
-                    </td>
-                    <td className="p-3">{pr.requesterName || pr.requesterId}</td>
-                    <td className="p-3">
-                      {copy(pr.status)}
-                      <SupplierOverrideCount count={pr.lines.filter((line) => hasSupplierOverride(line.supplierOverride)).length} testId="pr-row-supplier-overrides" />
-                      {/* Approve on this row skips the detail, so the row shows each reason too. */}
-                      {pr.lines.some((line) => hasSupplierOverride(line.supplierOverride)) ? (
-                        <div className="mt-1 flex flex-col items-start gap-1">
-                          {pr.lines.filter((line) => hasSupplierOverride(line.supplierOverride)).map((line, lineIndex) => (
-                            <SupplierOverrideFlag
-                              key={line.lineId || lineIndex}
-                              override={line.supplierOverride}
-                              prefix={`${line.sku || line.itemNameSnapshot} · ${line.supplierSnapshot?.supplierName || line.supplierId}`}
-                              testId="pr-row-supplier-override"
-                            />
-                          ))}
-                        </div>
-                      ) : null}
-                    </td>
-                    <td className="p-3">{amount(pr.totalAmount, pr.defaultCurrency)}</td>
-                    <td className="p-3 space-x-2">
-                      {pr.status === "draft" && (
-                        <>
-                          <button onClick={() => edit(pr)}>{copy("编辑")}</button>
-                          <button onClick={() => act(pr, "submit")}>{copy("提交")}</button>
-                        </>
-                      )}
-                      {pr.status === "submitted" && (
-                        <>
-                          <button onClick={() => act(pr, "approve")}>{copy("批准")}</button>
-                          <button onClick={() => act(pr, "reject")}>{copy("拒绝")}</button>
-                          <button onClick={() => act(pr, "withdraw")}>{copy("撤回")}</button>
-                        </>
-                      )}
-                      {pr.status === "approved" && (
-                        <button
-                          onClick={() => act(pr, "generate-purchase-orders")}
-                        >{copy("生成采购订单")}</button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      </ListCard>
     </div>
   );
 }

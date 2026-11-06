@@ -1,34 +1,33 @@
 import type { POStatus } from "../../../types/scm";
-import { A } from "../../../components/ui";
+import { StatusChip, type StatusTone } from "../../../components/ui/listLayout";
 import { workspaceCopy } from "../../../i18n/workspaceCopy";
+import { useI18n } from "../../../i18n/I18n";
 
-const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
-
-const poStatusMeta: Record<POStatus, { color: string; bg: string }> = {
-  "草稿":     { color: A.gray1,  bg: A.gray6  },
-  "待审批":   { color: A.orange, bg: "#fff8f0" },
-  "已审批":   { color: A.indigo, bg: "#eef0ff" },
-  "已发出":   { color: A.blue,   bg: "#f0f6ff" },
-  "部分到货": { color: A.teal,   bg: "#e8f6fc" },
-  "已完成":   { color: A.green,  bg: "#f0faf4" },
-  "已驳回":   { color: A.red,    bg: "#fff1f0" },
-  "已取消":   { color: A.red,    bg: "#fff1f0" },
+// The shared brand tones: gray draft, orange awaiting approval, blue while the
+// order is under way, teal once received, red when rejected.
+const poStatusTone: Record<POStatus, StatusTone> = {
+  "草稿": "neutral",
+  "待审批": "warning",
+  "已审批": "info",
+  "已发出": "info",
+  "部分到货": "info",
+  "已完成": "success",
+  "已驳回": "danger",
+  "已取消": "neutral",
 };
-// The same colours for the stored status codes.
+// The same tones for the stored status codes.
 const poStatusCodeMeta: Record<string, POStatus> = {
   draft: "草稿", pending_approval: "待审批", approved: "已审批", issued: "已发出",
   partially_received: "部分到货", fully_received: "已完成", completed: "已完成", rejected: "已驳回", cancelled: "已取消",
 };
 
 export function POStatusPill({ status }: { status: string }) {
+  const { language } = useI18n();
   const displayStatus = status || "未知";
-  const translatedStatus = copy(displayStatus);
+  const translatedStatus = workspaceCopy(displayStatus, language);
   const visibleStatus = translatedStatus !== displayStatus
     ? translatedStatus
     : displayStatus.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-  const m = poStatusMeta[(poStatusCodeMeta[displayStatus] || displayStatus) as POStatus] ?? { color: A.gray1, bg: A.gray6 };
-  return (
-    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium"
-      style={{ color: m.color, background: m.bg }}>{visibleStatus}</span>
-  );
+  const tone = poStatusTone[(poStatusCodeMeta[displayStatus] || displayStatus) as POStatus] ?? "neutral";
+  return <StatusChip label={visibleStatus} tone={tone} />;
 }

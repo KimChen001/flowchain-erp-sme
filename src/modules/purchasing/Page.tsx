@@ -8,9 +8,7 @@ import {
   AlertCircle,
   CheckCircle2,
   ClipboardCheck,
-  FileSpreadsheet,
   FileText,
-  Filter,
   PackageCheck,
   ShieldCheck,
   Truck,
@@ -60,16 +58,18 @@ import {
 import { POStatusPill } from "./components/POStatusPill";
 import {
   tableLinkClass,
-  tableMinXlClass,
   tableScrollClass,
   tdActionClass,
   tdIdClass,
   tdNameClass,
   tdNowrapClass,
-  tdNumericClass,
+  tdNumericRightClass,
   thClass,
+  thRightClass,
+  tableBodyTextClass,
 } from "../../components/ui/workbenchTable";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass } from "../../components/ui/listLayout";
 import { PurchaseOrderReceiveAction, PurchaseOrderWorkflowActions } from "./components/PurchaseOrderWorkflowActions";
 import { RecordBillAction } from "../../components/business/BillingEntryActions";
 import { PurchaseOrderPromiseDates } from "./components/PurchaseOrderPromiseDates";
@@ -194,7 +194,8 @@ type MatchEvidenceRow = {
 };
 
 function statusChip(status: string) {
-  return <Chip label={copy(status)} color={statusTone(status) === "danger" ? A.red : statusTone(status) === "warning" ? A.orange : statusTone(status) === "success" ? A.green : A.blue} bg={statusTone(status) === "danger" ? "#fff1f0" : statusTone(status) === "warning" ? "#fff8f0" : statusTone(status) === "success" ? "#f0faf4" : "#f0f6ff"} />;
+  const tone = statusTone(status);
+  return <StatusChip label={copy(status)} tone={tone === "purple" ? "info" : tone} />;
 }
 
 // A line made in the app has a random internal id (a UUID), which means
@@ -565,7 +566,10 @@ export default function PurchasingOrdersPage({
 }) {
   const copy = useWorkspaceCopy();
   const priceCopy = usePriceHistoryCopy();
-  const { t, timezone } = useI18n();
+  const { t, timezone, language } = useI18n();
+  // "供应商" alone is the Suppliers module name; a column holds one supplier.
+  const supplierLabel = language === "en-US" ? "Supplier" : "供应商";
+  const receiptInvoiceLabel = language === "en-US" ? "Receipt / invoice" : "收货 / 发票";
   const warehouseName = useWarehouseNames();
   const canOpenRoute = useRouteAvailability();
   const location = useLocation();
@@ -1057,120 +1061,100 @@ export default function PurchasingOrdersPage({
         <ActionableMetricCard label={copy("匹配复核")} value={String(matchExceptions)} description={copy("查看三单匹配异常")} to="/app/procurement/bills?status=exception" icon={ShieldCheck} color={A.purple} />
       </div>
 
-      <Card className="p-5">
-        <div className="flex items-start justify-between gap-3 mb-4">
-          <div>
-            <SectionHeader title={copy("采购订单查询")} />
-            <div className="text-xs mt-1" style={{ color: A.sub }}>
-              {copy("查询 PO、来源 PR / RFQ、供应商、收货、发票和三单匹配状态")}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={resetFilters}
-              className="h-8 px-3 rounded-lg text-xs font-medium"
-              style={{ background: A.gray6, color: A.label }}>
-              {copy("重置")}
-            </button>
-            <button onClick={exportCsv}
-              className="h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5"
-              style={{ background: "#f0f6ff", color: A.blue }}>
-              <FileSpreadsheet size={13} /> {copy("导出当前结果")}
-            </button>
-          </div>
-        </div>
-        <div className="grid grid-cols-4 gap-3">
-          <Field label={copy("PO 编号")}>
-            <input value={filters.poNumber} onChange={(event) => updateFilter("poNumber", event.target.value)}
-              placeholder="PO-2026-1287" style={inputStyle} />
-          </Field>
-          <Field label={copy("供应商")}>
-            <input value={filters.supplier} onChange={(event) => updateFilter("supplier", event.target.value)}
-              placeholder={copy("供应商名称")} style={inputStyle} />
-          </Field>
-          <Field label={copy("物料 / SKU")}>
-            <input value={filters.skuOrItem} onChange={(event) => updateFilter("skuOrItem", event.target.value)}
-              placeholder={copy("SKU 或品名")} style={inputStyle} />
-          </Field>
-          <Field label={copy("状态")}>
-            <select value={filters.status} onChange={(event) => updateFilter("status", event.target.value as PurchaseOrderWorkbenchFilters["status"])}
-              style={inputStyle}>
-              {statusOptions.map((status) => <option key={status} value={status}>{copy(status)}</option>)}
-            </select>
-          </Field>
-          <Field label={copy("来源")}>
-            <select value={filters.source} onChange={(event) => updateFilter("source", event.target.value)}
-              style={inputStyle}>
-              <option value="全部">{copy("全部")}</option>
-              {sourceOptions.map((source) => (
-                <option key={source} value={source}>{copy(source === "forecast" ? "预测" : source === "manual" ? "手工" : source)}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label={copy("负责人")}>
-            <input value={filters.owner} onChange={(event) => updateFilter("owner", event.target.value)}
-              placeholder={copy("采购负责人")} style={inputStyle} />
-          </Field>
-          <Field label={copy("ETA 起始")}>
-            <input value={filters.etaFrom} onChange={(event) => updateFilter("etaFrom", event.target.value)}
-              placeholder="2026-06-01" style={inputStyle} />
-          </Field>
-          <Field label={copy("ETA 结束")}>
-            <input value={filters.etaTo} onChange={(event) => updateFilter("etaTo", event.target.value)}
-              placeholder="2026-06-30" style={inputStyle} />
-          </Field>
-        </div>
-      </Card>
+      <ListSearchCard
+        title={copy("采购订单查询")}
+        subtitle={copy("查询 PO、来源 PR / RFQ、供应商、收货、发票和三单匹配状态")}
+        actions={<>
+          <ResetButton onClick={resetFilters} />
+          <ExportButton onClick={exportCsv} />
+        </>}
+      >
+        <Field label={copy("PO 编号")}>
+          <input value={filters.poNumber} onChange={(event) => updateFilter("poNumber", event.target.value)}
+            placeholder="PO-2026-1287" style={inputStyle} />
+        </Field>
+        <Field label={supplierLabel}>
+          <input value={filters.supplier} onChange={(event) => updateFilter("supplier", event.target.value)}
+            placeholder={copy("供应商名称")} style={inputStyle} />
+        </Field>
+        <Field label={copy("物料 / SKU")}>
+          <input value={filters.skuOrItem} onChange={(event) => updateFilter("skuOrItem", event.target.value)}
+            placeholder={copy("SKU 或品名")} style={inputStyle} />
+        </Field>
+        <Field label={copy("状态")}>
+          <select value={filters.status} onChange={(event) => updateFilter("status", event.target.value as PurchaseOrderWorkbenchFilters["status"])}
+            style={inputStyle}>
+            {statusOptions.map((status) => <option key={status} value={status}>{copy(status)}</option>)}
+          </select>
+        </Field>
+        <Field label={copy("来源")}>
+          <select value={filters.source} onChange={(event) => updateFilter("source", event.target.value)}
+            style={inputStyle}>
+            <option value="全部">{copy("全部")}</option>
+            {sourceOptions.map((source) => (
+              <option key={source} value={source}>{copy(source === "forecast" ? "预测" : source === "manual" ? "手工" : source)}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label={copy("负责人")}>
+          <input value={filters.owner} onChange={(event) => updateFilter("owner", event.target.value)}
+            placeholder={copy("采购负责人")} style={inputStyle} />
+        </Field>
+        <Field label={copy("ETA 起始")}>
+          <input value={filters.etaFrom} onChange={(event) => updateFilter("etaFrom", event.target.value)}
+            placeholder="2026-06-01" style={inputStyle} />
+        </Field>
+        <Field label={copy("ETA 结束")}>
+          <input value={filters.etaTo} onChange={(event) => updateFilter("etaTo", event.target.value)}
+            placeholder="2026-06-30" style={inputStyle} />
+        </Field>
+      </ListSearchCard>
 
-      <Card>
-        <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
-          <div>
-            <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("采购订单列表")}</div>
-            <div className="text-[11px] mt-0.5" style={{ color: A.sub }}>{copy("共")} {orders.length} {copy("条，当前筛选")} {filtered.length}</div>
-          </div>
-          <span className="text-xs ml-auto flex items-center gap-1.5" style={{ color: A.gray2 }}>
-            <Filter size={13} /> {copy("PO / GRN / Invoice 证据")}
-          </span>
-          <Chip label={copy("只读复核")} color={A.blue} bg="#f0f6ff" />
-        </div>
+      <ListCard title={copy("采购订单列表")} total={orders.length} shown={filtered.length}>
         <div className={tableScrollClass}>
-          <table className="w-full min-w-[1200px] table-fixed text-left [&_tbody_td]:!py-0">
+          {/* Fixed column widths that fit beside the sidebar at 1440px, so the
+              pinned Actions column never covers the last data column. */}
+          <table className={`w-full min-w-[1150px] table-fixed text-left ${tableBodyTextClass}`}>
             <thead>
-              <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
-                <th className={`${thClass} sticky left-0 z-20 w-[150px] bg-slate-50`} style={{ color: A.gray1 }}>{copy("PO 编号")}</th>
-                {["供应商", "状态", "采购负责人", "订单金额", "预计到货", "收货状态", "发票 / 匹配"].map((header) => <th key={header} className={thClass} style={{ color: A.gray1 }}>{copy(header)}</th>)}
-                <th className={`${thClass} sticky right-0 z-20 w-[150px] bg-slate-50`} style={{ color: A.gray1 }}>{copy("操作")}</th>
+              <tr style={listHeadRowStyle}>
+                <th className={`${thClass} sticky left-0 z-20 w-[190px] bg-white`} style={{ color: A.gray1 }}>{copy("PO 编号")}</th>
+                <th className={`${thClass} w-[180px]`} style={{ color: A.gray1 }}>{supplierLabel}</th>
+                <th className={`${thClass} w-[140px]`} style={{ color: A.gray1 }}>{copy("状态")}</th>
+                <th className={`${thClass} w-[120px]`} style={{ color: A.gray1 }}>{copy("采购负责人")}</th>
+                <th className={`${thRightClass} w-[130px]`} style={{ color: A.gray1 }}>{copy("订单金额")}</th>
+                <th className={`${thClass} w-[120px]`} style={{ color: A.gray1 }}>{copy("预计到货")}</th>
+                <th className={`${thClass} w-[160px]`} style={{ color: A.gray1 }}>{receiptInvoiceLabel}</th>
+                <th className={`${thClass} sticky right-0 z-20 w-[110px] bg-white`} style={{ color: A.gray1 }}>{copy("操作")}</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="p-12 text-center text-sm" style={{ color: A.sub }}>
-                    {copy("当前工作区没有符合条件的采购订单。")}
-                  </td>
-                </tr>
-              ) : null}
+              {filtered.length === 0 && (
+                <ListStateRow colSpan={8} state="empty" title={copy("当前工作区没有符合条件的采购订单。")} />
+              )}
               {filtered.map((order, index) => {
-                const totals = poTotals(order);
                 const firstGrn = grnsForPo(order.po, facts)[0];
                 const firstInvoice = invoicesForPo(order.po, facts)[0];
                 return (
-                  <tr key={order.po}
-                    className="h-14 transition-colors hover:bg-blue-50/40"
-                    style={{ borderBottom: index < filtered.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
-                    <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                  <tr key={order.po} className={listRowClass} style={listRowStyle(index, filtered.length)}>
+                    <td className={`${tdIdClass} sticky left-0 z-10 truncate bg-white`}>
                       <BusinessEntityLink entityType="purchase_order" entityId={order.po} className={tableLinkClass}>{order.po}</BusinessEntityLink>
                     </td>
-                    <td className={`${tdNameClass} max-w-[180px] truncate font-medium`}><BusinessEntityLink entityType="supplier" entityId={order.supplier}>{order.supplier}</BusinessEntityLink></td>
+                    <td className={`${tdNameClass} truncate font-medium`} title={order.supplier}><BusinessEntityLink entityType="supplier" entityId={order.supplier}>{order.supplier}</BusinessEntityLink></td>
                     <td className={tdNowrapClass}><POStatusPill status={order.status} /></td>
-                    <td className={tdNowrapClass} style={{ color: A.sub }}>{order.owner}</td>
-                    <td className={`${tdNumericClass} font-semibold`} style={{ color: A.label }}>{formatCurrencyAmount(poAmount(order), order.currency)}</td>
+                    <td className={`${tdNowrapClass} truncate`} style={{ color: A.sub }}>{order.owner}</td>
+                    <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{formatCurrencyAmount(poAmount(order), order.currency)}</td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{order.eta}</td>
-                    <td className={tdNowrapClass}>{statusChip(receivedStatus(order, facts))}</td>
-                    <td className={tdNowrapClass}><div>{statusChip(invoiceStatus(order, facts))}</div><div className="mt-1 text-[11px] text-slate-500">{copy(matchStatus(order, facts))}</div></td>
-                    <td className={`${tdActionClass} sticky right-0 z-10 bg-white`}>
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button onClick={() => openDetail(order.po)} className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600">{copy("查看")}</button>
-                        <details className="relative"><summary className="cursor-pointer list-none rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">{copy("更多")}</summary><div className="absolute right-0 top-7 z-30 w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                    <td className={tdNowrapClass}>
+                      <div className="flex flex-col items-start gap-1">
+                        {statusChip(receivedStatus(order, facts))}
+                        {statusChip(invoiceStatus(order, facts))}
+                      </div>
+                      <div className="mt-1 truncate text-[11px] text-slate-500" title={copy(matchStatus(order, facts))}>{copy(matchStatus(order, facts))}</div>
+                    </td>
+                    <td className={`${tdActionClass} sticky right-0 z-10 !min-w-0 bg-white`}>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => openDetail(order.po)} className={rowActionClass.primary}>{copy("查看")}</button>
+                        <details className="relative"><summary className={`cursor-pointer list-none ${rowActionClass.neutral}`}>{copy("更多")}</summary><div className="absolute right-0 top-7 z-30 w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
                           <button onClick={() => openDetail(order.po)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看订单行与证据")}</button>
                           {firstGrn && <button onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, firstGrn.grn)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开收货记录")}</button>}
                           {firstInvoice && canOpenRoute("procurement:bills") && <button onClick={() => navigateOrderWithReturn(order, "procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开采购发票")}</button>}
@@ -1183,17 +1167,10 @@ export default function PurchasingOrdersPage({
                   </tr>
                 );
               })}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center text-xs" style={{ color: A.gray2 }}>
-                    {copy("当前条件下暂无采购订单")}
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
-      </Card>
+      </ListCard>
 
     </div>
   );

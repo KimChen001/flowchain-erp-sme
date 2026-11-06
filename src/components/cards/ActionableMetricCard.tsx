@@ -2,9 +2,7 @@ import type React from "react";
 import { ArrowRight } from "lucide-react";
 import { Link } from "react-router";
 import { A, Card } from "../ui";
-import { workspaceCopy } from "../../i18n/workspaceCopy";
-
-const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
+import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 
 export function ActionableMetricCard({
   label,
@@ -23,6 +21,7 @@ export function ActionableMetricCard({
   color?: string;
   state?: Record<string, unknown>;
 }) {
+  const copy = useWorkspaceCopy();
   return (
     <Link
       to={to}

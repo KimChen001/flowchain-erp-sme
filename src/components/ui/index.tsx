@@ -241,6 +241,7 @@ export function KpiCard({ label, value, sub, delta, positive, icon: Icon, color 
   label: string; value: string; sub?: string; delta?: string; positive?: boolean;
   icon: React.ElementType; color?: string;
 }) {
+  const copy = useWorkspaceCopy();
   const c = color ?? A.blue;
   return (
     <Card className="p-4 flex flex-col gap-3">
@@ -268,6 +269,7 @@ export function KpiCard({ label, value, sub, delta, positive, icon: Icon, color 
 export function SegmentedControl({ options, value, onChange }: {
   options: { label: string; value: string }[]; value: string; onChange: (v: string) => void;
 }) {
+  const copy = useWorkspaceCopy();
   return (
     <div className="flex p-0.5 rounded-lg" style={{ background: A.gray5 }}>
       {options.map((opt) => (
@@ -302,6 +304,7 @@ export const AppleTooltip = ({ active, payload, label }: any) => {
 };
 
 export function SectionHeader({ title, right }: { title: string; right?: React.ReactNode }) {
+  const copy = useWorkspaceCopy();
   return (
     <div className="flex items-center justify-between mb-4">
       <h2 className="fc-section-title" style={{ color: A.label }}>{copy(title)}</h2>
@@ -314,6 +317,7 @@ export function Modal({ open, onClose, title, subtitle, width = 560, children, f
   open: boolean; onClose: () => void; title: string; subtitle?: string;
   width?: number; children: React.ReactNode; footer?: React.ReactNode;
 }) {
+  const copy = useWorkspaceCopy();
   useEffect(() => {
     if (!open) return;
     const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -347,6 +351,7 @@ export function Modal({ open, onClose, title, subtitle, width = 560, children, f
 }
 
 export function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+  const copy = useWorkspaceCopy();
   return (
     <div className="space-y-1.5">
       <label className="text-[13px] leading-5 font-semibold" style={{ color: A.sub }}>{copy(label)}</label>

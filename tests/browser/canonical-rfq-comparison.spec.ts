@@ -240,7 +240,7 @@ test("RFQ list and comparison use English when the user selects English", async 
   await page.getByRole("button", { name: "Cancel" }).click();
 
   await page.goto("/app/procurement/rfq");
-  await expect(page.getByTestId("procurement-rfq-list")).toContainText("Request for quotation records");
+  await expect(page.getByTestId("procurement-rfq-list")).toContainText("RFQ list");
   await expect(page.getByTestId("procurement-rfq-list")).toContainText("Collecting quotes");
   await page.goto(`/app/procurement/rfq/${encodeURIComponent(RFQ_ID)}/comparison`);
   const comparison = page.getByTestId("canonical-rfq-comparison");
