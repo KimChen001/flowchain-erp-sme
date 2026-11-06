@@ -3,6 +3,7 @@ import { PURCHASE_SUGGESTION_SOURCES, suggestNeedByDate } from '../../shared/pur
 import { can } from '../auth/authorization-service.mjs'
 import { AI_READ_TOOL_COLUMNS } from './ai-read-tool-runner.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
+import { aiSkillUnitLabel } from './ai-skill-copy.mjs'
 import { findPaymentTerm } from './standard-payment-terms.mjs'
 
 // The UI tools of assistant v2 (docs/ai-assistant-v2-design.md §3.6, §4, §4.1,
@@ -235,7 +236,14 @@ function cellOf(kind, row, key, output) {
 
 const declaredOf = (tool) => Object.entries(AI_READ_TOOL_COLUMNS[tool])
 // The model may name a column by its result key, its part code or the key in snake case.
-const keyIn = (keys, name) => keys.find((key) => key === name || aiUiColumnCode(key) === name || snakeCase(key) === name)
+// The model reads a display string and a label beside some values
+// (dueDateText, statusLabel): naming one means the value's own column
+// (2026-11-05: show_table failed twice on amountText and statusLabel).
+const baseName = (name) => name.replace(/(?:Text|Label|_text|_label)$/, '')
+const keyIn = (keys, name) => {
+  const match = (wanted) => keys.find((key) => key === wanted || aiUiColumnCode(key) === wanted || snakeCase(key) === wanted)
+  return match(name) || (baseName(name) !== name && baseName(name) ? match(baseName(name)) : undefined)
+}
 const describeColumns = (tool) => declaredOf(tool).map(([path, keys]) => `${path || 'result'}: ${keys.join(', ')}`).join('; ')
 
 // The list of the result the columns come from, and their keys there. A list
@@ -377,12 +385,19 @@ const showTable = defineUiTool({
     }
     // A quantity carries its unit in its own cell ("7,000 pcs"): the row's
     // unit goes beside the cells as unit (moq_unit for a minimum order
-    // quantity), and a column of units alone is not shown.
+    // quantity), worded in the answer's language ("300 boxes", "300 箱";
+    // unit_one for a quantity of 1), and a column of units alone is not shown.
     if (columns.some((column) => column.kind === 'quantity')) {
+      const worded = (cell, code, unit) => {
+        const many = aiSkillUnitLabel(unit, ctx?.language, 2)
+        const one = aiSkillUnitLabel(unit, ctx?.language, 1)
+        cell[code] = many
+        if (one !== many) cell[`${code}_one`] = one
+      }
       for (const [index, row] of shown.entries()) {
         const unit = [row.unit, row.item?.unit].find((entry) => typeof entry === 'string' && entry.trim() && entry.length <= 20)
-        if (unit) cells[index].unit = unit.trim()
-        if (typeof row.moqUnit === 'string' && row.moqUnit.trim() && row.moqUnit.length <= 20) cells[index].moq_unit = row.moqUnit.trim()
+        if (unit) worded(cells[index], 'unit', unit.trim())
+        if (typeof row.moqUnit === 'string' && row.moqUnit.trim() && row.moqUnit.length <= 20) worded(cells[index], 'moq_unit', row.moqUnit.trim())
       }
       for (const code of ['unit', 'moq_unit']) {
         const at = columns.findIndex((column) => column.code === code && column.kind === 'text')
@@ -417,7 +432,7 @@ const CARD_FIGURES = [
 
 // Up to two of the record's own figures, each with its unit; an amount only
 // with its currency, a quantity with the record's unit.
-function cardFigures(tool, row, output) {
+function cardFigures(tool, row, output, language) {
   const figures = []
   for (const key of CARD_FIGURES) {
     const value = numberOf(at(row, key))
@@ -426,17 +441,19 @@ function cardFigures(tool, row, output) {
     if (!unit) continue
     const currency = unit === 'money' ? currencyBeside(row, key, output) : null
     if (unit === 'money' && !currency) continue
-    const unitLabel = unit === 'quantity' ? [row.unit, row.item?.unit].find((entry) => typeof entry === 'string' && entry && entry.length <= 20) : undefined
+    const stored = unit === 'quantity' ? [row.unit, row.item?.unit].find((entry) => typeof entry === 'string' && entry && entry.length <= 20) : undefined
+    // The unit in the answer's language and number: "300 boxes", "300 箱".
+    const unitLabel = stored ? aiSkillUnitLabel(stored, language, value).slice(0, 20) : undefined
     figures.push({ code: aiUiColumnCode(key), value, unit, ...(currency ? { currency } : {}), ...(unitLabel ? { unitLabel } : {}) })
   }
   return figures
 }
 
-function cardOf(tool, { ref, row }, output) {
+function cardOf(tool, { ref, row }, output, language) {
   const title = CARD_TITLES.map((key) => at(row, key)).find((value) => typeof value === 'string' && value.trim() && value !== ref.label)
   const status = CARD_STATUSES.map((key) => row[key]).find(isCode)
   const date = cardDate(row)
-  const figures = cardFigures(tool, row, output)
+  const figures = cardFigures(tool, row, output, language)
   return { ref, ...(title ? { title: title.slice(0, MAX_TEXT) } : {}), ...(status ? { status: { code: status } } : {}), ...(date ? { date } : {}), ...(figures.length ? { figures } : {}) }
 }
 
@@ -459,7 +476,7 @@ const showRecords = defineUiTool({
     if (source.error) return source
     const found = pickRefs(source, input.refs, input.source)
     if (found.error) return found
-    const cards = found.picked.map((holder) => cardOf(source.tool, holder, source.output))
+    const cards = found.picked.map((holder) => cardOf(source.tool, holder, source.output, ctx?.language))
     return part('records', { source: source.id, ...(input.emphasis ? { emphasis: input.emphasis } : {}), cards }, cards.map((card) => card.ref))
   },
 })
@@ -828,7 +845,28 @@ const suggestPurchaseRequest = defineUiTool({
     if (!requestable.length) return fail('nothing_to_request', `No item in ${input.source} can be requested (inactive or none). Say so instead of showing the form.`)
     if (requestable.length > MAX_FORM_LINES) return fail('too_many_lines', `The form takes up to ${MAX_FORM_LINES} items; list the SKUs to show in lines.`)
     const userNamed = new Set(array(ctx.userNamedSkus).map(fold))
-    const entries = requestable.map((row) => ({ row, isNamed: agreed ? agreed.has(fold(row.item.sku)) : userNamed.has(fold(row.item.sku)), line: linesBySku.get(fold(row.item.sku)) }))
+    // An item the user described in their own words ("我需要 50 个温度传感器")
+    // that the model resolved and listed from user_named is the user's too
+    // (2026-11-05: the line stayed unticked while the answer asked to check
+    // it): when the user typed its quantity in this question, or when it is
+    // the one line and the question names no SKU at all. A quantity the user
+    // did not type is the server's suggestion, not "you asked for this".
+    const question = String(ctx.question ?? '').normalize('NFKC')
+    const typedNumbers = new Set([...question.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, ''))))
+    const namesNoSku = !/[A-Za-z]+[A-Za-z0-9]*-\d/.test(question)
+    const resolved = (line) => {
+      if (input.from !== 'user_named' || !line) return null
+      const quantityTyped = isNumber(line.quantity) && typedNumbers.has(line.quantity)
+      if (quantityTyped) return line
+      return lines.length === 1 && namesNoSku && question.trim() ? { ...line, quantity: undefined } : null
+    }
+    const entries = requestable.map((row) => {
+      const line = linesBySku.get(fold(row.item.sku))
+      if (agreed) return { row, isNamed: agreed.has(fold(row.item.sku)), line }
+      if (userNamed.has(fold(row.item.sku))) return { row, isNamed: true, line }
+      const described = resolved(line)
+      return { row, isNamed: Boolean(described), line: described || line }
+    })
     // Adding an approved supplier to an item is what the item supplier route
     // allows (master-data.routes.mjs WRITE_RULES); a role that cannot see
     // suppliers in the assistant is not offered it.

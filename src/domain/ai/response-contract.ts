@@ -115,6 +115,9 @@ export type AiResponseV2ReviewCard = {
   // (prepare_action_draft, mode order): true opens the card's form as the
   // answer arrives. Their allowedNextStep names the SKU and is the button label.
   autoOpen?: boolean;
+  // True on a request the answer says is not needed (open orders already
+  // cover the item): offered only if the user still wants one.
+  optional?: boolean;
 };
 
 export type AiRuntimeContextBreadcrumb = {

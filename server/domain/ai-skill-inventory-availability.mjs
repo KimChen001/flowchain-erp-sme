@@ -29,8 +29,24 @@ export function aiSkillOtherUnitLines(row, fmt, language) {
 
 const figure = (code, entityId, value, extra = {}) => ({ key: entityId ? `${code}:${entityId}` : code, code, entityId: entityId || null, value, ...extra })
 
+// The open sales orders the stock is set against (the readers' salesOrders:
+// not draft or cancelled, with a quantity not yet shipped), earliest promised
+// date first, undated last; for the SKU the question names when it names one.
+// Shown only to readers of sales orders.
+const MAX_SALES_ORDERS = 5
+function runOpenSalesOrders(facts, route) {
+  const base = { skillId: 'inventory_availability', mode: 'sales_orders' }
+  if (!Array.isArray(facts?.salesOrders)) return { ...base, salesHidden: true }
+  const sku = array(route?.entities?.skus)[0]?.sku || null
+  const orders = facts.salesOrders
+    .filter((order) => !sku || array(order.lines).some((line) => line.sku === sku))
+    .sort((a, b) => (a.promisedDate ? 0 : 1) - (b.promisedDate ? 0 : 1) || String(a.promisedDate || '').localeCompare(String(b.promisedDate || '')) || String(a.number).localeCompare(String(b.number)))
+  return { ...base, sku, orders, total: orders.length }
+}
+
 export function runInventoryAvailability(facts, { route = null } = {}) {
   const mode = route?.mode || 'overview'
+  if (mode === 'sales_orders') return runOpenSalesOrders(facts, route)
   if (mode === 'hidden' || !facts?.inventory) return { skillId: 'inventory_availability', mode: 'hidden', hidden: true, ids: array(route?.entities?.hidden).map((entry) => entry.id) }
   const rows = array(facts.inventory.rows)
   if (mode === 'single') return { skillId: 'inventory_availability', mode, skus: array(route?.entities?.skus).slice(0, 5), total: rows.length }
@@ -83,7 +99,45 @@ function singleSentences(row, fmt, language) {
   return sentences
 }
 
+// "3 open sales orders": each with its customer, the day promised to the
+// customer, how far it is (not shipped, partly shipped, on hold) and what is
+// not yet shipped or reserved, in each SKU's own unit.
+function presentOpenSalesOrders(result, facts, { skill, language, query }) {
+  const base = { skill, facts, language, query, items: [], navigation: [], followUpIds: ['late_order_impact', 'inventory_availability'] }
+  if (result.salesHidden) return presentAiSkillAnswer({ ...base, title: aiSkillText('sales.title_hidden', language), summary: aiSkillText('access.ask_admin', language), severity: 'info', evidence: [], impacts: [] })
+  const fmt = aiSkillFormatter(facts, language)
+  const units = new Map([...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)].map((row) => [row.sku, row.unit || null]))
+  const shown = result.orders.slice(0, MAX_SALES_ORDERS)
+  const evidence = shown.map((order, index) => {
+    const open = array(order.lines).filter((line) => line.open > 0)
+    const lines = open.length
+      ? aiSkillList(open.map((line) => aiSkillText('sales.line_open', language, { quantity: fmt.quantity(line.open, units.get(line.sku)), sku: line.sku })), language)
+      : aiSkillText('sales.line_reserved', language)
+    const customer = order.customer || aiSkillText('impact.customer_unknown', language)
+    const status = aiSkillText(`so_status.${['on_hold', 'partially_shipped'].includes(order.status) ? order.status : 'not_shipped'}`, language)
+    return {
+      id: `sales_order:${order.id}`, label: status, entityLabel: order.number, entityType: 'sales_order', entityId: order.id, moduleId: 'sales:orders', evidenceType: 'sales_order',
+      summary: aiSkillText(order.promisedDate ? 'sales.line' : 'sales.line_undated', language, { customer, date: order.promisedDate ? fmt.day(order.promisedDate) : '', lines }),
+      value: null, status, statusCode: order.status || 'not_shipped', severity: 'info', rank: index + 1, sourceLabel: aiSkillText('area.sales', language),
+      linkTarget: { moduleId: 'sales:orders', entityType: 'sales_order', entityId: order.id },
+    }
+  })
+  const titleKey = result.sku ? 'sales.sku_title' : 'sales.title'
+  return presentAiSkillAnswer({
+    ...base,
+    title: aiSkillCountText(titleKey, result.total, language, { count: fmt.number(result.total), sku: result.sku || '' }),
+    summary: aiSkillSentences([
+      result.total ? aiSkillText('sales.summary', language) : '',
+      result.total > shown.length ? aiSkillText('answer.showing_plain', language, { shown: fmt.number(shown.length), total: fmt.number(result.total) }) : '',
+    ], language),
+    severity: 'info', evidence,
+    impacts: evidence.map((item) => ({ area: item.sourceLabel, impact: item.status, severity: 'info', explanation: '', affectedObjects: [item.entityId] })),
+    figures: [{ key: 'open_sales_order_count', code: 'open_sales_order_count', entityId: null, value: result.total }],
+  })
+}
+
 export function presentInventoryAvailability(result, facts, { skill, language, query }) {
+  if (result.mode === 'sales_orders') return presentOpenSalesOrders(result, facts, { skill, language, query })
   const base = { skill, facts, language, query, followUpIds: ['highest_risk_items', 'prepare_action_draft'] }
   if (result.hidden) return presentAiSkillAnswer({ ...base, title: result.ids?.length ? aiSkillText('stock.hidden_lookup', language, { id: aiSkillList(result.ids, language) }) : aiSkillText('stock.title_hidden', language), summary: aiSkillText('access.ask_admin', language), severity: 'info', items: [], navigation: [] })
   const fmt = aiSkillFormatter(facts, language)

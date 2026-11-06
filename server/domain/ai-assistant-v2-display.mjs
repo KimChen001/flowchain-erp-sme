@@ -40,7 +40,10 @@ function realDay(value) {
 
 // The workspace's formats, as the panel's formatters write them
 // (formatCalendarDay, formatLocaleAmount with at most two decimals).
-export function aiV2Formats({ locale = 'en-US', timezone = 'America/New_York' } = {}) {
+// unitLabel(unit, quantity): a stored unit code in the answer's language and
+// number ("box" -> "boxes", 箱), as the rules assistant words it
+// (aiSkillUnitLabel); by default the code as stored.
+export function aiV2Formats({ locale = 'en-US', timezone = 'America/New_York', unitLabel = null } = {}) {
   let tag = text(locale) || 'en-US'
   try { new Intl.NumberFormat(tag) } catch { tag = 'en-US' }
   let zone = text(timezone) || 'UTC'
@@ -67,9 +70,17 @@ export function aiV2Formats({ locale = 'en-US', timezone = 'America/New_York' } 
       return `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(amount)} ${code}`
     }
   }
+  // A month and day with no year ("Nov 6"): no year is made up for it.
+  const monthDay = (month, dayOfMonth) => {
+    const time = Date.UTC(2000, Number(month) - 1, Number(dayOfMonth))
+    const date = new Date(time)
+    if (date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(dayOfMonth)) return null
+    return new Intl.DateTimeFormat(tag, { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(date)
+  }
   const number = (value) => numberFormat.format(value)
-  const quantity = (value, unit) => (text(unit) ? `${number(value)} ${text(unit)}` : number(value))
-  return { locale: tag, timezone: zone, day, money, number, quantity }
+  const unitText =(unit, value) => (typeof unitLabel === 'function' && text(unit) ? text(unitLabel(text(unit), value)) : '') || text(unit)
+  const quantity = (value, unit) => (text(unit) ? `${number(value)} ${unitText(unit, value)}` : number(value))
+  return { locale: tag, timezone: zone, day, monthDay, money, number, quantity, unitText }
 }
 
 // The keys that hold an amount or a quantity in the data tools' results (as
@@ -84,9 +95,10 @@ const SKIP_KEYS = new Set(['ref', 'asOf', 'source'])
 const currencyOf = (value) => (/^[A-Z]{3}$/.test(text(value)) ? text(value) : null)
 
 // The result with a display string beside each value whose shown form differs
-// from the raw one: every day and amount, and a quantity of 1,000 or more or
-// with decimals (a small whole quantity reads the same; its unit is beside
-// it). The keys end in Text; nothing else changes.
+// from the raw one: every day and amount, and a quantity of 1,000 or more,
+// with decimals, or whose unit reads otherwise in the answer ("300 boxes",
+// "300 箱"; a small quantity in pcs reads the same). The keys end in Text;
+// nothing else changes.
 export function aiV2DisplayStrings(result, formats) {
   const walk = (value, scope) => {
     if (Array.isArray(value)) return value.map((entry) => walk(entry, scope))
@@ -105,7 +117,7 @@ export function aiV2DisplayStrings(result, formats) {
         // { value, currency } (an estimated price) is an amount; the value of a
         // suggested quantity is a quantity in the row's unit.
         else if (key === 'value' && ownCurrency) shown = formats.money(entry, ownCurrency)
-        else if ((QUANTITY_KEYS.has(key) || (key === 'value' && scope.parent === 'suggestedQuantity')) && unit && (Math.abs(entry) >= 1000 || !Number.isInteger(entry))) shown = formats.quantity(entry, unit)
+        else if ((QUANTITY_KEYS.has(key) || (key === 'value' && scope.parent === 'suggestedQuantity')) && unit && (Math.abs(entry) >= 1000 || !Number.isInteger(entry) || formats.unitText(unit, entry) !== unit)) shown = formats.quantity(entry, unit)
       }
       if (shown) out[`${key}Text`] = shown
     }
@@ -128,6 +140,63 @@ const SHORT_RECORD = /(?<![\w-])([A-Za-z]{1,6}-\d+)(?![\w-])/g
 const UNIT_WORDS = ['pcs', 'pc', 'units', 'unit', 'ea', 'kg', 'g', 'lb', 'lbs', 'm', 'ft', 'box', 'boxes', 'roll', 'rolls', 'case', 'cases', 'set', 'sets', 'pack', 'packs', 'pair', 'pairs', 'l', 'ml', '件', '个', '箱', '卷', '台', '套', '只', '片', '米', '包']
 
 const amountOf = (value) => Number(value.replace(/,/g, '').replace('−', '-'))
+// A day written the Chinese way, alone or as a range whose second day may
+// leave out the year: 2026年7月1日至9月30日, 2026 年 8 月 8 日到 2026 年 11 月 5 日.
+const ZH_DATE = /(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号](?:\s*(至|到|~|～|-|–|—)\s*(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号])?/g
+const ZH_MONTH_DAY = /(?<!\d\s*年\s*)(?<![\d.])(\d{1,2})\s*月\s*(\d{1,2})\s*[日号](?:\s*(至|到|~|～|-|–|—)\s*(?:(\d{1,2})\s*月\s*)?(\d{1,2})\s*[日号])?/g
+const isoDay = (year, month, day) => `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+
+// Where the text places a display ("the table above", 上表只列出了…), in
+// words that do not (2026-11-05: the table now sits below the text).
+const POSITIONS = [
+  [/\b(the|this|that)\s+(table|list|chart|form|cards?)\s+(?:above|below)\b/gi, '$1 $2'],
+  [/\b([Tt])he\s+(?:above|below)\s+(table|list|chart|form|cards?)\b/g, '$1he $2'],
+  [/\b(shown|listed|displayed)\s+(?:above|below)\b/gi, '$1'],
+  [/[上下]([表图])(?=[中里])/g, '$1'],
+  [/[上下]([表图])(?=只|列|共|按|显示|展示|给出|的|所)/g, '$1中'],
+  [/(见|如|在|从|看)[上下]([表图])(?![格达现情])/g, '$1$2中'],
+  [/(?:上面|下面|上方|下方)的?(表格|列表|图表|卡片|表单|按钮)/g, '$1'],
+  [/(?:上面|下面|上方|下方)(列出|列了)/g, '$1'],
+]
+
+// Status, severity, priority and signal codes in words, [English, Chinese].
+// The statuses use the assistant's own words (po_status in ai-skill-copy.mjs,
+// LABELS.purchase_request below), so the prose matches the tables of the same
+// answer. The app's pages word some of them otherwise (src/i18n/statusLabels.ts:
+// 已下达, 已批准, 已取消); the owner's terminology pass settles one set.
+const CODE_LABELS = Object.freeze({
+  risk: ['Risk', '风险'], warning: ['Warning', '警告'], info: ['Info', '提示'],
+  matched: ['Matched', '已匹配'], variance: ['Variance', '有差异'], exception: ['Exception', '异常'], mismatch: ['Mismatch', '不一致'], not_matched: ['Not matched', '未匹配'],
+  pending: ['Pending', '待处理'], pending_approval: ['Pending approval', '待审批'], submitted: ['Submitted', '已提交'], draft: ['Draft', '草稿'],
+  approved: ['Approved', '审批通过'], rejected: ['Rejected', '已驳回'], cancelled: ['Cancelled', '已作废'], canceled: ['Cancelled', '已作废'],
+  issued: ['Issued', '已发给供应商'], partially_received: ['Partially received', '部分收货'], fully_received: ['Fully received', '全部收货'], received: ['Received', '已收货'],
+  closed: ['Closed', '已关闭'], posted: ['Posted', '已过账'], unposted: ['Not posted', '未过账'], overdue: ['Overdue', '已逾期'], disputed: ['Disputed', '有争议'],
+  below_safety_stock: ['Below safety stock', '低于安全库存'], below_reorder_point: ['Below reorder point', '低于再订货点'], out_of_stock: ['Out of stock', '缺货'], shortage_risk: ['Shortage risk', '短缺风险'],
+})
+function codesInWords(value, index) {
+  const known = (code) => CODE_LABELS[code] || LABELS.type[code] || LABELS.priority[code]
+  return value
+    // A code written as one (partially_received, po_overdue), anywhere.
+    .replace(/(?<![\w-])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\w-])/g, (whole, code) => known(code)?.[index] ?? whole)
+    // A code in quotes ('marks it as "risk"').
+    .replace(/(["“‘「])([a-z][a-z_]*)(["”’」])/g, (whole, open, code, close) => (known(code) ? `${open}${known(code)[index]}${close}` : whole))
+    // A code after "status" ("match status: variance", 状态：approved).
+    .replace(/\b((?:match |posting |dispute )?status(?:\s+is|\s*[:：])\s*)([a-z][a-z_]*)\b/gi, (whole, lead, code) => (known(code) ? `${lead}${known(code)[index]}` : whole))
+    .replace(/(状态\s*(?:[:：]|为|是)\s*)([a-z][a-z_]*)/g, (whole, lead, code) => (known(code) ? `${lead}${known(code)[index]}` : whole))
+}
+
+// A space between Chinese and a number, as the app writes it ("涉及 5 家",
+// "逾期 4 天"); a date's own parts (11月20日, 2026年) stay together.
+function zhSpacing(piece, before) {
+  let out = ''
+  let prev = before.slice(-1)
+  for (const char of piece) {
+    if ((HAN.test(prev) && /\d/.test(char) && !/[年月日号]/.test(prev)) || (/\d/.test(prev) && HAN.test(char) && !/[年月日号]/.test(char))) out += ' '
+    out += char
+    prev = char
+  }
+  return out
+}
 
 // Where a ', : ; ! ?' goes full-width in Chinese: after a Han character or
 // full-width punctuation, or before a Han character, never between digits.
@@ -142,14 +211,43 @@ export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), re
   const tidy = (piece, before = '') => {
     let out = String(piece ?? '')
     if (!out) return out
-    // Dates the app would show its own way.
+    // Dates the app would show its own way, the Chinese way of writing them
+    // too (2026年7月1日至9月30日): the workspace's date format holds in
+    // either language.
     out = out.replace(ISO_IN_TEXT, (whole, value) => formats.day(value) || whole)
+    out = out.replace(ZH_DATE, (whole, year, month, day, joint, year2, month2, day2) => {
+      const first = formats.day(isoDay(year, month, day))
+      if (!first) return whole
+      if (!joint) return first
+      const second = formats.day(isoDay(year2 || year, month2, day2))
+      return second ? `${first} ${/[至到]/.test(joint) ? joint : '–'} ${second}` : whole
+    })
+    // One with no year (11 月 6 日, 11月6日至8日) as a month and day.
+    out = out.replace(ZH_MONTH_DAY, (whole, month, day, joint, month2, day2) => {
+      const first = formats.monthDay(month, day)
+      if (!first) return whole
+      if (!joint) return first
+      const second = formats.monthDay(month2 || month, day2)
+      return second ? `${first} ${/[至到]/.test(joint) ? joint : '–'} ${second}` : whole
+    })
     // Amounts with a currency code or word, as the cards write them.
     out = out.replace(AMOUNT_THEN_CODE, (whole, symbol, figure, word) => formats.money(amountOf(figure), CURRENCY_WORDS[word.toUpperCase()] || CURRENCY_WORDS[word]) || whole)
     out = out.replace(CODE_THEN_AMOUNT, (whole, word, figure) => formats.money(amountOf(figure), CURRENCY_WORDS[word.toUpperCase()]) || whole)
     // A large whole quantity with its unit, grouped as the cards group it.
-    const unitWords = [...new Set([...UNIT_WORDS, ...array(units()).map(text).filter((unit) => unit && unit.length <= 20)])].sort((a, b) => b.length - a.length).map(escape)
+    const stored = [...new Set(array(units()).map(text).filter((unit) => unit && unit.length <= 20))]
+    const unitWords = [...new Set([...UNIT_WORDS, ...stored])].sort((a, b) => b.length - a.length).map(escape)
     out = out.replace(new RegExp(String.raw`(?<![\w.]|\d,)(\d{4,})(?=\s?(?:${unitWords.join('|')})(?![A-Za-z]))`, 'gu'), (whole) => formats.number(Number(whole)))
+    // A stored unit after its quantity, in the answer's language and number
+    // ("300 box" -> "300 boxes", "50 pcs" -> "50 件"); a Chinese unit word
+    // runs into the Chinese after it ("50 件温度传感器"), also when the
+    // Chinese comes in the next piece.
+    if (stored.length) {
+      const unitPattern = new RegExp(String.raw`(?<![\w.])(\d[\d,]*(?:\.\d+)?)\s?(${stored.sort((a, b) => b.length - a.length).map(escape).join('|')})(?![A-Za-z])([ \t](?=[㐀-鿿]|$))?`, 'gu')
+      out = out.replace(unitPattern, (whole, figure, unit, gap) => {
+        const label = formats.unitText(unit, amountOf(figure))
+        return `${figure} ${label}${gap && !HAN.test(label) ? gap : ''}`
+      })
+    }
     // A shortened record number that exactly one record of the answer ends with.
     const labels = [...new Set(array(records()).map(text).filter(Boolean))]
     if (labels.length) {
@@ -161,7 +259,13 @@ export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), re
         return matches.length === 1 ? matches[0] : token
       })
     }
-    if (zh) out = zhPunctuation(out, before)
+    // A table, chart or form is placed by the panel, not where the text
+    // says: no "the table above", 上表 (2026-11-05).
+    for (const [pattern, replacement] of POSITIONS) out = out.replace(pattern, replacement)
+    // A status, severity or signal code quoted, after "status", or written
+    // as a code (partially_received), in words of the answer's language.
+    out = codesInWords(out, zh ? 1 : 0)
+    if (zh) out = zhSpacing(zhPunctuation(out, before), before)
     return out
   }
   // A single line (a follow-up question): tidied whole, and left as written

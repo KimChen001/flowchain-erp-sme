@@ -79,6 +79,6 @@ test('the order prefill asks for at least the minimum, and the card says so', as
   // 28 available against a target of 40: 12 on top of what is on order, raised to 100.
   assert.equal(card.payload.quantity, 100)
   assert.equal(card.title, 'Request 100 pcs of LDM-001')
-  assert.match(card.description, /Acme Components takes orders of at least 100, so the request is for 100 rather than 12\./)
+  assert.match(card.description, /Acme Components takes orders of at least 100 pcs, so the request is for 100 pcs rather than 12 pcs\./)
   assert.equal(card.payload.reason, card.description)
 })

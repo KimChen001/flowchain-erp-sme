@@ -100,7 +100,7 @@ test('answerable questions reach their skill, not the help card', () => {
   assert.notEqual(routeSkill({ message: 'How many temperature sensors are on hand?' }).outOfDomain, true)
 })
 
-test('a thank-you gets a warm reply, and a question about sales orders is offered what the skills know of them', async () => {
+test('a thank-you gets a warm reply, and open sales orders are listed with customer, promised date and status', async () => {
   const english = await ask('Thanks!')
   assert.equal(english.intent, 'capability_overview')
   assert.equal(english.conclusion.title, "You're welcome. Anything else?")
@@ -108,13 +108,21 @@ test('a thank-you gets a warm reply, and a question about sales orders is offere
   assert.ok(english.followUpSuggestions.length > 0)
   const chinese = await ask('谢谢', 'zh-CN')
   assert.equal(chinese.conclusion.title, '不客气，还有什么需要？')
-  // No skill lists sales orders yet: the answer says so and offers the
-  // customer orders late purchase orders hold up, and the short SKUs.
+  // Open sales orders: the orders the stock is set against, each with its
+  // customer, promised date, status and what is not yet shipped or reserved.
   const sales = await ask('Show open sales orders')
-  assert.equal(sales.intent, 'capability_overview')
-  assert.match(sales.conclusion.summary, /sales orders/)
-  assert.deepEqual(sales.followUpSuggestions.slice(0, 2).map((chip) => chip.skillHint), ['late_order_impact', 'inventory_availability'])
+  assert.equal(sales.intent, 'inventory_availability')
+  assert.equal(sales.conclusion.title, '1 open sales order')
+  assert.deepEqual(sales.keyEvidence.map((item) => [item.entityLabel, item.entityType, item.status]), [['SO-001', 'sales_order', 'Not shipped yet']])
+  assert.equal(sales.keyEvidence[0].summary, 'Redwood Retail, no promised date: 35 pcs of LDM-001 not yet shipped or reserved.')
+  assert.deepEqual(sales.figures.map((entry) => [entry.key, entry.value]), [['open_sales_order_count', 1]])
   assert.equal(sales.followUpSuggestions[0].label, 'Customer orders at risk')
+  const zhSales = await ask('有哪些未结的销售订单？', 'zh-CN')
+  assert.equal(zhSales.conclusion.title, '未结销售订单 1 张')
+  assert.equal(zhSales.keyEvidence[0].summary, 'Redwood Retail，没有承诺日期：LDM-001 还有 35 件未发货或未预留。')
+  // Creating a sales order, or short stock against them, is not this list.
+  assert.equal(routeSkill({ message: 'Create a sales order for Redwood Retail' }).skillId, null)
+  assert.notEqual(routeSkill({ message: 'Which SKUs are short against open sales orders?' }).signals?.salesOrders, true)
   // Sales orders at risk: the customer orders waiting on late purchase orders.
   const risk = await ask('Which sales orders are at risk of late delivery?')
   assert.equal(risk.intent, 'late_order_impact')
@@ -128,13 +136,17 @@ test('a need with a quantity opens the item\'s purchase request; an item running
   assert.equal(card.payload.itemIdOrSku, 'LDM-002')
   assert.equal(card.payload.quantity, 50)
   assert.equal(card.payload.unitLabel, 'pcs')
+  // The reason is a whole sentence, in the request's reason field too.
+  assert.equal(card.payload.reason, 'Requested 50 pcs; 150 pcs available against a target of 15 pcs.')
   // An item the catalog has no match for (the items have English names): the
-  // answer says so, and the quantity is not carried to the item it offers.
+  // answer says so and offers only the blank request, never another item.
   const unmatched = await ask('我需要 50 个温度传感器', 'zh-CN')
   assert.equal(unmatched.conclusion.title, '要为哪个物料建采购申请？')
-  assert.match(unmatched.conclusion.summary, /^我没能在物料目录里找到你说的物料，所以不替你选。/)
-  assert.ok(unmatched.reviewCards.every((entry) => entry.payload?.quantity !== 50))
-  assert.ok(unmatched.reviewCards.every((entry) => entry.autoOpen !== true))
+  assert.equal(unmatched.conclusion.summary, '我没能在物料目录里找到你说的物料，所以不替你选。可以新建空白采购申请，在其中选择物料，或告诉我它的 SKU。')
+  assert.deepEqual(unmatched.reviewCards.map((entry) => [entry.draftType, entry.payload.itemIdOrSku, entry.autoOpen]), [['purchase_request_draft', undefined, false]])
+  assert.deepEqual(unmatched.keyEvidence, [])
+  const zhReason = (await ask('我需要 50 个 LDM-002', 'zh-CN')).reviewCards.find((entry) => entry.draftType === 'purchase_request_draft').payload.reason
+  assert.equal(zhReason, '按你的要求申请 50 件；可用 150 件，目标 15 件。')
   const low = await ask('Is the LDM-002 Temperature Sensor running low?')
   assert.equal(low.intent, 'inventory_availability')
   assert.match(low.conclusion.title, /^LDM-002: [\d,]+ pcs available to promise$/)

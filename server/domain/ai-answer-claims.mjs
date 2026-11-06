@@ -30,6 +30,11 @@ const ZH_SELF_CLAIMS = [
   new RegExp(`(?<=^|[\\s。！？；，、,:：])已经?${ZH_FOR_YOU}${ZH_OBJECT}${ZH_ACTS}`, 'g'),
   new RegExp(`(?:我|我们)${ZH_FOR_YOU}${ZH_OBJECT}${ZH_ACTS}了`, 'g'),
 ]
+// English in the same way: a passive state word ("PO-023 was approved but not
+// issued", "all eight were issued") describes records; it is a claim only
+// when the sentence says it was done for the user or by the assistant
+// ("it was sent for you", "has been approved on your behalf").
+const EN_ASSISTANT_STATE_CLAIM = new RegExp(`${EN_STATE_CLAIM.source}[^.!?\\n]{0,60}?\\b(?:for you|on your behalf|by me|by us|by the assistant)\\b`, 'gi')
 
 export function aiAnswerClaimsAction(value) {
   const text = String(value ?? '')
@@ -85,10 +90,13 @@ export function aiAnswerActionClaims(value, states = null) {
   return claims
 }
 
-// The claims of an assistant v2 answer: "I/we" forms and passive English
-// state words as aiAnswerActionClaims reads them (a state word about records
-// in that state is their status), and Chinese only with the assistant as the
-// one who acted (ZH_SELF_CLAIMS). Each wording once.
+// The claims of an assistant v2 answer, the assistant as the one who acted
+// (2026-11-05): "I/we" forms, an English state word said to be done for the
+// user or by the assistant, and Chinese with the assistant as the subject
+// (ZH_SELF_CLAIMS). A state word that only describes records is no claim
+// ("all eight were issued"), unless the sentence names records of that kind
+// and none of them is in that state: "PO-023 has been approved" while PO-023
+// is a draft reads as done when it was not.
 export function aiAnswerAssistantActionClaims(value, states = null) {
   const text = String(value ?? '')
   const claims = []
@@ -96,11 +104,21 @@ export function aiAnswerAssistantActionClaims(value, states = null) {
     const found = text.match(pattern)
     if (found) claims.push(found[0])
   }
+  for (const found of text.matchAll(EN_ASSISTANT_STATE_CLAIM)) claims.push(found[0])
   for (const found of text.matchAll(new RegExp(EN_STATE_CLAIM.source, 'gi'))) {
-    if (!statedStatus(text, found, states)) claims.push(found[0])
+    if (contradictedStatus(text, found, states)) claims.push(found[0])
   }
   for (const pattern of ZH_SELF_CLAIMS) for (const found of text.matchAll(pattern)) claims.push(found[0])
   return [...new Set(claims)]
+}
+
+// The sentence names records the state word describes, and none is in it.
+function contradictedStatus(text, found, states) {
+  if (!states?.size) return false
+  const rule = WORD_STATES.find((row) => row.word.test(found[0].trim().split(/\s+/).at(-1)))
+  if (!rule) return false
+  const named = recordsIn(sentenceAt(text, found.index), states).filter((record) => !rule.types || rule.types.includes(record.type))
+  return named.length > 0 && !named.some((record) => rule.states.some((state) => record.states.has(state)))
 }
 
 function statedStatus(text, found, states) {

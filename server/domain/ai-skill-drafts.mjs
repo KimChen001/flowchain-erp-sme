@@ -42,7 +42,7 @@ function poRowsOf(facts) {
 // "Raised to the supplier's minimum order": the request asks for the minimum,
 // more than the gap.
 export function aiSkillMinimumText(raised, fmt, language) {
-  return aiSkillText(raised.supplier ? 'draft.pr.minimum' : 'draft.pr.minimum_unnamed', language, { minimum: fmt.number(raised.minimum), gap: fmt.number(raised.gap), supplier: raised.supplier || '' })
+  return aiSkillText(raised.supplier ? 'draft.pr.minimum' : 'draft.pr.minimum_unnamed', language, { minimum: fmt.quantity(raised.minimum, raised.unit), gap: fmt.quantity(raised.gap, raised.unit), supplier: raised.supplier || '' })
 }
 
 export function aiSkillDraftCandidate(item, facts) {
@@ -206,7 +206,7 @@ export function aiSkillDraftCard(candidate, facts, language) {
       originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
   }
   const title = aiSkillText('draft.pr.title', language, { quantity: fmt.number(candidate.quantity), unit: '', sku: item.label }).replace(/\s{2,}/g, ' ')
-  const reason = [aiSkillText('draft.pr.reason', language, { available: fmt.number(item.data.available), target: fmt.number(candidate.target) }), candidate.raisedToMinimum ? aiSkillMinimumText(candidate.raisedToMinimum, fmt, language) : ''].filter(Boolean).join(language === 'zh-CN' ? '' : ' ')
+  const reason = [aiSkillText('draft.pr.reason', language, { available: fmt.quantity(item.data.available, item.data.unit), target: fmt.quantity(candidate.target, item.data.unit) }), candidate.raisedToMinimum ? aiSkillMinimumText({ ...candidate.raisedToMinimum, unit: item.data.unit }, fmt, language) : ''].filter(Boolean).join(language === 'zh-CN' ? '' : ' ')
   return { ...base, allowedNextStep: aiSkillText('draft.create_pr', language), title, draftTitle: title, description: reason, draftType: 'purchase_request_draft', targetModule: AI_SKILL_MODULES.purchase_request, targetEntityType: 'item', targetEntityId: item.entityId,
     payload: { itemIdOrSku: item.label, quantity: candidate.quantity, reason, language }, originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
 }

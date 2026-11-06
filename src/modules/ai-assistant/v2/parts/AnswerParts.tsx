@@ -78,14 +78,43 @@ function sentences(line: string): string[] {
 }
 const LIST_MARK = /^\s*(?:[-*+•]|\d{1,3}[.)])\s+/;
 
+// The text without some of its sentences; a line left empty goes.
+function withoutSentences(text: string, drop: (sentence: string) => boolean) {
+  return text.split("\n").flatMap((line) => {
+    const all = sentences(line);
+    const kept = all.filter((sentence) => !drop(sentence));
+    if (kept.length === all.length) return [line];
+    const rest = kept.join("").trimEnd();
+    return rest.replace(LIST_MARK, "").trim() ? [rest] : [];
+  }).join("\n").trim();
+}
+
+// A sentence that asks the user something, or tells them to pick from the
+// buttons ("Pick one, or…", 请选一个, 请点选…).
+const QUESTION = /[?？]["”’」』）)]*\s*$/;
+const PICK = /^\s*(?:please\s+)?(?:pick|choose|select|tap|click)\b|\b(?:pick|choose|select)\s+(?:one|an?\s+(?:order|record|item|supplier))\b|请(?:点选|选择|选|从中选)|选一[个张项条家]|点选/i;
+
 // The text without the questions it asks the user: when the answer offers
 // buttons to pick from, they ask (2026-11-05: "which record?" three times).
 export function withoutQuestions(text: string) {
-  return text.split("\n").flatMap((line) => {
-    if (!/[?？]/.test(line)) return [line];
-    const kept = sentences(line).filter((sentence) => !/[?？]["”’」』）)]*\s*$/.test(sentence)).join("").trimEnd();
-    return kept.replace(LIST_MARK, "").trim() ? [kept] : [];
-  }).join("\n").trim();
+  // A closing "，请选一张（，或者告诉我订单编号）。" goes, and the sentence it ends stays.
+  const trimmed = text.replace(/[，,]\s*(?:请(?:点选|选择|选|从中选)|选一[个张项条家])[^。！？\n]*(?=[。！？]|$)/gm, "");
+  return withoutSentences(trimmed, (sentence) => QUESTION.test(sentence) || PICK.test(sentence));
+}
+
+const sentenceKey = (sentence: string) => sentence.replace(/[\s*_`]+/g, "").trim();
+
+// Text parts after the first without the sentences an earlier part already
+// said (2026-11-05: a Chinese answer wrote its first sentence again after
+// the table).
+export function withoutRepeats(parts: AnswerPart[]): AnswerPart[] {
+  const said = new Set<string>();
+  return parts.map((part) => {
+    if (part.type !== "text" || !part.text) return part;
+    const text = said.size ? withoutSentences(part.text, (sentence) => sentenceKey(sentence).length > 8 && said.has(sentenceKey(sentence))) : part.text;
+    for (const line of part.text.split("\n")) for (const sentence of sentences(line)) said.add(sentenceKey(sentence));
+    return text === part.text ? part : { ...part, text };
+  });
 }
 
 // An answer's parts in the order they streamed, its first text above the
@@ -98,7 +127,7 @@ export function AnswerParts({ parts, refs = [], latest = true, ...context }: Omi
   const known = [...refs, ...parts.flatMap((part) => part.refs || [])];
   const full: Context = { ...context, refs: known, latest };
   const chips = parts.filter((part) => part.type === "ui" && part.component === "followups").slice(-1);
-  const ordered = [...textFirst(parts.filter((part) => !(part.type === "ui" && part.component === "followups"))), ...chips];
+  const ordered = [...withoutRepeats(textFirst(parts.filter((part) => !(part.type === "ui" && part.component === "followups")))), ...chips];
   const asking = parts.some((part) => part.type === "ui" && part.component === "choices");
   return (
     <div data-testid="ai-v2-answer" className="space-y-3">

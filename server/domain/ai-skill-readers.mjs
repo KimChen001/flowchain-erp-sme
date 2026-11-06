@@ -367,6 +367,8 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
       const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
       facts.salesOrders = array(business.salesOrders).filter((row) => open.has(text(row.salesOrderId || row.id))).map((row) => ({
         id: text(row.salesOrderId || row.id), number: text(row.orderNumber || row.salesOrderId || row.id), customer: text(row.customerName) || null, promisedDate: dayOf(row.promisedDate),
+        // How far the order is: on hold, partly shipped, or not shipped yet.
+        status: text(row.workflowStatus || row.status) === 'on_hold' ? 'on_hold' : /partial/.test(text(row.fulfillmentStatus)) ? 'partially_shipped' : 'not_shipped',
         lines: array(row.lines).map((line) => ({ sku: text(line.sku || line.itemId), open: Math.max(0, count(line.orderedQuantity ?? line.orderedQty ?? line.quantity) - count(line.fulfilledQuantity ?? line.fulfilledQty ?? line.shippedQty) - count(line.reservedQuantity ?? line.reservedQty)) })).filter((line) => line.sku),
       }))
     }

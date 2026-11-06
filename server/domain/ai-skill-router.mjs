@@ -98,7 +98,8 @@ const ORDER_START = [
   // With what to order between: 建一个 200 件 LDM-001 的采购申请, 开一张 Acme 的采购单.
   // Each token ends where its number or word ends, so the match stays short.
   /(?:开|建立?|做|拟|准备|提(?!交))\s*一?(?:张|个|份|笔)(?:\s*(?:\d[\d,.]*(?![\d,.])\s*(?:个|件|箱|卷|只|套|台|片|米|根|pcs\b)?|[A-Za-z][\w-]*(?![\w-]))){1,6}\s*的?\s*(?:新的?)?\s*(?:采购单|采购订单|采购申请|请购单|补货单)/i,
-  /补(?:个|一下|一点|点|些)?货(?![吗么情])/,
+  // 补货, 补点货, and asking which: 我应该补哪些货？ 需要补什么货？
+  /补(?:个|一下|一点|点|些|哪些|哪种|什么|多少)?货(?![吗么情])/,
   /(?:帮我|给我|替我|请|我要|我想|我需要|安排)再?(?:订购|订货|采购|买|订)(?!单号)/,
   ...ORDER_NEED,
 ]
@@ -364,6 +365,8 @@ const UNDER_PRESSURE = [/\b(?:stress(?:ed|ful)?|overwhelm(?:ed|ing)?|swamped|bur
 // about them gets the help answer that says so, never another skill's.
 const CONTRACT = [/\b(?:contracts?|agreements?|bpas?)\b/i, /合同|协议/]
 const SALES_ORDER = [/\b(?:sales|customer) orders?\b/i, /销售订单|客户订单/]
+// Asking to see sales orders, not to create one: "Show open sales orders", 有哪些未结的销售订单？
+const SALES_LIST = [/\b(?:open|show|list|which|what|any|how many|pending|unshipped|outstanding|current)\b/i, /哪些|未结|未完成|未发货|列出|多少|几张|看看/]
 // Customers, their orders and what they owe us, not suppliers.
 const CUSTOMER = [/\b(?:customers?|clients?|sales orders?|receivables?|accounts receivable)\b/i, /客户|销售订单|应收|回款/]
 export const aiSkillAboutCustomers = (message) => matches(CUSTOMER, text(message)) && !matches(SUPPLIER, text(message))
@@ -467,6 +470,10 @@ function intentRoute(intent, base) {
   // the customer orders waiting on what late purchase orders bring. Not the
   // open problems, which are purchase orders.
   if (matches(SALES_ORDER, intent) && matches(RISK, intent)) return route('late_order_impact')
+  // "Show open sales orders", 有哪些未结的销售订单？: the open sales orders the
+  // stock is set against (inventory_availability, mode sales_orders). Not a
+  // question about short stock, late deliveries or creating an order.
+  if (matches(SALES_ORDER, intent) && matches(SALES_LIST, intent) && !matches(STOCK, intent) && !matches(SHORT, intent) && !matches(LATE, intent)) return { ...route('inventory_availability'), signals: { ...signalsOf(intent), salesOrders: true } }
   if (matches(RISK, intent)) return route('highest_risk_items')
   const otherRecord = matches(OTHER_RECORD, intent)
   if (matches(APPROVAL, intent) && matches(REQUEST_NOUN, intent) && !otherRecord) return route('pending_approvals')

@@ -689,7 +689,8 @@ test('an unbacked claim takes only its own sentence; a condition or a negation i
   assert.deepEqual(audit.replaces, ['unbacked_action_claim'])
   // The records the rest names still get their chips.
   assert.ok(ofType(events, 'flag').some((flag) => (flag.refs || []).some((ref) => ref.id === 'PO-001')))
-  for (const sentence of ['Once the request has been approved, a buyer orders PO-001 again.', 'Nothing has been submitted yet for PO-001.', 'PO-001 has not been sent to the supplier.']) {
+  // An English state word that describes records is no claim either (2026-11-05).
+  for (const sentence of ['Once the request has been approved, a buyer orders PO-001 again.', 'Nothing has been submitted yet for PO-001.', 'PO-001 has not been sent to the supplier.', 'PO-008 was approved but not issued, so the supplier does not have it.', 'All eight were issued to their suppliers.']) {
     const plain = await ask([OVERDUE, [...say(sentence), end()]])
     assert.equal(ofType(plain.events, 'replace').length, 0, sentence)
   }
@@ -697,7 +698,7 @@ test('an unbacked claim takes only its own sentence; a condition or a negation i
   const zhAsk = { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } }
   const zh = await ask([OVERDUE, [...say('PO-001 已逾期 4 天。我已经帮你提交了采购申请。请今天催 Acme Components。'), end()]], zhAsk)
   assert.equal(ofType(zh.events, 'replace')[0].text, 'PO-001 已逾期 4 天。请今天催 Acme Components。')
-  const list = await ask([OVERDUE, [...say('Next:\n- Chase PO-001.\n- The new request was approved yesterday.'), end()]])
+  const list = await ask([OVERDUE, [...say('Next:\n- Chase PO-001.\n- I approved the new request yesterday.'), end()]])
   assert.equal(ofType(list.events, 'replace')[0].text, 'Next:\n- Chase PO-001.')
   // In Chinese only the assistant acting is a claim: a state word that
   // describes records stays (2026-11-05: 已批准的采购订单 took its sentence).
@@ -752,7 +753,7 @@ test('a figure the results do not hold is flagged, not dropped', async () => {
 
 test('a claim that something was done is replaced with the fixed text', async () => {
   for (const claim of [
-    'I submitted the request for LDM-001.', 'I have created a purchase order for you.', 'PO-008 was cancelled.', '我已为你提交采购申请。',
+    'I submitted the request for LDM-001.', 'I have created a purchase order for you.', 'PO-008 was cancelled for you.', '我已为你提交采购申请。',
     'I created the request.', 'Your purchase request has been created.', 'I\'ve gone ahead and submitted it for approval.', 'I created the draft for LDM-001.',
   ]) {
     const { events, body, audit } = await ask([OVERDUE, [...say(claim), end()]])
@@ -1017,7 +1018,7 @@ test('the text is written as the app shows it: workspace dates and amounts, full
   const { events, body } = await ask([OVERDUE, [...say('PO-001 的承诺日期是 2026-10-30(已逾期),差异 200 ', 'USD,还剩 1200 pcs 未收!'), end()]], zhAsk)
   assertProtocol(events)
   const shown = ofType(events, 'text_delta').map((event) => event.text).join('')
-  assert.equal(shown, 'PO-001 的承诺日期是 Oct 30, 2026（已逾期），差异 $200.00，还剩 1,200 pcs 未收！')
+  assert.equal(shown, 'PO-001 的承诺日期是 Oct 30, 2026（已逾期），差异 $200.00，还剩 1,200 件未收！')
   assert.equal(body.conclusion.summary, shown)
   // No piece leaves a figure parted from its currency.
   assert.ok(ofType(events, 'text_delta').every((event) => !/\d\s$/.test(event.text)), JSON.stringify(ofType(events, 'text_delta')))
@@ -1094,4 +1095,20 @@ test('the system prompt asks for the answer first, display strings, whole record
     /with nothing ticked, "tick the items you want, then click Create draft request"/,
   ]) assert.match(ASSISTANT_V2_SYSTEM, rule)
   assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /Copy figures as the tools give them/)
+})
+
+// A live re-check on 2026-11-05: "What approvals are pending?" lost both
+// tables (the model named amountText and statusLabel) and its 4 was marked.
+test('a count that adds up the lists\' totals is checked, and a table named by display strings shows', async () => {
+  const { events } = await ask([
+    [...call('tu_pos', 'list_purchase_orders', { status: 'overdue' }), ...call('tu_prs', 'list_purchase_requests', { status: 'all' }), end()],
+    [...say('You have 4 items to look at.'), ...call('tu_table', 'show_table', { source: 'list_purchase_orders#1', columns: ['orderNumber', 'statusLabel', 'amountText'] }), end()],
+    [...say('Start with the oldest.'), end()],
+  ], { uiTools: AI_ASSISTANT_V2_UI_TOOLS, question: 'What needs a look?' })
+  assertProtocol(events)
+  assert.deepEqual(ofType(events, 'ui').map((event) => event.component), ['table'])
+  const spans = ofType(events, 'flag').flatMap((flag) => flag.spans)
+  const totals = ofType(events, 'tool').filter((event) => event.rows !== undefined).map((event) => event.rows)
+  assert.equal(totals.reduce((sum, value) => sum + value, 0), 4, JSON.stringify(totals))
+  assert.ok(!spans.some((span) => span.text === '4'), JSON.stringify(spans))
 })

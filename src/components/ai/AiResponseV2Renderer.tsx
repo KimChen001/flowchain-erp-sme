@@ -37,6 +37,7 @@ const rendererCopy = {
     impactDetails: "Business impact",
     contextDetails: "System notes",
     proposal: "Suggested: new purchase request",
+    proposalOptional: "If you still need one: new purchase request",
     item: "Item",
     quantity: "Quantity",
     supplier: "Supplier",
@@ -70,6 +71,7 @@ const rendererCopy = {
     impactDetails: "业务影响",
     contextDetails: "系统说明",
     proposal: "建议：新建采购申请",
+    proposalOptional: "如仍需要：新建采购申请",
     item: "物料",
     quantity: "数量",
     supplier: "供应商",
@@ -201,7 +203,8 @@ function OrderProposal({ card, onNavigate, onReviewActionDraft, language }: { ca
     { label: copy.why, value: card.description || text(payload.reason) },
   ].filter((field) => field.value);
   const action: AiFocusedAction = { kind: "structured_draft", label: card.allowedNextStep || card.title, card };
-  return <AiConfirmCard label={copy.proposal} fields={fields} primary={<Action action={action} primary onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} />} cancelLabel={copy.cancel} onCancel={() => setDismissed(true)} />;
+  // A request the answer says is not needed is not "suggested".
+  return <AiConfirmCard label={card.optional ? copy.proposalOptional : copy.proposal} fields={fields} primary={<Action action={action} primary onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} />} cancelLabel={copy.cancel} onCancel={() => setDismissed(true)} />;
 }
 
 // Record numbers in the answer's text become chips: the numbers of the

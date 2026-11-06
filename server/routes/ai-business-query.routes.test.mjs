@@ -217,10 +217,14 @@ test('unavailable sources and hidden fields are worded in the answer language, n
     assert.equal(response.language, answerLanguage)
     assert.deepEqual(response.dataLimitations.map((item) => [item.code, item.description]), codes.map((code, index) => [code, descriptions[index]]), answerLanguage)
     assert.ok(response.businessQuery.sectionCards.length > 0)
+    // Every card keeps the codes; a shared note is said on the first card only.
+    const said = new Set()
     for (const card of response.businessQuery.sectionCards) {
       assert.deepEqual(card.limitationCodes, codes, card.goal)
-      assert.deepEqual(card.limitations, descriptions, card.goal)
+      assert.deepEqual(card.limitations, descriptions.filter((sentence) => !said.has(sentence)), card.goal)
+      for (const sentence of card.limitations) said.add(sentence)
     }
+    assert.deepEqual([...said], descriptions, answerLanguage)
     const strings = answerStrings(response)
     assert.deepEqual(strings.filter((value) => codeToken.test(value)), [], answerLanguage)
     if (answerLanguage === 'en-US') assert.deepEqual(strings.filter((value) => /[\u4e00-\u9fff]/.test(value)), [])

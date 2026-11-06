@@ -73,7 +73,8 @@ export function BusinessQueryPresentation({ response }: { response: AiResponseV2
     <section data-testid="ai-business-query-presentation" className="min-w-0 space-y-3">
       {clarifying ? null : <div className="flex min-w-0 flex-wrap gap-1.5">
         <span data-testid="ai-business-query-scope" className="max-w-full truncate rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: "#eef5ff", color: A.blue }}>{query.scopeBadge}</span>
-        {query.goalLabels.slice(0, 8).map((label) => <span key={label} className="rounded-full px-2 py-1 text-[11px]" style={{ background: A.gray6, color: A.gray1 }}>{label}</span>)}
+        {/* The cards name the checks; the tags only stand in when there are none. */}
+        {query.sectionCards.length ? null : query.goalLabels.slice(0, 8).map((label) => <span key={label} className="rounded-full px-2 py-1 text-[11px]" style={{ background: A.gray6, color: A.gray1 }}>{label}</span>)}
       </div>}
       {clarifying ? <p data-testid="ai-business-query-clarification" lang={response.language || undefined} className="break-words text-sm leading-relaxed" style={{ color: A.label }}>{query.clarification?.question}</p> : null}
       {query.sectionCards.length ? <div className="grid min-w-0 grid-cols-1 gap-2">{query.sectionCards.map((section) => <BusinessQuerySection key={section.goal} section={section} languageIndex={languageIndex} />)}</div> : null}

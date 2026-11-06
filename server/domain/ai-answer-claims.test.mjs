@@ -47,7 +47,15 @@ test('assistant v2 counts a Chinese claim only when the assistant is the one who
   const states = aiAnswerRecordStates([{ type: 'purchase_order', numbers: ['PO-021'], states: ['issued'] }])
   assert.deepEqual(aiAnswerAssistantActionClaims('I have sent the reminder.'), ['I have sent'])
   assert.deepEqual(aiAnswerAssistantActionClaims('PO-021 has been issued.', states), [])
-  assert.deepEqual(aiAnswerAssistantActionClaims('PO-022 has been issued.', states), ['has been issued'])
+  // An English state word describes records unless it was done for the user.
+  assert.deepEqual(aiAnswerAssistantActionClaims('PO-022 has been issued.', states), [])
+  assert.deepEqual(aiAnswerAssistantActionClaims('LOCAL-DEMO-PO-023 was approved but not issued, and all eight were issued except it.'), [])
+  assert.deepEqual(aiAnswerAssistantActionClaims('PO-022 has been issued for you.'), ['has been issued for you'])
+  assert.deepEqual(aiAnswerAssistantActionClaims('The reminder was sent on your behalf.'), ['was sent on your behalf'])
+  // ...but a named record the tools show in another state is a claim.
+  const draft = aiAnswerRecordStates([{ type: 'purchase_order', numbers: ['PO-023'], states: ['draft'] }, { type: 'purchase_order', numbers: ['PO-021'], states: ['issued'] }])
+  assert.deepEqual(aiAnswerAssistantActionClaims('PO-023 has been approved.', draft), ['has been approved'])
+  assert.deepEqual(aiAnswerAssistantActionClaims('PO-021 and PO-023 were issued last week.', draft), [])
   // The shared list the rules and the evaluation use is unchanged.
   assert.equal(aiAnswerClaimsAction('已批准的采购订单还有 2 张。'), true)
 })

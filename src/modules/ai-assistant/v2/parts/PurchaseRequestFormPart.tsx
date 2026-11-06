@@ -5,6 +5,7 @@ import { A } from "../../../../components/ui";
 import { businessEntityRouteRegistry } from "../../../../components/business/businessEntityRoutes";
 import { SUPPLIER_OVERRIDE_COPY, supplierOverrideReasonLabel } from "../../../../components/procurement/SupplierOverrideReason";
 import { isTranslationKey, type TranslationKey } from "../../../../i18n/I18n";
+import { unitLabel } from "../../../../i18n/unitLabels";
 import { ApiError, apiJson } from "../../../../lib/api-client";
 import { todayInTimeZone } from "../../../../lib/format";
 import { addCalendarDays, buildSuggestionTrail, type PrefillEntry } from "../../../../lib/prefill";
@@ -580,7 +581,10 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
           const price = priceOf(line);
           const lead = leadTimeOf(line);
           const options = supplierOptions(line);
-          const unit = row.item.unit || "";
+          // The stored unit code worded for the form's language ("件", "boxes");
+          // the request still records the code (unitSnapshot).
+          const unit = row.item.unit ? unitLabel(row.item.unit, copy.language) : "";
+          const unitFor = (quantity: number) => (row.item.unit ? unitLabel(row.item.unit, copy.language, quantity) : "");
           const chosen = optionOf(line);
           const fresh = chosen?.link === "new";
           const preferred = preferredOf(line);
@@ -606,7 +610,7 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
             row.onHand !== undefined && row.onHand !== null ? copy.t("ai.v2.form.onHand", { value: copy.number(row.onHand) }) : "",
             row.safetyStock !== undefined && row.safetyStock !== null ? copy.t("ai.v2.form.safetyStock", { value: copy.number(row.safetyStock) }) : "",
             row.reorderPoint !== undefined && row.reorderPoint !== null ? copy.t("ai.v2.form.reorderPoint", { value: copy.number(row.reorderPoint) }) : "",
-            line.origin === "suggested" && row.suggestedQuantity.value !== null ? copy.t("ai.v2.form.suggestedQuantity", { value: `${copy.number(row.suggestedQuantity.value)}${unit ? ` ${unit}` : ""}` }) : "",
+            line.origin === "suggested" && row.suggestedQuantity.value !== null ? copy.t("ai.v2.form.suggestedQuantity", { value: `${copy.number(row.suggestedQuantity.value)}${unit ? ` ${unitFor(row.suggestedQuantity.value)}` : ""}` }) : "",
             row.orderByDate ? copy.t("ai.v2.form.orderBy", { date: copy.day(row.orderByDate) }) : "",
           ].filter(Boolean);
           const shortSoon = Boolean(row.needByDate.shortWeekOf) && line.needByDate > String(row.needByDate.shortWeekOf);

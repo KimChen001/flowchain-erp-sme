@@ -37,7 +37,9 @@ test('asked for the order with no item named, the answer asks which one, open or
   assert.equal(response.conclusion.summary, 'You did not name an item, so I have not picked one. LDM-001 is below its target, but open orders or requests already cover it. Open orders PO-001 and PO-008 already bring 70 pcs. 50 pcs more is in requests awaiting approval. PO-001 is 4 days past its promised date. Chase PO-001 first, or open a request anyway. Pick an item below or start a blank request. FlowChain creates a purchase request first; it becomes a purchase order once approved.')
   // LDM-001's request one click away, chasing the late order, or a blank request.
   assert.deepEqual(cards(response), [['purchase_request_draft', 'ITEM-001', 12, false], ['po_followup_draft', 'PO-001', null, null], ['purchase_request_draft', null, null, false]])
-  assert.deepEqual(response.reviewCards.map((card) => card.allowedNextStep), ['Open a request for LDM-001 anyway', 'Draft a follow-up on PO-001', 'Open a blank purchase request'])
+  assert.deepEqual(response.reviewCards.map((card) => card.allowedNextStep), ['Open a request for LDM-001 anyway', 'Draft follow-up to Acme Components', 'Open a blank purchase request'])
+  // The request the answer says is not needed is headed as optional.
+  assert.deepEqual(response.reviewCards.map((card) => card.optional === true), [true, false, false])
   // The follow-up is the drafts' own: greeting, each open line, and the lines for the review form.
   const followUp = response.reviewCards[1].payload
   assert.match(followUp.message, /^Hello Acme Components,\n\nPlease confirm a delivery date for the open line on PO-001:\n- LDM-001: 30 pcs still to deliver/)
@@ -61,24 +63,33 @@ test('a named SKU opens its request on top of what is on order, and says what is
   }
   const english = await ask('Create a purchase order for LDM-001')
   assert.equal(english.conclusion.title, 'LDM-001 is already on order. Opening a request for 12 pcs more')
-  assert.match(english.conclusion.summary, /^Open orders PO-001 and PO-008 already bring 70 pcs\. 50 pcs more is in requests awaiting approval\. PO-001 is 4 days past its promised date\. 28 available against a target of 40; this is on top of what is already on order\./)
+  assert.match(english.conclusion.summary, /^Open orders PO-001 and PO-008 already bring 70 pcs\. 50 pcs more is in requests awaiting approval\. PO-001 is 4 days past its promised date\. 28 pcs available against a target of 40 pcs; this is on top of what is already on order\./)
   assert.match(english.conclusion.summary, /nothing is saved or submitted until you do/)
   // The reason is the request line's note.
-  assert.equal(english.reviewCards[0].payload.reason, '28 available against a target of 40; this is on top of what is already on order.')
+  assert.equal(english.reviewCards[0].payload.reason, '28 pcs available against a target of 40 pcs; this is on top of what is already on order.')
   assert.equal(english.reviewCards[0].allowedNextStep, 'Open request: 12 pcs of LDM-001')
   const chinese = await ask('仍然帮我下单 LDM-001')
   assert.equal(chinese.conclusion.title, 'LDM-001 已有在途订单，仍为你打开追加 12 件的采购申请')
-  assert.equal(chinese.reviewCards[0].payload.reason, '可用 28，目标 40；本数量在已在途数量之外追加。')
+  assert.equal(chinese.reviewCards[0].payload.reason, '可用 28 件，目标 40 件；本数量在已在途数量之外追加。')
   // "Anyway" with no SKU still names none: it asks, LDM-001's request one click away.
   const anyway = await ask('Place an order anyway')
   assert.equal(anyway.conclusion.title, 'Which item is the purchase request for?')
   assert.deepEqual(cards(anyway)[0], ['purchase_request_draft', 'ITEM-001', 12, false])
 })
 
+test('asking in Chinese which goods to restock answers as "What should I reorder?" does', async () => {
+  const english = await ask('What should I reorder?')
+  assert.ok(english.reviewCards.length > 0)
+  for (const message of ['我应该补哪些货？', '需要补什么货？']) {
+    const chinese = await ask(message)
+    assert.deepEqual(cards(chinese), cards(english), message)
+  }
+})
+
 test('a quantity the question names wins, and a SKU without stock levels opens without one', async () => {
   const fifty = await ask('order 50 more LDM-002')
   assert.deepEqual(cards(fifty), [['purchase_request_draft', 'ITEM-002', 50, true]])
-  assert.equal(fifty.reviewCards[0].payload.reason, 'The quantity you asked for. 150 available against a target of 15.')
+  assert.equal(fifty.reviewCards[0].payload.reason, 'Requested 50 pcs; 150 pcs available against a target of 15 pcs.')
   const gasket = await ask('Reorder LDM-009')
   assert.deepEqual(cards(gasket), [['purchase_request_draft', 'ITEM-009', null, true]])
   assert.equal(gasket.conclusion.title, 'Opening a purchase request for LDM-009')
@@ -99,7 +110,7 @@ test('the one SKU that needs ordering is offered with its gap when the request n
   assert.equal(response.conclusion.title, 'Which item is the purchase request for?')
   assert.match(response.conclusion.summary, /^You did not name an item, so I have not picked one\. LDM-001 is short by 12 pcs\. Pick an item below/)
   assert.deepEqual(cards(response), [['purchase_request_draft', 'ITEM-001', 12, false], ['purchase_request_draft', null, null, false]])
-  assert.equal(response.reviewCards[0].payload.reason, '28 available against a target of 40; nothing incoming covers it.')
+  assert.equal(response.reviewCards[0].payload.reason, '28 pcs available against a target of 40 pcs; nothing incoming covers it.')
   assert.match(order(uncovered(await facts()), 'zh-CN').conclusion.summary, /LDM-001 还缺 12 件。/)
   const named = order(uncovered(await facts()), 'en-US', {}, { entityType: 'item', entityId: 'ITEM-001' })
   assert.equal(named.conclusion.title, 'Opening a purchase request for 12 pcs of LDM-001')

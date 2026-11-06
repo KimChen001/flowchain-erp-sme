@@ -312,6 +312,20 @@ test('the answer leads with its finding, and a clarification asks its question w
   assert.equal(chineseQuestion.followUpSuggestions[4].label, '未授标询价')
 })
 
+test('two checks read from the same records are one card, and a shared note is said once', async () => {
+  const pack = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ scope: { mode: 'all' }, goals: ['supplier_payables_due', 'supplier_payment_readiness', 'supplier_invoice_exceptions'] }), { summaryService })
+  const response = buildBusinessQueryResponseV2(pack, {}, { answerLanguage: 'en-US' })
+  const cards = response.businessQuery.sectionCards
+  assert.deepEqual(cards.map((card) => card.goal), ['supplier_payables_due', 'supplier_invoice_exceptions'])
+  const notes = cards.flatMap((card) => card.limitations)
+  assert.equal(notes.length, new Set(notes).size)
+  // Every card keeps its codes.
+  assert.ok(cards.every((card) => card.limitationCodes.length === pack.sections.find((section) => section.goal === card.goal).limitations.length))
+  // Different checks that both found nothing stay two cards.
+  const quiet = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ scope: { mode: 'all' }, goals: ['supplier_receiving_exceptions', 'supplier_overdue_purchase_orders'] }), { summaryService })
+  assert.deepEqual(buildBusinessQueryResponseV2(quiet, {}, { answerLanguage: 'en-US' }).businessQuery.sectionCards.map((card) => card.goal), ['supplier_receiving_exceptions', 'supplier_overdue_purchase_orders'])
+})
+
 test('invoices due are payables due, not invoice exceptions', () => {
   for (const message of ['Which supplier invoices are due this month?', '哪些供应商发票本月到期？']) {
     assert.deepEqual(buildDeterministicBusinessQueryPlan({ message }).goals, ['supplier_payables_due', 'supplier_payment_readiness'], message)

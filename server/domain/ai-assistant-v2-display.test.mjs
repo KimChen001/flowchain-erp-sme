@@ -51,7 +51,7 @@ test('the text tidier rewrites dates, amounts, quantities and shortened record n
 
 test('Chinese text gets full-width punctuation next to Chinese words, never between digits or in a link', () => {
   const { tidy } = aiV2TextTidier({ language: 'zh-CN', formats, records })
-  assert.equal(tidy('目前有 15 张未完成的采购订单(未关闭,也未全部收货),明细见上表。'), '目前有 15 张未完成的采购订单（未关闭，也未全部收货），明细见上表。')
+  assert.equal(tidy('目前有 15 张未完成的采购订单(未关闭,也未全部收货),明细见上表。'), '目前有 15 张未完成的采购订单（未关闭，也未全部收货），明细见表中。')
   assert.equal(tidy('逾期最久: LOCAL-DEMO-PO-020(Precision Fastener Works):逾期 15 天,7000 pcs 未收。'), '逾期最久：LOCAL-DEMO-PO-020（Precision Fastener Works）：逾期 15 天，7,000 pcs 未收。')
   assert.equal(tidy('不客气!'), '不客气！')
   assert.equal(tidy('影响哪些销售订单?'), '影响哪些销售订单？')
@@ -87,4 +87,51 @@ test('codes the results give alone get their words: a request\'s status, a signa
   assert.deepEqual([zh.rows[1].typeLabel, zh.rows[1].priorityLabel, zh.rows[1].statusLabel], ['收货拒收', '高', '待审批'])
   // A label the result already gives stays.
   assert.equal(aiV2CodeLabels({ status: 'x', statusLabel: 'Kept', ref: { type: 'purchase_request', id: 'r', label: 'PR' } }, 'en-US').statusLabel, 'Kept')
+})
+
+// A live re-check on 2026-11-05: Chinese dates in their own format, units as
+// stored codes, "the table above" with the table below, codes in quotes, and
+// no space between Chinese and numbers.
+const unitLabel = (language) => (unit, quantity) => ({ box: [quantity === 1 ? 'box' : 'boxes', '箱'], roll: [quantity === 1 ? 'roll' : 'rolls', '卷'], pcs: ['pcs', '件'] }[unit]?.[language === 'zh-CN' ? 1 : 0] || unit)
+const withUnits = (language) => aiV2TextTidier({ language, formats: aiV2Formats({ unitLabel: unitLabel(language) }), records, units: () => ['box', 'roll', 'pcs'] })
+
+test('Chinese dates are written in the workspace format, ranges too', () => {
+  const { tidy } = withUnits('zh-CN')
+  assert.equal(tidy('上个季度（2026年7月1日至9月30日）共 $17,440.00。'), '上个季度（Jul 1, 2026 至 Sep 30, 2026）共 $17,440.00。')
+  assert.equal(tidy('统计期是 2026 年 8 月 8 日到 2026 年 11 月 5 日。'), '统计期是 Aug 8, 2026 到 Nov 5, 2026。')
+  // A date with no year is a month and day; no year is made up (2026-11-05).
+  assert.equal(tidy('承诺日期是 11 月 6 日和 11月8日。'), '承诺日期是 Nov 6 和 Nov 8。')
+  assert.equal(tidy('11月20日前'), 'Nov 20 前')
+  assert.equal(tidy('交货窗口 11月6日至8日，或 11 月 28 日到 12 月 2 日。'), '交货窗口 Nov 6 至 Nov 8，或 Nov 28 到 Dec 2。')
+  assert.equal(tidy('2月30日'), '2月30日')
+  assert.equal(tidy('2026年11月的支出'), '2026年11月的支出')
+})
+
+test('a stored unit reads in the answer\'s language and number', () => {
+  assert.equal(withUnits('en-US').tidy('300 box and 1 box, 80 roll, 1450 box.'), '300 boxes and 1 box, 80 rolls, 1,450 boxes.')
+  assert.equal(withUnits('zh-CN').tidy('还剩 300 box 未交，50 pcs 温度传感器。'), '还剩 300 箱未交，50 件温度传感器。')
+  // A piece that ends after the unit: the Chinese after it comes next.
+  assert.equal(withUnits('zh-CN').tidy('还剩 50 pcs ', '库存'), '还剩 50 件')
+})
+
+test('a display is never placed above or below in the text', () => {
+  const en = withUnits('en-US').tidy
+  assert.equal(en('The table above lists them; see the chart below. The above table is sorted, as listed above.'), 'The table lists them; see the chart. The table is sorted, as listed.')
+  const zh = withUnits('zh-CN').tidy
+  assert.equal(zh('上表只列出了前 10 项。明细见上表。如上表所示。下表中有 3 行。下面列出逾期最久的 6 个。'), '表中只列出了前 10 项。明细见表中。如表中所示。表中有 3 行。列出逾期最久的 6 个。')
+  assert.equal(zh('以下表格和交货表现'), '以下表格和交货表现')
+})
+
+test('status and severity codes in quotes, after "status" or as codes read as words', () => {
+  const en = withUnits('en-US').tidy
+  assert.equal(en('It marks one as "risk" and one as “warning” (match status: variance); partially_received.'), 'It marks one as "Risk" and one as “Warning” (match status: Variance); Partially received.')
+  assert.equal(en('Acme\'s "best" order, the word risk.'), 'Acme\'s "best" order, the word risk.')
+  assert.equal(withUnits('zh-CN').tidy('状态：pending_approval，类型 po_overdue。'), '状态：待审批，类型 逾期采购订单。')
+})
+
+test('Chinese text keeps a space between Chinese and a number', () => {
+  const { tidy } = withUnits('zh-CN')
+  assert.equal(tidy('涉及5家供应商，共11项，第3张'), '涉及 5 家供应商，共 11 项，第 3 张')
+  assert.equal(tidy('有', '共'), '有')
+  assert.equal(tidy('5家', '涉及'), ' 5 家')
 })

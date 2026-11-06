@@ -26,9 +26,11 @@ function sortKey(cell: TableCell, copy: PartCopy): number | string | null {
 }
 
 // The unit a quantity cell is counted in, from its row: the server puts it
-// beside the cells (moq_unit for a minimum order quantity).
-function unitOf(row: Row, code: string) {
-  const unit = code === "minimum_order_quantity" ? row.moq_unit ?? row.unit : row.unit;
+// beside the cells in the answer's language (moq_unit for a minimum order
+// quantity; *_one for a quantity of 1: "1 box", "300 boxes").
+function unitOf(row: Row, code: string, value: number) {
+  const base = code === "minimum_order_quantity" && row.moq_unit ? "moq_unit" : "unit";
+  const unit = value === 1 ? row[`${base}_one`] ?? row[base] : row[base];
   return typeof unit === "string" && unit.trim() ? unit.trim() : null;
 }
 
@@ -41,7 +43,7 @@ function Cell({ cell, kind, code, row, copy, onNavigate }: { cell: TableCell; ki
   if (kind === "date" && typeof cell === "string") return copy.day(cell);
   // An order that is not late shows no days overdue.
   if (code === "days_overdue" && typeof cell === "number" && cell <= 0) return "—";
-  if (kind === "quantity" && typeof cell === "number") return copy.value(cell, "quantity", null, unitOf(row, code));
+  if (kind === "quantity" && typeof cell === "number") return copy.value(cell, "quantity", null, unitOf(row, code, cell));
   // An amount with no currency of its own stays a plain number rather than guessing one.
   if (typeof cell === "number") return copy.value(cell, kind === "percent" || kind === "days" ? kind : "count");
   return cell;
@@ -113,7 +115,12 @@ export function DataTablePart({ props, language, onNavigate }: { props: TablePro
         ))}
       </ul>
       {folded ? (
-        <button type="button" data-testid="ai-v2-table-expand" onClick={() => setExpanded(true)} className={`${linkClass} @lg:hidden`} style={{ color: A.blue }}>{copy.t("ai.v2.showAll", { count: copy.number(rows.length) })}</button>
+        // The rows this answer holds, never more (2026-11-05: "Show all 10"
+        // when the list had 18).
+        <button type="button" data-testid="ai-v2-table-expand" onClick={() => setExpanded(true)} className={`${linkClass} @lg:hidden`} style={{ color: A.blue }}>{copy.t("ai.v2.showMore", { count: copy.number(rows.length - NARROW_ROWS) })}</button>
+      ) : null}
+      {props.total > props.rows.length ? (
+        <p data-testid="ai-v2-table-count" className="text-[12px]" style={{ color: A.gray1 }}>{copy.t("ai.v2.tableShowing", { shown: copy.number(props.rows.length), total: copy.number(props.total) })}</p>
       ) : null}
       {showAll ? (
         // In a narrow panel the list opens only once every row given is shown.

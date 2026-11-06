@@ -323,6 +323,8 @@ export function refineAiSkillRoute(route, message, facts) {
     const focus = !route.focus && FOCUS_SKILLS.has(skill) ? focusFromIds(idsOnly) : null
     return focus ? { ...route, focus, entities: idsOnly } : { ...route, entities: idsOnly }
   }
+  // Open sales orders, for the SKU the question names when it names one.
+  if (skill === 'inventory_availability' && route.signals?.salesOrders) return as(skill, 'sales_orders')
   if (skill === 'inventory_availability') return as(skill, stockMode(found, short ? 'short' : 'overview'))
   if (skill === 'purchase_orders') return as(skill, orderMode(found, 'overdue', { bySku: true }))
   // A supplier the question names (or the page's, when it points at it) narrows the list to it.

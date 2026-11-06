@@ -1,4 +1,5 @@
 import { isProcurementAuthorityStatus, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
+import { goalDefinition } from './ai-business-goal-registry.mjs'
 
 const EN = {
   "需要付款": "Payments due",
@@ -356,6 +357,11 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
   const describe = (code) => limitationDescription(code, { english, clarification })
   const limitations = limitationCodes(pack.limitations).map((code) => ({ code, label: L('查询限制'), description: describe(code), severity: 'warning', consequence: L('该限制不会被解释为业务数量 0。') }))
   const goalLabels = (planner.plan?.goals || sections.map((section) => section.goal)).map((goal) => L(GOAL_LABELS[goal] || goal))
+  // Two goals read through the same read and section (payments due and
+  // payment readiness) give the same card twice: it is shown once. A note several
+  // cards share is said on the first of them only; every card keeps its codes.
+  const seenCards = new Set()
+  const saidNotes = new Set()
   const sectionCards = sections.map((section) => ({
     goal: section.goal,
     label: L(GOAL_LABELS[section.goal] || section.goal),
@@ -367,7 +373,17 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
     // Sentences in the answer language (unlisted codes can share one); the codes are in `limitationCodes`.
     limitations: [...new Set(limitationCodes(section.limitations).map(describe))],
     limitationCodes: limitationCodes(section.limitations),
-  }))
+  })).filter((card) => {
+    const definition = goalDefinition(card.goal)
+    const key = JSON.stringify([definition?.tool || card.goal, definition?.section || card.goal, card.state, card.counts, card.amounts, card.rows])
+    if (seenCards.has(key)) return false
+    seenCards.add(key)
+    return true
+  }).map((card) => {
+    const limitations = card.limitations.filter((sentence) => !saidNotes.has(sentence))
+    for (const sentence of card.limitations) saidNotes.add(sentence)
+    return { ...card, limitations }
+  })
   return {
     version: 'v2',
     responseId: `AIQ-${Date.now()}-${Math.abs(text(request.message || request.question).length * 31)}`,

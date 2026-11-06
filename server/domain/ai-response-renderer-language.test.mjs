@@ -97,7 +97,7 @@ test('an order answer names each request button, and only a clear choice is open
   const covered = await runAiSkillRuntime({ ...scenario.ctx, env: {} }, { message: 'can you help me generate the order?', answerLanguage: 'en-US' })
   const markup = client.render(covered)
   assert.doesNotMatch(markup, CJK)
-  assert.match(markup, /data-action-kind="generate_text_draft"[^>]*>Draft a follow-up on PO-001</)
+  assert.match(markup, /data-action-kind="generate_text_draft"[^>]*>Draft follow-up to Acme Components</)
   assert.match(markup, /data-action-kind="create_formal_business_draft"[^>]*>Open a request for LDM-001 anyway</)
   assert.equal(client.autoOpenDraftCard(covered.reviewCards), null)
   const named = await runAiSkillRuntime({ ...scenario.ctx, env: {} }, { message: 'Create a purchase order for LDM-001', answerLanguage: 'en-US' })
@@ -106,7 +106,7 @@ test('an order answer names each request button, and only a clear choice is open
   // The same handoff the button makes: the request form, filled in.
   assert.deepEqual(client.structuredDraftTarget(card.draftType, card.payload, 'ai_assistant'), {
     moduleId: 'procurement:requests',
-    query: { mode: 'create', itemId: 'LDM-001', sku: 'LDM-001', quantity: '12', reason: '28 available against a target of 40; this is on top of what is already on order.', origin: 'ai_assistant' },
+    query: { mode: 'create', itemId: 'LDM-001', sku: 'LDM-001', quantity: '12', reason: '28 pcs available against a target of 40 pcs; this is on top of what is already on order.', origin: 'ai_assistant' },
   })
   assert.match(client.render(named), /data-action-kind="create_formal_business_draft"[^>]*>Open request: 12 pcs of LDM-001</)
   // A text draft is never opened on arrival.

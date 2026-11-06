@@ -105,12 +105,12 @@ test("S2: the overdue orders stream in as a table with a record chip per order",
   const textTop = (await answer.getByTestId("ai-v2-text").boundingBox())?.y ?? Infinity;
   expect(textTop).toBeLessThan((await table.boundingBox())?.y ?? -Infinity);
   // One chip per order, in the result's order: the most days overdue first.
-  // In the narrow panel the first five show until "Show all 8".
+  // In the narrow panel the first five show until "Show 3 more".
   const chips = table.locator('[data-testid="ai-record-chip"]:visible');
   const expand = table.getByTestId("ai-v2-table-expand");
   if (await expand.isVisible()) {
     await expect(chips).toHaveCount(5);
-    await expect(expand).toHaveText("Show all 8");
+    await expect(expand).toHaveText("Show 3 more");
     await expand.click();
   }
   await expect(chips).toHaveCount(8);

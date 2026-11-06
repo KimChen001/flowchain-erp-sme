@@ -95,9 +95,9 @@ function signalValue(item, fmt, language) {
     case 'po_overdue': return aiSkillCountText('value.days_late', data.days === 1 ? 1 : 2, language, { days: fmt.number(data.days) })
     case 'po_due_7d': return aiSkillText('value.due_in', language, { days: fmt.number(data.days) })
     case 'po_partially_received': return data.ordered === null || data.ordered === undefined ? null : aiSkillText('value.received_of', language, { received: fmt.number(data.received), ordered: fmt.quantity(data.ordered, data.unit) })
-    case 'stock_shortage': return aiSkillText('value.short', language, { shortage: fmt.number(data.shortage) })
-    case 'stock_below_safety': return aiSkillText('value.of', language, { value: fmt.number(data.available), target: fmt.number(data.safety) })
-    case 'stock_below_reorder': return aiSkillText('value.of', language, { value: fmt.number(data.atp), target: fmt.number(data.reorder) })
+    case 'stock_shortage': return aiSkillText('value.short', language, { shortage: fmt.quantity(data.shortage, data.unit) })
+    case 'stock_below_safety': return aiSkillText('value.of', language, { value: fmt.number(data.available), target: fmt.quantity(data.safety, data.unit) })
+    case 'stock_below_reorder': return aiSkillText('value.of', language, { value: fmt.number(data.atp), target: fmt.quantity(data.reorder, data.unit) })
     case 'invoice_variance': return data.variance === null ? null : fmt.money(data.variance, data.currency)
     case 'rfq_ready_to_award': return aiSkillText('value.quotes', language, { responses: fmt.number(data.responses) })
     case 'grn_rejected_qty': return fmt.quantity(data.rejected, data.unit)
@@ -114,9 +114,10 @@ export function aiSkillSignalReason(item, facts, language) {
     po_overdue: { days: fmt.number(data.days), date: fmt.day(data.dueDate), remaining, supplier: data.supplier },
     po_due_7d: { date: fmt.day(data.dueDate), remaining, supplier: data.supplier },
     po_partially_received: { received: fmt.number(data.received), ordered: fmt.quantity(data.ordered, data.unit) },
-    stock_shortage: { available: fmt.number(data.available), demand: fmt.number(data.demand), shortage: fmt.number(data.shortage), incoming: fmt.number(data.incoming) },
-    stock_below_safety: { available: fmt.number(data.available), safety: fmt.number(data.safety), incoming: fmt.number(data.incoming) },
-    stock_below_reorder: { atp: fmt.number(data.atp), reorder: fmt.number(data.reorder) },
+    // Stock quantities in the item's unit: "28 pcs available against 35 pcs".
+    stock_shortage: { available: fmt.quantity(data.available, data.unit), demand: fmt.quantity(data.demand, data.unit), shortage: fmt.quantity(data.shortage, data.unit), incoming: fmt.quantity(data.incoming, data.unit) },
+    stock_below_safety: { available: fmt.quantity(data.available, data.unit), safety: fmt.quantity(data.safety, data.unit), incoming: fmt.quantity(data.incoming, data.unit) },
+    stock_below_reorder: { atp: fmt.quantity(data.atp, data.unit), reorder: fmt.quantity(data.reorder, data.unit) },
     // A supplier name the role may not see on invoices is "a supplier".
     invoice_variance: { amount: fmt.money(data.variance, data.currency), supplier: data.supplier || aiSkillText('value.a_supplier', language) },
     pr_awaiting_approval: { priority: aiSkillText(`priority.${['high', 'medium', 'low'].includes(data.priority) ? data.priority : 'none'}`, language) },
