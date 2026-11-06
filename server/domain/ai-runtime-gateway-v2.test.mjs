@@ -645,7 +645,7 @@ test('main route dispatcher serves AI runtime endpoints', async () => {
         body: JSON.stringify({ message: '今天有什么需要我处理？' }),
       })
       assert.equal(chinese.status, 503)
-      assert.deepEqual(await chinese.json(), { code: 'AI_SKILL_UNAVAILABLE', error: 'AI 助手暂时无法读取工作区数据，请稍后重试。' })
+      assert.deepEqual(await chinese.json(), { code: 'AI_SKILL_UNAVAILABLE', error: 'AI 助手的工作区数据加载失败，请稍后重试。' })
       // The retired template chat is off the path unless the rollback flag is on.
       const legacy = await fetch(`${base}/api/ai/chat`, {
         method: 'POST',

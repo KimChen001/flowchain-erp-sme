@@ -32,7 +32,7 @@ import { procurementErrorText, type ErrorPair } from "../procurement/procurement
 // gets its own sentence (procurementErrors.ts), never the server's raw text.
 const RETRY: ErrorPair = ["Try again in a moment.", "请稍后重试。"];
 const LOAD_FAILED: ErrorPair = ["Purchase requests could not be loaded. Try again.", "采购申请数据加载失败，请重试。"];
-const SOURCES_FAILED: ErrorPair = ["The item's supplier sources could not be loaded.", "供应商关系读取失败。"];
+const SOURCES_FAILED: ErrorPair = ["The item's supplier sources could not be loaded.", "供应商关系加载失败。"];
 const SAVE_FAILED: ErrorPair = ["The purchase request could not be saved.", "采购申请保存失败。"];
 const UPDATE_FAILED: ErrorPair = ["The purchase request could not be updated.", "采购申请更新失败。"];
 
@@ -1052,8 +1052,8 @@ export default function CanonicalProcurementPanel({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              aria-label={copy("刷新主数据")}
-              title={copy("刷新主数据")}
+              aria-label={copy("刷新基础资料")}
+              title={copy("刷新基础资料")}
               onClick={() => load()}
               className={listButtonClass.secondary}
             >

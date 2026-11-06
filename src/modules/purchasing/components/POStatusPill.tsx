@@ -1,6 +1,7 @@
 import type { POStatus } from "../../../types/scm";
 import { StatusChip, type StatusTone } from "../../../components/ui/listLayout";
 import { workspaceCopy } from "../../../i18n/workspaceCopy";
+import { statusCodeLabel } from "../../../i18n/statusLabels";
 import { useI18n } from "../../../i18n/I18n";
 
 // The shared brand tones: gray draft, orange awaiting approval, blue while the
@@ -21,6 +22,10 @@ const poStatusCodeMeta: Record<string, POStatus> = {
   partially_received: "部分到货", fully_received: "已完成", completed: "已完成", rejected: "已驳回", cancelled: "已取消",
 };
 
+// The code of a legacy Chinese status value (已审批 -> approved), so both
+// read with the app's one set of status words (已批准, 已下达).
+const poStatusCodeOf: Record<string, string> = Object.fromEntries(Object.entries(poStatusCodeMeta).map(([code, value]) => [value, code]));
+
 // The tone of a PO status, for other places that show it (the detail header).
 export function poStatusToneOf(status?: string | null): StatusTone {
   const value = String(status || "");
@@ -30,7 +35,7 @@ export function poStatusToneOf(status?: string | null): StatusTone {
 export function POStatusPill({ status }: { status: string }) {
   const { language } = useI18n();
   const displayStatus = status || "未知";
-  const translatedStatus = workspaceCopy(displayStatus, language);
+  const translatedStatus = statusCodeLabel(poStatusCodeOf[displayStatus] || displayStatus, language) ?? workspaceCopy(displayStatus, language);
   const visibleStatus = translatedStatus !== displayStatus
     ? translatedStatus
     : displayStatus.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());

@@ -103,7 +103,7 @@ test("the Performance tab reads in Chinese with the same figures and number form
   // Language changes the copy, not the workspace's number format.
   await expect(onTime).toContainText("66.7% · 100%");
   await expect(panel.getByTestId("supplier-performance-otif")).toContainText("按采购订单日期 OTIF");
-  await expect(panel.getByTestId("supplier-performance-not-sent")).toHaveText("未发给供应商：1 张");
+  await expect(panel.getByTestId("supplier-performance-not-sent")).toHaveText("未下达：1 张");
   await panel.getByTestId("supplier-performance-definition-toggle").click();
   await expect(panel.getByTestId("supplier-performance-definition")).toContainText("原始承诺交期");
   await expect(panel.getByTestId("supplier-performance-definition")).toContainText("采购方的需求日期");

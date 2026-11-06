@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { roleLabel } from "../../shared/roles.mjs";
 import { Toaster } from "sonner";
-import { Activity, ArrowLeft, BarChart3, Boxes, Globe, Info, Link2, Loader2, Lock, Mail, ShieldCheck, ShoppingCart } from "lucide-react";
+import { Activity, ArrowLeft, Boxes, Globe, Info, Link2, Loader2, Lock, Mail, ShieldCheck, ShoppingCart, Sparkles } from "lucide-react";
 import { A } from "../components/ui";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../lib/constants";
 import { ApiError, apiJson, AUTH_TOKEN_KEY, CURRENT_USER_KEY } from "../lib/api-client";
@@ -25,17 +25,19 @@ const RESEND_DELAY_SECONDS = 60;
 const COPY = {
   tagline: { en: "AI-powered inventory and supply chain workspace", zh: PRODUCT_TAGLINE },
   // The headline is two lines so Chinese never breaks in the middle of a word.
-  headlineLead: { en: "Purchasing, sales, and inventory,", zh: "采购、销售与库存，" },
-  headlineRest: { en: "connected in one workspace.", zh: "在一个工作台协同完成。" },
-  intro: { en: "An ERP workspace for small and medium businesses. Master data, purchasing, sales, inventory, analytics, and operational finance share one set of records.", zh: "面向中小企业的 ERP 进销存平台。基础资料、采购、销售、库存、经营分析与运营财务共用同一套数据。" },
-  buyLabel: { en: "Purchasing", zh: "采购协同" },
-  buyDetail: { en: "Requisitions, purchase orders, receiving, and supplier invoices", zh: "采购申请、采购订单、收货与供应商账单" },
-  stockLabel: { en: "Inventory", zh: "库存管理" },
-  stockDetail: { en: "Stock by warehouse, reorder points, and movements", zh: "分仓库存、补货点与出入库记录" },
-  planLabel: { en: "Business insights", zh: "经营洞察" },
-  planDetail: { en: "Dashboards built from your own transactions", zh: "基于真实业务数据的经营看板" },
+  // The assistant comes first: ask, check, then act (the owner's direction).
+  headlineLead: { en: "Ask about purchasing and stock,", zh: "采购和库存，问一句就清楚，" },
+  headlineRest: { en: "then act on the answer.", zh: "确认后直接办成。" },
+  intro: { en: "An ERP workspace for small and medium businesses, with an assistant you can talk to. Master data, purchasing, sales, inventory, analytics, and operational finance share one set of records.", zh: "面向中小企业的 ERP 进销存平台，内置可以直接对话的智能助手。基础资料、采购、销售、库存、经营分析与运营财务共用同一套数据。" },
+  askLabel: { en: "AI assistant", zh: "智能助手" },
+  askDetail: { en: "Answers from your own records and marks any figure it could not check; drafts requests and orders for you to confirm", zh: "基于你的数据作答，标出未核对的数字；起草申请和订单，由你确认后提交" },
+  buyLabel: { en: "Purchasing", zh: "采购" },
+  buyDetail: { en: "Purchase requests, purchase orders, receiving, and supplier invoices", zh: "采购申请、采购订单、收货与采购发票" },
+  stockLabel: { en: "Inventory and reports", zh: "库存与报表" },
+  stockDetail: { en: "Stock by warehouse, reorder points, and dashboards from your own transactions", zh: "分仓库存、再订货点，以及基于真实业务数据的报表" },
   scopeNote: { en: "Payment, collection, refund, tax, and general-ledger execution are not enabled.", zh: "付款、收款、退款、税务与总账执行尚未启用。" },
   title: { en: "Sign in to your workspace", zh: "登录工作区" },
+  signedOut: { en: "Your session ended. Sign in again to continue.", zh: "登录已失效，请重新登录后继续。" },
   subtitle: { en: "Enter your work email and we'll send you a secure sign-in link.", zh: "输入工作邮箱，我们会发送一个安全登录链接。" },
   language: { en: "Interface language", zh: "界面语言" },
   email: { en: "Work email", zh: "工作邮箱" },
@@ -89,10 +91,23 @@ function useCopy() {
 }
 
 const FEATURES = [
+  { icon: Sparkles, label: "askLabel", detail: "askDetail" },
   { icon: ShoppingCart, label: "buyLabel", detail: "buyDetail" },
   { icon: Boxes, label: "stockLabel", detail: "stockDetail" },
-  { icon: BarChart3, label: "planLabel", detail: "planDetail" },
 ] as const;
+
+// Set by the app when a stored session is refused at start-up, so the sign-in
+// page can say why it is shown; read once.
+export const SIGNED_OUT_REASON_KEY = "flowchain:signed-out-reason";
+function takeSignedOutReason() {
+  try {
+    const reason = sessionStorage.getItem(SIGNED_OUT_REASON_KEY);
+    sessionStorage.removeItem(SIGNED_OUT_REASON_KEY);
+    return reason;
+  } catch {
+    return null;
+  }
+}
 
 const NAVY = "#0f1b33";
 
@@ -236,6 +251,8 @@ export function LoginScreen({ localStatus }: { localStatus: LocalDevelopmentStat
   const [notice, setNotice] = useState("");
   const [resendAt, setResendAt] = useState(0);
   const [clock, setClock] = useState(() => Date.now());
+  // Shown when a stored session was refused, not after signing out.
+  const [signedOut] = useState(() => takeSignedOutReason() === "expired");
 
   useEffect(() => {
     if (!sentTo) return;
@@ -298,6 +315,7 @@ export function LoginScreen({ localStatus }: { localStatus: LocalDevelopmentStat
     <SignInLayout>
       <form onSubmit={submit} className="space-y-4" data-testid="sign-in-email-form">
         <CardHeading icon={<Lock size={16} />} title={copy("title")} subtitle={copy("subtitle")} />
+        {signedOut && <p role="status" data-testid="sign-in-signed-out" className="rounded-lg px-3 py-2 text-xs leading-5" style={{ background: "#eff4ff", color: A.label }}>{copy("signedOut")}</p>}
         {localStatus && (
           <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs leading-5 text-amber-900" data-testid="local-login-metadata">
             <div className="font-semibold">{copy("localTitle")} · {localStatus.workspaceName}</div>

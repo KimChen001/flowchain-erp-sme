@@ -410,9 +410,9 @@ const codeMessages: Record<string, string> = {
   "SHIPMENT_REVERSAL_NOT_SAFE": "历史出库事实不一致，系统已阻止冲销。",
   // Shown both as a preview blocking issue and as a command error.
   "SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE":
-    "已有客户发票对此发货开票，不能再冲销。如需收回货物，请使用客户退货和贷项通知单。",
+    "已有销售发票对此发货开票，不能再冲销。如需收回货物，请使用客户退货和贷项通知单。",
   "SALES_ORDER_INVALID_STATE": "当前订单状态不允许此操作。",
-  "SALES_ORDER_ITEM_INVALID": "订单物料与当前工作区主数据不一致。",
+  "SALES_ORDER_ITEM_INVALID": "订单物料与当前工作区基础资料不一致。",
 };
 const Section = ({
   title,
@@ -615,7 +615,7 @@ function OrderList() {
       )}
       <ListSearchCard
         title={copy("销售订单查询")}
-        subtitle={copy("查询订单、客户、库存预留、履约状态和承诺日期。")}
+        subtitle={copy("查询订单、客户、库存预留、履约状态和承诺交期。")}
         actions={<>
           <ResetButton onClick={() => setParams({})} />
           <RefreshButton onClick={() => void load()} />
@@ -679,8 +679,8 @@ function OrderList() {
           >
             <option value="updatedAt:desc">{copy("更新时间（新到旧）")}</option>
             <option value="updatedAt:asc">{copy("更新时间（旧到新）")}</option>
-            <option value="promisedDate:asc">{copy("承诺日期（升序）")}</option>
-            <option value="promisedDate:desc">{copy("承诺日期（降序）")}</option>
+            <option value="promisedDate:asc">{copy("承诺交期（升序）")}</option>
+            <option value="promisedDate:desc">{copy("承诺交期（降序）")}</option>
             <option value="orderNumber:asc">{copy("订单号（升序）")}</option>
             <option value="orderNumber:desc">{copy("订单号（降序）")}</option>
           </select>
@@ -986,7 +986,7 @@ function OrderLinesField({
         <span className="text-xs text-slate-500">
           {say(
             "A unit price is needed to invoice the customer. Enter 0 for free goods.",
-            "开客户发票需要单价。赠品请填 0。",
+            "开销售发票需要单价。赠品请填 0。",
           )}
         </span>
       </div>
@@ -1106,7 +1106,7 @@ function OrderEntry() {
             />
             {workspace.status === "unavailable" && !currency && (
               <span className="mt-1 block text-xs text-amber-700">
-                {copy("无法读取工作区币种，请输入币种。")}
+                {copy("工作区币种加载失败，请输入币种。")}
               </span>
             )}
           </label>
@@ -1670,7 +1670,7 @@ function OrderDetail({ id }: { id: string }) {
           className="rounded-lg bg-green-50 p-3 text-green-800"
           data-testid="shipment-created-number"
         >
-          {say(`Delivery ${createdShipmentNumber} created.`, `已创建发货单 ${createdShipmentNumber}。`)}
+          {say(`Shipment ${createdShipmentNumber} created.`, `已创建发货单 ${createdShipmentNumber}。`)}
         </div>
       )}
       {data.scopeCoverage.status === "partial" && (
@@ -1678,7 +1678,7 @@ function OrderDetail({ id }: { id: string }) {
           role="status"
           className="rounded-lg bg-amber-50 p-3 text-amber-800"
         >
-          {copy("当前页面仅显示您有权查看的仓库数据，部分库存或履约事实已隐藏。")}
+          {copy("当前页面仅显示你有权查看的仓库数据，部分库存或履约事实已隐藏。")}
         </div>
       )}
       {((a.blockingReasonCodes as string[]) || []).includes(
@@ -1997,7 +1997,7 @@ function OrderDetail({ id }: { id: string }) {
                 ? say("Reserve inventory", "预留库存")
                 : intent === "release"
                   ? say("Release reservation", "释放预留")
-                  : say("Create delivery draft", "创建发货草稿")
+                  : say("Create shipment draft", "创建发货草稿")
           }
           onClose={() => {
             setIntent("");
@@ -2180,7 +2180,7 @@ function OrderDetail({ id }: { id: string }) {
                   className="mt-3 rounded-lg bg-slate-50 p-2 text-sm text-slate-600"
                   data-testid="shipment-number-on-save"
                 >
-                  {say("Delivery number: assigned when you save", "发货单号：保存时自动生成")}
+                  {say("Shipment number: assigned when you save", "发货单号：保存时自动生成")}
                 </p>
               )}
               {intent === "release" && (
@@ -2222,7 +2222,7 @@ function OrderDetail({ id }: { id: string }) {
                       ? say("Reserve", "确认预留")
                       : intent === "release"
                         ? say("Release", "确认释放")
-                        : say("Create delivery draft", "创建发货草稿")}
+                        : say("Create shipment draft", "创建发货草稿")}
                 </Button>
               </div>
             </>
@@ -2463,7 +2463,7 @@ function ShipmentDetail({ id }: { id: string }) {
               ? say("Post shipment", "发货过账确认")
               : intent === "reverse"
                 ? say("Reverse shipment", "发货冲销确认")
-                : say("Cancel delivery draft", "取消发货草稿")
+                : say("Cancel shipment draft", "取消发货草稿")
           }
           onClose={() => {
             setIntent("");
@@ -2504,7 +2504,7 @@ function ShipmentDetail({ id }: { id: string }) {
                   ? say("Post shipment", "过账发货")
                   : intent === "reverse"
                     ? say("Reverse shipment", "冲销发货")
-                    : say("Cancel delivery draft", "取消发货草稿")}
+                    : say("Cancel shipment draft", "取消发货草稿")}
             </Button>
           </div>
         </ActionDialog>

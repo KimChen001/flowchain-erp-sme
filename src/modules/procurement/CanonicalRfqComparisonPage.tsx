@@ -26,7 +26,7 @@ type Tr = (zh: string, en: string) => string;
 
 const RFQ_STATUS_LABELS: Record<string, readonly [string, string]> = {
   draft: ["草稿", "Draft"],
-  open: ["开放", "Open"],
+  open: ["未结", "Open"],
   collecting_quotes: ["收集报价", "Collecting quotes"],
   closed: ["已关闭", "Closed"],
   cancelled: ["已取消", "Cancelled"],
@@ -104,8 +104,8 @@ const ELIGIBILITY_REASON_LABELS: Record<string, readonly [string, string]> = {
   revision_status_incomplete: ["报价信息不完整", "The quote is incomplete"],
   revision_status_not_selected: ["此前未中选", "Not selected earlier"],
   revision_status_withdrawn: ["报价已撤回", "The quote was withdrawn"],
-  rfq_line_coverage_partial: ["只覆盖部分 RFQ 行", "Covers only some RFQ lines"],
-  rfq_line_coverage_none: ["未覆盖任何 RFQ 行", "Covers no RFQ line"],
+  rfq_line_coverage_partial: ["只覆盖部分询价单行", "Covers only some RFQ lines"],
+  rfq_line_coverage_none: ["未覆盖任何询价单行", "Covers no RFQ line"],
 };
 
 // The server's notes (keyed by its text) in plain business language; null for
@@ -115,7 +115,7 @@ const LIMITATION_LABELS: Record<string, readonly [string, string] | null> = {
   "Commercial authority comes only from the maximum revisionNumber for each SupplierQuotation.": null,
   "Non-eligible responses remain visible but are excluded from active comparison availability.": null,
   "At least one quotation has no authoritative revision and exposes no commercial facts.": ["至少有一份报价没有报价修订，因此不显示其价格。", "At least one quotation has no quote revision, so its prices are not shown."],
-  "At least one latest revision does not cover every target RFQ line.": ["至少有一份最新报价修订未覆盖全部 RFQ 行。", "At least one latest quote revision does not cover every RFQ line."],
+  "At least one latest revision does not cover every target RFQ line.": ["至少有一份最新报价修订未覆盖全部询价单行。", "At least one latest quote revision does not cover every RFQ line."],
   "Currency conversion is unavailable; amounts in different currencies are not normalized.": ["不同币种的金额不做换算。", "Amounts in different currencies are not converted."],
 };
 
@@ -153,7 +153,7 @@ function ResponseSummary({ responses }: { responses: RfqComparisonResponse[] }) 
         <h2 className="text-sm font-semibold">{tr("供应商响应摘要", "Supplier response summary")}</h2>
         <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("供应商按编号排列，不按价格排序。", "Suppliers are listed by supplier ID, not by price.")}</p>
       </div>
-      {responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 尚无报价记录。", "This RFQ has no quotation records.")}</div> : (
+      {responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单尚无报价记录。", "This RFQ has no quotation records.")}</div> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1100px] text-left text-xs">
             <thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("供应商", "Supplier"), tr("报价 / 报价修订", "Quotation / quote revision"), tr("状态", "Status"), tr("比较资格", "Eligibility"), tr("原币总额", "Original-currency total"), tr("提交时间", "Submitted"), tr("行项目覆盖", "Line coverage")].map((label) => <th className="p-3 font-medium" key={label}>{label}</th>)}</tr></thead>
@@ -194,10 +194,10 @@ function LineMatrix({ comparison }: { comparison: RfqSupplierComparison }) {
   return (
     <Card className="overflow-hidden" data-testid="rfq-comparison-line-matrix">
       <div className="border-b p-4"><h2 className="text-sm font-semibold">{tr("行项目并列展示", "Line-by-line comparison")}</h2><p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("金额按报价记录显示，不重新计算。", "Amounts are shown as quoted, not recalculated.")}</p></div>
-      {comparison.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有行项目。", "This RFQ has no line items.")}</div> : (
+      {comparison.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单没有行项目。", "This RFQ has no line items.")}</div> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-left text-xs">
-            <thead className="bg-slate-50" style={{ color: A.sub }}><tr><th className="sticky left-0 z-10 min-w-[260px] bg-slate-50 p-3 font-medium">{tr("RFQ 行项目", "RFQ line item")}</th>{comparison.responses.map((response) => <th className="min-w-[230px] p-3 font-medium" key={response.supplierId}><div>{response.supplierName || response.supplierId}</div><div className="mt-1 font-normal">{response.supplierId}</div><CopySupplierNote comparison={comparison} response={response} history={history} historyKeyOf={historyKeyOf} /></th>)}</tr></thead>
+            <thead className="bg-slate-50" style={{ color: A.sub }}><tr><th className="sticky left-0 z-10 min-w-[260px] bg-slate-50 p-3 font-medium">{tr("询价单行项目", "RFQ line item")}</th>{comparison.responses.map((response) => <th className="min-w-[230px] p-3 font-medium" key={response.supplierId}><div>{response.supplierName || response.supplierId}</div><div className="mt-1 font-normal">{response.supplierId}</div><CopySupplierNote comparison={comparison} response={response} history={history} historyKeyOf={historyKeyOf} /></th>)}</tr></thead>
             <tbody>{comparison.lines.map((line) => <tr className="border-t align-top" data-testid={`rfq-comparison-line-${line.rfqLineId}`} key={line.rfqLineId}>
               <td className="sticky left-0 z-10 bg-white p-3"><div className="font-medium">{line.itemName || line.sku || line.itemId || line.rfqLineId}</div><div className="mt-1" style={{ color: A.sub }} title={line.rfqLineId}>{line.sku || "—"}</div><div className="mt-2 tabular-nums">{tr("需求", "Required")}: {quantity(line.requestedQuantity)} {line.unit || ""}</div></td>
               {comparison.responses.map((response) => {
@@ -209,7 +209,7 @@ function LineMatrix({ comparison }: { comparison: RfqSupplierComparison }) {
           </table>
         </div>
       )}
-      {comparison.responses.some((response) => response.latestRevision?.lines.some((line) => line.lineAuthorityState !== "exact_target_rfq_line")) && <div className="border-t p-4 text-xs" style={{ color: A.sub }}><div className="font-semibold text-slate-700">{tr("未对应到 RFQ 行的报价行", "Quote lines not matched to an RFQ line")}</div>{comparison.responses.flatMap((response) => (response.latestRevision?.lines || []).filter((line) => line.lineAuthorityState !== "exact_target_rfq_line").map((line) => <div key={`${response.supplierId}:${line.revisionLineId}`} className="mt-1" title={line.revisionLineId}>{response.supplierName || response.supplierId} · {line.sku || line.itemName || tr("报价行", "Quote line")} · {tr("未能对应到 RFQ 行", "Not matched to an RFQ line")}</div>))}</div>}
+      {comparison.responses.some((response) => response.latestRevision?.lines.some((line) => line.lineAuthorityState !== "exact_target_rfq_line")) && <div className="border-t p-4 text-xs" style={{ color: A.sub }}><div className="font-semibold text-slate-700">{tr("未对应到询价单行的报价行", "Quote lines not matched to an RFQ line")}</div>{comparison.responses.flatMap((response) => (response.latestRevision?.lines || []).filter((line) => line.lineAuthorityState !== "exact_target_rfq_line").map((line) => <div key={`${response.supplierId}:${line.revisionLineId}`} className="mt-1" title={line.revisionLineId}>{response.supplierName || response.supplierId} · {line.sku || line.itemName || tr("报价行", "Quote line")} · {tr("未能对应到询价单行", "Not matched to an RFQ line")}</div>))}</div>}
     </Card>
   );
 }
@@ -305,7 +305,7 @@ function AwardDecisionPanel({ comparison, award, canAward, onAward }: { comparis
   };
 
   return <Card className="p-4" data-testid="rfq-award-decision"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 text-blue-600" size={18} /><div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">{tr("人工复核授标", "Reviewed award decision")}</h2><p className="mt-1 text-xs text-slate-500">{tr("选择一份符合条件的最新报价修订。系统不会排名或推荐供应商，也不会自动创建采购订单。", "Select one eligible latest quote revision. FlowChain does not rank or recommend suppliers, and it does not create a purchase order automatically.")}</p>
-    {!canAward ? <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{tr("当前角色可以查看比价，但没有记录正式授标决定的权限。", "Your role can review the comparison but cannot record a formal award decision.")}</p> : unavailable ? <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{comparison.rfqStatus !== "collecting_quotes" ? tr("只有处于收集报价状态的 RFQ 可以授标。", "An award can be recorded only while the RFQ is collecting quotes.") : tr("当前没有符合授标要求的完整报价。", "No complete eligible quotation is available for award.")}</p> : <div className="mt-4 space-y-3">
+    {!canAward ? <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{tr("当前角色可以查看比价，但没有记录正式授标决定的权限。", "Your role can review the comparison but cannot record a formal award decision.")}</p> : unavailable ? <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{comparison.rfqStatus !== "collecting_quotes" ? tr("只有处于收集报价状态的询价单可以授标。", "An award can be recorded only while the RFQ is collecting quotes.") : tr("当前没有符合授标要求的完整报价。", "No complete eligible quotation is available for award.")}</p> : <div className="mt-4 space-y-3">
       <fieldset className="space-y-2"><legend className="text-xs font-semibold">{tr("选择供应商报价", "Select supplier quotation")}</legend>{eligible.map((response) => <label key={response.supplierId} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-xs ${supplierId === response.supplierId ? "border-blue-500 bg-blue-50" : "border-slate-200"}`}><input className="mt-0.5" type="radio" name="rfq-award-supplier" value={response.supplierId} checked={supplierId === response.supplierId} onChange={() => { setSupplierId(response.supplierId); setReviewed(false); }} /><span><strong>{response.supplierName || response.supplierId}</strong><span className="mt-1 block text-slate-600">{tr(`报价修订 ${response.latestRevision?.revisionNumber ?? "—"}`, `Quote revision ${response.latestRevision?.revisionNumber ?? "—"}`)} · {exactAmount(response.latestRevision?.quotedAmount, response.latestRevision?.currency)}</span></span></label>)}</fieldset>
       <label className="block text-xs font-semibold">{tr("决定理由", "Decision reason")}<textarea rows={3} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2 font-normal" placeholder={tr("说明价格、交期、质量或业务判断依据", "Describe the price, lead time, quality, or business basis")}/></label>
       <label className="flex items-start gap-2 text-xs"><input className="mt-0.5" type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} /><span>{tr("我已复核所选供应商、报价金额及具体报价修订，并理解授标记录不可修改。", "I reviewed the supplier, quoted amount, and quote revision, and understand that the award record cannot be changed.")}</span></label>
@@ -339,14 +339,14 @@ function LoadedComparison({ comparison, award, canAward, onAward }: { comparison
           <div className="flex flex-wrap gap-2"><Chip label={tr("只读比较", "Read-only comparison")} color={A.blue} bg="#eff6ff" /><Chip label={localLabel(RFQ_STATUS_LABELS, comparison.rfqStatus || "", language, comparison.rfqStatusRaw || tr("状态未知", "Unknown status"))} color={A.sub} bg="#f1f5f9" /></div>
         </div>
         <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[[tr("RFQ 编号", "RFQ number"), rfqNumber], [tr("RFQ 币种", "RFQ currency"), comparison.rfqCurrency || "—"], [tr("有效报价", "Eligible quotations"), String(comparison.summary.eligibleResponseCount)], [tr("有报价修订的响应", "Responses with a quote revision"), String(comparison.summary.authoritativeResponseCount)], [tr("参与供应商", "Participating suppliers"), String(comparison.participationSummary.participantCount)], [tr("全部报价记录", "All quotation records"), String(comparison.summary.quotationCount)], [tr("显示顺序", "Display order"), tr("按供应商编号", "By supplier ID")], [tr("生成时间", "Generated at"), date(comparison.generatedAt)]].map(([label, value]) => <div className="rounded-lg bg-slate-50 p-3" key={label}><dt className="text-xs" style={{ color: A.sub }}>{label}</dt><dd className="mt-1 break-words text-sm font-medium">{value}</dd></div>)}
+          {[[tr("询价单编号", "RFQ number"), rfqNumber], [tr("询价单币种", "RFQ currency"), comparison.rfqCurrency || "—"], [tr("有效报价", "Eligible quotations"), String(comparison.summary.eligibleResponseCount)], [tr("有报价修订的响应", "Responses with a quote revision"), String(comparison.summary.authoritativeResponseCount)], [tr("参与供应商", "Participating suppliers"), String(comparison.participationSummary.participantCount)], [tr("全部报价记录", "All quotation records"), String(comparison.summary.quotationCount)], [tr("显示顺序", "Display order"), tr("按供应商编号", "By supplier ID")], [tr("生成时间", "Generated at"), date(comparison.generatedAt)]].map(([label, value]) => <div className="rounded-lg bg-slate-50 p-3" key={label}><dt className="text-xs" style={{ color: A.sub }}>{label}</dt><dd className="mt-1 break-words text-sm font-medium">{value}</dd></div>)}
         </dl>
       </Card>
 
       <Availability comparison={comparison} />
       <AwardDecisionPanel comparison={comparison} award={award} canAward={canAward} onAward={onAward} />
 
-      {(noParticipants || noQuotations || comparison.comparisonAvailability === "no_eligible_responses") && <Card className="p-4" data-testid="rfq-comparison-empty-context"><div className="flex items-start gap-2"><CircleAlert className="mt-0.5 text-slate-500" size={16} /><p className="text-xs" style={{ color: A.sub }}>{noParticipants ? tr("当前 RFQ 尚无供应商参与记录。", "This RFQ has no supplier participation records.") : noQuotations ? tr("已有参与记录，但尚无报价。", "Suppliers are participating, but no quotations have been recorded.") : tr("现有报价均为草稿、不完整、已撤回、历史记录或缺少完整行项目覆盖。", "All current quotations are drafts, incomplete, withdrawn, historical, or missing complete line coverage.")}</p></div></Card>}
+      {(noParticipants || noQuotations || comparison.comparisonAvailability === "no_eligible_responses") && <Card className="p-4" data-testid="rfq-comparison-empty-context"><div className="flex items-start gap-2"><CircleAlert className="mt-0.5 text-slate-500" size={16} /><p className="text-xs" style={{ color: A.sub }}>{noParticipants ? tr("当前询价单尚无供应商参与记录。", "This RFQ has no supplier participation records.") : noQuotations ? tr("已有参与记录，但尚无报价。", "Suppliers are participating, but no quotations have been recorded.") : tr("现有报价均为草稿、不完整、已撤回、历史记录或缺少完整行项目覆盖。", "All current quotations are drafts, incomplete, withdrawn, historical, or missing complete line coverage.")}</p></div></Card>}
 
       <Card className="p-4" data-testid="rfq-comparison-participation-summary">
         <h2 className="text-sm font-semibold">{tr("供应商参与摘要", "Supplier participation summary")}</h2>
@@ -403,13 +403,13 @@ export function CanonicalRfqComparisonPage({ documentId, effectivePermissionCode
   if (state === "loaded" && comparison) return <LoadedComparison comparison={comparison} award={award} canAward={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_award.create")} onAward={setAward} />;
 
   const messages: Record<Exclude<ReadState, "loading" | "loaded">, string> = {
-    malformed: tr("RFQ 比较链接缺少有效编号。", "The RFQ comparison link has no valid ID."),
-    notFound: tr("当前工作区中找不到该 RFQ，或该记录不可见。", "This RFQ was not found in the current workspace or is not visible to you."),
-    unauthenticated: tr("登录状态已失效，无法读取供应商报价比较。", "Your session has expired. Sign in to view the supplier quotation comparison."),
+    malformed: tr("询价单比较链接缺少有效编号。", "The RFQ comparison link has no valid ID."),
+    notFound: tr("当前工作区中找不到该询价单，或该记录不可见。", "This RFQ was not found in the current workspace or is not visible to you."),
+    unauthenticated: tr("登录状态已失效，供应商报价比较加载失败。", "Your session has expired. Sign in to view the supplier quotation comparison."),
     forbidden: tr("当前用户没有查看供应商价格比较的权限。", "You do not have permission to view supplier price comparisons."),
-    invalid: tr("RFQ 编号格式无效，无法读取供应商报价比较。", "The RFQ ID is invalid."),
-    error: tr("供应商报价比较暂时无法读取，请稍后重试。", "The supplier quotation comparison is temporarily unavailable. Try again later."),
+    invalid: tr("询价单编号格式无效，供应商报价比较加载失败。", "The RFQ ID is invalid."),
+    error: tr("供应商报价比较加载失败，请稍后重试。", "The supplier quotation comparison is temporarily unavailable. Try again later."),
     network: tr("无法连接到供应商报价比较服务，请检查网络后重试。", "The supplier quotation comparison service could not be reached. Check your connection and try again."),
   };
-  return <div className="space-y-4" data-testid="canonical-rfq-comparison-state"><Card className="p-8 text-center">{state === "loading" ? <div className="text-sm" style={{ color: A.sub }}>{tr("正在读取供应商报价比较…", "Loading supplier quotation comparison…")}</div> : <><TriangleAlert className="mx-auto text-amber-600" size={30} /><div className="mt-3 text-sm font-semibold">{messages[state]}</div>{state !== "malformed" && <button className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-blue-600" onClick={() => void load()} type="button"><RefreshCw size={15} />{tr("重试", "Retry")}</button>}</>}</Card><Link className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600" to={documentId ? `/app/procurement/rfq/${encodeURIComponent(documentId)}` : "/app/procurement/rfq"}><ArrowLeft size={16} />{tr("返回 RFQ", "Back to RFQ")}</Link></div>;
+  return <div className="space-y-4" data-testid="canonical-rfq-comparison-state"><Card className="p-8 text-center">{state === "loading" ? <div className="text-sm" style={{ color: A.sub }}>{tr("正在读取供应商报价比较…", "Loading supplier quotation comparison…")}</div> : <><TriangleAlert className="mx-auto text-amber-600" size={30} /><div className="mt-3 text-sm font-semibold">{messages[state]}</div>{state !== "malformed" && <button className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-blue-600" onClick={() => void load()} type="button"><RefreshCw size={15} />{tr("重试", "Retry")}</button>}</>}</Card><Link className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600" to={documentId ? `/app/procurement/rfq/${encodeURIComponent(documentId)}` : "/app/procurement/rfq"}><ArrowLeft size={16} />{tr("返回询价单", "Back to RFQ")}</Link></div>;
 }

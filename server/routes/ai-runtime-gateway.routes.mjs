@@ -30,7 +30,7 @@ const ERRORS = {
   ACTOR_NOT_PROVISIONED: ['Your user is not set up for this workspace.', '你的用户尚未在此工作区开通。'],
   USER_DISABLED: ['Your user is disabled in this workspace.', '你的用户在此工作区已停用。'],
   SESSION_STALE: ['Your access changed. Sign in again.', '你的权限已变更，请重新登录。'],
-  AI_SKILL_UNAVAILABLE: ['The assistant could not read your workspace data just now. Please try again.', 'AI 助手暂时无法读取工作区数据，请稍后重试。'],
+  AI_SKILL_UNAVAILABLE: ['The assistant could not read your workspace data just now. Please try again.', 'AI 助手的工作区数据加载失败，请稍后重试。'],
 }
 function errorBody(code, body = {}) {
   const [en, zh] = ERRORS[code] || ERRORS.AI_SKILL_UNAVAILABLE

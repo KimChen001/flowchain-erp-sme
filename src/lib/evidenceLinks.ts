@@ -49,8 +49,8 @@ const PROCUREMENT_DOCUMENT_TYPES: Record<string, { entityType: string; moduleId:
 };
 
 const ENTITY_TARGETS: Record<string, { moduleId: string; entityType: string; module: CanonicalEvidenceModule; label: string }> = {
-  sales_order: { moduleId: "sales", entityType: "sales_order", module: "sales", label: "客户订单" },
-  customer_order: { moduleId: "sales", entityType: "sales_order", module: "sales", label: "客户订单" },
+  sales_order: { moduleId: "sales", entityType: "sales_order", module: "sales", label: "销售订单" },
+  customer_order: { moduleId: "sales", entityType: "sales_order", module: "sales", label: "销售订单" },
   inventory_item: { moduleId: "inventory", entityType: "inventory_item", module: "inventory", label: "SKU" },
   inventory_availability: { moduleId: "inventory", entityType: "inventory_item", module: "inventory", label: "库存可用量" },
   available_to_promise: { moduleId: "inventory", entityType: "inventory_item", module: "inventory", label: "可承诺量" },

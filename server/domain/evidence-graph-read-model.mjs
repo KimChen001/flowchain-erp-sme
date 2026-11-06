@@ -27,7 +27,7 @@ function lower(value = '') {
 }
 
 const TYPE_LABELS = Object.freeze({
-  customer_order: '客户订单',
+  customer_order: '销售订单',
   inventory_availability: '库存可用量',
   sku: 'SKU',
   purchase_request: '采购申请',
@@ -35,7 +35,7 @@ const TYPE_LABELS = Object.freeze({
   purchase_order: '采购订单',
   receiving_doc: '收货单',
   supplier: '供应商',
-  supplier_invoice: '供应商发票',
+  supplier_invoice: '采购发票',
   exception_case: '异常工单',
   today_work_item: '今日风险事项',
 })
@@ -207,7 +207,7 @@ function nodeFromOrder(addNode, order = {}) {
   return addNode({
     type: 'customer_order',
     id: order.salesOrderId,
-    label: `${order.customerName || '客户订单'} · ${order.salesOrderId}`,
+    label: `${order.customerName || '销售订单'} · ${order.salesOrderId}`,
     status: order.statusLabel,
     riskLevel: order.deliveryRiskLevel,
     riskLabel: order.deliveryRiskLabel,

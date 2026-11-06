@@ -99,7 +99,7 @@ test('a shortage only an unissued order covers links to that order: no follow-up
 
 test("an answer line about an unissued order says to send it, and offers no follow-up draft", async () => {
   const { answer } = await withUnissuedOverdue()
-  for (const [language, pattern] of [['en-US', /send PO-009 to the supplier; it has not been issued yet/], ['zh-CN', /把 PO-009 发给供应商，它尚未发出/]]) {
+  for (const [language, pattern] of [['en-US', /send PO-009 to the supplier; it has not been issued yet/], ['zh-CN', /把 PO-009 发给供应商，它尚未下达/]]) {
     const priorities = answer('today_priorities', language)
     const line = priorities.keyEvidence.find((entry) => entry.entityId === 'PO-009')
     assert.match(line.nextStep, pattern, language)

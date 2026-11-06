@@ -156,9 +156,9 @@ test("encoded empty RFQ remains a valid authoritative record with subsection emp
   await page.goto(`/app/procurement/rfq/${encodeURIComponent(EMPTY_RFQ_ID)}`);
   const detail = page.getByTestId("canonical-rfq-detail");
   await expect(detail).toContainText("Valid RFQ without lines or quotations");
-  await expect(page.getByTestId("rfq-lines")).toContainText("当前 RFQ 没有行项目");
-  await expect(page.getByTestId("rfq-quotations")).toContainText("当前 RFQ 没有报价记录");
-  await expect(page.getByTestId("rfq-suppliers")).toContainText("当前 RFQ 没有供应商参与记录");
+  await expect(page.getByTestId("rfq-lines")).toContainText("当前询价单没有行项目");
+  await expect(page.getByTestId("rfq-quotations")).toContainText("当前询价单没有报价记录");
+  await expect(page.getByTestId("rfq-suppliers")).toContainText("当前询价单没有供应商参与记录");
   await expect(detail).not.toContainText("LOCAL-DEMO-QUOTE-001");
   await expect(detail).not.toContainText("Acme Components");
   await expectNoWriteActions(page);
@@ -181,13 +181,13 @@ test("RFQ detail distinguishes 404 401 403 500 and network failures without fall
   });
 
   await page.goto("/app/procurement/rfq/RFQ-MISSING-404");
-  await expect(page.getByTestId("canonical-rfq-detail-state")).toContainText("找不到该 RFQ，或该记录不可见");
+  await expect(page.getByTestId("canonical-rfq-detail-state")).toContainText("找不到该询价单，或该记录不可见");
   await expect(page.getByText("Flow Controller RFQ", { exact: true })).toHaveCount(0);
 
   for (const [id, status, expected] of [
     ["RFQ-ERROR-401", 401, "登录状态已失效"],
-    ["RFQ-ERROR-403", 403, "没有查看该 RFQ 的权限"],
-    ["RFQ-ERROR-500", 500, "RFQ 暂时无法读取，请稍后重试"],
+    ["RFQ-ERROR-403", 403, "没有查看该询价单的权限"],
+    ["RFQ-ERROR-500", 500, "询价单加载失败，请稍后重试"],
   ] as const) {
     const routePattern = `**${exactRfqPath(id)}`;
     await page.route(routePattern, (route) => route.fulfill({
@@ -207,7 +207,7 @@ test("RFQ detail distinguishes 404 401 403 500 and network failures without fall
   await page.route(networkPattern, (route) => route.abort("failed"));
   await page.goto("/app/procurement/rfq/RFQ-ERROR-NETWORK");
   const networkState = page.getByTestId("canonical-rfq-detail-state");
-  await expect(networkState).toContainText("无法连接到 RFQ 服务");
+  await expect(networkState).toContainText("无法连接到询价单服务");
   await expect(networkState.getByRole("button", { name: "重试" })).toBeVisible();
   await expect(page.getByText("Flow Controller RFQ", { exact: true })).toHaveCount(0);
 

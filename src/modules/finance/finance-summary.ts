@@ -20,7 +20,7 @@ export function financeSummaryCards() {
   const settlementReady = settlementRows().filter((row) => row.readiness === "可结算").length;
 
   return [
-    { label: "供应商发票", value: String(SUPPLIER_INVOICES.length), sub: "发票登记与匹配状态", icon: FileText, color: A.blue },
+    { label: "采购发票", value: String(SUPPLIER_INVOICES.length), sub: "发票登记与匹配状态", icon: FileText, color: A.blue },
     { label: "应付敞口", value: fmt(openPayables.reduce((sum, item) => sum + item.amount, 0)), sub: `${openPayables.length} 笔未关闭 AP`, icon: CreditCard, color: A.purple },
     { label: "贷项冲减", value: fmt(creditOffset), sub: `${SUPPLIER_CREDIT_MEMOS.length} 张贷项通知`, icon: ReceiptText, color: A.teal },
     { label: "对账异常", value: String(reconciliationExceptions.length), sub: "差异、驳回或逾期需复核", icon: AlertTriangle, color: A.orange },

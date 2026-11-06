@@ -75,7 +75,7 @@ const COPY = {
     unitNotRecordedLinesOne: "1 个以往采购行未记录单位，未比较",
     pricesHidden: "当前角色不可查看价格",
     loading: "正在读取以往采购订单…",
-    error: "以往采购订单读取失败。",
+    error: "以往采购订单加载失败。",
     poPriceNote: "以下为已下达采购订单上相同单位和币种的订购价格，不是发票或付款价格，不会自动填入。",
     vsLastPo: "对比上次采购订单 {price}（{po}，{date}）：{pct}",
     averageShort: "{n} 笔平均：{price}",

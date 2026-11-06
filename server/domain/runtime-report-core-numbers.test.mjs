@@ -77,7 +77,7 @@ test('metric definitions describe committed amounts', () => {
   const report = buildRuntimeGovernedReport(context({ purchaseOrders: reviewerOrders }), { subject: 'overview' })
   assert.match(kpi(report, 'purchase_order_amount').description, /已批准、已下达、部分收货或全部收货/)
   const finance = buildRuntimeGovernedReport(context(), { subject: 'finance' })
-  assert.match(kpi(finance, 'invoice_amount').description, /不含草稿、驳回和取消/)
+  assert.match(kpi(finance, 'invoice_amount').description, /不含草稿、已驳回和已取消/)
   for (const description of [kpi(report, 'purchase_order_amount').description, kpi(finance, 'invoice_amount').description]) {
     const english = analyticsCopy(description, 'en-US')
     assert.doesNotMatch(english, /[㐀-鿿]/)

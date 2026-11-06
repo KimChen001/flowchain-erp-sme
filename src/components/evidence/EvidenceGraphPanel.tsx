@@ -51,8 +51,8 @@ export type EvidenceNavigate = (
 ) => void;
 
 const typeLabels: Record<string, string> = {
-  customer_order: "客户订单",
-  sales_order: "客户订单",
+  customer_order: "销售订单",
+  sales_order: "销售订单",
   inventory_availability: "库存可用量",
   inventory_item: "SKU",
   sku: "SKU",
@@ -62,14 +62,14 @@ const typeLabels: Record<string, string> = {
   purchase_order: "采购订单",
   receiving_doc: "收货单",
   supplier: "供应商",
-  supplier_invoice: "供应商发票",
+  supplier_invoice: "采购发票",
   exception_case: "异常工单",
   data_limit: "数据限制",
   today_work_item: "今日风险事项",
 };
 
 const relatedLabels: Record<string, string> = {
-  salesOrders: "客户订单",
+  salesOrders: "销售订单",
   items: "物料资料",
   inventoryItems: "库存余额",
   inventoryAvailability: "SKU / 库存",
@@ -78,7 +78,7 @@ const relatedLabels: Record<string, string> = {
   purchaseOrders: "采购订单",
   receivingDocs: "收货单",
   suppliers: "供应商",
-  invoices: "供应商发票",
+  invoices: "采购发票",
   exceptionCases: "异常工单",
   dataLimitations: "数据限制",
 };
@@ -103,8 +103,8 @@ const limitationLabels: Record<string, string> = {
 // English display copy for this panel. Record labels and summaries from the API
 // go through the shared workspace copy; stored values are never rewritten.
 const english: Record<string, string> = {
-  "客户订单": "Customer order", "库存可用量": "Inventory availability", "采购申请": "Purchase request", "采购订单": "Purchase order",
-  "收货单": "Receiving document", "供应商": "Supplier", "供应商发票": "Supplier invoice", "异常工单": "Exception case",
+  "客户订单": "Customer order", "销售订单": "Sales order", "库存可用量": "Inventory availability", "采购申请": "Purchase request", "采购订单": "Purchase order",
+  "收货单": "Receiving document", "供应商": "Supplier", "供应商发票": "Supplier invoice", "采购发票": "Supplier invoice", "异常工单": "Exception case",
   "数据限制": "Data limitations", "今日风险事项": "Today's risk item", "物料资料": "Items", "库存余额": "Inventory balance",
   "SKU / 库存": "SKU / inventory", "业务记录": "Business record",
   "当前工作区缺少完整库存分配记录": "This workspace has incomplete inventory allocation records.",
@@ -129,7 +129,7 @@ const english: Record<string, string> = {
   "人工复核": "Manual review", "导航提示": "Navigation", "刷新": "Refresh",
   "已找到 {count} 个可跳转业务记录。": "Found {count} linked business records.", "当前没有更多可跳转记录。": "No more linked records.",
   "正在读取证据链...": "Loading evidence...", "低库存": "Low stock", "缺货": "Out of stock", "阻塞": "Blocked", "异常": "Exception",
-  "当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。": "The evidence path could not be loaded. Go back to customer orders or choose another record and try again.",
+  "当前暂未读取到完整证据链，请返回销售订单列表或切换业务对象后重试。": "The evidence path could not be loaded. Go back to customer orders or choose another record and try again.",
 };
 
 function useEvidenceCopy() {
@@ -339,13 +339,13 @@ export function RelatedRecordsPanel({
 }
 
 function guessTypeFromGroup(label: string) {
-  if (label.includes("客户订单")) return "customer_order";
+  if (label.includes("销售订单") || label.includes("客户订单")) return "customer_order";
   if (label.includes("SKU") || label.includes("库存")) return "inventory_availability";
   if (label.includes("采购申请")) return "purchase_request";
   if (label.includes("RFx")) return "rfq";
   if (label.includes("采购订单")) return "purchase_order";
   if (label.includes("收货")) return "receiving_doc";
-  if (label.includes("供应商发票")) return "supplier_invoice";
+  if (label.includes("采购发票") || label.includes("供应商发票")) return "supplier_invoice";
   if (label.includes("供应商")) return "supplier";
   if (label.includes("异常")) return "exception_case";
   return "data_limit";
@@ -445,7 +445,7 @@ export default function EvidenceGraphPanel({
       <div className="space-y-3">
         {showReturnPath && <ReturnPathBar anchor={null} sourceLabel={sourceLabel} onBack={onBack} onReturnSource={onReturnSource} onReturnList={onReturnList} />}
         <Card className="p-6 text-sm leading-6" style={{ color: A.orange }}>
-          {t(error || "当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。")}
+          {t(error || "当前暂未读取到完整证据链，请返回销售订单列表或切换业务对象后重试。")}
         </Card>
       </div>
     );

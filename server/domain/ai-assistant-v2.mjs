@@ -185,7 +185,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- Every answer has at least one sentence of text that answers the question ("8 orders are overdue; PO-020 is the oldest, 15 days late."); a display never stands alone.',
   '- Name the records you rely on by their numbers as the tools give them, whole (LOCAL-DEMO-PO-014, never PO-014); the app turns them into links. Do not add codes the user did not ask for, such as a supplier\'s code after its name.',
   '- Do not talk about the answer itself or the limits of what you read ("the result also covers 3 more SKUs that I can\'t show here", "I can\'t tell you its name from this result"). If something the user asked about is not in the records you can read, say so once, plainly. Ask the user at most one question; with offer_choices the buttons ask it, so do not ask it again in the text, and never ask again for what the user already told you. With offer_choices, write at most one short sentence of what you found ("8 orders are overdue."), with no question and no "pick one" (请选一个, 请点选).',
-  '- Headings and labels in sentence case ("Overdue purchase orders", not "Overdue Purchase Orders"). Use the app\'s terms: Purchase order, Purchase request, Receipt, Item, RFQ, Supplier invoice, Customer invoice; in Chinese 采购订单、采购申请、收货单、物料、询价单、采购发票、销售发票. In Chinese use full-width punctuation (，。：；！？（）), also next to English names and numbers, and a space between Chinese and a number (涉及 5 家，逾期 4 天).',
+  '- Headings and labels in sentence case ("Overdue purchase orders", not "Overdue Purchase Orders"). Use the app\'s terms: Purchase order, Purchase request, Receipt, Item, RFQ, Supplier invoice, Customer invoice, Sales order, Shipment; in Chinese 采购订单、采购申请、收货单、物料、询价单、采购发票、销售发票、销售订单、发货单, open documents 未结 (未结采购订单), the promised date 承诺交期, a lead time in days 提前期, the minimum order quantity 最小起订量, items and suppliers as records 基础资料, and the user 你. In Chinese use full-width punctuation (，。：；！？（）), also next to English names and numbers, and a space between Chinese and a number (涉及 5 家，逾期 4 天).',
   '- When the answer has a clear next step, end it with suggest_followups, called once: one to three short next steps in answerLanguage, worded as the user would ask or tell you, about their own records ("Draft a request for LDM-002", "Show Acme\'s late orders"); an action before a question about a concept. In a new or nearly empty workspace the next steps are setup steps. Leave the chips out when the answer itself asks the user something (offer the records to pick from with offer_choices instead), when it only confirms or declines, and when nothing useful follows.',
   '- Never mention tools, displays, sources, ids, errors or retries to the user. If a display did not work, give the answer in prose as if nothing had happened.',
 ].join('\n')
@@ -340,8 +340,9 @@ function rowCount(result) {
 // The status codes the assistant's copy words, by the kind of record and the
 // field: the model reads the words beside the code (statusLabel), in the
 // answer's language, so it writes "Partially received", not
-// partially_received. The labels are status labels ("Issued to the supplier",
-// 审批通过，待发出), never the wording the action-claim checks look for. The
+// partially_received. The labels are the app's status words ("Issued to the
+// supplier", 已批准，待下达; owner's terminology, 2026-11-05); a Chinese state
+// word describing a record is no claim here (aiAnswerAssistantActionClaims). The
 // stored result keeps its codes; only what the model reads gets the labels.
 const STATUS_COPY = Object.freeze({ purchase_order: { status: 'po_status' }, item: { status: 'stock_status' }, supplier_invoice: { matchStatus: 'match' } })
 function withStatusLabels(value, language) {

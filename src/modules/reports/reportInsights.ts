@@ -70,8 +70,8 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
   if (view === "procurement" && overdue) {
     const count = overdue.currentValue ?? 0;
     insights.push(count
-      ? { id: "overdue", tone: "attention", text: zh ? `${count} 张未完成采购订单有未收货行已过承诺日期。` : `${count} open purchase ${plural(count, "order has", "orders have")} a line past its promised date.` }
-      : { id: "overdue", tone: "positive", text: zh ? "没有未收货行已过承诺日期的未完成采购订单。" : "No open purchase order has a line past its promised date." });
+      ? { id: "overdue", tone: "attention", text: zh ? `${count} 张未结采购订单有未收货行已过承诺交期。` : `${count} open purchase ${plural(count, "order has", "orders have")} a line past its promised date.` }
+      : { id: "overdue", tone: "positive", text: zh ? "没有未收货行已过承诺交期的未结采购订单。" : "No open purchase order has a line past its promised date." });
   }
 
   if (view === "finance") {

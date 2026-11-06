@@ -24,7 +24,7 @@ type Tr = (zh: string, en: string) => string;
 
 const RFQ_STATUS_LABELS: Labels = {
   draft: ["草稿", "Draft"],
-  open: ["开放", "Open"],
+  open: ["未结", "Open"],
   collecting_quotes: ["收集报价", "Collecting quotes"],
   closed: ["已关闭", "Closed"],
   cancelled: ["已取消", "Cancelled"],
@@ -63,7 +63,7 @@ const REVISION_SOURCE_LABELS: Labels = {
 };
 
 const RELATION_LABELS: Labels = {
-  canonical_record: ["本 RFQ", "This RFQ"],
+  canonical_record: ["本询价单", "This RFQ"],
   source_request: ["来源采购申请", "Source purchase request"],
   linked_po: ["关联采购订单", "Linked purchase order"],
   quotation: ["供应商报价", "Supplier quotation"],
@@ -80,6 +80,7 @@ const LIMITATION_LABELS: Labels = {
     "每份报价以修订号最大的版本为当前版本。",
     "Each quotation's current version is the one with the highest revision number.",
   ],
+  // The key is the server's text (db-procurement-read-repository.mjs), word for word.
   "Supplier Response 与 Append Revision HTTP 写入仅可通过内部授权命令内核；当前 RFQ 页面仍保持只读。": [
     "供应商响应和新的报价修订只能由有权限的同事录入；询价单本身在此页不能修改。",
     "Supplier responses and new quotation revisions can only be recorded by colleagues with permission. The RFQ itself cannot be changed on this page.",
@@ -126,7 +127,7 @@ function RelatedEvidence({ record }: { record: ProcurementRfqDocument }) {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold">{tr("相关记录", "Related records")}</h2>
-          <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("与此 RFQ 直接关联的采购申请、采购订单和报价。", "Purchase requests, purchase orders and quotations linked to this RFQ.")}</p>
+          <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("与此询价单直接关联的采购申请、采购订单和报价。", "Purchase requests, purchase orders and quotations linked to this RFQ.")}</p>
         </div>
         <ExternalLink size={16} style={{ color: A.sub }} />
       </div>
@@ -241,11 +242,11 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
               <Scale size={15} />{tr("比较供应商报价", "Compare supplier quotations")}
             </Link>}
           </div>
-          {!responseWorkflowOpen && <span className="text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 状态不允许录入新的供应商响应。", "The current RFQ status does not allow new supplier responses.")}</span>}
+          {!responseWorkflowOpen && <span className="text-xs" style={{ color: A.sub }}>{tr("当前询价单状态不允许录入新的供应商响应。", "The current RFQ status does not allow new supplier responses.")}</span>}
         </div>
         <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            [tr("RFQ 编号", "RFQ number"), rfqNumber],
+            [tr("询价单编号", "RFQ number"), rfqNumber],
             [tr("截止日期", "Due date"), day(record.dueDate)],
             [tr("币种", "Currency"), record.currency || "—"],
             [tr("来源 PR", "Source purchase request"), requestNumber || "—"],
@@ -263,8 +264,8 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
       </Card>
 
       <Card className="overflow-hidden" data-testid="rfq-lines">
-        <div className="border-b p-4"><h2 className="text-sm font-semibold">{tr("RFQ 行项目", "RFQ line items")}</h2></div>
-        {record.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有行项目。", "This RFQ has no line items.")}</div> : (
+        <div className="border-b p-4"><h2 className="text-sm font-semibold">{tr("询价单行项目", "RFQ line items")}</h2></div>
+        {record.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单没有行项目。", "This RFQ has no line items.")}</div> : (
           <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs">
             <thead><tr style={listHeadRowStyle}>{([[tr("行", "Line")], [tr("物料 / SKU", "Item / SKU")], [tr("数量", "Quantity"), "right"], [tr("单位", "Unit")], [tr("目标 / 参考单价", "Target / reference unit price"), "right"], [tr("要求日期", "Required date")], [tr("交付地点", "Delivery location")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
             <tbody>{record.lines.map((line, index) => <tr key={line.id} className="border-t align-top" data-testid={`rfq-line-${line.id}`}>
@@ -290,14 +291,14 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
             const allowed = quotation ? canRevise : canCreate;
             return <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="flex items-start justify-between gap-2"><div><div className="font-medium">{supplier.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{supplier.supplierId} · {statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS, language)}</div></div>{!disabledByStatus && allowed && <button type="button" data-testid={`rfq-response-action-${supplier.supplierId}`} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-blue-200 px-2 py-1 font-semibold text-blue-700" onClick={() => openEditor(supplier)}><FilePlus2 size={13} />{actionLabel}</button>}</div><div className="mt-1 font-medium">{statusLabel(supplier.responseState, RESPONSE_STATE_LABELS, language)}</div>{quotation && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("当前报价修订", "Current quote revision")}: {quotation.latestRevision?.revisionNumber || quotation.revisionNumber || "—"} · {tr("历史报价修订只读", "Earlier quote revisions are read-only")}</div>}</div>;
           })}
-          {record.suppliers.knownParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有供应商参与记录。", "This RFQ has no supplier participation records.")}</div>}
+          {record.suppliers.knownParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>{tr("当前询价单没有供应商参与记录。", "This RFQ has no supplier participation records.")}</div>}
         </div>
         <p className="mt-3 text-xs" style={{ color: A.sub }}>{tr("参与状态是内部采购记录；记录的邀请时间不代表邮件已送达、供应商已开通门户账号或已在外部提交报价。", "Participation status is an internal purchasing record. A recorded invitation time does not mean an email was delivered, the supplier has a portal account, or a quotation was submitted outside FlowChain.")}</p>
       </Card>
 
       <Card className="overflow-hidden" data-testid="rfq-quotations">
         <div className="flex items-center justify-between gap-3 border-b p-4"><h2 className="text-sm font-semibold">{tr("供应商报价", "Supplier quotations")}</h2><span className="text-xs" style={{ color: A.sub }}>{tr(`${record.quotations.length} 条报价 · 以最新的报价修订为当前版本`, `${record.quotations.length} quotations · the latest quote revision is current`)}</span></div>
-        {record.quotations.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有报价记录。", "This RFQ has no quotation records.")}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[960px] text-left text-xs"><thead><tr style={listHeadRowStyle}>{([[tr("报价 ID", "Quotation ID")], [tr("供应商", "Supplier")], [tr("状态", "Status")], [tr("报价总额", "Quoted total"), "right"], [tr("提交时间", "Submitted at")], [tr("修订记录", "Revisions")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead><tbody>{record.quotations.map((quotation) => <QuotationRow key={quotation.id} quotation={quotation} currency={record.currency || ""} />)}</tbody></table></div>}
+        {record.quotations.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单没有报价记录。", "This RFQ has no quotation records.")}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[960px] text-left text-xs"><thead><tr style={listHeadRowStyle}>{([[tr("报价 ID", "Quotation ID")], [tr("供应商", "Supplier")], [tr("状态", "Status")], [tr("报价总额", "Quoted total"), "right"], [tr("提交时间", "Submitted at")], [tr("修订记录", "Revisions")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead><tbody>{record.quotations.map((quotation) => <QuotationRow key={quotation.id} quotation={quotation} currency={record.currency || ""} />)}</tbody></table></div>}
       </Card>
 
       <Card className="p-4" data-testid="rfq-data-limitations">
@@ -339,19 +340,19 @@ export function CanonicalRfqDetailPage({ documentId, effectivePermissionCodes, a
   if (state === "loaded" && record) return <LoadedRfq record={record} canCompare={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.prices.read")} canCreate={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.create")} canRevise={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.revise")} notice={successNotice} onReload={async () => { setSuccessNotice(null); await load(); }} onSuccessReload={async () => { setSuccessNotice(tr("报价已保存，已显示最新结果。", "Quotation saved. The latest result is shown.")); await load(); }} />;
 
   const messages: Record<Exclude<ReadState, "loading" | "loaded">, string> = {
-    malformed: tr("RFQ 链接缺少有效编号。", "The RFQ link has no valid ID."),
-    notFound: tr("当前工作区中找不到该 RFQ，或该记录不可见。", "This RFQ was not found in the current workspace or is not visible to you."),
-    unauthenticated: tr("登录状态已失效，无法读取 RFQ。", "Your session has expired. Sign in to view this RFQ."),
-    forbidden: tr("当前用户没有查看该 RFQ 的权限。", "You do not have permission to view this RFQ."),
-    error: tr("RFQ 暂时无法读取，请稍后重试。", "The RFQ is temporarily unavailable. Try again later."),
-    network: tr("无法连接到 RFQ 服务，请检查网络后重试。", "The RFQ service could not be reached. Check your connection and try again."),
+    malformed: tr("询价单链接缺少有效编号。", "The RFQ link has no valid ID."),
+    notFound: tr("当前工作区中找不到该询价单，或该记录不可见。", "This RFQ was not found in the current workspace or is not visible to you."),
+    unauthenticated: tr("登录状态已失效，询价单加载失败。", "Your session has expired. Sign in to view this RFQ."),
+    forbidden: tr("当前用户没有查看该询价单的权限。", "You do not have permission to view this RFQ."),
+    error: tr("询价单加载失败，请稍后重试。", "The RFQ is temporarily unavailable. Try again later."),
+    network: tr("无法连接到询价单服务，请检查网络后重试。", "The RFQ service could not be reached. Check your connection and try again."),
   };
 
   return (
     <div className="space-y-4" data-testid="canonical-rfq-detail-state">
       <BackToListLink list="rfq" />
       <Card className="p-8 text-center">
-        {state === "loading" ? <div className="text-sm" style={{ color: A.sub }}>{tr("正在读取 RFQ…", "Loading RFQ…")}</div> : <>
+        {state === "loading" ? <div className="text-sm" style={{ color: A.sub }}>{tr("正在读取询价单…", "Loading RFQ…")}</div> : <>
           <TriangleAlert className="mx-auto text-amber-600" size={30} />
           <div className="mt-3 text-sm font-semibold">{messages[state]}</div>
           {state !== "malformed" && <button type="button" onClick={() => void load()} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-blue-600"><RefreshCw size={15} />{tr("重试", "Retry")}</button>}

@@ -108,8 +108,8 @@ const ALLOWED = [
   // Data limitation labels by code; limitationLabel() is shown through copy().
   { file: 'src/modules/sales/Page.tsx', within: 'limitationLabel' },
   // Error and warning text kept in state and shown through copy() when rendered.
-  { file: 'src/modules/sales/Page.tsx', text: '当前未读取到客户订单记录，请检查工作区数据或刷新后重试。' },
-  { file: 'src/modules/sales/Page.tsx', text: '当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。' },
+  { file: 'src/modules/sales/Page.tsx', text: '当前未读取到销售订单记录，请检查工作区数据或刷新后重试。' },
+  { file: 'src/modules/sales/Page.tsx', text: '当前暂未读取到完整证据链，请返回销售订单列表或切换业务对象后重试。' },
   // Request errors kept in state in their source form and shown through copy().
   { file: 'src/modules/sales/OutboundWorkbench.tsx', within: 'errorMessage' },
   // A part of the server's timeline summary, compared before it is translated.

@@ -163,14 +163,14 @@ const POSITIONS = [
 // Status, severity, priority and signal codes in words, [English, Chinese].
 // The statuses use the assistant's own words (po_status in ai-skill-copy.mjs,
 // LABELS.purchase_request below), so the prose matches the tables of the same
-// answer. The app's pages word some of them otherwise (src/i18n/statusLabels.ts:
-// 已下达, 已批准, 已取消); the owner's terminology pass settles one set.
+// answer, and with the app's pages (src/i18n/statusLabels.ts: 已批准, 已下达,
+// 已驳回, 已取消; the owner's terminology of 2026-11-05).
 const CODE_LABELS = Object.freeze({
   risk: ['Risk', '风险'], warning: ['Warning', '警告'], info: ['Info', '提示'],
   matched: ['Matched', '已匹配'], variance: ['Variance', '有差异'], exception: ['Exception', '异常'], mismatch: ['Mismatch', '不一致'], not_matched: ['Not matched', '未匹配'],
   pending: ['Pending', '待处理'], pending_approval: ['Pending approval', '待审批'], submitted: ['Submitted', '已提交'], draft: ['Draft', '草稿'],
-  approved: ['Approved', '审批通过'], rejected: ['Rejected', '已驳回'], cancelled: ['Cancelled', '已作废'], canceled: ['Cancelled', '已作废'],
-  issued: ['Issued', '已发给供应商'], partially_received: ['Partially received', '部分收货'], fully_received: ['Fully received', '全部收货'], received: ['Received', '已收货'],
+  approved: ['Approved', '已批准'], rejected: ['Rejected', '已驳回'], cancelled: ['Cancelled', '已取消'], canceled: ['Cancelled', '已取消'],
+  issued: ['Issued', '已下达'], partially_received: ['Partially received', '部分收货'], fully_received: ['Fully received', '全部收货'], received: ['Received', '已收货'],
   closed: ['Closed', '已关闭'], posted: ['Posted', '已过账'], unposted: ['Not posted', '未过账'], overdue: ['Overdue', '已逾期'], disputed: ['Disputed', '有争议'],
   below_safety_stock: ['Below safety stock', '低于安全库存'], below_reorder_point: ['Below reorder point', '低于再订货点'], out_of_stock: ['Out of stock', '缺货'], shortage_risk: ['Shortage risk', '短缺风险'],
 })
@@ -397,8 +397,8 @@ export function aiV2UserTypedDate(value, userText) {
 // was the code alone (a purchase request "has status: submitted"; 2026-11-05).
 const LABELS = Object.freeze({
   purchase_request: {
-    draft: ['Draft', '草稿'], submitted: ['Waiting for approval', '待审批'], approved: ['Approved', '审批通过'], rejected: ['Rejected', '已驳回'],
-    cancelled: ['Cancelled', '已作废'], converted: ['Converted to an order', '已转为订单'], closed: ['Closed', '已关闭'],
+    draft: ['Draft', '草稿'], submitted: ['Waiting for approval', '待审批'], approved: ['Approved', '已批准'], rejected: ['Rejected', '已驳回'],
+    cancelled: ['Cancelled', '已取消'], converted: ['Converted to an order', '已转为订单'], closed: ['Closed', '已关闭'],
   },
   type: {
     po_overdue: ['Overdue purchase order', '逾期采购订单'], po_due_7d: ['Due within 7 days', '7 天内到期'], po_partially_received: ['Partially received', '部分收货'],

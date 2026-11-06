@@ -17,7 +17,7 @@ export type BusinessEntityRoute = {
 
 export const businessEntityRouteRegistry: Record<BusinessEntityType, BusinessEntityRoute> = {
   purchase_request: { entityType: "purchase_request", routeId: "procurement:request-detail", path: "/app/procurement/requests/:id", listRouteId: "procurement:requests", listPath: "/app/procurement/requests", label: "采购申请", returnLabel: "所有采购申请" },
-  rfq: { entityType: "rfq", routeId: "procurement:rfq-detail", path: "/app/procurement/rfq/:id", listRouteId: "procurement:rfq", listPath: "/app/procurement/rfq", label: "RFQ", returnLabel: "返回 RFQ" },
+  rfq: { entityType: "rfq", routeId: "procurement:rfq-detail", path: "/app/procurement/rfq/:id", listRouteId: "procurement:rfq", listPath: "/app/procurement/rfq", label: "询价单", returnLabel: "返回询价单" },
   purchase_order: { entityType: "purchase_order", routeId: "procurement:order-detail", path: "/app/procurement/orders/:id", listRouteId: "procurement:orders", listPath: "/app/procurement/orders", label: "采购订单", returnLabel: "返回采购订单" },
   receiving_doc: { entityType: "receiving_doc", routeId: "procurement:receiving-detail", path: "/app/procurement/receiving/:id", listRouteId: "procurement:receiving", listPath: "/app/procurement/receiving", label: "收货单", returnLabel: "返回采购收货" },
   supplier_invoice: { entityType: "supplier_invoice", routeId: "procurement:bill-detail", path: "/app/procurement/bills/:id", listRouteId: "procurement:bills", listPath: "/app/procurement/bills", label: "采购发票", returnLabel: "返回采购发票" },

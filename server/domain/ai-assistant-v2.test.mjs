@@ -399,7 +399,7 @@ test('each data result the model reads starts with its source and gives status w
   assert.deepEqual(tables[2].props.cards.map((card) => card.ref.label), ['LDM-001'])
   // A Chinese answer gets the words in Chinese.
   const zh = await ask([OVERDUE, [...say('PO-001 部分收货。'), end()]], { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } })
-  assert.deepEqual(JSON.parse(lastToolResults(zh.client.requests[1])[0].content).rows.map((row) => row.statusLabel), ['部分收货', '已发给供应商'])
+  assert.deepEqual(JSON.parse(lastToolResults(zh.client.requests[1])[0].content).rows.map((row) => row.statusLabel), ['部分收货', '已下达'])
 })
 
 test('a failed display says how to fix it; a second failure withdraws the display tools for the rest of the answer', async () => {

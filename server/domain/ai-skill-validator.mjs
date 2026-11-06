@@ -64,6 +64,13 @@ function visibleTexts(response) {
   return out.filter(([, value]) => value !== undefined && value !== null && value !== '').map(([path, value]) => [path, String(value)])
 }
 
+function isStatusField(response, path) {
+  const match = /^keyEvidence\.(\d+)\.(status|label)$/.exec(path)
+  if (!match) return false
+  const item = array(response.keyEvidence)[Number(match[1])]
+  return match[2] === 'status' || text(item?.label) === text(item?.status)
+}
+
 // `extra` adds the ids and stored names another read service returned for this
 // answer: the supplier business query's records in an agent planning answer.
 export function validateAiSkillResponse(response, facts, extra = {}) {
@@ -89,7 +96,12 @@ export function validateAiSkillResponse(response, facts, extra = {}) {
     // Logistics" is a name, not a claim.
     const stripped = allowlist.reduce((output, entry) => output.split(entry).join(''), value)
     if (response.language !== 'zh-CN' && CJK.test(stripped)) errors.push(`Chinese text in an English answer at ${path}`)
-    if (aiAnswerClaimsAction(stripped)) errors.push(`claims an action was taken at ${path}`)
+    // An evidence status field (and a label that repeats it) states the
+    // record's status, as "状态：已下达" does in a sentence: the app's status
+    // words (已下达, 已批准, 已取消) are allowed there (owner's terminology,
+    // 2026-11-05).
+    const claimText = isStatusField(response, path) ? `状态：${stripped}` : stripped
+    if (aiAnswerClaimsAction(claimText)) errors.push(`claims an action was taken at ${path}`)
   }
   for (const figure of array(response.figures)) if (figure.entityId && !known(figure.entityId)) errors.push(`figure id not read: ${figure.entityId}`)
   return { ok: errors.length === 0, errors }
