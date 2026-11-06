@@ -62,6 +62,22 @@ function checkValue(value, rule) {
     if (rule.maximum !== undefined && value > rule.maximum) return `must be at most ${rule.maximum}`
   }
   if (rule.type === 'boolean' && typeof value !== 'boolean') return 'must be true or false'
+  // A closed object (additionalProperties: false, such as a plan line
+  // { sku, quantity }): known fields only, each of its type. An open one is
+  // left to its tool, which reports a bad entry itself (calculate).
+  if (rule.type === 'object' && rule.additionalProperties === false) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return 'must be an object'
+    const properties = rule.properties || {}
+    const unknown = Object.keys(value).find((key) => !properties[key])
+    if (unknown) return `has an unknown field ${unknown}`
+    const absent = array(rule.required).find((key) => value[key] === undefined || value[key] === null || value[key] === '')
+    if (absent) return `is missing ${absent}`
+    for (const [key, entry] of Object.entries(properties)) {
+      if (value[key] === undefined || value[key] === null) continue
+      const problem = checkValue(value[key], entry)
+      if (problem) return `${key} ${problem}`
+    }
+  }
   if (rule.type === 'array') {
     if (!Array.isArray(value)) return 'must be a list'
     if (value.length > (rule.maxItems ?? AI_TOOL_LIMITS.items)) return 'has too many items'
