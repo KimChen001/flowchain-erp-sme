@@ -20,7 +20,7 @@ import { join } from 'node:path'
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
 // order of 100 and a reference price of 95 USD.
 const link = (extra = {}) => ({ id: 'ITEM-001::SUP-001', payload: { itemId: 'ITEM-001', supplierId: 'SUP-001', preferred: true, active: true, approved: true, leadTimeDays: 12, minimumOrderQuantity: 100, referencePrice: 95, currency: 'USD', ...extra } })
-const V2_ONLY = AI_ASSISTANT_V2_TOOLS.map((tool) => tool.name).filter((name) => name !== 'list_purchase_requests')
+const V2_ONLY = AI_ASSISTANT_V2_TOOLS.map((tool) => tool.name).filter((name) => !['list_purchase_requests', 'stock_projection'].includes(name))
 
 // The fixture workspace read as assistant v2 reads it: with the open purchase
 // requests. `change` edits the fixture records before they are read.
@@ -225,6 +225,22 @@ test('suggest_purchase_lines with coverDays sizes a line from recorded demand an
   const before = (await plain.run('suggest_purchase_lines', { skus: ['LDM-001'] })).result.rows[0]
   assert.equal(before.cover, undefined)
   assert.equal(before.suggestedQuantity.source, 'covered_by_open_orders')
+})
+
+// 2026-11-07 (public data): every sales order had shipped, so the projection
+// showed no demand for an item shipping 17 a day.
+test('stock_projection also runs the weeks at the recorded shipping rate, apart from the open sales orders', async () => {
+  const { run } = await v2({ change: shipping, actor: everyWarehouse })
+  const result = (await run('stock_projection', { sku: 'LDM-001', weeks: 3 })).result
+  assert.deepEqual(result.recordedDemand, { averageDailyDemand: 10, windowDays: 90, shipmentDays: 18 })
+  let balance = result.availableToday
+  for (const [index, week] of result.atRecordedRate.entries()) {
+    balance += week.incoming - 70
+    assert.deepEqual([week.from, week.incoming, week.demand, week.endAvailable, week.short], [result.weeks[index].from, result.weeks[index].incoming, 70, balance, balance < 0])
+  }
+  assert.equal(result.firstWeekShortAtRecordedRate, result.atRecordedRate.find((week) => week.short)?.from || null)
+  // The open sales order weeks are as the read tool gives them.
+  assert.ok(Array.isArray(result.weeks) && result.weeks.length === 3)
 })
 
 // 2026-11-05: "order 100 instead of 50, is it cheaper?" got the price and the

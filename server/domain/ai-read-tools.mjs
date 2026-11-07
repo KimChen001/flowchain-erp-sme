@@ -262,7 +262,7 @@ const listRfqs = defineAiTool({
 
 const listSuppliers = defineAiTool({
   name: 'list_suppliers',
-  description: 'Suppliers the user may read, with their code and tier (1 strategic, 2 core, 3 transactional, or none). Use it to find a supplier\'s exact name.',
+  description: 'Suppliers the user may read, with their code and tier (1 strategic, 2 core, 3 transactional, or none), and for users who may prepare drafts the contact name and email a message to the supplier is addressed to. Use it to find a supplier\'s exact name.',
   parameters: { name: { type: 'string', description: 'Part of a supplier name.' }, tier: { type: 'integer', minimum: 1, maximum: 3 }, limit: limitParam },
   available: (facts) => Array.isArray(facts.suppliers),
   run(args, { facts }) {
@@ -270,7 +270,7 @@ const listSuppliers = defineAiTool({
     if (args.name) rows = rows.filter((row) => fold(row.name).includes(fold(args.name)) || fold(row.code) === fold(args.name))
     if (args.tier) rows = rows.filter((row) => row.tier === args.tier)
     rows = [...rows].sort((a, b) => text(a.name).localeCompare(text(b.name)))
-    return aiToolList(rows.map((row) => ({ name: row.name, code: row.code, tier: row.tier, ref: aiToolRef('supplier', row.id, row.name) })), args.limit)
+    return aiToolList(rows.map((row) => ({ name: row.name, code: row.code, tier: row.tier, ...('email' in row ? { email: row.email, contactName: row.contactName } : {}), ref: aiToolRef('supplier', row.id, row.name) })), args.limit)
   },
 })
 
@@ -464,7 +464,7 @@ export function aiStockProjection(facts, { sku, weeks = 4 }) {
 
 const stockProjection = defineAiTool({
   name: 'stock_projection',
-  description: 'How one SKU\'s available stock moves over the next weeks: from what is available today, adding open purchase order lines in the week they are promised and taking off open sales order demand in the week promised to the customer. Lines already past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed. Gives the first week the SKU falls below safety stock or short.',
+  description: 'How one SKU\'s available stock moves over the next weeks: from what is available today, adding open purchase order lines in the week they are promised and taking off open sales order demand in the week promised to the customer (open sales orders only, not the rate of past shipments). Lines already past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed. Gives the first week the SKU falls below safety stock or short.',
   parameters: { sku: { type: 'string', description: 'The SKU.' }, weeks: { type: 'integer', minimum: 1, maximum: 12, description: '4 by default.' } },
   required: ['sku'],
   available: (facts) => Boolean(facts.inventory) && Boolean(facts.asOf || facts.today),

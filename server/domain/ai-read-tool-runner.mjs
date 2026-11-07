@@ -36,7 +36,7 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   list_purchase_orders: { rows: ['orderNumber', 'supplier', 'status', 'skus', 'itemNames', 'dueDate', 'overdueDays', 'ordered', 'received', 'remaining', 'unit', 'amount', 'currency', 'open'], bySupplier: ['supplier', 'orders'] },
   get_purchase_order: { openLines: ['sku', 'itemName', 'ordered', 'received', 'remaining', 'unit', 'unitPrice', 'promisedDate', 'originalPromisedDate'], receipts: ['documentNumber', 'arrived', 'postingStatus', 'rejected', 'unit'], invoiceDifferences: ['invoiceNumber', 'matchStatus', 'variance', 'currency'] },
   stock_position: { rows: ['sku', 'itemName', 'unit', 'onHand', 'reserved', 'available', 'openSalesDemand', 'incomingOnPurchaseOrders', 'availableToPromise', 'shortage', 'safetyStock', 'reorderPoint', 'status'] },
-  stock_projection: { weeks: ['from', 'to', 'incoming', 'demand', 'endAvailable', 'belowSafetyStock', 'short'] },
+  stock_projection: { weeks: ['from', 'to', 'incoming', 'demand', 'endAvailable', 'belowSafetyStock', 'short'], atRecordedRate: ['from', 'to', 'incoming', 'demand', 'endAvailable', 'belowSafetyStock', 'short'] },
   list_sales_orders: { rows: ['orderNumber', 'customer', 'promisedDate'] },
   list_receipts: { rows: ['documentNumber', 'supplier', 'arrived', 'purchaseOrder', 'postingStatus', 'rejected', 'unit'] },
   list_supplier_invoices: { rows: ['invoiceNumber', 'supplier', 'invoiceDate', 'purchaseOrder', 'matchStatus', 'difference', 'currency'] },

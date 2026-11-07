@@ -960,4 +960,45 @@ function orderPlanResult(result, { facts, records, items, args }) {
   }
 }
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan])
+// The stock projection with the demand the reorder list plans on (2026-11-07:
+// on public data, where every sales order has shipped, it showed no demand
+// for an item shipping 17 a day). weeks keep the open sales orders in the week
+// promised; atRecordedRate runs the same weeks at the average shipped per day
+// over the last 90 days, with the same incoming lines. The two are never
+// added: an open sales order becomes a shipment.
+const stockProjection = defineAiTool({
+  name: 'stock_projection',
+  description: 'How one SKU\'s available stock moves over the next weeks, from what is available today and adding open purchase order lines in the week they are promised. weeks takes off open sales orders in the week promised to the customer. atRecordedRate takes off the average quantity shipped per day over the last 90 days instead (recordedDemand, the reorder list\'s demand), for stock that sells without open sales orders. Lines past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed. Gives the first week the SKU falls below safety stock or short, on each basis.',
+  parameters: { sku: { type: 'string', description: 'The SKU.' }, weeks: { type: 'integer', minimum: 1, maximum: 12, description: '4 by default.' } },
+  required: ['sku'],
+  available: (facts, context) => Boolean(facts.inventory) && Boolean(facts.asOf || facts.today) && Boolean(context?.actor && context.prisma),
+  assistantV2Only: true,
+  async run(args, { facts, context }) {
+    const projection = aiStockProjection(facts, { sku: args.sku, weeks: args.weeks || 4 })
+    if (projection.error || projection.noStockOrOrders) return projection
+    const row = stockRow(facts, args.sku)
+    const item = row?.itemId ? (await storedItems(context, [text(row.itemId)])).get(text(row.itemId)) : null
+    const demand = item ? await recordedDemand(context, facts, [item]) : null
+    if (!demand || demand.scoped) return { ...projection, recordedDemand: { averageDailyDemand: null, reason: demand?.scoped ? 'warehouse_scope' : 'no_item_record' } }
+    const history = demand.byItem.get(text(item.id))
+    const rate = history?.averageDailyDemand ?? null
+    const recordedDemandRow = { averageDailyDemand: rate, windowDays: DEMAND_WINDOW_DAYS, shipmentDays: history?.shipmentDays ?? 0, ...(rate === null ? { reason: 'not_enough_shipment_history' } : {}) }
+    if (rate === null) return { ...projection, recordedDemand: recordedDemandRow }
+    const weekly = Math.round(rate * 7)
+    const safety = projection.safetyStock
+    let balance = projection.availableToday ?? 0
+    const atRecordedRate = projection.weeks.map((week) => {
+      balance += week.incoming - weekly
+      return { from: week.from, to: week.to, incoming: week.incoming, demand: weekly, endAvailable: balance, belowSafetyStock: safety !== null && safety !== undefined && balance < safety, short: balance < 0 }
+    })
+    return {
+      ...projection,
+      recordedDemand: recordedDemandRow,
+      atRecordedRate,
+      firstWeekBelowSafetyStockAtRecordedRate: atRecordedRate.find((week) => week.belowSafetyStock)?.from || null,
+      firstWeekShortAtRecordedRate: atRecordedRate.find((week) => week.short)?.from || null,
+    }
+  },
+})
+
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan, stockProjection])
