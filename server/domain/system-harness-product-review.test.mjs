@@ -7,7 +7,6 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
-import { handleAiRoute } from '../routes/ai.routes.mjs'
 import { handleInventoryRoute } from '../routes/inventory.routes.mjs'
 import { handleProcurementReadRoute } from '../routes/procurement-read.routes.mjs'
 import { handleSearchRoute } from '../routes/search.routes.mjs'
@@ -182,41 +181,6 @@ test('system harness locks draft-first preview invariants', async () => {
   assert.ok(db.auditLog.every((entry) => entry.action === 'draft_previewed'))
 })
 
-test('system harness validates AI safety, timeout fast path, and sanitized fallback', async () => {
-  const previous = {
-    AI_PROVIDER_ENABLED: process.env.AI_PROVIDER_ENABLED,
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    ARK_API_KEY: process.env.ARK_API_KEY,
-    DOUBAO_API_KEY: process.env.DOUBAO_API_KEY,
-  }
-  process.env.AI_PROVIDER_ENABLED = ''
-  process.env.OPENAI_API_KEY = 'fake-openai-key'
-  process.env.ARK_API_KEY = 'fake-ark-key'
-  process.env.DOUBAO_API_KEY = 'fake-doubao-key'
-  try {
-    const cockpit = routeContext('POST', '/api/ai/chat', createDb(), { moduleId: 'overview', message: '今天最需要处理什么？' })
-    await handleAiRoute(cockpit.ctx)
-    assert.equal(cockpit.response.status, 200)
-    assert.equal(cockpit.response.payload.intent.name, 'today_cockpit_priority_query')
-    assert.equal(cockpit.response.payload.providerStatus, 'deterministic')
-    assert.equal(cockpit.wrote, false)
-    expectCleanPayload(cockpit.response.payload)
-
-    const fallback = routeContext('POST', '/api/ai/chat', createDb(), { message: 'write a poetic sourcing manifesto' })
-    await handleAiRoute(fallback.ctx)
-    assert.equal(fallback.response.status, 200)
-    assert.equal(fallback.response.payload.intent.name, 'unknown_guided_fallback')
-    assert.equal(fallback.response.payload.providerStatus, 'deterministic')
-    assert.equal(fallback.response.payload.status, 'guided_fallback')
-    expectCleanPayload(fallback.response.payload)
-  } finally {
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) delete process.env[key]
-      else process.env[key] = value
-    }
-  }
-})
-
 test('system harness covers key read API contracts without mutation', async () => {
   const db = createDb()
   const before = snapshot(db)
@@ -297,11 +261,8 @@ test('Phase 0 product positioning and visible language governance stay productiz
   const importsPage = readSource('src', 'modules', 'imports', 'Page.tsx')
   const inventoryPage = readSource('src', 'modules', 'inventory', 'Page.tsx')
   const reportsPage = readSource('src', 'modules', 'reports', 'Page.tsx')
-  const aiEvidenceReuse = readSource('server', 'domain', 'ai-evidence-reuse.mjs')
-  const aiSop = readSource('server', 'domain', 'ai-sop-retrieval.mjs')
   const publicDocs = [readme.split('## Quick start')[0], docsIndex.split('# Phase 5.4B.1 local truthfulness')[0], narrative, roadmap, limitations.split('# Phase 5.4B.1 limitations')[0]].join('\n')
   const uiCopySources = [constants, forecast, actionShell, overview, importsPage, inventoryPage, reportsPage].join('\n')
-  const aiVisibleCopySources = [aiEvidenceReuse, aiSop].join('\n')
 
   assert.match(readme, /FlowChain is an ERP and inventory-purchase-sales \(进销存\) collaboration platform for SMEs/)
   assert.match(language, /FlowChain 是面向中小企业的 ERP 进销存协同平台/)
@@ -322,7 +283,6 @@ test('Phase 0 product positioning and visible language governance stay productiz
   assert.match(inventoryPage, /仅显示已过账的库存记录/)
   assert.match(inventoryPage, /不会用固定 SKU、批次、序列号或移动记录补足空数据/)
   assert.match(reportsPage, /API \/ 当前数据范围/)
-  assert.match(aiVisibleCopySources, /待复核草稿/)
   assert.match(overview, /今日需处理/)
   assert.match(overview, /最近单据/)
 
@@ -330,5 +290,4 @@ test('Phase 0 product positioning and visible language governance stay productiz
   assert.doesNotMatch(publicDocs, /FlowChain ERP\/SCM UAT Demo|JSON\/demo-data-backed UAT|UAT limitations|Demo script|Demo screenshot|Fake API keys|演示数据|示例数据|样例数据|sample data|demo data|UAT data/)
   assert.doesNotMatch(uiCopySources, /规划演示边界|Forecast\/MRP|ActionDraft 壳|保存 ActionDraft|Created record|not available|Purchase Cycle|Open PR Value|Open PO Value|Inventory Turnover|Forecast Accuracy|Supplier Score/)
   assert.doesNotMatch(uiCopySources, /ActionDraft purchase_request_draft|provider fallback|tool_result|response_card|raw JSON|演示数据|示例数据|样例数据|sample data|demo data|API fallback/)
-  assert.doesNotMatch(aiVisibleCopySources, /ActionDraft|演示数据|示例数据|样例数据|sample data|demo data|由于这是演示数据/)
 })

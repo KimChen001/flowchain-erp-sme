@@ -2,7 +2,6 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createRepositoryRegistry, getPersistenceMode } from '../repositories/adapter-registry.mjs'
 import { DATABASE_CONFIG_ERROR } from '../persistence/persistence-config.mjs'
-import { buildAiReadContext } from './ai-read-context.mjs'
 
 function createDb() {
   return {
@@ -76,22 +75,6 @@ test('explicit DB mode selects DB adapters even without DATABASE_URL', () => {
   assert.equal(registry.inventoryRead.adapter, 'db-inventory-read-v1')
   assert.equal(registry.actionDrafts.adapter, 'db-action-draft-v1')
   assert.equal(registry.auditLog.adapter, 'db-audit-log-v1')
-})
-
-test('DB-backed modules fail cleanly instead of falling back to stale JSON when DATABASE_URL is missing', async () => {
-  const db = createDb()
-  const registry = createRepositoryRegistry({
-    db,
-    env: { FLOWCHAIN_PERSISTENCE_MODE: 'database' },
-  })
-
-  await assert.rejects(() => registry.masterData.listItems(), assertDatabaseConfigError)
-  await assert.rejects(() => registry.procurementRead.listDocuments(), assertDatabaseConfigError)
-  await assert.rejects(() => registry.inventoryRead.listItems(), assertDatabaseConfigError)
-  await assert.rejects(() => registry.actionDrafts.persistDraft(draft()), assertDatabaseConfigError)
-  await assert.rejects(() => registry.auditLog.listAuditEntries(), assertDatabaseConfigError)
-  await assert.rejects(() => registry.auditLog.recordAuditEntry({ action: 'test', entity: { type: 'system', id: 'db-mode' } }), assertDatabaseConfigError)
-  await assert.rejects(() => buildAiReadContext(db, { repositories: registry }), assertDatabaseConfigError)
 })
 
 test('preview-only action draft fallback is intentional and remains non-mutating in misconfigured DB mode', () => {

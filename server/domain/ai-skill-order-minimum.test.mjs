@@ -61,24 +61,3 @@ test('a suggested purchase request asks for at least the minimum, and says so', 
   assert.equal(big.raisedToMinimum, undefined)
 })
 
-test('the order prefill asks for at least the minimum, and the card says so', async () => {
-  const scenario = aiSkillScenario({ supplierLinks: [link('ITEM-001')] })
-  const sent = []
-  const ctx = {
-    ...scenario.ctx,
-    req: { method: 'POST', headers: {} }, res: {}, url: new URL('http://local/api/ai-runtime/respond'),
-    db: { __dataMode: 'user', purchaseOrders: [], products: [], suppliers: [] },
-    env: { FLOWCHAIN_PERSISTENCE_MODE: 'database' },
-    send: (_res, status, payload) => sent.push({ status, payload }),
-  }
-  ctx.repositories = { ...ctx.repositories, auditLog: { mode: 'database', recordAuditEntry: async (entry) => entry } }
-  ctx.readBody = async () => ({ message: 'Create a purchase request for LDM-001 anyway', answerLanguage: 'en-US' })
-  assert.equal(await handleAiRuntimeGatewayRoute(ctx), true)
-  const answer = sent.at(-1).payload
-  const card = answer.reviewCards.find((entry) => entry.draftType === 'purchase_request_draft')
-  // 28 available against a target of 40: 12 on top of what is on order, raised to 100.
-  assert.equal(card.payload.quantity, 100)
-  assert.equal(card.title, 'Request 100 pcs of LDM-001')
-  assert.match(card.description, /Acme Components takes orders of at least 100 pcs, so the request is for 100 pcs rather than 12 pcs\./)
-  assert.equal(card.payload.reason, card.description)
-})

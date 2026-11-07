@@ -22,7 +22,7 @@ export type AssistantV2Request = {
   formResults?: AssistantV2FormResult[];
 };
 
-export type AssistantV2NoticeCode = "over_cap" | "over_cap_during_answer" | "cost_ceiling" | "unavailable" | "rate_limited" | "injection_refused" | "cancelled" | "refused" | "too_long_for_rules";
+export type AssistantV2NoticeCode = "over_cap" | "over_cap_during_answer" | "cost_ceiling" | "unavailable" | "rate_limited" | "injection_refused" | "cancelled" | "refused" | "ai_off" | "no_provider";
 export type AssistantV2ReplaceCode = "unbacked_action_claim" | "foreign_record" | "hidden_value";
 export type AssistantV2Progress = { step: "reading" | "writing" | "checking"; sources?: string[] };
 

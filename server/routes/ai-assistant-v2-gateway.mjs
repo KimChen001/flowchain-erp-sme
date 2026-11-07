@@ -31,15 +31,9 @@ import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
 // Each request gets one codes-only audit row; it says whether the question
 // read as an instruction to act (actionRequest, design §3.2: the action-verb
 // router is only an audit flag with v2 on). A provider failure before any
-// text or part was shown hands the request back to the gateway, which answers
-// with the rules and the unavailable notice; the audit row of that answer
-// carries the loop's block.
-//
-// Returns { handled: true } when it answered, else { handled: false,
-// fallback: 'over_cap' | 'unavailable', audit }. A question longer than the
-// rules read (QUESTION_LIMITS.rules: assistant v2 takes pasted rows up to
-// QUESTION_LIMITS.assistantV2) is never handed back: it gets the
-// too_long_for_rules notice instead, with its audit row.
+// text or part was shown, or a month's cap that cannot cover an answer, gets
+// a notice (unavailable, over_cap) with the loop's block in its audit row.
+// Returns { handled: true }.
 
 const THREADS = createAssistantV2ThreadStore()
 const RATE_LIMITER = createAssistantV2RateLimiter()
@@ -341,6 +335,19 @@ async function addSetupNote({ context, session, formId, userId, created }) {
   return confirmed.length
 }
 
+// The answer when assistant v2 cannot answer for this workspace at all
+// (code: ai_off, no_provider or over_cap): a notice, with its audit row.
+export async function answerWithAssistantV2Notice(ctx, body, code, { started = Date.now() } = {}) {
+  const message = text(body.message || body.question)
+  const answer = noticeAnswer(code, body.answerLanguage, message)
+  await recordAiSkillAudit(ctx, { response: answer, facts: null, message, latencyMs: Date.now() - started, assistantV2: { status: 'off', reason: code, actionRequest: Boolean(detectAiActionRequest(message)) } })
+  if (ctx.aiStreamEvent) {
+    ctx.aiStreamEvent({ type: 'notice', code })
+    ctx.aiStreamEvent({ type: 'answer', status: 200, body: answer })
+  } else ctx.send(ctx.res, 200, answer)
+  return { handled: true }
+}
+
 export async function answerWithAssistantV2(ctx, body, { client, started = Date.now() } = {}) {
   const { res } = ctx
   const send = ctx.send
@@ -358,14 +365,14 @@ export async function answerWithAssistantV2(ctx, body, { client, started = Date.
     } else send(res, 200, answer)
     return { handled: true }
   }
-  // The rules answer a question handed back, unless it is longer than they
-  // read: then the notice says so, and the audit row says why it came back.
-  const handBack = async (fallback, block) => {
-    if (message.length <= QUESTION_LIMITS.rules) return { handled: false, fallback, audit: block }
-    const answer = noticeAnswer('too_long_for_rules', language, message)
-    await audit(answer, { ...block, tooLongForRules: true })
+  // A question the loop cannot take (the month's cap, the provider failing
+  // before anything was shown) gets a notice that says so; there is no rules
+  // answer behind it any more (owner direction 2026-11-05).
+  const handBack = async (code, block) => {
+    const answer = noticeAnswer(code, language, message)
+    await audit(answer, block)
     if (emit) {
-      emit({ type: 'notice', code: 'too_long_for_rules' })
+      emit({ type: 'notice', code })
       emit({ type: 'answer', status: 200, body: answer })
     } else send(res, 200, answer)
     return { handled: true }

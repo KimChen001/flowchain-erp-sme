@@ -65,8 +65,10 @@ test('no in-page link or search entry points into a frozen or unavailable surfac
   assert.deepEqual(offenders, [])
 })
 
-test('suggestion, control tower, review and legacy assistant routes filter those links', () => {
-  for (const file of ['server/routes/ai-suggestions-workbench.routes.mjs', 'server/routes/today-cockpit.routes.mjs', 'server/routes/review-first-action-workflow.routes.mjs', 'server/routes/ai-runtime-gateway.routes.mjs', 'server/domain/ai-chat-status.mjs', 'server/domain/ai-response-contract-v2.mjs']) {
+// The legacy assistant's rules answers, and with them the links they carried,
+// were removed on 2026-11-06; assistant v2 links records, not product pages.
+test('suggestion, control tower and review routes filter those links', () => {
+  for (const file of ['server/routes/ai-suggestions-workbench.routes.mjs', 'server/routes/today-cockpit.routes.mjs', 'server/routes/review-first-action-workflow.routes.mjs', 'server/domain/ai-response-contract-v2.mjs']) {
     assert.match(readFileSync(join(root, file), 'utf8'), /withoutUnavailableProductLinks\(/, file)
   }
 })

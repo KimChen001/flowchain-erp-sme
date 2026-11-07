@@ -19,16 +19,14 @@ test('route audit documents preview-only action drafts separately from writes', 
   assert.doesNotMatch(draftRoutes, /writeDb\(/)
 })
 
-test('provider safety remains exact opt-in and evidence links remain frontend-only', () => {
-  const providerSafety = readSource('server', 'domain', 'ai-provider-safety.mjs')
+// The legacy /api/ai route and its provider switch were removed on
+// 2026-11-06 with the rules engine; the evidence links stay frontend-only.
+test('evidence links remain frontend-only', () => {
   const evidenceLinks = readSource('src', 'lib', 'evidenceLinks.ts')
-  const aiRoutes = readSource('server', 'routes', 'ai.routes.mjs')
 
-  assert.match(providerSafety, /env\.AI_PROVIDER_ENABLED === 'true'/)
   assert.match(evidenceLinks, /export function normalizeEvidenceLink/)
   assert.match(evidenceLinks, /const clickable = Boolean\(entityId && canonicalModuleId && normalizedEntityType\)/)
   assert.doesNotMatch(evidenceLinks, /fetch\(|apiJson|writeDb|localStorage/)
-  assert.match(aiRoutes, /getAiProviderSafetyState/)
 })
 
 test('navigation evidence surfaces share canonical helper names', () => {

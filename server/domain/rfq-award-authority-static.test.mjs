@@ -23,7 +23,6 @@ test("AI and review-draft handlers do not import or invoke formal Award authorit
   for (const path of [
     "./ai-response-contract-v2.mjs",
     "./review-first-action-workflow-v2.mjs",
-    "../routes/ai.routes.mjs",
     "../routes/action-drafts.routes.mjs",
   ]) {
     const content = source(path);

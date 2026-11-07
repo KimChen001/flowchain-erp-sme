@@ -360,7 +360,7 @@ test('notices and errors are worded by code, Retry only on the latest retryable 
   assert.doesNotMatch(unknown, />[^<]*provider_failed/)
   const signedOut = client.render({ message: client.finishAssistantV2Message(client.emptyAssistantV2Message(), { error: { code: 'signed_out', retryable: false } }) })
   assert.doesNotMatch(signedOut, /data-testid="ai-v2-retry"/)
-  for (const code of ['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused', 'too_long_for_rules']) {
+  for (const code of ['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused', 'ai_off', 'no_provider']) {
     const notice = client.render({ message: fold([event({ type: 'notice', code })]) })
     assert.match(notice, new RegExp(`data-code="${code}"[^>]*>[A-Z][^<]+\\.<`), code)
     assert.doesNotMatch(notice, CJK, code)

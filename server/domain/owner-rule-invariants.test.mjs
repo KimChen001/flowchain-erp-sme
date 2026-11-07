@@ -1,12 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
-import { buildSupplierActionSummaries } from './supplier-action-summary-read-service.mjs'
 import { summarizeScorecardLines } from './supplier-scorecard.mjs'
 import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
-import { answerAiSkill } from './ai-skills.mjs'
 import { aiSkillFormatter } from './ai-skill-presenter.mjs'
 import { buildAiResponseContractV2 } from './ai-response-contract-v2.mjs'
 import { buildAiSupplierOperationalResponse } from './ai-supplier-operational-query.mjs'
@@ -105,29 +103,6 @@ test('rule 1: quantities are never added across SKUs or units, in English and Ch
   }
 })
 
-test('rule 1: the supplier summary keeps rejected quantities per SKU and unit', () => {
-  const actor = { tenantId: 't1', permissionCodes: new Set(['receiving.read', 'procurement.purchase_order.read', 'finance.partner_snapshot.read']) }
-  // The last two lines have no SKU or unit: they may be different items.
-  const lines = [{ sku: 'BOLT', unit: 'pcs', rejectedQty: 2 }, { sku: 'BOLT', unit: 'box', rejectedQty: 1 }, { sku: 'CABLE', unit: 'm', rejectedQty: 3 }, { id: 'n1', rejectedQty: 4 }, { id: 'n2', sku: null, unit: null, rejectedQty: 5 }]
-  const result = buildSupplierActionSummaries({
-    actor, now: new Date('2026-07-24T12:00:00.000Z'),
-    records: { suppliers: [{ tenantId: 't1', id: 'a', name: 'Acme' }], payables: [], invoices: [], settlements: [], purchaseOrders: [], rfqs: [], bankExceptions: [], receiving: [{ tenantId: 't1', id: 'GRN-1', documentNumber: 'GRN-1', supplierId: 'a', poId: 'PO-1', status: 'posted', arrivedAt: '2026-07-20T10:00:00.000Z', lines }] },
-  })
-  const receiving = result.items[0].receiving
-  assert.deepEqual(receiving.rejectedQuantities.map((row) => [row.sku, row.unit, row.quantity]), [[null, null, 4], [null, null, 5], ['BOLT', 'box', 1], ['BOLT', 'pcs', 2], ['CABLE', 'm', 3]])
-  assert.ok(Object.values(receiving).every((value) => typeof value !== 'number' || value === receiving.exceptionCount || value === receiving.pendingEvidenceCount), 'no single rejected total')
-})
-
-// The skill scenario, with PO-008 moved to Summit Packaging so that the
-// supplier list has two suppliers to order.
-async function skillAnswers() {
-  const scenario = aiSkillScenario()
-  const read = await readAiSkillFacts(await loadAiSkillContext(scenario.ctx))
-  const facts = { ...read, purchaseOrders: { ...read.purchaseOrders, rows: read.purchaseOrders.rows.map((row) => row.id === 'PO-008' ? { ...row, supplierId: 'SUP-002', supplier: 'Summit Packaging' } : row) } }
-  const answer = (skillId, language) => answerAiSkill({ skillId, facts, language, query: 'q', actor: scenario.actor })
-  return { facts, answer }
-}
-
 // Each ranked list's lines in the order shown, with the date that orders them.
 const rankedLists = {
   today_priorities: (result) => result.items,
@@ -156,37 +131,6 @@ function assertDocumentedOrder(skillId, lines) {
   }
 }
 
-test('rule 2: ranked assistant lists are ordered by date and every dated line prints its date', async () => {
-  const { facts, answer } = await skillAnswers()
-  for (const [skillId, linesOf] of Object.entries(rankedLists)) {
-    for (const language of LANGUAGES) {
-      const { result, response } = answer(skillId, language)
-      const lines = linesOf(result)
-      assert.ok(lines.length >= 2, `${skillId} has a list to check`)
-      assertDocumentedOrder(skillId, lines)
-      const day = aiSkillFormatter(facts, language).day
-      for (const line of lines.filter((entry) => entry.when?.date)) {
-        const evidence = response.keyEvidence.find((item) => item.id === (line.lineId || line.id))
-        assert.ok(evidence, `${skillId} ${line.id} is shown`)
-        assert.ok(evidence.summary.includes(day(line.when.date)), `${skillId} ${language}: "${evidence.summary}" does not print ${day(line.when.date)}`)
-      }
-    }
-  }
-  // The open problems list on the scenario: INV-001 (open since Sep 24) is
-  // older than PO-001 (promised Sep 25), so it comes first.
-  const risk = answer('highest_risk_items', 'en-US').result.items.map((item) => [item.id, item.when.date])
-  assert.ok(risk.findIndex(([id]) => id === 'invoice_variance:INV-001') < risk.findIndex(([id]) => id === 'po_overdue:PO-001'), JSON.stringify(risk))
-  // Overdue purchase orders: the longest late first, each with its promised date.
-  for (const language of LANGUAGES) {
-    const { result, response } = answer('purchase_orders', language)
-    const days = result.overdue.map((row) => row.overdueDays)
-    assert.ok(days.length >= 2)
-    assert.deepEqual(days, [...days].sort((a, b) => b - a))
-    const day = aiSkillFormatter(facts, language).day
-    for (const row of result.overdue) assert.ok(response.keyEvidence.find((item) => item.entityId === row.id).summary.includes(day(row.dueDate)), `${row.id} ${language}`)
-  }
-})
-
 const FORBIDDEN_KEYS = new Set(['score', 'weight', 'weights', 'priorityScore', 'signalScore', 'riskScore', 'points'])
 function forbiddenKeys(value, path = '$', found = []) {
   if (Array.isArray(value)) value.forEach((entry, index) => forbiddenKeys(entry, `${path}[${index}]`, found))
@@ -202,34 +146,6 @@ function forbiddenKeys(value, path = '$', found = []) {
   }
   return found
 }
-
-test('rule 3: assistant and supplier payloads carry no weight or score', async () => {
-  const { answer } = await skillAnswers()
-  for (const skillId of [...Object.keys(rankedLists), 'purchase_orders', 'prepare_action_draft']) {
-    for (const language of LANGUAGES) {
-      const { result, response } = answer(skillId, language)
-      assert.deepEqual(forbiddenKeys({ result, response }), [], `${skillId} ${language}`)
-    }
-  }
-  const actor = { tenantId: 't1', permissionCodes: new Set(['finance.payable.read', 'finance.supplier_invoice.read', 'finance.amounts.read', 'finance.partner_snapshot.read', 'procurement.purchase_order.read', 'receiving.read']) }
-  const invoice = { tenantId: 't1', id: 'inv', supplierId: 'a', invoiceNumber: 'INV-1', amount: 100, currency: 'USD', status: 'disputed', matchStatus: 'exception', invoiceDate: '2026-07-01T00:00:00.000Z' }
-  const summaries = buildSupplierActionSummaries({
-    actor, now: new Date('2026-07-24T12:00:00.000Z'),
-    records: { suppliers: [{ tenantId: 't1', id: 'a', name: 'Acme' }, { tenantId: 't1', id: 'b', name: 'Beta' }], invoices: [invoice], payables: [{ tenantId: 't1', id: 'pay', supplierId: 'a', supplierInvoiceId: 'inv', supplierInvoice: invoice, currency: 'USD', outstandingAmount: 100, dueDate: '2026-07-10T00:00:00.000Z', status: 'approved' }], settlements: [], purchaseOrders: [], receiving: [], rfqs: [], bankExceptions: [] },
-  })
-  assert.deepEqual(forbiddenKeys(summaries), [])
-  // The older supplier answers: the response contract and the SRM module cards.
-  const db = createAiUserScenarioDb()
-  for (const question of ['哪些供应商有潜在风险？', '这个供应商最近有什么问题？', '今天有什么需要我处理？']) {
-    const contract = buildAiResponseContractV2(db, { moduleId: 'overview', question }).cards[0].data
-    assert.deepEqual(forbiddenKeys(contract.keyEvidence), [], question)
-  }
-  for (const question of ['查看高风险供应商', '解释评分规则', '下一步跟进']) {
-    assert.deepEqual(forbiddenKeys(buildAiSupplierOperationalResponse(db, { moduleId: 'srm', question }).cards), [], question)
-  }
-  // Ordered by the oldest open reason, each dated.
-  assert.deepEqual(summaries.items.map((row) => [row.supplier.id, row.priority.since]), [['a', '2026-07-01'], ['b', null]])
-})
 
 test('rule 4: no supplier rate is shown below the minimum sample of 5', () => {
   // One line per PO, so each line is its own delivery (scorecard v3 counts deliveries).

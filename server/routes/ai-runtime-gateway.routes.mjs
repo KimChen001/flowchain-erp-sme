@@ -1,30 +1,18 @@
-import { aiSkillDraftBasis } from '../domain/ai-skill-drafts.mjs'
-import { withoutUnavailableProductLinks } from '../../shared/unavailable-product-routes.mjs'
-import { modelFreeEnv, withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
-import { aiModelFirstEnabled, aiModelFirstEntry, answerAiModelFirst } from '../domain/ai-model-first.mjs'
-import { aiProviderFailures } from '../domain/ai-usage-meter.mjs'
-import { aiAgentKnowledge, handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
-import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
-import { runBusinessQueryRuntime, shouldUseSemanticBusinessQuery } from '../domain/ai-business-query-runtime.mjs'
-import { aiAgentPlanningEnabled } from '../domain/ai-agent-planning.mjs'
-import { splitAiCompoundQuestion } from '../domain/ai-skill-compound.mjs'
-import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
-import { isLegacyAiTemplateGatewayEnabled, runAiSkillRuntime } from '../domain/ai-skill-runtime.mjs'
-import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
+import { withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
+import { handleKnowledgeRoute } from './ai-knowledge.routes.mjs'
 import { aiSkillQuestionLanguage } from '../domain/ai-skill-copy.mjs'
-import { aiKnowledgeAuditBlock, recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
-import { reportReadAccess, scopeBusinessContext } from '../domain/report-read-access.mjs'
+import { scopeBusinessContext } from '../domain/report-read-access.mjs'
 import { aiRuntimeProgressStream } from './ai-runtime-stream.mjs'
 import { assistantV2Enabled, assistantV2ModelClient } from '../domain/ai-assistant-v2-controls.mjs'
 import { QUESTION_LIMITS } from '../../shared/assistant-protocol.mjs'
-import { answerWithAssistantV2, assistantV2SetupState, validateAssistantV2Question } from './ai-assistant-v2-gateway.mjs'
+import { answerWithAssistantV2, answerWithAssistantV2Notice, assistantV2SetupState, validateAssistantV2Question } from './ai-assistant-v2-gateway.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
 // was asked in Chinese. The client maps the codes to its own recovery text.
 const ERRORS = {
   AI_REQUEST_UNREADABLE: ['The question could not be read. Please ask again.', '问题内容无法读取，请重新输入。'],
   AI_QUESTION_TOO_LONG: ['The question is too long. Please shorten it and ask again.', '问题过长，请缩短后重新提问。'],
-  AI_QUESTION_TOO_SHORT: ['Enter a question of at least two characters.', '请输入至少两个字的问题。'],
+  AI_QUESTION_TOO_SHORT: ['Enter a question.', '请输入问题。'],
   AUTHENTICATION_REQUIRED: ['Sign in to use the assistant.', '请登录后使用 AI 助手。'],
   TENANT_CONTEXT_REQUIRED: ['A workspace is required to use the assistant.', '使用 AI 助手需要选择工作区。'],
   ACTOR_NOT_PROVISIONED: ['Your user is not set up for this workspace.', '你的用户尚未在此工作区开通。'],
@@ -35,19 +23,6 @@ const ERRORS = {
 function errorBody(code, body = {}) {
   const [en, zh] = ERRORS[code] || ERRORS.AI_SKILL_UNAVAILABLE
   return { code, error: body.answerLanguage === 'zh-CN' ? zh : en }
-}
-
-async function addKnowledgeContext(ctx, body, response) {
-  // A planned answer that searched the documents itself carries its passages.
-  if (response?.supplementalKnowledge || response?.intent === 'knowledge_retrieval') return response
-  if (classifyQueryScope(body) !== 'mixed') return response
-  try {
-    const knowledge = await runKnowledgeQuery(ctx, body, { force: true })
-    return aiSkillDraftBasis({ ...response, supplementalKnowledge: { title: knowledge.conclusion.title, summary: knowledge.conclusion.summary, rag: knowledge.rag } })
-  } catch {
-    const zh = body.answerLanguage === 'zh-CN'
-    return { ...response, supplementalKnowledge: { title: zh ? '知识库暂时不可用' : 'Knowledge temporarily unavailable', summary: zh ? '业务查询已完成，但本次未能读取相关政策或产品资料。请稍后重试。' : 'The business query completed, but supporting policy or product documents could not be retrieved. Try again later.', rag: { mode: 'unavailable', citations: [] } } }
-  }
 }
 
 // access, the reader's report read access, scopes the facts as the business
@@ -85,61 +60,40 @@ export async function loadAiRuntimeFacts(repositories = {}, tenantId = '', acces
 }
 
 // Every assistant request (answers, knowledge, readiness) runs with the model
-// access its workspace has (ai-workspace-access.mjs). A workspace over this
-// month's cap is answered without a model, and its answers say so. So is an
-// answer for which a model call failed (the provider down, slow, or out of
-// budget): it came from the rules, and may read less naturally or miss a part.
-// A typed question whose client accepts NDJSON gets the tool loop's progress
-// as it runs, then the answer (ai-runtime-stream.mjs); with assistant v2 on,
-// the answer itself streams as it is written.
+// access its workspace has (ai-workspace-access.mjs). Assistant v2 answers
+// every question (owner direction 2026-11-05: the deterministic rules engine
+// goes). When it cannot (AI off for the workspace, no model configured, the
+// month's cap used, the provider failing), the answer is a notice that says
+// so in plain words; no rules answer stands in for it. A client that accepts
+// NDJSON gets the answer as it is written (ai-runtime-stream.mjs).
 export async function handleAiRuntimeGatewayRoute(ctx) {
   if (!ctx.url?.pathname?.startsWith('/api/ai-runtime/')) return false
   const stream = ctx.url.pathname === '/api/ai-runtime/respond' ? aiRuntimeProgressStream(ctx.req, ctx.res, ctx.send) : { send: ctx.send, progress: null, event: null }
-  return withAiWorkspaceAccess({ ...ctx, send: stream.send }, (scoped) => handleGatewayRequest({ ...scoped, send: modelAccessSend(scoped.send, scoped.aiModelAccess === 'over_cap'), aiProgress: stream.progress, aiStreamEvent: stream.event }))
+  return withAiWorkspaceAccess({ ...ctx, send: stream.send }, (scoped) => handleGatewayRequest({ ...scoped, aiProgress: stream.progress, aiStreamEvent: stream.event }))
 }
 
-const isAnswer = (status, payload) => status === 200 && payload && typeof payload === 'object' && !Array.isArray(payload) && payload.version === 'v2'
-function modelAccessSend(send, overCap) {
-  return (res, status, payload) => {
-    if (!isAnswer(status, payload)) return send(res, status, payload)
-    if (overCap) return send(res, status, { ...payload, aiModelAccess: { status: 'over_cap' } })
-    const failures = aiProviderFailures()
-    if (!failures.length) return send(res, status, payload)
-    return send(res, status, { ...payload, aiModelAccess: { status: 'unavailable', ...(failures.includes('budget') ? { reason: 'budget' } : {}) } })
-  }
+// Why assistant v2 cannot answer this request, as a notice code: the month's
+// cap is used, the workspace has not switched AI on, or no model is set up on
+// this server (no provider, or the assistant mode is not assistant_v2).
+export function assistantV2OffNotice(ctx = {}) {
+  const status = ctx.aiModelAccess || ctx.aiWorkspaceAccessStatus
+  if (status === 'over_cap') return 'over_cap'
+  if (status === 'off') return 'ai_off'
+  return 'no_provider'
 }
 
-// A model-first answer that could not be given (the check failed twice, or a
-// limit ran out) is answered by the rules, and says so. A failed provider call
-// is noted by modelAccessSend, more specifically.
-// After a failed model answer the rules answer, with a notice. Their order
-// form does not open by itself: it may differ from what the conversation
-// agreed (on 2026-11-03 a fallback opened 95 pcs after the assistant had
-// offered the reorder list's 50), so it waits for the user's click.
-function modelFirstFallbackSend(send) {
-  const closed = (cards) => (Array.isArray(cards) ? cards.map((card) => (card?.autoOpen ? { ...card, autoOpen: false } : card)) : cards)
-  return (res, status, payload) => send(res, status, isAnswer(status, payload) && !payload.aiModelAccess ? { ...payload, reviewCards: closed(payload.reviewCards), aiModelAccess: { status: 'unavailable', reason: 'unchecked' } } : payload)
-}
-
-// A question assistant v2 handed back is answered by the rules, and says why:
-// the month's remaining budget could not cover an answer (over_cap), or the
-// provider failed before any text was shown (unavailable).
-function assistantV2FallbackSend(send, fallback) {
-  return (res, status, payload) => send(res, status, isAnswer(status, payload) && !payload.aiModelAccess ? { ...payload, aiModelAccess: { status: fallback } } : payload)
-}
-
-async function handleGatewayRequest(requestCtx) {
-  let ctx = requestCtx
+async function handleGatewayRequest(ctx) {
   if (await handleKnowledgeRoute(ctx)) return true
-  const { req, res, url, db, readBody, repositories, identity } = ctx
-  let send = ctx.send
+  const { req, res, url, readBody, identity } = ctx
+  const send = ctx.send
 
   if (req.method === 'GET' && url.pathname === '/api/ai-runtime/readiness') {
     // assistantV2: whether this user's questions go to assistant v2, so the
     // panel streams them; with it, setup: the first-day checklist's state, so
-    // the panel's empty state offers setup starters while it is open.
+    // the panel's empty state offers setup starters while it is open. Without
+    // it, notice: why the assistant cannot answer here.
     const assistantV2 = assistantV2Enabled(ctx)
-    send(res, 200, { ...buildAiRuntimeReadinessV2(db, process.env), assistantV2, ...(assistantV2 ? { setup: await assistantV2SetupState(ctx) } : {}) })
+    send(res, 200, { assistantV2, ...(assistantV2 ? { setup: await assistantV2SetupState(ctx) } : { notice: assistantV2OffNotice(ctx) }) })
     return true
   }
 
@@ -158,115 +112,29 @@ async function handleGatewayRequest(requestCtx) {
       body = { ...body, interfaceLanguage: body.answerLanguage, answerLanguage: aiSkillQuestionLanguage(String(body.message || body.question || '').slice(0, 1201), body.answerLanguage) }
     }
     // Reject empty or oversized questions before any tenant data is read.
-    const rejectInvalid = (validation, limit = QUESTION_LIMITS.rules) => {
-      const tooLong = String(body.message || body.question || '').trim().length > limit
+    // Questions may be long (QUESTION_LIMITS.assistantV2), so a user can
+    // paste rows.
+    const validation = validateAssistantV2Question(body)
+    if (!validation.ok) {
+      const tooLong = String(body.message || body.question || '').trim().length > QUESTION_LIMITS.assistantV2
       send(res, validation.status, errorBody(tooLong ? 'AI_QUESTION_TOO_LONG' : 'AI_QUESTION_TOO_SHORT', body))
       return true
     }
     try {
-      // Assistant v2 (docs/ai-assistant-v2-design.md §3.2): when it is on for
-      // this request, only the length check and its own guards run before the
-      // model. The rules below answer only a question it hands back, without
-      // a model and with a notice that says why. Its questions may be longer
-      // (QUESTION_LIMITS.assistantV2), so a user can paste rows.
+      if (!identity?.authenticated) {
+        send(res, 401, errorBody('AUTHENTICATION_REQUIRED', body))
+        return true
+      }
+      if (!identity.tenantId) {
+        send(res, 403, errorBody('TENANT_CONTEXT_REQUIRED', body))
+        return true
+      }
+      // Assistant v2 (docs/ai-assistant-v2-design.md §3.2): only the length
+      // check and its own guards run before the model.
       const assistantV2 = assistantV2ModelClient(ctx)
-      if (assistantV2) {
-        const validation = validateAssistantV2Question(body)
-        if (!validation.ok) return rejectInvalid(validation, QUESTION_LIMITS.assistantV2)
-        const outcome = await answerWithAssistantV2(ctx, body, { client: assistantV2, started })
-        if (outcome.handled) return true
-        ctx = { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: assistantV2FallbackSend(ctx.send, outcome.fallback), aiAssistantV2Audit: outcome.audit }
-        send = ctx.send
-      }
-      // An instruction to approve, pay, send, cancel or delete goes straight
-      // to the skill runtime's refusal: the knowledge and business query
-      // paths would otherwise answer it (a payment or supplier word sends it
-      // to the supplier query planner) and never refuse.
-      // Only the first 1,201 characters: a longer question is rejected below.
-      const actionRequest = detectAiActionRequest(String(body?.message || body?.question || '').slice(0, 1201))
-      // Model-first: a question the guards let through goes to the tool loop,
-      // which searches the documents itself; the knowledge path below then
-      // answers only when the loop does not.
-      const modelFirstEntry = !actionRequest && aiModelFirstEnabled(ctx.env || process.env) ? aiModelFirstEntry(body) : null
-      // A guarded question's audit row says why the loop did not answer it,
-      // also when the knowledge path answers it next.
-      if (modelFirstEntry && !modelFirstEntry.eligible) ctx = { ...ctx, aiModelFirstAudit: { status: 'guarded', reason: modelFirstEntry.reason } }
-      // The same audit row as a skill answer, with the knowledge answer's mode
-      // and the documents it cited (ids and counts only).
-      const answerFromDocuments = async () => {
-        const knowledge = await runKnowledgeQuery(ctx, body)
-        if (!knowledge) return false
-        await recordAiSkillAudit(ctx, { response: { ...knowledge, answerSource: 'knowledge', language: body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, knowledge: aiKnowledgeAuditBlock(knowledge.rag) })
-        send(res, 200, knowledge)
-        return true
-      }
-      if (!actionRequest && !modelFirstEntry?.eligible && await answerFromDocuments()) return true
-      const validation = validateAiRuntimeRequest(body)
-      if (!validation.ok) return rejectInvalid(validation)
-      // Model-first (docs/ai-model-first-design.md §3): a free-text question
-      // the guards let through is answered by the tool loop. When it gives no
-      // checked answer, the knowledge path, then the rules answer below, with
-      // no model call and a notice; a guarded question goes there directly. A
-      // question that needs a tool this user is not offered (search_documents
-      // without database storage, list_contracts without the contracts
-      // module) goes to the knowledge path or the rules as before, with no
-      // notice. Either way the audit row carries the loop's codes and counts.
-      if (modelFirstEntry?.eligible) {
-        // The languages of the documents the user may read (null without any).
-        const documents = await (ctx.aiAgentKnowledge !== undefined ? ctx.aiAgentKnowledge : aiAgentKnowledge(ctx).catch(() => null))
-        const modelFirst = await answerAiModelFirst(ctx, body, { documents: isKnowledgeQuestion(body), requires: modelFirstEntry.requires, documentLanguages: documents?.languages || null, onProgress: ctx.aiProgress || null })
-        if (modelFirst.response) {
-          await recordAiSkillAudit(ctx, { response: modelFirst.response, facts: modelFirst.facts, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, modelFirst: modelFirst.audit })
-          // The loop searched the documents itself when it could; otherwise
-          // a question about records and documents gets their passages.
-          send(res, 200, modelFirst.searchedDocuments ? modelFirst.response : await addKnowledgeContext(ctx, body, modelFirst.response))
-          return true
-        }
-        ctx = modelFirst.skipped
-          ? { ...ctx, aiModelFirstAudit: modelFirst.audit }
-          : { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: modelFirstFallbackSend(ctx.send), aiModelFirstAudit: modelFirst.audit }
-        send = ctx.send
-        if (await answerFromDocuments()) return true
-      }
-      // Agent planning (P2) on: a question with several parts that the
-      // business query path would take goes to the planner first, which has
-      // the supplier business query among its tools. When the planner does not
-      // answer it, the business query path answers as before.
-      const question = String(body.message || body.question || '')
-      // The actor's documents for the planner's knowledge search (PR-3), read
-      // only when agent planning is on.
-      const agentDocuments = !actionRequest && aiAgentPlanningEnabled(ctx.env || process.env) ? await (ctx.aiAgentKnowledge !== undefined ? ctx.aiAgentKnowledge : aiAgentKnowledge(ctx).catch(() => null)) : null
-      const attempt = !actionRequest && aiAgentPlanningEnabled(ctx.env || process.env) && splitAiCompoundQuestion(question).length >= 2 && shouldUseSemanticBusinessQuery(question, body) ? {} : null
-      if (attempt) {
-        const planned = await runAiSkillRuntime(ctx, body, { agentFirst: attempt, knowledge: agentDocuments })
-        if (planned) { send(res, 200, await addKnowledgeContext(ctx, body, planned)); return true }
-      }
-      const answered = actionRequest ? null : await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
-      // A planner that failed leaves this answer, with the limited-mode label.
-      const businessQuery = answered && attempt?.degraded ? { ...answered, agentPlanning: { status: 'degraded', entry: 'multi_part' } } : answered
-      if (businessQuery) {
-        // The same audit row as a skill answer: the plan's intent, the
-        // records it cited and a hash of the question, never its text.
-        await recordAiSkillAudit(ctx, { response: { ...businessQuery, answerSource: businessQuery.answerSource || 'business_query', language: businessQuery.language || body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, agent: attempt?.agent || null })
-        send(res, 200, await addKnowledgeContext(ctx, body, businessQuery))
-        return true
-      }
-      // Rollback only: the retired Chinese template gateway, off by default.
-      if (!actionRequest && isLegacyAiTemplateGatewayEnabled(ctx.env || process.env)) {
-        // An actor that cannot be resolved gets the sign-in error below.
-        const facts = identity?.authenticated && identity.tenantId
-          ? await loadAiRuntimeFacts(repositories, identity.tenantId, await reportReadAccess(ctx))
-          : {}
-        const result = await buildAiRuntimeResponseV2Async({ ...db, ...facts }, body, { env: identity?.authenticated ? process.env : {} })
-        send(res, result.status, await addKnowledgeContext(ctx, body, withoutUnavailableProductLinks(result.body)))
-        return true
-      }
-      send(res, 200, await addKnowledgeContext(ctx, body, await runAiSkillRuntime(ctx, body, { skipAgent: Boolean(attempt), knowledge: agentDocuments })))
+      if (!assistantV2) await answerWithAssistantV2Notice(ctx, body, assistantV2OffNotice(ctx), { started })
+      else await answerWithAssistantV2(ctx, body, { client: assistantV2, started })
     } catch (error) {
-      if (isKnowledgeQuestion(body)) {
-        send(res, error.status || 503, { code: error.code || 'KNOWLEDGE_UNAVAILABLE', error: error.status ? error.message : (body.answerLanguage === 'zh-CN' ? '知识库暂时不可用，请稍后重试。' : 'Knowledge is temporarily unavailable. Please try again.') })
-        return true
-      }
       // Sign-in and workspace problems keep their status; anything else is a
       // retryable 503, never a made-up "no records" answer.
       if ([401, 403].includes(error.status) && ERRORS[error.code]) {

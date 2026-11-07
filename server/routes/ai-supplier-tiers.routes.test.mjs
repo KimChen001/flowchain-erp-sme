@@ -12,28 +12,6 @@ import { handleAiRuntimeGatewayRoute } from './ai-runtime-gateway.routes.mjs'
 
 const CJK = /[㐀-鿿]/
 
-function harness({ roleKey = 'workspace-administrator', tiers = { 'SUP-001': 1, 'SUP-002': 2 } } = {}) {
-  const scenario = aiSkillScenario({ roleKey })
-  for (const supplier of scenario.data.suppliers) supplier.tier = tiers[supplier.id] ?? null
-  const sent = []
-  const ctx = {
-    ...scenario.ctx,
-    req: { method: 'POST', headers: {} }, res: {}, url: new URL('http://local/api/ai-runtime/respond'),
-    db: { __dataMode: 'user', purchaseOrders: [], products: [], suppliers: [] },
-    env: { FLOWCHAIN_PERSISTENCE_MODE: 'database' },
-    send: (_res, status, payload) => sent.push({ status, payload }),
-  }
-  ctx.repositories = { ...ctx.repositories, auditLog: { mode: 'database', recordAuditEntry: async (entry) => entry } }
-  const ask = async (message, answerLanguage = 'en-US') => {
-    ctx.readBody = async () => ({ message, answerLanguage })
-    assert.equal(await handleAiRuntimeGatewayRoute(ctx), true)
-    const { status, payload } = sent.at(-1)
-    assert.equal(status, 200, message)
-    return payload
-  }
-  return { ask, scenario }
-}
-
 const figures = (payload) => Object.fromEntries((payload.figures || []).map((figure) => [figure.key, figure.value]))
 const ids = (payload) => (payload.keyEvidence || []).map((item) => item.entityId)
 
@@ -62,72 +40,3 @@ test('tier questions route to the purchase orders and supplier answers', () => {
   ]) assert.equal(routeSkill({ message }).skillId, skillId, message)
 })
 
-test('a tier filters the overdue orders to its suppliers, in the same order, with its own count', async () => {
-  const { ask } = harness()
-  const all = await ask('Which purchase orders are overdue?')
-  const tier1 = await ask('Which Tier 1 suppliers have overdue orders?')
-  assert.equal(tier1.intent, 'purchase_orders')
-  const acme = all.keyEvidence.filter((item) => item.summary.includes('Acme Components')).map((item) => item.entityId)
-  assert.ok(acme.length > 0)
-  assert.deepEqual(ids(tier1), acme, 'the Tier 1 list is the full list without the other suppliers, in the same order')
-  assert.equal(figures(tier1)['tier_overdue_po:1'], acme.length)
-  assert.equal(figures(tier1).overdue_po_count, undefined, 'the workspace count is not stated as the tier count')
-  assert.match(tier1.conclusion.title, /purchase orders? from Tier 1 suppliers (is|are) overdue/)
-  assert.ok(tier1.keyEvidence.every((item) => item.summary.includes('Acme Components (Tier 1)')))
-  // Without a filter every tiered supplier is labelled.
-  assert.ok(all.keyEvidence.every((item) => /(Acme Components \(Tier 1\)|Summit Packaging \(Tier 2\))/.test(item.summary)))
-  const zh = await ask('一级供应商有哪些逾期订单？', 'zh-CN')
-  assert.deepEqual(ids(zh), acme)
-  assert.match(zh.conclusion.title, /一级供应商的逾期采购订单/)
-  assert.ok(zh.keyEvidence.every((item) => item.summary.includes('Acme Components（一级）')))
-  // A count question about one tier gets the same answer.
-  assert.equal(figures(await ask('How many Tier 1 suppliers have overdue POs?'))['tier_overdue_po:1'], acme.length)
-  // An English answer stays free of Chinese.
-  assert.doesNotMatch(JSON.stringify(tier1), CJK)
-})
-
-test('a tier narrows the supplier answer; an empty tier says so', async () => {
-  const { ask } = harness()
-  const all = await ask('Which suppliers need attention?')
-  const tier2 = await ask('Which Tier 2 suppliers need attention?')
-  assert.equal(tier2.intent, 'supplier_attention')
-  assert.deepEqual(ids(tier2), ids(all).filter((id) => id === 'SUP-002'))
-  assert.ok(all.keyEvidence.some((item) => item.entityLabel === 'Acme Components (Tier 1)'))
-  if (ids(tier2).length) assert.match(tier2.conclusion.title, /Tier 2 suppliers/)
-  const tier3 = await ask('Which Tier 3 suppliers need attention?')
-  assert.equal(tier3.conclusion.title, 'There are no Tier 3 suppliers yet')
-  assert.deepEqual(ids(tier3), [])
-  const zh = await ask('三级供应商需要关注什么？', 'zh-CN')
-  assert.equal(zh.conclusion.title, '目前还没有三级供应商')
-})
-
-test('suppliers without a tier keep their plain names, and "not tiered" filters to them', async () => {
-  const { ask } = harness({ tiers: { 'SUP-001': 1 } })
-  const all = await ask('Which purchase orders are overdue?')
-  assert.ok(all.keyEvidence.every((item) => !/Summit Packaging \(/.test(item.summary)))
-  const untiered = await ask('Which suppliers that are not tiered yet have overdue orders?')
-  assert.equal(untiered.intent, 'purchase_orders')
-  assert.ok(untiered.keyEvidence.every((item) => !item.summary.includes('Acme Components')))
-  assert.ok('tier_overdue_po:none' in figures(untiered))
-})
-
-test('a tier keeps the drafts to its suppliers: their orders and invoices, never a shortage of no one', async () => {
-  const { ask } = harness()
-  const all = await ask('Prepare follow-up drafts')
-  const tier1 = await ask('Prepare follow-up drafts for our Tier 1 suppliers')
-  assert.equal(tier1.intent, 'prepare_action_draft')
-  assert.ok(tier1.reviewCards.length > 0)
-  assert.ok(tier1.reviewCards.every((card) => card.payload?.supplierId === 'SUP-001'), 'only Tier 1 suppliers')
-  assert.ok(tier1.reviewCards.every((card) => card.draftType !== 'purchase_request_draft'))
-  assert.match(tier1.conclusion.title, /drafts? for Tier 1 suppliers/)
-  // Every draft for a Tier 1 supplier that the full answer has is kept.
-  const acme = all.reviewCards.filter((card) => card.payload?.supplierId === 'SUP-001').map((card) => card.targetEntityId)
-  for (const id of acme) assert.ok(tier1.reviewCards.some((card) => card.targetEntityId === id), id)
-  const zh = await ask('给一级供应商起草跟进', 'zh-CN')
-  assert.equal(zh.intent, 'prepare_action_draft')
-  assert.ok(zh.reviewCards.every((card) => card.payload?.supplierId === 'SUP-001'))
-  assert.match(zh.conclusion.title, /一级供应商/)
-  const empty = await ask('Prepare follow-up drafts for our Tier 3 suppliers')
-  assert.equal(empty.conclusion.title, 'No draft is needed for Tier 3 suppliers right now')
-  assert.deepEqual(empty.reviewCards, [])
-})

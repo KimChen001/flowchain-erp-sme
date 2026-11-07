@@ -4,10 +4,8 @@ import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { createScmServer } from '../bootstrap/scm-server.mjs'
-import { handleAiRoute } from '../routes/ai.routes.mjs'
 import { handleContextRoute } from '../routes/context.routes.mjs'
 import { normalizeAuditEvent } from './audit-foundation.mjs'
-import { getAiToolRegistry } from './ai-tool-registry.mjs'
 import { listAuditEvents, recordAuditEvent } from '../repositories/audit-log-repository.mjs'
 import { GENERIC_INTERNAL_ERROR, sanitizeErrorSummary, sendInternalServerError } from '../utils/safe-errors.mjs'
 import { databaseModeMutationBlockedPayload } from './route-classification.mjs'
@@ -319,58 +317,6 @@ test('GET /api/tenants/current returns minimal tenant context', async () => {
   assert.equal(route.response.payload.currency, 'USD')
   assert.equal(route.response.payload.settings.allowAiDraftPreparation, true)
   assert.equal(route.response.payload.settings.requireUserReviewForAiDrafts, true)
-})
-
-test('GET /api/ai/tools returns controlled AI tool registry', async () => {
-  const route = createRouteContext('GET', '/api/ai/tools')
-  const handled = await handleAiRoute(route.ctx)
-
-  assert.ok(handled)
-  assert.equal(route.response.status, 200)
-  assert.equal(route.response.payload.tools.length, 50)
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getSupplierStatus'))
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'resolveSupplierEntity'))
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getSupplierOperationalSummary'))
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'compareSupplierOperations'))
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getPurchaseRequestStatus'))
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getReceivingExceptions'))
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getRfqSupplierResponses'))
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getSalesDemandSummary'))
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getCustomerDeliveryRisks'))
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getPurchaseOrderSalesImpact'))
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getAvailableToPromise'))
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getReservationPreview'))
-  for (const toolName of [
-    'resolveEvidenceGraph',
-    'getEntityRelatedRecords',
-    'traceSalesOrderEvidence',
-    'traceSkuSupplyDemandEvidence',
-    'tracePurchaseOrderDeliveryImpact',
-    'traceSupplierOperationalEvidence',
-    'traceReceivingEvidence',
-    'traceInvoiceEvidence',
-  ]) {
-    const tool = route.response.payload.tools.find((item) => item.name === toolName)
-    assert.ok(tool, toolName)
-    assert.equal(tool.mode, 'read')
-    assert.equal(tool.writesBusinessData, false)
-    assert.equal(tool.requiresUserReview, false)
-    assert.equal(tool.audit.recordInvocation, true)
-  }
-  assert.ok(route.response.payload.tools.some((tool) => tool.name === 'preparePurchaseRequestDraft'))
-  assert.equal(route.response.payload.tools.some((tool) => tool.name === 'prepareInventoryExceptionDraft'), false)
-  assert.equal(route.response.payload.tools.find((tool) => tool.name === 'getSupplierStatus').mode, 'read')
-  assert.equal(route.response.payload.tools.find((tool) => tool.name === 'prepareRfqDraft').requiresUserReview, true)
-  assert.equal(route.response.payload.tools.every((tool) => tool.writesBusinessData === false), true)
-})
-
-test('AI tool registry returns defensive copies', () => {
-  const first = getAiToolRegistry()
-  const supplierTool = first.find((tool) => tool.name === 'findSupplier')
-  supplierTool.inputSchema.query = 'changed'
-
-  const second = getAiToolRegistry()
-  assert.equal(second.find((tool) => tool.name === 'findSupplier').inputSchema.query, 'string')
 })
 
 test('audit foundation normalizes and records reusable audit events', () => {
