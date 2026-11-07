@@ -70,92 +70,40 @@ Check a configuration without calling the provider: `npm run check:ai-provider-e
 - **No embeddings:** Anthropic has no embeddings endpoint, so knowledge search
   stays keyword search; the answer is written by the model.
 
-## The model-first assistant (removed)
+## Earlier assistants (removed)
 
-**Removed 2026-11-06:** the gateway no longer routes questions to this loop;
-assistant v2 replaced it. The section stays as the record of what it did, and
-its remaining code is removed in a later step.
-
-Step S2 of `docs/ai-model-first-design.md` (decisions M1–M7, 2026-10-28), off
-unless `FLOWCHAIN_AI_ASSISTANT_MODE=model_first`, and only where the switch above
-lets the workspace call a model.
-- **Entry.** A free-text question goes to a tool loop. The deterministic guards
-  answer first and keep their answers: an instruction to act, a question about
-  the outside world, injection phrasing (overriding the rules, other tenants or
-  workspaces, SQL) and a greeting. Prompt chips keep their skills. An order
-  request ("帮我起草一份PO") goes to the loop, which reads it with the
-  conversation so far. Document and mixed questions go to the loop too, which searches the
-  documents with `search_documents`; where that tool is not offered (no database
-  storage) the knowledge path answers them as before, and it is also the
-  fallback, without a model, when the loop gives no checked answer. A contract
-  question goes to the loop when `list_contracts` is offered (the contracts
-  module is on and the user may read contracts); otherwise the rules answer it
-  as before.
-- **The loop.** The model reads through the read tools
-  (`server/domain/ai-read-tools.mjs`), which hold only what the asking user may
-  read. At most 4 rounds, 8 tool calls and 20 s per answer, plus the token
-  budget; the calls of one round run together, and a tool error goes back to the
-  model as the tool's result.
-- **Proposals.** For a user who may draft, `propose_purchase_request`
-  (`server/domain/ai-model-first-proposals.mjs`) opens a filled-in purchase
-  request form in the panel for the user to review and submit. It saves
-  nothing; the request becomes a purchase order after approval. It names only an
-  item the user named, in the question or an earlier one, or chose from the
-  previous answer's choices; a quantity or supplier the user did not give is
-  left for them to fill in. Without a named item the model asks.
-- **The check.** Every number with its currency, percent sign or days, every
-  date, record number and known supplier, customer or item name in the answer
-  must be in this answer's tool results (or the question, or `calculate`), and
-  every cited record one a tool returned. On a failure the model gets one retry
-  with the list; after a second, the rules answer, with no model call, and say
-  so. The audit row keeps the kinds and counts, never the text.
-- **Providers.** `anthropic_messages` (the trial): tools with `tool_choice:
-  auto`, low effort, the answer as structured output, the system prompt, tools
-  and conversation cached; no sampling settings, which current Claude models
-  reject. The chat kinds (`deepseek_chat` on OpenCode Go locally): native tool
-  calls with `reasoning_effort`.
+The rules engine (workspace skills, the intent router, the business query
+planner, agent planning, answer wording) and the model-first loop were
+removed on 2026-11-06 and 2026-11-07 at the owner's direction. Assistant v2
+answers every question; `docs/ai-model-first-design.md` and the git history
+keep the record of what the earlier paths did.
 
 ## What leaves the workspace
 
-- **The model-first assistant** sends the question, up to 3 earlier questions
-  and answers of the user's panel as text, the open record's type and name, the
-  tool definitions, and the tool results: the asking user's own records, with
-  the fields the tools list. Contact emails and phone numbers are never in them.
+Only assistant v2 calls a model, and only for a workspace that is switched on
+and under its cap. Each model call sends:
 
-- **Agent planning and intent routing** send the question and the list of
-  skills.
-  - When the workspace has documents the user may read, agent planning also
-    sends their languages (for example "English"), so the model can write search
-    words in that language.
-  - Those words only search the workspace's own documents. The passages found
-    are shown with their sources and are not sent to a model.
-  - **Conversation memory** (owner decision 2 of 2026-10-07): for a question
-    that refers to the previous answer ("compare the first two", 这家供应商,
-    "it"), agent planning also sends the previous question and up to 8 records
-    that answer showed, as type, name and supplier name. Each record is looked
-    up again in the asking user's own data first, so a record they cannot read
-    is never sent. No ids, amounts or other figures are sent.
-  - A question that points at one of those records ("draft a follow-up email
-    for it") is usually narrowed to it by the rules, and then no model is asked.
-- **Knowledge answers** (a question about the documents alone) also send the
-  matching passages of the workspace's own documents.
-- **The business query planner** (supplier and payment questions) sends:
-  - the question, the workspace time zone and the current time;
-  - the page's record, as type, id and name, when the question is asked on a
-    record's page;
-  - up to 10 records the previous answer cited, as id and name, so "these
-    suppliers" can be planned.
+- the system prompt and the tool definitions (fixed text, the same for every
+  workspace);
+- the conversation on the user's thread: their questions, the assistant's
+  earlier answers, its tool calls and the tool results;
+- one context line per question: the answer language, the workspace day,
+  currency and time zone, the page's record (module, type and id) when the
+  question is asked on a record's page, and what the user's role cannot see
+  (source names only, never the hidden data);
+- the tool results: the asking user's own records, read with their own
+  permissions and warehouse scope, with the fields each tool lists. Amounts the
+  role cannot see are left out. The data tools return no contact emails or
+  phone numbers; a user who pastes suppliers with their contact details into
+  the chat sends those with the message;
+- for a question about the workspace's documents, the passages the search
+  found in documents the user may read;
+- a note when the user created or moved on a record with a card in the chat
+  (its number and status), after the server has checked the click in the
+  audit log.
 
-  No amounts, counts or other figures are sent.
-- **Answer wording (P3)** was approved by the owner on 2026-10-07 (agent mode
-  decisions 4 and 7) and built in PR #168. It is off unless
-  `FLOWCHAIN_AI_AGENT_MODE=compose`.
-  - With it, the model gets the facts a skill returned for the question,
-    masked to what the asking user may see, and writes the answer from them.
-  - For a follow-up, or a question about the previous answer, it also gets the
-    previous question.
-  - With it off, skill answers send no business figures to any model.
-- The switch covers every one of these paths.
+The audit row of each answer keeps codes and counts only: the tools called,
+the model, the tokens and the cost, never the question or the answer's words.
 
 ## On the trial servers (MIT Parley)
 
@@ -174,18 +122,17 @@ check withheld those answers.
   and the key as a secret (`sync: false`). `render-blueprint.test.mjs` fails if
   any other AI setting is added: no knowledge or embedding provider, answer
   wording (P3), model-first mode or the legacy `/api/ai` path.
-- **Only assistant v2 calls the model.** A question v2 hands back, and every
-  workspace that is not switched on or is over its cap, runs on the
-  model-free environment.
+- **Only assistant v2 calls the model.** A workspace that is not switched on
+  or is over its cap gets a notice that says so, and no model is called.
 - **The key.** The Parley key is the owner's own, tied to an MIT account. Enter
   it on each service's **Environment** page in Render. Before using it with a
   trial company's records, confirm with MIT that Parley may be used for this.
   Rotate it there if it has been shared or pasted anywhere, and after a
   rotation update both services.
 - **When Parley fails.** An expired key or a used-up Parley budget makes the
-  call fail. If nothing has been shown yet, the rules answer, with the notice
-  that the model is not available. If the answer was already streaming, the
-  panel says the assistant could not answer just now and that nothing was
+  call fail. If nothing has been shown yet, the answer is the notice that the
+  assistant is not available right now. If the answer was already streaming,
+  the panel says the assistant could not answer just now and that nothing was
   changed.
 - **The cap.** `FLOWCHAIN_AI_MONTHLY_CAP_USD` is per workspace and counted at the
   model's list prices, not by Parley. Keep the total over all switched-on

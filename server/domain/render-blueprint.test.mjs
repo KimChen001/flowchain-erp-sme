@@ -9,7 +9,6 @@ import { assistantV2ModelClient } from "./ai-assistant-v2-controls.mjs";
 import { createAssistantV2ModelClient } from "./ai-assistant-v2-model/index.mjs";
 import { canCallEmbeddingProvider } from "./ai-embedding-provider.mjs";
 import { knowledgeProviderEnv } from "./ai-knowledge-config.mjs";
-import { aiModelFirstEnabled } from "./ai-model-first.mjs";
 import { canCallConfiguredProvider } from "./ai-runtime-provider-adapter-v2.mjs";
 import { aiMonthlyCapUsd, aiOptInRequired, aiProviderConfigured, assertAiAssistantV2Deployment, modelFreeEnv } from "./ai-workspace-access.mjs";
 
@@ -269,18 +268,16 @@ for (const environment of environments) {
     // Production runs Parley only because the deployment allows it.
     assert.equal(createAssistantV2ModelClient(env).kind, "chat_completions");
     assert.throws(() => createAssistantV2ModelClient({ ...env, FLOWCHAIN_AI_ALLOW_PARLEY_IN_PRODUCTION: "false" }), (error) => error.reason === "local_only_provider");
-    // A workspace that is not switched on gets no model, and neither do the
-    // rules when v2 hands a question back (both run on modelFreeEnv).
+    // A workspace that is not switched on gets no model.
     const identity = { authenticated: true, tenantId: "tenant-render-blueprint" };
     assert.ok(assistantV2ModelClient({ env, identity, aiWorkspaceAccessStatus: "on" }));
     assert.equal(assistantV2ModelClient({ env, identity, aiWorkspaceAccessStatus: "off" }), null);
     assert.equal(aiProviderConfigured(modelFreeEnv(env)), false, "model-free environment");
     // Until the key is entered, nothing can call a model.
     assert.equal(aiProviderConfigured({ ...env, FLOWCHAIN_AI_PROVIDER_API_KEY: "" }), false, "no key");
-    // No other model path: knowledge provider and embeddings, model-first, the legacy /api/ai path.
+    // No other model path: knowledge provider and embeddings, the legacy /api/ai path.
     assert.equal(env.FLOWCHAIN_KNOWLEDGE_PROVIDER, undefined);
     assert.equal(canCallEmbeddingProvider(knowledgeProviderEnv(env)), false, "knowledge embeddings");
-    assert.equal(aiModelFirstEnabled(env), false, "model-first");
     assert.equal(canCallConfiguredProvider(env), true, "the assistant provider itself");
   });
 

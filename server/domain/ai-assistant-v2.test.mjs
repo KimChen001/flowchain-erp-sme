@@ -9,6 +9,8 @@ import { AssistantModelError } from './ai-assistant-v2-model/model-error.mjs'
 import { aiSkillText } from './ai-skill-copy.mjs'
 import { ASSISTANT_V2_LIMITS, ASSISTANT_V2_SYSTEM, answerAssistantV2 } from './ai-assistant-v2.mjs'
 import { AI_ASSISTANT_V2_UI_TOOLS } from './ai-assistant-v2-ui-tools.mjs'
+import { AI_ASSISTANT_V2_TOOLS } from './ai-assistant-v2-data-tools.mjs'
+import { AI_READ_TOOLS } from './ai-read-tools.mjs'
 import { safeParseStreamEvent } from '../../shared/assistant-protocol.mjs'
 
 // The assistant v2 loop (docs/ai-assistant-v2-design.md §3.3, §3.7, §3.9,
@@ -1112,7 +1114,7 @@ test('the system prompt asks for the answer first, display strings, whole record
     /write its one-sentence answer as text before any show_\* or suggest_purchase_request call/,
     /copy that string as it is, in any answer language/,
     /never write a code such as po_overdue/,
-    /whole \(LOCAL-DEMO-PO-014, never PO-014\)/,
+    /whole \(PO-202611-0014, never PO-0014 or 0014\)/,
     /Do not add codes the user did not ask for/,
     /Do not narrate what you are about to look up/,
     /with offer_choices the buttons ask it, so do not ask it again in the text/,
@@ -1122,6 +1124,17 @@ test('the system prompt asks for the answer first, display strings, whole record
     /with nothing ticked, "tick the items you want, then click Create draft request"/,
   ]) assert.match(ASSISTANT_V2_SYSTEM, rule)
   assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /Copy figures as the tools give them/)
+})
+
+// The showcase data is gone (owner, 2026-11-07: public data only), so no
+// example the model reads names its items or orders.
+test('no example the model reads names a showcase item or order', () => {
+  const visible = [
+    ASSISTANT_V2_SYSTEM,
+    JSON.stringify(AI_ASSISTANT_V2_UI_TOOLS.map((tool) => ({ name: tool.name, description: tool.description, input: tool.inputSchema }))),
+    JSON.stringify([...AI_READ_TOOLS, ...AI_ASSISTANT_V2_TOOLS].map((tool) => ({ name: tool.name, description: tool.description, input: tool.schema }))),
+  ]
+  for (const text of visible) assert.doesNotMatch(text, /LDM-\d|LOCAL-DEMO|PO-020\b/)
 })
 
 // A live re-check on 2026-11-05: "What approvals are pending?" lost both

@@ -10,13 +10,13 @@ import { aiAnswerAssistantActionClaims, aiAnswerRecordStates } from './ai-answer
 import { AI_V2_HAN, aiV2CodeLabels, aiV2DisplayStrings, aiV2Formats, aiV2TextTidier, aiV2UserTypedDate } from './ai-assistant-v2-display.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
 import { AssistantModelError } from './ai-assistant-v2-model/model-error.mjs'
-import { aiModelFirstHidden, aiModelFirstProgressSources, aiModelFirstTurns, presentAiModelFirstAnswer } from './ai-model-first.mjs'
+import { assistantV2EarlierTurns, assistantV2Hidden, assistantV2ProgressSources, presentAssistantV2Answer } from './ai-assistant-v2-answer.mjs'
 import { anthropicMessagesUsage } from './ai-runtime-provider-specific-adapters-v2.mjs'
 import { aiCallCostMicros, aiUsagePrices, recordAiProviderCall } from './ai-usage-meter.mjs'
 import { aiUiSourceHandles, aiUiTableColumns } from './ai-assistant-v2-ui-tools.mjs'
 
 // The assistant v2 loop (docs/ai-assistant-v2-design.md §3.3, §3.6, §3.7,
-// §3.9, §3.11), adapted from the model-first loop (ai-model-first.mjs). Behind
+// §3.9, §3.11), adapted from the earlier model-first loop. Behind
 // FLOWCHAIN_AI_ASSISTANT_MODE=assistant_v2; the gateway calls it only when v2
 // is on for the actor, after the length check, the injection guard, the rate
 // limit and the cost reservation.
@@ -147,9 +147,9 @@ export const ASSISTANT_V2_SYSTEM = [
   '- The tools return only what this user may read. If a record or a field is not readable or not recorded, say so plainly; never guess it. A cost or rate the workspace does not record (a holding rate, a cost per order) is no reason to stop: see the cost rule below.',
   '- Every number, amount, date, record number and name you write must come from a tool result of this conversation or from what the user wrote. Write each as the app shows it: where a result gives a display string beside a value (a key ending in Text, such as dueDateText "Nov 4, 2026", amountText "$2,500.00" or remainingText "7,000 pcs"), copy that string as it is, in any answer language: a Chinese answer writes dates as "Nov 4, 2026" too, never 2026年11月4日. Write a quantity with its unit as the display string words it ("300 boxes", 300 箱; "50 pcs"). You may round to fewer digits and say so (about $17, 约 $17 for $17.05), but never give a rounded figure digits it does not have ($17.00 for $17.05). For anything you derive (a sum, a difference, a percentage, days between two dates) call calculate first and use its result. Do not count rows yourself: use the totals and counts the tools return, or name the rows you count on the same line as the count.',
   '- Do not invent future figures. About the future, say what the records show: promised dates, open orders, available to promise. To size an order for a period ("what we need for the next 2 weeks", 下个月的量), call suggest_purchase_lines with coverDays: it sizes each item from its recorded average daily demand over the last 90 days, its lead time and safety stock. Say that basis in a few words, and for an item whose cover basis is not recorded_demand, say why its quantity is the reorder point one.',
-  '- What to order and cost trade-offs ("what should I order this week?", "with a $5,000 budget?", "is 50 LDM-002 a good idea?", "order 100 instead of 50?", 订多少最划算): think as a supply chain planner, in total cost, not only the price. What to order now across items, under a budget, a what-if or a proposed order: optimize_order_plan, an exact solver; lead with its decision, then what binds (budget, minimum orders) and how it compares with ordering nothing, the reorder list and the user\'s plan. One item\'s order size: order_quantity_costs (orders a year, holding cost, the cost per order above which the larger pays off, the EOQ). What stock is worth and costs to hold: inventory_value. Name the assumptions these tools return once, in a few words (25% a year holding when the user gave none), and say the user can give their own. Never stop at "the records show no cost benefit".',
+  '- What to order and cost trade-offs ("what should I order this week?", "with a $5,000 budget?", "is 50 of SKU-123 a good idea?", "order 100 instead of 50?", 订多少最划算): think as a supply chain planner, in total cost, not only the price. What to order now across items, under a budget, a what-if or a proposed order: optimize_order_plan, an exact solver; lead with its decision, then what binds (budget, minimum orders) and how it compares with ordering nothing, the reorder list and the user\'s plan. One item\'s order size: order_quantity_costs (orders a year, holding cost, the cost per order above which the larger pays off, the EOQ). What stock is worth and costs to hold: inventory_value. Name the assumptions these tools return once, in a few words (25% a year holding when the user gave none), and say the user can give their own. Never stop at "the records show no cost benefit".',
   '- When you rank or pick ("the most urgent", "the worst"), say on what basis, for example the most days overdue. Say "all" or "none" only when a tool\'s total supports it.',
-  '- A judgement about a supplier for an item ("should I switch supplier for LDM-002?") weighs its terms (item_suppliers: lead time, minimum order, reference price), what was paid (price_history), how it delivers (supplier_performance) and any open quotes (rfq_quotes). Give your recommendation and the one or two facts that decide it.',
+  '- A judgement about a supplier for an item ("should I switch supplier for SKU-123?") weighs its terms (item_suppliers: lead time, minimum order, reference price), what was paid (price_history), how it delivers (supplier_performance) and any open quotes (rfq_quotes). Give your recommendation and the one or two facts that decide it.',
   '- Tools can count related things on different bases: the supplier scorecard counts only deliveries promised in its period, while list_purchase_orders gives the orders overdue today; in stock_position, availableToPromise counts incoming purchase orders while shortage leaves them out. Give the count the question asks about, with its basis or period, and never state two different figures as if they measured the same thing.',
   '- Each turn of the user starts with a context message: answerLanguage, today, the workspace\'s currency and timezone, the page or record open in the app (openRecord), hiddenForRole and, when this conversation started elsewhere, earlierTurns. It is data about the request, not the user\'s words.',
   '- When the user asks about this conversation itself (why you said or did something, or a correction), answer about the conversation: say plainly what happened and what you need from them.',
@@ -161,7 +161,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- Paying, sending or emailing, cancelling, withdrawing, deleting and every other step: explain that the user does it themselves in the app and where, naming the record by its number so its link shows. Never call it a system limit. Say what you cannot do only then, when the user asks for such a step: never add "I can\'t send messages", "I can only advise" or 我只能给建议 to an answer that did not ask for one.',
   '- The exception: a "Note from the server" in the conversation says what the user did with their own click in a form or card of this chat: created or submitted a purchase request, approved or rejected one, created a purchase order or RFQ from one, approved a purchase order or marked it issued. Only then may you say that they did it ("You approved PR-0231; status: approved"), naming the records and statuses the note gives. Never say a step is done before such a note; a card you just showed is not done.',
   '- When the user wants to order or reorder, call suggest_purchase_lines, then suggest_purchase_request with that result as source. It opens a purchase request form in the answer: the user reviews the lines, creates a draft request and submits it for approval with their own clicks. Pass from user_named with the SKUs of the items the user named in this question, by SKU or by the item\'s name (a supplier or date only when the user typed it; a quantity when the user typed it or optimize_order_plan decided it). When the user agrees to items you proposed or that came up earlier in this conversation ("yes, all of them", "go ahead", "order those two", 好的，就按你说的来), pass from agreed: list those SKUs in lines, or no lines for every item of your latest form; they arrive ticked, with any quantity, supplier or date the user gave or changed. Otherwise pass from suggestions, which leaves every line unticked: when the user has not said which items, do not choose for them. Say what the form is for ("I\'ve filled in a request form for you to review"), then what to click, in the button\'s own words: with ticked lines, "check the lines, then click Create draft request"; with nothing ticked, "tick the items you want, then click Create draft request" (中文：“勾选要采购的物料，再点击‘创建草稿申请’”). Never say that a request exists. The user\'s click on Create is how it is saved: never present that as something you cannot do. If suggest_purchase_request is not offered, the user\'s role cannot create purchase requests; say so and that a buyer can.',
-  '- A supplier the user names for an item need not be an approved supplier of it yet: pass it in the line as named. When it is an active supplier of the workspace and the user may add approved suppliers, the form puts it on the line, and when the user clicks Create the form adds it as an approved supplier of the item, then creates the request. Say that in plain words ("Northstar Electronics isn\'t an approved supplier for LDM-001 yet; clicking Create adds it"), never that it was added. Pass a price, currency or lead time for it only when the user typed them; otherwise say that they can enter the price in the form. If the tool says the user\'s role cannot add it, say that a colleague with master data access can add the supplier to the item.',
+  '- A supplier the user names for an item need not be an approved supplier of it yet: pass it in the line as named. When it is an active supplier of the workspace and the user may add approved suppliers, the form puts it on the line, and when the user clicks Create the form adds it as an approved supplier of the item, then creates the request. Say that in plain words ("Northwind Supply isn\'t an approved supplier for SKU-123 yet; clicking Create adds it"), never that it was added. Pass a price, currency or lead time for it only when the user typed them; otherwise say that they can enter the price in the form. If the tool says the user\'s role cannot add it, say that a colleague with master data access can add the supplier to the item.',
   '- hiddenForRole, when given, is what this user\'s role cannot see: whole sources, and the amounts on sources it can otherwise see. When the question needs any of it, say so plainly ("Your role can\'t see amounts on purchase orders"; 你的角色无法查看采购订单金额) and answer whatever else it asks. Never call such data missing, blank or not found, never say whether a record of that kind exists, and do not look for it with other tools. When the question is only about something hidden, answer exactly: "Your role can\'t see {what}, so I can\'t answer this. Someone whose role can see {what} can help." (你的角色无法查看{what}，因此无法回答。可以请能查看{what}的同事帮忙。), with {what} the hidden source in words.',
   '- A record of a kind in hiddenForRole always gets that hidden reply, whether or not the tools find it; never the not-found reply below.',
   '- A record number the tools cannot find, of a kind the role can see: answer exactly, with {number} as the user wrote it: "I couldn\'t find {number} in the records you can see. Check the number, or tell me the supplier or item." (在你可查看的记录中找不到 {number}。请核对编号，或告诉我供应商或物料。). Add no reason or guess.',
@@ -183,11 +183,11 @@ export const ASSISTANT_V2_SYSTEM = [
   '- A table and a chart of the same rows say the same thing: show one of them. When a table, cards or a form show the rows, do not repeat them in the text or describe the display ("the table lists all 15", "I\'ve listed the six most overdue as buttons"); say what matters about them. The app places tables, charts and forms itself: never say where one is ("above", "below", "the table above", 上表, 下表, 下面列出).',
   '- Write each sentence once: after a table or chart, go on with what the user needs, never repeat the answer you wrote before it.',
   '- The user sees every word you write, text before a tool call included. Do not narrate what you are about to look up, fill in or show ("Let me check", "I\'ll fill in the form"); write text before a tool call only when it is part of the answer, and always in answerLanguage.',
-  '- Every answer has at least one sentence of text that answers the question ("8 orders are overdue; PO-020 is the oldest, 15 days late."); a display never stands alone.',
-  '- Name the records you rely on by their numbers as the tools give them, whole (LOCAL-DEMO-PO-014, never PO-014); the app turns them into links. Do not add codes the user did not ask for, such as a supplier\'s code after its name.',
+  '- Every answer has at least one sentence of text that answers the question ("8 orders are overdue; PO-202610-0007 is the oldest, 15 days late."); a display never stands alone.',
+  '- Name the records you rely on by their numbers as the tools give them, whole (PO-202611-0014, never PO-0014 or 0014); the app turns them into links. Do not add codes the user did not ask for, such as a supplier\'s code after its name.',
   '- Do not talk about the answer itself or the limits of what you read ("the result also covers 3 more SKUs that I can\'t show here", "I can\'t tell you its name from this result"). If something the user asked about is not in the records you can read, say so once, plainly. Ask the user at most one question; with offer_choices the buttons ask it, so do not ask it again in the text, and never ask again for what the user already told you. With offer_choices, write at most one short sentence of what you found ("8 orders are overdue."), with no question and no "pick one" (请选一个, 请点选).',
   '- Headings and labels in sentence case ("Overdue purchase orders", not "Overdue Purchase Orders"). Use the app\'s terms: Purchase order, Purchase request, Receipt, Item, RFQ, Supplier invoice, Customer invoice, Sales order, Shipment; in Chinese 采购订单、采购申请、收货单、物料、询价单、采购发票、销售发票、销售订单、发货单, open documents 未结 (未结采购订单), the promised date 承诺交期, a lead time in days 提前期, the minimum order quantity 最小起订量, items and suppliers as records 基础资料, and the user 你. In Chinese use full-width punctuation (，。：；！？（）), also next to English names and numbers, and a space between Chinese and a number (涉及 5 家，逾期 4 天).',
-  '- When the answer has a clear next step, end it with suggest_followups, called once: one to three short next steps in answerLanguage, worded as the user would ask or tell you, about their own records ("Draft a request for LDM-002", "Show Acme\'s late orders"); an action before a question about a concept. In a new or nearly empty workspace the next steps are setup steps. Leave the chips out when the answer itself asks the user something (offer the records to pick from with offer_choices instead), when it only confirms or declines, and when nothing useful follows.',
+  '- When the answer has a clear next step, end it with suggest_followups, called once: one to three short next steps in answerLanguage, worded as the user would ask or tell you, about their own records ("Draft a request for SKU-123", "Show Acme\'s late orders"); an action before a question about a concept. In a new or nearly empty workspace the next steps are setup steps. Leave the chips out when the answer itself asks the user something (offer the records to pick from with offer_choices instead), when it only confirms or declines, and when nothing useful follows.',
   '- Never mention tools, displays, sources, ids, errors or retries to the user. If a display did not work, give the answer in prose as if nothing had happened.',
 ].join('\n')
 
@@ -374,8 +374,6 @@ function toolContent(outcome, maxChars) {
   return content.length > maxChars ? JSON.stringify({ error: 'result_too_large', details: ['Ask for fewer rows with limit, or narrow the filter.'] }) : content
 }
 
-const firstSentence = (value) => text(value).split(/(?<=[.!?。！？])\s*/u)[0].slice(0, 80)
-
 // One answer. `ctx` is the request's context (identity, env, the database or
 // the test stand-ins); `body` the client's { threadId, message, activeContext,
 // answerLanguage }. `formNotes` are what the user's clicks in this thread's
@@ -394,7 +392,7 @@ export function latestOrderPlan(results) {
 // Returns { body, audit }: the folded AiResponseV2 with its
 // parts, and the codes-only audit block. A provider failure before any text
 // or part was shown throws the AssistantModelError, with `audit` on it, so the
-// gateway can answer with the rules instead; `emitted` on it says whether
+// gateway can answer with the unavailable notice; `emitted` on it says whether
 // status events (start, tool, progress) already went out. Any other failure
 // is rethrown unmetered. Either way the thread is left as it was.
 export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = null, modelClient, uiTools = [], thread = { messages: [], results: new Map() }, formNotes = [], limits: overrides = {} } = {}) {
@@ -426,7 +424,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
   signal?.addEventListener?.('abort', onAbort, { once: true })
   if (aborted) controller.abort()
   const timer = setTimeout(() => { timedOut = true; controller.abort() }, limits.timeoutMs)
-  // What went out so far, for the rules fallback: content (text, parts) or
+  // What went out so far, for the unavailable notice: content (text, parts) or
   // only status lines. A listener that fails never stops the answer.
   let sentStatus = false
   let sentContent = false
@@ -476,8 +474,8 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     send({ type: 'start', threadId, messageId, model, language })
     const context = await loadAiSkillContext(ctx)
     const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
-    const hidden = aiModelFirstHidden(facts)
-    const restartTurns = earlier.length ? [] : aiModelFirstTurns(body.conversationContext)
+    const hidden = assistantV2Hidden(facts)
+    const restartTurns = earlier.length ? [] : assistantV2EarlierTurns(body.conversationContext)
 
     // Records the user cannot read anywhere in this workspace: shaped like its
     // record numbers (a prefix such as PO- or LDM- that the facts or results
@@ -553,7 +551,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       { role: 'user', content: [{ type: 'text', text: question }] },
     )
 
-    const dataTools = aiReadToolDefinitions(facts, { format: 'anthropic', context, assistantV2: true })
+    const dataTools = aiReadToolDefinitions(facts, { format: 'anthropic', context })
     const dataNames = new Set(dataTools.map((tool) => tool.name))
     // A role that cannot create purchase requests is not offered the form at
     // all (design §4.1 item 5), as the prompt tells the model.
@@ -1015,12 +1013,12 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
             for (const id of answerResults.keys()) thread.results.delete(id)
           }
           // A failure of the loop itself is no provider call: not metered,
-          // no rules fallback.
+          // and no notice in its place.
           if (!(error instanceof AssistantModelError)) { rollback(); throw error }
           await recordAiProviderCall({ ok: false, ...(error.budgetExceeded ? { budgetExceeded: true } : {}), usage: null })
           stats.providerFailed = error.budgetExceeded ? 'budget' : 'failed'
           // Nothing shown yet (held text included): the gateway answers with
-          // the rules instead.
+          // the unavailable notice.
           if (!sentContent) {
             rollback()
             error.audit = auditBlock({ stats: { ...stats, stopReason: 'provider_error' }, model, aborted: false, started })
@@ -1098,9 +1096,9 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
 
       // The round's data calls run together; an error goes back to the model
       // as the call's result, so it can correct the call.
-      if (pending.length) send({ type: 'progress', step: 'reading', sources: aiModelFirstProgressSources(pending.map((call) => call.name)) })
+      if (pending.length) send({ type: 'progress', step: 'reading', sources: assistantV2ProgressSources(pending.map((call) => call.name)) })
       const ran = await Promise.all(pending.map(async (call) => [call, call.input
-        ? await runAiReadTool(call.name, call.input, { facts, context, assistantV2: true })
+        ? await runAiReadTool(call.name, call.input, { facts, context })
         : { ok: false, error: 'invalid_arguments', details: ['arguments must be a JSON object'] }]))
       for (const [call, outcome] of ran) {
         outcomes.set(call.id, outcome)
@@ -1180,20 +1178,16 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     const folded = fold(summary)
     const named = refs.filter((ref) => [ref.label, ref.id].some((value) => text(value) && folded.includes(fold(value))))
     const cited = [...shownRefs, ...named].filter((ref, index, list) => list.findIndex((row) => row.type === ref.type && row.id === ref.id) === index).slice(0, limits.records)
-    const response = presentAiModelFirstAnswer({
-      answer: { title: firstSentence(summary), answer: summary, records: cited.map((ref) => ({ type: ref.type, id: ref.id })) },
+    const response = presentAssistantV2Answer({
+      summary,
+      records: cited.map((ref) => ({ type: ref.type, id: ref.id })),
       refs: [...refs, ...shownRefs.filter((ref) => !refs.some((row) => row.type === ref.type && row.id === ref.id))],
-      stats: { calls: stats.calls }, facts, language, query: question, results,
+      calls: stats.calls, facts, language, query: question, results,
     })
-    const label = aiSkillText('answer.source_assistant_v2', language)
     const answer = {
       ...response,
       responseId: `ai-assistant-v2-${messageId}`,
-      intent: 'assistant_v2',
-      answerSource: 'assistant_v2',
-      answerSourceLabel: label,
-      runtimeModeLabel: label,
-      skill: { ...response.skill, id: 'assistant_v2', version: ASSISTANT_V2_VERSION },
+      skill: { ...response.skill, version: ASSISTANT_V2_VERSION },
       threadId,
       messageId,
       // The follow-up chips come last, after every other part and the text.

@@ -41,7 +41,6 @@ test('action draft review shell renders business payload, validation, audit, and
 
 test('structured AI drafts use formal pages while text drafts retain the editor', () => {
   const app = readSource('src', 'app', 'FlowChainApp.tsx')
-  const ai = readSource('src', 'components', 'ai', 'AiResponseV2Renderer.tsx')
   const inventory = readSource('src', 'modules', 'inventory', 'Page.tsx')
 
   assert.match(app, /\/api\/action-drafts\/preview/)
@@ -59,8 +58,9 @@ test('structured AI drafts use formal pages while text drafts retain the editor'
   assert.match(handoff, /intent: type === "rfq_draft" \? "rfq" : undefined/)
   assert.doesNotMatch(handoff, /procurement:rfq/)
   assert.match(app, /createsBusinessDocument/)
-  assert.match(ai, /const target = structuredDraftTarget\(action\.card\.draftType \|\| "", action\.card\.payload, "ai_assistant"\)/)
-  assert.match(ai, /onClick=\{\(\) => onReviewActionDraft\(request\)\}/)
+  // The assistant's in-chat request form opens the full form through the same helper.
+  const form = readSource('src', 'modules', 'ai-assistant', 'v2', 'parts', 'PurchaseRequestFormPart.tsx')
+  assert.match(form, /structuredDraftTarget\("purchase_request_draft", \{ itemIdOrSku: handoffLine\.row\.item\.sku/)
   assert.match(inventory, /<EntityLink kind="item"/)
   assert.doesNotMatch(inventory, /\/api\/master-data\/items\/.*\/suppliers/)
   assert.doesNotMatch(inventory, /维护供应商关系/)

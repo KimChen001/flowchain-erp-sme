@@ -94,7 +94,7 @@ const listPurchaseOrders = defineAiTool({
 const getPurchaseOrder = defineAiTool({
   name: 'get_purchase_order',
   description: 'One purchase order by its number: status, supplier, each open line with ordered, received and remaining quantity and its current and original promised dates, and the receipts and invoice differences recorded against it.',
-  parameters: { order: { type: 'string', description: 'The order number, for example PO-020.' } },
+  parameters: { order: { type: 'string', description: 'The order number, for example PO-202611-0014.' } },
   required: ['order'],
   available: (facts) => Boolean(facts.purchaseOrders),
   run(args, { facts }) {
@@ -480,7 +480,7 @@ const calculate = defineAiTool({
       items: {
         type: 'object',
         properties: {
-          label: { type: 'string', maxLength: 60, description: 'What the figure is, such as "LDM-002 cost".' },
+          label: { type: 'string', maxLength: 60, description: 'What the figure is, such as "SKU-123 cost".' },
           operation: { type: 'string', enum: OPERATIONS },
           values: { type: 'array', items: { type: 'number' }, maxItems: 50 },
           dates: { type: 'array', items: { type: 'string', pattern: ISO_DAY }, maxItems: 2 },

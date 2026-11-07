@@ -10,28 +10,14 @@ const purchaseRequestsSource = readFileSync(new URL('../../src/modules/purchase-
 const actionDraftSource = readFileSync(new URL('../../src/modules/action-drafts/ActionDraftReviewShell.tsx', import.meta.url), 'utf8')
 const uiSource = readFileSync(new URL('../../src/components/ui/index.tsx', import.meta.url), 'utf8')
 
-test('AI assistant UI has duplicate request guard, abort, and timeout fallback', () => {
+test('AI assistant UI has a duplicate request guard, Stop, and a retry of the same question', () => {
   assert.match(aiPanelSource, /requestInFlightRef/)
   assert.match(aiPanelSource, /AbortController/)
-  assert.match(aiPanelSource, /setTimeout\(\(\) =>/)
-  assert.match(aiPanelSource, /displaySafeAssistantRecoveryMessage/)
-  // The recovery message is one bilingual line saying why the request failed.
-  assert.match(aiPanelSource, /工作区数据暂时加载失败，未修改任何内容。/)
-  assert.match(aiPanelSource, /The assistant could not read your workspace data just now\. Nothing was changed\./)
-  assert.doesNotMatch(aiPanelSource, /Review boundary|Where to look|人工复核边界/)
-  assert.match(aiPanelSource, /error\.status === 401\) return \{ reason: "signed_out" \}/)
-  assert.match(aiPanelSource, /error\.status === 400\) return \{ reason: "invalid_question", serverMessage/)
-  assert.match(aiPanelSource, /if \(timedOut\) return \{ reason: "timeout" \}/)
-  assert.match(aiPanelSource, /displaySafeAssistantRecoveryMessage\(message, language, aiRecoveryReason\(error/)
-  assert.match(aiPanelSource, /retryPrompt/)
-  assert.match(aiPanelSource, /retryPrompt: message/)
-  // A retry asks the same question, for the same skill.
-  assert.match(aiPanelSource, /askAi\(message\.retryPrompt \|\| "", message\.retrySkillHint\)/)
-  assert.match(aiPanelSource, /retrySkillHint: skillHint/)
-  assert.match(aiPanelSource, /"重试" : "Retry"/)
+  // Stop ends the answer and says so; a stall or failure is worded by its code under the answer.
+  assert.match(aiPanelSource, /finishAssistantV2Message\(answer, abortReasonRef\.current === "stopped" \? \{ notice: "cancelled" \} : \{ error: assistantV2Failure\(error\) \}\)/)
+  // A retry asks the same question again.
+  assert.match(aiPanelSource, /onRetry=\{message\.question \? \(\) => askAi\(message\.question \|\| ""\) : undefined\}/)
   assert.match(aiPanelSource, /disabled=\{asking\}/)
-  assert.match(aiPanelSource, /Check npm run api, \/api\/health, SCM_API_PROXY_TARGET, stale node on 8787/)
-  assert.match(aiPanelSource, /UTF-8 byte bodies for PowerShell Chinese prompt tests/)
 })
 
 test('global focus recovery preserves canonical return context without redundant focus chrome', () => {

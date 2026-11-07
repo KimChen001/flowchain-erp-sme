@@ -2,32 +2,28 @@ import { validateAiToolArgs } from './ai-read-tool-contract.mjs'
 import { AI_READ_TOOLS } from './ai-read-tools.mjs'
 import { AI_ASSISTANT_V2_TOOLS } from './ai-assistant-v2-data-tools.mjs'
 
-// The tools the model-first loop offers (docs/ai-model-first-design.md §3–§4):
+// The data tools the assistant offers (docs/ai-assistant-v2-design.md §3.6):
 // only those the asking user's facts can serve, described in the provider's
 // format, and run through one door that checks the arguments and the user's
-// access again. The loop (S2) hands every result back to the model and keeps
-// the refs for the grounding check and the record links. (The older
-// ai-tool-registry.mjs serves the legacy /api/ai route and is unrelated.)
+// access again. The loop hands every result back to the model and keeps the
+// refs for the grounding check and the record links.
 //
 // `context` is the request's loadAiSkillContext result (the actor, the
 // database and the route context). Without it, only the tools over the facts
 // are offered; the tools that read services need it.
 //
-// One registry serves two loops. The model-first loop is offered every tool
-// not marked assistantV2Only, as before. Assistant v2 (assistantV2: true,
-// docs/ai-assistant-v2-design.md §3.6) is also offered those, and a v2 tool
-// with the name of a model-first tool takes its place wherever the facts
-// serve it (list_purchase_requests in every open status). On facts read
-// without the open requests the model-first tool stays, so v2 is never left
-// without one.
+// The read tools (ai-read-tools.mjs) and the assistant's own tools
+// (ai-assistant-v2-data-tools.mjs) make one registry. An assistant tool with
+// the name of a read tool takes its place wherever the facts serve it
+// (list_purchase_requests in every open status); on facts read without the
+// open requests the read tool stays, so the assistant is never left without
+// one.
 const REGISTRY = Object.freeze([...AI_READ_TOOLS, ...AI_ASSISTANT_V2_TOOLS])
-const MODEL_FIRST_TOOLS = REGISTRY.filter((tool) => !tool.assistantV2Only)
 
-function toolsFor(facts, context, assistantV2) {
+function toolsFor(facts, context) {
   if (!facts) return []
-  if (!assistantV2) return MODEL_FIRST_TOOLS.filter((tool) => tool.available(facts, context))
-  const v2 = new Set(AI_ASSISTANT_V2_TOOLS.filter((tool) => tool.available(facts, context)).map((tool) => tool.name))
-  return REGISTRY.filter((tool) => (tool.assistantV2Only ? v2.has(tool.name) : !v2.has(tool.name) && tool.available(facts, context)))
+  const own = new Set(AI_ASSISTANT_V2_TOOLS.filter((tool) => tool.available(facts, context)).map((tool) => tool.name))
+  return REGISTRY.filter((tool) => (tool.assistantV2Only ? own.has(tool.name) : !own.has(tool.name) && tool.available(facts, context)))
 }
 
 // The columns of every data tool's result, for the UI tools that render a
@@ -75,15 +71,15 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   },
 })
 
-export function aiReadToolsFor(facts, context = null, { assistantV2 = false } = {}) {
-  return toolsFor(facts, context, assistantV2)
+export function aiReadToolsFor(facts, context = null) {
+  return toolsFor(facts, context)
 }
 
 // The tool definitions for a provider: Anthropic's Messages API
 // ({ name, description, input_schema }) or chat completions
 // ({ type: 'function', function: { name, description, parameters } }).
-export function aiReadToolDefinitions(facts, { format = 'anthropic', context = null, assistantV2 = false } = {}) {
-  return aiReadToolsFor(facts, context, { assistantV2 }).map((tool) => (format === 'chat_completions'
+export function aiReadToolDefinitions(facts, { format = 'anthropic', context = null } = {}) {
+  return aiReadToolsFor(facts, context).map((tool) => (format === 'chat_completions'
     ? { type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.schema } }
     : { name: tool.name, description: tool.description, input_schema: tool.schema }))
 }
@@ -91,9 +87,9 @@ export function aiReadToolDefinitions(facts, { format = 'anthropic', context = n
 // Runs one tool call as the asking user. Returns { ok: true, result } or
 // { ok: false, error, details? }. An error is handed back to the model as the
 // tool's result, so it can correct the call or say what it could not read.
-export async function runAiReadTool(name, args, { facts, context = null, assistantV2 = false } = {}) {
-  const tool = toolsFor(facts, context, assistantV2).find((entry) => entry.name === name)
-  if (!tool) return { ok: false, error: (assistantV2 ? REGISTRY : MODEL_FIRST_TOOLS).some((entry) => entry.name === name) ? 'not_allowed' : 'unknown_tool' }
+export async function runAiReadTool(name, args, { facts, context = null } = {}) {
+  const tool = toolsFor(facts, context).find((entry) => entry.name === name)
+  if (!tool) return { ok: false, error: REGISTRY.some((entry) => entry.name === name) ? 'not_allowed' : 'unknown_tool' }
   const checked = validateAiToolArgs(tool.schema, args)
   if (!checked.ok) return { ok: false, error: 'invalid_arguments', details: checked.errors }
   try {

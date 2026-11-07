@@ -142,12 +142,6 @@ export function finishAssistantV2Message(message: AssistantV2Message, end: { not
   };
 }
 
-// A rules answer (the model was off or failed before any text): it has no
-// parts and is drawn as the classic answer card.
-export function rulesAnswerBody(message: AssistantV2Message) {
-  return message.done && message.body && !message.parts.length && !Array.isArray(message.body.parts) ? message.body : null;
-}
-
 // The parts as AnswerParts draws them.
 export function answerPartsOf(message: AssistantV2Message): AnswerPart[] {
   return chipsLast(textFirst(message.parts)).map((part) => part.kind === "text"

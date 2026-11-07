@@ -1,9 +1,21 @@
-import { aiModelFirstProviderFormat } from '../ai-model-first-provider.mjs'
+import { canCallConfiguredProvider, providerRuntimeConfig } from '../ai-runtime-provider-adapter-v2.mjs'
 import { createAnthropicSdkModelClient } from './anthropic-sdk.mjs'
 import { assertAssistantV2EndpointAllowed, createChatCompletionsModelClient } from './chat-completions.mjs'
 import { createScriptedModelClient, readScriptedTurns } from './scripted.mjs'
 
 export { AssistantModelError } from './model-error.mjs'
+
+// The provider kinds served through a chat completions endpoint.
+const CHAT_KINDS = new Set(['deepseek_chat', 'doubao_chat', 'qwen_chat', 'parley_chat', 'anthropic_chat'])
+
+// 'anthropic_messages', 'chat_completions', or null when the configured
+// provider cannot run the loop.
+export function assistantV2ProviderFormat(env = {}) {
+  if (!canCallConfiguredProvider(env)) return null
+  const { kind } = providerRuntimeConfig(env)
+  if (kind === 'anthropic_messages') return 'anthropic_messages'
+  return CHAT_KINDS.has(kind) ? 'chat_completions' : null
+}
 
 // The assistant v2 model seam (docs/ai-assistant-v2-design.md §3.4). Every
 // client has one method:
@@ -35,7 +47,7 @@ export { AssistantModelError } from './model-error.mjs'
 export function createAssistantV2ModelClient(env = {}, options = {}) {
   const scripted = String(env.FLOWCHAIN_AI_ASSISTANT_SCRIPTED ?? '').trim()
   if (scripted) return createScriptedModelClient(readScriptedTurns(scripted))
-  const format = aiModelFirstProviderFormat(env)
+  const format = assistantV2ProviderFormat(env)
   if (format === 'anthropic_messages') {
     assertAssistantV2EndpointAllowed(env)
     return createAnthropicSdkModelClient(env, options)

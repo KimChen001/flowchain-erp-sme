@@ -1,12 +1,16 @@
 import type { ReactNode } from "react";
-import { EvidenceLink, type Navigate } from "../../../../components/ai/AiResponseV2Renderer";
 import { A } from "../../../../components/ui";
+import { businessEntityRouteRegistry, type BusinessEntityType } from "../../../../components/business/businessEntityRoutes";
+import { isDocumentNumberType, useDocumentNumber } from "../../../../lib/documentNumbers";
+import { isUnavailableProductRoute } from "../../../../../shared/unavailable-product-routes.mjs";
 import { isTranslationKey, translate, useI18n, type TranslationKey } from "../../../../i18n/I18n";
 import { statusCodeLabel } from "../../../../i18n/statusLabels";
 import { formatCalendarDay, formatLocaleAmount } from "../../../../lib/format";
 import type { AnswerLanguage, PartRef, StatusTone, StatusValue, ValueUnit } from "./types";
 
-export type { Navigate };
+type NavigateOptions = { returnTo?: string; entityLabel?: string; source?: string; returnContext?: unknown; query?: Record<string, string> };
+type FocusTarget = { entityType: string; entityId: string; focusArea?: "exception" | "receiving" | "invoice" | "inventory" | "evidence" | "receiving-invoice-variance" };
+export type Navigate = (moduleId: string, focusTarget?: FocusTarget | null, options?: NavigateOptions) => void;
 
 // "lead_time_days" -> "Lead time days": a code with no label yet still reads.
 const humanize = (code: string) => {
@@ -89,9 +93,29 @@ export function toneStyle(tone: StatusTone) {
   return TONE_STYLE[tone];
 }
 
-// A record the server named, as the answer's record chip.
+function entityTypeOf(value = ""): BusinessEntityType | null {
+  const aliases: Record<string, BusinessEntityType> = { inventory_item: "item", sku: "item", po: "purchase_order", pr: "purchase_request", grn: "receiving_doc", invoice: "supplier_invoice" };
+  const candidate = aliases[value] || value;
+  return candidate in businessEntityRouteRegistry ? candidate as BusinessEntityType : null;
+}
+
+const chipClass = "inline-flex max-w-full items-center whitespace-nowrap rounded px-1 align-baseline text-[12.5px] font-semibold leading-5";
+// A tint, no border: a sentence full of record numbers stays calm.
+const CHIP_STYLE = { background: "#EFF4FF", color: A.blue };
+
+// A record the server named, as the answer's record chip: a button that opens
+// the record, or plain text when it has no page. A purchase request, RFQ or
+// purchase order labelled by its internal id is shown by its document number;
+// the id still opens it.
 export function RefChip({ value, onNavigate, children }: { value: PartRef; onNavigate?: Navigate; children?: ReactNode }) {
-  return <EvidenceLink item={{ id: `${value.type}:${value.id}`, label: value.label, entityLabel: value.label, entityType: value.type, entityId: value.id, moduleId: "", evidenceType: "record", summary: "" }} onNavigate={onNavigate}>{children}</EvidenceLink>;
+  const type = entityTypeOf(value.type);
+  const byId = !value.label || value.label === value.id;
+  const number = useDocumentNumber(type && isDocumentNumberType(type) && byId ? type : null, value.id);
+  const label = type && isDocumentNumberType(type) && byId && number && number !== value.id ? number : value.label || value.id;
+  const route = type ? businessEntityRouteRegistry[type] : null;
+  if (!route || !value.id || !onNavigate || isUnavailableProductRoute(route.listRouteId)) return <span className="font-medium" style={{ color: A.label }}>{children || label}</span>;
+  const focusArea = type === "purchase_order" ? "evidence" as const : undefined;
+  return <button type="button" data-testid="ai-record-chip" data-action-kind="view_evidence" data-business-id={value.id} className={`${chipClass} hover:underline`} style={CHIP_STYLE} onClick={() => onNavigate(route.listRouteId, { entityType: type as string, entityId: value.id, focusArea }, { returnTo: "ai", entityLabel: label, source: "ai" })}>{children || label}</button>;
 }
 
 export const isRef = (value: unknown): value is PartRef =>
