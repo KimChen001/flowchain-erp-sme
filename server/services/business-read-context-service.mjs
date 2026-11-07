@@ -1,4 +1,5 @@
 import { DEFAULT_TENANT_TIMEZONE } from '../domain/tenant-calendar-day.mjs'
+import { orderHasOpenDemand } from '../repositories/db-sales-order-read-repository.mjs'
 import { buildFirstRunChecklist, buildTodayWork, countDocumentsUpdatedToday } from '../domain/today-work.mjs'
 
 const clone = value => structuredClone(value)
@@ -36,6 +37,15 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
       // another unit because the item fell outside that list.
       const lineKeys = [...new Set(array(procurement.purchaseOrders).flatMap(po => array(po.lines).flatMap(line => [line.sku, line.itemId])).map(key => String(key ?? '').trim()).filter(Boolean))]
       const itemUnits = lineKeys.length ? await call(masterData, 'listRecordedItemUnits', [], { ...scope, keys: lineKeys }) : []
+      // Only the most recent sales orders are read. When every order that can
+      // still need stock is among them, the orders left out are history: the
+      // truncation stays reported, marked so stock views need not warn.
+      const salesTruncation = truncated.get('sales_orders')
+      if (salesTruncation && typeof repositories.salesOrders?.countOrdersWithOpenDemand === 'function') {
+        const openTotal = Number(await repositories.salesOrders.countOrdersWithOpenDemand(scope))
+        const openRead = array(salesOrders).filter(orderHasOpenDemand).length
+        if (Number.isFinite(openTotal) && openTotal <= openRead) salesTruncation.openDemandComplete = true
+      }
       const dataLimitations = []
       if (!repositories.procurementRuntime) dataLimitations.push('procurement_runtime_unavailable')
       if (!repositories.inventoryRuntime) dataLimitations.push('inventory_runtime_unavailable')

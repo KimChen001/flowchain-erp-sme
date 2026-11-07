@@ -3,11 +3,25 @@
 // an order due today must not turn overdue then.
 export const DEFAULT_TENANT_TIMEZONE = 'America/New_York'
 
+// One formatter per timezone: building an Intl.DateTimeFormat costs far more
+// than using one, and the reorder list asks for the day of every shipment line
+// (a year of public data made the list take seconds). An unknown timezone
+// throws here and is never cached.
+const dayFormatters = new Map()
+function dayFormatter(zone) {
+  let formatter = dayFormatters.get(zone)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' })
+    dayFormatters.set(zone, formatter)
+  }
+  return formatter
+}
+
 // The calendar day of an instant in a timezone, as YYYY-MM-DD. An unknown
 // timezone falls back to the product default, then to UTC.
 export function tenantCalendarDay(instant, timeZone = DEFAULT_TENANT_TIMEZONE) {
   const format = (zone) => {
-    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(instant).map((part) => [part.type, part.value]))
+    const parts = Object.fromEntries(dayFormatter(zone).formatToParts(instant).map((part) => [part.type, part.value]))
     return `${parts.year}-${parts.month}-${parts.day}`
   }
   try {

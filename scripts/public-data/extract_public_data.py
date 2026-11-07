@@ -47,7 +47,8 @@ M5_SHA256 = {
     "sell_prices.csv": "9da3ad1f8b8ccacdbdc70612191dd375ec24a4ac6625c24b75b3bc60b0bed2ef",
 }
 M5_STORE = "CA_1"
-M5_ITEMS_PER_DEPARTMENT = 30
+# 7 departments x 28 = 196 items: the app's business read context lists at most 200.
+M5_ITEMS_PER_DEPARTMENT = 28
 
 RULES = {
     "uci": [
