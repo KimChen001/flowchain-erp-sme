@@ -776,7 +776,7 @@ test('a data result the model reads names the columns show_table takes from it',
   const { client } = await ask([OVERDUE, [...say('PO-001 is 4 days overdue.'), end()]])
   const [result] = lastToolResults(client.requests[1])
   const read = JSON.parse(result.content)
-  assert.deepEqual(read.tableColumns.rows.slice(0, 5), ['order', 'supplier', 'status', 'due_date', 'days_overdue'])
+  assert.deepEqual(read.tableColumns.rows.slice(0, 7), ['order', 'supplier', 'status', 'skus', 'item_names', 'due_date', 'days_overdue'])
   assert.ok(read.source)
 })
 
@@ -1205,6 +1205,20 @@ test('lines read for an order with no form yet are named as not shown until the 
     [...say('A buyer can create the request.'), end()],
   ], { roleKey: 'read-only-viewer', question: 'Confirm: order 60 of LDM-002', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
   assert.ok(!viewer.client.requests.slice(1).some(notShown))
+})
+
+// 2026-11-07 (Haiku): a budget answer ended with the chips' call written out
+// as text, 「suggest_followups（{"questions":[…]}）」.
+test('a tool call written out as text is never shown', async () => {
+  const written = 'PO-001 is the most overdue order (4 days late).\n\nsuggest_followups({"questions":["Draft a follow-up to Acme","Show PO-001"]})'
+  const { events, body, audit } = await ask([OVERDUE, [...say(written.slice(0, 60), written.slice(60)), end()]], { uiTools: [showRecords, followups] })
+  const shown = events.filter((event) => event.type === 'text_delta').map((event) => event.text).join('')
+  assert.equal(shown.trim(), 'PO-001 is the most overdue order (4 days late).')
+  assert.doesNotMatch(body.conclusion.summary, /suggest_followups/)
+  assert.ok(audit.replaces.includes('tool_call_text'))
+  // A parenthesis in plain words is untouched.
+  const plain = await ask([OVERDUE, [...say('PO-001 is the most overdue order (4 days late).'), end()]], { uiTools: [showRecords, followups] })
+  assert.match(plain.body.conclusion.summary, /\(4 days late\)\./)
 })
 
 // 2026-11-07: a reorder answer ended at its opening line and the chips.

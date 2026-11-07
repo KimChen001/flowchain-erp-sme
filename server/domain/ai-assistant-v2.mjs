@@ -797,7 +797,13 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     const amountsHidden = Boolean(hidden?.amountsOn?.length)
     // The hard scans, conservative, on text not yet sent: wording that may
     // claim an action, an amount the role cannot see, a record of no result.
-    const unsafe = (value) => selfClaim(value) || youClaim(value) || PASSIVE_CLAIM.test(value.normalize('NFKC')) || aiAnswerAssistantActionClaims(value).length > 0
+    // A tool call written out as text (2026-11-07 on Haiku: a budget answer
+    // ended with suggest_followups（{"questions":[…]}）): the part is held
+    // where the call starts, and the call is left out when the part closes.
+    const callNames = [...dataNames, ...ui.keys()].sort((a, b) => b.length - a.length).map(escape).join('|') || '(?!)'
+    const CALL_TEXT_START = new RegExp(`(?<![\\w-])(?:${callNames})\\s*[(（]`)
+    const CALL_TEXT = new RegExp(`(?<![\\w-])(?:${callNames})\\s*[(（]\\s*(?:\\{[\\s\\S]*?\\}\\s*[)）]|[\\s\\S]*$)`, 'g')
+    const unsafe = (value) => CALL_TEXT_START.test(value) || selfClaim(value) || youClaim(value) || PASSIVE_CLAIM.test(value.normalize('NFKC')) || aiAnswerAssistantActionClaims(value).length > 0
       || (amountsHidden && MONEY_FIGURE.test(value.normalize('NFKC')))
       || aiGroundingRecordNumbers(value).some((token) => !isNamed(token) && foreign(token))
 
@@ -879,6 +885,11 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     // hard finding replaces it; otherwise its held rest is sent, then flags
     // and the records it names.
     const checkText = (part) => {
+      const withoutCalls = part.text.replace(CALL_TEXT, '')
+      if (withoutCalls !== part.text && part.sent <= withoutCalls.length) {
+        part.text = withoutCalls
+        stats.replaces.push('tool_call_text')
+      }
       if (!text(part.text)) { release(part, part.text.length); return }
       const check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today })
       // A sentence that claims an action no record backs is left out; the
