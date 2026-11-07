@@ -315,8 +315,12 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
     const total = spend.reduce((sum, row) => sum + Number(row._sum.amount || 0), 0)
     for (const supplier of plan.suppliers.filter((row) => row.tier)) {
       const share = total ? Math.round((100 * Number(spend.find((row) => row.supplierId === supplierId(supplier.key))?._sum.amount || 0)) / total) : 0
+      // The hero's rank among all products by sales value over the window.
       const hero = plan.scene.hero
-      const reason = `Tier ${supplier.tier}: sole source of our best-selling ${hero.name} and the other ${plan.items.filter((item) => item.supplierKey === supplier.key).length - 1} ${supplier.key}xxx lines; ${share}% of purchase spend over the last 12 months.`
+      const value = new Map()
+      for (const order of plan.salesOrders) for (const line of order.lines) value.set(line.itemKey, (value.get(line.itemKey) || 0) + line.quantity * line.unitPrice)
+      const rank = [...value.entries()].sort((a, b) => b[1] - a[1]).findIndex(([key]) => key === hero.sku) + 1
+      const reason = `Tier ${supplier.tier}: sole source of our ${hero.name} (No. ${rank} of ${plan.items.length} products by sales value over the last 12 months) and of ${plan.items.filter((item) => item.supplierKey === supplier.key).length - 1} other ${supplier.key}xxx lines; ${share}% of purchase spend over the last 12 months.`
       await prisma.$transaction(async (tx) => {
         const row = await tx.supplier.findUniqueOrThrow({ where: { id: supplierId(supplier.key) } })
         await applySupplierTierChange(tx, row, { tier: supplier.tier, reason, actorId: buyer.id, source: 'supplier-master', now: at(-40, '10:30') })
