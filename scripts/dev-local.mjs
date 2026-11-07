@@ -37,7 +37,10 @@ if (isMain) {
   const localEnvPath = resolve(root, '.env.local')
   if (existsSync(localEnvPath)) Object.assign(process.env, parseEnvFile(readFileSync(localEnvPath, 'utf8')))
   if (!process.env.DATABASE_URL) throw new Error('Missing .env.local. Copy .env.local.example and set a local DATABASE_URL.')
-  Object.assign(process.env, { FLOWCHAIN_DEV_LOCAL: 'true' })
+  // Assistant v2 is the only assistant since the rules engine went
+  // (2026-11-07): with a model in .local/ai-provider.env it answers, without
+  // one the panel says no model is set up. A mode set in .env.local stands.
+  Object.assign(process.env, { FLOWCHAIN_DEV_LOCAL: 'true', FLOWCHAIN_AI_ASSISTANT_MODE: process.env.FLOWCHAIN_AI_ASSISTANT_MODE || 'assistant_v2' })
   assertLocalDevelopment(process.env, 'dev:local')
   const { Client } = await import('pg')
   const connection = new Client({ connectionString: process.env.DATABASE_URL })
