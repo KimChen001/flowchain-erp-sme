@@ -43,9 +43,29 @@ function tenantWhere(filters = {}) {
   return { tenantId: requireTenantId(filters) }
 }
 
+// The most rows one list read returns. Reads without a limit get 200 (the
+// business read context); the master data pages ask for every record up to
+// this (master-data.routes.mjs), so their search reaches all of them.
+export const MASTER_DATA_LIST_LIMIT = 5000
+
 function safeLimit(value, fallback = 200) {
-  return Math.min(500, Math.max(1, Number(value || fallback)))
+  return Math.min(MASTER_DATA_LIST_LIMIT, Math.max(1, Number(value || fallback)))
 }
+
+// One record by a key a person types or a link carries: its id, then its SKU
+// or code, then its name, each ignoring case. A database query, so a record
+// is found however many the workspace has (it was the first 500 read). The
+// key is escaped: Prisma sends a case-insensitive equals as ILIKE.
+async function findByKey(delegate, where, key, fields, args = {}) {
+  const equals = { equals: escapeLikePattern(key), mode: 'insensitive' }
+  for (const field of fields) {
+    const record = await delegate.findFirst({ ...args, where: { ...where, [field]: equals }, orderBy: [{ id: 'asc' }] })
+    if (record) return record
+  }
+  return null
+}
+const ITEM_KEY_FIELDS = ['id', 'sku', 'name']
+const SUPPLIER_KEY_FIELDS = ['id', 'code', 'name']
 
 // The unit someone recorded for the item's stock; '' when none is. mapItem's
 // baseUnit falls back to 'pcs' for forms, which is not a recorded unit.
@@ -251,16 +271,6 @@ function mapCustomer(record = {}) {
   }
 }
 
-function itemMatches(record = {}, idOrSku = '') {
-  const key = lower(idOrSku)
-  return [record.id, record.sku, record.name].some((value) => lower(value) === key)
-}
-
-function supplierMatches(record = {}, idOrName = '') {
-  const key = lower(idOrName)
-  return [record.id, record.code, record.name].some((value) => lower(value) === key)
-}
-
 export function createDbMasterDataRepository({ env = process.env, prisma } = {}) {
   // A saved supplier, read again with the people behind its tier and owner.
   const withPeople = async (saved) => {
@@ -400,11 +410,7 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const client = await resolvePrisma({ env, prisma })
       const key = text(decodeURIComponent(String(idOrSku || '')))
       if (!key) return null
-      const records = await client.item.findMany({
-        where: tenantWhere(options),
-        take: safeLimit(options.limit, 500),
-      })
-      const record = records.find((item) => itemMatches(item, key))
+      const record = await findByKey(client.item, tenantWhere(options), key, ITEM_KEY_FIELDS)
       return record ? mapItem(record) : null
     },
     listSuppliers: async (filters = {}) => {
@@ -420,31 +426,36 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const client = await resolvePrisma({ env, prisma })
       if (!client.runtimeRecord?.findMany) return []
       const query = lower(filters.query)
-      const records = await client.runtimeRecord.findMany({
+      const filtered = Boolean(query || text(filters.status))
+      // A search or status filter looks at every customer, then keeps the limit;
+      // without one, the first `limit` by code are read and a cut is reported.
+      const limit = safeLimit(filters.limit)
+      const records = await findManyWithinLimit(client.runtimeRecord, {
         where: { ...tenantWhere(filters), namespace: 'master-data.customers' },
         orderBy: [{ recordKey: 'asc' }],
-        take: safeLimit(filters.limit),
-      })
+      }, { limit: filtered ? MASTER_DATA_LIST_LIMIT : limit, subject: 'customers', onTruncated: filters.onTruncated })
       return records.filter((record) => record.namespace === undefined || record.namespace === CUSTOMER_NAMESPACE).map(mapCustomer).filter((customer) =>
         (!query || [customer.id, customer.code, customer.name].some(value => lower(value).includes(query)))
         && (!text(filters.status) || customer.status === text(filters.status)),
-      )
+      ).slice(0, limit)
     },
     getCustomer: async (idOrCode = '', options = {}) => {
-      const customers = await createDbMasterDataRepository({ env, prisma }).listCustomers({ ...options, limit: 500 })
-      const key = lower(decodeURIComponent(String(idOrCode || '')))
+      const client = await resolvePrisma({ env, prisma })
+      const raw = text(decodeURIComponent(String(idOrCode || '')))
+      if (!raw || !client.runtimeRecord?.findMany) return null
+      // By id or code in the database; a name (inside the record) by reading
+      // every customer.
+      const record = await findByKey(client.runtimeRecord, { ...tenantWhere(options), namespace: CUSTOMER_NAMESPACE }, raw, ['id', 'recordKey'])
+      if (record) return mapCustomer(record)
+      const key = lower(raw)
+      const customers = await createDbMasterDataRepository({ env, prisma }).listCustomers({ ...options, limit: MASTER_DATA_LIST_LIMIT })
       return customers.find(customer => [customer.id, customer.code, customer.name].some(value => lower(value) === key)) || null
     },
     getSupplier: async (idOrName = '', options = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const key = text(decodeURIComponent(String(idOrName || '')))
       if (!key) return null
-      const records = await client.supplier.findMany({
-        where: tenantWhere(options),
-        include: SUPPLIER_PEOPLE,
-        take: safeLimit(options.limit, 500),
-      })
-      const record = records.find((supplier) => supplierMatches(supplier, key))
+      const record = await findByKey(client.supplier, tenantWhere(options), key, SUPPLIER_KEY_FIELDS, { include: SUPPLIER_PEOPLE })
       return record ? mapSupplier(record) : null
     },
     // An item's approved purchasing sources: its active, approved
@@ -456,8 +467,7 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const key = text(decodeURIComponent(String(idOrSku || '')))
       if (!key) return []
       const where = tenantWhere(options)
-      const items = await client.item.findMany({ where, take: safeLimit(options.limit, 500) })
-      const item = items.find((row) => itemMatches(row, key))
+      const item = await findByKey(client.item, where, key, ITEM_KEY_FIELDS)
       if (!item) return []
       const itemMeta = metadata(item)
       const relationships = (await listItemSupplierRecords(client, where.tenantId, { itemId: item.id })).map((row) => mapItemSupplierRecord(row))
@@ -490,8 +500,7 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const client = await resolvePrisma({ env, prisma })
       const where = tenantWhere(options)
       const key = text(decodeURIComponent(String(idOrSku || '')))
-      const items = key ? await client.item.findMany({ where, take: safeLimit(options.limit, 500) }) : []
-      const item = items.find((row) => itemMatches(row, key))
+      const item = key ? await findByKey(client.item, where, key, ITEM_KEY_FIELDS) : null
       if (!item) return []
       const rows = (await listItemSupplierRecords(client, where.tenantId, { itemId: item.id })).map((row) => mapItemSupplierRecord(row))
       const suppliers = rows.length ? await client.supplier.findMany({ where: { ...where, id: { in: rows.map((row) => row.supplierId) } } }) : []
