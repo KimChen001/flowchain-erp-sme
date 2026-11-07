@@ -38,7 +38,7 @@ UCI Online Retail II:
 M5, store CA_1:
 
 - **Window:** the last 365 days of `sales_train_evaluation.csv` (2015-05-24 to 2016-05-22).
-- **Items:** in each of the store's seven departments, the 30 items with the most units in the window, ties by `item_id`: 210 items. M5 has no product names; an item is named by its department and number (FOODS_3_090 is "Foods 3 item 090").
+- **Items:** in each of the store's seven departments, the 28 items with the most units in the window, ties by `item_id`: 196 items, under the 200 items the app's business read context lists. M5 has no product names; an item is named by its department and number (FOODS_3_090 is "Foods 3 item 090").
 - **Sales:** daily units as recorded; days without sales are 0.
 - **Prices:** the store's weekly sell price; a week without one takes the nearest earlier week's price, else the nearest later one.
 
@@ -85,9 +85,21 @@ The scene items place no weekly orders in the last weeks (the hero and the bird 
 
 ## Size and seed time
 
-Seeded 2026-11-07 (data moved so the last day is 2026-11-06):
+Seeded as of 2026-11-10 (the data's last day moved to 2026-11-09), on a Windows laptop with the embedded PostgreSQL:
 
-COUNTS_TABLE
+| | M5 (Walmart CA_1) | UCI Online Retail II |
+| --- | --- | --- |
+| Items | 196 (7 departments x 28) | 200 |
+| Customers | 1 (point of sale) | 1,023 |
+| Sales orders (shipped) | 364 (one a day) | 3,548 (each with an issued customer invoice) |
+| Sales order lines | 54,927 | 24,092 |
+| Units sold | 503,462 | 437,167 |
+| Suppliers [assumed] | 7 | 7 (Acme and Globex named) |
+| Purchase orders [assumed] | 370 (5,819 lines), 14 open | 356 (3,825 lines), 17 open |
+| Receipts posted | 356 | 339 |
+| Seed time | about 15 minutes | about 9 minutes |
+
+The extract takes about 50 seconds. The workspaces are seeded one after the other (side by side, their serializable postings abort each other), so a first start takes about 25 minutes.
 
 ## Run it
 
@@ -103,7 +115,7 @@ npm run walkthrough:local -- --reset --as-of=2026-11-10   # seed as of a given d
 ## Limitations
 
 - UCI cancellations are not yet posted as customer returns: the returns module is outside the trial capability set the walkthrough runs, and a credit note needs a posted return. They stay in the extract.
-- One in four UCI customers, and 200 of about 3,900 products sold in the window; 210 of CA_1's 3,049 items.
+- One in four UCI customers, and 200 of about 3,900 products sold in the window; 196 of CA_1's 3,049 items. The business read context also lists at most 200 customers and the 500 most recent sales orders; the reorder list and Today warn about the sales orders only when an order that can still need stock was left out.
 - Suppliers deliver exactly on time; purchase prices equal selling prices.
 
 ## Tests

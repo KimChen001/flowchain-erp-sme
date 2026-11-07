@@ -5,7 +5,7 @@
 //
 // Two workspaces, one per dataset, because each keeps its own currency and
 // timezone and the two businesses have nothing to do with each other:
-//   m5   Walmart store CA_1 (M5): 210 items, daily unit sales and weekly prices.
+//   m5   Walmart store CA_1 (M5): 196 items, daily unit sales and weekly prices.
 //   uci  A UK online gift retailer (UCI Online Retail II): 200 products, a
 //        one-in-four customer sample, their invoices and cancellations.
 //
