@@ -69,6 +69,11 @@ const contractFlags = contracts ? { FLOWCHAIN_ENABLE_CONTRACTS: "true", FLOWCHAI
 // passes FLOWCHAIN_AI_ASSISTANT_MODE=assistant_v2 and the recorded turns
 // (FLOWCHAIN_AI_ASSISTANT_SCRIPTED), which this process keeps.
 const assistantV2Showcase = process.env.PLAYWRIGHT_ASSISTANT_V2 === "true";
+// PLAYWRIGHT_PUBLIC_DATA_DIR=<research data folder> seeds public demand data
+// (M5, UCI Online Retail II; scripts/setup-public-data-scenario.mjs) instead of
+// the walkthrough, for the assistant v2 evaluation (tests/ai-eval/v2-public).
+// PLAYWRIGHT_PUBLIC_DATA_SETS names the sets, m5_main,m5_intermittent by default.
+const publicDataDirectory = String(process.env.PLAYWRIGHT_PUBLIC_DATA_DIR || "").trim();
 
 async function seedComparisonQuotation(client, quote) {
   await client.supplierQuotation.create({
@@ -428,7 +433,7 @@ try {
     maxBuffer: 10 * 1024 * 1024,
   });
   prisma = await createPrismaClient(process.env);
-  await prisma.tenant.create({ data: { id: tenantId, name: "Product Recovery Browser Tenant", defaultLanguage: usTrial ? "en-US" : "zh-CN", countryCode: "US", locale: "en-US", currency: "USD", timezone: "America/New_York" } });
+  await prisma.tenant.create({ data: { id: tenantId, name: "Product Recovery Browser Tenant", defaultLanguage: usTrial ? "en-US" : "zh-CN", countryCode: "US", locale: "en-US", currency: publicDataDirectory && /uci/.test(String(process.env.PLAYWRIGHT_PUBLIC_DATA_SETS || "")) ? "GBP" : "USD", timezone: "America/New_York" } });
   await prisma.user.create({
     data: {
       id: adminActorId,
@@ -461,8 +466,13 @@ try {
   });
   // As pilot:setup does: provision roles before the scenario posts its receipts.
   await backfillTenantAuthorization(prisma, tenantId, { actorId: adminActorId });
-  await seedLocalDemo(prisma, process.env);
-  if (process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY !== "true") {
+  if (publicDataDirectory) {
+    const { readPublicDataInstances } = await import("./public-data-instance.mjs");
+    const { seedPublicDataScenario } = await import("./setup-public-data-scenario.mjs");
+    const seeded = await seedPublicDataScenario(prisma, process.env, { instances: readPublicDataInstances(publicDataDirectory, process.env.PLAYWRIGHT_PUBLIC_DATA_SETS) });
+    console.log(`Public data seeded: ${JSON.stringify(seeded)}`);
+  } else await seedLocalDemo(prisma, process.env);
+  if (!publicDataDirectory && process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY !== "true") {
     await seedLocalScenario(prisma, process.env);
     if (usTrial) await seedUsTrialSalesOrders(prisma);
     if (assistantV2Showcase) await seedAssistantV2Showcase(prisma);

@@ -86,3 +86,13 @@ test('always refused: an action claim, an amount the role cannot see, an invente
   // A figure no tool returned, beside one it did.
   assert.deepEqual(kinds(check('HV-PO-101 is 8 days overdue and HV-PO-102 is 12 days overdue.', [orders])), ['number:12 days'])
 })
+
+// 2026-11-06 (the v2 evaluation on public data): the solver writes a plan's
+// lines as text, "HOUSEHOLD_1_272 81, ...". Its quantities back an answer that
+// quotes them; the digits of a SKU do not, and a quantity is not an amount.
+test('the quantities in a plan\'s lines back the answer; a SKU\'s digits and amounts do not', () => {
+  const results = [{ plans: [{ plan: 'without_budget_limit', lines: 'HOUSEHOLD_1_272 81, HOUSEHOLD_1_019 32', spend: 1002.23 }] }]
+  assert.equal(check('Without a cap, HOUSEHOLD_1_272 would go to 81 units and HOUSEHOLD_1_019 to 32.', results).ok, true)
+  assert.equal(check('That is 272 units.', results).ok, false)
+  assert.equal(check('It would cost $81.', results).ok, false)
+})

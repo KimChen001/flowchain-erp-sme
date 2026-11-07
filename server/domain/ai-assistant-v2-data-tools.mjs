@@ -881,6 +881,8 @@ function orderPlanResult(result, { facts, records, items, args }) {
     // So "over budget by" is a figure the result gives (2026-11-06: an
     // answer worked it out itself).
     overBudgetAmount: args.budget !== undefined && args.budget !== null && entry.spend > args.budget ? round(entry.spend - args.budget) : null,
+    // And what is left of it (2026-11-06: "$0.06 of the budget" was worked out).
+    budgetLeft: args.budget !== undefined && args.budget !== null && entry.spend <= args.budget ? round(args.budget - entry.spend) : null,
     issues: entry.issues.map((issue) => (issue.sku ? `${issue.sku} ${issue.code}` : issue.code)),
   })
   const rows = [
