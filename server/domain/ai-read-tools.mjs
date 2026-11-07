@@ -51,6 +51,10 @@ const ordersBySupplier = (rows) => {
 }
 const orderNumberOf = (facts, id) => array(facts.purchaseOrders?.index).find((row) => row.id === id)?.orderNumber || null
 const salesOrderNumberOf = (facts, id) => array(facts.salesOrders).find((row) => row.id === id)?.number || null
+// The promised date of each open purchase order behind a stock row, from the
+// same order index as its number, so the model never calls the dates unrecorded.
+const orderDatesOf = (facts, ids) => array(ids).map((id) => array(facts.purchaseOrders?.index).find((row) => row.id === id)).filter(Boolean)
+  .map((row) => ({ orderNumber: row.orderNumber, dueDate: row.dueDate || null, overdueDays: row.overdueDays || 0 }))
 
 const listPurchaseOrders = defineAiTool({
   name: 'list_purchase_orders',
@@ -118,7 +122,7 @@ const getPurchaseOrder = defineAiTool({
 const STOCK_BASIS = 'incomingOnPurchaseOrders counts every open approved purchase order line. status compares available stock with safety stock, then available to promise (available + incoming - unreserved demand) with the reorder point. It is not the reorder list: for whether, when and how much to order, use reorder_list.'
 const stockPosition = defineAiTool({
   name: 'stock_position',
-  description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders, available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status. One SKU, the SKUs at risk, or all.',
+  description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders (each order\'s promised date and days overdue in purchaseOrderDates), available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status. One SKU, the SKUs at risk, or all.',
   parameters: {
     sku: { type: 'string', description: 'One SKU.' },
     only: { type: 'string', enum: ['all', 'at_risk'], description: 'at_risk: short against open sales orders or below safety stock or the reorder point. all by default.' },
@@ -142,6 +146,7 @@ const stockPosition = defineAiTool({
         openSalesDemand: row.openSalesDemand, incomingOnPurchaseOrders: row.incomingApprovedPo, availableToPromise: row.availableToPromise,
         shortage: row.shortage, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint, status: row.stockStatus,
         purchaseOrders: array(row.purchaseOrderIds).map((id) => orderNumberOf(facts, id)).filter(Boolean),
+        purchaseOrderDates: orderDatesOf(facts, row.purchaseOrderIds),
         salesOrders: array(row.salesOrderIds).map((id) => salesOrderNumberOf(facts, id)).filter(Boolean),
         orderMinimum: row.orderMinimum ? { quantity: row.orderMinimum.quantity ?? null } : null,
         ref: aiToolRef('item', row.itemId || row.sku, row.sku),

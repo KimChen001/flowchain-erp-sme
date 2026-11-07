@@ -196,6 +196,19 @@ test('the stock projection places only dated lines in a week and lists the rest 
   assert.deepEqual(await runAiReadTool('stock_projection', { sku: 'NOPE-1' }, { facts }), { ok: false, error: 'not_found' })
 })
 
+test('a stock row gives each incoming order\'s promised date and days overdue, as the order list does', async () => {
+  const facts = await factsFor()
+  const row = (await runAiReadTool('stock_position', { sku: 'LDM-001' }, { facts })).result.rows[0]
+  assert.ok(row.purchaseOrders.length > 0)
+  assert.deepEqual(row.purchaseOrderDates.map((entry) => entry.orderNumber), row.purchaseOrders)
+  const listed = (await runAiReadTool('list_purchase_orders', { status: 'all', limit: 50 }, { facts })).result.rows
+  for (const entry of row.purchaseOrderDates) {
+    const order = listed.find((candidate) => candidate.orderNumber === entry.orderNumber)
+    assert.deepEqual({ dueDate: entry.dueDate, overdueDays: entry.overdueDays }, { dueDate: order.dueDate, overdueDays: order.overdueDays })
+  }
+  assert.ok(row.purchaseOrderDates.some((entry) => entry.orderNumber === 'PO-001' && entry.overdueDays > 0), 'PO-001 is overdue')
+})
+
 test('supplier_risks lists the Supplier risks page\'s issues, counted per supplier and never scored', async () => {
   const scenario = aiSkillScenario()
   const context = await loadAiSkillContext(scenario.ctx)
