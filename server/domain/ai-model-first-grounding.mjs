@@ -128,6 +128,7 @@ export function aiGroundingSources(results = []) {
   const numbers = []
   const days = new Set()
   const months = new Set()
+  const names = new Set()
   const addDates = (value) => {
     for (const match of value.matchAll(/(?<!\d)(\d{4})-(\d{2})(?:-(\d{2}))?(?!\d)/g)) {
       months.add(`${match[1]}-${match[2]}`)
@@ -157,6 +158,16 @@ export function aiGroundingSources(results = []) {
     if (typeof value === 'string') {
       strings.push(fold(value))
       addDates(value)
+      // A name with a number in it (Customer 14096 (United Kingdom)): its
+      // number is part of the name, not a figure (2026-11-07: a top-customers
+      // answer had every customer's number flagged).
+      // So is the part before a bracket, which a Chinese answer may follow
+      // with its own words (Customer 16684（英国）).
+      if (NAME_KEYS.has(key) && /\p{L}/u.test(value) && /\d/.test(value) && value.trim().length >= 3) {
+        names.add(value.trim())
+        const head = value.split(/\s*[(（]/)[0].trim()
+        if (head !== value.trim() && /\p{L}/u.test(head) && /\d/.test(head) && head.length >= 3) names.add(head)
+      }
       if (/^-?[\d,]+(?:\.\d+)?$/.test(value.trim())) numbers.push({ value: Number(value.replace(/,/g, '')), key, currency: text(parent?.currency).toUpperCase() || null, unit: null })
       else if (PROSE_KEYS.has(key)) addProse(value)
       // A plan's lines as the solver writes them ("FOODS_3_090 390, ..."):
@@ -191,8 +202,10 @@ export function aiGroundingSources(results = []) {
     for (const count of new Set(groups.values())) numbers.push({ value: count, key: 'count', currency: null, unit: null })
   }
   for (const result of array(results)) walk(result)
-  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months }
+  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names] }
 }
+
+const NAME_KEYS = new Set(['customer', 'customerName', 'itemName', 'name', 'supplier', 'supplierName'])
 
 const inText = (haystack, needle) => {
   const value = fold(needle)
@@ -287,7 +300,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     return blank(token)
   })
   // Names the workspace knows.
-  for (const name of aiGroundingNames(facts)) {
+  for (const name of [...new Set([...aiGroundingNames(facts), ...sources.names])].sort((a, b) => b.length - a.length)) {
     rest = rest.replace(nameMatch(name), (found, ...args) => {
       checked.name += 1
       if (!inText(sources.haystack, name) && !inText(named, name)) fail('name', found)

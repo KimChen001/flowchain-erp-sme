@@ -165,3 +165,14 @@ test('a budget left over is money', () => {
   const problems = checkAiModelFirstGrounding({ answer: { title: 'Plan', answer: 'It leaves $0.71 unspent; the reorder list leaves about $148.', records: [] }, results: [{ plans: [{ plan: 'optimal', spend: 599.29, budgetLeft: 0.71 }, { plan: 'reorder_list', spend: 451.9, budgetLeft: 148.1 }] }], today: '2026-11-07' }).problems
   assert.deepEqual(problems, [])
 })
+
+// 2026-11-07: a top-customers answer had every customer's number flagged
+// ("Customer 14096 (United Kingdom)", in Chinese "Customer 14096（英国）").
+test('a number inside a name a result gives is part of the name, not a figure', () => {
+  const results = [{ rows: [{ customer: 'Customer 14096 (United Kingdom)', amount: 7508.14, sharePercent: 9.9 }, { itemName: '72 Sweetheart Fairy Cake Cases', amount: 35.75 }] }]
+  const check = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results }).problems
+  assert.deepEqual(check('Customer 14096 (United Kingdom) bought £7,508.14, 9.9% of the total; 72 Sweetheart Fairy Cake Cases sold £35.75.'), [])
+  assert.deepEqual(check('Customer 14096（英国）：£7,508.14，占 9.9%。'), [])
+  // The figures beside the name are still checked.
+  assert.deepEqual(check('Customer 14096 (United Kingdom) bought £9,999.00.'), [{ kind: 'number', value: '£9,999.00' }])
+})
