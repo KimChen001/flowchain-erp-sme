@@ -110,7 +110,7 @@ npm run walkthrough:local -- --extract=~/flowchain-data/public-data-extract.json
 npm run walkthrough:local -- --reset --as-of=2026-11-10   # seed as of a given day
 ```
 
-`FLOWCHAIN_WALKTHROUGH_DIR`, `FLOWCHAIN_WALKTHROUGH_PG_PORT`, `FLOWCHAIN_WALKTHROUGH_API_PORT`, `FLOWCHAIN_WALKTHROUGH_APP_PORT`, `FLOWCHAIN_WALKTHROUGH_SECOND_API_PORT` and `FLOWCHAIN_WALKTHROUGH_SECOND_APP_PORT` move the data folder and ports. `npm run dev:local -- --public-data` (M5) or `--public-data=uci` seeds a development database once, while its workspace is empty. `npm run public-data:seed -- --dataset=m5` seeds one provisioned workspace directly.
+`FLOWCHAIN_WALKTHROUGH_PRIMARY=uci` puts the UCI workspace on the app port and M5 on the second. `FLOWCHAIN_WALKTHROUGH_DIR`, `FLOWCHAIN_WALKTHROUGH_PG_PORT`, `FLOWCHAIN_WALKTHROUGH_API_PORT`, `FLOWCHAIN_WALKTHROUGH_APP_PORT`, `FLOWCHAIN_WALKTHROUGH_SECOND_API_PORT` and `FLOWCHAIN_WALKTHROUGH_SECOND_APP_PORT` move the data folder and ports. `npm run dev:local -- --public-data` (M5) or `--public-data=uci` seeds a development database once, while its workspace is empty. `npm run public-data:seed -- --dataset=m5` seeds one provisioned workspace directly.
 
 ## Limitations
 

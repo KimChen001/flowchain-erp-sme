@@ -5,6 +5,8 @@
 //   m5   Walmart store CA_1 (M5), USD    on the app port (default 15201)
 //   uci  UK online gift retailer (UCI Online Retail II), GBP
 //                                        on the second app port (app port + 1)
+// FLOWCHAIN_WALKTHROUGH_PRIMARY=uci puts UCI on the app port and M5 on the
+// second one.
 //
 // Sales come from the public data; suppliers, purchasing and stock are
 // assumed by stated rules (docs/public-data-workspaces.md), and each workspace shows
@@ -113,9 +115,15 @@ if (firstRun && !existsSync(extractPath)) {
 }
 const pg = new EmbeddedPostgres({ databaseDir: pgDir, user, password: secrets.password, port: pgPort, persistent: true, onLog: () => {}, onError: () => {} });
 
+const primary = String(process.env.FLOWCHAIN_WALKTHROUGH_PRIMARY || "m5").trim().toLowerCase();
+if (!["m5", "uci"].includes(primary)) {
+  console.error(`[walkthrough] FLOWCHAIN_WALKTHROUGH_PRIMARY must be m5 or uci, not "${primary}".`);
+  process.exit(1);
+}
+const [first, second] = primary === "uci" ? ["uci", "m5"] : ["m5", "uci"];
 const workspaces = [
-  { ...PUBLIC_DATA_WORKSPACE_DATASETS.m5, apiPort, appPort },
-  { ...PUBLIC_DATA_WORKSPACE_DATASETS.uci, apiPort: secondApiPort, appPort: secondAppPort },
+  { ...PUBLIC_DATA_WORKSPACE_DATASETS[first], apiPort, appPort },
+  { ...PUBLIC_DATA_WORKSPACE_DATASETS[second], apiPort: secondApiPort, appPort: secondAppPort },
 ];
 
 const sharedEnv = {
