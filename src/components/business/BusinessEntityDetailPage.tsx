@@ -177,7 +177,7 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
       <Link to={returnTo} className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 rounded"><ArrowLeft size={15} />{returnLabel}</Link>
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><div className="fc-caption" style={{ color: A.gray2 }}>{entityLabel}</div><h1 className="mt-1 text-xl font-semibold tabular-nums" style={{ color: A.label }}>{shownId}</h1></div>
+          <div><div className="fc-caption" style={{ color: A.gray2 }}>{entityLabel}</div><h1 className="fc-page-title mt-1 tabular-nums" style={{ color: A.label }}>{shownId}</h1></div>
           <Chip label={formatValue("status", record.status || record.matchStatus || record.settlementStatus || "active", { locale, currency: recordCurrency, zh })} color={A.blue} bg="#f0f6ff" />
         </div>
       </Card>

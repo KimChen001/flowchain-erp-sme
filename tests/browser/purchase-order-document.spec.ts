@@ -43,6 +43,10 @@ test("an approved PO opens as a document to print or save, which prints alone an
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-021");
   await page.getByTestId("po-open-document").click();
   await expect(page).toHaveURL(/\/app\/procurement\/orders\/LOCAL-DEMO-PO-021\/document$/);
+  // The breadcrumb's parent is this PO, never the /orders/:id pattern.
+  const breadcrumb = page.getByTestId("app-breadcrumb");
+  await expect(breadcrumb.locator('a[href="/app/procurement/orders/LOCAL-DEMO-PO-021"]')).toHaveCount(1);
+  await expect(breadcrumb.locator('a[href*=":id"]')).toHaveCount(0);
 
   const sheet = page.getByTestId("business-document-sheet");
   await expect(sheet).toBeVisible();

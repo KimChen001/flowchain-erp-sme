@@ -100,8 +100,8 @@ test("each quoted price is set against the item's own PO history as plain text, 
   const row = page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001");
   // 98 against 90 is +8.9%; 97.5 against 90 is +8.3%. Text only, in the
   // server's supplier order. The session reads Chinese.
-  await expect(row).toContainText("对比上次采购订单 CNY 90.00（PO-0031，Sep 14, 2026）：+8.9%；2 笔平均：CNY 91.00");
-  await expect(row).toContainText("对比上次采购订单 CNY 90.00（PO-0031，Sep 14, 2026）：+8.3%；2 笔平均：CNY 91.00");
+  await expect(row).toContainText("对比上次采购订单 CN¥90.00（PO-0031，Sep 14, 2026）：+8.9%；2 笔平均：CN¥91.00");
+  await expect(row).toContainText("对比上次采购订单 CN¥90.00（PO-0031，Sep 14, 2026）：+8.3%；2 笔平均：CN¥91.00");
   await expect(row.locator("[data-quote-comparison]")).toHaveCount(2);
   const responseRows = await page.getByTestId("rfq-comparison-responses").locator("tbody > tr").allTextContents();
   expect(responseRows[0]).toContain("Acme Components");
@@ -111,7 +111,7 @@ test("each quoted price is set against the item's own PO history as plain text, 
   const note = page.getByTestId("rfq-comparison-copy-note-LOCAL-DEMO-SUP-001");
   const drafted = String(await note.getAttribute("data-note"));
   expect(drafted).toContain(RFQ_ID);
-  expect(drafted).toContain("我们上次采购订单 CNY 90.00（PO-0031，Sep 14, 2026）；2 笔平均：CNY 91.00");
+  expect(drafted).toContain("我们上次采购订单 CN¥90.00（PO-0031，Sep 14, 2026）；2 笔平均：CN¥91.00");
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => undefined);
   await note.click();
   await expect(page.getByRole("status").filter({ hasText: /Note copied|备注已复制|could not be copied|复制失败/ })).toBeVisible();

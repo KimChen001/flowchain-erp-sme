@@ -48,8 +48,9 @@ const statusCodes: Record<string, [string, string]> = {
 
 // Inventory movement types, as the ledger records them.
 const movementTypes: Record<string, [string, string]> = {
-  receipt_posting: ["Goods receipt", "采购入库"],
-  receipt: ["Goods receipt", "采购入库"],
+  // "Receipt", the app's word for a goods receipt everywhere else.
+  receipt_posting: ["Receipt", "采购入库"],
+  receipt: ["Receipt", "采购入库"],
   receipt_reversal: ["Receipt reversal", "收货冲销"],
   shipment_posting: ["Shipment", "销售出库"],
   outbound_posting: ["Shipment", "销售出库"],

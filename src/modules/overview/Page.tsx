@@ -9,7 +9,8 @@ import AiSuggestionsPage from "./AiSuggestionsPage";
 import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
 import { useDocumentNumbers } from "../../lib/documentNumbers";
-import { formatDateTimeInTimeZone, formatLocaleAmount, formatQuantity } from "../../lib/format";
+import { formatDateTimeInTimeZone, formatLocaleAmount, formatQuantity, instantDayInTimeZone } from "../../lib/format";
+import { unitLabel } from "../../i18n/unitLabels";
 import { useTodayCopy, type TodayCopyKey } from "./todayCopy";
 
 // Today: the work that needs doing, from the rules the rest of the app uses
@@ -127,7 +128,8 @@ function RuntimeHomepage() {
   const shown = filter === "overdue" ? items.filter((item) => item.overdueDays > 0) : items;
   const visible = expanded ? shown : shown.slice(0, COLLAPSED);
   const recent = overview?.recentDocuments || [];
-  const quantity = (value: unknown, unit?: string | null) => `${formatQuantity(value as number)}${unit ? ` ${unit}` : ""}`;
+  // A unit reads in the interface language (unitLabel): "35 pcs" in English.
+  const quantity = (value: unknown, unit?: string | null) => `${formatQuantity(value as number)}${unit ? ` ${unitLabel(unit, t.language, Number(value))}` : ""}`;
   // Amounts use the document currency; a hidden amount (null) is never shown as 0.
   const money = (value: unknown, currency?: string | null) => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "—" : formatLocaleAmount(Number(value), currency, locale, { maximumFractionDigits: 2 });
   const day = (value: string) => formatDay(value, locale);
@@ -207,6 +209,18 @@ function RuntimeHomepage() {
     { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: overview?.workTotal ?? 0 },
     { id: "overdue" as const, label: t("tileOverdue"), note: t("tileOverdueNote"), value: overview?.overdue ?? 0 },
   ];
+  // Under the count of documents changed today: when the last change was, from
+  // the newest recent document (the same documents the count reads), never
+  // just today's date. With none today it says so, with the last change's day.
+  const lastChange = recent[0]?.updatedAt || "";
+  const lastChangeDay = instantDayInTimeZone(lastChange, timezone);
+  const changesSub = !today
+    ? ""
+    : (overview?.todayChanges ?? 0) > 0
+      ? (lastChange ? t("changesShort", { when: formatDateTimeInTimeZone(lastChange, locale, timezone) }) : "")
+      : lastChangeDay && lastChangeDay < today
+        ? t("changesNoneLast", { date: day(lastChangeDay) })
+        : t("changesNone");
 
   // The tiles read like the cards on top of every list page, white and
   // full-width; the two counts filter the list below.
@@ -253,7 +267,7 @@ function RuntimeHomepage() {
         <div className={tileClass} style={tileStyle} data-testid="today-tile-changes" title={today ? t("changesNote", { date: day(today) }) : undefined}>
           <div className="text-xs" style={{ color: A.sub }}>{t("tileChanges")}</div>
           <div className="mt-1 text-2xl font-semibold">{overview?.todayChanges ?? 0}</div>
-          {today ? <div className="mt-1 text-xs" style={{ color: A.gray2 }}>{t("changesShort", { date: day(today) })}</div> : null}
+          {changesSub ? <div className="mt-1 text-xs" style={{ color: A.gray2 }} data-testid="today-tile-changes-note">{changesSub}</div> : null}
         </div>
       </div>
 

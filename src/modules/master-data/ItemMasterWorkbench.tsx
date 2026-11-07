@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { RefreshButton, ResetButton, listButtonClass } from "../../components/ui/listLayout";
 import {
+  listTableCardsRef,
   tableBodyTextClass,
   tableLinkClass,
   tableScrollClass,
@@ -22,6 +23,7 @@ import { DataImportLink } from "./DataImportLink";
 import { exportMasterDataCsv } from "./export";
 import { NOT_PROVIDED, useMasterDataCopy } from "./masterDataCopy";
 import { useI18n } from "../../i18n/I18n";
+import { unitLabel as sharedUnitLabel } from "../../i18n/unitLabels";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
@@ -81,7 +83,6 @@ const flagLabel = (key: string, language: string) => FLAG_LABELS[key]?.[language
 // Item types and units are stored as codes; known ones are shown in the
 // interface language and anything else as stored.
 const ITEM_TYPE_LABELS: Record<string, string> = { material: "Material" };
-const UNIT_LABELS: Record<string, { en: string; zh: string }> = { pcs: { en: "pcs", zh: "件" } };
 // The reorder list reads a missing, zero or negative reorder point as none
 // (server/domain/reorder-list.mjs), and the form saves 0 for an empty field.
 const hasReorderPoint = (item: MasterItem) => item.reorderPoint > 0;
@@ -173,6 +174,10 @@ export default function ItemMasterWorkbench({
   const [selected, setSelected] = useState<MasterItem | null>(null);
   // The breadcrumb names the item by its SKU, as the list does, never its stored id.
   useDetailCrumb(selected ? `${selected.sku} · ${selected.itemName}` : null);
+  // On the item's own page (/app/master-data/items/:id) the item is the page
+  // title (H1); opened in place from the list it sits under the list's H1.
+  const onDetailRoute = /^\/app\/master-data\/items\/[^/]+$/.test(useLocation().pathname);
+  const ItemTitle = onDetailRoute ? "h1" : "h2";
   // A failed request in the interface language, never the server's own words.
   const loadFailed = (cause: unknown) => apiErrorText(cause, language, ["Could not load items. Try again.", copy("Could not load items. Try again.")]);
   const [editing, setEditing] = useState<Partial<MasterItem> | null>(null);
@@ -230,7 +235,8 @@ export default function ItemMasterWorkbench({
   const types = useMemo(() => distinct(items.map((item) => item.itemType)), [items, locale]);
   const categories = useMemo(() => distinct(items.map((item) => item.category)), [items, locale]);
   const typeLabel = (code: string) => copy(ITEM_TYPE_LABELS[code] || code);
-  const unitLabel = (code: string) => UNIT_LABELS[code]?.[language === "en-US" ? "en" : "zh"] || code;
+  // The shared unit words ("box" / "箱"); a unit not listed shows as stored.
+  const unitLabel = (code: string) => sharedUnitLabel(code, language, 1);
   const supplierLabel = (id: string) => {
     if (!id) return NOT_PROVIDED;
     const supplier = suppliers.get(id);
@@ -374,9 +380,9 @@ export default function ItemMasterWorkbench({
             >
               {copy("← 返回 SKU 列表")}
             </button>
-            <h2 className="mt-2 text-base font-semibold">
+            <ItemTitle className={onDetailRoute ? "fc-page-title mt-2" : "mt-2 text-base font-semibold"} style={{ color: A.label }} data-testid="item-detail-title">
               {selected.sku} · {selected.itemName}
-            </h2>
+            </ItemTitle>
             <p className="text-xs" style={{ color: A.sub }}>
               {statusLabel(selected.status)} · v{selected.version}
             </p>
@@ -488,7 +494,7 @@ export default function ItemMasterWorkbench({
           </div>
         </div>
         {error && <p className="px-5 pt-3 text-xs text-red-600">{error}</p>}
-        <div className={tableScrollClass}>
+        <div className={tableScrollClass} ref={listTableCardsRef}>
           <table className={`w-full min-w-[1080px] text-left ${tableBodyTextClass}`} data-testid="item-list-table">
             <thead>
               <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>

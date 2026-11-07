@@ -1,5 +1,6 @@
 import type { GovernedReport, MetricDefinition } from './governedReports';
 import { formatMetric } from './currencyFormatting.mjs';
+import { unitLabel } from '../../i18n/unitLabels.ts';
 
 // How a KPI value reads, on the dashboard and in the exported workbook alike.
 // The result is interface copy (or a formatted number) that the caller passes
@@ -24,7 +25,8 @@ export function metricDisplayValue(item: MetricDefinition, dataScope: GovernedRe
   if (item.unit === 'currency' && currency.status === 'multi_currency_unconverted') return '请选择币种';
   if (item.unit === 'currency' && currency.status === 'currency_unknown') return 'Missing or invalid currency';
   if (item.dataStatus === 'incomplete') return '数据不足';
-  // A quantity total is of one SKU in one unit, and says which unit.
-  if (item.quantityUnit && item.currentValue !== null) return `${formatMetric(item.currentValue, item.unit, currency.code, format)} ${item.quantityUnit}`;
+  // A quantity total is of one SKU in one unit, and says which unit, in the
+  // interface language ("28 pcs", "28 件").
+  if (item.quantityUnit && item.currentValue !== null) return `${formatMetric(item.currentValue, item.unit, currency.code, format)} ${unitLabel(item.quantityUnit, format.language || 'en-US', item.currentValue)}`;
   return formatMetric(item.currentValue, item.unit, currency.code, format);
 }

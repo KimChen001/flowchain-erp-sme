@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { RefreshCw, Search } from "lucide-react";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import {
+  listTableCardsRef,
   tableBodyTextClass,
   tableLinkClass,
   tableScrollClass,
@@ -192,7 +193,7 @@ export default function BinListPage() {
             {filtered ? copy("No records match these filters") : copy("No bins yet. A bin is listed once stock is received or opening stock is posted into it.")}
           </div>
         ) : (
-          <div className={tableScrollClass}>
+          <div className={tableScrollClass} ref={listTableCardsRef}>
             <table className={`w-full min-w-[900px] text-left ${tableBodyTextClass}`} data-testid="bin-list-table">
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>

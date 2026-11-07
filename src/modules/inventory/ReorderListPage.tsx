@@ -5,6 +5,8 @@ import { A, Card, Chip, Modal, inputStyle } from "../../components/ui";
 import { apiJson } from "../../lib/api-client";
 import { formatQuantity } from "../../lib/format";
 import { useI18n } from "../../i18n/I18n";
+import { unitLabel } from "../../i18n/unitLabels";
+import { listTableCardsRef } from "../../components/ui/workbenchTable";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { useReorderListCopy, type ReorderListCopyKey } from "./reorderListCopy";
 
@@ -95,13 +97,16 @@ function formatDay(day: string, locale: string) {
 
 // Daily demand is an average: one decimal reads better than four ("10.0444").
 const oneDecimal = (value: number | null | undefined) => (value === null || value === undefined ? value : Math.round(value * 10) / 10);
-const withUnit = (value: number | null | undefined, unit: string | null) => (value === null || value === undefined ? "—" : `${formatQuantity(value)}${unit ? ` ${unit}` : ""}`);
+// A quantity with its unit. Given the interface language, the unit shows as
+// its label in that language ("28 pcs", "28 件"); without one it stays as
+// stored, as in the purchase request reason the list prefills.
+const withUnit = (value: number | null | undefined, unit: string | null, language?: string) => (value === null || value === undefined ? "—" : `${formatQuantity(value)}${unit ? ` ${language ? unitLabel(unit, language, value) : unit}` : ""}`);
 
-function flagText(flag: Flag, t: ReturnType<typeof useReorderListCopy>) {
+function flagText(flag: Flag, t: ReturnType<typeof useReorderListCopy>, locale: string) {
   const hidden = !flag.orderNumber;
   const byCode: Record<string, () => string> = {
     po_line_other_unit: () => t(hidden ? "poOtherUnitHidden" : "poOtherUnit", { po: flag.orderNumber || "", unit: flag.unit || "" }),
-    po_line_late: () => t(hidden ? "poLateHidden" : "poLate", { po: flag.orderNumber || "", day: flag.dueDay || "" }),
+    po_line_late: () => t(hidden ? "poLateHidden" : "poLate", { po: flag.orderNumber || "", day: flag.dueDay ? formatDay(flag.dueDay, locale) : "" }),
     po_line_no_due_day: () => t(hidden ? "poNoDueDayHidden" : "poNoDueDay", { po: flag.orderNumber || "" }),
     po_line_unit_not_recorded: () => t("poUnitNotRecorded"),
     shipment_other_unit: () => t.count("shipmentOtherUnit", flag.count ?? 0, { unit: flag.unit || "" }),
@@ -142,7 +147,7 @@ function SuggestedReorderPoint({ row, t, canSet, onSet }: { row: ReorderRow; t: 
   const detail = t("suggestionDetail", { lead: suggestion.leadTimeDays ?? 0, review: suggestion.reviewDays, days: suggestion.coverDays ?? 0, windows: suggestion.windowCount, rank: suggestion.rank, history: suggestion.historyDays });
   return (
     <div className="mt-1 max-w-[190px] space-y-0.5" data-testid="reorder-suggestion" title={detail}>
-      <div className="font-semibold" style={{ color: suggestion.recordedBelow ? A.orange : A.label }}>{t("suggested", { value: withUnit(suggestion.suggestedReorderPoint, row.unit) })}</div>
+      <div className="font-semibold" style={{ color: suggestion.recordedBelow ? A.orange : A.label }}>{t("suggested", { value: withUnit(suggestion.suggestedReorderPoint, row.unit, t.language) })}</div>
       {suggestion.recordedBelow && <span className="inline-block" data-testid="reorder-below-suggestion"><Chip label={t("belowSuggestion")} color={A.orange} bg="#fff4e8" /></span>}
       <div style={{ color: A.sub }}>{t("suggestionWhy", { days: suggestion.coverDays ?? 0 })}</div>
       {canSet && suggestion.suggestedReorderPoint > 0 && suggestion.suggestedReorderPoint !== row.reorderPoint && (
@@ -197,10 +202,10 @@ function SetReorderPointDialog({ row, t, onClose, onSaved }: { row: ReorderRow; 
       }
     >
       <div className="space-y-3 text-xs leading-5" data-testid="reorder-set-point-dialog">
-        <p>{t("dialogCurrent", { value: withUnit(row.reorderPoint, row.unit) })}</p>
-        <p>{t("dialogSuggested", { value: withUnit(suggestion.suggestedReorderPoint, row.unit), days: suggestion.coverDays ?? 0, lead: suggestion.leadTimeDays ?? 0, review: suggestion.reviewDays, history: suggestion.historyDays })}</p>
+        <p>{t("dialogCurrent", { value: withUnit(row.reorderPoint, row.unit, t.language) })}</p>
+        <p>{t("dialogSuggested", { value: withUnit(suggestion.suggestedReorderPoint, row.unit, t.language), days: suggestion.coverDays ?? 0, lead: suggestion.leadTimeDays ?? 0, review: suggestion.reviewDays, history: suggestion.historyDays })}</p>
         <label className="block">
-          <span className="font-semibold">{t("dialogField", { unit: row.unit })}</span>
+          <span className="font-semibold">{t("dialogField", { unit: unitLabel(row.unit, t.language) })}</span>
           <input type="number" min="0" step="any" value={value} onChange={(event) => setValue(event.target.value)} className="mt-1" style={inputStyle} data-testid="reorder-set-point-value" />
         </label>
         <p style={{ color: A.sub }}>{t("dialogNote")}</p>
@@ -333,10 +338,10 @@ export default function ReorderListPage() {
             </Card>
           ) : (
             <Card className="overflow-x-auto">
-              <table className="w-full min-w-[1100px] text-xs">
+              <table className="w-full min-w-[1100px] text-xs" ref={listTableCardsRef}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${A.border}` }}>
-                    {columns.map((key) => <th key={key} className="px-3 py-3 text-left">{t(key)}</th>)}
+                    {columns.map((key) => <th key={key} className="px-3 py-3 text-left" data-card-title={key === "colItem" ? "" : undefined}>{t(key)}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -357,22 +362,22 @@ export default function ReorderListPage() {
                           <div style={{ color: A.sub }}>{row.itemName}</div>
                           {row.flags.length > 0 && (
                             <ul className="mt-1 space-y-0.5" data-testid="reorder-flags">
-                              {row.flags.map((flag, index) => <li key={`${flag.code}-${index}`} style={{ color: A.orange }}>{flagText(flag, t)}</li>)}
+                              {row.flags.map((flag, index) => <li key={`${flag.code}-${index}`} style={{ color: A.orange }}>{flagText(flag, t, locale)}</li>)}
                             </ul>
                           )}
                         </td>
-                        <td className="px-3 py-3">{withUnit(row.onHand, row.unit)}</td>
-                        <td className="px-3 py-3">{withUnit(row.reserved, row.unit)}</td>
-                        <td className="px-3 py-3">{withUnit(row.incoming, row.unit)}</td>
-                        <td className="px-3 py-3 font-semibold">{withUnit(row.position, row.unit)}</td>
+                        <td className="px-3 py-3">{withUnit(row.onHand, row.unit, t.language)}</td>
+                        <td className="px-3 py-3">{withUnit(row.reserved, row.unit, t.language)}</td>
+                        <td className="px-3 py-3">{withUnit(row.incoming, row.unit, t.language)}</td>
+                        <td className="px-3 py-3 font-semibold">{withUnit(row.position, row.unit, t.language)}</td>
                         <td className="px-3 py-3" data-testid="reorder-point">
-                          <div>{withUnit(row.reorderPoint, row.unit)}</div>
+                          <div>{withUnit(row.reorderPoint, row.unit, t.language)}</div>
                           <SuggestedReorderPoint row={row} t={t} canSet={canSetReorderPoint} onSet={() => setSetting(row)} />
                         </td>
                         <td className="px-3 py-3" data-testid="reorder-demand">
                           {row.demand.enough ? (
                             <>
-                              <div>{withUnit(oneDecimal(row.demand.averageDailyDemand), row.unit)}</div>
+                              <div>{withUnit(oneDecimal(row.demand.averageDailyDemand), row.unit, t.language)}</div>
                               <div style={{ color: A.sub }}>{t.count("demandDays", row.demand.shipmentDays, { window: row.demand.windowDays })}</div>
                             </>
                           ) : (
@@ -380,10 +385,10 @@ export default function ReorderListPage() {
                           )}
                         </td>
                         <td className="px-3 py-3">
-                          {withUnit(row.shortfall, row.unit)}
+                          {withUnit(row.shortfall, row.unit, t.language)}
                           {row.purchaseRequest.raisedToMinimum && row.purchaseRequest.quantity !== null && (
                             <div style={{ color: A.sub }} data-testid={`reorder-order-minimum-${row.sku}`}>
-                              {t("orderMinimum", { n: formatQuantity(row.purchaseRequest.quantity), unit: row.unit })}
+                              {t("orderMinimum", { n: formatQuantity(row.purchaseRequest.quantity), unit: unitLabel(row.unit, t.language, row.purchaseRequest.quantity) })}
                             </div>
                           )}
                         </td>
@@ -447,7 +452,7 @@ export default function ReorderListPage() {
           t={t}
           onClose={() => setSetting(null)}
           onSaved={(value) => {
-            setSaved(t("savedNotice", { sku: setting.sku, value: withUnit(value, setting.unit) }));
+            setSaved(t("savedNotice", { sku: setting.sku, value: withUnit(value, setting.unit, t.language) }));
             setSetting(null);
             load();
           }}

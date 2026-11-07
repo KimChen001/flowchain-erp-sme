@@ -1,5 +1,6 @@
 import { A, Chip } from "../../components/ui";
 import {
+  listTableCardsRef,
   tableMinSmClass,
   tableScrollClass,
   tdIdClass,
@@ -51,7 +52,7 @@ export default function MasterDataTables({
 
   if (tab === "warehouses") {
     return (
-      <div className={tableScrollClass}>
+      <div className={tableScrollClass} ref={listTableCardsRef}>
         <table className={tableMinSmClass}>
           <HeaderRow labels={["Warehouse code", "Warehouse name", "Zone", "Bin", "Capacity", "Utilization", "Temperature requirement", "QA status", "Available", "Owner", "Actions"]} />
           <tbody>{warehouses.map((item, index) => {
@@ -79,7 +80,7 @@ export default function MasterDataTables({
 
   if (tab === "tax-codes") {
     return (
-      <div className={tableScrollClass}>
+      <div className={tableScrollClass} ref={listTableCardsRef}>
         <table className={tableMinSmClass}>
           <HeaderRow labels={["Tax code", "Tax code name", "Tax rate", "Tax type", "Region", "Default", "Status", "Description", "Actions"]} />
           <tbody>{taxCodes.map((item, index) => {
@@ -104,7 +105,7 @@ export default function MasterDataTables({
   }
 
   return (
-    <div className={tableScrollClass}>
+    <div className={tableScrollClass} ref={listTableCardsRef}>
       <table className={tableMinSmClass}>
         <HeaderRow labels={["Term code", "Term name", "Net days", "Discount rule", "Due date rule", "Status", "Description", "Actions"]} />
         <tbody>{paymentTerms.map((item, index) => {

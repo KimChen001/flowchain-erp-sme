@@ -229,7 +229,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: A.sub }}>RFQ · {rfqNumber}</div>
-            <h1 className="mt-1 text-xl font-semibold">{record.title || rfqNumber}</h1>
+            <h1 className="fc-page-title mt-1">{record.title || rfqNumber}</h1>
             {record.description && <p className="mt-2 text-sm" style={{ color: A.sub }}>{record.description}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">

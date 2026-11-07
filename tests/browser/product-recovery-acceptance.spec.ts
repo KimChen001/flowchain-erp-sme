@@ -77,7 +77,8 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await capture(page, "01a-order-fulfillment-lines");
 
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-001");
-  await expect(page.getByRole("heading", { name: "LOCAL-DEMO-PO-001", exact: true })).toBeVisible();
+  // The PO number is the page's one H1, as on every detail page.
+  await expect(page.getByRole("heading", { level: 1, name: "LOCAL-DEMO-PO-001", exact: true })).toBeVisible();
   await expect(page.getByTestId("po-line-name").first()).toHaveText("第 1 行");
   await expect(page.getByTestId("po-line-name").first()).toHaveAttribute("title", "LOCAL-DEMO-PO-001-LINE-001");
   await expect(page.locator("main").first()).not.toContainText("LOCAL-DEMO-PO-001-LINE-001");

@@ -1,8 +1,9 @@
 // Display labels for the unit codes items and order lines store, as
 // [one, many, Chinese]: "1 box", "300 boxes", "300 箱". Only the label
-// changes; the stored code stays the record's value. A unit not listed is
-// shown as stored. Mirrors aiSkillUnitLabel (server/domain/ai-skill-copy.mjs),
-// so the assistant's prose and the panel word units alike.
+// changes; the stored code stays the record's value, in any case ("BOX",
+// "Pairs"). A unit not listed is shown as stored. The first sixteen mirror
+// aiSkillUnitLabel (server/domain/ai-skill-copy.mjs), so the assistant's
+// prose and the panel word units alike; the rest are units imports carry.
 const UNIT_LABELS: Record<string, [string, string, string]> = (() => {
   const labels: Record<string, [string, string, string]> = {};
   const add = (codes: string[], entry: [string, string, string]) => { for (const code of codes) labels[code] = entry; };
@@ -22,6 +23,20 @@ const UNIT_LABELS: Record<string, [string, string, string]> = (() => {
   add(["pair", "pairs"], ["pair", "pairs", "双"]);
   add(["pallet", "pallets"], ["pallet", "pallets", "托"]);
   add(["sheet", "sheets"], ["sheet", "sheets", "张"]);
+  add(["dozen", "dozens", "doz", "dz"], ["dozen", "dozen", "打"]);
+  add(["g", "gram", "grams"], ["g", "g", "克"]);
+  add(["lb", "lbs", "pound", "pounds"], ["lb", "lb", "磅"]);
+  add(["l", "liter", "liters", "litre", "litres"], ["L", "L", "升"]);
+  add(["ml", "milliliter", "milliliters", "millilitre", "millilitres"], ["mL", "mL", "毫升"]);
+  add(["cm", "centimeter", "centimeters"], ["cm", "cm", "厘米"]);
+  add(["mm", "millimeter", "millimeters"], ["mm", "mm", "毫米"]);
+  add(["in", "inch", "inches"], ["in", "in", "英寸"]);
+  add(["yd", "yard", "yards"], ["yd", "yd", "码"]);
+  add(["gal", "gallon", "gallons"], ["gal", "gal", "加仑"]);
+  add(["bottle", "bottles"], ["bottle", "bottles", "瓶"]);
+  add(["can", "cans"], ["can", "cans", "罐"]);
+  add(["drum", "drums"], ["drum", "drums", "桶"]);
+  add(["tube", "tubes"], ["tube", "tubes", "支"]);
   return labels;
 })();
 

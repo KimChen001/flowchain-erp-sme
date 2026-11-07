@@ -1,6 +1,7 @@
 import { FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import { A, Card, Chip, KpiCard } from "../../components/ui";
+import { listTableCardsRef } from "../../components/ui/workbenchTable";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { exportRowsToWorkbook } from "../../lib/excel/excelWorkbookService";
 import { fmt } from "../../lib/format";
@@ -34,7 +35,7 @@ export default function SettlementPreparation() {
         <div><h2 className="text-sm font-semibold" style={{ color: A.label }}>结算单</h2><p className="text-[11px] mt-1" style={{ color: A.sub }}>从已确认对账单形成的结算业务单据，可继续下钻发票、对账单和供应商。</p></div>
         <button onClick={exportExcel} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg" style={{ background: A.gray6, color: A.blue }}><FileSpreadsheet size={13} /> 导出当前结果</button>
       </div>
-      <div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-xs"><thead><tr style={{ borderBottom: `1px solid ${A.border}` }}>{["结算单号", "供应商", "结算日期", "币种", "发票金额", "贷项金额", "调整金额", "实际结算金额", "对账单", "发票", "状态"].map((header) => <th key={header} className="px-5 py-3 text-left font-medium whitespace-nowrap" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={row.settlementNo} style={{ borderBottom: index < rows.length - 1 ? `1px solid ${A.border}` : "none" }}>
+      <div className="overflow-x-auto" ref={listTableCardsRef}><table className="w-full min-w-[1050px] text-xs"><thead><tr style={{ borderBottom: `1px solid ${A.border}` }}>{["结算单号", "供应商", "结算日期", "币种", "发票金额", "贷项金额", "调整金额", "实际结算金额", "对账单", "发票", "状态"].map((header) => <th key={header} className="px-5 py-3 text-left font-medium whitespace-nowrap" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={row.settlementNo} style={{ borderBottom: index < rows.length - 1 ? `1px solid ${A.border}` : "none" }}>
         <td className="px-5 py-3"><BusinessEntityLink entityType="settlement_document" entityId={row.settlementNo}>{row.settlementNo}</BusinessEntityLink></td>
         <td className="px-5 py-3"><BusinessEntityLink entityType="supplier" entityId={row.supplierCode}>{row.supplier}</BusinessEntityLink></td>
         <td className="px-5 py-3 whitespace-nowrap">{row.settlementDate}</td><td className="px-5 py-3">{row.currency}</td>

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import {
+  listTableCardsRef,
   tableBodyTextClass,
   tableLinkClass,
   tableScrollClass,
@@ -166,7 +167,7 @@ export default function ItemSupplierPricesPage() {
             <span className="text-xs">{copy(filtered ? "Reset the filters to see every link." : "Link items to a supplier under Supplied items on the supplier's page, or import a file of item–supplier links.")}</span>
           </div>
         ) : (
-          <div className={tableScrollClass}>
+          <div className={tableScrollClass} ref={listTableCardsRef}>
             <table className={`w-full min-w-[1040px] text-left ${tableBodyTextClass}`} data-testid="item-supplier-prices-table">
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>

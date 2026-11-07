@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
 import { A } from "../../../../components/ui";
 import { RefChip, usePartCopy, type Navigate, type PartCopy } from "./partKit";
 import type { FlagSpan, PartRef } from "./types";
@@ -23,14 +24,16 @@ const TABLE_ROW = /^\|.*\|$/;
 const TABLE_RULE = /^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?$/;
 const tableCells = (line: string) => line.replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
 
-function markdownBlocks(text: string): Block[] {
+// keepLines: inside a drafted message each line stays a line ("Best
+// regards," then the name), as the message will be sent.
+function markdownBlocks(text: string, keepLines = false): Block[] {
   const blocks: Block[] = [];
   let paragraph: string[] = [];
   // A quote runs over its "> " lines; a fence keeps its lines as written.
   let quote: Block | null = null;
   let fence: Block | null = null;
   const flush = () => {
-    if (paragraph.length) blocks.push({ kind: "p", start: 1, lines: [paragraph.join(" ")] });
+    if (paragraph.length) blocks.push({ kind: "p", start: 1, lines: [paragraph.join(keepLines ? "\n" : " ")] });
     paragraph = [];
   };
   for (const raw of text.split(/\r?\n/)) {
@@ -135,14 +138,44 @@ function inline(text: string, d: Decorator, copy: PartCopy, onNavigate: Navigate
   return out;
 }
 
+// The draft as plain text to paste into an email: markdown marks removed.
+function plainDraft(lines: string[]) {
+  return lines.map((value) => value.replace(/\*\*|__|`/g, "").replace(/^[-*+•]\s+/, "- ")).join("\n").trim();
+}
+
+function CopyDraft({ text, copy }: { text: string; copy: PartCopy }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      data-testid="ai-v2-quote-copy"
+      onClick={() => { void navigator.clipboard?.writeText(text).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); }, () => {}); }}
+      className="absolute right-1.5 top-1.5 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors hover:bg-white"
+      style={{ color: A.sub }}
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}{copy.t(copied ? "ai.v2.draftCopied" : "ai.v2.copyDraft")}
+    </button>
+  );
+}
+
 export function StreamingText({ text, refs = [], flags = [], language, onNavigate }: { text: string; refs?: PartRef[]; flags?: FlagSpan[]; language?: string; onNavigate?: Navigate }) {
   const copy = usePartCopy(language);
   const d = decorator(refs, flags);
-  const line = (value: string, key: string) => inline(value, d, copy, onNavigate, key);
+  // In a drafted message record numbers stay plain text (it is copied out
+  // and sent); figures the check could not match stay marked.
+  const inDraft = decorator([], flags);
+  let draft = false;
+  const line = (value: string, key: string) => inline(value, draft ? inDraft : d, copy, onNavigate, key);
   const render = (blocks: Block[], prefix: string): ReactNode[] => blocks.map((block, at) => {
     const index = `${prefix}${at}`;
-    // A drafted message: its own blocks, set off from the answer.
-    if (block.kind === "quote") return <blockquote key={index} data-testid="ai-v2-text-quote" className="space-y-2 rounded-r-lg border-l-2 py-1 pl-3" style={{ borderColor: A.gray4, background: A.gray6 }}>{render(markdownBlocks(block.lines.join("\n")), `${index}-`)}</blockquote>;
+    // A drafted message: its own blocks, set off from the answer, with its
+    // lines kept and a button to copy it.
+    if (block.kind === "quote") {
+      draft = true;
+      const inner = render(markdownBlocks(block.lines.join("\n"), true), `${index}-`);
+      draft = false;
+      return <blockquote key={index} data-testid="ai-v2-text-quote" className="relative space-y-2 rounded-r-lg border-l-2 py-1 pl-3 pr-16 [&_p]:whitespace-pre-line" style={{ borderColor: A.gray4, background: A.gray6 }}><CopyDraft text={plainDraft(block.lines)} copy={copy} />{inner}</blockquote>;
+    }
     if (block.kind === "pre") return <pre key={index} data-testid="ai-v2-text-pre" className="whitespace-pre-wrap rounded-lg px-3 py-2 text-[12.5px]" style={{ background: A.gray6 }}>{block.lines.join("\n")}</pre>;
     return renderBlock(block, index);
   });

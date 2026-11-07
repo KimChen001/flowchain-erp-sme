@@ -6,6 +6,7 @@ import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { formatDateTimeInTimeZone, formatQuantity } from "../../lib/format";
 import { movementTypeLabel, statusCodeLabel } from "../../i18n/statusLabels";
 import { useI18n } from "../../i18n/I18n";
+import { unitLabel } from "../../i18n/unitLabels";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
@@ -520,7 +521,7 @@ export default function InventoryPage({
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 text-xs md:grid-cols-4">
               {([
-                [tr("onHand"), `${formatQuantity(selected.onHandQuantity ?? "0")} ${selected.unit || ""}`],
+                [tr("onHand"), `${formatQuantity(selected.onHandQuantity ?? "0")} ${unitLabel(selected.unit, language, Number(selected.onHandQuantity ?? 0))}`],
                 [tr("reservedQty"), formatQuantity(selected.reservedQuantity ?? "0")],
                 [tr("available"), view === "overview" ? formatQuantity(selected.availableQuantity ?? "0") : formatQuantity(quantity(selected))],
                 [tr("safetyReorder"), `${formatQuantity(Number(selected.safetyStock || 0))} / ${formatQuantity(reorder(selected))}`],
@@ -560,7 +561,7 @@ export default function InventoryPage({
                           {warehouseName(item.warehouseId || item.defaultWarehouseId) || "—"}
                           <div className="text-[11px]" style={{ color: A.sub }}>{item.location || item.locationKey || "—"}</div>
                         </td>
-                        <td className={tdNumericRightClass}>{formatQuantity(item.onHandQuantity ?? "0")} {item.unit || ""}</td>
+                        <td className={tdNumericRightClass}>{formatQuantity(item.onHandQuantity ?? "0")} {unitLabel(item.unit, language, Number(item.onHandQuantity ?? 0))}</td>
                         <td className={tdNumericRightClass}>{formatQuantity(item.reservedQuantity ?? "0")}</td>
                         <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>
                           {view === "overview" ? formatQuantity(item.availableQuantity ?? "0") : formatQuantity(quantity(item))}

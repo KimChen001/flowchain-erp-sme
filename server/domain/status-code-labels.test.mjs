@@ -23,5 +23,5 @@ test('inventory adjustment movements name their reason, so opening stock stands 
   assert.equal(movementTypeLabel('inventory_adjustment', 'zh-CN', 'opening_balance'), '库存调整 · 期初库存')
   assert.equal(movementTypeLabel('inventory_adjustment', 'en-US', 'damage'), 'Inventory adjustment · Damage')
   assert.equal(movementTypeLabel('inventory_adjustment', 'en-US'), 'Inventory adjustment')
-  assert.equal(movementTypeLabel('receipt_posting', 'en-US', 'opening_balance'), 'Goods receipt')
+  assert.equal(movementTypeLabel('receipt_posting', 'en-US', 'opening_balance'), 'Receipt')
 })

@@ -289,6 +289,35 @@ function reconciliation(order, balances, movements, partialScope = false) {
   };
 }
 
+// Audit rows keep the summary the command wrote, in English ("Shipment
+// SH-202611-0001 posted."). The timeline titles them by action when it is
+// read, like its reservation and movement titles, and the page translates
+// the title (src/modules/sales/outboundCopy.ts). The summary names the
+// shipment or order and any reason given; the stored row is unchanged.
+export const OUTBOUND_AUDIT_TITLES = Object.freeze({
+  sales_inventory_reserved: "已为订单预留库存",
+  sales_reservation_released: "已释放库存预留",
+  shipment_draft_created: "发货单已创建",
+  shipment_draft_cancelled: "发货单已取消",
+  sales_shipment_posted: "发货单已过账",
+  sales_shipment_reversed: "发货单已冲销",
+  create_sales_order_draft: "销售订单草稿已创建",
+  revise_sales_order_draft: "销售订单草稿已修改",
+  confirm_sales_order: "销售订单已确认",
+  hold_sales_order: "销售订单已暂停",
+  resume_sales_order: "销售订单已恢复",
+  sales_order_cancelled: "销售订单已取消",
+});
+
+export function outboundAuditTimelineText(row, { orderNumber = "", shipmentNumbers = new Map() } = {}) {
+  const title = OUTBOUND_AUDIT_TITLES[row.action];
+  if (!title) return { title: row.summary, summary: row.summary };
+  const number = row.entityType === "ShipmentDocument" ? shipmentNumbers.get(row.entityId) || "" : orderNumber;
+  // "…cancelled: <reason>" / "…reversed: <reason>" / "…released: <reason>".
+  const reason = /^[^:]*:\s+(.+)$/.exec(String(row.summary || ""))?.[1]?.trim() || "";
+  return { title, summary: [number, reason].filter(Boolean).join(" · ") };
+}
+
 async function evidence(
   prisma,
   actor,
@@ -296,6 +325,7 @@ async function evidence(
   visibleShipments,
   visibleReservations,
 ) {
+  const shipmentNumbers = new Map(visibleShipments.map((row) => [row.id, row.shipmentNumber]));
   const shipmentIds = visibleShipments.map((row) => row.id),
     reservationIds = visibleReservations.map((row) => row.id);
   const [audits, events, movements] = await Promise.all([
@@ -357,8 +387,7 @@ async function evidence(
   const rows = [
     ...visibleAudits.map((row) => ({
       eventType: row.action,
-      title: row.summary,
-      summary: row.summary,
+      ...outboundAuditTimelineText(row, { orderNumber: order.orderNumber, shipmentNumbers }),
       occurredAt: iso(row.createdAt),
       actor: row.actor ? { id: row.actor.id, name: row.actor.name } : null,
       entityType: row.entityType,

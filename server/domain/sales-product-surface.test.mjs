@@ -42,3 +42,17 @@ test('sales risk and evidence pages use row-level tables and real evidence selec
   assert.doesNotMatch(source, /EntityLink kind="item" id=\{order\.sku\}/)
   assert.doesNotMatch(source, /客户订单 → SKU → 库存可用量 → 采购订单 → 供应商 → 收货单/)
 })
+
+test('sales order detail confirms a hold and shows unit prices as money', () => {
+  const source = readSource('src', 'modules', 'sales', 'OutboundWorkbench.tsx')
+
+  // Hold asks first, as Cancel order does; it never posts from the click.
+  assert.match(source, /const dialog = useConfirm\(\)/)
+  assert.match(source, /async function holdOrder\(\)[\s\S]*?await dialog\.confirm\([\s\S]*?if \(confirmed\) await lifecycle\("hold"\)/)
+  assert.match(source, /onClick=\{\(\) => void holdOrder\(\)\}/)
+  assert.doesNotMatch(source, /onClick=\{\(\) => void lifecycle\("hold"\)\}/)
+  assert.match(source, /\{dialog\.element\}/)
+  // "Unit price $180.00", not "Unit price 180 USD".
+  assert.match(source, /say\("Unit price", "单价"\)\} \$\{formatLocaleAmount\(Number\(line\.unitPrice\), data\.order\.currency, locale/)
+  assert.doesNotMatch(source, /formatQuantity\(line\.unitPrice\)/)
+})

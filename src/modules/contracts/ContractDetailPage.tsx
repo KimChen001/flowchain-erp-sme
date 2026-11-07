@@ -169,7 +169,8 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
   };
 
   const action = (label: string, onClick: () => void, testId: string, icon?: ReactNode, tone: "primary" | "secondary" | "danger" | "quiet" = "secondary") => (
-    <button type="button" data-testid={testId} disabled={busy || uploading} onClick={onClick} className={`fc-action-button fc-action-${tone} fc-action-compact`}>{icon}{t(label)}</button>
+    // Keyed by its test id: the actions render as an array.
+    <button key={testId} type="button" data-testid={testId} disabled={busy || uploading} onClick={onClick} className={`fc-action-button fc-action-${tone} fc-action-compact`}>{icon}{t(label)}</button>
   );
   const actions: ReactNode[] = [];
   if (manage) {

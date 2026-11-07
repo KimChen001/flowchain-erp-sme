@@ -232,5 +232,5 @@ export function useReorderListCopy() {
   const { language } = useI18n();
   const t = useCallback((key: ReorderListCopyKey, params?: Record<string, string | number>) => reorderListText(language, key, params), [language]);
   const count = useCallback((key: ReorderListCopyKey, n: number, params?: Record<string, string | number>) => reorderListCount(language, key, n, params), [language]);
-  return Object.assign(t, { count });
+  return Object.assign(t, { count, language });
 }

@@ -20,6 +20,7 @@ import { outboundEnglish } from "./outboundCopy";
 import { outboundPreviewSentences, type OutboundPreviewLookup } from "./outboundPreviewText";
 import { formatCalendarDay, formatLocaleAmount, formatQuantity } from "../../lib/format";
 import { movementTypeLabel } from "../../i18n/statusLabels";
+import { unitLabel } from "../../i18n/unitLabels";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
@@ -41,6 +42,7 @@ import {
   thRightClass,
 } from "../../components/ui/workbenchTable";
 import { A, Field, inputStyle } from "../../components/ui";
+import { useConfirm } from "../../components/ui/ConfirmDialog";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { ListCard, ListSearchCard, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 
@@ -1145,7 +1147,8 @@ function OrderDetail({ id }: { id: string }) {
   const warehouseName = useWarehouseNames();
   const place = usePlace();
   const stamp = useStamp();
-  const { locale } = useI18n();
+  const { locale, language } = useI18n();
+  const dialog = useConfirm();
   const [data, setData] = useState<Workbench | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
@@ -1307,6 +1310,23 @@ function OrderDetail({ id }: { id: string }) {
       inFlight.current = false;
       setSaving(false);
     }
+  }
+  // Putting an order on hold stops reserving and shipping, so it is confirmed
+  // first, as cancelling is.
+  async function holdOrder() {
+    if (!data || inFlight.current) return;
+    const confirmed = await dialog.confirm({
+      title: say(`Put ${data.order.orderNumber} on hold?`, `暂停订单 ${data.order.orderNumber}？`),
+      description: say(
+        "Stock can't be reserved or shipped for this order until you resume it.",
+        "恢复订单前，不能为此订单预留库存或发货。",
+      ),
+      confirmLabel: say("Put on hold", "暂停订单"),
+      cancelLabel: say("Keep open", "不暂停"),
+      tone: "danger",
+      testId: "hold-order-dialog",
+    });
+    if (confirmed) await lifecycle("hold");
   }
   async function reviseDraft() {
     if (!data || inFlight.current) return;
@@ -1694,7 +1714,7 @@ function OrderDetail({ id }: { id: string }) {
       <section className="rounded-xl border bg-white p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold">{data.order.orderNumber}</h1>
+            <h1 className="fc-page-title">{data.order.orderNumber}</h1>
             <div className="mt-2 flex flex-wrap gap-2">
               <Badge value={data.order.workflowStatus} />
               <Badge value={data.order.reservationStatus} />
@@ -1729,7 +1749,8 @@ function OrderDetail({ id }: { id: string }) {
                 dense
                 tone="secondary"
                 disabled={saving}
-                onClick={() => void lifecycle("hold")}
+                testId="hold-sales-order"
+                onClick={() => void holdOrder()}
               >
                 {copy("暂停订单")}
               </Button>
@@ -1813,7 +1834,7 @@ function OrderDetail({ id }: { id: string }) {
             label={say("Lines", "订单行")}
             note={
               lineUnits.length === 1
-                ? say(`${orderedText} ${lineUnits[0]} ordered`, `订购 ${orderedText} ${lineUnits[0]}`)
+                ? say(`${orderedText} ${unitLabel(lineUnits[0], language, 2)} ordered`, `订购 ${orderedText} ${unitLabel(lineUnits[0], language)}`)
                 : ""
             }
           >
@@ -1893,7 +1914,7 @@ function OrderDetail({ id }: { id: string }) {
                       >
                         {line.unitPrice == null
                           ? say("No unit price, cannot be invoiced", "未定价，无法开票")
-                          : `${say("Unit price", "单价")} ${formatQuantity(line.unitPrice)} ${data.order.currency}`}
+                          : `${say("Unit price", "单价")} ${formatLocaleAmount(Number(line.unitPrice), data.order.currency, locale, { maximumFractionDigits: 4 })}`}
                       </div>
                     </td>
                     {[
@@ -2229,6 +2250,7 @@ function OrderDetail({ id }: { id: string }) {
           )}
         </ActionDialog>
       )}
+      {dialog.element}
     </div>
   );
 }
@@ -2355,7 +2377,7 @@ function ShipmentDetail({ id }: { id: string }) {
       <section className="rounded-xl border bg-white p-5">
         <div className="flex flex-wrap justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold">
+            <h1 className="fc-page-title">
               {data.shipment.shipmentNumber}
             </h1>
             {/* The shipment version is an internal edit counter, so it is not shown. */}

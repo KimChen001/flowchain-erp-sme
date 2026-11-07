@@ -4,8 +4,9 @@ import { statusCodeLabel } from "../../i18n/statusLabels";
 
 // Display copy for Today (/app/overview/risks). English is the source; zh-CN
 // is chosen by the interface language. The server sends codes, ids, dates and
-// numbers (GET /api/home/overview); names, SKUs, units and document numbers
-// stay as stored. A message with a count has a "One" form for a count of 1.
+// numbers (GET /api/home/overview); names, SKUs and document numbers stay as
+// stored, and units read in the interface language (unitLabel: pcs / 件). A
+// message with a count has a "One" form for a count of 1.
 const COPY = {
   "en-US": {
     loadFailed: "Could not load overview",
@@ -114,7 +115,9 @@ const COPY = {
     tileOverdueNote: "Past their date. Select to list only these",
     tileChanges: "Documents updated today",
     changesNote: "Documents you can open whose last change was today ({date}). A document changed several times counts once.",
-    changesShort: "Last changed on {date}",
+    changesShort: "Last change {when}",
+    changesNone: "Nothing changed today",
+    changesNoneLast: "Nothing changed today. Last change {date}",
     setupTitle: "Set up your workspace",
     setupNote: "{done} of {total} steps done. This list goes away once every step is done.",
     step_items: "Import items",
@@ -252,7 +255,9 @@ const COPY = {
     tileOverdueNote: "已过日期；点选后只列出这些",
     tileChanges: "今日更新的单据",
     changesNote: "今天（{date}）最后一次更改、你有权打开的单据；同一单据多次更改只计一次。",
-    changesShort: "最后更改于 {date}",
+    changesShort: "最后更改于 {when}",
+    changesNone: "今天没有更改",
+    changesNoneLast: "今天没有更改，最后更改于 {date}",
     setupTitle: "设置工作区",
     setupNote: "已完成 {done}/{total} 步。全部完成后此清单会自动隐藏。",
     step_items: "导入物料",

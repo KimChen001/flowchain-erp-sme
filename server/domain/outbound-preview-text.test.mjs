@@ -96,6 +96,21 @@ test('every timeline title the order workbench API builds has an English label',
   assert.match(source, /"发货冲销流水已创建"/)
 })
 
+test('audit events on the order timeline are titled by action in both languages; the stored summary is kept', async () => {
+  const { OUTBOUND_AUDIT_TITLES, outboundAuditTimelineText } = await import('./outbound-workbench-read-service.mjs')
+  for (const title of Object.values(OUTBOUND_AUDIT_TITLES)) {
+    assert.ok(outboundEnglish[title], `${title} needs an English label`)
+    assert.doesNotMatch(outboundEnglish[title], /[㐀-鿿]/)
+  }
+  const shipmentNumbers = new Map([['ship-1', 'SH-202611-0001']])
+  assert.deepEqual(outboundAuditTimelineText({ action: 'sales_shipment_posted', entityType: 'ShipmentDocument', entityId: 'ship-1', summary: 'Shipment SH-202611-0001 posted.' }, { orderNumber: 'SO-202611-0001', shipmentNumbers }), { title: '发货单已过账', summary: 'SH-202611-0001' })
+  assert.equal(outboundEnglish['发货单已过账'], 'Shipment posted')
+  assert.deepEqual(outboundAuditTimelineText({ action: 'sales_shipment_reversed', entityType: 'ShipmentDocument', entityId: 'ship-1', summary: 'Shipment SH-202611-0001 reversed: Wrong carton' }, { shipmentNumbers }), { title: '发货单已冲销', summary: 'SH-202611-0001 · Wrong carton' })
+  assert.deepEqual(outboundAuditTimelineText({ action: 'confirm_sales_order', entityType: 'SalesOrder', entityId: 'so-1', summary: 'Sales order SO-202611-0001 confirm completed.' }, { orderNumber: 'SO-202611-0001' }), { title: '销售订单已确认', summary: 'SO-202611-0001' })
+  // An action the timeline does not title keeps the recorded text.
+  assert.deepEqual(outboundAuditTimelineText({ action: 'something_new', summary: 'Recorded text.' }), { title: 'Recorded text.', summary: 'Recorded text.' })
+})
+
 test('the sales dialogs have no unconditional Chinese confirm button, developer note or JSON dump', async () => {
   const source = await readFile(new URL('../../src/modules/sales/OutboundWorkbench.tsx', import.meta.url), 'utf8')
   assert.doesNotMatch(source, /"确认执行"/)

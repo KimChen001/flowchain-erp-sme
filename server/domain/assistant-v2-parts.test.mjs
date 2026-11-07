@@ -294,7 +294,9 @@ test('the form ticks nothing for the user, and a covered row needs "Order anyway
   assert.match(ticked('zh-CN'), />数量（件）</)
   assert.match(ticked('en-US', 'box'), />Quantity \(boxes\)</)
   assert.match(ticked('zh-CN', 'box'), />数量（箱）</)
-  assert.match(ticked('zh-CN', 'drum'), />数量（drum）</)
+  assert.match(ticked('zh-CN', 'drum'), />数量（桶）</)
+  // A unit the labels do not list shows as stored.
+  assert.match(ticked('zh-CN', 'tote'), />数量（tote）</)
   assert.match(client.form({ props: formProps(), language: 'zh-CN' }), /建议 600 件/)
   assert.doesNotMatch(markup, /Submit for approval|data-testid="ai-v2-pr-submit"/)
 })
@@ -859,10 +861,26 @@ test('with buttons to pick from, the text tells the user to pick no more', async
 test('a quoted draft and a fenced block render as blocks of their own', async () => {
   const client = await loadClient()
   const markup = client.text({ text: 'Here is a draft:\n\n> Subject: Overdue order PO-020\n>\n> Hello [contact name],\n> - Confirm a date.\n> - Send the rest.\n\nSend it when ready.\n\n```\nLine one\n  indented\n```' })
-  assert.match(markup, /<blockquote data-testid="ai-v2-text-quote"[^>]*><p>Subject: Overdue order PO-020<\/p><p>Hello \[contact name\],<\/p><ul[^>]*><li>Confirm a date\.<\/li><li>Send the rest\.<\/li><\/ul><\/blockquote>/)
+  assert.match(markup, /<blockquote data-testid="ai-v2-text-quote"[^>]*><button[^>]*data-testid="ai-v2-quote-copy"[^>]*>.*?<\/button><p>Subject: Overdue order PO-020<\/p><p>Hello \[contact name\],<\/p><ul[^>]*><li>Confirm a date\.<\/li><li>Send the rest\.<\/li><\/ul><\/blockquote>/)
   assert.doesNotMatch(markup, /&gt;/)
   assert.match(markup, /<p>Send it when ready\.<\/p>/)
   assert.match(markup, /<pre data-testid="ai-v2-text-pre"[^>]*>Line one\n {0,2}indented<\/pre>/)
+})
+
+// 2026-11-06: a draft's signature ran into one line ("Best regards, [Your
+// name] [Your title]"), and its record numbers were chips on some mentions only.
+test('a quoted draft keeps its lines, shows record numbers as text and can be copied', async () => {
+  const client = await loadClient()
+  const refs = [{ type: 'purchase_order', id: 'PO-020', label: 'PO-020' }]
+  const markup = client.text({ text: 'PO-020 is late. Draft:\n\n> Subject: PO-020 is overdue\n>\n> Best regards,\n> [Your name]\n> [Your title]', refs })
+  const quote = markup.slice(markup.indexOf('<blockquote'))
+  assert.match(quote, /<p>Best regards,\n\[Your name\]\n\[Your title\]<\/p>/)
+  assert.match(quote, /\[&amp;_p\]:whitespace-pre-line/)
+  // The record number in the draft is plain text, not a chip...
+  assert.match(quote, /<p>Subject: PO-020 is overdue<\/p>/)
+  assert.match(quote, /data-testid="ai-v2-quote-copy"[^>]*>.*Copy/)
+  // ...while the answer's own mention is still a chip around the number.
+  assert.doesNotMatch(markup.slice(0, markup.indexOf('<blockquote')), /<p>PO-020 is late/)
 })
 
 // ---------------------------------------------------------------- record card

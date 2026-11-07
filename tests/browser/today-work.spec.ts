@@ -123,5 +123,5 @@ test("Today stays in Chinese for a Chinese reader, with the same rows", async ({
   await expect(root.getByTestId("today-work-item").first()).toContainText(CJK);
   if (overview.workItems.length > 10) await root.getByRole("button", { name: /显示全部/ }).click();
   await expect(root.getByText("销售订单待预留", { exact: true })).toBeVisible();
-  await expect(root.locator('[data-kind="sales_order_to_reserve"]')).toContainText("仍待预留 35 pcs");
+  await expect(root.locator('[data-kind="sales_order_to_reserve"]')).toContainText("仍待预留 35 件");
 });

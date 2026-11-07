@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Info, RefreshCw } from "lucide-react";
 import { useSearchParams } from "react-router";
 import { A, Card } from "../../components/ui";
+import { listTableCardsRef } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
@@ -489,7 +490,7 @@ export function SupplierPerformanceTable() {
         : error ? <div role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-xs text-red-800"><ScorecardError failure={error} onRetry={reload} /></div>
         : !data?.suppliers.length ? <p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("noSuppliers")}</p>
         : (
-          <div className="mt-3 overflow-x-auto">
+          <div className="mt-3 overflow-x-auto" ref={listTableCardsRef}>
             <table className="w-full min-w-[980px] text-xs">
               <thead><tr>{[tr("supplier"), tr("lines"), tr("onTimeOriginal"), tr("onTimeCurrentFull"), tr("inFull"), tr("otifOriginal"), tr("otifCurrentFull"), tr("early"), tr("rejection"), tr("averageDelay"), tr("priceVariances"), ""].map((header, index) => <th key={`${header}-${index}`} className="p-2 text-left" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
               <tbody>

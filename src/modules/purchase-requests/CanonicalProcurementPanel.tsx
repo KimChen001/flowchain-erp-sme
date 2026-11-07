@@ -195,6 +195,9 @@ const COPY = {
   deleteLineTitle: ["Delete purchase line {line}?", "删除采购行 {line}？"],
   deleteLineBody: ["The line is removed from this form. Nothing is saved until you save the request.", "该行将从表单中移除；保存申请前不会保存任何更改。"],
   deleteLine: ["Delete line", "删除采购行"],
+  withdrawTitle: ["Withdraw {number}?", "撤回 {number}？"],
+  withdrawBody: ["It leaves the approval queue and goes back to draft. You can edit it and submit it again.", "该申请将退出审批并退回草稿；可以修改后重新提交。"],
+  withdraw: ["Withdraw", "撤回"],
 } as const;
 const request = <T,>(url: string, method = "GET", body?: unknown) =>
   apiJson<T>(url, {
@@ -704,6 +707,19 @@ export default function CanonicalProcurementPanel({
             })
           : "";
       if (action === "reject" && !reason) return;
+      // Withdrawing takes a submitted request out of approval, so it asks first.
+      if (
+        action === "withdraw" &&
+        !(await confirmDialog.confirm({
+          title: tr("withdrawTitle").replace("{number}", numberOf(pr)),
+          description: tr("withdrawBody"),
+          confirmLabel: tr("withdraw"),
+          cancelLabel: tr("goBack"),
+          tone: "danger",
+          testId: "withdraw-request-dialog",
+        }))
+      )
+        return;
       const result: any = await request(
         `/api/procurement/requests/${pr.id}/${action}`,
         "POST",
@@ -834,7 +850,7 @@ export default function CanonicalProcurementPanel({
           <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-lg font-semibold" style={{ color: A.label }}>{numberOf(selected)}</h1>
+                <h1 className="fc-page-title" style={{ color: A.label }}>{numberOf(selected)}</h1>
                 <StatusChip label={statusLabel(selected.status)} tone={statusToneOf(selected.status)} />
               </div>
               <p className="mt-1 text-xs" style={{ color: A.sub }}>
