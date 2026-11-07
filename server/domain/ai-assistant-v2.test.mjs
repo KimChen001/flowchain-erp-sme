@@ -1112,6 +1112,17 @@ test('a Chinese answer does not open with a paragraph of English prose; an Engli
   assert.match(ofType(wanted.events, 'text_delta').map((event) => event.text).join(''), /Please confirm the new delivery date/)
 })
 
+// 2026-11-07 on Haiku: an answer ended empty after its only text was held.
+test('held narration: the model is told it was not shown, and an answer that ends without text shows it after all', async () => {
+  const { client, body, events } = await ask([
+    [...say('PO-001 and PO-008 are overdue.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [end()],
+  ])
+  assert.match(client.requests[1].messages.at(-1).content.map((block) => block.text || '').join(' '), /not shown to the user/)
+  assert.equal(body.conclusion.summary, 'PO-001 and PO-008 are overdue.')
+  assert.equal(ofType(events, 'text_delta').map((event) => event.text).join(''), 'PO-001 and PO-008 are overdue.')
+})
+
 test('a date the user typed is not flagged as unmatched', async () => {
   const { events } = await ask([OVERDUE, [...say('PO-001 is late; you need it by 2026-11-20, and Nov 20 is 3 weeks away.'), end()]], { question: 'Which orders are late? We need them by Nov 20.' })
   const spans = ofType(events, 'flag').flatMap((flag) => flag.spans)
