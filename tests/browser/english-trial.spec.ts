@@ -110,7 +110,9 @@ test("English trial: the assistant opens in English", async ({ page }) => {
   await page.getByTestId("ai-assistant-toggle").click();
   const panel = page.getByTestId("ai-assistant-panel");
   await expect(panel).toBeVisible();
-  await expect(panel.getByTestId("ai-empty-prompt-chip").first()).toBeVisible();
+  // The starter cards, or, on a server with no model (as in CI), the notice
+  // that says why the assistant cannot answer, shown before any question.
+  await expect(panel.getByTestId("ai-empty-prompt-chip").or(panel.getByTestId("ai-readiness-notice")).first()).toBeVisible();
   await expectEnglish(page);
 });
 
