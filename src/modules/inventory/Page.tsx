@@ -252,6 +252,9 @@ export default function InventoryPage({
   // Movements are searched on the server (there can be tens of thousands),
   // a moment after the person stops typing.
   const [movementQuery, setMovementQuery] = useState("");
+  // Each load takes the next number; only the latest may show its rows, so a
+  // slow earlier response never replaces a newer one.
+  const loadRequest = useRef(0);
   const [warehouse, setWarehouse] = useState("");
   const [stockStatus, setStockStatus] = useState("");
   const [movementType, setMovementType] = useState("");
@@ -294,6 +297,8 @@ export default function InventoryPage({
     }, new URLSearchParams())
     .toString();
   const load = () => {
+    const request = (loadRequest.current += 1);
+    const latest = () => request === loadRequest.current;
     const endpoint = endpointFor[view];
     setServerTotal(null);
     if (!endpoint) {
@@ -318,6 +323,8 @@ export default function InventoryPage({
           params.set("page", String(page));
           params.set("pageSize", String(BALANCE_PAGE_SIZE));
           const payload = await read(params);
+          // A newer load has started: stop reading pages for this one.
+          if (!latest()) return;
           const pageRows = rowsOf(payload);
           all.push(...pageRows);
           total = totalOf(payload);
@@ -331,13 +338,18 @@ export default function InventoryPage({
       if (!params.get("pageSize")) params.set("pageSize", String(BALANCE_PAGE_SIZE));
       if (movementQuery) params.set("q", movementQuery);
       work = read(params).then((payload) => {
+        if (!latest()) return;
         setRows(rowsOf(payload));
         setServerTotal(totalOf(payload));
       });
     } else {
-      work = read(new URLSearchParams(queryString)).then((payload) => setRows(rowsOf(payload)));
+      work = read(new URLSearchParams(queryString)).then((payload) => {
+        if (latest()) setRows(rowsOf(payload));
+      });
     }
-    work.then(() => setState("ready")).catch(() => setState("error"));
+    work
+      .then(() => { if (latest()) setState("ready"); })
+      .catch(() => { if (latest()) setState("error"); });
   };
   useEffect(load, [view, queryString, movementQuery]);
   useEffect(() => {
