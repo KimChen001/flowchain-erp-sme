@@ -4,6 +4,7 @@ import { createContractReadService } from './contract-read-service.mjs'
 import { createOperationalFinanceO2cReadService } from './operational-finance-o2c-read-service.mjs'
 import { createPriceHistoryReadService } from './price-history-read-service.mjs'
 import { createReorderListReadService } from './reorder-list-read-service.mjs'
+import { DEMAND_WINDOW_DAYS } from './reorder-list.mjs'
 import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
 import { SUPPLIER_ISSUE_TYPES, createSupplierInsightsReadService } from './supplier-insights.mjs'
 import { reportReadAccessFor, scopeBusinessContext } from './report-read-access.mjs'
@@ -147,7 +148,7 @@ const reorderList = defineAiTool({
     // Counts over every row, so an answer reads them instead of counting
     // (2026-11-07: "10 of the 12 were raised to the minimum" when 11 were).
     const counts = { orderNow: rows.filter((row) => row.orderNow === true).length, raisedToMinimum: rows.filter((row) => row.raisedToMinimum).length }
-    return { asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), counts, ...aiToolList(rows, args.limit) }
+    return { asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), counts, demandWindowDays: DEMAND_WINDOW_DAYS, ...aiToolList(rows, args.limit) }
   },
 })
 

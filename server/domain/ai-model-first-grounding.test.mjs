@@ -159,3 +159,9 @@ test('a quoted draft\'s list numbers, payment terms and the answer\'s own steps 
   assert.deepEqual(answerOf('The largest is $7,300.', amounts), [{ kind: 'number', value: '$7,300' }])
   assert.deepEqual(answerOf('The largest is about $7,250.', amounts), [{ kind: 'number', value: '$7,250' }])
 })
+
+// 2026-11-07: "$0.71 unspent" read the solver's budgetLeft and was flagged.
+test('a budget left over is money', () => {
+  const problems = checkAiModelFirstGrounding({ answer: { title: 'Plan', answer: 'It leaves $0.71 unspent; the reorder list leaves about $148.', records: [] }, results: [{ plans: [{ plan: 'optimal', spend: 599.29, budgetLeft: 0.71 }, { plan: 'reorder_list', spend: 451.9, budgetLeft: 148.1 }] }], today: '2026-11-07' }).problems
+  assert.deepEqual(problems, [])
+})
