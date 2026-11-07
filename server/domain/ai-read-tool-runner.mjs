@@ -34,7 +34,7 @@ function toolsFor(facts, context) {
 export const AI_READ_TOOL_COLUMNS = Object.freeze({
   workspace_summary: { '': ['purchaseOrders.open', 'purchaseOrders.overdue', 'purchaseOrders.waitingForApproval', 'purchaseRequestsWaitingForApproval', 'inventory.skus', 'inventory.atRisk', 'supplierInvoices.committedCount', 'rfqs.open', 'rfqs.readyToAward', 'receipts.rejected', 'receipts.unposted', 'recordsMissingData'] },
   list_purchase_orders: { rows: ['orderNumber', 'supplier', 'status', 'dueDate', 'overdueDays', 'ordered', 'received', 'remaining', 'unit', 'amount', 'currency', 'open'], bySupplier: ['supplier', 'orders'] },
-  get_purchase_order: { openLines: ['sku', 'itemName', 'ordered', 'received', 'remaining', 'unit', 'promisedDate', 'originalPromisedDate'], receipts: ['documentNumber', 'arrived', 'postingStatus', 'rejected', 'unit'], invoiceDifferences: ['invoiceNumber', 'matchStatus', 'variance', 'currency'] },
+  get_purchase_order: { openLines: ['sku', 'itemName', 'ordered', 'received', 'remaining', 'unit', 'unitPrice', 'promisedDate', 'originalPromisedDate'], receipts: ['documentNumber', 'arrived', 'postingStatus', 'rejected', 'unit'], invoiceDifferences: ['invoiceNumber', 'matchStatus', 'variance', 'currency'] },
   stock_position: { rows: ['sku', 'itemName', 'unit', 'onHand', 'reserved', 'available', 'openSalesDemand', 'incomingOnPurchaseOrders', 'availableToPromise', 'shortage', 'safetyStock', 'reorderPoint', 'status'] },
   stock_projection: { weeks: ['from', 'to', 'incoming', 'demand', 'endAvailable', 'belowSafetyStock', 'short'] },
   list_sales_orders: { rows: ['orderNumber', 'customer', 'promisedDate'] },
@@ -62,7 +62,7 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   setup_status: { steps: ['id', 'done', 'count'] },
   item_suppliers: { suppliers: ['name', 'preferred', 'leadTimeDays', 'minimumOrderQuantity', 'referencePrice', 'currency'] },
   rfq_quotes: { rows: ['rfq', 'supplier', 'sku', 'quantity', 'unitPrice', 'currency', 'deliveryDate', 'validUntil'], rfqs: ['rfq', 'title', 'due', 'quotes'] },
-  order_quantity_costs: { options: ['quantity', 'orderValue', 'daysOfDemand', 'ordersPerYear', 'averageCycleStock', 'holdingCostPerYear', 'orderingCostPerYear', 'totalCostPerYear', 'belowSupplierMinimum'], comparisons: ['smaller', 'larger', 'ordersSavedPerYear', 'extraHoldingCostPerYear', 'breakEvenCostPerOrder', 'cheaperAtUserCostPerOrder'] },
+  order_quantity_costs: { options: ['quantity', 'orderValue', 'daysOfDemand', 'ordersPerYear', 'averageCycleStock', 'holdingCostPerYear', 'orderingCostPerYear', 'totalCostPerYear', 'belowSupplierMinimum'], comparisons: ['smaller', 'larger', 'ordersSavedPerYear', 'extraHoldingCostPerYear', 'breakEvenCostPerOrder', 'cheaperAtUserCostPerOrder', 'largerSavesPerYear'] },
   inventory_value: { rows: ['sku', 'itemName', 'onHand', 'unit', 'unitPrice', 'currency', 'value', 'sharePercent', 'cumulativeSharePercent', 'supplier'], totals: ['currency', 'value', 'holdingCostPerYear', 'holdingCostPerMonth', 'holdingCostPerDay'] },
   optimize_order_plan: {
     plans: ['plan', 'lines', 'spend', 'holdingCost', 'shortageCost', 'expectedCost', 'costAboveOptimal', 'withinBudget', 'overBudgetAmount', 'budgetLeft'],

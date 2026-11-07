@@ -93,7 +93,7 @@ const listPurchaseOrders = defineAiTool({
 
 const getPurchaseOrder = defineAiTool({
   name: 'get_purchase_order',
-  description: 'One purchase order by its number: status, supplier, each open line with ordered, received and remaining quantity and its current and original promised dates, and the receipts and invoice differences recorded against it.',
+  description: 'One purchase order by its number: status, supplier, each open line with ordered, received and remaining quantity, its unit price when your role sees prices, and its current and original promised dates, and the receipts and invoice differences recorded against it.',
   parameters: { order: { type: 'string', description: 'The order number, for example PO-202611-0014.' } },
   required: ['order'],
   available: (facts) => Boolean(facts.purchaseOrders),
@@ -105,7 +105,7 @@ const getPurchaseOrder = defineAiTool({
     return {
       asOf: facts.asOf,
       order: { ...orderRow(row), createdDate: row.createdDate || null },
-      openLines: array(row.openLines).map((line) => ({ sku: line.sku, itemName: line.itemName, ordered: line.ordered, received: line.received, remaining: line.remaining, unit: line.unit, promisedDate: line.promisedDate, originalPromisedDate: line.originalPromisedDate })),
+      openLines: array(row.openLines).map((line) => ({ sku: line.sku, itemName: line.itemName, ordered: line.ordered, received: line.received, remaining: line.remaining, unit: line.unit, promisedDate: line.promisedDate, originalPromisedDate: line.originalPromisedDate, ...(line.unitPrice !== null && line.unitPrice !== undefined ? { unitPrice: line.unitPrice, currency: row.currency || null } : {}) })),
       receipts: receipts.filter((entry) => !seen.has(entry.id) && seen.add(entry.id)).map((entry) => ({ documentNumber: entry.documentNumber, arrived: entry.arrivedDay, postingStatus: entry.postingStatus, rejected: entry.rejected, unit: entry.unit, ref: aiToolRef('receiving_doc', entry.id, entry.documentNumber) })),
       invoiceDifferences: array(facts.invoices?.variances).filter((entry) => entry.poId === row.id).map((entry) => ({ invoiceNumber: entry.invoiceNumber, matchStatus: entry.matchStatus, variance: entry.variance, currency: entry.currency, ref: aiToolRef('supplier_invoice', entry.id, entry.invoiceNumber) })),
     }

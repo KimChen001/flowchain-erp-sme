@@ -571,7 +571,7 @@ const preferredSource = (sources) => sources.find((source) => source.preferred) 
 
 const orderQuantityCosts = defineAiTool({
   name: 'order_quantity_costs',
-  description: `Compares order quantities for one item over a year: for each quantity the days of demand it covers, orders a year, average cycle stock, the order's value, the yearly holding cost and, when the user gives a cost per order, the yearly ordering cost and the total. For each pair, the extra holding cost of the larger one, the orders it saves and the break-even cost per order (the larger is cheaper overall when placing and receiving one order costs more than that). Also the economic order quantity (EOQ) at the user's cost per order, or at example costs per order of ${EOQ_EXAMPLE_ORDER_COSTS.join(', ')}. Demand is the item's recorded average daily demand (posted shipments over the last ${DEMAND_WINDOW_DAYS} days); price is the approved supplier's reference price. FlowChain records no price breaks and no cost per order, so the result says what it assumed. Use it for "order 100 instead of 50?", "is a bigger order cheaper?", "what quantity should I order?".`,
+  description: `Compares order quantities for one item over a year: for each quantity the days of demand it covers, orders a year, average cycle stock, the order's value, the yearly holding cost and, when the user gives a cost per order, the yearly ordering cost and the total. For each pair, the extra holding cost of the larger one, the orders it saves and the break-even cost per order (the larger is cheaper overall when placing and receiving one order costs more than that), and, at the user's cost per order, how much less the larger costs a year in all (negative when it costs more). Also the economic order quantity (EOQ) at the user's cost per order, or at example costs per order of ${EOQ_EXAMPLE_ORDER_COSTS.join(', ')}. Demand is the item's recorded average daily demand (posted shipments over the last ${DEMAND_WINDOW_DAYS} days); price is the approved supplier's reference price. FlowChain records no price breaks and no cost per order, so the result says what it assumed. Use it for "order 100 instead of 50?", "is a bigger order cheaper?", "what quantity should I order?".`,
   parameters: {
     sku: { type: 'string', description: 'The item\'s SKU.' },
     quantities: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 10000000 }, maxItems: 5, description: 'The order quantities to compare, in the item\'s stock unit (for example [50, 100]).' },
@@ -630,6 +630,9 @@ const orderQuantityCosts = defineAiTool({
         extraHoldingCostPerYear: holdingPerUnit === null ? null : round(((larger - smaller) / 2) * holdingPerUnit),
         breakEvenCostPerOrder: round(breakEven),
         cheaperAtUserCostPerOrder: costPerOrder === null || breakEven === null ? null : costPerOrder > breakEven ? larger : costPerOrder < breakEven ? smaller : 'equal',
+        // The yearly saving of the larger at the user's cost per order, so an
+        // answer reads it instead of subtracting the totals (2026-11-07).
+        largerSavesPerYear: options[index].totalCostPerYear === null || options[index + 1].totalCostPerYear === null ? null : round(options[index].totalCostPerYear - options[index + 1].totalCostPerYear),
       }
     })
     const eoqQuantity = (cost) => (annual === null || !holdingPerUnit ? null : Math.max(minimum, Math.round(Math.sqrt((2 * annual * cost) / holdingPerUnit))))

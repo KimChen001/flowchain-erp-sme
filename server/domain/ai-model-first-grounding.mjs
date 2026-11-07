@@ -101,7 +101,16 @@ const PROSE_WORDS = Object.freeze({ two: 2, three: 3, four: 4, five: 5, six: 6, 
 const PROSE_WORD = new RegExp(`\\b(${Object.keys(PROSE_WORDS).join('|')})\\b(?!-)`, 'gi')
 // What a count beside a list counts: up to two words, then the noun (6 FOODS_3
 // items, 3 late purchase orders), or a Chinese measure word (6 个, 3 张).
-const COUNT_NOUN = /^\s*(?:(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?|orders?|requests?|suppliers?|customers?|lines?|records?)(?![\p{L}])|(?:个|项|张|家|种|笔|条|款))/iu
+// An item of a numbered list, quoted or not, with its number.
+const LIST_ITEM = /^\s*(?:>\s*)*(\d{1,2})[.)]\s+/gm
+// Payment terms, read as a term: Net 30, 2/10 net 30, 月结 30 天.
+const PAYMENT_TERMS = /(?:\b\d{1,2}\/\d{1,2}\s+)?\bnet\s?\d{1,3}\b|月结\s*\d{1,3}\s*天/giu
+// What marks a figure as rounded, before or after it.
+const APPROX_BEFORE = /(?:\babout|\baround|\broughly|\bapproximately|\bapprox\.?|~|≈|约|大约|大概|近)\s*$/i
+const APPROX_AFTER = /^\s*(?:左右|上下)/
+// What points at a step of a numbered list: "step 2", "steps 1 and 2", 第 2 步, 步骤 3.
+const STEP_BEFORE = /(?:\bsteps?|步骤|第)[^.\n。！？!?]{0,16}$/i
+const COUNT_NOUN =/^\s*(?:(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?|orders?|requests?|suppliers?|customers?|lines?|records?)(?![\p{L}])|(?:个|项|张|家|种|笔|条|款))/iu
 const ZH_DIGITS = Object.freeze({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 })
 const ZH_COUNT = /([二两三四五六七八九]?十[一二三四五六七八九]?|[二两三四五六七八九])\s*(?=个|天|日|周|次|件|家|笔|名|项|条|份|小时|工作日|月|年)/g
 const zhCount = (value) => {
@@ -244,7 +253,13 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   const named = fold(`${question}\n${conversation}`)
   const given = aiGroundingSources([question])
   if (today) { sources.days.add(today); sources.months.add(today.slice(0, 7)) }
-  let rest = figuresText(`${title}\n${body}`).replace(/^\s*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
+  // The highest item number of the answer's own numbered lists, quoted ones
+  // (a drafted message) included: "steps 1 and 2" points into them.
+  const listItems = Math.max(0, ...[...figuresText(body).matchAll(LIST_ITEM)].map((match) => Number(match[1])))
+  // List marks go, also inside a quoted draft ("> 3. The reason for the delay").
+  let rest = figuresText(`${title}\n${body}`).replace(/^\s*(?:>\s*)*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
+    // Payment terms are a term, not a figure: "Net 30", "2/10 net 30", 月结 30 天.
+    .replace(PAYMENT_TERMS, (match) => ' '.repeat(match.length))
   const blank = (match) => ' '.repeat(match.length)
   // Where each grounded record and name sits, for a count written beside the
   // list it counts ("FOODS_3 items (6): FOODS_3_064, …"). An item's name and
@@ -325,7 +340,13 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const decimals = (digits.split('.')[1] || '').length
     const factor = SCALES[scale] || 1
     const value = written * factor
-    const tolerance = 0.5 * 10 ** -decimals * factor + 1e-9
+    // A figure the answer marks as rounded ("about $7,300", 约 7,300 美元,
+    // 7,300 美元左右) may be off by half the place of its last non-zero
+    // digit; any other by half its last digit.
+    const at = match.index + match[0].indexOf(num)
+    const approximate = APPROX_BEFORE.test(rest.slice(Math.max(0, match.index - 16), match.index)) || APPROX_AFTER.test(rest.slice(match.index + match[0].length, match.index + match[0].length + 6))
+    const zeros = !decimals && approximate ? (digits.replace(/^-/, '').match(/0+$/) || [''])[0].length : 0
+    const tolerance = (zeros ? 0.5 * 10 ** zeros : 0.5 * 10 ** -decimals) * factor + 1e-9
     const unit = text(suffix).toLowerCase()
     const currencies = currencyCodes(cur) || currencyCodes(unit)
     const kind = currencies ? 'money' : /%|％|percent|per cent|百分点/.test(unit) ? 'percent' : /day|天|日/.test(unit) ? 'days' : 'plain'
@@ -334,7 +355,9 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const grounded = sources.numbers.some((source) => numberKindFits(source, kind, currencies) && (near(source.value) || (kind === 'percent' && near(source.value * 100))))
       || givenNumbers.some(near)
       || (kind === 'plain' && !decimals && factor === 1 && value >= 1900 && value <= 2100 && [...sources.months].some((month) => month.startsWith(String(value))))
-      || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && listCount(match.index + match[0].indexOf(num), num.length) === value)
+      || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && listCount(at, num.length) === value)
+      // A step of the answer's own numbered list ("steps 1 and 2", 第 2 步).
+      || (kind === 'plain' && !decimals && factor === 1 && value >= 1 && value <= listItems && (STEP_BEFORE.test(rest.slice(Math.max(0, at - 24), at)) || /^\s*步/.test(rest.slice(at + num.length, at + num.length + 3))))
     if (!grounded) fail('number', match[0].trim())
   }
   // Cited records: each one a tool returned.

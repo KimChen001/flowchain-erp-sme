@@ -154,6 +154,9 @@ test('a role gets only the tools and the fields it may read', async () => {
   const orders = await runAiReadTool('list_purchase_orders', { status: 'all' }, { facts: viewer })
   assert.ok(orders.result.rows.length > 0)
   assert.ok(orders.result.rows.every((row) => row.amount === null))
+  // An order's unit price only for a role that sees prices (2026-11-07: an answer divided the amount itself).
+  assert.ok((await runAiReadTool('get_purchase_order', { order: 'PO-001' }, { facts: viewer })).result.openLines.every((line) => !('unitPrice' in line)))
+  assert.deepEqual((await runAiReadTool('get_purchase_order', { order: 'PO-001' }, { facts: await factsFor() })).result.openLines.map((line) => [line.unitPrice, line.currency]), [[100, 'USD']])
   assert.equal(orders.result.workspace.committedSpend, null)
   // Nobody gets a contact's email address from a tool.
   for (const facts of [await factsFor(), finance, operations, viewer]) assert.doesNotMatch(await everyOutput(facts), /@/)

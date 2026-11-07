@@ -139,3 +139,23 @@ test('a Chinese comma between two figures keeps them apart, in the answer, the q
   assert.deepEqual(kinds(check('订 50 或 100 都可以。', [], { question: '订 50，100 还是 200？' })), [])
   assert.deepEqual(kinds(check('供应商 3 个工作日内回复。', [policy('供应商应在 3，5 个工作日内回复。')])), [])
 })
+
+// 2026-11-07 new-user test: words that are no figure about the records were
+// flagged, and a rounded figure the prompt allows.
+test('a quoted draft\'s list numbers, payment terms and the answer\'s own steps are no figures; a marked rounding may round', () => {
+  const answerOf = (answer, results = []) => checkAiModelFirstGrounding({ answer: { title: 'Answer', answer, records: [] }, results, today: '2026-11-07' }).problems
+  // A follow-up drafted for the user, its questions numbered inside the quote.
+  assert.deepEqual(answerOf('> Could you confirm:\n> 1. The new date.\n> 2. The quantity.\n> 3. The reason for the delay.'), [])
+  // Payment terms, in an example or as terms.
+  assert.deepEqual(answerOf('Paste them, for example "Acme Packaging, contact Jane, Net 30". Terms such as 2/10 net 30 or 月结 30 天 work too.'), [])
+  // Steps of the answer's own list; a step it does not have is still a figure.
+  assert.deepEqual(answerOf('1. Add suppliers.\n2. Add items.\n3. Raise a request.\n\nWe can do steps 1 and 2 now, then 第 3 步.'), [])
+  assert.deepEqual(answerOf('1. Add suppliers.\n2. Add items.\n\nThen do step 5.'), [{ kind: 'number', value: '5' }])
+  // A figure marked as rounded may be off by half the place of its last
+  // non-zero digit; an unmarked one may not.
+  const amounts = [{ rows: [{ amount: 7320, currency: 'USD' }, { amount: 17.05, currency: 'USD' }] }]
+  assert.deepEqual(answerOf('The largest is about $7,300 and the smallest about $17.', amounts), [])
+  assert.deepEqual(answerOf('金额 7,300 美元左右，约 $7,000。', amounts), [])
+  assert.deepEqual(answerOf('The largest is $7,300.', amounts), [{ kind: 'number', value: '$7,300' }])
+  assert.deepEqual(answerOf('The largest is about $7,250.', amounts), [{ kind: 'number', value: '$7,250' }])
+})

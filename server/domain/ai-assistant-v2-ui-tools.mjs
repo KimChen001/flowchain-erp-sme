@@ -1421,7 +1421,7 @@ const FOLLOWUP_LENGTH = 90
 
 const suggestFollowups = defineUiTool({
   name: 'suggest_followups',
-  description: `Offer 1 to 3 short next steps the user might ask or tell you next, about their own records (an action before a question about a concept), in the answer's language, each at most ${FOLLOWUP_LENGTH} characters. Only when the answer has a clear next step, and not when it asks the user something. Never a claim that something was done.`,
+  description: `Offer 1 to 3 short next steps the user might ask or tell you next, about their own records (an action before a question about a concept), in the answer's language, each at most ${FOLLOWUP_LENGTH} characters. A chip is sent as the user's message the moment it is clicked, so each is a complete request that makes sense as it is, never the start of a sentence for the user to finish ("Here are my suppliers:"). Only when the answer has a clear next step, and not when it asks the user something. Never a claim that something was done.`,
   inputSchema: {
     type: 'object',
     properties: { questions: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', minLength: 1, maxLength: 400 } } },

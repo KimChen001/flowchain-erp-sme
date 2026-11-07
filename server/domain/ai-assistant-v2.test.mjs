@@ -435,7 +435,7 @@ test('a failed display says how to fix it; a second failure withdraws the displa
   assert.equal(first.error, 'source_missing')
   assert.deepEqual(first.details, [
     'No data result of this answer is called tu_po_missing. Pass source exactly as a result gives it: list_purchase_orders#1.',
-    'Correct this call once, or answer in prose. After another failed display no display tool is available for this answer.',
+    'Correct this call once, or answer in prose. After another failed display no display tool is available for this answer. The user already sees the text you wrote before this call: do not write it again.',
   ])
   const second = JSON.parse(lastToolResults(client.requests[3])[0].content)
   assert.equal(second.error, 'unknown_column')
@@ -1047,13 +1047,13 @@ test('the text is written as the app shows it: workspace dates and amounts, full
   const { events, body } = await ask([OVERDUE, [...say('PO-001 的承诺日期是 2026-10-30(已逾期),差异 200 ', 'USD,还剩 1200 pcs 未收!'), end()]], zhAsk)
   assertProtocol(events)
   const shown = ofType(events, 'text_delta').map((event) => event.text).join('')
-  assert.equal(shown, 'PO-001 的承诺日期是 Oct 30, 2026（已逾期），差异 $200.00，还剩 1,200 件未收！')
+  assert.equal(shown, 'PO-001 的承诺日期是 Oct 30, 2026（已逾期），差异 $200，还剩 1,200 件未收！')
   assert.equal(body.conclusion.summary, shown)
   // No piece leaves a figure parted from its currency.
   assert.ok(ofType(events, 'text_delta').every((event) => !/\d\s$/.test(event.text)), JSON.stringify(ofType(events, 'text_delta')))
   // English keeps its punctuation; its dates and amounts are rewritten too.
   const en = await ask([OVERDUE, [...say('PO-001 was due 2026-10-30 (Amount: 5,000 USD).'), end()]])
-  assert.equal(ofType(en.events, 'text_delta').map((event) => event.text).join(''), 'PO-001 was due Oct 30, 2026 (Amount: $5,000.00).')
+  assert.equal(ofType(en.events, 'text_delta').map((event) => event.text).join(''), 'PO-001 was due Oct 30, 2026 (Amount: $5,000).')
   // The follow-up questions read the same way.
   const chips = await ask([OVERDUE, [...say('PO-001 已逾期。'), ...call('tu_chips', 'suggest_followups', { questions: ['PO-001 会影响哪些销售订单?'] }), end()]], { ...zhAsk, uiTools: [followups] })
   assert.deepEqual(ofType(chips.events, 'ui')[0].props.questions, ['PO-001 会影响哪些销售订单？'])
@@ -1107,6 +1107,18 @@ test('an item the user names by its name is ticked on the form', async () => {
   ], { question: 'I need 50 temperature sensors', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
   const form = ofType(events, 'ui').find((event) => event.component === 'pr_form')?.props
   assert.deepEqual(form.lines.map((row) => [row.item.sku, row.checked, row.suggestedQuantity.value]), [['LDM-002', true, 50]])
+})
+
+// 2026-11-07: a budget plan ended at "Six SKUs: 019, 272, …" above its form,
+// because the chips came in the same round as the form.
+test('chips called beside a request form do not end the answer: the words about the form come after it', async () => {
+  const { client, body } = await ask([
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-002'] }), end()],
+    [...say('Six lines.'), ...call('tu_form', 'suggest_purchase_request', { source: 'tu_lines', from: 'suggestions' }), ...call('tu_chips', 'suggest_followups', { questions: ['Show the reorder list'] }), end()],
+    [...say('Tick the items you want, then click Create draft request.'), end()],
+  ], { question: 'What should I order?', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assert.equal(client.requests.length, 3)
+  assert.match(body.conclusion.summary, /Tick the items you want, then click Create draft request\./)
 })
 
 test('the system prompt asks for the answer first, display strings, whole record numbers and the app\'s terms', () => {

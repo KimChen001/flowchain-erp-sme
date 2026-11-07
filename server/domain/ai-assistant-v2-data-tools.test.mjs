@@ -243,14 +243,15 @@ test('order_quantity_costs weighs orders a year against holding cost, with the a
     [200, false, 19000, 20, 18.3, 100, 2375, null, null],
   ])
   // 100 → 200 saves 18.25 orders for 1,187.50 more holding: worth it above 23.75 × 100 × 200 / (2 × 3,650) = 65.07 an order.
-  assert.deepEqual(result.comparisons[1], { smaller: 100, larger: 200, ordersSavedPerYear: 18.3, extraHoldingCostPerYear: 1187.5, breakEvenCostPerOrder: 65.07, cheaperAtUserCostPerOrder: null })
+  assert.deepEqual(result.comparisons[1], { smaller: 100, larger: 200, ordersSavedPerYear: 18.3, extraHoldingCostPerYear: 1187.5, breakEvenCostPerOrder: 65.07, cheaperAtUserCostPerOrder: null, largerSavesPerYear: null })
   // EOQ = √(2 × 3,650 × cost / 23.75), never below the minimum order.
   assert.deepEqual(result.economicOrderQuantity, { atUserCostPerOrder: null, examples: [{ costPerOrder: 25, quantity: 100, daysOfDemand: 10, ordersPerYear: 36.5 }, { costPerOrder: 50, quantity: 124, daysOfDemand: 12.4, ordersPerYear: 29.4 }, { costPerOrder: 100, quantity: 175, daysOfDemand: 17.5, ordersPerYear: 20.9 }], raisedToSupplierMinimum: true })
   // With the user's own figures: 20% a year and 80 an order make 200 the cheaper.
   const own = (await run('order_quantity_costs', { sku: 'LDM-001', quantities: [100, 200], holdingRatePercent: 20, costPerOrder: 80 })).result
   assert.deepEqual([own.assumptions.holdingRateSource, own.assumptions.costPerOrderSource, own.assumptions.holdingCostPerUnitPerYear], ['user', 'user', 19])
   assert.deepEqual(own.options.map((row) => [row.holdingCostPerYear, row.orderingCostPerYear, row.totalCostPerYear]), [[950, 2920, 3870], [1900, 1460, 3360]])
-  assert.deepEqual([own.comparisons[0].breakEvenCostPerOrder, own.comparisons[0].cheaperAtUserCostPerOrder], [52.05, 200])
+  // 3,870 − 3,360: the larger saves 510 a year, read from the tool, not subtracted in the answer.
+  assert.deepEqual([own.comparisons[0].breakEvenCostPerOrder, own.comparisons[0].cheaperAtUserCostPerOrder, own.comparisons[0].largerSavesPerYear], [52.05, 200, 510])
   assert.deepEqual(own.economicOrderQuantity, { atUserCostPerOrder: { quantity: 175, daysOfDemand: 17.5, ordersPerYear: 20.9 }, examples: [], raisedToSupplierMinimum: true })
   // An approved supplier by name, and one that is not approved for the item.
   assert.equal((await run('order_quantity_costs', { sku: 'LDM-001', quantities: [100], supplier: 'acme' })).result.supplier.name, 'Acme Components')
@@ -491,6 +492,8 @@ test('reorder_list returns the preferred supplier\'s lead time, id and minimum o
   assert.deepEqual([row.supplier, row.supplierId, row.minimumOrderQuantity, row.moqUnit], ['Acme Components', 'SUP-001', 150, 'pcs'])
   assert.equal(row.shortfall, 102)
   assert.deepEqual([row.requestQuantity, row.raisedToMinimum], [150, true])
+  // Counts over every row, for the answer to read instead of counting.
+  assert.deepEqual(list.counts, { orderNow: list.rows.filter((entry) => entry.orderNow === true).length, raisedToMinimum: 1 })
   assert.ok(Array.isArray(row.flags) && row.flags.every((flag) => typeof flag.code === 'string'))
   // Every open line counts in the position, late or not, and says whether it is late.
   assert.ok(row.incomingLines.length && row.incomingLines.every((line) => typeof line.late === 'boolean'))

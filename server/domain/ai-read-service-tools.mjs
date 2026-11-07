@@ -93,7 +93,7 @@ const suggestionFacts = (suggestion) => ({
 // from the row's supplier, never from the row itself.
 const reorderList = defineAiTool({
   name: 'reorder_list',
-  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Flags name late lines and lines it could not count. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. Transfers between warehouses are not considered.',
+  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Flags name late lines and lines it could not count. counts gives how many rows are to order now and how many suggested quantities were raised to the supplier minimum: use them instead of counting rows. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. Transfers between warehouses are not considered.',
   parameters: {
     sku: { type: 'string', description: 'Only this SKU.' },
     supplier: { type: 'string', description: 'Only items whose preferred supplier is this one: a name or code.' },
@@ -144,7 +144,10 @@ const reorderList = defineAiTool({
       ref: aiToolRef('item', row.itemId || row.purchaseRequest?.itemId || row.sku, row.sku),
     }))
     rows.sort((a, b) => text(a.orderByDate || '9999').localeCompare(text(b.orderByDate || '9999')) || text(a.sku).localeCompare(text(b.sku)))
-    return { asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), ...aiToolList(rows, args.limit) }
+    // Counts over every row, so an answer reads them instead of counting
+    // (2026-11-07: "10 of the 12 were raised to the minimum" when 11 were).
+    const counts = { orderNow: rows.filter((row) => row.orderNow === true).length, raisedToMinimum: rows.filter((row) => row.raisedToMinimum).length }
+    return { asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), counts, ...aiToolList(rows, args.limit) }
   },
 })
 
