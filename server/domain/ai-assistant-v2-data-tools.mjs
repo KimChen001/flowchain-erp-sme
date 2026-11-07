@@ -389,6 +389,9 @@ const suggestPurchaseLines = defineAiTool({
         approvedSuppliers: suppliersVisible ? sources.map((source) => ({ id: source.id, name: source.name, preferred: source.preferred, leadTimeDays: source.leadTimeDays, unitPrice: source.referencePrice === null || source.referencePrice === undefined ? null : Number(source.referencePrice), currency: source.currency })) : [],
         needByDate: { value: needBy.value, source: needBy.source, leadTimeDays: needBy.leadTimeDays, warning: needBy.warning },
         estimatedUnitPrice: plan.values.estimatedUnitPrice ? { value: Number(plan.values.estimatedUnitPrice), currency: plan.values.currency || null, source: 'reference_price' } : null,
+        // The line's value at that price, so an answer reads it instead of
+        // multiplying (2026-11-07: Haiku wrote $32,541 for 1,735 × $18.75).
+        estimatedValue: !notRun && plan.values.estimatedUnitPrice && Number.isFinite(Number(quantity.quantity?.value)) && Number(quantity.quantity.value) > 0 ? { value: Math.round(Number(quantity.quantity.value) * Number(plan.values.estimatedUnitPrice) * 100) / 100, currency: plan.values.currency || null } : null,
         warehouseId: plan.values.targetWarehouseId || null,
         covered,
         // The basis of a period's quantity: recorded_demand, or why the

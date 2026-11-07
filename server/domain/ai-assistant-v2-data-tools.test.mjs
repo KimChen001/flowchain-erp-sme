@@ -182,6 +182,8 @@ test('suggest_purchase_lines raises the gap to the minimum order and fills suppl
   assert.deepEqual(row.supplier, { id: 'SUP-001', name: 'Acme Components', source: 'preferred_supplier' })
   assert.deepEqual(row.needByDate, { value: '2026-10-11', source: 'lead_time', leadTimeDays: 12, warning: null })
   assert.deepEqual(row.estimatedUnitPrice, { value: 95, currency: 'USD', source: 'reference_price' })
+  // The line's value, read instead of multiplied: 100 × 95.
+  assert.deepEqual(row.estimatedValue, { value: 9500, currency: 'USD' })
   assert.equal(row.covered, null)
   assert.deepEqual(row.ref, { type: 'item', id: 'ITEM-001', label: 'LDM-001' })
   // Without the submitted request the gap is above the minimum.

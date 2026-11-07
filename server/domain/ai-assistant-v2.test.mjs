@@ -1098,6 +1098,18 @@ test('a Chinese answer does not open with a paragraph of English prose; an Engli
   assert.equal(shown, '预算减少后，建议先保住逾期风险最高的物料。')
   const draft = await ask([[...say('> Dear Acme team, please confirm the new delivery date for the remaining items on our order.\n\n', '以上是给 Acme 的英文草稿，请核对后自己发送。'), end()]], { ...zh, question: '帮我用英文写一封催货邮件' })
   assert.match(ofType(draft.events, 'text_delta').map((event) => event.text).join(''), /^> Dear Acme team/)
+  // Nor a paragraph of English prose after its Chinese, at the end or between
+  // (2026-11-07: a Chinese chase email ended "Before sending, check that…").
+  const trailing = await ask([[...say('> Acme 您好：请确认剩余物料的交货日期。\n\n', '请核对后自己发送。\n\n', 'Before sending, check that the quantities still match what you expect, and add your name.'), end()]], { ...zh, question: '给 Acme 写一封催货邮件' })
+  const trailingText = ofType(trailing.events, 'text_delta').map((event) => event.text).join('')
+  assert.doesNotMatch(trailingText, /Before sending/)
+  assert.match(trailingText, /请核对后自己发送。/)
+  assert.doesNotMatch(trailing.body.conclusion.summary, /Before sending/)
+  const between = await ask([[...say('第一段是中文。\n\n', 'This paragraph is English reasoning about what the user may want next time.\n\n', '第二段也是中文。'), end()]], zh)
+  assert.equal(ofType(between.events, 'text_delta').map((event) => event.text).join('').replace(/\s+/g, ''), '第一段是中文。第二段也是中文。')
+  // Asked for English, the English stays.
+  const wanted = await ask([[...say('这是英文版：\n\n', 'Please confirm the new delivery date for the remaining items on our order.'), end()]], { ...zh, question: '用英文写吧' })
+  assert.match(ofType(wanted.events, 'text_delta').map((event) => event.text).join(''), /Please confirm the new delivery date/)
 })
 
 test('a date the user typed is not flagged as unmatched', async () => {
