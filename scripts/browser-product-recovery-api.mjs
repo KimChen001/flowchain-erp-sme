@@ -8,8 +8,8 @@ import EmbeddedPostgres from "embedded-postgres";
 import { backfillTenantAuthorization } from "../server/auth/authorization-backfill.mjs";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
 import { listItemSupplierRecords, saveItemSupplier } from "../server/domain/master-data-commands.mjs";
-import { localDemoSupplier, seedLocalDemo } from "./setup-local-demo.mjs";
-import { seedLocalScenario } from "./setup-local-scenario.mjs";
+import { localDemoSupplier, seedLocalDemo } from "../tests/fixtures/workspace/master-data.mjs";
+import { seedLocalScenario } from "../tests/fixtures/workspace/scenario.mjs";
 import { createTempClusterDirectory } from "./test-support/temp-cluster.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -109,7 +109,7 @@ async function seedComparisonQuotation(client, quote) {
           id: `${quote.revisionId}-LINE-001`,
           rfqLineId: quote.lineId,
           itemId: "LOCAL-DEMO-ITEM-001",
-          skuSnapshot: "LDM-001",
+          skuSnapshot: "TST-001",
           itemNameSnapshot: "Flow Controller",
           quantity: 50,
           unit: "pcs",
@@ -147,7 +147,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
         create: [{
           id: "LOCAL-DEMO-RFQL-001",
           itemId: "LOCAL-DEMO-ITEM-001",
-          sku: "LDM-001",
+          sku: "TST-001",
           itemName: "Flow Controller",
           quantity: 50,
           unit: "pcs",
@@ -160,7 +160,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
         }, ...(supplierResponseAcceptance ? [{
           id: "LOCAL-DEMO-RFQL-002",
           itemId: "LOCAL-DEMO-ITEM-002",
-          sku: "LDM-002",
+          sku: "TST-002",
           itemName: "Temperature Sensor",
           quantity: 25,
           unit: "pcs",
@@ -195,7 +195,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
         create: [{
           id: "LOCAL-DEMO-QUOTEL-001",
           itemId: "LOCAL-DEMO-ITEM-001",
-          sku: "LDM-001",
+          sku: "TST-001",
           itemName: "Flow Controller",
           quantity: 50,
           unit: "pcs",
@@ -226,7 +226,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
           sourceQuotationLineId: "LOCAL-DEMO-QUOTEL-001",
           rfqLineId: "LOCAL-DEMO-RFQL-001",
           itemId: "LOCAL-DEMO-ITEM-001",
-          skuSnapshot: "LDM-001",
+          skuSnapshot: "TST-001",
           itemNameSnapshot: "Flow Controller",
           quantity: 50,
           unit: "pcs",
@@ -258,7 +258,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
           sourceQuotationLineId: "LOCAL-DEMO-QUOTEL-001",
           rfqLineId: "LOCAL-DEMO-RFQL-001",
           itemId: "LOCAL-DEMO-ITEM-001",
-          skuSnapshot: "LDM-001",
+          skuSnapshot: "TST-001",
           itemNameSnapshot: "Flow Controller",
           quantity: supplierResponseAcceptance ? unsafeScaledDecimal : 50,
           unit: "pcs",
@@ -290,7 +290,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
       { id: "LOCAL-DEMO-RFQ-COMPARISON-DRAFT", lineId: "LOCAL-DEMO-RFQL-COMPARISON-DRAFT", title: "Draft quotations only" },
       { id: "LOCAL-DEMO-RFQ-COMPARISON-SINGLE", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SINGLE", title: "One valid quotation" },
       { id: "LOCAL-DEMO-RFQ-COMPARISON-HISTORICAL", lineId: "LOCAL-DEMO-RFQL-COMPARISON-HISTORICAL", title: "Historical and withdrawn quotations" },
-    ]) await client.rfq.create({ data: { id: scenario.id, tenantId, title: scenario.title, status: "collecting_quotes", supplierCount: 6, respondedSupplierCount: 2, currency: "CNY", metadata: { browserAcceptance: true }, lines: { create: [{ id: scenario.lineId, itemId: "LOCAL-DEMO-ITEM-001", sku: "LDM-001", itemName: "Flow Controller", quantity: 50, unit: "pcs", metadata: { browserAcceptance: true } }] } } });
+    ]) await client.rfq.create({ data: { id: scenario.id, tenantId, title: scenario.title, status: "collecting_quotes", supplierCount: 6, respondedSupplierCount: 2, currency: "CNY", metadata: { browserAcceptance: true }, lines: { create: [{ id: scenario.lineId, itemId: "LOCAL-DEMO-ITEM-001", sku: "TST-001", itemName: "Flow Controller", quantity: 50, unit: "pcs", metadata: { browserAcceptance: true } }] } } });
 
     for (const quote of [
       { id: "LOCAL-DEMO-QUOTE-SAME-A", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-SAME", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SAME", supplierId: "LOCAL-DEMO-SUP-001", supplierName: localDemoSupplier("LOCAL-DEMO-SUP-001").name, status: "submitted", currency: "CNY", amount: 4900, unitPrice: 98, revisionId: "LOCAL-DEMO-REV-SAME-A", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
@@ -347,7 +347,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
         status: "closed",
         currency: "CNY",
         metadata: { browserAcceptance: true },
-        lines: { create: [{ id: "LOCAL-DEMO-RFQL-CLOSED", itemId: "LOCAL-DEMO-ITEM-001", sku: "LDM-001", itemName: "Flow Controller", quantity: 1, unit: "pcs", metadata: { browserAcceptance: true } }] },
+        lines: { create: [{ id: "LOCAL-DEMO-RFQL-CLOSED", itemId: "LOCAL-DEMO-ITEM-001", sku: "TST-001", itemName: "Flow Controller", quantity: 1, unit: "pcs", metadata: { browserAcceptance: true } }] },
       },
     });
     await client.rfqSupplierParticipation.create({
@@ -362,7 +362,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
 // customer name, so it is blocked and shows the unnamed-customer label. No
 // stock is reserved for either, and no other phase sees them.
 async function seedUsTrialSalesOrders(client) {
-  const items = Object.fromEntries((await client.item.findMany({ where: { tenantId, sku: { in: ["LDM-001", "LDM-002", "LDM-003"] } } })).map((item) => [item.sku, item]));
+  const items = Object.fromEntries((await client.item.findMany({ where: { tenantId, sku: { in: ["TST-001", "TST-002", "TST-003"] } } })).map((item) => [item.sku, item]));
   const metadata = { browserAcceptance: true, usTrial: true };
   const promisedDate = new Date(Date.now() + 7 * 86_400_000);
   const line = (id, sku, orderedQuantity) => ({ id, itemId: items[sku].id, sku, itemName: items[sku].name, orderedQuantity, unit: items[sku].unit || "pcs", metadata });
@@ -370,14 +370,14 @@ async function seedUsTrialSalesOrders(client) {
     data: {
       id: "LOCAL-TRIAL-SO-101", tenantId, orderNumber: "LOCAL-TRIAL-SO-101", customerName: "Harbor Supply Co", workflowStatus: "confirmed",
       promisedDate, currency: "USD", metadata,
-      lines: { create: [line("LOCAL-TRIAL-SOL-101-1", "LDM-001", 12), line("LOCAL-TRIAL-SOL-101-2", "LDM-002", 8), line("LOCAL-TRIAL-SOL-101-3", "LDM-003", 20)] },
+      lines: { create: [line("LOCAL-TRIAL-SOL-101-1", "TST-001", 12), line("LOCAL-TRIAL-SOL-101-2", "TST-002", 8), line("LOCAL-TRIAL-SOL-101-3", "TST-003", 20)] },
     },
   });
   await client.salesOrder.create({
     data: {
       id: "LOCAL-TRIAL-SO-102", tenantId, orderNumber: "LOCAL-TRIAL-SO-102", customerName: "", workflowStatus: "on_hold",
       promisedDate, currency: "USD", metadata,
-      lines: { create: [line("LOCAL-TRIAL-SOL-102-1", "LDM-002", 5)] },
+      lines: { create: [line("LOCAL-TRIAL-SOL-102-1", "TST-002", 5)] },
     },
   });
 }
@@ -385,14 +385,14 @@ async function seedUsTrialSalesOrders(client) {
 // The reorder showcase of assistant v2 (docs/ai-assistant-v2-design.md §11
 // S4), on the walkthrough data: two more items fall below their stock levels,
 // and each item the form suggests has a preferred supplier with a reference
-// price and a lead time, so the in-chat form can create the request. LDM-001
+// price and a lead time, so the in-chat form can create the request. TST-001
 // stays covered by the walkthrough's open request. No other phase sees it.
 async function seedAssistantV2Showcase(client) {
-  for (const [sku, levels] of [["LDM-002", { safetyStock: 1500, reorderPoint: 2000 }], ["LDM-006", { safetyStock: 1200, reorderPoint: 1500 }]]) {
+  for (const [sku, levels] of [["TST-002", { safetyStock: 1500, reorderPoint: 2000 }], ["TST-006", { safetyStock: 1200, reorderPoint: 1500 }]]) {
     await client.item.updateMany({ where: { tenantId, sku }, data: levels });
   }
   // The walkthrough seed may already link the supplier; that link is updated.
-  for (const [sku, supplierId, referencePrice, leadTimeDays] of [["LDM-001", "LOCAL-DEMO-SUP-001", 42.5, 14], ["LDM-002", "LOCAL-DEMO-SUP-001", 18.75, 14], ["LDM-006", "LOCAL-DEMO-SUP-002", 0.85, 10]]) {
+  for (const [sku, supplierId, referencePrice, leadTimeDays] of [["TST-001", "LOCAL-DEMO-SUP-001", 42.5, 14], ["TST-002", "LOCAL-DEMO-SUP-001", 18.75, 14], ["TST-006", "LOCAL-DEMO-SUP-002", 0.85, 10]]) {
     const item = await client.item.findFirst({ where: { tenantId, sku } });
     const [link] = item ? await listItemSupplierRecords(client, tenantId, { itemId: item.id, supplierId }) : [];
     const values = { preferred: true, referencePrice, leadTimeDays, currency: "USD" };

@@ -4,7 +4,7 @@ import {
   LOCAL_DEMO_SUPPLIERS,
   LOCAL_DEMO_COUNTS,
   localDemoSupplier,
-} from "../../scripts/setup-local-demo.mjs";
+} from "../../tests/fixtures/workspace/master-data.mjs";
 
 // Built from escapes so this file stays ASCII-only while asserting about CJK.
 const CJK = new RegExp("[\\u3400-\\u9fff]", "u");
@@ -29,7 +29,7 @@ test("shared LOCAL-DEMO supplier master data is internally consistent", () => {
 
   for (const [id, code, name, category] of LOCAL_DEMO_SUPPLIERS) {
     assert.match(id, /^LOCAL-DEMO-SUP-\d{3}$/);
-    assert.match(code, /^LDS-\d{3}$/);
+    assert.match(code, /^TSS-\d{3}$/);
     assert.equal(typeof name, "string");
     assert.equal(name.trim(), name);
     assert.ok(name.length > 0);
@@ -44,7 +44,7 @@ test("localDemoSupplier resolves the authority and rejects unknown ids", () => {
   const resolved = localDemoSupplier("LOCAL-DEMO-SUP-005");
   assert.deepEqual(resolved, {
     id: "LOCAL-DEMO-SUP-005",
-    code: "LDS-005",
+    code: "TSS-005",
     name: "Northstar Electronics",
     category: "Electronic components",
   });

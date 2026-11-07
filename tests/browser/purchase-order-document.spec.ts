@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // The PO document on the walkthrough scenario: LOCAL-DEMO-PO-021 is an
-// approved Acme order of 25 × LDM-002 at 100.00 USD for the seeded walkthrough warehouse,
+// approved Acme order of 25 × TST-002 at 100.00 USD for the seeded walkthrough warehouse,
 // with no supplier SKU and no approval step recorded; LOCAL-DEMO-PO-024 is
 // still pending approval. The document is printed or saved as PDF by a
 // person, who sends it; FlowChain sends nothing. Printing shows the document
@@ -23,8 +23,8 @@ async function signIn(page: Page) {
   }, session);
 }
 
-// The walkthrough warehouse as seeded: LOCAL-DEMO-WH-001 = { code: "US-DEMO", name: "US Demo Warehouse" }.
-const SHIP_TO = { code: "US-DEMO", name: "US Demo Warehouse" }; // LOCAL-DEMO-WH-001
+// The walkthrough warehouse as seeded: LOCAL-DEMO-WH-001 = { code: "TEST-WH", name: "Test Warehouse" }.
+const SHIP_TO = { code: "TEST-WH", name: "Test Warehouse" }; // LOCAL-DEMO-WH-001
 
 const figures = async (page: Page) => ({
   quantity: await page.getByTestId("po-document-line-quantity").first().innerText(),
@@ -57,7 +57,7 @@ test("an approved PO opens as a document to print or save, which prints alone an
   await expect(page.getByTestId("business-document-blocked")).toHaveCount(0);
 
   const english = await figures(page);
-  expect(english).toMatchObject({ quantity: "25", unitPrice: "100.00", amount: "2,500.00", total: "2,500.00", currency: "USD", number: "LOCAL-DEMO-PO-021", sku: "LDM-002" });
+  expect(english).toMatchObject({ quantity: "25", unitPrice: "100.00", amount: "2,500.00", total: "2,500.00", currency: "USD", number: "LOCAL-DEMO-PO-021", sku: "TST-002" });
   // Ship to is the warehouse's code and name; it has no address.
   await expect(page.getByTestId("po-document-ship-to")).toContainText(SHIP_TO.name);
   await expect(page.getByTestId("po-document-ship-to")).toContainText(SHIP_TO.code);

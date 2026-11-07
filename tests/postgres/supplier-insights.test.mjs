@@ -11,8 +11,8 @@ const { createPrismaClient, disconnectPrismaClient } = await import('../../serve
 const { backfillTenantAuthorization } = await import('../../server/auth/authorization-backfill.mjs')
 const { createDatabaseRepositoryRegistry } = await import('../../server/repositories/adapter-registry.mjs')
 const { createScmServer } = await import('../../server/bootstrap/scm-server.mjs')
-const { seedLocalDemo } = await import('../../scripts/setup-local-demo.mjs')
-const { seedLocalScenario } = await import('../../scripts/setup-local-scenario.mjs')
+const { seedLocalDemo } = await import('../fixtures/workspace/master-data.mjs')
+const { seedLocalScenario } = await import('../fixtures/workspace/scenario.mjs')
 const { createSupplierInsightsReadService } = await import('../../server/domain/supplier-insights.mjs')
 const { buildOpenPurchaseOrdersReport } = await import('../../server/domain/open-purchase-orders-report.mjs')
 

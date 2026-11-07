@@ -20,6 +20,16 @@ import { attachReorderPointSuggestions } from './reorder-point-suggestion.mjs'
 // with its inputs. It never changes the row: the list is dated by the
 // recorded reorder point until a person changes it on the item.
 
+// The business context's truncated reads that can change a stock position:
+// stock balances, sales orders (open demand and reservations) and purchase
+// orders (incoming). Sales orders cut only from history, with every order
+// that can still need stock read, do not change it.
+export function stockTruncatedSubjects(entries = []) {
+  return (Array.isArray(entries) ? entries : [])
+    .filter((entry) => ['inventory_items', 'sales_orders', 'purchase_orders'].includes(entry?.subject))
+    .filter((entry) => !(entry.subject === 'sales_orders' && entry.openDemandComplete === true))
+}
+
 const ITEM_LIMIT = 2000
 const SHIPMENT_LINE_LIMIT = 20000
 
