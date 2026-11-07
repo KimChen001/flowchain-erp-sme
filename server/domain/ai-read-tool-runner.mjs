@@ -33,7 +33,7 @@ function toolsFor(facts, context) {
 // may name only these.
 export const AI_READ_TOOL_COLUMNS = Object.freeze({
   workspace_summary: { '': ['purchaseOrders.open', 'purchaseOrders.overdue', 'purchaseOrders.waitingForApproval', 'purchaseRequestsWaitingForApproval', 'inventory.skus', 'inventory.atRisk', 'supplierInvoices.committedCount', 'rfqs.open', 'rfqs.readyToAward', 'receipts.rejected', 'receipts.unposted', 'recordsMissingData'] },
-  list_purchase_orders: { rows: ['orderNumber', 'supplier', 'status', 'dueDate', 'overdueDays', 'ordered', 'received', 'remaining', 'unit', 'amount', 'currency', 'open'], bySupplier: ['supplier', 'orders'] },
+  list_purchase_orders: { rows: ['orderNumber', 'supplier', 'status', 'skus', 'itemNames', 'dueDate', 'overdueDays', 'ordered', 'received', 'remaining', 'unit', 'amount', 'currency', 'open'], bySupplier: ['supplier', 'orders'] },
   get_purchase_order: { openLines: ['sku', 'itemName', 'ordered', 'received', 'remaining', 'unit', 'unitPrice', 'promisedDate', 'originalPromisedDate'], receipts: ['documentNumber', 'arrived', 'postingStatus', 'rejected', 'unit'], invoiceDifferences: ['invoiceNumber', 'matchStatus', 'variance', 'currency'] },
   stock_position: { rows: ['sku', 'itemName', 'unit', 'onHand', 'reserved', 'available', 'openSalesDemand', 'incomingOnPurchaseOrders', 'availableToPromise', 'shortage', 'safetyStock', 'reorderPoint', 'status'] },
   stock_projection: { weeks: ['from', 'to', 'incoming', 'demand', 'endAvailable', 'belowSafetyStock', 'short'] },

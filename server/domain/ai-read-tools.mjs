@@ -30,6 +30,13 @@ const supplierError = (found) => ({ error: found.error, candidates: found.candid
 // step is to send it and mark it issued, before any receiving (decision V5).
 // On 2026-11-03 the model skipped that step for a PO just created.
 const NOT_ISSUED_NEXT_STEP = 'Not yet issued: the supplier does not have this order. Next step: the user sends the PO document to the supplier (print or save it), then marks it issued on the purchase order page. Receiving comes after that.'
+// The names of an order's items, from the stock rows the reader may see, so an
+// answer and a draft name the item, not only its SKU (2026-11-07: "the T-Light
+// Holder" after a draft that said only SKU 85123A drew "which one?").
+const itemNamesOf = (facts, skus) => {
+  const names = new Map([...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)].map((row) => [fold(row.sku), text(row.itemName)]))
+  return array(skus).map((sku) => names.get(fold(sku))).filter(Boolean)
+}
 const orderRow = (row) => ({
   orderNumber: row.orderNumber, supplier: row.supplier, status: row.status, dueDate: row.dueDate || null,
   overdueDays: row.overdueDays || 0, ordered: row.ordered ?? null, received: row.received ?? null, remaining: row.remaining ?? null, unit: row.unit || null,
@@ -58,7 +65,7 @@ const orderDatesOf = (facts, ids) => array(ids).map((id) => array(facts.purchase
 
 const listPurchaseOrders = defineAiTool({
   name: 'list_purchase_orders',
-  description: 'Purchase orders the user may read, with supplier, status, promised date, days overdue, quantities still to receive and amount. Filter by status, supplier, supplier tier or SKU. Most overdue first, then by promised date. total counts every matching order and bySupplier counts them per supplier.',
+  description: 'Purchase orders the user may read, with supplier, status, the SKUs and item names, promised date, days overdue, quantities still to receive and amount. Filter by status, supplier, supplier tier or SKU. Most overdue first, then by promised date. total counts every matching order and bySupplier counts them per supplier.',
   parameters: {
     status: { type: 'string', enum: ['open', 'overdue', 'pending_approval', 'all'], description: 'open (default): not closed or fully received; overdue: open and past the promised date; pending_approval; all.' },
     supplier: { type: 'string', description: 'A supplier name, code or id.' },
@@ -89,7 +96,7 @@ const listPurchaseOrders = defineAiTool({
     return {
       asOf: facts.asOf,
       workspace: { open: facts.purchaseOrders.open, overdue: facts.purchaseOrders.overdue, committedSpend: facts.purchaseOrders.committedSpend ?? null },
-      ...aiToolList(rows.map(orderRow), args.limit),
+      ...aiToolList(rows.map((row) => ({ ...orderRow(row), itemNames: itemNamesOf(facts, row.skus) })), args.limit),
       bySupplier: ordersBySupplier(rows),
     }
   },
@@ -108,7 +115,7 @@ const getPurchaseOrder = defineAiTool({
     const seen = new Set()
     return {
       asOf: facts.asOf,
-      order: { ...orderRow(row), createdDate: row.createdDate || null },
+      order: { ...orderRow(row), itemNames: itemNamesOf(facts, row.skus), createdDate: row.createdDate || null },
       openLines: array(row.openLines).map((line) => ({ sku: line.sku, itemName: line.itemName, ordered: line.ordered, received: line.received, remaining: line.remaining, unit: line.unit, promisedDate: line.promisedDate, originalPromisedDate: line.originalPromisedDate, ...(line.unitPrice !== null && line.unitPrice !== undefined ? { unitPrice: line.unitPrice, currency: row.currency || null } : {}) })),
       receipts: receipts.filter((entry) => !seen.has(entry.id) && seen.add(entry.id)).map((entry) => ({ documentNumber: entry.documentNumber, arrived: entry.arrivedDay, postingStatus: entry.postingStatus, rejected: entry.rejected, unit: entry.unit, ref: aiToolRef('receiving_doc', entry.id, entry.documentNumber) })),
       invoiceDifferences: array(facts.invoices?.variances).filter((entry) => entry.poId === row.id).map((entry) => ({ invoiceNumber: entry.invoiceNumber, matchStatus: entry.matchStatus, variance: entry.variance, currency: entry.currency, ref: aiToolRef('supplier_invoice', entry.id, entry.invoiceNumber) })),

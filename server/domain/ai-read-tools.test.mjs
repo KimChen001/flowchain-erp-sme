@@ -228,6 +228,17 @@ test('a stock row gives each incoming order\'s promised date and days overdue, a
   assert.ok(row.purchaseOrderDates.some((entry) => entry.orderNumber === 'PO-001' && entry.overdueDays > 0), 'PO-001 is overdue')
 })
 
+test('an order row names its items as the stock rows do, so a draft can name them', async () => {
+  const facts = await factsFor()
+  const names = new Map(facts.inventory.rows.map((row) => [row.sku, row.itemName]))
+  const rows = (await runAiReadTool('list_purchase_orders', { status: 'all', limit: 50 }, { facts })).result.rows
+  const withItems = rows.filter((row) => row.skus.length)
+  assert.ok(withItems.length > 0)
+  for (const row of withItems) assert.deepEqual(row.itemNames, row.skus.map((sku) => names.get(sku)).filter(Boolean), row.orderNumber)
+  const one = await runAiReadTool('get_purchase_order', { order: withItems[0].orderNumber }, { facts })
+  assert.deepEqual(one.result.order.itemNames, withItems[0].itemNames)
+})
+
 test('supplier_risks lists the Supplier risks page\'s issues, counted per supplier and never scored', async () => {
   const scenario = aiSkillScenario()
   const context = await loadAiSkillContext(scenario.ctx)

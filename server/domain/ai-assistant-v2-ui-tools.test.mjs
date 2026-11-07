@@ -217,9 +217,9 @@ test('show_table picks the list of a result that holds the columns, or the one n
 test('show_table refuses unknown columns, a missing or failed source and a UI result as source', async () => {
   const { ctx, call, build } = await workspace()
   await call('toolu_po', 'list_purchase_orders')
-  const unknown = build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'skus'] })
+  const unknown = build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'itemIds'] })
   assertError(unknown, 'unknown_column')
-  assert.match(unknown.error.message, /no column skus.*orderNumber/)
+  assert.match(unknown.error.message, /no column itemIds.*orderNumber/)
   // A key in the rows that the tool does not declare is not a column either.
   assertError(build('show_table', { source: 'toolu_po', columns: ['ref'] }), 'unknown_column')
   assertError(build('show_table', { source: 'toolu_nope', columns: ['orderNumber'] }), 'source_missing')
