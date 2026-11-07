@@ -589,13 +589,14 @@ test('the call before the wall-time limit is told it is the last, so the answer 
     [...call('tu_po2', 'list_purchase_orders', { status: 'open' }), end()],
     [...say('PO-001 is 4 days overdue.'), end()],
   ])
-  // Each call takes 200 ms: after the first, 200 + 2 × 200 fits in 700; after
-  // the second, 400 + 2 × 200 does not, and the third ends by about 600.
+  // Each call takes 500 ms: after the first, 500 + 2 × 500 fits in 1,900;
+  // after the second, 1,000 + 2 × 500 does not, and the third ends by about
+  // 1,500. The margins leave room for a loaded machine (it failed at 200 / 700).
   const paced = { model: 'scripted', requests: turns.requests, async *stream(request, signal) {
-    await new Promise((resolve) => setTimeout(resolve, 200))
+    await new Promise((resolve) => setTimeout(resolve, 500))
     yield* turns.stream(request, signal)
   } }
-  const { events, audit } = await ask([], { client: paced, limits: { timeoutMs: 700 } })
+  const { events, audit } = await ask([], { client: paced, limits: { timeoutMs: 1900 } })
   assert.equal(ofType(events, 'error').length, 0)
   assert.equal(turns.requests.length, 3)
   assert.ok(JSON.stringify(turns.requests[2].messages.at(-1)).includes(LAST_ROUND_NOTE))
