@@ -12,12 +12,20 @@ import { logReplenishmentCall, planReplenishment, replenishmentInputFromExport }
 //                          same figures from the live records
 //   LLM-estimated          --params=llm-params.json: parameters and per-item values an LLM
 //   parameters fed to OR   estimated, applied on top of the export before solving
-//   a given plan           --plan=LDM-002:50,LDM-001:10 (repeat --plan for more) is costed
-//                          beside the optimum, ordering nothing and the deployed reorder rule
+//   a given plan           --plan=LDM-002:50,LDM-001:10 (repeat --plan for more): a textbook
+//                          policy's order, an LLM's or a buyer's, costed beside the optimum
+//                          and ordering nothing
+//
+// The study's findings come from public data (M5, Online Retail II): calibrate on a
+// training window, backtest on a later one. The adapter that builds those items is not
+// written yet. A FlowChain export is pipeline evidence only. Such an export also carries
+// the walkthrough's own reorder suggestion: it is costed as deployed_rule, and
+// --budget=rule takes its spend as the budget. Both only reproduce the prototype; neither
+// is a study baseline.
 //
 // export.json is a replenishment-inputs export (scripts/export-replenishment-inputs.mjs).
-// Options: --budget=<amount> (default: no budget; --budget=rule is the spend of the
-// deployed rule's order, the prototype's B), --holding-rate=25, --shortage-multiple=5 or
+// Options: --budget=<amount> (default: no budget; --budget=rule, see above),
+// --holding-rate=25, --shortage-multiple=5 or
 // --service-level=83.3, --review-days=7, --samples=200, --seed=7, --heldout=20000,
 // --heldout-seed=1007, --position=all_open_lines|due_within_cycle,
 // --formulation=epigraph|scenarios, --exclude=SKU,SKU, --fix=SKU:qty,

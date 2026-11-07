@@ -10,7 +10,7 @@ The research prototype's single-cycle sample average approximation (research not
 
 | Symbol | Meaning | From |
 |---|---|---|
-| I_i | stock position: on hand − reserved + every open purchase order line (late or not) + open purchase requests | allocation read model, as the reorder list since #249; requests as `suggest_purchase_lines` counts them |
+| I_i | stock position: on hand − reserved + every open purchase order line (late or not) + open purchase requests | allocation read model (the inventory position of a reorder-point policy); requests as `suggest_purchase_lines` counts them |
 | c_i, m_i, L_i | unit price, minimum order quantity, lead time | the preferred approved supplier: reference price, MOQ, lead time |
 | R | review period, days to the next chance to order | 7 (assumed; the user can change it) |
 | h_i | holding cost per unit left at the end of the cycle = rate × c_i × (L_i + R) / 365 | rate 25% a year (assumed, as in #269) |
@@ -64,14 +64,22 @@ items are planned at once: those named, then those whose stock runs out first.
 
 ## Research hooks
 
+The study's findings come from public data. The datasets are M5 (Walmart) and Online Retail II (UCI): the
+parameters are calibrated on a training window, and the plans are backtested on a later test window. The baselines
+are textbook policies, plus the solver run on record fields. FlowChain's own walkthrough records are pipeline
+evidence only: they show that the solver runs on ERP records and reproduces the prototype. They are not results.
+
 `planReplenishment(input, options)` is pure and deterministic: the same input gives the same output, in a worker or
-inline. `scripts/replenishment-solver.mjs` runs it on a replenishment-inputs export
+inline. It takes the items directly: price, minimum order, lead time, stock position and daily demand. A public-data
+instance therefore needs only an adapter that builds those items; none is written yet.
+
+`scripts/replenishment-solver.mjs` runs the solver on a replenishment-inputs export
 (`scripts/export-replenishment-inputs.mjs`):
 
 ```bash
-# OR alone, with the prototype's budget (the spend of the deployed rule's order)
-node scripts/replenishment-solver.mjs export.json --budget=rule --label=or_alone --log=calls.jsonl
-# A given plan (an LLM's or a buyer's), costed beside the optimum, no order and the deployed rule
+# OR alone, under a budget
+node scripts/replenishment-solver.mjs export.json --budget=5000 --label=or_alone --log=calls.jsonl
+# A given plan (a textbook policy's order, an LLM's or a buyer's), costed beside the optimum and no order
 node scripts/replenishment-solver.mjs export.json --budget=5000 --plan=LDM-002:50 --label=llm_plan --log=calls.jsonl
 # LLM-estimated parameters fed to OR
 node scripts/replenishment-solver.mjs export.json --params=llm-params.json --label=llm_params_to_or --log=calls.jsonl
@@ -85,20 +93,22 @@ node scripts/replenishment-solver.mjs export.json --params=llm-params.json --lab
   for the server. There the log also records the assistant's tool arguments and the result the model was shown
   (`toolResult`), which is the "OR plan given to the LLM" arm's input. Logging is off by default.
 
-## Reproduction
+## Reproduction (a pipeline check)
 
-`server/domain/replenishment-solver.test.mjs` runs the post-#249 export of the local walkthrough (main a83d07cb,
-reseeded 2026-11-05) with the prototype's parameters. The test fixture holds the fields the solver reads.
+`server/domain/replenishment-solver.test.mjs` checks that this code gives the research prototype's numbers on the same
+input. The input is an export of the local walkthrough's synthetic records (main a83d07cb, reseeded 2026-11-05), run
+with the prototype's parameters. The test fixture holds the fields the solver reads.
 
 | Plan | Held out | In sample |
 |---|---|---|
 | q* = 25 LDM-001 | 740.50 | 738.22 |
 | No order | 780.41 | 776.39 |
-| Reorder list after #249 (50 LDM-002) | 827.55 | 818.94 |
+| 50 LDM-002 | 827.55 | 818.94 |
 
-These are the prototype's figures to the cent, from the same scenarios. Offline, the solver also matched the frozen
-r2 export (747.08 / 790.17 / 834.10). It matched the safety-stock scenario instance as well: q* = (63, 158, 111, 0,
-558, 0) at B = $24,520, with held-out costs 464.79 against the rule's 590.24, and the ±10% budget plans.
+These are the prototype's figures to the cent, from the same scenarios. The check shows that the code reproduces the
+prototype; what the plans cost on synthetic records says nothing about ordering policies. Offline, the solver also
+reproduced the prototype on two other walkthrough instances. One of them had a binding budget of $24,520, and the
+check covered its ±10% budget plans too.
 
 ## Limits
 
@@ -107,6 +117,5 @@ r2 export (747.08 / 790.17 / 834.10). It matched the safety-stock scenario insta
   history does not hold. `extraDemand` is how known information enters.
 - Costs are assumed, not accounting data. Because π is proportional to price, cheap items are cut first under a tight
   budget. The expected cost is a planning figure, not cash; spend is cash.
-- The position counts open purchase requests, as the assistant's other order tools do. The export, and so the
-  research instances, do not: on the 11/05 showcase, LOCAL-DEMO-PR-001 (50 LDM-001, submitted) covers the order the
-  prototype's q* places.
+- The position counts open purchase requests, as the assistant's other order tools do. The export does not. On the
+  11/05 showcase, LOCAL-DEMO-PR-001 (50 LDM-001, submitted) covers the order that q* places on the export.
