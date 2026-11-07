@@ -83,6 +83,10 @@ type Focus = {
   entityLabel?: string;
 } | null;
 
+// Stock records are read 200 at a time, up to 50 pages (10,000 records).
+const BALANCE_PAGE_SIZE = 200;
+const BALANCE_PAGE_LIMIT = 50;
+
 const endpointFor: Record<string, { url: string; key: string }> = {
   overview: { url: "/api/inventory/balances", key: "balances" },
   warnings: { url: "/api/inventory/balances", key: "balances" },
@@ -240,9 +244,14 @@ export default function InventoryPage({
   const reorderCopy = useReorderListCopy();
   const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState<any[]>([]);
+  // The server's count for the list's filters, when it pages the list.
+  const [serverTotal, setServerTotal] = useState<number | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [selectedSku, setSelectedSku] = useState(focus?.entityId || "");
   const [query, setQuery] = useState("");
+  // Movements are searched on the server (there can be tens of thousands),
+  // a moment after the person stops typing.
+  const [movementQuery, setMovementQuery] = useState("");
   const [warehouse, setWarehouse] = useState("");
   const [stockStatus, setStockStatus] = useState("");
   const [movementType, setMovementType] = useState("");
@@ -286,24 +295,56 @@ export default function InventoryPage({
     .toString();
   const load = () => {
     const endpoint = endpointFor[view];
+    setServerTotal(null);
     if (!endpoint) {
       setRows([]);
       setState("ready");
       return;
     }
     setState("loading");
-    apiJson<Record<string, any[]>>(
-      `${endpoint.url}${queryString ? `?${queryString}` : ""}`,
-    )
-      .then((payload) => {
-        setRows(
-          Array.isArray(payload[endpoint.key]) ? payload[endpoint.key] : [],
-        );
-        setState("ready");
-      })
-      .catch(() => setState("error"));
+    const read = (params: URLSearchParams) =>
+      apiJson<Record<string, any>>(`${endpoint.url}${params.toString() ? `?${params.toString()}` : ""}`);
+    const rowsOf = (payload: Record<string, any>) => (Array.isArray(payload[endpoint.key]) ? payload[endpoint.key] : []);
+    const totalOf = (payload: Record<string, any>) => (Number.isFinite(Number(payload.total)) ? Number(payload.total) : null);
+    let work: Promise<void>;
+    if (view === "overview" || view === "warnings") {
+      // Every stock record, a page at a time: the search box, the warnings and
+      // the cards are worked out over all of them, never over the first page.
+      work = (async () => {
+        const all: any[] = [];
+        let total: number | null = null;
+        for (let page = 1; page <= BALANCE_PAGE_LIMIT; page += 1) {
+          const params = new URLSearchParams(queryString);
+          params.set("page", String(page));
+          params.set("pageSize", String(BALANCE_PAGE_SIZE));
+          const payload = await read(params);
+          const pageRows = rowsOf(payload);
+          all.push(...pageRows);
+          total = totalOf(payload);
+          if (pageRows.length < BALANCE_PAGE_SIZE || total === null || all.length >= total) break;
+        }
+        setRows(all);
+        setServerTotal(total);
+      })();
+    } else if (view === "movements") {
+      const params = new URLSearchParams(queryString);
+      if (!params.get("pageSize")) params.set("pageSize", String(BALANCE_PAGE_SIZE));
+      if (movementQuery) params.set("q", movementQuery);
+      work = read(params).then((payload) => {
+        setRows(rowsOf(payload));
+        setServerTotal(totalOf(payload));
+      });
+    } else {
+      work = read(new URLSearchParams(queryString)).then((payload) => setRows(rowsOf(payload)));
+    }
+    work.then(() => setState("ready")).catch(() => setState("error"));
   };
-  useEffect(load, [view, queryString]);
+  useEffect(load, [view, queryString, movementQuery]);
+  useEffect(() => {
+    if (view !== "movements") return;
+    const timer = setTimeout(() => setMovementQuery(query.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [query, view]);
   useEffect(() => {
     if (focus?.entityId) setSelectedSku(focus.entityId);
   }, [focus?.entityId]);
@@ -322,8 +363,9 @@ export default function InventoryPage({
         && (!stockStatus || stockStateOf(item) === stockStatus);
     }
     if (view === "movements") {
+      // The server has already searched the movements for the query.
       const movement = row as Movement;
-      return contains(query, movement.sku, movement.itemName, movement.sourceDocumentId, movement.relatedGrnId)
+      return (Boolean(movementQuery) || contains(query, movement.sku, movement.itemName, movement.sourceDocumentId, movement.relatedGrnId))
         && (!warehouse || movement.warehouseId === warehouse)
         && (!movementType || movement.movementType === movementType);
     }
@@ -537,7 +579,7 @@ export default function InventoryPage({
       )}
 
       {listTitle && (
-        <ListCard title={tr(listTitle)} total={state === "ready" ? base.length : undefined} shown={visible.length}>
+        <ListCard title={tr(listTitle)} total={state === "ready" ? (view === "movements" && serverTotal !== null ? serverTotal : view === "overview" && serverTotal !== null ? Math.max(serverTotal, base.length) : base.length) : undefined} shown={visible.length}>
           <div className={tableScrollClass}>
             {balances && (
               <table className={`w-full min-w-[1000px] text-left ${tableBodyTextClass}`}>
