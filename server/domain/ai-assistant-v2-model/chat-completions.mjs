@@ -4,8 +4,8 @@ import { AssistantModelError, modelAbortError } from './model-error.mjs'
 
 // The assistant v2 model client on a chat completions endpoint with native
 // tool calls, for local runs and the local eval on OpenCode Go or Parley
-// (docs/ai-assistant-v2-design.md §3.4), ported from the chat path of
-// ai-model-first-provider.mjs. The loop keeps its transcript in the Messages
+// (docs/ai-assistant-v2-design.md §3.4), ported from the chat path of the
+// earlier model-first provider. The loop keeps its transcript in the Messages
 // API's shape, so the request is translated here and the reply comes back in
 // that shape too.
 //

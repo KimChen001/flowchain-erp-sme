@@ -364,10 +364,9 @@ export const openaiResponsesAdapter = {
   extractCandidateFromResponse: extractCandidateFromProviderResponse,
   call(providerInputPackage, env, fetchImpl) { return callSpecificAdapter(this, providerInputPackage, env, fetchImpl) },
 }
-// Anthropic's native Messages API (anthropic_messages), the trial provider of
-// the model-first assistant (docs/ai-model-first-design.md §5). The
-// model-first loop builds its own requests (ai-model-first-provider.mjs); the
-// other paths send one system and one user message, as to a chat model.
+// Anthropic's native Messages API (anthropic_messages). The assistant's own
+// loop calls it through the official SDK (ai-assistant-v2-model); the other
+// paths send one system and one user message, as to a chat model.
 // Current Claude models reject sampling settings, so none is sent, and the
 // reply is read by content block type: it may start with thinking blocks.
 export const ANTHROPIC_MESSAGES_VERSION = '2023-06-01'

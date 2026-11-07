@@ -1,10 +1,12 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 // The assistant on the US walkthrough: visible, its layout on a phone, an
-// English recovery message when the answer cannot be produced, and answers
-// streamed with their checked record links. Since 2026-11-06 it answers only
-// with assistant v2 (the rules engine was removed at the owner's direction);
-// this server has no model set up, so a question gets a notice that says so.
+// English notice when it cannot answer here, English recovery messages, and
+// answers streamed with their record chips. It answers only with the model
+// (the rules engine was removed at the owner's direction, 2026-11-06 and
+// 2026-11-07); this server has no model set up, so the panel says so before
+// the first question. The tests that stream an answer play its events through
+// the page's fetch and tell the panel a model is set up.
 const CJK = /[㐀-鿿]/;
 
 async function signIn(page: Page, language: "en-US" | "zh-CN" = "en-US") {
@@ -22,6 +24,11 @@ async function signIn(page: Page, language: "en-US" | "zh-CN" = "en-US") {
   }, session);
 }
 
+// The panel as it is on a server with a model: readiness says the assistant answers.
+async function withModel(page: Page) {
+  await page.route("**/api/ai-runtime/readiness", (route) => route.fulfill({ json: { assistantV2: true, setup: null } }));
+}
+
 async function openAssistant(page: Page) {
   await page.goto("/app/overview/risks");
   await page.getByTestId("ai-assistant-toggle").click();
@@ -37,14 +44,17 @@ async function newConversation(panel: Locator, label: string) {
 
 const chineseLines = async (locator: Locator) => (await locator.innerText()).split(/\n+/).map((line) => line.trim()).filter((line) => CJK.test(line));
 
-// No rules answer stands in for the model any more: without one, a question
-// gets a notice that says why, in the question's language.
-test("without a model a question gets an English notice that says why, and no rules answer", async ({ page }) => {
+// No rules answer stands in for the model: without one, the panel says why
+// before the first question, offers no starter cards, and a question gets the
+// same notice.
+test("without a model the panel says why before the first question, and a question gets the same notice", async ({ page }) => {
   await signIn(page);
   const panel = await openAssistant(page);
+  await expect(panel.getByTestId("ai-readiness-notice")).toHaveText("The assistant is not set up on this server yet.");
+  await expect(panel.getByTestId("ai-empty-prompt-chip")).toHaveCount(0);
   await panel.getByTestId("ai-assistant-input").fill("Which purchase orders are overdue?");
   await panel.getByTestId("ai-assistant-send").click();
-  await expect(panel.getByText("The assistant is not set up on this server yet.").first()).toBeVisible({ timeout: 15_000 });
+  await expect(panel.getByTestId("ai-v2-notice").last()).toHaveText("The assistant is not set up on this server yet.", { timeout: 15_000 });
   await expect(panel.locator('[data-answer-source="workspace_rules"]')).toHaveCount(0);
   expect(await chineseLines(panel)).toEqual([]);
 });
@@ -52,18 +62,16 @@ test("without a model a question gets an English notice that says why, and no ru
 test("on a phone the assistant fills the screen and gets out of the way when a record opens", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
+  await withModel(page);
   const panel = await openAssistant(page);
   await expect(panel).toHaveAttribute("data-docked", "false");
   const box = await panel.boundingBox();
   expect(box?.width).toBe(390);
   expect(box?.height).toBe(844);
-  // A streamed answer with a record link: this server has no model, and since
-  // 2026-11-06 no rules answer either.
   const stream = await streamAnswers(page);
   await panel.getByTestId("ai-assistant-input").fill("When does our contract with Acme end?");
   await panel.getByTestId("ai-assistant-input").press("Enter");
-  await stream.push({ type: "answer", status: 200, body: contractAnswer("ai-model-first-phone") });
-  await stream.close();
+  await contractAnswer(stream, "msg_phone");
   const before = page.url();
   await panel.getByTestId("ai-record-chip").filter({ hasText: "CT-ACME0001" }).click();
   await expect(page).not.toHaveURL(before);
@@ -75,37 +83,35 @@ test("a failed or slow answer shows an English recovery message", async ({ page 
   // It waits out the client's 25 second limit.
   test.setTimeout(90_000);
   await signIn(page);
+  await withModel(page);
   const panel = await openAssistant(page);
   await page.route("**/api/ai-runtime/respond", (route) => route.fulfill({ status: 503, json: { code: "AI_SKILL_UNAVAILABLE", error: "The assistant could not read your workspace data just now. Please try again." } }));
   await panel.getByTestId("ai-empty-prompt-chip").first().click();
   const failed = panel.getByTestId("ai-message-assistant").last();
-  await expect(failed).toContainText("could not read your workspace data just now");
+  await expect(failed.getByTestId("ai-v2-error").locator("p")).toHaveText("The assistant could not answer just now. Nothing was changed.");
   await expect(failed.getByRole("button", { name: "Retry" })).toBeVisible();
   expect(await chineseLines(panel)).toEqual([]);
 
   await page.unroute("**/api/ai-runtime/respond");
   await newConversation(panel, "New conversation");
-  // No answer within the client's 25 second limit (a chip may go to the model too).
+  // No answer within the client's 25 second limit.
   await page.route("**/api/ai-runtime/respond", () => new Promise(() => {}));
   await panel.getByTestId("ai-empty-prompt-chip").first().click();
-  await expect(panel.getByTestId("ai-message-assistant").last()).toContainText("took too long to answer", { timeout: 35_000 });
+  await expect(panel.getByTestId("ai-message-assistant").last().getByTestId("ai-v2-error")).toContainText("stopped responding", { timeout: 35_000 });
   expect(await chineseLines(panel)).toEqual([]);
 });
 
-// The model-first assistant's progress stream (server/routes/ai-runtime-stream.mjs),
-// played line by line through the page's fetch: no model runs here.
-// A checked answer about the Acme contract, with its record link.
-function contractAnswer(responseId: string) {
-  return {
-    version: "v2", responseId, query: "When does our contract with Acme end?", intent: "model_first", language: "en-US",
-    answerSource: "workspace_model", answerSourceLabel: "Written by AI from your records; figures checked", runtimeModeLabel: "Written by AI from your records; figures checked",
-    checked: ["contracts"], checkedLabel: "Checked: contracts", figures: [], scope: { module: "workspace", dataScopeLabel: "Your workspace" },
-    conclusion: { title: "The Acme agreement ends on 2026-12-31", summary: "Contract CT-ACME0001 ends on 2026-12-31.", severity: "info", confidence: "medium" },
-    keyEvidence: [], contextCards: [], realEvidenceCount: 0, contextCardCount: 0, limitationCount: 0, businessImpact: [], recommendedActions: [],
-    navigationLinks: [{ label: "Open CT-ACME0001", moduleId: "contracts:list", entityType: "contract", entityId: "CT-1", returnTo: "ai-assistant", source: "ai" }],
-    dataLimitations: [], reviewCards: [], followUpQuestions: [], followUpSuggestions: [], contextBreadcrumbs: [],
-    safetyBoundaries: [], sourceSummary: [], readinessSignals: [], generatedAt: new Date().toISOString(), dataScopeLabel: "Your workspace",
-  };
+// An answer about the Acme contract, as the server streams it: its text, the
+// check that names the contract it cites (the panel chips it), the answer line.
+async function contractAnswer(stream: Awaited<ReturnType<typeof streamAnswers>>, messageId: string) {
+  let seq = 0;
+  const push = (event: Record<string, unknown>) => stream.push({ v: 2, seq: seq++, ...event });
+  await push({ type: "start", threadId: "thr_contract", messageId, model: "scripted", language: "en-US" });
+  await push({ type: "progress", step: "reading", sources: ["contracts", "purchase_orders"] });
+  await push({ type: "text_delta", partId: "t1", text: "Contract CT-ACME0001 with Acme Components ends on Dec 31, 2026 and needs 60 days of notice." });
+  await push({ type: "flag", partId: "t1", spans: [], refs: [{ type: "contract", id: "CT-1", label: "CT-ACME0001" }] });
+  await push({ type: "answer", status: 200, body: { version: "v2", intent: "assistant_v2", language: "en-US", parts: [{ id: "t1", type: "text" }], conclusion: { title: "Contract CT-ACME0001 with Acme Components ends on Dec 31, 2026 and needs 60 days of notice.", summary: "Contract CT-ACME0001 with Acme Components ends on Dec 31, 2026 and needs 60 days of notice." } } });
+  await stream.close();
 }
 
 async function streamAnswers(page: Page) {
@@ -136,71 +142,49 @@ async function streamAnswers(page: Page) {
   };
 }
 
-test("a typed question shows what the assistant reads, then its checked answer with a contract link", async ({ page }) => {
+test("a typed question shows what the assistant reads, then its answer with a contract chip", async ({ page }) => {
   await signIn(page);
+  await withModel(page);
   const panel = await openAssistant(page);
   const stream = await streamAnswers(page);
   await panel.getByTestId("ai-assistant-input").fill("When does our contract with Acme end?");
   await panel.getByTestId("ai-assistant-input").press("Enter");
   const progress = panel.getByTestId("ai-progress-line");
   await expect(progress).toBeVisible();
-  await stream.push({ type: "progress", step: "reading", sources: ["contracts", "purchase_orders"] });
+  await stream.push({ v: 2, seq: 0, type: "progress", step: "reading", sources: ["contracts", "purchase_orders"] });
   await expect(progress).toHaveText("Reading contracts and purchase orders…");
-  await stream.push({ type: "progress", step: "writing" });
+  await stream.push({ v: 2, seq: 1, type: "progress", step: "writing" });
   await expect(progress).toHaveText("Writing the answer…");
-  await stream.push({ type: "progress", step: "checking" });
-  await expect(progress).toHaveText("Checking the figures…");
-  await stream.push({ type: "answer", status: 200, body: {
-    version: "v2", responseId: "ai-model-first-test", query: "When does our contract with Acme end?", intent: "model_first", language: "en-US",
-    answerSource: "workspace_model", answerSourceLabel: "Written by AI from your records; figures checked", runtimeModeLabel: "Written by AI from your records; figures checked",
-    checked: ["contracts"], checkedLabel: "Checked: contracts", figures: [],
-    scope: { module: "workspace", dataScopeLabel: "Your workspace" },
-    conclusion: { title: "The Acme agreement ends on 2026-12-31", summary: "Contract CT-ACME0001 with Acme Components ends on 2026-12-31 and needs 60 days of notice.", severity: "info", confidence: "medium" },
-    keyEvidence: [{ id: "mf-1", label: "CT-ACME0001", entityLabel: "CT-ACME0001", entityType: "contract", entityId: "CT-1", moduleId: "contracts:list", severity: "info", sourceLabel: "Your workspace" }],
-    contextCards: [], realEvidenceCount: 1, contextCardCount: 0, limitationCount: 0, businessImpact: [], recommendedActions: [],
-    navigationLinks: [{ label: "Open CT-ACME0001", moduleId: "contracts:list", entityType: "contract", entityId: "CT-1", returnTo: "ai-assistant", source: "ai" }],
-    dataLimitations: [], reviewCards: [], followUpQuestions: [], followUpSuggestions: [], contextBreadcrumbs: [],
-    safetyBoundaries: [], sourceSummary: [], readinessSignals: [], generatedAt: new Date().toISOString(), dataScopeLabel: "Your workspace",
-  } });
+  let seq = 2;
+  const push = (event: Record<string, unknown>) => stream.push({ v: 2, seq: seq++, ...event });
+  await push({ type: "text_delta", partId: "t1", text: "Contract CT-ACME0001 with Acme Components ends on Dec 31, 2026 and needs 60 days of notice." });
+  await push({ type: "flag", partId: "t1", spans: [], refs: [{ type: "contract", id: "CT-1", label: "CT-ACME0001" }] });
+  await push({ type: "answer", status: 200, body: { version: "v2", intent: "assistant_v2", language: "en-US", parts: [{ id: "t1", type: "text" }], conclusion: { title: "Contract CT-ACME0001", summary: "Contract CT-ACME0001 with Acme Components ends on Dec 31, 2026 and needs 60 days of notice." } } });
   await stream.close();
-  const answer = panel.locator('[data-answer-source="workspace_model"]');
-  await expect(answer.getByTestId("ai-answer-source")).toContainText("Written by AI from your records; figures checked");
-  await expect(answer.getByTestId("ai-focused-conclusion").locator("h3")).toHaveText("The Acme agreement ends on 2026-12-31");
-  // The contract number in the text is a chip; one line says the figures were checked.
-  await expect(answer.getByTestId("ai-answer-text").getByTestId("ai-record-chip")).toHaveText("CT-ACME0001");
-  await expect(answer.getByTestId("ai-trust-line").locator("summary")).toHaveText(/Figures checked\s*· 1 source/);
+  const answer = panel.getByTestId("ai-v2-message").last();
+  await expect(answer).toHaveAttribute("data-done", "true");
+  // The contract number in the text is a chip.
+  await expect(answer.getByTestId("ai-record-chip")).toHaveText("CT-ACME0001");
   await expect(progress).toHaveCount(0);
   expect(await chineseLines(panel)).toEqual([]);
-  // A chip keeps the plain JSON request; without a model its answer is the notice.
+  // A starter card is asked like a typed question: streamed, to the model.
   await newConversation(panel, "New conversation");
   await panel.getByTestId("ai-empty-prompt-chip").filter({ hasText: "What should I handle first today?" }).click();
-  await expect(panel.getByText("The assistant is not set up on this server yet.").first()).toBeVisible({ timeout: 15_000 });
+  await expect(panel.getByTestId("ai-progress-line")).toBeVisible();
   const accepts = await stream.accepts();
-  expect(accepts[0]).toContain("application/x-ndjson");
-  expect(accepts[1]).not.toContain("application/x-ndjson");
+  expect(accepts).toHaveLength(2);
+  for (const accept of accepts) expect(accept).toContain("application/x-ndjson");
 });
 
-test("the record link of a model-first answer opens the contract", async ({ page }) => {
+test("the record chip of an answer opens the contract", async ({ page }) => {
   await signIn(page);
+  await withModel(page);
   const panel = await openAssistant(page);
   const stream = await streamAnswers(page);
   await panel.getByTestId("ai-assistant-input").fill("When does our contract with Acme end?");
   await panel.getByTestId("ai-assistant-input").press("Enter");
   await expect(panel.getByTestId("ai-progress-line")).toBeVisible();
-  await stream.push({ type: "answer", status: 200, body: {
-    version: "v2", responseId: "ai-model-first-link", query: "When does our contract with Acme end?", intent: "model_first", language: "en-US",
-    answerSource: "workspace_model", answerSourceLabel: "Written by AI from your records; figures checked", runtimeModeLabel: "Written by AI from your records; figures checked",
-    checked: ["contracts"], checkedLabel: "Checked: contracts", figures: [], scope: { module: "workspace", dataScopeLabel: "Your workspace" },
-    conclusion: { title: "The Acme agreement ends on 2026-12-31", summary: "Contract CT-ACME0001 ends on 2026-12-31.", severity: "info", confidence: "medium" },
-    keyEvidence: [], contextCards: [], realEvidenceCount: 0, contextCardCount: 0, limitationCount: 0, businessImpact: [], recommendedActions: [],
-    navigationLinks: [{ label: "Open CT-ACME0001", moduleId: "contracts:list", entityType: "contract", entityId: "CT-1", returnTo: "ai-assistant", source: "ai" }],
-    dataLimitations: [], reviewCards: [], followUpQuestions: [], followUpSuggestions: [], contextBreadcrumbs: [],
-    safetyBoundaries: [], sourceSummary: [], readinessSignals: [], generatedAt: new Date().toISOString(), dataScopeLabel: "Your workspace",
-  } });
-  await stream.close();
-  // The chip in the text is the link; it is not repeated as an "Open" button.
-  await expect(panel.getByTestId("ai-business-navigation-action")).toHaveCount(0);
+  await contractAnswer(stream, "msg_link");
   await panel.getByTestId("ai-record-chip").filter({ hasText: "CT-ACME0001" }).click();
   await expect(page).toHaveURL(/\/app\/contracts\/CT-1$/);
 });
-

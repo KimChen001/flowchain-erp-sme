@@ -68,8 +68,8 @@ export async function loadAiRuntimeFacts(repositories = {}, tenantId = '', acces
 // NDJSON gets the answer as it is written (ai-runtime-stream.mjs).
 export async function handleAiRuntimeGatewayRoute(ctx) {
   if (!ctx.url?.pathname?.startsWith('/api/ai-runtime/')) return false
-  const stream = ctx.url.pathname === '/api/ai-runtime/respond' ? aiRuntimeProgressStream(ctx.req, ctx.res, ctx.send) : { send: ctx.send, progress: null, event: null }
-  return withAiWorkspaceAccess({ ...ctx, send: stream.send }, (scoped) => handleGatewayRequest({ ...scoped, aiProgress: stream.progress, aiStreamEvent: stream.event }))
+  const stream = ctx.url.pathname === '/api/ai-runtime/respond' ? aiRuntimeProgressStream(ctx.req, ctx.res, ctx.send) : { send: ctx.send, event: null }
+  return withAiWorkspaceAccess({ ...ctx, send: stream.send }, (scoped) => handleGatewayRequest({ ...scoped, aiStreamEvent: stream.event }))
 }
 
 // Why assistant v2 cannot answer this request, as a notice code: the month's

@@ -30,7 +30,7 @@ async function v2({ roleKey = 'workspace-administrator', supplierLinks = [link()
   if (actor) actor(scenario.ctx.aiSkillActor)
   const context = await loadAiSkillContext({ ...scenario.ctx, ...ctx })
   const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
-  const run = async (name, args = {}) => runAiReadTool(name, args, { facts, context, assistantV2: true })
+  const run = async (name, args = {}) => runAiReadTool(name, args, { facts, context })
   return { scenario, context, facts, run }
 }
 // LDM-001 with a reorder point of 200: 200 - 28 available - 70 on PO-001 and
@@ -40,39 +40,33 @@ const highReorderPoint = (data) => {
   data.balances[0].reorderPoint = 200
 }
 
-test('the v2 tools are offered to assistant v2 only; the model-first loop keeps its tools', async () => {
+test('the assistant is offered the read tools and its own, one of each name', async () => {
   const { facts, context, run } = await v2()
-  const modelFirst = aiReadToolsFor(facts, context).map((tool) => tool.name)
-  assert.deepEqual(modelFirst, AI_READ_TOOLS.filter((tool) => tool.available(facts, context)).map((tool) => tool.name))
-  for (const name of V2_ONLY) assert.ok(!modelFirst.includes(name), `${name} is not offered to the model-first loop`)
-  assert.deepEqual((await runAiReadTool('attention_list', {}, { facts, context })), { ok: false, error: 'unknown_tool' })
-  const assistant = aiReadToolsFor(facts, context, { assistantV2: true })
+  const assistant = aiReadToolsFor(facts, context)
   for (const name of V2_ONLY) assert.ok(assistant.some((tool) => tool.name === name), `${name} is offered to assistant v2`)
   // One list_purchase_requests each: v2's, with statuses, replaces the other.
   assert.equal(assistant.filter((tool) => tool.name === 'list_purchase_requests').length, 1)
   assert.ok(assistant.find((tool) => tool.name === 'list_purchase_requests').assistantV2Only)
-  assert.ok(aiReadToolDefinitions(facts, { context, assistantV2: true }).every((tool) => tool.input_schema.additionalProperties === false))
-  // The model-first tool still lists the requests awaiting approval only.
-  const old = (await runAiReadTool('list_purchase_requests', {}, { facts, context })).result
-  assert.deepEqual(old.rows.map((row) => row.request), ['PR-001'])
-  assert.equal((await runAiReadTool('list_purchase_requests', { status: 'draft' }, { facts, context })).error, 'invalid_arguments')
+  assert.ok(aiReadToolDefinitions(facts, { context }).every((tool) => tool.input_schema.additionalProperties === false))
+  assert.deepEqual(assistant.map((tool) => tool.name), [...new Set(assistant.map((tool) => tool.name))])
+  for (const tool of AI_READ_TOOLS.filter((entry) => entry.available(facts, context))) assert.ok(assistant.some((entry) => entry.name === tool.name), tool.name)
   assert.deepEqual((await run('list_purchase_requests', { status: 'draft' })).result.rows.map((row) => row.request), ['PR-002'])
 })
 
-test('on facts read without the open requests, v2 keeps the model-first request list and refuses to suggest lines', async () => {
+test('on facts read without the open requests, the assistant keeps the read tool\'s request list and refuses to suggest lines', async () => {
   const scenario = aiSkillScenario({ supplierLinks: [link()] })
   scenario.data.items[0].reorderPoint = 200
   scenario.data.balances[0].reorderPoint = 200
   const context = await loadAiSkillContext(scenario.ctx)
   const facts = await readAiSkillFacts(context)
-  const offered = aiReadToolsFor(facts, context, { assistantV2: true }).filter((tool) => tool.name === 'list_purchase_requests')
+  const offered = aiReadToolsFor(facts, context).filter((tool) => tool.name === 'list_purchase_requests')
   assert.equal(offered.length, 1)
-  assert.ok(!offered[0].assistantV2Only, 'the model-first list stays')
-  assert.deepEqual((await runAiReadTool('list_purchase_requests', {}, { facts, context, assistantV2: true })).result.rows.map((row) => row.request), ['PR-001'])
-  assert.deepEqual(await runAiReadTool('suggest_purchase_lines', {}, { facts, context, assistantV2: true }), { ok: false, error: 'open_purchase_requests_not_read' })
+  assert.ok(!offered[0].assistantV2Only, 'the read tool\'s list stays')
+  assert.deepEqual((await runAiReadTool('list_purchase_requests', {}, { facts, context })).result.rows.map((row) => row.request), ['PR-001'])
+  assert.deepEqual(await runAiReadTool('suggest_purchase_lines', {}, { facts, context }), { ok: false, error: 'open_purchase_requests_not_read' })
   // Not offered at all is not allowed; never offered anywhere is unknown.
-  assert.deepEqual(await runAiReadTool('list_purchase_requests', {}, { facts: null, context, assistantV2: true }), { ok: false, error: 'not_allowed' })
-  assert.deepEqual(await runAiReadTool('made_up', {}, { facts, context, assistantV2: true }), { ok: false, error: 'unknown_tool' })
+  assert.deepEqual(await runAiReadTool('list_purchase_requests', {}, { facts: null, context }), { ok: false, error: 'not_allowed' })
+  assert.deepEqual(await runAiReadTool('made_up', {}, { facts, context }), { ok: false, error: 'unknown_tool' })
 })
 
 test('the open purchase requests are read only when asked for, so the existing facts stay as they are', async () => {
@@ -477,8 +471,8 @@ test('suggest_purchase_lines reads only the asking user\'s workspace', async () 
   const actor = aiSkillActor('workspace-administrator', AI_SKILL_OTHER_TENANT)
   const context = await loadAiSkillContext({ ...other.ctx, identity: { ...other.ctx.identity, tenantId: AI_SKILL_OTHER_TENANT }, aiSkillActor: actor })
   const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
-  assert.deepEqual(await runAiReadTool('suggest_purchase_lines', { skus: ['LDM-001'] }, { facts, context, assistantV2: true }), { ok: false, error: 'not_found', details: ['LDM-001'] })
-  assert.deepEqual((await runAiReadTool('suggest_purchase_lines', {}, { facts, context, assistantV2: true })).result.rows, [])
+  assert.deepEqual(await runAiReadTool('suggest_purchase_lines', { skus: ['LDM-001'] }, { facts, context }), { ok: false, error: 'not_found', details: ['LDM-001'] })
+  assert.deepEqual((await runAiReadTool('suggest_purchase_lines', {}, { facts, context })).result.rows, [])
 })
 
 test('reorder_list returns the preferred supplier\'s lead time, id and minimum order, and filters by SKU and supplier', async () => {
@@ -593,7 +587,7 @@ test('every data tool declares its columns, and each declared column is in its r
   // there, and null. Each column must be in a row of one of the tool's calls.
   const at = (value, path) => (path ? path.split('.').reduce((entry, key) => (entry === null || entry === undefined ? entry : entry[key]), value) : value)
   const checked = new Set()
-  for (const tool of aiReadToolsFor(facts, context, { assistantV2: true })) {
+  for (const tool of aiReadToolsFor(facts, context)) {
     const seen = new Map()
     for (const args of calls[tool.name] || [{}]) {
       const output = await run(tool.name, args)
@@ -649,10 +643,10 @@ test('setup_status: without import a step opens its own page; a role that may no
   // One model of the stand-in database answered differently.
   const swapped = (prisma, model, methods) => new Proxy({}, { get: (_target, key) => (key === model ? new Proxy({}, { get: (_inner, method) => methods[method] || prisma[model][method] }) : prisma[key]) })
   const done = await v2({ change: (data) => { data.customers = [{ id: 'CUST-1' }] } })
-  const all = (await runAiReadTool('setup_status', {}, { facts: done.facts, context: { ...done.context, prisma: swapped(done.context.prisma, 'user', { count: async () => 2 }) }, assistantV2: true })).result
+  const all = (await runAiReadTool('setup_status', {}, { facts: done.facts, context: { ...done.context, prisma: swapped(done.context.prisma, 'user', { count: async () => 2 }) } })).result
   assert.deepEqual([all.open, all.done], [false, 5])
   const broken = await v2()
-  assert.deepEqual(await runAiReadTool('setup_status', {}, { facts: broken.facts, context: { ...broken.context, prisma: swapped(broken.context.prisma, 'supplier', { count: async () => { throw new Error('down') } }) }, assistantV2: true }), { ok: false, error: 'setup_counts_unavailable' })
+  assert.deepEqual(await runAiReadTool('setup_status', {}, { facts: broken.facts, context: { ...broken.context, prisma: swapped(broken.context.prisma, 'supplier', { count: async () => { throw new Error('down') } }) } }), { ok: false, error: 'setup_counts_unavailable' })
 })
 
 // A supplier switch was judged without the other supplier's terms, and open

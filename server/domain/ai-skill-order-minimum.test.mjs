@@ -3,9 +3,7 @@ import assert from 'node:assert/strict'
 import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
-import { aiSkillDraftCandidate, aiSkillDraftCard, aiSkillNextStepText } from './ai-skill-drafts.mjs'
 import { requestMinimumOf } from './reorder-list.mjs'
-import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 
 // The preferred supplier's minimum order, by the reorder list's own rule
 // (reorder-list.mjs): a purchase request the assistant suggests asks for at
@@ -41,23 +39,5 @@ test('each stock row carries its preferred supplier\'s minimum, read as the reor
   assert.equal(minimumOf((await factsWith([link('ITEM-001', { minimumOrderQuantity: null })])).facts, 'LDM-001'), null)
   // No links read: nothing changes.
   assert.equal(minimumOf((await factsWith([])).facts, 'LDM-001'), null)
-})
-
-test('a suggested purchase request asks for at least the minimum, and says so', async () => {
-  const { facts } = await factsWith([])
-  const item = { id: 'stock_shortage:ITEM-009', type: 'stock_shortage', entityType: 'item', entityId: 'ITEM-009', label: 'LDM-009', severity: 'risk', data: { available: 10, demand: 60, reorder: 0, safety: 0, incoming: 0, pendingRequests: 0, purchaseOrderIds: [], minimum: 100, minimumSupplier: 'Acme Components' } }
-  const candidate = aiSkillDraftCandidate(item, facts)
-  assert.equal(candidate.kind, 'purchase_request_draft')
-  assert.equal(candidate.quantity, 100)
-  assert.deepEqual(candidate.raisedToMinimum, { minimum: 100, gap: 50, supplier: 'Acme Components' })
-  assert.equal(aiSkillNextStepText(candidate, facts, 'en-US'), "Next: raise a purchase request for 100, Acme Components's minimum order.")
-  assert.equal(aiSkillNextStepText(candidate, facts, 'zh-CN'), '下一步：按 Acme Components 的最小起订量申请采购 100。')
-  const card = aiSkillDraftCard(candidate, facts, 'en-US')
-  assert.equal(card.payload.quantity, 100)
-  assert.match(card.description, /Acme Components takes orders of at least 100, so the request is for 100 rather than 50\./)
-  // A gap above the minimum is asked for as it is.
-  const big = aiSkillDraftCandidate({ ...item, data: { ...item.data, demand: 260 } }, facts)
-  assert.equal(big.quantity, 250)
-  assert.equal(big.raisedToMinimum, undefined)
 })
 

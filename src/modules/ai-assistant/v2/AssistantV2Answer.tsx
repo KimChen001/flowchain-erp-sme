@@ -1,11 +1,8 @@
 import { Loader2, RotateCcw } from "lucide-react";
 import { A } from "../../../components/ui";
-import { AiResponseV2Renderer } from "../../../components/ai/AiResponseV2Renderer";
-import type { AiResponseV2 } from "../../../domain/ai/response-contract";
 import { isTranslationKey } from "../../../i18n/I18n";
-import type { ActionDraftPreviewRequest } from "../../action-drafts/ActionDraftReviewShell";
 import { aiProgressLine } from "../presentation";
-import { answerPartsOf, rulesAnswerBody, type AssistantV2Message } from "./foldEvents";
+import { answerPartsOf, type AssistantV2Message } from "./foldEvents";
 import { AnswerParts } from "./parts/AnswerParts";
 import { isRef, toneStyle, usePartCopy, type Navigate, type PartCopy } from "./parts/partKit";
 import type { PartRef, PrReceipt, RecordActionReceipt, SetupReceipt } from "./parts/types";
@@ -43,7 +40,6 @@ export function AssistantV2Answer({
   onNavigate,
   onFollowUp,
   onRetry,
-  onReviewActionDraft,
 }: {
   message: AssistantV2Message;
   threadId: string;
@@ -60,10 +56,8 @@ export function AssistantV2Answer({
   onNavigate?: Navigate;
   onFollowUp?: (question: string) => void;
   onRetry?: () => void;
-  onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void;
 }) {
   const copy = usePartCopy(message.language);
-  const rules = rulesAnswerBody(message);
   const parts = answerPartsOf(message);
   const formIds = Object.fromEntries(parts.flatMap((part) => part.type === "ui" && part.component === "pr_form" ? [[part.id, formIdOf(part.props)]] : []));
   const partReceipts = Object.fromEntries(Object.entries(formIds).flatMap(([partId, formId]) => receipts[formId] ? [[partId, receipts[formId]]] : []));
@@ -77,27 +71,23 @@ export function AssistantV2Answer({
 
   return (
     <div data-testid="ai-v2-message" data-done={message.done ? "true" : "false"} lang={copy.language} className="space-y-3">
-      {rules ? (
-        <AiResponseV2Renderer response={rules as unknown as AiResponseV2} latest={latest} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} onFollowUp={onFollowUp ? (question) => onFollowUp(question) : undefined} />
-      ) : (
-        <AnswerParts
-          parts={parts}
-          refs={evidence}
-          latest={latest}
-          threadId={message.threadId || threadId}
-          messageId={message.messageId || fallbackMessageId}
-          language={copy.language}
-          onNavigate={onNavigate}
-          onFollowUp={onFollowUp}
-          onChoose={onFollowUp ? (ref) => onFollowUp(ref.label) : undefined}
-          receipts={partReceipts}
-          onReceipt={onReceipt ? (partId, receipt) => { if (formIds[partId]) onReceipt(formIds[partId], receipt); } : undefined}
-          setupReceipts={partSetupReceipts}
-          onSetupReceipt={onSetupReceipt ? (partId, receipt) => { if (setupFormIds[partId]) onSetupReceipt(setupFormIds[partId], receipt); } : undefined}
-          actionReceipts={partActionReceipts}
-          onActionReceipt={onActionReceipt ? (partId, receipt) => { if (cardIds[partId]) onActionReceipt(cardIds[partId], receipt); } : undefined}
-        />
-      )}
+      <AnswerParts
+        parts={parts}
+        refs={evidence}
+        latest={latest}
+        threadId={message.threadId || threadId}
+        messageId={message.messageId || fallbackMessageId}
+        language={copy.language}
+        onNavigate={onNavigate}
+        onFollowUp={onFollowUp}
+        onChoose={onFollowUp ? (ref) => onFollowUp(ref.label) : undefined}
+        receipts={partReceipts}
+        onReceipt={onReceipt ? (partId, receipt) => { if (formIds[partId]) onReceipt(formIds[partId], receipt); } : undefined}
+        setupReceipts={partSetupReceipts}
+        onSetupReceipt={onSetupReceipt ? (partId, receipt) => { if (setupFormIds[partId]) onSetupReceipt(setupFormIds[partId], receipt); } : undefined}
+        actionReceipts={partActionReceipts}
+        onActionReceipt={onActionReceipt ? (partId, receipt) => { if (cardIds[partId]) onActionReceipt(cardIds[partId], receipt); } : undefined}
+      />
       {showStatus ? (
         <div data-testid="ai-progress-line" aria-live="polite" className="flex items-center gap-2 text-[13px]" style={{ color: A.gray1 }}>
           <Loader2 size={14} className="animate-spin" aria-hidden />

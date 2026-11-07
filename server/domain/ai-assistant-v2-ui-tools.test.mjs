@@ -37,7 +37,7 @@ async function workspace({ roleKey = 'workspace-administrator', supplierLinks = 
   const results = new Map()
   const ctx = { results, facts, actor: context.actor, language: 'en-US', threadId: 'thr_7f2c', messageId: 'msg_19', partId: 'p2', userNamedSkus, userText, prisma: context.prisma, tenantId: context.tenantId, workspaceCurrency: context.tenant.currency, agreeable, lastFormSkus }
   const call = async (id, name, args = {}) => {
-    const run = await runAiReadTool(name, args, { facts, context, assistantV2: true })
+    const run = await runAiReadTool(name, args, { facts, context })
     assert.ok(run.ok, `${name}: ${run.error}`)
     results.set(id, { tool: name, output: run.result })
     return run.result

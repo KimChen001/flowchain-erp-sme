@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const panelSource = readFileSync(new URL('../../src/modules/ai-assistant/Panel.tsx', import.meta.url), 'utf8')
-const rendererSource = readFileSync(new URL('../../src/components/ai/AiResponseV2Renderer.tsx', import.meta.url), 'utf8')
 
 test('R134 AI assistant empty state exposes business prompt chips', () => {
   assert.match(panelSource, /AI_EMPTY_STATE_PROMPT_CHIPS/)
@@ -32,16 +31,11 @@ test('R135 the placeholder offers the page record next to the whole workspace, a
   assert.doesNotMatch(panelSource, /routeById\(moduleId\)\?\.moduleLabel/)
 })
 
-test('R136 follow-up chips are distinct from review-first recommended actions', () => {
-  assert.match(panelSource, /export function getAiFollowUpChips/)
-  assert.match(panelSource, /data-testid="ai-follow-up-chip"/)
-  assert.match(panelSource, /为什么这个 PO 优先？/)
-  assert.match(panelSource, /查看关联 SKU/)
-  assert.match(panelSource, /哪些数据不完整？/)
-  assert.match(panelSource, /Which data is incomplete\?/)
-  assert.match(panelSource, /预览供应商提醒草稿/)
-  assert.match(panelSource, /Preview supplier reminder/)
-  assert.match(panelSource, /rag\?\.mode === "no_results"/)
-  assert.match(panelSource, /getAiFollowUpChips\(message, language\)/)
-  assert.match(rendererSource, /ai-action-draft-preview/)
+test('R136 the panel has one path: every question streams to the model, with no rule chips or skill hints', () => {
+  // Next steps come from the answer (its follow-up part), never from rules in the panel.
+  assert.doesNotMatch(panelSource, /getAiFollowUpChips|skillHint|SKILL_HINTS|requestScopeLabel|AiResponseV2Renderer|postAiRuntimeResponse/)
+  assert.match(panelSource, /streamAssistantV2\(/)
+  // When the assistant cannot answer here, the welcome says why before the first question.
+  assert.match(panelSource, /data-testid="ai-readiness-notice"/)
+  assert.match(panelSource, /ai\.v2\.notice\.\$\{notice\}/)
 })
