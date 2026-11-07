@@ -1189,6 +1189,24 @@ test('a failed form call is named in each later round until the form is shown', 
   assert.match(body.conclusion.summary, /Tick the items you want/)
 })
 
+// 2026-11-07 (public-data scene): a confirmed order read its lines and said
+// "I've filled in a request form" without calling the form.
+test('lines read for an order with no form yet are named as not shown until the form is', async () => {
+  const { client } = await ask([
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-002'] }), end()],
+    [...call('tu_form', 'suggest_purchase_request', { source: 'tu_lines', from: 'user_named', lines: [{ sku: 'LDM-002', quantity: 60 }] }), end()],
+    [...say('Check the line, then click Create draft request.'), end()],
+  ], { question: 'Confirm: order 60 of LDM-002', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  const notShown = (request) => request.messages.at(-1).content.some((block) => block.type === 'text' && /No purchase request form is shown in this answer yet/.test(block.text))
+  assert.deepEqual(client.requests.slice(1).map(notShown), [true, false])
+  // A role that cannot create requests is not told to open one.
+  const viewer = await ask([
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-002'] }), end()],
+    [...say('A buyer can create the request.'), end()],
+  ], { roleKey: 'read-only-viewer', question: 'Confirm: order 60 of LDM-002', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assert.ok(!viewer.client.requests.slice(1).some(notShown))
+})
+
 // 2026-11-07: a reorder answer ended at its opening line and the chips.
 test('chips in a round with no text do not end the answer on an earlier opening line', async () => {
   const { client, body } = await ask([

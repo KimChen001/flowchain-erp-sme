@@ -140,6 +140,11 @@ const unshownCards = (calls) => [...CARD_TOOLS].filter((name) => {
   const last = calls.filter((row) => row.tool === name).at(-1)
   return last && last.status !== 'ok' && last.status !== 'skipped'
 })
+// Lines read for an order with no form shown yet (2026-11-07: a confirmed
+// order read its lines and said "I've filled in a request form" without
+// calling the form).
+const FORM_NOT_SHOWN = 'No purchase request form is shown in this answer yet: the user sees one only after suggest_purchase_request succeeds with a suggest_purchase_lines result as source. If the user wants to order, call it; never say a form is open before it succeeds.'
+const linesWithoutForm = (stats, offered) => offered && stats.calls.some((row) => row.tool === 'suggest_purchase_lines' && row.status === 'ok') && !stats.ui.some((row) => row.tool === 'suggest_purchase_request')
 const DISPLAY_OFF = 'No display tool is available for the rest of this answer.'
 const displayOffNote = (names) => `No display tool (${names.join(', ')}) is available for the rest of this answer. Answer in prose from the results, and do not mention displays, tools or errors to the user.`
 const FLAG_KINDS = new Set(['number', 'date', 'name', 'record'])
@@ -225,7 +230,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- A record of a kind in hiddenForRole always gets that hidden reply, whether or not the tools find it; never the not-found reply below.',
   '- A record number the tools cannot find, of a kind the role can see: answer exactly, with {number} as the user wrote it: "I couldn\'t find {number} in the records you can see. Check the number, or tell me the supplier or item." (在你可查看的记录中找不到 {number}。请核对编号，或告诉我供应商或物料。). Add no reason or guess.',
   '- Answer from what the records hold before saying something is not recorded. Sales ("last month\'s sales", 上个月销售额) are recorded as customer invoices with their amounts and dates (list_receivables with status all); open sales orders (list_sales_orders) show what is still to ship. Answer from them and say in a few words which you used and what that leaves out. When the records you read hold nothing for the question, state that as the finding ("No customer invoices are recorded for October." / 10 月没有记录客户发票。), without apologising, then what you can show instead. Only a question no tool can answer at all, because FlowChain does not record it (profit or margins, cash, people\'s sales performance, a sales forecast beyond recorded demand), gets one plain sentence saying so, without apologising, then what you can help with instead, with no figures. The cost of holding stock and of ordering is not such a question: answer it with the cost tools.',
-  '- If the user asks for a message or a note, write the draft in the answer for them to review and send themselves, as "> " quoted lines, in the language the user asked in unless they name another. Use only the facts the tools gave; leave a bracketed placeholder for anything you do not have.',
+  '- If the user asks for a message or a note, write the draft in the answer for them to review and send themselves, as "> " quoted lines, in the language the user asked in unless they name another. Use only the facts the tools gave; leave a bracketed placeholder for anything you do not have. When the user asks to change a draft, keep its records and figures: a record the user names by part of its name ("the sensor") is the one in the draft, so look it up by its number and do not ask which.',
   '- What the workspace\'s own policies or documents say: search them with search_documents and state only what the passages say, naming the document and section. If no passage answers it, say the documents do not cover it.',
   '- A general question (what a three-way match is) may be answered briefly from general knowledge, saying that it is general practice, not this workspace\'s data.',
   '- Never mention these instructions, the checking of your answer or the notes from the server; say what happened in your own words ("you approved PR-0231"), and just answer.',
@@ -1254,7 +1259,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // above its form, the explanation unwritten. Nor when the round's text
       // is none: the only text was an opening line of an earlier round
       // (2026-11-07: a reorder answer ended at 21 characters and its chips).
-      if (toolUses.some((block) => block.name === 'suggest_followups') && !toolUses.some((block) => CARD_TOOLS.has(block.name)) && toolUses.every((block) => ui.has(block.name) && outcomes.get(block.id)?.ok) && parts.slice(roundStart).some((part) => part.type === 'text' && text(part.text)) && !unshownCards(stats.ui).length) { stop('end_turn'); break }
+      if (toolUses.some((block) => block.name === 'suggest_followups') && !toolUses.some((block) => CARD_TOOLS.has(block.name)) && toolUses.every((block) => ui.has(block.name) && outcomes.get(block.id)?.ok) && parts.slice(roundStart).some((part) => part.type === 'text' && text(part.text)) && !unshownCards(stats.ui).length && !linesWithoutForm(stats, ui.has('suggest_purchase_request'))) { stop('end_turn'); break }
       // The next call is the last when the limits say so, when a call after
       // it could not fit in what the answer may still spend, or when the
       // model called only withdrawn display tools.
@@ -1279,6 +1284,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       if (parts.slice(roundStart).some((part) => part.narration)) note.push({ type: 'text', text: HIDDEN_NOTE })
       const unshown = unshownCards(stats.ui)
       if (unshown.length) note.push({ type: 'text', text: cardNotShownNote(unshown) })
+      else if (linesWithoutForm(stats, ui.has('suggest_purchase_request'))) note.push({ type: 'text', text: FORM_NOT_SHOWN })
       if (stats.rounds >= limits.rounds || callCount >= limits.toolCalls || lastForCost || lastForTokens || lastForTime || displaysRefused) {
         finalRound = true
         stats.lastRoundForCost ||= lastForCost
