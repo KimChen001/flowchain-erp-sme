@@ -58,6 +58,11 @@ function riskFor(row, status, shortageQty) {
   return 'low'
 }
 
+const OPEN_DEMAND_EXCLUDED_STATUSES = ['draft', 'cancelled', 'canceled']
+
+// The same rule on an order as listOrders returns it.
+export const orderHasOpenDemand = (order) => !OPEN_DEMAND_EXCLUDED_STATUSES.includes(text(order?.workflowStatus)) && text(order?.fulfillmentStatus) !== 'fully_fulfilled'
+
 function mapOrder(row = {}) {
   const lines = Array.isArray(row.lines) ? row.lines : []
   const orderedQty = sum(lines, 'orderedQuantity')
@@ -172,10 +177,20 @@ export function createDbSalesOrderReadRepository({ env = process.env, prisma } =
       .filter((order) => !text(filters.risk) || (filters.risk === 'true' ? order.deliveryRiskLevel !== 'low' : order.deliveryRiskLevel === filters.risk))
   }
 
+  // Orders that may still need stock: neither draft nor cancelled, and not
+  // fully fulfilled (orderHasOpenDemand, below). The business read context
+  // compares it with the orders it read, so a list that reads only the most
+  // recent orders knows whether an older one could still hold open demand.
+  async function countOrdersWithOpenDemand(filters = {}) {
+    const db = await client()
+    return db.salesOrder.count({ where: { tenantId: requireTenantId(filters), workflowStatus: { notIn: OPEN_DEMAND_EXCLUDED_STATUSES }, fulfillmentStatus: { not: 'fully_fulfilled' } } })
+  }
+
   return {
     mode: 'database',
     adapter: 'db-sales-order-read-v1',
     listOrders,
+    countOrdersWithOpenDemand,
     async getOrder(id, filters = {}) {
       const orders = await listOrders(filters)
       const key = text(id).toLowerCase()

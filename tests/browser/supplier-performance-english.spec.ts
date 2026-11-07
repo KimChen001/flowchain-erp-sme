@@ -59,7 +59,7 @@ test("the supplier Performance tab shows on time against the date on the PO and 
   await panel.getByTestId("supplier-performance-not-sent").click();
   await expect(panel.getByTestId("supplier-performance-not-sent")).toHaveText("Not sent to supplier: 1");
   await expect(drilldown.getByRole("heading", { name: "Not sent to supplier" })).toBeVisible();
-  await expect(drilldown.getByTestId("supplier-performance-not-sent-LOCAL-DEMO-PO-023-LINE-001")).toContainText("LDM-005");
+  await expect(drilldown.getByTestId("supplier-performance-not-sent-LOCAL-DEMO-PO-023-LINE-001")).toContainText("TST-005");
 
   // The definition explains the rule in plain English.
   await panel.getByTestId("supplier-performance-definition-toggle").click();

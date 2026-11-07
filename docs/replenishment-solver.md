@@ -80,7 +80,7 @@ instance therefore needs only an adapter that builds those items; none is writte
 # OR alone, under a budget
 node scripts/replenishment-solver.mjs export.json --budget=5000 --label=or_alone --log=calls.jsonl
 # A given plan (a textbook policy's order, an LLM's or a buyer's), costed beside the optimum and no order
-node scripts/replenishment-solver.mjs export.json --budget=5000 --plan=LDM-002:50 --label=llm_plan --log=calls.jsonl
+node scripts/replenishment-solver.mjs export.json --budget=5000 --plan=FOODS_3_090:50 --label=llm_plan --log=calls.jsonl
 # LLM-estimated parameters fed to OR
 node scripts/replenishment-solver.mjs export.json --params=llm-params.json --label=llm_params_to_or --log=calls.jsonl
 ```
@@ -96,18 +96,18 @@ node scripts/replenishment-solver.mjs export.json --params=llm-params.json --lab
 ## Reproduction (a pipeline check)
 
 `server/domain/replenishment-solver.test.mjs` checks that this code gives the research prototype's numbers on the same
-input. The input is an export of the local walkthrough's synthetic records (main a83d07cb, reseeded 2026-11-05), run
-with the prototype's parameters. The test fixture holds the fields the solver reads.
+input. The input is an export of synthetic test records (main a83d07cb, 2026-11-05), run with the prototype's
+parameters. The test fixture holds the fields the solver reads; items A and B are two of its six items.
 
 | Plan | Held out | In sample |
 |---|---|---|
-| q* = 25 LDM-001 | 740.50 | 738.22 |
+| q* = 25 of item A | 740.50 | 738.22 |
 | No order | 780.41 | 776.39 |
-| 50 LDM-002 | 827.55 | 818.94 |
+| 50 of item B | 827.55 | 818.94 |
 
 These are the prototype's figures to the cent, from the same scenarios. The check shows that the code reproduces the
 prototype; what the plans cost on synthetic records says nothing about ordering policies. Offline, the solver also
-reproduced the prototype on two other walkthrough instances. One of them had a binding budget of $24,520, and the
+reproduced the prototype on two other synthetic instances. One of them had a binding budget of $24,520, and the
 check covered its ±10% budget plans too.
 
 ## Limits
@@ -117,5 +117,5 @@ check covered its ±10% budget plans too.
   history does not hold. `extraDemand` is how known information enters.
 - Costs are assumed, not accounting data. Because π is proportional to price, cheap items are cut first under a tight
   budget. The expected cost is a planning figure, not cash; spend is cash.
-- The position counts open purchase requests, as the assistant's other order tools do. The export does not. On the
-  11/05 showcase, LOCAL-DEMO-PR-001 (50 LDM-001, submitted) covers the order that q* places on the export.
+- The position counts open purchase requests, as the assistant's other order tools do. The export does not, so an
+  item with an open request can get a smaller order from the assistant than from the script.

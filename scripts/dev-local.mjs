@@ -12,11 +12,15 @@ export function parseEnvFile(source = '') {
   }).filter((entry) => entry.length === 2))
 }
 
+// --public-data (M5, Walmart store CA_1) or --public-data=uci (UCI Online
+// Retail II) seeds the workspace from the local public data extract once,
+// while it is still empty (docs/public-data-workspaces.md).
 export function localCommandPlan(argv = []) {
-  const scenario = argv.includes('--scenario')
+  const flag = argv.find((arg) => arg === '--public-data' || arg.startsWith('--public-data='))
+  const publicData = flag ? (flag.split('=')[1] || 'm5') : null
+  if (publicData && !['m5', 'uci'].includes(publicData)) throw new Error(`--public-data must be m5 or uci, not "${publicData}".`)
   return {
-    demo: scenario || argv.includes('--demo'),
-    scenario,
+    publicData,
     setupCommands: ['db:generate', 'db:migrate:deploy', 'pilot:setup'],
   }
 }
@@ -71,8 +75,7 @@ if (isMain) {
   })
   const plan = localCommandPlan(process.argv.slice(2))
   for (const command of plan.setupCommands) await run(command)
-  if (plan.demo) await run('pilot:setup:demo')
-  if (plan.scenario) await run('pilot:setup:scenario')
+  if (plan.publicData) await run('public-data:seed', ['--', `--dataset=${plan.publicData}`, '--if-empty'])
 
   const children = new Set()
   let shuttingDown = false

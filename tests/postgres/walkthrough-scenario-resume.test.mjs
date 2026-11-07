@@ -8,8 +8,8 @@ const tenantId = 'tenant-walkthrough-scenario-resume'
 process.env.FLOWCHAIN_DEFAULT_TENANT_ID = tenantId
 const { createPrismaClient } = await import('../../server/persistence/prisma-client.mjs')
 const { backfillTenantAuthorization } = await import('../../server/auth/authorization-backfill.mjs')
-const { seedLocalDemo } = await import('../../scripts/setup-local-demo.mjs')
-const { seedLocalScenario } = await import('../../scripts/setup-local-scenario.mjs')
+const { seedLocalDemo } = await import('../fixtures/workspace/master-data.mjs')
+const { seedLocalScenario } = await import('../fixtures/workspace/scenario.mjs')
 const { createOutboundPostingCommandService } = await import('../../server/domain/outbound-posting-command-service.mjs')
 
 const AS_OF = '2026-10-20'
@@ -46,7 +46,7 @@ test('a stopped walkthrough seed resumes on its first day, and history a person 
     assert.equal(await prisma.inventoryAdjustmentDocument.count({ where: { tenantId } }), 1)
     assert.equal(Number((await prisma.inventoryBalance.findUnique({ where: { id: 'LOCAL-DEMO-BAL-001' } })).onHandQuantity), 28)
     const ledger = await prisma.inventoryMovement.findMany({ where: { tenantId }, orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }] })
-    for (const sku of ['LDM-001', 'LDM-002', 'LDM-003', 'LDM-004', 'LDM-005', 'LDM-006']) {
+    for (const sku of ['TST-001', 'TST-002', 'TST-003', 'TST-004', 'TST-005', 'TST-006']) {
       let stock = 0
       for (const movement of ledger.filter((row) => row.sku === sku)) {
         stock += Number(movement.quantityIn) - Number(movement.quantityOut)

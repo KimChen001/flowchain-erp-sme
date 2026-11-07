@@ -26,7 +26,7 @@
     ],
     [
       { "type": "text_delta", "text": "Three items are below their stock levels. " },
-      { "type": "text_delta", "text": "I've filled in a request form for you to review: tick the items you want, check the quantities, then create the draft request. LDM-001 is already on an open request." },
+      { "type": "text_delta", "text": "I've filled in a request form for you to review: tick the items you want, check the quantities, then create the draft request. TST-001 is already on an open request." },
       { "type": "tool_use_start", "id": "toolu_s4_form", "name": "suggest_purchase_request" },
       { "type": "tool_use_end", "id": "toolu_s4_form", "name": "suggest_purchase_request", "input": { "source": "toolu_s4_lines", "from": "suggestions" } },
       { "type": "tool_use_start", "id": "toolu_s4_followups", "name": "suggest_followups" },

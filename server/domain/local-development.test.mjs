@@ -18,9 +18,13 @@ test('local development requires explicit development mode and localhost Postgre
   assert.throws(() => assertLocalDevelopment({ ...harness, FLOWCHAIN_REQUIRE_REAL_POSTGRES_TESTS: 'false' }), /controlled local development/)
 })
 
-test('dev:local parses environment and scenario implies demo', () => {
+test('dev:local parses environment and the public data option', () => {
   assert.deepEqual(parseEnvFile('NODE_ENV=development\n# comment\nSCM_API_PORT=8787\n'), { NODE_ENV: 'development', SCM_API_PORT: '8787' })
-  assert.deepEqual(localCommandPlan(['--scenario']), { demo: true, scenario: true, setupCommands: ['db:generate', 'db:migrate:deploy', 'pilot:setup'] })
+  const setupCommands = ['db:generate', 'db:migrate:deploy', 'pilot:setup']
+  assert.deepEqual(localCommandPlan([]), { publicData: null, setupCommands })
+  assert.deepEqual(localCommandPlan(['--public-data']), { publicData: 'm5', setupCommands })
+  assert.deepEqual(localCommandPlan(['--public-data=uci']), { publicData: 'uci', setupCommands })
+  assert.throws(() => localCommandPlan(['--public-data=other']), /m5 or uci/)
   assert.deepEqual(localRuntimePorts({ SCM_API_PORT: '8791', VITE_PORT: '5174' }), {
     apiPort: 8791,
     frontendPort: 5174,
