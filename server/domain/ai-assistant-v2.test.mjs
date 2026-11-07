@@ -84,6 +84,15 @@ test('a short reply keeps the conversation\'s language, and a clear question set
   assert.deepEqual([await fresh('ok 100', 'zh-CN'), await fresh('好', 'en-US'), await fresh('100', 'zh-CN'), await fresh('100', 'en-US')], ['en-US', 'zh-CN', 'zh-CN', 'en-US'])
 })
 
+test('a longer text streams as deltas up to each word break, so no figure leaves in pieces', async () => {
+  const long = ['PO-001 is 4 days overdue and PO-008 is 2 days overdue, both with Acme Components. ', 'The older one still has 30 pcs to receive and the newer one ', '40 pcs, so chase PO-001 first.']
+  const { events } = await ask([[...say(...long), end()]])
+  const deltas = ofType(events, 'text_delta').map((event) => event.text)
+  assert.ok(deltas.length >= 2, deltas.join('|'))
+  assert.equal(deltas.join(''), long.join(''))
+  assert.ok(deltas.every((delta) => !/d$/.test(delta)), deltas.join('|'))
+})
+
 test('text streams as deltas in order, the start comes first and the answer last', async () => {
   const { events, body, audit, client } = await ask([[...say('PO-001 is ', '4 days overdue', ' and PO-008 is 2.'), end()]], { question: 'Which purchase orders are overdue? PO-001 and PO-008?' })
   assertProtocol(events)
@@ -93,8 +102,9 @@ test('text streams as deltas in order, the start comes first and the answer last
   assert.equal(events[0].model, 'scripted')
   assert.equal(events.at(-1).type, 'answer')
   assert.equal(events.at(-1).status, 200)
-  // Text is sent up to its last word break, so no figure leaves in pieces.
-  assert.deepEqual(ofType(events, 'text_delta').map((event) => event.text), ['PO-001 is ', '4 days ', 'overdue and PO-008 is ', '2.'])
+  // A short text is held until the turn shows what follows it (narration
+  // before a lookup is never shown), then sent whole.
+  assert.deepEqual(ofType(events, 'text_delta').map((event) => event.text), ['PO-001 is 4 days overdue and PO-008 is 2.'])
   assert.ok(ofType(events, 'text_delta').every((event) => event.partId === 'p1'))
   assert.equal(body.version, 'v2')
   assert.equal(body.intent, 'assistant_v2')
@@ -126,8 +136,8 @@ test('a data tool, then a UI tool on its result: the part shows where the model 
   const order = events.filter((event) => ['tool', 'progress', 'text_delta', 'ui', 'flag'].includes(event.type)).map((event) => `${event.type}:${event.partId || event.name || event.step}${event.state ? `:${event.state}` : ''}`)
   assert.deepEqual(order, [
     'tool:list_purchase_orders:running', 'progress:reading', 'tool:list_purchase_orders:done',
-    'progress:writing', 'text_delta:p1', 'text_delta:p1', 'flag:p1', 'tool:show_records:running', 'ui:p2', 'tool:show_records:done',
-    'progress:writing', 'text_delta:p3', 'text_delta:p3', 'flag:p3',
+    'progress:writing', 'text_delta:p1', 'flag:p1', 'tool:show_records:running', 'ui:p2', 'tool:show_records:done',
+    'progress:writing', 'text_delta:p3', 'flag:p3',
   ])
   assert.equal(ofType(events, 'tool').find((event) => event.state === 'done').rows, 2)
   const ui = ofType(events, 'ui')[0]
@@ -236,7 +246,8 @@ test('the cost ceiling and the monthly cap stop the loop after a model call that
   assert.equal(ceiling.audit.stopReason, 'cost_ceiling')
   assert.equal(ceiling.audit.costMicros, 210000)
   assert.equal(ceiling.metered.length, 1)
-  assert.equal(ceiling.body.conclusion.summary, 'Let me check.')
+  // The narration before the lookup was never shown; the notice says why the answer stopped.
+  assert.equal(ceiling.body.conclusion.summary, '')
   assert.equal(ceiling.thread.messages.at(-1).content[0].is_error, true)
 })
 
@@ -254,7 +265,7 @@ test('each call is priced before it is made: no call that could pass the ceiling
   assert.equal(ceiling.audit.stopReason, 'cost_ceiling')
   assert.equal(ceiling.audit.costMicros, 130000)
   assert.ok(ceiling.audit.costMicros <= ASSISTANT_V2_LIMITS.costCeilingMicros)
-  assert.equal(ceiling.body.conclusion.summary, 'Let me check.')
+  assert.equal(ceiling.body.conclusion.summary, '')
   // The same answer with less left of the monthly cap than of the ceiling.
   const cap = await ask([[...say('Let me check.'), ...call('tu_po', 'list_purchase_orders', {}), end(big)], [...say('Never sent.'), end()]], { limits: { capRemainingMicros: 150000 } })
   assert.deepEqual(ofType(cap.events, 'notice'), [{ type: 'notice', code: 'over_cap_during_answer' }])
@@ -524,7 +535,7 @@ test('the records a text names come with its flag, from this answer\'s results o
   assert.equal('refs' in ofType(longer.events, 'flag')[0], false)
   // A number written before its result arrives gets its chip once the result
   // is in: a further flag of that part, with those refs alone.
-  const early = await ask([[...say('Let me look up PO-001.'), ...call('tu_one', 'get_purchase_order', { order: 'PO-001' }), end()], [...say('It is partially received.'), end()]], { question: 'What is the status of PO-001?' })
+  const early = await ask([[...say('PO-001 is the order you asked about. Its lines, receipts and invoice differences tell what is still open and what is late, so here is the order as it stands today. '), ...call('tu_one', 'get_purchase_order', { order: 'PO-001' }), end()], [...say('It is partially received.'), end()]], { question: 'What is the status of PO-001?' })
   assertProtocol(early.events)
   assert.deepEqual(ofType(early.events, 'flag').filter((event) => event.partId === 'p1').map((event) => [event.spans.length, (event.refs || []).map((ref) => ref.id)]), [[0, []], [0, ['PO-001']]])
   const order = early.events.map((event) => `${event.type}:${event.partId || event.name || event.step || ''}`)
@@ -548,7 +559,7 @@ test('stopping mid-stream ends the answer at once: no more events, calls or mete
   let deltas = 0
   const { events, audit, metered, client, thread } = await ask([
     OVERDUE,
-    [...say('PO-001 ', 'is ', 'late.'), ...call('tu_more', 'stock_position', {}), end()],
+    [...say("Here is what I found so far: PO-001 and PO-008 are both overdue with Acme Components, the older by 4 days with 30 pcs still to receive and the newer by 2 days. ", 'PO-001 ', 'is ', 'late.'), ...call('tu_more', 'stock_position', {}), end()],
     [...say('Never sent.'), end()],
   ], { signal: controller.signal, onEvent: (event) => { if (event.type === 'text_delta' && ++deltas === 1) controller.abort() } })
   assert.equal(events.at(-1).type, 'text_delta')
@@ -609,7 +620,7 @@ test('the wall-time deadline stops a slow model call with a retryable error', as
 
 test('a provider failure before anything is shown leaves the answer to the rules; after text it ends with an error', async () => {
   const failing = (afterText) => ({ model: 'scripted', async *stream() {
-    if (afterText) yield { type: 'text_delta', text: 'PO-001 is late. ' }
+    if (afterText) yield { type: 'text_delta', text: "Here is what I found so far: PO-001 and PO-008 are both overdue with Acme Components, the older by 4 days with 30 pcs still to receive and the newer by 2 days. " }
     throw new AssistantModelError('non_success_status', { status: 529 })
   } })
   const thread = { messages: [], results: new Map() }
@@ -619,7 +630,7 @@ test('a provider failure before anything is shown leaves the answer to the rules
   assertProtocol(late.events)
   assert.deepEqual(ofType(late.events, 'error'), [{ type: 'error', code: 'non_success_status', retryable: true }])
   assert.equal(late.events.at(-1).type, 'answer')
-  assert.equal(late.body.conclusion.summary, 'PO-001 is late.')
+  assert.equal(late.body.conclusion.summary, "Here is what I found so far: PO-001 and PO-008 are both overdue with Acme Components, the older by 4 days with 30 pcs still to receive and the newer by 2 days.")
   // A failure in the second round after a round of tools only: the round's
   // results leave the thread with its messages, and the gateway is told that
   // status events already went out.
@@ -1069,8 +1080,24 @@ test('a Chinese answer leaves out English narration before a tool call', async (
   assert.doesNotMatch(body.conclusion.summary, /fill in the form/)
   assert.deepEqual(body.parts.map((part) => part.type), ['text'])
   // English narration in an English answer still shows; text with Chinese in it too.
+  // In English too, a short text before a lookup is narration and is left
+  // out (2026-11-07: "I'll pull the reorder list first." opened answers on Haiku).
   const en = await ask([[...say('Let me check the orders.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()], [...say('PO-001 is late.'), end()]])
-  assert.match(ofType(en.events, 'text_delta').map((event) => event.text).join(''), /^Let me check the orders\./)
+  assert.equal(ofType(en.events, 'text_delta').map((event) => event.text).join(''), 'PO-001 is late.')
+  assert.equal(en.body.conclusion.summary, 'PO-001 is late.')
+  // A short text before a display is the answer, and stays.
+  const shown = await ask([OVERDUE, [...say('Two orders are overdue.'), ...call('tu_show', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()], [...say('Chase PO-001 first.'), end()]])
+  assert.match(shown.body.conclusion.summary, /^Two orders are overdue./)
+})
+
+// 2026-11-07 on Haiku: a Chinese answer opened with its English reasoning.
+test('a Chinese answer does not open with a paragraph of English prose; an English draft in quotes stays', async () => {
+  const zh = { question: '如果预算减少 20%，补货计划怎么变？', body: { answerLanguage: 'zh-CN' } }
+  const reasoning = await ask([[...say('The current baseline is the reorder list, but I do not know the user budget, so I will treat the list as the base.\n\n', '预算减少后，建议先保住逾期风险最高的物料。'), end()]], zh)
+  const shown = ofType(reasoning.events, 'text_delta').map((event) => event.text).join('')
+  assert.equal(shown, '预算减少后，建议先保住逾期风险最高的物料。')
+  const draft = await ask([[...say('> Dear Acme team, please confirm the new delivery date for the remaining items on our order.\n\n', '以上是给 Acme 的英文草稿，请核对后自己发送。'), end()]], { ...zh, question: '帮我用英文写一封催货邮件' })
+  assert.match(ofType(draft.events, 'text_delta').map((event) => event.text).join(''), /^> Dear Acme team/)
 })
 
 test('a date the user typed is not flagged as unmatched', async () => {

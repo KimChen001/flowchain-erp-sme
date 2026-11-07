@@ -83,6 +83,27 @@ const LAST_ROUND_NOTE = 'No more tool calls are available for this answer, displ
 const DISPLAY_RETRY = 'Correct this call once, or answer in prose. After another failed display no display tool is available for this answer. The user already sees the text you wrote before this call: do not write it again.'
 // The forms and cards the user acts in: the text after them says what to click.
 const CARD_TOOLS = new Set(['suggest_purchase_request', 'suggest_setup_records', 'offer_record_actions'])
+// How long a round's text is held before it streams: about two sentences,
+// a Chinese character counting as two.
+const NARRATION_LENGTH = 160
+const weightedLength = (value) => [...String(value)].reduce((total, char) => total + (/[㐀-鿿]/u.test(char) ? 2 : 1), 0)
+// Where a Chinese answer's text should start: after its leading paragraphs
+// of English prose (no Chinese, six English words or more, not a quoted
+// draft), at the first paragraph that is not one. 0 when there are none.
+function englishLead(raw) {
+  const value = String(raw)
+  const breaks = /\n\s*\n/g
+  let start = 0
+  for (;;) {
+    const found = breaks.exec(value)
+    const end = found ? found.index + found[0].length : value.length
+    const paragraph = value.slice(start, end)
+    const prose = !AI_V2_HAN.test(paragraph) && !/^\s*>/.test(paragraph) && (paragraph.match(/[A-Za-z]{2,}/g) || []).length >= 6
+    if (!prose) return start
+    if (!found) return 0
+    start = end
+  }
+}
 const SHOWN_NOTE = 'The user already sees the text you wrote so far in this answer, so never write it again. Keep working as the question needs, with more tool calls if it needs them; any text you add appears below what is there.'
 const DISPLAY_OFF = 'No display tool is available for the rest of this answer.'
 const displayOffNote = (names) => `No display tool (${names.join(', ')}) is available for the rest of this answer. Answer in prose from the results, and do not mention displays, tools or errors to the user.`
@@ -150,7 +171,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- The tools return only what this user may read. If a record or a field is not readable or not recorded, say so plainly; never guess it. A cost or rate the workspace does not record (a holding rate, a cost per order) is no reason to stop: see the cost rule below.',
   '- Every number, amount, date, record number and name you write must come from a tool result of this conversation or from what the user wrote. Write each as the app shows it: where a result gives a display string beside a value (a key ending in Text, such as dueDateText "Nov 4, 2026", amountText "$2,500.00" or remainingText "7,000 pcs"), copy that string as it is, in any answer language: a Chinese answer writes dates as "Nov 4, 2026" too, never 2026年11月4日. Write a quantity with its unit as the display string words it ("300 boxes", 300 箱; "50 pcs"). You may round to fewer digits and say so (about $17, 约 $17 for $17.05), but never give a rounded figure digits it does not have ($17.00 for $17.05). For anything you derive (a sum, a difference, a percentage, days between two dates) call calculate first and use its result. Do not count rows yourself: use the totals and counts the tools return, or name the rows you count on the same line as the count.',
   '- Do not invent future figures. About the future, say what the records show: promised dates, open orders, available to promise. To size an order for a period ("what we need for the next 2 weeks", 下个月的量), call suggest_purchase_lines with coverDays: it sizes each item from its recorded average daily demand over the last 90 days, its lead time and safety stock. Say that basis in a few words, and for an item whose cover basis is not recorded_demand, say why its quantity is the reorder point one.',
-  '- What to order and cost trade-offs ("what should I order this week?", "with a $5,000 budget?", "is 50 of SKU-123 a good idea?", "order 100 instead of 50?", 订多少最划算): think as a supply chain planner, in total cost, not only the price. What to order now across items, under a budget, a what-if or a proposed order: optimize_order_plan, an exact solver; lead with its decision, then what binds (budget, minimum orders) and how it compares with ordering nothing, the reorder list and the user\'s plan. One item\'s order size: order_quantity_costs (orders a year, holding cost, the cost per order above which the larger pays off, the EOQ). What stock is worth and costs to hold: inventory_value. Name the assumptions these tools return once, in a few words (25% a year holding when the user gave none), and say the user can give their own. Never stop at "the records show no cost benefit".',
+  '- What to order and cost trade-offs ("what should I order this week?", "with a $5,000 budget?", "is 50 of SKU-123 a good idea?", "order 100 instead of 50?", 订多少最划算): think as a supply chain planner, in total cost, not only the price. What to order now across items, under a budget, a what-if or a proposed order: optimize_order_plan, an exact solver; lead with its decision, then what binds (budget, minimum orders) and how it compares with ordering nothing, the reorder list and the user\'s plan. When the solver and the reorder list differ (order nothing against order 50), say which you recommend and the one reason, on one basis: the solver weighs holding and shortage cost under the stated assumptions, while the reorder list refills to the reorder point. Never set two suggestions side by side without a recommendation. When the user asks about a change to a budget they never gave, ask for it in one question. One item\'s order size: order_quantity_costs (orders a year, holding cost, the cost per order above which the larger pays off, the EOQ). What stock is worth and costs to hold: inventory_value. Name the assumptions these tools return once, in a few words (25% a year holding when the user gave none), and say the user can give their own. Never stop at "the records show no cost benefit".',
   '- When you rank or pick ("the most urgent", "the worst"), say on what basis, for example the most days overdue. Say "all" or "none" only when a tool\'s total supports it.',
   '- A judgement about a supplier for an item ("should I switch supplier for SKU-123?") weighs its terms (item_suppliers: lead time, minimum order, reference price), what was paid (price_history), how it delivers (supplier_performance) and any open quotes (rfq_quotes). Give your recommendation and the one or two facts that decide it.',
   '- Tools can count related things on different bases: the supplier scorecard counts only deliveries promised in its period, while list_purchase_orders gives the orders overdue today; in stock_position, availableToPromise counts incoming purchase orders while shortage leaves them out. Give the count the question asks about, with its basis or period, and never state two different figures as if they measured the same thing.',
@@ -755,10 +776,24 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     }
     const stream = (part) => {
       if (part.held) return
+      // A round's text waits while it is short: if a call that reads data
+      // follows, it was written before reading, so it is narration ("I'll
+      // pull the reorder list first."), never shown. Longer text, a new
+      // paragraph, or text before a display or form or at the end of the
+      // turn is the answer and streams (2026-11-07: narration opened 4 of 5
+      // answers on Haiku).
+      if (part.pending) {
+        if (weightedLength(part.raw) < NARRATION_LENGTH && !/\n\s*\n/.test(part.raw)) return
+        part.pending = false
+      }
       // A Chinese answer's text waits for its first Chinese word: English
       // written before a tool call is narration, left out below (2026-11-05:
       // "The item is LDM-002 Temperature Sensor. I'll fill in the form…").
       if (zhAnswer && !AI_V2_HAN.test(part.raw)) return
+      // Nor does it open with English prose before its Chinese: a paragraph
+      // of reasoning in the wrong language ("I don't know the user's budget,
+      // so I'm treating $5,000 as the base…", 2026-11-07 on Haiku).
+      if (zhAnswer && part.rawAt === 0 && !part.text) part.rawAt = englishLead(part.raw)
       const upTo = lastBreak(part.raw, part.rawAt)
       if (upTo <= part.rawAt) return
       if (unsafe(part.raw.slice(0, upTo))) { part.held = true; return }
@@ -859,10 +894,18 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     // answer, such text with no Chinese in it is narration in the wrong
     // language: it is never shown (nothing of it was sent) and stays out of
     // the answer.
-    const closeText = ({ beforeTool = false } = {}) => {
+    const closeText = ({ beforeTool = false, beforeRead = false } = {}) => {
       if (!openText) return
       const part = openText
       openText = null
+      const short = part.pending
+      part.pending = false
+      if (beforeRead && short && !part.held) {
+        part.dropped = true
+        part.narration = true
+        part.text = ''
+        return
+      }
       if (beforeTool && zhAnswer && !part.held && !AI_V2_HAN.test(part.raw) && (part.raw.match(/[A-Za-z]{2,}/g) || []).length >= 3) {
         part.dropped = true
         part.text = ''
@@ -995,13 +1038,14 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
           if (aborted || timedOut) break
           if (event.type === 'text_delta' && event.text) {
             if (!openText) {
-              openText = { id: `p${parts.length + 1}`, type: 'text', raw: '', rawAt: 0, text: '', sent: 0, held: false }
+              openText = { id: `p${parts.length + 1}`, type: 'text', raw: '', rawAt: 0, text: '', sent: 0, held: false, pending: true }
               parts.push(openText)
             }
             openText.raw += event.text
             stream(openText)
           } else if (event.type === 'tool_use_start') {
-            closeText({ beforeTool: true })
+            // In the last round no call runs, so text before one is the answer.
+            closeText({ beforeTool: true, beforeRead: !finalRound && !ui.has(event.name) })
             send({ type: 'tool', id: event.id, name: asCode(event.name, 'unknown_tool'), state: 'running' })
           } else if (event.type === 'tool_use_end') {
             closeText({ beforeTool: true })
