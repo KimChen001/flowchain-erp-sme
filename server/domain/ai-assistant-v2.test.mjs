@@ -1125,6 +1125,17 @@ test('chips called beside a request form do not end the answer: the words about 
   assert.deepEqual([shown(client.requests[1]), shown(client.requests[2])], [false, true])
 })
 
+// 2026-11-07: a reorder answer ended at its opening line and the chips.
+test('chips in a round with no text do not end the answer on an earlier opening line', async () => {
+  const { client, body } = await ask([
+    [...say('Checking the orders.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [...call('tu_chips', 'suggest_followups', { questions: ['Show PO-001'] }), end()],
+    [...say('PO-001 is the most overdue.'), end()],
+  ])
+  assert.equal(client.requests.length, 3)
+  assert.match(body.conclusion.summary, /PO-001 is the most overdue\./)
+})
+
 test('the system prompt asks for the answer first, display strings, whole record numbers and the app\'s terms', () => {
   for (const rule of [
     /write its one-sentence answer as text before any show_\* or suggest_purchase_request call/,

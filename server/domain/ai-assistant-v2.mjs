@@ -83,7 +83,7 @@ const LAST_ROUND_NOTE = 'No more tool calls are available for this answer, displ
 const DISPLAY_RETRY = 'Correct this call once, or answer in prose. After another failed display no display tool is available for this answer. The user already sees the text you wrote before this call: do not write it again.'
 // The forms and cards the user acts in: the text after them says what to click.
 const CARD_TOOLS = new Set(['suggest_purchase_request', 'suggest_setup_records', 'offer_record_actions'])
-const SHOWN_NOTE = 'The user already sees the text you wrote so far in this answer. Go on from it with only what is new, such as what to click in a form or card shown since or what a result changed; do not write it again.'
+const SHOWN_NOTE = 'The user already sees the text you wrote so far in this answer, so never write it again. Keep working as the question needs, with more tool calls if it needs them; any text you add appears below what is there.'
 const DISPLAY_OFF = 'No display tool is available for the rest of this answer.'
 const displayOffNote = (names) => `No display tool (${names.join(', ')}) is available for the rest of this answer. Answer in prose from the results, and do not mention displays, tools or errors to the user.`
 const FLAG_KINDS = new Set(['number', 'date', 'name', 'record'])
@@ -922,6 +922,9 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
 
     let afterTools = false
     while (true) {
+      // Where this round's parts begin: chips end the answer only after text
+      // written in the same round.
+      const roundStart = parts.length
       if (aborted) break
       if (timedOut) { stop('timeout'); send({ type: 'error', code: 'timeout', retryable: true }); break }
       if (tokensUsed() >= limits.tokens) { stop('usage_limit'); send({ type: 'error', code: 'usage_limit', retryable: false }); break }
@@ -1154,8 +1157,10 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // what to click in it depends on what it holds (ticked, covered or
       // offered steps), which the model reads only in its result. 2026-11-07
       // a budget plan stopped at "Six SKUs: 019, 272, 354, 397, 430, 439."
-      // above its form, the explanation unwritten.
-      if (toolUses.some((block) => block.name === 'suggest_followups') && !toolUses.some((block) => CARD_TOOLS.has(block.name)) && toolUses.every((block) => ui.has(block.name) && outcomes.get(block.id)?.ok) && parts.some((part) => part.type === 'text' && text(part.text))) { stop('end_turn'); break }
+      // above its form, the explanation unwritten. Nor when the round's text
+      // is none: the only text was an opening line of an earlier round
+      // (2026-11-07: a reorder answer ended at 21 characters and its chips).
+      if (toolUses.some((block) => block.name === 'suggest_followups') && !toolUses.some((block) => CARD_TOOLS.has(block.name)) && toolUses.every((block) => ui.has(block.name) && outcomes.get(block.id)?.ok) && parts.slice(roundStart).some((part) => part.type === 'text' && text(part.text))) { stop('end_turn'); break }
       // The next call is the last when the limits say so, when a call after
       // it could not fit in what the answer may still spend, or when the
       // model called only withdrawn display tools.
