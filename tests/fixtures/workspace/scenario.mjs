@@ -1,24 +1,28 @@
-import { getPrismaClient, disconnectPrismaClient } from '../server/persistence/prisma-client.mjs'
-import { assertLocalDevelopment } from '../server/domain/local-development-contract.mjs'
-import { localDemoSupplier } from './setup-local-demo.mjs'
-import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../server/domain/procurement-status-authority.mjs'
-import { isCommittedPurchaseOrder } from '../server/domain/open-purchase-order.mjs'
-import { createReceivingPostingCommandService } from '../server/domain/receiving-posting-command-service.mjs'
-import { applyPromisedDateChanges, recordOriginalPromises } from '../server/domain/purchase-order-promise-dates.mjs'
-import { resolveProvisionedActor } from '../server/domain/pilot-identity.mjs'
-import { authorize } from '../server/auth/authorization-service.mjs'
-import { contractsEnabled } from '../server/domain/contract-policy.mjs'
-import { createOutboundPostingCommandService } from '../server/domain/outbound-posting-command-service.mjs'
-import { createInventoryOperationsCommandService } from '../server/domain/inventory-operations-command-service.mjs'
-import { listItemSupplierRecords, saveItemSupplier } from '../server/domain/master-data-commands.mjs'
+// Test fixture: the dated scenario on top of ./master-data.mjs (purchase
+// orders, receipts, invoices, contracts and 12 weeks of shipped customer
+// orders) for the PostgreSQL tests and the browser test harness. Test-only:
+// never seeded into a workspace a person uses.
+import { getPrismaClient, disconnectPrismaClient } from '../../../server/persistence/prisma-client.mjs'
+import { assertLocalDevelopment } from '../../../server/domain/local-development-contract.mjs'
+import { localDemoSupplier } from './master-data.mjs'
+import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../../../server/domain/procurement-status-authority.mjs'
+import { isCommittedPurchaseOrder } from '../../../server/domain/open-purchase-order.mjs'
+import { createReceivingPostingCommandService } from '../../../server/domain/receiving-posting-command-service.mjs'
+import { applyPromisedDateChanges, recordOriginalPromises } from '../../../server/domain/purchase-order-promise-dates.mjs'
+import { contractsEnabled } from '../../../server/domain/contract-policy.mjs'
+import { createInventoryOperationsCommandService } from '../../../server/domain/inventory-operations-command-service.mjs'
+import { listItemSupplierRecords, saveItemSupplier } from '../../../server/domain/master-data-commands.mjs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
+import { HISTORY_PERMISSIONS, localCalendarDay, parseAsOf, scenarioActor, scenarioCalendar, shipHistoryOrder } from '../../../scripts/seed-history.mjs'
+
+export { HISTORY_PERMISSIONS, scenarioActor, scenarioCalendar, shipHistoryOrder }
 
 // The US walkthrough scenario. Every date is an offset from the seed day in the
 // tenant's timezone, so overdue orders, receipt timeliness and invoice aging
 // have something to show. The same seed day always produces the same rows;
 // pass { asOf: 'YYYY-MM-DD' } (or --as-of) to pin it. Identifiers keep the
-// LOCAL-DEMO- prefix that the local-status endpoint counts.
+// LOCAL-DEMO- prefix the fixture has always used.
 //
 // Receipts are posted through the receiving posting command service, dated at
 // their arrival, so purchase order received quantities, receipt status and
@@ -43,12 +47,12 @@ const customerName = 'Redwood Retail'
 const SALES_TAX_RATE = 0.0825
 
 const items = Object.freeze({
-  'LDM-001': { id: 'LOCAL-DEMO-ITEM-001', name: 'Flow Controller', unit: 'pcs' },
-  'LDM-002': { id: 'LOCAL-DEMO-ITEM-002', name: 'Temperature Sensor', unit: 'pcs' },
-  'LDM-003': { id: 'LOCAL-DEMO-ITEM-003', name: 'Shipping Carton', unit: 'box' },
-  'LDM-004': { id: 'LOCAL-DEMO-ITEM-004', name: 'Stainless Steel Fastener', unit: 'pcs' },
-  'LDM-005': { id: 'LOCAL-DEMO-ITEM-005', name: 'Shielded Control Cable', unit: 'ft' },
-  'LDM-006': { id: 'LOCAL-DEMO-ITEM-006', name: 'Product Label Roll', unit: 'roll' },
+  'TST-001': { id: 'LOCAL-DEMO-ITEM-001', name: 'Flow Controller', unit: 'pcs' },
+  'TST-002': { id: 'LOCAL-DEMO-ITEM-002', name: 'Temperature Sensor', unit: 'pcs' },
+  'TST-003': { id: 'LOCAL-DEMO-ITEM-003', name: 'Shipping Carton', unit: 'box' },
+  'TST-004': { id: 'LOCAL-DEMO-ITEM-004', name: 'Stainless Steel Fastener', unit: 'pcs' },
+  'TST-005': { id: 'LOCAL-DEMO-ITEM-005', name: 'Shielded Control Cable', unit: 'ft' },
+  'TST-006': { id: 'LOCAL-DEMO-ITEM-006', name: 'Product Label Roll', unit: 'roll' },
 })
 
 // Six suppliers with transactions, all from the shared LOCAL-DEMO master data.
@@ -68,59 +72,59 @@ const PRECISION = 'LOCAL-DEMO-SUP-007'
 // (Net 30). Every status is a committed one; only INV-001 carries a variance.
 const S = PURCHASE_ORDER_STATUS
 const purchaseOrders = [
-  { n: 1, supplier: ACME, sku: 'LDM-001', qty: 50, price: 100, status: S.PARTIALLY_RECEIVED, created: -21, promised: -4, priority: 'medium', request: true,
+  { n: 1, supplier: ACME, sku: 'TST-001', qty: 50, price: 100, status: S.PARTIALLY_RECEIVED, created: -21, promised: -4, priority: 'medium', request: true,
     receipts: [[1, -6, '10:20', 20, 0]], invoice: [1, -5, 110, 181.5, 'exception'] },
-  { n: 2, supplier: ACME, sku: 'LDM-002', qty: 40, price: 100, status: S.ISSUED, created: -10, promised: 4, priority: 'high', request: true },
-  { n: 3, supplier: SUMMIT, sku: 'LDM-003', qty: 400, price: 12.5, status: S.FULLY_RECEIVED, created: -150, promised: -136,
+  { n: 2, supplier: ACME, sku: 'TST-002', qty: 40, price: 100, status: S.ISSUED, created: -10, promised: 4, priority: 'high', request: true },
+  { n: 3, supplier: SUMMIT, sku: 'TST-003', qty: 400, price: 12.5, status: S.FULLY_RECEIVED, created: -150, promised: -136,
     receipts: [[2, -136, '09:10', 400, 0]], invoice: [2, -135, 12.5, 0, 'approved'] },
-  { n: 4, supplier: ATLAS, sku: 'LDM-004', qty: 5000, price: 0.4, status: S.FULLY_RECEIVED, created: -120, promised: -106,
+  { n: 4, supplier: ATLAS, sku: 'TST-004', qty: 5000, price: 0.4, status: S.FULLY_RECEIVED, created: -120, promised: -106,
     receipts: [[3, -103, '14:45', 5000, 0]], invoice: [3, -102, 0.4, 0, 'approved'] },
-  { n: 5, supplier: NORTHSTAR, sku: 'LDM-002', qty: 60, price: 64, status: S.FULLY_RECEIVED, created: -95, promised: -80,
+  { n: 5, supplier: NORTHSTAR, sku: 'TST-002', qty: 60, price: 64, status: S.FULLY_RECEIVED, created: -95, promised: -80,
     receipts: [[4, -82, '11:05', 60, 0]], invoice: [4, -80, 64, 0, 'approved'] },
-  { n: 6, supplier: EVERGREEN, sku: 'LDM-006', qty: 120, price: 18, status: S.FULLY_RECEIVED, created: -70, promised: -55,
+  { n: 6, supplier: EVERGREEN, sku: 'TST-006', qty: 120, price: 18, status: S.FULLY_RECEIVED, created: -70, promised: -55,
     receipts: [[5, -51, '13:30', 110, 10, 'Damaged roll cores'], [6, -44, '10:00', 10, 0]], invoice: [5, -44, 18, 0, 'matched'] },
-  { n: 7, supplier: PRECISION, sku: 'LDM-004', qty: 8000, price: 0.38, status: S.FULLY_RECEIVED, created: -60, promised: -45,
+  { n: 7, supplier: PRECISION, sku: 'TST-004', qty: 8000, price: 0.38, status: S.FULLY_RECEIVED, created: -60, promised: -45,
     receipts: [[7, -45, '08:40', 8000, 0]], invoice: [6, -43, 0.38, 0, 'approved'] },
-  { n: 8, supplier: ACME, sku: 'LDM-005', qty: 2000, price: 1.85, status: S.FULLY_RECEIVED, created: -40, promised: -25,
+  { n: 8, supplier: ACME, sku: 'TST-005', qty: 2000, price: 1.85, status: S.FULLY_RECEIVED, created: -40, promised: -25,
     receipts: [[8, -25, '15:15', 2000, 0]], invoice: [7, -24, 1.85, 0, 'matched'] },
-  { n: 9, supplier: NORTHSTAR, sku: 'LDM-005', qty: 1500, price: 1.8, status: S.FULLY_RECEIVED, created: -35, promised: -20,
+  { n: 9, supplier: NORTHSTAR, sku: 'TST-005', qty: 1500, price: 1.8, status: S.FULLY_RECEIVED, created: -35, promised: -20,
     receipts: [[9, -22, '09:50', 1500, 0]], invoice: [8, -20, 1.8, 0, 'submitted'] },
-  { n: 10, supplier: SUMMIT, sku: 'LDM-003', qty: 250, price: 12.75, status: S.FULLY_RECEIVED, created: -30, promised: -16,
+  { n: 10, supplier: SUMMIT, sku: 'TST-003', qty: 250, price: 12.75, status: S.FULLY_RECEIVED, created: -30, promised: -16,
     receipts: [[10, -14, '16:10', 250, 0]], invoice: [9, -13, 12.75, 0, 'submitted'] },
-  { n: 11, supplier: EVERGREEN, sku: 'LDM-003', qty: 600, price: 12.2, status: S.PARTIALLY_RECEIVED, created: -25, promised: -8, priority: 'high',
+  { n: 11, supplier: EVERGREEN, sku: 'TST-003', qty: 600, price: 12.2, status: S.PARTIALLY_RECEIVED, created: -25, promised: -8, priority: 'high',
     receipts: [[11, -8, '11:40', 300, 0]], invoice: [10, -7, 12.2, 0, 'submitted'] },
-  { n: 12, supplier: PRECISION, sku: 'LDM-004', qty: 10000, price: 0.39, status: S.PARTIALLY_RECEIVED, created: -18, promised: -3, priority: 'high',
+  { n: 12, supplier: PRECISION, sku: 'TST-004', qty: 10000, price: 0.39, status: S.PARTIALLY_RECEIVED, created: -18, promised: -3, priority: 'high',
     receipts: [[12, -2, '14:05', 4000, 500, 'Wrong thread pitch']] },
-  { n: 13, supplier: ATLAS, sku: 'LDM-004', qty: 6000, price: 0.41, status: S.PARTIALLY_RECEIVED, created: -14, promised: 3,
+  { n: 13, supplier: ATLAS, sku: 'TST-004', qty: 6000, price: 0.41, status: S.PARTIALLY_RECEIVED, created: -14, promised: 3,
     receipts: [[13, -1, '10:35', 2500, 0]] },
-  { n: 14, supplier: NORTHSTAR, sku: 'LDM-002', qty: 80, price: 63.5, status: S.PARTIALLY_RECEIVED, created: -20, promised: -6, priority: 'high',
+  { n: 14, supplier: NORTHSTAR, sku: 'TST-002', qty: 80, price: 63.5, status: S.PARTIALLY_RECEIVED, created: -20, promised: -6, priority: 'high',
     receipts: [[14, -10, '13:00', 30, 5, 'Missing calibration labels']], invoice: [11, -9, 63.5, 0, 'submitted'] },
-  { n: 15, supplier: ACME, sku: 'LDM-001', qty: 40, price: 98, status: S.ISSUED, created: -16, promised: -2, priority: 'high' },
-  { n: 16, supplier: SUMMIT, sku: 'LDM-006', qty: 80, price: 17.5, status: S.ISSUED, created: -12, promised: -7 },
-  { n: 17, supplier: ATLAS, sku: 'LDM-004', qty: 4000, price: 0.4, status: S.ISSUED, created: -6, promised: 8 },
-  { n: 18, supplier: NORTHSTAR, sku: 'LDM-005', qty: 1200, price: 1.82, status: S.ISSUED, created: -9, promised: 1 },
-  { n: 19, supplier: EVERGREEN, sku: 'LDM-003', qty: 300, price: 12.4, status: S.ISSUED, created: -5, promised: 12 },
-  { n: 20, supplier: PRECISION, sku: 'LDM-004', qty: 7000, price: 0.38, status: S.ISSUED, created: -30, promised: -15, priority: 'high' },
-  { n: 21, supplier: ACME, sku: 'LDM-002', qty: 25, price: 100, status: S.APPROVED, created: -3, promised: 14 },
-  { n: 22, supplier: SUMMIT, sku: 'LDM-003', qty: 200, price: 12.5, status: S.APPROVED, created: -2, promised: 10 },
-  { n: 23, supplier: NORTHSTAR, sku: 'LDM-005', qty: 900, price: 1.85, status: S.APPROVED, created: -8, promised: -1, priority: 'high' },
-  { n: 24, supplier: ACME, sku: 'LDM-001', qty: 120, price: 100, status: S.PENDING_APPROVAL, created: -2, promised: 21, priority: 'high' },
-  { n: 25, supplier: EVERGREEN, sku: 'LDM-006', qty: 150, price: 18.25, status: S.PENDING_APPROVAL, created: -1, promised: 18 },
-  { n: 26, supplier: PRECISION, sku: 'LDM-004', qty: 20000, price: 0.37, status: S.PENDING_APPROVAL, created: -4, promised: 25 },
-  { n: 27, supplier: ATLAS, sku: 'LDM-004', qty: 3000, price: 0.4, status: S.DRAFT, created: -1, promised: 20 },
-  { n: 28, supplier: NORTHSTAR, sku: 'LDM-002', qty: 50, price: 64, status: S.DRAFT, created: 0, promised: 28 },
-  { n: 29, supplier: SUMMIT, sku: 'LDM-006', qty: 60, price: 17.75, status: S.DRAFT, created: -3, promised: 15 },
-  { n: 30, supplier: ACME, sku: 'LDM-005', qty: 1000, price: 1.95, status: S.CANCELLED, created: -45, promised: -30, sent: true, cancellationReason: 'Replaced by a lower-priced order' },
-  { n: 31, supplier: EVERGREEN, sku: 'LDM-003', qty: 500, price: 12.9, status: S.CANCELLED, created: -28, promised: -12, sent: true, cancellationReason: 'Supplier could not meet the delivery date' },
-  { n: 32, supplier: ATLAS, sku: 'LDM-004', qty: 2500, price: 0.44, status: S.CANCELLED, created: -10, promised: 5, cancellationReason: 'Duplicate order' },
+  { n: 15, supplier: ACME, sku: 'TST-001', qty: 40, price: 98, status: S.ISSUED, created: -16, promised: -2, priority: 'high' },
+  { n: 16, supplier: SUMMIT, sku: 'TST-006', qty: 80, price: 17.5, status: S.ISSUED, created: -12, promised: -7 },
+  { n: 17, supplier: ATLAS, sku: 'TST-004', qty: 4000, price: 0.4, status: S.ISSUED, created: -6, promised: 8 },
+  { n: 18, supplier: NORTHSTAR, sku: 'TST-005', qty: 1200, price: 1.82, status: S.ISSUED, created: -9, promised: 1 },
+  { n: 19, supplier: EVERGREEN, sku: 'TST-003', qty: 300, price: 12.4, status: S.ISSUED, created: -5, promised: 12 },
+  { n: 20, supplier: PRECISION, sku: 'TST-004', qty: 7000, price: 0.38, status: S.ISSUED, created: -30, promised: -15, priority: 'high' },
+  { n: 21, supplier: ACME, sku: 'TST-002', qty: 25, price: 100, status: S.APPROVED, created: -3, promised: 14 },
+  { n: 22, supplier: SUMMIT, sku: 'TST-003', qty: 200, price: 12.5, status: S.APPROVED, created: -2, promised: 10 },
+  { n: 23, supplier: NORTHSTAR, sku: 'TST-005', qty: 900, price: 1.85, status: S.APPROVED, created: -8, promised: -1, priority: 'high' },
+  { n: 24, supplier: ACME, sku: 'TST-001', qty: 120, price: 100, status: S.PENDING_APPROVAL, created: -2, promised: 21, priority: 'high' },
+  { n: 25, supplier: EVERGREEN, sku: 'TST-006', qty: 150, price: 18.25, status: S.PENDING_APPROVAL, created: -1, promised: 18 },
+  { n: 26, supplier: PRECISION, sku: 'TST-004', qty: 20000, price: 0.37, status: S.PENDING_APPROVAL, created: -4, promised: 25 },
+  { n: 27, supplier: ATLAS, sku: 'TST-004', qty: 3000, price: 0.4, status: S.DRAFT, created: -1, promised: 20 },
+  { n: 28, supplier: NORTHSTAR, sku: 'TST-002', qty: 50, price: 64, status: S.DRAFT, created: 0, promised: 28 },
+  { n: 29, supplier: SUMMIT, sku: 'TST-006', qty: 60, price: 17.75, status: S.DRAFT, created: -3, promised: 15 },
+  { n: 30, supplier: ACME, sku: 'TST-005', qty: 1000, price: 1.95, status: S.CANCELLED, created: -45, promised: -30, sent: true, cancellationReason: 'Replaced by a lower-priced order' },
+  { n: 31, supplier: EVERGREEN, sku: 'TST-003', qty: 500, price: 12.9, status: S.CANCELLED, created: -28, promised: -12, sent: true, cancellationReason: 'Supplier could not meet the delivery date' },
+  { n: 32, supplier: ATLAS, sku: 'TST-004', qty: 2500, price: 0.44, status: S.CANCELLED, created: -10, promised: 5, cancellationReason: 'Duplicate order' },
   // Northstar's recent deliveries. Two slipped and were re-promised, then arrived
   // on the new date: late against the original promise, on time against the
   // current date, so its scorecard shows the gap.
-  { n: 33, supplier: NORTHSTAR, sku: 'LDM-005', qty: 1000, price: 1.8, status: S.FULLY_RECEIVED, created: -60, promised: -45,
+  { n: 33, supplier: NORTHSTAR, sku: 'TST-005', qty: 1000, price: 1.8, status: S.FULLY_RECEIVED, created: -60, promised: -45,
     revised: [-40, -47, 'Supplier moved the ship date after a raw material delay'], receipts: [[15, -41, '10:15', 1000, 0]] },
-  { n: 34, supplier: NORTHSTAR, sku: 'LDM-005', qty: 500, price: 1.8, status: S.FULLY_RECEIVED, created: -50, promised: -34,
+  { n: 34, supplier: NORTHSTAR, sku: 'TST-005', qty: 500, price: 1.8, status: S.FULLY_RECEIVED, created: -50, promised: -34,
     revised: [-30, -36, 'Carrier capacity shortage delayed the pickup'], receipts: [[16, -30, '13:20', 500, 0]] },
-  { n: 35, supplier: NORTHSTAR, sku: 'LDM-005', qty: 800, price: 1.82, status: S.FULLY_RECEIVED, created: -28, promised: -14,
+  { n: 35, supplier: NORTHSTAR, sku: 'TST-005', qty: 800, price: 1.82, status: S.FULLY_RECEIVED, created: -28, promised: -14,
     receipts: [[17, -14, '09:40', 800, 0]] },
 ]
 
@@ -154,10 +158,10 @@ const contracts = [
 // Each item has its own demand shape: the weekdays it can be ordered, the
 // chance it is on such an order, the mean quantity and the spread of the
 // log-normal noise, with demand growing about 20% over the 12 weeks.
-//   LDM-002  smooth: on almost every order, little spread (about 10 a day)
-//   LDM-001  regular: on most orders, some spread
-//   LDM-004  lumpy: on some of Bluebird's orders, in very uneven quantities
-//   LDM-006  intermittent: on about one Redwood order in three, in steady quantities
+//   TST-002  smooth: on almost every order, little spread (about 10 a day)
+//   TST-001  regular: on most orders, some spread
+//   TST-004  lumpy: on some of Bluebird's orders, in very uneven quantities
+//   TST-006  intermittent: on about one Redwood order in three, in steady quantities
 // The draws come from one fixed random seed, in week, weekday and item order,
 // so every seed day gets the same orders on its own dates.
 const HISTORY_WEEKS = 12
@@ -176,16 +180,16 @@ const customerOrderDays = [
 ]
 // [SKU, weekdays, chance on an order, mean quantity, log-normal spread]
 const demandShapes = [
-  ['LDM-001', [1, 3, 4, 5], 0.85, 10, 0.3],
-  ['LDM-002', [1, 2, 3, 4, 5], 0.95, 16, 0.15],
-  ['LDM-003', [1, 2, 4], 0.7, 40, 0.3],
-  ['LDM-004', [2, 5], 0.65, 1100, 0.9],
-  ['LDM-005', [2, 3, 5], 0.75, 280, 0.55],
-  ['LDM-006', [1, 4], 0.42, 22, 0.12],
+  ['TST-001', [1, 3, 4, 5], 0.85, 10, 0.3],
+  ['TST-002', [1, 2, 3, 4, 5], 0.95, 16, 0.15],
+  ['TST-003', [1, 2, 4], 0.7, 40, 0.3],
+  ['TST-004', [2, 5], 0.65, 1100, 0.9],
+  ['TST-005', [2, 3, 5], 0.75, 280, 0.55],
+  ['TST-006', [1, 4], 0.42, 22, 0.12],
 ]
 // Cartons ship by 5 boxes, fasteners by 100 pieces, cable by 25 feet, labels by 2 rolls.
-const orderMultiples = { 'LDM-003': 5, 'LDM-004': 100, 'LDM-005': 25, 'LDM-006': 2 }
-const salesPrices = { 'LDM-001': 180, 'LDM-002': 115, 'LDM-003': 21, 'LDM-004': 0.85, 'LDM-005': 3.4, 'LDM-006': 29 }
+const orderMultiples = { 'TST-003': 5, 'TST-004': 100, 'TST-005': 25, 'TST-006': 2 }
+const salesPrices = { 'TST-001': 180, 'TST-002': 115, 'TST-003': 21, 'TST-004': 0.85, 'TST-005': 3.4, 'TST-006': 29 }
 
 // Opening stock, counted the day the workspace went live, before the oldest
 // purchase order: version 7's opening stock plus what the history ships.
@@ -196,19 +200,19 @@ const OPENING_DAY = -160
 // the scenario's own number.
 const OPENING_ADJUSTMENT = 'LOCAL-DEMO-ADJ-OPENING'
 const OPENING_STOCK_KEY = 'local-walkthrough-scenario:opening-stock'
-const openingBeforeHistory = { 'LDM-001': 8, 'LDM-002': 60 }
+const openingBeforeHistory = { 'TST-001': 8, 'TST-002': 60 }
 
 // The preferred source of each item, with the terms a buyer recorded on the
 // item-supplier link: lead time in days, minimum order quantity in the stock
 // unit and reference price. Saved once through the item supplier command; a
 // link already there is never changed.
 const supplierTerms = [
-  ['LDM-001', ACME, 14, 25, 100],
-  ['LDM-002', ACME, 17, 50, 100],
-  ['LDM-003', SUMMIT, 12, 100, 12.5],
-  ['LDM-004', ATLAS, 14, 2000, 0.4],
-  ['LDM-005', ACME, 10, 500, 1.85],
-  ['LDM-006', SUMMIT, 10, 50, 17.5],
+  ['TST-001', ACME, 14, 25, 100],
+  ['TST-002', ACME, 17, 50, 100],
+  ['TST-003', SUMMIT, 12, 100, 12.5],
+  ['TST-004', ATLAS, 14, 2000, 0.4],
+  ['TST-005', ACME, 10, 500, 1.85],
+  ['TST-006', SUMMIT, 10, 50, 17.5],
 ]
 
 // A small seeded generator (mulberry32): the same seed gives the same numbers
@@ -294,51 +298,6 @@ export const LOCAL_SCENARIO_COUNTS = Object.freeze({
   suppliersWithTransactions: new Set(purchaseOrders.map((po) => po.supplier)).size,
 })
 
-// Calendar arithmetic in the tenant's timezone. A date-only value (a promised
-// date, a due date) is stored at 12:00 UTC of that calendar day, which reads as
-// the same day in every US timezone and in the report code that slices ISO
-// dates. A timestamp (an arrival) is the local wall-clock time converted to UTC.
-function localCalendarDay(instant, timeZone) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(instant).map((part) => [part.type, part.value]))
-  return `${parts.year}-${parts.month}-${parts.day}`
-}
-
-function parseAsOf(value, timeZone) {
-  if (value instanceof Date) {
-    if (!Number.isFinite(value.getTime())) throw new Error('The scenario as-of date is not a valid date.')
-    return localCalendarDay(value, timeZone)
-  }
-  const text = String(value ?? '').trim()
-  const parsed = new Date(`${text}T12:00:00Z`)
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
-    throw new Error(`The scenario as-of date must be a calendar date in YYYY-MM-DD format, not "${text}".`)
-  }
-  return text
-}
-
-function timeZoneOffsetMs(instant, timeZone) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(instant).map((part) => [part.type, part.value]))
-  return Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second)) - instant.getTime()
-}
-
-export function scenarioCalendar(asOf, timeZone) {
-  const seedDay = parseAsOf(asOf, timeZone)
-  const [year, month, dayOfMonth] = seedDay.split('-').map(Number)
-  const dayOf = (offset) => new Date(Date.UTC(year, month - 1, dayOfMonth + offset, 12))
-  return {
-    seedDay,
-    day: dayOf,
-    isoDay: (offset) => dayOf(offset).toISOString().slice(0, 10),
-    at(offset, time) {
-      const [hour, minute] = time.split(':').map(Number)
-      const date = dayOf(offset)
-      const wallClock = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hour, minute)
-      const guess = new Date(wallClock - timeZoneOffsetMs(new Date(wallClock), timeZone))
-      return new Date(wallClock - timeZoneOffsetMs(guess, timeZone))
-    },
-  }
-}
-
 const INVOICE_MATCH_STATUS = Object.freeze({ submitted: 'pending', matched: 'matched', approved: 'matched', exception: 'variance' })
 
 // The seed day. Before any stock history is posted it is the requested day (or
@@ -367,22 +326,6 @@ async function scenarioSeedDay(prisma, tenantId, requested, timeZone) {
 // The workspace user who posts the walkthrough's documents: the first active
 // user, by email, whose roles grant every permission given. pilot:setup
 // provisions the roles.
-export async function scenarioActor(prisma, tenantId, permissions, documents) {
-  const users = await prisma.user.findMany({ where: { tenantId, status: 'active' }, orderBy: { email: 'asc' } })
-  for (const user of users) {
-    const identity = { authenticated: true, tenantId, userId: user.id, role: user.role, name: user.name, source: 'local_walkthrough_scenario' }
-    try {
-      const actor = await resolveProvisionedActor(prisma, identity)
-      if (permissions.every((permission) => authorize({ actor, permission, tenantId }).allowed)) return identity
-    } catch {
-      // A user without a complete role assignment cannot post; try the next one.
-    }
-  }
-  throw new Error(`No active workspace user may post ${documents}. Run pilot:setup before pilot:setup:scenario.`)
-}
-
-export const HISTORY_PERMISSIONS = ['inventory.adjustment.create', 'inventory.adjustment.approve', 'inventory.adjustment.post', 'shipment.prepare', 'shipment.post']
-
 // The opening stock entry (see OPENING_STOCK_KEY), or null before it exists.
 async function openingStockEntry(prisma, tenantId, where = {}, select = undefined) {
   const created = await prisma.businessCommandExecution.findUnique({
@@ -414,36 +357,6 @@ async function postOpeningStock(prisma, { tenantId, calendar, identity, env }) {
 // is resumed; anything else a person has changed since (a posted, reversed or
 // cancelled shipment, an order on hold or cancelled, a released reservation)
 // is left as it is.
-export async function shipHistoryOrder(prisma, order, { tenantId, calendar, identity, env }) {
-  // The order's one shipment, found by the order (the server numbers it).
-  const posted = await prisma.shipmentDocument.findFirst({ where: { tenantId, salesOrderId: order.id }, orderBy: { createdAt: 'asc' } })
-  if (posted && (posted.postingStatus !== 'unposted' || posted.workflowStatus === 'cancelled')) return false
-  const service = createOutboundPostingCommandService({ prisma, env, now: () => calendar.at(order.offset, order.shippedAt) })
-  const key = (step) => `local-walkthrough-scenario:${step}:${order.id}`
-  let salesOrder = await prisma.salesOrder.findUniqueOrThrow({ where: { id: order.id }, include: { reservations: true } })
-  if (salesOrder.workflowStatus !== 'confirmed') return false
-  const reservedInFull = (line) => salesOrder.reservations.some((row) => row.salesOrderLineId === line.id && Number(row.reservedQuantity) === line.quantity && Number(row.consumedQuantity) === 0 && Number(row.releasedQuantity) === 0)
-  if (salesOrder.reservations.length && !order.lines.every(reservedInFull)) return false
-  if (!salesOrder.reservations.length) {
-    await service.reserveSalesOrderInventory({
-      idempotencyKey: key('reserve'), salesOrderId: order.id, expectedOrderVersion: salesOrder.version,
-      allocations: order.lines.map((line) => ({ salesOrderLineId: line.id, warehouseId: WAREHOUSE, location: 'A-01', quantity: String(line.quantity) })),
-    }, { identity })
-    salesOrder = await prisma.salesOrder.findUniqueOrThrow({ where: { id: order.id }, include: { reservations: true } })
-  }
-  let shipment = posted
-  if (!shipment) {
-    const reservationOf = new Map(salesOrder.reservations.map((row) => [row.salesOrderLineId, row]))
-    const created = await service.createShipmentDraft({
-      idempotencyKey: key('draft'), salesOrderId: order.id, expectedOrderVersion: salesOrder.version,
-      lines: order.lines.map((line) => ({ salesOrderLineId: line.id, allocations: [{ reservationId: reservationOf.get(line.id).id, quantity: String(line.quantity) }] })),
-    }, { identity })
-    shipment = await prisma.shipmentDocument.findUniqueOrThrow({ where: { id: created.shipment.id } })
-  }
-  await service.postShipment({ idempotencyKey: key('post'), shipmentId: shipment.id, expectedShipmentVersion: shipment.version }, { identity })
-  return true
-}
-
 // The preferred-source terms, through the item supplier command. An item that
 // already has a link to the supplier keeps it as it is.
 async function saveSupplierTerms(prisma, { tenantId, actorId }) {
@@ -460,9 +373,9 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
   assertLocalDevelopment(env, 'pilot:setup:scenario')
   const tenantId = String(env.FLOWCHAIN_DEFAULT_TENANT_ID || 'tenant-flowchain-local').trim()
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } })
-  if (!tenant) throw new Error('Run pilot:setup before pilot:setup:scenario.')
+  if (!tenant) throw new Error('Run pilot:setup before seeding the test workspace scenario.')
   if (tenant.currency !== 'USD') throw new Error(`The walkthrough scenario is USD business data; workspace ${tenantId} uses ${tenant.currency}.`)
-  if (!await prisma.item.findUnique({ where: { id: 'LOCAL-DEMO-ITEM-001' } })) throw new Error('Run pilot:setup:demo before pilot:setup:scenario.')
+  if (!await prisma.item.findUnique({ where: { id: 'LOCAL-DEMO-ITEM-001' } })) throw new Error('Seed the test workspace master data (./master-data.mjs) before its scenario.')
   const timeZone = tenant.timezone || 'America/New_York'
   const calendar = scenarioCalendar(await scenarioSeedDay(prisma, tenantId, options.asOf ?? env.FLOWCHAIN_SCENARIO_AS_OF, timeZone), timeZone)
   const { day, isoDay, at } = calendar
@@ -472,7 +385,7 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
   // stock goes only onto stock records with no history. A workspace seeded
   // before version 8 has posted receipts and no opening stock entry, so it
   // keeps its stock as it is and gets no shipment history; seed a fresh
-  // database (walkthrough:local -- --reset) to have one.
+  // database to have one.
   const withHistory = Boolean(await openingStockEntry(prisma, tenantId, {}, { id: true }))
     || !await prisma.receivingDocument.findFirst({ where: { tenantId, id: { startsWith: 'LOCAL-DEMO-GRN-' }, postingStatus: { not: 'unposted' } }, select: { id: true } })
   const salesHistory = withHistory ? scenarioSalesHistory(calendar) : []
@@ -502,7 +415,7 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
     // The walkthrough's requests, RFQs and orders keep their seeded numbers
     // (number = id), as documents created before workspace numbering do.
     await put('purchaseRequest', 'LOCAL-DEMO-PR-001', { tenantId, number: 'LOCAL-DEMO-PR-001', status: PURCHASE_REQUEST_STATUS.SUBMITTED, requester: 'Kim', priority: 'high', requiredDate: day(14), amount: 5000, currency: 'USD', source: 'local_demo_scenario', metadata, createdAt: at(-23, '09:15') })
-    await put('purchaseRequestLine', 'LOCAL-DEMO-PRL-001', { purchaseRequestId: 'LOCAL-DEMO-PR-001', itemId: items['LDM-001'].id, sku: 'LDM-001', itemName: items['LDM-001'].name, quantity: 50, unit: 'pcs', unitPrice: 100, amount: 5000, metadata })
+    await put('purchaseRequestLine', 'LOCAL-DEMO-PRL-001', { purchaseRequestId: 'LOCAL-DEMO-PR-001', itemId: items['TST-001'].id, sku: 'TST-001', itemName: items['TST-001'].name, quantity: 50, unit: 'pcs', unitPrice: 100, amount: 5000, metadata })
 
     // The RFQ awarded from the purchase request. Quotation revisions are
     // immutable in the database, so they keep the dates of their first seed.
@@ -511,7 +424,7 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
       tenantId, number: 'LOCAL-DEMO-RFQ-AWARD-001', title: 'Flow Controller RFQ', category: 'Electronic components', status: 'collecting_quotes', supplierCount: 2, respondedSupplierCount: 2,
       dueDate: day(2), sourceRequestId: 'LOCAL-DEMO-PR-001', currency: 'USD', metadata, createdAt: at(-7, '10:00'),
     })
-    await put('rfqLine', 'LOCAL-DEMO-RFQL-AWARD-001', { tenantId, rfqId: 'LOCAL-DEMO-RFQ-AWARD-001', itemId: items['LDM-001'].id, sku: 'LDM-001', itemName: items['LDM-001'].name, quantity: 50, unit: 'pcs', metadata: rfqLineMetadata })
+    await put('rfqLine', 'LOCAL-DEMO-RFQL-AWARD-001', { tenantId, rfqId: 'LOCAL-DEMO-RFQ-AWARD-001', itemId: items['TST-001'].id, sku: 'TST-001', itemName: items['TST-001'].name, quantity: 50, unit: 'pcs', metadata: rfqLineMetadata })
     for (const [suffix, supplierId, amount, unitPrice, submitted, delivery, paymentTerms] of [
       ['001', ACME, 4900, 98, -4, 14, 'NET30'],
       ['002', SUMMIT, 4875, 97.5, -3, 16, 'NET45'],
@@ -527,13 +440,13 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
         update: { status: 'response_recorded', invitedAt: at(-7, '10:30'), respondedAt: submittedAt, metadata },
       })
       await put('supplierQuotation', quotationId, { tenantId, rfqId: 'LOCAL-DEMO-RFQ-AWARD-001', supplierId, supplierName, status: 'submitted', quotedAmount: amount, currency: 'USD', submittedAt, metadata })
-      await put('supplierQuotationLine', quotationLineId, { supplierQuotationId: quotationId, itemId: items['LDM-001'].id, sku: 'LDM-001', itemName: items['LDM-001'].name, quantity: 50, unit: 'pcs', unitPrice, amount, metadata })
+      await put('supplierQuotationLine', quotationLineId, { supplierQuotationId: quotationId, itemId: items['TST-001'].id, sku: 'TST-001', itemName: items['TST-001'].name, quantity: 50, unit: 'pcs', unitPrice, amount, metadata })
       if (!await tx.supplierQuotationRevision.findUnique({ where: { id: revisionId } })) {
         await tx.supplierQuotationRevision.create({
           data: {
             id: revisionId, tenantId, quotationId, revisionNumber: 1, status: 'submitted', currency: 'USD', quotedAmount: amount,
             submittedAt, validUntil: day(30), deliveryDate: day(delivery), paymentTerms, source: 'local_demo_scenario', metadata,
-            lines: { create: [{ id: `${revisionId}-LINE-001`, rfqLineId: 'LOCAL-DEMO-RFQL-AWARD-001', sourceQuotationLineId: quotationLineId, itemId: items['LDM-001'].id, skuSnapshot: 'LDM-001', itemNameSnapshot: items['LDM-001'].name, quantity: 50, unit: 'pcs', unitPrice, amount, deliveryDate: day(delivery), metadata }] },
+            lines: { create: [{ id: `${revisionId}-LINE-001`, rfqLineId: 'LOCAL-DEMO-RFQL-AWARD-001', sourceQuotationLineId: quotationLineId, itemId: items['TST-001'].id, skuSnapshot: 'TST-001', itemNameSnapshot: items['TST-001'].name, quantity: 50, unit: 'pcs', unitPrice, amount, deliveryDate: day(delivery), metadata }] },
           },
         })
       }
@@ -542,14 +455,14 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
     // One stock record per item at A-01, which opening stock and the
     // walkthrough receipts add to, with the item's own safety stock and
     // reorder point, so the record and the item agree. Created once, empty,
-    // for the opening stock entry (before version 8 LDM-001 and LDM-002 held
+    // for the opening stock entry (before version 8 TST-001 and TST-002 held
     // their opening stock directly and the others were created by their first
     // receipt); quantities then belong to inventory. The thresholds keep
-    // LDM-001 short after its 20 received pieces.
+    // TST-001 short after its 20 received pieces.
     for (const [index, sku] of Object.keys(items).entries()) {
       const id = `LOCAL-DEMO-BAL-${pad(index + 1)}`
       const item = await tx.item.findUniqueOrThrow({ where: { id: items[sku].id }, select: { safetyStock: true, reorderPoint: true } })
-      const thresholds = { itemName: items[sku].name, safetyStock: item.safetyStock, reorderPoint: item.reorderPoint, riskLevel: sku === 'LDM-001' ? 'shortage' : 'normal' }
+      const thresholds = { itemName: items[sku].name, safetyStock: item.safetyStock, reorderPoint: item.reorderPoint, riskLevel: sku === 'TST-001' ? 'shortage' : 'normal' }
       const existing = await tx.inventoryBalance.findUnique({ where: { tenantId_sku_warehouseKey_locationKey: { tenantId, sku, warehouseKey: WAREHOUSE, locationKey: 'a-01' } }, select: { id: true } })
       if (existing) {
         await tx.inventoryBalance.update({ where: { id: existing.id }, data: { ...thresholds, ...(existing.id === id ? { metadata } : {}) } })
@@ -675,7 +588,7 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
   await prisma.$transaction(async tx => {
     const put = putWith(tx)
     if (await put('salesOrder', 'LOCAL-DEMO-SO-001', { tenantId, orderNumber: 'LOCAL-DEMO-SO-001', customerId: 'LOCAL-DEMO-CUS-001', customerName, workflowStatus: 'confirmed', reservationStatus: 'not_reserved', fulfillmentStatus: 'not_fulfilled', promisedDate: day(5), currency: 'USD', metadata, createdAt: at(-4, '11:00') })) {
-      await put('salesOrderLine', 'LOCAL-DEMO-SOL-001', { salesOrderId: 'LOCAL-DEMO-SO-001', itemId: items['LDM-001'].id, sku: 'LDM-001', itemName: items['LDM-001'].name, orderedQuantity: 35, unit: 'pcs', unitPrice: 180, amount: 6300, metadata })
+      await put('salesOrderLine', 'LOCAL-DEMO-SOL-001', { salesOrderId: 'LOCAL-DEMO-SO-001', itemId: items['TST-001'].id, sku: 'TST-001', itemName: items['TST-001'].name, orderedQuantity: 35, unit: 'pcs', unitPrice: 180, amount: 6300, metadata })
     }
     for (const po of purchaseOrders.filter((row) => row.invoice)) {
       const id = `LOCAL-DEMO-PO-${pad(po.n)}`
@@ -737,7 +650,7 @@ export async function seedLocalContracts(prisma, { tenantId, calendar, actorId, 
     for (const contract of contracts) {
       const id = `LOCAL-DEMO-CT-${pad(contract.n)}`
       if (await tx.contract.findUnique({ where: { id } })) continue
-      // Numbers follow the CT- plus eight hexadecimal characters rule; DE for demo.
+      // Numbers follow the CT- plus eight hexadecimal characters rule; DE as before.
       const number = `CT-DE${String(contract.n).padStart(6, '0')}`
       if (await tx.contract.findFirst({ where: { tenantId, number } })) throw new Error(`Refusing to reuse contract number ${number}.`)
       const supplier = await tx.supplier.findUnique({ where: { id: contract.supplier }, select: { businessOwnerId: true } })
@@ -772,8 +685,8 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   const prisma = await getPrismaClient(process.env)
   try {
     const counts = await seedLocalScenario(prisma, process.env, asOf ? { asOf } : {})
-    console.log(`Local walkthrough scenario v${LOCAL_SCENARIO_VERSION} ready: ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(' ')}`)
-    if (counts.shipmentHistory === 'not_added') console.log('This workspace was seeded before version 8 and keeps its stock as it is, without the shipment history. Seed a fresh database (npm run walkthrough:local -- --reset) to have the shipment history.')
+    console.log(`Test workspace scenario v${LOCAL_SCENARIO_VERSION} ready: ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(' ')}`)
+    if (counts.shipmentHistory === 'not_added') console.log('This workspace was seeded before version 8 and keeps its stock as it is, without the shipment history. Seed a fresh database to have the shipment history.')
   } finally {
     await disconnectPrismaClient()
   }

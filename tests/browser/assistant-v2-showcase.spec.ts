@@ -73,7 +73,7 @@ async function ask(panel: Locator, question: string) {
 type RequestRow = { id: string; status: string; version?: number };
 
 // A run that fails after Create would leave the request open, and a retry on
-// the same database would then see LDM-002 as already requested. Cancel what
+// the same database would then see TST-002 as already requested. Cancel what
 // this run created so the retry starts from the same state. A click still in
 // flight can move the version under us, so a conflict reads the request again.
 async function cancelCreatedRequests(request: APIRequestContext, session: Session, before: Array<{ id: string }>) {
@@ -155,12 +155,12 @@ async function runS4(page: Page, session: Session, panel: Locator, requestsBefor
   // Suggested items are never ticked for the user (decision V2-4).
   await expect(form.locator('[data-testid="ai-v2-pr-row"][data-checked="true"]')).toHaveCount(0);
   await expect(form.getByTestId("ai-v2-pr-create")).toBeDisabled();
-  const covered = rows.filter({ hasText: "LDM-001" });
+  const covered = rows.filter({ hasText: "TST-001" });
   await expect(covered).toHaveAttribute("data-covered", "true");
   await expect(covered.getByTestId("ai-v2-pr-covered")).toContainText("Already requested:");
   await expect(covered.getByTestId("ai-v2-pr-covered")).toContainText("LOCAL-DEMO-PR-001");
 
-  const sensor = rows.filter({ hasText: "LDM-002" });
+  const sensor = rows.filter({ hasText: "TST-002" });
   await sensor.getByTestId("ai-v2-pr-tick").check();
   await expect(sensor).toHaveAttribute("data-checked", "true");
   await expect(sensor.locator('[data-field="quantity"] input')).toHaveValue("1735");

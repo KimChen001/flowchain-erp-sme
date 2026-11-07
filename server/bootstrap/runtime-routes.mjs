@@ -5,6 +5,7 @@ import {
   checkRuntimeReadiness,
 } from "../domain/runtime-readiness.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { publicDataNoteSummary } from "../domain/public-data-note.mjs";
 import { mailProviderName } from "../mail/mailer.mjs";
 import { defaultOutboxPath, readOutbox } from "../mail/outbox-mailer.mjs";
 import { send } from "../utils/http.mjs";
@@ -42,19 +43,19 @@ export async function handleRuntimeRoutes({
     }
     const prisma = await getPrismaClient(env);
     const tenantId = String(env.FLOWCHAIN_DEFAULT_TENANT_ID || "").trim();
-    const [tenant, users, demoMasterDataCount, demoScenarioCount] = await Promise.all([
+    const [tenant, users, publicDataNote] = await Promise.all([
       prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } }),
       prisma.user.findMany({ where: { tenantId, status: "active", email: { in: ["admin@flowchain.local", "kim@example.com"] } }, select: { email: true }, orderBy: { email: "asc" } }),
-      prisma.item.count({ where: { tenantId, id: { startsWith: "LOCAL-DEMO-ITEM-" } } }),
-      prisma.purchaseOrder.count({ where: { tenantId, id: { startsWith: "LOCAL-DEMO-PO-" } } }),
+      // The note a workspace seeded from public data carries (scripts/public-data/seed.mjs):
+      // which dataset, its original dates and how far they moved, what is assumed.
+      prisma.runtimeRecord.findUnique({ where: { tenantId_namespace_recordKey: { tenantId, namespace: "workspace.public-data", recordKey: "note" } }, select: { payload: true } }),
     ]);
     send(res, 200, {
       localDevelopment: true,
       tenantId: tenant?.id || tenantId,
       workspaceName: tenant?.name || "",
       availableLoginEmails: users.map(user => user.email),
-      demoMasterDataLoaded: demoMasterDataCount > 0,
-      demoScenarioLoaded: demoScenarioCount > 0,
+      publicData: publicDataNoteSummary(publicDataNote?.payload),
       universalIntakeEnabled: capabilityForEnvironment("universal-intake", env)?.enabled === true,
     });
     return true;

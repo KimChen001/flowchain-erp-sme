@@ -7,14 +7,15 @@ import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../lib/constants";
 import { ApiError, apiJson, AUTH_TOKEN_KEY, CURRENT_USER_KEY } from "../lib/api-client";
 import { useI18n } from "../i18n/I18n";
 import type { WorkspaceUser } from "../types/scm";
+import type { PublicDataNote } from "./PublicDataNote";
 
 export type LocalDevelopmentStatus = {
   localDevelopment: true;
   tenantId: string;
   workspaceName: string;
   availableLoginEmails: string[];
-  demoMasterDataLoaded: boolean;
-  demoScenarioLoaded: boolean;
+  // A workspace seeded from public data says which and what is assumed.
+  publicData: PublicDataNote | null;
   universalIntakeEnabled: boolean;
 };
 

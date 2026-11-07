@@ -105,20 +105,20 @@ test('analytics subtitles stay accurate in Chinese', async ({ page }) => {
   await expect(page.getByTestId('bi-dashboard')).not.toContainText(/OTIF|质量|三单匹配|账龄/);
 });
 
-// Walkthrough-shaped inventory: LDM-001 has 8 on hand against an item master
+// Walkthrough-shaped inventory: TST-001 has 8 on hand against an item master
 // safety stock of 10, a 35 unit sales order and a partially received PO with
-// 30 still in transit (ATP +3). LDM-003 is in the item master with no stock.
+// 30 still in transit (ATP +3). TST-003 is in the item master with no stock.
 const walkthroughInventory = {
   items: [
-    { id: 'ITEM-1', itemId: 'ITEM-1', sku: 'LDM-001', itemName: 'Flow Controller', safetyStock: 10, reorderPoint: 20 },
-    { id: 'ITEM-3', itemId: 'ITEM-3', sku: 'LDM-003', itemName: 'Shipping Carton', safetyStock: 10, reorderPoint: 20 },
+    { id: 'ITEM-1', itemId: 'ITEM-1', sku: 'TST-001', itemName: 'Flow Controller', safetyStock: 10, reorderPoint: 20 },
+    { id: 'ITEM-3', itemId: 'ITEM-3', sku: 'TST-003', itemName: 'Shipping Carton', safetyStock: 10, reorderPoint: 20 },
   ],
   inventoryItems: [
-    { sku: 'LDM-001', itemId: 'ITEM-1', onHandQuantity: 8, reservedQuantity: 0, unit: 'pcs' },
-    { sku: 'LDM-003', itemId: 'ITEM-3', onHandQuantity: 0, reservedQuantity: 0, unit: 'pcs' },
+    { sku: 'TST-001', itemId: 'ITEM-1', onHandQuantity: 8, reservedQuantity: 0, unit: 'pcs' },
+    { sku: 'TST-003', itemId: 'ITEM-3', onHandQuantity: 0, reservedQuantity: 0, unit: 'pcs' },
   ],
-  salesOrders: [{ id: 'SO-1', salesOrderId: 'SO-1', workflowStatus: 'confirmed', sku: 'LDM-001', orderedQty: 35, fulfilledQty: 0, reservedQty: 0, lines: [{ sku: 'LDM-001', orderedQuantity: 35, reservedQuantity: 0, fulfilledQuantity: 0 }] }],
-  purchaseOrders: [{ id: 'PO-1', status: 'partially_received', lines: [{ sku: 'LDM-001', orderedQuantity: 50, receivedQuantity: 20 }] }],
+  salesOrders: [{ id: 'SO-1', salesOrderId: 'SO-1', workflowStatus: 'confirmed', sku: 'TST-001', orderedQty: 35, fulfilledQty: 0, reservedQty: 0, lines: [{ sku: 'TST-001', orderedQuantity: 35, reservedQuantity: 0, fulfilledQuantity: 0 }] }],
+  purchaseOrders: [{ id: 'PO-1', status: 'partially_received', lines: [{ sku: 'TST-001', orderedQuantity: 50, receivedQuantity: 20 }] }],
   suppliers: [], supplierInvoices: [], receipts: [], dataLimitations: [],
 };
 
@@ -133,11 +133,11 @@ test('inventory report shows translated stock status codes in English and Chines
     await page.goto('/app/reports/inventory');
     const dashboard = page.getByTestId('bi-dashboard');
     await expect(dashboard.getByRole('columnheader', { name: labels.header, exact: true })).toBeVisible();
-    const ldm1 = dashboard.locator('tr', { hasText: 'LDM-001' });
+    const ldm1 = dashboard.locator('tr', { hasText: 'TST-001' });
     await expect(ldm1.locator('td').nth(7)).toHaveText('3');
     await expect(ldm1.locator('td').nth(8)).toHaveText(labels.belowSafety);
     await expect(ldm1.locator('td').nth(9)).toHaveText(labels.high);
-    const ldm3 = dashboard.locator('tr', { hasText: 'LDM-003' });
+    const ldm3 = dashboard.locator('tr', { hasText: 'TST-003' });
     await expect(ldm3.locator('td').nth(8)).toHaveText(labels.outOfStock);
     await expect(ldm3.locator('td').nth(9)).toHaveText(labels.medium);
     await expect(dashboard).not.toContainText(/below_safety_stock|out_of_stock|below_reorder_point/);
@@ -146,7 +146,7 @@ test('inventory report shows translated stock status codes in English and Chines
       await dashboard.getByRole('button', { name: 'Export', exact: true }).click();
       const workbook = XLSX.read(await readFile((await (await pending).path())!), { type: 'buffer' });
       const details = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets['Detail data']);
-      expect(details.map(row => [row.SKU, row['Item name'], row.Unit, row['Stock status'], row.Risk])).toEqual([['LDM-001', 'Flow Controller', 'pcs', 'Below safety stock', 'High'], ['LDM-003', 'Shipping Carton', 'pcs', 'Out of stock', 'Medium']]);
+      expect(details.map(row => [row.SKU, row['Item name'], row.Unit, row['Stock status'], row.Risk])).toEqual([['TST-001', 'Flow Controller', 'pcs', 'Below safety stock', 'High'], ['TST-003', 'Shipping Carton', 'pcs', 'Out of stock', 'Medium']]);
     }
   }
 });

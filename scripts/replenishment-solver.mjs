@@ -12,14 +12,14 @@ import { logReplenishmentCall, planReplenishment, replenishmentInputFromExport }
 //                          same figures from the live records
 //   LLM-estimated          --params=llm-params.json: parameters and per-item values an LLM
 //   parameters fed to OR   estimated, applied on top of the export before solving
-//   a given plan           --plan=LDM-002:50,LDM-001:10 (repeat --plan for more): a textbook
+//   a given plan           --plan=FOODS_3_090:50,FOODS_3_586:10 (repeat --plan for more): a textbook
 //                          policy's order, an LLM's or a buyer's, costed beside the optimum
 //                          and ordering nothing
 //
 // The study's findings come from public data (M5, Online Retail II): calibrate on a
 // training window, backtest on a later one. The adapter that builds those items is not
 // written yet. A FlowChain export is pipeline evidence only. Such an export also carries
-// the walkthrough's own reorder suggestion: it is costed as deployed_rule, and
+// the workspace's own reorder suggestion: it is costed as deployed_rule, and
 // --budget=rule takes its spend as the budget. Both only reproduce the prototype; neither
 // is a study baseline.
 //

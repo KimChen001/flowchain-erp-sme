@@ -99,7 +99,7 @@ const po = (id, status, lines) => ({ id, status, lines })
 const poLine = (sku, orderedQuantity, receivedQuantity) => ({ id: `${sku}-po-line`, sku, itemId: `ITEM-${sku}`, quantity: orderedQuantity, orderedQuantity, receivedQuantity })
 
 test('walkthrough scenario: LDM-001 ATP is +3 with the partially received PO counted at its remaining quantity', () => {
-  // scripts/setup-local-scenario.mjs: 8 on hand, a 35 unit sales order, and
+  // tests/fixtures/workspace/scenario.mjs: 8 on hand, a 35 unit sales order, and
   // LOCAL-DEMO-PO-001 partially received (20 of 50), so 30 are still in transit.
   const model = buildRuntimeInventoryAllocation(context({
     inventoryItems: [balance('LDM-001', 8), balance('LDM-002', 60)],
