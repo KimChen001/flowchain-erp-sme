@@ -276,7 +276,7 @@ const listSuppliers = defineAiTool({
 
 const spendAnalysis = defineAiTool({
   name: 'spend_analysis',
-  description: 'Committed purchase spend, as the procurement dashboard counts it: by supplier with each one\'s share and ABC class, by item for one supplier, or by month. Amounts are never added across currencies; without permission to see prices it gives order counts.',
+  description: 'Committed purchase spend, as the procurement dashboard counts it: by supplier with each one\'s share and ABC class (the largest suppliers only), by item for one supplier, or by month. For one supplier\'s spend ("how much with Acme this quarter?") pass supplier. Amounts are never added across currencies; without permission to see prices it gives order counts.',
   parameters: {
     view: { type: 'string', enum: ['suppliers', 'trend'], description: 'suppliers (default), or trend for spend by month.' },
     period: periodParam,
@@ -305,7 +305,7 @@ const spendAnalysis = defineAiTool({
       otherCurrencies: array(result.others),
       ...(result.mode === 'trend' ? { months: array(result.months), undatedOrders: result.undated, peakMonth: result.peak || null } : {}),
       ...(result.mode === 'supplier' ? { supplier: result.supplier.name, supplierTotal: result.supplier.row ? spendRow(result.supplier.row) : null, items: array(result.supplier.items).map((row) => ({ name: row.name, amount: row.value })), itemCount: result.supplier.itemCount } : {}),
-      ...(result.mode === 'suppliers' ? { suppliers: array(result.suppliers).map(spendRow), more: result.more, classASuppliers: result.classA } : {}),
+      ...(result.mode === 'suppliers' ? { suppliers: array(result.suppliers).map(spendRow), more: result.more, ...(result.more ? { notListed: 'More suppliers have spend than are listed here. Pass supplier to read one of them.' } : {}), classASuppliers: result.classA } : {}),
     }
   },
 })
