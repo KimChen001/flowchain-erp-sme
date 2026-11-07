@@ -42,12 +42,43 @@ test('still refused: a number no passage states, or one a passage only seems to 
   assert.deepEqual(kinds(check('3 pallets are waiting.', [{ rows: [{ note: 'three pallets at the dock', ref: { type: 'receiving_doc', id: 'GRN-9', label: 'GRN-9' } }] }])), ['number:3'])
 })
 
-test('real gap, still refused: a count of rows the model picked out, which no tool totals', () => {
-  // The Tier 1 overdue orders are 5 of the 8 overdue; no tool returns 5.
-  const tier1 = '一级供应商共 5 笔逾期订单：HV-PO-101、HV-PO-102、PR-PO-201、PR-PO-202、LK-PO-301。'
-  assert.deepEqual(kinds(check(tier1, [orders])), ['number:5'])
-  // The same count through calculate is grounded.
-  assert.deepEqual(kinds(check(tier1, [orders, { operation: 'sum', values: [1, 1, 1, 1, 1], result: 5 }])), [])
+test('a count of rows the model picked out: grounded beside the list it counts, refused alone or miscounted', () => {
+  // The Tier 1 overdue orders are 5 of the 8 overdue; no tool returns 5. Since
+  // 2026-11-07 a count written beside the records it counts, on one line, is
+  // grounded by that list (each record is checked on its own).
+  assert.deepEqual(kinds(check('一级供应商共 5 笔逾期订单：HV-PO-101、HV-PO-102、PR-PO-201、PR-PO-202、LK-PO-301。', [orders])), [])
+  assert.deepEqual(kinds(check('一级供应商共 7 笔逾期订单：HV-PO-101、HV-PO-102、PR-PO-201、PR-PO-202、LK-PO-301。', [orders])), ['number:7'])
+  // Alone, with the list on another line, or not a count of the list: refused.
+  assert.deepEqual(kinds(check('一级供应商共 5 笔逾期订单。', [orders])), ['number:5'])
+  assert.deepEqual(kinds(check('Tier 1 has 5 overdue orders.\nHV-PO-101, HV-PO-102, PR-PO-201, PR-PO-202 and LK-PO-301.', [orders])), ['number:5'])
+  // Through calculate it is grounded too.
+  assert.deepEqual(kinds(check('一级供应商共 5 笔逾期订单。', [orders, { operation: 'sum', values: [1, 1, 1, 1, 1], result: 5 }])), [])
+})
+
+// 2026-11-07 (the v2 evaluation on public data): "FOODS_3 items (6): …" and
+// "for 10 of the 12 items the quantity is the minimum order" were flagged,
+// though the reorder list held both counts in its rows.
+test('the counts a whole list holds: rows sharing a value or a flag; not from a list cut at the limit', () => {
+  const item = (sku, supplier, raisedToMinimum) => ({ sku, supplier, raisedToMinimum, ref: { type: 'item', id: sku, label: sku } })
+  const list = { rows: [item('A-1', 'North Foods', true), item('A-2', 'North Foods', true), item('A-3', 'North Foods', false), item('B-1', 'South Home', true)], total: 4, more: 0 }
+  assert.deepEqual(kinds(check('3 of the 4 items come from North Foods.', [list])), [])
+  assert.deepEqual(kinds(check('For 3 of them the quantity was raised to the minimum order; 1 was not.', [list])), [])
+  assert.deepEqual(kinds(check('North Foods supplies 5 of them.', [list])), ['number:5'])
+  // Harbor Valve Co has 2 of the 3 orders shown, but 9 are overdue in all.
+  const shown = (more) => ({ rows: [{ order: 'X-1', supplier: 'Harbor Valve Co' }, { order: 'X-2', supplier: 'Harbor Valve Co' }, { order: 'X-3', supplier: 'Lakeside Wire' }], total: 3 + more, more })
+  assert.deepEqual(kinds(check('Harbor Valve Co has 2 overdue orders.', [shown(6)])), ['number:2'])
+  assert.deepEqual(kinds(check('Harbor Valve Co has 2 overdue orders.', [shown(0)])), [])
+})
+
+test('a count beside its list: in brackets or before what it counts, one item by SKU or name', () => {
+  const facts = { inventory: { rows: [{ sku: 'FOODS_3_064', itemName: 'Canned Beans' }, { sku: 'FOODS_3_090', itemName: 'Rice' }, { sku: 'HOUSEHOLD_1_019', itemName: 'Detergent' }] } }
+  const results = [{ rows: facts.inventory.rows, total: 3 }]
+  assert.deepEqual(kinds(check('- **FOODS_3 items (2):** FOODS_3_064 and FOODS_3_090.', results, { facts })), [])
+  assert.deepEqual(kinds(check('2 FOODS_3 items are short: FOODS_3_064 (Canned Beans) and FOODS_3_090.', results, { facts })), [])
+  assert.deepEqual(kinds(check('2 个 FOODS_3 物料低于再订货点：FOODS_3_064、FOODS_3_090。', results, { facts })), [])
+  assert.deepEqual(kinds(check('- **FOODS_3 items (4):** FOODS_3_064 and FOODS_3_090.', results, { facts })), ['number:4'])
+  // A quantity beside the same names is no count of them.
+  assert.deepEqual(kinds(check('Order 2 cases of FOODS_3_064 and FOODS_3_090.', results, { facts })), ['number:2'])
 })
 
 test('still refused: a figure carried over from an earlier turn without reading it again', () => {

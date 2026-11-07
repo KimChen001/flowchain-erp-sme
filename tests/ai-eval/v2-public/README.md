@@ -74,3 +74,4 @@ It calls the configured model: about $0.6 for the 13 cases on Sonnet 5.5.
 | Date | Code | Passed | Notes |
 |---|---|---|---|
 | 2026-11-06 | main ff16f34d + this PR | 10/13, then 12/13 | First run: the decision answers matched the research optima, but two were flagged for a quantity the solver gave in its plan text and a budget remainder; both fixed here. Left: the answer to "which items are below their reorder point" counts table rows itself ("6 FOODS_3 items", "10 of the 12"). |
+| 2026-11-07 | main 5e982cad + counts beside lists | 13/13 ($0.65) | The answer check now takes the counts a whole list holds (rows sharing a supplier or a flag) and a count written beside the records it lists; "The other 6 are HOUSEHOLD_1 items" passes. |

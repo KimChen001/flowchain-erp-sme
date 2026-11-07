@@ -95,6 +95,9 @@ const PROSE_NUMBER = /(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w.])\d+(?:\.\
 // 一 mean much else in prose, and a compound ("three-way match") is no count.
 const PROSE_WORDS = Object.freeze({ two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20 })
 const PROSE_WORD = new RegExp(`\\b(${Object.keys(PROSE_WORDS).join('|')})\\b(?!-)`, 'gi')
+// What a count beside a list counts: up to two words, then the noun (6 FOODS_3
+// items, 3 late purchase orders), or a Chinese measure word (6 个, 3 张).
+const COUNT_NOUN = /^\s*(?:(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?|orders?|requests?|suppliers?|customers?|lines?|records?)(?![\p{L}])|(?:个|项|张|家|种|笔|条|款))/iu
 const ZH_DIGITS = Object.freeze({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 })
 const ZH_COUNT = /([二两三四五六七八九]?十[一二三四五六七八九]?|[二两三四五六七八九])\s*(?=个|天|日|周|次|件|家|笔|名|项|条|份|小时|工作日|月|年)/g
 const zhCount = (value) => {
@@ -151,8 +154,28 @@ export function aiGroundingSources(results = []) {
       return
     }
     if (typeof value === 'boolean') return
-    if (Array.isArray(value)) { for (const item of value) walk(item, key, parent); return }
+    if (Array.isArray(value)) { addCounts(value, parent); for (const item of value) walk(item, key, parent); return }
     if (typeof value === 'object') for (const [name, entry] of Object.entries(value)) walk(entry, name, value)
+  }
+  // The counts a list of rows holds without writing them: how many rows share
+  // a value (3 of the late orders are Northstar's) or have a flag set (10 of
+  // the 12 raised to the minimum order). 2026-11-07: "FOODS_3 items (6)" was
+  // flagged though the reorder list had 6 rows from that supplier. Only from a
+  // whole list: rows cut at the limit (more > 0) would count short. The list's
+  // own size is its total field.
+  const addCounts = (rows, parent) => {
+    const objects = rows.filter((row) => row && typeof row === 'object' && !Array.isArray(row))
+    if (objects.length < 2 || Number(parent?.more) > 0) return
+    const groups = new Map()
+    for (const row of objects) {
+      for (const [name, entry] of Object.entries(row)) {
+        const value = typeof entry === 'boolean' ? String(entry) : typeof entry === 'string' ? fold(entry) : typeof entry?.name === 'string' ? fold(entry.name) : ''
+        if (!value) continue
+        const group = `${name}\u0000${value}`
+        groups.set(group, (groups.get(group) || 0) + 1)
+      }
+    }
+    for (const count of new Set(groups.values())) numbers.push({ value: count, key: 'count', currency: null, unit: null })
   }
   for (const result of array(results)) walk(result)
   return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months }
@@ -219,10 +242,21 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   if (today) { sources.days.add(today); sources.months.add(today.slice(0, 7)) }
   let rest = `${title}\n${body}`.normalize('NFKC').replace(/^\s*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
   const blank = (match) => ' '.repeat(match.length)
+  // Where each grounded record and name sits, for a count written beside the
+  // list it counts ("FOODS_3 items (6): FOODS_3_064, …"). An item's name and
+  // its SKU are one item.
+  const listed = []
+  const offsetOf = (args) => args.find((value) => typeof value === 'number')
+  const entities = new Map()
+  for (const row of [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)]) {
+    if (!text(row?.sku)) continue
+    entities.set(fold(row.sku), `item:${fold(row.sku)}`)
+    if (text(row.itemName)) entities.set(fold(row.itemName), `item:${fold(row.sku)}`)
+  }
 
   // Record numbers: as a tool wrote them, or as the end of one ("PO-020" for
   // LOCAL-DEMO-PO-020).
-  rest = rest.replace(RECORD, (token) => {
+  rest = rest.replace(RECORD, (token, ...args) => {
     if (NOT_RECORD.test(token)) return token
     checked.record += 1
     const value = fold(token)
@@ -230,15 +264,26 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const squeezed = (value) => value.replace(/[-\s]/g, '')
     const found = inText(sources.haystack, value) || new RegExp(`-${escape(value)}($|[^a-z0-9])`, 'u').test(sources.haystack) || inText(named, value) || inText(squeezed(named), squeezed(value))
     if (!found) fail('record', token)
+    else listed.push({ at: offsetOf(args), key: entities.get(value) || `record:${value}` })
     return blank(token)
   })
   // Names the workspace knows.
   for (const name of aiGroundingNames(facts)) {
-    rest = rest.replace(nameMatch(name), (found) => {
+    rest = rest.replace(nameMatch(name), (found, ...args) => {
       checked.name += 1
       if (!inText(sources.haystack, name) && !inText(named, name)) fail('name', found)
+      else listed.push({ at: offsetOf(args), key: entities.get(fold(name)) || `name:${fold(name)}` })
       return blank(found)
     })
+  }
+  // A whole number in brackets, or before what it counts (6 items, 6 个),
+  // that equals the records and names its own line lists.
+  const listCount = (at, length) => {
+    const after = rest.slice(at + length, at + length + 40)
+    if (!(rest[at - 1] === '(' && /^\s*\)/.test(after)) && !COUNT_NOUN.test(after)) return null
+    const start = rest.lastIndexOf('\n', at) + 1
+    const end = rest.indexOf('\n', at) === -1 ? rest.length : rest.indexOf('\n', at)
+    return new Set(listed.filter((row) => row.at >= start && row.at < end).map((row) => row.key)).size
   }
   // Dates: the same day (and year, when written) as a date in the results.
   const dayKnown = ({ year, month, day }) => {
@@ -285,6 +330,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const grounded = sources.numbers.some((source) => numberKindFits(source, kind, currencies) && (near(source.value) || (kind === 'percent' && near(source.value * 100))))
       || givenNumbers.some(near)
       || (kind === 'plain' && !decimals && factor === 1 && value >= 1900 && value <= 2100 && [...sources.months].some((month) => month.startsWith(String(value))))
+      || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && listCount(match.index + match[0].indexOf(num), num.length) === value)
     if (!grounded) fail('number', match[0].trim())
   }
   // Cited records: each one a tool returned.
