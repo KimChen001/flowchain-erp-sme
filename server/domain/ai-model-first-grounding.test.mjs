@@ -127,3 +127,15 @@ test('the quantities in a plan\'s lines back the answer; a SKU\'s digits and amo
   assert.equal(check('That is 272 units.', results).ok, false)
   assert.equal(check('It would cost $81.', results).ok, false)
 })
+
+// 2026-11-07 (15231): "200 个的年持有成本是 $2,500，100 个是 $1,250" was flagged
+// as $2,500,100, NFKC having turned the Chinese comma into ",".
+test('a Chinese comma between two figures keeps them apart, in the answer, the question and a passage', () => {
+  const costs = [{ comparisons: [{ quantity: 100, holdingCostPerYear: 1250 }, { quantity: 200, holdingCostPerYear: 2500 }] }]
+  assert.deepEqual(kinds(check('200 个的年持有成本是 $2,500，100 个是 $1,250。', costs)), [])
+  assert.deepEqual(kinds(check('200 个的年持有成本是 $2,500，100 个是 $1,350。', costs)), ['number:$1,350'])
+  // A figure written with its own thousands comma is still one figure.
+  assert.deepEqual(kinds(check('年持有成本合计 $3,750。', [...costs, { operation: 'sum', values: [1250, 2500], result: 3750 }])), [])
+  assert.deepEqual(kinds(check('订 50 或 100 都可以。', [], { question: '订 50，100 还是 200？' })), [])
+  assert.deepEqual(kinds(check('供应商 3 个工作日内回复。', [policy('供应商应在 3，5 个工作日内回复。')])), [])
+})

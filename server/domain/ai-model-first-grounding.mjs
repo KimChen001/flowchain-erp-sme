@@ -29,6 +29,10 @@ import { aiAnswerActionClaims, aiAnswerRecordStates } from './ai-answer-claims.m
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
 const fold = (value) => text(value).normalize('NFKC').toLowerCase()
+// Text whose figures are read. NFKC turns a Chinese comma into ",", which ran
+// two figures into one: "$2,500，100 个是 $1,250" read as $2,500,100
+// (2026-11-07). A space after it keeps them apart.
+const figuresText = (value) => String(value ?? '').replace(/，/g, ', ').normalize('NFKC')
 const CJK = /[㐀-鿿]/u
 const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -122,7 +126,7 @@ export function aiGroundingSources(results = []) {
     }
   }
   const addProse = (value) => {
-    let rest = value.normalize('NFKC')
+    let rest = figuresText(value)
     for (const { pattern, read } of DATE_PATTERNS) {
       rest = rest.replace(pattern, (...match) => {
         const date = read(match)
@@ -240,7 +244,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   const named = fold(`${question}\n${conversation}`)
   const given = aiGroundingSources([question])
   if (today) { sources.days.add(today); sources.months.add(today.slice(0, 7)) }
-  let rest = `${title}\n${body}`.normalize('NFKC').replace(/^\s*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
+  let rest = figuresText(`${title}\n${body}`).replace(/^\s*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
   const blank = (match) => ' '.repeat(match.length)
   // Where each grounded record and name sits, for a count written beside the
   // list it counts ("FOODS_3 items (6): FOODS_3_064, …"). An item's name and
@@ -309,7 +313,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     })
   }
   // Numbers, with what they measure.
-  const givenNumbers = [...String(question ?? '').normalize('NFKC').matchAll(/\d+(?:,\d{3})*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, '')))
+  const givenNumbers = [...figuresText(question).matchAll(/\d+(?:,\d{3})*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, '')))
   for (const match of rest.matchAll(NUMBER)) {
     const { cur, num, scale, suffix } = match.groups
     // A number run into letters is part of a word (3PL, 2FA), not a figure.
