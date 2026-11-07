@@ -120,9 +120,19 @@ const getPurchaseOrder = defineAiTool({
 // reorder list's rule, and on 2026-11-03 the model took stock_position's "ok"
 // as reversing the reorder list's "order now".
 const STOCK_BASIS = 'incomingOnPurchaseOrders counts every open approved purchase order line. status compares available stock with safety stock, then available to promise (available + incoming - unreserved demand) with the reorder point. It is not the reorder list: for whether, when and how much to order, use reorder_list.'
+// At risk as the parameter says: short against open sales orders, or out of
+// stock, below safety stock or at or below the reorder point (2026-11-07: on
+// public data, with every sales order shipped, the shortage-only list was
+// empty while items were below safety stock, and the model said none was).
+const RISK_STATUSES = new Set(['out_of_stock', 'below_safety_stock', 'below_reorder_point'])
+const stockCounts = (facts, rows) => {
+  const short = new Set(array(facts.inventory.atRisk))
+  const count = (status) => rows.filter((row) => row.stockStatus === status).length
+  return { atRisk: rows.filter((row) => short.has(row.sku) || RISK_STATUSES.has(row.stockStatus)).length, shortAgainstSalesOrders: rows.filter((row) => short.has(row.sku)).length, outOfStock: count('out_of_stock'), belowSafetyStock: count('below_safety_stock'), belowReorderPoint: count('below_reorder_point') }
+}
 const stockPosition = defineAiTool({
   name: 'stock_position',
-  description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders (each order\'s promised date and days overdue in purchaseOrderDates), available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status. One SKU, the SKUs at risk, or all.',
+  description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders (each order\'s promised date and days overdue in purchaseOrderDates), available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status. One SKU, the SKUs at risk, or all; counts gives how many SKUs are at risk, short against open sales orders, out of stock, below safety stock and below the reorder point.',
   parameters: {
     sku: { type: 'string', description: 'One SKU.' },
     only: { type: 'string', enum: ['all', 'at_risk'], description: 'at_risk: short against open sales orders or below safety stock or the reorder point. all by default.' },
@@ -130,17 +140,18 @@ const stockPosition = defineAiTool({
   },
   available: (facts) => Boolean(facts.inventory),
   run(args, { facts }) {
-    let rows = array(facts.inventory.rows)
+    const all = array(facts.inventory.rows)
+    let rows = all
     if (args.sku) {
       rows = rows.filter((row) => fold(row.sku) === fold(args.sku))
       if (!rows.length) return array(facts.inventory.masterOnly).some((row) => fold(row.sku) === fold(args.sku)) ? { asOf: facts.asOf, sku: args.sku, noStockOrOrders: true } : { error: 'not_found' }
     }
-    if (args.only === 'at_risk') rows = rows.filter((row) => array(facts.inventory.atRisk).includes(row.sku))
+    if (args.only === 'at_risk') rows = rows.filter((row) => array(facts.inventory.atRisk).includes(row.sku) || RISK_STATUSES.has(row.stockStatus))
     rows = [...rows].sort((a, b) => text(a.sku).localeCompare(text(b.sku)))
     return {
       asOf: facts.asOf,
       basis: STOCK_BASIS,
-      atRiskCount: facts.inventory.atRiskCount,
+      counts: stockCounts(facts, all),
       ...aiToolList(rows.map((row) => ({
         sku: row.sku, itemName: row.itemName, unit: row.unit, onHand: row.onHand, reserved: row.reserved, available: row.available,
         openSalesDemand: row.openSalesDemand, incomingOnPurchaseOrders: row.incomingApprovedPo, availableToPromise: row.availableToPromise,
@@ -362,7 +373,7 @@ const lateOrderImpact = defineAiTool({
 
 const workspaceSummary = defineAiTool({
   name: 'workspace_summary',
-  description: 'Counts across the workspace as the reports show them: open and overdue purchase orders and committed spend, orders waiting for approval, SKUs at risk, supplier invoice matching, open RFQs, receipts with rejections or not posted, and records missing data. What the user may not read is left out.',
+  description: 'Counts across the workspace as the reports show them: open and overdue purchase orders and committed spend, orders waiting for approval, SKUs at risk as the reports count them (short against open sales orders; stock_position counts those below safety stock or the reorder point too), supplier invoice matching, open RFQs, receipts with rejections or not posted, and records missing data. What the user may not read is left out.',
   available: () => true,
   run(_args, { facts }) {
     return {

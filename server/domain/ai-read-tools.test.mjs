@@ -196,6 +196,25 @@ test('the stock projection places only dated lines in a week and lists the rest 
   assert.deepEqual(await runAiReadTool('stock_projection', { sku: 'NOPE-1' }, { facts }), { ok: false, error: 'not_found' })
 })
 
+test('at risk covers short, out of stock, below safety stock and below the reorder point, as the parameter says', async () => {
+  const facts = await factsFor()
+  const all = facts.inventory.rows
+  // As on the public data: below safety stock with no open sales demand short.
+  const calm = all.find((row) => !facts.inventory.atRisk.includes(row.sku) && row.stockStatus !== 'below_safety_stock')
+  calm.stockStatus = 'below_safety_stock'
+  const risky = (row) => facts.inventory.atRisk.includes(row.sku) || ['out_of_stock', 'below_safety_stock', 'below_reorder_point'].includes(row.stockStatus)
+  const result = (await runAiReadTool('stock_position', { only: 'at_risk', limit: 50 }, { facts })).result
+  assert.deepEqual(result.rows.map((row) => row.sku), all.filter(risky).map((row) => row.sku).sort())
+  assert.ok(result.rows.some((row) => row.status === 'below_safety_stock' && !(row.shortage > 0)), 'an item below safety stock with no shortage is at risk')
+  assert.deepEqual(result.counts, {
+    atRisk: all.filter(risky).length,
+    shortAgainstSalesOrders: all.filter((row) => facts.inventory.atRisk.includes(row.sku)).length,
+    outOfStock: all.filter((row) => row.stockStatus === 'out_of_stock').length,
+    belowSafetyStock: all.filter((row) => row.stockStatus === 'below_safety_stock').length,
+    belowReorderPoint: all.filter((row) => row.stockStatus === 'below_reorder_point').length,
+  })
+})
+
 test('a stock row gives each incoming order\'s promised date and days overdue, as the order list does', async () => {
   const facts = await factsFor()
   const row = (await runAiReadTool('stock_position', { sku: 'LDM-001' }, { facts })).result.rows[0]
