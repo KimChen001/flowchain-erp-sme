@@ -69,7 +69,11 @@ export function aiSkillQuestionLanguageSignal(message) {
     if (english.length !== chinese.length) return strong(english.length > chinese.length ? 'en-US' : 'zh-CN')
     return strong(Math.min(...english) < Math.min(...chinese) ? 'en-US' : 'zh-CN')
   }
-  // No question words: "overdue POs" or "逾期订单".
+  // No question words: "overdue POs" or "逾期订单". Chinese in two or more
+  // places is Chinese wrapped around names the records write in English
+  // (2026-11-07: "确认：从 Supplier of 22xxx codes (assumed) 订 60 个 Regency
+  // Cakestand" was answered in English).
+  if ((stripped.match(/[㐀-鿿]+/gu) || []).length >= 2) return strong('zh-CN')
   const cjkWords = (stripped.match(CJK_CHAR) || []).length / 2
   const latinWords = words.filter((match) => !acronym(match[0])).length
   if (latinWords >= 2 && latinWords > cjkWords) return strong('en-US')

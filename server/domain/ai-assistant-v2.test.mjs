@@ -1221,6 +1221,19 @@ test('a tool call written out as text is never shown', async () => {
   assert.match(plain.body.conclusion.summary, /\(4 days late\)\./)
 })
 
+// 2026-11-07 (Haiku): after long English results a Chinese answer was written
+// in English headings and bullets.
+test('each round of results in a Chinese answer says to write in Chinese; an English answer is not told', async () => {
+  const zhNote = (request) => request.messages.at(-1).content.some((block) => block.type === 'text' && /answerLanguage is zh-CN/.test(block.text))
+  const zh = await ask([OVERDUE, [...say('PO-001 逾期最久。'), end()]], { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } })
+  assert.equal(zhNote(zh.client.requests[1]), true)
+  const en = await ask([OVERDUE, [...say('PO-001 is the most overdue.'), end()]])
+  assert.equal(zhNote(en.client.requests[1]), false)
+  // Nor when the user asked for English.
+  const wanted = await ask([OVERDUE, [...say('PO-001 is the most overdue.'), end()]], { question: '用英文回答：哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } })
+  assert.equal(zhNote(wanted.client.requests[1]), false)
+})
+
 // 2026-11-07: a reorder answer ended at its opening line and the chips.
 test('chips in a round with no text do not end the answer on an earlier opening line', async () => {
   const { client, body } = await ask([

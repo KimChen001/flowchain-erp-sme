@@ -30,6 +30,9 @@ test('the answer follows the language the question is phrased in', () => {
     ['Any open POs from Summit?', 'zh-CN', 'en-US'],
     ['上海有成 POs overdue?', 'zh-CN', 'zh-CN'],
     ['overdue POs', 'zh-CN', 'en-US'],
+    // Chinese around English names, with no question word in either.
+    ['确认：从 Supplier of 22xxx codes (assumed) 订 60 个 Regency Cakestand', 'en-US', 'zh-CN'],
+    ['Confirm: order 60 Regency Cakestands from Supplier of 22xxx codes (assumed)', 'zh-CN', 'en-US'],
     ['逾期订单', 'en-US', 'zh-CN'],
     // No language in the question: the interface language.
     ['PO-012', 'zh-CN', 'zh-CN'],

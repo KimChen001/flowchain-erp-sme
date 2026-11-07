@@ -131,6 +131,10 @@ function chineseTextWindow(raw, from, final) {
 }
 const HIDDEN_NOTE = 'The short text you wrote before reading was not shown to the user. Write the answer for the user after these results.'
 const SHOWN_NOTE = 'The user already sees the text you wrote so far in this answer, so never write it again. Keep working as the question needs, with more tool calls if it needs them; any text you add appears below what is there.'
+// answerLanguage is said once, before the results; after long English results
+// Haiku wrote a whole Chinese answer in English headings and bullets
+// (2026-11-07, "我们的库存周转怎么样？"). Each round of results says it again.
+const ZH_NOTE = 'answerLanguage is zh-CN: write everything the user reads in Chinese, headings and list items included. Names, SKUs and record numbers stay as the records write them.'
 // A form or card whose call failed is not on screen until a later call of the
 // same tool succeeds (2026-11-07: a reorder answer's request form failed for
 // its source, the model fetched the lines and wrote "the form is open below"
@@ -1296,6 +1300,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       const unshown = unshownCards(stats.ui)
       if (unshown.length) note.push({ type: 'text', text: cardNotShownNote(unshown) })
       else if (linesWithoutForm(stats, ui.has('suggest_purchase_request'))) note.push({ type: 'text', text: FORM_NOT_SHOWN })
+      if (zhAnswer && !englishWanted) note.push({ type: 'text', text: ZH_NOTE })
       if (stats.rounds >= limits.rounds || callCount >= limits.toolCalls || lastForCost || lastForTokens || lastForTime || displaysRefused) {
         finalRound = true
         stats.lastRoundForCost ||= lastForCost
