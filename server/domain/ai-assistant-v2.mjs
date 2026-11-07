@@ -83,6 +83,7 @@ const LAST_ROUND_NOTE = 'No more tool calls are available for this answer, displ
 const DISPLAY_RETRY = 'Correct this call once, or answer in prose. After another failed display no display tool is available for this answer. The user already sees the text you wrote before this call: do not write it again.'
 // The forms and cards the user acts in: the text after them says what to click.
 const CARD_TOOLS = new Set(['suggest_purchase_request', 'suggest_setup_records', 'offer_record_actions'])
+const SHOWN_NOTE = 'The user already sees the text you wrote so far in this answer. Go on from it with only what is new, such as what to click in a form or card shown since or what a result changed; do not write it again.'
 const DISPLAY_OFF = 'No display tool is available for the rest of this answer.'
 const displayOffNote = (names) => `No display tool (${names.join(', ')}) is available for the rest of this answer. Answer in prose from the results, and do not mention displays, tools or errors to the user.`
 const FLAG_KINDS = new Set(['number', 'date', 'name', 'record'])
@@ -1170,6 +1171,9 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // with an error).
       const lastForTime = Date.now() - started + 2 * lastCallMs > limits.timeoutMs
       const note = thread.messages.at(-1).content
+      // Text already sent stays on screen: the model goes on from it (2026-11-07:
+      // a budget plan written out three times, once after each later call).
+      if (parts.some((part) => part.type === 'text' && text(part.text))) note.push({ type: 'text', text: SHOWN_NOTE })
       if (stats.rounds >= limits.rounds || callCount >= limits.toolCalls || lastForCost || lastForTokens || lastForTime || displaysRefused) {
         finalRound = true
         stats.lastRoundForCost ||= lastForCost

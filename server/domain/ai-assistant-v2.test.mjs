@@ -1119,6 +1119,10 @@ test('chips called beside a request form do not end the answer: the words about 
   ], { question: 'What should I order?', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
   assert.equal(client.requests.length, 3)
   assert.match(body.conclusion.summary, /Tick the items you want, then click Create draft request\./)
+  // Once text is on screen, the model is told to go on from it, not write it
+  // again (2026-11-07: a plan written out three times); before any text, not.
+  const shown = (request) => request.messages.at(-1).content.some((block) => block.type === 'text' && /already sees the text you wrote/.test(block.text))
+  assert.deepEqual([shown(client.requests[1]), shown(client.requests[2])], [false, true])
 })
 
 test('the system prompt asks for the answer first, display strings, whole record numbers and the app\'s terms', () => {
