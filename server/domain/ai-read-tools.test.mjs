@@ -295,3 +295,42 @@ test('list_contracts gives a contract\'s title, dates, value and terms, the valu
   assert.equal(viewer.rows[0].totalValue, null)
   assert.equal(viewer.rows[0].currency, 'USD')
 })
+
+// 2026-11-07: "上个月销售额是多少？", top customers and best sellers had no tool.
+test('sales_summary totals customer invoices in a period by customer, item or month, in one currency', async () => {
+  const scenario = aiSkillScenario()
+  const loaded = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(loaded)
+  const seen = []
+  const line = (sku, itemName, quantity, lineAmount) => ({ itemId: `ITEM-${sku}`, sku, itemName, quantity: String(quantity), unit: 'pcs', lineAmount: String(lineAmount) })
+  const invoices = [
+    { id: 'CI-1', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-10-03T00:00:00Z'), subtotalAmount: '100.0000', currency: 'GBP', lines: [line('X-1', 'Cake Stand', 10, 60), line('Y-2', 'Tea Towel', 5, 40)] },
+    { id: 'CI-2', customerNameSnapshot: 'Redwood Retail', invoiceDate: new Date('2026-10-20T00:00:00Z'), subtotalAmount: '250.0000', currency: 'GBP', lines: [line('X-1', 'Cake Stand', 25, 250)] },
+    { id: 'CI-3', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-10-21T00:00:00Z'), subtotalAmount: '50.0000', currency: 'USD', lines: [line('X-1', 'Cake Stand', 4, 50)] },
+  ]
+  const context = { ...loaded, prisma: { ...loaded.prisma, customerInvoice: { findMany: async (query) => { seen.push(query); return invoices } } } }
+  const run = async (args) => (await runAiReadTool('sales_summary', { from: '2026-10-01', to: '2026-10-31', currency: 'GBP', ...args }, { facts, context })).result
+  const customers = await run({})
+  assert.deepEqual(seen[0].where.status, { notIn: ['draft', 'cancelled'] })
+  assert.deepEqual([seen[0].where.invoiceDate.gte.toISOString(), seen[0].where.invoiceDate.lt.toISOString()], ['2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'])
+  assert.deepEqual([customers.currency, customers.invoices, customers.amount], ['GBP', 2, 350])
+  assert.deepEqual(customers.rows.map((row) => [row.customer, row.invoices, row.amount, row.sharePercent]), [['Redwood Retail', 1, 250, 71.4], ['Harbor Supply Co', 1, 100, 28.6]])
+  assert.deepEqual(customers.otherCurrencies, [{ currency: 'USD', invoices: 1, amount: 50 }])
+  const items = await run({ by: 'item' })
+  assert.deepEqual(items.rows.map((row) => [row.sku, row.itemName, row.quantity, row.amount, row.sharePercent]), [['X-1', 'Cake Stand', 35, 310, 88.6], ['Y-2', 'Tea Towel', 5, 40, 11.4]])
+  assert.deepEqual(items.rows[0].ref, { type: 'item', id: 'ITEM-X-1', label: 'X-1' })
+  const oneItem = await run({ sku: 'Y-2' })
+  assert.deepEqual([oneItem.amount, oneItem.quantity, oneItem.invoices, oneItem.rows.map((row) => row.customer)], [40, 5, 1, ['Harbor Supply Co']])
+  const months = await run({ by: 'month' })
+  assert.deepEqual(months.rows.map((row) => [row.month, row.amount]), [['2026-10', 350]])
+  const harbor = await run({ customer: 'harbor', by: 'item' })
+  assert.deepEqual(harbor.rows.map((row) => [row.sku, row.amount]), [['X-1', 60], ['Y-2', 40]])
+  // A named period is counted from the workspace day; to before from is refused.
+  const lastMonth = (await runAiReadTool('sales_summary', { period: 'last_month' }, { facts, context })).result
+  assert.ok(lastMonth.period.from.endsWith('-01') && lastMonth.period.to < String(facts.today || facts.asOf))
+  assert.equal((await runAiReadTool('sales_summary', { from: '2026-10-31', to: '2026-10-01' }, { facts, context })).error, 'invalid_period')
+  // Only for users who may read customer invoices.
+  const tool = AI_READ_SERVICE_TOOLS.find((entry) => entry.name === 'sales_summary')
+  assert.equal(tool.available(facts, context), true)
+  assert.equal(tool.available(facts, { ...context, actor: { ...context.actor, permissionCodes: new Set() } }), false)
+})

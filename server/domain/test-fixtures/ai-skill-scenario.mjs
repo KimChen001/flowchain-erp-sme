@@ -114,6 +114,8 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     workspaceInvitation: { count: () => 0 },
     // The workspace's payment terms, for the setup card.
     paymentTerm: { findMany: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? array(data.paymentTerms) : []) },
+    // Customer invoices with their lines (none unless a test adds them).
+    customerInvoice: { findMany: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? array(data.customerInvoices) : []) },
     rfqSupplierParticipation: { findMany: ({ where }) => data.participations.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
     rfqAwardDecision: { findMany: ({ where }) => data.awards.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
     // Item-supplier links (master-data-commands.mjs listItemSupplierRecords),

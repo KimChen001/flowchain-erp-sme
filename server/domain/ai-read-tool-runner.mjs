@@ -42,6 +42,7 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   list_supplier_invoices: { rows: ['invoiceNumber', 'supplier', 'invoiceDate', 'purchaseOrder', 'matchStatus', 'difference', 'currency'] },
   list_purchase_requests: { rows: ['request', 'status', 'priority', 'requiredDate', 'skus', 'lineCount', 'quantity', 'unit'] },
   list_rfqs: { rows: ['rfq', 'title', 'invited', 'quotes', 'due', 'readyToAward'] },
+  sales_summary: { rows: ['customer', 'sku', 'itemName', 'month', 'invoices', 'quantity', 'unit', 'amount', 'sharePercent'] },
   list_suppliers: { rows: ['name', 'code', 'tier'] },
   spend_analysis: { suppliers: ['name', 'amount', 'sharePercent', 'rank', 'spendClass'], months: ['month', 'value', 'orders'], items: ['name', 'amount'] },
   supplier_performance: { suppliers: ['name', 'deliveries', 'onTime.percent', 'inFull.percent', 'onTimeInFull.percent', 'rejection.percent', 'averageDelayDays', 'lateDeliveries', 'undeliveredPastOriginalPromiseInPeriod'] },

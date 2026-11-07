@@ -7,6 +7,7 @@ import { createReorderListReadService } from './reorder-list-read-service.mjs'
 import { DEMAND_WINDOW_DAYS } from './reorder-list.mjs'
 import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
 import { SUPPLIER_ISSUE_TYPES, createSupplierInsightsReadService } from './supplier-insights.mjs'
+import { aiSkillSpendPeriod } from './ai-skill-spend-analysis.mjs'
 import { reportReadAccessFor, scopeBusinessContext } from './report-read-access.mjs'
 import { searchRuntimeBusinessContext } from './runtime-business-search.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
@@ -182,6 +183,90 @@ const listReceivables = defineAiTool({
   },
 })
 
+// Completed sales from customer invoices (2026-11-07: "上个月销售额是多少？",
+// top customers and best-selling items had no tool, on two years of invoices).
+// Invoices dated in the period, not drafts or cancelled, before tax; credit
+// notes are not subtracted. Amounts are never added across currencies.
+const SALES_PERIODS = ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'this_year', 'last_year', 'last_30_days', 'last_90_days', 'last_12_months']
+const SALES_DAYS = Object.freeze({ last_30_days: 30, last_90_days: 90, last_12_months: 365 })
+const SALES_INVOICES_MAX = 20000
+const SALES_BASIS = 'Customer invoices dated in the period, not drafts or cancelled, before tax. Credit notes are not subtracted.'
+const money2 = (value) => Math.round(value * 100) / 100
+const share = (part, whole) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null)
+const salesDay = (value) => (value instanceof Date ? value.toISOString() : text(value)).slice(0, 10)
+function salesRange(args, today) {
+  if (args.from || args.to) return args.from && args.to && args.from <= args.to ? { from: args.from, to: args.to } : null
+  const period = args.period || 'last_12_months'
+  return aiSkillSpendPeriod(SALES_DAYS[period] ? { kind: 'last_days', days: SALES_DAYS[period] } : { kind: period }, today)
+}
+const salesSummary = defineAiTool({
+  name: 'sales_summary',
+  description: 'Completed sales from customer invoices over a period: the total, and the largest customers or items, or each month, by invoiced amount with each one\'s share. Invoices dated in the period, not drafts or cancelled, before tax; credit notes are not subtracted. For "last month\'s sales", "our top customers this quarter" or "which products sold most".',
+  parameters: {
+    by: { type: 'string', enum: ['customer', 'item', 'month'], description: 'customer (default), item or month.' },
+    period: { type: 'string', enum: SALES_PERIODS, description: 'Counted from the workspace day; last_12_months by default.' },
+    from: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'A first day, with to, instead of period.' },
+    to: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'The last day, included.' },
+    customer: { type: 'string', description: 'Only this customer (part of its name).' },
+    sku: { type: 'string', description: 'Only this item.' },
+    currency: { type: 'string', pattern: '^[A-Z]{3}$', description: 'A currency code; the workspace currency by default.' },
+    limit: limitParam,
+  },
+  available: (_facts, context) => Boolean(context?.actor && context.prisma) && can(context, 'finance.customer_invoice.read'),
+  async run(args, { facts, context }) {
+    const range = salesRange(args, salesDay(facts.today || facts.asOf))
+    if (!range) return { error: 'invalid_period' }
+    const found = array(await context.prisma.customerInvoice.findMany({
+      where: { tenantId: context.tenantId, status: { notIn: ['draft', 'cancelled'] }, invoiceDate: { gte: new Date(`${range.from}T00:00:00Z`), lt: new Date(`${addCalendarDays(range.to, 1)}T00:00:00Z`) } },
+      select: { id: true, customerNameSnapshot: true, invoiceDate: true, subtotalAmount: true, currency: true, lines: { select: { itemId: true, sku: true, itemName: true, quantity: true, unit: true, lineAmount: true } } },
+      take: SALES_INVOICES_MAX + 1,
+    }))
+    let invoices = found.slice(0, SALES_INVOICES_MAX).map((row) => ({ id: text(row.id), customer: text(row.customerNameSnapshot) || null, day: salesDay(row.invoiceDate), amount: Number(row.subtotalAmount) || 0, currency: text(row.currency).toUpperCase() || null, lines: array(row.lines) }))
+    if (args.customer) invoices = invoices.filter((row) => fold(row.customer).includes(fold(args.customer)))
+    const currencies = new Map()
+    for (const row of invoices) {
+      const entry = currencies.get(row.currency) || { currency: row.currency, invoices: 0, amount: 0 }
+      entry.invoices += 1
+      entry.amount += row.amount
+      currencies.set(row.currency, entry)
+    }
+    const workspace = text(facts.currency).toUpperCase()
+    const currency = args.currency || (currencies.has(workspace) ? workspace : [...currencies.values()].sort((a, b) => b.amount - a.amount)[0]?.currency) || workspace || null
+    // Each sale counted: the invoice, or its lines for one item.
+    const sales = invoices.filter((row) => row.currency === currency).flatMap((row) => (args.sku || args.by === 'item'
+      ? row.lines.filter((line) => !args.sku || fold(line.sku) === fold(args.sku)).map((line) => ({ invoice: row.id, customer: row.customer, day: row.day, amount: Number(line.lineAmount) || 0, quantity: Number(line.quantity) || 0, sku: text(line.sku), itemName: text(line.itemName) || null, unit: text(line.unit) || null, itemId: text(line.itemId) || null }))
+      : [{ invoice: row.id, customer: row.customer, day: row.day, amount: row.amount }]))
+    const total = sales.reduce((sum, row) => sum + row.amount, 0)
+    const by = args.by || 'customer'
+    const groups = new Map()
+    for (const row of sales) {
+      const key = by === 'item' ? fold(row.sku) : by === 'month' ? row.day.slice(0, 7) : text(row.customer)
+      const entry = groups.get(key) || { key, row, invoices: new Set(), amount: 0, quantity: 0 }
+      entry.invoices.add(row.invoice)
+      entry.amount += row.amount
+      entry.quantity += row.quantity || 0
+      groups.set(key, entry)
+    }
+    const rows = [...groups.values()]
+      .sort(by === 'month' ? (a, b) => a.key.localeCompare(b.key) : (a, b) => b.amount - a.amount || a.key.localeCompare(b.key))
+      .map((entry) => ({
+        ...(by === 'item' ? { sku: entry.row.sku, itemName: entry.row.itemName, quantity: Math.round(entry.quantity * 10000) / 10000, unit: entry.row.unit, ref: aiToolRef('item', entry.row.itemId || entry.row.sku, entry.row.sku) }
+          : by === 'month' ? { month: entry.key } : { customer: entry.key || null }),
+        invoices: entry.invoices.size, amount: money2(entry.amount), sharePercent: share(entry.amount, total),
+      }))
+    return {
+      period: range, basis: SALES_BASIS, by, currency,
+      invoices: new Set(sales.map((row) => row.invoice)).size,
+      amount: money2(total),
+      ...(args.sku ? { sku: args.sku, quantity: Math.round(sales.reduce((sum, row) => sum + row.quantity, 0) * 10000) / 10000 } : {}),
+      ...(args.customer ? { customer: args.customer } : {}),
+      otherCurrencies: [...currencies.values()].filter((entry) => entry.currency !== currency).map((entry) => ({ currency: entry.currency, invoices: entry.invoices, amount: money2(entry.amount) })),
+      ...(found.length > SALES_INVOICES_MAX ? { onlyFirstInvoices: SALES_INVOICES_MAX } : {}),
+      ...aiToolList(rows, args.limit),
+    }
+  },
+})
+
 // A contract's money and dates as the contract service returns them: the
 // total value is null, and named in restrictedFields, for a user without
 // procurement.prices.read (maskContract). K1 stores no per-item prices. The
@@ -351,4 +436,4 @@ const searchDocuments = defineAiTool({
   },
 })
 
-export const AI_READ_SERVICE_TOOLS = Object.freeze([searchRecords, reorderList, listReceivables, listContracts, priceHistory, supplierRisks, searchDocuments])
+export const AI_READ_SERVICE_TOOLS = Object.freeze([searchRecords, reorderList, listReceivables, salesSummary, listContracts, priceHistory, supplierRisks, searchDocuments])

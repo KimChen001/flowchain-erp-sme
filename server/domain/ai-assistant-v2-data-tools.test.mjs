@@ -581,7 +581,8 @@ test('every data tool declares its columns, and each declared column is in its r
   const items = scenario.data.items.map((row) => ({ ...row, status: 'active', reorderPoint: row.sku === 'LDM-001' ? 200 : row.reorderPoint }))
   const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
   const reorderList = { read: async (input) => buildReorderList({ allocationRows: input.allocationRows, items, supplierLinks: [link()], suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }) }
-  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList } } })
+  const invoiced = (data) => { data.customerInvoices = [{ id: 'CI-1', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-09-10T00:00:00Z'), subtotalAmount: '950.0000', currency: 'USD', lines: [{ itemId: 'ITEM-001', sku: 'LDM-001', itemName: 'Flow Controller', quantity: '10', unit: 'pcs', lineAmount: '950.0000' }] }] }
+  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data); invoiced(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList } } })
   // The calls that fill each table; a tool not named here is called once
   // without arguments.
   const calls = {
@@ -594,6 +595,7 @@ test('every data tool declares its columns, and each declared column is in its r
     calculate: [{ operation: 'percent', values: [1, 2] }],
     search_records: [{ query: 'LDM' }],
     list_receivables: [{}, { view: 'aging' }],
+    sales_summary: [{ from: '2026-01-01', to: '2026-12-31' }, { by: 'item', from: '2026-01-01', to: '2026-12-31' }, { by: 'month', from: '2026-01-01', to: '2026-12-31' }],
     price_history: [{ sku: 'LDM-001' }],
     search_documents: [{ query: 'supplier past the promised date escalate' }],
     // A row's details depend on its signal: today's list and the problems

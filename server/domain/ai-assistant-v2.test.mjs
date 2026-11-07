@@ -1257,7 +1257,8 @@ test('no example the model reads names a showcase item or order', () => {
     JSON.stringify(AI_ASSISTANT_V2_UI_TOOLS.map((tool) => ({ name: tool.name, description: tool.description, input: tool.inputSchema }))),
     JSON.stringify([...AI_READ_TOOLS, ...AI_ASSISTANT_V2_TOOLS].map((tool) => ({ name: tool.name, description: tool.description, input: tool.schema }))),
   ]
-  for (const text of visible) assert.doesNotMatch(text, /LDM-\d|LOCAL-DEMO|PO-020\b/)
+  // Nor the showcase items' or suppliers' names (Flow Controller, Temperature Sensor).
+  for (const text of visible) assert.doesNotMatch(text, /LDM|LOCAL-DEMO|PO-020\b|Flow Controller|Temperature Sensor|Northstar|Summit Packaging/)
 })
 
 // A live re-check on 2026-11-05: "What approvals are pending?" lost both
