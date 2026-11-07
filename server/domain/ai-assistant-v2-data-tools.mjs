@@ -968,14 +968,18 @@ function orderPlanResult(result, { facts, records, items, args }) {
 // added: an open sales order becomes a shipment.
 const stockProjection = defineAiTool({
   name: 'stock_projection',
-  description: 'How one SKU\'s available stock moves over the next weeks, from what is available today and adding open purchase order lines in the week they are promised. weeks takes off open sales orders in the week promised to the customer. atRecordedRate takes off the average quantity shipped per day over the last 90 days instead (recordedDemand, the reorder list\'s demand), for stock that sells without open sales orders. Lines past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed. Gives the first week the SKU falls below safety stock or short, on each basis.',
+  description: 'How one SKU\'s available stock moves over the next weeks, from what is available today and adding open purchase order lines in the week they are promised. weeks takes off open sales orders in the week promised to the customer. atRecordedRate takes off the average quantity shipped per day over the last 90 days instead (recordedDemand, the reorder list\'s demand), for stock that sells without open sales orders. Lines past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed; availableIfLateLinesArrive is what is available once the late ones arrive. Gives the first week the SKU falls below safety stock or short, on each basis.',
   parameters: { sku: { type: 'string', description: 'The SKU.' }, weeks: { type: 'integer', minimum: 1, maximum: 12, description: '4 by default.' } },
   required: ['sku'],
   available: (facts, context) => Boolean(facts.inventory) && Boolean(facts.asOf || facts.today) && Boolean(context?.actor && context.prisma),
   assistantV2Only: true,
   async run(args, { facts, context }) {
-    const projection = aiStockProjection(facts, { sku: args.sku, weeks: args.weeks || 4 })
-    if (projection.error || projection.noStockOrOrders) return projection
+    const base = aiStockProjection(facts, { sku: args.sku, weeks: args.weeks || 4 })
+    if (base.error || base.noStockOrOrders) return base
+    // What is available once the lines past their promised date arrive, which
+    // answers add up themselves otherwise (2026-11-07: "库存会增加到 408 件").
+    const late = array(base.notPlacedInAWeek?.incomingPastPromisedDate).reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0)
+    const projection = late ? { ...base, availableIfLateLinesArrive: (base.availableToday ?? 0) + late } : base
     const row = stockRow(facts, args.sku)
     const item = row?.itemId ? (await storedItems(context, [text(row.itemId)])).get(text(row.itemId)) : null
     const demand = item ? await recordedDemand(context, facts, [item]) : null
