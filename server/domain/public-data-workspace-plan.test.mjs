@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PUBLIC_DATA_WORKSPACE_EXTRACT_SCHEMA, buildPublicDataPlan, itemThresholds, publicDataPlanCounts, readPublicDataExtract, simulatePurchasing, titleCase } from '../../scripts/public-data/plan.mjs'
+import { UCI_SCENE } from '../../scripts/public-data/scene.mjs'
 import { publicDataNoteSummary } from './public-data-note.mjs'
 
 // A tiny synthetic extract in the shape scripts/public-data/extract_public_data.py
@@ -64,7 +65,7 @@ test('public data plan moves the window so its last day is yesterday', () => {
 })
 
 test('public data plan keeps every UCI invoice line and its customer', () => {
-  const plan = buildPublicDataPlan(syntheticExtract(), 'uci', { seedDay: '2026-11-07' })
+  const plan = buildPublicDataPlan(syntheticExtract(), 'uci', { seedDay: '2026-11-07', scene: false })
   assert.equal(plan.profile.currency, 'GBP')
   assert.deepEqual(plan.customers.map((customer) => [customer.code, customer.name]), [['CUST-12348', 'Customer 12348 (Finland)'], ['CUST-12352', 'Customer 12352 (Norway)']])
   assert.deepEqual(plan.salesOrders.map((order) => [order.index, order.orderedAt, order.shippedAt, order.source.invoice]), [[0, '09:15', '10:15', '580001'], [27, '12:50', '13:50', '580700']])
@@ -78,7 +79,7 @@ test('public data plan keeps every UCI invoice line and its customer', () => {
 })
 
 test('a shorter public data plan keeps only the last days', () => {
-  const plan = buildPublicDataPlan(syntheticExtract(), 'uci', { seedDay: '2026-11-07', lastDays: 7 })
+  const plan = buildPublicDataPlan(syntheticExtract(), 'uci', { seedDay: '2026-11-07', lastDays: 7, scene: false })
   assert.equal(plan.days, 7)
   assert.deepEqual(plan.salesOrders.map((order) => order.index), [6])
   assert.equal(plan.sourceWindow.first, '2011-12-03')
@@ -128,10 +129,98 @@ test('the workspace note sends only its known fields', () => {
   assert.deepEqual(note, {
     dataset: 'uci', sourceWindow: { first: '2010-12-10', last: '2011-12-09' }, window: { first: '2025-11-07', last: '2026-11-06' }, shiftDays: 5446,
     counts: { items: 200, customers: 1023 }, assumptions: { leadTimeDays: 14, paymentTermsDays: 30 },
-    citation: 'Chen, D. (2012). Online Retail II.', licence: 'CC BY 4.0', url: 'https://archive.ics.uci.edu/dataset/502/online+retail+ii',
+    citation: 'Chen, D. (2012). Online Retail II.', licence: 'CC BY 4.0', url: 'https://archive.ics.uci.edu/dataset/502/online+retail+ii', sceneSuppliers: [],
   })
   assert.equal(publicDataNoteSummary({ dataset: 'other' }), null)
   assert.equal(publicDataNoteSummary(null), null)
   assert.equal(publicDataNoteSummary({ dataset: 'm5', sourceWindow: { first: 'x' } }), null)
   assert.equal(publicDataNoteSummary({ dataset: 'm5', sourceWindow: { first: '2015-05-24', last: '2016-05-22' }, window: { first: '2025-11-07', last: '2026-11-06' }, shiftDays: 3820, source: { url: 'javascript:alert(1)' } }).url, null)
+})
+
+// A synthetic UCI extract with the scene's products and four more in each of
+// their code families, every product bought daily in steady amounts.
+function sceneExtract(days = 140) {
+  const codes = ['85123A', '85099B', '85099C', '85099F', '85152', '84879', '84946', '84947', '84945', '84077', '22423', '22197']
+  const first = Date.UTC(2011, 6, 23)
+  const at = (index) => new Date(first + index * 86400000).toISOString().slice(0, 10)
+  const invoices = Array.from({ length: days }, (_, index) => ({
+    number: String(560000 + index), at: `${at(index)}T10:00`, customer: '12348', country: 'Finland',
+    lines: codes.map((code, position) => [code, 6 + ((index + position) % 5) * 3, 2]),
+  }))
+  return {
+    schema: PUBLIC_DATA_WORKSPACE_EXTRACT_SCHEMA,
+    m5: { source: {}, rules: [], store: 'ST_1', window: { first: '2016-01-01', last: '2016-01-01', days: 1 }, dates: ['2016-01-01'], items: [{ id: 'D_1_001', department: 'D_1', category: 'D', daily: [1], prices: [1] }] },
+    uci: {
+      source: {}, rules: [], window: { first: at(0), last: at(days - 1), days },
+      products: codes.map((code) => ({ code, name: `PRODUCT ${code}`, price: 2 })),
+      customers: [{ id: '12348', country: 'Finland' }], invoices, cancellations: [],
+    },
+  }
+}
+
+test('the walkthrough scene holds: a late-covered hero, a second late supplier, one suggestion at its minimum', () => {
+  const plan = buildPublicDataPlan(sceneExtract(), 'uci', { seedDay: '2026-11-10' })
+  const { hero, second, reorder, approval } = plan.scene
+  // Hero: below safety stock, two late Acme orders (one partly received) covering its reorder point.
+  assert.ok(hero.onHand > 0 && hero.onHand < hero.safetyStock)
+  assert.ok(hero.position > hero.reorderPoint)
+  assert.deepEqual(hero.orders.map((order) => [order.role, order.ordered, order.received, order.created, order.promised]), [
+    ['hero_partly_received', 2 * hero.minimumOrderQuantity, hero.minimumOrderQuantity, -20, -6],
+    ['hero_nothing_received', 2 * hero.minimumOrderQuantity, 0, -18, -4],
+  ])
+  // Second supplier: one late order, nothing received, that covers the item.
+  assert.equal(second.order.promised, -5)
+  assert.ok(second.position > second.reorderPoint)
+  // The reorder suggestion: no open order, a shortfall under the minimum, raised to it.
+  assert.equal(reorder.shortfall, UCI_SCENE.reorder.shortfall)
+  assert.equal(reorder.suggested, reorder.minimumOrderQuantity)
+  assert.equal(approval.ordered, approval.minimumOrderQuantity)
+  // Suppliers: the two fictional names on reserved domains; Acme Tier 1.
+  const named = plan.suppliers.filter((supplier) => supplier.scene)
+  assert.deepEqual(named.map((supplier) => [supplier.code, supplier.name, supplier.email, supplier.tier]), [
+    ['GLOBEX', 'Globex Party Supplies', 'orders@globex-party.example', null],
+    ['ACME', 'Acme Home Goods', 'orders@acme-homegoods.example', 1],
+  ])
+  for (const supplier of named) assert.match(supplier.email, /@[a-z-]+\.example$/)
+  // Orders: the scene's are open and late; one waits for approval; nothing else is late.
+  const n = plan.days
+  const received = (order) => order.receipts.reduce((total, receipt) => total + receipt.lines.reduce((sum, line) => sum + line.quantity, 0), 0)
+  const ordered = (order) => order.lines.reduce((total, line) => total + line.quantity, 0)
+  const lateOpen = plan.purchasing.orders.filter((order) => order.status === 'issued' && order.promised < n && received(order) < ordered(order))
+  assert.deepEqual(lateOpen.map((order) => order.scene).sort(), ['hero_nothing_received', 'hero_partly_received', 'second_supplier_late'])
+  assert.deepEqual(plan.purchasing.orders.filter((order) => order.status === 'pending_approval').map((order) => order.scene), ['waiting_for_approval'])
+  // Acme delivered some weekly orders after their promised date.
+  const acme = plan.purchasing.orders.filter((order) => order.supplierKey === '85' && !order.scene && order.receipts.length)
+  assert.ok(acme.some((order) => order.receipts[0].index > order.promised))
+  assert.ok(acme.some((order) => order.receipts[0].index === order.promised))
+  // The public sales are untouched by the scene.
+  assert.equal(plan.salesOrders.length, 140)
+})
+
+test('a scene product missing from the extract stops the plan with its code', () => {
+  const extract = sceneExtract()
+  extract.uci.products = extract.uci.products.filter((product) => product.code !== '22423')
+  extract.uci.invoices = extract.uci.invoices.map((invoice) => ({ ...invoice, lines: invoice.lines.filter(([code]) => code !== '22423') }))
+  assert.throws(() => buildPublicDataPlan(extract, 'uci', { seedDay: '2026-11-10' }), /needs UCI products 22423/)
+  assert.doesNotThrow(() => buildPublicDataPlan(extract, 'uci', { seedDay: '2026-11-10', scene: false }))
+})
+
+test('trimmed closing stock never leaves a day short', () => {
+  const days = 50
+  const daily = Array.from({ length: days }, (_, index) => 5 + (index % 4))
+  const item = { key: 'A', supplierKey: 'S', daily, ...itemThresholds(6.5), targetClosing: 3 }
+  const reviewIndexes = Array.from({ length: days }, (_, index) => index).filter((index) => index % 7 === 0)
+  const result = simulatePurchasing({ days, items: [item], reviewIndexes, leadTimeDays: 14, delayOf: (review) => (review === 7 ? 2 : 0) })
+  let onHand = result.opening.A
+  for (let day = 0; day < days; day += 1) {
+    for (const order of result.orders) if (order.arrival === day) onHand += order.lines[0].quantity
+    assert.ok(onHand >= daily[day], `day ${day}`)
+    onHand -= daily[day]
+  }
+  assert.equal(onHand, result.closing.A)
+  assert.ok(result.closing.A >= 3)
+  for (const order of result.orders) {
+    assert.equal(order.arrival, order.review + 14 + (order.review === 7 ? 2 : 0))
+    assert.ok(order.lines[0].quantity >= item.minimumOrderQuantity)
+  }
 })

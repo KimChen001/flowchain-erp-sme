@@ -31,5 +31,7 @@ export function publicDataNoteSummary(payload) {
     citation: text(payload.source?.citation),
     licence: text(payload.source?.licence, 80),
     url: /^https:\/\//.test(String(payload.source?.url || '')) ? text(payload.source.url, 200) : null,
+    // The walkthrough scene's fictional suppliers (scripts/public-data/scene.mjs).
+    sceneSuppliers: Array.isArray(payload.scene?.suppliers) ? payload.scene.suppliers.map((name) => text(name, 80)).filter(Boolean).slice(0, 5) : [],
   }
 }

@@ -45,7 +45,7 @@ export async function handleRuntimeRoutes({
     const tenantId = String(env.FLOWCHAIN_DEFAULT_TENANT_ID || "").trim();
     const [tenant, users, publicDataNote] = await Promise.all([
       prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } }),
-      prisma.user.findMany({ where: { tenantId, status: "active", email: { in: ["admin@flowchain.local", "kim@example.com"] } }, select: { email: true }, orderBy: { email: "asc" } }),
+      prisma.user.findMany({ where: { tenantId, status: "active", email: { in: ["admin@flowchain.local", "kim@example.com", "daniel@example.com"] } }, select: { email: true }, orderBy: { email: "asc" } }),
       // The note a workspace seeded from public data carries (scripts/public-data/seed.mjs):
       // which dataset, its original dates and how far they moved, what is assumed.
       prisma.runtimeRecord.findUnique({ where: { tenantId_namespace_recordKey: { tenantId, namespace: "workspace.public-data", recordKey: "note" } }, select: { payload: true } }),

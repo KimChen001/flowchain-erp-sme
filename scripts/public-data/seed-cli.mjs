@@ -47,6 +47,7 @@ try {
     process.exit(0)
   }
   const result = await seedPublicData(prisma, process.env, { plan, log: (line) => console.log(`[public-data] ${line}`) })
+  if (result.scene) console.log(`[public-data] ${dataset} scene: ${JSON.stringify(result.scene)}`)
   console.log(`[public-data] ${dataset} ready in ${result.seconds} s (as of ${result.seedDay}, data ${plan.sourceWindow.first}..${plan.sourceWindow.last} moved ${plan.shiftDays} days): ${Object.entries(result.counts).map(([name, count]) => `${name}=${count}`).join(' ')}`)
 } finally {
   await disconnectPrismaClient()

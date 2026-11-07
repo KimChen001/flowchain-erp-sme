@@ -23,6 +23,8 @@
 //   npm run walkthrough:local -- --extract=<file>   the extract (default
 //                                                   FLOWCHAIN_PUBLIC_DATA_EXTRACT or
 //                                                   ~/flowchain-data/public-data-extract.json)
+//   npm run walkthrough:local -- --as-of=YYYY-MM-DD seed as of that day instead of today
+//                                                   (the data's last day is the day before)
 //   npm run walkthrough:local -- --ai-env=<file>    also use the assistant's model
 //
 // --ai-env is the one exception to "calls no paid service", and only when
@@ -48,6 +50,7 @@ const secondAppPort = Number(process.env.FLOWCHAIN_WALKTHROUGH_SECOND_APP_PORT |
 const database = "flowchain_walkthrough";
 const user = "flowchain_walkthrough";
 const extractArg = process.argv.find((arg) => arg.startsWith("--extract="));
+const asOfArg = process.argv.find((arg) => arg.startsWith("--as-of="));
 const extractPath = resolve(extractArg ? extractArg.slice("--extract=".length) : process.env.FLOWCHAIN_PUBLIC_DATA_EXTRACT || join(homedir(), "flowchain-data", "public-data-extract.json"));
 
 // The server fills any empty variable from .env.local, .env and, in local
@@ -193,9 +196,9 @@ try {
     // aborting each other in the one database.
     const started = Date.now();
     for (const workspace of workspaces) {
-      await runNode(["scripts/public-data/seed-cli.mjs", `--dataset=${workspace.dataset}`, `--extract=${extractPath}`], `Seeding ${workspace.workspaceName} from public data`, envFor(workspace));
+      await runNode(["scripts/public-data/seed-cli.mjs", `--dataset=${workspace.dataset}`, `--extract=${extractPath}`, ...(asOfArg ? [asOfArg] : [])], `Seeding ${workspace.workspaceName} from public data`, envFor(workspace));
     }
-    writeFileSync(seededPath, JSON.stringify({ seededAt: new Date().toISOString(), seconds: Math.round((Date.now() - started) / 1000), extract: extractPath }, null, 2));
+    writeFileSync(seededPath, JSON.stringify({ seededAt: new Date().toISOString(), asOf: asOfArg ? asOfArg.slice("--as-of=".length) : null, seconds: Math.round((Date.now() - started) / 1000), extract: extractPath }, null, 2));
   } else {
     step("Workspaces already seeded; keeping their data (use --reset to start over)");
   }
@@ -212,7 +215,7 @@ try {
 [walkthrough] Ready:
 [walkthrough]   ${workspaces[0].workspaceName}: http://127.0.0.1:${workspaces[0].appPort}
 [walkthrough]   ${workspaces[1].workspaceName}: http://127.0.0.1:${workspaces[1].appPort}
-[walkthrough] Sign in with admin@flowchain.local or kim@example.com, then open
+[walkthrough] Sign in with admin@flowchain.local or kim@example.com (UCI also daniel@example.com), then open
 [walkthrough] "View the sign-in link" on the sign-in page (local outbox only).
 [walkthrough] Data folder: ${dataRoot}   Stop with Ctrl+C.
 [walkthrough] Model features: ${aiEnvArg ? `on (${aiEnv.FLOWCHAIN_AI_PROVIDER_KIND}, ${aiEnv.FLOWCHAIN_AI_PROVIDER_MODEL || "default model"}; knowledge ${aiEnv.FLOWCHAIN_KNOWLEDGE_PROVIDER || "off"})` : "off"}`);

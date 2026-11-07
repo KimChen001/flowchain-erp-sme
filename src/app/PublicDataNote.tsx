@@ -15,6 +15,7 @@ export type PublicDataNote = {
   citation: string | null;
   licence: string | null;
   url: string | null;
+  sceneSuppliers: string[];
 };
 
 const hiddenKey = (note: PublicDataNote) => `flowchain.publicDataNote.hidden.${note.dataset}.${note.window.last}`;
@@ -72,6 +73,7 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
             <div className="mt-2 space-y-1.5 text-slate-600" data-testid="public-data-note-details">
               <p>{t("publicData.assumed", { leadTimeDays, reviewDays, cover: leadTimeDays + reviewDays })}</p>
               {note.dataset === "uci" && <p>{t("publicData.uciAssumed", { paymentTermsDays: note.assumptions.paymentTermsDays ?? 30 })}</p>}
+              {note.sceneSuppliers?.length > 0 && <p>{t("publicData.scene", { suppliers: note.sceneSuppliers.join(", ") })}</p>}
               <p>{t("publicData.dates")}</p>
               {note.citation && (
                 <p className="break-words">

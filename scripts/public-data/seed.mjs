@@ -15,12 +15,15 @@
 //   5. the [assumed] supplier terms (item supplier command);
 //   6. UCI only: a customer invoice for each shipment, issued on its day, due
 //      30 days later and paid then [assumed], and its receivable;
-//   7. the workspace note: what is public, what is assumed, the date shift.
+//   7. the walkthrough scene's supplier tier, set by its buyer (scene.mjs);
+//   8. the workspace note: what is public, what is assumed, the date shift.
 import { assertLocalDevelopment } from '../../server/domain/local-development-contract.mjs'
 import { allocateDocumentNumber } from '../../server/domain/document-numbering.mjs'
 import { createInventoryOperationsCommandService } from '../../server/domain/inventory-operations-command-service.mjs'
 import { createReceivingPostingCommandService } from '../../server/domain/receiving-posting-command-service.mjs'
 import { saveItemSupplier } from '../../server/domain/master-data-commands.mjs'
+import { applySupplierTierChange } from '../../server/domain/supplier-tier-command.mjs'
+import { backfillTenantAuthorization } from '../../server/auth/authorization-backfill.mjs'
 import { HISTORY_PERMISSIONS, scenarioActor, scenarioCalendar, shipHistoryOrder } from '../seed-history.mjs'
 import { publicDataPlanCounts } from './plan.mjs'
 
@@ -56,17 +59,20 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   const tenantId = String(env.FLOWCHAIN_DEFAULT_TENANT_ID || profile.tenantId).trim()
   const P = plan.dataset.toUpperCase()
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } })
-  if (!tenant) throw new Error(`Provision workspace ${tenantId} (scripts/setup-pilot-workspace.mjs) before seeding public data data.`)
-  if (await prisma.item.findFirst({ where: { tenantId }, select: { id: true } })) throw new Error(`Workspace ${tenantId} already has items; seed public data data into an empty workspace.`)
+  if (!tenant) throw new Error(`Provision workspace ${tenantId} (scripts/setup-pilot-workspace.mjs) before seeding public data.`)
+  if (await prisma.item.findFirst({ where: { tenantId }, select: { id: true } })) throw new Error(`Workspace ${tenantId} already has items; seed public data into an empty workspace.`)
   await prisma.tenant.update({ where: { id: tenantId }, data: { name: profile.workspaceName, currency: profile.currency, timezone: profile.timezone, countryCode: profile.countryCode } })
   const calendar = scenarioCalendar(plan.seedDay, profile.timezone)
   const { at, isoDay } = calendar
   const offset = plan.offsetOf
   const dateOnly = (index) => new Date(`${isoDay(offset(index))}T12:00:00.000Z`)
   const historyEnv = { ...env, FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: 'true', FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: 'true', FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: 'true' }
-  const actor = await scenarioActor(prisma, tenantId, [...HISTORY_PERMISSIONS, 'receiving.post'], 'opening stock, receipts and shipments')
-  const buyer = await prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } })
   const metadata = { publicData: true, publicDataset: plan.dataset, scenarioAsOf: plan.seedDay }
+  // The scene's buyer signs in like the other local users, with the same role
+  // as the workspace's manager.
+  const sceneBuyer = plan.scene?.buyer ? await createSceneBuyer(prisma, tenantId, plan.scene.buyer) : null
+  const actor = await scenarioActor(prisma, tenantId, [...HISTORY_PERMISSIONS, 'receiving.post'], 'opening stock, receipts and shipments')
+  const buyer = sceneBuyer || await prisma.user.findUnique({ where: { id: actor.userId }, select: { id: true, name: true } })
   const timing = {}
   const lap = (name, since) => { timing[name] = Math.round((Date.now() - since) / 1000) }
 
@@ -80,7 +86,10 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   }
   const supplierId = (key) => `${P}-SUP-${safeId(key)}`
   await prisma.supplier.createMany({
-    data: plan.suppliers.map((supplier) => ({ id: supplierId(supplier.key), tenantId, code: supplier.code, name: supplier.name, category: supplier.category, riskLevel: 'low', metadata: { ...metadata, assumed: true, defaultCurrency: profile.currency } })),
+    data: plan.suppliers.map((supplier) => ({
+      id: supplierId(supplier.key), tenantId, code: supplier.code, name: supplier.name, category: supplier.category, riskLevel: 'low',
+      metadata: { ...metadata, assumed: true, defaultCurrency: profile.currency, ...(supplier.email ? { email: supplier.email, contactName: supplier.contactName } : {}), ...(supplier.scene ? { walkthroughScene: true } : {}) },
+    })),
   })
   const customerId = (key) => `${P}-CUS-${safeId(key)}`
   const customers = new Map(plan.customers.map((customer) => [customer.key, { ...customer, id: customerId(customer.key) }]))
@@ -108,7 +117,8 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   })
   lap('masterData', since)
 
-  // 2. Sales orders (confirmed) and purchase orders (issued) with their receipts.
+  // 2. Sales orders (confirmed) and purchase orders (issued, or waiting for
+  // approval) with their receipts.
   since = Date.now()
   const orderRows = plan.salesOrders
     .map((order, sequence) => ({ ...order, id: `${P}-SO-${String(sequence + 1).padStart(5, '0')}` }))
@@ -142,6 +152,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   }
 
   const receipts = []
+  const sceneOrders = {}
   const purchaseOrders = plan.purchasing.orders.map((order, sequence) => ({ ...order, id: `${P}-PO-${String(sequence + 1).padStart(5, '0')}` }))
   for (const part of chunks(purchaseOrders, 200)) {
     await prisma.$transaction(async (tx) => {
@@ -151,40 +162,56 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
       const documentLines = []
       for (const order of part) {
         const supplier = plan.suppliers.find((row) => row.key === order.supplierKey)
-        const createdAt = at(offset(order.review), '09:30')
-        const issuedAt = at(offset(order.review), '11:00')
-        const promised = isoDay(offset(order.arrival))
+        const createdAt = at(offset(order.created), order.createdTime || '09:30')
+        const issued = order.status === 'issued'
+        const issuedAt = issued ? new Date(createdAt.getTime() + 90 * 60000) : null
+        const promised = isoDay(offset(order.promised))
         const number = await allocateDocumentNumber(tx, { tenantId, documentType: 'purchase_order', at: createdAt })
+        if (order.scene) sceneOrders[order.scene] = number
         let amount = 0
         const poLines = order.lines.map((line, lineIndex) => {
           const item = items.get(line.itemKey)
-          const unitPrice = plan.dataset === 'm5' ? item.prices[order.review] : item.price
+          const unitPrice = plan.dataset === 'm5' ? item.prices[order.created] : item.price
           const lineAmount = money(line.quantity * unitPrice)
           amount += lineAmount
           return {
             id: `${order.id}-L${String(lineIndex + 1).padStart(3, '0')}`, purchaseOrderId: order.id, itemId: item.id, sku: item.sku, itemName: item.name, orderedQuantity: line.quantity, receivedQuantity: 0,
-            unit: 'pcs', unitPrice, amount: lineAmount, originalPromisedDate: new Date(`${promised}T12:00:00Z`),
+            unit: 'pcs', unitPrice, amount: lineAmount, originalPromisedDate: issued ? new Date(`${promised}T12:00:00Z`) : null,
             metadata: { ...metadata, assumed: true, targetWarehouseId: warehouse.id, requestedDate: promised, promisedDate: promised, ...(line.raisedBy ? { raisedForDemandSpike: line.raisedBy } : {}) },
           }
         })
         orders.push({
-          id: order.id, tenantId, number, status: 'issued', supplierId: supplierId(order.supplierKey), supplierName: supplier.name, expectedDate: new Date(`${promised}T12:00:00Z`), amount: money(amount), currency: profile.currency,
+          id: order.id, tenantId, number, status: order.status, supplierId: supplierId(order.supplierKey), supplierName: supplier.name, expectedDate: new Date(`${promised}T12:00:00Z`), amount: money(amount), currency: profile.currency,
           owner: buyer?.name || null, priority: 'medium', issuedAt, createdAt,
-          metadata: { ...metadata, assumed: true, targetWarehouseId: warehouse.id, transmissionStatus: 'sent', issuedAt: issuedAt.toISOString(), purchasingRule: 'weekly_review_up_to_reorder_point_plus_minimum' },
+          metadata: {
+            ...metadata, assumed: true, targetWarehouseId: warehouse.id, transmissionStatus: issued ? 'sent' : 'not_sent', ...(issuedAt ? { issuedAt: issuedAt.toISOString() } : {}),
+            purchasingRule: order.scene ? 'walkthrough_scene' : 'weekly_review_base_stock', ...(order.scene ? { walkthroughScene: order.scene } : {}),
+          },
         })
         lines.push(...poLines)
-        if (order.arrival < plan.days) {
-          const arrivedAt = at(offset(order.arrival), RECEIPT_TIME)
-          const documentNumber = await allocateDocumentNumber(tx, { tenantId, documentType: 'receiving_document', at: arrivedAt })
-          const id = `${order.id}-GRN`
-          documents.push({ id, tenantId, documentNumber, poId: order.id, supplierId: supplierId(order.supplierKey), supplierName: supplier.name, status: 'received', workflowStatus: 'received', postingStatus: 'unposted', warehouseId: warehouse.id, receiver: buyer?.name || null, currency: profile.currency, arrivedAt, metadata, createdAt: arrivedAt })
-          poLines.forEach((line, lineIndex) => documentLines.push({ id: `${id}-L${String(lineIndex + 1).padStart(3, '0')}`, receivingDocumentId: id, purchaseOrderLineId: line.id, itemId: line.itemId, sku: line.sku, itemName: line.itemName, acceptedQty: line.orderedQuantity, rejectedQty: 0, unit: 'pcs', warehouseId: warehouse.id, location: 'A-01', locationKey: 'a-01', metadata }))
-          receipts.push({ id, arrivedAt, index: order.arrival })
-        }
+        const ordered = order.lines.reduce((total, line) => total + line.quantity, 0)
+        let cumulative = 0
+        order.receipts.forEach((receipt, receiptIndex) => {
+          const arrivedAt = at(offset(receipt.index), RECEIPT_TIME)
+          const id = `${order.id}-GRN${receiptIndex + 1}`
+          cumulative += receipt.lines.reduce((total, line) => total + line.quantity, 0)
+          documents.push({ id, arrivedAt, poId: order.id, supplierId: supplierId(order.supplierKey), supplierName: supplier.name, status: cumulative >= ordered ? 'received' : 'partial' })
+          receipt.lines.forEach((received, lineIndex) => {
+            const line = poLines.find((row) => row.itemId === items.get(received.itemKey).id)
+            documentLines.push({ id: `${id}-L${String(lineIndex + 1).padStart(3, '0')}`, receivingDocumentId: id, purchaseOrderLineId: line.id, itemId: line.itemId, sku: line.sku, itemName: line.itemName, acceptedQty: received.quantity, rejectedQty: 0, unit: 'pcs', warehouseId: warehouse.id, location: 'A-01', locationKey: 'a-01', metadata })
+          })
+          receipts.push({ id, arrivedAt, index: receipt.index })
+        })
       }
       await tx.purchaseOrder.createMany({ data: orders })
       for (const lineChunk of chunks(lines)) await tx.purchaseOrderLine.createMany({ data: lineChunk })
-      if (documents.length) await tx.receivingDocument.createMany({ data: documents })
+      // Receipts are numbered in the order they arrive.
+      const numbered = []
+      for (const document of [...documents].sort((a, b) => a.arrivedAt - b.arrivedAt || a.id.localeCompare(b.id))) {
+        const documentNumber = await allocateDocumentNumber(tx, { tenantId, documentType: 'receiving_document', at: document.arrivedAt })
+        numbered.push({ ...document, tenantId, documentNumber, workflowStatus: 'received', postingStatus: 'unposted', warehouseId: warehouse.id, receiver: buyer?.name || null, currency: profile.currency, metadata, createdAt: document.arrivedAt })
+      }
+      if (numbered.length) await tx.receivingDocument.createMany({ data: numbered })
       for (const lineChunk of chunks(documentLines)) await tx.receivingLine.createMany({ data: lineChunk })
     }, { timeout: 600000 })
   }
@@ -279,7 +306,27 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   }
   lap('customerInvoices', since)
 
-  // 7. The workspace note.
+  // 7. The scene's supplier tier, set by its buyer with a written reason from
+  // the purchase orders: the supplier's share of purchase spend over the
+  // last 12 months.
+  let tiers = []
+  if (plan.scene) {
+    const spend = await prisma.purchaseOrder.groupBy({ by: ['supplierId'], where: { tenantId, createdAt: { gte: at(offset(plan.days - 365), '00:00') } }, _sum: { amount: true } })
+    const total = spend.reduce((sum, row) => sum + Number(row._sum.amount || 0), 0)
+    for (const supplier of plan.suppliers.filter((row) => row.tier)) {
+      const share = total ? Math.round((100 * Number(spend.find((row) => row.supplierId === supplierId(supplier.key))?._sum.amount || 0)) / total) : 0
+      const hero = plan.scene.hero
+      const reason = `Tier ${supplier.tier}: sole source of our best-selling ${hero.name} and the other ${plan.items.filter((item) => item.supplierKey === supplier.key).length - 1} ${supplier.key}xxx lines; ${share}% of purchase spend over the last 12 months.`
+      await prisma.$transaction(async (tx) => {
+        const row = await tx.supplier.findUniqueOrThrow({ where: { id: supplierId(supplier.key) } })
+        await applySupplierTierChange(tx, row, { tier: supplier.tier, reason, actorId: buyer.id, source: 'supplier-master', now: at(-40, '10:30') })
+        await tx.supplier.update({ where: { id: row.id }, data: { businessOwnerId: buyer.id } })
+      })
+      tiers.push({ supplier: supplier.name, tier: supplier.tier, reason, share, setBy: buyer.name })
+    }
+  }
+
+  // 8. The workspace note.
   const counts = { ...publicDataPlanCounts(plan), postedReceipts: posted, shippedOrders: shipped, customerInvoices: invoices }
   const note = {
     dataset: plan.dataset,
@@ -291,9 +338,27 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
     source: plan.sources,
     rules: plan.rules,
     assumptions: { ...assumptions },
+    ...(plan.scene ? { scene: { suppliers: plan.suppliers.filter((row) => row.scene).map((row) => row.name) } } : {}),
   }
   await prisma.runtimeRecord.create({ data: { id: `${P}-PUBLIC-DATA-NOTE`, tenantId, namespace: PUBLIC_DATA_NOTE_NAMESPACE, recordKey: PUBLIC_DATA_NOTE_KEY, payload: note } })
-  return { tenantId, seedDay: plan.seedDay, counts, seconds: Math.round((Date.now() - started) / 1000), timing }
+  const scene = plan.scene ? { ...plan.scene, purchaseOrders: sceneOrders, tiers, suppliers: plan.suppliers.filter((row) => row.scene).map(({ name, code, email, contactName }) => ({ name, code, email, contactName })) } : null
+  return { tenantId, seedDay: plan.seedDay, counts, seconds: Math.round((Date.now() - started) / 1000), timing, scene }
+}
+
+// The scene's buyer: a workspace user with the manager's role, a warehouse
+// scope like the others, and role assignments from the authorization backfill.
+async function createSceneBuyer(prisma, tenantId, { name, email, jobTitle }) {
+  const existing = await prisma.user.findFirst({ where: { tenantId, email } })
+  if (existing) return existing
+  const manager = await prisma.user.findFirst({ where: { tenantId, role: 'manager', status: 'active' }, orderBy: { email: 'asc' } })
+  const user = await prisma.user.create({ data: { id: `USR-${tenantId}-${email.split('@')[0]}`, tenantId, email, name, role: 'manager', jobTitle, status: 'active', defaultWarehouseId: manager?.defaultWarehouseId || null } })
+  const scopes = await prisma.userWarehouseScope.findMany({ where: { tenantId, userId: manager?.id || '' } })
+  for (const scope of scopes) {
+    await prisma.userWarehouseScope.create({ data: { id: `${user.id}-${scope.warehouseId}`, tenantId, userId: user.id, warehouseId: scope.warehouseId, accessLevel: scope.accessLevel } })
+  }
+  const admin = await prisma.user.findFirst({ where: { tenantId, role: 'admin', status: 'active' } })
+  await backfillTenantAuthorization(prisma, tenantId, { actorId: admin?.id || user.id })
+  return user
 }
 
 // The note a workspace was seeded with, or null.

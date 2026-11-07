@@ -62,13 +62,26 @@ Dates move by whole days so the last day of the data is the day before the seed 
 
 Both datasets have demand only. Everything a buyer also needs is assumed, by the research rules (`data/public/m5/SELECTION.md` of the research folder), and labelled so in the workspace note:
 
-- **Suppliers:** M5, one per department ("Foods 3 vendor (assumed)"); UCI, one per StockCode family of the first two digits, with families of fewer than five products sharing one ("Supplier of 22xxx codes (assumed)").
+- **Suppliers:** M5, one per department ("Foods 3 vendor (assumed)"); UCI, one per StockCode family of the first two digits, with families of fewer than five products sharing one ("Supplier of 22xxx codes (assumed)"). Two UCI families have fictional names for the walkthrough scene (below).
 - **Lead time** 14 days; **review** every 7 days, on Mondays.
 - **Minimum order** a week of average daily demand, rounded up to 10.
-- **Safety stock** a week of average demand; **reorder point** 21 days (lead time plus review) of average demand. Averages are over the whole window.
+- **Safety stock** a week of average demand; **reorder point** 21 days (lead time plus review) of average demand. The average is over the last 90 days of the window, the window the reorder list reads and the research instances use.
 - **Purchase price** the public selling price (a proxy: neither dataset has costs), so holding cost h = 25 %/yr × price × (L + 7)/365 and shortage cost π = 5h in the order plan match the research rule. Gross margin is not meaningful in these workspaces.
-- **Purchasing history:** opening stock of the reorder point plus the minimum order the day before the window. At each Monday review an item whose position (on hand plus on order) is at or below its reorder point is ordered up to the reorder point plus its minimum order; the purchase order arrives 14 days later, at 07:00, and is received in full. Public demand is never cut: when a day's demand is more than the stock on hand, the item's order at the latest review that arrives by then is raised by the shortfall plus its safety stock (or such an order is added, at least the minimum), and before the first such review the opening stock is raised. Purchase orders placed in the last 14 days are still open.
+- **Purchasing history:** a weekly-review base-stock policy. The base stock level is the reorder point plus the safety stock (average demand over lead time and review, plus the buffer). Opening stock, the day before the window, is that level plus the minimum order. At each Monday review an item whose position (on hand plus on order) is at or below its base stock level is ordered up to that level plus its minimum order; the purchase order arrives 14 days later, at 07:00, and is received in full. Public demand is never cut: when a day's demand is more than the stock on hand, the item's order at the latest review that arrives by then is raised by the shortfall plus its safety stock (or such an order is added, at least the minimum), and before the first such review the opening stock is raised. Purchase orders placed in the last 14 days are still open.
 - **UCI payment terms:** customer invoices are due 30 days after the invoice and paid on the due date; receivables before the seed day are settled.
+
+## The walkthrough scene (UCI workspace)
+
+A buyer's first look at FlowChain needs a few purchasing problems to look at. The UCI workspace therefore has one labelled scene, all of it on the assumed purchasing side; the public sales are unchanged. It is defined in `scripts/public-data/scene.mjs`, dated back from the seed day (`--as-of`), and the plan stops with the reason if the data no longer supports it.
+
+- **Suppliers.** StockCode family 85 is *Acme Home Goods* (orders@acme-homegoods.example) and family 84 *Globex Party Supplies* (orders@globex-party.example): fictional names on reserved `.example` domains. Acme is Tier 1, set by the buyer with a written reason that states its share of purchase spend. Every third Acme order before the last three weeks arrived 2 days after its promised date, so its on-time rate shows.
+- **Buyer.** Daniel (daniel@example.com, buyer, the manager's role) owns the purchase orders and set the tier.
+- **Hero.** 85123A White Hanging Heart T-Light Holder ends below its safety stock. Acme has two late open orders for it: one partly received, one with nothing received. Together they cover its reorder point, so the reorder list does not suggest it.
+- **Second supplier.** 84879 Assorted Colour Bird Ornament has one late Globex order with nothing received, so late orders span two suppliers.
+- **Reorder.** 22423 Regency Cakestand 3 Tier has no open order and ends 20 under its reorder point; the reorder list suggests its minimum order.
+- **Approval.** 85152 Hand Over The Chocolate Sign has a purchase order waiting for approval.
+
+The scene items place no weekly orders in the last weeks (the hero and the bird ornament three weeks back, the cakestand from the latest review that still leaves it just under its reorder point), and their stock is cut back by cutting earlier received orders, never below an order's minimum and never so far that a public order goes unmet. The workspace note names the two suppliers as fictional and the scene as assumed.
 
 ## Size and seed time
 
@@ -82,6 +95,7 @@ COUNTS_TABLE
 npm ci
 npx prisma generate
 npm run walkthrough:local -- --extract=~/flowchain-data/public-data-extract.json
+npm run walkthrough:local -- --reset --as-of=2026-11-10   # seed as of a given day
 ```
 
 `FLOWCHAIN_WALKTHROUGH_DIR`, `FLOWCHAIN_WALKTHROUGH_PG_PORT`, `FLOWCHAIN_WALKTHROUGH_API_PORT`, `FLOWCHAIN_WALKTHROUGH_APP_PORT`, `FLOWCHAIN_WALKTHROUGH_SECOND_API_PORT` and `FLOWCHAIN_WALKTHROUGH_SECOND_APP_PORT` move the data folder and ports. `npm run dev:local -- --public-data` (M5) or `--public-data=uci` seeds a development database once, while its workspace is empty. `npm run public-data:seed -- --dataset=m5` seeds one provisioned workspace directly.
