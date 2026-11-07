@@ -1175,6 +1175,20 @@ test('chips called beside a request form do not end the answer: the words about 
   assert.deepEqual([shown(client.requests[1]), shown(client.requests[2])], [false, true])
 })
 
+// 2026-11-07 (public-data scene): the form's call failed for its source; the
+// model fetched the lines and wrote "the form is open below" without calling it again.
+test('a failed form call is named in each later round until the form is shown', async () => {
+  const { client, body } = await ask([
+    [...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), ...call('tu_form', 'suggest_purchase_request', { source: 'tu_po', from: 'suggestions' }), end()],
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-002'] }), end()],
+    [...call('tu_form2', 'suggest_purchase_request', { source: 'tu_lines', from: 'suggestions' }), end()],
+    [...say('Tick the items you want, then click Create draft request.'), end()],
+  ], { question: 'What should I order?', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  const notShown = (request) => request.messages.at(-1).content.some((block) => block.type === 'text' && /No suggest_purchase_request card is shown in this answer/.test(block.text))
+  assert.deepEqual(client.requests.slice(1).map(notShown), [true, true, false])
+  assert.match(body.conclusion.summary, /Tick the items you want/)
+})
+
 // 2026-11-07: a reorder answer ended at its opening line and the chips.
 test('chips in a round with no text do not end the answer on an earlier opening line', async () => {
   const { client, body } = await ask([

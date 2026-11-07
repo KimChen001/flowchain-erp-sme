@@ -131,6 +131,15 @@ function chineseTextWindow(raw, from, final) {
 }
 const HIDDEN_NOTE = 'The short text you wrote before reading was not shown to the user. Write the answer for the user after these results.'
 const SHOWN_NOTE = 'The user already sees the text you wrote so far in this answer, so never write it again. Keep working as the question needs, with more tool calls if it needs them; any text you add appears below what is there.'
+// A form or card whose call failed is not on screen until a later call of the
+// same tool succeeds (2026-11-07: a reorder answer's request form failed for
+// its source, the model fetched the lines and wrote "the form is open below"
+// twice without calling the form again).
+const cardNotShownNote = (names) => `No ${names.join(' or ')} card is shown in this answer: its call failed. Correct it as the error says and call it again, or do not say that it is shown.`
+const unshownCards = (calls) => [...CARD_TOOLS].filter((name) => {
+  const last = calls.filter((row) => row.tool === name).at(-1)
+  return last && last.status !== 'ok' && last.status !== 'skipped'
+})
 const DISPLAY_OFF = 'No display tool is available for the rest of this answer.'
 const displayOffNote = (names) => `No display tool (${names.join(', ')}) is available for the rest of this answer. Answer in prose from the results, and do not mention displays, tools or errors to the user.`
 const FLAG_KINDS = new Set(['number', 'date', 'name', 'record'])
@@ -235,7 +244,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- The user sees every word you write, text before a tool call included. Do not narrate what you are about to look up, fill in or show ("Let me check", "I\'ll fill in the form"); write text before a tool call only when it is part of the answer, and always in answerLanguage.',
   '- Every answer has at least one sentence of text that answers the question ("8 orders are overdue; PO-202610-0007 is the oldest, 15 days late."); a display never stands alone.',
   '- Name the records you rely on by their numbers as the tools give them, whole (PO-202611-0014, never PO-0014 or 0014); the app turns them into links. Do not add codes the user did not ask for, such as a supplier\'s code after its name.',
-  '- Do not talk about the answer itself or the limits of what you read ("the result also covers 3 more SKUs that I can\'t show here", "I can\'t tell you its name from this result"). If something the user asked about is not in the records you can read, say so once, plainly. Ask the user at most one question, and only when the records cannot settle it: before you ask which record the user means, check whether their words (a supplier, an amount, a reason such as "to refill safety stock") and the records leave only one, and then use it and say which. When you ask for a record number, never write an example number; say where the user finds it. Ask it once: with offer_choices the buttons ask it, so do not ask it again in the text, and never ask again for what the user already told you. With offer_choices, write at most one short sentence of what you found ("8 orders are overdue."), with no question and no "pick one" (请选一个, 请点选).',
+  '- Do not talk about the answer itself or the limits of what you read ("the result also covers 3 more SKUs that I can\'t show here", "I can\'t tell you its name from this result"). If something the user asked about is not in the records you can read, say so once, plainly. Ask the user at most one question, and only when this conversation and the records cannot settle it: before you ask which record the user means, check whether their words (a supplier, an amount, a reason such as "to refill safety stock"), what this conversation is about (the order, draft or item just discussed) and the records leave only one, and then use it and say which. When you ask for a record number, never write an example number; say where the user finds it. Ask it once: with offer_choices the buttons ask it, so do not ask it again in the text, and never ask again for what the user already told you. With offer_choices, write at most one short sentence of what you found ("8 orders are overdue."), with no question and no "pick one" (请选一个, 请点选).',
   '- Headings and labels in sentence case ("Overdue purchase orders", not "Overdue Purchase Orders"). Use the app\'s terms: Purchase order, Purchase request, Receipt, Item, RFQ, Supplier invoice, Customer invoice, Sales order, Shipment; in Chinese 采购订单、采购申请、收货单、物料、询价单、采购发票、销售发票、销售订单、发货单, open documents 未结 (未结采购订单), the promised date 承诺交期, a lead time in days 提前期, the minimum order quantity 最小起订量, items and suppliers as records 基础资料, and the user 你. In Chinese use full-width punctuation (，。：；！？（）), also next to English names and numbers, and a space between Chinese and a number (涉及 5 家，逾期 4 天).',
   '- When the answer has a clear next step, end it with suggest_followups, called once: one to three short next steps in answerLanguage, worded as the user would ask or tell you, about their own records ("Draft a request for SKU-123", "Show Acme\'s late orders"); an action before a question about a concept. In a new or nearly empty workspace the next steps are setup steps. Leave the chips out when the answer itself asks the user something (offer the records to pick from with offer_choices instead), when it only confirms or declines, and when nothing useful follows.',
   '- Never mention tools, displays, sources, ids, errors or retries to the user. If a display did not work, give the answer in prose as if nothing had happened.',
@@ -1245,7 +1254,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // above its form, the explanation unwritten. Nor when the round's text
       // is none: the only text was an opening line of an earlier round
       // (2026-11-07: a reorder answer ended at 21 characters and its chips).
-      if (toolUses.some((block) => block.name === 'suggest_followups') && !toolUses.some((block) => CARD_TOOLS.has(block.name)) && toolUses.every((block) => ui.has(block.name) && outcomes.get(block.id)?.ok) && parts.slice(roundStart).some((part) => part.type === 'text' && text(part.text))) { stop('end_turn'); break }
+      if (toolUses.some((block) => block.name === 'suggest_followups') && !toolUses.some((block) => CARD_TOOLS.has(block.name)) && toolUses.every((block) => ui.has(block.name) && outcomes.get(block.id)?.ok) && parts.slice(roundStart).some((part) => part.type === 'text' && text(part.text)) && !unshownCards(stats.ui).length) { stop('end_turn'); break }
       // The next call is the last when the limits say so, when a call after
       // it could not fit in what the answer may still spend, or when the
       // model called only withdrawn display tools.
@@ -1268,6 +1277,8 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // shown, so it writes the answer after the results (2026-11-07: an
       // answer ended empty after its only text was held).
       if (parts.slice(roundStart).some((part) => part.narration)) note.push({ type: 'text', text: HIDDEN_NOTE })
+      const unshown = unshownCards(stats.ui)
+      if (unshown.length) note.push({ type: 'text', text: cardNotShownNote(unshown) })
       if (stats.rounds >= limits.rounds || callCount >= limits.toolCalls || lastForCost || lastForTokens || lastForTime || displaysRefused) {
         finalRound = true
         stats.lastRoundForCost ||= lastForCost

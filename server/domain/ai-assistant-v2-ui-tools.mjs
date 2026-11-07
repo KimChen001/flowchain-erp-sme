@@ -863,7 +863,7 @@ const suggestPurchaseRequest = defineUiTool({
     if (!canDraft(ctx?.actor)) return fail('not_allowed', 'The user may not create purchase requests; explain and link to the record instead.')
     const source = sourceOf(ctx, input.source)
     if (source.error) return source
-    if (source.tool !== 'suggest_purchase_lines') return fail('wrong_source', `suggest_purchase_request takes a suggest_purchase_lines result; ${input.source} is ${source.tool}.`)
+    if (source.tool !== 'suggest_purchase_lines') return fail('wrong_source', `suggest_purchase_request takes a suggest_purchase_lines result; ${input.source} is ${source.tool}. Call suggest_purchase_lines for the items first, then suggest_purchase_request with its result as source. No form is shown until then.`)
     const { output } = source
     const lines = array(input.lines)
     if (input.from === 'user_named' && !lines.length) return fail('invalid_input', 'from user_named needs the named items in lines.')
