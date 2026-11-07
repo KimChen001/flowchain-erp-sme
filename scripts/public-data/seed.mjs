@@ -106,7 +106,12 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
     data: [...items.values()].map((item) => ({
       id: item.id, tenantId, sku: item.sku, name: item.name, category: item.category, unit: 'pcs', preferredSupplierId: supplierId(item.supplierKey),
       safetyStock: item.safetyStock, reorderPoint: item.reorderPoint,
-      metadata: { ...metadata, defaultWarehouseId: warehouse.id, safetyStock: item.safetyStock, reorderPoint: item.reorderPoint, source: item.source, thresholdsAssumed: true },
+      // The item's own purchasing fields (the item page shows them) agree
+      // with its preferred supplier's terms below.
+      metadata: {
+        ...metadata, defaultWarehouseId: warehouse.id, safetyStock: item.safetyStock, reorderPoint: item.reorderPoint, source: item.source, thresholdsAssumed: true,
+        minimumOrderQuantity: item.minimumOrderQuantity, moq: item.minimumOrderQuantity, purchaseLeadTimeDays: assumptions.leadTimeDays, leadTimeDays: assumptions.leadTimeDays,
+      },
     })),
   })
   await prisma.inventoryBalance.createMany({
@@ -323,7 +328,10 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
       const reason = `Tier ${supplier.tier}: sole source of our ${hero.name} (No. ${rank} of ${plan.items.length} products by sales value over the last 12 months) and of ${plan.items.filter((item) => item.supplierKey === supplier.key).length - 1} other ${supplier.key}xxx lines; ${share}% of purchase spend over the last 12 months.`
       await prisma.$transaction(async (tx) => {
         const row = await tx.supplier.findUniqueOrThrow({ where: { id: supplierId(supplier.key) } })
-        await applySupplierTierChange(tx, row, { tier: supplier.tier, reason, actorId: buyer.id, source: 'supplier-master', now: at(-40, '10:30') })
+        const setAt = at(-40, '10:30')
+        await applySupplierTierChange(tx, row, { tier: supplier.tier, reason, actorId: buyer.id, source: 'supplier-master', now: setAt })
+        // The tier's history row carries the day the tier was set, not the seed's.
+        await tx.auditLog.updateMany({ where: { tenantId, entityType: 'supplier', entityId: row.id, action: 'tier_change' }, data: { createdAt: setAt } })
         await tx.supplier.update({ where: { id: row.id }, data: { businessOwnerId: buyer.id } })
       })
       tiers.push({ supplier: supplier.name, tier: supplier.tier, reason, share, setBy: buyer.name })
