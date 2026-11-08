@@ -228,15 +228,14 @@ test('a stock row gives each incoming order\'s promised date and days overdue, a
   assert.ok(row.purchaseOrderDates.some((entry) => entry.orderNumber === 'PO-001' && entry.overdueDays > 0), 'PO-001 is overdue')
 })
 
-test('list_suppliers gives the contact a draft is addressed to, only where the facts hold it', async () => {
+// No read tool gives an email address (tests/postgres/ai-read-tools.test.mjs
+// holds every output to it): a draft leaves the To: line for the user.
+test('list_suppliers gives no contact email, though the facts hold one for drafting roles', async () => {
   const facts = await factsFor()
-  const row = (await runAiReadTool('list_suppliers', { name: 'Acme' }, { facts })).result.rows[0]
-  const stored = facts.suppliers.find((entry) => entry.name === row.name)
-  assert.ok('email' in stored)
-  assert.deepEqual([row.email, row.contactName], [stored.email, stored.contactName])
-  const bare = { ...facts, suppliers: facts.suppliers.map(({ email, contactName, ...rest }) => rest) }
-  const hidden = (await runAiReadTool('list_suppliers', { name: 'Acme' }, { facts: bare })).result.rows[0]
-  assert.ok(!('email' in hidden) && !('contactName' in hidden))
+  assert.ok(facts.suppliers.some((row) => 'email' in row))
+  const rows = (await runAiReadTool('list_suppliers', {}, { facts })).result.rows
+  assert.ok(rows.length > 0)
+  for (const row of rows) assert.ok(!('email' in row) && !('contactName' in row), row.name)
 })
 
 test('an order row names its items as the stock rows do, so a draft can name them', async () => {
