@@ -129,6 +129,7 @@ export function aiGroundingSources(results = []) {
   const days = new Set()
   const months = new Set()
   const names = new Set()
+  const nameOrigins = new Map()
   const addDates = (value) => {
     for (const match of value.matchAll(/(?<!\d)(\d{4})-(\d{2})(?:-(\d{2}))?(?!\d)/g)) {
       months.add(`${match[1]}-${match[2]}`)
@@ -164,9 +165,15 @@ export function aiGroundingSources(results = []) {
       // So is the part before a bracket, which a Chinese answer may follow
       // with its own words (Customer 16684（英国）).
       if (NAME_KEYS.has(key) && /\p{L}/u.test(value) && /\d/.test(value) && value.trim().length >= 3) {
-        names.add(value.trim())
         const head = value.split(/\s*[(（]/)[0].trim()
-        if (head !== value.trim() && /\p{L}/u.test(head) && /\d/.test(head) && head.length >= 3) names.add(head)
+        for (const name of new Set([value.trim(), head])) {
+          if (!/\p{L}/u.test(name) || !/\d/.test(name) || name.length < 3) continue
+          names.add(name)
+          // Also with its long numbers grouped, as an answer may write them
+          // (2026-11-08 on DeepSeek: "Customer 16,684" for Customer 16684).
+          const grouped = name.replace(/\d{4,}/g, (digits) => Number(digits).toLocaleString('en-US'))
+          if (grouped !== name) { names.add(grouped); nameOrigins.set(grouped, name) }
+        }
       }
       if (/^-?[\d,]+(?:\.\d+)?$/.test(value.trim())) numbers.push({ value: Number(value.replace(/,/g, '')), key, currency: text(parent?.currency).toUpperCase() || null, unit: null })
       else if (PROSE_KEYS.has(key)) addProse(value)
@@ -202,7 +209,7 @@ export function aiGroundingSources(results = []) {
     for (const count of new Set(groups.values())) numbers.push({ value: count, key: 'count', currency: null, unit: null })
   }
   for (const result of array(results)) walk(result)
-  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names] }
+  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names], nameOrigins }
 }
 
 const NAME_KEYS = new Set(['customer', 'customerName', 'itemName', 'name', 'supplier', 'supplierName'])
@@ -303,7 +310,8 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   for (const name of [...new Set([...aiGroundingNames(facts), ...sources.names])].sort((a, b) => b.length - a.length)) {
     rest = rest.replace(nameMatch(name), (found, ...args) => {
       checked.name += 1
-      if (!inText(sources.haystack, name) && !inText(named, name)) fail('name', found)
+      const origin = sources.nameOrigins?.get(name) || name
+      if (!inText(sources.haystack, origin) && !inText(named, origin)) fail('name', found)
       else listed.push({ at: offsetOf(args), key: entities.get(fold(name)) || `name:${fold(name)}` })
       return blank(found)
     })
