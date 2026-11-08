@@ -55,7 +55,7 @@ test("RFQ detail opens authoritative comparison and preserves history without wr
   await expect(page.getByTestId("canonical-rfq-comparison")).not.toContainText("Feb 17, 2030");
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-003")).toContainText("已拒绝");
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-004")).toContainText("已撤回");
-  // Name comes from LOCAL_DEMO_SUPPLIERS in scripts/setup-local-demo.mjs, the
+  // Name comes from LOCAL_DEMO_SUPPLIERS in tests/fixtures/workspace/master-data.mjs, the
   // single authority for shared LOCAL-DEMO supplier master data.
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-005")).toContainText("Northstar Electronics");
   const responseRows = await page.getByTestId("rfq-comparison-responses").locator("tbody > tr").allTextContents();

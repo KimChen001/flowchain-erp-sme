@@ -3,6 +3,7 @@ import { selectMasterData } from '../domain/master-data-selectors.mjs'
 import { maskReferencePrice, maskSupplier, masterDataReadAccess } from '../domain/master-data-read-access.mjs'
 import { PilotIdentityError, hasWarehouseAccess, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
+import { MASTER_DATA_LIST_LIMIT } from '../repositories/db-master-data-repository.mjs'
 import { createSupplierInsightsReadService } from '../domain/supplier-insights.mjs'
 
 // Writes are decided by Roles & permissions, never by the legacy User.role, so
@@ -27,6 +28,9 @@ export async function handleMasterDataRoute(ctx) {
   const repository = masterDataRepository(ctx)
   if (!url.pathname.startsWith('/api/master-data')) return false
   const tenantScope = (extra = {}) => ({ ...(ctx.identity?.tenantId ? { tenantId: ctx.identity.tenantId } : {}), ...extra })
+  // The master data pages list and search every record (up to the list
+  // limit), not the first 200.
+  const everyRecord = (extra = {}) => tenantScope({ limit: MASTER_DATA_LIST_LIMIT, ...extra })
   const scopedRepository = new Proxy(repository, {
     get(target, property) {
       if (property === 'listManagedItems' && typeof target[property] !== 'function') {
@@ -92,9 +96,9 @@ export async function handleMasterDataRoute(ctx) {
   if (req.method === 'GET' && url.pathname === '/api/master-data') {
     const [items, suppliers, customers, warehouses, paymentTerms, taxCodes] =
       await Promise.all([
-        repository.listItems(tenantScope()),
-        repository.listSuppliers(tenantScope()),
-        repository.listCustomers(tenantScope()),
+        repository.listItems(everyRecord()),
+        repository.listSuppliers(everyRecord()),
+        repository.listCustomers(everyRecord()),
         repository.listWarehouses(tenantScope()),
         repository.listPaymentTerms(tenantScope()),
         repository.listTaxCodes(tenantScope()),
@@ -111,7 +115,7 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/customers') {
-    send(res, 200, { customers: await repository.listCustomers(tenantScope({
+    send(res, 200, { customers: await repository.listCustomers(everyRecord({
       query: url.searchParams.get('query') || '',
       status: url.searchParams.get('status') || '',
     })) })
@@ -166,7 +170,7 @@ export async function handleMasterDataRoute(ctx) {
     send(res, 200, {
       items: await (managed && repository.listManagedItems
         ? repository.listManagedItems
-        : repository.listItems)(tenantScope({
+        : repository.listItems)(everyRecord({
         purchasableOnly: url.searchParams.get('purchasable') === 'true',
       })),
     })
@@ -244,7 +248,7 @@ export async function handleMasterDataRoute(ctx) {
     // the Supplier evaluation filter, and owner (a user id, me, none), the
     // list's Managed by me tab, narrow further. The counts cover each tier
     // and owner view under the search, status and category.
-    const filters = tenantScope({
+    const filters = everyRecord({
       query: url.searchParams.get('query') || '',
       status: url.searchParams.get('status') || '',
       category: url.searchParams.get('category') || '',
@@ -350,7 +354,7 @@ export async function handleMasterDataRoute(ctx) {
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/suppliers/select') {
     const query = String(url.searchParams.get('query') || '').trim().toLowerCase()
-    const suppliers = await suppliersFor(await repository.listSuppliers(tenantScope()))
+    const suppliers = await suppliersFor(await repository.listSuppliers(everyRecord()))
     send(res, 200, {
       suppliers: suppliers.filter(row => !query || [row.id, row.name].some(value => String(value || '').toLowerCase().includes(query))).map(row => ({
         ...row,

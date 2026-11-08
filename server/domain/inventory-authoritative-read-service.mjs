@@ -1,3 +1,4 @@
+import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import {
   outboundDecimalString,
@@ -63,11 +64,22 @@ function balanceOrder(query = {}) {
   ];
 }
 
+// A movement search: the text anywhere in the SKU, item name or source
+// document, ignoring case. The inventory page searches movements here because
+// it shows only one page of them.
+function movementSearch(query = {}) {
+  const term = text(query.q);
+  if (!term) return {};
+  const contains = { contains: escapeLikePattern(term), mode: "insensitive" };
+  return { OR: [{ sku: contains }, { itemName: contains }, { sourceDocumentId: contains }, { sourceDocument: contains }] };
+}
+
 function movementWhere(actor, query = {}) {
   return {
     tenantId: actor.tenantId,
     AND: [
       scopedWhere(actor),
+      movementSearch(query),
       {
         ...(text(query.relatedSalesOrderId)
           ? { relatedSalesOrderId: text(query.relatedSalesOrderId) }

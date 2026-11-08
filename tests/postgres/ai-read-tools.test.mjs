@@ -18,8 +18,8 @@ const { AI_READ_TOOLS } = await import('../../server/domain/ai-read-tools.mjs')
 // The read tools; the assistant's own tools (ai-assistant-v2-data-tools.mjs)
 // need their arguments and the open requests, and have their own tests.
 const READ_TOOL_NAMES = new Set(AI_READ_TOOLS.map((tool) => tool.name))
-const { seedLocalDemo } = await import('../../scripts/setup-local-demo.mjs')
-const { seedLocalScenario } = await import('../../scripts/setup-local-scenario.mjs')
+const { seedLocalDemo } = await import('../fixtures/workspace/master-data.mjs')
+const { seedLocalScenario } = await import('../fixtures/workspace/scenario.mjs')
 const { createKnowledgeService } = await import('../../server/domain/ai-knowledge-service.mjs')
 const { parseKnowledgeFile } = await import('../../server/domain/ai-knowledge-file-parser.mjs')
 const { readFileSync } = await import('node:fs')
@@ -34,11 +34,11 @@ const counted = ['purchaseOrder', 'purchaseOrderLine', 'purchaseRequest', 'rfq',
 // The arguments each tool is asked with: the walkthrough's records.
 const ARGS = {
   get_purchase_order: { order: 'PO-020' },
-  stock_projection: { sku: 'LDM-001', weeks: 4 },
+  stock_projection: { sku: 'TST-001', weeks: 4 },
   late_order_impact: { orders: ['PO-020'] },
   calculate: { operation: 'days_between', dates: ['2026-09-29', '2026-10-13'] },
   search_records: { query: 'Acme' },
-  price_history: { sku: 'LDM-001' },
+  price_history: { sku: 'TST-001' },
   search_documents: { query: 'escalation of a late supplier' },
 }
 // The assistant evaluation's three fictional documents (tests/ai-eval/knowledge).
@@ -107,8 +107,8 @@ test('the read tools answer from the seeded workspace, each role reading only wh
     const chinese = await runAiReadTool('search_documents', { query: '紧急采购怎么规定' }, admin)
     assert.equal(chinese.error, 'query_language')
     assert.match(chinese.details[0], /en-US/)
-    // PO-020 buys LDM-004, which no open sales order needs.
-    assert.ok(results.late_order_impact.skus.every((row) => row.sku !== 'LDM-001'))
+    // PO-020 buys TST-004, which no open sales order needs.
+    assert.ok(results.late_order_impact.skus.every((row) => row.sku !== 'TST-001'))
     assert.ok(aiReadToolRefs(results.list_purchase_orders).length > 0)
     // Tier 1 suppliers' overdue orders, counted by the tool: the eval's
     // tier_overdue_po:1, which the model otherwise counts by picking rows.

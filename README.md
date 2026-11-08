@@ -36,23 +36,23 @@ Every change to business data is made by a person: posting, approving and revers
 
 Requires **Node.js 24**.
 
-**Try the walkthrough.** No database setup is needed: it starts its own embedded PostgreSQL. Run it from a fresh checkout without `.env`, `.env.local` or `.local/`.
+**Try the walkthrough.** No database setup is needed: it starts its own embedded PostgreSQL. Run it from a fresh checkout without `.env`, `.env.local` or `.local/`. It runs on two public datasets, Walmart store sales (M5) and a UK online gift retailer's invoices (UCI Online Retail II), one workspace each, with suppliers, purchasing and stock assumed by stated rules. The datasets are not in this repository: write the local extract first, as [Public data workspaces](docs/public-data-workspaces.md) describes.
 
 ```bash
 npm install
 npm run walkthrough:local
 ```
 
-Open http://127.0.0.1:15201 and sign in with `admin@flowchain.local` or `kim@example.com`. Then use **View the sign-in link** on the sign-in page; emails go to a local outbox. The data lives in `~/flowchain-data/walkthrough`, and `npm run walkthrough:local -- --reset` starts over.
+Open http://127.0.0.1:15201 (M5) or http://127.0.0.1:15202 (UCI) and sign in with `admin@flowchain.local` or `kim@example.com`. Then use **View the sign-in link** on the sign-in page; emails go to a local outbox. The data lives in `~/flowchain-data/public-data`, and `npm run walkthrough:local -- --reset` starts over.
 
 **Develop against your own PostgreSQL.**
 
 ```bash
 cp .env.local.example .env.local   # then set DATABASE_URL
-npm run dev:local -- --demo
+npm run dev:local -- --public-data
 ```
 
-Later runs only need `npm run dev:local`. See [Local development workflow](docs/local-development-workflow-v1.md) for scenarios, resets and port conflicts.
+Later runs only need `npm run dev:local`. See [Local development workflow](docs/local-development-workflow-v1.md) for public data, resets and port conflicts.
 
 ## Testing
 

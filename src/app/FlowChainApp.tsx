@@ -130,6 +130,7 @@ import {
   SIGNED_OUT_REASON_KEY,
   type LocalDevelopmentStatus,
 } from "./SignInScreens";
+import { PublicDataNoteBanner } from "./PublicDataNote";
 
 const ReportsPanel = React.lazy(() => import("../modules/reports/Page"));
 const ImportsPanel = React.lazy(() => import("../modules/imports/Page"));
@@ -401,6 +402,7 @@ export default function FlowChainApp() {
   const location = useLocation();
   const routerNavigate = useNavigate();
   const [localStatus, setLocalStatus] = useState<LocalDevelopmentStatus | null>(null);
+  const [publicDataReopen, setPublicDataReopen] = useState(0);
   const [purchaseIntent, setPurchaseIntent] = useState<PurchaseIntent | null>(
     null,
   );
@@ -1483,7 +1485,17 @@ export default function FlowChainApp() {
               {workspaceName || user.company}
             </span>
             {/* On a phone only a dot shows; its words stay for assistive technology. */}
-            {localStatus && <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-100 px-1.5 py-1 text-xs font-semibold leading-none text-amber-800 sm:px-2 sm:py-0.5 sm:leading-5" title={`User ${user.email} · Demo ${localStatus.demoMasterDataLoaded ? "loaded" : "not loaded"} · Scenario ${localStatus.demoScenarioLoaded ? "loaded" : "not loaded"} · Universal Intake ${localStatus.universalIntakeEnabled ? "enabled" : "disabled"}`}><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-600 sm:hidden" /><span className="sr-only sm:not-sr-only sm:whitespace-nowrap">{language === "en-US" ? "Local development" : "本地开发"}</span></span>}
+            {localStatus && <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-100 px-1.5 py-1 text-xs font-semibold leading-none text-amber-800 sm:px-2 sm:py-0.5 sm:leading-5" title={`User ${user.email} · Public data ${localStatus.publicData ? localStatus.publicData.dataset.toUpperCase() : "none"} · Universal Intake ${localStatus.universalIntakeEnabled ? "enabled" : "disabled"}`}><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-600 sm:hidden" /><span className="sr-only sm:not-sr-only sm:whitespace-nowrap">{language === "en-US" ? "Local development" : "本地开发"}</span></span>}
+            {localStatus?.publicData && (
+              <button
+                type="button"
+                data-testid="public-data-pill"
+                className="hidden shrink-0 items-center rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold leading-5 text-sky-800 hover:bg-sky-200 sm:inline-flex"
+                onClick={() => setPublicDataReopen((value) => value + 1)}
+              >
+                {t("publicData.pill")}
+              </button>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-1 sm:gap-2">
             <form
@@ -1826,6 +1838,11 @@ export default function FlowChainApp() {
             className="flex-1 overflow-auto p-3 pb-20 sm:p-6 sm:pb-24"
             data-testid="app-main"
           >
+            {localStatus?.publicData && (
+              <div className={`mx-auto w-full ${contentMaxWidthClass}`}>
+                <PublicDataNoteBanner note={localStatus.publicData} reopen={publicDataReopen} />
+              </div>
+            )}
             <div
               id="module-export-scope"
               data-testid="module-export-scope"

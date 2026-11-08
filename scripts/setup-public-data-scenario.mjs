@@ -18,7 +18,7 @@
 import { assertLocalDevelopment } from '../server/domain/local-development-contract.mjs'
 import { createInventoryOperationsCommandService } from '../server/domain/inventory-operations-command-service.mjs'
 import { saveItemSupplier } from '../server/domain/master-data-commands.mjs'
-import { HISTORY_PERMISSIONS, scenarioActor, scenarioCalendar, shipHistoryOrder } from './setup-local-scenario.mjs'
+import { HISTORY_PERMISSIONS, scenarioActor, scenarioCalendar, shipHistoryOrder } from './seed-history.mjs'
 import { PUBLIC_DATA_ASSUMPTIONS } from './public-data-instance.mjs'
 
 // shipHistoryOrder ships from this warehouse, at A-01.

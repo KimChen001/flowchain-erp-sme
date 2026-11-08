@@ -27,12 +27,13 @@ import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from '../server/domain/ten
 // picture and a write would be refused by the database.
 //
 //   node scripts/export-replenishment-inputs.mjs [--out=<file>] [--as-of=YYYY-MM-DD]
-//   node scripts/export-replenishment-inputs.mjs --walkthrough-dir=<folder> [--pg-port=55433]
+//   node scripts/export-replenishment-inputs.mjs --walkthrough-dir=<folder> [--pg-port=55433] [--dataset=m5|uci]
 //
 // The workspace is FLOWCHAIN_DEFAULT_TENANT_ID in the database at
 // DATABASE_URL. --walkthrough-dir reads a local walkthrough instead (see
 // scripts/walkthrough-local.mjs): its database URL from the folder's
-// secrets.json and the port, and its workspace. --as-of reads demand as of
+// secrets.json and the port, and one of its two public data workspaces
+// (--dataset, default m5). --as-of reads demand as of
 // another workspace day (default today); stock and open orders are always as
 // they are now. Without --out the JSON goes to stdout.
 
@@ -106,8 +107,8 @@ export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, e
         orderBy: [{ purchaseOrder: { createdAt: 'desc' } }, { id: 'asc' }],
       }),
     ])
-    // A local walkthrough records the day it was seeded and the random seed
-    // of its shipment history (scripts/setup-local-scenario.mjs).
+    // The test workspace fixture records the day it was seeded and the random
+    // seed of its shipment history (tests/fixtures/workspace/scenario.mjs).
     const [seededReceipt, historyOrder] = await Promise.all([
       tx.receivingDocument.findFirst({ where: { tenantId, id: { startsWith: 'LOCAL-DEMO-GRN-' } }, select: { metadata: true } }),
       tx.salesOrder.findFirst({ where: { tenantId, id: { startsWith: 'LOCAL-DEMO-SO-1' } }, select: { metadata: true } }),
@@ -251,12 +252,13 @@ export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, e
 }
 
 // The walkthrough's database URL and workspace, from its data folder.
-function walkthroughEnv(directory, port) {
+function walkthroughEnv(directory, port, dataset = 'm5') {
+  if (!['m5', 'uci'].includes(dataset)) throw new Error(`--dataset must be m5 or uci, not "${dataset}".`)
   const secrets = JSON.parse(readFileSync(join(directory, 'secrets.json'), 'utf8'))
   const user = 'flowchain_walkthrough'
   return {
     DATABASE_URL: `postgresql://${user}:${encodeURIComponent(secrets.password)}@127.0.0.1:${port}/flowchain_walkthrough?schema=public`,
-    FLOWCHAIN_DEFAULT_TENANT_ID: 'tenant-flowchain-walkthrough',
+    FLOWCHAIN_DEFAULT_TENANT_ID: `tenant-public-${dataset}`,
   }
 }
 
@@ -264,7 +266,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   const option = (name) => process.argv.slice(2).find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3)
   const directory = option('walkthrough-dir')
   const env = directory
-    ? { ...process.env, ...walkthroughEnv(resolve(directory), Number(option('pg-port') || process.env.FLOWCHAIN_WALKTHROUGH_PG_PORT || 55433)) }
+    ? { ...process.env, ...walkthroughEnv(resolve(directory), Number(option('pg-port') || process.env.FLOWCHAIN_WALKTHROUGH_PG_PORT || 55433), option('dataset') || 'm5') }
     : process.env
   if (!text(env.DATABASE_URL)) throw new Error('Set DATABASE_URL, or pass --walkthrough-dir=<folder>.')
   const asOf = option('as-of')

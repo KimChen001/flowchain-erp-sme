@@ -65,7 +65,7 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(detail).toContainText("LOCAL-DEMO-PR-001");
 
   const line = page.getByTestId("rfq-line-LOCAL-DEMO-RFQL-001");
-  await expect(line).toContainText("LDM-001");
+  await expect(line).toContainText("TST-001");
   await expect(line).toContainText("50");
   await expect(line).toContainText("pcs");
   await expect(line).toContainText("Jan 15, 2030");
@@ -79,7 +79,7 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(quotation).toContainText("已提交");
   await expect(quotation).toContainText("4,900");
   await expect(quotation).toContainText(/Jan 5, 2030, \d{1,2}:30\s?[AP]M/);
-  await expect(page.getByTestId("rfq-quotation-line-LOCAL-DEMO-REVLINE-002")).toContainText("LDM-001 · 50 pcs");
+  await expect(page.getByTestId("rfq-quotation-line-LOCAL-DEMO-REVLINE-002")).toContainText("TST-001 · 50 pcs");
   await expect(page.getByTestId("rfq-revision-LOCAL-DEMO-REV-002")).toContainText("报价修订 2 · 当前版本");
   await expect(page.getByTestId("rfq-revision-LOCAL-DEMO-REV-001")).toContainText("报价修订 1 · 历史版本");
   await expect(page.getByTestId("rfq-revision-line-LOCAL-DEMO-REVLINE-001")).toContainText("100");
