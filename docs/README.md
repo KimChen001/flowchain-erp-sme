@@ -11,7 +11,7 @@
 
 - [Product language and positioning](product-language-and-positioning-v1.md)
 - [Product narrative](product-narrative-v1.md)
-- [Trial user guide](trial-user-guide.md): for the people using FlowChain in a trial
+- [FlowChain handbook (research edition)](handbook.md): the product as it is on `main`, on the two public-data workspaces; replaces the trial user guide (2026-11-08)
 - [Current development limitations](current-development-limitations-v1.md)
 - [Product scope / IA review](product-scope-ia-review.md)
 - [System harness and product review](system-harness-and-product-review-v1.md)

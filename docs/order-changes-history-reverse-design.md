@@ -374,7 +374,7 @@ message points to a return plus a credit note.
 
 1. Point the sales and procurement return pages at the returns workbench, or remove them.
 2. Refuse reversing a return posting that an approved credit is based on.
-3. Add the returns section to `docs/trial-user-guide.md`.
+3. Add the returns section to `docs/handbook.md` (which replaced `docs/trial-user-guide.md` on 2026-11-08).
 4. Set the flag in `render.yaml` and the env examples, and update `us-trial-capabilities.test.mjs` and `deploy/README.md`.
 
 Scrap from quarantine waits (decision RV6). Writing stock off needs a value, and
