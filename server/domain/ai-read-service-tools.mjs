@@ -96,10 +96,12 @@ const suggestionFacts = (suggestion) => ({
 // from the row's supplier, never from the row itself.
 const reorderList = defineAiTool({
   name: 'reorder_list',
-  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point. safetyStock and belowSafetyStock give that judgement for each row. Flags name late lines and lines it could not count. counts gives how many rows are to order now and how many suggested quantities were raised to the supplier minimum: use them instead of counting rows. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. Transfers between warehouses are not considered.',
+  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point. safetyStock and belowSafetyStock give that judgement for each row. Flags name late lines and lines it could not count. counts gives, over every row, how many are to order now, due within 7 and within 30 days (order-now included), without an order-by date, and raised to the supplier minimum; orderByRange gives the earliest and latest order-by dates of every row: use them instead of counting or reading a range off the rows shown. Rows come a page at a time (shownFrom to shownTo of total); due narrows them and offset gives the next page. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. Transfers between warehouses are not considered.',
   parameters: {
     sku: { type: 'string', description: 'Only this SKU.' },
     supplier: { type: 'string', description: 'Only items whose preferred supplier is this one: a name or code.' },
+    due: { type: 'string', enum: ['now', 'within_7_days', 'within_30_days', 'all'], description: 'Only items to order now, or by an order-by date within 7 or 30 days (order-now items included); all by default.' },
+    offset: { type: 'integer', minimum: 0, maximum: 10000, description: 'Rows to skip, for the next page ("the next 20": offset 20).' },
     limit: limitParam,
   },
   available: (facts, context) => Boolean(facts?.inventory) && Boolean(context?.actor) && can(context, 'inventory.balance.read'),
@@ -149,8 +151,31 @@ const reorderList = defineAiTool({
     rows.sort((a, b) => text(a.orderByDate || '9999').localeCompare(text(b.orderByDate || '9999')) || text(a.sku).localeCompare(text(b.sku)))
     // Counts over every row, so an answer reads them instead of counting
     // (2026-11-07: "10 of the 12 were raised to the minimum" when 11 were).
-    const counts = { orderNow: rows.filter((row) => row.orderNow === true).length, raisedToMinimum: rows.filter((row) => row.raisedToMinimum).length }
-    return { asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), counts, demandWindowDays: DEMAND_WINDOW_DAYS, ...aiToolList(rows, args.limit) }
+    // Counts and the order-by range over every row, so an answer about the
+    // rows it did not read uses them (2026-11-08: "the other 195 are due
+    // Nov 10 to Nov 16" came from the first 20 rows, soonest first).
+    const today = text(facts.today).slice(0, 10)
+    const within = (row, days) => row.orderNow === true || (Boolean(row.orderByDate) && /^\d{4}-\d{2}-\d{2}$/.test(today) && text(row.orderByDate) <= addCalendarDays(today, days))
+    const dated = rows.map((row) => text(row.orderByDate)).filter(Boolean).sort()
+    const counts = {
+      orderNow: rows.filter((row) => row.orderNow === true).length,
+      dueWithin7Days: rows.filter((row) => within(row, 7)).length,
+      dueWithin30Days: rows.filter((row) => within(row, 30)).length,
+      noOrderByDate: rows.filter((row) => !row.orderByDate).length,
+      raisedToMinimum: rows.filter((row) => row.raisedToMinimum).length,
+    }
+    const windowed = args.due === 'now' ? rows.filter((row) => row.orderNow === true) : args.due === 'within_7_days' ? rows.filter((row) => within(row, 7)) : args.due === 'within_30_days' ? rows.filter((row) => within(row, 30)) : rows
+    // A page: rows are about a kilobyte each, so 50 at once is too large for
+    // an answer; the next ones come with offset (2026-11-08: "the detail of
+    // the 195" could not be read).
+    const offset = Math.min(Math.max(0, Number(args.offset) || 0), windowed.length)
+    const page = aiToolList(windowed.slice(offset), args.limit)
+    return {
+      asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), counts,
+      orderByRange: dated.length ? { earliest: dated[0], latest: dated.at(-1) } : null,
+      demandWindowDays: DEMAND_WINDOW_DAYS,
+      ...page, total: windowed.length, shownFrom: page.rows.length ? offset + 1 : 0, shownTo: offset + page.rows.length, more: Math.max(0, windowed.length - offset - page.rows.length),
+    }
   },
 })
 
