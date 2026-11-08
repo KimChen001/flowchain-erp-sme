@@ -158,7 +158,11 @@ export function aiStockSku(facts, value) {
   if (bySku) return { sku: bySku.sku }
   const key = nameKey(wanted)
   const exact = items.filter((row) => row.itemName && nameKey(row.itemName) === key)
-  const matches = exact.length ? exact : items.filter((row) => row.itemName && key.length >= 3 && nameKey(row.itemName).includes(key))
+  // Spaces and dashes do not matter either ("Cake Stand" for Regency
+  // Cakestand 3 Tier, 2026-11-08).
+  const compact = (value) => nameKey(value).replace(/[\s-]+/g, '')
+  const contains = (row) => row.itemName && key.length >= 3 && (nameKey(row.itemName).includes(key) || compact(row.itemName).includes(compact(key)))
+  const matches = exact.length ? exact : items.filter(contains)
   if (matches.length === 1) return { sku: matches[0].sku }
   if (matches.length > 1) return { error: 'ambiguous', candidates: matches.slice(0, 10).map((row) => ({ sku: row.sku, itemName: row.itemName || null })) }
   return { error: 'not_found' }
