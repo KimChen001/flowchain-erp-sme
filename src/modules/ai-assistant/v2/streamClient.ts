@@ -1,5 +1,5 @@
 import { ApiError, apiErrorFrom, apiFetch } from "../../../lib/api-client";
-import { safeParseStreamEvent, safeParseStreamLine } from "../../../../shared/assistant-protocol.mjs";
+import { safeParseStreamLine } from "../../../../shared/assistant-protocol.mjs";
 import type { AnswerLanguage, FlagSpan, PartRef } from "./parts/types";
 
 // The assistant v2 request and its event stream (docs/ai-assistant-v2-design.md
@@ -49,22 +49,12 @@ export function newThreadId() {
 }
 
 // One NDJSON line as an event, or null when it cannot be read: a bad line is
-// skipped, not fatal. A line of the rules fallback (server/routes/ai-runtime-stream.mjs)
-// has no {v, seq} envelope; its progress and answer lines are read with one.
+// skipped, not fatal.
 export function parseAssistantV2Line(line: string): AssistantV2Event | null {
   const text = line.trim();
   if (!text) return null;
   const parsed = safeParseStreamLine(text);
-  if (parsed.success) return parsed.data as AssistantV2Event;
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value) || "v" in value) return null;
-  const legacy = safeParseStreamEvent({ ...value, v: 2, seq: 0 });
-  return legacy.success && (legacy.data.type === "progress" || legacy.data.type === "answer") ? legacy.data as AssistantV2Event : null;
+  return parsed.success ? parsed.data as AssistantV2Event : null;
 }
 
 // Complete lines out of the text read so far; the unfinished tail waits for more.
@@ -88,8 +78,8 @@ type StreamOptions = { signal?: AbortSignal; idleTimeoutMs?: number; fetcher?: (
 // Yields each event until the answer line. Aborting `signal` is Stop and
 // throws AssistantV2StreamError("stopped"); a stall throws "idle_timeout";
 // a stream that ends without its answer throws "incomplete". An answer the
-// server gave as plain JSON (the rules, before any stream opened) arrives as
-// one answer event.
+// server gave as plain JSON (before any stream opened) arrives as one answer
+// event.
 export async function* streamAssistantV2(request: AssistantV2Request, { signal, idleTimeoutMs = ASSISTANT_V2_IDLE_TIMEOUT_MS, fetcher = apiFetch }: StreamOptions = {}): AsyncGenerator<AssistantV2Event, void, undefined> {
   const controller = new AbortController();
   let reason: "stopped" | "idle_timeout" | null = null;

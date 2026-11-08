@@ -1,11 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { aiSkillIntentText } from './ai-skill-intent-text.mjs'
 import { AI_SKILL_COPY, aiSkillList, aiSkillQuestionLanguage } from './ai-skill-copy.mjs'
 import { aiAnswerClaimsAction } from './ai-answer-claims.mjs'
-import { routeSkill } from './ai-skill-router.mjs'
-
-const states = (found) => Object.fromEntries(Object.entries(found).filter(([state, list]) => state !== 'viaName' && list.length).map(([state, list]) => [state, list.map((entry) => entry.id || entry.sku)]))
 
 test('the answer follows the language the question is phrased in', () => {
   for (const [question, ui, expected] of [
@@ -49,41 +45,11 @@ test('the answer follows the language the question is phrased in', () => {
   }
 })
 
-const COMMON_WORDS = `about above across after again against almost along already also although always among another answer anyone
-anything around asked because become before begin behind being below between beyond both bring build business busy
-call came cannot care carry certain change check choose clear close come coming company could course cover create
-current daily days deal decide details did different does done down during each early either else enough even
-ever every example expect explain fact fall far fast feel few fill final find first follow form forward found
-four free friday from full further gave general get give given goes going gone good great group grow half hand
-happen hard head hear held help here high hold home hour house however idea important include inside instead
-into issue just keep kind know large later least less level like line little long look made main make manager
-many mark matter maybe mean meet might minute money monday more morning most move much must name near need
-never next night none normal note nothing notice number often once only open order other over own part
-people perhaps place plan please point possible present pretty problem process product provide public pull push
-question quite rather ready real really reason recent reply report request require right same saturday say second
-see seem seen send set several shall share should show side since small some something soon sorry sound speak
-special start state stay step still stop such sunday supply sure system take team tell than thank that their them
-then there these they thing think this those though three through thursday till time today together told tomorrow
-total toward tuesday turn under until update upon usual very wait want week wednesday well were what when where
-whether which while whole whom whose why will with within without word work world would write year yesterday young`.split(/\s+/).filter(Boolean)
-
 test('question language detection is linear on long input', () => {
   const started = Date.now()
   aiSkillQuestionLanguage('a'.repeat(200000), 'en-US')
   aiSkillQuestionLanguage('a-'.repeat(100000), 'en-US')
   assert.ok(Date.now() - started < 500, `${Date.now() - started} ms`)
-})
-
-test('common words are never corrected, and misspelled workspace words are', () => {
-  assert.ok(COMMON_WORDS.length >= 300, COMMON_WORDS.length)
-  const changed = COMMON_WORDS.filter((word) => aiSkillIntentText(word) !== word)
-  assert.deepEqual(changed, [])
-  assert.equal(aiSkillIntentText('how mnay opne purchse ordrs'), 'how many open purchase orders')
-  assert.equal(aiSkillIntentText('wich invocies have a varience?'), 'which invoices have a variance?')
-  // Record ids, names inside the sentence and near-verbs stay as typed.
-  assert.equal(aiSkillIntentText('Is Rikc handling PO-0012?'), 'is rikc handling po-0012?')
-  assert.equal(aiSkillIntentText('aprove PO-001'), 'aprove po-001')
-  for (const word of ['avoidable', 'rises', 'committee', 'regaining', 'relieving', 'wanting']) assert.equal(aiSkillIntentText(word), word)
 })
 
 test('a choice between records is worded as a choice', () => {

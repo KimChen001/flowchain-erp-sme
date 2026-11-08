@@ -5,10 +5,7 @@ import { WORKED_EXAMPLE_AS_OF, workedExampleRows } from './test-fixtures/supplie
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { buildSupplierScorecard, createSupplierScorecardReadService } from './supplier-scorecard.mjs'
-import { presentSupplierComparison, runSupplierComparison } from './ai-skill-supplier-comparison.mjs'
-import { aiSkillComparisonSignals, routeSkill } from './ai-skill-router.mjs'
-import { aiSkillById, toolsFor } from './ai-skill-registry.mjs'
-import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
+import { runSupplierComparison } from './ai-skill-supplier-comparison.mjs'
 
 // Two suppliers from the scorecard's worked example: A is the example itself
 // (12 deliveries, 9 on time), B the six punctual lines L01 to L06 as its own
@@ -39,22 +36,6 @@ async function scenarioFacts(roleKey) {
   const scenario = aiSkillScenario(roleKey ? { roleKey } : {})
   return { scenario, facts: await readAiSkillFacts(await loadAiSkillContext(scenario.ctx)) }
 }
-const answer = (result, facts, language = 'en-US') => presentSupplierComparison(result, facts, { skill: aiSkillById('supplier_comparison'), language, query: 'q' })
-
-test('delivery performance questions route to the supplier comparison; open late orders do not', () => {
-  const route = (message) => routeSkill({ message })?.skillId || null
-  for (const message of ['Which supplier is most reliable?', 'Compare Acme Components and Summit Packaging', 'How is Acme Components performing?', 'Which supplier delivers late most often?', 'What is our on-time delivery rate by supplier?', '哪家供应商最准时？', '对比一下 Acme Components 和 Summit Packaging', 'Acme Components 的交付表现怎么样', '哪家供应商最不靠谱']) {
-    assert.equal(route(message), 'supplier_comparison', message)
-  }
-  assert.equal(route('Which suppliers need attention?'), 'supplier_attention')
-  assert.equal(route('Which suppliers do we spend the most with?'), 'spend_analysis')
-  assert.equal(route('Which purchase orders are late?'), 'purchase_orders')
-  assert.notEqual(route('Which suppliers are late?'), 'supplier_comparison')
-  assert.equal(aiSkillComparisonSignals('Which supplier delivers late most often?').mode, 'worst')
-  assert.equal(aiSkillComparisonSignals('哪家供应商最不靠谱').mode, 'worst')
-  assert.equal(aiSkillComparisonSignals('Which supplier is most reliable?').mode, 'best')
-  assert.deepEqual(aiSkillComparisonSignals('How reliable was Acme last quarter?').period, { kind: 'last_quarter' })
-})
 
 test('suppliers are ranked by the scorecard\'s on-time rate; too few deliveries are named, not rated', async () => {
   const { facts } = await scenarioFacts()
@@ -66,15 +47,17 @@ test('suppliers are ranked by the scorecard\'s on-time rate; too few deliveries 
   const best = runSupplierComparison(facts, { route: { scorecard: card, signals: { compare: { mode: 'best' } } } })
   assert.deepEqual(best.suppliers.map((row) => row.name), ['Bravo Parts', 'Example Supplier'])
   assert.deepEqual(best.few, [{ name: 'Charlie Tools', deliveries: 1 }])
-  const english = answer(best, facts)
-  assert.equal(english.conclusion.title, 'Most reliable: Bravo Parts, on time 100% (6 of 6 deliveries, Jul 17, 2026 – Oct 14, 2026)')
-  assert.match(english.conclusion.summary, /1 supplier has too few deliveries to rate: Charlie Tools\./)
-  assert.match(english.keyEvidence[1].summary, /in full 83\.3%, OTIF 66\.7%, 2\.5% of the received quantity rejected and 3 late deliveries, 5 days late on average/)
-  assert.deepEqual(english.figures.map((row) => [row.key, row.value]), [['supplier_on_time_rate:SUP-B', 1], ['supplier_on_time_rate:EXAMPLE-SUP', 0.75]])
-  assert.deepEqual(english.reviewCards, [])
+  assert.equal(best.mode, 'best')
+  const bravo = best.suppliers[0]
+  assert.equal(bravo.onTime.count, 6)
+  assert.equal(bravo.onTime.of, 6)
+  const example = best.suppliers[1]
+  assert.equal(example.inFull.rate.toFixed(3), '0.833')
+  assert.equal(example.otif.rate.toFixed(3), '0.667')
+  assert.equal(example.delay.lateCount, 3)
   const worst = runSupplierComparison(facts, { route: { scorecard: card, signals: { compare: { mode: 'worst' } } } })
   assert.deepEqual(worst.suppliers.map((row) => row.name), ['Example Supplier', 'Bravo Parts'])
-  assert.match(answer(worst, facts, 'zh-CN').conclusion.title, /^最不可靠的是 Example Supplier：准时 75%（12 次交付中 9 次，[^（）]+）$/)
+  assert.equal(worst.mode, 'worst')
 })
 
 test('named suppliers are compared side by side, with no rate below the minimum sample', async () => {
@@ -82,22 +65,16 @@ test('named suppliers are compared side by side, with no rate below the minimum 
   const card = scorecard()
   const result = runSupplierComparison(facts, { route: { scorecard: card, signals: { compare: { mode: 'best' } }, entities: { suppliers: [{ id: 'EXAMPLE-SUP', name: 'Example Supplier' }, { id: 'SUP-C', name: 'Charlie Tools' }] } } })
   assert.equal(result.mode, 'compare')
-  const english = answer(result, facts)
-  assert.equal(english.conclusion.title, 'On time: Example Supplier 75% and Charlie Tools not rated (Jul 17, 2026 – Oct 14, 2026)')
-  assert.match(english.conclusion.summary, /A rate needs at least 5 deliveries in the period\./)
-  assert.equal(english.keyEvidence[1].value, '1 delivery, fewer than the 5 a rate needs')
+  assert.deepEqual(result.suppliers.map((row) => [row.name, row.onTime?.rate ?? null, row.deliveries]), [['Example Supplier', 0.75, 12], ['Charlie Tools', null, 1]])
   // One named supplier: its own line.
   const one = runSupplierComparison(facts, { route: { scorecard: card, entities: { suppliers: [{ id: 'SUP-B', name: 'Bravo Parts' }] } } })
-  assert.equal(answer(one, facts).conclusion.title, 'Bravo Parts: on time 100% (6 of 6 deliveries, Jul 17, 2026 – Oct 14, 2026)')
+  assert.equal(one.mode, 'one')
+  assert.deepEqual(one.suppliers.map((row) => [row.name, row.onTime.rate]), [['Bravo Parts', 1]])
 })
 
-test('the comparison needs both purchase orders and receipts, as the scorecard does', async () => {
-  const has = (roleKey) => toolsFor(aiSkillScenario({ roleKey }).actor).some((entry) => entry.id === 'supplier_comparison')
-  assert.equal(has('workspace-administrator'), true)
-  assert.equal(has('finance-specialist'), false)
+test('the comparison needs the scorecard, and says why it has none', async () => {
   // A reader without the scorecard: the comparison says so instead of guessing.
   const { facts } = await scenarioFacts()
-  assert.match(answer(runSupplierComparison(facts, { route: {} }), facts).conclusion.title, /needs access to purchase orders and receipts/)
-  const tooLong = runSupplierComparison(facts, { route: { scorecardError: 'SCORECARD_PERIOD_TOO_LONG' } })
-  assert.match(answer(tooLong, facts).conclusion.summary, /at most 731 days/)
+  assert.equal(runSupplierComparison(facts, { route: {} }).hidden, true)
+  assert.equal(runSupplierComparison(facts, { route: { scorecardError: 'SCORECARD_PERIOD_TOO_LONG' } }).unavailable, 'SCORECARD_PERIOD_TOO_LONG')
 })

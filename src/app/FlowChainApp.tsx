@@ -2017,7 +2017,6 @@ export default function FlowChainApp() {
           openSignal={aiOpenSignal}
           userName={user.name}
           onNavigate={navigateTo}
-          onReviewActionDraft={openActionDraftReview}
         />
       </PanelErrorBoundary>
       <ActionDraftReviewShell

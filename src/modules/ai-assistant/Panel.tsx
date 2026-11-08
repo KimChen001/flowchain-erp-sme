@@ -1,17 +1,11 @@
 import { KnowledgeLibrary } from "./KnowledgeLibrary";
 import { translate, useI18n } from "../../i18n/I18n";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { BookOpen, Clock3, FilePlus2, ListChecks, Loader2, Maximize2, MessageSquareText, Minimize2, MoreHorizontal, RotateCcw, Send, Square, SquarePen, Sparkles, Truck, Upload, X, type LucideIcon } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { BookOpen, Clock3, FilePlus2, ListChecks, Maximize2, MessageSquareText, Minimize2, MoreHorizontal, Send, Square, SquarePen, Sparkles, Truck, Upload, X, type LucideIcon } from "lucide-react";
 import { QUESTION_LIMITS } from "../../../shared/assistant-protocol.mjs";
 import type { CanonicalFocusTarget } from "../../lib/evidenceLinks";
 import { A } from "../../components/ui";
-import { AiResponseV2Renderer } from "../../components/ai/AiResponseV2Renderer";
-import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
-import type { AiResponseV2 } from "../../domain/ai/response-contract";
-import { autoOpenDraftCard, structuredDraftTarget } from "../action-drafts/structuredDraftHandoff";
-import { fetchAiRuntimeReadiness, focusTargetFromActiveContext, postAiRuntimeResponse, type AiRuntimeProgress, type AiRuntimeReadinessV2 } from "./aiRuntimeGateway";
-import { ApiError } from "../../lib/api-client";
-import { aiProgressLine, looksLikeRawJson, sanitizeAiMessage } from "./presentation";
+import { fetchAiRuntimeReadiness, type AiRuntimeReadiness } from "./aiRuntimeGateway";
 import { AssistantV2Answer } from "./v2/AssistantV2Answer";
 import { emptyAssistantV2Message, finishAssistantV2Message, foldAssistantV2Event, type AssistantV2Message } from "./v2/foldEvents";
 import type { PrReceipt, RecordActionReceipt, SetupReceipt } from "./v2/parts/types";
@@ -27,33 +21,14 @@ export type ActiveContext = {
   route?: string;
 };
 
+// One message of the conversation: the user's question, or the assistant's
+// answer as its events built it (with the question it answers, for Retry).
 type AiChatMessage = {
   role: "user" | "assistant";
   content: string;
-  cards?: AiChatCard[];
-  retryPrompt?: string;
-  // The skill the failed question asked for, so a retry asks for it again.
-  retrySkillHint?: string;
-  // An assistant v2 answer: its id in the panel, the question it answers
-  // (for Retry) and the answer as its events built it.
   id?: string;
   question?: string;
   v2?: AssistantV2Message;
-};
-
-type AiChatCard = {
-  type?: string;
-  data?: Record<string, unknown>;
-  actions?: {
-    label?: string;
-    kind?: string;
-    target?: string;
-    draftType?: string;
-    draftTitle?: string;
-    payload?: Record<string, unknown>;
-    originEvidence?: Record<string, unknown>[];
-  }[];
-  evidence?: { type?: string; id?: string; label?: string; status?: string; route?: string; summary?: string }[];
 };
 
 type AiNavigateOptions = {
@@ -66,65 +41,21 @@ type AiNavigateOptions = {
 
 type AiNavigate = (moduleId: string, focusTarget?: CanonicalFocusTarget | null, options?: AiNavigateOptions) => void;
 
-// Which assistant a conversation asks: the rules-first one (v1) or assistant v2.
-type AssistantPath = "v1" | "v2";
-// How long a first question waits for readiness before it asks v1.
-const READINESS_WAIT_MS = 4000;
-
-type AiSessionGrounding = {
-  lastIntent?: string;
-  lastPrimaryEntity?: { type?: string; id?: string; label?: string } | null;
-  lastEvidenceIds?: string[];
-  lastVisibleBusinessIds?: Record<string, string[]>;
-  activeContext?: ActiveContext | null;
-};
-
-type SafeConversationContext = {
-  previousIntent?: string;
-  previousQuestion?: string;
-  previousConclusionTitle?: string;
-  previousEntityRefs?: Array<{ entityType?: string; entityId?: string; entityLabel: string; source: string; confidence: string }>;
-  previousNavigationRefs?: Array<{ label: string; moduleId?: string; entityType?: string; entityId?: string; entityLabel?: string; returnTo: "ai-assistant" }>;
-  previousEvidenceRefs?: Array<{ id?: string; label?: string; entityType?: string; entityId?: string; entityLabel?: string; moduleId?: string }>;
-  // The records of the latest answer that listed several, so "the second one"
-  // still means that list after a "why?" about one of them.
-  previousListRefs?: Array<{ id?: string; label?: string; entityType?: string; entityId?: string; entityLabel?: string; moduleId?: string }>;
-  previousModuleId?: string;
-  previousViewId?: string;
-  previousFocusTarget?: { entityType?: string; entityId?: string; entityLabel?: string } | null;
-  breadcrumbTrail?: Array<{ label: string; moduleId?: string; entityLabel?: string; returnTo: "ai-assistant" }>;
-  lastResponseId?: string;
-  returnContext?: { returnTo: "ai-assistant"; returnLabel: string; sourceModuleId?: string; sourceViewId?: string };
-  // The last few questions and answers of this panel, as text, so the
-  // model-first assistant reads a follow-up with what came before.
-  previousTurns?: Array<{ question: string; answer: string }>;
-  // The order the last answer offered to confirm (model-first), if any.
-  previousPendingOrder?: { sku: string; quantity?: number } | null;
-};
-
 // The welcome cards (owner-approved panel design, 2026-11-01): what to handle
 // first, overdue orders, a purchase request draft, and the purchasing policy.
+// Every card is asked as typed, like any question.
 export const AI_EMPTY_STATE_PROMPT_CHIPS = [
   { label: "What should I handle first today?", prompt: "What should I handle first today?", zhLabel: "今天先处理什么？", zhPrompt: "今天先处理什么？" },
   { label: "Which purchase orders are overdue?", prompt: "Which purchase orders are overdue?", zhLabel: "哪些采购订单逾期了？", zhPrompt: "哪些采购订单逾期了？" },
   { label: "Draft a purchase request", prompt: "Draft a purchase request", zhLabel: "帮我起草一份采购申请", zhPrompt: "帮我起草一份采购申请" },
   { label: "What does our purchasing policy say?", prompt: "What does our purchasing policy say?", zhLabel: "公司的采购制度是怎么规定的？", zhPrompt: "公司的采购制度是怎么规定的？" },
 ];
-
-// The workspace skill each card asks for, by card position; the hint only
-// tells the server which skill to run. The request and policy cards have none:
-// they are asked as typed, so the request asks which item and the policy
-// question goes to the company documents.
-const EMPTY_STATE_SKILL_HINTS = ["today_priorities", "purchase_orders", "", ""];
 const EMPTY_STATE_ICONS: LucideIcon[] = [ListChecks, Clock3, FilePlus2, BookOpen];
 
-// With assistant v2 on and the first-day checklist open on its first steps
-// (no items or no suppliers yet), the welcome cards start the setup instead.
-// They go to the model as typed, like any question.
+// With the first-day checklist open on its first steps (no items or no
+// suppliers yet), the welcome cards start the setup instead.
 const SETUP_STARTERS = ["ai.v2.starter.setup", "ai.v2.starter.suppliers", "ai.v2.starter.reorder", "ai.v2.starter.import"] as const;
 const SETUP_STARTER_ICONS: LucideIcon[] = [ListChecks, Truck, FilePlus2, Upload];
-const PO_SKILL_HINTS = ["today_priorities", "records_needing_data", "highest_risk_items", "prepare_action_draft"];
-const SKU_SKILL_HINTS = ["today_priorities", "inventory_availability", "highest_risk_items", "prepare_action_draft"];
 
 const PO_EMPTY_PROMPTS = {
   "en-US": ["Why does this PO need attention?", "Which receipt or invoice evidence is missing?", "What will a delay affect?", "What should happen next?"],
@@ -134,14 +65,6 @@ const SKU_EMPTY_PROMPTS = {
   "en-US": ["Does this SKU need replenishment?", "What is the available inventory?", "Which orders will be affected?", "What action is recommended?"],
   "zh-CN": ["这个 SKU 需要补货吗？", "当前可用库存是多少？", "哪些订单会受影响？", "建议如何处理？"],
 };
-
-function requestScopeLabel(message: string, language: "en-US" | "zh-CN") {
-  if (/\bPOs?\b|PO-|采购订单|收货|GRN|发票|匹配/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：采购订单、收货和发票记录" : "Checking purchase orders, receipts, and invoice records";
-  if (/库存|SKU|补货|可用量|inventory|replenish/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：库存余额和关联订单" : "Checking inventory balances and related orders";
-  if (/供应商|RFQ|报价|supplier|quote/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：供应商和询报价记录" : "Checking supplier and sourcing records";
-  if (/今天|重点|风险|待办|today|risk|priority/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：当前工作区重点事项" : "Checking current workspace priorities";
-  return language === "zh-CN" ? "正在查询业务数据：当前工作区记录" : "Checking your workspace records";
-}
 
 const CONTEXT_ENTITY_LABELS: Record<string, { "en-US": string; "zh-CN": string }> = {
   purchase_order: { "en-US": "Purchase order", "zh-CN": "采购单" },
@@ -222,397 +145,6 @@ function useDocked() {
   return docked;
 }
 
-function textValue(value: unknown) {
-  if (typeof value === "boolean") return value ? "是" : "否";
-  if (typeof value === "number") return Number.isFinite(value) ? value.toLocaleString() : "";
-  if (typeof value === "object") return "";
-  if (typeof value === "string") return sanitizeAiMessage(value);
-  return String(value ?? "");
-}
-
-function arrayValue(value: unknown) {
-  return Array.isArray(value) ? value : [];
-}
-
-// Answers arrive from /api/ai-runtime/respond as ai_response_v2 cards; the
-// panel creates no other card type.
-function AiResponseCard({
-  card,
-  latest,
-  onNavigate,
-  onReviewActionDraft,
-  onFollowUp,
-}: {
-  card: AiChatCard;
-  latest: boolean;
-  onNavigate?: AiNavigate;
-  onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void;
-  onFollowUp?: (prompt: string, skillHint?: string) => void;
-}) {
-  if (card.type !== "ai_response_v2") return null;
-  return (
-    <AiResponseV2Renderer
-      response={(card.data || {}) as unknown as AiResponseV2}
-      latest={latest}
-      onNavigate={onNavigate}
-      onReviewActionDraft={onReviewActionDraft}
-      onFollowUp={onFollowUp}
-    />
-  );
-}
-
-function businessTypeFromId(id = "") {
-  if (/^PO-/i.test(id)) return "po";
-  if (/^PR-/i.test(id)) return "pr";
-  if (/^RFQ-/i.test(id)) return "rfq";
-  if (/^GRN-/i.test(id)) return "grn";
-  if (/^INV-/i.test(id)) return "invoice";
-  if (/^SKU-/i.test(id)) return "sku";
-  return "";
-}
-
-function visibleBusinessId(...values: unknown[]) {
-  for (const value of values) {
-    const found = String(value ?? "").match(/\b(?:PO|PR|RFQ|GRN|INV|SKU)-[A-Z0-9-]+\b/i)?.[0];
-    if (found) return found.toUpperCase();
-  }
-  return "";
-}
-
-function collectBusinessIdsFromCards(cards: AiChatCard[] = []) {
-  const grouped: Record<string, string[]> = {};
-  const push = (id: unknown) => {
-    const value = String(id ?? "").trim().toUpperCase();
-    const type = businessTypeFromId(value);
-    if (!type) return;
-    grouped[type] = grouped[type] || [];
-    if (!grouped[type].includes(value)) grouped[type].push(value);
-  };
-  for (const card of cards) {
-    if (card.type === "ai_response_v2") {
-      const response = card.data as Record<string, unknown>;
-      for (const item of arrayValue(response.keyEvidence)) {
-        if (item && typeof item === "object") {
-          const row = item as Record<string, unknown>;
-          push(row.entityId);
-          push(visibleBusinessId(row.entityId, row.entityLabel, row.label, row.summary));
-        }
-      }
-      for (const item of arrayValue(response.navigationLinks)) {
-        if (item && typeof item === "object") {
-          const row = item as Record<string, unknown>;
-          push(row.entityId);
-          push(visibleBusinessId(row.entityId, row.label, row.reason));
-        }
-      }
-    }
-    for (const evidence of card.evidence || []) {
-      push(evidence.id);
-      push(visibleBusinessId(evidence.id, evidence.route, evidence.label, evidence.summary));
-    }
-    for (const action of card.actions || []) {
-      push(String(action.target || "").match(/\b(?:PO|PR|RFQ|GRN|INV|SKU)-[A-Z0-9-]+\b/i)?.[0]);
-      for (const evidence of action.originEvidence || []) {
-        push(evidence.id);
-        push(visibleBusinessId(evidence.id, evidence.route, evidence.label, evidence.summary));
-      }
-    }
-    const data = card.data || {};
-    Object.values(data).forEach((value) => {
-      if (typeof value === "string") push(value.match(/\b(?:PO|PR|RFQ|GRN|INV|SKU)-[A-Z0-9-]+\b/i)?.[0]);
-    });
-  }
-  return grouped;
-}
-
-function primaryEntityFromCards(cards: AiChatCard[] = []) {
-  for (const card of cards) {
-    if (card.type !== "ai_response_v2") continue;
-    const response = card.data as Record<string, unknown>;
-    const firstEvidence = arrayValue(response.keyEvidence).find((item) => item && typeof item === "object") as Record<string, unknown> | undefined;
-    const id = visibleBusinessId(firstEvidence?.entityId, firstEvidence?.entityLabel, firstEvidence?.label, firstEvidence?.summary);
-    if (id) return { type: businessTypeFromId(id), id, label: id };
-  }
-  for (const card of cards) {
-    const data = card.data || {};
-    const priorityItems = arrayValue(data.priorityItems);
-    const firstPriority = priorityItems.find((item) => item && typeof item === "object") as Record<string, unknown> | undefined;
-    const priorityId = firstPriority
-      ? visibleBusinessId(firstPriority.id, firstPriority.sourceDocument, firstPriority.title, firstPriority.reason, firstPriority.explanation)
-      : "";
-    if (priorityId) return { type: businessTypeFromId(priorityId), id: priorityId, label: priorityId };
-  }
-  for (const card of cards) {
-    for (const evidence of card.evidence || []) {
-      const id = visibleBusinessId(evidence.id, evidence.route, evidence.label, evidence.summary);
-      if (id) return { type: businessTypeFromId(id), id, label: id };
-    }
-  }
-  return null;
-}
-
-function buildSessionGrounding(messages: AiChatMessage[], activeContext: ActiveContext | null): AiSessionGrounding {
-  const assistant = [...messages].reverse().find((message) => message.role === "assistant" && message.cards?.length);
-  const cards = assistant?.cards || [];
-  const lastVisibleBusinessIds = collectBusinessIdsFromCards(cards);
-  const lastEvidenceIds = Object.values(lastVisibleBusinessIds).flat().slice(0, 12);
-  const primaryType = Object.keys(lastVisibleBusinessIds).find((type) => lastVisibleBusinessIds[type]?.length === 1);
-  const primaryId = primaryType ? lastVisibleBusinessIds[primaryType]?.[0] : "";
-  const primaryEntity = primaryEntityFromCards(cards);
-  return {
-    // The skill or plan that answered, not the card type.
-    lastIntent: typeof cards[0]?.data?.intent === "string" ? cards[0].data.intent : cards[0]?.type,
-    lastPrimaryEntity: primaryEntity || (primaryId ? { type: primaryType, id: primaryId, label: primaryId } : null),
-    lastEvidenceIds,
-    lastVisibleBusinessIds,
-    activeContext,
-  };
-}
-
-function safeEntityType(value: unknown) {
-  const raw = String(value || "");
-  if (/purchase_order|PO/i.test(raw)) return "PO";
-  if (/purchase_request|PR/i.test(raw)) return "PR";
-  if (/rfq/i.test(raw)) return "RFQ";
-  if (/receiving|GRN/i.test(raw)) return "GRN";
-  if (/invoice|发票/i.test(raw)) return "Invoice";
-  if (/supplier|供应商/i.test(raw)) return "Supplier";
-  if (/inventory|item|SKU/i.test(raw)) return "SKU";
-  return "Unknown";
-}
-
-function aiRuntimeResponses(messages: AiChatMessage[]): AiResponseV2[] {
-  return messages.flatMap((message) => message.role === "assistant" ? (message.cards || []).filter((card) => card.type === "ai_response_v2" && card.data).map((card) => card.data as unknown as AiResponseV2) : []);
-}
-
-function latestAiRuntimeResponse(messages: AiChatMessage[]): AiResponseV2 | null {
-  return aiRuntimeResponses(messages).at(-1) || null;
-}
-
-// Up to three earlier turns: each question with the headline and summary of
-// the answer that followed it.
-function previousTurns(messages: AiChatMessage[]) {
-  const turns: Array<{ question: string; answer: string }> = [];
-  messages.forEach((message, index) => {
-    if (message.role !== "user") return;
-    const reply = messages[index + 1];
-    const response = reply?.role === "assistant" ? (reply.cards || []).find((card) => card.type === "ai_response_v2" && card.data)?.data as unknown as AiResponseV2 | undefined : undefined;
-    if (!response) return;
-    const answer = [response.conclusion?.title, response.conclusion?.summary].filter(Boolean).join(" — ");
-    turns.push({ question: message.content.slice(0, 300), answer: answer.slice(0, 800) });
-  });
-  return turns.slice(-3);
-}
-
-function evidenceRefs(response: AiResponseV2 | null | undefined) {
-  return (response?.keyEvidence || []).slice(0, 8).map((item) => ({
-    id: item.id,
-    label: item.label,
-    entityType: safeEntityType(item.entityType || item.entityId),
-    entityId: item.entityId,
-    entityLabel: item.entityLabel,
-    moduleId: item.moduleId,
-  }));
-}
-
-function buildSafeConversationContext(messages: AiChatMessage[], activeContext: ActiveContext | null, sessionGrounding: AiSessionGrounding, language: "en-US" | "zh-CN" = "en-US"): SafeConversationContext {
-  const response = latestAiRuntimeResponse(messages);
-  const refs: SafeConversationContext["previousEntityRefs"] = [];
-  const pushRef = (input: { entityType?: unknown; entityId?: unknown; entityLabel?: unknown; source: string; confidence?: string }) => {
-    const entityLabel = textValue(input.entityLabel || input.entityId);
-    if (!entityLabel) return;
-    const entityId = textValue(input.entityId);
-    const key = `${input.source}:${entityId || entityLabel}`;
-    if (refs.some((item) => `${item.source}:${item.entityId || item.entityLabel}` === key)) return;
-    refs.push({
-      entityType: safeEntityType(input.entityType || entityId || entityLabel),
-      entityId,
-      entityLabel,
-      source: input.source,
-      confidence: input.confidence || (entityId ? "high" : "medium"),
-    });
-  };
-
-  if (activeContext?.entityId || activeContext?.entityLabel) {
-    pushRef({ entityType: activeContext.entityType, entityId: activeContext.entityId, entityLabel: activeContext.entityLabel, source: "activePage", confidence: "high" });
-  }
-  if (sessionGrounding.lastPrimaryEntity) {
-    pushRef({ entityType: sessionGrounding.lastPrimaryEntity.type, entityId: sessionGrounding.lastPrimaryEntity.id, entityLabel: sessionGrounding.lastPrimaryEntity.label, source: "session", confidence: "high" });
-  }
-  for (const item of response?.keyEvidence || []) {
-    pushRef({ entityType: item.entityType, entityId: item.entityId, entityLabel: item.entityLabel || item.label, source: "evidence", confidence: "high" });
-  }
-  for (const link of response?.navigationLinks || []) {
-    const navEntityType = link.entityType;
-    const navEntityId = link.entityId;
-    const navLabel = link.label;
-    pushRef({ entityType: navEntityType, entityId: navEntityId, entityLabel: navLabel || navEntityId, source: "navigation", confidence: navEntityId ? "high" : "medium" });
-  }
-  for (const card of response?.reviewCards || []) {
-    pushRef({ entityType: card.targetEntityType, entityId: card.targetEntityId, entityLabel: card.title, source: "reviewCard", confidence: card.targetEntityId ? "high" : "medium" });
-  }
-
-  return {
-    previousIntent: response?.intent || sessionGrounding.lastIntent,
-    previousQuestion: response?.query,
-    previousConclusionTitle: response?.conclusion?.title,
-    previousEntityRefs: refs.slice(0, 12),
-    previousNavigationRefs: (response?.navigationLinks || []).slice(0, 8).map((link) => {
-      const navEntityType = link.entityType;
-      const navEntityId = link.entityId;
-      const navLabel = link.label;
-      return {
-        label: textValue(navLabel || navEntityId || link.moduleId),
-        moduleId: link.moduleId,
-        entityType: safeEntityType(navEntityType || navEntityId || navLabel),
-        entityId: textValue(navEntityId),
-        entityLabel: textValue(navLabel || navEntityId),
-        returnTo: "ai-assistant",
-      };
-    }),
-    previousEvidenceRefs: evidenceRefs(response),
-    previousListRefs: evidenceRefs([...aiRuntimeResponses(messages)].reverse().find((item) => (item.keyEvidence || []).length > 1)),
-    previousModuleId: response?.scope?.module || activeContext?.module,
-    previousViewId: activeContext?.view,
-    previousFocusTarget: activeContext?.entityId ? {
-      entityType: activeContext.entityType,
-      entityId: activeContext.entityId,
-      entityLabel: activeContext.entityLabel || activeContext.entityId,
-    } : null,
-    breadcrumbTrail: (response?.contextBreadcrumbs || []).slice(0, 4).map((item) => ({
-      label: item.label,
-      moduleId: item.moduleId,
-      entityLabel: item.entityLabel,
-      returnTo: "ai-assistant",
-    })),
-    lastResponseId: (response as (AiResponseV2 & { responseId?: string }) | null)?.responseId,
-    previousTurns: previousTurns(messages),
-    previousPendingOrder: response?.pendingOrder || null,
-    returnContext: {
-      returnTo: "ai-assistant",
-      returnLabel: language === "zh-CN" ? "返回 AI 助手" : "Back to AI assistant",
-      sourceModuleId: activeContext?.module,
-      sourceViewId: activeContext?.view,
-    },
-  };
-}
-
-function uniqueFollowUpChips(chips: { label: string; prompt: string }[]) {
-  const seen = new Set<string>();
-  return chips.filter((chip) => {
-    const key = `${chip.label}|${chip.prompt}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).slice(0, 3);
-}
-
-type AiRecoveryReason = "signed_out" | "invalid_question" | "unavailable" | "timeout" | "network";
-
-// Why a request failed, from the server's status and code. A 400 shows the
-// server's own message, which is already in the question's language.
-export function aiRecoveryReason(error: unknown, timedOut: boolean): { reason: AiRecoveryReason; serverMessage?: string } {
-  if (timedOut) return { reason: "timeout" };
-  if (error instanceof ApiError) {
-    if (error.status === 401) return { reason: "signed_out" };
-    if (error.status === 400) return { reason: "invalid_question", serverMessage: error.payload?.error || error.message };
-    return { reason: "unavailable" };
-  }
-  return { reason: "network" };
-}
-
-// One line saying why the answer failed; the Retry button sits under it.
-const RECOVERY_COPY = {
-  "en-US": {
-    signed_out: "Your session has ended. Sign in again, then ask again.",
-    invalid_question: "The question could not be answered as asked.",
-    unavailable: "The assistant could not read your workspace data just now. Nothing was changed.",
-    timeout: "The assistant took too long to answer. Nothing was changed.",
-    network: "The assistant could not be reached. Check your connection. Nothing was changed.",
-  },
-  "zh-CN": {
-    signed_out: "登录已失效，请重新登录后再提问。",
-    invalid_question: "这个问题无法按原样回答。",
-    unavailable: "工作区数据暂时加载失败，未修改任何内容。",
-    timeout: "AI 助手响应超时，未修改任何内容。",
-    network: "暂时无法连接 AI 助手，请检查网络。未修改任何内容。",
-  },
-} as const;
-
-export function displaySafeAssistantRecoveryMessage(_prompt: string, language: "en-US" | "zh-CN" = "en-US", failure: { reason: AiRecoveryReason; serverMessage?: string } = { reason: "unavailable" }) {
-  return failure.reason === "invalid_question" && failure.serverMessage ? failure.serverMessage : RECOVERY_COPY[language][failure.reason];
-}
-
-function hasRuntimeFollowUpSuggestions(message: AiChatMessage) {
-  return Boolean(message.cards?.some((card) =>
-    card.type === "ai_response_v2"
-    && Array.isArray((card.data as AiResponseV2 | undefined)?.followUpSuggestions)
-    && ((card.data as AiResponseV2 | undefined)?.followUpSuggestions || []).length > 0
-  ));
-}
-
-export function getAiFollowUpChips(message: AiChatMessage, language: "en-US" | "zh-CN" = "zh-CN") {
-  if (message.role !== "assistant" || !message.cards?.length) return [];
-  if (hasRuntimeFollowUpSuggestions(message)) return [];
-  if (message.cards.some((card) => card.type === "ai_response_v2" && (card.data as AiResponseV2 | undefined)?.rag?.mode === "no_results")) return [];
-  // The chips follow the answer's language (a Chinese question in the English
-  // interface gets Chinese chips), else the interface language.
-  const answerLanguage = message.cards.map((card) => (card.data as AiResponseV2 | undefined)?.language).find((value) => value === "en-US" || value === "zh-CN");
-  const zh = (answerLanguage || language) === "zh-CN";
-  const localizedChip = (zhLabel: string, enLabel: string, zhPrompt: string, enPrompt: string) => ({
-    label: zh ? zhLabel : enLabel,
-    prompt: zh ? zhPrompt : enPrompt,
-  });
-  const ids = collectBusinessIdsFromCards(message.cards);
-  const firstPo = ids.po?.[0] || "";
-  const firstSku = ids.sku?.[0] || "";
-  const firstRfq = ids.rfq?.[0] || "";
-  const cardTypes = new Set(message.cards.map((card) => card.type || ""));
-  const chips: { label: string; prompt: string }[] = [];
-
-  if (cardTypes.has("ai_response_v2")) {
-    if (firstPo) chips.push(localizedChip("为什么这个 PO 优先？", "Why is this PO a priority?", "这个 PO 为什么优先？", "Why is this PO a priority?"));
-    if (firstSku) chips.push(localizedChip("查看关联 SKU", "View related SKU", "这个 SKU 和哪些单据有关？", "Which records are related to this SKU?"));
-    chips.push(localizedChip("哪些数据不完整？", "Which data is incomplete?", "哪些数据依据不完整？", "Which supporting data is incomplete?"));
-  }
-  if (firstSku) {
-    chips.push(localizedChip("需要补货吗？", "Does it need replenishment?", "这个 SKU 需要补货吗？", "Does this SKU need replenishment?"));
-    chips.push(localizedChip("关联哪些采购单？", "Which purchase orders?", "这个 SKU 关联哪些采购单？", "Which purchase orders are related to this SKU?"));
-    chips.push(localizedChip("预览补货 PR 草稿", "Preview replenishment PR", "预览补货 PR 草稿", "Preview a replenishment purchase request draft"));
-  }
-  if (firstRfq) {
-    chips.push(localizedChip("有几家回复了？", "How many suppliers replied?", "刚才那个询价单有几家回复了？", "How many suppliers replied to that RFQ?"));
-    chips.push(localizedChip("谁还没回复？", "Who has not replied?", "谁还没回复这个询价单？", "Who has not replied to this RFQ?"));
-    chips.push(localizedChip("预览供应商提醒草稿", "Preview supplier reminder", "预览供应商提醒草稿", "Preview a supplier reminder draft"));
-  }
-
-  return uniqueFollowUpChips(chips);
-}
-
-function AiResponseCards({
-  cards = [],
-  latest = true,
-  onNavigate,
-  onReviewActionDraft,
-  onFollowUp,
-}: {
-  cards?: AiChatCard[];
-  latest?: boolean;
-  onNavigate?: AiNavigate;
-  onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void;
-  onFollowUp?: (prompt: string, skillHint?: string) => void;
-}) {
-  const visibleCards = cards.filter((card) => card.type);
-  if (!visibleCards.length) return null;
-  return (
-    <div className="space-y-3">
-      {visibleCards.map((card, index) => (
-        <AiResponseCard key={`${card.type}-${index}`} card={card} latest={latest} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} onFollowUp={onFollowUp} />
-      ))}
-    </div>
-  );
-}
-
 function HeaderButton({ label, onClick, children, testId, expanded }: { label: string; onClick: () => void; children: ReactNode; testId?: string; expanded?: boolean }) {
   return (
     <button type="button" onClick={onClick} data-testid={testId} aria-label={label} title={label} aria-expanded={expanded} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }}>
@@ -639,14 +171,12 @@ export default function FloatingAiAssistant({
   openSignal,
   userName,
   onNavigate,
-  onReviewActionDraft,
 }: {
   moduleId: string;
   activeContext?: ActiveContext | null;
   openSignal?: number;
   userName?: string | null;
   onNavigate?: AiNavigate;
-  onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void;
 }) {
   const { language } = useI18n();
   const zh = language === "zh-CN";
@@ -657,9 +187,6 @@ export default function FloatingAiAssistant({
   const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState("");
   const [asking, setAsking] = useState(false);
-  const [slowRequest, setSlowRequest] = useState(false);
-  // What the model-first assistant is reading, while it answers a typed question.
-  const [progress, setProgress] = useState<AiRuntimeProgress | null>(null);
   const [messages, setMessages] = useState<AiChatMessage[]>([]);
   const [dismissedContextKey, setDismissedContextKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -669,17 +196,7 @@ export default function FloatingAiAssistant({
   const requestInFlightRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const requestSeqRef = useRef(0);
-  const abortReasonRef = useRef<"timeout" | "superseded" | "unmount" | "stopped" | null>(null);
-  // Assistant v2 (docs/ai-assistant-v2-design.md): on only when the server says
-  // so for this user. The first question of a conversation waits for that
-  // answer and fixes the conversation's path, so one conversation never mixes
-  // the two; if readiness fails or is slow, the panel asks as before.
-  const readinessRef = useRef<Promise<AssistantPath> | null>(null);
-  const [conversationPath, setConversationPath] = useState<AssistantPath | null>(null);
-  const conversationPathRef = useRef<AssistantPath | null>(null);
-  // Bumped by a new conversation or a cancel, to drop a question still waiting for readiness.
-  const pendingAskRef = useRef(0);
-  const assistantV2 = conversationPath === "v2";
+  const abortReasonRef = useRef<"superseded" | "unmount" | "stopped" | null>(null);
   const [threadId, setThreadId] = useState(newThreadId);
   // In-chat form receipts by form id, and the requests the forms created that
   // the next question reports to the server.
@@ -692,23 +209,24 @@ export default function FloatingAiAssistant({
   // Record card receipts by card id, and the steps already reported.
   const [actionReceipts, setActionReceipts] = useState<Record<string, RecordActionReceipt>>({});
   const reportedActionsRef = useRef(new Set<string>());
-  // What readiness last said: whether v2 answers, and the setup checklist.
-  const [readiness, setReadiness] = useState<Pick<AiRuntimeReadinessV2, "assistantV2" | "setup"> | null>(null);
+  // What readiness last said: whether the assistant answers here (with the
+  // first-day checklist), or why it cannot (a notice code, shown up front).
+  // null until it is read, or when it could not be read: the panel then asks
+  // as usual, and the server's answer says what it can.
+  const [readiness, setReadiness] = useState<AiRuntimeReadiness | null>(null);
+  const readinessRequestedRef = useRef(false);
+
+  function refreshReadiness() {
+    readinessRequestedRef.current = true;
+    void fetchAiRuntimeReadiness().then((ready) => setReadiness(ready), () => undefined);
+  }
 
   useEffect(() => {
     if (openSignal) setOpen(true);
   }, [openSignal]);
 
-  function assistantPath() {
-    readinessRef.current ??= fetchAiRuntimeReadiness().then((ready): AssistantPath => {
-      setReadiness({ assistantV2: ready.assistantV2, setup: ready.setup ?? null });
-      return ready.assistantV2 === true ? "v2" : "v1";
-    }, (): AssistantPath => "v1");
-    return readinessRef.current;
-  }
-
   useEffect(() => {
-    if (open) void assistantPath();
+    if (open && !readinessRequestedRef.current) refreshReadiness();
   }, [open]);
 
   const minimizeAssistant = () => setOpen(false);
@@ -725,8 +243,8 @@ export default function FloatingAiAssistant({
   }, [open, docked]);
 
   // A new answer is shown from its first line, where it says what matters
-  // most (for an order, what is already on order), not scrolled to its end.
-  // Anything else (a question, the loading line) scrolls to the end.
+  // most, not scrolled to its end. Anything else (a question, an answer still
+  // streaming) scrolls to the end.
   useEffect(() => {
     if (!open) return;
     const area = scrollRef.current;
@@ -769,42 +287,31 @@ export default function FloatingAiAssistant({
     };
   }, [open, docked]);
 
-  useEffect(() => {
-    if (!asking) {
-      setSlowRequest(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setSlowRequest(true), 1500);
-    return () => window.clearTimeout(timer);
-  }, [asking]);
-
   // The page's record, until the user sets it aside for this record. Opening
   // another record brings its context back.
   const pageContext = cleanActiveContext(activeContext);
   const pageContextKey = pageContext ? `${pageContext.entityType}:${pageContext.entityId}` : null;
   const currentContext = pageContext && pageContextKey !== dismissedContextKey ? pageContext : null;
-  const sessionGrounding = useMemo(() => buildSessionGrounding(messages, currentContext), [messages, currentContext]);
   const contextLabel = getAiContextLabel(currentContext, language);
   const inputPlaceholder = getAiInputPlaceholder(currentContext, language);
+  // Why the assistant cannot answer in this workspace, said before the first
+  // question; the welcome cards are left out, since each would get the same notice.
+  const notice = readiness && readiness.assistantV2 === false && readiness.notice ? readiness.notice : null;
   // On a PO or SKU page: two questions about the record, then two about the
   // workspace, so the assistant never turns into a single-record bot.
   const workspacePrompts = AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => language === "zh-CN" ? item.zhPrompt : item.prompt);
   const recordPrompts = currentContext?.entityType === "purchase_order" ? PO_EMPTY_PROMPTS[language]
     : currentContext?.entityType === "item" ? SKU_EMPTY_PROMPTS[language] : [];
-  const recordHints = currentContext?.entityType === "purchase_order" ? PO_SKILL_HINTS : SKU_SKILL_HINTS;
   const setupStarters = !recordPrompts.length && readiness?.assistantV2 === true && Boolean(readiness.setup?.open && readiness.setup.firstStepsOpen);
-  const emptyPrompts = setupStarters ? SETUP_STARTERS.map((key) => translate(language, key))
+  const emptyPrompts = notice ? [] : setupStarters ? SETUP_STARTERS.map((key) => translate(language, key))
     : recordPrompts.length ? [...recordPrompts.slice(0, 2), ...workspacePrompts.slice(0, 2)] : workspacePrompts;
-  const emptyPromptSkillHints = setupStarters ? SETUP_STARTERS.map(() => "")
-    : recordPrompts.length ? [...recordHints.slice(0, 2), ...EMPTY_STATE_SKILL_HINTS.slice(0, 2)] : EMPTY_STATE_SKILL_HINTS;
   const emptyPromptIcons = setupStarters ? SETUP_STARTER_ICONS
     : recordPrompts.length ? [MessageSquareText, MessageSquareText, ...EMPTY_STATE_ICONS.slice(0, 2)] : EMPTY_STATE_ICONS;
-  // The longest question the conversation's path reads: assistant v2 takes
-  // pasted rows, the rules do not. Longer text stays in the box, unsent.
-  const questionLimit = (conversationPath ?? (readiness?.assistantV2 === true ? "v2" : "v1")) === "v2" ? QUESTION_LIMITS.assistantV2 : QUESTION_LIMITS.rules;
+  // The longest question the assistant reads; pasted rows fit. Longer text
+  // stays in the box, unsent.
+  const questionLimit = QUESTION_LIMITS.assistantV2;
   const inputLength = input.trim().length;
   const inputTooLong = inputLength > questionLimit;
-  const currentRequestLabel = requestScopeLabel(messages.filter((message) => message.role === "user").at(-1)?.content || input, language);
   // The header names the conversation by its first question once there is one.
   const firstQuestion = messages.find((message) => message.role === "user")?.content || "";
   const panelTitle = firstQuestion || (zh ? "FlowChain 助手" : "FlowChain assistant");
@@ -815,13 +322,8 @@ export default function FloatingAiAssistant({
   function startNewConversation() {
     abortReasonRef.current = "superseded";
     abortRef.current?.abort();
-    pendingAskRef.current += 1;
-    conversationPathRef.current = null;
-    setConversationPath(null);
     requestInFlightRef.current = false;
     setAsking(false);
-    setSlowRequest(false);
-    setProgress(null);
     setMessages([]);
     setInput("");
     setThreadId(newThreadId());
@@ -832,20 +334,14 @@ export default function FloatingAiAssistant({
     reportedSetupRef.current = new Set();
     setActionReceipts({});
     reportedActionsRef.current = new Set();
-    // The checklist may have moved on (records created in this conversation).
-    if (readinessRef.current) void fetchAiRuntimeReadiness().then((ready) => setReadiness({ assistantV2: ready.assistantV2, setup: ready.setup ?? null }), () => undefined);
+    // The checklist may have moved on (records created in this conversation),
+    // and AI may have been switched on or off.
+    refreshReadiness();
   }
 
   function cancelRequest() {
-    if (!abortRef.current) {
-      // Still waiting for readiness: nothing was sent, the question stays in the box.
-      pendingAskRef.current += 1;
-      requestInFlightRef.current = false;
-      setAsking(false);
-      return;
-    }
-    // The in-flight request belongs to this conversation, so its path decides.
-    abortReasonRef.current = conversationPathRef.current === "v2" ? "stopped" : "superseded";
+    if (!abortRef.current) return;
+    abortReasonRef.current = "stopped";
     abortRef.current.abort();
   }
 
@@ -874,129 +370,13 @@ export default function FloatingAiAssistant({
     setActionReceipts((current) => ({ ...current, [cardId]: receipt }));
   }
 
-  async function askAi(text: string, skillHint?: string) {
+  // Every question, typed or from a card or chip, goes to the assistant as it
+  // is written; its answer streams in as events.
+  async function askAi(text: string) {
     const message = text.trim();
     if (!message || requestInFlightRef.current) return;
-    // Over the path's limit the question stays in the box with its count.
+    // Over the limit the question stays in the box with its count.
     if (message.length > questionLimit) return;
-    let path = conversationPathRef.current;
-    if (!path) {
-      const pending = pendingAskRef.current + 1;
-      pendingAskRef.current = pending;
-      requestInFlightRef.current = true;
-      setAsking(true);
-      path = await Promise.race([assistantPath(), new Promise<AssistantPath>((done) => window.setTimeout(() => done("v1"), READINESS_WAIT_MS))]);
-      if (pendingAskRef.current !== pending || abortReasonRef.current === "unmount") return;
-      requestInFlightRef.current = false;
-      conversationPathRef.current = path;
-      setConversationPath(path);
-    }
-    // The model reads every question as typed: no skill hint goes with v2.
-    if (path === "v2") {
-      await askAssistantV2(message);
-      return;
-    }
-
-    const context = currentContext;
-    const requestStartedAt = performance.now();
-    const requestId = requestSeqRef.current + 1;
-    const controller = new AbortController();
-    let timeoutHit = false;
-    requestSeqRef.current = requestId;
-    requestInFlightRef.current = true;
-    abortReasonRef.current = null;
-    abortRef.current?.abort();
-    abortRef.current = controller;
-    setAsking(true);
-    setProgress(null);
-    setInput("");
-    setMessages((current) => [...current, { role: "user", content: message }]);
-    // Any question, a chip's too, may go to the model-first loop, which takes
-    // up to 20 s before the rules answer instead.
-    const timeout = window.setTimeout(() => {
-      timeoutHit = true;
-      abortReasonRef.current = "timeout";
-      controller.abort();
-    }, 25000);
-
-    try {
-      const safeConversationContext = buildSafeConversationContext(messages, context, sessionGrounding, language);
-      const response = await postAiRuntimeResponse({
-        answerLanguage: language,
-        // The server picks records or company documents from the question.
-        queryMode: "auto",
-        message,
-        ...(skillHint ? { skillHint } : {}),
-        activeModuleId: moduleId,
-        activeViewId: context?.view,
-        focusTarget: focusTargetFromActiveContext(context),
-        conversationContext: {
-          ...safeConversationContext,
-          previousQuestion: safeConversationContext.previousQuestion || sessionGrounding.lastIntent,
-          previousAnswerSummary: sessionGrounding.lastPrimaryEntity?.label,
-          userIntentLabel: context?.entityLabel || contextLabel,
-        },
-        sessionGrounding,
-        returnTo: "ai-assistant",
-        // A typed question may go to the model-first loop, which says what it
-        // reads while it answers; a chip answers at once from its skill.
-      }, controller.signal, skillHint ? undefined : (event) => { if (requestSeqRef.current === requestId) setProgress(event); });
-      const rawContent = response.runtimeModeLabel || "";
-      const content = "";
-      if (looksLikeRawJson(rawContent)) console.debug("AI assistant raw content suppressed", rawContent);
-      if (import.meta.env.DEV) {
-        console.debug("AI assistant request completed", {
-          elapsedMs: Math.round(performance.now() - requestStartedAt),
-          cards: 1,
-        });
-      }
-      if (requestSeqRef.current !== requestId) return;
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", content, cards: [{ type: "ai_response_v2", data: response as unknown as Record<string, unknown> }] },
-      ]);
-      // Asked for an order with a clear choice: open its form, filled in, as
-      // the answer's own button would. Nothing is saved. The assistant stays
-      // open, so the user reads first why the page changed and what is
-      // already on order; the answer keeps the button to open it again.
-      const opening = autoOpenDraftCard((response as unknown as AiResponseV2).reviewCards);
-      if (opening?.draftType) {
-        const target = structuredDraftTarget(opening.draftType, opening.payload, "ai_assistant");
-        onNavigate?.(target.moduleId, null, { source: "ai", returnTo: "ai", entityLabel: opening.allowedNextStep, query: target.query });
-      }
-    } catch (error) {
-      if (requestSeqRef.current !== requestId || abortReasonRef.current === "unmount" || abortReasonRef.current === "superseded") return;
-      if (import.meta.env.DEV) {
-        console.warn("AI assistant request failed", {
-          elapsedMs: Math.round(performance.now() - requestStartedAt),
-          timeout: timeoutHit || abortReasonRef.current === "timeout",
-          name: error instanceof Error ? error.name : "unknown",
-          healthCheck: "/api/health",
-          devHint: "Check npm run api, /api/health, SCM_API_PROXY_TARGET, stale node on 8787, current HEAD with git rev-parse --short HEAD, browser refresh, and UTF-8 byte bodies for PowerShell Chinese prompt tests.",
-        });
-      }
-      setMessages((current) => [
-        ...current,
-        {
-          role: "assistant",
-          content: displaySafeAssistantRecoveryMessage(message, language, aiRecoveryReason(error, timeoutHit || abortReasonRef.current === "timeout")),
-          retryPrompt: message,
-          ...(skillHint ? { retrySkillHint: skillHint } : {}),
-        },
-      ]);
-    } finally {
-      window.clearTimeout(timeout);
-      if (requestSeqRef.current === requestId) {
-        requestInFlightRef.current = false;
-        abortRef.current = null;
-        abortReasonRef.current = null;
-        setAsking(false);
-        setProgress(null);
-      }
-    }
-  }
-
-  async function askAssistantV2(message: string) {
     const context = currentContext;
     const requestId = requestSeqRef.current + 1;
     const controller = new AbortController();
@@ -1098,25 +478,32 @@ export default function FloatingAiAssistant({
               <div data-testid="ai-welcome">
                 <h3 className="text-xl font-semibold" style={{ color: A.label }}>{greeting}</h3>
                 <p data-testid="ai-runtime-boundary" className="mt-1.5 text-sm leading-relaxed" style={{ color: A.gray1 }}>{zh ? "我能查采购、库存和发票，也能帮你起草单据，你确认后才会提交。" : "I can look up purchasing, inventory and invoices, and draft documents for you to confirm."}</p>
-                <div className="mt-5 grid grid-cols-2 gap-2.5">
-                  {emptyPrompts.slice(0, 4).map((prompt, index) => {
-                    const Icon = emptyPromptIcons[index] || MessageSquareText;
-                    return (
-                      <button
-                        key={prompt}
-                        type="button"
-                        onClick={() => askAi(prompt, emptyPromptSkillHints[index] || undefined)}
-                        disabled={asking}
-                        data-testid="ai-empty-prompt-chip"
-                        data-starter={setupStarters ? "setup" : "workspace"}
-                        className="flex min-h-[92px] flex-col items-start gap-2.5 rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: "#EFF4FF" }}><Icon size={15} style={{ color: A.blue }} aria-hidden /></span>
-                        <span className="text-[13px] font-medium leading-snug" style={{ color: A.label }}>{prompt}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                {notice ? (
+                  <p role="status" data-testid="ai-readiness-notice" data-code={notice} className="mt-4 rounded-lg px-3 py-2 text-[13px] leading-relaxed" style={{ background: A.gray6, color: A.gray1 }}>
+                    {translate(language, `ai.v2.notice.${notice}` as const)}
+                  </p>
+                ) : null}
+                {emptyPrompts.length ? (
+                  <div className="mt-5 grid grid-cols-2 gap-2.5">
+                    {emptyPrompts.slice(0, 4).map((prompt, index) => {
+                      const Icon = emptyPromptIcons[index] || MessageSquareText;
+                      return (
+                        <button
+                          key={prompt}
+                          type="button"
+                          onClick={() => askAi(prompt)}
+                          disabled={asking}
+                          data-testid="ai-empty-prompt-chip"
+                          data-starter={setupStarters ? "setup" : "workspace"}
+                          className="flex min-h-[92px] flex-col items-start gap-2.5 rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: "#EFF4FF" }}><Icon size={15} style={{ color: A.blue }} aria-hidden /></span>
+                          <span className="text-[13px] font-medium leading-snug" style={{ color: A.label }}>{prompt}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             )}
             {messages.length > 0 && (
@@ -1143,52 +530,9 @@ export default function FloatingAiAssistant({
                       onNavigate={minimizeAfterNavigate}
                       onFollowUp={askAi}
                       onRetry={message.question ? () => askAi(message.question || "") : undefined}
-                      onReviewActionDraft={onReviewActionDraft}
                     />
                   </div>
-                ) : (
-                  <div key={`${message.role}-${index}`} data-testid="ai-message-assistant" className="space-y-3 text-sm leading-relaxed" style={{ color: A.label }}>
-                    {message.content ? <div className="whitespace-pre-wrap">{message.content}</div> : null}
-                    <AiResponseCards cards={message.cards} latest={index === lastAssistantIndex} onNavigate={minimizeAfterNavigate} onReviewActionDraft={onReviewActionDraft} onFollowUp={askAi} />
-                    {/* Next questions only under the latest answer. */}
-                    {index === lastAssistantIndex && getAiFollowUpChips(message, language).length ? (
-                      <div className="flex flex-wrap gap-1.5">
-                        {getAiFollowUpChips(message, language).map((chip) => (
-                          <button
-                            key={`${chip.label}-${chip.prompt}`}
-                            type="button"
-                            onClick={() => askAi(chip.prompt)}
-                            disabled={asking}
-                            data-testid="ai-follow-up-chip"
-                            className="rounded-full px-3 py-1.5 text-[13px] font-medium hover:bg-blue-50 disabled:cursor-not-allowed"
-                            style={{ background: A.white, color: asking ? A.gray3 : A.blue, border: `1px solid ${A.gray4}` }}
-                          >
-                            {chip.label}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {message.retryPrompt ? (
-                      <button
-                        type="button"
-                        onClick={() => askAi(message.retryPrompt || "", message.retrySkillHint)}
-                        disabled={asking}
-                        className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium disabled:cursor-not-allowed"
-                        style={{ background: A.white, color: asking ? A.gray3 : A.blue, border: `1px solid ${A.gray4}` }}
-                      >
-                        <RotateCcw size={13} />
-                        {language === "zh-CN" ? "重试" : "Retry"}
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
-                {/* An assistant v2 answer shows its own status line. */}
-                {asking && !assistantV2 && (
-                  <div data-testid="ai-progress-line" aria-live="polite" className="flex items-center gap-2 text-[13px]" style={{ color: A.gray1 }}>
-                    <Loader2 size={14} className="animate-spin" aria-hidden />
-                    {progress ? aiProgressLine(progress, language) : slowRequest ? currentRequestLabel : (language === "zh-CN" ? "正在确认查询范围" : "Checking your question")}
-                  </div>
-                )}
+                ) : null)}
               </div>
             )}
           </div>
@@ -1220,11 +564,11 @@ export default function FloatingAiAssistant({
                   type="button"
                   onClick={() => asking ? cancelRequest() : askAi(input)}
                   disabled={!asking && (!input.trim() || inputTooLong)}
-                  data-testid={asking && assistantV2 ? "ai-assistant-stop" : "ai-assistant-send"}
+                  data-testid={asking ? "ai-assistant-stop" : "ai-assistant-send"}
                   className="flex h-8 w-8 items-center justify-center rounded-lg text-white disabled:cursor-not-allowed"
                   style={{ background: asking || input.trim() ? A.blue : A.gray3 }}
-                  aria-label={asking ? (assistantV2 ? translate(language, "ai.v2.stop") : language === "zh-CN" ? "取消请求" : "Cancel request") : (language === "zh-CN" ? "发送" : "Send")}
-                  title={asking && assistantV2 ? translate(language, "ai.v2.stop") : undefined}
+                  aria-label={asking ? translate(language, "ai.v2.stop") : (language === "zh-CN" ? "发送" : "Send")}
+                  title={asking ? translate(language, "ai.v2.stop") : undefined}
                 >
                   {asking ? <Square size={13} /> : <Send size={15} />}
                 </button>

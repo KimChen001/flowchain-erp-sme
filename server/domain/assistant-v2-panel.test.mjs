@@ -151,11 +151,6 @@ test('ui parts keep their order, a resent part is swapped in place, notices are 
   const withheld = fold([event({ type: 'error', code: 'withheld', retryable: false }), event({ type: 'answer', status: 200, body: { parts: [], conclusion: { summary: 'PO-020 costs 4,200 USD.' } } })])
   assert.deepEqual([withheld.parts, withheld.error], [[], { code: 'withheld', retryable: false }])
 
-  // A rules answer (no parts at all) is drawn as the classic card.
-  const rules = fold([{ type: 'answer', status: 200, body: { version: 'v2', answerSource: 'workspace_rules' } }])
-  assert.deepEqual(client.rulesAnswerBody(rules), { version: 'v2', answerSource: 'workspace_rules' })
-  assert.equal(client.rulesAnswerBody(client.foldAssistantV2Events(S4)), null)
-
   // Stop: the answer so far stays, with the cancelled notice.
   const partial = client.foldAssistantV2Events(S4.slice(0, 5))
   const stopped = client.finishAssistantV2Message(partial, { notice: 'cancelled' })
@@ -219,9 +214,9 @@ test('a stream line that cannot be read is skipped, not fatal', () => {
     assert.equal(client.parseAssistantV2Line(line), null, line)
   }
   assert.equal(client.parseAssistantV2Line('{"v":2,"seq":4,"type":"text_delta","partId":"p1","text":"Hi"}').text, 'Hi')
-  // The rules fallback's lines have no envelope; its progress and answer still read.
-  assert.deepEqual(client.parseAssistantV2Line('{"type":"progress","step":"reading","sources":["purchase_orders"]}'), { v: 2, seq: 0, type: 'progress', step: 'reading', sources: ['purchase_orders'] })
-  assert.equal(client.parseAssistantV2Line('{"type":"answer","status":200,"body":{"version":"v2"}}').type, 'answer')
+  // A line without the {v, seq} envelope is not read.
+  assert.equal(client.parseAssistantV2Line('{"type":"progress","step":"reading","sources":["purchase_orders"]}'), null)
+  assert.equal(client.parseAssistantV2Line('{"type":"answer","status":200,"body":{"version":"v2"}}'), null)
 
   assert.deepEqual(client.splitStreamLines('{"a":1}\n\n{"b":2}\n{"c"'), { lines: ['{"a":1}', '{"b":2}'], rest: '{"c"' })
   assert.deepEqual(client.splitStreamLines('{"c":3}', true), { lines: ['{"c":3}'], rest: '' })
@@ -375,7 +370,7 @@ test('notices and errors are worded by code, Retry only on the latest retryable 
   assert.match(client.render({ message: client.finishAssistantV2Message(chinese, { notice: 'cancelled' }) }), /已停止。未修改任何数据。/)
 })
 
-test('a created request keeps its receipt by form id, and a rules answer renders as the classic card', () => {
+test('a created request keeps its receipt by form id', () => {
   const message = client.foldAssistantV2Events(S4)
   const created = client.render({ message, receipts: { 'msg_19:p2': { id: 'PR-0231', version: 1, status: 'draft' } } })
   assert.match(created, /data-testid="ai-v2-pr-receipt" data-status="draft"/)
@@ -383,11 +378,6 @@ test('a created request keeps its receipt by form id, and a rules answer renders
   // Another form's receipt does not land on this one.
   assert.match(client.render({ message, receipts: { 'msg_18:p2': { id: 'PR-0230', version: 1, status: 'draft' } } }), /data-testid="ai-v2-pr-form"/)
 
-  const rules = fold([{ type: 'answer', status: 200, body: { version: 'v2', answerSource: 'workspace_rules', language: 'en-US', conclusion: { title: 'Two purchase orders are overdue', summary: 'PO-020 and PO-021 are past their promised date.' }, keyEvidence: [], navigationLinks: [] } }])
-  const classic = client.render({ message: rules })
-  assert.match(classic, /data-answer-source="workspace_rules"/)
-  assert.match(classic, /Two purchase orders are overdue/)
-  assert.doesNotMatch(classic, /data-testid="ai-v2-answer"/)
 })
 
 test('a setup card keeps what it created by form id, and the setup tool has a status line', () => {

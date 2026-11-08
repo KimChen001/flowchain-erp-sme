@@ -12,8 +12,7 @@ import { reportReadAccessFor } from '../domain/report-read-access.mjs'
 import { loadAiSkillContext } from '../domain/ai-skill-context.mjs'
 import { recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
 import { aiSkillText } from '../domain/ai-skill-copy.mjs'
-import { presentAiModelFirstAnswer } from '../domain/ai-model-first.mjs'
-import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
+import { presentAssistantV2Answer } from '../domain/ai-assistant-v2-answer.mjs'
 
 // The assistant v2 branch of /api/ai-runtime/respond (docs/ai-assistant-v2-design.md
 // §3.1, §3.2, §3.5, §3.8, §3.11). The gateway calls it, after the length
@@ -25,12 +24,10 @@ import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
 //   2. the per-user rate limit (30 questions per 10 minutes);
 //   3. the cost reservation: when this month's remaining budget, less what
 //      the workspace's running answers hold, cannot cover one answer's
-//      ceiling, the rules answer instead, with the over_cap notice;
+//      ceiling, the over_cap notice;
 //   4. the loop, on the user's thread, its events streamed as they happen and
 //      stopped when the client goes away or the wall time runs out.
-// Each request gets one codes-only audit row; it says whether the question
-// read as an instruction to act (actionRequest, design §3.2: the action-verb
-// router is only an audit flag with v2 on). A provider failure before any
+// Each request gets one codes-only audit row. A provider failure before any
 // text or part was shown, or a month's cap that cannot cover an answer, gets
 // a notice (unavailable, over_cap) with the loop's block in its audit row.
 // Returns { handled: true }.
@@ -89,13 +86,11 @@ function withoutInjectedTurns(conversationContext) {
 // and the same words in the folded body for a client that reads only that.
 function noticeAnswer(code, language, query) {
   const summary = aiSkillText(`assistant_v2.notice.${code}`, language)
-  const response = presentAiModelFirstAnswer({ answer: { title: summary, answer: summary, records: [] }, refs: [], stats: { calls: [] }, facts: null, language, query })
+  const response = presentAssistantV2Answer({ summary, language, query })
   const label = aiSkillText('answer.source_none', language)
   return {
     ...response,
     responseId: `ai-assistant-v2-${randomUUID()}`,
-    intent: 'assistant_v2',
-    answerSource: 'assistant_v2',
     answerSourceLabel: label,
     runtimeModeLabel: label,
     conclusion: { ...response.conclusion, severity: 'warning' },
@@ -340,7 +335,7 @@ async function addSetupNote({ context, session, formId, userId, created }) {
 export async function answerWithAssistantV2Notice(ctx, body, code, { started = Date.now() } = {}) {
   const message = text(body.message || body.question)
   const answer = noticeAnswer(code, body.answerLanguage, message)
-  await recordAiSkillAudit(ctx, { response: answer, facts: null, message, latencyMs: Date.now() - started, assistantV2: { status: 'off', reason: code, actionRequest: Boolean(detectAiActionRequest(message)) } })
+  await recordAiSkillAudit(ctx, { response: answer, facts: null, message, latencyMs: Date.now() - started, assistantV2: { status: 'off', reason: code } })
   if (ctx.aiStreamEvent) {
     ctx.aiStreamEvent({ type: 'notice', code })
     ctx.aiStreamEvent({ type: 'answer', status: 200, body: answer })
@@ -354,11 +349,10 @@ export async function answerWithAssistantV2(ctx, body, { client, started = Date.
   const emit = ctx.aiStreamEvent || null
   const message = text(body.message || body.question)
   const language = body.answerLanguage
-  const actionRequest = Boolean(detectAiActionRequest(message))
   const audit = (response, assistantV2, extra = {}) => recordAiSkillAudit(ctx, { response, facts: null, message, latencyMs: Date.now() - started, assistantV2, ...extra })
   const refuse = async (code, reason) => {
     const answer = noticeAnswer(code, language, message)
-    await audit(answer, { status: 'refused', reason, actionRequest }, { refusal: true })
+    await audit(answer, { status: 'refused', reason }, { refusal: true })
     if (emit) {
       emit({ type: 'notice', code })
       emit({ type: 'answer', status: 200, body: answer })
@@ -388,7 +382,7 @@ export async function answerWithAssistantV2(ctx, body, { client, started = Date.
   if (!(ctx.aiAssistantV2RateLimiter || RATE_LIMITER).allow(`${context.tenantId}:${userId}`)) return refuse('rate_limited', 'rate_limited')
 
   const reservation = (ctx.aiAssistantV2CostLedger || COST_LEDGER).reserve(context.tenantId, ctx.aiWorkspaceAccess)
-  if (!reservation.ok) return handBack('over_cap', { status: 'fallback', reason: 'over_cap', actionRequest })
+  if (!reservation.ok) return handBack('over_cap', { status: 'fallback', reason: 'over_cap' })
 
   const threadId = THREAD_ID.test(text(body.threadId)) ? text(body.threadId) : `thr_${randomUUID().replace(/-/g, '').slice(0, 24)}`
   const session = (ctx.aiAssistantV2Threads || THREADS).open({ tenantId: context.tenantId, userId, threadId, fingerprint: assistantV2PermissionFingerprint(context.actor) })
@@ -418,9 +412,9 @@ export async function answerWithAssistantV2(ctx, body, { client, started = Date.
       })
     } catch (error) {
       if (!(error instanceof AssistantModelError)) throw error
-      return await handBack('unavailable', { status: 'fallback', reason: 'provider_error', actionRequest, ...(error.audit || {}) })
+      return await handBack('unavailable', { status: 'fallback', reason: 'provider_error', ...(error.audit || {}) })
     }
-    await audit(result.body, { status: gone ? 'cancelled' : backstop ? 'timeout' : 'answered', formNotes: notes, actionRequest, droppedTurns, ...result.audit })
+    await audit(result.body, { status: gone ? 'cancelled' : backstop ? 'timeout' : 'answered', formNotes: notes, droppedTurns, ...result.audit })
     if (gone) return { handled: true }
     if (backstop) {
       if (emit) {

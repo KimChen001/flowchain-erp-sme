@@ -14,6 +14,10 @@ const { createDatabaseRepositoryRegistry } = await import('../../server/reposito
 const { loadAiSkillContext } = await import('../../server/domain/ai-skill-context.mjs')
 const { readAiSkillFacts } = await import('../../server/domain/ai-skill-readers.mjs')
 const { aiReadToolsFor, aiReadToolRefs, runAiReadTool } = await import('../../server/domain/ai-read-tool-runner.mjs')
+const { AI_READ_TOOLS } = await import('../../server/domain/ai-read-tools.mjs')
+// The read tools; the assistant's own tools (ai-assistant-v2-data-tools.mjs)
+// need their arguments and the open requests, and have their own tests.
+const READ_TOOL_NAMES = new Set(AI_READ_TOOLS.map((tool) => tool.name))
 const { seedLocalDemo } = await import('../fixtures/workspace/master-data.mjs')
 const { seedLocalScenario } = await import('../fixtures/workspace/scenario.mjs')
 const { createKnowledgeService } = await import('../../server/domain/ai-knowledge-service.mjs')
@@ -66,7 +70,7 @@ test('the read tools answer from the seeded workspace, each role reading only wh
 
     // The administrator: every tool, every one answers.
     const admin = await contextFor('admin')
-    const offered = aiReadToolsFor(admin.facts, admin.context).map((tool) => tool.name)
+    const offered = aiReadToolsFor(admin.facts, admin.context).map((tool) => tool.name).filter((name) => READ_TOOL_NAMES.has(name))
     for (const name of ['search_records', 'reorder_list', 'list_receivables', 'list_contracts', 'price_history', 'stock_projection', 'supplier_risks', 'search_documents']) assert.ok(offered.includes(name), `${name} is offered`)
     const results = {}
     for (const name of offered) {
@@ -133,7 +137,7 @@ test('the read tools answer from the seeded workspace, each role reading only wh
 
     // Finance reads invoices and receivables, not purchase orders or stock.
     const finance = await contextFor('finance')
-    const financeTools = aiReadToolsFor(finance.facts, finance.context).map((tool) => tool.name)
+    const financeTools = aiReadToolsFor(finance.facts, finance.context).map((tool) => tool.name).filter((name) => READ_TOOL_NAMES.has(name))
     for (const name of ['list_purchase_orders', 'price_history', 'reorder_list', 'stock_projection', 'late_order_impact']) assert.ok(!financeTools.includes(name), `finance is not offered ${name}`)
     assert.ok(financeTools.includes('list_receivables'))
     const financeOutputs = []

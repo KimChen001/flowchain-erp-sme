@@ -32,7 +32,9 @@ test('an administrator is offered every read tool, and each answers with capped 
   // Without the request's context only the tools over the facts are offered;
   // the service tools (tests/postgres/ai-read-tools.test.mjs) need it.
   const service = new Set(AI_READ_SERVICE_TOOLS.map((tool) => tool.name))
-  assert.deepEqual(aiReadToolsFor(facts).map((tool) => tool.name), AI_READ_TOOLS.map((tool) => tool.name).filter((name) => !service.has(name)))
+  const offered = aiReadToolsFor(facts).map((tool) => tool.name)
+  for (const name of AI_READ_TOOLS.map((tool) => tool.name).filter((entry) => !service.has(entry))) assert.ok(offered.includes(name), name)
+  assert.ok(!offered.some((name) => service.has(name)))
   assert.equal((await runAiReadTool('search_records', { query: 'Acme' }, { facts })).error, 'not_allowed')
   const scenario = aiSkillScenario()
   const context = await loadAiSkillContext(scenario.ctx)
@@ -140,7 +142,7 @@ test('calculate multiplies, and takes several calculations in one call', async (
 test('a role gets only the tools and the fields it may read', async () => {
   // Finance reads supplier invoices, not purchase orders or stock.
   const finance = await factsFor('finance-specialist')
-  assert.deepEqual(aiReadToolsFor(finance).map((tool) => tool.name).sort(), ['calculate', 'list_supplier_invoices', 'list_suppliers', 'workspace_summary'])
+  assert.deepEqual(aiReadToolsFor(finance).map((tool) => tool.name).sort(), ['attention_list', 'calculate', 'list_supplier_invoices', 'list_suppliers', 'records_missing_data', 'workspace_summary'])
   assert.equal((await runAiReadTool('list_purchase_orders', {}, { facts: finance })).error, 'not_allowed')
   assert.doesNotMatch(await everyOutput(finance), /PO-0\d\d/, 'no purchase order number reaches a finance user')
   // Operations reads stock and receipts, not purchase orders.

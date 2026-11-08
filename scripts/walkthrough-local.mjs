@@ -32,8 +32,9 @@
 // --ai-env is the one exception to "calls no paid service", and only when
 // given: it reads a model provider from a file outside this checkout (the
 // owner's provider settings, for example another worktree's
-// .local/ai-provider.env). Only the AI provider and knowledge settings in it
-// are used, and the key is never printed.
+// .local/ai-provider.env) and switches assistant v2 on. Without it the
+// assistant shows the notice that no model is set up. Only the AI provider
+// and knowledge settings in it are used, and the key is never printed.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -87,9 +88,9 @@ if (aiEnvArg) {
     console.error("[walkthrough] --ai-env needs FLOWCHAIN_AI_PROVIDER_KIND and FLOWCHAIN_AI_PROVIDER_API_KEY.");
     process.exit(1);
   }
-  // Agent planning (P2): one model call picks the skills; the skills answer.
-  // --compose also lets the model word the answers from their facts (P3).
-  aiEnv.FLOWCHAIN_AI_AGENT_MODE = process.argv.includes("--compose") ? "compose" : "plan";
+  // Assistant v2 answers every question; with the rules engine removed
+  // (2026-11-07), a server with a model but another mode shows the notice.
+  aiEnv.FLOWCHAIN_AI_ASSISTANT_MODE = "assistant_v2";
 }
 
 if (process.argv.includes("--reset")) rmSync(dataRoot, { recursive: true, force: true });
@@ -226,7 +227,7 @@ try {
 [walkthrough] Sign in with admin@flowchain.local or kim@example.com (UCI also daniel@example.com), then open
 [walkthrough] "View the sign-in link" on the sign-in page (local outbox only).
 [walkthrough] Data folder: ${dataRoot}   Stop with Ctrl+C.
-[walkthrough] Model features: ${aiEnvArg ? `on (${aiEnv.FLOWCHAIN_AI_PROVIDER_KIND}, ${aiEnv.FLOWCHAIN_AI_PROVIDER_MODEL || "default model"}; knowledge ${aiEnv.FLOWCHAIN_KNOWLEDGE_PROVIDER || "off"})` : "off"}`);
+[walkthrough] Model features: ${aiEnvArg ? `on (${aiEnv.FLOWCHAIN_AI_PROVIDER_KIND}, ${aiEnv.FLOWCHAIN_AI_PROVIDER_MODEL || "default model"}; assistant v2, knowledge ${aiEnv.FLOWCHAIN_KNOWLEDGE_PROVIDER || "off"})` : "off"}`);
 } catch (error) {
   console.error(`[walkthrough] ${error.message}`);
   await stop(1);
