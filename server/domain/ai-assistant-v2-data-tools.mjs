@@ -32,6 +32,8 @@ const array = (value) => (Array.isArray(value) ? value : [])
 const fold = (value) => text(value).toLowerCase()
 const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `How many rows to return, ${AI_TOOL_LIMITS.rows} by default.` }
+// A rate as the model reads it: one decimal; calculations keep the exact one.
+const rate1 = (value) => (value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Math.round(Number(value) * 10) / 10)
 const stockRow = (facts, sku) => array(facts.inventory?.rows).find((row) => fold(row.sku) === fold(sku)) || null
 const openRequestsRead = (facts) => Array.isArray(facts.purchaseRequests?.open)
 
@@ -400,7 +402,7 @@ const suggestPurchaseLines = defineAiTool({
         ...(coverDays ? { cover: {
           days: coverDays,
           basis: coverTarget !== null ? 'recorded_demand' : row.noStock ? 'no_stock_position' : demand?.scoped ? 'warehouse_scope' : 'not_enough_shipment_history',
-          averageDailyDemand: rateOf(row),
+          averageDailyDemand: rate1(rateOf(row)),
           demandWindowDays: DEMAND_WINDOW_DAYS,
           shipmentDays: demandOf(row)?.shipmentDays ?? 0,
           leadTimeDays: chosen?.leadTimeDays ?? null,
@@ -654,7 +656,7 @@ const orderQuantityCosts = defineAiTool({
       priceBreaksRecorded: false,
       demand: rate === null
         ? { averageDailyDemand: null, basis: demand.scoped ? 'warehouse_scope' : 'not_enough_shipment_history', windowDays: DEMAND_WINDOW_DAYS }
-        : { averageDailyDemand: round(rate), annualDemand: Math.round(annual), basis: 'recorded_demand', windowDays: DEMAND_WINDOW_DAYS, shipmentDays: demand.byItem.get(text(item.id))?.shipmentDays ?? null },
+        : { averageDailyDemand: rate1(rate), annualDemand: Math.round(annual), basis: 'recorded_demand', windowDays: DEMAND_WINDOW_DAYS, shipmentDays: demand.byItem.get(text(item.id))?.shipmentDays ?? null },
       assumptions: { ...assumptions, holdingCostPerUnitPerYear: round(holdingPerUnit), costPerOrder, costPerOrderSource: costPerOrder === null ? 'not_recorded' : 'user' },
       options,
       comparisons,
@@ -987,7 +989,7 @@ const stockProjection = defineAiTool({
     if (!demand || demand.scoped) return { ...projection, recordedDemand: { averageDailyDemand: null, reason: demand?.scoped ? 'warehouse_scope' : 'no_item_record' } }
     const history = demand.byItem.get(text(item.id))
     const rate = history?.averageDailyDemand ?? null
-    const recordedDemandRow = { averageDailyDemand: rate, windowDays: DEMAND_WINDOW_DAYS, shipmentDays: history?.shipmentDays ?? 0, ...(rate === null ? { reason: 'not_enough_shipment_history' } : {}) }
+    const recordedDemandRow = { averageDailyDemand: rate1(rate), windowDays: DEMAND_WINDOW_DAYS, shipmentDays: history?.shipmentDays ?? 0, ...(rate === null ? { reason: 'not_enough_shipment_history' } : {}) }
     if (rate === null) return { ...projection, recordedDemand: recordedDemandRow }
     const weekly = Math.round(rate * 7)
     const safety = projection.safetyStock

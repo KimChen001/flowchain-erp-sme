@@ -379,3 +379,12 @@ test('stock_position and stock_projection find an item by its name, in any case,
   assert.equal(many.error, 'ambiguous')
   assert.ok(many.candidates.some((row) => row.sku === 'LDM-001') && many.candidates.some((row) => row.sku === 'LDM-001-B'), JSON.stringify(many.candidates))
 })
+
+// 2026-11-08 on DeepSeek: "7.1556 件" a day, copied from four decimals.
+test('the reorder list gives the model its daily demand to one decimal', async () => {
+  const scenario = aiSkillScenario()
+  const reorderList = { read: async () => ({ rows: [{ sku: 'SKU-1', itemName: 'Item', orderNow: true, orderByDate: '2026-11-08', demand: { averageDailyDemand: 7.1556 }, supplier: { id: 'SUP-1', name: 'Supplier One' } }] }) }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  const row = (await runAiReadTool('reorder_list', {}, { facts: await readAiSkillFacts(context), context })).result.rows[0]
+  assert.equal(row.averageDailyDemand, 7.2)
+})

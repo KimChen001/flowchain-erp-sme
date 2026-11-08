@@ -149,3 +149,12 @@ test('in a Chinese answer, quoted lines and English lines keep English punctuati
   assert.equal(tidy('LOCAL-DEMO-PO-020 (Precision Fastener Works) ', '', '逾期 15 天'), 'LOCAL-DEMO-PO-020（Precision Fastener Works） ')
   assert.equal(tidy('LOCAL-DEMO-PO-020 (Precision Fastener Works) ', '', 'is late'), 'LOCAL-DEMO-PO-020 (Precision Fastener Works) ')
 })
+
+// 2026-11-08 on DeepSeek: a Chinese answer wrote "10 月 1, 2026" for Oct 1, 2026.
+test('a date half in Chinese and half in the app\'s format is written in the workspace\'s format', () => {
+  const { tidy } = aiV2TextTidier({ language: 'zh-CN', formats })
+  assert.equal(tidy('上个月（10 月 1, 2026 至 10 月 31, 2026）的销售额是 £75,552.67。'), '上个月（Oct 1, 2026 至 Oct 31, 2026）的销售额是 £75,552.67。')
+  assert.equal(tidy('承诺交期 11月4，2026，已逾期。'), '承诺交期 Nov 4, 2026，已逾期。')
+  // Not a date: a decimal before 月, or no year.
+  assert.equal(tidy('3.5 月 2, 2026 不是日期'), '3.5 月 2, 2026 不是日期')
+})
