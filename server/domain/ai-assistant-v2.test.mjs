@@ -360,8 +360,9 @@ test('a call the provider reports no usage for is metered by estimate, so the ce
       FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted', FLOWCHAIN_AI_PROVIDER_KIND: 'deepseek_chat', FLOWCHAIN_AI_PROVIDER_ENDPOINT: `http://127.0.0.1:${server.address().port}/v1/chat/completions`,
       FLOWCHAIN_AI_PROVIDER_API_KEY: 'placeholder-key', FLOWCHAIN_AI_PROVIDER_MODEL: 'claude-sonnet-5-5',
     })
-    // Sized to the prompt and tools (raised from 100,000 when the cost tools came, 2026-11-06).
-    const ceiling = 120000
+    // Sized to the prompt and tools (raised from 100,000 when the cost tools
+    // came, 2026-11-06, and from 120,000 with the reorder paging rules, 2026-11-08).
+    const ceiling = 135000
     const chat = await ask(null, { client, limits: { costCeilingMicros: ceiling } })
     assertProtocol(chat.events)
     assert.ok(requests.length < ASSISTANT_V2_LIMITS.rounds, 'the cost stopped the answer, not the round limit')
