@@ -730,3 +730,21 @@ test('rfq_quotes reads each open RFQ\'s latest quotes through the RFQ comparison
   assert.equal(tool.available(facts, context), true)
   assert.equal(tool.available(facts, { ...context, actor: { ...context.actor, permissionCodes: new Set() } }), false)
 })
+
+// 2026-11-08: today's priorities read "21166 · 21166", a SKU with no name.
+test('attention_list names the item of an item row', async () => {
+  const { facts, run } = await v2({ change: shipping, actor: everyWarehouse })
+  const rows = (await run('attention_list', { limit: 10 })).result.rows.filter((row) => row.ref.type === 'item')
+  assert.ok(rows.length > 0)
+  for (const row of rows) {
+    const stock = [...facts.inventory.rows, ...facts.inventory.masterOnly].find((entry) => entry.sku === row.label)
+    assert.equal(row.itemName, stock.itemName, row.label)
+  }
+})
+
+// 2026-11-08: "check the line" beside a form whose line was already ticked.
+test('the prompt words a ticked form as reviewing it, an unticked one as ticking', () => {
+  assert.match(ASSISTANT_V2_SYSTEM, /review the lines, then click Create draft request/)
+  assert.match(ASSISTANT_V2_SYSTEM, /tick the items you want, then click Create draft request/)
+  assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /"check the lines, then click Create draft request"/)
+})

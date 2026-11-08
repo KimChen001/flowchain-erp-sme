@@ -57,7 +57,7 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   search_documents: { passages: ['document', 'section', 'excerpt'] },
   // A row's details are columns too: the model reads them and names them
   // (2026-11-05: the first table of attention items failed 5 times of 6).
-  attention_list: { rows: ['rank', 'type', 'severity', 'label', 'whenKind', 'days', 'date', 'supplier', 'details.sku', 'details.remaining', 'details.unit', 'details.available', 'details.demand', 'details.shortage', 'details.incoming', 'details.safety', 'details.reorder', 'details.pendingRequests', 'details.covered', 'details.variance', 'details.currency', 'details.rejected', 'details.quantity', 'details.priority', 'details.requiredDate', 'details.responses', 'details.title', 'details.count'] },
+  attention_list: { rows: ['rank', 'type', 'severity', 'label', 'itemName', 'whenKind', 'days', 'date', 'supplier', 'details.sku', 'details.remaining', 'details.unit', 'details.available', 'details.demand', 'details.shortage', 'details.incoming', 'details.safety', 'details.reorder', 'details.pendingRequests', 'details.covered', 'details.variance', 'details.currency', 'details.rejected', 'details.quantity', 'details.priority', 'details.requiredDate', 'details.responses', 'details.title', 'details.count'] },
   records_missing_data: { rows: ['type', 'label', 'source', 'missing'] },
   suggest_purchase_lines: { rows: ['item.sku', 'item.name', 'item.unit', 'onHand', 'safetyStock', 'reorderPoint', 'suggestedQuantity.value', 'suggestedQuantity.source', 'supplier.name', 'needByDate.value', 'estimatedUnitPrice.value', 'estimatedUnitPrice.currency'] },
   setup_status: { steps: ['id', 'done', 'count'] },

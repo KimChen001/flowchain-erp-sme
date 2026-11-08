@@ -70,6 +70,14 @@ function requestCoverOf(facts, item) {
   return row ? { pendingRequests: openRequestsOf(facts, row), covered: quantityOf(facts, row).covered } : {}
 }
 
+// The item's name for an item row, so a table or card shows it beside the
+// SKU (2026-11-08: today's priorities read "21166 · 21166").
+function attentionItemName(facts, item) {
+  if (item.entityType !== 'item') return null
+  const row = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)].find((entry) => (entry.itemId && entry.itemId === item.entityId) || fold(entry.sku) === fold(item.label))
+  return text(row?.itemName) || null
+}
+
 function attentionRow(facts, item, rank) {
   const data = isObject(item.data) ? { ...item.data, ...requestCoverOf(facts, item) } : {}
   const details = Object.fromEntries(ATTENTION_DETAILS
@@ -77,7 +85,7 @@ function attentionRow(facts, item, rank) {
     .map((key) => [key, typeof data[key] === 'string' ? data[key].slice(0, AI_TOOL_LIMITS.text) : data[key]]))
   return {
     rank, type: item.type, also: [...new Set(array(item.also))], ...(item.type === 'supplier_exposure' ? { problemTypes: array(data.types) } : {}),
-    severity: item.severity, label: item.label, whenKind: item.when?.kind || 'undated', days: item.when?.days ?? null, date: item.when?.date ?? null,
+    severity: item.severity, label: item.label, ...(attentionItemName(facts, item) ? { itemName: attentionItemName(facts, item) } : {}), whenKind: item.when?.kind || 'undated', days: item.when?.days ?? null, date: item.when?.date ?? null,
     supplier: item.supplier || null, details,
     ref: aiToolRef(item.entityType, item.entityId, item.label),
   }
