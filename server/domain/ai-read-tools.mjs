@@ -126,6 +126,26 @@ const getPurchaseOrder = defineAiTool({
 // The inventory page's terms, said with every result: its status is not the
 // reorder list's rule, and on 2026-11-03 the model took stock_position's "ok"
 // as reversing the reorder list's "order now".
+// An item named by its SKU or by its name, as the user or a draft wrote it
+// (2026-11-08: a lookup of "White Hanging Heart T-Light Holder" in the SKU
+// field found nothing, and the answer would not state the stock). Case,
+// quotes, dashes and spaces do not matter; one item whose name holds the
+// words is that item; several are offered back to choose from.
+const nameKey = (value) => text(value).normalize('NFKC').toLowerCase().replace(/[\u2018\u2019\u201c\u201d"'`]/g, '').replace(/[\u2010-\u2015\u2212]/g, '-').replace(/\s+/g, ' ').trim()
+export function aiStockSku(facts, value) {
+  const wanted = text(value)
+  if (!wanted) return { error: 'not_found' }
+  const items = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)]
+  const bySku = items.find((row) => fold(row.sku) === fold(wanted))
+  if (bySku) return { sku: bySku.sku }
+  const key = nameKey(wanted)
+  const exact = items.filter((row) => row.itemName && nameKey(row.itemName) === key)
+  const matches = exact.length ? exact : items.filter((row) => row.itemName && key.length >= 3 && nameKey(row.itemName).includes(key))
+  if (matches.length === 1) return { sku: matches[0].sku }
+  if (matches.length > 1) return { error: 'ambiguous', candidates: matches.slice(0, 10).map((row) => ({ sku: row.sku, itemName: row.itemName || null })) }
+  return { error: 'not_found' }
+}
+
 const STOCK_BASIS = 'incomingOnPurchaseOrders counts every open approved purchase order line. status compares available stock with safety stock, then available to promise (available + incoming - unreserved demand) with the reorder point. Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point. belowSafetyStock gives that judgement. It is not the reorder list: for whether, when and how much to order, use reorder_list.'
 // At risk as the parameter says: short against open sales orders, or out of
 // stock, below safety stock or at or below the reorder point (2026-11-07: on
@@ -141,7 +161,7 @@ const stockPosition = defineAiTool({
   name: 'stock_position',
   description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders (each order\'s promised date and days overdue in purchaseOrderDates), available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status. One SKU, the SKUs at risk, or all; counts gives how many SKUs are at risk, short against open sales orders, out of stock, below safety stock and below the reorder point.',
   parameters: {
-    sku: { type: 'string', description: 'One SKU.' },
+    sku: { type: 'string', description: 'One SKU, or the item\'s name.' },
     only: { type: 'string', enum: ['all', 'at_risk'], description: 'at_risk: short against open sales orders or below safety stock or the reorder point. all by default.' },
     limit: limitParam,
   },
@@ -150,8 +170,10 @@ const stockPosition = defineAiTool({
     const all = array(facts.inventory.rows)
     let rows = all
     if (args.sku) {
-      rows = rows.filter((row) => fold(row.sku) === fold(args.sku))
-      if (!rows.length) return array(facts.inventory.masterOnly).some((row) => fold(row.sku) === fold(args.sku)) ? { asOf: facts.asOf, sku: args.sku, noStockOrOrders: true } : { error: 'not_found' }
+      const found = aiStockSku(facts, args.sku)
+      if (found.error) return found
+      rows = rows.filter((row) => fold(row.sku) === fold(found.sku))
+      if (!rows.length) return { asOf: facts.asOf, sku: found.sku, noStockOrOrders: true }
     }
     if (args.only === 'at_risk') rows = rows.filter((row) => array(facts.inventory.atRisk).includes(row.sku) || RISK_STATUSES.has(row.stockStatus))
     rows = [...rows].sort((a, b) => text(a.sku).localeCompare(text(b.sku)))
@@ -412,8 +434,10 @@ const dayOfIndex = (index) => new Date(index * 86400000).toISOString().slice(0, 
 // Exported for the assistant's purchase suggestions (ai-assistant-v2-data-tools.mjs),
 // which warn when the stock runs short before the need-by date.
 export function aiStockProjection(facts, { sku, weeks = 4 }) {
-  const row = array(facts.inventory?.rows).find((entry) => fold(entry.sku) === fold(sku))
-  if (!row) return array(facts.inventory?.masterOnly).some((entry) => fold(entry.sku) === fold(sku)) ? { asOf: facts.asOf, sku, noStockOrOrders: true } : { error: 'not_found' }
+  const found = aiStockSku(facts, sku)
+  if (found.error) return found
+  const row = array(facts.inventory?.rows).find((entry) => fold(entry.sku) === fold(found.sku))
+  if (!row) return { asOf: facts.asOf, sku: found.sku, noStockOrOrders: true }
   const start = dayIndex(facts.asOf || facts.today)
   const sameUnit = (unit) => !unit || !row.unit || fold(unit) === fold(row.unit)
   const incoming = []
@@ -466,7 +490,7 @@ export function aiStockProjection(facts, { sku, weeks = 4 }) {
 const stockProjection = defineAiTool({
   name: 'stock_projection',
   description: 'How one SKU\'s available stock moves over the next weeks: from what is available today, adding open purchase order lines in the week they are promised and taking off open sales order demand in the week promised to the customer (open sales orders only, not the rate of past shipments). Lines already past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed. Gives the first week the SKU falls below safety stock or short.',
-  parameters: { sku: { type: 'string', description: 'The SKU.' }, weeks: { type: 'integer', minimum: 1, maximum: 12, description: '4 by default.' } },
+  parameters: { sku: { type: 'string', description: 'The SKU, or the item\'s name.' }, weeks: { type: 'integer', minimum: 1, maximum: 12, description: '4 by default.' } },
   required: ['sku'],
   available: (facts) => Boolean(facts.inventory) && Boolean(facts.asOf || facts.today),
   run(args, { facts }) {

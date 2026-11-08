@@ -969,7 +969,7 @@ function orderPlanResult(result, { facts, records, items, args }) {
 const stockProjection = defineAiTool({
   name: 'stock_projection',
   description: 'How one SKU\'s available stock moves over the next weeks, from what is available today and adding open purchase order lines in the week they are promised. weeks takes off open sales orders in the week promised to the customer. atRecordedRate takes off the average quantity shipped per day over the last 90 days instead (recordedDemand, the reorder list\'s demand), for stock that sells without open sales orders. Lines past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed; availableIfLateLinesArrive is what is available once the late ones arrive, a figure for later, never today\'s stock. belowSafetyStockNow judges today\'s available stock against safety stock (Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point.) runsOutIfNothingArrives gives when today\'s available stock runs out at the shipped rate, in days and as a date. Gives the first week the SKU falls below safety stock or short, on each basis.',
-  parameters: { sku: { type: 'string', description: 'The SKU.' }, weeks: { type: 'integer', minimum: 1, maximum: 12, description: '4 by default.' } },
+  parameters: { sku: { type: 'string', description: 'The SKU, or the item\'s name.' }, weeks: { type: 'integer', minimum: 1, maximum: 12, description: '4 by default.' } },
   required: ['sku'],
   available: (facts, context) => Boolean(facts.inventory) && Boolean(facts.asOf || facts.today) && Boolean(context?.actor && context.prisma),
   assistantV2Only: true,
@@ -981,7 +981,7 @@ const stockProjection = defineAiTool({
     const late = array(base.notPlacedInAWeek?.incomingPastPromisedDate).reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0)
     const safetyNow = base.safetyStock !== null && base.safetyStock !== undefined && base.availableToday !== null && base.availableToday !== undefined ? { belowSafetyStockNow: base.availableToday < base.safetyStock } : {}
     const projection = { ...base, ...safetyNow, ...(late ? { availableIfLateLinesArrive: (base.availableToday ?? 0) + late } : {}) }
-    const row = stockRow(facts, args.sku)
+    const row = stockRow(facts, base.sku)
     const item = row?.itemId ? (await storedItems(context, [text(row.itemId)])).get(text(row.itemId)) : null
     const demand = item ? await recordedDemand(context, facts, [item]) : null
     if (!demand || demand.scoped) return { ...projection, recordedDemand: { averageDailyDemand: null, reason: demand?.scoped ? 'warehouse_scope' : 'no_item_record' } }
