@@ -317,7 +317,7 @@ test('sales_summary totals customer invoices in a period by customer, item or mo
   assert.deepEqual(customers.rows.map((row) => [row.customer, row.invoices, row.amount, row.sharePercent]), [['Redwood Retail', 1, 250, 71.4], ['Harbor Supply Co', 1, 100, 28.6]])
   assert.deepEqual(customers.otherCurrencies, [{ currency: 'USD', invoices: 1, amount: 50 }])
   // The share of the rows so far, so the top N together comes from the tool.
-  assert.deepEqual(customers.rows.map((row) => [row.runningAmount, row.runningSharePercent]), [[250, 71.4], [350, 100]])
+  assert.deepEqual(customers.rows.map((row) => [row.rank, row.runningAmount, row.runningSharePercent]), [[1, 250, 71.4], [2, 350, 100]])
   const items = await run({ by: 'item' })
   assert.deepEqual(items.rows.map((row) => [row.sku, row.itemName, row.quantity, row.amount, row.sharePercent]), [['X-1', 'Cake Stand', 35, 310, 88.6], ['Y-2', 'Tea Towel', 5, 40, 11.4]])
   assert.deepEqual(items.rows[0].ref, { type: 'item', id: 'ITEM-X-1', label: 'X-1' })

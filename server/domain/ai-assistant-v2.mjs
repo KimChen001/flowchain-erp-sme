@@ -132,7 +132,7 @@ function chineseTextWindow(raw, from, final) {
   return { from: start, limit: raw.length }
 }
 const HIDDEN_NOTE = 'The short text you wrote before reading was not shown to the user. Write the answer for the user after these results.'
-const SHOWN_NOTE = 'The user already sees the text you wrote so far in this answer, so never write it again. Keep working as the question needs, with more tool calls if it needs them; any text you add appears below what is there.'
+const SHOWN_NOTE = 'The user already sees the text you wrote so far in this answer, so never write it again. Keep working as the question needs, with more tool calls if it needs them; any text you add appears below what is there. When the answer is complete, stop without writing more, and never write about the answer itself.'
 // answerLanguage is said once, before the results; after long English results
 // Haiku wrote a whole Chinese answer in English headings and bullets
 // (2026-11-07, "我们的库存周转怎么样？"). Each round of results says it again.
