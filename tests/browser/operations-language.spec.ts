@@ -31,7 +31,7 @@ const order = (id: string, status: string, currency = 'USD') => ({
 
 test('PO currency follows the document; cancelled orders are excluded from open fulfillment', async ({ page }) => {
   await signIn(page);
-  await page.route('**/api/purchase-orders-workbench', route => route.fulfill({ json: {
+  await page.route('**/api/purchase-orders-workbench*', route => route.fulfill({ json: {
     purchaseOrders: [order('PO-CANCELLED', 'cancelled'), order('PO-OPEN', 'issued'), order('PO-EUR', 'issued', 'EUR')],
     receivingDocs: [], supplierInvoices: [],
   } }));
@@ -95,7 +95,8 @@ test('purchase request labels and defaults are English without changing selected
 test('sales risk and evidence views translate system reasons and preserve customer names', async ({ page }) => {
   await signIn(page);
   let customerName = 'Acme Retail';
-  await page.route('**/api/sales-demand/orders', route => route.fulfill({ json: { orders: [{
+  // The risk and evidence lists read a page at a time (?risk=…&offset=…&limit=…).
+  await page.route('**/api/sales-demand/orders*', route => route.fulfill({ json: { orders: [{
     salesOrderId: 'SO-TEST', customerName, customerTier: 'Standard', itemId: 'ITEM-1', sku: 'SKU-1', itemName: 'Control module',
     orderedQty: 10, reservedQty: 0, fulfilledQty: 0, shortageQty: 10, promisedDate: '2026-09-23',
     statusLabel: '缺货风险', priority: '高', deliveryRiskLevel: 'high', deliveryRiskLabel: '高风险',
@@ -131,7 +132,7 @@ for (const financeEnabled of [false, true]) {
       await route.fulfill({ response, json: { capabilities: (data.capabilities || []).map((capability: { id: string }) =>
         ['finance', 'supplier-invoice', 'three-way-match'].includes(capability.id) ? { ...capability, enabled: financeEnabled } : capability) } });
     });
-    await page.route('**/api/purchase-orders-workbench', route => route.fulfill({ json: {
+    await page.route('**/api/purchase-orders-workbench*', route => route.fulfill({ json: {
       purchaseOrders: [order('PO-OPEN', 'issued')], receivingDocs: [],
       supplierInvoices: [{ invoiceNumber: 'INV-OPEN', relatedPo: 'PO-OPEN', supplier: 'Acme Components', currency: 'USD', amount: 2400, status: 'submitted' }],
     } }));

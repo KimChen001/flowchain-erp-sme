@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDetailCrumb } from "../navigation/detailCrumb";
 import { ArrowLeft, Clock3, FileText } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import type { AppRouteDefinition } from "../../app/routeRegistry";
@@ -45,7 +46,8 @@ const LABELS: Record<string, [string, string]> = {
 };
 
 // Internal bookkeeping fields that are not business information.
-const HIDDEN_KEYS = new Set(["lines", "history", "invoices", "sourceType", "parentId"]);
+// The row version and tenant are bookkeeping, not business information.
+const HIDDEN_KEYS = new Set(["lines", "history", "invoices", "sourceType", "parentId", "version", "tenantId"]);
 
 // Stored codes shown as labels. The stored value itself is never changed.
 const VALUE_LABELS: Record<string, [string, string]> = {
@@ -141,9 +143,10 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
         if (active) setRecord(payload.find((row) => String(row.pr || row.id) === id) || null);
       }).finally(() => { if (active) setLoading(false); });
     } else if (entityType === "sales_order") {
-      apiJson<{ orders: RecordValue[] }>("/api/sales-demand/orders").then((payload) => {
-        if (active) setRecord(payload.orders.find((row) => String(row.orderNo || row.id) === id) || null);
-      }).finally(() => { if (active) setLoading(false); });
+      // One order by its id or number, however old: the list holds only the newest.
+      apiJson<{ order: RecordValue }>(`/api/sales-demand/orders/${encodeURIComponent(id)}`).then((payload) => {
+        if (active) setRecord(payload.order || null);
+      }).catch(() => { if (active) setRecord(null); }).finally(() => { if (active) setLoading(false); });
     } else if (masterDetailEndpoints[entityType]) {
       const endpoint = masterDetailEndpoints[entityType]!;
       apiJson<RecordValue>(endpoint.url).then((payload) => {
@@ -168,6 +171,13 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
   const recordCurrency = String(record?.currency || record?.defaultCurrency || "");
   // A purchase request, RFQ or purchase order is named by its document number; the id stays in the address.
   const shownId = useDocumentNumber(isDocumentNumberType(entityType) ? entityType : null, id, typeof record?.number === "string" ? record.number : null) || id;
+  // A master record (customer, warehouse, tax code) is named by its name, with
+  // its code beside the type; the id stays in the address.
+  const nameOf = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : "";
+  const recordName = isDocumentNumberType(entityType) ? "" : nameOf(record?.name) || nameOf(record?.customerName) || nameOf(record?.supplierName) || nameOf(record?.itemName) || nameOf(record?.warehouseName) || nameOf(record?.label);
+  const recordCode = nameOf(record?.code) || nameOf(record?.customerCode) || nameOf(record?.supplierCode) || nameOf(record?.sku);
+  const heading = recordName || shownId;
+  useDetailCrumb(record ? heading : null);
 
   if (loading) return <Card className="p-8" data-testid="business-entity-detail"><div className="animate-pulse text-sm" style={{ color: A.gray1 }}>{text("loading", { label: entityLabel })}</div></Card>;
   if (!record) return <Card className="p-8" data-testid="business-entity-detail"><Link to={returnTo} className="text-sm text-blue-600 hover:underline">← {returnLabel}</Link><h2 className="mt-5 text-lg font-semibold">{text("notFound", { label: entityLabel, id: shownId })}</h2><p className="mt-2 text-sm" style={{ color: A.gray1 }}>{text("notFoundHint")}</p></Card>;
@@ -177,7 +187,7 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
       <Link to={returnTo} className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 rounded"><ArrowLeft size={15} />{returnLabel}</Link>
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><div className="fc-caption" style={{ color: A.gray2 }}>{entityLabel}</div><h1 className="fc-page-title mt-1 tabular-nums" style={{ color: A.label }}>{shownId}</h1></div>
+          <div><div className="fc-caption" style={{ color: A.gray2 }}>{entityLabel}{recordName && recordCode ? ` · ${recordCode}` : ""}</div><h1 className="fc-page-title mt-1 tabular-nums" style={{ color: A.label }}>{heading}</h1></div>
           <Chip label={formatValue("status", record.status || record.matchStatus || record.settlementStatus || "active", { locale, currency: recordCurrency, zh })} color={A.blue} bg="#f0f6ff" />
         </div>
       </Card>

@@ -20,6 +20,6 @@ export default function ReportsPanel({ onNavigate, initialView = "overview" }: R
       <Link className="font-semibold text-blue-600 hover:underline" to="/app/reports/procurement">{language === "en-US" ? "Open purchase orders" : "未结采购订单"}</Link>
       <Link className="font-semibold text-blue-600 hover:underline" to="/app/reports/procurement?view=analytics">{language === "en-US" ? "Procurement analytics" : "采购分析"}</Link>
     </nav>}
-    {openOrders ? <OpenPurchaseOrdersPage /> : <BiDashboard view={initialView} onNavigate={onNavigate} afterInsights={initialView === "suppliers" ? <SupplierPerformanceTable /> : null} />}
+    {openOrders ? <OpenPurchaseOrdersPage /> : <BiDashboard view={initialView} onNavigate={onNavigate} afterInsights={initialView === "suppliers" ? <SupplierPerformanceTable datesFromPage /> : null} />}
   </div>;
 }

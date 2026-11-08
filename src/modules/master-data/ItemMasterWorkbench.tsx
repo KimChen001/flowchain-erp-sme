@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
+import { useDetailBack } from "../../components/navigation/useDetailBack";
 import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
@@ -178,6 +179,7 @@ export default function ItemMasterWorkbench({
   // title (H1); opened in place from the list it sits under the list's H1.
   const onDetailRoute = /^\/app\/master-data\/items\/[^/]+$/.test(useLocation().pathname);
   const ItemTitle = onDetailRoute ? "h1" : "h2";
+  const detailBack = useDetailBack("/app/master-data/items", ["Back to items", "返回 SKU 列表"], () => setSelected(null));
   // A failed request in the interface language, never the server's own words.
   const loadFailed = (cause: unknown) => apiErrorText(cause, language, ["Could not load items. Try again.", copy("Could not load items. Try again.")]);
   const [editing, setEditing] = useState<Partial<MasterItem> | null>(null);
@@ -376,9 +378,9 @@ export default function ItemMasterWorkbench({
           <div>
             <button
               className="text-xs text-blue-600"
-              onClick={() => setSelected(null)}
+              onClick={detailBack.back}
             >
-              {copy("← 返回 SKU 列表")}
+              ← {detailBack.label}
             </button>
             <ItemTitle className={onDetailRoute ? "fc-page-title mt-2" : "mt-2 text-base font-semibold"} style={{ color: A.label }} data-testid="item-detail-title">
               {selected.sku} · {selected.itemName}

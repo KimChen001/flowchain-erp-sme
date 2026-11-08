@@ -6,7 +6,7 @@ import { workspaceCopy } from "../../i18n/workspaceCopy";
 // (启用, 冻结, 正常, ...), so those are listed too and either form renders in
 // the active language.
 const zh: Record<string, string> = {
-  "Customer code": "客户编号", "Customer name": "客户名称", "Contact": "联系人", "Phone": "电话", "Address": "地址",
+  "Back to items": "返回 SKU 列表", "Customer code": "客户编号", "Customer name": "客户名称", "Contact": "联系人", "Phone": "电话", "Address": "地址",
   "Credit status": "信用状态", "Payment terms": "付款条款", "Status": "状态", "Actions": "操作", "View details": "查看详情",
   "Details": "详情", "Yes": "是", "No": "否",
   "No customers yet. Create or import customers to continue.": "暂无客户。请新建或导入客户后继续。",

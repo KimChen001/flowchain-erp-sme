@@ -364,13 +364,18 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
     }
   }
 
-  // Receipts of the workspace the actor may read, newest first.
+  // Every receipt of the workspace the actor may read, newest first. The
+  // list page counts, filters and pages them in the browser, so `total` is
+  // the true number and older receipts stay reachable (it used to stop at the
+  // newest 200 and call that the total). A line is read only for its
+  // warehouse and quantities, which keeps the read small.
   async function listReceivingDocuments({ purchaseOrderId = '' } = {}, context) {
     const actor = await resolveProvisionedActor(prisma, context?.identity || context)
     assertAuthorized({ actor, permission: 'receiving.read', tenantId: actor.tenantId })
     const rows = await prisma.receivingDocument.findMany({
       where: { tenantId: actor.tenantId, ...(text(purchaseOrderId) ? { poId: text(purchaseOrderId) } : {}) },
-      include: { lines: true }, orderBy: [{ createdAt: 'desc' }], take: 200,
+      include: { lines: { select: { warehouseId: true, acceptedQty: true, rejectedQty: true } } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     })
     const visible = rows.filter((row) => hasWarehouseAccess(actor, [row.warehouseId, ...row.lines.map((line) => line.warehouseId)].filter(Boolean), 'read'))
     const warehouseIds = [...new Set(visible.map((row) => row.warehouseId).filter(Boolean))]

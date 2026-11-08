@@ -9,6 +9,23 @@ import WarehouseMaster from "./WarehouseMaster";
 import WorkspaceMembers from "./WorkspaceMembers";
 import { roleDisplayName } from "../../../shared/roles.mjs";
 
+// The server states each check's finding in English; the Chinese page says
+// the same with the same counts.
+const DIAGNOSTIC_DETAILS: Array<[RegExp, (match: RegExpMatchArray) => string]> = [
+  [/^(d+) migrations? applied$/, (m) => `已应用 ${m[1]} 个数据库迁移`],
+  [/^Workspace profile complete$/, () => "工作区资料已填写完整"],
+  [/^Workspace profile incomplete$/, () => "工作区资料尚未填写完整"],
+  [/^(d+) active warehouses?$/, (m) => `${m[1]} 个启用仓库`],
+  [/^(d+) active users?; (d+) can manage roles$/, (m) => `${m[1]} 个启用用户；${m[2]} 人可管理角色`],
+  [/^(d+) active users? without warehouse scope$/, (m) => `${m[1]} 个启用用户未设置仓库范围`],
+  [/^(d+) pending; (d+) blocked or failed$/, (m) => `${m[1]} 个待处理；${m[2]} 个被阻止或失败`],
+];
+export function diagnosticDetail(detail: string, language: string) {
+  if (language === "en-US") return detail;
+  for (const [pattern, say] of DIAGNOSTIC_DETAILS) { const match = detail.match(pattern); if (match) return say(match); }
+  return "";
+}
+
 type Profile = {
   id: string;
   email: string;
@@ -324,7 +341,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
         [t("settings.workspaceSection"), Boolean(workspace.workspaceCompletedAt)],
         [t("settings.accessSection"), ownWarehouseIds.size > 0],
       ].map(([label, ok]) => <div key={String(label)} className="rounded-xl border p-4"><ShieldCheck size={18} color={ok ? A.green : A.orange} /><div className="mt-2 font-semibold">{label}</div><div className="text-sm text-slate-500">{ok ? t("settings.ready") : t("settings.needsSetup")}</div></div>)}</div>
-      {canReadDiagnostics && diagnostics && <div className="rounded-xl border p-4" data-testid="admin-diagnostics"><div className="flex items-center justify-between"><h3 className="font-semibold">{language === "en-US" ? "Workspace checks" : "工作区检查"}</h3><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium" title={diagnostics.overall}>{diagnosticWord("overall", diagnostics.overall)}</span></div><div className="mt-3 grid gap-2 md:grid-cols-2">{diagnostics.checks.map(check => <div key={check.id} className="rounded-lg bg-slate-50 p-3 text-sm"><span className="font-semibold" style={{ color: check.status === "pass" ? A.green : check.status === "fail" ? A.red : A.orange }}>{diagnosticWord("status", check.status)}</span> · <span title={check.detail || check.id}>{diagnosticWord("check", check.id)}</span>{language === "en-US" && check.detail ? <span className="block text-xs text-slate-500">{check.detail}</span> : null}</div>)}</div><div className="mt-3 text-xs text-slate-500">{formatDateTime(diagnostics.generatedAt)}</div></div>}
+      {canReadDiagnostics && diagnostics && <div className="rounded-xl border p-4" data-testid="admin-diagnostics"><div className="flex items-center justify-between"><h3 className="font-semibold">{language === "en-US" ? "Workspace checks" : "工作区检查"}</h3><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium">{diagnosticWord("overall", diagnostics.overall)}</span></div><div className="mt-3 grid gap-2 md:grid-cols-2">{diagnostics.checks.map(check => <div key={check.id} className="rounded-lg bg-slate-50 p-3 text-sm"><span className="font-semibold" style={{ color: check.status === "pass" ? A.green : check.status === "fail" ? A.red : A.orange }}>{diagnosticWord("status", check.status)}</span> · <span>{diagnosticWord("check", check.id)}</span>{check.detail ? <span className="block text-xs text-slate-500">{diagnosticDetail(check.detail, language)}</span> : null}</div>)}</div><div className="mt-3 text-xs text-slate-500">{formatDateTime(diagnostics.generatedAt)}</div></div>}
     </div>}
   </Card>;
   // The letterhead and document templates sit with the company they print.

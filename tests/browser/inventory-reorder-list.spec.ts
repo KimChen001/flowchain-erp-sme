@@ -92,9 +92,10 @@ test("the reorder list ranks by order-by date and prints every input, in English
   await expect(a.getByTestId("reorder-flags")).toContainText("1 shipment line in CASE, not counted");
   await expect(a.getByTestId("reorder-supplier")).toContainText("Lead time 10 days");
   await expect(a.getByTestId("reorder-supplier")).toContainText("MOQ not recorded");
-  // The MOQ is printed in the unit the item is bought in; one day is singular.
+  // The MOQ is printed in the unit the item is bought in, by its label in the
+  // interface language (CASE: "cases", 箱); one day is singular.
   const d = page.getByTestId("reorder-row-RL-D");
-  await expect(d.getByTestId("reorder-supplier")).toContainText("MOQ 2 CASE");
+  await expect(d.getByTestId("reorder-supplier")).toContainText("MOQ 2 cases");
   await expect(d.getByTestId("reorder-supplier")).toContainText("Lead time 1 day");
   await expect(d.getByTestId("reorder-flags")).toContainText("Purchase unit differs (CASE); enter the quantity");
   await expect(d.getByTestId("reorder-flags")).toContainText("PO-0038 was due Oct 1, 2026: late, counted; confirm with the supplier");

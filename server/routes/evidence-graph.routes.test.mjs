@@ -191,3 +191,15 @@ test("the evidence graph reads inventory from the reader's warehouses only", asy
   assert.ok(!outside.payload.nodes.some(node => node.entityType === 'inventory_item'))
   assert.equal(JSON.stringify(outside.payload).includes('999'), false)
 })
+
+test('a sales order older than the read context still anchors its own graph', async () => {
+  const route = createRoute('GET', '/api/evidence-graph/sales-order/SO-OLD-0001')
+  const lookups = []
+  const older = { salesOrderId: 'SO-OLD-0001', customerName: '华东精密制造', sku: 'SKU-00412', itemName: '高扭矩伺服电机', orderedQty: 10, reservedQty: 0, status: 'confirmed' }
+  route.ctx.identity = { tenantId: 'tenant-g' }
+  route.ctx.repositories = { salesOrders: { async getOrder(id, filters) { lookups.push([id, filters.tenantId]); return id === 'SO-OLD-0001' ? older : null } } }
+  await handleEvidenceGraphRoute(route.ctx)
+  assert.equal(route.response.status, 200)
+  assert.equal(route.response.payload.anchor.id, 'SO-OLD-0001')
+  assert.deepEqual(lookups, [['SO-OLD-0001', 'tenant-g']])
+})

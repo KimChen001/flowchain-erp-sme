@@ -12,7 +12,9 @@ import {
   ShoppingCart,
   Sparkles,
   Truck,
+  X,
 } from "lucide-react";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -131,6 +133,14 @@ type Shipment = {
   reversedAt?: string | null;
   reversalReason?: string | null;
 };
+type ReconciliationCheck = {
+  status: string;
+  rule: string;
+  calculated: string;
+  recorded: string;
+  affectedEntity: { type: string; id: string };
+  evidenceLinks?: Array<{ type: string; id: string }>;
+};
 type LifecycleCapability = {
   enabled: boolean;
   maturity?: string;
@@ -169,6 +179,9 @@ type Workbench = {
     location?: string;
     quantityIn: string;
     quantityOut: string;
+    // The shipment the movement posted or reversed.
+    sourceDocumentId?: string | null;
+    occurredAt?: string | null;
   }>;
   scopeCoverage: {
     status: "full" | "partial";
@@ -191,13 +204,7 @@ type Workbench = {
   reconciliation: {
     status: string;
     reasonCode?: string;
-    checks: Array<{
-      status: string;
-      rule: string;
-      calculated: string;
-      recorded: string;
-      affectedEntity: { type: string; id: string };
-    }>;
+    checks: ReconciliationCheck[];
   };
   aiExplain: {
     conclusion: string;
@@ -238,6 +245,7 @@ type ShipmentWorkbench = {
   allocations: Array<{
     id: string;
     reservationId: string;
+    sku?: string | null;
     warehouseId: string;
     location: string;
     quantity: string;
@@ -295,12 +303,41 @@ const shipmentStatus = (shipment: { workflowStatus: string; postingStatus: strin
     : shipment.postingStatus && shipment.postingStatus !== "unposted"
       ? shipment.postingStatus
       : shipment.workflowStatus;
-// A long stored id (a reservation or movement UUID) in a short form for a
-// table column. The full id is never changed.
-const shortId = (id?: string | null) => {
-  const value = String(id || "");
-  return value.length > 12 ? `${value.slice(0, 8)}…` : value || "—";
-};
+// Records are named by their document numbers (SO-…, DN-…) or by what they
+// hold (SKU, warehouse); stored ids, whole or shortened, are never shown.
+//
+// An order can have hundreds of lines, and each line its own reservation,
+// movement and checks. A list repeated per line shows its first few rows and
+// a "Show all" button, so the page stays readable and every row stays one
+// click away.
+const FEW_ROWS = 5;
+function Collapsible({
+  total,
+  few = FEW_ROWS,
+  testId,
+  children,
+}: {
+  total: number;
+  few?: number;
+  testId?: string;
+  children: (count: number) => React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const count = open ? total : Math.min(total, few);
+  return (
+    <>
+      {children(count)}
+      {total > few && (
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500" data-testid={testId}>
+          <span>{say(`Showing ${count} of ${total}`, `显示 ${count} / ${total} 条`)}</span>
+          <button type="button" aria-expanded={open} className="font-semibold text-blue-600 hover:underline" onClick={() => setOpen(!open)}>
+            {open ? say("Show fewer", "收起") : say(`Show all ${total}`, `显示全部 ${total} 条`)}
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
 const hasQuantity = (value?: string | null) => Number(value) > 0;
 // A stored four-decimal value ("12.5000") as an exact count of ten-thousandths;
 // null when there is no value.
@@ -533,6 +570,8 @@ function OrderList() {
       page: number;
       pageSize: number;
       dataSource: string;
+      // The currencies the workspace's orders use.
+      currencies?: string[];
       capabilities: { salesOrderLifecycle: LifecycleCapability };
     } | null>(null),
     [error, setError] = useState(""),
@@ -563,6 +602,7 @@ function OrderList() {
         page: number;
         pageSize: number;
         dataSource: string;
+        currencies?: string[];
         capabilities: { salesOrderLifecycle: LifecycleCapability };
       }>(`/api/sales/orders?${query}`);
       const totalPages = Math.max(1, Math.ceil(result.total / result.pageSize));
@@ -589,7 +629,20 @@ function OrderList() {
       .then((entries) => setCounts(Object.fromEntries(entries)));
   }, []);
   const totalPages = Math.max(1, Math.ceil((data?.total || 0) / pageSize));
-  const filtered = ["search", "workflowStatus", "reservationStatus", "fulfillmentStatus", "currency"].some((name) => params.get(name));
+  const filtered = ["search", "workflowStatus", "reservationStatus", "fulfillmentStatus", "currency", ...Object.keys(DEMAND_FILTERS)].some((name) => params.get(name));
+  // The currencies the workspace's orders use; before the server lists them,
+  // the workspace currency and the currencies on this page.
+  const currencyOptions = orderedCurrencyCodes(
+    workspace.currency,
+    data?.currencies?.length ? data.currencies : [workspace.currency, ...(data?.orders || []).map((row) => row.currency)].filter(Boolean),
+    value("currency"),
+  );
+  // The delivery-risk filters the Delivery risk page opens the list with,
+  // each shown as a chip that removes it.
+  const demandFilters = Object.entries(DEMAND_FILTERS).flatMap(([name, labels]) => {
+    const label = labels[value(name)];
+    return label ? [{ name, label: say(...label) }] : [];
+  });
   return (
     <div className="space-y-5" data-testid="outbound-order-list">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -664,7 +717,7 @@ function OrderList() {
             onChange={(e) => update({ currency: e.target.value, page: 1 })}
           >
             <option value="">{copy("全部")}</option>
-            {orderedCurrencyCodes(workspace.currency, ["USD", "EUR", "CNY"]).map((x) => (
+            {currencyOptions.map((x) => (
               <option key={x}>{x}</option>
             ))}
           </select>
@@ -688,7 +741,28 @@ function OrderList() {
           </select>
         </Field>
       </ListSearchCard>
-      <ListCard title={say("Sales order list", "销售订单列表")} total={data?.total} shown={data?.orders.length}>
+      <ListCard
+        title={say("Sales order list", "销售订单列表")}
+        total={data?.total}
+        shown={data?.orders.length}
+        right={demandFilters.length ? (
+          <div className="flex flex-wrap items-center gap-2" data-testid="sales-order-demand-filters">
+            <span className="text-xs" style={{ color: A.sub }}>{say("Filtered by", "筛选条件")}</span>
+            {demandFilters.map((filter) => (
+              <button
+                type="button"
+                key={filter.name}
+                onClick={() => update({ [filter.name]: "", page: 1 })}
+                aria-label={say(`Remove filter: ${filter.label}`, `移除筛选：${filter.label}`)}
+                className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+              >
+                {filter.label}
+                <X size={12} aria-hidden />
+              </button>
+            ))}
+          </div>
+        ) : undefined}
+      >
         <div className={tableScrollClass}>
           <table className={`w-full min-w-[1040px] text-left ${tableBodyTextClass}`}>
             <thead>
@@ -773,6 +847,19 @@ function OrderList() {
     </div>
   );
 }
+
+// The filters the Delivery risk page's figures open the list with
+// (src/modules/sales/Page.tsx), by parameter and value: the server selects
+// the same orders those figures count (db-sales-order-read-repository.mjs).
+const DEMAND_FILTERS: Record<string, Record<string, [string, string]>> = {
+  risk: {
+    "true": ["At risk of late delivery", "有交付风险"],
+    "blocked": ["Blocked (on hold)", "已阻塞（已暂停）"],
+    "high": ["High risk", "高风险"],
+  },
+  shortage: { "true": ["Short of stock", "存在缺口"] },
+  reserved: { "true": ["Stock reserved", "已预留库存"] },
+};
 
 // The four counts above the list, each a filter of the list.
 const ORDER_CARDS: Record<string, { label: [string, string]; note: [string, string]; filter: string; icon: React.ElementType; color: string }> = {
@@ -1171,6 +1258,8 @@ function OrderDetail({ id }: { id: string }) {
     [saving, setSaving] = useState(false);
   const lifecycleIntents = useRef<Record<string, string>>({}),
     inFlight = useRef(false);
+  // The breadcrumb names the order by its number, not by the id in the address.
+  useDetailCrumb(data?.order.orderNumber);
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -1489,7 +1578,16 @@ function OrderDetail({ id }: { id: string }) {
         {copy(error)}
       </div>
     );
-  const a = data.availableActions;
+  // A fully shipped order has nothing left to reserve, hold or ship; a
+  // cancelled one neither. The page offers only what the order still needs.
+  const shippedInFull = data.order.fulfillmentStatus === "fully_fulfilled",
+    cancelled = data.order.workflowStatus === "cancelled",
+    openToReserve = data.lines.some((line) => line.remainingToReserve == null || hasQuantity(line.remainingToReserve));
+  const a: Workbench["availableActions"] = {
+    ...data.availableActions,
+    canReserve: Boolean(data.availableActions.canReserve) && openToReserve && !shippedInFull,
+    canHold: Boolean(data.availableActions.canHold) && !shippedInFull,
+  };
   const lineOptions = data.lines,
     reservationOptions = data.reservations.filter(
       (row) =>
@@ -1608,67 +1706,102 @@ function OrderDetail({ id }: { id: string }) {
       return say("Stock moves when a shipment is posted.", "发货单过账后才会产生库存流水。");
     return "";
   })();
+  // A reservation's line, for its SKU; a movement's shipment, for its number.
+  const lineSku = (lineId: string) => data.lines.find((line) => line.id === lineId)?.sku || "—",
+    shipmentNumbers = new Map(data.shipments.map((shipment) => [shipment.id, shipment.shipmentNumber]));
+  const roleViewOnly = ((a.blockingReasonCodes as string[]) || []).includes("PERMISSION_DENIED"),
+    balanceRows = data.availability.flatMap((row) =>
+      row.balances.map((balance) => ({ lineId: row.salesOrderLineId, sku: lineSku(row.salesOrderLineId), balance })),
+    );
+  // What a fulfillment check is about: an order line, a stock balance, a
+  // reservation or a shipment, by SKU, place or number.
+  const checkSubject = (check: ReconciliationCheck) => {
+    const id = check.affectedEntity.id;
+    if (check.affectedEntity.type === "SalesOrderLine") return lineSku(id);
+    if (check.affectedEntity.type === "InventoryBalance") {
+      const found = balanceRows.find((row) => row.balance.id === id);
+      return found ? `${found.sku} · ${place(found.balance.warehouseId, found.balance.location)}` : "—";
+    }
+    if (check.affectedEntity.type === "InventoryReservation") {
+      const reservation = data.reservations.find((row) => row.id === id);
+      return reservation ? `${reservation.sku || lineSku(reservation.salesOrderLineId)} · ${place(reservation.warehouseId, reservation.location)}` : "—";
+    }
+    const shipmentId = check.evidenceLinks?.find((link) => link.type === "shipment")?.id;
+    return (shipmentId && shipmentNumbers.get(shipmentId)) || say("Shipment line", "发货行");
+  };
   const sectionBody: Record<string, () => React.ReactNode> = {
     reservations: () => (
       <Section id="reservations" title={copy("预留记录")} key="reservations">
-        <Table
-          rows={data.reservations.map((x) => [
-            shortId(x.id),
-            warehouseName(x.warehouseId),
-            x.location || copy("默认库位"),
-            formatQuantity(x.reservedQuantity),
-            formatQuantity(x.allocatedQuantity),
-            formatQuantity(x.consumedQuantity),
-            formatQuantity(x.releasedQuantity),
-            formatQuantity(x.allocatableQuantity),
-            status(x.status),
-          ])}
-          numeric={[3, 4, 5, 6, 7]}
-          headers={[
-            copy("参考号"),
-            copy("仓库"),
-            copy("库位"),
-            copy("预留量"),
-            copy("已分配"),
-            copy("已消耗"),
-            copy("已释放"),
-            copy("可释放"),
-            copy("状态"),
-          ]}
-        />
+        <Collapsible total={data.reservations.length} testId="reservations-show-all">
+          {(count) => (
+            <Table
+              rows={data.reservations.slice(0, count).map((x) => [
+                x.sku || lineSku(x.salesOrderLineId),
+                warehouseName(x.warehouseId),
+                x.location || copy("默认库位"),
+                formatQuantity(x.reservedQuantity),
+                formatQuantity(x.allocatedQuantity),
+                formatQuantity(x.consumedQuantity),
+                formatQuantity(x.releasedQuantity),
+                formatQuantity(x.allocatableQuantity),
+                status(x.status),
+              ])}
+              numeric={[3, 4, 5, 6, 7]}
+              headers={[
+                "SKU",
+                copy("仓库"),
+                copy("库位"),
+                copy("预留量"),
+                copy("已分配"),
+                copy("已消耗"),
+                copy("已释放"),
+                copy("可释放"),
+                copy("状态"),
+              ]}
+            />
+          )}
+        </Collapsible>
       </Section>
     ),
     shipments: () => (
       <Section id="shipments" title={copy("发货单")} key="shipments">
-        <div className="space-y-2">
-          {data.shipments.map((x) => (
-            <Link
-              data-testid={`shipment-${x.id}`}
-              className="flex justify-between rounded-lg border p-3 text-sm text-blue-700"
-              to={`/app/sales/shipments/${encodeURIComponent(x.id)}`}
-              key={x.id}
-            >
-              <span>{x.shipmentNumber}</span>
-              <span>{status(shipmentStatus(x))}</span>
-            </Link>
-          ))}
-        </div>
+        <Collapsible total={data.shipments.length}>
+          {(count) => (
+            <div className="space-y-2">
+              {data.shipments.slice(0, count).map((x) => (
+                <Link
+                  data-testid={`shipment-${x.id}`}
+                  className="flex justify-between rounded-lg border p-3 text-sm text-blue-700"
+                  to={`/app/sales/shipments/${encodeURIComponent(x.id)}`}
+                  key={x.id}
+                >
+                  <span>{x.shipmentNumber}</span>
+                  <span>{status(shipmentStatus(x))}</span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </Collapsible>
       </Section>
     ),
     movements: () => (
       <Section id="movements" title={copy("库存流水")} key="movements">
-        <Table
-          rows={data.movements.map((x) => [
-            shortId(x.id),
-            x.sku,
-            warehouseName(x.warehouseId),
-            formatQuantity(x.quantityIn),
-            formatQuantity(x.quantityOut),
-            movementTypeLabel(x.movementType, activeLanguage),
-          ])}
-          numeric={[3, 4]}
-          headers={[copy("参考号"), "SKU", copy("仓库"), copy("入"), copy("出"), copy("类型")]}
-        />
+        <Collapsible total={data.movements.length} testId="movements-show-all">
+          {(count) => (
+            <Table
+              rows={data.movements.slice(0, count).map((x) => [
+                (x.sourceDocumentId && shipmentNumbers.get(x.sourceDocumentId)) || "—",
+                x.sku,
+                warehouseName(x.warehouseId),
+                formatQuantity(x.quantityIn),
+                formatQuantity(x.quantityOut),
+                movementTypeLabel(x.movementType, activeLanguage),
+              ])}
+              numeric={[3, 4]}
+              headers={[say("Shipment", "发货单"), "SKU", copy("仓库"), copy("入"), copy("出"), copy("类型")]}
+            />
+          )}
+        </Collapsible>
       </Section>
     ),
     evidence: () => (
@@ -1715,9 +1848,11 @@ function OrderDetail({ id }: { id: string }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="fc-page-title">{data.order.orderNumber}</h1>
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="mt-2 flex flex-wrap gap-2" data-testid="sales-order-statuses">
               <Badge value={data.order.workflowStatus} />
-              <Badge value={data.order.reservationStatus} />
+              {/* Shipping uses up the reservations, so a fully shipped order
+                  reads "Not reserved"; its reservation status is left out. */}
+              {!shippedInFull && <Badge value={data.order.reservationStatus} />}
               <Badge value={data.order.fulfillmentStatus} />
             </div>
           </div>
@@ -1853,7 +1988,8 @@ function OrderDetail({ id }: { id: string }) {
               <Link
                 data-testid={`smart-link-${link.targetType}`}
                 className="rounded-lg border px-3 py-2 text-sm text-blue-700 outline-offset-2 focus-visible:outline"
-                to={smartLinkPath(link)}
+                // The audit log names the order it is filtered to by its number.
+                to={smartLinkPath(link.targetRouteId === "settings:audit" ? { ...link, filter: { entityLabel: data.order.orderNumber, ...link.filter } } : link)}
                 key={link.id}
               >
                 {copy(link.label)} {link.count ?? ""}
@@ -1937,31 +2073,37 @@ function OrderDetail({ id }: { id: string }) {
             </tbody>
           </table>
         </div>
-        {/* Each stock balance for a line: where it is, its quantities and
-            what this user may do with it. */}
-        {data.availability.flatMap((x) =>
-          x.balances.map((b) => (
-            <div
-              data-testid="availability-balance"
-              className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-slate-50 px-4 py-2 text-xs md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.6fr)_repeat(3,minmax(0,0.8fr))_minmax(0,2fr)]"
-              key={`${x.salesOrderLineId}-${b.id}`}
-            >
-              <span className="font-medium text-slate-700">
-                {data.lines.find((line) => line.id === x.salesOrderLineId)?.sku || "—"}
-              </span>
-              <span>{place(b.warehouseId, b.location)}</span>
-              <span className="tabular-nums">{copy("现有 {n}").replace("{n}", formatQuantity(b.onHandQuantity))}</span>
-              <span className="tabular-nums">{copy("预留 {n}").replace("{n}", formatQuantity(b.reservedQuantity))}</span>
-              <span className="tabular-nums">{copy("可用 {n}").replace("{n}", formatQuantity(b.availableQuantity))}</span>
-              <span className={b.selectable ? "text-slate-700" : "text-slate-500"}>
-                {!b.selectable
-                  ? say("View only: no access to this warehouse", "只读：无此仓库的操作权限")
-                  : ((a.blockingReasonCodes as string[]) || []).includes("PERMISSION_DENIED")
-                    ? say("View only: your role cannot reserve or ship", "只读：当前角色不能预留或发货")
-                    : say("You can reserve and ship from here", "可从此处预留和发货")}
-              </span>
-            </div>
-          )),
+        {/* Each stock balance for a line: where it is, its quantities and,
+            when this user may not use it, why. Only an order still to be
+            reserved or shipped lists them; the table above has the totals. */}
+        {!shippedInFull && !cancelled && balanceRows.length > 0 && (
+          <div className="mt-4" data-testid="availability-balances">
+            <h3 className="text-xs font-semibold text-slate-600">{say("Stock by location", "按库位的库存")}</h3>
+            <Collapsible total={balanceRows.length} testId="availability-show-all">
+              {(count) =>
+                balanceRows.slice(0, count).map(({ sku, lineId, balance: b }) => (
+                  <div
+                    data-testid="availability-balance"
+                    className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-slate-50 px-4 py-2 text-xs md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.6fr)_repeat(3,minmax(0,0.8fr))_minmax(0,2fr)]"
+                    key={`${lineId}-${b.id}`}
+                  >
+                    <span className="font-medium text-slate-700">{sku}</span>
+                    <span>{place(b.warehouseId, b.location)}</span>
+                    <span className="tabular-nums">{copy("现有 {n}").replace("{n}", formatQuantity(b.onHandQuantity))}</span>
+                    <span className="tabular-nums">{copy("预留 {n}").replace("{n}", formatQuantity(b.reservedQuantity))}</span>
+                    <span className="tabular-nums">{copy("可用 {n}").replace("{n}", formatQuantity(b.availableQuantity))}</span>
+                    <span className="text-slate-500">
+                      {!b.selectable
+                        ? say("View only: no access to this warehouse", "只读：无此仓库的操作权限")
+                        : roleViewOnly
+                          ? say("View only: your role cannot reserve or ship", "只读：当前角色不能预留或发货")
+                          : ""}
+                    </span>
+                  </div>
+                ))
+              }
+            </Collapsible>
+          </div>
         )}
       </Section>
       {recordSections.map((section) =>
@@ -1996,16 +2138,7 @@ function OrderDetail({ id }: { id: string }) {
             {copy("完整订单对账无法在当前权限范围内确认。")}
           </p>
         )}
-        {data.reconciliation.checks.map((x) => (
-          <div
-            className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t py-2 text-xs"
-            key={`${x.affectedEntity.type}-${x.affectedEntity.id}`}
-          >
-            <span className="font-medium text-slate-800">{reconciliationRuleLabel(x.rule)}</span>
-            <Badge value={x.status} />
-            <span className="tabular-nums text-slate-500">{reconciliationFacts(x)}</span>
-          </div>
-        ))}
+        <ReconciliationRules checks={data.reconciliation.checks} subject={checkSubject} />
       </Section>
       {intent && (
         <ActionDialog
@@ -2259,6 +2392,7 @@ function ShipmentDetail({ id }: { id: string }) {
   const stamp = useStamp();
   const warehouseName = useWarehouseNames();
   const place = usePlace();
+  const { language } = useI18n();
   const [data, setData] = useState<ShipmentWorkbench | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
@@ -2267,6 +2401,8 @@ function ShipmentDetail({ id }: { id: string }) {
     [intentKey, setIntentKey] = useState(""),
     [reason, setReason] = useState(() => copy("业务冲销")),
     [saving, setSaving] = useState(false);
+  // The breadcrumb names the shipment by its number (DN-…), not "Shipment workbench".
+  useDetailCrumb(data?.shipment.shipmentNumber);
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -2367,6 +2503,12 @@ function ShipmentDetail({ id }: { id: string }) {
   };
   const postedAt = data.shipment.postedAt ? stamp(data.shipment.postedAt) : "—",
     reversedAt = data.shipment.reversedAt ? stamp(data.shipment.reversedAt) : "—";
+  // An allocation's stock movements by when they were recorded, not by id.
+  const movementTime = (movementId?: string | null) => {
+    if (!movementId) return "—";
+    const movement = data.movements.find((row) => row.id === movementId);
+    return movement?.occurredAt ? stamp(movement.occurredAt) : say("Recorded", "已记录");
+  };
   return (
     <div className="space-y-4" data-testid="shipment-workbench">
       {error && (
@@ -2435,38 +2577,46 @@ function ShipmentDetail({ id }: { id: string }) {
             `${x.sku} · ${x.itemName}`,
             formatQuantity(x.requestedQuantity),
             formatQuantity(x.postedQuantity),
-            x.unit,
+            unitLabel(x.unit, language, Number(x.requestedQuantity)),
           ])}
         />
       </Section>
       <Section title={copy("分配与库存流水")}>
-        <Table
-          headers={[
-            copy("预留参考号"),
-            copy("仓库"),
-            copy("库位"),
-            copy("数量"),
-            copy("状态"),
-            copy("出库流水"),
-            copy("冲销流水"),
-          ]}
-          rows={data.allocations.map((x) => [
-            shortId(x.reservationId),
-            warehouseName(x.warehouseId),
-            x.location || copy("默认库位"),
-            formatQuantity(x.quantity),
-            status(x.status),
-            x.movementLink ? shortId(x.movementLink) : "—",
-            x.reversalMovementLink ? shortId(x.reversalMovementLink) : "—",
-          ])}
-        />
-        {data.movements.map((x) => (
-          <div className="mt-2 rounded-lg bg-slate-50 p-2 text-xs" data-testid="shipment-movement" key={x.id}>
-            {shortId(x.id)} · {movementTypeLabel(x.movementType, activeLanguage)} · {x.itemName} ·{" "}
-            {place(x.warehouseId, x.location)} · {copy("入")}{" "}
-            {formatQuantity(x.quantityIn)} / {copy("出")} {formatQuantity(x.quantityOut)}
-          </div>
-        ))}
+        <Collapsible total={data.allocations.length} testId="allocations-show-all">
+          {(count) => (
+            <Table
+              headers={[
+                "SKU",
+                copy("仓库"),
+                copy("库位"),
+                copy("数量"),
+                copy("状态"),
+                copy("出库流水"),
+                copy("冲销流水"),
+              ]}
+              rows={data.allocations.slice(0, count).map((x) => [
+                x.sku || onlyLine?.sku || "—",
+                warehouseName(x.warehouseId),
+                x.location || copy("默认库位"),
+                formatQuantity(x.quantity),
+                status(x.status),
+                movementTime(x.movementLink),
+                movementTime(x.reversalMovementLink),
+              ])}
+            />
+          )}
+        </Collapsible>
+        <Collapsible total={data.movements.length} testId="shipment-movements-show-all">
+          {(count) =>
+            data.movements.slice(0, count).map((x) => (
+              <div className="mt-2 rounded-lg bg-slate-50 p-2 text-xs" data-testid="shipment-movement" key={x.id}>
+                {movementTypeLabel(x.movementType, activeLanguage)} · {x.sku} · {x.itemName} ·{" "}
+                {place(x.warehouseId, x.location)} · {copy("入")}{" "}
+                {formatQuantity(x.quantityIn)} / {copy("出")} {formatQuantity(x.quantityOut)}
+              </div>
+            ))
+          }
+        </Collapsible>
       </Section>
       <Section title={copy("发货证据与时间线")}>
         <Timeline rows={data.evidence} resolve={timelinePart} />
@@ -2572,11 +2722,67 @@ function Table({
     </div>
   );
 }
+// The fulfillment checks run once per balance, line, reservation and shipment
+// line, so a long order has hundreds. Each rule is one row saying how many of
+// its checks match, with the ones that do not listed under it; a rule checked
+// once shows its two figures.
+function ReconciliationRules({
+  checks,
+  subject,
+}: {
+  checks: ReconciliationCheck[];
+  subject: (check: ReconciliationCheck) => string;
+}) {
+  const rules = new Map<string, ReconciliationCheck[]>();
+  for (const check of checks) rules.set(check.rule, [...(rules.get(check.rule) || []), check]);
+  return (
+    <>
+      {[...rules].map(([rule, rows]) => {
+        const mismatched = rows.filter((row) => row.status === "mismatch");
+        const ruleStatus = mismatched.length ? "mismatch" : rows.every((row) => row.status === "matched") ? "matched" : rows[0].status;
+        return (
+          <div className="border-t py-2 text-xs" key={rule} data-testid="reconciliation-rule">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="font-medium text-slate-800">{reconciliationRuleLabel(rule)}</span>
+              <Badge value={ruleStatus} />
+              <span className="tabular-nums text-slate-500">
+                {rows.length === 1
+                  ? reconciliationFacts(rows[0])
+                  : mismatched.length
+                    ? say(`${mismatched.length} of ${rows.length} checks do not match`, `${rows.length} 项检查中 ${mismatched.length} 项不一致`)
+                    : say(`${rows.length} checks, all match`, `${rows.length} 项检查全部一致`)}
+              </span>
+            </div>
+            {rows.length > 1 && mismatched.length > 0 && (
+              <Collapsible total={mismatched.length}>
+                {(count) => (
+                  <ul className="mt-1 space-y-0.5">
+                    {mismatched.slice(0, count).map((row) => (
+                      <li className="tabular-nums text-slate-600" key={`${row.affectedEntity.type}-${row.affectedEntity.id}`}>
+                        {subject(row)} · {reconciliationFacts(row)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Collapsible>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
 // The workbench API builds reservation and movement timeline titles when it is
 // read (they are not stored); they are translated here like its other labels.
 // Its summaries name a reservation or warehouse by id, so each such part is
 // shown by its warehouse name and location instead. Audit summaries are shown
 // as recorded.
+//
+// One posting reserves, allocates and ships every line of an order, so a long
+// order's timeline repeats each event once per line. A run of three or more
+// of the same event is one row with its count and time span, opened to list
+// the events one by one.
+const RUN = 3;
 function Timeline({
   rows,
   resolve,
@@ -2594,21 +2800,46 @@ function Timeline({
           : resolve?.(part) ?? (/^-?\d+(\.\d+)?$/.test(part) ? formatQuantity(part) : part),
       )
       .join(" · ");
+  const runs: Array<Workbench["evidence"]> = [];
+  for (const row of rows) {
+    const last = runs[runs.length - 1];
+    if (last && last[0].eventType === row.eventType && last[0].title === row.title) last.push(row);
+    else runs.push([row]);
+  }
+  const event = (x: Workbench["evidence"][number], key: string) => (
+    <div className="border-l-2 border-blue-200 pl-3 text-sm" key={key}>
+      <div className="font-semibold">{copy(x.title)}</div>
+      <div className="text-xs text-slate-500">
+        {stamp(x.occurredAt)}
+        {x.summary && x.summary !== x.title ? ` · ${summary(x.summary)}` : ""}
+      </div>
+    </div>
+  );
   return (
     <div className="space-y-2" data-testid="outbound-timeline">
-      {rows.map((x, i) => (
-        <div
-          className="border-l-2 border-blue-200 pl-3 text-sm"
-          key={`${x.eventType}-${x.entityId}-${i}`}
-          title={x.commandExecutionId ? copy("参考号：{id}").replace("{id}", x.commandExecutionId) : undefined}
-        >
-          <div className="font-semibold">{copy(x.title)}</div>
-          <div className="text-xs text-slate-500">
-            {stamp(x.occurredAt)}
-            {x.summary && x.summary !== x.title ? ` · ${summary(x.summary)}` : ""}
-          </div>
-        </div>
-      ))}
+      {runs.flatMap((run, r) => {
+        if (run.length < RUN) return run.map((x, i) => event(x, `${r}-${i}-${x.entityId}`));
+        const first = stamp(run[0].occurredAt),
+          last = stamp(run[run.length - 1].occurredAt);
+        return [
+          <details className="border-l-2 border-blue-200 pl-3 text-sm" key={`run-${r}`} data-testid="outbound-timeline-run">
+            <summary className="cursor-pointer list-none">
+              <span className="font-semibold">{copy(run[0].title)}</span>
+              <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                {say(`${run.length} records`, `${run.length} 条记录`)}
+              </span>
+              <span className="block text-xs text-slate-500">
+                {first === last ? first : `${first} – ${last}`} · <span className="text-blue-600">{say("Show each", "逐条查看")}</span>
+              </span>
+            </summary>
+            <div className="mt-2 space-y-2">
+              <Collapsible total={run.length} few={10}>
+                {(count) => run.slice(0, count).map((x, i) => event(x, `${r}-${i}-${x.entityId}`))}
+              </Collapsible>
+            </div>
+          </details>,
+        ];
+      })}
       {!rows.length && <p className="text-sm text-slate-500">{copy("暂无证据事件。")}</p>}
     </div>
   );

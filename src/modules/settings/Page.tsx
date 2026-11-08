@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Plus, Save, Search, ShieldCheck } from 'lucide-react';
+import { ArrowDown, ArrowUp, Plus, Save, Search, ShieldCheck, X } from 'lucide-react';
+import { useSearchParams } from 'react-router';
 import { A, Card, RecoveryActions } from '../../components/ui';
 import { BusinessEntityLink } from '../../components/business/BusinessEntityLink';
 import { businessEntityRouteRegistry, type BusinessEntityType } from '../../components/business/businessEntityRoutes';
@@ -37,6 +38,37 @@ const AUDIT_MODULES: Record<string, [string, string]> = {
   srm: ['Suppliers', '供应商'], procurement_receiving: ['Receiving', '收货'], sales_outbound: ['Sales', '销售'], returns: ['Returns', '退货'],
   overview: ['Today', '今日'], 'action-drafts': ['Action drafts', '行动草稿'], 'user-data': ['Data import', '数据导入'], imports: ['Data import', '数据导入'],
   'universal-intake': ['Data import', '数据导入'], evidence: ['Evidence', '证据链'], notifications: ['Notifications', '通知'], 'exception-cases': ['Exception cases', '异常工单'], system: ['System', '系统'],
+};
+// What an audit row records, by its stored action code, for the row's
+// tooltip. A code not listed reads as words in English and has no tooltip in
+// Chinese; the row's summary already says what happened.
+const AUDIT_ACTIONS: Record<string, [string, string]> = {
+  session_created: ['Signed in', '已登录'], sign_in_link_requested: ['Sign-in link requested', '已申请登录链接'],
+  sign_in_link_consumed: ['Sign-in link used', '已使用登录链接'], session_logout: ['Signed out', '已退出登录'], sessions_revoked: ['Signed-in sessions ended', '已结束登录会话'],
+  profile_settings_updated: ['Profile updated', '已更新个人资料'], workspace_settings_updated: ['Workspace settings updated', '已更新工作区设置'],
+  authorization_legacy_role_backfilled: ['Role assignments backfilled', '已补录角色分配'],
+  create: ['Created', '已创建'], tier_change: ['Supplier tier changed', '已更改供应商分级'], owner_change: ['Supplier owner changed', '已更改供应商负责人'],
+  purchase_request_created: ['Purchase request created', '已创建采购申请'], purchase_request_updated: ['Purchase request updated', '已更新采购申请'],
+  purchase_order_approve: ['Purchase order approved', '已批准采购订单'], purchase_order_issue: ['Purchase order issued', '已下达采购订单'],
+  purchase_order_promised_dates_revised: ['Promised dates revised', '已修改承诺交期'],
+  receiving_posted: ['Receipt posted', '收货单已过账'], receiving_reversed: ['Receipt reversed', '收货单已冲销'],
+  supplier_invoice_created: ['Supplier invoice created', '已创建采购发票'], supplier_invoice_submitted: ['Supplier invoice submitted', '已提交采购发票'],
+  supplier_invoice_matched: ['Supplier invoice matched', '采购发票已匹配'], supplier_invoice_approved: ['Supplier invoice approved', '已批准采购发票'],
+  customer_invoice_created: ['Customer invoice created', '已创建销售发票'],
+  inventory_adjustment_created: ['Inventory adjustment created', '已创建库存调整单'], inventory_adjustment_ready: ['Inventory adjustment ready', '库存调整单已就绪'],
+  inventory_adjustment_posted: ['Inventory adjustment posted', '库存调整单已过账'], inventory_adjustment_reversed: ['Inventory adjustment reversed', '库存调整单已冲销'],
+  stock_transfer_created: ['Stock transfer created', '已创建库存调拨'], stock_transfer_posted: ['Stock transfer posted', '库存调拨已过账'],
+  cycle_count_created: ['Cycle count created', '已创建循环盘点'], cycle_count_posted: ['Cycle count posted', '循环盘点已过账'],
+  create_sales_order_draft: ['Sales order draft created', '销售订单草稿已创建'], revise_sales_order_draft: ['Sales order draft revised', '销售订单草稿已修改'],
+  confirm_sales_order: ['Sales order confirmed', '销售订单已确认'], hold_sales_order: ['Sales order put on hold', '销售订单已暂停'],
+  resume_sales_order: ['Sales order resumed', '销售订单已恢复'], sales_order_cancelled: ['Sales order cancelled', '销售订单已取消'],
+  sales_inventory_reserved: ['Stock reserved for a sales order', '已为销售订单预留库存'], sales_reservation_released: ['Stock reservation released', '已释放库存预留'],
+  shipment_draft_created: ['Shipment created', '发货单已创建'], shipment_draft_cancelled: ['Shipment cancelled', '发货单已取消'],
+  sales_shipment_posted: ['Shipment posted', '发货单已过账'], sales_shipment_reversed: ['Shipment reversed', '发货单已冲销'],
+  contract_created: ['Contract created', '已创建合同'], contract_updated: ['Contract updated', '已更新合同'], contract_activated: ['Contract activated', '合同已生效'],
+  contract_terminated: ['Contract terminated', '合同已终止'], contract_renewed: ['Contract renewal started', '已开始续签合同'],
+  ai_skill_answered: ['Assistant answered', '助手已回答'], ai_tool_invoked: ['Assistant read workspace data', '助手已读取工作区数据'],
+  import_batch_committed: ['Data import committed', '数据导入已提交'], user_import_committed: ['Users imported', '已导入用户'],
 };
 const ACRONYMS: Record<string, string> = { ai: 'AI', po: 'PO', pr: 'PR', rfq: 'RFQ', grn: 'GRN', sku: 'SKU', id: 'ID' };
 const humanizeCode = (code: string) => {
@@ -171,7 +203,7 @@ function Review({ value, onChange }: { value: SettingsRuntime['review']; onChang
   <section><h3 className="mb-3 font-medium" style={{ color: A.label }}>{t('settings.otherReviewSettings')}</h3><NotInEffect><div className="grid gap-5 lg:grid-cols-[1fr_320px]"><div className="grid gap-4 md:grid-cols-2">
     <label className="text-sm">{t('settings.amountThreshold')}<input type="number" className={`${fieldClass} mt-1`} value={value.amountThreshold} onChange={e => onChange({ ...value, amountThreshold: Number(e.target.value) })} /></label>
     <label className="text-sm">{t('settings.inventoryTolerance')}<input type="number" className={`${fieldClass} mt-1`} value={value.inventoryTolerancePercent} onChange={e => onChange({ ...value, inventoryTolerancePercent: Number(e.target.value) })} /></label>
-    <div className="text-sm">{t('settings.riskLevels')}<div className={`${fieldClass} mt-1 bg-slate-50`} title={value.riskLevels.join(', ')}>{riskNames || t('settings.none')}</div></div>
+    <div className="text-sm">{t('settings.riskLevels')}<div className={`${fieldClass} mt-1 bg-slate-50`}>{riskNames || t('settings.none')}</div></div>
     <div className="text-sm">{t('settings.reviewerRoles')}<div className={`${fieldClass} mt-1 bg-slate-50`} title={value.reviewerRoles.join(', ')}>{reviewerNames || t('settings.none')}</div></div>
     <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value.enabled} onChange={e => onChange({ ...value, enabled: e.target.checked })} />{t('settings.enableReview')}</label>
     <div className="md:col-span-2"><div className="mb-2 text-sm font-medium">{t('settings.reviewPolicyList')}</div><div className="grid gap-2">{(value.policies || []).map(policy => <label key={policy.id} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3 text-sm"><input type="checkbox" checked={policy.enabled} onChange={e => onChange({ ...value, policies: value.policies.map(row => row.id === policy.id ? { ...row, enabled: e.target.checked } : row) })} />{labelFor(t, 'settings.policy', policy.id, policy.name)}</label>)}</div></div>
@@ -233,10 +265,22 @@ function Audit() {
   const entityName = (code: string) => auditEntityLabel(code, language);
   // A record id stays as recorded; an internal one is left out.
   const entityId = (type: string, id: string) => auditEntityIdText(type, id);
+  // An action code as words, never the code itself (see AUDIT_ACTIONS).
+  const actionName = (code: string) => AUDIT_ACTIONS[code]?.[english ? 0 : 1] || (english ? humanizeCode(code) : undefined);
+  // A link from a record (a sales order's Related records) opens its entries:
+  // ?entityType=&entityId=, with entityLabel naming it (its document number).
+  // The filter is shown and can be removed.
+  const [params, setParams] = useSearchParams();
+  const recordType = params.get('entityType') || '', recordId = params.get('entityId') || '';
+  const recordFilter = recordType && recordId ? { entityType: recordType, entityId: recordId } : null;
+  // The record's document number, when the link gave it, names its rows too.
+  const recordLabel = params.get('entityLabel') || '';
+  const recordName = [entityName(recordType), recordLabel || entityId(recordType, recordId)].filter(Boolean).join(' ');
+  const clearRecord = () => { const next = new URLSearchParams(params); for (const key of ['entityType', 'entityId', 'entityLabel']) next.delete(key); setParams(next, { replace: true }); };
   const [entries, setEntries] = useState<SettingsAuditEntry[]>([]); const [query, setQuery] = useState(''); const [module, setModule] = useState(''); const [expanded, setExpanded] = useState<string | null>(null);
-  useEffect(() => { fetchSettingsAudit().then(setEntries).catch(() => setEntries([])); }, []);
+  useEffect(() => { fetchSettingsAudit(recordFilter || {}).then(setEntries).catch(() => setEntries([])); }, [recordType, recordId]);
   const filtered = useMemo(() => entries.filter(e => (!module || e.module === module) && (!query || JSON.stringify(e).toLowerCase().includes(query.toLowerCase()))), [entries, query, module]);
-  return <><div className="mb-4 flex flex-wrap gap-2"><label className="relative min-w-[260px] flex-1"><Search className="absolute left-3 top-2.5 text-slate-400" size={16} /><input aria-label={t('settings.searchAudit')} className={`${fieldClass} pl-9`} value={query} onChange={e => setQuery(e.target.value)} placeholder={t('settings.auditPlaceholder')} /></label><select aria-label={t('settings.moduleFilter')} className={`${fieldClass} w-44`} value={module} onChange={e => setModule(e.target.value)}><option value="">{t('settings.allModules')}</option>{[...new Set(entries.map(e => e.module))].map(x => <option key={x} value={x}>{moduleName(x)}</option>)}</select></div><div className="space-y-2">{filtered.map(entry => { const type = entry.entity?.type as BusinessEntityType | undefined; return <div key={entry.id} className="rounded-xl border border-slate-200 p-4"><button className="w-full text-left" onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}><div className="flex flex-wrap justify-between gap-2"><span className="font-medium" title={entry.action}>{auditSummaryText(entry, language)}</span><time className="text-xs text-slate-500" dateTime={entry.timestamp}>{entry.timestamp && !Number.isNaN(new Date(entry.timestamp).getTime()) ? formatDateTime(entry.timestamp) : entry.timestamp}</time></div><div className="mt-1 text-xs text-slate-500">{entry.actor?.name || t('settings.systemActor')} · <span title={entry.module}>{moduleName(entry.module)}</span>{entry.entity?.type ? <> · <span>{entityName(entry.entity.type)}</span> <span>{entityId(entry.entity.type, entry.entity.id || '')}</span></> : null}</div></button>{expanded === entry.id && <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 md:grid-cols-2"><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.before')}{`\n`}{JSON.stringify(entry.before, null, 2)}</pre><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.after')}{`\n`}{JSON.stringify(entry.after, null, 2)}</pre>{entry.entity?.id && type && type in businessEntityRouteRegistry && <BusinessEntityLink entityType={type} entityId={entry.entity.id}>{t('settings.openEntity')}</BusinessEntityLink>}</div>}</div>; })}{!filtered.length && <div className="py-12 text-center text-sm text-slate-500">{t('settings.noAudit')}</div>}</div></>;
+  return <>{recordFilter && <div className="mb-3 flex flex-wrap items-center gap-2 text-xs" data-testid="audit-record-filter"><span className="text-slate-500">{english ? 'Showing entries for' : '仅显示此记录的审计条目：'}</span><button type="button" onClick={clearRecord} aria-label={english ? `Remove filter: ${recordName}` : `移除筛选：${recordName}`} className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 font-medium text-blue-700 hover:bg-blue-100">{recordName}<X size={12} aria-hidden /></button></div>}<div className="mb-4 flex flex-wrap gap-2"><label className="relative min-w-[260px] flex-1"><Search className="absolute left-3 top-2.5 text-slate-400" size={16} /><input aria-label={t('settings.searchAudit')} className={`${fieldClass} pl-9`} value={query} onChange={e => setQuery(e.target.value)} placeholder={t('settings.auditPlaceholder')} /></label><select aria-label={t('settings.moduleFilter')} className={`${fieldClass} w-44`} value={module} onChange={e => setModule(e.target.value)}><option value="">{t('settings.allModules')}</option>{[...new Set(entries.map(e => e.module))].map(x => <option key={x} value={x}>{moduleName(x)}</option>)}</select></div><div className="space-y-2">{filtered.map(entry => { const type = entry.entity?.type as BusinessEntityType | undefined; return <div key={entry.id} className="rounded-xl border border-slate-200 p-4"><button className="w-full text-left" onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}><div className="flex flex-wrap justify-between gap-2"><span className="font-medium" title={actionName(entry.action)}>{auditSummaryText(entry, language)}</span><time className="text-xs text-slate-500" dateTime={entry.timestamp}>{entry.timestamp && !Number.isNaN(new Date(entry.timestamp).getTime()) ? formatDateTime(entry.timestamp) : entry.timestamp}</time></div><div className="mt-1 text-xs text-slate-500">{entry.actor?.name || t('settings.systemActor')} · <span>{moduleName(entry.module)}</span>{entry.entity?.type ? <> · <span>{entityName(entry.entity.type)}</span> <span>{recordLabel && entry.entity.type === recordType && entry.entity.id === recordId ? recordLabel : entityId(entry.entity.type, entry.entity.id || '')}</span></> : null}</div></button>{expanded === entry.id && <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 md:grid-cols-2"><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.before')}{`\n`}{JSON.stringify(entry.before, null, 2)}</pre><pre className="overflow-auto rounded-lg bg-slate-50 p-3 text-xs">{t('settings.after')}{`\n`}{JSON.stringify(entry.after, null, 2)}</pre>{entry.entity?.id && type && type in businessEntityRouteRegistry && <BusinessEntityLink entityType={type} entityId={entry.entity.id}>{t('settings.openEntity')}</BusinessEntityLink>}</div>}</div>; })}{!filtered.length && <div className="py-12 text-center text-sm text-slate-500">{t('settings.noAudit')}</div>}</div></>;
 }
 
 export default function SettingsPage({ initialView }: { initialView?: string; onNavigate: NavigateFn }) {

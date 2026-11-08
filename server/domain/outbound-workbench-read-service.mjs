@@ -195,7 +195,8 @@ function smartLinks({ order, reservations, shipments, movements, balances }) {
       targetRouteId: "settings:audit",
       targetType: "audit",
       targetId: order.id,
-      filter: { entityType: "SalesOrder", entityId: order.id },
+      // entityLabel names the order on the audit page by its number.
+      filter: { entityType: "SalesOrder", entityId: order.id, entityLabel: order.orderNumber },
       enabled: true,
       unavailableReason: null,
     },
@@ -534,6 +535,15 @@ export function createOutboundWorkbenchReadService({
       lifecycleEnabled = capabilities.lifecycle?.enabled === true,
       reservationEnabled = capabilities.reservation?.enabled === true,
       confirmed = order.workflowStatus === "confirmed",
+      // A fully shipped order has nothing left to hold, reserve or ship.
+      shippedInFull = order.fulfillmentStatus === "fully_fulfilled",
+      openToReserve = order.lines.some(
+        (line) =>
+          units(line.orderedQuantity) -
+            units(line.reservedQuantity) -
+            units(line.fulfilledQuantity) >
+          0n,
+      ),
       operateWarehouses = balances.filter((row) =>
         canOperate(actor, row.warehouseId),
       );
@@ -547,7 +557,7 @@ export function createOutboundWorkbenchReadService({
         permission(actor, "sales_order.submit") &&
         order.workflowStatus === "draft" &&
         order.lines.length > 0,
-      canHold: lifecycleEnabled && permission(actor, "sales_order.revise") && confirmed,
+      canHold: lifecycleEnabled && permission(actor, "sales_order.revise") && confirmed && !shippedInFull,
       canResume:
         lifecycleEnabled && permission(actor, "sales_order.revise") && order.workflowStatus === "on_hold",
       // Cancelling releases the order's reservations and cancels its unposted
@@ -561,6 +571,7 @@ export function createOutboundWorkbenchReadService({
         reservationEnabled &&
         permission(actor, "shipment.prepare") &&
         confirmed &&
+        openToReserve &&
         operateWarehouses.some((row) => units(row.availableQuantity) > 0n),
       canRelease:
         reservationEnabled &&
@@ -802,6 +813,8 @@ export function createOutboundWorkbenchReadService({
       allocations: allocations.map((row) => ({
         id: row.id,
         reservationId: row.reservationId,
+        // The item the allocation ships, so the page names it, not the reservation id.
+        sku: row.reservation?.sku || null,
         warehouseId: row.warehouseId,
         location: row.location || "",
         locationKey: row.locationKey,

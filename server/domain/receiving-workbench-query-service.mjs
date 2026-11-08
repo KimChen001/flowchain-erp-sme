@@ -236,7 +236,9 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
       prisma.auditLog.count({ where: { tenantId: scope.tenantId, entityType: 'ReceivingDocument', entityId: receivingDocumentId } }),
     ])
     const reversals = movements.filter((movement) => movement.movementType === 'receipt_reversal')
-    const link = (value) => ({ unavailableReason: value.enabled ? null : 'No authoritative records are available.', ...value })
+    // A link with nothing behind it says why: the English sentence, and a code
+    // the page shows in the interface language.
+    const link = (value) => ({ unavailableReason: value.enabled ? null : 'No authoritative records are available.', unavailableReasonCode: value.enabled ? null : 'NO_RECORDS', ...value })
     return { links: [
       link({ label: 'Purchase Order', count: 1, targetRouteId: 'procurement:order-detail', targetType: 'purchase_order', targetId: aggregate.purchaseOrder.id, targetNumber: procurementDocumentNumber(aggregate.purchaseOrder), filter: {}, enabled: true }),
       link({ label: 'Movements', count: movements.length, targetRouteId: 'inventory:movements', targetType: 'inventory_movement', targetId: receivingDocumentId, filter: { relatedGrnId: receivingDocumentId }, enabled: movements.length > 0 }),

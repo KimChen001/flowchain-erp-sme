@@ -1,4 +1,5 @@
 import { SupplierForm, type PaymentTermOption } from "./SupplierForm";
+import { useDetailBack } from "../../components/navigation/useDetailBack";
 import { supplierCopy } from "./supplierCopy";
 import { SupplierPerformancePanel, supplierPerformanceTabLabel } from "./supplierPerformance";
 import { SupplierActivityCards } from "./supplierActivity";
@@ -471,6 +472,7 @@ export default function SupplierMasterPage({
   // link currency and the item's unit, in one request. Display only.
   // The item being linked gets the same facts under its reference price, in
   // the currency the link will be saved in. Never fills the price.
+  const detailBack = useDetailBack("/app/master-data/suppliers", ["Back to suppliers", "返回供应商列表"], () => { setSelected(null); onActiveContextChange?.(null); });
   const relationshipHistoryKey = (r: Relationship) => (selected ? priceHistoryKey({ itemId: r.itemId, currency: r.currency, supplierId: selected.id }) : "");
   const relationFormHistoryKey = selected && writes.items ? priceHistoryKey({ itemId: relationForm.itemId, currency: relationForm.currency || selected.defaultCurrency, supplierId: selected.id }) : "";
   const relationshipHistory = usePriceHistory([...relationships.map(relationshipHistoryKey), relationFormHistoryKey]);
@@ -482,13 +484,10 @@ export default function SupplierMasterPage({
           <button
             type="button"
             className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
-            onClick={() => {
-              setSelected(null);
-              onActiveContextChange?.(null);
-            }}
+            onClick={detailBack.back}
           >
             <ArrowLeft size={13} />
-            {copy("返回供应商列表")}</button>
+            {detailBack.label}</button>
           {writes.suppliers && (
             <div className="flex flex-wrap gap-2">
               <button

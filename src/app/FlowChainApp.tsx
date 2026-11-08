@@ -1,4 +1,5 @@
 import { workspaceCopy } from "../i18n/workspaceCopy";
+import { useBackLabel } from "../components/navigation/backLabel";
 import { FadeIn, PageSkeleton, PageTransition } from "../components/motion/Motion";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router";
@@ -161,6 +162,10 @@ type GlobalSearchResult = {
   label: string;
   // A purchase request's, RFQ's or order's document number.
   number?: string;
+  // The code a person knows a master record by (SKU, supplier code).
+  code?: string;
+  // The record's own page, when it has one.
+  deepLink?: string;
   subtitle: string;
   status: string;
   moduleId: string;
@@ -397,9 +402,16 @@ function CapabilityRouteStatus({
   );
 }
 
+// The local development badge's details, in the interface language.
+const LOCAL_BADGE_COPY = {
+  "en-US": { user: "User", data: "Public data", none: "none", intakeOn: "Universal Intake enabled", intakeOff: "Universal Intake disabled" },
+  "zh-CN": { user: "用户", data: "公开数据", none: "无", intakeOn: "通用录入已开启", intakeOff: "通用录入已关闭" },
+} as const;
+
 export default function FlowChainApp() {
   const { t, routeLabel, workspaceName, language } = useI18n();
   const location = useLocation();
+  const backLabel = useBackLabel();
   const routerNavigate = useNavigate();
   const [localStatus, setLocalStatus] = useState<LocalDevelopmentStatus | null>(null);
   const [publicDataReopen, setPublicDataReopen] = useState(0);
@@ -433,6 +445,13 @@ export default function FlowChainApp() {
     null,
   );
   const [profileOpen, setProfileOpen] = useState(false);
+  // Escape closes the user menu, as it closes the other menus.
+  useEffect(() => {
+    if (!profileOpen) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setProfileOpen(false); };
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [profileOpen]);
   // Below 1024 px the navigation opens as a drawer from the header.
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const mobileNavRef = useRef<HTMLDivElement | null>(null);
@@ -1057,6 +1076,17 @@ export default function FlowChainApp() {
   }
 
   function openSearchResult(result: GlobalSearchResult) {
+    // A result with its own page opens that page, with a way back to the page
+    // the search was made from.
+    if (typeof result.deepLink === "string" && result.deepLink.startsWith("/app/")) {
+      const params = new URLSearchParams();
+      params.set("returnTo", `${location.pathname}${location.search}`);
+      params.set("returnLabel", backLabel() || (language === "en-US" ? "Back" : "返回"));
+      routerNavigate(`${result.deepLink}${result.deepLink.includes("?") ? "&" : "?"}${params.toString()}`);
+      setSearchOpen(false);
+      setActiveSearchIndex(-1);
+      return;
+    }
     applyNavigationIntent(
       navigationIntentFromGlobalSearchResult(result, { returnTo: active }),
       {
@@ -1485,7 +1515,7 @@ export default function FlowChainApp() {
               {workspaceName || user.company}
             </span>
             {/* On a phone only a dot shows; its words stay for assistive technology. */}
-            {localStatus && <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-100 px-1.5 py-1 text-xs font-semibold leading-none text-amber-800 sm:px-2 sm:py-0.5 sm:leading-5" title={`User ${user.email} · Public data ${localStatus.publicData ? localStatus.publicData.dataset.toUpperCase() : "none"} · Universal Intake ${localStatus.universalIntakeEnabled ? "enabled" : "disabled"}`}><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-600 sm:hidden" /><span className="sr-only sm:not-sr-only sm:whitespace-nowrap">{language === "en-US" ? "Local development" : "本地开发"}</span></span>}
+            {localStatus && <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-100 px-1.5 py-1 text-xs font-semibold leading-none text-amber-800 sm:px-2 sm:py-0.5 sm:leading-5" title={(() => { const badge = LOCAL_BADGE_COPY[language === "en-US" ? "en-US" : "zh-CN"]; return `${badge.user} ${user.email} · ${badge.data} ${localStatus.publicData ? localStatus.publicData.dataset.toUpperCase() : badge.none} · ${localStatus.universalIntakeEnabled ? badge.intakeOn : badge.intakeOff}`; })()}><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-600 sm:hidden" /><span className="sr-only sm:not-sr-only sm:whitespace-nowrap">{language === "en-US" ? "Local development" : "本地开发"}</span></span>}
             {localStatus?.publicData && (
               <button
                 type="button"
@@ -1691,20 +1721,21 @@ export default function FlowChainApp() {
                                           className={`${typography.searchResultTitle} truncate`}
                                           style={{ color: A.label }}
                                         >
-                                          {/* A request, RFQ or order found by its id shows its document number. */}
-                                          {isDocumentNumberType(result.entityType) && result.label === result.entityId
+                                          {/* A document shows its number first; its name or party goes underneath. */}
+                                          {isDocumentNumberType(result.entityType)
                                             ? <DocumentNumber type={result.entityType} id={result.entityId} number={result.number} />
-                                            : result.label}
+                                            : result.number || result.label}
                                         </span>
                                       </div>
                                       <div
                                         className={`${typography.searchResultMeta} mt-1 truncate`}
                                         style={{ color: A.sub }}
                                       >
-                                        {/* Runtime results repeat the server's status label as the subtitle. */}
-                                        {result.subtitle && result.subtitle === result.status
-                                          ? workspaceCopy(result.status, language)
-                                          : result.subtitle || result.entityLabel}
+                                        {/* The status has its own chip, so the line under the title
+                                            names the party of a document or the code of a record. */}
+                                        {isDocumentNumberType(result.entityType) || result.number
+                                          ? result.label !== result.entityId ? result.label : ""
+                                          : result.code || (result.subtitle && result.subtitle !== result.status ? result.subtitle : "")}
                                       </div>
                                       {hint && (
                                         <div

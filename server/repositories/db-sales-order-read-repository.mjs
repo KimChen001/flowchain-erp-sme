@@ -63,12 +63,62 @@ const OPEN_DEMAND_EXCLUDED_STATUSES = ['draft', 'cancelled', 'canceled']
 // The same rule on an order as listOrders returns it.
 export const orderHasOpenDemand = (order) => !OPEN_DEMAND_EXCLUDED_STATUSES.includes(text(order?.workflowStatus)) && text(order?.fulfillmentStatus) !== 'fully_fulfilled'
 
+// The orders behind each delivery figure, as database filters, so a count and
+// the list it opens are the same orders. The outbound policy keeps an order's
+// reservation and fulfillment statuses from its lines (outboundOrderStatuses
+// in server/domain/outbound-transaction-policy.mjs): "fully_reserved" means
+// every line is reserved or shipped in full, "fully_fulfilled" every line is
+// shipped. An order is short of stock when it is neither, which is what
+// mapOrder works out from the line quantities.
+const HAS_LINES = Object.freeze({ lines: { some: {} } })
+const NOT_CANCELLED = Object.freeze({ workflowStatus: { not: 'cancelled' } })
+const NOT_SHIPPED_IN_FULL = Object.freeze({ fulfillmentStatus: { not: 'fully_fulfilled' } })
+export const SALES_ORDER_DEMAND_FILTERS = Object.freeze({
+  // On hold and not shipped in full: risk "blocked".
+  blocked: { workflowStatus: 'on_hold', ...NOT_SHIPPED_IN_FULL },
+  // Open, not on hold, with a line not yet reserved or shipped: risk "high".
+  high: { workflowStatus: { notIn: ['cancelled', 'on_hold'] }, ...NOT_SHIPPED_IN_FULL, reservationStatus: { not: 'fully_reserved' }, ...HAS_LINES },
+  // Every order still short of stock, on hold or not (shortageQty > 0).
+  shortage: { ...NOT_CANCELLED, ...NOT_SHIPPED_IN_FULL, reservationStatus: { not: 'fully_reserved' }, ...HAS_LINES },
+  // Stock reserved on at least one line (reservedQty > 0).
+  reserved: { reservationStatus: { not: 'not_reserved' } },
+})
+// No order: an unknown filter value matches nothing rather than everything.
+const NO_ORDER = Object.freeze({ id: { in: [] } })
+
+// risk: "true" (blocked or high, as the risk queue counts), "blocked",
+// "high" or "low".
+export function salesOrderRiskWhere(risk) {
+  const value = text(risk)
+  if (!value) return null
+  const atRisk = { OR: [SALES_ORDER_DEMAND_FILTERS.blocked, SALES_ORDER_DEMAND_FILTERS.high] }
+  if (value === 'true') return atRisk
+  if (value === 'blocked' || value === 'high') return SALES_ORDER_DEMAND_FILTERS[value]
+  if (value === 'low') return { NOT: atRisk }
+  return NO_ORDER
+}
+
+// The status mapOrder gives an order (statusFor), as a filter.
+const ORDER_STATUS_FILTERS = Object.freeze({
+  cancelled: { workflowStatus: 'cancelled' },
+  fulfilled: { ...NOT_CANCELLED, fulfillmentStatus: 'fully_fulfilled', ...HAS_LINES },
+  partially_fulfilled: { ...NOT_CANCELLED, fulfillmentStatus: 'partially_fulfilled' },
+  shortage_risk: { ...NOT_CANCELLED, fulfillmentStatus: 'not_fulfilled', reservationStatus: { not: 'fully_reserved' }, ...HAS_LINES },
+  ready_to_ship: { ...NOT_CANCELLED, fulfillmentStatus: 'not_fulfilled', reservationStatus: 'fully_reserved', ...HAS_LINES },
+  // Only an order without lines keeps its workflow status as its status.
+  draft: { workflowStatus: 'draft', lines: { none: {} } },
+  confirmed: { workflowStatus: 'confirmed', lines: { none: {} } },
+  on_hold: { workflowStatus: 'on_hold', lines: { none: {} } },
+})
+export const SALES_ORDER_STATUS_CODES = Object.freeze(Object.keys(ORDER_STATUS_FILTERS))
+
 function mapOrder(row = {}) {
   const lines = Array.isArray(row.lines) ? row.lines : []
   const orderedQty = sum(lines, 'orderedQuantity')
   const reservedQty = sum(lines, 'reservedQuantity')
   const fulfilledQty = sum(lines, 'fulfilledQuantity')
-  const shortageQty = Math.max(0, orderedQty - reservedQty - fulfilledQty)
+  // A cancelled order will not be delivered, so it is short of nothing.
+  const shortageQty = row.workflowStatus === 'cancelled' ? 0 : Math.max(0, orderedQty - reservedQty - fulfilledQty)
   const status = statusFor(row, orderedQty, reservedQty, fulfilledQty, shortageQty)
   const deliveryRiskLevel = riskFor(row, status, shortageQty)
   const firstLine = lines[0] || {}
@@ -156,25 +206,76 @@ export function createDbSalesOrderReadRepository({ env = process.env, prisma } =
     return prisma || getPrismaClient(env)
   }
 
-  async function listOrders(filters = {}) {
-    const where = { tenantId: requireTenantId(filters) }
-    const db = await client()
+  // The orders the filters select, every filter applied in the database so a
+  // count, a page and the summary agree: q (order id, number or customer),
+  // status (workflow status), sku (any line), risk (salesOrderRiskWhere) and
+  // orderStatus (the status mapOrder gives, SALES_ORDER_STATUS_CODES).
+  function orderWhere(filters = {}) {
+    const tenantId = requireTenantId(filters)
+    const and = []
     // Escaped, so "%" or "_" is searched for as itself and does not match every order.
     const search = escapeLikePattern(text(filters.q || filters.search))
-    if (search) where.OR = [
+    if (search) and.push({ OR: [
       { id: { contains: search, mode: 'insensitive' } },
       { orderNumber: { contains: search, mode: 'insensitive' } },
       { customerName: { contains: search, mode: 'insensitive' } },
-    ]
-    if (text(filters.status)) where.workflowStatus = text(filters.status)
+    ] })
+    if (text(filters.status)) and.push({ workflowStatus: text(filters.status) })
+    const sku = text(filters.sku)
+    if (sku) and.push({ lines: { some: { OR: [{ sku }, { itemId: sku }] } } })
+    const risk = salesOrderRiskWhere(filters.risk)
+    if (risk) and.push(risk)
+    const orderStatus = text(filters.orderStatus)
+    if (orderStatus) and.push(ORDER_STATUS_FILTERS[orderStatus] || NO_ORDER)
+    return and.length ? { tenantId, AND: and } : { tenantId }
+  }
+  const narrowed = (where, extra) => ({ tenantId: where.tenantId, AND: [...(where.AND || []), extra] })
+
+  // Up to 500 orders, most recently updated first, from `offset`. sort=risk
+  // puts orders on hold first: in the risk queue the workflow status is
+  // on_hold, draft or confirmed, so descending order lists on_hold first.
+  async function listOrders(filters = {}) {
+    const where = orderWhere(filters)
+    const db = await client()
+    const offset = Math.max(0, Math.floor(Number(filters.offset) || 0))
     const rows = await findManyWithinLimit(db.salesOrder, {
       where,
       include: { lines: { orderBy: { id: 'asc' } } },
-      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+      orderBy: filters.sort === 'risk' ? [{ workflowStatus: 'desc' }, { updatedAt: 'desc' }, { id: 'asc' }] : [{ updatedAt: 'desc' }, { id: 'asc' }],
+      ...(offset ? { skip: offset } : {}),
     }, { limit: Math.min(500, Math.max(1, Number(filters.limit || 500))), subject: 'sales_orders', onTruncated: filters.onTruncated })
     return rows.map(mapOrder)
-      .filter((order) => !text(filters.sku) || order.lines.some((line) => line.sku === text(filters.sku) || line.itemId === text(filters.sku)))
-      .filter((order) => !text(filters.risk) || (filters.risk === 'true' ? order.deliveryRiskLevel !== 'low' : order.deliveryRiskLevel === filters.risk))
+  }
+
+  // How many orders the filters select, however many a list returns.
+  async function countOrders(filters = {}) {
+    const where = orderWhere(filters)
+    const db = await client()
+    return db.salesOrder.count({ where })
+  }
+
+  // The delivery figures over every order the filters select, not only the
+  // orders a list returns: counts and line sums in the database.
+  async function getSummary(filters = {}) {
+    const where = orderWhere(filters)
+    const db = await client()
+    const atRisk = narrowed(where, salesOrderRiskWhere('true'))
+    const [totalOrders, riskOrderCount, short, reserved, customers] = await Promise.all([
+      db.salesOrder.count({ where }),
+      db.salesOrder.count({ where: atRisk }),
+      // Each short order is short by ordered - reserved - shipped over its lines.
+      db.salesOrderLine.aggregate({ where: { salesOrder: { is: narrowed(where, SALES_ORDER_DEMAND_FILTERS.shortage) } }, _sum: { orderedQuantity: true, reservedQuantity: true, fulfilledQuantity: true } }),
+      db.salesOrderLine.aggregate({ where: { salesOrder: { is: where } }, _sum: { reservedQuantity: true } }),
+      db.salesOrder.findMany({ where: atRisk, distinct: ['customerName'], select: { customerName: true } }),
+    ])
+    return {
+      totalOrders,
+      riskOrderCount,
+      highRiskOrderCount: riskOrderCount,
+      shortageQty: Math.max(0, number(short?._sum?.orderedQuantity) - number(short?._sum?.reservedQuantity) - number(short?._sum?.fulfilledQuantity)),
+      reservedQty: number(reserved?._sum?.reservedQuantity),
+      affectedCustomerCount: new Set((customers || []).map((row) => text(row.customerName)).filter(Boolean)).size,
+    }
   }
 
   // Orders that may still need stock: neither draft nor cancelled, and not
@@ -190,14 +291,21 @@ export function createDbSalesOrderReadRepository({ env = process.env, prisma } =
     mode: 'database',
     adapter: 'db-sales-order-read-v1',
     listOrders,
+    countOrders,
     countOrdersWithOpenDemand,
+    // One order by its id or its number, however old it is.
     async getOrder(id, filters = {}) {
-      const orders = await listOrders(filters)
-      const key = text(id).toLowerCase()
-      return orders.find((order) => [order.id, order.salesOrderId, order.orderNumber].some((value) => text(value).toLowerCase() === key)) || null
+      const tenantId = requireTenantId(filters)
+      const key = text(id)
+      if (!key) return null
+      const db = await client()
+      const row = await db.salesOrder.findFirst({
+        where: { tenantId, OR: [{ id: { equals: key, mode: 'insensitive' } }, { orderNumber: { equals: key, mode: 'insensitive' } }] },
+        include: { lines: { orderBy: { id: 'asc' } } },
+        orderBy: { id: 'asc' },
+      })
+      return row ? mapOrder(row) : null
     },
-    async getSummary(filters = {}) {
-      return summarizeSalesOrders(await listOrders(filters))
-    },
+    getSummary,
   }
 }

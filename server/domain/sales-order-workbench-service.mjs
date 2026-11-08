@@ -6,6 +6,7 @@ import { outboundRequestHash } from './outbound-posting-command-service.mjs'
 import { outboundDecimalString as fixed, outboundDecimalUnits as units } from './outbound-transaction-policy.mjs'
 import { CUSTOMER_NAMESPACE } from './master-data-commands.mjs'
 import { allocateDocumentNumber } from './document-numbering.mjs'
+import { SALES_ORDER_DEMAND_FILTERS, salesOrderRiskWhere } from '../repositories/db-sales-order-read-repository.mjs'
 
 export class SalesWorkbenchError extends Error {
   constructor(code, message, status = 400, details) { super(message); this.name = 'SalesWorkbenchError'; this.code = code; this.status = status; this.details = details }
@@ -178,6 +179,8 @@ export function createSalesOrderWorkbenchService({ prisma, idFactory = randomUUI
       if (!current) fail('SALES_ORDER_NOT_FOUND', 'Sales order was not found.', 404)
       if (current.version !== payload.expectedOrderVersion) fail('SALES_ORDER_VERSION_CONFLICT', 'Sales order version does not match.', 409)
       if (current.workflowStatus !== definition[0]) fail('SALES_ORDER_INVALID_STATE', `Sales order cannot ${action} from its current state.`, 409)
+      // Everything is shipped, so there is nothing left to hold back.
+      if (action === 'hold' && current.fulfillmentStatus === 'fully_fulfilled') fail('SALES_ORDER_INVALID_STATE', 'A fully shipped sales order cannot be put on hold.', 409)
       if (!current.lines.length) fail('SALES_ORDER_VALIDATION_FAILED', 'Sales order requires at least one line.', 422)
       await authoritativeLines(tx, actor.tenantId, current.lines.map((line) => ({ itemId: line.itemId, quantity: fixed(units(line.orderedQuantity)), unitPrice: line.unitPrice === null || line.unitPrice === undefined ? null : fixed(units(line.unitPrice)) })))
       const order = await tx.salesOrder.update({ where: { id: current.id }, data: { workflowStatus: definition[1], version: { increment: 1 } }, include: { lines: { orderBy: { id: 'asc' } } } })
@@ -190,6 +193,10 @@ export function createSalesOrderWorkbenchService({ prisma, idFactory = randomUUI
 
 export function createSalesOrderReadService({ prisma, lifecycleCapability = { enabled: false } } = {}) {
   if (!prisma) throw new Error('prisma is required')
+  // The delivery-risk filters open the orders the Delivery risk page counts
+  // (db-sales-order-read-repository.mjs): risk=true|blocked|high, shortage=true
+  // (short of stock) and reserved=true (stock reserved). `currencies` lists the
+  // currencies the workspace's orders use, for the currency filter.
   async function listOrders(query, context) {
     const actor = await actorFor(prisma, context)
     assertAuthorized({ actor, permission: 'sales_order.read', tenantId: actor.tenantId })
@@ -198,9 +205,16 @@ export function createSalesOrderReadService({ prisma, lifecycleCapability = { en
     const search = escapeLikePattern(text(query.search)); if (search) where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }]
     for (const key of ['workflowStatus', 'reservationStatus', 'fulfillmentStatus', 'currency']) if (text(query[key])) where[key] = text(query[key])
     if (text(query.customer)) where.customerName = { contains: escapeLikePattern(text(query.customer)), mode: 'insensitive' }
+    const demand = [salesOrderRiskWhere(query.risk), text(query.shortage) === 'true' ? SALES_ORDER_DEMAND_FILTERS.shortage : null, text(query.reserved) === 'true' ? SALES_ORDER_DEMAND_FILTERS.reserved : null].filter(Boolean)
+    if (demand.length) where.AND = demand
     const sort = ['promisedDate', 'orderNumber'].includes(query.sort) ? query.sort : 'updatedAt', direction = query.direction === 'asc' ? 'asc' : 'desc'
-    const [total, rows] = await Promise.all([prisma.salesOrder.count({ where }), prisma.salesOrder.findMany({ where, include: { lines: true }, orderBy: [{ [sort]: direction }, { id: 'asc' }], skip: (page - 1) * pageSize, take: pageSize } )])
-    return { dataSource: 'Authoritative PostgreSQL', page, pageSize, total, capabilities: { salesOrderLifecycle: lifecycleCapability }, orders: rows.map((row) => { const order = publicOrder(row); return { ...order, totalLines: row.lines.length, orderedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.orderedQuantity), 0n)), reservedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.reservedQuantity), 0n)), fulfilledQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.fulfilledQuantity), 0n)) } }) }
+    const [total, rows, currencyRows] = await Promise.all([
+      prisma.salesOrder.count({ where }),
+      prisma.salesOrder.findMany({ where, include: { lines: true }, orderBy: [{ [sort]: direction }, { id: 'asc' }], skip: (page - 1) * pageSize, take: pageSize }),
+      prisma.salesOrder.findMany({ where: { tenantId: actor.tenantId }, distinct: ['currency'], select: { currency: true }, orderBy: { currency: 'asc' } }),
+    ])
+    const currencies = [...new Set((currencyRows || []).map((row) => text(row.currency).toUpperCase()).filter(Boolean))]
+    return { dataSource: 'Authoritative PostgreSQL', page, pageSize, total, currencies, capabilities: { salesOrderLifecycle: lifecycleCapability }, orders: rows.map((row) => { const order = publicOrder(row); return { ...order, totalLines: row.lines.length, orderedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.orderedQuantity), 0n)), reservedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.reservedQuantity), 0n)), fulfilledQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.fulfilledQuantity), 0n)) } }) }
   }
   async function entryData(context) {
     const actor = await actorFor(prisma, context)

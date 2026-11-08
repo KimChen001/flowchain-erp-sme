@@ -85,7 +85,8 @@ test("SME navigation, direct access and browser history follow the route manifes
       exact: true,
     }),
   ).toHaveAttribute("aria-current", "page");
-  await expect(page.getByTitle(/Universal Intake disabled/)).toBeVisible();
+  // The badge's details follow the interface language (Chinese here).
+  await expect(page.getByTitle(/通用录入已关闭/)).toBeVisible();
   const sidebar = page.locator("aside");
   for (const label of [
     "今日",
@@ -221,13 +222,14 @@ test("SME navigation, direct access and browser history follow the route manifes
   await expect(
     sidebar.getByRole("button", { name: "收货", exact: true }),
   ).toHaveAttribute("aria-current", "page");
+  // Units read in the interface language: pcs is 件 on a Chinese page.
   const fulfilledPoLine = page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-001-LINE-001");
-  await expect(fulfilledPoLine).toContainText("50 pcs");
-  await expect(fulfilledPoLine).toContainText("20 pcs");
+  await expect(fulfilledPoLine).toContainText("50 件");
+  await expect(fulfilledPoLine).toContainText("20 件");
   await expect(
     page.getByTestId("order-fulfillment-line-list").getByRole("columnheader", { name: "待收", exact: true }),
   ).toBeVisible();
-  await expect(fulfilledPoLine).toContainText("30 pcs");
+  await expect(fulfilledPoLine).toContainText("30 件");
   await expect(fulfilledPoLine).toContainText("部分收货");
   await expect(
     fulfilledPoLine.getByRole("link", { name: "收货单 LOCAL-DEMO-GRN-001" }),
@@ -412,7 +414,7 @@ test("procurement invoice and match records use canonical authoritative read det
 
 test("order fulfillment lines keep empty workspaces truthful", async ({ page, request }) => {
   await login(page, request);
-  await page.route("**/api/purchase-orders-workbench", async (route) => {
+  await page.route("**/api/purchase-orders-workbench*", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

@@ -26,9 +26,9 @@ export function createPilotOperationsService({ prisma, now = () => new Date() } 
     const checks = [
       { id: 'migrations', status: Number(migrationRows[0]?.count || 0) >= 4 ? 'pass' : 'fail', detail: `${Number(migrationRows[0]?.count || 0)} migrations applied` },
       { id: 'workspace', status: tenant?.workspaceCompletedAt ? 'pass' : 'warn', detail: tenant?.workspaceCompletedAt ? 'Workspace profile complete' : 'Workspace profile incomplete' },
-      { id: 'warehouses', status: activeWarehouses > 0 ? 'pass' : 'fail', detail: `${activeWarehouses} active warehouses` },
-      { id: 'users', status: activeUsers > 0 && roleManagers > 0 ? 'pass' : 'fail', detail: `${activeUsers} active users; ${roleManagers} can manage roles` },
-      { id: 'warehouse_scopes', status: unscopedUsers === 0 ? 'pass' : 'warn', detail: `${unscopedUsers} active users without warehouse scope` },
+      { id: 'warehouses', status: activeWarehouses > 0 ? 'pass' : 'fail', detail: `${activeWarehouses} active ${activeWarehouses === 1 ? 'warehouse' : 'warehouses'}` },
+      { id: 'users', status: activeUsers > 0 && roleManagers > 0 ? 'pass' : 'fail', detail: `${activeUsers} active ${activeUsers === 1 ? 'user' : 'users'}; ${roleManagers} can manage roles` },
+      { id: 'warehouse_scopes', status: unscopedUsers === 0 ? 'pass' : 'warn', detail: `${unscopedUsers} active ${unscopedUsers === 1 ? 'user' : 'users'} without warehouse scope` },
       { id: 'imports', status: failedImports === 0 ? 'pass' : 'warn', detail: `${pendingImports} pending; ${failedImports} blocked or failed` },
     ]
     return { generatedAt: now().toISOString(), workspaceId: actor.tenantId, overall: checks.some(row => row.status === 'fail') ? 'not_ready' : checks.some(row => row.status === 'warn') ? 'attention' : 'ready', checks, openingBalanceLocked: Boolean(tenant?.openingBalanceLockedAt), safe: true }

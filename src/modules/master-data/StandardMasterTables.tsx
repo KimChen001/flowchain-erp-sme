@@ -7,6 +7,7 @@ import { BusinessEntityLink } from "../../components/business/BusinessEntityLink
 import type { CustomerMaster, PrintTemplateCatalogItem } from "./standardData";
 import { orNotProvided, useMasterDataCopy } from "./masterDataCopy";
 import { useMasterDataWriteAccess } from "./writeAccess";
+import { RowPopover } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tableMinSmClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, thClass } from "../../components/ui/workbenchTable";
 
 function creditStyle(status: string) {
@@ -171,7 +172,7 @@ export function PrintTemplateTable({ templates, onCopy }: { templates: PrintTemp
               <td className={tdNowrapClass}>
                 <div className="flex items-center gap-1.5">
                   <button type="button" onClick={() => onCopy(item)} className="flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium" style={{ color: A.label }}><Copy size={12} />{copy("Copy template")}</button>
-                  <details className="relative"><summary className="flex cursor-pointer list-none items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium" style={{ color: A.label }}><Eye size={12} />{copy("Preview")}</summary><div className="absolute right-0 z-20 mt-1 w-64 rounded-lg border bg-white p-3 shadow-lg"><div className="font-semibold">{name}</div><div className="mt-2 text-slate-500">{copy("Document type: {value}", { value: copy(item.documentType) })}</div><div className="mt-1 text-slate-500">{copy("Updated: {value}", { value: updated(item.updatedAt) })}</div></div></details>
+                  <RowPopover summary={<><Eye size={12} />{copy("Preview")}</>} summaryClassName="flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-900" panelClassName="w-64 p-3" testId={`print-template-preview-${item.id}`}><div className="font-semibold">{name}</div><div className="mt-2 text-slate-500">{copy("Document type: {value}", { value: copy(item.documentType) })}</div><div className="mt-1 text-slate-500">{copy("Updated: {value}", { value: updated(item.updatedAt) })}</div></RowPopover>
                 </div>
               </td>
             </tr>

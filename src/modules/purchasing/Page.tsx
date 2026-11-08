@@ -52,6 +52,8 @@ import type { ActiveContext } from "../ai-assistant/Panel";
 import {
   defaultPurchaseOrderWorkbenchFilters,
   filterPurchaseOrdersForWorkbench,
+  purchaseOrderStatusCode,
+  purchaseOrderStatusFilterOptions,
   type PurchaseOrderWorkbenchFilters,
 } from "./filters";
 import { POStatusPill, poStatusToneOf } from "./components/POStatusPill";
@@ -75,7 +77,21 @@ import { PurchaseOrderReceiveAction, PurchaseOrderWorkflowActions, poSecondaryBu
 import { RecordBillAction } from "../../components/business/BillingEntryActions";
 import { PurchaseOrderPromiseDates } from "./components/PurchaseOrderPromiseDates";
 
-const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
+// The words this page adds to the shared workspace copy, in English: the
+// match and next-step states of an order not yet approved or received.
+const PAGE_ENGLISH: Record<string, string> = {
+  "尚无可匹配": "Nothing to match yet",
+  "无需匹配": "No match needed",
+  "等待审批": "Awaiting approval",
+  "提交审批": "Submit it for approval",
+  "订单已驳回，修改后重新提交": "Rejected; revise it and submit again",
+};
+const pageCopy = (label: string, language: string) => (language === "en-US" && PAGE_ENGLISH[label]) || workspaceCopy(label, language);
+const copy = (label: string) => pageCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
+function usePageCopy() {
+  const { language } = useI18n();
+  return (label: string) => pageCopy(label, language);
+}
 // Statuses in which a bill can be recorded: a supplier's bill can arrive
 // before the goods (it then waits for the receipt) or after them.
 const BILLABLE_PO_STATUSES = new Set(["approved", "issued", "partially_received", "received", "fully_received", "closed"]);
@@ -216,6 +232,7 @@ const EVIDENCE_TONES: Record<string, StatusTone> = {
   "未开票": "neutral", "已开票": "info", "已付款": "success", "发票差异": "danger",
   "缺少发票": "neutral", "缺少收货": "warning", "已匹配": "success", "需人工复核": "warning", "已收未票": "warning", "已票未收": "warning",
   "低风险": "success", "无需收货": "neutral", "通过": "success", "质检中": "info", "质检异常": "danger",
+  "尚无可匹配": "neutral", "无需匹配": "neutral",
 };
 
 function evidenceTone(status: string): StatusTone {
@@ -396,9 +413,12 @@ function invoiceStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
 }
 
 function matchStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
+  if (purchaseOrderStatusCode(po.status) === "cancelled") return "无需匹配";
   const invoices = invoicesForPo(po.po, facts);
   const grns = grnsForPo(po.po, facts);
-  if (!invoices.length) return "缺少发票";
+  // An invoice is missing only once goods have arrived; before that (an order
+  // awaiting approval, or issued and not received) there is nothing to match.
+  if (!invoices.length) return grns.length || poTotals(po).totalReceivedQty > 0 ? "缺少发票" : "尚无可匹配";
   if (!grns.length || grns.some((doc) => doc.status === "待收货" || doc.status === "质检中")) return "缺少收货";
   const variance = invoices.find((invoice) => !isNoInvoiceVariance(invoice.varianceType) || invoice.varianceAmount > 0);
   if (variance) return invoiceVarianceLabelKey(variance.varianceType);
@@ -407,10 +427,15 @@ function matchStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
 }
 
 function nextStepForPo(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
-  if (["cancelled", "已取消"].includes(po.status)) return "订单已取消，无需收货";
+  const code = purchaseOrderStatusCode(po.status);
+  if (code === "cancelled") return "订单已取消，无需收货";
+  // Before approval the order waits on its approver, not on a receipt.
+  if (code === "draft") return "提交审批";
+  if (code === "pending_approval") return "等待审批";
+  if (code === "rejected") return "订单已驳回，修改后重新提交";
   // Approved but not issued: the supplier does not have it yet, so nothing
   // can arrive; it is sent first (decision V5).
-  if (String(po.status) === "approved") return "发给供应商并标记为下达";
+  if (code === "approved") return "发给供应商并标记为下达";
   if (receivedStatus(po, facts) === "未收货") return "等待收货";
   const status = matchStatus(po, facts);
   if (status === "缺少收货") return "等待收货";
@@ -431,7 +456,7 @@ function poTimeline(po: PurchaseOrder, facts: ProcurementRuntimeFacts, day: (val
     { label: "PO 已建立", status: "done", helper: day(po.created) },
     { label: "收货证据", status: receipt === "未收货" ? "pending" : receipt === "异常处理" ? "warning" : "done", helper: receipt },
     { label: "发票证据", status: invoice === "未开票" ? "pending" : invoice === "发票差异" ? "warning" : "done", helper: invoice },
-    { label: "三单匹配", status: match === "已匹配" ? "done" : match === "缺少发票" || match === "缺少收货" ? "pending" : "warning", helper: match },
+    { label: "三单匹配", status: match === "已匹配" ? "done" : ["缺少发票", "缺少收货", "尚无可匹配", "无需匹配"].includes(match) ? "pending" : "warning", helper: match },
     { label: "人工复核", status: match === "已匹配" ? "pending" : "current", helper: nextStepForPo(po, facts) },
   ];
 }
@@ -686,7 +711,7 @@ const STEP_COLORS: Record<TimelineStep["status"], string> = { done: A.green, cur
 // The order's progress as equal-width steps: a dot on a line, its label and
 // note below, so long labels and dates wrap within their own step.
 function PoProgress({ steps }: { steps: TimelineStep[] }) {
-  const copy = useWorkspaceCopy();
+  const copy = usePageCopy();
   return (
     <Card className="p-4" data-testid="po-progress">
       <div className={tableScrollClass}>
@@ -752,6 +777,23 @@ function Sub({ children }: { children: React.ReactNode }) {
 
 const relatedLinkClass = `inline-flex items-center ${typography.denseButton} text-blue-600 hover:underline rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200`;
 
+// The list's filters from the address. A status the list does not offer
+// (or a legacy Chinese one) is read as its code, else as All.
+function filtersFromAddress(searchParams: URLSearchParams): PurchaseOrderWorkbenchFilters {
+  const status = purchaseOrderStatusCode(searchParams.get("status") || "全部");
+  return {
+    ...defaultPurchaseOrderWorkbenchFilters,
+    poNumber: searchParams.get("po") || "",
+    supplier: searchParams.get("supplier") || "",
+    skuOrItem: searchParams.get("item") || "",
+    status: (purchaseOrderStatusFilterOptions as readonly string[]).includes(status) ? status : "全部",
+    source: searchParams.get("source") || "全部",
+    owner: searchParams.get("owner") || "",
+    etaFrom: searchParams.get("etaFrom") || "",
+    etaTo: searchParams.get("etaTo") || "",
+  };
+}
+
 export default function PurchasingOrdersPage({
   focus,
   onNavigate,
@@ -761,7 +803,7 @@ export default function PurchasingOrdersPage({
   onNavigate?: NavigateFn;
   onActiveContextChange?: (context: ActiveContext | null) => void;
 }) {
-  const copy = useWorkspaceCopy();
+  const copy = usePageCopy();
   const priceCopy = usePriceHistoryCopy();
   const { t, timezone, language, formatNumber } = useI18n();
   const say = useSay();
@@ -783,17 +825,11 @@ export default function PurchasingOrdersPage({
   const [loading, setLoading] = useState(true);
   // The failed read, shown as a translated sentence (its code in the tooltip).
   const [loadError, setLoadError] = useState<{ error: unknown } | null>(null);
-  const [filters, setFilters] = useState<PurchaseOrderWorkbenchFilters>(() => ({
-    ...defaultPurchaseOrderWorkbenchFilters,
-    poNumber: searchParams.get("po") || "",
-    supplier: searchParams.get("supplier") || "",
-    skuOrItem: searchParams.get("item") || "",
-    status: (searchParams.get("status") || "全部") as PurchaseOrderWorkbenchFilters["status"],
-    source: searchParams.get("source") || "全部",
-    owner: searchParams.get("owner") || "",
-    etaFrom: searchParams.get("etaFrom") || "",
-    etaTo: searchParams.get("etaTo") || "",
-  }));
+  const filtersInAddress = useMemo(() => filtersFromAddress(searchParams), [searchParams.toString()]);
+  const [filters, setFilters] = useState<PurchaseOrderWorkbenchFilters>(filtersInAddress);
+  useEffect(() => {
+    setFilters((current) => (JSON.stringify(current) === JSON.stringify(filtersInAddress) ? current : filtersInAddress));
+  }, [filtersInAddress]);
   const [selectedId, setSelectedId] = useState(canonicalDetailId);
   const viewMode: PurchaseOrderViewMode = canonicalDetailId ? "detail" : "list";
   const [highlightedArea, setHighlightedArea] = useState("");
@@ -848,14 +884,12 @@ export default function PurchasingOrdersPage({
     };
   }, [focus?.at, focus?.entityId, focus?.entityType, focus?.focusArea, loading, selectedId, viewMode]);
 
-  const filtered = filterPurchaseOrdersForWorkbench(orders, filters).filter((order) => {
+  // "open" is the report definition: committed and still to receive.
+  const openOrderIds = useMemo(() => (summary ? new Set(summary.openPurchaseOrderIds || []) : undefined), [summary]);
+  const filtered = filterPurchaseOrdersForWorkbench(orders, filters, openOrderIds).filter((order) => {
     const supplier = searchParams.get("supplier");
-    const status = searchParams.get("status");
     const overdue = searchParams.get("overdue") === "true";
     if (supplier && order.supplier !== supplier) return false;
-    if (status && status !== "open" && order.status !== status) return false;
-    // "open" is the report definition: committed and still to receive.
-    if (status === "open" && !(summary?.openPurchaseOrderIds || []).includes(order.po)) return false;
     // Overdue: open, with an expected arrival before today in the workspace timezone.
     if (overdue && (!(summary?.openPurchaseOrderIds || []).includes(order.po) || !order.eta || String(order.eta) >= todayInTimeZone())) return false;
     return true;
@@ -903,7 +937,8 @@ export default function PurchasingOrdersPage({
   const poLineHistoryKeys = new Map((viewMode === "detail" && selectedPO?.lines ? selectedPO.lines : []).map((line) => [line.poLineId, priceHistoryKey({ itemId: line.itemId, unit: line.unit, currency: line.currency || selectedPO?.currency })]));
   const poPriceHistory = usePriceHistory([...poLineHistoryKeys.values()], { excludePurchaseOrderId: selectedPO?.po });
   const sourceOptions = Array.from(new Set(orders.map((order) => order.source || "manual"))).sort();
-  const statusOptions = ["全部", "草稿", "待审批", "已审批", "已发出", "部分到货", "已完成", "已驳回", "已取消"] as const;
+  const statusOptions = purchaseOrderStatusFilterOptions;
+  const statusOptionLabel = (status: string) => status === "open" ? say("Open (still to receive)", "未结（仍待收货）") : copy(status);
 
   useEffect(() => {
     if (viewMode === "list" && selectedId) setSelectedId("");
@@ -927,7 +962,9 @@ export default function PurchasingOrdersPage({
   const committedValue = summary?.committedValueByCurrency || [];
   const committedHidden = Boolean(summary) && summary?.committedValueByCurrency === null;
   const invoiceExceptions = orders.filter((order) => invoiceStatus(order, facts) === "发票差异").length;
-  const matchExceptions = orders.filter((order) => !["已匹配", "缺少发票"].includes(matchStatus(order, facts))).length;
+  // Orders whose match needs a person: not those matched, waiting for an
+  // invoice, or with nothing to match yet.
+  const matchExceptions = orders.filter((order) => !["已匹配", "缺少发票", "尚无可匹配", "无需匹配"].includes(matchStatus(order, facts))).length;
 
   function updateFilter<K extends keyof PurchaseOrderWorkbenchFilters>(key: K, value: PurchaseOrderWorkbenchFilters[K]) {
     setFilters((current) => {
@@ -1065,7 +1102,7 @@ export default function PurchasingOrdersPage({
       }] : []),
       ...(firstGrn ? [{ key: "receiving", label: copy("查看收货单"), onClick: () => openReceipt(firstGrn.grn) }] : []),
       ...(firstInvoice ? [{ key: "invoice", label: copy("查看采购发票"), onClick: focusFulfillmentEvidence }] : []),
-      { key: "match", label: copy("查看三单匹配"), onClick: focusFulfillmentEvidence },
+      ...(firstGrn || firstInvoice ? [{ key: "match", label: copy("查看三单匹配"), onClick: focusFulfillmentEvidence }] : []),
     ];
     // The order status ("Partially received") already says what a receiving
     // status of the same words would (compared in English, where the two
@@ -1396,7 +1433,7 @@ export default function PurchasingOrdersPage({
         <Field label={copy("状态")}>
           <select value={filters.status} onChange={(event) => updateFilter("status", event.target.value as PurchaseOrderWorkbenchFilters["status"])}
             style={inputStyle}>
-            {statusOptions.map((status) => <option key={status} value={status}>{copy(status)}</option>)}
+            {statusOptions.map((status) => <option key={status} value={status}>{statusOptionLabel(status)}</option>)}
           </select>
         </Field>
         <Field label={copy("来源")}>
@@ -1451,7 +1488,7 @@ export default function PurchasingOrdersPage({
                     <td className={`${tdIdClass} sticky left-0 z-10 truncate bg-white`}>
                       <BusinessEntityLink entityType="purchase_order" entityId={order.po} number={purchaseOrderNumber(order)} className={tableLinkClass} />
                     </td>
-                    <td className={`${tdNameClass} truncate font-medium`} title={order.supplier}><BusinessEntityLink entityType="supplier" entityId={order.supplier}>{order.supplier}</BusinessEntityLink></td>
+                    <td className={`${tdNameClass} truncate font-medium`} title={order.supplier}><BusinessEntityLink entityType="supplier" entityId={order.supplierId}>{order.supplier}</BusinessEntityLink></td>
                     <td className={tdNowrapClass}><POStatusPill status={order.status} /></td>
                     <td className={`${tdNowrapClass} truncate`} style={{ color: A.sub }}>{order.owner}</td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{formatCurrencyAmount(poAmount(order), order.currency)}</td>
@@ -1469,7 +1506,7 @@ export default function PurchasingOrdersPage({
                         <RowMenu label={copy("更多")} testId={`po-row-more-${order.po}`}>
                           {firstGrn && <button onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, firstGrn.grn)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看收货单")}</button>}
                           {firstInvoice && canOpenRoute("procurement:bills") && <button onClick={() => navigateOrderWithReturn(order, "procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看采购发票")}</button>}
-                          {canOpenRoute("procurement:match") && <button onClick={() => navigateOrderWithReturn(order, "procurement:match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看三单匹配")}</button>}
+                          {canOpenRoute("procurement:match") && (firstGrn || firstInvoice) && <button onClick={() => navigateOrderWithReturn(order, "procurement:match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看三单匹配")}</button>}
                           {order.sourceRequest && <button onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, documentNumberFor("purchase_request", order.sourceRequest, order.prNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{say("View source PR", "查看来源采购申请")}</button>}
                           {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, documentNumberFor("rfq", order.sourceRfq, order.rfqNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{say("View source RFQ", "查看来源询价单")}</button>}
                         </RowMenu>

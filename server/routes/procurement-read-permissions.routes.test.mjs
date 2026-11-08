@@ -132,3 +132,29 @@ test('the administrator still reads everything unmasked', async () => {
   const summary = await call(handleProcurementReadRoute, '/api/procurement/summary', 'workspace-administrator')
   assert.notEqual(summary.payload.summary.currencyAggregationStatus, 'restricted')
 })
+
+// The Order lines page reads ?view=lines: each order line with its receipts
+// and invoices, nothing else, masked the same way as the full workbench.
+test('the order lines view carries only the line fields, with prices masked by role', async () => {
+  const admin = await call(handlePurchaseOrdersRoute, '/api/purchase-orders-workbench?view=lines', 'workspace-administrator')
+  assert.equal(admin.status, 200)
+  assert.deepEqual(Object.keys(admin.payload).sort(), ['purchaseOrders', 'receivingDocs', 'supplierInvoices'])
+  const [order] = admin.payload.purchaseOrders
+  assert.equal(order.po, 'PO-LEAK')
+  assert.equal(order.supplierId, 'SUP-PROBE')
+  const lineFields = new Set(['poLineId', 'sku', 'itemName', 'unit', 'quantityOrdered', 'quantityReceived', 'unitPrice', 'currency'])
+  assert.deepEqual(Object.keys(order.lines[0]).filter((key) => !lineFields.has(key)), [])
+  assert.equal(order.lines[0].unitPrice, 12.5)
+  assert.equal(order.lines[0].quantityOrdered, 10)
+  const full = await call(handlePurchaseOrdersRoute, '/api/purchase-orders-workbench', 'workspace-administrator')
+  assert.ok(JSON.stringify(admin.payload).length < JSON.stringify(full.payload).length)
+
+  const viewer = await call(handlePurchaseOrdersRoute, '/api/purchase-orders-workbench?view=lines', 'read-only-viewer')
+  assert.equal(viewer.status, 200)
+  assert.doesNotMatch(JSON.stringify(viewer.payload), MONEY)
+  assert.equal(viewer.payload.purchaseOrders[0].lines[0].unitPrice, null)
+  assert.deepEqual(viewer.payload.purchaseOrders[0].restrictedFields, ['amounts'])
+
+  const denied = await call(handlePurchaseOrdersRoute, '/api/purchase-orders-workbench?view=lines', 'operations-specialist')
+  assert.deepEqual([denied.status, denied.payload.code], [403, 'PERMISSION_DENIED'])
+})

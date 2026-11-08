@@ -75,6 +75,26 @@ test('populated overview uses readable status labels and filters by the original
   expect(new URL(page.url()).searchParams.has('from')).toBeFalsy();
 });
 
+test('a date range sets the flow figures against the previous period, in neutral words', async ({ page }) => {
+  await login(page);
+  await page.route('**/api/reports/query', async route => {
+    const po = (id: string, date: string, amount: number) => ({ id, supplierName: 'Acme Components', status: 'issued', currency: 'USD', totalAmount: amount, orderDate: date, createdAt: `${date}T12:00:00Z`, lines: [] });
+    const context = { purchaseOrders: [po('PO-JUL', '2026-07-10', 100), po('PO-AUG-1', '2026-08-10', 150), po('PO-AUG-2', '2026-08-20', 50)], salesOrders: [], suppliers: [], items: [], inventoryItems: [], supplierInvoices: [], receipts: [], dataLimitations: [] };
+    await route.fulfill({ json: buildRuntimeGovernedReport(context, route.request().postDataJSON()) });
+  });
+  await page.goto('/app/reports/procurement?view=analytics&from=2026-08-01&to=2026-08-31');
+  const spend = page.getByTestId('report-kpi-purchase_order_amount');
+  await expect(spend.getByTestId('report-kpi-change')).toHaveText('+100.0%');
+  await expect(spend).toContainText('$100.00 in the previous period');
+  // Open orders are a state as of today, so they are not compared.
+  await expect(page.getByTestId('report-kpi-open_po_count')).toContainText('As of today');
+  await expect(page.getByTestId('report-kpi-open_po_count').getByTestId('report-kpi-change')).toHaveCount(0);
+  await expect(page.getByTestId('report-insights')).toContainText('rose 100.0% against the previous period: $200.00, against $100.00.');
+  await page.getByTestId('bi-global-filters').getByLabel('Compare with', { exact: true }).selectOption('none');
+  await expect(page).toHaveURL(/comparison=none/);
+  await expect(spend.getByTestId('report-kpi-change')).toHaveCount(0);
+});
+
 test('analytics pages offer only filters the report applies and promise no missing metrics', async ({ page }) => {
   await login(page);
   await page.goto('/app/reports/overview?company=Acme&warehouse=Main&category=Bolts&comparison=year_over_year');
