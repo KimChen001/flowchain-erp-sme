@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
 import {
-  ReplenishmentInputError, buildReplenishmentInstance, evaluateReplenishmentPlan, inventoryPosition, logReplenishmentCall, planReplenishment,
-  reorderListQuantities, replenishmentInputFromExport, solveReplenishmentMilp, unbudgetedQuantities,
+  ReplenishmentInputError, buildReplenishmentInstance, comparePlanCosts, evaluateReplenishmentPlan, inventoryPosition, logReplenishmentCall, planReplenishment,
+  reorderListQuantities, replenishmentInputFromExport, sampleCosts, solveReplenishmentMilp, unbudgetedQuantities,
 } from './replenishment-solver.mjs'
 import { runReplenishmentSolver } from '../../scripts/replenishment-solver.mjs'
 
@@ -53,6 +53,25 @@ test('on the post-#249 export the solver reproduces the prototype: q* = 25 LDM-0
     ['LDM-003', 0, 0, 'covered'], ['LDM-004', 0, 0, 'covered'], ['LDM-005', 0, 0, 'covered'], ['LDM-006', 0, 0, 'covered'],
   ])
   assert.deepEqual(result.binding, { budget: { amount: 5000, spend: 2500, left: 2500, binds: false }, raisedToMinimumOrder: ['LDM-001'], skippedForMinimumOrder: ['LDM-002'] })
+})
+
+// 2026-11-08: costs come from 20,000 fresh samples, so two plans can differ by
+// less than the estimate's own sampling error; such a difference is marked.
+test('a plan\'s cost difference from the optimum is compared with its sampling error, sample by sample', async () => {
+  assert.deepEqual(comparePlanCosts(Float64Array.from([1, 2, 3]), Float64Array.from([1, 2, 3])), { difference: 0, standardError: 0, withinSamplingError: true })
+  assert.deepEqual(comparePlanCosts(Float64Array.from([2, 3, 4]), Float64Array.from([1, 2, 3])), { difference: 1, standardError: 0, withinSamplingError: false })
+  const noisy = comparePlanCosts(Float64Array.from([1, -1, 1, -1]), Float64Array.from([0, 0, 0, 0]))
+  assert.deepEqual([noisy.difference, noisy.withinSamplingError], [0, true])
+  const input = replenishmentInputFromExport(exportOf())
+  const result = await planReplenishment(input, { budget: 5000, candidates: [{ id: 'same_as_optimal', quantities: { 'LDM-001': 25 } }] })
+  assert.equal(result.optimalityProven, true)
+  const same = byId(result, 'same_as_optimal')
+  assert.deepEqual([same.costAboveOptimal, same.costAboveOptimalStandardError, same.withinSamplingErrorOfOptimal], [0, 0, true])
+  assert.equal(byId(result, 'no_order').withinSamplingErrorOfOptimal, false)
+  // The costs pair sample by sample: their mean is the held-out cost.
+  const instance = buildReplenishmentInstance(input, { budget: 5000 })
+  const costs = sampleCosts(instance, result.optimal.quantities)
+  assert.equal(cents(costs.reduce((sum, value) => sum + value, 0) / costs.length), heldOut(result.optimal))
 })
 
 test('the prototype\'s scenario form and the epigraph form, and both position rules, agree on that export', async () => {
