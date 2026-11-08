@@ -1,6 +1,6 @@
 # Assistant query tool: design (draft for review)
 
-Status: draft, 2026-11-08. Nothing is built yet. Decisions Q1–Q8 at the end
+Status: draft, 2026-11-08. Nothing is built yet. Decisions Q1–Q13 at the end
 are for the owner.
 
 ## 1. Why
@@ -38,11 +38,42 @@ Non-goals:
   of their own.
 - Not a reporting UI.
 
+## 2.1 Lessons from a reference design
+
+A public write-up of a "trusted analytics" design (called Hermes there) solves
+the same problem for e-commerce analysis. Its principle is that the model
+handles understanding and the program holds the execution boundary. Five of
+its ideas fit FlowChain, and this design adopts them:
+
+| Idea | What it means here |
+|---|---|
+| The model hands over intent only, and SQL comes from a deterministic compiler | The spec (§3) names datasets, fields and defined metrics. The server checks it and compiles parameterised SQL. There is no back door where the model writes SQL when the compiler cannot. |
+| A versioned semantic layer: metrics, dimensions and join rules | Datasets and metric formulas live in one manifest with a version (§4, §7). For example, net sales is invoiced minus credited, each totalled and then aligned by the grouping. An answer can say which version it used. |
+| The model has no database rights | Queries run under a database role that can only read the analytics views (§5). |
+| Every conclusion carries a reference to the fact behind it | Each result gets a snapshot id, and its values can be cited. The backend checks the citations, and the panel can show where a number came from (§6, phase 2). |
+| Planning, execution and explanation are separate | The model plans (the spec), the server executes, and the model explains from the result. The grounding check stays between execution and the answer. |
+
+Where FlowChain differs, on purpose:
+- **No confirmation before each read.** Hermes shows the query and waits for a
+  person's go-ahead before running it. FlowChain's reads are scoped, limited
+  and cheap, and a chat that stops for every lookup would not be usable.
+  Confirmation stays where it is today: before any write.
+- **Results do go back to the model.** It has to write the answer from them.
+  Text fields from records (item names, notes) are passed as data, inside the
+  result, under the injection guard that already runs.
+- **The debating agents come later.** Hermes uses an advocate, a sceptic and a
+  judge over frozen evidence to explain "why" questions, and says the evidence
+  supports an explanation, not a proof of cause. That fits FlowChain's "why did
+  stock run low" questions. It is a phase after this one and is not designed
+  here.
+
 ## 3. The tool
 
-One tool, `query_records`. It takes a JSON spec. The server checks the spec
-against the dataset's schema and compiles it; the model never writes a query
-string.
+One tool, `query_records`. It takes a JSON spec that names datasets, fields
+and defined metrics from the semantic manifest (§4, §7). The server checks the
+spec against the manifest version in force and compiles parameterised SQL. A
+spec the compiler cannot compile is refused, with the reason; the model never
+writes a query string.
 
 ```jsonc
 {
@@ -121,6 +152,10 @@ No dataset holds email addresses or phone numbers, so the privacy check (no
 - **Compiled on the server.** The spec becomes a Prisma `groupBy`, `aggregate`
   or `findMany`, or a parameterised query over read-only views. It is never
   text from the model.
+- **Database role.** Compiled queries run as a role that may only `SELECT`
+  from the analytics views, not as the application's role. A bug in the
+  compiler can then read too much at worst, never change anything. Each query
+  runs in a read-only transaction with a statement timeout.
 - **Scoping.** The tenant and the user's warehouses come from the session,
   never from the spec, the same way `reportReadAccessFor` scopes the pages.
 - **Field permissions.**
@@ -148,6 +183,18 @@ writes are in the result and the existing check reads them as it does now.
 `with_share` gives each group's share and running share, so "the top five
 together are 29.5%" is a figure the tool gave, not a sum the model worked out.
 The `described` line lets the answer say what it read and what it left out.
+
+Phase 2 adds fact references, as in the reference design:
+- Each query result is kept as a snapshot. The snapshot holds the compiled
+  query, its parameters, the manifest version and the rows, and it has an id.
+- A value in it can be cited as snapshot, row and column.
+- The answer cites the values it relies on.
+- The backend checks that each citation exists and holds the written value.
+- The panel shows a cited number's row and query on click.
+
+This is stronger than today's check, which only asks whether a number appears
+somewhere in the results. It also makes "where does this number come from?"
+answerable in the UI.
 
 ## 7. Defined metrics
 
@@ -239,3 +286,8 @@ applications due Dec 1.
 | Q6 | Which models does the evaluation compare? | Haiku 5.5, DeepSeek V4 Pro, and Sonnet 5.5 when Parley works |
 | Q7 | Build the evaluation set before the tool becomes the default? | Yes, 40 conversations |
 | Q8 | Keep fuzzy search (`search_records`) and knowledge search separate? | Yes |
+| Q9 | Run compiled queries as a database role that can only read the analytics views? | Yes, from phase 1 |
+| Q10 | Keep each result as a snapshot, and cite and check values by snapshot, row and column (fact references)? | Yes, in phase 2 |
+| Q11 | Ask the user to confirm each read before it runs, as the reference design does? | No: reads are scoped, limited and cheap; confirmation stays for writes |
+| Q12 | Keep metric formulas in a versioned manifest, and name the version in the result? | Yes, a small manifest in phase 1 (sales, spend, days of stock, below safety stock) |
+| Q13 | Debating agents (advocate, sceptic, judge) for "why" questions? | Later, after phase 3; not part of this design |
