@@ -1486,7 +1486,7 @@ const en: Record<keyof typeof zh, string> = {
   "settings.aiModelHelp": "Lets the assistant use an AI model in this workspace: it reads your records with the tools it is given, answers in plain words and prepares forms for you to check. Figures and records in answers come from your workspace data. While it is off, the assistant does not answer questions.",
   "settings.aiModelToggle": "Use an AI model in this workspace",
   "settings.aiModelData": "When on, each question is sent to the AI model service this server is set up with (on the trial servers, Claude through MIT Parley), together with the conversation so far and the records the assistant reads to answer it. Those are only records your role may see, without amounts it may not see and without contact emails or phone numbers; for questions about your documents, the matching passages are sent too. FlowChain's own log keeps codes and counts, never the words of a question or an answer.",
-  "settings.aiModelNoProvider": "No AI model is configured on this server, so the assistant cannot answer questions.",
+  "settings.aiModelNoProvider": "No AI model is configured on this server. The assistant cannot answer questions.",
   "settings.aiModelNotRequired": "Every workspace on this server may use the model (local development); no switch is needed.",
   "publicData.title": "Public data workspace",
   "publicData.pill": "Public data",
