@@ -29,6 +29,7 @@ import { knowledgeProviderEnv } from './ai-knowledge-config.mjs'
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
 const fold = (value) => text(value).toLowerCase()
+const stockRowOf = (facts, sku) => array(facts?.inventory?.rows).find((row) => fold(row.sku) === fold(sku)) || null
 const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `How many rows to return, ${AI_TOOL_LIMITS.rows} by default.` }
 const can = (context, permission) => Boolean(context?.actor?.permissionCodes?.has?.(permission))
 const serviceOf = (context, name, create) => context?.routeContext?.aiReadServices?.[name] || create({ prisma: context.prisma, env: context.routeContext?.env || process.env, now: () => context.now })
@@ -95,7 +96,7 @@ const suggestionFacts = (suggestion) => ({
 // from the row's supplier, never from the row itself.
 const reorderList = defineAiTool({
   name: 'reorder_list',
-  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Flags name late lines and lines it could not count. counts gives how many rows are to order now and how many suggested quantities were raised to the supplier minimum: use them instead of counting rows. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. Transfers between warehouses are not considered.',
+  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point. safetyStock and belowSafetyStock give that judgement for each row. Flags name late lines and lines it could not count. counts gives how many rows are to order now and how many suggested quantities were raised to the supplier minimum: use them instead of counting rows. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. Transfers between warehouses are not considered.',
   parameters: {
     sku: { type: 'string', description: 'Only this SKU.' },
     supplier: { type: 'string', description: 'Only items whose preferred supplier is this one: a name or code.' },
@@ -124,7 +125,7 @@ const reorderList = defineAiTool({
       ...primitives(row, ['sku', 'itemName', 'name', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'position', 'reorderPoint', 'shortfall']),
       averageDailyDemand: row.demand?.averageDailyDemand ?? null,
       supplier: text(row.supplier?.name) || null,
-      supplierId: text(row.supplier?.id) || null,
+      ...(() => { const stock = stockRowOf(facts, row.sku); const safety = stock?.safetyStock ?? null; const available = Number.isFinite(Number(row.onHand)) ? Number(row.onHand) - (Number(row.reserved) || 0) : null; return { safetyStock: safety, belowSafetyStock: safety !== null && available !== null ? available < safety : null } })(),
       leadTimeDays: row.supplier?.leadTimeDays ?? null,
       // When an order placed today would arrive (the request's need-by date),
       // beside orderByDate, the last day to order: on 2026-11-04 an answer

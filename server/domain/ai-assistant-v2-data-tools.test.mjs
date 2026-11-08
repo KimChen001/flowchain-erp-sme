@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { ASSISTANT_V2_SYSTEM } from './ai-assistant-v2.mjs'
 import assert from 'node:assert/strict'
 import { AI_SKILL_OTHER_TENANT, AI_SKILL_TENANT, aiSkillActor, aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
@@ -243,6 +244,31 @@ test('stock_projection also runs the weeks at the recorded shipping rate, apart 
   assert.equal(result.availableIfLateLinesArrive, late ? result.availableToday + late : undefined)
   // The open sales order weeks are as the read tool gives them.
   assert.ok(Array.isArray(result.weeks) && result.weeks.length === 3)
+})
+
+// 2026-11-08 (rehearsal): asked to add "our stock is already below safety
+// stock" to a draft, the answer "corrected" it from the position (408, above
+// the reorder point), though 48 on hand was below the safety stock of 119.
+test('an item below safety stock on its available stock reads so in every stock tool, though open orders cover its reorder point', async () => {
+  const { facts, run } = await v2({ change: shipping, actor: everyWarehouse })
+  const stock = facts.inventory.rows.find((entry) => entry.sku === 'LDM-001')
+  assert.ok(stock.available < stock.safetyStock, 'the fixture item is below safety stock now')
+  const position = (await run('stock_position', { sku: 'LDM-001' })).result
+  assert.deepEqual([position.rows[0].belowSafetyStock, position.rows[0].status], [true, 'below_safety_stock'])
+  assert.match(position.basis, /Safety stock is judged on the stock available now/)
+  const projection = (await run('stock_projection', { sku: 'LDM-001' })).result
+  assert.equal(projection.belowSafetyStockNow, true)
+  // Once the late lines arrive it is above the reorder point: a figure for later.
+  assert.ok(projection.availableIfLateLinesArrive > projection.reorderPoint, JSON.stringify([projection.availableIfLateLinesArrive, projection.reorderPoint]))
+  // 10 a day from what is available now, if nothing arrives.
+  const days = projection.availableToday / 10
+  assert.deepEqual(projection.runsOutIfNothingArrives, { days: Math.round(days * 10) / 10, date: addCalendarDays(facts.asOf || facts.today, Math.floor(days)) })
+})
+
+test('the prompt keeps the safety stock and the reorder point on their own bases, and never corrects a user on another basis', () => {
+  assert.match(ASSISTANT_V2_SYSTEM, /safety stock on the stock available now \(on hand less reserved; belowSafetyStock in the stock tools\), the reorder point on the stock position/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Never correct what the user says unless a tool result contradicts it on the same basis/)
+  assert.match(ASSISTANT_V2_SYSTEM, /name a supplier by its name as the tools give it, never by its id or code/)
 })
 
 // 2026-11-05: "order 100 instead of 50, is it cheaper?" got the price and the
@@ -496,7 +522,7 @@ test('suggest_purchase_lines reads only the asking user\'s workspace', async () 
   assert.deepEqual((await runAiReadTool('suggest_purchase_lines', {}, { facts, context })).result.rows, [])
 })
 
-test('reorder_list returns the preferred supplier\'s lead time, id and minimum order, and filters by SKU and supplier', async () => {
+test('reorder_list returns the preferred supplier\'s name, lead time and minimum order, and filters by SKU and supplier', async () => {
   const scenario = aiSkillScenario()
   // The reorder list over the fixture items, LDM-001 at a reorder point of
   // 200 so it is listed (no shipment history), linked to Acme with a lead
@@ -509,7 +535,11 @@ test('reorder_list returns the preferred supplier\'s lead time, id and minimum o
   const list = (await runAiReadTool('reorder_list', {}, { facts, context })).result
   const row = list.rows.find((entry) => entry.sku === 'LDM-001')
   assert.equal(row.leadTimeDays, 12)
-  assert.deepEqual([row.supplier, row.supplierId, row.minimumOrderQuantity, row.moqUnit], ['Acme Components', 'SUP-001', 150, 'pcs'])
+  // The supplier by name only (2026-11-08: an answer named it by its id).
+  assert.deepEqual([row.supplier, row.supplierId, row.minimumOrderQuantity, row.moqUnit], ['Acme Components', undefined, 150, 'pcs'])
+  // Safety stock judged on the stock available now, beside the position.
+  const stock = facts.inventory.rows.find((entry) => entry.sku === 'LDM-001')
+  assert.deepEqual([row.safetyStock, row.belowSafetyStock], [stock.safetyStock, row.onHand - row.reserved < stock.safetyStock])
   assert.equal(row.shortfall, 102)
   assert.deepEqual([row.requestQuantity, row.raisedToMinimum], [150, true])
   // Counts over every row, for the answer to read instead of counting.

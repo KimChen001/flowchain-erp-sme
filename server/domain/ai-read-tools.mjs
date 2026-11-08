@@ -126,7 +126,7 @@ const getPurchaseOrder = defineAiTool({
 // The inventory page's terms, said with every result: its status is not the
 // reorder list's rule, and on 2026-11-03 the model took stock_position's "ok"
 // as reversing the reorder list's "order now".
-const STOCK_BASIS = 'incomingOnPurchaseOrders counts every open approved purchase order line. status compares available stock with safety stock, then available to promise (available + incoming - unreserved demand) with the reorder point. It is not the reorder list: for whether, when and how much to order, use reorder_list.'
+const STOCK_BASIS = 'incomingOnPurchaseOrders counts every open approved purchase order line. status compares available stock with safety stock, then available to promise (available + incoming - unreserved demand) with the reorder point. Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point. belowSafetyStock gives that judgement. It is not the reorder list: for whether, when and how much to order, use reorder_list.'
 // At risk as the parameter says: short against open sales orders, or out of
 // stock, below safety stock or at or below the reorder point (2026-11-07: on
 // public data, with every sales order shipped, the shortage-only list was
@@ -163,6 +163,7 @@ const stockPosition = defineAiTool({
         sku: row.sku, itemName: row.itemName, unit: row.unit, onHand: row.onHand, reserved: row.reserved, available: row.available,
         openSalesDemand: row.openSalesDemand, incomingOnPurchaseOrders: row.incomingApprovedPo, availableToPromise: row.availableToPromise,
         shortage: row.shortage, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint, status: row.stockStatus,
+        belowSafetyStock: row.safetyStock !== null && row.safetyStock !== undefined && row.available !== null && row.available !== undefined ? row.available < row.safetyStock : null,
         purchaseOrders: array(row.purchaseOrderIds).map((id) => orderNumberOf(facts, id)).filter(Boolean),
         purchaseOrderDates: orderDatesOf(facts, row.purchaseOrderIds),
         salesOrders: array(row.salesOrderIds).map((id) => salesOrderNumberOf(facts, id)).filter(Boolean),
