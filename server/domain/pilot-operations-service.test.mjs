@@ -62,7 +62,7 @@ test('Pilot diagnostics count role managers and unscoped users from assignments,
       await prisma.user.update({ where: { id: founder.userId }, data: { status: 'active' } })
       await prisma.userWarehouseScope.deleteMany({ where: { tenantId, userId: founder.userId } })
       const scopes = await check(lead, 'warehouse_scopes')
-      assert.deepEqual([scopes.status, scopes.detail], ['warn', '1 active users without warehouse scope'])
+      assert.deepEqual([scopes.status, scopes.detail], ['warn', '1 active user without warehouse scope'])
 
       // Once no active user holds Workspace Administrator, nobody can manage
       // roles and the check fails, though a legacy admin is still active. The
