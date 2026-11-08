@@ -253,7 +253,7 @@ test('a client that goes away stops the answer: no further model call, nothing m
     model: 'scripted',
     async *stream(_request, signal) {
       calls += 1
-      yield { type: 'text_delta', text: 'Reading your orders now. ' }
+      yield { type: 'text_delta', text: "Here is what I found so far: PO-001 and PO-008 are both overdue with Acme Components, the older by 4 days with 30 pcs still to receive and the newer by 2 days. " }
       if (!signal.aborted) await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))
       throw modelAbortError()
     },
@@ -296,7 +296,7 @@ test('a provider failure after text ends the answer with an error event', async 
     model: 'scripted',
     async *stream() {
       calls += 1
-      yield { type: 'text_delta', text: 'Here is what I found so far. ' }
+      yield { type: 'text_delta', text: "Here is what I found so far: PO-001 and PO-008 are both overdue with Acme Components, the older by 4 days with 30 pcs still to receive and the newer by 2 days. " }
       throw new AssistantModelError('non_success_status', { status: 500 })
     },
   }
@@ -618,7 +618,7 @@ test('after a provider failure that followed text, both transports report the mo
   const failing = () => ({
     model: 'scripted',
     async *stream() {
-      yield { type: 'text_delta', text: 'Here is what I found so far. ' }
+      yield { type: 'text_delta', text: "Here is what I found so far: PO-001 and PO-008 are both overdue with Acme Components, the older by 4 days with 30 pcs still to receive and the newer by 2 days. " }
       throw new AssistantModelError('non_success_status', { status: 500 })
     },
   })

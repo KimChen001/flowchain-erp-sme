@@ -30,6 +30,13 @@ const supplierError = (found) => ({ error: found.error, candidates: found.candid
 // step is to send it and mark it issued, before any receiving (decision V5).
 // On 2026-11-03 the model skipped that step for a PO just created.
 const NOT_ISSUED_NEXT_STEP = 'Not yet issued: the supplier does not have this order. Next step: the user sends the PO document to the supplier (print or save it), then marks it issued on the purchase order page. Receiving comes after that.'
+// The names of an order's items, from the stock rows the reader may see, so an
+// answer and a draft name the item, not only its SKU (2026-11-07: "the T-Light
+// Holder" after a draft that said only SKU 85123A drew "which one?").
+const itemNamesOf = (facts, skus) => {
+  const names = new Map([...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)].map((row) => [fold(row.sku), text(row.itemName)]))
+  return array(skus).map((sku) => names.get(fold(sku))).filter(Boolean)
+}
 const orderRow = (row) => ({
   orderNumber: row.orderNumber, supplier: row.supplier, status: row.status, dueDate: row.dueDate || null,
   overdueDays: row.overdueDays || 0, ordered: row.ordered ?? null, received: row.received ?? null, remaining: row.remaining ?? null, unit: row.unit || null,
@@ -51,10 +58,14 @@ const ordersBySupplier = (rows) => {
 }
 const orderNumberOf = (facts, id) => array(facts.purchaseOrders?.index).find((row) => row.id === id)?.orderNumber || null
 const salesOrderNumberOf = (facts, id) => array(facts.salesOrders).find((row) => row.id === id)?.number || null
+// The promised date of each open purchase order behind a stock row, from the
+// same order index as its number, so the model never calls the dates unrecorded.
+const orderDatesOf = (facts, ids) => array(ids).map((id) => array(facts.purchaseOrders?.index).find((row) => row.id === id)).filter(Boolean)
+  .map((row) => ({ orderNumber: row.orderNumber, dueDate: row.dueDate || null, overdueDays: row.overdueDays || 0 }))
 
 const listPurchaseOrders = defineAiTool({
   name: 'list_purchase_orders',
-  description: 'Purchase orders the user may read, with supplier, status, promised date, days overdue, quantities still to receive and amount. Filter by status, supplier, supplier tier or SKU. Most overdue first, then by promised date. total counts every matching order and bySupplier counts them per supplier.',
+  description: 'Purchase orders the user may read, with supplier, status, the SKUs and item names, promised date, days overdue, quantities still to receive and amount. Filter by status, supplier, supplier tier or SKU. Most overdue first, then by promised date. total counts every matching order and bySupplier counts them per supplier.',
   parameters: {
     status: { type: 'string', enum: ['open', 'overdue', 'pending_approval', 'all'], description: 'open (default): not closed or fully received; overdue: open and past the promised date; pending_approval; all.' },
     supplier: { type: 'string', description: 'A supplier name, code or id.' },
@@ -85,7 +96,7 @@ const listPurchaseOrders = defineAiTool({
     return {
       asOf: facts.asOf,
       workspace: { open: facts.purchaseOrders.open, overdue: facts.purchaseOrders.overdue, committedSpend: facts.purchaseOrders.committedSpend ?? null },
-      ...aiToolList(rows.map(orderRow), args.limit),
+      ...aiToolList(rows.map((row) => ({ ...orderRow(row), itemNames: itemNamesOf(facts, row.skus) })), args.limit),
       bySupplier: ordersBySupplier(rows),
     }
   },
@@ -93,7 +104,7 @@ const listPurchaseOrders = defineAiTool({
 
 const getPurchaseOrder = defineAiTool({
   name: 'get_purchase_order',
-  description: 'One purchase order by its number: status, supplier, each open line with ordered, received and remaining quantity and its current and original promised dates, and the receipts and invoice differences recorded against it.',
+  description: 'One purchase order by its number: status, supplier, each open line with ordered, received and remaining quantity, its unit price when your role sees prices, and its current and original promised dates, and the receipts and invoice differences recorded against it.',
   parameters: { order: { type: 'string', description: 'The order number, for example PO-202611-0014.' } },
   required: ['order'],
   available: (facts) => Boolean(facts.purchaseOrders),
@@ -104,8 +115,8 @@ const getPurchaseOrder = defineAiTool({
     const seen = new Set()
     return {
       asOf: facts.asOf,
-      order: { ...orderRow(row), createdDate: row.createdDate || null },
-      openLines: array(row.openLines).map((line) => ({ sku: line.sku, itemName: line.itemName, ordered: line.ordered, received: line.received, remaining: line.remaining, unit: line.unit, promisedDate: line.promisedDate, originalPromisedDate: line.originalPromisedDate })),
+      order: { ...orderRow(row), itemNames: itemNamesOf(facts, row.skus), createdDate: row.createdDate || null },
+      openLines: array(row.openLines).map((line) => ({ sku: line.sku, itemName: line.itemName, ordered: line.ordered, received: line.received, remaining: line.remaining, unit: line.unit, promisedDate: line.promisedDate, originalPromisedDate: line.originalPromisedDate, ...(line.unitPrice !== null && line.unitPrice !== undefined ? { unitPrice: line.unitPrice, currency: row.currency || null } : {}) })),
       receipts: receipts.filter((entry) => !seen.has(entry.id) && seen.add(entry.id)).map((entry) => ({ documentNumber: entry.documentNumber, arrived: entry.arrivedDay, postingStatus: entry.postingStatus, rejected: entry.rejected, unit: entry.unit, ref: aiToolRef('receiving_doc', entry.id, entry.documentNumber) })),
       invoiceDifferences: array(facts.invoices?.variances).filter((entry) => entry.poId === row.id).map((entry) => ({ invoiceNumber: entry.invoiceNumber, matchStatus: entry.matchStatus, variance: entry.variance, currency: entry.currency, ref: aiToolRef('supplier_invoice', entry.id, entry.invoiceNumber) })),
     }
@@ -116,9 +127,19 @@ const getPurchaseOrder = defineAiTool({
 // reorder list's rule, and on 2026-11-03 the model took stock_position's "ok"
 // as reversing the reorder list's "order now".
 const STOCK_BASIS = 'incomingOnPurchaseOrders counts every open approved purchase order line. status compares available stock with safety stock, then available to promise (available + incoming - unreserved demand) with the reorder point. It is not the reorder list: for whether, when and how much to order, use reorder_list.'
+// At risk as the parameter says: short against open sales orders, or out of
+// stock, below safety stock or at or below the reorder point (2026-11-07: on
+// public data, with every sales order shipped, the shortage-only list was
+// empty while items were below safety stock, and the model said none was).
+const RISK_STATUSES = new Set(['out_of_stock', 'below_safety_stock', 'below_reorder_point'])
+const stockCounts = (facts, rows) => {
+  const short = new Set(array(facts.inventory.atRisk))
+  const count = (status) => rows.filter((row) => row.stockStatus === status).length
+  return { atRisk: rows.filter((row) => short.has(row.sku) || RISK_STATUSES.has(row.stockStatus)).length, shortAgainstSalesOrders: rows.filter((row) => short.has(row.sku)).length, outOfStock: count('out_of_stock'), belowSafetyStock: count('below_safety_stock'), belowReorderPoint: count('below_reorder_point') }
+}
 const stockPosition = defineAiTool({
   name: 'stock_position',
-  description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders, available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status. One SKU, the SKUs at risk, or all.',
+  description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders (each order\'s promised date and days overdue in purchaseOrderDates), available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status. One SKU, the SKUs at risk, or all; counts gives how many SKUs are at risk, short against open sales orders, out of stock, below safety stock and below the reorder point.',
   parameters: {
     sku: { type: 'string', description: 'One SKU.' },
     only: { type: 'string', enum: ['all', 'at_risk'], description: 'at_risk: short against open sales orders or below safety stock or the reorder point. all by default.' },
@@ -126,22 +147,24 @@ const stockPosition = defineAiTool({
   },
   available: (facts) => Boolean(facts.inventory),
   run(args, { facts }) {
-    let rows = array(facts.inventory.rows)
+    const all = array(facts.inventory.rows)
+    let rows = all
     if (args.sku) {
       rows = rows.filter((row) => fold(row.sku) === fold(args.sku))
       if (!rows.length) return array(facts.inventory.masterOnly).some((row) => fold(row.sku) === fold(args.sku)) ? { asOf: facts.asOf, sku: args.sku, noStockOrOrders: true } : { error: 'not_found' }
     }
-    if (args.only === 'at_risk') rows = rows.filter((row) => array(facts.inventory.atRisk).includes(row.sku))
+    if (args.only === 'at_risk') rows = rows.filter((row) => array(facts.inventory.atRisk).includes(row.sku) || RISK_STATUSES.has(row.stockStatus))
     rows = [...rows].sort((a, b) => text(a.sku).localeCompare(text(b.sku)))
     return {
       asOf: facts.asOf,
       basis: STOCK_BASIS,
-      atRiskCount: facts.inventory.atRiskCount,
+      counts: stockCounts(facts, all),
       ...aiToolList(rows.map((row) => ({
         sku: row.sku, itemName: row.itemName, unit: row.unit, onHand: row.onHand, reserved: row.reserved, available: row.available,
         openSalesDemand: row.openSalesDemand, incomingOnPurchaseOrders: row.incomingApprovedPo, availableToPromise: row.availableToPromise,
         shortage: row.shortage, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint, status: row.stockStatus,
         purchaseOrders: array(row.purchaseOrderIds).map((id) => orderNumberOf(facts, id)).filter(Boolean),
+        purchaseOrderDates: orderDatesOf(facts, row.purchaseOrderIds),
         salesOrders: array(row.salesOrderIds).map((id) => salesOrderNumberOf(facts, id)).filter(Boolean),
         orderMinimum: row.orderMinimum ? { quantity: row.orderMinimum.quantity ?? null } : null,
         ref: aiToolRef('item', row.itemId || row.sku, row.sku),
@@ -253,7 +276,7 @@ const listSuppliers = defineAiTool({
 
 const spendAnalysis = defineAiTool({
   name: 'spend_analysis',
-  description: 'Committed purchase spend, as the procurement dashboard counts it: by supplier with each one\'s share and ABC class, by item for one supplier, or by month. Amounts are never added across currencies; without permission to see prices it gives order counts.',
+  description: 'Committed purchase spend, as the procurement dashboard counts it: by supplier with each one\'s share and ABC class (the largest suppliers only), by item for one supplier, or by month. For one supplier\'s spend ("how much with Acme this quarter?") pass supplier. Amounts are never added across currencies; without permission to see prices it gives order counts.',
   parameters: {
     view: { type: 'string', enum: ['suppliers', 'trend'], description: 'suppliers (default), or trend for spend by month.' },
     period: periodParam,
@@ -282,7 +305,7 @@ const spendAnalysis = defineAiTool({
       otherCurrencies: array(result.others),
       ...(result.mode === 'trend' ? { months: array(result.months), undatedOrders: result.undated, peakMonth: result.peak || null } : {}),
       ...(result.mode === 'supplier' ? { supplier: result.supplier.name, supplierTotal: result.supplier.row ? spendRow(result.supplier.row) : null, items: array(result.supplier.items).map((row) => ({ name: row.name, amount: row.value })), itemCount: result.supplier.itemCount } : {}),
-      ...(result.mode === 'suppliers' ? { suppliers: array(result.suppliers).map(spendRow), more: result.more, classASuppliers: result.classA } : {}),
+      ...(result.mode === 'suppliers' ? { suppliers: array(result.suppliers).map(spendRow), more: result.more, ...(result.more ? { notListed: 'More suppliers have spend than are listed here. Pass supplier to read one of them.' } : {}), classASuppliers: result.classA } : {}),
     }
   },
 })
@@ -327,7 +350,7 @@ const supplierPerformance = defineAiTool({
 
 const lateOrderImpact = defineAiTool({
   name: 'late_order_impact',
-  description: 'What late purchase orders put at risk, in the inventory page\'s terms: per SKU, available to promise with and without the late lines, how much more the open sales orders would fall short, and those sales orders with their customers and promised days. availableToPromise counts every late line as arriving; withoutTheseLines is available to promise if the late lines judged here never arrive (all of them, or the one order named), never what one order brings on its own; additionalShortfall is how much more the sales orders then fall short. Name orders to judge each on its own; with none, the overdue orders are judged together. No arrival dates are guessed.',
+  description: 'What late purchase orders put at risk, in the inventory page\'s terms: per SKU, available to promise with and without the late lines, how much more the open sales orders would fall short, and those sales orders with their customers and promised days. availableToPromise counts every late line as arriving; withoutTheseLines is available to promise if the late lines judged here never arrive (all of them, or the one order named), never what one order brings on its own; additionalShortfall is how much more the sales orders then fall short. Name orders to judge each on its own; with none, the overdue orders of every supplier are judged together, so for one supplier\'s delay name that supplier\'s orders (list_purchase_orders with supplier). It counts open sales orders only: for stock that sells without them, stock_projection\'s atRecordedRate shows what a delay does at the shipped rate. No arrival dates are guessed.',
   parameters: { orders: { type: 'array', items: { type: 'string' }, maxItems: 5, description: 'Purchase order numbers.' } },
   available: (facts) => Boolean(facts.purchaseOrders) && Boolean(facts.inventory),
   run(args, { facts }) {
@@ -357,7 +380,7 @@ const lateOrderImpact = defineAiTool({
 
 const workspaceSummary = defineAiTool({
   name: 'workspace_summary',
-  description: 'Counts across the workspace as the reports show them: open and overdue purchase orders and committed spend, orders waiting for approval, SKUs at risk, supplier invoice matching, open RFQs, receipts with rejections or not posted, and records missing data. What the user may not read is left out.',
+  description: 'Counts across the workspace as the reports show them: open and overdue purchase orders and committed spend, orders waiting for approval, SKUs at risk as the reports count them (short against open sales orders; stock_position counts those below safety stock or the reorder point too), supplier invoice matching, open RFQs, receipts with rejections or not posted, and records missing data. What the user may not read is left out.',
   available: () => true,
   run(_args, { facts }) {
     return {
@@ -441,7 +464,7 @@ export function aiStockProjection(facts, { sku, weeks = 4 }) {
 
 const stockProjection = defineAiTool({
   name: 'stock_projection',
-  description: 'How one SKU\'s available stock moves over the next weeks: from what is available today, adding open purchase order lines in the week they are promised and taking off open sales order demand in the week promised to the customer. Lines already past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed. Gives the first week the SKU falls below safety stock or short.',
+  description: 'How one SKU\'s available stock moves over the next weeks: from what is available today, adding open purchase order lines in the week they are promised and taking off open sales order demand in the week promised to the customer (open sales orders only, not the rate of past shipments). Lines already past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed. Gives the first week the SKU falls below safety stock or short.',
   parameters: { sku: { type: 'string', description: 'The SKU.' }, weeks: { type: 'integer', minimum: 1, maximum: 12, description: '4 by default.' } },
   required: ['sku'],
   available: (facts) => Boolean(facts.inventory) && Boolean(facts.asOf || facts.today),

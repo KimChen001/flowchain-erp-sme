@@ -40,7 +40,10 @@ test('a result gets display strings beside its dates, amounts and large quantiti
 
 test('the text tidier rewrites dates, amounts, quantities and shortened record numbers', () => {
   const { tidy } = aiV2TextTidier({ language: 'en-US', formats, records, units: () => ['ft'] })
-  assert.equal(tidy('Due 2026-11-01; Amount: 5,000 USD; $79,692.50 USD in all; USD 2,500 more.'), 'Due Nov 1, 2026; Amount: $5,000.00; $79,692.50 in all; $2,500.00 more.')
+  assert.equal(tidy('Due 2026-11-01; Amount: 5,000 USD; $79,692.50 USD in all; USD 2,500 more.'), 'Due Nov 1, 2026; Amount: $5,000; $79,692.50 in all; $2,500 more.')
+  // A figure keeps the decimals it was written with: a rounded one gets no
+  // false cents (2026-11-07: 约 7,300 美元 read as $7,300.00 for $7,320).
+  assert.equal(tidy('about 7,300 USD, 17.05 USD'), 'about $7,300, $17.05')
   assert.equal(tidy('7000 pcs and 1200 ft, 2026 deliveries, 1.9万美元, 5k USD'), '7,000 pcs and 1,200 ft, 2026 deliveries, 1.9万美元, 5k USD')
   // A short form that one record ends with is written whole; a full number,
   // a SKU and a form two records end with stay as written.
@@ -56,7 +59,7 @@ test('Chinese text gets full-width punctuation next to Chinese words, never betw
   assert.equal(tidy('不客气!'), '不客气！')
   assert.equal(tidy('影响哪些销售订单?'), '影响哪些销售订单？')
   assert.equal(tidy('时间 10:30,数量 1,000 件'), '时间 10:30，数量 1,000 件')
-  assert.equal(tidy('累计 19,120 美元,差异 200 USD。'), '累计 $19,120.00，差异 $200.00。')
+  assert.equal(tidy('累计 19,120 美元,差异 200 USD。'), '累计 $19,120，差异 $200。')
   assert.equal(tidy('见 [指南](https://example.com/a) 和 ![图](a.png)'), '见 [指南](https://example.com/a) 和 ![图](a.png)')
   assert.equal(tidy('1) 第一步\n2) 第二步'), '1) 第一步\n2) 第二步')
   // A piece continues what was already sent: a closing parenthesis follows its opening one.
