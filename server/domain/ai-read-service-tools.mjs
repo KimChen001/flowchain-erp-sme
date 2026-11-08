@@ -173,7 +173,7 @@ const reorderList = defineAiTool({
     return {
       asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), counts,
       orderByRange: dated.length ? { earliest: dated[0], latest: dated.at(-1) } : null,
-      demandWindowDays: DEMAND_WINDOW_DAYS,
+      demandWindowDays: DEMAND_WINDOW_DAYS, dueWindowsInDays: [7, 30],
       ...page, total: windowed.length, shownFrom: page.rows.length ? offset + 1 : 0, shownTo: offset + page.rows.length, more: Math.max(0, windowed.length - offset - page.rows.length),
     }
   },
