@@ -94,7 +94,14 @@ const weightedLength = (value) => [...String(value)].reduce((total, char) => tot
 // more. It is reasoning or a sentence in the wrong language ("I don't know
 // the user's budget, so I'm treating $5,000 as the base…", "Before sending,
 // check that the quantities still match…", 2026-11-07 on Haiku).
-const englishProse = (paragraph) => !AI_V2_HAN.test(paragraph) && !/^\s*(?:>|\||[-*+•#]|\d{1,3}[.)])/.test(paragraph) && (paragraph.match(/[A-Za-z]{2,}/g) || []).length >= 6
+// English by proportion: a few Chinese characters in English prose leave
+// it English (2026-11-08: "…I can't see a SKU named 蛋糕架 itself, so I'm
+// working from that match. Let me pull its stock position…" opened a
+// Chinese answer), and English names in a Chinese sentence leave it Chinese.
+const latinWords = (value) => (value.match(/[A-Za-z]{2,}/g) || []).length
+const hanChars = (value) => (value.match(/[\u3400-\u9fff]/g) || []).length
+const mostlyEnglish = (value, words) => latinWords(value) >= words && hanChars(value) * 4 < latinWords(value)
+const englishProse = (paragraph) => !/^\s*(?:>|\||[-*+•#]|\d{1,3}[.)])/.test(paragraph) && mostlyEnglish(paragraph, 6)
 // The paragraphs of a text from `from` on: [start, end, complete], a
 // paragraph being complete once a blank line follows it (or `final`).
 function paragraphsFrom(raw, from, final) {
@@ -127,7 +134,7 @@ function chineseTextWindow(raw, from, final) {
       if (at === start) { start = end; continue }
       return { from: start, limit: at }
     }
-    if (!complete && !AI_V2_HAN.test(paragraph) && !/^\s*(?:>|\||[-*+•#]|\d{1,3}[.)])/.test(paragraph)) return { from: start, limit: at }
+    if (!complete && (!AI_V2_HAN.test(paragraph) || mostlyEnglish(paragraph, 6)) && !/^\s*(?:>|\||[-*+•#]|\d{1,3}[.)])/.test(paragraph)) return { from: start, limit: at }
   }
   return { from: start, limit: raw.length }
 }
@@ -984,7 +991,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         part.text = ''
         return
       }
-      if (beforeTool && zhAnswer && !part.held && !AI_V2_HAN.test(part.raw) && (part.raw.match(/[A-Za-z]{2,}/g) || []).length >= 3) {
+      if (beforeTool && zhAnswer && !part.held && mostlyEnglish(part.raw, 3)) {
         part.dropped = true
         part.text = ''
         return
