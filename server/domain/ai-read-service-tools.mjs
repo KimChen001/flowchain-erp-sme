@@ -123,7 +123,8 @@ const reorderList = defineAiTool({
     }
     const rows = listed.map((row) => ({
       ...primitives(row, ['sku', 'itemName', 'name', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'position', 'reorderPoint', 'shortfall']),
-      averageDailyDemand: row.demand?.averageDailyDemand ?? null,
+      // One decimal as the model reads it ("7.1556 件" was copied as is).
+      averageDailyDemand: row.demand?.averageDailyDemand === null || row.demand?.averageDailyDemand === undefined ? null : Math.round(Number(row.demand.averageDailyDemand) * 10) / 10,
       supplier: text(row.supplier?.name) || null,
       ...(() => { const stock = stockRowOf(facts, row.sku); const safety = stock?.safetyStock ?? null; const available = Number.isFinite(Number(row.onHand)) ? Number(row.onHand) - (Number(row.reserved) || 0) : null; return { safetyStock: safety, belowSafetyStock: safety !== null && available !== null ? available < safety : null } })(),
       leadTimeDays: row.supplier?.leadTimeDays ?? null,

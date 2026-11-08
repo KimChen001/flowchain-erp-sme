@@ -176,3 +176,11 @@ test('a number inside a name a result gives is part of the name, not a figure', 
   // The figures beside the name are still checked.
   assert.deepEqual(check('Customer 14096 (United Kingdom) bought £9,999.00.'), [{ kind: 'number', value: '£9,999.00' }])
 })
+
+// 2026-11-08 on DeepSeek: "Customer 16,684" for Customer 16684.
+test('a number inside a name is part of the name when the answer groups its digits', () => {
+  const results = [{ rows: [{ customer: 'Customer 16684 (United Kingdom)', amount: 10230.24 }] }]
+  const check = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results }).problems
+  assert.deepEqual(check('排名第一的 Customer 16,684 只占 9.8% 以内，金额 £10,230.24。').filter((row) => row.value.includes('16,684')), [])
+  assert.deepEqual(check('Customer 16,684 (United Kingdom) bought £10,230.24.'), [])
+})
