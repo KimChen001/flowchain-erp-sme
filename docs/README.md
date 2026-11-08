@@ -70,6 +70,7 @@
 
 - [AI assistant plan, v4.0](ai-assistant-plan.md): decisions, state, roadmap and stop points for the assistant and knowledge work
 - [Model-first assistant design](ai-model-first-design.md): proposal of 2026-10-28; the model reads through tools and writes the answer, with a grounding check; decisions M1–M7 open
+- [Assistant query tool design](ai-query-tool-design.md): draft of 2026-11-08; one read-only tool over named datasets that the model queries (filter, group, total, page) in place of the narrow list tools; decisions Q1–Q8 open
 - [AI safety and draft-first explainer](ai-safety-and-draft-first-explainer-v1.md)
 - [AI provider safety gate](ai-provider-safety-gate-v1.md)
 - [AI provider adapter plan](ai-provider-adapter-v1-plan.md)
