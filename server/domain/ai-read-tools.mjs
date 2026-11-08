@@ -1,4 +1,6 @@
-import { AI_TOOL_LIMITS, aiToolList, aiToolPurchaseOrder, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
+import { AI_TOOL_LIMITS, aiStockSku, aiToolList, aiToolPurchaseOrder, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
+// The item lookup lives with the contract, so the service tools can use it too.
+export { aiStockSku }
 import { runLateOrderImpact } from './ai-skill-late-order-impact.mjs'
 import { runSpendAnalysis } from './ai-skill-spend-analysis.mjs'
 import { aiSkillPrepareComparison, runSupplierComparison } from './ai-skill-supplier-comparison.mjs'
@@ -126,25 +128,6 @@ const getPurchaseOrder = defineAiTool({
 // The inventory page's terms, said with every result: its status is not the
 // reorder list's rule, and on 2026-11-03 the model took stock_position's "ok"
 // as reversing the reorder list's "order now".
-// An item named by its SKU or by its name, as the user or a draft wrote it
-// (2026-11-08: a lookup of "White Hanging Heart T-Light Holder" in the SKU
-// field found nothing, and the answer would not state the stock). Case,
-// quotes, dashes and spaces do not matter; one item whose name holds the
-// words is that item; several are offered back to choose from.
-const nameKey = (value) => text(value).normalize('NFKC').toLowerCase().replace(/[\u2018\u2019\u201c\u201d"'`]/g, '').replace(/[\u2010-\u2015\u2212]/g, '-').replace(/\s+/g, ' ').trim()
-export function aiStockSku(facts, value) {
-  const wanted = text(value)
-  if (!wanted) return { error: 'not_found' }
-  const items = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)]
-  const bySku = items.find((row) => fold(row.sku) === fold(wanted))
-  if (bySku) return { sku: bySku.sku }
-  const key = nameKey(wanted)
-  const exact = items.filter((row) => row.itemName && nameKey(row.itemName) === key)
-  const matches = exact.length ? exact : items.filter((row) => row.itemName && key.length >= 3 && nameKey(row.itemName).includes(key))
-  if (matches.length === 1) return { sku: matches[0].sku }
-  if (matches.length > 1) return { error: 'ambiguous', candidates: matches.slice(0, 10).map((row) => ({ sku: row.sku, itemName: row.itemName || null })) }
-  return { error: 'not_found' }
-}
 
 const STOCK_BASIS = 'incomingOnPurchaseOrders counts every open approved purchase order line. status compares available stock with safety stock, then available to promise (available + incoming - unreserved demand) with the reorder point. Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point. belowSafetyStock gives that judgement. It is not the reorder list: for whether, when and how much to order, use reorder_list.'
 // At risk as the parameter says: short against open sales orders, or out of

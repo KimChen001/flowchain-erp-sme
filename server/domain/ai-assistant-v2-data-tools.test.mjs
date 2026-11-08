@@ -271,6 +271,13 @@ test('reorder_list counts and dates every row, narrows to a window and pages wit
   assert.deepEqual((await run({ due: 'now' })).rows.map((row) => row.sku), ['SKU-000'])
   const beyond = await run({ offset: 99 })
   assert.deepEqual([beyond.rows.length, beyond.shownFrom, beyond.more], [0, 0, 0])
+  // An item by its name; the counts stay the whole list's.
+  const named = await run({ sku: 'item 7' })
+  assert.deepEqual([named.rows.map((row) => row.sku), named.counts.orderNow, named.counts.dueWithin30Days], [['SKU-007'], 1, 30])
+  // 2026-11-08: a SKU filter that matched nothing gave "0 to order now".
+  const missing = await runAiReadTool('reorder_list', { sku: '蛋糕架' }, { facts: await readAiSkillFacts(context), context })
+  assert.equal(missing.error, 'not_found')
+  assert.match(missing.details.join(' '), /another language than the question/)
 })
 
 test('the prompt keeps an answer to the rows it read, pages for more, and explains a questioned figure', () => {
