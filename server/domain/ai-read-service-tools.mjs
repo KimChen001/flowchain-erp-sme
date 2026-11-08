@@ -153,28 +153,75 @@ const reorderList = defineAiTool({
   },
 })
 
+// Every page of a receivables list, up to a bound: a total by customer, or
+// one customer's items, must count them all, not the first 100 (2026-11-07:
+// "Which customer owes us the most?" read 100 of 542 open items).
+const RECEIVABLE_PAGES_MAX = 100
+async function allReceivables(service, query, context) {
+  const rows = []
+  let total = 0
+  for (let page = 1; page <= RECEIVABLE_PAGES_MAX; page += 1) {
+    const result = await service.listReceivables({ ...query, page, pageSize: 100 }, identityOf(context))
+    total = result.total ?? total
+    rows.push(...array(result.items))
+    if (array(result.items).length < 100 || rows.length >= total) break
+  }
+  return { rows, total, complete: rows.length >= total }
+}
+const amountOf = (value) => Number(value) || 0
+
 const listReceivables = defineAiTool({
   name: 'list_receivables',
-  description: 'What customers owe: open receivables from customer invoices with the amount outstanding, the amount paid, the due date and any dispute, or an aging summary by currency (current, 1-30, 31-60, 61-90 and over 90 days past due). Soonest due first.',
+  description: 'What customers owe: open receivables from customer invoices with the amount outstanding, the amount paid, the due date and any dispute, an aging summary by currency (current, 1-30, 31-60, 61-90 and over 90 days past due), or by_customer: what each customer owes over every open item (balance, items, overdue amount, oldest due date), largest first. Items soonest due first.',
   parameters: {
-    view: { type: 'string', enum: ['items', 'aging'], description: 'items (default) or aging.' },
+    view: { type: 'string', enum: ['items', 'aging', 'by_customer'], description: 'items (default), aging, or by_customer for "who owes us the most".' },
     status: { type: 'string', enum: ['open', 'overdue', 'disputed', 'all'], description: 'For items: open by default.' },
     customer: { type: 'string', description: 'Part of a customer name.' },
     limit: limitParam,
   },
   available: (_facts, context) => Boolean(context?.actor) && can(context, 'finance.receivable.read'),
-  async run(args, { context }) {
+  async run(args, { facts, context }) {
     const service = serviceOf(context, 'receivables', createOperationalFinanceO2cReadService)
     if (args.view === 'aging') {
       const aging = await service.aging({}, identityOf(context))
       return { aging: array(aging.groups || aging.items || aging.currencies).map((group) => primitives(group, ['currency', 'current', '1_30', '31_60', '61_90', '90_plus', 'total', 'count'])), asOf: aging.asOf || null }
     }
+    if (args.view === 'by_customer') {
+      const { rows: all, complete } = await allReceivables(service, { status: '' }, context)
+      const today = text(facts?.today || facts?.asOf).slice(0, 10)
+      const groups = new Map()
+      for (const row of all) {
+        const owed = amountOf(row.outstandingAmount)
+        if (!(owed > 0)) continue
+        if (args.customer && !fold(row.customerName).includes(fold(args.customer))) continue
+        const key = `${text(row.customerName)}\u0000${text(row.currency)}`
+        const entry = groups.get(key) || { customer: text(row.customerName) || null, currency: text(row.currency) || null, balance: 0, items: 0, overdueAmount: 0, oldestDueDate: null }
+        const due = text(row.dueDate).slice(0, 10)
+        entry.balance += owed
+        entry.items += 1
+        if (due && today && due < today) entry.overdueAmount += owed
+        if (due && (!entry.oldestDueDate || due < entry.oldestDueDate)) entry.oldestDueDate = due
+        groups.set(key, entry)
+      }
+      const customers = [...groups.values()].sort((a, b) => b.balance - a.balance || text(a.customer).localeCompare(text(b.customer))).map((entry) => ({ ...entry, balance: money2(entry.balance), overdueAmount: money2(entry.overdueAmount) }))
+      const totals = new Map()
+      for (const entry of customers) {
+        const sum = totals.get(entry.currency) || { currency: entry.currency, balance: 0, items: 0, customers: 0 }
+        sum.balance += entry.balance
+        sum.items += entry.items
+        sum.customers += 1
+        totals.set(entry.currency, sum)
+      }
+      return { asOf: today || null, totals: [...totals.values()].map((sum) => ({ ...sum, balance: money2(sum.balance) })), ...(complete ? {} : { onlyFirstItems: all.length }), ...aiToolList(customers, args.limit) }
+    }
     const status = args.status || 'open'
-    const page = await service.listReceivables({ status: status === 'all' || status === 'disputed' ? '' : status, ...(status === 'disputed' ? { disputeStatus: 'open' } : {}), pageSize: 100 }, identityOf(context))
-    let rows = array(page.items)
+    const query = { status: status === 'all' || status === 'disputed' ? '' : status, ...(status === 'disputed' ? { disputeStatus: 'open' } : {}) }
+    // One customer's items from every page; otherwise the first page.
+    const page = args.customer ? await allReceivables(service, query, context) : await service.listReceivables({ ...query, pageSize: 100 }, identityOf(context)).then((result) => ({ rows: array(result.items), total: result.total }))
+    let rows = page.rows
     if (args.customer) rows = rows.filter((row) => fold(row.customerName).includes(fold(args.customer)))
     return {
-      total: page.total,
+      total: args.customer ? rows.length : page.total,
       ...aiToolList(rows.map((row) => ({
         ...primitives(row, ['obligationNumber', 'customerInvoiceNumber', 'customerName', 'outstandingAmount', 'paidAmount', 'originalAmount', 'currency', 'dueDate', 'status', 'disputeStatus']),
         ref: aiToolRef('receivable', row.id, row.obligationNumber || row.customerInvoiceNumber),

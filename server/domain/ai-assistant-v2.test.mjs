@@ -1235,6 +1235,17 @@ test('each round of results in a Chinese answer says to write in Chinese; an Eng
   assert.equal(zhNote(wanted.client.requests[1]), false)
 })
 
+// 2026-11-07: a short first sentence before a slow model's stall never showed,
+// because short text waits as possible narration.
+test('a short text is shown once the model pauses; narration right before a call is still held', async () => {
+  const slow = await ask([[...say('Here is the start of it. '), { type: 'pause', ms: 400 }, ...say('And the rest.'), end()]], { limits: { narrationWaitMs: 100 } })
+  const deltas = ofType(slow.events, 'text_delta').map((event) => event.text)
+  assert.equal(deltas[0].trim(), 'Here is the start of it.')
+  assert.match(slow.body.conclusion.summary, /Here is the start of it\. And the rest\./)
+  const quick = await ask([[...say('Checking the orders.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()], [...say('PO-001 is the most overdue.'), end()]], { limits: { narrationWaitMs: 100 } })
+  assert.doesNotMatch(ofType(quick.events, 'text_delta').map((event) => event.text).join(''), /Checking the orders/)
+})
+
 // 2026-11-07: a reorder answer ended at its opening line and the chips.
 test('chips in a round with no text do not end the answer on an earlier opening line', async () => {
   const { client, body } = await ask([

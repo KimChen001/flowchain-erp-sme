@@ -596,7 +596,7 @@ test('every data tool declares its columns, and each declared column is in its r
     late_order_impact: [{ orders: ['PO-001'] }],
     calculate: [{ operation: 'percent', values: [1, 2] }],
     search_records: [{ query: 'LDM' }],
-    list_receivables: [{}, { view: 'aging' }],
+    list_receivables: [{}, { view: 'aging' }, { view: 'by_customer' }],
     sales_summary: [{ from: '2026-01-01', to: '2026-12-31' }, { by: 'item', from: '2026-01-01', to: '2026-12-31' }, { by: 'month', from: '2026-01-01', to: '2026-12-31' }],
     price_history: [{ sku: 'LDM-001' }],
     search_documents: [{ query: 'supplier past the promised date escalate' }],

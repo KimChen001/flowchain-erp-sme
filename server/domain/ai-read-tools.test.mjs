@@ -334,3 +334,26 @@ test('sales_summary totals customer invoices in a period by customer, item or mo
   assert.equal(tool.available(facts, context), true)
   assert.equal(tool.available(facts, { ...context, actor: { ...context.actor, permissionCodes: new Set() } }), false)
 })
+
+// 2026-11-07: "Which customer owes us the most?" read the first 100 of 542 open
+// items, and a customer's items were filtered from that page only.
+test('list_receivables by_customer totals every open item over all pages; one customer\'s items come from every page', async () => {
+  const scenario = aiSkillScenario()
+  const all = [
+    ...Array.from({ length: 100 }, (_, index) => ({ id: `AR-A${index}`, obligationNumber: `AR-A${index}`, customerName: 'Harbor Supply Co', outstandingAmount: '1.00', currency: 'GBP', dueDate: '2026-01-05T00:00:00.000Z', status: 'open' })),
+    ...Array.from({ length: 30 }, (_, index) => ({ id: `AR-B${index}`, obligationNumber: `AR-B${index}`, customerName: 'Redwood Retail', outstandingAmount: '10.00', currency: 'GBP', dueDate: index ? '2099-01-01T00:00:00.000Z' : '2026-02-01T00:00:00.000Z', status: 'open' })),
+    { id: 'AR-PAID', obligationNumber: 'AR-PAID', customerName: 'Paid Up Ltd', outstandingAmount: '0.00', currency: 'GBP', dueDate: '2026-01-01T00:00:00.000Z', status: 'paid' },
+  ]
+  const pages = []
+  const receivables = { listReceivables: async ({ page = 1, pageSize }) => { pages.push(page); return { total: all.length, items: all.slice((page - 1) * pageSize, page * pageSize) } } }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { receivables } })
+  const facts = await readAiSkillFacts(context)
+  const result = (await runAiReadTool('list_receivables', { view: 'by_customer' }, { facts, context })).result
+  assert.deepEqual(pages, [1, 2])
+  assert.deepEqual(result.rows.map((row) => [row.customer, row.balance, row.items]), [['Redwood Retail', 300, 30], ['Harbor Supply Co', 100, 100]])
+  assert.deepEqual([result.rows[0].overdueAmount, result.rows[0].oldestDueDate], [10, '2026-02-01'])
+  assert.deepEqual(result.totals, [{ currency: 'GBP', balance: 400, items: 130, customers: 2 }])
+  pages.length = 0
+  const redwood = (await runAiReadTool('list_receivables', { customer: 'redwood', limit: 50 }, { facts, context })).result
+  assert.deepEqual([pages, redwood.total, redwood.rows.length], [[1, 2], 30, 30])
+})

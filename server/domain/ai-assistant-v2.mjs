@@ -58,6 +58,8 @@ export const ASSISTANT_V2_VERSION = '2026-11-02'
 export const ASSISTANT_V2_LIMITS = Object.freeze({
   rounds: 6, toolCalls: 12, timeoutMs: 75000, tokens: 120000, outputTokens: 4000, costCeilingMicros: 200000, capRemainingMicros: null,
   question: QUESTION_LIMITS.assistantV2, resultChars: 24000, records: 8,
+  // How long a short text waits for more before it is shown anyway.
+  narrationWaitMs: 1500,
 })
 
 const text = (value) => String(value ?? '').trim()
@@ -951,11 +953,26 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     }
 
     let openText = null
+    // A short text held as possible narration is shown after a pause with
+    // nothing more from the model: narration is followed by its call at
+    // once, and a slow model's first sentence should not wait unseen
+    // (2026-11-07: a sentence before a 30-second stall never showed).
+    let pendingTimer = null
+    const waitForMore = (part) => {
+      clearTimeout(pendingTimer)
+      if (!part.pending) return
+      pendingTimer = setTimeout(() => {
+        if (openText !== part || !part.pending || aborted || timedOut || stats.stopReason) return
+        part.pending = false
+        stream(part)
+      }, limits.narrationWaitMs)
+    }
     // beforeTool: a tool call follows the text in the same turn. In a Chinese
     // answer, such text with no Chinese in it is narration in the wrong
     // language: it is never shown (nothing of it was sent) and stays out of
     // the answer.
     const closeText = ({ beforeTool = false, beforeRead = false } = {}) => {
+      clearTimeout(pendingTimer)
       if (!openText) return
       const part = openText
       openText = null
@@ -1113,6 +1130,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
             }
             openText.raw += event.text
             stream(openText)
+            waitForMore(openText)
           } else if (event.type === 'tool_use_start') {
             // In the last round no call runs, so text before one is the answer.
             closeText({ beforeTool: true, beforeRead: !finalRound && !ui.has(event.name) })
