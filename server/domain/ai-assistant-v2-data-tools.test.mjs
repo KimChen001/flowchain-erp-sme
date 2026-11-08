@@ -20,7 +20,7 @@ import { join } from 'node:path'
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
 // order of 100 and a reference price of 95 USD.
 const link = (extra = {}) => ({ id: 'ITEM-001::SUP-001', payload: { itemId: 'ITEM-001', supplierId: 'SUP-001', preferred: true, active: true, approved: true, leadTimeDays: 12, minimumOrderQuantity: 100, referencePrice: 95, currency: 'USD', ...extra } })
-const V2_ONLY = AI_ASSISTANT_V2_TOOLS.map((tool) => tool.name).filter((name) => name !== 'list_purchase_requests')
+const V2_ONLY = AI_ASSISTANT_V2_TOOLS.map((tool) => tool.name).filter((name) => !['list_purchase_requests', 'stock_projection'].includes(name))
 
 // The fixture workspace read as assistant v2 reads it: with the open purchase
 // requests. `change` edits the fixture records before they are read.
@@ -182,6 +182,8 @@ test('suggest_purchase_lines raises the gap to the minimum order and fills suppl
   assert.deepEqual(row.supplier, { id: 'SUP-001', name: 'Acme Components', source: 'preferred_supplier' })
   assert.deepEqual(row.needByDate, { value: '2026-10-11', source: 'lead_time', leadTimeDays: 12, warning: null })
   assert.deepEqual(row.estimatedUnitPrice, { value: 95, currency: 'USD', source: 'reference_price' })
+  // The line's value, read instead of multiplied: 100 × 95.
+  assert.deepEqual(row.estimatedValue, { value: 9500, currency: 'USD' })
   assert.equal(row.covered, null)
   assert.deepEqual(row.ref, { type: 'item', id: 'ITEM-001', label: 'LDM-001' })
   // Without the submitted request the gap is above the minimum.
@@ -225,6 +227,24 @@ test('suggest_purchase_lines with coverDays sizes a line from recorded demand an
   assert.equal(before.suggestedQuantity.source, 'covered_by_open_orders')
 })
 
+// 2026-11-07 (public data): every sales order had shipped, so the projection
+// showed no demand for an item shipping 17 a day.
+test('stock_projection also runs the weeks at the recorded shipping rate, apart from the open sales orders', async () => {
+  const { run } = await v2({ change: shipping, actor: everyWarehouse })
+  const result = (await run('stock_projection', { sku: 'LDM-001', weeks: 3 })).result
+  assert.deepEqual(result.recordedDemand, { averageDailyDemand: 10, windowDays: 90, shipmentDays: 18 })
+  let balance = result.availableToday
+  for (const [index, week] of result.atRecordedRate.entries()) {
+    balance += week.incoming - 70
+    assert.deepEqual([week.from, week.incoming, week.demand, week.endAvailable, week.short], [result.weeks[index].from, result.weeks[index].incoming, 70, balance, balance < 0])
+  }
+  assert.equal(result.firstWeekShortAtRecordedRate, result.atRecordedRate.find((week) => week.short)?.from || null)
+  const late = result.notPlacedInAWeek.incomingPastPromisedDate.reduce((sum, entry) => sum + entry.quantity, 0)
+  assert.equal(result.availableIfLateLinesArrive, late ? result.availableToday + late : undefined)
+  // The open sales order weeks are as the read tool gives them.
+  assert.ok(Array.isArray(result.weeks) && result.weeks.length === 3)
+})
+
 // 2026-11-05: "order 100 instead of 50, is it cheaper?" got the price and the
 // cash tied up, never the trade between ordering less often and holding more.
 // LDM-001: 10 a day (3,650 a year), reference price 95, minimum order 100.
@@ -243,14 +263,15 @@ test('order_quantity_costs weighs orders a year against holding cost, with the a
     [200, false, 19000, 20, 18.3, 100, 2375, null, null],
   ])
   // 100 → 200 saves 18.25 orders for 1,187.50 more holding: worth it above 23.75 × 100 × 200 / (2 × 3,650) = 65.07 an order.
-  assert.deepEqual(result.comparisons[1], { smaller: 100, larger: 200, ordersSavedPerYear: 18.3, extraHoldingCostPerYear: 1187.5, breakEvenCostPerOrder: 65.07, cheaperAtUserCostPerOrder: null })
+  assert.deepEqual(result.comparisons[1], { smaller: 100, larger: 200, ordersSavedPerYear: 18.3, extraHoldingCostPerYear: 1187.5, breakEvenCostPerOrder: 65.07, cheaperAtUserCostPerOrder: null, largerSavesPerYear: null })
   // EOQ = √(2 × 3,650 × cost / 23.75), never below the minimum order.
   assert.deepEqual(result.economicOrderQuantity, { atUserCostPerOrder: null, examples: [{ costPerOrder: 25, quantity: 100, daysOfDemand: 10, ordersPerYear: 36.5 }, { costPerOrder: 50, quantity: 124, daysOfDemand: 12.4, ordersPerYear: 29.4 }, { costPerOrder: 100, quantity: 175, daysOfDemand: 17.5, ordersPerYear: 20.9 }], raisedToSupplierMinimum: true })
   // With the user's own figures: 20% a year and 80 an order make 200 the cheaper.
   const own = (await run('order_quantity_costs', { sku: 'LDM-001', quantities: [100, 200], holdingRatePercent: 20, costPerOrder: 80 })).result
   assert.deepEqual([own.assumptions.holdingRateSource, own.assumptions.costPerOrderSource, own.assumptions.holdingCostPerUnitPerYear], ['user', 'user', 19])
   assert.deepEqual(own.options.map((row) => [row.holdingCostPerYear, row.orderingCostPerYear, row.totalCostPerYear]), [[950, 2920, 3870], [1900, 1460, 3360]])
-  assert.deepEqual([own.comparisons[0].breakEvenCostPerOrder, own.comparisons[0].cheaperAtUserCostPerOrder], [52.05, 200])
+  // 3,870 − 3,360: the larger saves 510 a year, read from the tool, not subtracted in the answer.
+  assert.deepEqual([own.comparisons[0].breakEvenCostPerOrder, own.comparisons[0].cheaperAtUserCostPerOrder, own.comparisons[0].largerSavesPerYear], [52.05, 200, 510])
   assert.deepEqual(own.economicOrderQuantity, { atUserCostPerOrder: { quantity: 175, daysOfDemand: 17.5, ordersPerYear: 20.9 }, examples: [], raisedToSupplierMinimum: true })
   // An approved supplier by name, and one that is not approved for the item.
   assert.equal((await run('order_quantity_costs', { sku: 'LDM-001', quantities: [100], supplier: 'acme' })).result.supplier.name, 'Acme Components')
@@ -491,6 +512,8 @@ test('reorder_list returns the preferred supplier\'s lead time, id and minimum o
   assert.deepEqual([row.supplier, row.supplierId, row.minimumOrderQuantity, row.moqUnit], ['Acme Components', 'SUP-001', 150, 'pcs'])
   assert.equal(row.shortfall, 102)
   assert.deepEqual([row.requestQuantity, row.raisedToMinimum], [150, true])
+  // Counts over every row, for the answer to read instead of counting.
+  assert.deepEqual(list.counts, { orderNow: list.rows.filter((entry) => entry.orderNow === true).length, raisedToMinimum: 1 })
   assert.ok(Array.isArray(row.flags) && row.flags.every((flag) => typeof flag.code === 'string'))
   // Every open line counts in the position, late or not, and says whether it is late.
   assert.ok(row.incomingLines.length && row.incomingLines.every((line) => typeof line.late === 'boolean'))
@@ -560,7 +583,8 @@ test('every data tool declares its columns, and each declared column is in its r
   const items = scenario.data.items.map((row) => ({ ...row, status: 'active', reorderPoint: row.sku === 'LDM-001' ? 200 : row.reorderPoint }))
   const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
   const reorderList = { read: async (input) => buildReorderList({ allocationRows: input.allocationRows, items, supplierLinks: [link()], suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }) }
-  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList } } })
+  const invoiced = (data) => { data.customerInvoices = [{ id: 'CI-1', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-09-10T00:00:00Z'), subtotalAmount: '950.0000', currency: 'USD', lines: [{ itemId: 'ITEM-001', sku: 'LDM-001', itemName: 'Flow Controller', quantity: '10', unit: 'pcs', lineAmount: '950.0000' }] }] }
+  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data); invoiced(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList } } })
   // The calls that fill each table; a tool not named here is called once
   // without arguments.
   const calls = {
@@ -572,7 +596,8 @@ test('every data tool declares its columns, and each declared column is in its r
     late_order_impact: [{ orders: ['PO-001'] }],
     calculate: [{ operation: 'percent', values: [1, 2] }],
     search_records: [{ query: 'LDM' }],
-    list_receivables: [{}, { view: 'aging' }],
+    list_receivables: [{}, { view: 'aging' }, { view: 'by_customer' }],
+    sales_summary: [{ from: '2026-01-01', to: '2026-12-31' }, { by: 'item', from: '2026-01-01', to: '2026-12-31' }, { by: 'month', from: '2026-01-01', to: '2026-12-31' }],
     price_history: [{ sku: 'LDM-001' }],
     search_documents: [{ query: 'supplier past the promised date escalate' }],
     // A row's details depend on its signal: today's list and the problems

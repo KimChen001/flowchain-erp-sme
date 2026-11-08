@@ -290,12 +290,14 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
     // first line, which may be fully received, and its remaining quantity is
     // the order total, which the report gives only for one SKU in one unit: a
     // follow-up, and an answer about an order of several SKUs, names these
-    // lines instead. Quantities and dates only, no prices.
+    // lines instead. The unit price only for a reader who may see prices, so
+    // an answer reads it instead of dividing the order's amount (2026-11-07).
     const openLinesById = new Map(reportRows.map((po) => [text(po.id), array(po.lines).flatMap((line) => {
       const read = purchaseOrderReportLine(line, po)
       return read.open ? [{
         lineId: text(line.id) || null, sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName || line.itemNameSnapshot) || null,
         ordered: read.ordered, received: read.received, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
+        unitPrice: visibility.amounts.purchase_order_amounts && line.unitPrice !== null && line.unitPrice !== undefined && line.unitPrice !== '' && Number.isFinite(Number(line.unitPrice)) ? Number(line.unitPrice) : null,
       }] : []
     })]))
     const rawStatusById = new Map(reportRows.map((po) => [text(po.id), text(po.status)]))

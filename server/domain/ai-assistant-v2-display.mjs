@@ -61,13 +61,17 @@ export function aiV2Formats({ locale = 'en-US', timezone = 'America/New_York', u
     }
     return null
   }
-  const money = (amount, currency) => {
+  // `digits`: the decimals to keep, for a figure the model wrote its own
+  // way ("7,300 USD" stays $7,300, never $7,300.00: a rounded figure gets no
+  // false cents); by default the currency's own.
+  const money = (amount, currency, digits) => {
     const code = text(currency).toUpperCase()
     if (!isNumber(amount) || !/^[A-Z]{3}$/.test(code)) return null
+    const fraction = Number.isInteger(digits) ? { minimumFractionDigits: digits, maximumFractionDigits: digits } : { maximumFractionDigits: 2 }
     try {
-      return new Intl.NumberFormat(tag, { style: 'currency', currency: code, maximumFractionDigits: 2 }).format(amount)
+      return new Intl.NumberFormat(tag, { style: 'currency', currency: code, ...fraction }).format(amount)
     } catch {
-      return `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(amount)} ${code}`
+      return `${new Intl.NumberFormat('en-US', fraction).format(amount)} ${code}`
     }
   }
   // A month and day with no year ("Nov 6"): no year is made up for it.
@@ -141,6 +145,7 @@ const SHORT_RECORD = /(?<![\w-])([A-Za-z]{1,6}-\d+)(?![\w-])/g
 const UNIT_WORDS = ['pcs', 'pc', 'units', 'unit', 'ea', 'kg', 'g', 'lb', 'lbs', 'm', 'ft', 'box', 'boxes', 'roll', 'rolls', 'case', 'cases', 'set', 'sets', 'pack', 'packs', 'pair', 'pairs', 'l', 'ml', '件', '个', '箱', '卷', '台', '套', '只', '片', '米', '包']
 
 const amountOf = (value) => Number(value.replace(/,/g, '').replace('−', '-'))
+const decimalsOf = (value) => (String(value).split('.')[1] || '').length
 // A day written the Chinese way, alone or as a range whose second day may
 // leave out the year: 2026年7月1日至9月30日, 2026 年 8 月 8 日到 2026 年 11 月 5 日.
 const ZH_DATE = /(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号](?:\s*(至|到|~|～|-|–|—)\s*(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号])?/g
@@ -240,8 +245,8 @@ export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), re
       return second ? `${first} ${/[至到]/.test(joint) ? joint : '–'} ${second}` : whole
     })
     // Amounts with a currency code or word, as the cards write them.
-    out = out.replace(AMOUNT_THEN_CODE, (whole, symbol, figure, word) => formats.money(amountOf(figure), CURRENCY_WORDS[word.toUpperCase()] || CURRENCY_WORDS[word]) || whole)
-    out = out.replace(CODE_THEN_AMOUNT, (whole, word, figure) => formats.money(amountOf(figure), CURRENCY_WORDS[word.toUpperCase()]) || whole)
+    out = out.replace(AMOUNT_THEN_CODE, (whole, symbol, figure, word) => formats.money(amountOf(figure), CURRENCY_WORDS[word.toUpperCase()] || CURRENCY_WORDS[word], decimalsOf(figure)) || whole)
+    out = out.replace(CODE_THEN_AMOUNT, (whole, word, figure) => formats.money(amountOf(figure), CURRENCY_WORDS[word.toUpperCase()], decimalsOf(figure)) || whole)
     // A large whole quantity with its unit, grouped as the cards group it.
     const stored = [...new Set(array(units()).map(text).filter((unit) => unit && unit.length <= 20))]
     const unitWords = [...new Set([...UNIT_WORDS, ...stored])].sort((a, b) => b.length - a.length).map(escape)

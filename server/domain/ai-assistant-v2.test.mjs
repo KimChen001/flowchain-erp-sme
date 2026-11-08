@@ -84,6 +84,15 @@ test('a short reply keeps the conversation\'s language, and a clear question set
   assert.deepEqual([await fresh('ok 100', 'zh-CN'), await fresh('好', 'en-US'), await fresh('100', 'zh-CN'), await fresh('100', 'en-US')], ['en-US', 'zh-CN', 'zh-CN', 'en-US'])
 })
 
+test('a longer text streams as deltas up to each word break, so no figure leaves in pieces', async () => {
+  const long = ['PO-001 is 4 days overdue and PO-008 is 2 days overdue, both with Acme Components. ', 'The older one still has 30 pcs to receive and the newer one ', '40 pcs, so chase PO-001 first.']
+  const { events } = await ask([[...say(...long), end()]])
+  const deltas = ofType(events, 'text_delta').map((event) => event.text)
+  assert.ok(deltas.length >= 2, deltas.join('|'))
+  assert.equal(deltas.join(''), long.join(''))
+  assert.ok(deltas.every((delta) => !/d$/.test(delta)), deltas.join('|'))
+})
+
 test('text streams as deltas in order, the start comes first and the answer last', async () => {
   const { events, body, audit, client } = await ask([[...say('PO-001 is ', '4 days overdue', ' and PO-008 is 2.'), end()]], { question: 'Which purchase orders are overdue? PO-001 and PO-008?' })
   assertProtocol(events)
@@ -93,8 +102,9 @@ test('text streams as deltas in order, the start comes first and the answer last
   assert.equal(events[0].model, 'scripted')
   assert.equal(events.at(-1).type, 'answer')
   assert.equal(events.at(-1).status, 200)
-  // Text is sent up to its last word break, so no figure leaves in pieces.
-  assert.deepEqual(ofType(events, 'text_delta').map((event) => event.text), ['PO-001 is ', '4 days ', 'overdue and PO-008 is ', '2.'])
+  // A short text is held until the turn shows what follows it (narration
+  // before a lookup is never shown), then sent whole.
+  assert.deepEqual(ofType(events, 'text_delta').map((event) => event.text), ['PO-001 is 4 days overdue and PO-008 is 2.'])
   assert.ok(ofType(events, 'text_delta').every((event) => event.partId === 'p1'))
   assert.equal(body.version, 'v2')
   assert.equal(body.intent, 'assistant_v2')
@@ -126,8 +136,8 @@ test('a data tool, then a UI tool on its result: the part shows where the model 
   const order = events.filter((event) => ['tool', 'progress', 'text_delta', 'ui', 'flag'].includes(event.type)).map((event) => `${event.type}:${event.partId || event.name || event.step}${event.state ? `:${event.state}` : ''}`)
   assert.deepEqual(order, [
     'tool:list_purchase_orders:running', 'progress:reading', 'tool:list_purchase_orders:done',
-    'progress:writing', 'text_delta:p1', 'text_delta:p1', 'flag:p1', 'tool:show_records:running', 'ui:p2', 'tool:show_records:done',
-    'progress:writing', 'text_delta:p3', 'text_delta:p3', 'flag:p3',
+    'progress:writing', 'text_delta:p1', 'flag:p1', 'tool:show_records:running', 'ui:p2', 'tool:show_records:done',
+    'progress:writing', 'text_delta:p3', 'flag:p3',
   ])
   assert.equal(ofType(events, 'tool').find((event) => event.state === 'done').rows, 2)
   const ui = ofType(events, 'ui')[0]
@@ -236,7 +246,8 @@ test('the cost ceiling and the monthly cap stop the loop after a model call that
   assert.equal(ceiling.audit.stopReason, 'cost_ceiling')
   assert.equal(ceiling.audit.costMicros, 210000)
   assert.equal(ceiling.metered.length, 1)
-  assert.equal(ceiling.body.conclusion.summary, 'Let me check.')
+  // The narration before the lookup was never shown; the notice says why the answer stopped.
+  assert.equal(ceiling.body.conclusion.summary, '')
   assert.equal(ceiling.thread.messages.at(-1).content[0].is_error, true)
 })
 
@@ -254,7 +265,7 @@ test('each call is priced before it is made: no call that could pass the ceiling
   assert.equal(ceiling.audit.stopReason, 'cost_ceiling')
   assert.equal(ceiling.audit.costMicros, 130000)
   assert.ok(ceiling.audit.costMicros <= ASSISTANT_V2_LIMITS.costCeilingMicros)
-  assert.equal(ceiling.body.conclusion.summary, 'Let me check.')
+  assert.equal(ceiling.body.conclusion.summary, '')
   // The same answer with less left of the monthly cap than of the ceiling.
   const cap = await ask([[...say('Let me check.'), ...call('tu_po', 'list_purchase_orders', {}), end(big)], [...say('Never sent.'), end()]], { limits: { capRemainingMicros: 150000 } })
   assert.deepEqual(ofType(cap.events, 'notice'), [{ type: 'notice', code: 'over_cap_during_answer' }])
@@ -435,7 +446,7 @@ test('a failed display says how to fix it; a second failure withdraws the displa
   assert.equal(first.error, 'source_missing')
   assert.deepEqual(first.details, [
     'No data result of this answer is called tu_po_missing. Pass source exactly as a result gives it: list_purchase_orders#1.',
-    'Correct this call once, or answer in prose. After another failed display no display tool is available for this answer.',
+    'Correct this call once, or answer in prose. After another failed display no display tool is available for this answer. The user already sees the text you wrote before this call: do not write it again.',
   ])
   const second = JSON.parse(lastToolResults(client.requests[3])[0].content)
   assert.equal(second.error, 'unknown_column')
@@ -524,7 +535,7 @@ test('the records a text names come with its flag, from this answer\'s results o
   assert.equal('refs' in ofType(longer.events, 'flag')[0], false)
   // A number written before its result arrives gets its chip once the result
   // is in: a further flag of that part, with those refs alone.
-  const early = await ask([[...say('Let me look up PO-001.'), ...call('tu_one', 'get_purchase_order', { order: 'PO-001' }), end()], [...say('It is partially received.'), end()]], { question: 'What is the status of PO-001?' })
+  const early = await ask([[...say('PO-001 is the order you asked about. Its lines, receipts and invoice differences tell what is still open and what is late, so here is the order as it stands today. '), ...call('tu_one', 'get_purchase_order', { order: 'PO-001' }), end()], [...say('It is partially received.'), end()]], { question: 'What is the status of PO-001?' })
   assertProtocol(early.events)
   assert.deepEqual(ofType(early.events, 'flag').filter((event) => event.partId === 'p1').map((event) => [event.spans.length, (event.refs || []).map((ref) => ref.id)]), [[0, []], [0, ['PO-001']]])
   const order = early.events.map((event) => `${event.type}:${event.partId || event.name || event.step || ''}`)
@@ -548,7 +559,7 @@ test('stopping mid-stream ends the answer at once: no more events, calls or mete
   let deltas = 0
   const { events, audit, metered, client, thread } = await ask([
     OVERDUE,
-    [...say('PO-001 ', 'is ', 'late.'), ...call('tu_more', 'stock_position', {}), end()],
+    [...say("Here is what I found so far: PO-001 and PO-008 are both overdue with Acme Components, the older by 4 days with 30 pcs still to receive and the newer by 2 days. ", 'PO-001 ', 'is ', 'late.'), ...call('tu_more', 'stock_position', {}), end()],
     [...say('Never sent.'), end()],
   ], { signal: controller.signal, onEvent: (event) => { if (event.type === 'text_delta' && ++deltas === 1) controller.abort() } })
   assert.equal(events.at(-1).type, 'text_delta')
@@ -578,13 +589,14 @@ test('the call before the wall-time limit is told it is the last, so the answer 
     [...call('tu_po2', 'list_purchase_orders', { status: 'open' }), end()],
     [...say('PO-001 is 4 days overdue.'), end()],
   ])
-  // Each call takes 200 ms: after the first, 200 + 2 × 200 fits in 700; after
-  // the second, 400 + 2 × 200 does not, and the third ends by about 600.
+  // Each call takes 500 ms: after the first, 500 + 2 × 500 fits in 1,900;
+  // after the second, 1,000 + 2 × 500 does not, and the third ends by about
+  // 1,500. The margins leave room for a loaded machine (it failed at 200 / 700).
   const paced = { model: 'scripted', requests: turns.requests, async *stream(request, signal) {
-    await new Promise((resolve) => setTimeout(resolve, 200))
+    await new Promise((resolve) => setTimeout(resolve, 500))
     yield* turns.stream(request, signal)
   } }
-  const { events, audit } = await ask([], { client: paced, limits: { timeoutMs: 700 } })
+  const { events, audit } = await ask([], { client: paced, limits: { timeoutMs: 1900 } })
   assert.equal(ofType(events, 'error').length, 0)
   assert.equal(turns.requests.length, 3)
   assert.ok(JSON.stringify(turns.requests[2].messages.at(-1)).includes(LAST_ROUND_NOTE))
@@ -609,7 +621,7 @@ test('the wall-time deadline stops a slow model call with a retryable error', as
 
 test('a provider failure before anything is shown leaves the answer to the rules; after text it ends with an error', async () => {
   const failing = (afterText) => ({ model: 'scripted', async *stream() {
-    if (afterText) yield { type: 'text_delta', text: 'PO-001 is late. ' }
+    if (afterText) yield { type: 'text_delta', text: "Here is what I found so far: PO-001 and PO-008 are both overdue with Acme Components, the older by 4 days with 30 pcs still to receive and the newer by 2 days. " }
     throw new AssistantModelError('non_success_status', { status: 529 })
   } })
   const thread = { messages: [], results: new Map() }
@@ -619,7 +631,7 @@ test('a provider failure before anything is shown leaves the answer to the rules
   assertProtocol(late.events)
   assert.deepEqual(ofType(late.events, 'error'), [{ type: 'error', code: 'non_success_status', retryable: true }])
   assert.equal(late.events.at(-1).type, 'answer')
-  assert.equal(late.body.conclusion.summary, 'PO-001 is late.')
+  assert.equal(late.body.conclusion.summary, "Here is what I found so far: PO-001 and PO-008 are both overdue with Acme Components, the older by 4 days with 30 pcs still to receive and the newer by 2 days.")
   // A failure in the second round after a round of tools only: the round's
   // results leave the thread with its messages, and the gateway is told that
   // status events already went out.
@@ -765,7 +777,7 @@ test('a data result the model reads names the columns show_table takes from it',
   const { client } = await ask([OVERDUE, [...say('PO-001 is 4 days overdue.'), end()]])
   const [result] = lastToolResults(client.requests[1])
   const read = JSON.parse(result.content)
-  assert.deepEqual(read.tableColumns.rows.slice(0, 5), ['order', 'supplier', 'status', 'due_date', 'days_overdue'])
+  assert.deepEqual(read.tableColumns.rows.slice(0, 7), ['order', 'supplier', 'status', 'skus', 'item_names', 'due_date', 'days_overdue'])
   assert.ok(read.source)
 })
 
@@ -1047,13 +1059,13 @@ test('the text is written as the app shows it: workspace dates and amounts, full
   const { events, body } = await ask([OVERDUE, [...say('PO-001 的承诺日期是 2026-10-30(已逾期),差异 200 ', 'USD,还剩 1200 pcs 未收!'), end()]], zhAsk)
   assertProtocol(events)
   const shown = ofType(events, 'text_delta').map((event) => event.text).join('')
-  assert.equal(shown, 'PO-001 的承诺日期是 Oct 30, 2026（已逾期），差异 $200.00，还剩 1,200 件未收！')
+  assert.equal(shown, 'PO-001 的承诺日期是 Oct 30, 2026（已逾期），差异 $200，还剩 1,200 件未收！')
   assert.equal(body.conclusion.summary, shown)
   // No piece leaves a figure parted from its currency.
   assert.ok(ofType(events, 'text_delta').every((event) => !/\d\s$/.test(event.text)), JSON.stringify(ofType(events, 'text_delta')))
   // English keeps its punctuation; its dates and amounts are rewritten too.
   const en = await ask([OVERDUE, [...say('PO-001 was due 2026-10-30 (Amount: 5,000 USD).'), end()]])
-  assert.equal(ofType(en.events, 'text_delta').map((event) => event.text).join(''), 'PO-001 was due Oct 30, 2026 (Amount: $5,000.00).')
+  assert.equal(ofType(en.events, 'text_delta').map((event) => event.text).join(''), 'PO-001 was due Oct 30, 2026 (Amount: $5,000).')
   // The follow-up questions read the same way.
   const chips = await ask([OVERDUE, [...say('PO-001 已逾期。'), ...call('tu_chips', 'suggest_followups', { questions: ['PO-001 会影响哪些销售订单?'] }), end()]], { ...zhAsk, uiTools: [followups] })
   assert.deepEqual(ofType(chips.events, 'ui')[0].props.questions, ['PO-001 会影响哪些销售订单？'])
@@ -1069,8 +1081,47 @@ test('a Chinese answer leaves out English narration before a tool call', async (
   assert.doesNotMatch(body.conclusion.summary, /fill in the form/)
   assert.deepEqual(body.parts.map((part) => part.type), ['text'])
   // English narration in an English answer still shows; text with Chinese in it too.
+  // In English too, a short text before a lookup is narration and is left
+  // out (2026-11-07: "I'll pull the reorder list first." opened answers on Haiku).
   const en = await ask([[...say('Let me check the orders.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()], [...say('PO-001 is late.'), end()]])
-  assert.match(ofType(en.events, 'text_delta').map((event) => event.text).join(''), /^Let me check the orders\./)
+  assert.equal(ofType(en.events, 'text_delta').map((event) => event.text).join(''), 'PO-001 is late.')
+  assert.equal(en.body.conclusion.summary, 'PO-001 is late.')
+  // A short text before a display is the answer, and stays.
+  const shown = await ask([OVERDUE, [...say('Two orders are overdue.'), ...call('tu_show', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()], [...say('Chase PO-001 first.'), end()]])
+  assert.match(shown.body.conclusion.summary, /^Two orders are overdue./)
+})
+
+// 2026-11-07 on Haiku: a Chinese answer opened with its English reasoning.
+test('a Chinese answer does not open with a paragraph of English prose; an English draft in quotes stays', async () => {
+  const zh = { question: '如果预算减少 20%，补货计划怎么变？', body: { answerLanguage: 'zh-CN' } }
+  const reasoning = await ask([[...say('The current baseline is the reorder list, but I do not know the user budget, so I will treat the list as the base.\n\n', '预算减少后，建议先保住逾期风险最高的物料。'), end()]], zh)
+  const shown = ofType(reasoning.events, 'text_delta').map((event) => event.text).join('')
+  assert.equal(shown, '预算减少后，建议先保住逾期风险最高的物料。')
+  const draft = await ask([[...say('> Dear Acme team, please confirm the new delivery date for the remaining items on our order.\n\n', '以上是给 Acme 的英文草稿，请核对后自己发送。'), end()]], { ...zh, question: '帮我用英文写一封催货邮件' })
+  assert.match(ofType(draft.events, 'text_delta').map((event) => event.text).join(''), /^> Dear Acme team/)
+  // Nor a paragraph of English prose after its Chinese, at the end or between
+  // (2026-11-07: a Chinese chase email ended "Before sending, check that…").
+  const trailing = await ask([[...say('> Acme 您好：请确认剩余物料的交货日期。\n\n', '请核对后自己发送。\n\n', 'Before sending, check that the quantities still match what you expect, and add your name.'), end()]], { ...zh, question: '给 Acme 写一封催货邮件' })
+  const trailingText = ofType(trailing.events, 'text_delta').map((event) => event.text).join('')
+  assert.doesNotMatch(trailingText, /Before sending/)
+  assert.match(trailingText, /请核对后自己发送。/)
+  assert.doesNotMatch(trailing.body.conclusion.summary, /Before sending/)
+  const between = await ask([[...say('第一段是中文。\n\n', 'This paragraph is English reasoning about what the user may want next time.\n\n', '第二段也是中文。'), end()]], zh)
+  assert.equal(ofType(between.events, 'text_delta').map((event) => event.text).join('').replace(/\s+/g, ''), '第一段是中文。第二段也是中文。')
+  // Asked for English, the English stays.
+  const wanted = await ask([[...say('这是英文版：\n\n', 'Please confirm the new delivery date for the remaining items on our order.'), end()]], { ...zh, question: '用英文写吧' })
+  assert.match(ofType(wanted.events, 'text_delta').map((event) => event.text).join(''), /Please confirm the new delivery date/)
+})
+
+// 2026-11-07 on Haiku: an answer ended empty after its only text was held.
+test('held narration: the model is told it was not shown, and an answer that ends without text shows it after all', async () => {
+  const { client, body, events } = await ask([
+    [...say('PO-001 and PO-008 are overdue.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [end()],
+  ])
+  assert.match(client.requests[1].messages.at(-1).content.map((block) => block.text || '').join(' '), /not shown to the user/)
+  assert.equal(body.conclusion.summary, 'PO-001 and PO-008 are overdue.')
+  assert.equal(ofType(events, 'text_delta').map((event) => event.text).join(''), 'PO-001 and PO-008 are overdue.')
 })
 
 test('a date the user typed is not flagged as unmatched', async () => {
@@ -1109,6 +1160,103 @@ test('an item the user names by its name is ticked on the form', async () => {
   assert.deepEqual(form.lines.map((row) => [row.item.sku, row.checked, row.suggestedQuantity.value]), [['LDM-002', true, 50]])
 })
 
+// 2026-11-07: a budget plan ended at "Six SKUs: 019, 272, …" above its form,
+// because the chips came in the same round as the form.
+test('chips called beside a request form do not end the answer: the words about the form come after it', async () => {
+  const { client, body } = await ask([
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-002'] }), end()],
+    [...say('Six lines.'), ...call('tu_form', 'suggest_purchase_request', { source: 'tu_lines', from: 'suggestions' }), ...call('tu_chips', 'suggest_followups', { questions: ['Show the reorder list'] }), end()],
+    [...say('Tick the items you want, then click Create draft request.'), end()],
+  ], { question: 'What should I order?', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assert.equal(client.requests.length, 3)
+  assert.match(body.conclusion.summary, /Tick the items you want, then click Create draft request\./)
+  // Once text is on screen, the model is told to go on from it, not write it
+  // again (2026-11-07: a plan written out three times); before any text, not.
+  const shown = (request) => request.messages.at(-1).content.some((block) => block.type === 'text' && /already sees the text you wrote/.test(block.text))
+  assert.deepEqual([shown(client.requests[1]), shown(client.requests[2])], [false, true])
+})
+
+// 2026-11-07 (public-data scene): the form's call failed for its source; the
+// model fetched the lines and wrote "the form is open below" without calling it again.
+test('a failed form call is named in each later round until the form is shown', async () => {
+  const { client, body } = await ask([
+    [...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), ...call('tu_form', 'suggest_purchase_request', { source: 'tu_po', from: 'suggestions' }), end()],
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-002'] }), end()],
+    [...call('tu_form2', 'suggest_purchase_request', { source: 'tu_lines', from: 'suggestions' }), end()],
+    [...say('Tick the items you want, then click Create draft request.'), end()],
+  ], { question: 'What should I order?', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  const notShown = (request) => request.messages.at(-1).content.some((block) => block.type === 'text' && /No suggest_purchase_request card is shown in this answer/.test(block.text))
+  assert.deepEqual(client.requests.slice(1).map(notShown), [true, true, false])
+  assert.match(body.conclusion.summary, /Tick the items you want/)
+})
+
+// 2026-11-07 (public-data scene): a confirmed order read its lines and said
+// "I've filled in a request form" without calling the form.
+test('lines read for an order with no form yet are named as not shown until the form is', async () => {
+  const { client } = await ask([
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-002'] }), end()],
+    [...call('tu_form', 'suggest_purchase_request', { source: 'tu_lines', from: 'user_named', lines: [{ sku: 'LDM-002', quantity: 60 }] }), end()],
+    [...say('Check the line, then click Create draft request.'), end()],
+  ], { question: 'Confirm: order 60 of LDM-002', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  const notShown = (request) => request.messages.at(-1).content.some((block) => block.type === 'text' && /No purchase request form is shown in this answer yet/.test(block.text))
+  assert.deepEqual(client.requests.slice(1).map(notShown), [true, false])
+  // A role that cannot create requests is not told to open one.
+  const viewer = await ask([
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-002'] }), end()],
+    [...say('A buyer can create the request.'), end()],
+  ], { roleKey: 'read-only-viewer', question: 'Confirm: order 60 of LDM-002', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  assert.ok(!viewer.client.requests.slice(1).some(notShown))
+})
+
+// 2026-11-07 (Haiku): a budget answer ended with the chips' call written out
+// as text, 「suggest_followups（{"questions":[…]}）」.
+test('a tool call written out as text is never shown', async () => {
+  const written = 'PO-001 is the most overdue order (4 days late).\n\nsuggest_followups({"questions":["Draft a follow-up to Acme","Show PO-001"]})'
+  const { events, body, audit } = await ask([OVERDUE, [...say(written.slice(0, 60), written.slice(60)), end()]], { uiTools: [showRecords, followups] })
+  const shown = events.filter((event) => event.type === 'text_delta').map((event) => event.text).join('')
+  assert.equal(shown.trim(), 'PO-001 is the most overdue order (4 days late).')
+  assert.doesNotMatch(body.conclusion.summary, /suggest_followups/)
+  assert.ok(audit.replaces.includes('tool_call_text'))
+  // A parenthesis in plain words is untouched.
+  const plain = await ask([OVERDUE, [...say('PO-001 is the most overdue order (4 days late).'), end()]], { uiTools: [showRecords, followups] })
+  assert.match(plain.body.conclusion.summary, /\(4 days late\)\./)
+})
+
+// 2026-11-07 (Haiku): after long English results a Chinese answer was written
+// in English headings and bullets.
+test('each round of results in a Chinese answer says to write in Chinese; an English answer is not told', async () => {
+  const zhNote = (request) => request.messages.at(-1).content.some((block) => block.type === 'text' && /answerLanguage is zh-CN/.test(block.text))
+  const zh = await ask([OVERDUE, [...say('PO-001 逾期最久。'), end()]], { question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } })
+  assert.equal(zhNote(zh.client.requests[1]), true)
+  const en = await ask([OVERDUE, [...say('PO-001 is the most overdue.'), end()]])
+  assert.equal(zhNote(en.client.requests[1]), false)
+  // Nor when the user asked for English.
+  const wanted = await ask([OVERDUE, [...say('PO-001 is the most overdue.'), end()]], { question: '用英文回答：哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } })
+  assert.equal(zhNote(wanted.client.requests[1]), false)
+})
+
+// 2026-11-07: a short first sentence before a slow model's stall never showed,
+// because short text waits as possible narration.
+test('a short text is shown once the model pauses; narration right before a call is still held', async () => {
+  const slow = await ask([[...say('Here is the start of it. '), { type: 'pause', ms: 400 }, ...say('And the rest.'), end()]], { limits: { narrationWaitMs: 100 } })
+  const deltas = ofType(slow.events, 'text_delta').map((event) => event.text)
+  assert.equal(deltas[0].trim(), 'Here is the start of it.')
+  assert.match(slow.body.conclusion.summary, /Here is the start of it\. And the rest\./)
+  const quick = await ask([[...say('Checking the orders.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()], [...say('PO-001 is the most overdue.'), end()]], { limits: { narrationWaitMs: 100 } })
+  assert.doesNotMatch(ofType(quick.events, 'text_delta').map((event) => event.text).join(''), /Checking the orders/)
+})
+
+// 2026-11-07: a reorder answer ended at its opening line and the chips.
+test('chips in a round with no text do not end the answer on an earlier opening line', async () => {
+  const { client, body } = await ask([
+    [...say('Checking the orders.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [...call('tu_chips', 'suggest_followups', { questions: ['Show PO-001'] }), end()],
+    [...say('PO-001 is the most overdue.'), end()],
+  ])
+  assert.equal(client.requests.length, 3)
+  assert.match(body.conclusion.summary, /PO-001 is the most overdue\./)
+})
+
 test('the system prompt asks for the answer first, display strings, whole record numbers and the app\'s terms', () => {
   for (const rule of [
     /write its one-sentence answer as text before any show_\* or suggest_purchase_request call/,
@@ -1134,7 +1282,8 @@ test('no example the model reads names a showcase item or order', () => {
     JSON.stringify(AI_ASSISTANT_V2_UI_TOOLS.map((tool) => ({ name: tool.name, description: tool.description, input: tool.inputSchema }))),
     JSON.stringify([...AI_READ_TOOLS, ...AI_ASSISTANT_V2_TOOLS].map((tool) => ({ name: tool.name, description: tool.description, input: tool.schema }))),
   ]
-  for (const text of visible) assert.doesNotMatch(text, /LDM-\d|LOCAL-DEMO|PO-020\b/)
+  // Nor the showcase items' or suppliers' names (Flow Controller, Temperature Sensor).
+  for (const text of visible) assert.doesNotMatch(text, /LDM|LOCAL-DEMO|PO-020\b|Flow Controller|Temperature Sensor|Northstar|Summit Packaging/)
 })
 
 // A live re-check on 2026-11-05: "What approvals are pending?" lost both

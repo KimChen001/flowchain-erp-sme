@@ -154,6 +154,9 @@ test('a role gets only the tools and the fields it may read', async () => {
   const orders = await runAiReadTool('list_purchase_orders', { status: 'all' }, { facts: viewer })
   assert.ok(orders.result.rows.length > 0)
   assert.ok(orders.result.rows.every((row) => row.amount === null))
+  // An order's unit price only for a role that sees prices (2026-11-07: an answer divided the amount itself).
+  assert.ok((await runAiReadTool('get_purchase_order', { order: 'PO-001' }, { facts: viewer })).result.openLines.every((line) => !('unitPrice' in line)))
+  assert.deepEqual((await runAiReadTool('get_purchase_order', { order: 'PO-001' }, { facts: await factsFor() })).result.openLines.map((line) => [line.unitPrice, line.currency]), [[100, 'USD']])
   assert.equal(orders.result.workspace.committedSpend, null)
   // Nobody gets a contact's email address from a tool.
   for (const facts of [await factsFor(), finance, operations, viewer]) assert.doesNotMatch(await everyOutput(facts), /@/)
@@ -191,6 +194,59 @@ test('the stock projection places only dated lines in a week and lists the rest 
   for (const entry of projection.notPlacedInAWeek.incomingPastPromisedDate) assert.ok(!placed.has(entry.orderNumber))
   assert.ok(projection.notPlacedInAWeek.incomingPastPromisedDate.some((entry) => entry.orderNumber === 'PO-001'), 'PO-001 is overdue')
   assert.deepEqual(await runAiReadTool('stock_projection', { sku: 'NOPE-1' }, { facts }), { ok: false, error: 'not_found' })
+})
+
+test('at risk covers short, out of stock, below safety stock and below the reorder point, as the parameter says', async () => {
+  const facts = await factsFor()
+  const all = facts.inventory.rows
+  // As on the public data: below safety stock with no open sales demand short.
+  const calm = all.find((row) => !facts.inventory.atRisk.includes(row.sku) && row.stockStatus !== 'below_safety_stock')
+  calm.stockStatus = 'below_safety_stock'
+  const risky = (row) => facts.inventory.atRisk.includes(row.sku) || ['out_of_stock', 'below_safety_stock', 'below_reorder_point'].includes(row.stockStatus)
+  const result = (await runAiReadTool('stock_position', { only: 'at_risk', limit: 50 }, { facts })).result
+  assert.deepEqual(result.rows.map((row) => row.sku), all.filter(risky).map((row) => row.sku).sort())
+  assert.ok(result.rows.some((row) => row.status === 'below_safety_stock' && !(row.shortage > 0)), 'an item below safety stock with no shortage is at risk')
+  assert.deepEqual(result.counts, {
+    atRisk: all.filter(risky).length,
+    shortAgainstSalesOrders: all.filter((row) => facts.inventory.atRisk.includes(row.sku)).length,
+    outOfStock: all.filter((row) => row.stockStatus === 'out_of_stock').length,
+    belowSafetyStock: all.filter((row) => row.stockStatus === 'below_safety_stock').length,
+    belowReorderPoint: all.filter((row) => row.stockStatus === 'below_reorder_point').length,
+  })
+})
+
+test('a stock row gives each incoming order\'s promised date and days overdue, as the order list does', async () => {
+  const facts = await factsFor()
+  const row = (await runAiReadTool('stock_position', { sku: 'LDM-001' }, { facts })).result.rows[0]
+  assert.ok(row.purchaseOrders.length > 0)
+  assert.deepEqual(row.purchaseOrderDates.map((entry) => entry.orderNumber), row.purchaseOrders)
+  const listed = (await runAiReadTool('list_purchase_orders', { status: 'all', limit: 50 }, { facts })).result.rows
+  for (const entry of row.purchaseOrderDates) {
+    const order = listed.find((candidate) => candidate.orderNumber === entry.orderNumber)
+    assert.deepEqual({ dueDate: entry.dueDate, overdueDays: entry.overdueDays }, { dueDate: order.dueDate, overdueDays: order.overdueDays })
+  }
+  assert.ok(row.purchaseOrderDates.some((entry) => entry.orderNumber === 'PO-001' && entry.overdueDays > 0), 'PO-001 is overdue')
+})
+
+// No read tool gives an email address (tests/postgres/ai-read-tools.test.mjs
+// holds every output to it): a draft leaves the To: line for the user.
+test('list_suppliers gives no contact email, though the facts hold one for drafting roles', async () => {
+  const facts = await factsFor()
+  assert.ok(facts.suppliers.some((row) => 'email' in row))
+  const rows = (await runAiReadTool('list_suppliers', {}, { facts })).result.rows
+  assert.ok(rows.length > 0)
+  for (const row of rows) assert.ok(!('email' in row) && !('contactName' in row), row.name)
+})
+
+test('an order row names its items as the stock rows do, so a draft can name them', async () => {
+  const facts = await factsFor()
+  const names = new Map(facts.inventory.rows.map((row) => [row.sku, row.itemName]))
+  const rows = (await runAiReadTool('list_purchase_orders', { status: 'all', limit: 50 }, { facts })).result.rows
+  const withItems = rows.filter((row) => row.skus.length)
+  assert.ok(withItems.length > 0)
+  for (const row of withItems) assert.deepEqual(row.itemNames, row.skus.map((sku) => names.get(sku)).filter(Boolean), row.orderNumber)
+  const one = await runAiReadTool('get_purchase_order', { order: withItems[0].orderNumber }, { facts })
+  assert.deepEqual(one.result.order.itemNames, withItems[0].itemNames)
 })
 
 test('supplier_risks lists the Supplier risks page\'s issues, counted per supplier and never scored', async () => {
@@ -237,4 +293,66 @@ test('list_contracts gives a contract\'s title, dates, value and terms, the valu
   assert.equal(viewer.pricesHidden, true)
   assert.equal(viewer.rows[0].totalValue, null)
   assert.equal(viewer.rows[0].currency, 'USD')
+})
+
+// 2026-11-07: "上个月销售额是多少？", top customers and best sellers had no tool.
+test('sales_summary totals customer invoices in a period by customer, item or month, in one currency', async () => {
+  const scenario = aiSkillScenario()
+  const loaded = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(loaded)
+  const seen = []
+  const line = (sku, itemName, quantity, lineAmount) => ({ itemId: `ITEM-${sku}`, sku, itemName, quantity: String(quantity), unit: 'pcs', lineAmount: String(lineAmount) })
+  const invoices = [
+    { id: 'CI-1', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-10-03T00:00:00Z'), subtotalAmount: '100.0000', currency: 'GBP', lines: [line('X-1', 'Cake Stand', 10, 60), line('Y-2', 'Tea Towel', 5, 40)] },
+    { id: 'CI-2', customerNameSnapshot: 'Redwood Retail', invoiceDate: new Date('2026-10-20T00:00:00Z'), subtotalAmount: '250.0000', currency: 'GBP', lines: [line('X-1', 'Cake Stand', 25, 250)] },
+    { id: 'CI-3', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-10-21T00:00:00Z'), subtotalAmount: '50.0000', currency: 'USD', lines: [line('X-1', 'Cake Stand', 4, 50)] },
+  ]
+  const context = { ...loaded, prisma: { ...loaded.prisma, customerInvoice: { findMany: async (query) => { seen.push(query); return invoices } } } }
+  const run = async (args) => (await runAiReadTool('sales_summary', { from: '2026-10-01', to: '2026-10-31', currency: 'GBP', ...args }, { facts, context })).result
+  const customers = await run({})
+  assert.deepEqual(seen[0].where.status, { notIn: ['draft', 'cancelled'] })
+  assert.deepEqual([seen[0].where.invoiceDate.gte.toISOString(), seen[0].where.invoiceDate.lt.toISOString()], ['2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'])
+  assert.deepEqual([customers.currency, customers.invoices, customers.amount], ['GBP', 2, 350])
+  assert.deepEqual(customers.rows.map((row) => [row.customer, row.invoices, row.amount, row.sharePercent]), [['Redwood Retail', 1, 250, 71.4], ['Harbor Supply Co', 1, 100, 28.6]])
+  assert.deepEqual(customers.otherCurrencies, [{ currency: 'USD', invoices: 1, amount: 50 }])
+  const items = await run({ by: 'item' })
+  assert.deepEqual(items.rows.map((row) => [row.sku, row.itemName, row.quantity, row.amount, row.sharePercent]), [['X-1', 'Cake Stand', 35, 310, 88.6], ['Y-2', 'Tea Towel', 5, 40, 11.4]])
+  assert.deepEqual(items.rows[0].ref, { type: 'item', id: 'ITEM-X-1', label: 'X-1' })
+  const oneItem = await run({ sku: 'Y-2' })
+  assert.deepEqual([oneItem.amount, oneItem.quantity, oneItem.invoices, oneItem.rows.map((row) => row.customer)], [40, 5, 1, ['Harbor Supply Co']])
+  const months = await run({ by: 'month' })
+  assert.deepEqual(months.rows.map((row) => [row.month, row.amount]), [['2026-10', 350]])
+  const harbor = await run({ customer: 'harbor', by: 'item' })
+  assert.deepEqual(harbor.rows.map((row) => [row.sku, row.amount]), [['X-1', 60], ['Y-2', 40]])
+  // A named period is counted from the workspace day; to before from is refused.
+  const lastMonth = (await runAiReadTool('sales_summary', { period: 'last_month' }, { facts, context })).result
+  assert.ok(lastMonth.period.from.endsWith('-01') && lastMonth.period.to < String(facts.today || facts.asOf))
+  assert.equal((await runAiReadTool('sales_summary', { from: '2026-10-31', to: '2026-10-01' }, { facts, context })).error, 'invalid_period')
+  // Only for users who may read customer invoices.
+  const tool = AI_READ_SERVICE_TOOLS.find((entry) => entry.name === 'sales_summary')
+  assert.equal(tool.available(facts, context), true)
+  assert.equal(tool.available(facts, { ...context, actor: { ...context.actor, permissionCodes: new Set() } }), false)
+})
+
+// 2026-11-07: "Which customer owes us the most?" read the first 100 of 542 open
+// items, and a customer's items were filtered from that page only.
+test('list_receivables by_customer totals every open item over all pages; one customer\'s items come from every page', async () => {
+  const scenario = aiSkillScenario()
+  const all = [
+    ...Array.from({ length: 100 }, (_, index) => ({ id: `AR-A${index}`, obligationNumber: `AR-A${index}`, customerName: 'Harbor Supply Co', outstandingAmount: '1.00', currency: 'GBP', dueDate: '2026-01-05T00:00:00.000Z', status: 'open' })),
+    ...Array.from({ length: 30 }, (_, index) => ({ id: `AR-B${index}`, obligationNumber: `AR-B${index}`, customerName: 'Redwood Retail', outstandingAmount: '10.00', currency: 'GBP', dueDate: index ? '2099-01-01T00:00:00.000Z' : '2026-02-01T00:00:00.000Z', status: 'open' })),
+    { id: 'AR-PAID', obligationNumber: 'AR-PAID', customerName: 'Paid Up Ltd', outstandingAmount: '0.00', currency: 'GBP', dueDate: '2026-01-01T00:00:00.000Z', status: 'paid' },
+  ]
+  const pages = []
+  const receivables = { listReceivables: async ({ page = 1, pageSize }) => { pages.push(page); return { total: all.length, items: all.slice((page - 1) * pageSize, page * pageSize) } } }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { receivables } })
+  const facts = await readAiSkillFacts(context)
+  const result = (await runAiReadTool('list_receivables', { view: 'by_customer' }, { facts, context })).result
+  assert.deepEqual(pages, [1, 2])
+  assert.deepEqual(result.rows.map((row) => [row.customer, row.balance, row.items]), [['Redwood Retail', 300, 30], ['Harbor Supply Co', 100, 100]])
+  assert.deepEqual([result.rows[0].overdueAmount, result.rows[0].oldestDueDate], [10, '2026-02-01'])
+  assert.deepEqual(result.totals, [{ currency: 'GBP', balance: 400, items: 130, customers: 2 }])
+  pages.length = 0
+  const redwood = (await runAiReadTool('list_receivables', { customer: 'redwood', limit: 50 }, { facts, context })).result
+  assert.deepEqual([pages, redwood.total, redwood.rows.length], [[1, 2], 30, 30])
 })

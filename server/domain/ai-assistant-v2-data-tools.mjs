@@ -389,6 +389,9 @@ const suggestPurchaseLines = defineAiTool({
         approvedSuppliers: suppliersVisible ? sources.map((source) => ({ id: source.id, name: source.name, preferred: source.preferred, leadTimeDays: source.leadTimeDays, unitPrice: source.referencePrice === null || source.referencePrice === undefined ? null : Number(source.referencePrice), currency: source.currency })) : [],
         needByDate: { value: needBy.value, source: needBy.source, leadTimeDays: needBy.leadTimeDays, warning: needBy.warning },
         estimatedUnitPrice: plan.values.estimatedUnitPrice ? { value: Number(plan.values.estimatedUnitPrice), currency: plan.values.currency || null, source: 'reference_price' } : null,
+        // The line's value at that price, so an answer reads it instead of
+        // multiplying (2026-11-07: Haiku wrote $32,541 for 1,735 × $18.75).
+        estimatedValue: !notRun && plan.values.estimatedUnitPrice && Number.isFinite(Number(quantity.quantity?.value)) && Number(quantity.quantity.value) > 0 ? { value: Math.round(Number(quantity.quantity.value) * Number(plan.values.estimatedUnitPrice) * 100) / 100, currency: plan.values.currency || null } : null,
         warehouseId: plan.values.targetWarehouseId || null,
         covered,
         // The basis of a period's quantity: recorded_demand, or why the
@@ -571,7 +574,7 @@ const preferredSource = (sources) => sources.find((source) => source.preferred) 
 
 const orderQuantityCosts = defineAiTool({
   name: 'order_quantity_costs',
-  description: `Compares order quantities for one item over a year: for each quantity the days of demand it covers, orders a year, average cycle stock, the order's value, the yearly holding cost and, when the user gives a cost per order, the yearly ordering cost and the total. For each pair, the extra holding cost of the larger one, the orders it saves and the break-even cost per order (the larger is cheaper overall when placing and receiving one order costs more than that). Also the economic order quantity (EOQ) at the user's cost per order, or at example costs per order of ${EOQ_EXAMPLE_ORDER_COSTS.join(', ')}. Demand is the item's recorded average daily demand (posted shipments over the last ${DEMAND_WINDOW_DAYS} days); price is the approved supplier's reference price. FlowChain records no price breaks and no cost per order, so the result says what it assumed. Use it for "order 100 instead of 50?", "is a bigger order cheaper?", "what quantity should I order?".`,
+  description: `Compares order quantities for one item over a year: for each quantity the days of demand it covers, orders a year, average cycle stock, the order's value, the yearly holding cost and, when the user gives a cost per order, the yearly ordering cost and the total. For each pair, the extra holding cost of the larger one, the orders it saves and the break-even cost per order (the larger is cheaper overall when placing and receiving one order costs more than that), and, at the user's cost per order, how much less the larger costs a year in all (negative when it costs more). Also the economic order quantity (EOQ) at the user's cost per order, or at example costs per order of ${EOQ_EXAMPLE_ORDER_COSTS.join(', ')}. Demand is the item's recorded average daily demand (posted shipments over the last ${DEMAND_WINDOW_DAYS} days); price is the approved supplier's reference price. FlowChain records no price breaks and no cost per order, so the result says what it assumed. Use it for "order 100 instead of 50?", "is a bigger order cheaper?", "what quantity should I order?".`,
   parameters: {
     sku: { type: 'string', description: 'The item\'s SKU.' },
     quantities: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 10000000 }, maxItems: 5, description: 'The order quantities to compare, in the item\'s stock unit (for example [50, 100]).' },
@@ -630,6 +633,9 @@ const orderQuantityCosts = defineAiTool({
         extraHoldingCostPerYear: holdingPerUnit === null ? null : round(((larger - smaller) / 2) * holdingPerUnit),
         breakEvenCostPerOrder: round(breakEven),
         cheaperAtUserCostPerOrder: costPerOrder === null || breakEven === null ? null : costPerOrder > breakEven ? larger : costPerOrder < breakEven ? smaller : 'equal',
+        // The yearly saving of the larger at the user's cost per order, so an
+        // answer reads it instead of subtracting the totals (2026-11-07).
+        largerSavesPerYear: options[index].totalCostPerYear === null || options[index + 1].totalCostPerYear === null ? null : round(options[index].totalCostPerYear - options[index + 1].totalCostPerYear),
       }
     })
     const eoqQuantity = (cost) => (annual === null || !holdingPerUnit ? null : Math.max(minimum, Math.round(Math.sqrt((2 * annual * cost) / holdingPerUnit))))
@@ -954,4 +960,49 @@ function orderPlanResult(result, { facts, records, items, args }) {
   }
 }
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan])
+// The stock projection with the demand the reorder list plans on (2026-11-07:
+// on public data, where every sales order has shipped, it showed no demand
+// for an item shipping 17 a day). weeks keep the open sales orders in the week
+// promised; atRecordedRate runs the same weeks at the average shipped per day
+// over the last 90 days, with the same incoming lines. The two are never
+// added: an open sales order becomes a shipment.
+const stockProjection = defineAiTool({
+  name: 'stock_projection',
+  description: 'How one SKU\'s available stock moves over the next weeks, from what is available today and adding open purchase order lines in the week they are promised. weeks takes off open sales orders in the week promised to the customer. atRecordedRate takes off the average quantity shipped per day over the last 90 days instead (recordedDemand, the reorder list\'s demand), for stock that sells without open sales orders. Lines past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed; availableIfLateLinesArrive is what is available once the late ones arrive. Gives the first week the SKU falls below safety stock or short, on each basis.',
+  parameters: { sku: { type: 'string', description: 'The SKU.' }, weeks: { type: 'integer', minimum: 1, maximum: 12, description: '4 by default.' } },
+  required: ['sku'],
+  available: (facts, context) => Boolean(facts.inventory) && Boolean(facts.asOf || facts.today) && Boolean(context?.actor && context.prisma),
+  assistantV2Only: true,
+  async run(args, { facts, context }) {
+    const base = aiStockProjection(facts, { sku: args.sku, weeks: args.weeks || 4 })
+    if (base.error || base.noStockOrOrders) return base
+    // What is available once the lines past their promised date arrive, which
+    // answers add up themselves otherwise (2026-11-07: "库存会增加到 408 件").
+    const late = array(base.notPlacedInAWeek?.incomingPastPromisedDate).reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0)
+    const projection = late ? { ...base, availableIfLateLinesArrive: (base.availableToday ?? 0) + late } : base
+    const row = stockRow(facts, args.sku)
+    const item = row?.itemId ? (await storedItems(context, [text(row.itemId)])).get(text(row.itemId)) : null
+    const demand = item ? await recordedDemand(context, facts, [item]) : null
+    if (!demand || demand.scoped) return { ...projection, recordedDemand: { averageDailyDemand: null, reason: demand?.scoped ? 'warehouse_scope' : 'no_item_record' } }
+    const history = demand.byItem.get(text(item.id))
+    const rate = history?.averageDailyDemand ?? null
+    const recordedDemandRow = { averageDailyDemand: rate, windowDays: DEMAND_WINDOW_DAYS, shipmentDays: history?.shipmentDays ?? 0, ...(rate === null ? { reason: 'not_enough_shipment_history' } : {}) }
+    if (rate === null) return { ...projection, recordedDemand: recordedDemandRow }
+    const weekly = Math.round(rate * 7)
+    const safety = projection.safetyStock
+    let balance = projection.availableToday ?? 0
+    const atRecordedRate = projection.weeks.map((week) => {
+      balance += week.incoming - weekly
+      return { from: week.from, to: week.to, incoming: week.incoming, demand: weekly, endAvailable: balance, belowSafetyStock: safety !== null && safety !== undefined && balance < safety, short: balance < 0 }
+    })
+    return {
+      ...projection,
+      recordedDemand: recordedDemandRow,
+      atRecordedRate,
+      firstWeekBelowSafetyStockAtRecordedRate: atRecordedRate.find((week) => week.belowSafetyStock)?.from || null,
+      firstWeekShortAtRecordedRate: atRecordedRate.find((week) => week.short)?.from || null,
+    }
+  },
+})
+
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan, stockProjection])
