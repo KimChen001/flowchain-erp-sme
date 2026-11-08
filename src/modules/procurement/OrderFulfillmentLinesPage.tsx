@@ -11,7 +11,9 @@ import { POStatusPill } from "../purchasing/components/POStatusPill";
 import { apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { formatLocaleAmount } from "../../lib/format";
+import { unitLabel } from "../../i18n/unitLabels";
 import { procurementErrorText } from "./procurementErrors";
+import { ListPager, useMediaQuery, usePagedRows } from "./listPaging";
 import type {
   PurchaseOrder,
   PurchaseOrderLine,
@@ -144,8 +146,9 @@ export function buildOrderFulfillmentLines(
   );
 }
 
-function quantity(value: number, unit: string, locale: string) {
-  return `${value.toLocaleString(locale)} ${unit || ""}`.trim();
+// The unit as its label in the interface language ("30 pcs", "30 件").
+function quantity(value: number, unit: string, locale: string, language: string) {
+  return `${value.toLocaleString(locale)} ${unitLabel(unit, language, value)}`.trim();
 }
 
 function money(value: number, currency: string, locale: string) {
@@ -163,6 +166,9 @@ const FULFILLMENT_TONE: Record<OrderFulfillmentLine["status"], StatusTone> = {
   "发票差异": "danger",
   "已完成": "success",
 };
+
+// Rows drawn at a time; the search and filters cover every line.
+const PAGE_SIZE = 50;
 
 const isClosedPo = (row: OrderFulfillmentLine) => ["cancelled", "closed", "已取消", "已关闭"].includes(row.poStatus);
 const needsReview = (row: OrderFulfillmentLine) => row.varianceAmount !== 0 || row.status === "数量待复核";
@@ -191,6 +197,8 @@ function EvidenceLinks({ row, type }: { row: OrderFulfillmentLine; type: "receiv
   const ids = type === "receiving"
     ? unique(row.receivingEvidence.map((entry) => entry.document.grn).filter(Boolean))
     : unique(row.invoiceEvidence.map((entry) => entry.invoice.id).filter(Boolean));
+  // A receipt is shown by its number (GRN-202611-0002); its id stays in the link.
+  const receiptNumbers = new Map(row.receivingEvidence.map((entry) => [entry.document.grn, entry.document.documentNumber || entry.document.grn]));
   if (ids.length === 0)
     return <span style={{ color: A.gray2 }}>—</span>;
   return (
@@ -202,7 +210,7 @@ function EvidenceLinks({ row, type }: { row: OrderFulfillmentLine; type: "receiv
           entityId={id}
           className="!font-medium"
         >
-          {id}
+          {type === "receiving" ? receiptNumbers.get(id) || id : id}
         </BusinessEntityLink>
       ))}
     </div>
@@ -232,7 +240,7 @@ export function OrderFulfillmentLinesPage() {
     setState("loading");
     setError(null);
     try {
-      setPayload(await apiJson<PurchaseOrderWorkbenchPayload>("/api/purchase-orders-workbench"));
+      setPayload(await apiJson<PurchaseOrderWorkbenchPayload>("/api/purchase-orders-workbench?view=lines"));
       setState("loaded");
     } catch (nextError) {
       setPayload({});
@@ -258,7 +266,12 @@ export function OrderFulfillmentLinesPage() {
     });
   }, [query, rows, supplier, view]);
 
-  const count = (next: View) => (state === "loaded" ? String(rows.filter(inView[next]).length) : "—");
+  // The cards count every line; the list draws one page of the lines that match.
+  const counts = useMemo(() => Object.fromEntries(VIEWS.map((next) => [next, rows.filter(inView[next]).length])) as Record<View, number>, [rows]);
+  const count = (next: View) => (state === "loaded" ? String(counts[next]) : "—");
+  const { page, pageRows, setPage } = usePagedRows(filtered, PAGE_SIZE, `${view}|${supplier}|${query.trim().toLowerCase()}`);
+  // Below 768 px the lines are cards; only one of the two is drawn.
+  const wide = useMediaQuery("(min-width: 768px)");
   const reset = () => {
     setQuery("");
     setSupplier("");
@@ -319,11 +332,12 @@ export function OrderFulfillmentLinesPage() {
 
       <ListCard
         title={copy("采购订单行")}
-        total={state === "loaded" ? rows.length : undefined}
-        shown={filtered.length}
+        total={state === "loaded" ? filtered.length : undefined}
+        shown={pageRows.length}
         testId="order-fulfillment-line-list"
       >
-        <div className={`hidden md:block ${tableScrollClass}`}>
+        {wide ? (
+        <div className={tableScrollClass}>
           <table className={`w-full min-w-[1100px] text-left ${tableBodyTextClass}`}>
             <thead>
               <tr style={listHeadRowStyle}>
@@ -348,8 +362,8 @@ export function OrderFulfillmentLinesPage() {
               {state === "loaded" && rows.length > 0 && filtered.length === 0 && (
                 <ListStateRow colSpan={columns} state="empty" title={copy("当前筛选条件下没有订单行")} detail={say("Choose All order lines or clear the search.", "可以切换到“全部订单行”或清除搜索条件。")} />
               )}
-              {state === "loaded" && filtered.map((row, index) => (
-                <tr key={row.id} data-testid={`fulfillment-line-${row.id}`} className={listRowClass} style={listRowStyle(index, filtered.length)}>
+              {state === "loaded" && pageRows.map((row, index) => (
+                <tr key={row.id} data-testid={`fulfillment-line-${row.id}`} className={listRowClass} style={listRowStyle(index, pageRows.length)}>
                   <td className={`${cellClass} sticky left-0 z-10 max-w-[210px] bg-white`} title={row.id}>
                     <BusinessEntityLink entityType="purchase_order" entityId={row.poId} number={row.poNumber} className={tableLinkClass} />
                     <div className="truncate text-[11px]"><SupplierDisplay row={row} /></div>
@@ -363,11 +377,11 @@ export function OrderFulfillmentLinesPage() {
                     <div className="font-mono text-[11px]" style={{ color: A.sub }}>{row.sku || "—"}</div>
                   </td>
                   <td className={numberClass}>{money(row.lineAmount, row.currency, locale)}</td>
-                  <td className={`${numberClass} font-semibold`} style={{ color: A.label }}>{quantity(row.orderedQuantity, row.unit, locale)}</td>
-                  <td className={numberClass}>{quantity(row.receivedQuantity, row.unit, locale)}</td>
-                  <td className={numberClass}>{quantity(row.invoicedQuantity, row.unit, locale)}</td>
-                  <td className={numberClass} style={{ color: row.remainingToReceive > 0 ? A.label : A.gray2 }}>{quantity(row.remainingToReceive, row.unit, locale)}</td>
-                  <td className={`${numberClass}${row.receivedNotInvoiced > 0 ? " font-semibold text-amber-700" : ""}`} style={row.receivedNotInvoiced > 0 ? undefined : { color: A.gray2 }}>{quantity(row.receivedNotInvoiced, row.unit, locale)}</td>
+                  <td className={`${numberClass} font-semibold`} style={{ color: A.label }}>{quantity(row.orderedQuantity, row.unit, locale, language)}</td>
+                  <td className={numberClass}>{quantity(row.receivedQuantity, row.unit, locale, language)}</td>
+                  <td className={numberClass}>{quantity(row.invoicedQuantity, row.unit, locale, language)}</td>
+                  <td className={numberClass} style={{ color: row.remainingToReceive > 0 ? A.label : A.gray2 }}>{quantity(row.remainingToReceive, row.unit, locale, language)}</td>
+                  <td className={`${numberClass}${row.receivedNotInvoiced > 0 ? " font-semibold text-amber-700" : ""}`} style={row.receivedNotInvoiced > 0 ? undefined : { color: A.gray2 }}>{quantity(row.receivedNotInvoiced, row.unit, locale, language)}</td>
                   <td className={`${numberClass}${row.varianceAmount !== 0 ? " font-semibold text-red-700" : ""}`} style={row.varianceAmount !== 0 ? undefined : { color: A.gray2 }}>{money(row.varianceAmount, row.currency, locale)}</td>
                   <td className={`${cellClass} sticky right-0 z-10 min-w-[170px] bg-white`}>
                     <StatusChip label={copy(row.status)} tone={FULFILLMENT_TONE[row.status]} />
@@ -383,10 +397,11 @@ export function OrderFulfillmentLinesPage() {
             </tbody>
           </table>
         </div>
-
-        <div className="divide-y md:hidden">
+        ) : (
+        <div className="divide-y">
           {state === "loading" && <div className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>{copy("正在读取订单履约明细…")}</div>}
-          {state === "loaded" && filtered.map((row) => (
+          {state === "error" && <div className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>{procurementErrorText(error, language, ["Try again in a moment.", "请稍后重试。"])}</div>}
+          {state === "loaded" && pageRows.map((row) => (
             <article key={row.id} data-testid={`fulfillment-line-mobile-${row.id}`} className="p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -399,14 +414,14 @@ export function OrderFulfillmentLinesPage() {
                 <StatusChip label={copy(row.status)} tone={FULFILLMENT_TONE[row.status]} />
               </div>
               <div className="mt-4 grid grid-cols-2 gap-4 text-xs sm:grid-cols-4">
-                <div><div style={{ color: A.sub }}>{copy("订购")}</div><div className="mt-1 font-semibold">{quantity(row.orderedQuantity, row.unit, locale)}</div></div>
-                <div><div style={{ color: A.sub }}>{copy("已收")}</div><div className="mt-1 font-semibold">{quantity(row.receivedQuantity, row.unit, locale)}</div></div>
-                <div><div style={{ color: A.sub }}>{copy("已开票")}</div><div className="mt-1 font-semibold">{quantity(row.invoicedQuantity, row.unit, locale)}</div></div>
+                <div><div style={{ color: A.sub }}>{copy("订购")}</div><div className="mt-1 font-semibold">{quantity(row.orderedQuantity, row.unit, locale, language)}</div></div>
+                <div><div style={{ color: A.sub }}>{copy("已收")}</div><div className="mt-1 font-semibold">{quantity(row.receivedQuantity, row.unit, locale, language)}</div></div>
+                <div><div style={{ color: A.sub }}>{copy("已开票")}</div><div className="mt-1 font-semibold">{quantity(row.invoicedQuantity, row.unit, locale, language)}</div></div>
                 <div><div style={{ color: A.sub }}>{copy("PO 行金额")}</div><div className="mt-1 font-semibold">{money(row.lineAmount, row.currency, locale)}</div></div>
               </div>
               <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
-                <span>{copy("待收")} <strong>{quantity(row.remainingToReceive, row.unit, locale)}</strong></span>
-                <span>{copy("已收未票")} <strong>{quantity(row.receivedNotInvoiced, row.unit, locale)}</strong></span>
+                <span>{copy("待收")} <strong>{quantity(row.remainingToReceive, row.unit, locale, language)}</strong></span>
+                <span>{copy("已收未票")} <strong>{quantity(row.receivedNotInvoiced, row.unit, locale, language)}</strong></span>
                 <span>{copy("金额差异")} <strong className={row.varianceAmount !== 0 ? "text-red-700" : ""}>{money(row.varianceAmount, row.currency, locale)}</strong></span>
               </div>
               <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
@@ -422,6 +437,8 @@ export function OrderFulfillmentLinesPage() {
             </div>
           )}
         </div>
+        )}
+        {state === "loaded" && <ListPager page={page} pageSize={PAGE_SIZE} total={filtered.length} onPage={setPage} testId="order-fulfillment-line-pager" />}
       </ListCard>
     </div>
   );

@@ -10,9 +10,14 @@ import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdName
 import { receivingApi, type ReceiptListItem } from "./receivingApi";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { ListPager, usePagedRows } from "./listPaging";
+
+// Receipts drawn at a time; the cards, search and filters cover every receipt.
+const PAGE_SIZE = 50;
 
 // Receipts come from PostgreSQL through /api/procurement/receiving, drafts
-// included, for the warehouses the signed-in user may read.
+// included, for the warehouses the signed-in user may read: all of them, so
+// the total and the cards are true and older receipts are a page away.
 export function ReceivingListPage() {
   const { language, locale, timezone, formatNumber, formatDateTime } = useI18n();
   // The list shows the arrival day; the time is in the cell's tooltip.
@@ -63,6 +68,7 @@ export function ReceivingListPage() {
   const suppliers = [...new Set(rows.map((row) => row.supplierName || "").filter(Boolean))].sort();
   const warehouses = [...new Set(rows.map((row) => row.warehouse?.name || "").filter(Boolean))].sort();
   const count = (value: number) => state === "loaded" ? String(value) : "—";
+  const { page, pageRows, setPage } = usePagedRows(shown, PAGE_SIZE, [posting, supplier, warehouse, needle].join("|"));
   const reset = () => {
     setQuery("");
     setSupplier("");
@@ -113,7 +119,7 @@ export function ReceivingListPage() {
         </Field>
       </ListSearchCard>
 
-      <ListCard title={tr("收货单列表", "Receipt list")} total={state === "loaded" ? rows.length : undefined} shown={shown.length} testId="receiving-record-list">
+      <ListCard title={tr("收货单列表", "Receipt list")} total={state === "loaded" ? shown.length : undefined} shown={pageRows.length} testId="receiving-record-list">
         <div className={tableScrollClass}>
           <table className={`w-full min-w-[1000px] text-left ${tableBodyTextClass}`}>
             <thead>
@@ -136,8 +142,8 @@ export function ReceivingListPage() {
                   ? <ListStateRow colSpan={8} state="empty" title={tr("当前工作区暂无收货记录", "No receiving records in this workspace")} detail={tr("在采购订单上收货后，收货单会显示在这里。", "Receipts appear here after you receive against a purchase order.")} />
                   : <ListStateRow colSpan={8} state="empty" title={tr("没有符合筛选条件的收货单", "No receipts match these filters")} />
               )}
-              {state === "loaded" && shown.map((row, index) => (
-                <tr key={row.id} className={listRowClass} style={listRowStyle(index, shown.length)}>
+              {state === "loaded" && pageRows.map((row, index) => (
+                <tr key={row.id} className={listRowClass} style={listRowStyle(index, pageRows.length)}>
                   <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                     <BusinessEntityLink entityType="receiving_doc" entityId={row.id} className={tableLinkClass}>
                       {row.documentNumber || row.id}
@@ -181,6 +187,7 @@ export function ReceivingListPage() {
             </tbody>
           </table>
         </div>
+        {state === "loaded" && <ListPager page={page} pageSize={PAGE_SIZE} total={shown.length} onPage={setPage} testId="receiving-record-pager" />}
       </ListCard>
     </div>
   );

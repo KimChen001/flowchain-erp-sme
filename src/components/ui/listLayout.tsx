@@ -134,6 +134,15 @@ export { listTableCardsRef };
 // closes on a choice, a click elsewhere or Escape, and follows the row while
 // the page scrolls.
 export function RowMenu({ label, children, testId }: { label: string; children: React.ReactNode; testId?: string }) {
+  return (
+    <RowPopover summary={label} summaryClassName={rowActionClass.neutral} panelClassName="flex w-max min-w-40 max-w-64 flex-col p-1" closeOnClick testId={testId}>
+      {children}
+    </RowPopover>
+  );
+}
+
+// A small panel opened from a row (a menu, a preview), placed like RowMenu.
+export function RowPopover({ summary, summaryClassName, panelClassName, closeOnClick = false, children, testId }: { summary: React.ReactNode; summaryClassName: string; panelClassName: string; closeOnClick?: boolean; children: React.ReactNode; testId?: string }) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -187,12 +196,12 @@ export function RowMenu({ label, children, testId }: { label: string; children: 
   }, [open]);
   return (
     <details ref={detailsRef} className="relative" onToggle={(event) => setOpen(event.currentTarget.open)} data-testid={testId}>
-      <summary className={`cursor-pointer list-none ${rowActionClass.neutral}`}>{label}</summary>
+      <summary className={`cursor-pointer list-none ${summaryClassName}`}>{summary}</summary>
       <div
         ref={menuRef}
-        className="fixed z-50 flex w-max min-w-40 max-w-64 flex-col whitespace-normal rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+        className={`fixed z-50 whitespace-normal rounded-lg border border-slate-200 bg-white shadow-lg ${panelClassName}`}
         style={{ visibility: open ? "visible" : "hidden" }}
-        onClick={close}
+        onClick={closeOnClick ? close : undefined}
       >
         {children}
       </div>

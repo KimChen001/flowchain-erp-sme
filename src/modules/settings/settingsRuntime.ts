@@ -30,7 +30,15 @@ export async function saveSettingsSection<K extends keyof SettingsRuntime>(secti
   });
 }
 
-export const fetchSettingsAudit = () => apiJson<SettingsAuditEntry[]>('/api/audit-log?limit=200');
+// The latest 200 entries, or those of one record (entityType and entityId).
+export const fetchSettingsAudit = (filter: { entityType?: string; entityId?: string } = {}) => {
+  const query = new URLSearchParams({ limit: '200' });
+  if (filter.entityType && filter.entityId) {
+    query.set('entityType', filter.entityType);
+    query.set('entityId', filter.entityId);
+  }
+  return apiJson<SettingsAuditEntry[]>(`/api/audit-log?${query}`);
+};
 
 // The workspace's AI status (server/domain/ai-workspace-access.mjs).
 export type AiWorkspaceStatus = {

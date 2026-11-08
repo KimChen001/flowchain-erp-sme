@@ -183,8 +183,9 @@ function pareto(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       const group = classes[index] === "other" ? "" : ` · ${ctx.copy(`Class ${classes[index]}`)}`;
       return `<b>${escape(ctx.category(chart, String(row?.name ?? "")))}</b>${escape(group)}<br/>${escape(ctx.copy(barMeasure?.label || chart.title))}&nbsp;&nbsp;<b>${escape(ctx.format(num(row?.value), unit, chart.currencyCode))}</b><br/>${escape(ctx.copy("Cumulative share"))}&nbsp;&nbsp;<b>${escape(ctx.format(num(row?.["Cumulative share"]), "percentage"))}</b>`;
     } }),
-    grid: grid({ left: rows.length > 6 ? 36 : 12 }),
-    xAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { axisLabel: axisLabel(ctx, { width: 64, overflow: "break", lineHeight: 13, rotate: rows.length > 6 ? 28 : 0, interval: 0 }) }),
+    // Up to ten names break onto lines under their bars; more turn sideways.
+    grid: grid({ left: rows.length > 10 ? 36 : 12 }),
+    xAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { axisLabel: axisLabel(ctx, { width: rows.length > 10 ? 64 : 76, overflow: "break", lineHeight: 13, rotate: rows.length > 10 ? 28 : 0, interval: 0 }) }),
     yAxis: [valueAxis(ctx, unit, chart.currencyCode), valueAxis(ctx, "percentage", null, { min: 0, max: 100, splitLine: { show: false }, axisLabel: axisLabel(ctx, { formatter: (value: number) => `${value}%` }) })],
     series: [
       { name: ctx.copy(barMeasure?.label || chart.title), type: "bar", barMaxWidth: 38, data: rows.map((row, index) => ({ value: num(row.value), filterValue: String(row.filterValue ?? ""), itemStyle: { color: classColor[classes[index]], borderRadius: [4, 4, 0, 0] } })), emphasis: { focus: "series" } },
@@ -214,29 +215,77 @@ function pie(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   };
 }
 
-function funnel(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
+// Each status as a segment of one bar (design §13, P2: segmented bars instead
+// of every donut), with every status listed beneath it: its count and share.
+// Status charts list every status; any other breakdown shows its six largest
+// parts and the rest as "Other" (P3).
+const SEGMENT_LIMIT = 6;
+function segmented(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
+  const unit = chart.unit || "number";
+  const status = Boolean(chart.statusLabels) || chart.id.endsWith("_status") || chart.crossFilter === "status";
+  const sorted = rowsOf(chart).filter(row => (num(row.value) ?? 0) > 0);
+  const kept = status || sorted.length <= SEGMENT_LIMIT ? sorted : [...sorted].sort((a, b) => (num(b.value) ?? 0) - (num(a.value) ?? 0)).slice(0, SEGMENT_LIMIT - 1);
+  const rest = sorted.filter(row => !kept.includes(row));
+  const parts = [
+    ...kept.map((row, index) => ({ name: ctx.category(chart, String(row.name ?? "")), value: num(row.value) ?? 0, filterValue: filterValueOf(row), color: colorFor(String(row.name ?? ""), index, chart.colors?.length ? chart.colors : PALETTE) })),
+    ...(rest.length ? [{ name: ctx.copy("Other"), value: rest.reduce((sum, row) => sum + (num(row.value) ?? 0), 0), filterValue: "", color: OTHER }] : []),
+  ];
+  const total = parts.reduce((sum, part) => sum + part.value, 0);
+  const share = (value: number) => total ? Math.round(value / total * 1000) / 10 : 0;
+  const clean = (value: string) => value.replace(/[{}|]/g, "");
+  const byName = new Map(parts.map(part => [part.name, part]));
+  const big = ctx.large ? 26 : 22;
+  return {
+    ...base(chart),
+    // The total under a small "Total" caption, like a KPI tile.
+    title: { text: ctx.copy("Total"), subtext: ctx.format(total, unit, chart.currencyCode), left: 0, top: 0, itemGap: 2, textStyle: { fontSize: 11, fontWeight: 500, color: SUB }, subtextStyle: { fontSize: big, fontWeight: 650, color: INK } },
+    tooltip: tooltip({ trigger: "item", formatter: (param: TooltipParam) => `${param.marker}${escape(param.seriesName)}<br/><b>${escape(ctx.format(num(param.value), unit, chart.currencyCode))}</b>&nbsp;·&nbsp;${share(num(param.value) ?? 0)}%` }),
+    legend: legend(ctx, {
+      top: 92, left: 0, orient: "vertical", itemGap: 9, icon: "circle", itemWidth: 9, itemHeight: 9,
+      formatter: (name: string) => { const part = byName.get(name); return `{name|${clean(name)}}{count|${clean(ctx.format(part?.value ?? 0, unit, chart.currencyCode))}}{share|${share(part?.value ?? 0)}%}`; },
+      textStyle: { rich: { name: { width: ctx.large ? 220 : 150, color: INK, fontSize: ctx.large ? 13 : 12 }, count: { width: ctx.large ? 110 : 80, align: "right", color: INK, fontSize: ctx.large ? 13 : 12, fontWeight: 600 }, share: { width: 54, align: "right", color: SUB, fontSize: ctx.large ? 12 : 11 } } },
+    }),
+    grid: { left: 0, right: 0, top: 52, height: 26, outerBoundsMode: "none" },
+    xAxis: { type: "value", max: total || 1, show: false },
+    yAxis: { type: "category", data: [""], show: false },
+    series: parts.map((part, index) => ({
+      name: part.name, type: "bar", stack: "share", barWidth: 26,
+      itemStyle: { color: part.color, borderColor: "#fff", borderWidth: 1, borderRadius: parts.length === 1 ? 6 : index === 0 ? [6, 0, 0, 6] : index === parts.length - 1 ? [0, 6, 6, 0] : 0 },
+      label: { show: share(part.value) >= 9, position: "inside", color: "#fff", fontSize: 10, fontWeight: 600, formatter: () => `${Math.round(share(part.value))}%` },
+      emphasis: { focus: "series" },
+      data: [{ value: part.value, filterValue: part.filterValue }],
+    })),
+  };
+}
+
+// Stages as horizontal bars from the first stage down (P2: stage bars instead
+// of every funnel), each with its count and its share of the first stage.
+function stageBars(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   const rows = rowsOf(chart);
   const first = num(rows[0]?.value) || 0;
+  const names = rows.map(row => ctx.category(chart, String(row.name ?? "")));
   return {
     ...base(chart),
     tooltip: tooltip({ trigger: "item", formatter: (param: TooltipParam) => {
       const index = param.dataIndex;
-      const value = num(param.value) ?? 0;
+      const value = num((param.data as Row)?.value) ?? 0;
       const previous = index ? num(rows[index - 1]?.value) ?? 0 : value;
-      return `<b>${escape(param.name)}</b>&nbsp;&nbsp;${escape(ctx.format(value, "number"))}<br/>${escape(ctx.copy("Share of first stage"))}&nbsp;&nbsp;<b>${escape(ctx.format(first ? value / first * 100 : null, "percentage"))}</b>${index ? `<br/>${escape(ctx.copy("From previous stage"))}&nbsp;&nbsp;<b>${escape(ctx.format(previous ? value / previous * 100 : null, "percentage"))}</b>` : ""}`;
+      return `<b>${escape(names[index])}</b>&nbsp;&nbsp;${escape(ctx.format(value, "number"))}<br/>${escape(ctx.copy("Share of first stage"))}&nbsp;&nbsp;<b>${escape(ctx.format(first ? value / first * 100 : null, "percentage"))}</b>${index ? `<br/>${escape(ctx.copy("From previous stage"))}&nbsp;&nbsp;<b>${escape(ctx.format(previous ? value / previous * 100 : null, "percentage"))}</b>` : ""}`;
     } }),
+    grid: grid({ top: 4, right: ctx.large ? 120 : 96 }),
+    xAxis: { type: "value", max: first || undefined, show: false },
+    yAxis: categoryAxis(ctx, names, { inverse: true, axisLine: { show: false }, axisLabel: axisLabel(ctx, { width: ctx.large ? 200 : 132, overflow: "break", lineHeight: 14, interval: 0, color: INK }) }),
     series: [{
-      type: "funnel", sort: "none", left: "2%", width: "52%", top: 6, bottom: 6, minSize: "18%", maxSize: "100%", gap: 4, funnelAlign: "center",
-      label: { show: true, position: "right", color: INK, fontSize: ctx.large ? 13 : 11, formatter: (param: TooltipParam) => `{name|${String(param.name ?? "").replace(/[{}|]/g, "")}}\n{value|${ctx.format(num(param.value), "number")}${param.dataIndex && first ? `  ·  ${Math.round((num(param.value) ?? 0) / first * 100)}%` : ""}}`, rich: { name: { color: SUB, fontSize: ctx.large ? 12 : 11, lineHeight: 16 }, value: { color: INK, fontSize: ctx.large ? 15 : 13, fontWeight: 600, lineHeight: 18 } } },
-      labelLine: { show: true, length: 10, lineStyle: { color: AXIS_LINE } }, itemStyle: { borderColor: "#fff", borderWidth: 1 },
-      emphasis: { label: { fontWeight: 700 } },
-      data: rows.map((row, index) => ({ name: ctx.category(chart, String(row.name ?? "")), value: num(row.value), itemStyle: { color: STAGES[Math.min(index, STAGES.length - 1)] } })),
+      type: "bar", barWidth: ctx.large ? 26 : 20, showBackground: true, backgroundStyle: { color: "#f1f5f9", borderRadius: 4 },
+      label: { show: true, position: "right", color: INK, fontSize: ctx.large ? 13 : 11, formatter: (param: TooltipParam) => { const value = num((param.data as Row)?.value) ?? 0; return `{value|${ctx.format(value, "number")}}${param.dataIndex && first ? `{share|${Math.round(value / first * 100)}%}` : ""}`; }, rich: { value: { color: INK, fontWeight: 600, fontSize: ctx.large ? 13 : 12 }, share: { color: SUB, fontSize: ctx.large ? 12 : 11, padding: [0, 0, 0, 8] } } },
+      data: rows.map((row, index) => ({ value: num(row.value), itemStyle: { color: STAGES[Math.min(index, STAGES.length - 1)], borderRadius: 4 } })),
     }],
   };
 }
 
-// A stacked bar with an invisible base: totals rise from zero, steps float
-// from the running total, decreases (still waiting) in orange and increases in teal.
+// A value bridge read top to bottom (P2: a horizontal bridge instead of the
+// waterfall): totals start at zero, steps float from the running total,
+// decreases (still waiting) in orange and increases in teal.
 function waterfall(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   const rows = rowsOf(chart);
   const totals = new Set(chart.totals || []);
@@ -249,7 +298,7 @@ function waterfall(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
     else if (value >= 0) { lift.push(running); up.push(value); total.push("-"); down.push("-"); running += value; }
     else { running += value; lift.push(running); down.push(-value); total.push("-"); up.push("-"); }
   }
-  const label = (sign: string) => ({ show: true, position: "top", color: SUB, fontSize: ctx.large ? 12 : 10, formatter: (param: TooltipParam) => `${sign}${ctx.compact(num(param.value) ?? 0, unit, chart.currencyCode)}` });
+  const label = (sign: string) => ({ show: true, position: "right", color: INK, fontSize: ctx.large ? 12 : 11, fontWeight: 600, formatter: (param: TooltipParam) => `${sign}${ctx.compact(num(param.value) ?? 0, unit, chart.currencyCode)}` });
   return {
     ...base(chart),
     legend: legend(ctx, { data: [ctx.copy("Total"), ctx.copy("Decrease"), ctx.copy("Increase")] }),
@@ -257,14 +306,14 @@ function waterfall(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       const row = rows[params[0]?.dataIndex ?? 0];
       return `<b>${escape(ctx.category(chart, String(row?.name ?? "")))}</b><br/>${escape(ctx.format(num(row?.value), unit, chart.currencyCode))}`;
     } }),
-    grid: grid(),
-    xAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { axisLabel: axisLabel(ctx, { width: 90, overflow: "break", interval: 0 }) }),
-    yAxis: valueAxis(ctx, unit, chart.currencyCode),
+    grid: grid({ right: 64 }),
+    yAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { inverse: true, axisLabel: axisLabel(ctx, { width: ctx.large ? 200 : 130, overflow: "break", lineHeight: 14, interval: 0, color: INK }) }),
+    xAxis: valueAxis(ctx, unit, chart.currencyCode),
     series: [
       { name: "lift", type: "bar", stack: "bridge", silent: true, itemStyle: { color: "transparent" }, emphasis: { disabled: true }, tooltip: { show: false }, data: lift },
-      { name: ctx.copy("Total"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: PALETTE[0], borderRadius: [4, 4, 0, 0] }, label: label(""), data: total },
-      { name: ctx.copy("Decrease"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: WAITING, borderRadius: 4 }, label: label("−"), data: down },
-      { name: ctx.copy("Increase"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: DONE, borderRadius: 4 }, label: label("+"), data: up },
+      { name: ctx.copy("Total"), type: "bar", stack: "bridge", barMaxWidth: 26, itemStyle: { color: PALETTE[0], borderRadius: 4 }, label: label(""), data: total },
+      { name: ctx.copy("Decrease"), type: "bar", stack: "bridge", barMaxWidth: 26, itemStyle: { color: WAITING, borderRadius: 4 }, label: label("−"), data: down },
+      { name: ctx.copy("Increase"), type: "bar", stack: "bridge", barMaxWidth: 26, itemStyle: { color: DONE, borderRadius: 4 }, label: label("+"), data: up },
     ],
   };
 }
@@ -323,9 +372,10 @@ function heatmap(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       const [x, y, value] = (param.data as { value: [number, number, number] }).value;
       return `<b>${escape(ctx.category(chart, String(rows[y]?.name ?? "")))}</b> · ${escape(columnLabel(columns[x]))}<br/>${escape(ctx.format(value, chart.unit || "number"))}`;
     } }),
-    grid: grid({ top: 8, bottom: 44 }),
+    // A fixed name column: the outer bounds do not hold the wrapped names here.
+    grid: grid({ top: 8, bottom: 56, left: ctx.large ? 176 : 152, outerBoundsMode: "none" }),
     xAxis: categoryAxis(ctx, columns.map(columnLabel), { splitArea: { show: false }, axisLine: { show: false }, axisLabel: axisLabel(ctx, { interval: 0 }) }),
-    yAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { inverse: true, axisLine: { show: false }, axisLabel: axisLabel(ctx, { width: 130, overflow: "truncate", interval: 0 }) }),
+    yAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { inverse: true, axisLine: { show: false }, axisLabel: axisLabel(ctx, { lineHeight: 13, interval: 0, formatter: (value: string) => wrap(value, 20) }) }),
     visualMap: { min: 0, max, calculable: false, orient: "horizontal", left: "center", bottom: 0, itemWidth: 10, itemHeight: 140, text: [ctx.copy("More"), ctx.copy("Less")], textStyle: { color: SUB, fontSize: 10 }, inRange: { color: ["#eff6ff", "#93c5fd", "#2563eb", "#1e3a8a"] } },
     series: [{
       type: "heatmap",
@@ -453,9 +503,9 @@ export function chartOption(chart: ReportChart, ctx: ChartContext): EChartsCoreO
   switch (chart.type) {
     case "combo": return combo(chart, ctx);
     case "pareto": return pareto(chart, ctx);
-    case "pie":
-    case "donut": return pie(chart, ctx);
-    case "funnel": return funnel(chart, ctx);
+    case "pie": return pie(chart, ctx);
+    case "donut": return segmented(chart, ctx);
+    case "funnel": return stageBars(chart, ctx);
     case "waterfall": return waterfall(chart, ctx);
     case "treemap": return treemap(chart, ctx);
     case "gauge": return gauge(chart, ctx);
@@ -473,7 +523,10 @@ export function chartOption(chart: ReportChart, ctx: ChartContext): EChartsCoreO
 export function chartHeight(chart: ReportChart) {
   const rows = (chart.data || []).length;
   if (chart.type === "horizontal_bar" || (chart.type === "stacked_bar" && chart.orientation === "horizontal")) return Math.max(260, rows * 30 + 56);
-  if (chart.type === "heatmap") return Math.max(240, rows * 36 + 76);
+  if (chart.type === "heatmap") return Math.max(250, rows * 36 + 88);
+  if (chart.type === "donut") return Math.max(210, 106 + Math.min(rows, SEGMENT_LIMIT + 6) * 22);
+  if (chart.type === "funnel") return Math.max(200, rows * 44 + 16);
+  if (chart.type === "waterfall") return Math.max(240, rows * 40 + 56);
   if (chart.type === "calendar") return 210;
   if (chart.type === "gauge") return 250;
   if (["treemap", "sankey", "scatter", "radar"].includes(chart.type)) return 330;

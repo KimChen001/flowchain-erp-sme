@@ -400,7 +400,7 @@ export default function ReorderListPage() {
                               <div style={{ color: A.sub }}>
                                 {row.supplier.minimumOrderQuantity === null
                                   ? t("moqNotRecorded")
-                                  : t(row.supplier.moqUnit ? "moq" : "moqNoUnit", { n: formatQuantity(row.supplier.minimumOrderQuantity), unit: row.supplier.moqUnit || "" })}
+                                  : t(row.supplier.moqUnit ? "moq" : "moqNoUnit", { n: formatQuantity(row.supplier.minimumOrderQuantity), unit: unitLabel(row.supplier.moqUnit, t.language, row.supplier.minimumOrderQuantity) })}
                               </div>
                             </>
                           ) : (

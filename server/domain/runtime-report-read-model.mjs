@@ -274,6 +274,33 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
   return { id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, ...(demand ? { quantityUnit: demand.unit } : {}), comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, trend: metricTrend(id, all, money), generatedAt: new Date().toISOString() }
 }
 
+// Period comparison (docs/report-collaboration-design.md §5.1): a figure over
+// the range beside the same figure over the period of the same length just
+// before it, both computed by buildRuntimeGovernedReport, so both sides count
+// alike. Only flow figures are compared. A state as of today (open, overdue,
+// in stock, awaiting match, shipped in full) would read today's state for the
+// earlier period too, and master record counts have no period.
+export const COMPARABLE_METRICS = new Set(['purchase_order_amount', 'sales_order_amount', 'sales_order_count', 'invoice_amount', 'on_time_receipt_rate', 'active_supplier_count'])
+const isCalendarDay = value => /^\d{4}-\d{2}-\d{2}$/.test(value)
+export function previousPeriod(from, to) {
+  if (!isCalendarDay(from) || !isCalendarDay(to) || from > to) return null
+  const before = addDays(from, -1)
+  return { from: addDays(before, -daysBetween(from, to)), to: before }
+}
+// No comparison when the earlier period has no records for the figure or no
+// figure (a rate under its minimum sample), or when the two amounts are not
+// in one currency.
+function compareKpi(current, earlier, range) {
+  if (!COMPARABLE_METRICS.has(current.id)) return current
+  const none = { ...current, comparisonLabel: 'No figure for the previous period', comparisonRange: range }
+  if (!earlier || current.dataStatus !== 'complete' || earlier.dataStatus !== 'complete' || current.currentValue === null || earlier.currentValue === null) return none
+  if (current.unit === 'currency' && (!current.currencyCode || current.currencyCode !== earlier.currencyCode || !(earlier.currencyAmounts || []).some(group => group.recordCount > 0))) return none
+  if (current.unit === 'number' && earlier.currentValue === 0) return none
+  const points = current.unit === 'percentage'
+  const delta = round4(current.currentValue - earlier.currentValue)
+  return { ...current, comparisonValue: earlier.currentValue, comparisonDelta: delta, comparisonRate: points ? null : round4(delta / Math.abs(earlier.currentValue) * 100), comparisonDirection: delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat', comparisonLabel: '上期', comparisonUnit: points ? 'percentage_points' : current.unit, comparisonRange: range }
+}
+
 // Notes about inventory data belong on the dashboards that show inventory
 // figures (inventory and the overview); the warehouse and bin notes only on
 // the inventory dashboard, the one that would show stock by location.
@@ -334,16 +361,20 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const promisePurchaseOrderIds = query.subject === 'suppliers' && query.currency ? new Set(filtered(source.purchase_orders, { ...query, from: '', to: '', currency: '' }, applicableFilters('purchase_orders', primaryKey)).map(row => row.id)) : null
   const promiseOptions = { graceDays: query.graceDays, warehouseIds: Array.isArray(options.warehouseIds) ? options.warehouseIds : null, purchaseOrderIds: promisePurchaseOrderIds }
   const facts = { ...buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand, onTimeWithheld, promiseOptions }), salesDemandTotal: salesDemandTotal(salesDemand), inventoryOnHand: inventoryOnHandTotal(source.inventory_balances, inventory.units) }
-  const visuals = buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts, today, timeZone, salesDemand, onTimeWithheld, promiseOptions })
+  const visuals = options.kpisOnly ? [] : buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts, today, timeZone, salesDemand, onTimeWithheld, promiseOptions })
   const inventoryLabels = primaryKey === 'inventory_balances' ? { id: 'SKU', itemName: '物料名称', status: 'Risk' } : primaryKey === 'suppliers' ? { number: '供应商编号' } : {}
   const repeatsId = key => key === 'number' && details.every(row => !text(row.number) || text(row.number) === text(row.id))
   const columns = [...new Set(details.flatMap(row => Object.keys(row)))].filter(key => !repeatsId(key)).map(key => ({ key, label: inventoryLabels[key] || ({ id: '业务编号', number: '单据号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', unit: '单位', fulfilled: '已履约', reserved: 'Reserved quantity', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: 'Short now', availableToPromise: 'Available to promise', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'fulfilled', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
-  const kpis = metricIds.map(id => metric(id, all, inventory, query, primaryKey, facts, restriction))
+  // input.comparison 'previous_period' sets the comparison; options.kpisOnly
+  // marks the inner run for the earlier period, which needs only its KPIs.
+  const comparisonRange = input.comparison === 'previous_period' && !options.kpisOnly ? previousPeriod(query.from, query.to) : null
+  const earlier = comparisonRange ? buildRuntimeGovernedReport(context, { ...input, comparison: 'none', measures: metricIds, filters: { ...(input.filters || {}), from: comparisonRange.from, to: comparisonRange.to } }, { ...options, kpisOnly: true }).kpis : []
+  const kpis = metricIds.map(id => metric(id, all, inventory, query, primaryKey, facts, restriction)).map(item => comparisonRange ? compareKpi(item, earlier.find(entry => entry.id === item.id), comparisonRange) : item)
   const moneyLimitations = ['multi_currency_unconverted', 'currency_missing_or_invalid', 'amount_missing', 'amount_restricted', 'subject_restricted']
   const limitations = [...new Set([...array(context.dataLimitations), ...inventory.dataLimitations, ...(inventory.availability.length && inventory.availability.some(row => row.onHand === null) ? ['inventory_on_hand_incomplete'] : []), ...scopeMoney.limitations, ...kpis.flatMap(item => item.limitations.filter(code => moneyLimitations.includes(code)))])].filter(code => noteApplies(code, query.subject))
   const distinct = values => [...new Set(values.map(text).filter(Boolean))]
-  const dataScope = { label: '当前工作区数据', company: null, currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from, to: query.to, activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => ['from', 'to'].includes(key) ? text(input.filters?.[key]) : query[key]).length, sourceLabel: '业务记录', completenessLabel: details.length ? `已读取 ${details.length} 条真实记录` : '当前范围无真实业务记录', filterOptions: { companies: [], suppliers: distinct(array(context.suppliers).map(row => row.supplierName || row.name)), customers: distinct(array(context.customers).map(row => row.name || row.customerName)), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_orders, ...source.supplier_invoices].map(row => row.currency)) } }
-  const overview = query.subject === 'overview' ? buildBusinessOverview(all, { salesDemand, reorder: options.reorder || null }) : null
+  const dataScope = { label: '当前工作区数据', company: null, currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from, to: query.to, activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => ['from', 'to'].includes(key) ? text(input.filters?.[key]) : query[key]).length, sourceLabel: '业务记录', completenessLabel: all[primaryKey].length ? `已读取 ${all[primaryKey].length} 条真实记录` : '当前范围无真实业务记录', filterOptions: { companies: [], suppliers: distinct(array(context.suppliers).map(row => row.supplierName || row.name)), customers: distinct(array(context.customers).map(row => row.name || row.customerName)), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_orders, ...source.supplier_invoices].map(row => row.currency)) } }
+  const overview = query.subject === 'overview' && !options.kpisOnly ? buildBusinessOverview(all, { salesDemand, reorder: options.reorder || null }) : null
   // Subjects the read context could not load in full; totals over them may be low.
   const truncatedSubjects = array(context.truncatedSubjects).filter(entry => text(entry?.subject) && Number.isFinite(Number(entry?.limit))).map(entry => ({ subject: text(entry.subject), limit: Number(entry.limit) }))
   return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, restrictedSubjects: [...restriction.subjects], restrictedAmounts: Object.keys(restriction.amounts).filter(key => restriction.amounts[key]), kpis, charts: overview ? [...overview.charts, ...visuals] : visuals, attention: overview?.attention || [], totalRecords: all[primaryKey].length, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: metricDefinitions[id][4] })), exportRows: all[primaryKey], metricDefinitions: kpis }

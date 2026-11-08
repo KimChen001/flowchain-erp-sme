@@ -137,3 +137,28 @@ test('empty fields do not filter', async () => {
     etaTo: '',
   })).length, 2)
 })
+
+// The Status filter offers status codes; orders stored with the legacy
+// Chinese value still match their code, and the code matches the code.
+test('filters by status code, matching legacy Chinese statuses', async () => {
+  assert.deepEqual((await filterWith({ status: 'issued' })).map((order) => order.po), ['PO-1001'])
+  assert.deepEqual((await filterWith({ status: 'fully_received' })).map((order) => order.po), ['PO-1002'])
+  const { mod } = await loadFilterModule()
+  const coded = [{ ...orders[0], status: 'issued' }, { ...orders[1], status: 'pending_approval' }]
+  const byCode = (status) => mod.filterPurchaseOrdersForWorkbench(coded, { ...mod.defaultPurchaseOrderWorkbenchFilters, status }).map((order) => order.po)
+  assert.deepEqual(byCode('issued'), ['PO-1001'])
+  assert.deepEqual(byCode('已发出'), ['PO-1001'])
+  assert.deepEqual(byCode('pending_approval'), ['PO-1002'])
+  assert.equal(mod.purchaseOrderStatusFilterOptions[1], 'open')
+})
+
+// "open" is the report definition (committed, still to receive): the orders
+// the server's summary lists, not a stored status.
+test('the open status lists the summary\'s open orders', async () => {
+  const { mod } = await loadFilterModule()
+  const filters = { ...mod.defaultPurchaseOrderWorkbenchFilters, status: 'open' }
+  assert.deepEqual(mod.filterPurchaseOrdersForWorkbench(orders, filters, new Set(['PO-1002'])).map((order) => order.po), ['PO-1002'])
+  assert.deepEqual(mod.filterPurchaseOrdersForWorkbench(orders, filters, new Set()).map((order) => order.po), [])
+  // Before the summary is read, nothing is hidden.
+  assert.equal(mod.filterPurchaseOrdersForWorkbench(orders, filters).length, 2)
+})

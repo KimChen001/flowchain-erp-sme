@@ -63,8 +63,9 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByText("LOCAL-DEMO-PO-001", { exact: true })).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-PO-002", { exact: true })).toBeVisible();
   await expect(page.getByText("Acme Components").first()).toBeVisible();
-  await expect(page.getByText("部分收货").first()).toBeVisible();
-  await expect(page.getByText("发票差异").first()).toBeVisible();
+  // Read in the list: the Status filter offers "部分收货" (partially received) too.
+  await expect(page.locator("tbody").getByText("部分收货").first()).toBeVisible();
+  await expect(page.locator("tbody").getByText("发票差异").first()).toBeVisible();
   await capture(page, "01-procurement-orders");
 
   await page.goto("/app/procurement/order-lines");
@@ -72,8 +73,9 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(fulfillmentTable).toBeVisible();
   await expect(fulfillmentTable.getByRole("columnheader", { name: "已收", exact: true })).toBeVisible();
   await expect(fulfillmentTable.getByRole("columnheader", { name: "已开票", exact: true })).toBeVisible();
-  await expect(page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-001-LINE-001")).toContainText("20 pcs");
-  await expect(page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-002-LINE-001")).toContainText("40 pcs");
+  // Units read in the interface language: pcs is 件 on a Chinese page.
+  await expect(page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-001-LINE-001")).toContainText("20 件");
+  await expect(page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-002-LINE-001")).toContainText("40 件");
   await capture(page, "01a-order-fulfillment-lines");
 
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-001");

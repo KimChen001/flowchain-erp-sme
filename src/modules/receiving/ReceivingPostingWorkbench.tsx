@@ -8,6 +8,7 @@ import { tableMinSmClass, tableScrollClass, tdClass, tdIdClass, tdNowrapClass, t
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { useI18n } from "../../i18n/I18n";
+import { unitLabel } from "../../i18n/unitLabels";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { RecordBillAction } from "../../components/business/BillingEntryActions";
@@ -30,7 +31,7 @@ type Detail = {
   limitations: string[];
 };
 type Preview = { operation: "post" | "reverse"; allowed: boolean; blockingIssues: Array<{ code: string; message: string }>; warnings: Array<{ code: string; message: string }>; inventoryImpacts: Array<Record<string, string>>; purchaseOrderImpacts: Array<Record<string, string>>; statusImpact: Record<string, string>; factsToCreate: { inventoryMovementCount: number; auditEventCount: number; commandExecutionCount: number }; limitations: string[] };
-type Link = { label: string; count: number; targetRouteId: string; targetType: string; targetId?: string; filter?: Record<string, unknown>; enabled: boolean; unavailableReason?: string | null };
+type Link = { label: string; count: number; targetRouteId: string; targetType: string; targetId?: string; filter?: Record<string, unknown>; enabled: boolean; unavailableReason?: string | null; unavailableReasonCode?: string | null };
 type TimelineEvent = { id: string; type: string; event: string; occurredAt: string; label: string; actorId?: string; actorName?: string | null; postedFact: boolean; data?: Record<string, unknown> | null };
 type Reconciliation = { status: "matched" | "mismatch" | "unavailable"; reason?: string; entries: Array<{ sku: string; warehouseId?: string | null; locationKey: string; status: string; calculatedQuantity: string; recordedQuantity: string | null; differenceQuantity: string | null }> };
 type Navigate = (routeId: string, focus?: { entityType: string; entityId: string } | null, options?: { source?: string; entityLabel?: string }) => void;
@@ -91,6 +92,13 @@ const LINK_COPY: Record<string, Pair> = {
   Balances: ["Balances", "库存余额"],
   Audit: ["Audit", "审计记录"],
   Reversal: ["Reversal", "冲销"],
+};
+
+// Why a related-records button is off, by the server's code (or, from an
+// older server, its English sentence).
+const LINK_UNAVAILABLE_COPY: Record<string, Pair> = {
+  NO_RECORDS: ["No related records yet.", "暂无相关记录。"],
+  "No authoritative records are available.": ["No related records yet.", "暂无相关记录。"],
 };
 
 // Movement kinds as the server's timeline names them.
@@ -235,6 +243,11 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   if (!detail) return <div className="space-y-3"><BackToListLink list="receiving" /><div className="rounded-xl border p-6" data-testid="receiving-error" title={errorCode}><AlertTriangle className="mb-2" color={A.red} />{error || say("This receipt is unavailable.", "该收货单暂时无法查看。")}<button className="ml-3 underline" onClick={() => void refresh()}>{say("Retry", "重试")}</button></div></div>;
 
   const unavailable = say("Unavailable", "不可用");
+  // A disabled related-records button says why in the interface language.
+  const linkUnavailableText = (link: Link) => {
+    const pair = LINK_UNAVAILABLE_COPY[link.unavailableReasonCode || ""] || LINK_UNAVAILABLE_COPY[link.unavailableReason || ""];
+    return pair ? sayPair(pair) : language === "en-US" ? link.unavailableReason || undefined : sayPair(LINK_UNAVAILABLE_COPY.NO_RECORDS);
+  };
   // Quantities are recorded as decimal strings; they are shown in the
   // workspace number format, with only the fraction digits that are not zero.
   const qty = (value?: string | null) => formatDecimal(value, locale);
@@ -369,12 +382,12 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
           <td className={tdNumericRightClass}>{qty(line.remainingReceivableQuantity)}</td>
           <td className={`${tdClass} min-w-[140px]`}>{line.warehouse?.name || line.warehouse?.code || unavailable}</td>
           <td className={tdNowrapClass}>{line.location || "—"}</td>
-          <td className={tdNowrapClass}>{line.unit || "—"}</td>
+          <td className={tdNowrapClass}>{line.unit ? unitLabel(line.unit, language) : "—"}</td>
         </tr>)}</tbody>
       </table></div>
     </section>
 
-    <section className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Link2 size={16} />{say("Related records", "关联记录")}</div><div className="flex flex-wrap gap-2">{links.map((link) => <button key={link.label} disabled={!link.enabled} title={link.unavailableReason || undefined} onClick={() => onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link', entityLabel: link.label })} className={`rounded-lg border px-3 py-1.5 text-sm ${link.enabled ? 'text-blue-700 hover:bg-blue-50' : 'text-gray-400'}`}>{LINK_COPY[link.label] ? sayPair(LINK_COPY[link.label]) : link.label} · {link.count}</button>)}</div></section>
+    <section className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Link2 size={16} />{say("Related records", "关联记录")}</div><div className="flex flex-wrap gap-2">{links.map((link) => <button key={link.label} disabled={!link.enabled} title={link.enabled ? undefined : linkUnavailableText(link)} onClick={() => onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link', entityLabel: link.label })} className={`rounded-lg border px-3 py-1.5 text-sm ${link.enabled ? 'text-blue-700 hover:bg-blue-50' : 'text-gray-400'}`}>{LINK_COPY[link.label] ? sayPair(LINK_COPY[link.label]) : link.label} · {link.count}</button>)}</div></section>
 
     <section className="overflow-hidden rounded-2xl border bg-white" data-testid="receiving-reconciliation">
       <div className="flex items-center gap-2 border-b px-4 py-3 text-sm font-semibold">{say("Inventory reconciliation", "库存核对")}{reconciliation && chip(reconciliation.status)}</div>

@@ -5,6 +5,7 @@ import { businessEntityPath, businessEntityRouteRegistry, type BusinessEntityTyp
 import { businessEntityCopy } from "./businessEntityCopy";
 import { useI18n } from "../../i18n/I18n";
 import { isDocumentNumberType, useDocumentNumber } from "../../lib/documentNumbers";
+import { useBackLabel } from "../navigation/backLabel";
 
 type Props = {
   entityType: BusinessEntityType;
@@ -22,6 +23,7 @@ export function BusinessEntityLink({ entityType, entityId, children, className =
   // The i18n language, not <html lang>, which is updated only after a language change renders.
   const { language } = useI18n();
   const copy = (label: string) => businessEntityCopy(label, language);
+  const backLabel = useBackLabel();
   const value = entityId?.trim();
   // Purchase requests, RFQs and purchase orders are shown by their number; the id stays in the link.
   const shown = useDocumentNumber(isDocumentNumberType(entityType) ? entityType : null, value, number) || value;
@@ -32,7 +34,9 @@ export function BusinessEntityLink({ entityType, entityId, children, className =
   if (isUnavailableProductRoute(route.routeId)) return <span className={className || undefined}>{text}</span>;
   const params = new URLSearchParams();
   params.set("returnTo", `${location.pathname}${location.search}`);
-  params.set("returnLabel", copy(returnLabel || route.returnLabel));
+  // Back goes to this page, so the label names this page unless the caller
+  // gave one.
+  params.set("returnLabel", returnLabel ? copy(returnLabel) : backLabel() || copy(route.returnLabel));
   const href = `${businessEntityPath(entityType, value)}?${params.toString()}`;
   return (
     <Link

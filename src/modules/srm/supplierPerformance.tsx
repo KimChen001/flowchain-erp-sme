@@ -7,6 +7,7 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { ReportDateInput } from "../reports/ReportDateInput";
+import { formatCalendarDay } from "../../lib/format";
 
 // Supplier delivery performance per delivery (the lines of one PO with one
 // original promised date), measured against that date
@@ -176,18 +177,20 @@ export function useSupplierScorecard(query: { supplierId?: string; from: string;
 
 // Period filter: presets plus explicit dates. An empty period means the
 // server's default, the 90 days ending today in the workspace timezone.
-function PeriodFilter({ from, to, graceDays, asOf, onChange, onReload }: { from: string; to: string; graceDays: number; asOf?: string; onChange: (next: { from: string; to: string; graceDays: number }) => void; onReload: () => void }) {
+// Inside the supplier report the page's own date filter sets the period (both
+// read the link's from and to), so there only the grace days show.
+function PeriodFilter({ from, to, graceDays, asOf, onChange, onReload, dates = true }: { from: string; to: string; graceDays: number; asOf?: string; onChange: (next: { from: string; to: string; graceDays: number }) => void; onReload: () => void; dates?: boolean }) {
   const tr = useCopy();
   const { language } = useI18n();
   const today = asOf || isoDay(new Date());
   return (
     <div className="flex flex-wrap items-end gap-2" data-testid="supplier-performance-period">
-      <div className="flex flex-wrap gap-1">
+      {dates && <div className="flex flex-wrap gap-1">
         {PRESETS.map(([key, days]) => (
           <button key={key} type="button" onClick={() => onChange({ from: shiftDay(to || today, -(days - 1)), to: to || today, graceDays })} className="h-8 rounded-lg px-2.5 text-xs font-medium" style={{ background: A.gray6, color: A.blue }}>{tr(key)}</button>
         ))}
-      </div>
-      {(["from", "to"] as const).map((field) => (
+      </div>}
+      {dates && (["from", "to"] as const).map((field) => (
         <label key={field} className="w-32 text-[11px] font-medium" style={{ color: A.gray1 }}>
           {tr(field)}
           <ReportDateInput label={tr(field)} value={field === "from" ? from : to} language={language} onChange={(value) => onChange({ from: field === "from" ? value : from, to: field === "to" ? value : to, graceDays })} />
@@ -469,8 +472,9 @@ export function SupplierPerformancePanel({ supplierId }: { supplierId: string })
 }
 
 // Reports › Supplier analytics: one row per supplier.
-export function SupplierPerformanceTable() {
+export function SupplierPerformanceTable({ datesFromPage = false }: { datesFromPage?: boolean } = {}) {
   const tr = useCopy();
+  const { locale } = useI18n();
   const format = useFormat();
   const [period, setPeriod] = useUrlPeriod();
   const { data, error, loading, reload } = useSupplierScorecard(period);
@@ -482,9 +486,9 @@ export function SupplierPerformanceTable() {
         <div>
           <h2 className="flex items-center gap-1 text-sm font-semibold">{tr("title")}<Definition /></h2>
           <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("subtitle")}{data?.rules.promiseBasis === "po_date" && <span data-testid="supplier-performance-basis"> {tr("basisNote")}</span>}</p>
-          {data && <p className="mt-1 text-[11px]" style={{ color: A.gray1 }}>{data.period.from} — {data.period.to} · {tr("graceDays")}: {data.rules.graceDays}</p>}
+          {data && <p className="mt-1 text-[11px]" style={{ color: A.gray1 }}>{formatCalendarDay(data.period.from, locale)} — {formatCalendarDay(data.period.to, locale)} · {tr("graceDays")}: {data.rules.graceDays}</p>}
         </div>
-        <PeriodFilter from={period.from || data?.period.from || ""} to={period.to || data?.period.to || ""} graceDays={period.graceDays} asOf={data?.asOf} onChange={setPeriod} onReload={reload} />
+        <PeriodFilter from={period.from || data?.period.from || ""} to={period.to || data?.period.to || ""} graceDays={period.graceDays} asOf={data?.asOf} onChange={setPeriod} onReload={reload} dates={!datesFromPage} />
       </div>
       {loading ? <p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("loading")}</p>
         : error ? <div role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-xs text-red-800"><ScorecardError failure={error} onRetry={reload} /></div>

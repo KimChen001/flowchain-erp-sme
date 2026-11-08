@@ -44,7 +44,16 @@ export async function handleEvidenceGraphRoute(ctx) {
       send(res, 403, { code: 'AUTHORIZATION_PERMISSION_DENIED', message: 'Your role cannot view this record.', anchor: { entityType, entityId }, restrictedSubjects: scopeBusinessContext({}, access).restrictedSubjects })
       return true
     }
-    context = scopeBusinessContext(await readBusinessContext(ctx, { warehouseIds: access.warehouseIds }), access)
+    const raw = await readBusinessContext(ctx, { warehouseIds: access.warehouseIds })
+    // The read context holds the newest sales orders only; an older order
+    // still anchors its own graph. It is added before scoping, so the same
+    // masking applies to it.
+    const isAnchor = (order) => [order?.id, order?.salesOrderId, order?.orderNumber, order?.number, order?.orderNo].some(key => key && String(key).toLowerCase() === entityId.toLowerCase())
+    if (collection === 'salesOrders' && entityId && !(raw.salesOrders || []).some(isAnchor) && ctx.repositories?.salesOrders?.getOrder) {
+      const order = await ctx.repositories.salesOrders.getOrder(entityId, { tenantId: ctx.identity?.tenantId })
+      if (order) raw.salesOrders = [...(raw.salesOrders || []), order]
+    }
+    context = scopeBusinessContext(raw, access)
   } catch (error) { sendReadAccessError(ctx, error); return true }
   const graph = buildRuntimeEvidenceGraph(context, { entityType, entityId })
   if (graph.dataLimitations.includes('record_not_found')) return missingAnchor(ctx, entityType, entityId)
