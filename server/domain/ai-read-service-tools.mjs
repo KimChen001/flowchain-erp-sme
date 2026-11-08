@@ -248,7 +248,7 @@ function salesRange(args, today) {
 }
 const salesSummary = defineAiTool({
   name: 'sales_summary',
-  description: 'Completed sales from customer invoices over a period: the total, and the largest customers or items, or each month, by invoiced amount with each one\'s share. Invoices dated in the period, not drafts or cancelled, before tax; credit notes are not subtracted. For "last month\'s sales", "our top customers this quarter" or "which products sold most".',
+  description: 'Completed sales from customer invoices over a period: the total, and the largest customers or items, or each month, by invoiced amount with each one\'s share (and, for customers and items, a rank, 1 the largest, with runningAmount and runningSharePercent: the rows up to and including it together, so the top N together are the figures at rank N). Invoices dated in the period, not drafts or cancelled, before tax; credit notes are not subtracted. For "last month\'s sales", "our top customers this quarter" or "which products sold most".',
   parameters: {
     by: { type: 'string', enum: ['customer', 'item', 'month'], description: 'customer (default), item or month.' },
     period: { type: 'string', enum: SALES_PERIODS, description: 'Counted from the workspace day; last_12_months by default.' },
@@ -294,12 +294,18 @@ const salesSummary = defineAiTool({
       entry.quantity += row.quantity || 0
       groups.set(key, entry)
     }
+    // Customers and items, largest first, carry the share of all the rows up
+    // to them (2026-11-07: "前五大客户合计" was summed by the model, written as
+    // 25.4% and corrected to 29.4% in the same answer).
+    let running = 0
     const rows = [...groups.values()]
       .sort(by === 'month' ? (a, b) => a.key.localeCompare(b.key) : (a, b) => b.amount - a.amount || a.key.localeCompare(b.key))
-      .map((entry) => ({
+      .map((entry, index) => ({
+        ...(by === 'month' ? {} : { rank: index + 1 }),
         ...(by === 'item' ? { sku: entry.row.sku, itemName: entry.row.itemName, quantity: Math.round(entry.quantity * 10000) / 10000, unit: entry.row.unit, ref: aiToolRef('item', entry.row.itemId || entry.row.sku, entry.row.sku) }
           : by === 'month' ? { month: entry.key } : { customer: entry.key || null }),
         invoices: entry.invoices.size, amount: money2(entry.amount), sharePercent: share(entry.amount, total),
+        ...(by === 'month' ? {} : { runningAmount: money2((running += entry.amount)), runningSharePercent: share(running, total) }),
       }))
     return {
       period: range, basis: SALES_BASIS, by, currency,

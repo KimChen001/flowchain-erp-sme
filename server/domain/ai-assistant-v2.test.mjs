@@ -1071,6 +1071,23 @@ test('the text is written as the app shows it: workspace dates and amounts, full
   assert.deepEqual(ofType(chips.events, 'ui')[0].props.questions, ['PO-001 会影响哪些销售订单？'])
 })
 
+// 2026-11-08: English narration with a Chinese fragment in it opened a Chinese
+// answer, because only text with no Chinese at all counted as English.
+test('a Chinese answer leaves out English narration that quotes a Chinese word; Chinese with English names stays', async () => {
+  const narration = 'The cake rack in the records is most likely the Regency Cakestand 3 Tier (SKU-123). I cannot see a SKU named 蛋糕架 itself, so I am working from that match. Let me pull its stock position and check the 60 figure.'
+  const { events, body } = await ask([
+    [...say(narration), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [...say('建议订 60 个 Regency Cakestand 3 Tier，因为 PO-001 已逾期 4 天。'), end()],
+  ], { question: '为什么建议订 60 个蛋糕架？', body: { answerLanguage: 'zh-CN' } })
+  const shown = ofType(events, 'text_delta').map((event) => event.text).join('')
+  assert.doesNotMatch(shown, /Let me pull|working from that match/)
+  assert.match(body.conclusion.summary, /建议订 60 个 Regency Cakestand 3 Tier/)
+  // The same narration as its own paragraph above the answer, in one text.
+  const joined = await ask([[...say(`${narration}\n\n`, '建议订 60 个，因为 PO-001 已逾期 4 天。'), end()]], { question: '为什么建议订 60 个蛋糕架？', body: { answerLanguage: 'zh-CN' } })
+  assert.doesNotMatch(ofType(joined.events, 'text_delta').map((event) => event.text).join(''), /Let me pull/)
+  assert.match(joined.body.conclusion.summary, /建议订 60 个/)
+})
+
 test('a Chinese answer leaves out English narration before a tool call', async () => {
   const { events, body } = await ask([
     [...say('The item is LDM-002 Temperature Sensor. I will fill in the form.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
