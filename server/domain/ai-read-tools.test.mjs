@@ -359,3 +359,23 @@ test('list_receivables by_customer totals every open item over all pages; one cu
   const redwood = (await runAiReadTool('list_receivables', { customer: 'redwood', limit: 50 }, { facts, context })).result
   assert.deepEqual([pages, redwood.total, redwood.rows.length], [[1, 2], 30, 30])
 })
+
+// 2026-11-08: a lookup of the item's full name in the SKU field found
+// nothing, and the answer would not state the stock.
+test('stock_position and stock_projection find an item by its name, in any case, quotes or dash; several matches come back to choose from', async () => {
+  const facts = await factsFor()
+  const item = facts.inventory.rows.find((row) => row.sku === 'LDM-001')
+  const named = `“${item.itemName.toUpperCase().replace('-', '‑')}”`
+  const position = (await runAiReadTool('stock_position', { sku: named }, { facts })).result
+  assert.deepEqual(position.rows.map((row) => row.sku), ['LDM-001'])
+  const projection = (await runAiReadTool('stock_projection', { sku: item.itemName.toLowerCase() }, { facts })).result
+  assert.equal(projection.sku, 'LDM-001')
+  // The SKU still works, and a name nothing fits is not found.
+  assert.equal((await runAiReadTool('stock_position', { sku: 'ldm-001' }, { facts })).result.rows[0].sku, 'LDM-001')
+  assert.equal((await runAiReadTool('stock_position', { sku: 'No Such Item Here' }, { facts })).error, 'not_found')
+  // Part of a name several items share.
+  const twin = { ...facts, inventory: { ...facts.inventory, rows: [...facts.inventory.rows, { ...item, sku: 'LDM-001-B', itemName: `${item.itemName} Spare` }] } }
+  const many = await runAiReadTool('stock_position', { sku: item.itemName.split(' ')[0] }, { facts: twin })
+  assert.equal(many.error, 'ambiguous')
+  assert.ok(many.candidates.some((row) => row.sku === 'LDM-001') && many.candidates.some((row) => row.sku === 'LDM-001-B'), JSON.stringify(many.candidates))
+})
