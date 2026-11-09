@@ -63,6 +63,9 @@ const DATE_PATTERNS = [
   { pattern: /(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月/g, read: (m) => ({ year: +m[1], month: +m[2], day: null }) },
   // A month alone (上季度 7月至9月), not a count of months (3 个月).
   { pattern: /(?<![\d.])(\d{1,2})\s*月(?!\s*\d)/g, read: (m) => ({ year: null, month: +m[1], day: null }) },
+  // A range of days in one month, both checked (2026-11-08 on DeepSeek: "本周内
+  // （Nov 9–15, 2026）", a week the projection gave, read as Nov 9 and the number 15).
+  { pattern: new RegExp(`\\b${MONTH}\\.?\\s+(\\d{1,2})\\s*[–—-]\\s*(\\d{1,2})(?:,?\\s+(\\d{4}))?(?!\\d)`, 'gi'), read: (m) => ({ year: m[4] ? +m[4] : null, month: MONTHS[m[1].slice(0, 3).toLowerCase()], day: +m[2], endDay: +m[3] }) },
   { pattern: new RegExp(`\\b${MONTH}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?(?!\\d)`, 'gi'), read: (m) => ({ year: m[3] ? +m[3] : null, month: MONTHS[m[1].slice(0, 3).toLowerCase()], day: +m[2] }) },
   { pattern: new RegExp(`(?<!\\d)(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH}\\b\\.?(?:,?\\s+(\\d{4}))?`, 'gi'), read: (m) => ({ year: m[3] ? +m[3] : null, month: MONTHS[m[2].slice(0, 3).toLowerCase()], day: +m[1] }) },
   { pattern: new RegExp(`\\b${MONTH}\\s+(\\d{4})(?!\\d)`, 'gi'), read: (m) => ({ year: +m[2], month: MONTHS[m[1].slice(0, 3).toLowerCase()], day: null }) },
@@ -89,7 +92,7 @@ const DAYS_KEY = /day|delay|overdue|result|between|lead/i
 // 48 on hand plus one late order of 120, where the tools gave 408).
 const AVAILABLE_KEY = /avail|atp/i
 const AVAILABLE_AFTER = /^\s*(?:[A-Za-z]{1,6}\.?\s+|[件个箱卷套只台]\s*)?(?:are\s+|is\s+|of\s+)?(?:available|atp\b|可用|可承诺)/i
-const AVAILABLE_BEFORE = /(?:available(?:\s+to\s+promise)?|\bATP|可承诺量?|可用(?:量|库存)?)\s*(?:is|was|of|stays at|would be|:|：|为|是|有|只有)?\s*(?:about|约)?\s*$/i
+const AVAILABLE_BEFORE = /(?:available(?:\s+to\s+promise)?|\bATP|可承诺量?|可用(?:量|库存)?)\s*(?:is|was|of|stays at|would be|:|：|(?:就|仍|还|也|只)?(?:为|是|有)|只剩|剩下?)?\s*(?:about|约)?\s*$/i
 // A stock figure written for "if neither arrives" or "without both" is
 // today's available stock (2026-11-08 on DeepSeek: "即便这两批货都不来…不计入
 // 这两批货的 168 件", the figure without one of two late orders; without both
@@ -97,14 +100,16 @@ const AVAILABLE_BEFORE = /(?:available(?:\s+to\s+promise)?|\bATP|可承诺量?|�
 // PO-…" leaves out is not read.
 const NONE_ARRIVE_KEY = /^(?:available|availableToday|availableIfNoLateLinesArrive)$/
 const NONE_ARRIVE_EN = String.raw`\b(?:without|excluding|not\s+counting)\s+(?:both|either|any|all|the\s+two|these\s+two|those\s+two)\b|\b(?:if|when|with|even\s+if)\s+(?:neither|none|nothing)\b|\b(?:before|until)\s+(?:either|any|both)\s+(?:of\s+them\s+)?(?:\w+\s+)?(?:arrives?|lands?|comes?)\b`
-const NONE_ARRIVE_ZH = String.raw`(?:两|二|2|几|所有|全部|这些|那些)\s*(?:批|张|笔|单|份)[^，。；！？\d]{0,8}?都?(?:不|没有?|未)(?:来|到|计|算|含)|都(?:不|没有?|未)(?:来|到)|(?:不计入?|不算|不含|扣除|去掉|排除|除去)\s*(?:这|那)?\s*(?:两|二|2|几|所有|全部|这些)\s*(?:批|张|笔|单)|(?:两|二|2|所有|全部|这些)\s*(?:批|张|笔|单)[^，。；！？\d]{0,8}?(?:到货|到达|入库)之?前`
+const NONE_ARRIVE_ZH = String.raw`(?:两|二|2|几|所有|全部|这些|那些)\s*(?:批|张|笔|单|份)[^，。；！？\d]{0,8}?都?(?:不|没有?|未)(?:来|到|计|算|含)|(?:都|全都|全部|全)(?:不|没有?|未)(?:来|到)|(?:不计入?|不算|不含|扣除|去掉|排除|除去)\s*(?:这|那)?\s*(?:两|二|2|几|所有|全部|这些)\s*(?:批|张|笔|单)|(?:两|二|2|所有|全部|这些)\s*(?:批|张|笔|单)[^，。；！？\d]{0,8}?(?:到货|到达|入库)之?前`
 const NONE_ARRIVE = new RegExp(`${NONE_ARRIVE_EN}|${NONE_ARRIVE_ZH}`, 'gi')
-const NONE_ARRIVE_START = new RegExp(`^(?:如果|若|在)?\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_EN}|${NONE_ARRIVE_ZH})`, 'i')
+// After the figure, the phrase is its condition ("48 pcs if neither arrives",
+// "48 件（两批都不来时）"), not its subject ("PO-…的 240 件都不来").
+const NONE_ARRIVE_START = new RegExp(`^(?:[（(,，]\\s*)?(?:${NONE_ARRIVE_EN})|^[（(,，]\\s*(?:如果|若|假如|要是|在)?\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_ZH})`, 'i')
 // Words that make the figure another measure: a shortfall, demand, a rate,
 // safety stock, a week.
 const NOT_STOCK = /short|gap|need|demand|cost|price|spend|value|safety|reorder|\brate\b|\bper\b|\ba\s+(?:day|week|month)\b|weekly|daily|\bweeks?\b|\bdays?\b|\bmonths?\b|sold|sell|ship|缺|不足|需求|需要|成本|价格|金额|安全库存|再订货|补货|每天|每周|每月|日均|周均|销量|发货|出货|订货量|采购量|(?:[一二两三四五六七八九十几]|下)(?:周|天|个月)/i
 const NOT_STOCK_AFTER = /^\s*(?:[A-Za-z]{1,6}\.?|[件个箱卷套只台])?\s*(?:short|below|less|fewer|more|a\s+(?:day|week|month)\b|per\b|each\b|\/|缺|短缺|不足|每|多|少)/i
-const NONE_UNIT = /^\s*(?:[A-Za-z]{1,6}\.?|[件个箱卷套只台])?\s*(?:available|可用)?\s*[（(,，]?\s*/i
+const NONE_UNIT = /^\s*(?:[A-Za-z]{1,6}\.?|[件个箱卷套只台])?\s*(?:available|可用)?\s*/i
 // And a word that says the figure is a stock quantity, so a count ("if none
 // of the 5 orders is late") is left alone.
 const STOCK_CUE = /avail|stock|on\s*hand|\bleft\b|remain|\bunits?\b|\bpcs\b|pieces|\bATP\b|可用|库存|现货|件|个|箱|卷|套|只|台|剩/i
@@ -119,7 +124,10 @@ function noneArriveFigure(before, after) {
   const found = [...before.matchAll(NONE_ARRIVE)].pop()
   if (found) {
     const between = before.slice(found.index + found[0].length)
-    if (between.length <= 30 && !/[\d.!?。！？；;\n]/.test(between) && !NOT_STOCK.test(between)) return true
+    // "两批未到的 360 件" is the orders' own quantity; "不计入这两批货的 168 件"
+    // is stock without them.
+    const ordersOwn = /^\s*的/.test(between) && !/^(?:不计|不算|不含|扣除|去掉|排除|除去)/.test(found[0])
+    if (!ordersOwn && between.length <= 30 && !/[\d.!?。！？；;\n]/.test(between) && !NOT_STOCK.test(between)) return true
   }
   return NONE_ARRIVE_START.test(after.slice(unit.length)) && !NOT_STOCK.test(before.slice(-24))
 }
@@ -180,11 +188,12 @@ export function aiGroundingSources(results = []) {
     for (const { pattern, read } of DATE_PATTERNS) {
       rest = rest.replace(pattern, (...match) => {
         const date = read(match)
-        if (!date.month || date.month > 12) return match[0]
+        if (!date.month || date.month > 12 || (date.endDay !== undefined && (date.endDay <= date.day || date.endDay > 31))) return match[0]
         const year = date.year ? String(date.year) : '????'
         const month = String(date.month).padStart(2, '0')
         months.add(`${year}-${month}`)
         if (date.day) days.add(`${year}-${month}-${String(date.day).padStart(2, '0')}`)
+        if (date.endDay) days.add(`${year}-${month}-${String(date.endDay).padStart(2, '0')}`)
         return ' '.repeat(match[0].length)
       })
     }
@@ -437,8 +446,9 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     rest = rest.replace(pattern, (...match) => {
       const date = read(match)
       if (!date.month || date.month > 12 || (date.day !== null && (date.day < 1 || date.day > 31))) return match[0]
+      if (date.endDay !== undefined && (date.endDay <= date.day || date.endDay > 31)) return match[0]
       checked.date += 1
-      if (!dayKnown(date)) fail('date', match[0])
+      if (!dayKnown(date) || (date.endDay && !dayKnown({ ...date, day: date.endDay }))) fail('date', match[0])
       return blank(match[0])
     })
   }

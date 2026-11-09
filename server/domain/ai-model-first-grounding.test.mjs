@@ -216,7 +216,7 @@ test('a figure written as available comes from an available field', () => {
 // the two late orders (408 − 240); without both it is 48.
 test('a stock figure written for none of the late orders arriving is today\'s available stock', () => {
   const results = [
-    { sku: '85123A', availableToday: 48, safetyStock: 119, availableIfLateLinesArrive: 408, availableIfNoLateLinesArrive: 48, notPlacedInAWeek: { incomingPastPromisedDate: [{ orderNumber: 'PO-202610-0024', quantity: 240 }, { orderNumber: 'PO-202610-0031', quantity: 120 }] }, recordedDemand: { averageDailyDemand: 17.1 }, runsOutIfNothingArrives: { days: 2.8 }, weeksAhead: 4, lateLines: 2 },
+    { sku: '85123A', availableToday: 48, safetyStock: 119, availableIfLateLinesArrive: 408, availableIfNoLateLinesArrive: 48, notPlacedInAWeek: { incomingPastPromisedDate: [{ orderNumber: 'PO-202610-0024', quantity: 240 }, { orderNumber: 'PO-202610-0031', quantity: 120 }] }, recordedDemand: { averageDailyDemand: 17.1 }, runsOutIfNothingArrives: { days: 2.8 }, weeksAhead: 4, lateLines: 2, lateLinesQuantity: 360 },
     { calculations: [{ label: 'without PO-202610-0024', result: 168 }, { label: 'short of safety stock', result: 71 }, { label: 'a week', result: 120 }] },
   ]
   const numbers = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
@@ -225,12 +225,16 @@ test('a stock figure written for none of the late orders arriving is today\'s av
   assert.deepEqual(numbers('Without both orders it would be 168 pcs.'), ['168'])
   assert.deepEqual(numbers('85123A has 168 pcs if neither arrives.'), ['168'])
   assert.deepEqual(numbers('85123A 有 168 件（两批都不来时）。'), ['168'])
+  // A later Flash run: "两批未到的 360 件一旦全不到，可用库存就是 0".
+  assert.deepEqual(numbers('两批未到的 360 件一旦全不到，可用库存就是 0。'), ['0'])
   // The right figure passes, in either language.
   assert.deepEqual(numbers('Without both orders it would be 48 pcs, below safety stock of 119.'), [])
   assert.deepEqual(numbers('如果两批货都不来，可用量只有 48 件，低于安全库存 119 件。'), [])
   assert.deepEqual(numbers('Even if neither order arrives, 48 pcs are available today; once both arrive, 408.'), [])
   // A figure without one named order is not read as this scenario.
   assert.deepEqual(numbers('Without PO-202610-0024 it is 168 pcs.'), [])
+  // Nor is an order's own quantity named as what does not arrive.
+  assert.deepEqual(numbers('如果 PO-202610-0031 的剩余 120 件和 PO-202610-0024 的 240 件都不来，85123A 现在只有 48 件可用。'), [])
   // A shortfall, demand, safety stock or a time written in the scenario is
   // another measure, checked as before.
   assert.deepEqual(numbers('If neither order arrives, you would be 71 pcs short of safety stock.'), [])
@@ -241,4 +245,16 @@ test('a stock figure written for none of the late orders arriving is today\'s av
   assert.deepEqual(numbers('If neither order arrives, stock stays below safety stock for 4 weeks.'), [])
   // A count is left alone.
   assert.deepEqual(numbers('If none of the 2 orders is late, nothing changes.'), [])
+})
+
+// 2026-11-08 on DeepSeek: "本周内（Nov 9–15, 2026）", a week stock_projection
+// gave, was read as Nov 9 and the number 15.
+test('a range of days in one month checks both days', () => {
+  const results = [{ weeks: [{ from: '2026-11-09', to: '2026-11-15', endAvailable: -72 }] }]
+  const problems = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results }).problems.map((row) => `${row.kind}:${row.value}`)
+  assert.deepEqual(problems('本周内（Nov 9–15, 2026）就会用完。'), [])
+  assert.deepEqual(problems('In the week of Nov 9-15 it runs short.'), [])
+  assert.deepEqual(problems('Between Nov 9 – 16, 2026 it runs short.'), ['date:Nov 9 – 16, 2026'])
+  // Two separate dates are read as before.
+  assert.deepEqual(problems('From Nov 9, 2026 to Nov 15, 2026.'), [])
 })
