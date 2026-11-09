@@ -1263,6 +1263,15 @@ test('a short text is shown once the model pauses; narration right before a call
   assert.doesNotMatch(ofType(quick.events, 'text_delta').map((event) => event.text).join(''), /Checking the orders/)
 })
 
+// 2026-11-08 on DeepSeek: a SKU given a name the records never gave it.
+test('a name the answer gives a SKU that the records do not is replaced with the record\'s name', async () => {
+  const { events, body, audit } = await ask([[...say("LDM-001 'Turbo Widget Deluxe' style item needs a look."), end()]], { question: 'What needs a look?' })
+  const replaced = ofType(events, 'replace').find((event) => event.code === 'item_name')
+  assert.ok(replaced, JSON.stringify(ofType(events, 'replace')))
+  assert.doesNotMatch(body.conclusion.summary, /Turbo Widget Deluxe/)
+  assert.ok(audit.replaces.includes('item_name'))
+})
+
 // 2026-11-07: a reorder answer ended at its opening line and the chips.
 test('chips in a round with no text do not end the answer on an earlier opening line', async () => {
   const { client, body } = await ask([

@@ -184,3 +184,29 @@ test('a number inside a name is part of the name when the answer groups its digi
   assert.deepEqual(check('排名第一的 Customer 16,684 只占 9.8% 以内，金额 £10,230.24。').filter((row) => row.value.includes('16,684')), [])
   assert.deepEqual(check('Customer 16,684 (United Kingdom) bought £10,230.24.'), [])
 })
+
+// 2026-11-08 on DeepSeek: "85123A 'Famous Paint Your Own…' style item".
+test('a name written beside a SKU must be that SKU\'s item name; a Chinese name is left alone', () => {
+  const facts = { inventory: { rows: [{ sku: '85123A', itemName: 'White Hanging Heart T-Light Holder' }, { sku: '22423', itemName: 'Regency Cakestand 3 Tier' }], masterOnly: [] } }
+  const results = [{ rows: [{ sku: '85123A', itemName: 'White Hanging Heart T-Light Holder', available: 48 }, { sku: '22423', itemName: 'Regency Cakestand 3 Tier' }] }]
+  const pairs = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results, facts }).problems.filter((row) => row.kind === 'item_name')
+  assert.deepEqual(pairs("85123A 'Famous Paint Your Own…' style item is low."), [{ kind: 'item_name', value: 'Famous Paint Your Own…', expected: 'White Hanging Heart T-Light Holder', sku: '85123a' }])
+  // Another item's name for this SKU.
+  assert.equal(pairs('22423 "White Hanging Heart T-Light Holder" is low.')[0].expected, 'Regency Cakestand 3 Tier')
+  // The right name, shortened, before or after; figures in brackets; Chinese.
+  assert.deepEqual(pairs('85123A (White Hanging Heart T-Light Holder) and 22423 (Regency Cakestand) are low.'), [])
+  assert.deepEqual(pairs("'White Hanging Heart' (85123A) is low."), [])
+  assert.deepEqual(pairs('85123A (48 pcs available) is low.'), [])
+  assert.deepEqual(pairs('85123A（白色心形烛台）库存偏低。'), [])
+})
+
+// 2026-11-08 on DeepSeek: "stays at 168 pcs available to promise" (48 + 120).
+test('a figure written as available comes from an available field', () => {
+  const results = [{ rows: [{ sku: '85123A', available: 48, availableToPromise: 408, incoming: 360 }], other: { quantity: 168 } }]
+  const numbers = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
+  assert.deepEqual(numbers('85123A stays at 168 pcs available to promise.'), ['168'])
+  assert.deepEqual(numbers('Available to promise is 168 for 85123A.'), ['168'])
+  assert.deepEqual(numbers('85123A has 48 pcs available now and 408 available to promise.'), [])
+  // 168 not written as available is checked as before.
+  assert.deepEqual(numbers('A quantity of 168 is recorded.'), [])
+})

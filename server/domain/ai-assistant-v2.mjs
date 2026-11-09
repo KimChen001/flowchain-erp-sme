@@ -931,6 +931,16 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         part.sent = part.text.length
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: 'unbacked_action_claim' })
       }
+      // A name given a SKU that the records do not give it is replaced with
+      // the record's name (2026-11-08 on DeepSeek: "85123A 'Famous Paint Your
+      // Own…' style item").
+      const misnamed = check.problems.filter((row) => row.kind === 'item_name' && row.value && row.expected && part.text.includes(row.value))
+      if (misnamed.length) {
+        for (const row of misnamed) part.text = part.text.split(row.value).join(row.expected)
+        part.sent = part.text.length
+        stats.replaces.push(...misnamed.map(() => 'item_name'))
+        send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: 'item_name' })
+      }
       const withheld = []
       const spans = []
       for (const row of check.problems) {
