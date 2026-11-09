@@ -15,6 +15,11 @@ export const MODEL_CALL_RETRY = Object.freeze({
   minTimeLeftMs: 15000,
   // A completed call this slow is logged too.
   slowMs: 20000,
+  // A try with no first event this long is ended and tried again (Flash's
+  // slowest first event in 99 calls on 2026-11-09 was 15.1 s).
+  firstEventMs: 20000,
+  // The wait for a first event ends this long before the answer's deadline.
+  deadlineMarginMs: 1500,
 })
 
 const TRANSIENT_ERROR_TYPE = /overload|rate.?limit|too.?many|timeout|unavailable|server.?error|internal|api.?error|bad.?gateway/i
@@ -23,8 +28,9 @@ const TRANSIENT_ERROR_TYPE = /overload|rate.?limit|too.?many|timeout|unavailable
 // limit (402) and other 4xx replies are not: they fail the same way again.
 export function transientModelError(error) {
   if (!(error instanceof AssistantModelError) || error.budgetExceeded) return false
-  // A dropped connection, or a reply cut short before anything arrived.
-  if (error.reason === 'network_error' || error.reason === 'malformed_output') return true
+  // A dropped connection, a reply cut short before anything arrived, or no
+  // first event in time.
+  if (['network_error', 'malformed_output', 'first_event_timeout'].includes(error.reason)) return true
   if (error.reason !== 'non_success_status') return false
   if (error.status) return error.status === 408 || error.status === 429 || error.status >= 500
   // An error the provider reported in the body of a 200 reply.
@@ -61,8 +67,9 @@ function pause(ms, signal) {
 // { deadline } (epoch ms, when the answer runs out of time) as a third
 // argument. Only a call that failed before yielding anything is tried again,
 // so nothing was shown or run for it.
-export function withModelCallRetry(client, { provider = null, logger = console, retry = MODEL_CALL_RETRY, now = Date.now } = {}) {
+export function withModelCallRetry(client, { provider = null, logger = console, retry: overrides = {}, now = Date.now } = {}) {
   if (!client || typeof client.stream !== 'function') return client
+  const retry = { ...MODEL_CALL_RETRY, ...overrides }
   const log = (fields) => {
     try { logger?.warn?.(JSON.stringify({ event: 'assistant_v2_model_call', provider, model: client.model || null, ...fields })) } catch { /* the answer goes on */ }
   }
@@ -71,11 +78,32 @@ export function withModelCallRetry(client, { provider = null, logger = console, 
     async *stream(request, signal, { deadline = null } = {}) {
       for (let attempt = 1; ; attempt += 1) {
         const started = now()
-        const events = client.stream(request, signal)
+        // Each try has its own signal, so a try that never starts can be
+        // ended without stopping the answer; the answer's signal ends it too.
+        const trying = new AbortController()
+        const onStop = () => trying.abort()
+        if (signal?.aborted) trying.abort()
+        else signal?.addEventListener?.('abort', onStop, { once: true })
+        const events = client.stream(request, trying.signal)
+        // No first event in time: the try is ended and counts as a passing
+        // failure. The wait ends before the answer's own deadline, so a last
+        // failure still reaches the "try again" notice (2026-11-09 on Flash:
+        // a call with no first event for 74 s came back as an empty answer).
+        const wait = Math.max(0, Math.min(retry.firstEventMs, Number.isFinite(deadline) ? deadline - now() - retry.deadlineMarginMs : Infinity))
+        let timer
+        const noFirstEvent = new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            trying.abort()
+            reject(new AssistantModelError('first_event_timeout'))
+          }, wait)
+        })
         let first
         try {
-          first = await events.next()
+          first = await Promise.race([events.next(), noFirstEvent])
         } catch (error) {
+          signal?.removeEventListener?.('abort', onStop)
+          // A try ended for its wait is let go without waiting on it.
+          if (error?.reason === 'first_event_timeout') events.return?.().catch(() => {})
           const fields = { attempt, durationMs: now() - started, phase: 'before_first_event', ...failureFields(error) }
           const timeLeft = !Number.isFinite(deadline) || now() + retry.backoffMs + retry.minTimeLeftMs <= deadline
           if (attempt === 1 && !signal?.aborted && transientModelError(error) && timeLeft) {
@@ -85,6 +113,8 @@ export function withModelCallRetry(client, { provider = null, logger = console, 
           }
           log({ outcome: isAbort(error) ? 'stopped' : 'failed', ...fields })
           throw error
+        } finally {
+          clearTimeout(timer)
         }
         const firstEventMs = now() - started
         try {
@@ -100,6 +130,7 @@ export function withModelCallRetry(client, { provider = null, logger = console, 
           log({ outcome: isAbort(error) ? 'stopped' : 'failed', attempt, durationMs: now() - started, firstEventMs, phase: 'streaming', ...failureFields(error) })
           throw error
         } finally {
+          signal?.removeEventListener?.('abort', onStop)
           await events.return?.()
         }
         const durationMs = now() - started

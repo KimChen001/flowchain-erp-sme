@@ -157,3 +157,47 @@ test('the chat completions client retries a 503 from the provider, and the facto
     await new Promise((resolve) => server.close(resolve))
   }
 })
+
+// 2026-11-09 on Flash: one call had no first event for 74 s, and the answer
+// came back empty at its 75 s limit.
+test('a try with no first event in time is ended and tried once more; a second hang fails before the deadline', async () => {
+  // Hangs until its signal ends it, as a provider call does.
+  const hang = { kind: 'chat_completions', model: 'm', calls: 0, signals: [], async *stream(_request, signal) {
+    this.calls += 1
+    this.signals.push(signal)
+    if (this.calls === 2 && this.thenAnswer) { yield { type: 'text_delta', text: 'Hi' }; yield END; return }
+    await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))
+    throw new DOMException('The model call was stopped.', 'AbortError')
+  } }
+  let recorded = recorder()
+  hang.thenAnswer = true
+  const events = await collect(withModelCallRetry(hang, { provider: 'deepseek_chat', logger: recorded.logger, retry: { ...FAST, firstEventMs: 40 } }).stream(request(), undefined, { deadline: Date.now() + 60000 }))
+  assert.deepEqual(events.map((event) => event.type), ['text_delta', 'message_end'])
+  assert.equal(hang.calls, 2)
+  assert.equal(hang.signals[0].aborted, true, 'the hung try was ended')
+  assert.deepEqual(recorded.lines.map((line) => [line.outcome, line.reason, line.phase]), [['retrying', 'first_event_timeout', 'before_first_event']])
+  // Hung twice: a model error, which the gateway answers with the notice.
+  recorded = recorder()
+  hang.calls = 0
+  hang.thenAnswer = false
+  await assert.rejects(collect(withModelCallRetry(hang, { logger: recorded.logger, retry: { ...FAST, firstEventMs: 40 } }).stream(request(), undefined, { deadline: Date.now() + 60000 })), (error) => error instanceof AssistantModelError && error.reason === 'first_event_timeout')
+  assert.deepEqual(recorded.lines.map((line) => line.outcome), ['retrying', 'failed'])
+  // Near the deadline the wait is cut to end before it, with no second try.
+  recorded = recorder()
+  hang.calls = 0
+  const started = Date.now()
+  await assert.rejects(collect(withModelCallRetry(hang, { logger: recorded.logger, retry: { ...FAST, firstEventMs: 20000, deadlineMarginMs: 100 } }).stream(request(), undefined, { deadline: started + 300 })), (error) => error.reason === 'first_event_timeout')
+  assert.ok(Date.now() - started < 1000, `ended after ${Date.now() - started} ms`)
+  assert.equal(hang.calls, 1)
+  // A client that does not listen to its signal still times out.
+  recorded = recorder()
+  const deaf = { model: 'm', async *stream() { await new Promise((resolve) => setTimeout(resolve, 400)); yield END } }
+  await assert.rejects(collect(withModelCallRetry(deaf, { logger: recorded.logger, retry: { ...FAST, firstEventMs: 30 } }).stream(request(), undefined, { deadline: Date.now() + 1500 })), (error) => error.reason === 'first_event_timeout')
+  // The answer's own stop still ends a try as a stop, not a timeout.
+  const controller = new AbortController()
+  hang.calls = 0
+  const stopping = collect(withModelCallRetry(hang, { logger: recorded.logger, retry: FAST }).stream(request(), controller.signal, {}))
+  setTimeout(() => controller.abort(), 20)
+  await assert.rejects(stopping, (error) => error.name === 'AbortError')
+  assert.equal(hang.calls, 1)
+})
