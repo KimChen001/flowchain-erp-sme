@@ -1067,6 +1067,19 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       }) })
     }
     const stop = (reason) => { stats.stopReason = reason }
+    // Out of time with nothing shown (held narration aside): the thread is
+    // left as it was and the gateway answers with the notice that says to try
+    // again, not an empty answer (2026-11-09 on Flash: a call with no first
+    // event for 74 s came back as an empty answer).
+    const unshownTimeout = () => {
+      if (sentContent) return null
+      thread.messages.length = turnStart
+      for (const id of answerResults.keys()) thread.results.delete(id)
+      const error = new AssistantModelError('timeout')
+      error.audit = auditBlock({ stats: { ...stats, stopReason: 'timeout' }, model, aborted: false, started })
+      error.emitted = sentStatus
+      return error
+    }
 
     let afterTools = false
     while (true) {
@@ -1074,7 +1087,11 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // written in the same round.
       const roundStart = parts.length
       if (aborted) break
-      if (timedOut) { stop('timeout'); send({ type: 'error', code: 'timeout', retryable: true }); break }
+      if (timedOut) {
+        const unshown = unshownTimeout()
+        if (unshown) throw unshown
+        stop('timeout'); send({ type: 'error', code: 'timeout', retryable: true }); break
+      }
       if (tokensUsed() >= limits.tokens) { stop('usage_limit'); send({ type: 'error', code: 'usage_limit', retryable: false }); break }
       // The cost check before every call: this call, estimated at its full
       // output, must fit in what the answer may still spend.
@@ -1139,7 +1156,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       const sentMessages = thread.messages.length
       const callStarted = Date.now()
       try {
-        for await (const event of modelClient.stream({ system: ASSISTANT_V2_SYSTEM, messages: sent(), tools, maxTokens: limits.outputTokens, ...(withdrawn.size ? { withdrawnTools: [...withdrawn] } : {}) }, controller.signal)) {
+        for await (const event of modelClient.stream({ system: ASSISTANT_V2_SYSTEM, messages: sent(), tools, maxTokens: limits.outputTokens, ...(withdrawn.size ? { withdrawnTools: [...withdrawn] } : {}) }, controller.signal, { deadline: started + limits.timeoutMs })) {
           if (aborted || timedOut) break
           if (event.type === 'text_delta' && event.text) {
             if (!openText) {
@@ -1193,6 +1210,8 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         // is metered, as a failed call.
         await recordAiProviderCall({ ok: false, usage: null })
         stats.providerFailed ||= 'failed'
+        const unshown = unshownTimeout()
+        if (unshown) throw unshown
         closeText()
         stop('timeout')
         send({ type: 'error', code: 'timeout', retryable: true })

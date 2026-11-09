@@ -604,19 +604,28 @@ test('the call before the wall-time limit is told it is the last, so the answer 
   assert.match(ofType(events, 'text_delta').map((event) => event.text).join(''), /PO-001 is 4 days overdue/)
 })
 
-test('the wall-time deadline stops a slow model call with a retryable error', async () => {
-  const slow = { model: 'scripted', async *stream(_request, signal) {
-    yield { type: 'text_delta', text: 'Reading your orders. ' }
+// 2026-11-09 on Flash: a call with no first event for 74 s came back as an
+// empty answer; with nothing shown, the gateway's "try again" notice answers.
+test('the wall-time deadline stops a slow model call: after text with a retryable error, with nothing shown for the notice', async () => {
+  const slow = (opening) => ({ model: 'scripted', async *stream(_request, signal) {
+    yield { type: 'text_delta', text: opening }
     await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))
     throw new DOMException('stopped', 'AbortError')
-  } }
-  const { events, audit, metered } = await ask([], { client: slow, limits: { timeoutMs: 30 } })
+  } })
+  const long = 'PO-001 and PO-008 are both overdue with Acme Components: the older by 4 days with 30 pcs still to receive, the newer by 2 days with nothing received yet, and both are for LDM-001. '
+  const { events, audit, metered } = await ask([], { client: slow(long), limits: { timeoutMs: 300 } })
   assertProtocol(events)
   assert.deepEqual(ofType(events, 'error'), [{ type: 'error', code: 'timeout', retryable: true }])
   assert.equal(events.at(-1).type, 'answer')
   assert.equal(audit.stopReason, 'timeout')
   // The provider ran the stopped call, so the meter counts it.
   assert.deepEqual(metered, [null])
+  // Only a held opening line: no empty answer, the thread is left as it was.
+  const thread = { messages: [], results: new Map() }
+  const held = []
+  await assert.rejects(ask([], { client: slow('Reading your orders. '), limits: { timeoutMs: 30 }, thread, onEvent: (event) => held.push(event) }), (error) => error instanceof AssistantModelError && error.reason === 'timeout' && error.audit.stopReason === 'timeout')
+  assert.deepEqual(thread.messages, [])
+  assert.deepEqual(ofType(held, 'text_delta'), [])
 })
 
 test('a provider failure before anything is shown leaves the answer to the rules; after text it ends with an error', async () => {
