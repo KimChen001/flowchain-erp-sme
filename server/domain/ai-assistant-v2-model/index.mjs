@@ -2,6 +2,7 @@ import { canCallConfiguredProvider, providerRuntimeConfig } from '../ai-runtime-
 import { createAnthropicSdkModelClient } from './anthropic-sdk.mjs'
 import { assertAssistantV2EndpointAllowed, createChatCompletionsModelClient } from './chat-completions.mjs'
 import { createScriptedModelClient, readScriptedTurns } from './scripted.mjs'
+import { withModelCallRetry } from './resilient.mjs'
 
 export { AssistantModelError } from './model-error.mjs'
 
@@ -44,13 +45,18 @@ export function assistantV2ProviderFormat(env = {}) {
 //   FLOWCHAIN_AI_PROVIDER_KIND=anthropic_messages   the official SDK
 //   a chat kind (deepseek_chat, parley_chat, ...)   chat completions, local only
 // and is null when no provider can run the loop.
+//
+// A provider client is wrapped by withModelCallRetry (resilient.mjs): one more
+// try for a call that fails before its first event, and a log line for every
+// failed, stopped or slow call.
 export function createAssistantV2ModelClient(env = {}, options = {}) {
   const scripted = String(env.FLOWCHAIN_AI_ASSISTANT_SCRIPTED ?? '').trim()
   if (scripted) return createScriptedModelClient(readScriptedTurns(scripted))
   const format = assistantV2ProviderFormat(env)
+  const resilient = (client) => withModelCallRetry(client, { provider: providerRuntimeConfig(env).kind, ...(options.logger ? { logger: options.logger } : {}) })
   if (format === 'anthropic_messages') {
     assertAssistantV2EndpointAllowed(env)
-    return createAnthropicSdkModelClient(env, options)
+    return resilient(createAnthropicSdkModelClient(env, options))
   }
-  return format === 'chat_completions' ? createChatCompletionsModelClient(env) : null
+  return format === 'chat_completions' ? resilient(createChatCompletionsModelClient(env)) : null
 }

@@ -1139,7 +1139,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       const sentMessages = thread.messages.length
       const callStarted = Date.now()
       try {
-        for await (const event of modelClient.stream({ system: ASSISTANT_V2_SYSTEM, messages: sent(), tools, maxTokens: limits.outputTokens, ...(withdrawn.size ? { withdrawnTools: [...withdrawn] } : {}) }, controller.signal)) {
+        for await (const event of modelClient.stream({ system: ASSISTANT_V2_SYSTEM, messages: sent(), tools, maxTokens: limits.outputTokens, ...(withdrawn.size ? { withdrawnTools: [...withdrawn] } : {}) }, controller.signal, { deadline: started + limits.timeoutMs })) {
           if (aborted || timedOut) break
           if (event.type === 'text_delta' && event.text) {
             if (!openText) {
