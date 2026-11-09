@@ -149,6 +149,10 @@ const decimalsOf = (value) => (String(value).split('.')[1] || '').length
 // A day written the Chinese way, alone or as a range whose second day may
 // leave out the year: 2026年7月1日至9月30日, 2026 年 8 月 8 日到 2026 年 11 月 5 日.
 const ZH_DATE = /(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号](?:\s*(至|到|~|～|-|–|—)\s*(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号])?/g
+// A date written half the Chinese way and half the app's way, the month as
+// a number with 月 and the year after a comma (2026-11-08 on DeepSeek:
+// "10 月 1, 2026" for Oct 1, 2026): written in the workspace's format.
+const HYBRID_ZH_DATE = /(?<![\d.])(\d{1,2})\s*月\s*(\d{1,2})\s*[,，]\s*(\d{4})(?!\d)/g
 const ZH_MONTH_DAY = /(?<!\d\s*年\s*)(?<![\d.])(\d{1,2})\s*月\s*(\d{1,2})\s*[日号](?:\s*(至|到|~|～|-|–|—)\s*(?:(\d{1,2})\s*月\s*)?(\d{1,2})\s*[日号])?/g
 const isoDay = (year, month, day) => `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 
@@ -236,6 +240,7 @@ export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), re
       const second = formats.day(isoDay(year2 || year, month2, day2))
       return second ? `${first} ${/[至到]/.test(joint) ? joint : '–'} ${second}` : whole
     })
+    out = out.replace(HYBRID_ZH_DATE, (whole, month, day, year) => formats.day(isoDay(year, month, day)) || whole)
     // One with no year (11 月 6 日, 11月6日至8日) as a month and day.
     out = out.replace(ZH_MONTH_DAY, (whole, month, day, joint, month2, day2) => {
       const first = formats.monthDay(month, day)

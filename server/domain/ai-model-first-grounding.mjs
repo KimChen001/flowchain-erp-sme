@@ -84,6 +84,12 @@ const SCALES = { k: 1e3, K: 1e3, m: 1e6, M: 1e6, bn: 1e9, 千: 1e3, 万: 1e4, �
 const MONEY_KEY = /amount|value|total|spend|committed|difference|variance|price|cost|balance|outstanding|budget|result/i
 const PERCENT_KEY = /percent|share|rate|result/i
 const DAYS_KEY = /day|delay|overdue|result|between|lead/i
+// A figure written as available or available to promise comes from such a
+// field (2026-11-08 on DeepSeek: "stays at 168 pcs available to promise",
+// 48 on hand plus one late order of 120, where the tools gave 408).
+const AVAILABLE_KEY = /avail|atp/i
+const AVAILABLE_AFTER = /^\s*(?:[A-Za-z]{1,6}\.?\s+|[件个箱卷套只台]\s*)?(?:are\s+|is\s+|of\s+)?(?:available|atp\b|可用|可承诺)/i
+const AVAILABLE_BEFORE = /(?:available(?:\s+to\s+promise)?|\bATP|可承诺量?|可用(?:量|库存)?)\s*(?:is|was|of|stays at|would be|:|：|为|是|有|只有)?\s*(?:about|约)?\s*$/i
 
 function currencyCodes(word) {
   const found = CURRENCY_WORDS.find(([pattern]) => pattern.test(text(word)))
@@ -129,6 +135,7 @@ export function aiGroundingSources(results = []) {
   const days = new Set()
   const months = new Set()
   const names = new Set()
+  const nameOrigins = new Map()
   const addDates = (value) => {
     for (const match of value.matchAll(/(?<!\d)(\d{4})-(\d{2})(?:-(\d{2}))?(?!\d)/g)) {
       months.add(`${match[1]}-${match[2]}`)
@@ -164,9 +171,15 @@ export function aiGroundingSources(results = []) {
       // So is the part before a bracket, which a Chinese answer may follow
       // with its own words (Customer 16684（英国）).
       if (NAME_KEYS.has(key) && /\p{L}/u.test(value) && /\d/.test(value) && value.trim().length >= 3) {
-        names.add(value.trim())
         const head = value.split(/\s*[(（]/)[0].trim()
-        if (head !== value.trim() && /\p{L}/u.test(head) && /\d/.test(head) && head.length >= 3) names.add(head)
+        for (const name of new Set([value.trim(), head])) {
+          if (!/\p{L}/u.test(name) || !/\d/.test(name) || name.length < 3) continue
+          names.add(name)
+          // Also with its long numbers grouped, as an answer may write them
+          // (2026-11-08 on DeepSeek: "Customer 16,684" for Customer 16684).
+          const grouped = name.replace(/\d{4,}/g, (digits) => Number(digits).toLocaleString('en-US'))
+          if (grouped !== name) { names.add(grouped); nameOrigins.set(grouped, name) }
+        }
       }
       if (/^-?[\d,]+(?:\.\d+)?$/.test(value.trim())) numbers.push({ value: Number(value.replace(/,/g, '')), key, currency: text(parent?.currency).toUpperCase() || null, unit: null })
       else if (PROSE_KEYS.has(key)) addProse(value)
@@ -202,7 +215,7 @@ export function aiGroundingSources(results = []) {
     for (const count of new Set(groups.values())) numbers.push({ value: count, key: 'count', currency: null, unit: null })
   }
   for (const result of array(results)) walk(result)
-  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names] }
+  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names], nameOrigins }
 }
 
 const NAME_KEYS = new Set(['customer', 'customerName', 'itemName', 'name', 'supplier', 'supplierName'])
@@ -243,7 +256,63 @@ function numberKindFits(source, kind, currencies) {
   if (kind === 'money') return MONEY_KEY.test(source.key) && (!currencies || !source.currency || currencies.includes(source.currency))
   if (kind === 'percent') return PERCENT_KEY.test(source.key) || source.unit === 'percent'
   if (kind === 'days') return DAYS_KEY.test(source.key) || source.unit === 'days'
+  if (kind === 'available') return AVAILABLE_KEY.test(source.key)
   return true
+}
+
+// The item names the records give each SKU: the facts' stock rows and every
+// result row holding a SKU and a name.
+function itemNamesBySku(facts, results) {
+  const names = new Map()
+  const add = (sku, name) => {
+    const key = text(sku).toLowerCase()
+    const value = text(name)
+    if (!key || !value || !/\p{L}/u.test(value)) return
+    if (!names.has(key)) names.set(key, new Set())
+    names.get(key).add(value)
+  }
+  for (const row of [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)]) add(row.sku, row.itemName)
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return }
+    if (!value || typeof value !== 'object') return
+    if (typeof value.sku === 'string') add(value.sku, value.itemName ?? value.name ?? value.item?.name)
+    if (value.item && typeof value.item.sku === 'string') add(value.item.sku, value.item.name)
+    for (const entry of Object.values(value)) if (entry && typeof entry === 'object') walk(entry)
+  }
+  walk(array(results))
+  return names
+}
+const nameKey = (value) => text(value).normalize('NFKC').toLowerCase().replace(/[\u2018\u2019\u201c\u201d"'`…]|\.{3}/g, '').replace(/[\u2010-\u2015\u2212]/g, '-').replace(/\s+/g, ' ').trim()
+const compactKey = (value) => nameKey(value).replace(/[\s-]+/g, '')
+// A bracket holding figures or states, not a name.
+const NOT_A_NAME = /\d+\s*(?:pcs|pc|units?|days?|%|件|个|天)|[£$€¥]|\b(?:overdue|late|due|available|on hand|incoming|short|order now|below|above|safety|reorder|pcs|units?)\b/i
+export function aiGroundingItemNamePairs(body, facts, results) {
+  const out = []
+  const value = String(body || '')
+  const bySku = itemNamesBySku(facts, results)
+  for (const [sku, names] of bySku) {
+    if (sku.length < 3) continue
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}-])${sku.replace(/[.*+?^${}()|[\]\\]/g, '\\// Checks one answer. `answer` is { title, answer, records }; `results` the')}(?![\\p{L}\\p{N}-])`, 'giu')
+    for (const match of value.matchAll(pattern)) {
+      const after = value.slice(match.index + match[0].length, match.index + match[0].length + 110)
+      const before = value.slice(Math.max(0, match.index - 110), match.index)
+      const candidates = []
+      const quotedAfter = after.match(/^\s*(?:[-–—:,，]\s*)?[(（]?\s*['‘"“「]([^'’"”」\n]{3,90})['’"”」]/)
+      if (quotedAfter) candidates.push(quotedAfter[1])
+      const bracketAfter = after.match(/^\s*[(（]([^()（）\n]{3,90})[)）]/)
+      if (bracketAfter && !NOT_A_NAME.test(bracketAfter[1]) && /\p{L}{2,}\s+\p{L}{2,}/u.test(bracketAfter[1])) candidates.push(bracketAfter[1])
+      const quotedBefore = before.match(/['‘"“「]([^'’"”」\n]{3,90})['’"”」]\s*[(（]?\s*(?:SKU\s*)?$/i)
+      if (quotedBefore) candidates.push(quotedBefore[1])
+      for (const candidate of candidates) {
+        const written = candidate.trim()
+        if (!/[A-Za-z]{2,}/.test(written) || /[\u3400-\u9fff]/.test(written)) continue
+        if (written.toLowerCase().replace(/^sku\s*/, '') === sku) continue
+        const fits = [...names].some((name) => nameKey(name).includes(nameKey(written)) || nameKey(written).includes(nameKey(name)) || compactKey(name).includes(compactKey(written)) || compactKey(written).includes(compactKey(name)))
+        if (!fits && !out.some((row) => row.value === written)) out.push({ sku, value: written, expected: [...names][0] })
+      }
+    }
+  }
+  return out
 }
 
 // Checks one answer. `answer` is { title, answer, records }; `results` the
@@ -303,11 +372,17 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   for (const name of [...new Set([...aiGroundingNames(facts), ...sources.names])].sort((a, b) => b.length - a.length)) {
     rest = rest.replace(nameMatch(name), (found, ...args) => {
       checked.name += 1
-      if (!inText(sources.haystack, name) && !inText(named, name)) fail('name', found)
+      const origin = sources.nameOrigins?.get(name) || name
+      if (!inText(sources.haystack, origin) && !inText(named, origin)) fail('name', found)
       else listed.push({ at: offsetOf(args), key: entities.get(fold(name)) || `name:${fold(name)}` })
       return blank(found)
     })
   }
+  // A name written beside a SKU, in quotes or in brackets, is that SKU's item
+  // name as the records give it (2026-11-08 on DeepSeek: "85123A 'Famous
+  // Paint Your Own…' style item"). A name in Chinese cannot be checked and
+  // is left alone.
+  for (const pair of aiGroundingItemNamePairs(body, facts, results)) problems.push({ kind: 'item_name', value: pair.value, expected: pair.expected, sku: pair.sku })
   // A whole number in brackets, or before what it counts (6 items, 6 个),
   // that equals the records and names its own line lists.
   const listCount = (at, length) => {
@@ -362,7 +437,8 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const tolerance = (zeros ? 0.5 * 10 ** zeros : 0.5 * 10 ** -decimals) * factor + 1e-9
     const unit = text(suffix).toLowerCase()
     const currencies = currencyCodes(cur) || currencyCodes(unit)
-    const kind = currencies ? 'money' : /%|％|percent|per cent|百分点/.test(unit) ? 'percent' : /day|天|日/.test(unit) ? 'days' : 'plain'
+    const measured = currencies ? 'money' : /%|％|percent|per cent|百分点/.test(unit) ? 'percent' : /day|天|日/.test(unit) ? 'days' : 'plain'
+    const kind = measured === 'plain' && (AVAILABLE_AFTER.test(rest.slice(match.index + match[0].length, match.index + match[0].length + 40)) || AVAILABLE_BEFORE.test(rest.slice(Math.max(0, match.index - 40), match.index))) ? 'available' : measured
     checked.number += 1
     const near = (candidate) => Math.abs(Math.abs(candidate) - value) <= tolerance
     const grounded = sources.numbers.some((source) => numberKindFits(source, kind, currencies) && (near(source.value) || (kind === 'percent' && near(source.value * 100))))

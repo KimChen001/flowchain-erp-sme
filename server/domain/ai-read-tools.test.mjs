@@ -386,3 +386,12 @@ test('an item name matches whatever its spaces and dashes', () => {
   assert.deepEqual(aiStockSku(facts, 'Cake Stand'), { sku: '22423' })
   assert.deepEqual(aiStockSku(facts, 'tlight holder'), { sku: '85123A' })
 })
+
+// 2026-11-08 on DeepSeek: "7.1556 件" a day, copied from four decimals.
+test('the reorder list gives the model its daily demand to one decimal', async () => {
+  const scenario = aiSkillScenario()
+  const reorderList = { read: async () => ({ rows: [{ sku: 'SKU-1', itemName: 'Item', orderNow: true, orderByDate: '2026-11-08', demand: { averageDailyDemand: 7.1556 }, supplier: { id: 'SUP-1', name: 'Supplier One' } }] }) }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  const row = (await runAiReadTool('reorder_list', {}, { facts: await readAiSkillFacts(context), context })).result.rows[0]
+  assert.equal(row.averageDailyDemand, 7.2)
+})
