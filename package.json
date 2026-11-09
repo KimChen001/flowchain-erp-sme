@@ -19,6 +19,7 @@
     "audit:i18n": "node scripts/audit-interface-language.mjs",
     "test": "node --test server/domain/*.test.mjs server/routes/*.test.mjs",
     "eval:assistant:public": "node tests/ai-eval/v2-public/run.mjs",
+    "eval:assistant:uci": "node tests/ai-eval/v2-public/run.mjs --suite=uci",
     "test:browser:english": "playwright test --config playwright.english.config.ts",
     "test:db:english": "node scripts/run-postgres-test-files.mjs tests/postgres/english-default-language.test.mjs",
     "test:db:us-defaults": "node scripts/run-postgres-test-files.mjs tests/postgres/us-business-defaults.test.mjs",
