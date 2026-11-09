@@ -133,13 +133,19 @@ function noneArriveFigure(before, after) {
   if (NOT_STOCK.test(after.split(/[，,。；;：:（(]/)[0].slice(0, 14)) ||NOT_STOCK_AFTER.test(after) || !STOCK_CUE.test(`${before} ${unit}`)) return false
   const found = [...before.matchAll(NONE_ARRIVE)].pop()
   if (found) {
-    const between = before.slice(found.index + found[0].length)
+    // "从 408 件降到 168 件", "drops from 408 pcs to 168": the change's
+    // starting figure is a joining span, and the figure after it is the
+    // scenario's.
+    const between = before.slice(found.index + found[0].length).replace(/(?:\bfrom|从|由)\s*[\d,.]+\s*(?:[A-Za-z]{1,6}\b|[件个箱卷套只台])?\s*(?:to|down\s+to|降到|降至|减少到|减到|变为|变成|到)\s*$/i, ' ')
     // "两批未到的 360 件" and "去掉这两单的 360 件" are the orders' own
     // quantity; "不计入这两批货的 168 件" is stock without them.
     const ordersOwn = /^\s*的/.test(between) && !/^(?:不计|不算|不含)/.test(found[0])
     // A colon starts another point, and "都到的话" or "once both arrive" turns
     // to the other case ("两单都到 vs 都不来：** 都到的话可用量是 408 件").
-    if (!ordersOwn && between.length <= 30 && !/[\d.!?。！？；;:：\n]/.test(between) && !NOT_STOCK.test(between) && !BOTH_ARRIVE.test(between)) return true
+    // "从 408 件降到 48 件", "drops from 408 to 48": the figure after "from" is
+    // the one before the change.
+    const fromFigure = /(?:\bfrom|从|由)\s*$/i.test(between)
+    if (!ordersOwn && !fromFigure && between.length <= 30 && !/[\d.!?。！？；;:：\n]/.test(between) && !NOT_STOCK.test(between) && !BOTH_ARRIVE.test(between)) return true
   }
   return NONE_ARRIVE_START.test(after.slice(unit.length)) && !NOT_STOCK.test(before.slice(-24))
 }
