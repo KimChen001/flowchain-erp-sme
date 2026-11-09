@@ -242,6 +242,13 @@ test('stock_projection also runs the weeks at the recorded shipping rate, apart 
   assert.equal(result.firstWeekShortAtRecordedRate, result.atRecordedRate.find((week) => week.short)?.from || null)
   const late = result.notPlacedInAWeek.incomingPastPromisedDate.reduce((sum, entry) => sum + entry.quantity, 0)
   assert.equal(result.availableIfLateLinesArrive, late ? result.availableToday + late : undefined)
+  assert.equal(result.availableIfNoLateLinesArrive, late ? result.availableToday : undefined)
+  assert.equal(result.lateLinesQuantity, late || undefined)
+  const lines = result.notPlacedInAWeek.incomingPastPromisedDate
+  for (const entry of lines) {
+    assert.equal(entry.availableIfOnlyThisArrives, lines.length > 1 ? result.availableToday + entry.quantity : undefined)
+    assert.equal(entry.availableWithoutThisLine, lines.length > 1 ? result.availableToday + late - entry.quantity : undefined)
+  }
   // The open sales order weeks are as the read tool gives them.
   assert.ok(Array.isArray(result.weeks) && result.weeks.length === 3)
 })
