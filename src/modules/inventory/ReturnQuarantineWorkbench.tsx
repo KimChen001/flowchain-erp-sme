@@ -938,7 +938,7 @@ function Reconciliation({ value }: { value: any }) {
               {line.checks.map((check: any) => (
                 <div key={check.rule} className="rounded-lg bg-slate-50 p-3 text-xs">
                   <div className="font-semibold">{ruleLabel(check.rule)} · {codeLabel(check.status)}</div>
-                  <div className="mt-1 break-all text-slate-400">{check.rule}</div>
+                  <div className="mt-1 break-all text-slate-500">{check.rule}</div>
                   <div className="mt-1 text-slate-500">{copy("Calculated {calculated} / recorded {recorded}", { calculated: checkValue(check.calculated), recorded: checkValue(check.recorded) })}</div>
                 </div>
               ))}
@@ -964,7 +964,7 @@ function Evidence({
       {!rows.length && !movements.length ? <div className="text-sm text-slate-500">{copy("No evidence yet.")}</div> : null}
       <div className="space-y-2">
         {rows.map((row) => <div key={row.id} className="rounded-lg bg-slate-50 p-3 text-xs"><strong>{codeLabel(row.action)}</strong> · {row.actor?.name || row.actorId || copy("System")} · {row.occurredAt || row.createdAt}<div className="mt-1 text-slate-500">{row.summary || row.metadata?.reason || copy("Audit event")}</div></div>)}
-        {movements.map((row) => <div key={row.id} className="rounded-lg bg-blue-50 p-3 text-xs"><strong>{codeLabel(row.movementType)}</strong> <span className="text-slate-400">{row.movementType}</span> · {copy("Batch {id}", { id: row.postingBatchId })}<div className="mt-1 text-slate-500">{copy("In {in} / out {out}", { in: row.quantityIn, out: row.quantityOut })} · {codeLabel(row.balanceType)}:{row.balanceId}</div></div>)}
+        {movements.map((row) => <div key={row.id} className="rounded-lg bg-blue-50 p-3 text-xs"><strong>{codeLabel(row.movementType)}</strong> <span className="text-slate-500">{row.movementType}</span> · {copy("Batch {id}", { id: row.postingBatchId })}<div className="mt-1 text-slate-500">{copy("In {in} / out {out}", { in: row.quantityIn, out: row.quantityOut })} · {codeLabel(row.balanceType)}:{row.balanceId}</div></div>)}
       </div>
     </Card>
   );

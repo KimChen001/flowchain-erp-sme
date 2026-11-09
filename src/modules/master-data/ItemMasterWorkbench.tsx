@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useLocation, useSearchParams } from "react-router";
 import { useDetailBack } from "../../components/navigation/useDetailBack";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
+
+const ITEM_PAGE_SIZE = 50;
 import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
@@ -233,6 +237,9 @@ export default function ItemMasterWorkbench({
       ),
     [items, query, status, type, category, gap],
   );
+  // One page of the list is drawn, as on the other long lists; the search and
+  // filters run over every item, and a new search starts at page 1.
+  const paged = usePagedRows(shown, ITEM_PAGE_SIZE, [query, status, type, category, gap].join("|"));
   const distinct = (values: string[]) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, locale));
   const types = useMemo(() => distinct(items.map((item) => item.itemType)), [items, locale]);
   const categories = useMemo(() => distinct(items.map((item) => item.category)), [items, locale]);
@@ -279,6 +286,7 @@ export default function ItemMasterWorkbench({
   if (editing)
     return (
       <Card className="p-5">
+        <FocusFirstField />
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold">
@@ -524,8 +532,8 @@ export default function ItemMasterWorkbench({
                   </td>
                 </tr>
               )}
-              {shown.map((item, index) => (
-                <tr key={item.itemId} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < shown.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
+              {paged.pageRows.map((item, index) => (
+                <tr key={item.itemId} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < paged.pageRows.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
                   <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                     <EntityLink kind="item" id={item.itemId} className={tableLinkClass}>
                       {item.sku}
@@ -576,6 +584,7 @@ export default function ItemMasterWorkbench({
             </tbody>
           </table>
         </div>
+        <ListPager page={paged.page} pageSize={ITEM_PAGE_SIZE} total={shown.length} onPage={paged.setPage} testId="item-list-pager" />
       </Card>
     </div>
   );

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { readAuthorizationContext } from "../../lib/authorizationContext";
 import { ArrowLeft, Eraser, Printer, RotateCcw, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PRINT_LAYOUT_LIMITS, type DocumentSettings } from "../../../shared/business-documents.mjs";
 import { useUnsavedChanges } from "../../components/navigation/UnsavedChangesProvider";
 import { useI18n } from "../../i18n/I18n";
-import { ApiError, apiJson } from "../../lib/api-client";
+import { ApiError } from "../../lib/api-client";
 import PrintCanvas from "./PrintCanvas";
 import PrintElementInspector from "./PrintElementInspector";
 import PrintInstancePanel from "./PrintInstancePanel";
@@ -78,7 +79,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
     let alive = true;
     Promise.all([
       fetchWorkspacePrintSettings(),
-      apiJson<{ tenantId?: string; effectivePermissions?: string[] }>("/api/authorization/context").catch(() => null),
+      readAuthorizationContext().catch(() => null),
     ]).then(([settings, context]) => {
       if (!alive) return;
       setDocuments(settings.documents);

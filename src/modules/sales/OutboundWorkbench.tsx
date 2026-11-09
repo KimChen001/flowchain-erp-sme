@@ -489,7 +489,7 @@ const HeaderFact = ({
     <dt className="text-xs text-slate-500">{label}</dt>
     <dd
       className={`mt-0.5 break-words text-sm tabular-nums ${
-        tone === "warning" ? "font-semibold text-amber-700" : tone === "muted" ? "text-slate-400" : "font-semibold text-slate-800"
+        tone === "warning" ? "font-semibold text-amber-700" : tone === "muted" ? "text-slate-500" : "font-semibold text-slate-800"
       }`}
     >
       {children}
@@ -1998,7 +1998,7 @@ function OrderDetail({ id }: { id: string }) {
               <span
                 aria-disabled="true"
                 title={link.unavailableReason ? copy(link.unavailableReason) : ""}
-                className="rounded-lg border px-3 py-2 text-sm text-slate-400"
+                className="rounded-lg border px-3 py-2 text-sm text-slate-500"
                 key={link.id}
               >
                 {copy(link.label)} {link.count ?? ""}

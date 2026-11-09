@@ -1305,7 +1305,7 @@ export default function FlowChainApp() {
                       }))
                     }
                     className={`${rail ? "hidden xl:flex" : "flex"} w-full items-center justify-between gap-2 fc-caption font-semibold uppercase tracking-widest px-2 mb-2`}
-                    style={{ color: "rgba(148,163,184,0.58)" }}
+                    style={{ color: "rgba(148,163,184,0.82)" }}
                   >
                     <span>{groupLabel}</span>
                     <ChevronRight
@@ -1321,7 +1321,7 @@ export default function FlowChainApp() {
                 ) : (
                   <div
                     className={`${rail ? "hidden xl:block" : ""} fc-caption font-semibold uppercase tracking-widest px-2 mb-2`}
-                    style={{ color: "rgba(148,163,184,0.58)" }}
+                    style={{ color: "rgba(148,163,184,0.82)" }}
                   >
                     {groupLabel}
                   </div>
@@ -1498,7 +1498,7 @@ export default function FlowChainApp() {
             borderBottom: `1px solid ${A.border}`,
           }}
         >
-          <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-sm">
             <button
               ref={mobileNavButtonRef}
               type="button"
@@ -1537,7 +1537,7 @@ export default function FlowChainApp() {
               className="relative hidden sm:block"
             >
               <div
-                className="flex items-center gap-2 w-72 px-3 py-1.5 rounded-lg text-xs"
+                className="flex items-center gap-2 w-52 xl:w-72 px-3 py-1.5 rounded-lg text-xs focus-within:ring-2 focus-within:ring-blue-500/50"
                 style={{ color: A.gray1, background: A.gray6 }}
               >
                 <button
@@ -1593,6 +1593,7 @@ export default function FlowChainApp() {
                       openSearchResult(visibleSearchResults[activeSearchIndex]);
                     }
                   }}
+                  aria-label={t("top.search")}
                   placeholder={t("top.search")}
                   className="w-full bg-transparent outline-none text-xs"
                   style={{ color: A.label }}

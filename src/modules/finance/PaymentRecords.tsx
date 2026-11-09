@@ -177,7 +177,7 @@ export function PaymentRecords({ kind, obligation, onDone }: {
             </thead>
             <tbody>
               {payments.map((payment) => (
-                <tr key={payment.id} data-testid="payment-row" className={`border-b border-slate-50 align-top ${payment.status === "voided" ? "text-slate-400" : ""}`}>
+                <tr key={payment.id} data-testid="payment-row" className={`border-b border-slate-50 align-top ${payment.status === "voided" ? "text-slate-500" : ""}`}>
                   <td className="py-2">{day(payment.paymentDate, locale)}</td>
                   <td className="py-2">{METHOD_KEYS[payment.method] ? t(METHOD_KEYS[payment.method]) : payment.method}</td>
                   <td className="py-2">{payment.reference || "—"}{payment.note && <div className="text-xs text-slate-500">{payment.note}</div>}</td>

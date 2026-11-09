@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { Boxes, Pencil, Plus, Save } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { forgetWarehouseNames } from "../../lib/useWarehouseNames";
@@ -190,14 +191,14 @@ export default function WarehouseMaster({ operateIds, onChanged }: { operateIds:
   return <section className="mt-5" data-testid="warehouse-master">
     {confirmDialog.element}
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h3 className="font-semibold">{t("settings.warehouses")}</h3><p className="mt-1 text-sm text-slate-500">{t("settings.warehousesHint")}</p></div>
+      <div><h2 className="text-lg font-semibold">{t("settings.warehouses")}</h2><p className="mt-1 text-sm text-slate-500">{t("settings.warehousesHint")}</p></div>
       {!adding && <button type="button" data-testid="warehouse-new" className={`${button} text-white`} style={{ background: A.blue }} onClick={() => { setAdding(true); setNotice(null); }}><Plus size={15} />{t("settings.warehouseNew")}</button>}
     </div>
     {notice && <div role={notice.tone === "alert" ? "alert" : "status"} data-testid="warehouse-notice" className={`mt-3 rounded-lg p-3 text-sm ${notice.tone === "alert" ? "bg-amber-50 text-amber-800" : "bg-blue-50 text-blue-900"}`}>
       <div>{notice.title}</div>{notice.lines.length > 0 && <ul className="mt-1 list-disc pl-5">{notice.lines.map(line => <li key={line}>{line}</li>)}</ul>}
     </div>}
 
-    {adding && <form onSubmit={event => void create(event)} className="mt-3 flex flex-wrap items-end gap-2 rounded-lg bg-slate-50 p-3" data-testid="warehouse-form">
+    {adding && <form onSubmit={event => void create(event)} className="mt-3 flex flex-wrap items-end gap-2 rounded-lg bg-slate-50 p-3" data-testid="warehouse-form"><FocusFirstField />
       <label className="text-sm">{t("settings.warehouseCode")}<input data-testid="warehouse-field-code" required maxLength={32} className={`${field} mt-1 block w-40 uppercase`} value={draft.code} onChange={event => setDraft({ ...draft, code: event.target.value })} /></label>
       <label className="text-sm">{t("settings.warehouseName")}<input data-testid="warehouse-field-name" required maxLength={120} className={`${field} mt-1 block w-64`} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
       <button type="submit" data-testid="warehouse-save" disabled={busy === "new" || !draft.code.trim() || !draft.name.trim()} className={`${button} text-white`} style={{ background: A.blue }}><Save size={15} />{t("settings.warehouseAdd")}</button>

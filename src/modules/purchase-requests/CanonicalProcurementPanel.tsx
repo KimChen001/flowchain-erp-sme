@@ -1,4 +1,5 @@
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
+import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useI18n } from "../../i18n/I18n";
 import { formatCalendarDay, formatLocaleAmount, todayInTimeZone } from "../../lib/format";
 import { formatInstantDay } from "../business-documents/documentFormat";
@@ -11,7 +12,18 @@ import { ArrowLeft, CheckCircle2, ClipboardCheck, FileText, Plus, RefreshCw, Tra
 import { toast } from "sonner";
 import { rememberDocumentNumbers, resolveDocumentNumbers } from "../../lib/documentNumbers";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
-import { ApiError, apiJson } from "../../lib/api-client";
+import { ApiError, apiJson, CURRENT_USER_KEY } from "../../lib/api-client";
+
+// The signed-in person's name as the app stored it at sign-in; the server
+// still records the requester from the session, whatever this shows.
+function signedInName() {
+  try {
+    const user = JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || "null");
+    return typeof user?.name === "string" ? user.name.trim() : "";
+  } catch {
+    return "";
+  }
+}
 import { A, Card, Field, inputStyle, useConfirm } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
@@ -1054,6 +1066,7 @@ export default function CanonicalProcurementPanel({
   }
   return (
     <div className="space-y-5 pb-16" data-testid="purchase-request-form">
+      <FocusFirstField />
       <Card className="p-5">
         <button type="button" onClick={closeForm} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline">
           <ArrowLeft size={13} />{editingSelected ? tr("backToRequest") : copy("返回采购申请列表")}
@@ -1117,7 +1130,7 @@ export default function CanonicalProcurementPanel({
             <input
               aria-label={copy("申请人")}
               readOnly
-              value={copy("由服务端当前用户确定")}
+              value={signedInName() || copy("由服务端当前用户确定")}
               style={{ ...inputStyle, background: A.gray6, color: A.sub }}
             />
           </Field>

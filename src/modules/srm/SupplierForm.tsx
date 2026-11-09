@@ -1,4 +1,5 @@
 import { Building2, Check, ChevronDown } from 'lucide-react';
+import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useI18n } from '../../i18n/I18n';
 import { supplierCopy } from './supplierCopy';
 import { orderedCurrencyCodes } from '../../lib/currencyOptions';
@@ -37,6 +38,7 @@ export function SupplierForm({ form, editing, saving, errors, currencyWarning, w
   }
   const section = (title: string, fields: string[][]) => <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="text-base font-semibold text-slate-900">{t(title)}</h2><div className="mt-4 grid gap-x-5 gap-y-4 md:grid-cols-2">{fields.map(field)}{title === 'Basic information' && <div><label htmlFor="supplier-status" className="text-sm font-medium text-slate-600">{t('Status')}</label><select id="supplier-status" aria-label={t('Status')} className={control} value={form.status} onChange={event => onChange('status', event.target.value)}>{[['active', 'Active'], ['draft', 'Draft'], ['inactive', 'Inactive']].map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select></div>}</div></section>;
   return <form noValidate data-testid="supplier-form" onSubmit={event => { event.preventDefault(); onSave(); }} className="mx-auto max-w-5xl space-y-4">
+    <FocusFirstField />
     <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50/60 p-5"><Building2 className="mt-1 text-blue-600" size={24} /><div><h1 className="text-xl font-semibold text-slate-900">{t(editing ? 'Edit supplier' : 'New supplier')}</h1><p className="mt-1 text-sm text-slate-600">{t('Start with the essentials. Add contact and commercial details when available.')}</p><p className="mt-2 text-xs text-slate-500">* {t('Required fields')}</p></div></div>
     {errors.length > 0 && <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{t('Check the highlighted fields.')}{errors.filter(error => !error.field).map((error, index) => <p key={index}>{t(error.message || 'Could not save supplier. Please try again.')}</p>)}</div>}
     {currencyWarning && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{t('Could not load workspace currency. Choose a currency before saving.')}</p>}

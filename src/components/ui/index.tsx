@@ -1,6 +1,9 @@
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useI18n } from "../../i18n/I18n";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
+import { useDialogFocus } from "./useDialogFocus";
+import { readableOn } from "./contrast";
+export { contrastRatio, readableOn } from "./contrast";
 import { ArrowDownRight, ArrowLeft, ArrowUpRight, ChevronDown, History, Home, List, X } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import type { AuditEntry } from "../../types/scm";
@@ -17,7 +20,7 @@ export function Chip({ label, color, bg }: { label: string; color: string; bg: s
   const copy = useWorkspaceCopy();
   return (
     <span className="fc-status-chip inline-flex w-fit items-center whitespace-nowrap break-keep"
-      style={{ color, background: bg }}>
+      style={{ color: readableOn(color, bg), background: bg }}>
       {copy(label)}
     </span>
   );
@@ -322,23 +325,22 @@ export function Modal({ open, onClose, title, subtitle, width = 560, children, f
   width?: number; children: React.ReactNode; footer?: React.ReactNode;
 }) {
   const copy = useWorkspaceCopy();
-  useEffect(() => {
-    if (!open) return;
-    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onEsc);
-    return () => window.removeEventListener("keydown", onEsc);
-  }, [open, onClose]);
+  const dialog = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  // A real dialog: named by its title, focus moves in and stays, Escape
+  // closes it and focus returns to the opener (useDialogFocus).
+  useDialogFocus(open, dialog, onClose);
   if (!open) return null;
   return (
     <div className="fc-overlay-enter fixed inset-0 z-50 flex items-center justify-center p-6"
       style={{ background: "rgba(0,0,0,0.32)", backdropFilter: "blur(10px)" }}
       onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()}
-        className="fc-dialog-enter bg-white rounded-2xl flex flex-col max-h-[88vh] overflow-hidden"
+      <div onClick={(e) => e.stopPropagation()} ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+        className="fc-dialog-enter bg-white rounded-2xl flex flex-col max-h-[88vh] overflow-hidden outline-none"
         style={{ width: `min(${width}px, calc(100vw - 32px))`, boxShadow: "0 24px 60px rgba(0,0,0,0.24), 0 0 0 0.5px rgba(0,0,0,0.08)" }}>
         <div className="px-6 pt-5 pb-4 flex items-start justify-between" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
           <div>
-            <h3 className="fc-modal-title" style={{ color: A.label }}>{copy(title)}</h3>
+            <h2 id={titleId} className="fc-modal-title" style={{ color: A.label }}>{copy(title)}</h2>
             {subtitle && <p className="fc-page-subtitle mt-0.5" style={{ color: A.sub }}>{subtitle}</p>}
           </div>
           <button aria-label={copy("关闭")} onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors"
@@ -354,12 +356,18 @@ export function Modal({ open, onClose, title, subtitle, width = 560, children, f
   );
 }
 
+// The label names its control: a single control child gets an id (unless it
+// has one) and the label points at it, so a screen reader reads the label,
+// not the placeholder.
 export function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   const copy = useWorkspaceCopy();
+  const fallbackId = useId();
+  const child = React.Children.count(children) === 1 && React.isValidElement<{ id?: string }>(children) && typeof children.type === "string" ? children : null;
+  const controlId = child?.props.id || fallbackId;
   return (
     <div className="space-y-1.5">
-      <label className="text-[13px] leading-5 font-semibold" style={{ color: A.sub }}>{copy(label)}</label>
-      {children}
+      <label htmlFor={child ? controlId : undefined} className="block text-[13px] leading-5 font-semibold" style={{ color: A.sub }}>{copy(label)}</label>
+      {child ? React.cloneElement(child, { id: controlId }) : children}
       {hint && <p className="text-[12px] leading-[18px]" style={{ color: A.gray2 }}>{copy(hint)}</p>}
     </div>
   );
@@ -367,5 +375,5 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 
 export const inputStyle: React.CSSProperties = {
   width: "100%", padding: "8px 10px", borderRadius: 8, fontSize: 13, lineHeight: "20px", color: A.label,
-  background: A.white, border: `0.5px solid ${A.gray4}`, outline: "none",
+  background: A.white, border: `0.5px solid ${A.gray4}`,
 };
