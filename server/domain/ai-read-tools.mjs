@@ -373,7 +373,7 @@ const supplierPerformance = defineAiTool({
 
 const lateOrderImpact = defineAiTool({
   name: 'late_order_impact',
-  description: 'What late purchase orders put at risk, in the inventory page\'s terms: per SKU, available to promise with and without the late lines, how much more the open sales orders would fall short, and those sales orders with their customers and promised days. availableToPromise counts every late line as arriving; withoutTheseLines is available to promise if the late lines judged here never arrive (all of them, or the one order named), never what one order brings on its own; additionalShortfall is how much more the sales orders then fall short. Name orders to judge each on its own; with none, the overdue orders of every supplier are judged together, so for one supplier\'s delay name that supplier\'s orders (list_purchase_orders with supplier). It counts open sales orders only: for stock that sells without them, stock_projection\'s atRecordedRate shows what a delay does at the shipped rate. No arrival dates are guessed.',
+  description: 'What late purchase orders put at risk, in the inventory page\'s terms: per SKU, available to promise with and without the late lines, how much more the open sales orders would fall short, and those sales orders with their customers and promised days. availableToPromise counts every late line as arriving; withoutTheseLines is available to promise if the lines of the row\'s judgedOrders never arrive, never what one order brings on its own; additionalShortfall is how much more the sales orders then fall short. withoutEveryLateLine is on the rows that leave out every late line of the SKU: the figure for "without the late lines" or "if none arrive"; a row that leaves out only some of them gives the figure without those orders, named as such. Name orders to judge each on its own (a SKU on more than one named order also gets a row for them together, marked together); with none, the overdue orders of every supplier are judged together, so for one supplier\'s delay name that supplier\'s orders (list_purchase_orders with supplier). It counts open sales orders only: for stock that sells without them, stock_projection\'s atRecordedRate shows what a delay does at the shipped rate. No arrival dates are guessed.',
   parameters: { orders: { type: 'array', items: { type: 'string' }, maxItems: 5, description: 'Purchase order numbers.' } },
   available: (facts) => Boolean(facts.purchaseOrders) && Boolean(facts.inventory),
   run(args, { facts }) {
@@ -390,8 +390,11 @@ const lateOrderImpact = defineAiTool({
       judged: result.mode === 'named' ? 'each named order on its own' : 'the overdue orders together',
       orders: array(result.pos).map((po) => ({ orderNumber: po.orderNumber, overdueDays: po.overdueDays || 0, ref: aiToolRef('purchase_order', po.id, po.orderNumber) })),
       skus: array(result.groups).map((group) => ({
-        sku: group.sku, unit: group.unit, stillToReceive: group.remaining, known: group.known,
-        availableToPromise: group.known ? group.atp : null, withoutTheseLines: group.known ? group.without : null, additionalShortfall: group.known ? group.added : null,
+        sku: group.sku, judgedOrders: array(group.pos).map((po) => po.orderNumber), ...(group.together ? { together: true } : {}),
+        unit: group.unit, stillToReceive: group.remaining, known: group.known,
+        availableToPromise: group.known ? group.atp : null, withoutTheseLines: group.known ? group.without : null,
+        ...(group.known && group.coversEveryLateLine ? { withoutEveryLateLine: group.without } : {}),
+        additionalShortfall: group.known ? group.added : null,
         countedAsIncoming: group.known ? group.counted : null,
         salesOrdersWaiting: result.salesVisible ? array(group.orders).map((order) => ({ orderNumber: order.number, customer: order.customer, promisedDate: order.promisedDate, needs: order.open, ref: aiToolRef('sales_order', order.id, order.number) })) : null,
       })),
