@@ -90,7 +90,9 @@ const DAYS_KEY = /day|delay|overdue|result|between|lead/i
 // A figure written as available or available to promise comes from such a
 // field (2026-11-08 on DeepSeek: "stays at 168 pcs available to promise",
 // 48 on hand plus one late order of 120, where the tools gave 408).
-const AVAILABLE_KEY = /avail|atp/i
+// late_order_impact's figures without some late lines are available to
+// promise too ("PO-202610-0022 不来，可承诺量 288 件").
+const AVAILABLE_KEY = /avail|atp|^without(?:These|Every)/i
 const AVAILABLE_AFTER = /^\s*(?:[A-Za-z]{1,6}\.?\s+|[件个箱卷套只台]\s*)?(?:are\s+|is\s+|of\s+)?(?:available|atp\b|可用|可承诺)/i
 const AVAILABLE_BEFORE = /(?:available(?:\s+to\s+promise)?|\bATP|可承诺量?|可用(?:量|库存)?)\s*(?:is|was|of|stays at|would be|:|：|(?:就|仍|还|也|只)?(?:为|是|有)|只剩|剩下?)?\s*(?:about|约)?\s*$/i
 // A stock figure written for "if neither arrives" or "without both" is

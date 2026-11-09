@@ -294,4 +294,6 @@ test('a figure "without the late lines" comes from the row that leaves out every
   // A figure without one named order is read as before.
   assert.deepEqual(numbers('Without PO-202610-0022 it is 288 pcs, and without PO-202610-0024 it is 168 pcs.'), [])
   assert.deepEqual(numbers('85123A has 288 pcs without PO-202610-0022.'), [])
+  // A figure written as available to promise may come from these rows.
+  assert.deepEqual(numbers('单不来时：PO-202610-0022 不来，可承诺量 288 件；PO-202610-0024 不来，只剩 168 件。'), [])
 })
