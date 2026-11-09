@@ -216,7 +216,7 @@ test('a figure written as available comes from an available field', () => {
 // the two late orders (408 − 240); without both it is 48.
 test('a stock figure written for none of the late orders arriving is today\'s available stock', () => {
   const results = [
-    { sku: '85123A', availableToday: 48, safetyStock: 119, availableIfLateLinesArrive: 408, availableIfNoLateLinesArrive: 48, notPlacedInAWeek: { incomingPastPromisedDate: [{ orderNumber: 'PO-202610-0024', quantity: 240 }, { orderNumber: 'PO-202610-0031', quantity: 120 }] }, recordedDemand: { averageDailyDemand: 17.1 }, runsOutIfNothingArrives: { days: 2.8 }, weeksAhead: 4, lateLines: 2, lateLinesQuantity: 360 },
+    { sku: '85123A', availableToday: 48, safetyStock: 119, availableIfLateLinesArrive: 408, availableIfNoLateLinesArrive: 48, notPlacedInAWeek: { incomingPastPromisedDate: [{ orderNumber: 'PO-202610-0024', quantity: 240 }, { orderNumber: 'PO-202610-0031', quantity: 120 }] }, recordedDemand: { averageDailyDemand: 17.1 }, runsOutIfNothingArrives: { days: 2.8 }, weeksAhead: 4, lateLines: 2, lateLinesQuantity: 360, reorderPoint: 358 },
     { calculations: [{ label: 'without PO-202610-0024', result: 168 }, { label: 'short of safety stock', result: 71 }, { label: 'a week', result: 120 }] },
   ]
   const numbers = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
@@ -233,6 +233,20 @@ test('a stock figure written for none of the late orders arriving is today\'s av
   assert.deepEqual(numbers('Even if neither order arrives, 48 pcs are available today; once both arrive, 408.'), [])
   // A figure without one named order is not read as this scenario.
   assert.deepEqual(numbers('Without PO-202610-0024 it is 168 pcs.'), [])
+  // Nor a measure named after the figure, or the other case after a colon or
+  // "都到的话" (later Flash runs).
+  assert.deepEqual(numbers('**这两单没到之前就补一批**：现有在途和申请都覆盖不到 358 件的再订货点。'), [])
+  assert.deepEqual(numbers('- **两单都到 vs 都不来：** 都到的话可用量是 408 件，够覆盖 358 件的再订货点；都不来就只剩 48 件。'), [])
+  assert.deepEqual(numbers('- **两单都到 vs 都不来：** 都到的话可用量是 408 件，够覆盖 358 件的再订货点；都不来就只剩 168 件。'), ['168'])
+  // Nor an order's state, its own quantity, or the next sentence (saved
+  // answers replayed on 2026-11-08).
+  assert.deepEqual(numbers('PO-202610-0024 is overdue with nothing received yet, so all 240 pcs are outstanding.'), [])
+  assert.deepEqual(numbers('可供承诺量会从 408 件降到 48 件（去掉这两单的 360 件）。'), [])
+  assert.deepEqual(numbers('85123A 现有可用 48 件，两批未到的 360 件一旦全不到，可用库存就是 0。'), ['0'])
+  assert.deepEqual(numbers('If both late orders arrive, available to promise is 408 pcs. If neither arrives, it is 48 pcs.'), [])
+  assert.deepEqual(numbers('85123A 有 168 件，如果两批都不来。'), ['168'])
+  // A wrong figure for each order missing alone, written as both missing.
+  assert.deepEqual(numbers('即使这两张订单都不到货，仍有 168 件。'), ['168'])
   // Nor is an order's own quantity named as what does not arrive.
   assert.deepEqual(numbers('如果 PO-202610-0031 的剩余 120 件和 PO-202610-0024 的 240 件都不来，85123A 现在只有 48 件可用。'), [])
   // A shortfall, demand, safety stock or a time written in the scenario is
