@@ -46,7 +46,7 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   list_suppliers: { rows: ['name', 'code', 'tier'] },
   spend_analysis: { suppliers: ['name', 'amount', 'sharePercent', 'rank', 'spendClass'], months: ['month', 'value', 'orders'], items: ['name', 'amount'] },
   supplier_performance: { suppliers: ['name', 'deliveries', 'onTime.percent', 'inFull.percent', 'onTimeInFull.percent', 'rejection.percent', 'averageDelayDays', 'lateDeliveries', 'undeliveredPastOriginalPromiseInPeriod'] },
-  late_order_impact: { orders: ['orderNumber', 'overdueDays'], skus: ['sku', 'unit', 'stillToReceive', 'availableToPromise', 'withoutTheseLines', 'additionalShortfall'] },
+  late_order_impact: { orders: ['orderNumber', 'overdueDays'], skus: ['sku', 'judgedOrders', 'together', 'unit', 'stillToReceive', 'availableToPromise', 'withoutTheseLines', 'withoutEveryLateLine', 'additionalShortfall'] },
   calculate: { '': ['result', 'unit'] },
   search_records: { rows: ['type', 'number', 'name', 'status'] },
   reorder_list: { rows: ['sku', 'itemName', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'position', 'reorderPoint', 'shortfall', 'averageDailyDemand', 'supplier', 'leadTimeDays', 'minimumOrderQuantity', 'moqUnit', 'requestQuantity', 'raisedToMinimum', 'suggestedReorderPoint'] },

@@ -388,3 +388,34 @@ test('the reorder list gives the model its daily demand to one decimal', async (
   const row = (await runAiReadTool('reorder_list', {}, { facts: await readAiSkillFacts(context), context })).result.rows[0]
   assert.equal(row.averageDailyDemand, 7.2)
 })
+
+// 2026-11-09 on Flash (UCI scene): "available to promise for 85123A is 408
+// pcs with these late lines counted (288 without)". The two named late orders
+// gave two rows for 85123A, 288 and 168, with nothing to say which order each
+// left out; without both it is 48.
+test('late order impact names the orders each row leaves out, and judges named orders on one SKU together too', async () => {
+  const po = (id, orderNumber, sku, remaining, overdueDays) => ({ id, orderNumber, isOpen: true, overdueDays, openLines: [{ sku, remaining, unit: 'pcs' }] })
+  const facts = {
+    asOf: '2026-11-10',
+    purchaseOrders: { index: [po('po-22', 'PO-202610-0022', '85123A', 120, 5), po('po-24', 'PO-202610-0024', '85123A', 240, 3), po('po-23', 'PO-202610-0023', '84879', 450, 4)] },
+    inventory: { rows: [
+      { sku: '85123A', itemId: 'item-1', unit: 'pcs', available: 48, availableToPromise: 408, purchaseOrderIds: ['po-22', 'po-24'] },
+      { sku: '84879', itemId: 'item-2', unit: 'pcs', available: 98, availableToPromise: 548, purchaseOrderIds: ['po-23'] },
+    ] },
+    salesOrders: [],
+  }
+  const rows = (result) => result.skus.map((row) => [row.sku, row.judgedOrders.join('+'), row.withoutTheseLines, row.withoutEveryLateLine ?? null, row.together ?? false])
+  const named = (await runAiReadTool('late_order_impact', { orders: ['PO-202610-0022', 'PO-202610-0024', 'PO-202610-0023'] }, { facts })).result
+  assert.deepEqual(rows(named), [
+    ['85123A', 'PO-202610-0022', 288, null, false],
+    ['85123A', 'PO-202610-0024', 168, null, false],
+    ['84879', 'PO-202610-0023', 98, 98, false],
+    ['85123A', 'PO-202610-0022+PO-202610-0024', 48, 48, true],
+  ])
+  // One named order of two leaves the other late line counted.
+  const one = (await runAiReadTool('late_order_impact', { orders: ['PO-202610-0024'] }, { facts })).result
+  assert.deepEqual(rows(one), [['85123A', 'PO-202610-0024', 168, null, false]])
+  // With none named, the overdue orders are judged together.
+  const all = (await runAiReadTool('late_order_impact', {}, { facts })).result
+  assert.deepEqual(rows(all).sort(), [['84879', 'PO-202610-0023', 98, 98, false], ['85123A', 'PO-202610-0022+PO-202610-0024', 48, 48, false]])
+})
