@@ -242,9 +242,13 @@ test('a stock figure written for none of the late orders arriving is today\'s av
   // answers replayed on 2026-11-08).
   assert.deepEqual(numbers('PO-202610-0024 is overdue with nothing received yet, so all 240 pcs are outstanding.'), [])
   assert.deepEqual(numbers('可供承诺量会从 408 件降到 48 件（去掉这两单的 360 件）。'), [])
+  assert.deepEqual(numbers('PO-202610-0024（逾期 3 天，240 件全部未到），两张合计剩余 360 件。'), [])
   assert.deepEqual(numbers('85123A 现有可用 48 件，两批未到的 360 件一旦全不到，可用库存就是 0。'), ['0'])
   assert.deepEqual(numbers('If both late orders arrive, available to promise is 408 pcs. If neither arrives, it is 48 pcs.'), [])
   assert.deepEqual(numbers('85123A 有 168 件，如果两批都不来。'), ['168'])
+  // The last Flash round: a figure without one order, a measure in the next
+  // clause.
+  assert.deepEqual(numbers('**销售订单**：这两张单都不来，可承诺量是 288 件，仍高于安全库存 119 件。'), ['288'])
   // A wrong figure for each order missing alone, written as both missing.
   assert.deepEqual(numbers('即使这两张订单都不到货，仍有 168 件。'), ['168'])
   // Nor is an order's own quantity named as what does not arrive.
