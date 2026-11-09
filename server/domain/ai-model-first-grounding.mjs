@@ -114,7 +114,7 @@ const NONE_ARRIVE = new RegExp(`${NONE_ARRIVE_EN}|${NONE_ARRIVE_ZH}`, 'gi')
 const NONE_ARRIVE_START = new RegExp(`^(?:[（(,，]\\s*)?(?:${NONE_ARRIVE_EN})|^without(?=[)）,，;；.。]|$)|^[（(]\\s*(?:如果|若|假如|要是|在)?\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_ZH})|^[,，]\\s*(?:如果|若|假如|要是)\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_ZH})`, 'i')
 // Words that make the figure another measure: a shortfall, demand, a rate,
 // safety stock, a week.
-const NOT_STOCK = /short|gap|need|demand|outstanding|on\s+order|to\s+receive|still\s+due|\btotal\b|in\s+all|未收|在途|合计|总计|共计|cost|price|spend|value|safety|reorder|\brate\b|\bper\b|\ba\s+(?:day|week|month)\b|weekly|daily|\bweeks?\b|\bdays?\b|\bmonths?\b|sold|sell|ship|缺|不足|需求|需要|成本|价格|金额|安全库存|再订货|补货|每天|每周|每月|日均|周均|销量|发货|出货|订货量|采购量|(?:[一二两三四五六七八九十几]|下)(?:周|天|个月)/i
+const NOT_STOCK = /short|gap|need|demand|outstanding|on\s+order|to\s+receive|still\s+due|\btotal\b|in\s+all|differ|未收|在途|合计|总计|差额|相差|差距|共计|cost|price|spend|value|safety|reorder|\brate\b|\bper\b|\ba\s+(?:day|week|month)\b|weekly|daily|\bweeks?\b|\bdays?\b|\bmonths?\b|sold|sell|ship|缺|不足|需求|需要|成本|价格|金额|安全库存|再订货|补货|每天|每周|每月|日均|周均|销量|发货|出货|订货量|采购量|(?:[一二两三四五六七八九十几]|下)(?:周|天|个月)/i
 const NOT_STOCK_AFTER = /^\s*(?:[A-Za-z]{1,6}\.?|[件个箱卷套只台])?\s*(?:short|below|less|fewer|more|a\s+(?:day|week|month)\b|per\b|each\b|\/|缺|短缺|不足|每|多|少)/i
 const NONE_UNIT = /^\s*(?:[A-Za-z]{1,6}\b|[件个箱卷套只台])?\s*(?:available|可用)?\s*/i
 // And a word that says the figure is a stock quantity, so a count ("if none

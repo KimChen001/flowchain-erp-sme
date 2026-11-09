@@ -284,7 +284,7 @@ test('a figure "without the late lines" comes from the row that leaves out every
   const results = [{ skus: [
     { sku: '85123A', judgedOrders: ['PO-202610-0022'], availableToPromise: 408, withoutTheseLines: 288 },
     { sku: '85123A', judgedOrders: ['PO-202610-0024'], availableToPromise: 408, withoutTheseLines: 168 },
-    { sku: '85123A', judgedOrders: ['PO-202610-0022', 'PO-202610-0024'], together: true, availableToPromise: 408, withoutTheseLines: 48, withoutEveryLateLine: 48 },
+    { sku: '85123A', judgedOrders: ['PO-202610-0022', 'PO-202610-0024'], together: true, stillToReceive: 360, availableToPromise: 408, withoutTheseLines: 48, withoutEveryLateLine: 48 },
   ] }]
   const numbers = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
   assert.deepEqual(numbers('Available to promise for 85123A is 408 pcs with these late lines counted (288 without).'), ['288'])
@@ -294,6 +294,9 @@ test('a figure "without the late lines" comes from the row that leaves out every
   // A figure without one named order is read as before.
   assert.deepEqual(numbers('Without PO-202610-0022 it is 288 pcs, and without PO-202610-0024 it is 168 pcs.'), [])
   assert.deepEqual(numbers('85123A has 288 pcs without PO-202610-0022.'), [])
+  // A difference named after the figure is another measure (a later step-2
+  // run: "drops to 48 pcs if neither arrives — a 360 pcs difference").
+  assert.deepEqual(numbers('Available to promise is 408 pcs with both late lines counted, but drops to 48 pcs if neither arrives — a 360 pcs difference.'), [])
   // A figure written as available to promise may come from these rows.
   assert.deepEqual(numbers('单不来时：PO-202610-0022 不来，可承诺量 288 件；PO-202610-0024 不来，只剩 168 件。'), [])
 })
