@@ -765,3 +765,30 @@ test('the prompt words a ticked form as reviewing it, an unticked one as ticking
   assert.match(ASSISTANT_V2_SYSTEM, /tick the items you want, then click Create draft request/)
   assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /"check the lines, then click Create draft request"/)
 })
+
+// 2026-11-09 on Flash, today's priorities: "a call with Acme covers both of
+// its late orders, 360 pcs of 85123A in all" (120 + 240) was flagged, as no
+// tool gave the total.
+test('attention_list gives the late lines\' total for a SKU on more than one late order, following its focus', async () => {
+  const { facts, run } = await v2()
+  // What the purchase orders say, worked out here.
+  const late = facts.purchaseOrders.rows.filter((po) => po.overdueDays > 0)
+  const bySku = new Map()
+  for (const po of late) for (const line of po.openLines) if (line.remaining > 0) bySku.set(line.sku, [...(bySku.get(line.sku) || []), { order: po.orderNumber, remaining: line.remaining, supplierId: po.supplierId }])
+  const shared = [...bySku.entries()].filter(([, lines]) => new Set(lines.map((line) => line.order)).size > 1)
+  assert.ok(shared.length > 0, 'the scenario has a SKU on two late orders')
+  const [sku, lines] = shared[0]
+  const today = (await run('attention_list')).result
+  const row = today.lateLinesBySku.find((entry) => entry.sku === sku)
+  assert.equal(row.lateQuantity, lines.reduce((sum, line) => sum + line.remaining, 0))
+  assert.deepEqual(row.orders.sort(), [...new Set(lines.map((line) => line.order))].sort())
+  assert.ok(today.lateLinesBySku.every((entry) => entry.orders.length > 1))
+  // Focused on the SKU, on one of its orders, or on its supplier, it stays.
+  assert.deepEqual((await run('attention_list', { focus: sku })).result.lateLinesBySku.map((entry) => entry.sku), [sku])
+  assert.ok((await run('attention_list', { focus: lines[0].order })).result.lateLinesBySku.some((entry) => entry.sku === sku))
+  const supplier = facts.suppliers.find((entry) => entry.id === lines[0].supplierId)
+  if (supplier && lines.every((line) => line.supplierId === supplier.id)) assert.ok((await run('attention_list', { focus: supplier.name })).result.lateLinesBySku.some((entry) => entry.sku === sku))
+  // A role that cannot read purchase orders gets none.
+  const noOrders = { ...facts, purchaseOrders: undefined }
+  assert.equal((await runAiReadTool('attention_list', {}, { facts: noOrders })).result.lateLinesBySku, undefined)
+})

@@ -78,6 +78,35 @@ function attentionItemName(facts, item) {
   return text(row?.itemName) || null
 }
 
+// The late lines' total per SKU where they span more than one late order, so
+// an answer need not add them up itself (2026-11-09 on Flash, today's
+// priorities: "a call with Acme covers both of its late orders, 360 pcs of
+// 85123A in all", 120 + 240, flagged as a figure no tool gave). It follows
+// the list's focus: a supplier's orders, the SKUs of one order, or one SKU.
+const LATE_BY_SKU_LISTED = 10
+function lateLinesBySku(facts, focus) {
+  if (!Array.isArray(facts.purchaseOrders?.rows)) return []
+  const late = facts.purchaseOrders.rows.filter((po) => (po.overdueDays || 0) > 0 && (focus?.entityType !== 'supplier' || po.supplierId === focus.entityId))
+  const groups = new Map()
+  for (const po of late) {
+    for (const line of array(po.openLines)) {
+      const remaining = Number(line.remaining)
+      if (!text(line.sku) || !(remaining > 0)) continue
+      const key = `${fold(line.sku)}|${text(line.unit)}`
+      const group = groups.get(key) || { sku: text(line.sku), itemName: text(line.itemName) || null, unit: text(line.unit) || null, lateQuantity: 0, orders: [], suppliers: [] }
+      group.lateQuantity = Math.round((group.lateQuantity + remaining) * 1000) / 1000
+      if (!group.orders.includes(po.orderNumber)) group.orders.push(po.orderNumber)
+      if (po.supplier && !group.suppliers.includes(po.supplier)) group.suppliers.push(po.supplier)
+      groups.set(key, group)
+    }
+  }
+  return [...groups.values()]
+    .filter((group) => group.orders.length > 1)
+    .filter((group) => focus?.entityType !== 'purchase_order' || group.orders.includes(focus.label))
+    .filter((group) => focus?.entityType !== 'item' || fold(group.sku) === fold(focus.label))
+    .slice(0, LATE_BY_SKU_LISTED)
+}
+
 function attentionRow(facts, item, rank) {
   const data = isObject(item.data) ? { ...item.data, ...requestCoverOf(facts, item) } : {}
   const details = Object.fromEntries(ATTENTION_DETAILS
@@ -99,7 +128,7 @@ function attentionTypeCounts(items) {
 
 const attentionList = defineAiTool({
   name: 'attention_list',
-  description: 'What needs attention, ranked by date and never by a score. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it. byType counts the rows of each type in the whole list, also those past the limit: stock rows come last, so read byType (stock_below_safety, stock_below_reorder, stock_shortage) before saying nothing is short or below its levels, and ask again with types to list them. On a stock row, pendingRequests and covered count the open purchase requests in any status, drafts included.',
+  description: 'What needs attention, ranked by date and never by a score. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it. byType counts the rows of each type in the whole list, also those past the limit: stock rows come last, so read byType (stock_below_safety, stock_below_reorder, stock_shortage) before saying nothing is short or below its levels, and ask again with types to list them. On a stock row, pendingRequests and covered count the open purchase requests in any status, drafts included. lateLinesBySku gives, for a SKU on more than one late purchase order, the late lines\' total still to receive (lateQuantity) with those orders and their suppliers.',
   parameters: {
     kind: { type: 'string', enum: ['today', 'problems'], description: 'today by default.' },
     focus: { type: 'string', description: 'A purchase order number, a SKU, or a supplier name or code.' },
@@ -118,6 +147,7 @@ const attentionList = defineAiTool({
     const types = array(args.types).length ? new Set(args.types) : null
     const items = types ? result.items.filter((item) => types.has(item.type) || array(item.also).some((type) => types.has(type))) : result.items
     const limit = args.limit || 5
+    const lateBySku = lateLinesBySku(facts, focus)
     return {
       asOf: facts.asOf,
       kind,
@@ -132,6 +162,7 @@ const attentionList = defineAiTool({
       byType: attentionTypeCounts(items),
       // The window of po_due_7d, for "7 orders fall due within 7 days".
       dueSoonDays: DUE_SOON_DAYS,
+      ...(lateBySku.length ? { lateLinesBySku: lateBySku } : {}),
     }
   },
 })
