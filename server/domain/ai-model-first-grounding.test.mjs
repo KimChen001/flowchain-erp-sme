@@ -276,3 +276,22 @@ test('a range of days in one month checks both days', () => {
   // Two separate dates are read as before.
   assert.deepEqual(problems('From Nov 9, 2026 to Nov 15, 2026.'), [])
 })
+
+// 2026-11-09 on Flash, today's priorities: "available to promise for 85123A
+// is 408 pcs with these late lines counted (288 without)". 288 leaves out one
+// of the two late orders; late_order_impact now gives withoutEveryLateLine 48.
+test('a figure "without the late lines" comes from the row that leaves out every late line', () => {
+  const results = [{ skus: [
+    { sku: '85123A', judgedOrders: ['PO-202610-0022'], availableToPromise: 408, withoutTheseLines: 288 },
+    { sku: '85123A', judgedOrders: ['PO-202610-0024'], availableToPromise: 408, withoutTheseLines: 168 },
+    { sku: '85123A', judgedOrders: ['PO-202610-0022', 'PO-202610-0024'], together: true, availableToPromise: 408, withoutTheseLines: 48, withoutEveryLateLine: 48 },
+  ] }]
+  const numbers = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
+  assert.deepEqual(numbers('Available to promise for 85123A is 408 pcs with these late lines counted (288 without).'), ['288'])
+  assert.deepEqual(numbers('Available to promise for 85123A is 408 pcs with these late lines counted (48 without).'), [])
+  assert.deepEqual(numbers('Without the late lines it is 168 pcs.'), ['168'])
+  assert.deepEqual(numbers('Without them, 85123A has 48 pcs.'), [])
+  // A figure without one named order is read as before.
+  assert.deepEqual(numbers('Without PO-202610-0022 it is 288 pcs, and without PO-202610-0024 it is 168 pcs.'), [])
+  assert.deepEqual(numbers('85123A has 288 pcs without PO-202610-0022.'), [])
+})

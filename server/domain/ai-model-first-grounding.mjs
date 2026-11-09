@@ -98,18 +98,22 @@ const AVAILABLE_BEFORE = /(?:available(?:\s+to\s+promise)?|\bATP|可承诺量?|�
 // 这两批货的 168 件", the figure without one of two late orders; without both
 // it was 48). Only that scenario is checked: which order a figure "without
 // PO-…" leaves out is not read.
-const NONE_ARRIVE_KEY = /^(?:available|availableToday|availableIfNoLateLinesArrive)$/
-const NONE_ARRIVE_EN = String.raw`\b(?:without|excluding|not\s+counting)\s+(?:both|either|any|all|the\s+two|these\s+two|those\s+two)\b|\b(?:if|when|even\s+if)\s+(?:neither|none|nothing)\b|\bwith\s+(?:neither|none)\b|\b(?:before|until)\s+(?:either|any|both)\s+(?:of\s+them\s+)?(?:\w+\s+)?(?:arrives?|lands?|comes?)\b`
+// late_order_impact's withoutEveryLateLine counts too (2026-11-09 on Flash:
+// "408 pcs with these late lines counted (288 without)", 288 being the figure
+// without one of the two).
+const NONE_ARRIVE_KEY = /^(?:available|availableToday|availableIfNoLateLinesArrive|withoutEveryLateLine)$/
+const NONE_ARRIVE_EN = String.raw`\b(?:without|excluding|not\s+counting)\s+(?:both|either|any|all|the\s+two|these\s+two|those\s+two)\b|\b(?:without|excluding|not\s+counting)\s+(?:them|these(?:\s+late)?\s+(?:lines|orders)|the\s+late\s+(?:lines|orders|ones))\b|\b(?:if|when|even\s+if)\s+(?:neither|none|nothing)\b|\bwith\s+(?:neither|none)\b|\b(?:before|until)\s+(?:either|any|both)\s+(?:of\s+them\s+)?(?:\w+\s+)?(?:arrives?|lands?|comes?)\b`
 const NONE_ARRIVE_ZH = String.raw`(?:两|二|2|几|所有|全部|这些|那些)\s*(?:批|张|笔|单|份)[^，。；！？\d]{0,8}?都?不(?:来|到|计|算|含)|(?:都|全都|全部|全)不(?:来|到)|(?:不计入?|不算|不含|扣除|去掉|排除|除去)\s*(?:这|那)?\s*(?:两|二|2|几|所有|全部|这些)\s*(?:批|张|笔|单)|(?:两|二|2|所有|全部|这些)\s*(?:批|张|笔|单)[^，。；！？\d]{0,8}?(?:到货|到达|入库)之?前`
 const NONE_ARRIVE = new RegExp(`${NONE_ARRIVE_EN}|${NONE_ARRIVE_ZH}`, 'gi')
 // After the figure, the phrase is its condition ("48 pcs if neither arrives",
-// "48 件（两批都不来时）"), not its subject ("PO-…的 240 件都不来").
-const NONE_ARRIVE_START = new RegExp(`^(?:[（(,，]\\s*)?(?:${NONE_ARRIVE_EN})|^[（(]\\s*(?:如果|若|假如|要是|在)?\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_ZH})|^[,，]\\s*(?:如果|若|假如|要是)\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_ZH})`, 'i')
+// "48 件（两批都不来时）", "(48 without)" after "with the late lines counted"),
+// not its subject ("PO-…的 240 件都不来").
+const NONE_ARRIVE_START = new RegExp(`^(?:[（(,，]\\s*)?(?:${NONE_ARRIVE_EN})|^without(?=[)）,，;；.。]|$)|^[（(]\\s*(?:如果|若|假如|要是|在)?\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_ZH})|^[,，]\\s*(?:如果|若|假如|要是)\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_ZH})`, 'i')
 // Words that make the figure another measure: a shortfall, demand, a rate,
 // safety stock, a week.
 const NOT_STOCK = /short|gap|need|demand|outstanding|on\s+order|to\s+receive|still\s+due|\btotal\b|in\s+all|未收|在途|合计|总计|共计|cost|price|spend|value|safety|reorder|\brate\b|\bper\b|\ba\s+(?:day|week|month)\b|weekly|daily|\bweeks?\b|\bdays?\b|\bmonths?\b|sold|sell|ship|缺|不足|需求|需要|成本|价格|金额|安全库存|再订货|补货|每天|每周|每月|日均|周均|销量|发货|出货|订货量|采购量|(?:[一二两三四五六七八九十几]|下)(?:周|天|个月)/i
 const NOT_STOCK_AFTER = /^\s*(?:[A-Za-z]{1,6}\.?|[件个箱卷套只台])?\s*(?:short|below|less|fewer|more|a\s+(?:day|week|month)\b|per\b|each\b|\/|缺|短缺|不足|每|多|少)/i
-const NONE_UNIT = /^\s*(?:[A-Za-z]{1,6}|[件个箱卷套只台])?\s*(?:available|可用)?\s*/i
+const NONE_UNIT = /^\s*(?:[A-Za-z]{1,6}\b|[件个箱卷套只台])?\s*(?:available|可用)?\s*/i
 // And a word that says the figure is a stock quantity, so a count ("if none
 // of the 5 orders is late") is left alone.
 const BOTH_ARRIVE = /都到|全到|到齐|都来|到货后|计入后|算上|\b(?:once|if|when|with)\s+(?:both|they|them|all)\b|\bvs\b|versus/i
