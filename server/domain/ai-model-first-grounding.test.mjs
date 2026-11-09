@@ -297,6 +297,10 @@ test('a figure "without the late lines" comes from the row that leaves out every
   // A difference named after the figure is another measure (a later step-2
   // run: "drops to 48 pcs if neither arrives — a 360 pcs difference").
   assert.deepEqual(numbers('Available to promise is 408 pcs with both late lines counted, but drops to 48 pcs if neither arrives — a 360 pcs difference.'), [])
+  // The figure a change starts from is not the scenario's ("从 408 件降到 48 件").
+  assert.deepEqual(numbers('PO-202610-0022 和 PO-202610-0024 涉及的 85123A 全部不到货，可承诺量会从 408 件降到 48 件。'), [])
+  assert.deepEqual(numbers('If neither arrives, it drops from 408 pcs to 48 pcs.'), [])
+  assert.deepEqual(numbers('如果两批都不来，可承诺量会从 408 件降到 168 件。'), ['168'])
   // A figure written as available to promise may come from these rows.
   assert.deepEqual(numbers('单不来时：PO-202610-0022 不来，可承诺量 288 件；PO-202610-0024 不来，只剩 168 件。'), [])
 })
