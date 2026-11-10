@@ -14,7 +14,7 @@ import {
   ShieldCheck,
   Truck,
 } from "lucide-react";
-import { apiJson } from "../../lib/api-client";
+import { ApiError, apiJson } from "../../lib/api-client";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
@@ -111,6 +111,11 @@ type PurchaseOrderWorkbenchPayload = {
   documentLinks: Array<Record<string, unknown>>;
   procurementFollowups: Array<Record<string, unknown>>;
   summary?: PurchaseOrderWorkbenchSummary;
+};
+// One order for the detail view (GET /api/purchase-orders-workbench/:id): the
+// same records as the workbench, only those of this order.
+type PurchaseOrderDetailPayload = Omit<PurchaseOrderWorkbenchPayload, "purchaseOrders" | "summary"> & {
+  purchaseOrder: PurchaseOrder;
 };
 // Header figures from the server, using the report definitions of committed
 // and open purchase orders. Committed value is one total per currency.
@@ -832,6 +837,12 @@ export default function PurchasingOrdersPage({
   const [invoiceRecords, setInvoiceRecords] = useState<SupplierInvoice[]>([]);
   const [summary, setSummary] = useState<PurchaseOrderWorkbenchSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  // The address the data on the page was read for: the list ("") or one
+  // order's id. The list's orders carry only the line fields the list uses,
+  // so the detail never draws from them, and neither view shows the other's
+  // data for the moment between a navigation and its read.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loadedForAddress = loadedFor === canonicalDetailId;
   // The failed read, shown as a translated sentence (its code in the tooltip).
   const [loadError, setLoadError] = useState<{ error: unknown } | null>(null);
   const filtersInAddress = useMemo(() => filtersFromAddress(searchParams), [searchParams.toString()]);
@@ -852,7 +863,13 @@ export default function PurchasingOrdersPage({
     let alive = true;
     setLoading(true);
     setLoadError(null);
-    apiJson<PurchaseOrderWorkbenchPayload>("/api/purchase-orders-workbench")
+    // The detail reads only its order, with that order's receipts and
+    // invoices; the list reads every order.
+    const read: Promise<PurchaseOrderWorkbenchPayload> = canonicalDetailId
+      ? apiJson<PurchaseOrderDetailPayload>(`/api/purchase-orders-workbench/${encodeURIComponent(canonicalDetailId)}`)
+        .then(({ purchaseOrder, ...rest }) => ({ ...rest, purchaseOrders: purchaseOrder ? [purchaseOrder] : [] }))
+      : apiJson<PurchaseOrderWorkbenchPayload>("/api/purchase-orders-workbench?view=list");
+    read
       .then((data) => {
         if (!alive) return;
         rememberDocumentNumbers("purchase_order", data.purchaseOrders, (order) => [order.po, order.number || order.orderNumber]);
@@ -860,7 +877,9 @@ export default function PurchasingOrdersPage({
         setReceivingRecords(data.receivingDocs || []);
         setInvoiceRecords(data.supplierInvoices || []);
         setSummary(data.summary || null);
-        setSelectedId(canonicalDetailId);
+        // The address may name the order by its number; the page keeps its id.
+        setSelectedId(canonicalDetailId ? data.purchaseOrders?.[0]?.po || canonicalDetailId : "");
+        setLoadedFor(canonicalDetailId);
       })
       .catch((error) => {
         if (!alive) return;
@@ -868,6 +887,10 @@ export default function PurchasingOrdersPage({
         setReceivingRecords([]);
         setInvoiceRecords([]);
         setSummary(null);
+        setLoadedFor(canonicalDetailId);
+        // An order that is not there (or not in this workspace) is "not
+        // found", not a failed read.
+        if (canonicalDetailId && error instanceof ApiError && error.status === 404) return;
         setLoadError({ error });
       })
       .finally(() => { if (alive) setLoading(false); });
@@ -881,7 +904,7 @@ export default function PurchasingOrdersPage({
   }, [canonicalDetailId]);
 
   useEffect(() => {
-    if (loading || viewMode !== "detail" || focus?.entityType !== "purchase_order" || focus.entityId !== selectedId || !focus.focusArea) return;
+    if (loading || !loadedForAddress || viewMode !== "detail" || focus?.entityType !== "purchase_order" || focus.entityId !== selectedId || !focus.focusArea) return;
     const area = focus.focusArea === "evidence" ? "receiving-invoice-variance" : focus.focusArea || "receiving-invoice-variance";
     setHighlightedArea(area);
     const target = fulfillmentFocusRef.current;
@@ -891,7 +914,7 @@ export default function PurchasingOrdersPage({
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [focus?.at, focus?.entityId, focus?.entityType, focus?.focusArea, loading, selectedId, viewMode]);
+  }, [focus?.at, focus?.entityId, focus?.entityType, focus?.focusArea, loading, loadedForAddress, selectedId, viewMode]);
 
   // "open" is the report definition: committed and still to receive.
   const openOrderIds = useMemo(() => (summary ? new Set(summary.openPurchaseOrderIds || []) : undefined), [summary]);
@@ -906,7 +929,7 @@ export default function PurchasingOrdersPage({
   // One page of the list is drawn, as on the other long lists; search and
   // filters run over every order, and a new search starts at page 1.
   const paged = usePagedRows(filtered, PO_LIST_PAGE_SIZE, searchParams.toString());
-  const selectedPO = orders.find((order) => order.po === selectedId) ?? null;
+  const selectedPO = loadedForAddress ? orders.find((order) => order.po === selectedId) ?? null : null;
   const selectedPOTotals = poTotals(selectedPO);
   // People read document numbers; the ids stay in links and calls.
   const selectedPONumber = selectedPO ? purchaseOrderNumber(selectedPO) : "";
@@ -1386,7 +1409,7 @@ export default function PurchasingOrdersPage({
     );
   })();
 
-  if (loading) {
+  if (loading || !loadedForAddress) {
     return <Card className="p-12 text-center text-sm" data-testid="po-loading-state">{copy("正在加载采购订单…")}</Card>;
   }
 
