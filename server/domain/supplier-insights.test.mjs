@@ -2,6 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import * as insights from './supplier-insights.mjs'
 import { buildSupplierInsights, supplierPurchaseRecords, supplierPurchaseTotals } from './supplier-insights.mjs'
+import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
+import { loadAiSkillContext } from './ai-skill-context.mjs'
+import { readAiSkillFacts, readAiSkillSupplierIssueFacts } from './ai-skill-readers.mjs'
+import { buildAiSkillSignals } from './ai-skill-signals.mjs'
 
 const window = { from: '2025-10-05', to: '2026-10-04' }
 const po = (supplierId, amount, extra = {}) => ({ supplierId, status: 'issued', totalAmount: amount, currency: 'USD', createdAt: '2026-09-01', lines: [], ...extra })
@@ -69,4 +73,50 @@ test('supplier risks list every supplier issue the earliest date first, never by
   assert.ok(rows.every((row) => !('severity' in row) && !('score' in row) && !('rank' in row)))
   // The rows are exactly what each supplier's detail page lists.
   for (const id of ['A', 'B', 'C']) assert.equal(rows.filter((row) => row.supplierId === id).length, insights.supplierIssueSignals(signals, id).length)
+})
+
+// The issues as they were read before 2026-11-08: the assistant's signals
+// over its full facts, which read every sales order, stock row and item.
+const fullFactsSignals = (skillContext) => readAiSkillFacts(skillContext).then(buildAiSkillSignals)
+const supplierSignals = (signals) => signals.filter((signal) => insights.SUPPLIER_ISSUE_TYPES.includes(signal.type))
+// Readers with every mix of orders, prices, receipts, invoices, invoice amounts and the partner snapshot.
+const READERS = ['workspace-administrator', 'operations-manager', 'procurement-specialist', 'finance-specialist', 'operations-specialist', 'read-only-viewer']
+
+async function everyRead(service, ctx) {
+  return { list: await service.read(ctx), acme: await service.readActivity(ctx, 'SUP-001'), summit: await service.readActivity(ctx, 'SUP-002'), risks: await service.readRisks(ctx) }
+}
+
+test('the supplier list, detail pages and risks read only what their issues need, with the same results as the full facts, per reader', async () => {
+  for (const roleKey of READERS) {
+    const scenario = aiSkillScenario({ roleKey })
+    const { ctx } = scenario
+    const options = { prisma: ctx.aiSkillPrisma, listPurchaseOrders: ctx.repositories.procurementRuntime.listForReport, now: () => new Date(ctx.aiSkillNow) }
+    const narrow = await everyRead(insights.createSupplierInsightsReadService(options), ctx)
+    const repositoryReads = scenario.calls.repositories.map(([name]) => name)
+    const prismaReads = scenario.calls.prisma.map(([model]) => model)
+    const full = await everyRead(insights.createSupplierInsightsReadService({ ...options, readIssueSignals: fullFactsSignals }), ctx)
+    assert.deepEqual(narrow, full, roleKey)
+    // The signals themselves, every field, not only what the pages print.
+    const skillContext = await loadAiSkillContext(ctx)
+    assert.deepEqual(supplierSignals(buildAiSkillSignals(await readAiSkillSupplierIssueFacts(skillContext))), supplierSignals(await fullFactsSignals(skillContext)), roleKey)
+    // No sales order, stock row or item is read, and the purchase orders are
+    // read once per page: the list, two detail pages and the risks.
+    for (const name of ['salesOrders.listOrders', 'inventoryRuntime.listItems', 'masterData.listManagedItems', 'procurementRuntime.snapshot']) assert.ok(!repositoryReads.includes(name), `${roleKey} read ${name}`)
+    for (const model of ['item', 'inventoryBalance', 'runtimeRecord']) assert.ok(!prismaReads.includes(model), `${roleKey} read ${model}`)
+    assert.equal(repositoryReads.filter((name) => name === 'procurementRuntime.listForReport').length, narrow.list.visibility.orders ? 4 : 0, roleKey)
+  }
+  // The fixture has every kind of issue, so the comparison covers each.
+  const { ctx } = aiSkillScenario()
+  const admin = await insights.createSupplierInsightsReadService({ prisma: ctx.aiSkillPrisma, now: () => new Date(ctx.aiSkillNow) }).readRisks(ctx)
+  assert.deepEqual([...new Set(admin.issues.map((issue) => issue.type))].sort(), [...insights.SUPPLIER_ISSUE_TYPES].sort())
+})
+
+test('without the narrow receipt and invoice read, the issues come from the business read context, the same as before', async () => {
+  for (const roleKey of ['workspace-administrator', 'read-only-viewer']) {
+    const scenario = aiSkillScenario({ roleKey })
+    delete scenario.ctx.repositories.procurementRuntime.listReceiptsAndInvoices
+    const skillContext = await loadAiSkillContext(scenario.ctx)
+    assert.deepEqual(supplierSignals(buildAiSkillSignals(await readAiSkillSupplierIssueFacts(skillContext))), supplierSignals(await fullFactsSignals(skillContext)), roleKey)
+    assert.ok(scenario.calls.repositories.some(([name]) => name === 'procurementRuntime.snapshot'), roleKey)
+  }
 })

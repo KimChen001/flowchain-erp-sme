@@ -31,7 +31,10 @@ test('a manager receives an issued purchase order on the desktop and posts the r
   await form.getByLabel('Accepted BROWSER-SKU').fill('4')
   await form.getByLabel('Rejected BROWSER-SKU').fill('1')
   await form.getByTestId('receiving-form-save').click()
-  await expect(form.getByTestId('receiving-form-errors')).toContainText('Enter a reason for the rejected quantity.')
+  // The message sits under the field it is about, and focus goes there.
+  await expect(form.getByLabel('Rejection reason BROWSER-SKU')).toHaveAccessibleDescription('Enter a reason for the rejected quantity.')
+  await expect(form.getByLabel('Rejection reason BROWSER-SKU')).toBeFocused()
+  await expect(form.getByTestId('receiving-form-errors')).toHaveText('Check the highlighted fields.')
   await form.getByLabel('Rejection reason BROWSER-SKU').fill('Carton crushed in transit')
   await form.getByLabel('Location BROWSER-SKU').fill('B-02')
   await form.getByTestId('receiving-form-save').click()

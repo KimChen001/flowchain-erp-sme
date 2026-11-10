@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Loader2 } from "lucide-react";
-import { A, Card } from "../../components/ui";
+import { A, Card, Field, inputStyle } from "../../components/ui";
+import { FieldError, FormActionBar, FormHeader, FormSection, RequiredMark, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
+import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
@@ -19,6 +21,9 @@ const COPY: Record<string, [string, string]> = {
   titleEdit: ["Edit receipt draft", "编辑收货草稿"],
   intro: ["Record what arrived. Accepted quantity goes to stock when the receipt is posted; rejected quantity stays out of stock.", "登记本次到货。收货单过账后，合格数量计入库存；拒收数量不入库。"],
   numberOnSave: ["The receipt number is assigned when you save.", "收货单号在保存时自动生成。"],
+  details: ["Receipt details", "收货信息"],
+  linesTitle: ["Lines to receive", "收货明细"],
+  linesIntro: ["Tick the lines that arrived. A rejected quantity needs a reason.", "勾选本次到货的行。有拒收数量时需填写拒收原因。"],
   loading: ["Loading the purchase order…", "正在读取采购订单…"],
   loadFailed: ["The purchase order could not be loaded for receiving.", "可收货的采购订单加载失败。"],
   retry: ["Retry", "重试"],
@@ -46,8 +51,6 @@ const COPY: Record<string, [string, string]> = {
   locationNew: ["New location in this warehouse", "此仓库的新库位"],
   saveDraft: ["Save draft", "保存草稿"],
   saveSubmit: ["Save and submit for posting", "保存并提交过账"],
-  saving: ["Saving…", "正在保存…"],
-  cancel: ["Cancel", "取消"],
   lineRequired: ["Select at least one line to receive.", "请至少选择一行收货。"],
   acceptedPositive: ["Accepted quantity must be greater than zero.", "合格数量必须大于零。"],
   overReceipt: ["Accepted quantity is more than the open quantity on the purchase order.", "合格数量超过采购订单未收数量。"],
@@ -69,6 +72,8 @@ type Detail = {
   lines: Array<{ poLineId: string; acceptedQuantity: string; rejectedQuantity: string; rejectionReason?: string | null; location?: string }>;
 };
 type LineState = { include: boolean; accepted: string; rejected: string; reason: string; location: string };
+// A line's messages, as COPY keys, by field.
+type LineIssues = { accepted?: string; rejected?: string; reason?: string };
 
 const QUANTITY = /^\d+(?:\.\d{1,4})?$/;
 // The location holding most of the item in the warehouse, so a receipt adds to
@@ -102,7 +107,11 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
   const [arrivedAt, setArrivedAt] = useState("");
   const [note, setNote] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  const [errors, setErrors] = useState<string[]>([]);
+  // A save was refused: the messages show, and go as each field is fixed.
+  const [checked, setChecked] = useState(false);
+  const formCopy = useFormCopy();
+  const formRef = useRef<HTMLDivElement>(null);
+  const idBase = useId();
   const [serverError, setServerError] = useState("");
   // The failed request's code, in the message's tooltip for support.
   const [serverErrorCode, setServerErrorCode] = useState<string | undefined>();
@@ -181,22 +190,32 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
   };
   const knownLocations = warehouses.find((row) => row.id === warehouseId)?.locations || [];
 
+  // The receipt's rules, each message under its field: `form` holds what
+  // has no field (no line chosen).
   const validation = useMemo(() => {
-    const found: string[] = [];
-    if (!po) return found;
+    const form: string[] = [];
+    const header: { warehouse?: string; arrival?: string } = {};
+    const byLine: Record<string, LineIssues> = {};
+    if (!po) return { form, header, byLine, count: 0 };
     const chosen = po.lines.filter((line) => lines[line.id]?.include);
-    if (!chosen.length) found.push("lineRequired");
+    if (!chosen.length) form.push("lineRequired");
     for (const line of chosen) {
       const value = lines[line.id];
-      if (!QUANTITY.test(value.accepted.trim()) || !QUANTITY.test((value.rejected.trim() || "0"))) { found.push("invalidQuantity"); continue; }
-      if (units(value.accepted.trim()) <= 0n) found.push("acceptedPositive");
-      if (units(value.accepted.trim()) > units(line.remainingQuantity)) found.push("overReceipt");
-      if (units(value.rejected.trim() || "0") > 0n && !value.reason.trim()) found.push("reasonRequired");
+      const accepted = value.accepted.trim();
+      const rejected = value.rejected.trim() || "0";
+      const issue: LineIssues = {};
+      if (!QUANTITY.test(accepted)) issue.accepted = "invalidQuantity";
+      else if (units(accepted) <= 0n) issue.accepted = "acceptedPositive";
+      else if (units(accepted) > units(line.remainingQuantity)) issue.accepted = "overReceipt";
+      if (!QUANTITY.test(rejected)) issue.rejected = "invalidQuantity";
+      else if (units(rejected) > 0n && !value.reason.trim()) issue.reason = "reasonRequired";
+      if (Object.keys(issue).length) byLine[line.id] = issue;
     }
-    if (!warehouseId) found.push("warehouseRequired");
-    if (!dateTimeInputToIso(arrivedAt, timezone)) found.push("arrivalRequired");
-    return [...new Set(found)];
+    if (!warehouseId) header.warehouse = "warehouseRequired";
+    if (!dateTimeInputToIso(arrivedAt, timezone)) header.arrival = "arrivalRequired";
+    return { form, header, byLine, count: form.length + Object.keys(header).length + Object.keys(byLine).length };
   }, [arrivedAt, lines, po, timezone, warehouseId]);
+  const shown = checked ? validation : { form: [] as string[], header: {} as typeof validation.header, byLine: {} as Record<string, LineIssues>, count: 0 };
 
   const serverMessage = (error: unknown) => {
     if (!(error instanceof ApiError)) return tr("failed");
@@ -210,8 +229,11 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
   };
 
   async function save(submit: boolean) {
-    setErrors(validation);
-    if (validation.length || !po) return;
+    setChecked(true);
+    if (validation.count || !po) {
+      focusFirstInvalid(formRef.current);
+      return;
+    }
     const input: ReceiptInput = {
       warehouseId,
       arrivedAt: dateTimeInputToIso(arrivedAt, timezone),
@@ -249,7 +271,6 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
       if (submit) await receivingApi.submit(saved.entityId, saved.receivingDocument.version, createSecureClientMutationId("receipt-submit"));
       navigate(`/app/procurement/receiving/${encodeURIComponent(saved.entityId)}`);
     } catch (error) {
-      setErrors([]);
       setServerError(serverMessage(error));
       setServerErrorCode(procurementErrorCode(error));
     } finally {
@@ -265,90 +286,116 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
     </Card>
   );
 
-  const inputClass = "w-full rounded-lg border px-2 py-1.5 text-sm";
+  // The lines table's inputs keep a fixed width each, so the text columns
+  // (SKU, quantities) get the room and never wrap.
+  const cellInputClass = "rounded-lg border px-2 py-1.5 text-sm";
+  // A message under a table input wraps instead of widening its column.
+  const cellErrorClass = "max-w-40";
+  const fieldIssues = Object.keys(shown.header).length + Object.keys(shown.byLine).length > 0;
+  const message = shown.form.length || fieldIssues || serverError ? (
+    <>
+      {shown.form.map((key) => <div key={key}>{tr(key)}</div>)}
+      {fieldIssues && <div>{formCopy("checkFields")}</div>}
+      {serverError && <div title={serverErrorCode}>{serverError}</div>}
+    </>
+  ) : null;
   return (
-    <div className="space-y-4" data-testid="receiving-form">
-      <Card className="p-4">
-        <div className="text-sm font-semibold">{tr(mode === "new" ? "titleNew" : "titleEdit")}{draft?.documentNumber ? ` · ${draft.documentNumber}` : ""}</div>
-        <div className="mt-1 text-xs" style={{ color: A.sub }}>{tr("intro")}</div>
+    <div ref={formRef} className="space-y-5" data-testid="receiving-form">
+      <FocusFirstField />
+      <FormHeader title={`${tr(mode === "new" ? "titleNew" : "titleEdit")}${draft?.documentNumber ? ` · ${draft.documentNumber}` : ""}`} intro={tr("intro")}>
         {/* The server numbers a new receipt (GRN-YYYYMM-NNNN) when it is saved. */}
         {mode === "new" && <div className="mt-1 text-xs" style={{ color: A.sub }} data-testid="receiving-number-on-save">{tr("numberOnSave")}</div>}
         <dl className="mt-4 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
           <div><dt style={{ color: A.sub }}>{tr("purchaseOrder")}</dt><dd className="mt-1 font-medium"><DocumentNumber type="purchase_order" id={po.id} number={po.number} /></dd></div>
           <div><dt style={{ color: A.sub }}>{tr("supplier")}</dt><dd className="mt-1 font-medium">{po.supplierName || "—"}</dd></div>
-          <label className="block text-xs"><span style={{ color: A.sub }}>{tr("warehouse")} *</span>
-            <select aria-label={tr("warehouse")} value={warehouseId} onChange={(event) => changeWarehouse(event.target.value)} className={`${inputClass} mt-1`}>
+        </dl>
+        {!po.receivable && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{tr("notReceivable")}</div>}
+        {!warehouses.length && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{tr("noWarehouse")}</div>}
+      </FormHeader>
+
+      <FormSection title={tr("details")}>
+        <div className={formGridClass}>
+          <Field label={tr("warehouse")} required error={shown.header.warehouse ? tr(shown.header.warehouse) : null}>
+            <select aria-label={tr("warehouse")} value={warehouseId} onChange={(event) => changeWarehouse(event.target.value)} style={inputStyle}>
               <option value="">{tr("selectWarehouse")}</option>
               {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.code} · {warehouse.name}</option>)}
             </select>
             <PrefillSourceChip entry={prefill?.warehouseId} current={warehouseId} testId="receiving-prefill-warehouse" />
-          </label>
-          <label className="block text-xs"><span style={{ color: A.sub }}>{tr("arrivedAt")} *</span>
-            <input aria-label={tr("arrivedAt")} type="datetime-local" value={arrivedAt} onChange={(event) => setArrivedAt(event.target.value)} className={`${inputClass} mt-1`} />
-            <span className="mt-1 block text-[11px]" style={{ color: A.sub }}>{tr("timezone")}: {timezone}</span>
+          </Field>
+          <Field label={tr("arrivedAt")} required error={shown.header.arrival ? tr(shown.header.arrival) : null}>
+            <input aria-label={tr("arrivedAt")} type="datetime-local" value={arrivedAt} onChange={(event) => setArrivedAt(event.target.value)} style={inputStyle} />
+            <span className="block text-[11px]" style={{ color: A.sub }}>{tr("timezone")}: {timezone}</span>
             <PrefillSourceChip entry={prefill?.arrivedAt} current={arrivedAt} testId="receiving-prefill-arrival" />
-          </label>
-        </dl>
-        {!po.receivable && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{tr("notReceivable")}</div>}
-        {!warehouses.length && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{tr("noWarehouse")}</div>}
-      </Card>
-
-      <Card className="overflow-x-auto">
-        <table className="w-full min-w-[960px] text-left text-sm">
-          <thead className="bg-gray-50 text-xs" style={{ color: A.sub }}>
-            <tr>{["include", "sku", "item", "ordered", "received", "remaining", "accepted", "rejected", "rejectionReason", "location"].map((key) => <th key={key} className="px-3 py-2 font-medium">{tr(key)}{key === "accepted" && prefill ? <span data-testid="receiving-prefill-accepted" className="block text-[11px] font-normal" style={{ color: A.blue }}>{tr("acceptedHint")}</span> : null}</th>)}</tr>
-          </thead>
-          <tbody>
-            {po.lines.map((line) => {
-              const value = lines[line.id];
-              const open = units(line.remainingQuantity) > 0n;
-              const quantity = (text: string) => `${formatNumber(Number(text))}${line.unit ? ` ${line.unit}` : ""}`;
-              return (
-                <tr key={line.id} className="border-t align-top" data-testid="receiving-form-line">
-                  <td className="px-3 py-2"><input type="checkbox" aria-label={`${tr("include")} ${line.sku}`} checked={Boolean(value?.include)} disabled={!open} onChange={(event) => update(line.id, { include: event.target.checked })} /></td>
-                  <td className="px-3 py-2 font-mono text-xs">{line.sku}</td>
-                  <td className="px-3 py-2">{line.itemName}</td>
-                  <td className="px-3 py-2 tabular-nums">{quantity(line.orderedQuantity)}</td>
-                  <td className="px-3 py-2 tabular-nums">{quantity(line.receivedQuantity)}</td>
-                  <td className="px-3 py-2 tabular-nums font-semibold">{quantity(line.remainingQuantity)}</td>
-                  <td className="px-3 py-2"><input aria-label={`${tr("accepted")} ${line.sku}`} inputMode="decimal" value={value?.accepted || ""} disabled={!value?.include} onChange={(event) => update(line.id, { accepted: event.target.value })} className={`${inputClass} w-24`} /></td>
-                  <td className="px-3 py-2"><input aria-label={`${tr("rejected")} ${line.sku}`} inputMode="decimal" value={value?.rejected || ""} disabled={!value?.include} onChange={(event) => update(line.id, { rejected: event.target.value })} className={`${inputClass} w-24`} /></td>
-                  <td className="px-3 py-2"><input aria-label={`${tr("rejectionReason")} ${line.sku}`} value={value?.reason || ""} disabled={!value?.include} onChange={(event) => update(line.id, { reason: event.target.value })} className={inputClass} /></td>
-                  <td className="px-3 py-2">
-                    <input aria-label={`${tr("location")} ${line.sku}`} list="receiving-locations" value={value?.location || ""} disabled={!value?.include} onChange={(event) => update(line.id, { location: event.target.value })} className={`${inputClass} w-28`} />
-                    {value?.include && value.location.trim() ? (
-                      value.location.trim().toLowerCase() === stockedLocation(line, warehouseId).toLowerCase()
-                        ? <span data-testid="receiving-location-stocked" className="mt-1 block text-[11px]" style={{ color: A.blue }}>{tr("locationStocked")}</span>
-                        : !knownLocations.some((known) => known.toLowerCase() === value.location.trim().toLowerCase())
-                          ? <span data-testid="receiving-location-new" className="mt-1 block text-[11px]" style={{ color: A.sub }}>{tr("locationNew")}</span>
-                          : null
-                    ) : null}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        <datalist id="receiving-locations">{knownLocations.map((location) => <option key={location} value={location} />)}</datalist>
-      </Card>
-
-      <Card className="space-y-3 p-4">
-        <label className="block text-xs"><span style={{ color: A.sub }}>{tr("note")}</span>
-          <textarea aria-label={tr("note")} value={note} onChange={(event) => setNote(event.target.value)} rows={2} className={`${inputClass} mt-1`} />
-        </label>
-        {(errors.length > 0 || serverError) && (
-          <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700" data-testid="receiving-form-errors">
-            {errors.map((key) => <div key={key}>{tr(key)}</div>)}
-            {serverError && <div title={serverErrorCode}>{serverError}</div>}
+          </Field>
+          <div className="md:col-span-2">
+            <Field label={tr("note")}>
+              <textarea aria-label={tr("note")} value={note} onChange={(event) => setNote(event.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} />
+            </Field>
           </div>
-        )}
-        {/* Left-aligned so the floating assistant button never covers them. */}
-        <div className="flex flex-wrap gap-2">
-          <button type="button" data-testid="receiving-form-submit" disabled={Boolean(saving) || !po.receivable} onClick={() => { setServerError(""); void save(true); }} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{saving === "submit" ? tr("saving") : tr("saveSubmit")}</button>
-          <button type="button" data-testid="receiving-form-save" disabled={Boolean(saving) || !po.receivable} onClick={() => { setServerError(""); void save(false); }} className="rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50">{saving === "draft" ? tr("saving") : tr("saveDraft")}</button>
-          <button type="button" onClick={() => navigate(-1)} className="rounded-lg border px-3 py-2 text-xs font-semibold">{tr("cancel")}</button>
         </div>
-      </Card>
+      </FormSection>
+
+      <FormSection title={tr("linesTitle")} description={tr("linesIntro")}>
+        <div className="overflow-x-auto rounded-lg border" style={{ borderColor: A.border }}>
+          <table className="w-full min-w-[960px] text-left text-sm">
+            <thead className="bg-gray-50 text-xs" style={{ color: A.sub }}>
+              <tr>{["include", "sku", "item", "ordered", "received", "remaining", "accepted", "rejected", "rejectionReason", "location"].map((key) => <th key={key} className={`whitespace-nowrap px-3 py-2 font-medium${key === "accepted" ? " min-w-32" : key === "item" ? " min-w-28" : ""}`}>{tr(key)}{key === "accepted" ? <> <RequiredMark /></> : null}{key === "accepted" && prefill ? <span data-testid="receiving-prefill-accepted" className="block max-w-32 whitespace-normal text-[11px] font-normal" style={{ color: A.blue }}>{tr("acceptedHint")}</span> : null}</th>)}</tr>
+            </thead>
+            <tbody>
+              {po.lines.map((line, index) => {
+                const value = lines[line.id];
+                const open = units(line.remainingQuantity) > 0n;
+                const quantity = (text: string) => `${formatNumber(Number(text))}${line.unit ? ` ${line.unit}` : ""}`;
+                const issue = shown.byLine[line.id] || {};
+                const errorId = (field: keyof LineIssues) => `${idBase}-${field}-${index}`;
+                const rejected = value?.rejected.trim() || "0";
+                const rejectsSome = Boolean(value?.include) && QUANTITY.test(rejected) && units(rejected) > 0n;
+                return (
+                  <tr key={line.id} className="border-t align-top" data-testid="receiving-form-line">
+                    <td className="whitespace-nowrap px-3 py-2"><input type="checkbox" aria-label={`${tr("include")} ${line.sku}`} checked={Boolean(value?.include)} disabled={!open} onChange={(event) => update(line.id, { include: event.target.checked })} /></td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{line.sku}</td>
+                    <td className="px-3 py-2">{line.itemName}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{quantity(line.orderedQuantity)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{quantity(line.receivedQuantity)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums font-semibold">{quantity(line.remainingQuantity)}</td>
+                    <td className="px-3 py-2">
+                      <input aria-label={`${tr("accepted")} ${line.sku}`} aria-required={Boolean(value?.include)} {...invalidProps(errorId("accepted"), issue.accepted)} inputMode="decimal" value={value?.accepted || ""} disabled={!value?.include} onChange={(event) => update(line.id, { accepted: event.target.value })} className={`${cellInputClass} w-24`} />
+                      {issue.accepted && <FieldError id={errorId("accepted")} className={cellErrorClass}>{tr(issue.accepted)}</FieldError>}
+                    </td>
+                    <td className="px-3 py-2">
+                      <input aria-label={`${tr("rejected")} ${line.sku}`} {...invalidProps(errorId("rejected"), issue.rejected)} inputMode="decimal" value={value?.rejected || ""} disabled={!value?.include} onChange={(event) => update(line.id, { rejected: event.target.value })} className={`${cellInputClass} w-24`} />
+                      {issue.rejected && <FieldError id={errorId("rejected")} className={cellErrorClass}>{tr(issue.rejected)}</FieldError>}
+                    </td>
+                    <td className="px-3 py-2">
+                      <input aria-label={`${tr("rejectionReason")} ${line.sku}`} aria-required={rejectsSome} {...invalidProps(errorId("reason"), issue.reason)} value={value?.reason || ""} disabled={!value?.include} onChange={(event) => update(line.id, { reason: event.target.value })} className={`${cellInputClass} w-40`} />
+                      {issue.reason && <FieldError id={errorId("reason")} className={cellErrorClass}>{tr(issue.reason)}</FieldError>}
+                    </td>
+                    <td className="px-3 py-2">
+                      <input aria-label={`${tr("location")} ${line.sku}`} list="receiving-locations" value={value?.location || ""} disabled={!value?.include} onChange={(event) => update(line.id, { location: event.target.value })} className={`${cellInputClass} w-28`} />
+                      {value?.include && value.location.trim() ? (
+                        value.location.trim().toLowerCase() === stockedLocation(line, warehouseId).toLowerCase()
+                          ? <span data-testid="receiving-location-stocked" className="mt-1 block text-[11px]" style={{ color: A.blue }}>{tr("locationStocked")}</span>
+                          : !knownLocations.some((known) => known.toLowerCase() === value.location.trim().toLowerCase())
+                            ? <span data-testid="receiving-location-new" className="mt-1 block text-[11px]" style={{ color: A.sub }}>{tr("locationNew")}</span>
+                            : null
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <datalist id="receiving-locations">{knownLocations.map((location) => <option key={location} value={location} />)}</datalist>
+      </FormSection>
+
+      <FormActionBar
+        onCancel={() => navigate(-1)}
+        draft={{ label: tr("saveDraft"), onClick: () => { setServerError(""); void save(false); }, busy: saving === "draft", disabled: !po.receivable, testId: "receiving-form-save" }}
+        submit={{ label: tr("saveSubmit"), onClick: () => { setServerError(""); void save(true); }, busy: saving === "submit", disabled: !po.receivable, testId: "receiving-form-submit" }}
+        message={message}
+        messageTestId="receiving-form-errors"
+      />
     </div>
   );
 }

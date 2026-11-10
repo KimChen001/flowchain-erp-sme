@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { ClipboardList, RefreshCw } from "lucide-react";
 import { A, Card, Chip, Modal, inputStyle } from "../../components/ui";
+import { rowActionClass } from "../../components/ui/listLayout";
 import { apiJson } from "../../lib/api-client";
 import { formatQuantity } from "../../lib/format";
 import { useI18n } from "../../i18n/I18n";
 import { unitLabel } from "../../i18n/unitLabels";
 import { listTableCardsRef } from "../../components/ui/workbenchTable";
+import { ListPager, useMediaQuery, usePagedRows } from "../procurement/listPaging";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { useReorderListCopy, type ReorderListCopyKey } from "./reorderListCopy";
 
@@ -69,6 +71,9 @@ type ReorderList = {
   truncatedSubjects?: { subject: string; limit: number }[];
 };
 
+// Rows drawn at a time; the ranking, the supplier filter and the total cover
+// every row.
+const PAGE_SIZE = 50;
 const NO_SUPPLIER = "__none__";
 const NOT_CHECKED_SECTIONS: { reason: NotChecked["reason"]; title: ReorderListCopyKey; body: ReorderListCopyKey }[] = [
   { reason: "warehouse_scope", title: "checkScopeTitle", body: "checkScopeBody" },
@@ -82,6 +87,19 @@ const SUBJECT_KEYS: Record<string, ReorderListCopyKey> = {
   inventory_items: "subjectStockBalances",
   sales_orders: "subjectSalesOrders",
 };
+const STOCK_COLUMNS = ["colOnHand", "colReserved", "colIncoming", "colPosition"] as const;
+// Phones (below 640 px, the list card breakpoint in theme.css) draw the four
+// stock quantities as one 2×2 block without a column label.
+const STOCK_BLOCK = "stock" as const;
+
+// Dense cells, so a row stays within about 90 px and the eleven columns fit a
+// 1440 px window: the four stock quantities are short numbers under one-word
+// headers and take the least room.
+const cell = "px-1.5 py-2";
+const stockCell = "px-1 py-2";
+const firstCell = "pl-3 pr-1.5 py-2";
+const lastCell = "pl-1.5 pr-3 py-2";
+const small = "text-[11px] leading-4";
 
 // A workspace calendar day (YYYY-MM-DD) in the interface locale. The day is
 // already the workspace's, so it is formatted as a date, not an instant.
@@ -95,6 +113,18 @@ function formatDay(day: string, locale: string) {
   }
 }
 
+// A day in the list's own year without the year ("Nov 9", "11月9日"); any
+// other day in full.
+function formatShortDay(day: string, today: string, locale: string) {
+  const date = new Date(`${day}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(date.getTime()) || day.slice(0, 4) !== String(today).slice(0, 4)) return formatDay(day, locale);
+  try {
+    return new Intl.DateTimeFormat(locale || "en-US", { timeZone: "UTC", month: "short", day: "numeric" }).format(date);
+  } catch {
+    return day;
+  }
+}
+
 // Daily demand is an average: one decimal reads better than four ("10.0444").
 const oneDecimal = (value: number | null | undefined) => (value === null || value === undefined ? value : Math.round(value * 10) / 10);
 // A quantity with its unit. Given the interface language, the unit shows as
@@ -102,11 +132,11 @@ const oneDecimal = (value: number | null | undefined) => (value === null || valu
 // stored, as in the purchase request reason the list prefills.
 const withUnit = (value: number | null | undefined, unit: string | null, language?: string) => (value === null || value === undefined ? "—" : `${formatQuantity(value)}${unit ? ` ${language ? unitLabel(unit, language, value) : unit}` : ""}`);
 
-function flagText(flag: Flag, t: ReturnType<typeof useReorderListCopy>, locale: string) {
+function flagText(flag: Flag, t: ReturnType<typeof useReorderListCopy>, locale: string, today: string) {
   const hidden = !flag.orderNumber;
   const byCode: Record<string, () => string> = {
     po_line_other_unit: () => t(hidden ? "poOtherUnitHidden" : "poOtherUnit", { po: flag.orderNumber || "", unit: flag.unit || "" }),
-    po_line_late: () => t(hidden ? "poLateHidden" : "poLate", { po: flag.orderNumber || "", day: flag.dueDay ? formatDay(flag.dueDay, locale) : "" }),
+    po_line_late: () => t(hidden ? "poLateHidden" : "poLate", { po: flag.orderNumber || "", day: flag.dueDay ? formatShortDay(flag.dueDay, today, locale) : "" }),
     po_line_no_due_day: () => t(hidden ? "poNoDueDayHidden" : "poNoDueDay", { po: flag.orderNumber || "" }),
     po_line_unit_not_recorded: () => t("poUnitNotRecorded"),
     shipment_other_unit: () => t.count("shipmentOtherUnit", flag.count ?? 0, { unit: flag.unit || "" }),
@@ -135,27 +165,37 @@ const NO_SUGGESTION: Record<string, ReorderListCopyKey> = {
   not_enough_history: "noSuggestionHistory",
 };
 
-// The suggested reorder point under the recorded one, with a one-line why,
-// highlighted when the recorded value is below it. The button only opens the
+// The suggested reorder point under the recorded one, in orange when the
+// recorded value is below it (said in words to screen readers). Why it is that
+// number is in the tooltip; it is printed on the row only when the row does
+// not follow the rule printed above the table. The button only opens the
 // confirm dialog.
-function SuggestedReorderPoint({ row, t, canSet, onSet }: { row: ReorderRow; t: Copy; canSet: boolean; onSet: () => void }) {
+function SuggestedReorderPoint({ row, t, canSet, followsRule, onSet }: { row: ReorderRow; t: Copy; canSet: boolean; followsRule: boolean; onSet: () => void }) {
   const suggestion = row.reorderPointSuggestion;
   if (!suggestion) return null;
   if (suggestion.suggestedReorderPoint === null) {
-    return <div className="mt-1" style={{ color: A.sub }} data-testid="reorder-suggestion">{t(NO_SUGGESTION[suggestion.reason || ""] || "noSuggestionHistory", { min: suggestion.minShipmentDays })}</div>;
+    return <div className={small} style={{ color: A.sub }} data-testid="reorder-suggestion">{t(NO_SUGGESTION[suggestion.reason || ""] || "noSuggestionHistory", { min: suggestion.minShipmentDays })}</div>;
   }
+  const why = t("suggestionWhy", { days: suggestion.coverDays ?? 0 });
   const detail = t("suggestionDetail", { lead: suggestion.leadTimeDays ?? 0, review: suggestion.reviewDays, days: suggestion.coverDays ?? 0, windows: suggestion.windowCount, rank: suggestion.rank, history: suggestion.historyDays });
   return (
-    <div className="mt-1 max-w-[190px] space-y-0.5" data-testid="reorder-suggestion" title={detail}>
-      <div className="font-semibold" style={{ color: suggestion.recordedBelow ? A.orange : A.label }}>{t("suggested", { value: withUnit(suggestion.suggestedReorderPoint, row.unit, t.language) })}</div>
-      {suggestion.recordedBelow && <span className="inline-block" data-testid="reorder-below-suggestion"><Chip label={t("belowSuggestion")} color={A.orange} bg="#fff4e8" /></span>}
-      <div style={{ color: A.sub }}>{t("suggestionWhy", { days: suggestion.coverDays ?? 0 })}</div>
+    <>
+      <div
+        className={`whitespace-nowrap text-[12px] leading-[18px] ${suggestion.recordedBelow ? "font-semibold" : "font-medium"}`}
+        style={{ color: suggestion.recordedBelow ? A.orange : A.sub }}
+        data-testid="reorder-suggestion"
+        title={t("suggestionTooltip", { why, detail })}
+      >
+        {t("suggested", { value: withUnit(suggestion.suggestedReorderPoint, row.unit, t.language) })}
+        {suggestion.recordedBelow && <span className="sr-only" data-testid="reorder-below-suggestion">{` (${t("belowSuggestion")})`}</span>}
+      </div>
+      {!followsRule && <div className={small} style={{ color: A.sub }}>{why}</div>}
       {canSet && suggestion.suggestedReorderPoint > 0 && suggestion.suggestedReorderPoint !== row.reorderPoint && (
-        <button type="button" onClick={onSet} data-testid={`reorder-set-point-${row.sku}`} className="mt-1 whitespace-nowrap rounded-md px-2 py-1 font-semibold" style={{ background: "#f0f6ff", color: A.blue }}>
+        <button type="button" onClick={onSet} data-testid={`reorder-set-point-${row.sku}`} className={`${small} whitespace-nowrap font-medium hover:underline max-sm:-my-1.5 max-sm:py-1.5 max-sm:text-[12px]`} style={{ color: A.blue }}>
           {t("setReorderPoint")}
         </button>
       )}
-    </div>
+    </>
   );
 }
 
@@ -224,6 +264,7 @@ export default function ReorderListPage() {
   const [setting, setSetting] = useState<ReorderRow | null>(null);
   const [saved, setSaved] = useState("");
   const canSetReorderPoint = useMasterDataWriteAccess().items;
+  const phone = useMediaQuery("(max-width: 639.98px)");
   const supplierFilter = searchParams.get("supplier") || "";
 
   const load = () => {
@@ -243,6 +284,8 @@ export default function ReorderListPage() {
     if (supplierFilter === NO_SUPPLIER) return all.filter((row) => !row.supplier);
     return all.filter((row) => row.supplier?.id === supplierFilter);
   }, [list, supplierFilter]);
+  // One page of the ranked rows; a new supplier filter starts at page 1.
+  const { page, pageRows, setPage } = usePagedRows(rows, PAGE_SIZE, supplierFilter);
 
   const setSupplierFilter = (value: string) => {
     const next = new URLSearchParams(searchParams);
@@ -254,7 +297,16 @@ export default function ReorderListPage() {
   const total = list?.scope.totalWarehouseCount ?? list?.scope.warehouseCount ?? 0;
   const scopeLabel = list?.scope.kind === "reader_warehouses" ? t.count("scopeReader", list.scope.warehouseCount ?? 0, { total }) : t("scopeAll");
   const truncated = (list?.truncatedSubjects || []).map((entry) => t(SUBJECT_KEYS[entry.subject] || "subjectOther"));
-  const columns: ReorderListCopyKey[] = ["colOrderBy", "colItem", "colOnHand", "colReserved", "colIncoming", "colPosition", "colReorderPoint", "colDemand", "colShortfall", "colSupplier", "colAction"];
+  const stockColumns: readonly (ReorderListCopyKey | typeof STOCK_BLOCK)[] = phone ? [STOCK_BLOCK] : STOCK_COLUMNS;
+  const columns: (ReorderListCopyKey | typeof STOCK_BLOCK)[] = ["colOrderBy", "colItem", ...stockColumns, "colReorderPoint", "colDemand", "colShortfall", "colSupplier", "colAction"];
+  // The review days and history the rule above the table states. A row whose
+  // suggestion uses these, over the lead time its supplier cell prints, needs
+  // no sentence of its own.
+  const ruleReviewDays = list?.rows.find((row) => row.reorderPointSuggestion)?.reorderPointSuggestion?.reviewDays ?? 7;
+  const followsRule = (row: ReorderRow) => {
+    const suggestion = row.reorderPointSuggestion;
+    return !suggestion || (suggestion.reviewDays === ruleReviewDays && suggestion.historyDays === list?.rule.windowDays && suggestion.leadTimeDays === row.supplier?.leadTimeDays);
+  };
 
   return (
     <div className="space-y-4" data-testid="reorder-list-page">
@@ -280,7 +332,7 @@ export default function ReorderListPage() {
             <p style={{ color: A.sub }} data-testid="reorder-list-horizon">{t("horizon")}</p>
             <p style={{ color: A.sub }}>{t("units")}</p>
             {list.rows.some((row) => row.reorderPointSuggestion) && (
-              <p style={{ color: A.sub }} data-testid="reorder-list-suggestion-rule">{t("suggestionRule", { review: list.rows.find((row) => row.reorderPointSuggestion)?.reorderPointSuggestion?.reviewDays ?? 7, window: list.rule.windowDays })}</p>
+              <p style={{ color: A.sub }} data-testid="reorder-list-suggestion-rule">{t("suggestionRule", { review: ruleReviewDays, window: list.rule.windowDays })}</p>
             )}
             {saved && <p data-testid="reorder-list-saved" style={{ color: A.green }}>{saved}</p>}
             {truncated.length > 0 && (
@@ -335,91 +387,123 @@ export default function ReorderListPage() {
               {!list.rows.length && list.notJudged.length > 0 && <p className="mt-1 text-xs" style={{ color: A.sub }}>{t.count("emptyNotChecked", list.notJudged.length)}</p>}
             </Card>
           ) : (
-            <Card className="overflow-x-auto">
-              <table className="w-full min-w-[1100px] text-xs" ref={listTableCardsRef}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${A.border}` }}>
-                    {columns.map((key) => <th key={key} className="px-3 py-3 text-left" data-card-title={key === "colItem" ? "" : undefined}>{t(key)}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => {
-                    const reason = t("reason", { position: withUnit(row.position, row.unit), reorderPoint: withUnit(row.reorderPoint, row.unit), date: row.orderByDate });
-                    return (
-                      <tr key={row.itemId} data-testid={`reorder-row-${row.sku}`} style={{ borderBottom: `1px solid ${A.border}` }} className="align-top">
-                        <td className="px-3 py-3" data-testid="reorder-order-by">
-                          <div className="font-semibold">{formatDay(row.orderByDate, locale)}</div>
-                          {row.orderNow ? (
-                            <span className="mt-1 inline-block"><Chip label={t("orderNow")} color={A.orange} bg="#fff4e8" /></span>
-                          ) : (
-                            <div style={{ color: A.sub }}>{row.daysUntilOrderBy === 0 ? t("today") : row.daysUntilOrderBy === 1 ? t("inOneDay") : t("inDays", { n: row.daysUntilOrderBy })}</div>
-                          )}
-                        </td>
-                        <td className="px-3 py-3">
-                          <div className="font-semibold">{row.sku}</div>
-                          <div style={{ color: A.sub }}>{row.itemName}</div>
-                          {row.flags.length > 0 && (
-                            <ul className="mt-1 space-y-0.5" data-testid="reorder-flags">
-                              {row.flags.map((flag, index) => <li key={`${flag.code}-${index}`} style={{ color: A.orange }}>{flagText(flag, t, locale)}</li>)}
-                            </ul>
-                          )}
-                        </td>
-                        <td className="px-3 py-3">{withUnit(row.onHand, row.unit, t.language)}</td>
-                        <td className="px-3 py-3">{withUnit(row.reserved, row.unit, t.language)}</td>
-                        <td className="px-3 py-3">{withUnit(row.incoming, row.unit, t.language)}</td>
-                        <td className="px-3 py-3 font-semibold">{withUnit(row.position, row.unit, t.language)}</td>
-                        <td className="px-3 py-3" data-testid="reorder-point">
-                          <div>{withUnit(row.reorderPoint, row.unit, t.language)}</div>
-                          <SuggestedReorderPoint row={row} t={t} canSet={canSetReorderPoint} onSet={() => setSetting(row)} />
-                        </td>
-                        <td className="px-3 py-3" data-testid="reorder-demand">
-                          {row.demand.enough ? (
-                            <>
-                              <div>{withUnit(oneDecimal(row.demand.averageDailyDemand), row.unit, t.language)}</div>
-                              <div style={{ color: A.sub }}>{t.count("demandDays", row.demand.shipmentDays, { window: row.demand.windowDays })}</div>
-                            </>
-                          ) : (
-                            <div style={{ color: A.sub }}>{t.count("notEnoughHistory", row.demand.shipmentDays)}</div>
-                          )}
-                        </td>
-                        <td className="px-3 py-3">
-                          {withUnit(row.shortfall, row.unit, t.language)}
-                          {row.purchaseRequest.raisedToMinimum && row.purchaseRequest.quantity !== null && (
-                            <div style={{ color: A.sub }} data-testid={`reorder-order-minimum-${row.sku}`}>
-                              {t("orderMinimum", { n: formatQuantity(row.purchaseRequest.quantity), unit: unitLabel(row.unit, t.language, row.purchaseRequest.quantity) })}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-3 py-3" data-testid="reorder-supplier">
-                          {row.supplier ? (
-                            <>
-                              <div className="font-semibold">{row.supplier.name}</div>
-                              <div style={{ color: A.sub }}>{row.supplier.leadTimeDays === null ? t("leadTimeNotRecorded") : t.count("leadTime", row.supplier.leadTimeDays)}</div>
-                              <div style={{ color: A.sub }}>
-                                {row.supplier.minimumOrderQuantity === null
-                                  ? t("moqNotRecorded")
-                                  : t(row.supplier.moqUnit ? "moq" : "moqNoUnit", { n: formatQuantity(row.supplier.minimumOrderQuantity), unit: unitLabel(row.supplier.moqUnit, t.language, row.supplier.minimumOrderQuantity) })}
-                              </div>
-                            </>
-                          ) : (
-                            <span style={{ color: A.sub }}>{t("notRecorded")}</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-3">
-                          <Link
-                            to={purchaseRequestHref(row, reason)}
-                            data-testid={`reorder-create-request-${row.sku}`}
-                            className="inline-block whitespace-nowrap rounded-md px-3 py-1.5 font-semibold"
-                            style={{ background: "#f0f6ff", color: A.blue }}
-                          >
-                            {t("createRequest")}
-                          </Link>
-                        </td>
+            <Card>
+              {/* The body holds the table and its pager, as ListCard's does: a new page scrolls back to the card's top. */}
+              <div ref={listTableCardsRef}>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[1100px] text-xs">
+                    <thead>
+                      <tr style={{ borderBottom: `1px solid ${A.border}` }}>
+                        {columns.map((key, index) => (
+                          <th key={key} className={`${index === 0 ? firstCell : index === columns.length - 1 ? lastCell : (STOCK_COLUMNS as readonly string[]).includes(key) ? stockCell : cell} !py-2.5 text-left align-bottom`} data-card-title={key === "colItem" ? "" : undefined}>
+                            {key === STOCK_BLOCK ? null : t(key)}
+                          </th>
+                        ))}
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {pageRows.map((row) => {
+                        const reason = t("reason", { position: withUnit(row.position, row.unit), reorderPoint: withUnit(row.reorderPoint, row.unit), date: row.orderByDate });
+                        const stock: [ReorderListCopyKey, number][] = [["colOnHand", row.onHand], ["colReserved", row.reserved], ["colIncoming", row.incoming], ["colPosition", row.position]];
+                        const supplier = row.supplier;
+                        const leadTime = supplier && (supplier.leadTimeDays === null ? t("leadTimeNotRecorded") : t.count("leadTimeShort", supplier.leadTimeDays));
+                        const moq = supplier && (supplier.minimumOrderQuantity === null
+                          ? t("moqNotRecorded")
+                          : t(supplier.moqUnit ? "moq" : "moqNoUnit", { n: formatQuantity(supplier.minimumOrderQuantity), unit: unitLabel(supplier.moqUnit, t.language, supplier.minimumOrderQuantity) }));
+                        return (
+                          <tr key={row.itemId} data-testid={`reorder-row-${row.sku}`} style={{ borderBottom: `1px solid ${A.border}` }} className="align-top">
+                            <td className={`${firstCell} whitespace-nowrap`} data-testid="reorder-order-by">
+                              <div className="max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-2">
+                                <div className="font-semibold">{formatDay(row.orderByDate, locale)}</div>
+                                {row.orderNow ? (
+                                  <span className="mt-0.5 inline-block max-sm:mt-0"><Chip label={t("orderNow")} color={A.orange} bg="#fff4e8" /></span>
+                                ) : (
+                                  <div className={small} style={{ color: A.sub }}>{row.daysUntilOrderBy === 0 ? t("today") : row.daysUntilOrderBy === 1 ? t("inOneDay") : t("inDays", { n: row.daysUntilOrderBy })}</div>
+                                )}
+                              </div>
+                            </td>
+                            <td className={cell}>
+                              {/* Wide enough for a late purchase order note on two lines. */}
+                              <div className="sm:w-[12.5rem]">
+                                <div className="font-semibold">{row.sku}</div>
+                                <div className="text-[12px] leading-[18px]" style={{ color: A.sub }}>{row.itemName}</div>
+                                {row.flags.length > 0 && (
+                                  <ul className={`mt-0.5 space-y-0.5 ${small}`} data-testid="reorder-flags">
+                                    {row.flags.map((flag, index) => <li key={`${flag.code}-${index}`} style={{ color: A.orange }}>{flagText(flag, t, locale, list.today)}</li>)}
+                                  </ul>
+                                )}
+                              </div>
+                            </td>
+                            {phone ? (
+                              <td className={cell}>
+                                <dl className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                                  {stock.map(([key, value]) => (
+                                    <div key={key} className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+                                      <dt style={{ color: A.sub }}>{t(key)}</dt>
+                                      <dd className={key === "colPosition" ? "font-semibold" : undefined}>{withUnit(value, row.unit, t.language)}</dd>
+                                    </div>
+                                  ))}
+                                </dl>
+                              </td>
+                            ) : (
+                              stock.map(([key, value]) => (
+                                <td key={key} className={`${stockCell} whitespace-nowrap${key === "colPosition" ? " font-semibold" : ""}`}>{withUnit(value, row.unit, t.language)}</td>
+                              ))
+                            )}
+                            <td className={cell} data-testid="reorder-point">
+                              {/* Recorded, then suggested: stacked in the table, on one line on a phone. */}
+                              <div className="max-sm:flex max-sm:flex-wrap max-sm:items-baseline max-sm:gap-x-1.5">
+                                <div className="whitespace-nowrap">{withUnit(row.reorderPoint, row.unit, t.language)}</div>
+                                <SuggestedReorderPoint row={row} t={t} canSet={canSetReorderPoint} followsRule={followsRule(row)} onSet={() => setSetting(row)} />
+                              </div>
+                            </td>
+                            <td className={cell} data-testid="reorder-demand">
+                              {row.demand.enough ? (
+                                <div className="max-sm:flex max-sm:flex-wrap max-sm:items-baseline max-sm:gap-x-1.5" title={t.count("demandDays", row.demand.shipmentDays, { window: row.demand.windowDays })}>
+                                  <div className="whitespace-nowrap">{t("perDay", { value: withUnit(oneDecimal(row.demand.averageDailyDemand), row.unit, t.language) })}</div>
+                                  <div className={`${small} whitespace-nowrap`} style={{ color: A.sub }}>{t.count("demandDaysShort", row.demand.shipmentDays, { window: row.demand.windowDays })}</div>
+                                </div>
+                              ) : (
+                                <div className={small} style={{ color: A.sub }}>{t.count("notEnoughHistory", row.demand.shipmentDays)}</div>
+                              )}
+                            </td>
+                            <td className={`${cell} whitespace-nowrap`}>{withUnit(row.shortfall, row.unit, t.language)}</td>
+                            <td className={cell} data-testid="reorder-supplier">
+                              {supplier ? (
+                                <>
+                                  {/* The name (two lines at most at 1440 px; the whole name in its tooltip), then lead time and MOQ. */}
+                                  <div className="line-clamp-2 font-semibold" title={supplier.name}>{supplier.name}</div>
+                                  <div className={small} style={{ color: A.sub }} title={`${supplier.leadTimeDays === null ? t("leadTimeNotRecorded") : t.count("leadTime", supplier.leadTimeDays)} · ${moq}`}>
+                                    <span className="whitespace-nowrap">{leadTime}</span> · <span className="whitespace-nowrap">{moq}</span>
+                                  </div>
+                                </>
+                              ) : (
+                                <span style={{ color: A.sub }}>{t("notRecorded")}</span>
+                              )}
+                            </td>
+                            <td className={lastCell}>
+                              <Link
+                                to={purchaseRequestHref(row, reason)}
+                                data-testid={`reorder-create-request-${row.sku}`}
+                                className={`${rowActionClass.primary} inline-block whitespace-nowrap !no-underline max-sm:px-3 max-sm:py-1.5 max-sm:text-[12px]`}
+                              >
+                                {t("createRequest")}
+                              </Link>
+                              {/* The quantity the request opens with, when the shortfall is raised to the supplier's minimum. */}
+                              {row.purchaseRequest.raisedToMinimum && row.purchaseRequest.quantity !== null && (
+                                <div className={`mt-1 max-w-[9.25rem] ${small}`} style={{ color: A.sub }} data-testid={`reorder-order-minimum-${row.sku}`}>
+                                  {t("orderMinimum", { n: formatQuantity(row.purchaseRequest.quantity), unit: unitLabel(row.unit, t.language, row.purchaseRequest.quantity) })}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <ListPager page={page} pageSize={PAGE_SIZE} total={rows.length} onPage={setPage} testId="reorder-list-pager" />
+              </div>
             </Card>
           )}
 

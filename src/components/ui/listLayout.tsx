@@ -24,9 +24,10 @@ const COPY = {
 export const metricGridClass = "grid grid-cols-2 gap-3 lg:grid-cols-4";
 
 export function useListCopy() {
-  const { language } = useI18n();
+  const { language, formatNumber } = useI18n();
+  // Counts read with the workspace's digit grouping ("5,760 total").
   return (key: keyof typeof COPY, values: Record<string, string | number> = {}) =>
-    COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
+    COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => typeof values[name] === "number" ? formatNumber(values[name] as number) : String(values[name] ?? ""));
 }
 
 export const listButtonClass = {
@@ -172,10 +173,13 @@ export function RowPopover({ summary, summaryClassName, panelClassName, closeOnC
       }
     };
     place();
-    // Rows below a sticky cell would otherwise paint over the open menu.
+    // A sticky cell holds the menu in its own stacking context, so the cell
+    // itself is raised: above the rows below it, and above the floating AI
+    // assistant button (z-40, later in the page), which would otherwise cover
+    // the menu's last items when the row is near the bottom of the window.
     const cell = details.closest("td, th") as HTMLElement | null;
     const zIndex = cell?.style.zIndex ?? "";
-    if (cell) cell.style.zIndex = "40";
+    if (cell) cell.style.zIndex = "50";
     const outside = (event: Event) => {
       if (!details.contains(event.target as Node)) close();
     };

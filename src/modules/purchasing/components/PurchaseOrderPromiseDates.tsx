@@ -22,7 +22,12 @@ const COPY: Record<string, [string, string]> = {
   newDate: ["New promised date", "新的承诺交期"], reason: ["Reason", "原因"], reasonPlaceholder: ["For example: the supplier moved the ship date", "例如：供应商推迟了发货日期"],
   save: ["Save revision", "保存修改"], cancel: ["Cancel", "取消"], saved: ["Promised date revised", "承诺交期已修改"], failed: ["The promised date could not be revised", "承诺交期修改失败"],
   history: ["Revisions", "修改记录"], noHistory: ["No revisions", "暂无修改"], dateRequired: ["Enter the date as YYYY-MM-DD.", "请按 YYYY-MM-DD 输入日期。"], reasonRequired: ["Give a reason for the change.", "请填写修改原因。"],
+  allSame: ["All {n} lines are promised for {date}, as first promised.", "全部 {n} 行承诺交期均为 {date}，与原始承诺一致。"],
+  showLines: ["Show lines", "展开各行"], hideLines: ["Hide lines", "收起各行"],
 };
+
+// More lines than this, all still on one unchanged date, fold into one sentence.
+const FOLD_AFTER = 3;
 
 export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; onChanged?: () => void }) {
   const { language, locale, timezone } = useI18n();
@@ -33,13 +38,20 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
   const [canRevise, setCanRevise] = useState(false);
   const [form, setForm] = useState<{ lineId: string; date: string; reason: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = () => apiJson<PurchaseOrderPromises>(`/api/procurement/orders/${encodeURIComponent(poId)}`).then(setPo).catch(() => setPo(null));
+  const [expanded, setExpanded] = useState(false);
+  const load =() => apiJson<PurchaseOrderPromises>(`/api/procurement/orders/${encodeURIComponent(poId)}`).then(setPo).catch(() => setPo(null));
   useEffect(() => { void load(); }, [poId]);
   useEffect(() => {
     readAuthorizationContext().then((context) => setCanRevise((context.effectivePermissions || []).includes("procurement.purchase_order.revise"))).catch(() => setCanRevise(false));
   }, []);
   if (!po || !po.lines.length) return null;
   const revisable = canRevise && REVISABLE.has(po.status);
+  // A long order whose lines all keep one first promise reads as one line;
+  // the table opens on request, or by itself once a date moves.
+  const firstDate = po.lines[0].promisedDate;
+  const unchanged = po.lines.length > FOLD_AFTER && !po.promiseRevisions.length && Boolean(firstDate)
+    && po.lines.every((line) => line.promisedDate === firstDate && (line.originalPromisedDate || line.promisedDate) === firstDate);
+  const folded = unchanged && !expanded && !form;
   const submit = async () => {
     if (!form) return;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(form.date)) return toast.warning(tr("dateRequired"));
@@ -61,8 +73,14 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
     <section data-testid="po-promise-dates" className="rounded-xl border bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h3 className="text-sm font-semibold">{tr("title")}</h3><p className="text-[11px] text-slate-500">{tr("note")}</p></div>
+        {unchanged && !form && (
+          <button type="button" aria-expanded={!folded} data-testid="po-promise-toggle" className="h-8 rounded-lg px-2 text-xs font-medium text-blue-600 hover:bg-blue-50" onClick={() => setExpanded(!expanded)}>
+            {tr(folded ? "showLines" : "hideLines")}
+          </button>
+        )}
       </div>
-      <div className="mt-2 overflow-x-auto">
+      {unchanged && <p className="mt-2 text-xs text-slate-700" data-testid="po-promise-summary">{tr("allSame").replace("{n}", String(po.lines.length)).replace("{date}", day(firstDate))}</p>}
+      {!folded && <div className="mt-2 overflow-x-auto">
         <table className="w-full min-w-[560px] text-xs">
           <thead><tr>{[tr("line"), tr("original"), tr("current"), ""].map((header, index) => <th key={index} className="p-2 text-left text-slate-500">{header}</th>)}</tr></thead>
           <tbody>
@@ -76,7 +94,7 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
             ))}
           </tbody>
         </table>
-      </div>
+      </div>}
       {form && (
         <div className="mt-3 grid gap-2 rounded-lg bg-slate-50 p-3 md:grid-cols-[10rem_1fr_auto]" data-testid="po-promise-form">
           <label className="text-[11px] font-medium text-slate-600">{tr("newDate")}<input aria-label={tr("newDate")} placeholder="YYYY-MM-DD" inputMode="numeric" maxLength={10} value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} className="mt-1 block h-8 w-full rounded border px-2" /></label>
@@ -85,7 +103,7 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
         </div>
       )}
       <div className="mt-3">
-        <h4 className="text-xs font-semibold">{tr("history")}</h4>
+        {po.promiseRevisions.length ? <h4 className="text-xs font-semibold">{tr("history")}</h4> : null}
         {po.promiseRevisions.length ? (
           <ul className="mt-1 space-y-1 text-[11px] text-slate-600" data-testid="po-promise-history">
             {po.promiseRevisions.map((revision) => (

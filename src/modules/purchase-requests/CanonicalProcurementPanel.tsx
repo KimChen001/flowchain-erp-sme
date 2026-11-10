@@ -8,7 +8,7 @@ import { usePermissionSet } from "../../lib/usePermissionSet";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
-import { ArrowLeft, CheckCircle2, ClipboardCheck, FileText, Plus, RefreshCw, Trash2, Truck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ClipboardCheck, FileText, Plus, RefreshCw, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { rememberDocumentNumbers, resolveDocumentNumbers } from "../../lib/documentNumbers";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
@@ -29,6 +29,7 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ExportButton, ListCard, ListSearchCard, ListStateRow, PrimaryButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
+import { FormActionBar, FormHeader, FormLineCard, FormSection, focusFirstInvalid, formGridClass, useFormCopy } from "../../components/ui/formLayout";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { createClientTemporaryId } from "../../lib/client-id";
@@ -128,6 +129,53 @@ type PR = {
 const numberOf = (pr: Pick<PR, "id" | "number">) => pr.number || pr.id;
 type FieldError = { field?: string; code?: string; message?: string };
 const OVERRIDE_FIELD = /^lines\.(\d+)\.supplierOverride\.(reasonCode|note)$/;
+// The message under a field, by field name; a server code with a sentence of
+// its own wins (by "CODE.field", then "CODE").
+const FIELD_MESSAGES: Record<string, ErrorPair> = {
+  itemId: ["Choose an item.", "请选择物料。"],
+  itemNameSnapshot: ["Enter the item or service name.", "请填写物料或服务名称。"],
+  supplierId: ["Choose a supplier.", "请选择供应商。"],
+  unitSnapshot: ["Choose a unit.", "请选择单位。"],
+  quantity: ["Enter a quantity above 0.", "请输入大于 0 的数量。"],
+  estimatedUnitPrice: ["Enter an estimated unit price (0 or more).", "请输入预计单价（可为 0）。"],
+  estimatedAmount: ["Enter an amount above 0.", "请输入大于 0 的金额。"],
+  needByDate: ["Choose a required date.", "请选择需求日期。"],
+  defaultCurrency: ["Choose a currency.", "请选择币种。"],
+  defaultNeedByDate: ["Enter a valid date.", "请输入有效日期。"],
+};
+const CODE_MESSAGES: Record<string, ErrorPair> = {
+  "LINE_VALUE_REQUIRED.estimatedUnitPrice": ["Enter a quantity above 0 and an estimated unit price.", "请填写大于 0 的数量和预计单价。"],
+  SUPPLIER_NOT_FOUND: ["This supplier is not in the workspace. Choose another.", "工作区中没有该供应商，请重新选择。"],
+  SUPPLIER_INACTIVE: ["This supplier is inactive. Choose another.", "该供应商已停用，请选择其他供应商。"],
+  ITEM_INACTIVE: ["This item is inactive.", "该物料已停用。"],
+  ITEM_NOT_PURCHASABLE: ["This item cannot be purchased.", "该物料不允许采购。"],
+};
+const HEADER_FIELDS = new Set(["defaultCurrency", "defaultNeedByDate"]);
+const LINE_FIELD = /^lines\.\d+\.(\w+)$/;
+// The field an error is shown under, by name; "" when it belongs to the whole form.
+const inlineFieldName = (error: FieldError) => {
+  const field = error.field || "";
+  const name = HEADER_FIELDS.has(field) ? field : LINE_FIELD.exec(field)?.[1] || "";
+  return FIELD_MESSAGES[name] ? name : "";
+};
+// What the server refuses a line without (canonicalPurchaseRequestLines),
+// checked before saving so each message shows under its field.
+const missingLineFields = (lines: Line[]): FieldError[] =>
+  lines.flatMap((line, index) => {
+    const byQuantity = line.lineBasis === "quantity";
+    const nonCatalog = line.sourceType === "non_catalog_item";
+    const missing = [
+      !nonCatalog && !line.itemId && "itemId",
+      nonCatalog && !line.itemNameSnapshot.trim() && "itemNameSnapshot",
+      !line.supplierId.trim() && "supplierId",
+      nonCatalog && byQuantity && !String(line.unitSnapshot || "").trim() && "unitSnapshot",
+      byQuantity && !(Number(line.quantity) > 0) && "quantity",
+      byQuantity && (String(line.estimatedUnitPrice).trim() === "" || !(Number(line.estimatedUnitPrice) >= 0)) && "estimatedUnitPrice",
+      !byQuantity && !(Number(line.estimatedAmount) > 0) && "estimatedAmount",
+      !line.needByDate && "needByDate",
+    ].filter((name): name is string => Boolean(name));
+    return missing.map((name) => ({ field: `lines.${index}.${name}`, code: "REQUIRED" }));
+  });
 // The line fields a handoff (the assistant's purchase request draft) can fill.
 type PrefillLineField = "itemId" | "itemNameSnapshot" | "unitSnapshot" | "supplierId" | "quantity" | "estimatedUnitPrice" | "targetWarehouseId" | "needByDate" | "internalLineComment";
 type LinePrefill = { origin: PrefillOrigin; intent: string | null; lineId: string; fields: Partial<Record<PrefillLineField, PrefillEntry>>; supplierChoices: SupplierChoice[] };
@@ -260,11 +308,15 @@ export default function CanonicalProcurementPanel({
     [loadError, setLoadError] = useState("");
   const [editing, setEditing] = useState<PR | null>(null),
     [errors, setErrors] = useState<FieldError[]>([]),
-    [saving, setSaving] = useState(false),
+    // Which save is running: the draft or the submit.
+    [saving, setSaving] = useState<"" | "draft" | "submit">(""),
     // The list and the selectors have loaded: the list's loading row, and a
     // non-catalog handoff matching its unit and supplier, wait on it.
     [loaded, setLoaded] = useState(false);
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
+  const pair = (value: ErrorPair) => value[language === "en-US" ? 0 : 1];
+  const formCopy = useFormCopy();
+  const formRef = useRef<HTMLDivElement>(null);
   const confirmDialog = useConfirm();
   // Editing and submitting a draft need the permission the server checks for
   // them (PURCHASE_REQUEST_PERMISSIONS: update and submit follow PO revise).
@@ -452,10 +504,26 @@ export default function CanonicalProcurementPanel({
   // Earlier PO prices for every catalog line, in one request. Never fills a price.
   const priceHistoryKeyOf = (line: Line) => line.sourceType === "catalog_item" ? priceHistoryKey({ itemId: line.itemId, unit: line.unitSnapshot, currency: line.currency || currency }) : "";
   const priceHistory = usePriceHistory(lines.map(priceHistoryKeyOf));
-  const patchLine = (index: number, patch: Partial<Line>) =>
+  // A field's message goes once the field changes; Save checks again.
+  const clearFieldErrors = (fields: string[]) =>
+    setErrors((current) => {
+      const kept = current.filter((error) => !fields.includes(error.field || ""));
+      return kept.length === current.length ? current : kept;
+    });
+  const patchLine = (index: number, patch: Partial<Line>) => {
     setLines((current) =>
       current.map((line, i) => (i === index ? { ...line, ...patch } : line)),
     );
+    clearFieldErrors(Object.keys(patch).map((key) => `lines.${index}.${key}`));
+  };
+  // The message under a field, or null.
+  const fieldError = (field: string) => {
+    const error = errors.find((candidate) => candidate.field === field);
+    const name = error ? inlineFieldName(error) : "";
+    if (!error || !name) return null;
+    return pair(CODE_MESSAGES[`${error.code}.${name}`] || CODE_MESSAGES[error.code || ""] || FIELD_MESSAGES[name]);
+  };
+  const lineError = (index: number, name: string) => fieldError(`lines.${index}.${name}`);
   // A supplier with a recorded lead time moves the line's need-by date from
   // the form's default to today + lead time, so a new order is not due on the
   // day it is placed. A date the person changed is kept.
@@ -595,17 +663,20 @@ export default function CanonicalProcurementPanel({
     if (opensForm(searchParams)) setSearchParams({}, { replace: true });
   };
   const save = async (submit = false) => {
-    setSaving(true);
+    setSaving(submit ? "submit" : "draft");
     setErrors([]);
     try {
-      // The same rule the server applies, so the person sees it before saving.
+      // The same rules the server applies, so the person sees each one under
+      // its field before saving.
       const missingReasons: FieldError[] = lines.flatMap((line, index) =>
         needsReason(line)
           ? validateSupplierOverride(line.supplierOverride, true).issues.map((issue) => ({ field: `lines.${index}.supplierOverride.${issue.field}`, code: issue.code }))
           : [],
       );
-      if (missingReasons.length) {
-        setErrors(missingReasons);
+      const missing = [...missingLineFields(lines), ...missingReasons];
+      if (missing.length) {
+        setErrors(missing);
+        focusFirstInvalid(formRef.current);
         return;
       }
       const body = {
@@ -659,6 +730,7 @@ export default function CanonicalProcurementPanel({
           ? details
           : [{ message: errorText(error, SAVE_FAILED) }],
       );
+      if ((details as FieldError[]).some((detail) => inlineFieldName(detail) || OVERRIDE_FIELD.test(detail.field || ""))) focusFirstInvalid(formRef.current);
       // The server asked for a reason the form did not: the item's preferred
       // supplier changed since the form read it. Read the sources again so
       // the picker shows, and say it in the interface language.
@@ -674,7 +746,7 @@ export default function CanonicalProcurementPanel({
         toast.error(errorText(error, SAVE_FAILED));
       }
     } finally {
-      setSaving(false);
+      setSaving("");
     }
   };
   const readSuppliers = (itemIds: string[]) =>
@@ -1064,68 +1136,40 @@ export default function CanonicalProcurementPanel({
       </div>
     );
   }
+  // Messages about the whole form: what has no field of its own. Field
+  // messages sit under their fields (Field's error, the reason picker).
+  const fieldIssues = errors.some((error) => inlineFieldName(error) || OVERRIDE_FIELD.test(error.field || ""));
+  const formIssues = errors.filter((error) => !inlineFieldName(error) && !OVERRIDE_FIELD.test(error.field || ""));
+  const formMessage = fieldIssues || formIssues.length ? (
+    <>
+      {fieldIssues && <div>{formCopy("checkFields")}</div>}
+      {formIssues.map((error, index) => <div key={index}>{error.message ? copy(error.message) : pair(SAVE_FAILED)}</div>)}
+    </>
+  ) : null;
   return (
-    <div className="space-y-5 pb-16" data-testid="purchase-request-form">
+    <div ref={formRef} className="space-y-5" data-testid="purchase-request-form">
       <FocusFirstField />
-      <Card className="p-5">
-        <button type="button" onClick={closeForm} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline">
-          <ArrowLeft size={13} />{editingSelected ? tr("backToRequest") : copy("返回采购申请列表")}
-        </button>
-        <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold" style={{ color: A.label }}>
-              {editing ? `${copy("编辑采购申请")} ${numberOf(editing)}` : copy("新建采购申请")}
-            </h2>
-            <p className="mt-1 text-xs" style={{ color: A.sub }}>{copy("每一行均需明确物料或服务、供应商、金额、交付地点和需求日期。")}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              aria-label={copy("刷新基础资料")}
-              title={copy("刷新基础资料")}
-              onClick={() => load()}
-              className={listButtonClass.secondary}
-            >
-              <RefreshCw size={13} />
-            </button>
-            <button type="button" onClick={closeForm} className={listButtonClass.secondary}>{copy("取消")}</button>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => save(false)}
-              className={listButtonClass.secondary}
-            >{copy("保存草稿")}</button>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => save(true)}
-              className={listButtonClass.primary}
-            >{copy("保存并提交")}</button>
-          </div>
-        </div>
-        {prefill && !editing ? <PrefillBanner origin={prefill.origin} intent={prefill.intent} /> : null}
-        {errors.length > 0 && (
-          <div
-            role="alert"
-            className="mt-3 rounded-lg bg-red-50 p-3 text-xs text-red-700"
+      <FormHeader
+        title={editing ? `${copy("编辑采购申请")} ${numberOf(editing)}` : copy("新建采购申请")}
+        intro={copy("每一行均需明确物料或服务、供应商、金额、交付地点和需求日期。")}
+        back={{ label: editingSelected ? tr("backToRequest") : copy("返回采购申请列表"), onClick: closeForm }}
+        aside={
+          <button
+            type="button"
+            aria-label={copy("刷新基础资料")}
+            title={copy("刷新基础资料")}
+            onClick={() => load()}
+            className={listButtonClass.secondary}
           >
-            {errors.map((e, i) => {
-              const override = OVERRIDE_FIELD.exec(e.field || "");
-              return (
-                <div key={i}>
-                  {override
-                    ? `${copy("采购行")} ${Number(override[1]) + 1}: ${supplierOverrideIssueText(e.code, language)}`
-                    : copy(e.message || e.field)}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
+            <RefreshCw size={13} />
+          </button>
+        }
+      >
+        {prefill && !editing ? <PrefillBanner origin={prefill.origin} intent={prefill.intent} /> : null}
+      </FormHeader>
 
-      <Card className="p-5">
-        <h3 className="fc-section-title mb-4" style={{ color: A.label }}>{tr("requestDetails")}</h3>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+      <FormSection title={tr("requestDetails")}>
+        <div className={formGridClass}>
           <Field label={copy("申请人")}>
             <input
               aria-label={copy("申请人")}
@@ -1144,45 +1188,43 @@ export default function CanonicalProcurementPanel({
               {departments.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}
             </select>
           </Field>
-          <Field label={copy("默认币种")}>
+          <Field label={copy("默认币种")} error={fieldError("defaultCurrency")}>
             <select
               aria-label={copy("默认币种")}
               value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
+              onChange={(e) => { setCurrency(e.target.value); clearFieldErrors(["defaultCurrency"]); }}
               style={inputStyle}
             >
               <option value="">{copy("选择币种")}</option>
               {orderedCurrencyCodes(workspaceCurrency, currencies.map((option) => option.id), currency).map((code) => <option key={code} value={code}>{code}</option>)}
             </select>
           </Field>
-          <Field label={copy("默认需求日期")}>
+          <Field label={copy("默认需求日期")} error={fieldError("defaultNeedByDate")}>
             <input
               aria-label={copy("默认需求日期")}
               type="date"
               value={defaultDate}
-              onChange={(e) => setDefaultDate(e.target.value)}
+              onChange={(e) => { setDefaultDate(e.target.value); clearFieldErrors(["defaultNeedByDate"]); }}
               style={inputStyle}
             />
           </Field>
         </div>
-      </Card>
+      </FormSection>
 
-      <ListCard
+      <FormSection
         title={tr("lines")}
         right={<span className="text-sm font-semibold tabular-nums" style={{ color: A.label }}>{copy("预计总额")} {amount(total, currency)}</span>}
       >
-        {lines.map((line, index) => (
-          <div key={line.lineId} className="px-5 py-4" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
-            <div className="mb-3 flex items-center gap-3">
-              <span className="inline-flex h-6 items-center rounded-full bg-blue-50 px-2.5 text-xs font-semibold text-blue-700">{copy("采购行")} {index + 1}</span>
-              <span className="ml-auto text-xs tabular-nums" style={{ color: A.sub }}>
-                {tr("lineAmount")} <strong style={{ color: A.label }}>{amount(lineAmountOf(line), line.currency || currency)}</strong>
-              </span>
-              <button
-                type="button"
-                aria-label={`${copy("删除采购行")} ${index + 1}`}
-                title={copy("删除采购行")}
-                onClick={async () => {
+        <div className="space-y-3">
+          {lines.map((line, index) => (
+            <FormLineCard
+              key={line.lineId}
+              label={`${copy("采购行")} ${index + 1}`}
+              aside={<>{tr("lineAmount")} <strong style={{ color: A.label }}>{amount(lineAmountOf(line), line.currency || currency)}</strong></>}
+              remove={{
+                label: `${copy("删除采购行")} ${index + 1}`,
+                disabled: lines.length < 2,
+                onClick: async () => {
                   if (lines.length < 2) return;
                   const confirmed = await confirmDialog.confirm({
                     title: tr("deleteLineTitle").replace("{line}", String(index + 1)),
@@ -1190,270 +1232,270 @@ export default function CanonicalProcurementPanel({
                     confirmLabel: tr("deleteLine"),
                     tone: "danger",
                   });
-                  if (confirmed) setLines((current) => current.filter((candidate) => candidate.lineId !== line.lineId));
-                }}
-                className="rounded-md p-1 text-red-600 hover:bg-red-50 disabled:opacity-40"
-                disabled={lines.length < 2}
-              >
-                <Trash2 size={15} />
-              </button>
-            </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
-              <Field label={copy("采购类型")}>
-                <select
-                  value={line.sourceType}
-                  onChange={(e) => {
-                    const sourceType = e.target.value as Line["sourceType"];
-                    patchLine(index, {
-                      ...makeLine(defaultDate),
-                      lineId: line.lineId,
-                      sourceType,
-                      currency,
-                    });
-                  }}
-                  style={inputStyle}
-                >
-                  <option value="catalog_item">{copy("目录物料")}</option>
-                  <option value="non_catalog_item">{copy("其他（非目录物料）")}</option>
-                </select>
-              </Field>
-              <Field label={copy("计价方式")}>
-                <select
-                  value={line.lineBasis}
-                  onChange={(e) =>
-                    patchLine(index, {
-                      lineBasis: e.target.value as Line["lineBasis"],
-                      quantity: "",
-                      estimatedUnitPrice: "",
-                      estimatedAmount: "",
-                    })
-                  }
-                  style={inputStyle}
-                >
-                  <option value="quantity">{copy("数量型")}</option>
-                  <option value="amount">{copy("金额 / 服务型")}</option>
-                </select>
-              </Field>
-              <div className="md:col-span-1 xl:col-span-2">
-                <Field label="SKU / 其他">
-                  {line.sourceType === "catalog_item" ? (
+                  if (!confirmed) return;
+                  setLines((current) => current.filter((candidate) => candidate.lineId !== line.lineId));
+                  // Line messages are kept by position, so they go with any removed line.
+                  setErrors((current) => current.filter((error) => !(error.field || "").startsWith("lines.")));
+                },
+              }}
+            >
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
+                <Field label={copy("采购类型")}>
+                  <select
+                    value={line.sourceType}
+                    onChange={(e) => {
+                      const sourceType = e.target.value as Line["sourceType"];
+                      patchLine(index, {
+                        ...makeLine(defaultDate),
+                        lineId: line.lineId,
+                        sourceType,
+                        currency,
+                      });
+                    }}
+                    style={inputStyle}
+                  >
+                    <option value="catalog_item">{copy("目录物料")}</option>
+                    <option value="non_catalog_item">{copy("其他（非目录物料）")}</option>
+                  </select>
+                </Field>
+                <Field label={copy("计价方式")}>
+                  <select
+                    value={line.lineBasis}
+                    onChange={(e) =>
+                      patchLine(index, {
+                        lineBasis: e.target.value as Line["lineBasis"],
+                        quantity: "",
+                        estimatedUnitPrice: "",
+                        estimatedAmount: "",
+                      })
+                    }
+                    style={inputStyle}
+                  >
+                    <option value="quantity">{copy("数量型")}</option>
+                    <option value="amount">{copy("金额 / 服务型")}</option>
+                  </select>
+                </Field>
+                <div className="md:col-span-1 xl:col-span-2">
+                  <Field label="SKU / 其他" required={line.sourceType === "catalog_item"} error={line.sourceType === "catalog_item" ? lineError(index, "itemId") : null}>
+                    {line.sourceType === "catalog_item" ? (
+                      <select
+                        aria-label={`SKU ${index + 1}`}
+                        value={line.itemId || ""}
+                        onChange={(e) => selectItem(index, e.target.value)}
+                        style={inputStyle}
+                      >
+                        <option value="">{copy("搜索或选择 SKU")}</option>
+                        {items.map((i) => (
+                          <option key={i.itemId || i.id} value={i.itemId || i.id}>
+                            {i.sku} · {i.itemName || i.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input readOnly value={copy("非目录")} style={{ ...inputStyle, background: A.gray6, color: A.sub }} />
+                    )}
+                    {prefillChip(line, "itemId")}
+                  </Field>
+                </div>
+                <div className="md:col-span-3 xl:col-span-2">
+                  <Field label={copy("物料名称 / 描述")} required={line.sourceType === "non_catalog_item"} error={lineError(index, "itemNameSnapshot")}>
+                    <input
+                      readOnly={line.sourceType === "catalog_item"}
+                      value={line.itemNameSnapshot}
+                      onChange={(e) =>
+                        patchLine(index, { itemNameSnapshot: e.target.value })
+                      }
+                      style={line.sourceType === "catalog_item" ? { ...inputStyle, background: A.gray6 } : inputStyle}
+                    />
+                    {prefillChip(line, "itemNameSnapshot")}
+                  </Field>
+                </div>
+                <div className="md:col-span-3 xl:col-span-2">
+                  <Field label={tr("supplier")} required error={lineError(index, "supplierId")}>
                     <select
-                      aria-label={`SKU ${index + 1}`}
-                      value={line.itemId || ""}
-                      onChange={(e) => selectItem(index, e.target.value)}
+                      aria-label={`${tr("supplier")} ${index + 1}`}
+                      value={line.supplierId}
+                      onChange={(e) => chooseSupplier(index, e.target.value)}
                       style={inputStyle}
                     >
-                      <option value="">{copy("搜索或选择 SKU")}</option>
-                      {items.map((i) => (
-                        <option key={i.itemId || i.id} value={i.itemId || i.id}>
-                          {i.sku} · {i.itemName || i.name}
+                      <option value="">{copy("选择供应商")}</option>
+                      {supplierOptions(line).map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                          {s.preferred ? ` · ${tr("preferred")}` : ""}
                         </option>
                       ))}
                     </select>
-                  ) : (
-                    <input readOnly value={copy("非目录")} style={{ ...inputStyle, background: A.gray6, color: A.sub }} />
-                  )}
-                  {prefillChip(line, "itemId")}
-                </Field>
-              </div>
-              <div className="md:col-span-3 xl:col-span-2">
-                <Field label={copy("物料名称 / 描述")}>
-                  <input
-                    readOnly={line.sourceType === "catalog_item"}
-                    value={line.itemNameSnapshot}
-                    onChange={(e) =>
-                      patchLine(index, { itemNameSnapshot: e.target.value })
-                    }
-                    style={line.sourceType === "catalog_item" ? { ...inputStyle, background: A.gray6 } : inputStyle}
-                  />
-                  {prefillChip(line, "itemNameSnapshot")}
-                </Field>
-              </div>
-              <div className="md:col-span-3 xl:col-span-2">
-                <Field label={tr("supplier")}>
-                  <select
-                    aria-label={`${tr("supplier")} ${index + 1}`}
-                    value={line.supplierId}
-                    onChange={(e) => chooseSupplier(index, e.target.value)}
-                    style={inputStyle}
-                  >
-                    <option value="">{copy("选择供应商")}</option>
-                    {supplierOptions(line).map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                        {s.preferred ? ` · ${tr("preferred")}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {prefillChip(line, "supplierId")}
-                  {prefill && !editing && line.lineId === prefill.lineId && line.itemId && line.itemId === prefill.fields.itemId?.value ? (
-                    <SupplierChoices
-                      choices={prefill.supplierChoices}
-                      preferredOnly={prefill.fields.supplierId?.ref === "item_supplier:choose_preferred"}
-                      selectedId={line.supplierId}
-                      onChoose={(supplierId) => { if (supplierId !== line.supplierId) chooseSupplier(index, supplierId); }}
-                    />
-                  ) : null}
-                  {needsReason(line) || (line.sourceType === "catalog_item" && hasOverrideIssue(index)) ? (
-                    <SupplierOverrideReason
-                      testId={`supplier-override-reason-${index + 1}`}
-                      preferredName={preferredNames(line)}
-                      preferredCount={preferredOf(line).length}
-                      value={line.supplierOverride}
-                      issues={overrideIssues(index)}
-                      onChange={(supplierOverride) =>
-                        patchLine(index, {
-                          supplierOverride: {
-                            ...supplierOverride,
-                            missingReason: false,
-                            preferredSupplierId: preferredOf(line)[0]?.id || null,
-                            preferredSupplierIds: preferredOf(line).map((option) => option.id),
-                            preferredSupplierName: preferredNames(line) || null,
-                          },
-                        })
-                      }
-                    />
-                  ) : null}
-                  {line.sourceType === "catalog_item" &&
-                    line.itemId &&
-                    supplierOptions(line).length === 0 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onNavigate?.("master-data:items", {
-                            entityType: "item",
-                            entityId: line.itemId,
+                    {prefillChip(line, "supplierId")}
+                    {prefill && !editing && line.lineId === prefill.lineId && line.itemId && line.itemId === prefill.fields.itemId?.value ? (
+                      <SupplierChoices
+                        choices={prefill.supplierChoices}
+                        preferredOnly={prefill.fields.supplierId?.ref === "item_supplier:choose_preferred"}
+                        selectedId={line.supplierId}
+                        onChoose={(supplierId) => { if (supplierId !== line.supplierId) chooseSupplier(index, supplierId); }}
+                      />
+                    ) : null}
+                    {needsReason(line) || (line.sourceType === "catalog_item" && hasOverrideIssue(index)) ? (
+                      <SupplierOverrideReason
+                        testId={`supplier-override-reason-${index + 1}`}
+                        preferredName={preferredNames(line)}
+                        preferredCount={preferredOf(line).length}
+                        value={line.supplierOverride}
+                        issues={overrideIssues(index)}
+                        onChange={(supplierOverride) =>
+                          patchLine(index, {
+                            supplierOverride: {
+                              ...supplierOverride,
+                              missingReason: false,
+                              preferredSupplierId: preferredOf(line)[0]?.id || null,
+                              preferredSupplierIds: preferredOf(line).map((option) => option.id),
+                              preferredSupplierName: preferredNames(line) || null,
+                            },
                           })
                         }
-                        className="mt-1 text-xs text-blue-600"
-                      >{copy("维护 SKU 供应商")}</button>
-                    )}
-                </Field>
-              </div>
-              <div className="md:col-span-1 xl:col-span-2">
-                <Field label={copy("品类")}>
-                  {line.sourceType === "catalog_item" ? <input readOnly value={line.commodityId} style={{ ...inputStyle, background: A.gray6 }} /> : <select value={line.commodityId} onChange={(e) => patchLine(index, { commodityId: e.target.value })} style={inputStyle}><option value="">{copy("选择品类")}</option>{commodities.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
-                </Field>
-              </div>
-              <div className="md:col-span-2 xl:col-span-2">
-                <Field label={copy("规格")}>
-                  <input
-                    readOnly={line.sourceType === "catalog_item"}
-                    value={line.specificationSnapshot}
-                    onChange={(e) =>
-                      patchLine(index, {
-                        specificationSnapshot: e.target.value,
-                      })
-                    }
-                    style={line.sourceType === "catalog_item" ? { ...inputStyle, background: A.gray6 } : inputStyle}
-                  />
-                </Field>
-              </div>
-              {line.lineBasis === "quantity" && (
-                <>
-                  <Field label={copy("单位")}>
-                    {line.sourceType === "catalog_item" ? <input readOnly value={line.unitSnapshot || ""} style={{ ...inputStyle, background: A.gray6 }} /> : <select value={line.unitSnapshot || ""} onChange={(e) => patchLine(index, { unitSnapshot: e.target.value })} style={inputStyle}><option value="">{copy("选择单位")}</option>{units.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
-                    {prefillChip(line, "unitSnapshot")}
+                      />
+                    ) : null}
+                    {line.sourceType === "catalog_item" &&
+                      line.itemId &&
+                      supplierOptions(line).length === 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onNavigate?.("master-data:items", {
+                              entityType: "item",
+                              entityId: line.itemId,
+                            })
+                          }
+                          className="mt-1 text-xs text-blue-600"
+                        >{copy("维护 SKU 供应商")}</button>
+                      )}
                   </Field>
-                  <Field label={copy("数量")}>
-                    <input
-                      type="number"
-                      min="0"
-                      value={line.quantity}
-                      onChange={(e) =>
-                        patchLine(index, { quantity: e.target.value })
-                      }
-                      style={inputStyle}
-                    />
-                    {prefillChip(line, "quantity")}
+                </div>
+                <div className="md:col-span-1 xl:col-span-2">
+                  <Field label={copy("品类")}>
+                    {line.sourceType === "catalog_item" ? <input readOnly value={line.commodityId} style={{ ...inputStyle, background: A.gray6 }} /> : <select value={line.commodityId} onChange={(e) => patchLine(index, { commodityId: e.target.value })} style={inputStyle}><option value="">{copy("选择品类")}</option>{commodities.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
                   </Field>
-                  <Field label={copy("预计单价")}>
+                </div>
+                <div className="md:col-span-2 xl:col-span-2">
+                  <Field label={copy("规格")}>
                     <input
-                      aria-label={`${copy("预计单价")} ${index + 1}`}
-                      type="number"
-                      min="0"
-                      placeholder={copy("请输入")}
-                      value={line.estimatedUnitPrice}
+                      readOnly={line.sourceType === "catalog_item"}
+                      value={line.specificationSnapshot}
                       onChange={(e) =>
                         patchLine(index, {
-                          estimatedUnitPrice: e.target.value,
+                          specificationSnapshot: e.target.value,
                         })
                       }
-                      style={inputStyle}
-                    />
-                    {prefillChip(line, "estimatedUnitPrice")}
-                  </Field>
-                </>
-              )}
-              {line.lineBasis === "amount" && (
-                <div className="md:col-span-3 xl:col-span-3">
-                  <Field label={copy("预计总金额")}>
-                    <input
-                      type="number"
-                      min="0"
-                      value={line.estimatedAmount}
-                      onChange={(e) =>
-                        patchLine(index, { estimatedAmount: e.target.value })
-                      }
-                      style={inputStyle}
+                      style={line.sourceType === "catalog_item" ? { ...inputStyle, background: A.gray6 } : inputStyle}
                     />
                   </Field>
                 </div>
-              )}
-              <div className="md:col-span-2 xl:col-span-2">
-                <Field label={copy("目标仓库或服务地点")}>
-                  <select
-                    value={line.targetWarehouseId}
+                {line.lineBasis === "quantity" && (
+                  <>
+                    <Field label={copy("单位")} required={line.sourceType === "non_catalog_item"} error={line.sourceType === "non_catalog_item" ? lineError(index, "unitSnapshot") : null}>
+                      {line.sourceType === "catalog_item" ? <input readOnly value={line.unitSnapshot || ""} style={{ ...inputStyle, background: A.gray6 }} /> : <select value={line.unitSnapshot || ""} onChange={(e) => patchLine(index, { unitSnapshot: e.target.value })} style={inputStyle}><option value="">{copy("选择单位")}</option>{units.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
+                      {prefillChip(line, "unitSnapshot")}
+                    </Field>
+                    <Field label={copy("数量")} required error={lineError(index, "quantity")}>
+                      <input
+                        type="number"
+                        min="0"
+                        value={line.quantity}
+                        onChange={(e) =>
+                          patchLine(index, { quantity: e.target.value })
+                        }
+                        style={inputStyle}
+                      />
+                      {prefillChip(line, "quantity")}
+                    </Field>
+                    <Field label={copy("预计单价")} required error={lineError(index, "estimatedUnitPrice")}>
+                      <input
+                        aria-label={`${copy("预计单价")} ${index + 1}`}
+                        type="number"
+                        min="0"
+                        placeholder={copy("请输入")}
+                        value={line.estimatedUnitPrice}
+                        onChange={(e) =>
+                          patchLine(index, {
+                            estimatedUnitPrice: e.target.value,
+                          })
+                        }
+                        style={inputStyle}
+                      />
+                      {prefillChip(line, "estimatedUnitPrice")}
+                    </Field>
+                  </>
+                )}
+                {line.lineBasis === "amount" && (
+                  <div className="md:col-span-3 xl:col-span-3">
+                    <Field label={copy("预计总金额")} required error={lineError(index, "estimatedAmount")}>
+                      <input
+                        type="number"
+                        min="0"
+                        value={line.estimatedAmount}
+                        onChange={(e) =>
+                          patchLine(index, { estimatedAmount: e.target.value })
+                        }
+                        style={inputStyle}
+                      />
+                    </Field>
+                  </div>
+                )}
+                <div className="md:col-span-2 xl:col-span-2">
+                  <Field label={copy("目标仓库或服务地点")}>
+                    <select
+                      value={line.targetWarehouseId}
+                      onChange={(e) =>
+                        patchLine(index, { targetWarehouseId: e.target.value })
+                      }
+                      style={inputStyle}
+                    >
+                      <option value="">{copy("选择地点")}</option>
+                      {warehouses.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.label}
+                        </option>
+                      ))}
+                    </select>
+                    {prefillChip(line, "targetWarehouseId")}
+                  </Field>
+                </div>
+                <Field label={copy("需求日期")} required error={lineError(index, "needByDate")}>
+                  <input
+                    type="date"
+                    value={line.needByDate}
                     onChange={(e) =>
-                      patchLine(index, { targetWarehouseId: e.target.value })
+                      patchLine(index, { needByDate: e.target.value })
                     }
                     style={inputStyle}
-                  >
-                    <option value="">{copy("选择地点")}</option>
-                    {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.label}
-                      </option>
-                    ))}
-                  </select>
-                  {prefillChip(line, "targetWarehouseId")}
+                  />
+                  {prefillChip(line, "needByDate")}
                 </Field>
               </div>
-              <Field label={copy("需求日期")}>
-                <input
-                  type="date"
-                  value={line.needByDate}
-                  onChange={(e) =>
-                    patchLine(index, { needByDate: e.target.value })
-                  }
-                  style={inputStyle}
-                />
-                {prefillChip(line, "needByDate")}
-              </Field>
-            </div>
-            {/* Earlier PO prices for the item, beside the estimated unit price. Display only. */}
-            {line.lineBasis === "quantity" && priceHistoryKeyOf(line) && (
+              {/* Earlier PO prices for the item, beside the estimated unit price. Display only. */}
+              {line.lineBasis === "quantity" && priceHistoryKeyOf(line) && (
+                <div className="mt-3">
+                  <PriceHistoryFacts history={priceHistory.histories.get(priceHistoryKeyOf(line))} state={priceHistory.state} testId={`pr-line-price-history-${index + 1}`} />
+                </div>
+              )}
               <div className="mt-3">
-                <PriceHistoryFacts history={priceHistory.histories.get(priceHistoryKeyOf(line))} state={priceHistory.state} testId={`pr-line-price-history-${index + 1}`} />
+                <Field label={copy("行级内部备注")}>
+                  <textarea
+                    aria-label={`${copy("行级内部备注")} ${index + 1}`}
+                    value={line.internalLineComment}
+                    onChange={(e) =>
+                      patchLine(index, { internalLineComment: e.target.value })
+                    }
+                    rows={2}
+                    style={{ ...inputStyle, resize: "vertical" }}
+                  />
+                  {prefillChip(line, "internalLineComment")}
+                </Field>
               </div>
-            )}
-            <div className="mt-3">
-              <Field label={copy("行级内部备注")}>
-                <textarea
-                  aria-label={`${copy("行级内部备注")} ${index + 1}`}
-                  value={line.internalLineComment}
-                  onChange={(e) =>
-                    patchLine(index, { internalLineComment: e.target.value })
-                  }
-                  rows={2}
-                  style={{ ...inputStyle, resize: "vertical" }}
-                />
-                {prefillChip(line, "internalLineComment")}
-              </Field>
-            </div>
-          </div>
-        ))}
-        <div className="flex items-center justify-between px-5 py-3.5">
+            </FormLineCard>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
             onClick={() => setLines([...lines, makeLine(defaultDate)])}
@@ -1463,7 +1505,15 @@ export default function CanonicalProcurementPanel({
           <strong className="text-sm tabular-nums" style={{ color: A.label }}>{copy("预计总额")} {amount(total, currency)}
           </strong>
         </div>
-      </ListCard>
+      </FormSection>
+
+      <FormActionBar
+        onCancel={closeForm}
+        draft={{ label: copy("保存草稿"), onClick: () => void save(false), busy: saving === "draft" }}
+        submit={{ label: copy("保存并提交"), onClick: () => void save(true), busy: saving === "submit" }}
+        message={formMessage}
+        messageTestId="purchase-request-form-errors"
+      />
       {confirmDialog.element}
     </div>
   );

@@ -29,7 +29,15 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   // The buyer agrees a price below the reference price, so the PO price
   // (4.10) and the reference price (4.25) tell the two sources apart below.
   await page.getByLabel('Estimated unit price 1').fill('4.10')
+  // Required fields are marked; a missing one is named under it and gets focus.
+  await expect(page.getByTestId('form-required-note')).toHaveText('* Required')
+  await expect(field(page, 'Quantity').locator('input')).toHaveAttribute('aria-required', 'true')
+  await page.getByRole('button', { name: 'Save and submit' }).click()
+  await expect(field(page, 'Quantity').locator('input')).toHaveAccessibleDescription('Enter a quantity above 0.')
+  await expect(field(page, 'Quantity').locator('input')).toBeFocused()
+  await expect(page.getByTestId('purchase-request-form-errors')).toHaveText('Check the highlighted fields.')
   await field(page, 'Quantity').locator('input').fill('12')
+  await expect(field(page, 'Quantity').locator('input')).not.toHaveAttribute('aria-invalid', 'true')
   await field(page, 'Destination warehouse or service location').locator('select').selectOption('browser-warehouse')
   await page.getByRole('button', { name: 'Save and submit' }).click()
   await expect(page.getByText('Purchase request submitted')).toBeVisible()

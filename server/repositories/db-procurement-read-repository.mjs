@@ -813,6 +813,46 @@ async function loadProcurementSnapshot(client, filters = {}) {
   }
 }
 
+// One purchase order, by its id or the number it shows, with what its detail
+// page reads: the receipts and supplier invoices for it (also one that names
+// it only on a line), the links and follow-ups that name it, and the numbers
+// of its source request and RFQ. The same record shapes as the snapshot, so
+// the detail page reads it as it read the snapshot. Null when the workspace
+// has no such order; another workspace's order is never found.
+const ORDER_DOCUMENTS_LIMIT = 500
+async function loadPurchaseOrderWorkbench(client, { tenantId, id } = {}) {
+  const scoped = requireTenantId({ tenantId })
+  const requestedId = text(id)
+  if (!requestedId) return null
+  const record = await findNumberedDocument(client.purchaseOrder, scoped, requestedId, { lines: true })
+  if (!record) return null
+  const lineIds = asArray(record.lines).map((line) => text(line.id)).filter(Boolean)
+  const forOrder = (field) => ({
+    tenantId: scoped,
+    OR: [{ [field]: record.id }, ...(lineIds.length ? [{ lines: { some: { purchaseOrderLineId: { in: lineIds } } } }] : [])],
+  })
+  const newest = [{ createdAt: 'desc' }]
+  const [receivingDocuments, supplierInvoices, documentLinks, procurementFollowups, request, rfq] = await Promise.all([
+    client.receivingDocument.findMany({ where: forOrder('poId'), include: { lines: true }, orderBy: newest, take: ORDER_DOCUMENTS_LIMIT }),
+    client.supplierInvoice.findMany({ where: forOrder('relatedPoId'), include: { lines: true }, orderBy: newest, take: ORDER_DOCUMENTS_LIMIT }),
+    client.documentLink.findMany({ where: { tenantId: scoped, OR: [{ sourceId: record.id }, { targetId: record.id }] }, orderBy: newest, take: ORDER_DOCUMENTS_LIMIT }),
+    client.procurementFollowup.findMany({ where: { tenantId: scoped, documentId: record.id }, orderBy: newest, take: ORDER_DOCUMENTS_LIMIT }),
+    record.sourceRequestId ? client.purchaseRequest.findFirst({ where: { tenantId: scoped, id: record.sourceRequestId }, select: { id: true, number: true } }) : null,
+    record.sourceRfqId ? client.rfq.findFirst({ where: { tenantId: scoped, id: record.sourceRfqId }, select: { id: true, number: true } }) : null,
+  ])
+  const poNumbers = numbersById([record])
+  const isThisOrder = (type, documentId) => type === 'po' && documentId === record.id
+  return {
+    purchaseOrders: [{ ...mapPurchaseOrder(record), ...withNumber('prNumber', numbersById(request ? [request] : []), record.sourceRequestId), ...withNumber('rfqNumber', numbersById(rfq ? [rfq] : []), record.sourceRfqId) }],
+    receivingDocs: receivingDocuments.map((doc) => ({ ...mapReceivingDocument(doc), ...withNumber('poNumber', poNumbers, doc.poId) })),
+    supplierInvoices: supplierInvoices.map((invoice) => ({ ...mapSupplierInvoice(invoice), ...withNumber('poNumber', poNumbers, invoice.relatedPoId) })),
+    documentLinks: documentLinks.map(mapDocumentLink)
+      .filter((link) => link.sourceType && link.sourceId && link.targetType && link.targetId)
+      .filter((link) => isThisOrder(link.sourceType, link.sourceId) || isThisOrder(link.targetType, link.targetId)),
+    procurementFollowups: procurementFollowups.map(mapFollowup).filter((item) => item.id && isThisOrder(item.documentType, item.documentId)),
+  }
+}
+
 // The number each named purchase order, purchase request and RFQ of the
 // workspace shows, by id: { purchase_order: { id: number }, purchase_request:
 // {...}, rfq: {...} }. An id the workspace does not have is left out. The
@@ -840,6 +880,9 @@ export function createDbProcurementReadRepository({ env = process.env, prisma } 
       const client = await resolvePrisma({ env, prisma })
       return loadProcurementSnapshot(client, filters)
     },
+    // One purchase order and its receipts, invoices, links and follow-ups,
+    // in the snapshot's shape; null when the workspace has no such order.
+    purchaseOrderWorkbench: async ({ tenantId, id } = {}) => loadPurchaseOrderWorkbench(await resolvePrisma({ env, prisma }), { tenantId, id }),
     // With `access` (procurement-read-access.mjs), documents the actor may
     // not read are left out and hidden amounts are masked before any search
     // filter runs, so a search can never match a hidden value.

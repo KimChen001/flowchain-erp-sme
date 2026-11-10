@@ -86,28 +86,37 @@ test("the reorder list ranks by order-by date and prints every input, in English
   await expect(a.getByTestId("reorder-order-by")).toContainText("in 37 days");
   await expect(a).toContainText("110 pcs");
   await expect(a).toContainText("130 pcs");
-  await expect(a.getByTestId("reorder-demand")).toContainText("0.8 pcs");
-  await expect(a.getByTestId("reorder-demand")).toContainText("8 shipment days in 90");
+  // Daily demand per day, with the shipment days small beneath (in full in the tooltip).
+  await expect(a.getByTestId("reorder-demand")).toContainText("0.8 pcs/day");
+  await expect(a.getByTestId("reorder-demand")).toContainText("8 of 90 days");
+  await expect(a.getByTestId("reorder-demand").locator("[title]")).toHaveAttribute("title", "8 shipment days in 90");
   await expect(a.getByTestId("reorder-flags")).toContainText("PO-0040 in CASE, not counted");
   // One line: the singular form.
   await expect(a.getByTestId("reorder-flags")).toContainText("1 shipment line in CASE, not counted");
-  await expect(a.getByTestId("reorder-supplier")).toContainText("Lead time 10 days");
-  await expect(a.getByTestId("reorder-supplier")).toContainText("MOQ not recorded");
+  // The supplier's name, then lead time and MOQ on one short line (in full in the tooltip).
+  await expect(a.getByTestId("reorder-supplier")).toContainText("Reorder Supply");
+  await expect(a.getByTestId("reorder-supplier")).toContainText("10 d lead · MOQ not recorded");
+  await expect(a.getByTestId("reorder-supplier").locator("[title^='Lead time']")).toHaveAttribute("title", "Lead time 10 days · MOQ not recorded");
   // The MOQ is printed in the unit the item is bought in, by its label in the
   // interface language (CASE: "cases", 箱); one day is singular.
   const d = page.getByTestId("reorder-row-RL-D");
-  await expect(d.getByTestId("reorder-supplier")).toContainText("MOQ 2 cases");
-  await expect(d.getByTestId("reorder-supplier")).toContainText("Lead time 1 day");
+  await expect(d.getByTestId("reorder-supplier")).toContainText("1 d lead · MOQ 2 cases");
   await expect(d.getByTestId("reorder-flags")).toContainText("Purchase unit differs (CASE); enter the quantity");
-  await expect(d.getByTestId("reorder-flags")).toContainText("PO-0038 was due Oct 1, 2026: late, counted; confirm with the supplier");
+  // A late line in the list's own year reads without the year.
+  await expect(d.getByTestId("reorder-flags")).toContainText("PO-0038 due Oct 1 is late — counted; confirm with the supplier");
   await expect(d).toContainText("405 pcs");
   // The suggested reorder point beside the recorded one: 9 on 8 days in a
   // row, 10 days' lead time + 7 = 17-day stretches, the 75th of 90 holds 45.
+  // The row follows the rule above the table, so why it is 45 is in the
+  // tooltip only.
   await expect(page.getByTestId("reorder-list-suggestion-rule")).toContainText("enough for the lead time plus 7 days of demand in 5 of 6 past stretches");
   await expect(a.getByTestId("reorder-point")).toContainText("100 pcs");
   await expect(a.getByTestId("reorder-suggestion")).toContainText("Suggested 45 pcs");
-  await expect(a.getByTestId("reorder-suggestion")).toContainText("Covers 17 days of demand in 5 of 6 past stretches");
+  await expect(a.getByTestId("reorder-suggestion")).toHaveAttribute("title", /^Covers 17 days of demand in 5 of 6 past stretches\. Lead time 10 days \+ 7 review days = 17 days\./);
+  await expect(a.getByTestId("reorder-point")).not.toContainText("Covers 17 days");
   await expect(a.getByTestId("reorder-below-suggestion")).toHaveCount(0);
+  // Compact rows: a row without notes stays under 90 px.
+  expect((await c.boundingBox())!.height).toBeLessThan(90);
   await expect(c.getByTestId("reorder-suggestion")).toContainText("No suggestion: fewer than 8 shipment days");
   await expect(pageRoot).not.toContainText(/[㐀-鿿]/);
 
@@ -115,6 +124,49 @@ test("the reorder list ranks by order-by date and prints every input, in English
   await page.getByTestId("reorder-list-supplier-filter").selectOption("SUP-1");
   await expect(rows).toHaveCount(2);
   await expect(page).toHaveURL(/supplier=SUP-1/);
+});
+
+// 120 rows in rank order: RL-C, RL-A and RL-D copies; RL-A and RL-D name SUP-1.
+const longList = {
+  ...list,
+  dataLimitations: ["transfers_not_considered"],
+  rows: Array.from({ length: 120 }, (_, index) => ({ ...list.rows[index % 3], itemId: `ITEM-${index}`, sku: `RL-${String(index + 1).padStart(3, "0")}` })),
+};
+
+test("a long list is drawn 50 rows at a time in rank order, with the true total, and a new filter starts at page 1", async ({ page }) => {
+  await open(page, "en-US", longList);
+  const rows = page.getByTestId("reorder-list-page").locator("tbody tr");
+  const pager = page.getByTestId("reorder-list-pager");
+  await expect(rows).toHaveCount(50);
+  await expect(rows.first()).toHaveAttribute("data-testid", "reorder-row-RL-001");
+  await expect(pager).toContainText("Page 1 of 3 · 120 results");
+  await pager.getByRole("button", { name: "Next" }).click();
+  await expect(pager).toContainText("Page 2 of 3 · 120 results");
+  await expect(rows.first()).toHaveAttribute("data-testid", "reorder-row-RL-051");
+  await pager.getByRole("button", { name: "Next" }).click();
+  await expect(rows).toHaveCount(20);
+  await expect(rows.last()).toHaveAttribute("data-testid", "reorder-row-RL-120");
+  await expect(pager.getByRole("button", { name: "Next" })).toBeDisabled();
+
+  // SUP-1 has 80 of the rows: back to page 1, its first row first.
+  await page.getByTestId("reorder-list-supplier-filter").selectOption("SUP-1");
+  await expect(pager).toContainText("Page 1 of 2 · 80 results");
+  await expect(rows).toHaveCount(50);
+  await expect(rows.first()).toHaveAttribute("data-testid", "reorder-row-RL-002");
+});
+
+test("on a phone each row is a short card: the four stock quantities in one block, the reorder point and its suggestion on one line", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page);
+  const a = page.getByTestId("reorder-row-RL-A");
+  const stock = a.locator("dl");
+  await expect(stock).toHaveCount(1);
+  for (const text of ["On hand", "110 pcs", "Reserved", "10 pcs", "Incoming", "30 pcs", "Position", "130 pcs"]) await expect(stock).toContainText(text);
+  const recorded = a.getByTestId("reorder-point").getByText("100 pcs", { exact: true });
+  const suggested = a.getByTestId("reorder-suggestion");
+  expect(Math.abs((await recorded.boundingBox())!.y - (await suggested.boundingBox())!.y)).toBeLessThan(6);
+  expect((await a.boundingBox())!.height).toBeLessThan(420);
+  await expect(a.getByTestId("reorder-create-request-RL-A")).toBeVisible();
 });
 
 test("Create purchase request opens the prefilled form; nothing is submitted", async ({ page }) => {
@@ -192,9 +244,12 @@ test("the reorder list is available in Chinese and says when nothing needs order
   await expect(page.getByTestId("reorder-list-horizon")).toContainText("所有未到货的采购订单行都计入在途");
   // The workspace locale here is zh-CN, so the day reads in Chinese; units
   // show their Chinese label.
-  await expect(page.getByTestId("reorder-row-RL-D").getByTestId("reorder-flags")).toContainText("PO-0038 应于 2026年10月1日 到货，已逾期，已计入；请与供应商确认");
+  await expect(page.getByTestId("reorder-row-RL-D").getByTestId("reorder-flags")).toContainText("PO-0038 应于 10月1日 到货，已逾期，已计入；请与供应商确认");
   await expect(page.getByTestId("reorder-row-RL-A").getByTestId("reorder-suggestion")).toContainText("建议 45 件");
-  await expect(page.getByTestId("reorder-row-RL-A").getByTestId("reorder-suggestion")).toContainText("过去每 6 段中有 5 段够用 17 天的需求");
+  await expect(page.getByTestId("reorder-row-RL-A").getByTestId("reorder-suggestion")).toHaveAttribute("title", /^过去每 6 段中有 5 段够用 17 天的需求。提前期 10 天/);
+  await expect(page.getByTestId("reorder-row-RL-A").getByTestId("reorder-demand")).toContainText("0.8 件/天");
+  await expect(page.getByTestId("reorder-row-RL-A").getByTestId("reorder-supplier")).toContainText("提前期 10 天 · 最小起订量未记录");
+  await expect(page.getByTestId("reorder-list-pager")).toContainText("第 1 / 1 页 · 共 3 条");
   await expect(page.getByTestId("reorder-row-RL-C").getByTestId("reorder-suggestion")).toContainText("无建议值：发货日少于 8 天");
   await page.unrouteAll();
   await open(page, "en-US", { ...list, rows: [], suppliers: [], summary: { ...list.summary, listed: 0, orderNow: 0 } });

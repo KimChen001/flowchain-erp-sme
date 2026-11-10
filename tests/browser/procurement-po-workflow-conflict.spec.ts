@@ -20,7 +20,8 @@ test('a PO action refused for a stale version says the order changed and reloads
 
   await page.goto('/app/procurement/orders/browser-po')
   await expect(page.getByTestId('po-action-close')).toBeVisible()
-  const reload = page.waitForRequest((req) => req.method() === 'GET' && req.url().endsWith('/api/purchase-orders-workbench'))
+  // The detail reloads only its own order.
+  const reload = page.waitForRequest((req) => req.method() === 'GET' && req.url().endsWith('/api/purchase-orders-workbench/browser-po'))
   await page.getByTestId('po-action-close').click()
   await page.getByTestId('confirm-dialog-field').fill('Supplier stopped the line')
   await page.getByTestId('confirm-dialog-confirm').click()

@@ -15,6 +15,8 @@ const { seedLocalDemo } = await import('../fixtures/workspace/master-data.mjs')
 const { seedLocalScenario } = await import('../fixtures/workspace/scenario.mjs')
 const { createSupplierInsightsReadService } = await import('../../server/domain/supplier-insights.mjs')
 const { buildOpenPurchaseOrdersReport } = await import('../../server/domain/open-purchase-orders-report.mjs')
+const { readAiSkillFacts } = await import('../../server/domain/ai-skill-readers.mjs')
+const { buildAiSkillSignals } = await import('../../server/domain/ai-skill-signals.mjs')
 
 const AS_OF = '2026-03-09'
 const asOfNoon = new Date(`${AS_OF}T12:00:00Z`)
@@ -163,6 +165,19 @@ test('supplier metrics agree with the reports, per reader', async () => {
     assert.equal(financeRisks.visibility.orders, false)
     assert.ok(financeRisks.issues.every((issue) => issue.type !== 'po_overdue'))
     assert.equal(financeRisks.issues.length, totalIssues(finance))
+
+    // The issues are read from the purchase orders, receipts and supplier
+    // invoices alone (readAiSkillSupplierIssueFacts). Read as before
+    // 2026-11-08, over the assistant's full facts with every sales order and
+    // stock row, every page is the same for every reader and supplier.
+    const fullFacts = createSupplierInsightsReadService({ prisma, listPurchaseOrders: repositories.procurementRuntime.listForReport, now: () => asOfNoon, readIssueSignals: (skillContext) => readAiSkillFacts(skillContext).then(buildAiSkillSignals) })
+    const supplierIds = (await prisma.supplier.findMany({ where: { tenantId }, select: { id: true } })).map((row) => row.id)
+    for (const key of Object.keys(people)) {
+      const ctx = { env, repositories, identity: { authenticated: true, tenantId, userId: `${tenantId}-${key}`, role: people[key], name: `Insights ${key}`, source: 'test-suite' } }
+      assert.deepEqual(await service.read(ctx), await fullFacts.read(ctx), key)
+      assert.deepEqual(await service.readRisks(ctx), await fullFacts.readRisks(ctx), key)
+      for (const supplierId of supplierIds) assert.deepEqual(await service.readActivity(ctx, supplierId), await fullFacts.readActivity(ctx, supplierId), `${key} ${supplierId}`)
+    }
 
     // The route serves the same read to the signed-in user.
     server = createScmServer()
