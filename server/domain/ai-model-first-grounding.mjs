@@ -121,6 +121,15 @@ const NONE_UNIT = /^\s*(?:[A-Za-z]{1,6}\b|[件个箱卷套只台])?\s*(?:availab
 // of the 5 orders is late") is left alone.
 const BOTH_ARRIVE = /都到|全到|到齐|都来|到货后|计入后|算上|\b(?:once|if|when|with)\s+(?:both|they|them|all)\b|\bvs\b|versus/i
 const STOCK_CUE = /avail|stock|on\s*hand|\bleft\b|remain|\bunits?\b|\bpcs\b|pieces|\bATP\b|可用|库存|现货|件|个|箱|卷|套|只|台|剩/i
+// The scenario where only some of an item's open orders arrive: "If only the
+// remaining 120 pcs on PO-… arrive, 85123A would have 168 pcs available",
+// 如果只有 PO-…到货，可用量会是 288 件 (2026-11-09 on Flash, the UCI walkthrough
+// question set: right, and flagged, since stock_projection was not called and
+// no field held 168). A figure written in that scenario may be today's
+// available stock of one SKU plus what is still to receive on some of its open
+// orders (see onlyArriveFigures); outside it, an available figure still comes
+// from its own field, so "stays at 168 pcs available to promise" is refused.
+const ONLY_ARRIVE = /\b(?:if|when)\s+only\b|\bonly\s+(?:the\s+)?(?:\S+\s+){0,10}?(?:arrives?|arrived|lands?|comes?\s+in|is\s+received)\b|\bwith\s+(?:just|only)\b|只有.{0,60}?(?:到货|到达|到了|来了|来的话|入库|收到)|只(?:来|收到)|只到(?!期|\s*\d)|仅.{0,60}?(?:到货|到达|入库)/i
 
 // Whether a plain figure is written for the scenario where none of the late
 // orders arrives: the phrase ends shortly before it with only joining words
@@ -274,13 +283,102 @@ export function aiGroundingSources(results = []) {
         const value = typeof entry === 'boolean' ? String(entry) : typeof entry === 'string' ? fold(entry) : typeof entry?.name === 'string' ? fold(entry.name) : ''
         if (!value) continue
         const group = `${name}\u0000${value}`
-        groups.set(group, (groups.get(group) || 0) + 1)
+        groups.set(group, [...(groups.get(group) || []), row])
       }
     }
-    for (const count of new Set(groups.values())) numbers.push({ value: count, key: 'count', currency: null, unit: null })
+    for (const count of new Set([...groups.values()].map((members) => members.length))) numbers.push({ value: count, key: 'count', currency: null, unit: null })
+    addTotals(objects, groups)
+  }
+  // The totals a whole list holds without writing them: a quantity or amount
+  // added up over every row, and over the rows that share a value (two late
+  // orders from one supplier). 2026-11-09 on Flash, the UCI walkthrough
+  // question set: "360 pcs are still to receive across the two orders" and
+  // "这 3 张订单合计待收货 810 件" from list_purchase_orders' remaining 120,
+  // 240 and 450 were flagged. Each total keeps its field's name, so it
+  // measures what the field does; amounts only in one currency. Never
+  // available stock: several items' available stock together is no item's.
+  const addTotals = (rows, groups) => {
+    if (rows.length > TOTAL_ROWS) return
+    const sets = [rows, ...[...groups.values()].filter((members) => members.length >= 2 && members.length < rows.length)]
+    for (const members of sets) {
+      const totals = new Map()
+      for (const row of members) {
+        for (const [name, entry] of Object.entries(row)) {
+          if (!TOTAL_KEY.test(name) || NOT_TOTAL_KEY.test(name) || AVAILABLE_KEY.test(name)) continue
+          const amount = typeof entry === 'number' ? entry : typeof entry?.amount === 'number' ? entry.amount : null
+          if (amount === null || !Number.isFinite(amount)) continue
+          const currency = text(typeof entry === 'number' ? row.currency : entry.currency).toUpperCase() || null
+          const total = totals.get(name) || { value: 0, rows: 0, currencies: new Set() }
+          total.value += amount
+          total.rows += 1
+          total.currencies.add(currency)
+          totals.set(name, total)
+        }
+      }
+      for (const [name, total] of totals) {
+        if (total.rows < 2 || total.currencies.size > 1) continue
+        numbers.push({ value: Math.round(total.value * 100) / 100, key: name, currency: [...total.currencies][0], unit: null })
+      }
+    }
   }
   for (const result of array(results)) walk(result)
-  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names], nameOrigins }
+  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names], nameOrigins, onlyArrive: onlyArriveFigures(results) }
+}
+
+// The fields a list's totals are taken from: quantities and amounts, not
+// prices, rates, averages, days or thresholds.
+const TOTAL_ROWS = 200
+const TOTAL_KEY = /quantity|remaining|ordered|received|outstanding|toReceive|amount|balance|value|spend|revenue|sales|units|shortage|incoming|onHand/i
+const NOT_TOTAL_KEY = /price|rate|percent|share|average|avg|perDay|daily|days|lead|minimum|moq|reorder|safety|rank/i
+
+// The figures for some of an item's open orders arriving (see ONLY_ARRIVE):
+// its available stock today plus what is still to receive on each subset of
+// its open orders, from the results that tie both to its SKU: a stock row
+// (available, availableToday), purchase order rows of that SKU alone
+// (remaining), stock_projection's late lines and late_order_impact's rows on
+// one order (stillToReceive). An order read twice counts once.
+const ONLY_ARRIVE_LINES = 6
+function onlyArriveFigures(results) {
+  const available = new Map()
+  const lines = new Map()
+  const addLine = (sku, order, quantity) => {
+    if (!sku || !(quantity > 0)) return
+    const byOrder = lines.get(sku) || new Map()
+    byOrder.set(order ? fold(order) : `#${byOrder.size}:${quantity}`, quantity)
+    lines.set(sku, byOrder)
+  }
+  const skuOf = (row) => {
+    if (typeof row.sku === 'string' && row.sku.trim()) return fold(row.sku)
+    const skus = Array.isArray(row.skus) ? row.skus : typeof row.skus === 'string' ? row.skus.split(/[,;\s]+/) : []
+    const one = skus.map((value) => text(typeof value === 'object' ? value?.sku : value)).filter(Boolean)
+    return one.length === 1 ? fold(one[0]) : null
+  }
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return }
+    if (!value || typeof value !== 'object') return
+    const sku = skuOf(value)
+    if (sku) {
+      for (const key of ['available', 'availableToday', 'availableIfNoLateLinesArrive']) {
+        if (typeof value[key] === 'number' && Number.isFinite(value[key])) available.set(sku, new Set([...(available.get(sku) || []), value[key]]))
+      }
+      const order = text(value.orderNumber || value.order || value.ref?.label || (Array.isArray(value.judgedOrders) && value.judgedOrders.length === 1 ? value.judgedOrders[0] : ''))
+      if (typeof value.remaining === 'number' && order) addLine(sku, order, value.remaining)
+      if (typeof value.stillToReceive === 'number' && Array.isArray(value.judgedOrders) && value.judgedOrders.length === 1) addLine(sku, order, value.stillToReceive)
+      for (const entry of array(value.notPlacedInAWeek?.incomingPastPromisedDate)) addLine(sku, text(entry?.orderNumber), Number(entry?.quantity))
+    }
+    for (const entry of Object.values(value)) walk(entry)
+  }
+  walk(results)
+  const figures = new Set()
+  for (const [sku, byOrder] of lines) {
+    const quantities = [...byOrder.values()].slice(0, ONLY_ARRIVE_LINES)
+    for (const today of available.get(sku) || []) {
+      for (let mask = 1; mask < 1 << quantities.length; mask += 1) {
+        figures.add(today + quantities.reduce((sum, quantity, index) => sum + (mask & (1 << index) ? quantity : 0), 0))
+      }
+    }
+  }
+  return figures
 }
 
 const NAME_KEYS = new Set(['customer', 'customerName', 'itemName', 'name', 'supplier', 'supplierName'])
@@ -568,8 +666,13 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
         : AVAILABLE_AFTER.test(afterText) || AVAILABLE_BEFORE.test(rest.slice(Math.max(0, match.index - 40), match.index)) ? 'available' : measured
     checked.number += 1
     const near = (candidate) => Math.abs(Math.abs(candidate) - value) <= tolerance
+    // A figure written for only some of an item's open orders arriving, in its
+    // sentence or the clause after it (see ONLY_ARRIVE).
+    const onlyArrive = (kind === 'available' || kind === 'plain') && !decimals && factor === 1 && [...sources.onlyArrive].some(near)
+      && (ONLY_ARRIVE.test(rest.slice(Math.max(0, match.index - 160), match.index).split(/[。！？!?\n]|\.(?!\d)/).pop()) || ONLY_ARRIVE.test(afterText.split(/[。；;\n]|\.(?!\d)/)[0]))
     const read = sources.numbers.some((source) => numberKindFits(source, kind, currencies) && (near(source.value) || (kind === 'percent' && near(source.value * 100))))
       || givenNumbers.some(near)
+      || onlyArrive
     const grounded = read
       || (kind === 'plain' && !decimals && factor === 1 && value >= 1900 && value <= 2100 && [...sources.months].some((month) => month.startsWith(String(value))))
       || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && listCount(at, num.length) === value)
