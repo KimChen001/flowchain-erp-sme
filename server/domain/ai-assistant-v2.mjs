@@ -89,6 +89,36 @@ const CARD_TOOLS = new Set(['suggest_purchase_request', 'suggest_setup_records',
 // a Chinese character counting as two.
 const NARRATION_LENGTH = 160
 const weightedLength = (value) => [...String(value)].reduce((total, char) => total + (/[㐀-鿿]/u.test(char) ? 2 : 1), 0)
+// A text part written after the answer is on screen is held while it says
+// the answer again (repeatsShown): until it is this long it waits, and it is
+// left out at its end when it is a repeat at least REPEAT_MIN long. A short
+// closing line is never a repeat.
+const REPEAT_HOLD = 200
+const REPEAT_MIN = 120
+// Words that say the model is about to look something up: a text of one
+// paragraph with them, up to twice the narration length, is narration too
+// (2026-11-10 on Flash: "…two of them are for the same item — but I need to
+// see whether the open sales orders actually depend on that stock.", 165
+// characters, before three more reads).
+const LOOKUP_CUE = /\b(?:I(?:'ll| will| need to| want to| have to|'m going to| am going to)|let me|let's|first,? I)\s+(?:\w+\s+){0,2}?(?:check|look|see|pull|read|confirm|find|verify|get|review|open|work out)\b|(?:我|先)(?:需要|要|来|再|先)?(?:查|看|核对|确认|读|拉)(?:一下|看|下)?/i
+
+// Whether a text mostly says what the answer already shows: half of its
+// six-character runs (spaces and punctuation aside), or 60% of its words and
+// figures (a Chinese character a word), are in the shown text. 2026-11-09 on
+// Flash, the UCI question set: under its table or chips an answer wrote its
+// stock position, its October sales and "288 if only that order arrives"
+// out again in other words; the panel drops only sentences repeated as they
+// were.
+function repeatsShown(value, shown) {
+  if (!text(shown)) return false
+  const runs = (input) => {
+    const plain = String(input).replace(/[\s\p{P}\p{S}]+/gu, '')
+    return new Set(Array.from({ length: Math.max(0, plain.length - 5) }, (_, index) => plain.slice(index, index + 6)))
+  }
+  const words = (input) => new Set(String(input).toLowerCase().match(/[a-z]{3,}|\d+(?:\.\d+)?|[㐀-鿿]/gu) || [])
+  const share = (later, earlier) => (later.size ? [...later].filter((entry) => earlier.has(entry)).length / later.size : 0)
+  return share(runs(value), runs(shown)) >= 0.5 || share(words(value), words(shown)) >= 0.6
+}
 // English prose in a Chinese answer: a plain paragraph (not a quoted draft,
 // a table, a list or a heading) with no Chinese and six English words or
 // more. It is reasoning or a sentence in the wrong language ("I don't know
@@ -520,6 +550,15 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
   let lastCallTokens = 0
   let lastCallMs = 0
   const parts = []
+  // The answer's text on screen so far (left-out narration and repeats aside,
+  // and the part being written, when given).
+  const shownText = (except = null) => parts.filter((part) => part.type === 'text' && part !== except && !part.dropped && text(part.text)).map((part) => part.text).join('\n')
+  // An answer is written once its shown text is past an opening line: two
+  // sentences or a new paragraph.
+  const answerWritten = () => {
+    const shown = shownText()
+    return weightedLength(shown) >= NARRATION_LENGTH || /\n\s*\n/.test(shown.trim())
+  }
   const results = []
   const refs = []
   const shownRefs = []
@@ -848,6 +887,12 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         if (weightedLength(part.raw) < NARRATION_LENGTH && !/\n\s*\n/.test(part.raw)) return
         part.pending = false
       }
+      // Written after the answer was on screen: held while it says it again,
+      // and streamed once it says something new (see repeatsShown).
+      if (part.echo) {
+        if (weightedLength(part.raw) < REPEAT_HOLD || repeatsShown(part.raw, shownText(part))) return
+        part.echo = false
+      }
       // A Chinese answer's text waits for its first Chinese word: English
       // written before a tool call is narration, left out below (2026-11-05:
       // "The item is LDM-002 Temperature Sensor. I'll fill in the form…").
@@ -1001,6 +1046,33 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         part.narration = true
         part.text = ''
         return
+      }
+      // A short text of one paragraph already shown, then a call that reads:
+      // narration after all, let out by the pause or by the blank line after
+      // it (2026-11-09 on Flash through OpenCode: "I'll look at what's flagged
+      // for today." opened about 1 in 3 answers, a longer pause not helping).
+      // It is taken back; the model is told it was not shown.
+      const said = part.raw.trim()
+      const narrationLike = weightedLength(said) < NARRATION_LENGTH || (weightedLength(said) < 2 * NARRATION_LENGTH && LOOKUP_CUE.test(said))
+      if (beforeRead && part.sent > 0 && !part.held && narrationLike && !/\n\s*\n/.test(said)) {
+        part.dropped = true
+        part.narration = true
+        part.retracted = true
+        part.text = ''
+        stats.replaces.push('narration')
+        send({ type: 'replace', partId: part.id, text: '', code: 'narration' })
+        return
+      }
+      // A part that said the shown answer again to its end is left out; it
+      // was never sent.
+      if (part.echo && !part.held) {
+        part.echo = false
+        if (weightedLength(part.raw) >= REPEAT_MIN && repeatsShown(part.raw, shownText(part))) {
+          part.dropped = true
+          part.text = ''
+          stats.replaces.push('repeated_text')
+          return
+        }
       }
       if (beforeTool && zhAnswer && !part.held && mostlyEnglish(part.raw, 3)) {
         part.dropped = true
@@ -1160,7 +1232,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
           if (aborted || timedOut) break
           if (event.type === 'text_delta' && event.text) {
             if (!openText) {
-              openText = { id: `p${parts.length + 1}`, type: 'text', raw: '', rawAt: 0, text: '', sent: 0, held: false, pending: true }
+              openText = { id: `p${parts.length + 1}`, type: 'text', raw: '', rawAt: 0, text: '', sent: 0, held: false, pending: true, echo: answerWritten() }
               parts.push(openText)
             }
             openText.raw += event.text
@@ -1272,8 +1344,9 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // The round's data calls run together; an error goes back to the model
       // as the call's result, so it can correct the call.
       if (pending.length) send({ type: 'progress', step: 'reading', sources: assistantV2ProgressSources(pending.map((call) => call.name)) })
+      // The tools see this thread's questions (a period to cover is the user's).
       const ran = await Promise.all(pending.map(async (call) => [call, call.input
-        ? await runAiReadTool(call.name, call.input, { facts, context })
+        ? await runAiReadTool(call.name, call.input, { facts, context: { ...context, question: userText } })
         : { ok: false, error: 'invalid_arguments', details: ['arguments must be a JSON object'] }]))
       for (const [call, outcome] of ran) {
         outcomes.set(call.id, outcome)
@@ -1327,9 +1400,13 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // offered steps), which the model reads only in its result. 2026-11-07
       // a budget plan stopped at "Six SKUs: 019, 272, 354, 397, 430, 439."
       // above its form, the explanation unwritten. Nor when the round's text
-      // is none: the only text was an opening line of an earlier round
+      // is none and the only text was an opening line of an earlier round
       // (2026-11-07: a reorder answer ended at 21 characters and its chips).
-      if (toolUses.some((block) => block.name === 'suggest_followups') && !toolUses.some((block) => CARD_TOOLS.has(block.name)) && toolUses.every((block) => ui.has(block.name) && outcomes.get(block.id)?.ok) && parts.slice(roundStart).some((part) => part.type === 'text' && text(part.text)) && !unshownCards(stats.ui).length && !linesWithoutForm(stats, ui.has('suggest_purchase_request'))) { stop('end_turn'); break }
+      // An answer written in an earlier round does end here: the next call
+      // only wrote it again in other words or said where it was (2026-11-09
+      // on Flash, the UCI question set: "Your answer is above", and stock
+      // positions and monthly sales written out twice).
+      if (toolUses.some((block) => block.name === 'suggest_followups') && !toolUses.some((block) => CARD_TOOLS.has(block.name)) && toolUses.every((block) => ui.has(block.name) && outcomes.get(block.id)?.ok) && (parts.slice(roundStart).some((part) => part.type === 'text' && text(part.text)) || answerWritten()) && !unshownCards(stats.ui).length && !linesWithoutForm(stats, ui.has('suggest_purchase_request'))) { stop('end_turn'); break }
       // The next call is the last when the limits say so, when a call after
       // it could not fit in what the answer may still spend, or when the
       // model called only withdrawn display tools.
@@ -1376,7 +1453,10 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         held.rawAt = 0
         held.text = ''
         advance(held, held.raw.length)
+        // A part taken back is put back whole: the panel emptied it.
+        if (held.retracted) held.sent = held.text.length
         checkText(held)
+        if (held.retracted && !held.replaced) send({ type: 'replace', partId: held.id, text: held.text.slice(0, 4000), code: 'narration' })
       }
     }
 

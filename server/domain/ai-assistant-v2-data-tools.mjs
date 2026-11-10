@@ -292,6 +292,21 @@ async function recordedDemand(context, facts, items) {
 // What an item needs to cover a period: recorded daily demand over the
 // supplier's lead time and the days to cover after the order arrives, plus
 // safety stock. null without enough recorded demand.
+// Whether the user's words name a period of stock to order for: "2 weeks",
+// "a month's worth", "for the next two weeks", 两周的量, 一个月, 下个月的量,
+// 够卖到月底. "This week", 这周 and 本周 say when, so they do not.
+const COVER_PERIOD = [
+  /\d+\s*-?\s*(?:days?|weeks?|wks?|months?|mos?)\b/i,
+  /\b(?:a|one|two|three|four|five|six|eight|ten|twelve|a\s+couple\s+of|a\s+few|several)\s+(?:days?|weeks?|months?|quarters?)\b/i,
+  /\b(?:week|month|quarter|year)(?:'s|s')\s+(?:worth|supply|stock|demand|sales)\b/i,
+  /\b(?:for|cover(?:ing)?|enough\s+for|to\s+last|through|until\s+the\s+end\s+of)\s+(?:the\s+)?(?:next|coming|rest\s+of\s+the)\s+(?:\w+\s+)?(?:days?|weeks?|month|quarter|year)\b/i,
+  /\b(?:until|through|to)\s+(?:the\s+)?end\s+of\s+(?:the\s+)?(?:week|month|quarter|year)\b/i,
+  /[\d一二两三四五六七八九十半几]+\s*(?:个)?\s*(?:天|日|周|星期|礼拜|月|季度)/,
+  /下(?:个)?(?:周|星期|礼拜|月|季度)的?(?:量|用量|需求|销量|库存)/,
+  /(?:够|撑)(?:用|卖|到)|到(?:月底|月末|年底|季度末)/,
+]
+export const namesCoverPeriod = (value) => COVER_PERIOD.some((pattern) => pattern.test(String(value || '')))
+
 const coverTargetOf = (row, rate, lead, coverDays) => (rate === null || !coverDays ? null : Math.ceil(rate * ((lead ?? 0) + coverDays) + Math.max(0, Number(row.safetyStock) || 0)))
 const COVER_SOURCE = Object.freeze({ [PURCHASE_SUGGESTION_SOURCES.reorderGap]: PURCHASE_SUGGESTION_SOURCES.coverDays, [PURCHASE_SUGGESTION_SOURCES.raisedToMoq]: PURCHASE_SUGGESTION_SOURCES.coverDaysRaisedToMoq })
 // The shared quantity rule with the cover target in place of the reorder
@@ -324,7 +339,7 @@ const suggestPurchaseLines = defineAiTool({
   parameters: {
     skus: { type: 'array', items: { type: 'string' }, maxItems: AI_TOOL_LIMITS.items, description: 'The SKUs the user named.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_SUGGESTED, description: `How many items to suggest when none is named, ${MAX_SUGGESTED} by default.` },
-    coverDays: { type: 'integer', minimum: 1, maximum: COVER_DAYS_MAX, description: 'Size each line to cover this many days after the order arrives, when the user asks to order for a period ("what we need for the next 2 weeks", 一个月的量): target = average daily demand (posted shipments over the last 90 days) × (lead time + coverDays) + safety stock. Without names, any stocked item that falls short of it is suggested. Each row\'s cover gives the basis; an item without enough shipment history keeps the reorder point quantity (cover.basis says so).' },
+    coverDays: { type: 'integer', minimum: 1, maximum: COVER_DAYS_MAX, description: 'Size each line to cover this many days after the order arrives, when the user asks to order for a period ("what we need for the next 2 weeks", 一个月的量): target = average daily demand (posted shipments over the last 90 days) × (lead time + coverDays) + safety stock. Without names, any stocked item that falls short of it is suggested. Each row\'s cover gives the basis; an item without enough shipment history keeps the reorder point quantity (cover.basis says so). "This week" or 这周 says when to order, not a period: leave coverDays out.' },
   },
   available: (facts, context) => Boolean(facts.inventory) && Boolean(context?.actor && context.prisma),
   assistantV2Only: true,
@@ -333,7 +348,13 @@ const suggestPurchaseLines = defineAiTool({
     // a reader of requests never gets suggestions that ignore them.
     if (facts.purchaseRequests && !openRequestsRead(facts)) return { error: 'open_purchase_requests_not_read' }
     const named = array(args.skus).length > 0
-    const coverDays = Number.isInteger(args.coverDays) && args.coverDays >= 1 && args.coverDays <= COVER_DAYS_MAX ? args.coverDays : null
+    const asked = Number.isInteger(args.coverDays) && args.coverDays >= 1 && args.coverDays <= COVER_DAYS_MAX ? args.coverDays : null
+    // A period to cover comes from the user's questions: "this week" says
+    // when (2026-11-09 on Flash: "这周需要补什么货" sized the cakestand at 72,
+    // 7 days of cover, where the reorder list says its minimum order of 60).
+    // Without the questions (another caller), the argument stands.
+    const periodLeftOut = asked !== null && typeof context?.question === 'string' && !namesCoverPeriod(context.question)
+    const coverDays = periodLeftOut ? null : asked
     let rows = []
     if (named) {
       for (const sku of args.skus) {
@@ -437,6 +458,7 @@ const suggestPurchaseLines = defineAiTool({
       today: facts.today,
       from: named ? 'named' : 'suggestions',
       ...(coverDays ? { coverDays } : {}),
+      ...(periodLeftOut ? { coverDaysLeftOut: 'The questions name no period to cover, so each line is sized to the reorder point, as the reorder list does.' } : {}),
       pricesHidden: !prices,
       suppliersHidden: !suppliersVisible,
       purchaseRequestsRead: openRequestsRead(facts),

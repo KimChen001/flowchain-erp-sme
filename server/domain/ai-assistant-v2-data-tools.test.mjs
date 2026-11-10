@@ -5,7 +5,7 @@ import { AI_SKILL_OTHER_TENANT, AI_SKILL_TENANT, aiSkillActor, aiSkillScenario }
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_READ_TOOLS } from './ai-read-tools.mjs'
-import { AI_ASSISTANT_V2_TOOLS } from './ai-assistant-v2-data-tools.mjs'
+import { AI_ASSISTANT_V2_TOOLS, namesCoverPeriod } from './ai-assistant-v2-data-tools.mjs'
 import { AI_READ_TOOL_COLUMNS, aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { buildReorderList } from './reorder-list.mjs'
@@ -235,6 +235,24 @@ test('suggest_purchase_lines with coverDays sizes a line from recorded demand an
   const before = (await plain.run('suggest_purchase_lines', { skus: ['LDM-001'] })).result.rows[0]
   assert.equal(before.cover, undefined)
   assert.equal(before.suggestedQuantity.source, 'covered_by_open_orders')
+})
+
+// 2026-11-09 on Flash: "这周需要补什么货" became coverDays 7, and the form held 72
+// cakestands where the reorder list says its minimum order of 60.
+test('coverDays stands only when the questions name a period to cover; "this week" says when', async () => {
+  const { facts, context } = await v2({ change: shipping, actor: everyWarehouse })
+  const lines = async (question) => (await runAiReadTool('suggest_purchase_lines', { skus: ['LDM-001'], coverDays: 7 }, { facts, context: { ...context, question } })).result
+  const thisWeek = await lines('这周需要补什么货？')
+  assert.equal(thisWeek.coverDays, undefined)
+  assert.match(thisWeek.coverDaysLeftOut, /no period to cover/)
+  assert.equal(thisWeek.rows[0].cover, undefined)
+  assert.notEqual(thisWeek.rows[0].suggestedQuantity.source, 'cover_days')
+  assert.equal((await lines('What should I reorder this week?')).coverDays, undefined)
+  const period = await lines('What do we need for the next 2 weeks?')
+  assert.equal(period.coverDays, 7)
+  assert.equal(period.coverDaysLeftOut, undefined)
+  for (const question of ['Order a month\'s worth of LDM-001', 'enough for the next two weeks', '两周的量', '下个月的量', '备一个月的货', '够卖到月底', '30 days of stock']) assert.ok(namesCoverPeriod(question), question)
+  for (const question of ['这周需要补什么货？', '本周要下哪些单', 'What should I reorder this week?', 'What needs ordering today?', 'Reorder LDM-001']) assert.ok(!namesCoverPeriod(question), question)
 })
 
 // 2026-11-07 (public data): every sales order had shipped, so the projection
