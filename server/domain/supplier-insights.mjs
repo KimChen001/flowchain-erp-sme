@@ -1,6 +1,6 @@
 import { can } from '../auth/authorization-service.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
-import { readAiSkillFacts } from './ai-skill-readers.mjs'
+import { readAiSkillSupplierIssueFacts } from './ai-skill-readers.mjs'
 import { buildAiSkillSignals, compareSignalsByDate, compareSignalsByPrintedDate } from './ai-skill-signals.mjs'
 import { isCommittedPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { buildOpenPurchaseOrdersReport, purchaseOrderDueDay, purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
@@ -145,10 +145,24 @@ export function supplierRiskRows(signals = [], suppliers = []) {
     })
 }
 
+// The assistant's signals over only the facts the supplier issues need
+// (readAiSkillSupplierIssueFacts): the same issues as over its full facts
+// (readAiSkillFacts), without reading sales orders, stock or items.
+// purchaseOrders: the rows listPurchaseOrders returned, when already read.
+export const readSupplierIssueSignals = (skillContext, { purchaseOrders } = {}) => readAiSkillSupplierIssueFacts(skillContext, { purchaseOrders }).then(buildAiSkillSignals)
+
 // Reads every supplier's metrics for the signed-in reader.
-// listPurchaseOrders is the procurement runtime's listForReport.
-export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, now = () => new Date() } = {}) {
+// listPurchaseOrders is the procurement runtime's listForReport; the issues
+// are read from the orders it returns. readIssueSignals reads the issues; the
+// tests pass the full facts' signals to check this one gives the same.
+export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, now = () => new Date(), readIssueSignals = readSupplierIssueSignals } = {}) {
   if (!prisma) throw new Error('prisma is required')
+  // The purchase orders, read once, and the issues read from them.
+  const ordersAndIssues = async (skillContext, { orders, issues }) => {
+    const purchaseOrders = orders && listPurchaseOrders ? await listPurchaseOrders({ tenantId: skillContext.tenantId }) : undefined
+    const signals = issues ? await readIssueSignals(skillContext, { purchaseOrders }) : []
+    return { purchaseOrders: purchaseOrders || [], signals }
+  }
   return {
     async read(ctx) {
       const instant = now()
@@ -163,14 +177,13 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
         issues: Boolean(access.collections.purchaseOrders || access.collections.receipts || access.collections.supplierInvoices),
       }
       const window = { from: addDays(today, -(SUPPLIER_SPEND_LOOKBACK_DAYS - 1)), to: today }
-      const [suppliers, purchaseOrders] = await Promise.all([
+      const [suppliers, { purchaseOrders, signals }, scorecard] = await Promise.all([
         prisma.supplier.findMany({ where: { tenantId }, select: { id: true, name: true, status: true }, orderBy: [{ name: 'asc' }, { id: 'asc' }] }),
-        visibility.orders && listPurchaseOrders ? listPurchaseOrders({ tenantId }) : [],
+        ordersAndIssues(skillContext, { orders: visibility.orders, issues: visibility.issues }),
+        visibility.onTime ? createSupplierScorecardReadService({ prisma, now: () => instant }).read({}, { actor }) : null,
       ])
       const totals = supplierPurchaseTotals(purchaseOrders, { ...window, timeZone: tenant.timezone })
       const openRows = visibility.orders ? buildOpenPurchaseOrdersReport(purchaseOrders, { export: 'true' }, instant, { timeZone: tenant.timezone }).exportRows || [] : []
-      const scorecard = visibility.onTime ? await createSupplierScorecardReadService({ prisma, now: () => instant }).read({}, { actor }) : null
-      const signals = visibility.issues ? buildAiSkillSignals(await readAiSkillFacts(skillContext)) : []
       return {
         asOf: today,
         lookbackDays: SUPPLIER_SPEND_LOOKBACK_DAYS,
@@ -200,12 +213,11 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
         invoiceAmounts: Boolean(access.collections.supplierInvoices && access.partner && access.amounts),
         issues: Boolean(access.collections.purchaseOrders || access.collections.receipts || access.collections.supplierInvoices),
       }
-      const [purchaseOrders, invoices, signals] = await Promise.all([
-        visibility.orders && listPurchaseOrders ? listPurchaseOrders({ tenantId }) : [],
+      const [{ purchaseOrders, signals }, invoices] = await Promise.all([
+        ordersAndIssues(skillContext, { orders: visibility.orders, issues: visibility.issues }),
         visibility.invoices
           ? prisma.supplierInvoice.findMany({ where: { tenantId, supplierId: supplier.id }, orderBy: [{ invoiceDate: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }], take: SUPPLIER_ACTIVITY_LIMIT + 1, select: { id: true, invoiceNumber: true, invoiceDate: true, dueDate: true, status: true, matchStatus: true, totalAmount: true, amount: true, currency: true, createdAt: true } })
           : [],
-        visibility.issues ? readAiSkillFacts(skillContext).then(buildAiSkillSignals) : [],
       ])
       const mine = purchaseOrders.filter((po) => text(po.supplierId) === supplier.id)
       const openRows = visibility.orders ? buildOpenPurchaseOrdersReport(mine, { export: 'true' }, instant, { timeZone: tenant.timezone }).exportRows || [] : []
@@ -253,7 +265,7 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
       }
       const [suppliers, signals] = await Promise.all([
         prisma.supplier.findMany({ where: { tenantId }, select: { id: true, code: true, name: true }, orderBy: [{ name: 'asc' }, { id: 'asc' }] }),
-        visibility.issues ? readAiSkillFacts(skillContext).then(buildAiSkillSignals) : [],
+        visibility.issues ? readIssueSignals(skillContext) : [],
       ])
       return {
         asOf: today,
