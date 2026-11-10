@@ -9,8 +9,9 @@ import { aiAnswerActionClaims, aiAnswerRecordStates } from './ai-answer-claims.m
 //   - every number, with its currency, percent sign or days;
 // and each must appear in a tool result of this answer, after normalising
 // formats (1,234.50 is 1234.5; $47.2k is 47,200 give or take 50), or come from
-// the calculate tool, whose results are tool results too. A number may be
-// rounded. The question's own words count as given: a figure or a name the
+// the calculate tool, whose results are tool results too, or be worked out
+// from the answer's own grounded figures (120 + 240 = 360; see workedOut;
+// never an available figure). A number may be rounded. The question's own words count as given: a figure or a name the
 // user wrote is not the model's invention. A cited record must be one a tool
 // returned, and the text may not claim the assistant acted. What fails is
 // listed with its kind; the loop gives the model one retry with the list, and
@@ -169,6 +170,17 @@ const APPROX_AFTER = /^\s*(?:左右|上下)/
 // What points at a step of a numbered list: "step 2", "steps 1 and 2", 第 2 步, 步骤 3.
 const STEP_BEFORE = /(?:\bsteps?|步骤|第)[^.\n。！？!?]{0,16}$/i
 const COUNT_NOUN =/^\s*(?:(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?|orders?|requests?|suppliers?|customers?|lines?|records?)(?![\p{L}])|(?:个|项|张|家|种|笔|条|款))/iu
+// An answer about overdue or aged amounts, and the bucket labels it may write:
+// 1–30, 31–60, 61–90, 91–120, 121–180, over 90 days, over-90-day, 90+ days,
+// 超过 90 天, 90 天以上.
+const AGING_CUE = /\bage?ing\b|overdue|past[\s-]due|\bbuckets?\b|账龄|逾期/i
+const BUCKET_DASH = String.raw`\s*[-–—~～至到]\s*`
+const AGING_BUCKET = new RegExp([
+  `(?<!\\d|\\d[.,])(?:[01]${BUCKET_DASH}30|31${BUCKET_DASH}60|61${BUCKET_DASH}90|91${BUCKET_DASH}120|121${BUCKET_DASH}180)(?!\\d|[.,]\\d)`,
+  String.raw`(?:\bover|>|超过)\s*-?\s*(?:30|60|90|120|180|365)\s*-?\s*(?:days?\b|天)`,
+  String.raw`(?<!\d|\d[.,])(?:30|60|90|120|180|365)\s*\+(?:\s*(?:days?\b|天))?`,
+  String.raw`(?<!\d|\d[.,])(?:30|60|90|120|180|365)\s*天以上`,
+].join('|'), 'gi')
 const ZH_DIGITS = Object.freeze({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 })
 const ZH_COUNT = /([二两三四五六七八九]?十[一二三四五六七八九]?|[二两三四五六七八九])\s*(?=个|天|日|周|次|件|家|笔|名|项|条|份|小时|工作日|月|年)/g
 const zhCount = (value) => {
@@ -312,6 +324,51 @@ function numberKindFits(source, kind, currencies) {
   if (kind === 'available') return AVAILABLE_KEY.test(source.key)
   if (kind === 'available_now') return NONE_ARRIVE_KEY.test(source.key)
   return true
+}
+
+// A figure no result holds that the answer works out from its own figures,
+// those read from the results or the question: the sum, difference, product
+// or ratio of two, a share of one in another (for a percent), the sum of
+// three, or the sum of a run of figures of one kind written one after another
+// (a table's top five). 2026-11-09 on Flash, the UCI walkthrough: "That leaves 360
+// pcs" after 120 and 240 pcs, "roughly 18 days" from 132 pcs at 7.2 a day,
+// "about 43%" for £17,142.45 of £39,929.35 — each right, each flagged. The
+// arithmetic itself is checked, so 350 for 120 + 240 is still flagged.
+// Never for an available figure: it must come from its own field (2026-11-08:
+// 168 and 288 "if neither order arrives" are sums of real figures, and
+// wrong). A whole number under 10 is not worked out: too many pairs make one.
+const WORKED_KINDS = new Set(['plain', 'money', 'days', 'percent'])
+const WORKED_MAX = 60
+function workedOut(figure, operands) {
+  if (!WORKED_KINDS.has(figure.kind)) return false
+  if (!figure.decimals && figure.value < 10) return false
+  const near = (candidate) => Number.isFinite(candidate) && Math.abs(Math.abs(candidate) - figure.value) <= figure.tolerance
+  // A zero or a one adds nothing: any figure is itself plus 0, or times 1.
+  const usable = operands.filter((row) => Math.abs(row.value) > 1e-9 && row.value !== 1).slice(0, WORKED_MAX)
+  const values = usable.map((row) => row.value)
+  const percent = figure.kind === 'percent'
+  for (let i = 0; i < values.length; i += 1) {
+    for (let j = i + 1; j < values.length; j += 1) {
+      const [a, b] = [values[i], values[j]]
+      if (near(a + b) || near(a - b) || near(a * b) || near(a / b) || near(b / a)) return true
+      if (percent && (near((a / b) * 100) || near((b / a) * 100))) return true
+      if (values.length > 40) continue
+      for (let k = j + 1; k < values.length; k += 1) if (near(a + b + values[k])) return true
+    }
+  }
+  // Runs of one kind, in the order written.
+  const groups = new Map()
+  for (const row of usable) groups.set(row.group, [...(groups.get(row.group) || []), row.value])
+  for (const run of groups.values()) {
+    for (let start = 0; start < run.length; start += 1) {
+      let sum = run[start]
+      for (let end = start + 1; end < Math.min(run.length, start + 12); end += 1) {
+        sum += run[end]
+        if (near(sum)) return true
+      }
+    }
+  }
+  return false
 }
 
 // The item names the records give each SKU: the facts' stock rows and every
@@ -470,8 +527,16 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
       return blank(whole)
     })
   }
+  // Aging buckets are labels, not figures, in an answer about overdue or aged
+  // amounts: "nothing in the 1–30, 31–60, 61–90 or over-90-day buckets"
+  // (2026-11-09 on Flash: five flagged in a receivables answer).
+  if (AGING_CUE.test(body)) rest = rest.replace(AGING_BUCKET, blank)
   // Numbers, with what they measure.
   const givenNumbers = [...figuresText(question).matchAll(/\d+(?:,\d{3})*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, '')))
+  // The answer's figures read from the results or the question, in order, and
+  // those no result holds.
+  const operands = []
+  const unread = []
   for (const match of rest.matchAll(NUMBER)) {
     const { cur, num, scale, suffix } = match.groups
     // A number run into letters is part of a word (3PL, 2FA), not a figure.
@@ -499,14 +564,25 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
         : AVAILABLE_AFTER.test(afterText) || AVAILABLE_BEFORE.test(rest.slice(Math.max(0, match.index - 40), match.index)) ? 'available' : measured
     checked.number += 1
     const near = (candidate) => Math.abs(Math.abs(candidate) - value) <= tolerance
-    const grounded = sources.numbers.some((source) => numberKindFits(source, kind, currencies) && (near(source.value) || (kind === 'percent' && near(source.value * 100))))
+    const read = sources.numbers.some((source) => numberKindFits(source, kind, currencies) && (near(source.value) || (kind === 'percent' && near(source.value * 100))))
       || givenNumbers.some(near)
+    const grounded = read
       || (kind === 'plain' && !decimals && factor === 1 && value >= 1900 && value <= 2100 && [...sources.months].some((month) => month.startsWith(String(value))))
       || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && listCount(at, num.length) === value)
       // A step of the answer's own numbered list ("steps 1 and 2", 第 2 步).
       || (kind === 'plain' && !decimals && factor === 1 && value >= 1 && value <= listItems && (STEP_BEFORE.test(rest.slice(Math.max(0, at - 24), at)) || /^\s*步/.test(rest.slice(at + num.length, at + num.length + 3))))
-    if (!grounded) fail('number', match[0].trim())
+    const figure = { label: match[0].trim(), value, tolerance, kind, decimals, group: kind === 'money' ? `money:${(currencies || []).join('/')}` : kind }
+    if (read) operands.push(figure)
+    else if (!grounded) unread.push(figure)
   }
+  for (const value of givenNumbers) operands.push({ value, kind: 'plain', group: 'given' })
+  // Figures worked out from the answer's own figures (see workedOut).
+  for (let round = 0; round < 2; round += 1) {
+    const worked = unread.filter((figure) => workedOut(figure, operands))
+    if (!worked.length) break
+    for (const figure of worked) { unread.splice(unread.indexOf(figure), 1); operands.push(figure) }
+  }
+  for (const figure of unread) fail('number', figure.label)
   // Cited records: each one a tool returned.
   for (const record of array(answer?.records)) {
     checked.citation += 1

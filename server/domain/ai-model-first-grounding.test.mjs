@@ -297,3 +297,35 @@ test('a figure "without the late lines" comes from the row that leaves out every
   // A figure written as available to promise may come from these rows.
   assert.deepEqual(numbers('单不来时：PO-202610-0022 不来，可承诺量 288 件；PO-202610-0024 不来，只剩 168 件。'), [])
 })
+
+// 2026-11-09 on Flash, the UCI walkthrough answers: right figures the answer worked
+// out from its own figures were flagged (360 pcs, roughly 18 days, about 43%).
+test('a figure worked out from the answer\'s own figures is grounded; wrong arithmetic and available figures are not', () => {
+  const numbers = (answer, results) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
+  const late = [{ rows: [{ order: 'HV-PO-101', remaining: 120 }, { order: 'HV-PO-102', remaining: 240 }] }]
+  assert.deepEqual(numbers('HV-PO-101 has 120 pcs outstanding and HV-PO-102 has 240 pcs. That leaves 360 pcs still to arrive across the two orders.', late), [])
+  assert.deepEqual(numbers('HV-PO-101 has 120 pcs outstanding and HV-PO-102 has 240 pcs. That leaves 350 pcs still to arrive.', late), ['350'])
+  // Only from figures the answer writes: 360 alone is not worked out.
+  assert.deepEqual(numbers('360 pcs are still to arrive.', late), ['360'])
+  const cover = [{ sku: 'HV-1', onHand: 132, averageDailyDemand: 7.2 }]
+  assert.deepEqual(numbers('Stock on hand is 132 pcs. At the recorded average of 7.2 pcs a day it would cover roughly 18 days.', cover), [])
+  assert.deepEqual(numbers('Stock on hand is 132 pcs. At 7.2 pcs a day it would cover roughly 25 days.', cover), ['25 days'])
+  const spend = [{ supplier: 'Harbor Valve Co', committedSpend: 39929.35, currency: 'GBP', items: [{ sku: 'HV-1', spend: 17142.45, currency: 'GBP' }] }]
+  assert.deepEqual(numbers('Committed spend is £39,929.35. HV-1 alone accounts for £17,142.45, about 43% of it.', spend), [])
+  // Three figures, and a run of one kind (a table's top three) with its share.
+  const owed = [{ total: 1000, currency: 'GBP', rows: [{ customer: 'Customer 1', amount: 300, currency: 'GBP' }, { customer: 'Customer 2', amount: 150, currency: 'GBP' }, { customer: 'Customer 3', amount: 50.5, currency: 'GBP' }] }]
+  assert.deepEqual(numbers('Receivables total £1,000.00. | Customer 1 | £300.00 | | Customer 2 | £150.00 | | Customer 3 | £50.50 | The top three hold £500.50, about 50% of it.', owed), [])
+  // An available figure must come from its own field, even when it is a sum.
+  const stock = [{ sku: 'HV-1', available: 48, onOrder: [{ order: 'HV-PO-101', remaining: 120 }] }]
+  assert.deepEqual(numbers('HV-1 has 48 pcs available today and 120 pcs on HV-PO-101. If neither order arrives, HV-1 has 168 pcs available.', stock), ['168'])
+  // A whole number under 10 is not worked out.
+  assert.deepEqual(numbers('HV-PO-101 has 120 pcs outstanding and HV-PO-102 has 240 pcs, 2 orders with 3 more to come.', late), ['3'])
+})
+
+test('aging bucket labels are no figures in an answer about overdue or aged amounts', () => {
+  const numbers = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results: [{ total: 78984.01, currency: 'GBP' }] }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
+  assert.deepEqual(numbers('Aging: current £78,984.01; nothing in the 1–30, 31–60, 61–90 or over-90-day overdue buckets.'), [])
+  assert.deepEqual(numbers('账龄：当前 £78,984.01，逾期 1–30 天、31–60 天、61–90 天和 90 天以上都没有。'), [])
+  // Without an aging cue the same figures are read as figures.
+  assert.deepEqual(numbers('Order 31–60 units next month.'), ['31', '60'])
+})
