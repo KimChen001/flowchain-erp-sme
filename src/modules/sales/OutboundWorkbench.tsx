@@ -44,6 +44,8 @@ import {
   thRightClass,
 } from "../../components/ui/workbenchTable";
 import { A, Field, inputStyle } from "../../components/ui";
+import { FormActionBar, FormHeader, FormLineCard, FormSection, focusFirstInvalid, formGridClass, useFormCopy } from "../../components/ui/formLayout";
+import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useConfirm } from "../../components/ui/ConfirmDialog";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { ListCard, ListSearchCard, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
@@ -943,11 +945,15 @@ function CustomerField({
   value,
   onChange,
   ariaLabel,
+  required = false,
+  error,
 }: {
   customers: EntryCustomer[];
   value: string;
   onChange: (customer: EntryCustomer | null) => void;
   ariaLabel: string;
+  required?: boolean;
+  error?: string;
 }) {
   const chosen = customers.find((customer) => customer.id === value);
   if (!customers.length)
@@ -970,11 +976,10 @@ function CustomerField({
       </div>
     );
   return (
-    <label className="text-sm">
-      {say("Customer", "客户")}
+    <Field label={say("Customer", "客户")} required={required} error={error}>
       <select
         aria-label={ariaLabel}
-        className="mt-1 w-full rounded-lg border p-2"
+        style={inputStyle}
         value={value}
         onChange={(e) => onChange(customers.find((customer) => customer.id === e.target.value) || null)}
       >
@@ -986,25 +991,29 @@ function CustomerField({
         ))}
       </select>
       {chosen?.paymentTerms && (
-        <span className="mt-1 block text-xs text-slate-500" data-testid="sales-order-customer-terms">
+        <span className="block text-xs text-slate-500" data-testid="sales-order-customer-terms">
           {say(`Payment terms: ${chosen.paymentTerms}`, `付款条款：${chosen.paymentTerms}`)}
         </span>
       )}
-    </label>
+    </Field>
   );
 }
 
-// The order's lines: item, quantity and unit price, one row each.
+type LineIssues = { itemId?: string; quantity?: string; unitPrice?: string };
+// The order's lines: item, quantity and unit price, one card each. `issues`
+// holds each line's messages, by line key, once a save was refused.
 function OrderLinesField({
   items,
   lines,
   currency,
   onChange,
+  issues = {},
 }: {
   items: EntryItem[];
   lines: DraftLine[];
   currency: string;
   onChange: (lines: DraftLine[]) => void;
+  issues?: Record<string, LineIssues>;
 }) {
   const update = (lineKey: string, change: Partial<DraftLine>) =>
     onChange(lines.map((line) => (line.key === lineKey ? { ...line, ...change } : line)));
@@ -1013,65 +1022,61 @@ function OrderLinesField({
       {lines.map((line, index) => {
         const unit = items.find((item) => item.id === line.itemId)?.unit;
         const n = String(index + 1);
+        const issue = issues[line.key] || {};
         return (
-          <div
+          <FormLineCard
             key={line.key}
-            className="grid gap-2 rounded-lg border p-3 md:grid-cols-[2fr_1fr_1fr_auto]"
-            data-testid={`sales-order-line-${n}`}
+            label={say(`Line ${n}`, `第 ${n} 行`)}
+            remove={{
+              label: say(`Remove line ${n}`, `删除第 ${n} 行`),
+              disabled: lines.length === 1,
+              onClick: () => onChange(lines.filter((other) => other.key !== line.key)),
+            }}
+            testId={`sales-order-line-${n}`}
           >
-            <label className="text-sm">
-              {say("Item", "物料")}
-              <select
-                aria-label={say(`Item, line ${n}`, `物料（第 ${n} 行）`)}
-                className="mt-1 w-full rounded-lg border p-2"
-                value={line.itemId}
-                onChange={(e) => update(line.key, { itemId: e.target.value })}
-              >
-                <option value="">{say("Choose an item", "选择物料")}</option>
-                {items.map((item) => (
-                  <option value={item.id} key={item.id}>
-                    {item.sku} · {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm">
-              {unit ? say(`Quantity (${unit})`, `数量（${unit}）`) : say("Quantity", "数量")}
-              <input
-                aria-label={say(`Quantity, line ${n}`, `数量（第 ${n} 行）`)}
-                inputMode="decimal"
-                className="mt-1 w-full rounded-lg border p-2"
-                value={line.quantity}
-                onChange={(e) => update(line.key, { quantity: e.target.value })}
-              />
-            </label>
-            <label className="text-sm">
-              {currency ? say(`Unit price (${currency})`, `单价（${currency}）`) : say("Unit price", "单价")}
-              <input
-                aria-label={say(`Unit price, line ${n}`, `单价（第 ${n} 行）`)}
-                inputMode="decimal"
-                className="mt-1 w-full rounded-lg border p-2"
-                value={line.unitPrice}
-                onChange={(e) => update(line.key, { unitPrice: e.target.value })}
-              />
-            </label>
-            <div className="flex items-end">
-              <Button
-                tone="secondary"
-                ariaLabel={say(`Remove line ${n}`, `删除第 ${n} 行`)}
-                disabled={lines.length === 1}
-                onClick={() => onChange(lines.filter((other) => other.key !== line.key))}
-              >
-                {say("Remove", "删除")}
-              </Button>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[2fr_1fr_1fr]">
+              <Field label={say("Item", "物料")} required error={issue.itemId}>
+                <select
+                  aria-label={say(`Item, line ${n}`, `物料（第 ${n} 行）`)}
+                  style={inputStyle}
+                  value={line.itemId}
+                  onChange={(e) => update(line.key, { itemId: e.target.value })}
+                >
+                  <option value="">{say("Choose an item", "选择物料")}</option>
+                  {items.map((item) => (
+                    <option value={item.id} key={item.id}>
+                      {item.sku} · {item.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label={unit ? say(`Quantity (${unit})`, `数量（${unit}）`) : say("Quantity", "数量")} required error={issue.quantity}>
+                <input
+                  aria-label={say(`Quantity, line ${n}`, `数量（第 ${n} 行）`)}
+                  inputMode="decimal"
+                  style={inputStyle}
+                  value={line.quantity}
+                  onChange={(e) => update(line.key, { quantity: e.target.value })}
+                />
+              </Field>
+              <Field label={currency ? say(`Unit price (${currency})`, `单价（${currency}）`) : say("Unit price", "单价")} required error={issue.unitPrice}>
+                <input
+                  aria-label={say(`Unit price, line ${n}`, `单价（第 ${n} 行）`)}
+                  inputMode="decimal"
+                  style={inputStyle}
+                  value={line.unitPrice}
+                  onChange={(e) => update(line.key, { unitPrice: e.target.value })}
+                />
+              </Field>
             </div>
-          </div>
+          </FormLineCard>
         );
       })}
       <div className="flex flex-wrap items-center gap-3">
-        <Button tone="secondary" testId="sales-order-add-line" onClick={() => onChange([...lines, draftLine()])}>
+        <button type="button" className={listButtonClass.secondary} data-testid="sales-order-add-line" onClick={() => onChange([...lines, draftLine()])}>
+          <Plus size={13} />
           {say("Add line", "添加行")}
-        </Button>
+        </button>
         <span className="text-xs text-slate-500">
           {say(
             "A unit price is needed to invoice the customer. Enter 0 for free goods.",
@@ -1083,6 +1088,26 @@ function OrderLinesField({
   );
 }
 
+// What the order is refused without, field by field: the rules of
+// linesReady and the customer and currency checks, so the client refuses
+// nothing it accepted before.
+function entryIssues(customerId: string, currency: string, lines: DraftLine[]) {
+  const header = {
+    customer: customerId ? "" : say("Choose a customer.", "请选择客户。"),
+    currency: currency.trim() ? "" : say("Enter the currency, such as USD.", "请输入币种，例如 USD。"),
+  };
+  const byLine: Record<string, LineIssues> = {};
+  for (const line of lines) {
+    const issue: LineIssues = {
+      ...(line.itemId ? {} : { itemId: say("Choose an item.", "请选择物料。") }),
+      ...(Number(line.quantity) > 0 ? {} : { quantity: say("Enter a quantity above 0.", "请输入大于 0 的数量。") }),
+      ...(line.unitPrice.trim() !== "" ? {} : { unitPrice: say("Enter a unit price. Use 0 for free goods.", "请输入单价，赠品填 0。") }),
+    };
+    if (Object.keys(issue).length) byLine[line.key] = issue;
+  }
+  return { header, byLine, any: Boolean(header.customer || header.currency || Object.keys(byLine).length || !lines.length) };
+}
+
 function OrderEntry() {
   const nav = useNavigate(),
     [entry, setEntry] = useState<EntryData | null>(null),
@@ -1091,10 +1116,16 @@ function OrderEntry() {
     [promised, setPromised] = useState(""),
     [lines, setLines] = useState<DraftLine[]>(() => [draftLine()]),
     [saving, setSaving] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    // A save was refused for missing fields: their messages show, and go as
+    // each field is filled.
+    [checked, setChecked] = useState(false);
   const intent = useRef({ fingerprint: "", idempotencyKey: "" }),
-    inFlight = useRef(false);
+    inFlight = useRef(false),
+    formRef = useRef<HTMLDivElement>(null);
   const workspace = useWorkspaceCurrency();
+  const formCopy = useFormCopy();
+  const issues = entryIssues(customerId, currency, lines);
   const customers = entry?.customers || [];
   // Prefill the workspace currency; a chosen customer's recorded currency
   // replaces it, and the user can still type another ISO code.
@@ -1112,6 +1143,12 @@ function OrderEntry() {
   }
   async function save() {
     if (inFlight.current) return;
+    if (issues.any) {
+      setChecked(true);
+      setError("");
+      focusFirstInvalid(formRef.current);
+      return;
+    }
     // No order number: the server assigns SO-YYYYMM-NNNN when the draft is saved.
     const body = {
       customerId,
@@ -1157,75 +1194,66 @@ function OrderEntry() {
         </Link>
       </div>
     );
+  const shown = checked ? issues : { header: { customer: "", currency: "" }, byLine: {}, any: false };
   return (
-    <div className="max-w-4xl space-y-4" data-testid="sales-order-entry">
-      <p className="text-sm text-slate-500">
-        {say(
+    <div ref={formRef} className="space-y-5" data-testid="sales-order-entry">
+      <FocusFirstField />
+      {/* The page's h1 already says "New sales order". */}
+      <FormHeader
+        intro={say(
           "Saved as a draft. The SKU, item name and unit are taken from Items when you save.",
           "保存为草稿。保存时会从物料资料带入 SKU、物料名称和单位。",
         )}
-      </p>
-      {error && (
-        <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {copy(error)}
-        </div>
-      )}
-      <Section title={copy("订单信息")}>
-        <div className="grid gap-3 md:grid-cols-2">
+      >
+        <p className="mt-3 text-xs text-slate-600" data-testid="sales-order-number-on-save">
+          {say("Order number: assigned when you save", "订单编号：保存时自动生成")}
+        </p>
+      </FormHeader>
+      <FormSection title={say("Order details", "订单信息")}>
+        <div className={formGridClass}>
           <CustomerField
             customers={customers}
             value={customerId}
             onChange={chooseCustomer}
             ariaLabel={say("Customer", "客户")}
+            required
+            error={shown.header.customer}
           />
-          <p
-            className="self-end rounded-lg bg-slate-50 p-2 text-sm text-slate-600"
-            data-testid="sales-order-number-on-save"
-          >
-            {say("Order number: assigned when you save", "订单编号：保存时自动生成")}
-          </p>
-          <label className="text-sm">
-            {copy("币种")}
+          <Field label={copy("币种")} required error={shown.header.currency}>
             <input
               aria-label={copy("币种")}
               maxLength={3}
-              className="mt-1 w-full rounded-lg border p-2 uppercase"
+              className="uppercase"
+              style={inputStyle}
               value={currency}
               onChange={(e) => setCurrency(e.target.value.toUpperCase())}
             />
             {workspace.status === "unavailable" && !currency && (
-              <span className="mt-1 block text-xs text-amber-700">
+              <span className="block text-xs text-amber-700">
                 {copy("工作区币种加载失败，请输入币种。")}
               </span>
             )}
-          </label>
-          <label className="text-sm">
-            {say("Promised date (optional)", "承诺交期（可选）")}
+          </Field>
+          <Field label={say("Promised date", "承诺交期")}>
             <input
               type="date"
               aria-label={say("Promised date", "承诺交期")}
-              className="mt-1 w-full rounded-lg border p-2"
+              style={inputStyle}
               value={promised}
               onChange={(e) => setPromised(e.target.value)}
             />
-          </label>
+          </Field>
         </div>
-      </Section>
-      <Section title={say("Lines", "订单行")}>
-        <OrderLinesField items={entry.items} lines={lines} currency={currency} onChange={setLines} />
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button
-            testId="create-sales-order"
-            disabled={saving || !customerId || !currency.trim() || !linesReady(lines)}
-            onClick={() => void save()}
-          >
-            {saving ? copy("保存中…") : copy("保存草稿")}
-          </Button>
-          <Link className="rounded-lg bg-slate-100 px-3 py-2 text-sm" to="/app/sales/orders">
-            {copy("取消")}
-          </Link>
-        </div>
-      </Section>
+      </FormSection>
+      <FormSection title={say("Lines", "订单行")}>
+        <OrderLinesField items={entry.items} lines={lines} currency={currency} onChange={setLines} issues={shown.byLine} />
+      </FormSection>
+      <FormActionBar
+        onCancel={() => nav("/app/sales/orders")}
+        submit={{ label: say("Save draft", "保存草稿"), onClick: () => void save(), busy: saving, testId: "create-sales-order" }}
+        message={shown.any ? formCopy("checkFields") : error ? copy(error) : null}
+        messageTestId="sales-order-entry-errors"
+      />
     </div>
   );
 }

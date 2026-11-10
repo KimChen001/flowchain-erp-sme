@@ -33,13 +33,16 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.goto("/app/sales/orders");
   await expect(page.getByTestId("outbound-order-list")).toBeVisible();
   await page.getByRole("link", { name: "新建销售订单" }).click();
-  await expect(page.getByTestId("create-sales-order")).toBeDisabled();
+  await page.getByTestId("create-sales-order").click();
+  await expect(page.getByLabel("客户", { exact: true })).toHaveAccessibleDescription("请选择客户。");
+  await expect(page.getByTestId("sales-order-entry-errors")).toHaveText("请检查标出的字段。");
   await page.getByLabel("客户").selectOption({ label: "Playwright Customer · CUST-PW" });
   await expect(page.getByTestId("sales-order-customer-terms")).toHaveText("付款条款：Net 30");
   await page.getByLabel("物料（第 1 行）").selectOption({ index: 1 });
   await page.getByLabel("数量（第 1 行）").fill("4.0000");
   // Without a price the draft cannot be saved, because it could never be invoiced.
-  await expect(page.getByTestId("create-sales-order")).toBeDisabled();
+  await page.getByTestId("create-sales-order").click();
+  await expect(page.getByLabel("单价（第 1 行）")).toHaveAccessibleDescription("请输入单价，赠品填 0。");
   await page.getByLabel("单价（第 1 行）").fill("12.5000");
   await page.getByTestId("create-sales-order").click();
   await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();

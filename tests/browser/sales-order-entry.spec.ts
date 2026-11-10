@@ -33,8 +33,15 @@ test("a sales order is placed for a customer from Customers, with two lines, and
     "Cancelling Customer · CUST-CANCEL",
     "Playwright Customer · CUST-PW",
   ]);
-  await expect(create).toBeDisabled();
+  // Save stays clickable: a missing field is named under it, and focus goes there.
+  await expect(page.getByTestId("form-required-note")).toHaveText("* Required");
+  await expect(page.getByLabel("Customer", { exact: true })).toHaveAttribute("aria-required", "true");
+  await create.click();
+  await expect(page.getByLabel("Customer", { exact: true })).toHaveAccessibleDescription("Choose a customer.");
+  await expect(page.getByLabel("Customer", { exact: true })).toBeFocused();
+  await expect(page.getByTestId("sales-order-entry-errors")).toHaveText("Check the highlighted fields.");
   await page.getByLabel("Customer", { exact: true }).selectOption({ label: "Playwright Customer · CUST-PW" });
+  await expect(page.getByLabel("Customer", { exact: true })).toHaveAccessibleDescription("");
   await expect(page.getByTestId("sales-order-customer-terms")).toHaveText("Payment terms: Net 30");
   await expect(page.getByLabel("Currency")).toHaveValue("USD");
   await page.getByLabel("Promised date").fill("2026-10-20");
@@ -45,10 +52,12 @@ test("a sales order is placed for a customer from Customers, with two lines, and
   await page.getByTestId("sales-order-add-line").click();
   await page.getByLabel("Item, line 2").selectOption({ index: 1 });
   await page.getByLabel("Quantity, line 2").fill("1");
-  // A line without a price could never be invoiced.
-  await expect(create).toBeDisabled();
+  // A line without a price could never be invoiced, so the save stops there.
+  await create.click();
+  await expect(page.getByLabel("Unit price, line 2")).toHaveAccessibleDescription("Enter a unit price. Use 0 for free goods.");
+  await expect(page.getByLabel("Unit price, line 2")).toBeFocused();
+  await expect(page).toHaveURL(/\/app\/sales\/orders\/new$/);
   await page.getByLabel("Unit price, line 2").fill("0");
-  await expect(create).toBeEnabled();
   await create.click();
 
   await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();

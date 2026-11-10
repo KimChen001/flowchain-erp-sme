@@ -356,18 +356,38 @@ export function Modal({ open, onClose, title, subtitle, width = 560, children, f
   );
 }
 
+type ControlProps = { id?: string; "aria-describedby"?: string; "aria-required"?: boolean; "aria-invalid"?: boolean };
+const CONTROL_TAGS = new Set(["input", "select", "textarea"]);
+const isElement = (node: React.ReactNode): node is React.ReactElement<ControlProps> => React.isValidElement(node) && typeof node.type === "string";
+
 // The label names its control: a single control child gets an id (unless it
 // has one) and the label points at it, so a screen reader reads the label,
-// not the placeholder.
-export function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+// not the placeholder. Among several children (a control and its notes), the
+// first input, select or textarea is the control.
+// `required` puts a "*" after the label and aria-required on the control;
+// `error` shows its message right under the control, tied to it with
+// aria-describedby, and sets aria-invalid. The form standard is in
+// formLayout.tsx.
+export function Field({ label, children, hint, required = false, error }: { label: string; children: React.ReactNode; hint?: string; required?: boolean; error?: string | null }) {
   const copy = useWorkspaceCopy();
   const fallbackId = useId();
-  const child = React.Children.count(children) === 1 && React.isValidElement<{ id?: string }>(children) && typeof children.type === "string" ? children : null;
+  const nodes = React.Children.toArray(children);
+  const single = React.Children.count(children) === 1 && isElement(children) ? children : null;
+  const child = single || nodes.find((node): node is React.ReactElement<ControlProps> => isElement(node) && CONTROL_TAGS.has(node.type as string)) || null;
   const controlId = child?.props.id || fallbackId;
+  const errorId = `${controlId}-error`;
+  const message = error ? <p key="field-error" id={errorId} className="text-[12px] leading-[18px] text-red-600">{error}</p> : null;
+  const wired: React.ReactNode[] | null = child ? [React.cloneElement(child, {
+    key: "field-control",
+    id: controlId,
+    ...(required ? { "aria-required": true } : {}),
+    ...(error ? { "aria-invalid": true, "aria-describedby": [child.props["aria-describedby"], errorId].filter(Boolean).join(" ") } : {}),
+  }), message] : null;
+  const labelElement = <label htmlFor={child ? controlId : undefined} className="block text-[13px] leading-5 font-semibold" style={{ color: A.sub }}>{copy(label)}</label>;
   return (
     <div className="space-y-1.5">
-      <label htmlFor={child ? controlId : undefined} className="block text-[13px] leading-5 font-semibold" style={{ color: A.sub }}>{copy(label)}</label>
-      {child ? React.cloneElement(child, { id: controlId }) : children}
+      {required ? <div className="flex items-baseline gap-0.5">{labelElement}<span aria-hidden="true" className="text-[13px] leading-5 font-semibold text-blue-600">*</span></div> : labelElement}
+      {!child ? <>{children}{message}</> : single ? wired : nodes.flatMap<React.ReactNode>((node) => (node === child ? wired : [node]))}
       {hint && <p className="text-[12px] leading-[18px]" style={{ color: A.gray2 }}>{copy(hint)}</p>}
     </div>
   );
