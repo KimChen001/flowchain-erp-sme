@@ -42,8 +42,11 @@ import { useI18n } from "../../i18n/I18n";
 //    connection) goes in the action bar, beside the buttons, where the
 //    person just clicked; after a refusal with field messages it says
 //    "Check the highlighted fields."
-// 5. Actions. One FormActionBar at the end of the form, kept in view at the
-//    bottom of the window and clear of the assistant button. Buttons sit on
+// 5. Actions. One FormActionBar at the end of the form, stuck to the bottom
+//    of the page's scroll area. The app's main area already keeps its bottom
+//    padding clear of the assistant button, so the bar sits just above that
+//    button with no offset of its own, and the form adds no bottom padding
+//    either. Buttons sit on
 //    the right in a fixed order: Cancel · Save draft · Submit, the primary
 //    (blue) action last. A form with one save action shows Cancel · Save.
 //    The clicked button says "Saving…" and the others wait.
@@ -82,9 +85,11 @@ export function RequiredNote() {
   );
 }
 
-// A field's message, under it; `id` is what the control's aria-describedby names.
-export function FieldError({ id, children, testId }: { id: string; children: React.ReactNode; testId?: string }) {
-  return <p id={id} className="mt-1 text-[12px] leading-[18px] text-red-600" data-testid={testId}>{children}</p>;
+// A field's message, under it; `id` is what the control's aria-describedby
+// names. In a table cell, a max width keeps a long message from widening the
+// column.
+export function FieldError({ id, children, testId, className = "" }: { id: string; children: React.ReactNode; testId?: string; className?: string }) {
+  return <p id={id} className={`mt-1 text-[12px] leading-[18px] text-red-600 ${className}`} data-testid={testId}>{children}</p>;
 }
 
 // The attributes a control gets when it has a message.
@@ -213,7 +218,7 @@ export function FormActionBar({ onCancel, draft, submit, message, messageTestId,
     </button>
   );
   return (
-    <div className="sticky bottom-20 z-10 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border bg-white p-3 shadow-sm sm:px-4" style={{ borderColor: A.border }} data-testid={testId}>
+    <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border bg-white p-3 shadow-sm sm:px-4" style={{ borderColor: A.border }} data-testid={testId}>
       {message && (
         <div role="alert" className="flex min-w-0 flex-1 basis-60 items-start gap-1.5 text-xs leading-5 text-red-700" data-testid={messageTestId}>
           <AlertCircle size={14} className="mt-[3px] shrink-0" aria-hidden="true" />

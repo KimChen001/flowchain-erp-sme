@@ -1147,7 +1147,7 @@ export default function CanonicalProcurementPanel({
     </>
   ) : null;
   return (
-    <div ref={formRef} className="space-y-5 pb-24" data-testid="purchase-request-form">
+    <div ref={formRef} className="space-y-5" data-testid="purchase-request-form">
       <FocusFirstField />
       <FormHeader
         title={editing ? `${copy("编辑采购申请")} ${numberOf(editing)}` : copy("新建采购申请")}

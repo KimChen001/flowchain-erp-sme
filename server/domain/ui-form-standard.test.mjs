@@ -24,8 +24,12 @@ test('the form standard sits beside the shared UI and covers sections, fields, r
   const order = ['say("cancel")', '{draft && button(draft, false)}', '{button(submit, true)}'].map((part) => bar.indexOf(part))
   assert.ok(order.every((at) => at > 0), 'the bar renders Cancel, the draft action and the submit action')
   assert.deepEqual([...order].sort((a, b) => a - b), order)
-  // Kept in view above the assistant button.
-  assert.match(bar, /sticky bottom-20/)
+  // Stuck to the bottom of main, whose own bottom padding clears the
+  // assistant button; an offset here would count that room twice.
+  assert.match(bar, /sticky bottom-0 /)
+  const app = read('src/app/FlowChainApp.tsx')
+  assert.match(app, /<main\s+className="[^"]*pb-20 sm:p-6 sm:pb-24"/)
+  for (const file of FORMS) assert.doesNotMatch(read(file), /ref=\{formRef\} className="[^"]*\bpb-/, `${file} adds no bottom padding of its own`)
 })
 
 test('Field marks a required control and ties a message to it', () => {

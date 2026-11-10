@@ -1196,7 +1196,7 @@ function OrderEntry() {
     );
   const shown = checked ? issues : { header: { customer: "", currency: "" }, byLine: {}, any: false };
   return (
-    <div ref={formRef} className="space-y-5 pb-24" data-testid="sales-order-entry">
+    <div ref={formRef} className="space-y-5" data-testid="sales-order-entry">
       <FocusFirstField />
       {/* The page's h1 already says "New sales order". */}
       <FormHeader

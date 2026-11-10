@@ -286,7 +286,11 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
     </Card>
   );
 
-  const inputClass = "w-full rounded-lg border px-2 py-1.5 text-sm";
+  // The lines table's inputs keep a fixed width each, so the text columns
+  // (SKU, quantities) get the room and never wrap.
+  const cellInputClass = "rounded-lg border px-2 py-1.5 text-sm";
+  // A message under a table input wraps instead of widening its column.
+  const cellErrorClass = "max-w-40";
   const fieldIssues = Object.keys(shown.header).length + Object.keys(shown.byLine).length > 0;
   const message = shown.form.length || fieldIssues || serverError ? (
     <>
@@ -296,7 +300,7 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
     </>
   ) : null;
   return (
-    <div ref={formRef} className="space-y-5 pb-24" data-testid="receiving-form">
+    <div ref={formRef} className="space-y-5" data-testid="receiving-form">
       <FocusFirstField />
       <FormHeader title={`${tr(mode === "new" ? "titleNew" : "titleEdit")}${draft?.documentNumber ? ` · ${draft.documentNumber}` : ""}`} intro={tr("intro")}>
         {/* The server numbers a new receipt (GRN-YYYYMM-NNNN) when it is saved. */}
@@ -335,7 +339,7 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
         <div className="overflow-x-auto rounded-lg border" style={{ borderColor: A.border }}>
           <table className="w-full min-w-[960px] text-left text-sm">
             <thead className="bg-gray-50 text-xs" style={{ color: A.sub }}>
-              <tr>{["include", "sku", "item", "ordered", "received", "remaining", "accepted", "rejected", "rejectionReason", "location"].map((key) => <th key={key} className="px-3 py-2 font-medium">{tr(key)}{key === "accepted" ? <> <RequiredMark /></> : null}{key === "accepted" && prefill ? <span data-testid="receiving-prefill-accepted" className="block text-[11px] font-normal" style={{ color: A.blue }}>{tr("acceptedHint")}</span> : null}</th>)}</tr>
+              <tr>{["include", "sku", "item", "ordered", "received", "remaining", "accepted", "rejected", "rejectionReason", "location"].map((key) => <th key={key} className={`whitespace-nowrap px-3 py-2 font-medium${key === "accepted" ? " min-w-32" : key === "item" ? " min-w-28" : ""}`}>{tr(key)}{key === "accepted" ? <> <RequiredMark /></> : null}{key === "accepted" && prefill ? <span data-testid="receiving-prefill-accepted" className="block max-w-32 whitespace-normal text-[11px] font-normal" style={{ color: A.blue }}>{tr("acceptedHint")}</span> : null}</th>)}</tr>
             </thead>
             <tbody>
               {po.lines.map((line, index) => {
@@ -348,26 +352,26 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
                 const rejectsSome = Boolean(value?.include) && QUANTITY.test(rejected) && units(rejected) > 0n;
                 return (
                   <tr key={line.id} className="border-t align-top" data-testid="receiving-form-line">
-                    <td className="px-3 py-2"><input type="checkbox" aria-label={`${tr("include")} ${line.sku}`} checked={Boolean(value?.include)} disabled={!open} onChange={(event) => update(line.id, { include: event.target.checked })} /></td>
-                    <td className="px-3 py-2 font-mono text-xs">{line.sku}</td>
+                    <td className="whitespace-nowrap px-3 py-2"><input type="checkbox" aria-label={`${tr("include")} ${line.sku}`} checked={Boolean(value?.include)} disabled={!open} onChange={(event) => update(line.id, { include: event.target.checked })} /></td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{line.sku}</td>
                     <td className="px-3 py-2">{line.itemName}</td>
-                    <td className="px-3 py-2 tabular-nums">{quantity(line.orderedQuantity)}</td>
-                    <td className="px-3 py-2 tabular-nums">{quantity(line.receivedQuantity)}</td>
-                    <td className="px-3 py-2 tabular-nums font-semibold">{quantity(line.remainingQuantity)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{quantity(line.orderedQuantity)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{quantity(line.receivedQuantity)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums font-semibold">{quantity(line.remainingQuantity)}</td>
                     <td className="px-3 py-2">
-                      <input aria-label={`${tr("accepted")} ${line.sku}`} aria-required={Boolean(value?.include)} {...invalidProps(errorId("accepted"), issue.accepted)} inputMode="decimal" value={value?.accepted || ""} disabled={!value?.include} onChange={(event) => update(line.id, { accepted: event.target.value })} className={`${inputClass} w-24`} />
-                      {issue.accepted && <FieldError id={errorId("accepted")}>{tr(issue.accepted)}</FieldError>}
+                      <input aria-label={`${tr("accepted")} ${line.sku}`} aria-required={Boolean(value?.include)} {...invalidProps(errorId("accepted"), issue.accepted)} inputMode="decimal" value={value?.accepted || ""} disabled={!value?.include} onChange={(event) => update(line.id, { accepted: event.target.value })} className={`${cellInputClass} w-24`} />
+                      {issue.accepted && <FieldError id={errorId("accepted")} className={cellErrorClass}>{tr(issue.accepted)}</FieldError>}
                     </td>
                     <td className="px-3 py-2">
-                      <input aria-label={`${tr("rejected")} ${line.sku}`} {...invalidProps(errorId("rejected"), issue.rejected)} inputMode="decimal" value={value?.rejected || ""} disabled={!value?.include} onChange={(event) => update(line.id, { rejected: event.target.value })} className={`${inputClass} w-24`} />
-                      {issue.rejected && <FieldError id={errorId("rejected")}>{tr(issue.rejected)}</FieldError>}
+                      <input aria-label={`${tr("rejected")} ${line.sku}`} {...invalidProps(errorId("rejected"), issue.rejected)} inputMode="decimal" value={value?.rejected || ""} disabled={!value?.include} onChange={(event) => update(line.id, { rejected: event.target.value })} className={`${cellInputClass} w-24`} />
+                      {issue.rejected && <FieldError id={errorId("rejected")} className={cellErrorClass}>{tr(issue.rejected)}</FieldError>}
                     </td>
                     <td className="px-3 py-2">
-                      <input aria-label={`${tr("rejectionReason")} ${line.sku}`} aria-required={rejectsSome} {...invalidProps(errorId("reason"), issue.reason)} value={value?.reason || ""} disabled={!value?.include} onChange={(event) => update(line.id, { reason: event.target.value })} className={inputClass} />
-                      {issue.reason && <FieldError id={errorId("reason")}>{tr(issue.reason)}</FieldError>}
+                      <input aria-label={`${tr("rejectionReason")} ${line.sku}`} aria-required={rejectsSome} {...invalidProps(errorId("reason"), issue.reason)} value={value?.reason || ""} disabled={!value?.include} onChange={(event) => update(line.id, { reason: event.target.value })} className={`${cellInputClass} w-40`} />
+                      {issue.reason && <FieldError id={errorId("reason")} className={cellErrorClass}>{tr(issue.reason)}</FieldError>}
                     </td>
                     <td className="px-3 py-2">
-                      <input aria-label={`${tr("location")} ${line.sku}`} list="receiving-locations" value={value?.location || ""} disabled={!value?.include} onChange={(event) => update(line.id, { location: event.target.value })} className={`${inputClass} w-28`} />
+                      <input aria-label={`${tr("location")} ${line.sku}`} list="receiving-locations" value={value?.location || ""} disabled={!value?.include} onChange={(event) => update(line.id, { location: event.target.value })} className={`${cellInputClass} w-28`} />
                       {value?.include && value.location.trim() ? (
                         value.location.trim().toLowerCase() === stockedLocation(line, warehouseId).toLowerCase()
                           ? <span data-testid="receiving-location-stocked" className="mt-1 block text-[11px]" style={{ color: A.blue }}>{tr("locationStocked")}</span>
