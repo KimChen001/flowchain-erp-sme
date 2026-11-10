@@ -105,6 +105,7 @@ export function PriceHistoryFacts({
   compact = false,
   testId,
   excludesThisOrder = false,
+  supplierId,
 }: {
   history: PriceHistory | null | undefined;
   state?: LoadState;
@@ -113,6 +114,9 @@ export function PriceHistoryFacts({
   // On a purchase order: the history leaves this order out, so an empty one
   // means no earlier orders, not that the item was never ordered.
   excludesThisOrder?: boolean;
+  // The supplier of the document beside it. The compact line names the last
+  // PO's supplier only when it was someone else.
+  supplierId?: string | null;
 }) {
   const copy = usePriceHistoryCopy();
   const text = usePriceFactText();
@@ -132,6 +136,30 @@ export function PriceHistoryFacts({
     ...(history.otherUnits.length ? [copy("otherUnit", { list: history.otherUnits.map((unit) => unitLabel(unit, copy.language, 1)).join(", ") })] : []),
     ...(history.unitNotRecordedCount ? [copy.count("unitNotRecordedLines", history.unitNotRecordedCount)] : []),
   ];
+  // One line beside a row: the last price, its PO and date; the supplier only
+  // when it is not the row's own; the average only when it differs.
+  if (compact && history.status !== "unit_not_recorded" && history.latest && history.latest.unitPrice !== null) {
+    const latest = history.latest;
+    const otherSupplier = !history.supplierId && (!supplierId || latest.supplierId !== supplierId);
+    const averagePrice = history.average?.unitPrice;
+    const averageDiffers = Boolean(averagePrice) && history.average!.n > 1 && Number(averagePrice) !== Number(latest.unitPrice);
+    const line = copy(otherSupplier ? "lastPoShortFrom" : "lastPoShort", {
+      price: text.price(latest.unitPrice, latest.currency),
+      unit: latest.unit ? unitLabel(latest.unit, copy.language, 1) : "—",
+      po: latest.orderNumber,
+      date: text.date(latest),
+      supplier: latest.supplierName || copy("supplierNotRecorded"),
+    });
+    return box(
+      <>
+        <div data-testid={testId ? `${testId}-latest` : undefined}>
+          <span className="font-medium" style={{ color: A.label }}>{line}</span>
+          {averageDiffers && <span>{` · ${copy("averageShort", { n: history.average!.n, price: text.price(averagePrice, history.currency) })}`}</span>}
+        </div>
+        {notes.map((note) => <div key={note}>{note}</div>)}
+      </>,
+    );
+  }
   return box(
     <>
       {history.status === "unit_not_recorded" ? (

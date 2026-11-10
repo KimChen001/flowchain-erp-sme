@@ -35,6 +35,16 @@ test("Add supplied item is disabled until an item is picked", () => {
   assert.match(source, /data-testid="add-supplied-item"[\s\S]{0,120}disabled=\{!relationForm\.itemId\}/);
 });
 
+test("Supplied items are paged 25 at a time with the shared list pager and the true total", () => {
+  const source = read("src/modules/srm/Page.tsx");
+  assert.match(source, /const SUPPLIED_ITEM_PAGE_SIZE = 25;/);
+  assert.match(source, /usePagedRows\(relationships, SUPPLIED_ITEM_PAGE_SIZE, selected\?\.id \|\| ""\)/);
+  assert.match(source, /suppliedItems\.pageRows\.map\(\(r, index\) =>/);
+  assert.match(source, /<ListPager page=\{suppliedItems\.page\} pageSize=\{SUPPLIED_ITEM_PAGE_SIZE\} total=\{relationships\.length\}[^>]*testId="supplied-item-pager"/);
+  // The add-supplied-item row stays above the table.
+  assert.ok(source.indexOf('data-testid="add-supplied-item"') < source.indexOf("suppliedItems.pageRows.map"));
+});
+
 test("PO list filters use date inputs and the current PO number format", () => {
   const source = read("src/modules/purchasing/Page.tsx");
   assert.match(source, /<input type="date" value=\{filters\.etaFrom\}/);

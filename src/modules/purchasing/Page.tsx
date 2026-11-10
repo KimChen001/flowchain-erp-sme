@@ -707,7 +707,7 @@ type OverviewField = { label: string; value: React.ReactNode; helper?: React.Rea
 function OverviewFields({ fields }: { fields: OverviewField[] }) {
   return (
     <Card className="p-4" data-testid="po-overview">
-      <dl className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-4">
         {fields.map((field) => (
           <div key={field.label} className="min-w-0">
             <dt className="fc-caption font-medium" style={{ color: A.gray2 }}>{field.label}</dt>
@@ -728,13 +728,14 @@ function PoProgress({ steps }: { steps: TimelineStep[] }) {
   const copy = usePageCopy();
   return (
     <Card className="p-4" data-testid="po-progress">
-      <div className={tableScrollClass}>
-        <ol className="grid min-w-[640px]" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
+      {/* Four steps fit a phone: no sideways scroll, the labels wrap. */}
+      <div>
+        <ol className="grid" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
           {steps.map((step, index) => {
             const color = STEP_COLORS[step.status];
             const next = steps[index + 1];
             return (
-              <li key={step.label} className="relative px-2 text-center" aria-current={step.status === "current" ? "step" : undefined}>
+              <li key={step.label} className="relative px-1 text-center sm:px-2" aria-current={step.status === "current" ? "step" : undefined}>
                 {next ? <span aria-hidden className="absolute left-1/2 top-[7px] h-0.5 w-full" style={{ background: next.status === "pending" ? A.gray4 : color }} /> : null}
                 <span aria-hidden className="relative mx-auto block h-4 w-4 rounded-full" style={{ background: color, boxShadow: `0 0 0 3px ${color}22` }} />
                 <div className="mt-2 text-xs font-semibold leading-4" style={{ color: step.status === "pending" ? A.gray1 : A.label }}>{copy(step.label)}</div>
@@ -1257,11 +1258,17 @@ export default function PurchasingOrdersPage({
         <div className="whitespace-nowrap font-medium">{signedMoney(row.amountVariance)}</div>
         {Math.abs(row.priceVariance) >= MATCH_MONEY_EPSILON ? <Sub><span className="whitespace-nowrap">{say("Price", "价格")} {signedMoney(row.priceVariance)}</span></Sub> : null}
       </> : "—" },
-      { key: "status", label: copy("匹配状态"), width: 170, render: (row) => <>
+      // A line with nothing received and nothing invoiced is simply waiting:
+      // gray, not the orange of a receipt missing behind an invoice.
+      { key: "status", label: copy("匹配状态"), width: 170, render: (row) => row.status === "缺少收货" && row.receivedQty === 0 && !invoiced(row) ? <>
+        <StatusChip label={say("Awaiting receipt", "等待收货")} tone="neutral" />
+      </> : <>
         {statusChip(row.status)}
         <Sub>{copy(row.suggestedAction)}</Sub>
       </> },
     ];
+    // Nothing received and nothing invoiced: the match reads as one sentence.
+    const nothingToMatch = grnRows.length === 0 && invoiceRows.length === 0;
 
     // The order's number is the heading, under a small "Purchase order" label;
     // its status is shown once, beside that label.
@@ -1321,7 +1328,7 @@ export default function PurchasingOrdersPage({
             currency={selectedPO.currency}
             priceHistory={(poLineId) => poLineHistoryKeys.get(poLineId) ? (
               <div className="mt-1">
-                <PriceHistoryFacts history={poPriceHistory.histories.get(poLineHistoryKeys.get(poLineId) || "")} state={poPriceHistory.state} testId={`po-line-price-history-${poLineId}`} excludesThisOrder compact />
+                <PriceHistoryFacts history={poPriceHistory.histories.get(poLineHistoryKeys.get(poLineId) || "")} state={poPriceHistory.state} testId={`po-line-price-history-${poLineId}`} excludesThisOrder compact supplierId={selectedPO.supplierId} />
               </div>
             ) : null}
           />
@@ -1345,7 +1352,7 @@ export default function PurchasingOrdersPage({
             </Card>
           ) : null}
         <div>
-          <SectionTitle title={say("Receipt lines", "收货明细行")} />
+          <SectionTitle title={say("Receipt lines", "收货明细行")} right={<span className="text-xs" style={{ color: A.sub }}>{copy("对照采购订单查看实收、质检和差异记录。")}</span>} />
           <EvidenceTable
             testId="po-receipt-lines"
             rows={grnRows}
@@ -1353,9 +1360,6 @@ export default function PurchasingOrdersPage({
             emptyText={copy("当前 PO 暂无收货记录。")}
             columns={grnColumns}
           />
-          <Card className="p-3 mt-3 text-[11px] leading-5" style={{ color: A.sub, background: "#f8fafc" }}>
-            {copy("对照采购订单查看实收、质检和差异记录。")}
-          </Card>
         </div>
 
         <div>
@@ -1369,14 +1373,26 @@ export default function PurchasingOrdersPage({
           />
         </div>
         <div>
-          <SectionTitle title={copy("三单匹配")} right={<span className="text-xs" style={{ color: A.sub }}>{say("One row per PO line: invoiced vs PO price and received quantity", "按采购订单行核对：开票对照订单价与已收数量")}</span>} />
-          <EvidenceTable
-            testId="po-match-lines"
-            rows={matchRows}
-            rowKey={(row) => row.poLineId}
-            emptyText={copy("当前采购订单没有明细行。")}
-            columns={matchColumns}
-          />
+          <SectionTitle title={copy("三单匹配")} right={nothingToMatch ? null : <span className="text-xs" style={{ color: A.sub }}>{say("One row per PO line: invoiced vs PO price and received quantity", "按采购订单行核对：开票对照订单价与已收数量")}</span>} />
+          {nothingToMatch && matchRows.length ? (
+            <Card className="p-4 text-xs leading-5" style={{ color: A.sub }} data-testid="po-match-lines" data-match-state="nothing-yet">
+              {matchRows.length === 1 ? say(
+                "Nothing to match yet. The line is matched once its goods are received and the supplier invoice is recorded.",
+                "尚无可匹配。该行在收货并录入供应商发票后进行匹配。",
+              ) : say(
+                `Nothing to match yet. Each of the ${formatNumber(matchRows.length)} lines is matched once its goods are received and the supplier invoice is recorded.`,
+                `尚无可匹配。${formatNumber(matchRows.length)} 行均在收货并录入供应商发票后逐行匹配。`,
+              )}
+            </Card>
+          ) : (
+            <EvidenceTable
+              testId="po-match-lines"
+              rows={matchRows}
+              rowKey={(row) => row.poLineId}
+              emptyText={copy("当前采购订单没有明细行。")}
+              columns={matchColumns}
+            />
+          )}
         </div>
 
         </section>
@@ -1495,21 +1511,21 @@ export default function PurchasingOrdersPage({
         </Field>
       </ListSearchCard>
 
-      <ListCard title={copy("采购订单列表")} total={orders.length} shown={filtered.length}>
+      <ListCard title={copy("采购订单列表")} total={filtered.length} shown={paged.pageRows.length}>
         <div className={tableScrollClass}>
           {/* Fixed column widths that fit beside the sidebar at 1440px, so the
               pinned Actions column never covers the last data column. */}
           <table className={`w-full min-w-[1150px] table-fixed text-left ${tableBodyTextClass}`}>
             <thead>
               <tr style={listHeadRowStyle}>
-                <th className={`${thClass} sticky left-0 z-20 w-[190px] bg-white`} style={{ color: A.gray1 }}>{copy("PO 编号")}</th>
+                <th className={`${thClass} sticky left-0 z-20 w-[160px] bg-white`} style={{ color: A.gray1 }}>{copy("PO 编号")}</th>
                 <th className={`${thClass} w-[180px]`} style={{ color: A.gray1 }}>{supplierLabel}</th>
-                <th className={`${thClass} w-[140px]`} style={{ color: A.gray1 }}>{copy("状态")}</th>
-                <th className={`${thClass} w-[120px]`} style={{ color: A.gray1 }}>{copy("采购负责人")}</th>
-                <th className={`${thRightClass} w-[130px]`} style={{ color: A.gray1 }}>{copy("订单金额")}</th>
+                <th className={`${thClass} w-[130px]`} style={{ color: A.gray1 }}>{copy("状态")}</th>
+                <th className={`${thClass} w-[100px]`} style={{ color: A.gray1 }}>{copy("采购负责人")}</th>
+                <th className={`${thRightClass} w-[120px]`} style={{ color: A.gray1 }}>{copy("订单金额")}</th>
                 <th className={`${thClass} w-[120px]`} style={{ color: A.gray1 }}>{copy("预计到货")}</th>
-                <th className={`${thClass} w-[160px]`} style={{ color: A.gray1 }}>{receiptInvoiceLabel}</th>
-                <th className={`${thClass} sticky right-0 z-20 w-[110px] bg-white`} style={{ color: A.gray1 }}>{copy("操作")}</th>
+                <th className={`${thClass} w-[220px]`} style={{ color: A.gray1 }}>{receiptInvoiceLabel}</th>
+                <th className={`${thClass} sticky right-0 z-20 w-[120px] bg-white`} style={{ color: A.gray1 }}>{copy("操作")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1526,15 +1542,16 @@ export default function PurchasingOrdersPage({
                     </td>
                     <td className={`${tdNameClass} truncate font-medium`} title={order.supplier}><BusinessEntityLink entityType="supplier" entityId={order.supplierId}>{order.supplier}</BusinessEntityLink></td>
                     <td className={tdNowrapClass}><POStatusPill status={order.status} /></td>
-                    <td className={`${tdNowrapClass} truncate`} style={{ color: A.sub }}>{order.owner}</td>
+                    <td className={`${tdNowrapClass} truncate`} style={{ color: A.sub }} title={order.owner}>{order.owner}</td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{formatCurrencyAmount(poAmount(order), order.currency)}</td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{order.eta ? day(order.eta) : "—"}</td>
                     <td className={tdNowrapClass}>
-                      <div className="flex flex-col items-start gap-1">
+                      {/* Receipt and invoice side by side; the match only when there is one to read. */}
+                      <div className="flex flex-wrap items-center gap-1">
                         {statusChip(receivedStatus(order, facts))}
                         {statusChip(invoiceStatus(order, facts))}
                       </div>
-                      <div className="mt-1 truncate text-[11px] text-slate-500" title={copy(matchStatus(order, facts))}>{copy(matchStatus(order, facts))}</div>
+                      {matchStatus(order, facts) !== "尚无可匹配" ? <div className="mt-1 truncate text-[11px] text-slate-500" title={copy(matchStatus(order, facts))}>{copy(matchStatus(order, facts))}</div> : null}
                     </td>
                     <td className={`${tdActionClass} sticky right-0 z-10 !min-w-0 bg-white`}>
                       <div className="flex items-center gap-1.5">

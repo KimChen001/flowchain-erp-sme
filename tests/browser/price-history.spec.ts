@@ -44,9 +44,13 @@ test('a supplied item shows its last PO price from this supplier in the link cur
   });
   await page.goto(`/app/master-data/suppliers/${supplierId}`);
   const facts = page.getByTestId(`supplied-item-price-history-${itemId}`);
-  await expect(facts.getByTestId(`supplied-item-price-history-${itemId}-latest`)).toHaveText('Last PO price $4.20 / ea · PO-0031 · Sep 14, 2026 · Acme');
-  await expect(facts).toContainText('Average PO price of 2 (by quantity): $4.30');
+  // One line: this supplier's own page does not repeat its name, and the
+  // average follows only because it differs from the last price.
+  await expect(facts.getByTestId(`supplied-item-price-history-${itemId}-latest`)).toHaveText('Last PO $4.20 / ea · PO-0031 · Sep 14, 2026 · average of 2: $4.30');
+  await expect(facts).not.toContainText('Acme');
   await expect(facts).toContainText('Earlier purchases in EUR, not compared');
+  // The note on what these prices are stays as the group's tooltip.
+  await expect(facts).toHaveAttribute('title', /not invoiced or paid prices/);
   // Compact: earlier lines are left to the forms.
   await expect(facts).not.toContainText('PO-0020');
   expect(requests).toHaveLength(1);

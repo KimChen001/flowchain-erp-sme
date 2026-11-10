@@ -24,9 +24,10 @@ const COPY = {
 export const metricGridClass = "grid grid-cols-2 gap-3 lg:grid-cols-4";
 
 export function useListCopy() {
-  const { language } = useI18n();
+  const { language, formatNumber } = useI18n();
+  // Counts read with the workspace's digit grouping ("5,760 total").
   return (key: keyof typeof COPY, values: Record<string, string | number> = {}) =>
-    COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
+    COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => typeof values[name] === "number" ? formatNumber(values[name] as number) : String(values[name] ?? ""));
 }
 
 export const listButtonClass = {
