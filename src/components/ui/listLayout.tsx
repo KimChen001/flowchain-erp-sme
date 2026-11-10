@@ -172,10 +172,13 @@ export function RowPopover({ summary, summaryClassName, panelClassName, closeOnC
       }
     };
     place();
-    // Rows below a sticky cell would otherwise paint over the open menu.
+    // A sticky cell holds the menu in its own stacking context, so the cell
+    // itself is raised: above the rows below it, and above the floating AI
+    // assistant button (z-40, later in the page), which would otherwise cover
+    // the menu's last items when the row is near the bottom of the window.
     const cell = details.closest("td, th") as HTMLElement | null;
     const zIndex = cell?.style.zIndex ?? "";
-    if (cell) cell.style.zIndex = "40";
+    if (cell) cell.style.zIndex = "50";
     const outside = (event: Event) => {
       if (!details.contains(event.target as Node)) close();
     };
