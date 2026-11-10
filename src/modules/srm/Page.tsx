@@ -18,6 +18,7 @@ import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { PriceHistoryFacts, priceHistoryKey, usePoPrice, usePriceHistory } from "../procurement/PriceHistoryFacts";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { ON_TIME_HEADER_TIP } from "./supplierMetrics";
@@ -117,6 +118,9 @@ const statusLabel = { draft: "草稿", active: "启用", inactive: "停用" };
 // sideways with the code and actions columns kept in view, as on purchase orders.
 const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
 const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
+// A supplier's supplied items drawn at a time; the pager under the table
+// gives the true total.
+const SUPPLIED_ITEM_PAGE_SIZE = 25;
 
 function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): Supplier {
   const text = (candidate: unknown, fallback = "") => String(candidate ?? "").trim() || fallback;
@@ -476,6 +480,8 @@ export default function SupplierMasterPage({
   const relationshipHistoryKey = (r: Relationship) => (selected ? priceHistoryKey({ itemId: r.itemId, currency: r.currency, supplierId: selected.id }) : "");
   const relationFormHistoryKey = selected && writes.items ? priceHistoryKey({ itemId: relationForm.itemId, currency: relationForm.currency || selected.defaultCurrency, supplierId: selected.id }) : "";
   const relationshipHistory = usePriceHistory([...relationships.map(relationshipHistoryKey), relationFormHistoryKey]);
+  // One page of supplied items; another supplier starts again at page 1.
+  const suppliedItems = usePagedRows(relationships, SUPPLIED_ITEM_PAGE_SIZE, selected?.id || "");
   if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} paymentTerms={paymentTerms} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
   if (selected)
     return (
@@ -642,7 +648,8 @@ export default function SupplierMasterPage({
             <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
               {copy("暂无可供应物料")}</div>
           ) : (
-            <div className={`mt-3 ${tableScrollClass}`}>
+            <div className="mt-3">
+            <div className={tableScrollClass}>
             <table className={`w-full ${tableBodyTextClass}`}>
               <thead>
                 <tr style={listHeadRowStyle}>
@@ -664,8 +671,8 @@ export default function SupplierMasterPage({
                 </tr>
               </thead>
               <tbody>
-                {relationships.map((r, index) => (
-                  <tr key={r.relationshipId} className={listRowClass} style={listRowStyle(index, relationships.length)}>
+                {suppliedItems.pageRows.map((r, index) => (
+                  <tr key={r.relationshipId} className={listRowClass} style={listRowStyle(index, suppliedItems.pageRows.length)}>
                     <td className={`${tdClass} min-w-[160px]`}>
                       <EntityLink kind="item" id={r.itemId} className={tableLinkClass}>
                         {r.item?.sku || r.itemId} · {r.item?.itemName || ""}
@@ -709,6 +716,10 @@ export default function SupplierMasterPage({
                 ))}
               </tbody>
             </table>
+            </div>
+            <div className="-mx-5 -mb-5">
+              <ListPager page={suppliedItems.page} pageSize={SUPPLIED_ITEM_PAGE_SIZE} total={relationships.length} onPage={suppliedItems.setPage} testId="supplied-item-pager" />
+            </div>
             </div>
           )}
         </Card>

@@ -21,10 +21,10 @@ import { procurementErrorCode, procurementErrorText } from "../procurement/procu
 
 type Capability = { enabled?: boolean; maturity?: string };
 type Detail = {
-  receivingDocument: { id: string; documentNumber: string; workflowStatus: string; postingStatus: string; qualityStatus: string; version: number; arrivedAt?: string | null; postedAt?: string | null; postedById?: string | null; reversedAt?: string | null; reversedById?: string | null; reversalReason?: string | null; receiver?: string | null; supplier?: { name?: string }; warehouse?: { name?: string; code?: string } | null };
+  receivingDocument: { id: string; documentNumber: string; workflowStatus: string; postingStatus: string; qualityStatus: string; version: number; arrivedAt?: string | null; postedAt?: string | null; postedById?: string | null; reversedAt?: string | null; reversedById?: string | null; reversalReason?: string | null; receiver?: string | null; supplier?: { name?: string }; warehouse?: { id?: string; name?: string; code?: string } | null };
   // number: the order's document number (shown); id: its internal id (links).
   purchaseOrder: { id: string; number?: string; workflowStatus: string; fulfillmentStatus: string };
-  lines: Array<{ id: string; poLineId: string; sku: string; itemName: string; orderedQuantity: string; previouslyReceivedQuantity: string; documentAcceptedQuantity: string; currentlyAppliedQuantity: string; acceptedQuantity: string; rejectedQuantity: string; remainingReceivableQuantity: string; unit?: string; warehouse?: { name?: string; code?: string } | null; location?: string; lotSerialCapability: { postingAvailable: boolean; message: string } }>;
+  lines: Array<{ id: string; poLineId: string; sku: string; itemName: string; orderedQuantity: string; previouslyReceivedQuantity: string; documentAcceptedQuantity: string; currentlyAppliedQuantity: string; acceptedQuantity: string; rejectedQuantity: string; remainingReceivableQuantity: string; unit?: string; warehouse?: { id?: string; name?: string; code?: string } | null; location?: string; lotSerialCapability: { postingAvailable: boolean; message: string } }>;
   postingSummary: { acceptedQuantity: string; rejectedQuantity: string; lineCount: number };
   capabilities: { posting?: Capability; reversal?: Capability };
   availableActions: { canEditDraft?: boolean; canSubmit?: boolean; canCancel?: boolean; canPost: boolean; canReverse: boolean; canViewReversal: boolean; primaryAction: "post" | "reverse" | "view_reversal" | null; blockingReasonCodes: string[] };
@@ -148,6 +148,8 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const [detail, setDetail] = useState<Detail | null>(null);
   const [links, setLinks] = useState<Link[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
+  // Timeline groups a person opened to read line by line.
+  const [openEventGroups, setOpenEventGroups] = useState<Set<string>>(() => new Set());
   const [reconciliation, setReconciliation] = useState<Reconciliation | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -158,6 +160,8 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [printing, setPrinting] = useState(false);
+  // The reconciliation table, when every balance matches, opens on request.
+  const [showReconciliation, setShowReconciliation] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!receivingDocumentId) return;
@@ -304,6 +308,38 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     }
     return event.label;
   };
+  // One receipt posts a movement, a balance change and a PO quantity change
+  // for every line, all at the same moment. More than three of a kind read as
+  // one entry ("On hand updated for 18 items") that opens to the lines.
+  const EVENT_GROUP_AFTER = 3;
+  const eventGroupKey = (event: TimelineEvent) =>
+    [event.event, event.event === "inventory_movement_created" ? event.label.split(" · ")[0] : "", stamp(event.occurredAt), eventKind(event)].join("|");
+  // Consecutive events of one kind at one moment form a group; the group's
+  // key adds its position, so two runs of the same kind stay apart.
+  const eventGroups = shownEvents.reduce<Array<{ kind: string; key: string; events: TimelineEvent[] }>>((groups, event) => {
+    const kind = eventGroupKey(event);
+    const last = groups[groups.length - 1];
+    if (last && last.kind === kind) last.events.push(event);
+    else groups.push({ kind, key: `${kind}#${groups.length}`, events: [event] });
+    return groups;
+  }, []);
+  const eventGroupLabel = (group: TimelineEvent[]) => {
+    const first = group[0];
+    const count = group.length;
+    if (first.event === "inventory_movement_created") {
+      const kind = first.label.split(" · ")[0];
+      const name = MOVEMENT_COPY[kind] ? sayPair(MOVEMENT_COPY[kind]) : kind;
+      return say(`${name} · ${count} lines`, `${name} · ${count} 行`);
+    }
+    if (first.event === "inventory_balance_changed") return say(`On hand updated for ${count} items`, `${count} 个物料的在手库存已更新`);
+    if (first.event === "purchase_order_line_received_changed") return say(`PO received quantity updated on ${count} lines`, `采购订单 ${count} 行的已收数量已更新`);
+    return say(`${eventLabel(first)} and ${count - 1} more`, `${eventLabel(first)} 等 ${count} 条`);
+  };
+  const toggleEventGroup = (key: string) => setOpenEventGroups((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
   // The balance key lower-cases the location; show the location as the
   // receipt line recorded it when the line can be found.
   const recordedLocation = (sku: string, locationKey: string) =>
@@ -320,19 +356,32 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     [say("Arrived", "到货时间"), stamp(grn.arrivedAt)],
     [grn.postingStatus === "reversed" ? say("Reversed", "冲销时间") : say("Posted", "过账时间"), stamp(grn.reversedAt || grn.postedAt)],
   ];
+  // One row of totals under the header facts; the posting status is already
+  // among the header facts, so it is not repeated here.
   const summary: Array<[string, React.ReactNode]> = [
     [say("Total accepted", "合格总数"), qty(detail.postingSummary.acceptedQuantity)],
     [say("Total rejected", "拒收总数"), qty(detail.postingSummary.rejectedQuantity)],
     [say("Movements", "库存移动"), totals.movement === undefined ? "—" : String(totals.movement)],
     [say("Affected balances", "影响的库存余额"), totals.balances === undefined ? "—" : String(totals.balances)],
-    [say("Posting status", "过账状态"), chip(grn.postingStatus)],
     [say("Reconciliation", "库存核对"), reconciliation ? chip(reconciliation.status) : unavailable],
   ];
+  // The lines' warehouse column shows only when a line is stored somewhere
+  // other than the receipt's warehouse, which the header already names.
+  const warehouseKey = (warehouse?: { id?: string; name?: string; code?: string } | null) => warehouse ? warehouse.id || warehouse.code || warehouse.name || "" : "";
+  const showLineWarehouse = detail.lines.some((line) => warehouseKey(line.warehouse) !== warehouseKey(grn.warehouse));
   const lineColumns: Array<[string, boolean]> = [
     ["SKU", false], [say("Item", "物料"), false], [say("Ordered", "订购"), true], [say("Received before", "此前已收"), true],
     [say("Accepted", "本单合格"), true], [say("Posted qty", "已过账数量"), true], [say("Rejected", "拒收"), true],
-    [say("Open", "未收"), true], [say("Warehouse", "仓库"), false], [say("Location", "库位"), false], [say("Unit", "单位"), false],
+    [say("Open", "未收"), true], ...(showLineWarehouse ? [[say("Warehouse", "仓库"), false] as [string, boolean]] : []), [say("Location", "库位"), false], [say("Unit", "单位"), false],
   ];
+  // Every balance matching its movements is said in one line; the table
+  // opens on request. Any difference shows the table at once.
+  const reconciliationEntries = reconciliation?.entries || [];
+  const allBalancesMatch = reconciliation?.status === "matched" && reconciliationEntries.length > 0 && reconciliationEntries.every((entry) => entry.status === "matched");
+  const matchedSummary = reconciliationEntries.length === 1
+    ? say("The balance matches its movements.", "该库存余额与库存移动一致。")
+    : say(`All ${reconciliationEntries.length} balances match their movements.`, `全部 ${reconciliationEntries.length} 个库存余额与库存移动一致。`);
+  const showReconciliationTable = reconciliationEntries.length > 0 && (!allBalancesMatch || showReconciliation);
   const reconciliationColumns: Array<[string, boolean]> = [
     ["SKU", false], [say("Warehouse", "仓库"), false], [say("Location", "库位"), false], [say("Calculated from movements", "按库存移动计算"), true],
     [say("Recorded balance", "账面余额"), true], [say("Difference", "差异"), true], [say("Status", "状态"), false],
@@ -361,10 +410,9 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
         {facts.map(([name, value]) => <div key={name} className="rounded-xl bg-gray-50 p-3"><div className="text-xs" style={{ color: A.sub }}>{name}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>)}
       </div>
-    </section>
-
-    <section className="grid gap-3 md:grid-cols-3">
-      {summary.map(([name, value]) => <div key={name} className="rounded-xl border bg-white p-4"><div className="text-xs" style={{ color: A.sub }}>{name}</div><div className="mt-1 font-semibold tabular-nums">{value}</div></div>)}
+      <dl className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 border-t pt-3" data-testid="receiving-summary">
+        {summary.map(([name, value]) => <div key={name} className="flex items-center gap-2"><dt className="text-xs" style={{ color: A.sub }}>{name}</dt><dd className="text-sm font-semibold tabular-nums">{value}</dd></div>)}
+      </dl>
     </section>
 
     <section className="overflow-hidden rounded-2xl border bg-white">
@@ -373,14 +421,14 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
         <thead><tr style={listHeadRowStyle}>{lineColumns.map(([label, numeric]) => <th key={label} className={numeric ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
         <tbody>{detail.lines.map((line) => <tr key={line.id} className="border-t">
           <td className={tdIdClass}>{line.sku}</td>
-          <td className={`${tdClass} min-w-[160px]`}>{line.itemName}</td>
+          <td className={tdNowrapClass}><div className="max-w-[320px] truncate" title={line.itemName}>{line.itemName}</div></td>
           <td className={tdNumericRightClass}>{qty(line.orderedQuantity)}</td>
           <td className={tdNumericRightClass}>{qty(line.previouslyReceivedQuantity)}</td>
           <td className={`${tdNumericRightClass} font-semibold text-teal-700`}>{qty(line.documentAcceptedQuantity)}</td>
           <td className={tdNumericRightClass}>{qty(line.currentlyAppliedQuantity)}</td>
           <td className={tdNumericRightClass}>{qty(line.rejectedQuantity)}</td>
           <td className={tdNumericRightClass}>{qty(line.remainingReceivableQuantity)}</td>
-          <td className={`${tdClass} min-w-[140px]`}>{line.warehouse?.name || line.warehouse?.code || unavailable}</td>
+          {showLineWarehouse && <td className={`${tdClass} min-w-[140px]`}>{line.warehouse?.name || line.warehouse?.code || unavailable}</td>}
           <td className={tdNowrapClass}>{line.location || "—"}</td>
           <td className={tdNowrapClass}>{line.unit ? unitLabel(line.unit, language) : "—"}</td>
         </tr>)}</tbody>
@@ -391,9 +439,13 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
 
     <section className="overflow-hidden rounded-2xl border bg-white" data-testid="receiving-reconciliation">
       <div className="flex items-center gap-2 border-b px-4 py-3 text-sm font-semibold">{say("Inventory reconciliation", "库存核对")}{reconciliation && chip(reconciliation.status)}</div>
-      {reconciliation?.entries.length ? <div className={tableScrollClass}><table className={tableMinSmClass}>
+      {allBalancesMatch && <div className={`flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm${showReconciliation ? " border-b" : ""}`}>
+        <span data-testid="receiving-reconciliation-summary">{matchedSummary}</span>
+        <button type="button" data-testid="receiving-reconciliation-toggle" aria-expanded={showReconciliation} aria-controls={showReconciliation ? "receiving-reconciliation-table" : undefined} onClick={() => setShowReconciliation((open) => !open)} className="text-sm font-medium text-blue-600 hover:underline">{showReconciliation ? say("Hide details", "收起明细") : say("Show details", "显示明细")}</button>
+      </div>}
+      {showReconciliationTable ? <div id="receiving-reconciliation-table" className={tableScrollClass}><table className={tableMinSmClass}>
         <thead><tr style={listHeadRowStyle}>{reconciliationColumns.map(([label, numeric]) => <th key={label} className={numeric ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
-        <tbody>{reconciliation.entries.map((entry) => <tr key={`${entry.sku}-${entry.warehouseId || ''}-${entry.locationKey}`} className="border-t">
+        <tbody>{reconciliationEntries.map((entry) => <tr key={`${entry.sku}-${entry.warehouseId || ''}-${entry.locationKey}`} className="border-t">
           <td className={tdIdClass}>{entry.sku}</td>
           <td className={tdClass}>{warehouseName(entry.warehouseId) || say("No warehouse", "未指定仓库")}</td>
           <td className={tdNowrapClass}>{recordedLocation(entry.sku, entry.locationKey)}</td>
@@ -402,10 +454,19 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
           <td className={`${tdNumericRightClass} ${entry.differenceQuantity != null && /[1-9]/.test(entry.differenceQuantity) ? 'text-red-700' : ''}`}>{qty(entry.differenceQuantity)}</td>
           <td className={tdNowrapClass}>{chip(entry.status)}</td>
         </tr>)}</tbody>
-      </table></div> : <div className="p-4 text-sm text-gray-500">{reconciliationReason}</div>}
+      </table></div> : !reconciliationEntries.length && <div className="p-4 text-sm text-gray-500">{reconciliationReason}</div>}
     </section>
 
-    <section id="evidence" className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><ShieldCheck size={16} />{say("Evidence timeline", "证据时间线")}</div><div className="space-y-3">{shownEvents.length ? shownEvents.map((event) => <div key={event.id} className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="w-40 shrink-0 text-xs tabular-nums text-gray-500">{stamp(event.occurredAt)}</div><div><div className="text-sm font-medium">{eventLabel(event)}</div><div className="text-[11px] text-gray-500">{eventKind(event)}{event.actorName ? ` · ${event.actorName}` : ''}</div></div></div>) : <div className="text-sm text-gray-500">{say("No evidence connected.", "暂无关联证据。")}</div>}</div></section>
+    <section id="evidence" className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><ShieldCheck size={16} />{say("Evidence timeline", "证据时间线")}</div><div className="space-y-3">{shownEvents.length ? eventGroups.map((group) => {
+      const eventRow = (event: TimelineEvent) => <div key={event.id} className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="w-40 shrink-0 text-xs tabular-nums text-gray-500">{stamp(event.occurredAt)}</div><div><div className="text-sm font-medium">{eventLabel(event)}</div><div className="text-[11px] text-gray-500">{eventKind(event)}{event.actorName ? ` · ${event.actorName}` : ''}</div></div></div>;
+      if (group.events.length <= EVENT_GROUP_AFTER) return group.events.map(eventRow);
+      const first = group.events[0];
+      const open = openEventGroups.has(group.key);
+      return <div key={group.key} className="space-y-3" data-testid="evidence-event-group">
+        <div className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="w-40 shrink-0 text-xs tabular-nums text-gray-500">{stamp(first.occurredAt)}</div><div className="min-w-0 flex-1"><div className="text-sm font-medium">{eventGroupLabel(group.events)}</div><div className="text-[11px] text-gray-500">{eventKind(first)}{first.actorName ? ` · ${first.actorName}` : ''}</div></div><button type="button" aria-expanded={open} data-testid="evidence-event-group-toggle" onClick={() => toggleEventGroup(group.key)} className="h-7 shrink-0 self-start rounded-md px-2 text-xs font-medium text-blue-600 hover:bg-blue-50">{open ? say("Hide lines", "收起") : say("Show lines", "展开")}</button></div>
+        {open ? <div className="ml-4 space-y-3">{group.events.map(eventRow)}</div> : null}
+      </div>;
+    }) : <div className="text-sm text-gray-500">{say("No evidence connected.", "暂无关联证据。")}</div>}</div></section>
     {notes.length > 0 && <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900" data-testid="receiving-notes">{notes.join(' ')}</div>}
 
     {preview && <div className="fc-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-testid="impact-preview"><div className="fc-dialog-enter max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">

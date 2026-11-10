@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { Link } from "react-router";
 import { A, Card } from "../ui";
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
+import { useI18n } from "../../i18n/I18n";
 
 export function ActionableMetricCard({
   label,
@@ -22,6 +23,10 @@ export function ActionableMetricCard({
   state?: Record<string, unknown>;
 }) {
   const copy = useWorkspaceCopy();
+  const { formatNumber } = useI18n();
+  // A bare count reads with the workspace's digit grouping: 5760 → 5,760.
+  // Amounts and labels arrive formatted and pass through.
+  value = /^-?\d{4,}$/.test(value) ? formatNumber(Number(value)) : value;
   return (
     <Link
       to={to}
