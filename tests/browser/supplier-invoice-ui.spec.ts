@@ -28,7 +28,6 @@ async function enterInvoice(page: Page, number: string, quantity: string, unitPr
   const line = page.getByTestId("supplier-invoice-line").first();
   await line.locator("input").nth(0).fill(quantity);
   if (unitPrice) await line.locator("input").nth(1).fill(unitPrice);
-  await page.getByTestId("supplier-invoice-preview").click();
   await expect(page.getByTestId("supplier-invoice-create")).toBeEnabled();
   await page.getByTestId("supplier-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}$/);

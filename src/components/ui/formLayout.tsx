@@ -4,8 +4,9 @@ import { A, Card } from "./index";
 import { listButtonClass } from "./listLayout";
 import { useI18n } from "../../i18n/I18n";
 
-// The entry form standard. The purchase request, sales order and goods
-// receipt forms follow it, and so should any new form that records a document.
+// The entry form standard. The purchase request, sales order, goods receipt,
+// supplier invoice and supplier forms follow it, and so should any new form
+// that records a document or a master record.
 // It builds on Field (index.tsx), the list layout's cards and buttons
 // (listLayout.tsx) and FocusFirstField.
 //

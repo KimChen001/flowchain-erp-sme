@@ -51,7 +51,6 @@ test("a bill to pay is paid in two parts and a wrong payment is voided", async (
   await expect(page.getByTestId("supplier-invoice-receipt")).toHaveValue("finance-browser-grn");
   await page.getByTestId("supplier-invoice-number").fill("UI-PAY-BILL");
   await page.getByTestId("supplier-invoice-due").fill("2026-11-01");
-  await page.getByTestId("supplier-invoice-preview").click();
   await expect(page.getByTestId("supplier-invoice-create")).toBeEnabled();
   await page.getByTestId("supplier-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}$/);
