@@ -126,7 +126,10 @@ const reorderList = defineAiTool({
       // One decimal as the model reads it ("7.1556 件" was copied as is).
       averageDailyDemand: row.demand?.averageDailyDemand === null || row.demand?.averageDailyDemand === undefined ? null : Math.round(Number(row.demand.averageDailyDemand) * 10) / 10,
       supplier: text(row.supplier?.name) || null,
-      ...(() => { const stock = stockRowOf(facts, row.sku); const safety = stock?.safetyStock ?? null; const available = Number.isFinite(Number(row.onHand)) ? Number(row.onHand) - (Number(row.reserved) || 0) : null; return { safetyStock: safety, belowSafetyStock: safety !== null && available !== null ? available < safety : null } })(),
+      // availableToday is the stock that judgement uses, given so an answer
+      // can say it (2026-11-09 on Flash: "48 pcs available" in a reorder
+      // answer was flagged, as no result held it).
+      ...(() => { const stock = stockRowOf(facts, row.sku); const safety = stock?.safetyStock ?? null; const available = Number.isFinite(Number(row.onHand)) ? Number(row.onHand) - (Number(row.reserved) || 0) : null; return { safetyStock: safety, availableToday: available, belowSafetyStock: safety !== null && available !== null ? available < safety : null } })(),
       leadTimeDays: row.supplier?.leadTimeDays ?? null,
       // When an order placed today would arrive (the request's need-by date),
       // beside orderByDate, the last day to order: on 2026-11-04 an answer
