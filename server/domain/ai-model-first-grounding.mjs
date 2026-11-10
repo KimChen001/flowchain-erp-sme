@@ -474,7 +474,11 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const value = fold(token)
     // The question may write it without the hyphen ("LDM001").
     const squeezed = (value) => value.replace(/[-\s]/g, '')
+    // "SKU-85123A" is the SKU 85123A with a label (2026-11-09 on Flash, an
+    // email to a supplier).
+    const sku = /^sku-./.test(value) ? value.slice(4) : null
     const found = inText(sources.haystack, value) || new RegExp(`-${escape(value)}($|[^a-z0-9])`, 'u').test(sources.haystack) || inText(named, value) || inText(squeezed(named), squeezed(value))
+      || Boolean(sku && (inText(sources.haystack, sku) || inText(named, sku)))
     if (!found) fail('record', token)
     else listed.push({ at: offsetOf(args), key: entities.get(value) || `record:${value}` })
     return blank(token)

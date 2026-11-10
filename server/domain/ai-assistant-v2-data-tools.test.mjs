@@ -107,6 +107,15 @@ test('attention_list wraps today\'s priorities and the open problems, ranked by 
     details: { sku: 'LDM-001', remaining: 30, unit: 'pcs', notSent: false }, ref: { type: 'purchase_order', id: 'PO-001', label: 'PO-001' },
   })
   assert.ok(JSON.stringify(today).indexOf('score') === -1)
+  // byType counts the whole list by type, rows past the limit too, and a row
+  // under each also.
+  const expected = {}
+  for (const item of engine.items) for (const type of new Set([item.type, ...item.also || []])) expected[type] = (expected[type] || 0) + 1
+  assert.deepEqual(today.byType, expected)
+  assert.equal(today.byType.po_partially_received >= 1, true)
+  assert.ok(engine.items.slice(5).some((item) => item.type.startsWith('stock_')), 'the fixture has stock rows past the first five')
+  assert.ok(Object.keys(today.byType).some((type) => type.startsWith('stock_')))
+  assert.equal(today.dueSoonDays, 7)
   // Up to 10 rows, all of them when fewer.
   assert.equal((await run('attention_list', { limit: 10 })).result.rows.length, engine.total)
   assert.equal((await run('attention_list', { limit: 11 })).error, 'invalid_arguments')

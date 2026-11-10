@@ -322,6 +322,12 @@ test('a figure worked out from the answer\'s own figures is grounded; wrong arit
   assert.deepEqual(numbers('HV-PO-101 has 120 pcs outstanding and HV-PO-102 has 240 pcs, 2 orders with 3 more to come.', late), ['3'])
 })
 
+test('"SKU-" before a SKU the results hold is that SKU; before any other it is still refused', () => {
+  const problems = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results: [{ rows: [{ sku: '85123A', order: 'HV-PO-101' }] }] }).problems.map((row) => `${row.kind}:${row.value}`)
+  assert.deepEqual(problems('Two orders for SKU-85123A are late.'), [])
+  assert.deepEqual(problems('Two orders for SKU-99999X are late.'), ['record:SKU-99999X'])
+})
+
 test('aging bucket labels are no figures in an answer about overdue or aged amounts', () => {
   const numbers = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results: [{ total: 78984.01, currency: 'GBP' }] }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
   assert.deepEqual(numbers('Aging: current £78,984.01; nothing in the 1–30, 31–60, 61–90 or over-90-day overdue buckets.'), [])
