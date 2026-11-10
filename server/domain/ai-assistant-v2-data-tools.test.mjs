@@ -556,6 +556,7 @@ test('reorder_list returns the preferred supplier\'s name, lead time and minimum
   // Safety stock judged on the stock available now, beside the position.
   const stock = facts.inventory.rows.find((entry) => entry.sku === 'LDM-001')
   assert.deepEqual([row.safetyStock, row.belowSafetyStock], [stock.safetyStock, row.onHand - row.reserved < stock.safetyStock])
+  assert.equal(row.availableToday, row.onHand - row.reserved)
   assert.equal(row.shortfall, 102)
   assert.deepEqual([row.requestQuantity, row.raisedToMinimum], [150, true])
   // Counts over every row, for the answer to read instead of counting.
