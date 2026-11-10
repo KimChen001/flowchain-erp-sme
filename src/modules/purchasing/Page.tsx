@@ -57,6 +57,9 @@ import {
   type PurchaseOrderWorkbenchFilters,
 } from "./filters";
 import { POStatusPill, poStatusToneOf } from "./components/POStatusPill";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
+
+const PO_LIST_PAGE_SIZE = 50;
 import {
   tableLinkClass,
   tableScrollClass,
@@ -68,6 +71,7 @@ import {
   thClass,
   thRightClass,
   tableBodyTextClass,
+  listTableCardsRef,
 } from "../../components/ui/workbenchTable";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, RowMenu, StatusChip, metricGridClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
@@ -270,6 +274,13 @@ function useLineName() {
   return (position: number) => say(`Line ${position}`, `第 ${position} 行`);
 }
 
+// The order's lines as one table, a row per line: what was ordered, received
+// and invoiced, the price, the date expected and one status. A line's earlier
+// prices sit under its name; its source request or RFQ only when it has one.
+// Below 640 px the shared phone layout turns each row into a card.
+// A second chip only when the line needs attention beyond its status: billed
+// before receipt, or received and not yet billed.
+const LINE_ATTENTION_RISKS = new Set(["已票未收风险", "已收未票风险"]);
 function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvidenceRow[]; currency?: string; priceHistory?: (poLineId: string) => React.ReactNode }) {
   const copy = useWorkspaceCopy();
   const say = useSay();
@@ -279,75 +290,61 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
   if (!rows.length) {
     return <Card className="p-8 text-center text-xs" style={{ color: A.gray2 }}>{copy("当前采购订单没有明细行。")}</Card>;
   }
+  // The warehouse shows per line only when the lines go to different places.
+  const warehouses = new Set(rows.map((line) => line.warehouse).filter(Boolean));
+  const qty = (value: number, unit: string) => `${formatNumber(value)} ${unitLabel(unit, language, value)}`;
+  const source = (line: PoEvidenceRow) => [
+    line.sourcePrLine && line.sourcePrLine !== "无采购申请" ? `${say("From", "来自")} ${line.sourcePrLine}` : "",
+    line.sourceRfqLine && line.sourceRfqLine !== "未经询价" ? `${say("Quoted in", "询价")} ${line.sourceRfqLine}` : "",
+  ].filter(Boolean).join(" · ");
+  const headers = [
+    [say("Line", "行"), "left"], [say("Item", "物料"), "left"], [say("Ordered", "订购"), "right"], [say("Received", "已收"), "right"],
+    [say("Invoiced", "已开票"), "right"], [say("Unit price", "单价"), "right"], [say("Amount", "金额"), "right"], [say("Expected", "预计到货"), "left"], [say("Status", "状态"), "left"],
+  ] as const;
   return (
-    <div className="space-y-3" data-testid="po-line-cards">
-      {rows.map((line) => {
-        const fmt = (value: number) => formatCurrencyAmount(value, line.currency || currency);
-        const groups = [
-          {
-            title: "来源",
-            facts: [
-              [say("Source PR line", "来源采购申请行"), line.sourcePrLine === "无采购申请" ? line.sourcePrLine : `${line.sourcePrLine} · ${lineName(line.lineNumber)}`],
-              [say("Source RFQ line", "来源询价单行"), line.sourceRfqLine === "未经询价" ? line.sourceRfqLine : `${line.sourceRfqLine} · ${lineName(line.lineNumber)}`],
-            ],
-          },
-          {
-            title: "订购",
-            facts: [
-              ["订购数量", `${formatNumber(line.quantity)} ${unitLabel(line.unit, language, line.quantity)}`],
-              ["单价", fmt(line.unitPrice)],
-              ["行金额", fmt(line.lineAmount)],
-            ],
-          },
-          {
-            title: "履约",
-            facts: [
-              ["已收 / 未收", `${formatNumber(line.receivedQty)} / ${formatNumber(line.remainingQty)} ${unitLabel(line.unit, language, line.remainingQty)}`],
-              ["已开票 / 未开票", `${formatNumber(line.invoicedQty)} / ${formatNumber(line.uninvoicedQty)} ${unitLabel(line.unit, language, line.uninvoicedQty)}`],
-            ],
-          },
-          {
-            title: "交付",
-            facts: [
-              ["目标仓库", line.warehouse],
-              ["需求日期", day(line.requiredDate)],
-              ["预计到货", day(line.promisedDate)],
-            ],
-          },
-        ];
-        return (
-          <article key={line.poLineId} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0">
-                <div className="text-xs font-semibold tabular-nums" style={{ color: A.blue }} title={line.poLineId} data-testid="po-line-name">{lineName(line.lineNumber)}</div>
-                <div className="mt-1 text-sm font-semibold" style={{ color: A.label }}>{line.sku} · {line.itemName}</div>
-                {line.supplierOverride ? <div className="mt-1"><SupplierOverrideFlag override={line.supplierOverride} testId="po-line-supplier-override" /></div> : null}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {statusChip(line.status)}
-                {line.risk ? <StatusChip label={copy(line.risk)} tone={evidenceTone(line.risk)} /> : null}
-              </div>
-            </div>
-            {priceHistory?.(line.poLineId)}
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {groups.map((group) => (
-                <div key={group.title} className="rounded-lg bg-slate-50 p-3">
-                  <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: A.gray2 }}>{copy(group.title)}</div>
-                  <dl className="mt-2 space-y-2">
-                    {group.facts.map(([label, value]) => (
-                      <div key={label} className="flex items-start justify-between gap-3 text-xs">
-                        <dt className="shrink-0" style={{ color: A.sub }}>{copy(label)}</dt>
-                        <dd className="min-w-0 break-words text-right font-medium tabular-nums" style={{ color: A.label }}>{copy(value)}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
-              ))}
-            </div>
-          </article>
-        );
-      })}
-    </div>
+    <Card className="overflow-hidden p-0">
+      <div className={tableScrollClass} data-testid="po-line-cards" ref={listTableCardsRef}>
+        <table className={`w-full min-w-[960px] ${tableBodyTextClass}`}>
+          <thead><tr>{headers.map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass}>{label}</th>)}</tr></thead>
+          <tbody>
+            {rows.map((line) => {
+              const fmt = (value: number) => formatCurrencyAmount(value, line.currency || currency);
+              const from = source(line);
+              return (
+                <tr key={line.poLineId} className="border-t border-slate-100 align-top">
+                  <td className={tdNowrapClass}><span className="font-semibold tabular-nums" style={{ color: A.blue }} title={line.poLineId} data-testid="po-line-name">{lineName(line.lineNumber)}</span></td>
+                  <td className="min-w-[240px] max-w-[380px] px-4 py-3">
+                    <div className="font-semibold" style={{ color: A.label }}>{line.sku} · {line.itemName}</div>
+                    {line.supplierOverride ? <div className="mt-1"><SupplierOverrideFlag override={line.supplierOverride} testId="po-line-supplier-override" /></div> : null}
+                    {from ? <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{from}</div> : null}
+                    {warehouses.size > 1 && line.warehouse ? <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{say("To", "送至")} {line.warehouse}</div> : null}
+                    {priceHistory?.(line.poLineId)}
+                  </td>
+                  <td className={tdNumericRightClass}>{qty(line.quantity, line.unit)}</td>
+                  <td className={tdNumericRightClass}>
+                    <div>{qty(line.receivedQty, line.unit)}</div>
+                    {line.remainingQty > 0 && line.receivedQty > 0 ? <div className="text-[11px]" style={{ color: A.sub }}>{say(`${formatNumber(line.remainingQty)} to come`, `还差 ${formatNumber(line.remainingQty)}`)}</div> : null}
+                  </td>
+                  <td className={tdNumericRightClass}>{qty(line.invoicedQty, line.unit)}</td>
+                  <td className={tdNumericRightClass}>{fmt(line.unitPrice)}</td>
+                  <td className={`${tdNumericRightClass} font-semibold`}>{fmt(line.lineAmount)}</td>
+                  <td className={tdNowrapClass}>
+                    <div>{day(line.promisedDate)}</div>
+                    {line.requiredDate && line.requiredDate !== line.promisedDate ? <div className="text-[11px]" style={{ color: A.sub }}>{say("Needed", "需求")} {day(line.requiredDate)}</div> : null}
+                  </td>
+                  <td className={tdNowrapClass}>
+                    <div className="flex flex-col items-start gap-1">
+                      {statusChip(line.status)}
+                      {LINE_ATTENTION_RISKS.has(line.risk) ? <StatusChip label={copy(line.risk)} tone={evidenceTone(line.risk)} /> : null}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
@@ -447,18 +444,30 @@ function nextStepForPo(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
   return "需人工复核";
 }
 
+// The order's four stages in plain words, with exactly one marked current: the
+// first stage not finished. A stage with a problem (a receipt exception, an
+// invoice variance, a match to review) shows as a warning instead.
 function poTimeline(po: PurchaseOrder, facts: ProcurementRuntimeFacts, day: (value?: string | null) => string): TimelineStep[] {
+  const code = purchaseOrderStatusCode(po.status);
   const receipt = receivedStatus(po, facts);
   const invoice = invoiceStatus(po, facts);
   const match = matchStatus(po, facts);
-  return [
-    { label: "来源确认", status: "done", helper: po.sourceRequest || po.sourceRfq || "直接创建（无采购申请或询价单）" },
-    { label: "PO 已建立", status: "done", helper: day(po.created) },
-    { label: "收货证据", status: receipt === "未收货" ? "pending" : receipt === "异常处理" ? "warning" : "done", helper: receipt },
-    { label: "发票证据", status: invoice === "未开票" ? "pending" : invoice === "发票差异" ? "warning" : "done", helper: invoice },
-    { label: "三单匹配", status: match === "已匹配" ? "done" : ["缺少发票", "缺少收货", "尚无可匹配", "无需匹配"].includes(match) ? "pending" : "warning", helper: match },
-    { label: "人工复核", status: match === "已匹配" ? "pending" : "current", helper: nextStepForPo(po, facts) },
+  const placed = !NOT_ISSUED_PO_STATUSES.has(po.status) && !NOT_ISSUED_PO_STATUSES.has(code);
+  const received = receipt === "已收货";
+  const invoiced = invoice === "已开票" || invoice === "已付款";
+  const matched = match === "已匹配" || match === "无需匹配";
+  const steps: Array<{ label: string; done: boolean; warning?: boolean; helper: React.ReactNode }> = [
+    { label: "下单", done: placed, helper: placed ? day(po.created) : nextStepForPo(po, facts) },
+    { label: "收货", done: received, warning: receipt === "异常处理", helper: receipt },
+    { label: "供应商开票", done: invoiced, warning: invoice === "发票差异", helper: invoice },
+    { label: "三单匹配", done: matched, warning: !matched && !["缺少发票", "缺少收货", "尚无可匹配"].includes(match), helper: match },
   ];
+  const current = code === "cancelled" ? -1 : steps.findIndex((step) => !step.done);
+  return steps.map((step, index) => ({
+    label: step.label,
+    status: step.done ? "done" : step.warning ? "warning" : index === current ? "current" : "pending",
+    helper: step.helper,
+  }));
 }
 
 // Statuses before the order reaches the supplier: its lines wait on the order,
@@ -894,6 +903,9 @@ export default function PurchasingOrdersPage({
     if (overdue && (!(summary?.openPurchaseOrderIds || []).includes(order.po) || !order.eta || String(order.eta) >= todayInTimeZone())) return false;
     return true;
   });
+  // One page of the list is drawn, as on the other long lists; search and
+  // filters run over every order, and a new search starts at page 1.
+  const paged = usePagedRows(filtered, PO_LIST_PAGE_SIZE, searchParams.toString());
   const selectedPO = orders.find((order) => order.po === selectedId) ?? null;
   const selectedPOTotals = poTotals(selectedPO);
   // People read document numbers; the ids stay in links and calls.
@@ -1123,7 +1135,8 @@ export default function PurchasingOrdersPage({
       { label: copy("发票状态"), value: statusChip(invoiceStatus(selectedPO, facts)) },
       { label: copy("匹配状态"), value: statusChip(matchStatus(selectedPO, facts)) },
       { label: copy("当前下一步"), value: copy(nextStepForPo(selectedPO, facts)) },
-      { label: copy("延迟 / 未收齐风险"), value: <StatusChip label={copy(delayed ? "需关注" : "未触发")} tone={delayed ? "warning" : "success"} />, helper: delayNote },
+      // Plain words: is anything late to arrive? The note says what.
+      { label: say("Late deliveries", "逾期未到"), value: <StatusChip label={delayed ? say("Some lines are late", "有逾期行") : say("None", "无")} tone={delayed ? "warning" : "success"} />, helper: delayNote },
     ];
     const lineLabel = poLineLabel;
     const grnColumns: EvidenceColumn<GrnEvidenceRow>[] = [
@@ -1268,7 +1281,7 @@ export default function PurchasingOrdersPage({
               )}
             </div>
           </div>
-          {actionNotes.length ? <p className="text-[11px] leading-4 text-slate-500" data-testid="po-action-notes">{actionNotes.join(" ")}</p> : null}
+          {actionNotes.length ? <p className="text-[11px] leading-4" style={{ color: A.sub }} data-testid="po-action-notes">{actionNotes.join(" ")}</p> : null}
         </div>
 
         <div>
@@ -1284,8 +1297,8 @@ export default function PurchasingOrdersPage({
             rows={poLines}
             currency={selectedPO.currency}
             priceHistory={(poLineId) => poLineHistoryKeys.get(poLineId) ? (
-              <div className="mt-2">
-                <PriceHistoryFacts history={poPriceHistory.histories.get(poLineHistoryKeys.get(poLineId) || "")} state={poPriceHistory.state} testId={`po-line-price-history-${poLineId}`} excludesThisOrder />
+              <div className="mt-1">
+                <PriceHistoryFacts history={poPriceHistory.histories.get(poLineHistoryKeys.get(poLineId) || "")} state={poPriceHistory.state} testId={`po-line-price-history-${poLineId}`} excludesThisOrder compact />
               </div>
             ) : null}
           />
@@ -1480,11 +1493,11 @@ export default function PurchasingOrdersPage({
               {filtered.length === 0 && (
                 <ListStateRow colSpan={8} state="empty" title={copy("当前工作区没有符合条件的采购订单。")} />
               )}
-              {filtered.map((order, index) => {
+              {paged.pageRows.map((order, index) => {
                 const firstGrn = grnsForPo(order.po, facts)[0];
                 const firstInvoice = invoicesForPo(order.po, facts)[0];
                 return (
-                  <tr key={order.po} className={listRowClass} style={listRowStyle(index, filtered.length)}>
+                  <tr key={order.po} className={listRowClass} style={listRowStyle(index, paged.pageRows.length)}>
                     <td className={`${tdIdClass} sticky left-0 z-10 truncate bg-white`}>
                       <BusinessEntityLink entityType="purchase_order" entityId={order.po} number={purchaseOrderNumber(order)} className={tableLinkClass} />
                     </td>
@@ -1518,6 +1531,7 @@ export default function PurchasingOrdersPage({
             </tbody>
           </table>
         </div>
+        <ListPager page={paged.page} pageSize={PO_LIST_PAGE_SIZE} total={filtered.length} onPage={paged.setPage} testId="po-list-pager" />
       </ListCard>
 
     </div>

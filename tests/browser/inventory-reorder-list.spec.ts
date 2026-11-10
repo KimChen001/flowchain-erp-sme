@@ -60,7 +60,8 @@ async function open(page: Page, language = "en-US", payload: unknown = { ...list
 test("the reorder list ranks by order-by date and prints every input, in English", async ({ page }) => {
   await open(page);
   const pageRoot = page.getByTestId("reorder-list-page");
-  await expect(pageRoot.getByRole("heading", { name: "Reorder list" })).toBeVisible();
+  // The page's one title is the shell's h1; the list itself repeats no heading.
+  await expect(page.getByRole("heading", { level: 1, name: "Reorder list" })).toBeVisible();
   await expect(page.getByTestId("reorder-list-scope")).toContainText("All warehouses; transfers not considered");
   await expect(page.getByTestId("reorder-list-horizon")).toContainText("Every open purchase order line counts as incoming, whatever its due date");
   await expect(page.getByTestId("reorder-list-no-reorder-point")).toContainText("1 item has no reorder point and is not checked");
@@ -186,7 +187,7 @@ test("a reorder point below the suggestion is highlighted, and only a confirmed 
 
 test("the reorder list is available in Chinese and says when nothing needs ordering", async ({ page }) => {
   await open(page, "zh-CN");
-  await expect(page.getByTestId("reorder-list-page").getByRole("heading", { name: "补货清单" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "补货清单" })).toBeVisible();
   await expect(page.getByTestId("reorder-row-RL-C")).toContainText("立即下单");
   await expect(page.getByTestId("reorder-list-horizon")).toContainText("所有未到货的采购订单行都计入在途");
   // The workspace locale here is zh-CN, so the day reads in Chinese; units

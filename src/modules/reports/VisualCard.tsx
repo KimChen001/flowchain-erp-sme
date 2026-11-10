@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useDialogFocus } from "../../components/ui/useDialogFocus";
 import type { ECElementEvent } from "echarts/core";
 import { BarChart3, Download, ImageDown, Maximize2, Table2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -91,12 +92,8 @@ export function VisualCard({ chart, context, className = "", onDrill, onCrossFil
   const notes = [...new Set((chart.limitations || []).map(code => LIMITATION_NOTES[code]).filter(Boolean))];
   const largeContext = useMemo(() => ({ ...context, large: true }), [context]);
   const height = chartHeight(chart);
-  useEffect(() => {
-    if (!focused) return;
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setFocused(false); };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [focused]);
+  const focusDialog = useRef<HTMLDivElement>(null);
+  useDialogFocus(focused, focusDialog, () => setFocused(false));
   const downloadImage = async () => {
     const instance = (focused ? focusRef : chartRef).current?.instance();
     if (!instance) return;
@@ -139,7 +136,7 @@ export function VisualCard({ chart, context, className = "", onDrill, onCrossFil
       {footer}
     </Card>
     {focused && <div className="fc-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-[2px]" onMouseDown={event => { if (event.currentTarget === event.target) setFocused(false); }}>
-      <div role="dialog" aria-modal="true" aria-label={`${copy("Focus mode")}: ${title}`} className="fc-dialog-enter w-full max-w-6xl rounded-2xl bg-white p-6 shadow-2xl">
+      <div ref={focusDialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`${copy("Focus mode")}: ${title}`} className="fc-dialog-enter outline-none w-full max-w-6xl rounded-2xl bg-white p-6 shadow-2xl">
         {header(true)}
         <div className="mt-4"><VisualBody chart={chart} context={largeContext} height={Math.max(420, Math.round(window.innerHeight * 0.66))} mode={mode} chartRef={focusRef} onCrossFilter={(key, value) => { setFocused(false); onCrossFilter(key, value); }} /></div>
         {footer}

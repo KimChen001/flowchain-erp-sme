@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from "react";
+import React, { useLayoutEffect, useRef, useState, useId } from "react";
 import { FileSpreadsheet, Plus, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { A, Card } from "./index";
 import { typography } from "./typography";
@@ -71,6 +71,7 @@ export function ListSearchCard({ title, subtitle, actions, children }: {
 }) {
   const say = useListCopy();
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const moreFiltersId = useId();
   const [first, ...rest] = React.Children.toArray(children);
   return (
     <Card className="p-4 sm:p-5">
@@ -83,12 +84,13 @@ export function ListSearchCard({ title, subtitle, actions, children }: {
       </div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4" data-testid="list-search-fields">
         {first}
-        {rest.length > 0 && <div className={filtersOpen ? "contents" : "hidden md:contents"} data-testid="list-search-more-filters">{rest}</div>}
+        {rest.length > 0 && <div id={moreFiltersId} className={filtersOpen ? "contents" : "hidden md:contents"} data-testid="list-search-more-filters">{rest}</div>}
       </div>
       {rest.length > 0 && (
         <button
           type="button"
           aria-expanded={filtersOpen}
+          aria-controls={moreFiltersId}
           onClick={() => setFiltersOpen((open) => !open)}
           className={`mt-3 md:hidden ${listButtonClass.secondary}`}
           data-testid="list-search-filters-toggle"

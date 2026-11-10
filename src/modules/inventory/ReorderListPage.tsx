@@ -259,10 +259,8 @@ export default function ReorderListPage() {
   return (
     <div className="space-y-4" data-testid="reorder-list-page">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold">{t("title")}</h2>
-          <p className="mt-1 max-w-3xl text-xs leading-5" style={{ color: A.sub }}>{t("subtitle")}</p>
-        </div>
+        {/* The page title above already says "Reorder list"; this line explains it. */}
+        <p className="max-w-3xl text-xs leading-5" style={{ color: A.sub }}>{t("subtitle")}</p>
         <button onClick={load} aria-label={t("refresh")} className="rounded-md p-2" style={{ color: A.blue }}>
           <RefreshCw size={16} />
         </button>

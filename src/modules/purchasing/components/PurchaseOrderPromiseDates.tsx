@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { readAuthorizationContext } from "../../../lib/authorizationContext";
 import { toast } from "sonner";
 import { apiJson } from "../../../lib/api-client";
 import { useI18n } from "../../../i18n/I18n";
@@ -35,7 +36,7 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
   const load = () => apiJson<PurchaseOrderPromises>(`/api/procurement/orders/${encodeURIComponent(poId)}`).then(setPo).catch(() => setPo(null));
   useEffect(() => { void load(); }, [poId]);
   useEffect(() => {
-    apiJson<{ effectivePermissions?: string[] }>("/api/authorization/context").then((context) => setCanRevise((context.effectivePermissions || []).includes("procurement.purchase_order.revise"))).catch(() => setCanRevise(false));
+    readAuthorizationContext().then((context) => setCanRevise((context.effectivePermissions || []).includes("procurement.purchase_order.revise"))).catch(() => setCanRevise(false));
   }, []);
   if (!po || !po.lines.length) return null;
   const revisable = canRevise && REVISABLE.has(po.status);

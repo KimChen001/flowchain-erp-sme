@@ -277,7 +277,7 @@ function RuntimeHomepage() {
             <h2 className="text-sm font-semibold">{t("workTitle")}</h2>
             <p className="mt-0.5 text-xs" style={{ color: A.sub }}>{t("workNote")}</p>
           </div>
-          <button onClick={load} aria-label={t("refresh")}><RefreshCw size={15} /></button>
+          <button onClick={load} aria-label={t("refresh")} title={t("refresh")} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100"><RefreshCw size={15} /></button>
         </div>
         {state === "loading" ? (
           <div className="py-10 text-center text-xs">{t("loading")}</div>
@@ -292,7 +292,7 @@ function RuntimeHomepage() {
               <li key={item.id} className="flex items-start gap-3 py-3" data-testid="today-work-item" data-kind={item.kind}>
                 {/* A fixed column, so every row's title starts at the same place;
                     on a phone the date sits above the title instead. */}
-                <div className="mt-0.5 hidden w-48 shrink-0 sm:block" data-testid="today-work-date">
+                <div className="mt-0.5 hidden w-36 shrink-0 sm:block" data-testid="today-work-date">
                   <span className="inline-block max-w-full rounded px-2 py-1 text-xs font-medium" style={tone(item)}>{dateText(item)}</span>
                 </div>
                 <div className="min-w-0 flex-1">

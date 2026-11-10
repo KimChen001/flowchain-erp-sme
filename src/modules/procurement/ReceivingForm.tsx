@@ -276,14 +276,14 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
         <dl className="mt-4 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
           <div><dt style={{ color: A.sub }}>{tr("purchaseOrder")}</dt><dd className="mt-1 font-medium"><DocumentNumber type="purchase_order" id={po.id} number={po.number} /></dd></div>
           <div><dt style={{ color: A.sub }}>{tr("supplier")}</dt><dd className="mt-1 font-medium">{po.supplierName || "—"}</dd></div>
-          <label className="block"><span style={{ color: A.sub }}>{tr("warehouse")} *</span>
+          <label className="block text-xs"><span style={{ color: A.sub }}>{tr("warehouse")} *</span>
             <select aria-label={tr("warehouse")} value={warehouseId} onChange={(event) => changeWarehouse(event.target.value)} className={`${inputClass} mt-1`}>
               <option value="">{tr("selectWarehouse")}</option>
               {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.code} · {warehouse.name}</option>)}
             </select>
             <PrefillSourceChip entry={prefill?.warehouseId} current={warehouseId} testId="receiving-prefill-warehouse" />
           </label>
-          <label className="block"><span style={{ color: A.sub }}>{tr("arrivedAt")} *</span>
+          <label className="block text-xs"><span style={{ color: A.sub }}>{tr("arrivedAt")} *</span>
             <input aria-label={tr("arrivedAt")} type="datetime-local" value={arrivedAt} onChange={(event) => setArrivedAt(event.target.value)} className={`${inputClass} mt-1`} />
             <span className="mt-1 block text-[11px]" style={{ color: A.sub }}>{tr("timezone")}: {timezone}</span>
             <PrefillSourceChip entry={prefill?.arrivedAt} current={arrivedAt} testId="receiving-prefill-arrival" />

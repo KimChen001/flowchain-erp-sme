@@ -178,7 +178,7 @@ function Landing({ entry }: { entry: Entry }) {
             to={to}
             className="rounded-xl border border-slate-200 bg-white p-5 transition-colors hover:border-blue-200 hover:bg-blue-50/30"
           >
-            <h3 className="font-semibold">{title}</h3>
+            <h2 className="text-lg font-semibold">{title}</h2>
             <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
             <span className="mt-4 inline-block text-sm font-semibold text-blue-600">
               {copy("打开工作台 →")}
