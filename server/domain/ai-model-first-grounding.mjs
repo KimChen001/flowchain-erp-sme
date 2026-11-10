@@ -50,7 +50,10 @@ const LIMIT_CLAIMS = [
 
 // Record numbers: letters, then hyphenated parts ending in digits.
 const RECORD = /(?<![\w-])[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+[A-Za-z0-9]*(?![\w-])/g
-const NOT_RECORD = /^tier-\d$/i
+// Words written with a number that are no record: tier-1, and top-10,
+// last-30 and the like (2026-11-10 on Flash: "that top-10 share" was marked
+// as an unknown record).
+const NOT_RECORD = /^(?:tier|top|bottom|first|last|next|past|best|worst)-\d+$/i
 
 // The record numbers in a text as this check reads them, NFKC-normalised.
 export function aiGroundingRecordNumbers(value) {
@@ -151,7 +154,9 @@ function currencyCodes(word) {
 
 // Fields that hold a document's own words (search_documents passages): a
 // number or a date written in them counts as given, whatever it measures.
-const PROSE_KEYS = new Set(['excerpt', 'section', 'document'])
+// A supplier tier's reason is a person's words too (2026-11-10 on Flash: its
+// "No. 2 of 200 products… 7% of purchase spend", quoted, was flagged).
+const PROSE_KEYS = new Set(['excerpt', 'section', 'document', 'tierReason'])
 const PROSE_NUMBER = /(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w.])\d+(?:\.\d+)?/g
 // A count a passage writes as a word ("within three business days",
 // 三个工作日), which an answer writes as 3. From two to twenty only: "one" and

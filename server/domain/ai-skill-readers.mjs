@@ -46,6 +46,8 @@ const isRecent = (day, asOf) => {
 }
 const UNCOMMITTED_INVOICE_STATUSES = new Set(['draft', 'cancelled', 'canceled', 'void', 'voided'])
 const RAW_LIMIT = 500
+// How many of an item's latest receipts the facts keep.
+const LATEST_RECEIPTS = 3
 const committedInvoiceStatuses = new Set(RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES)
 const SUBJECT_SOURCE = { purchase_orders: 'purchase_orders', purchase_requests: 'purchase_requests', rfqs: 'rfqs', receipts: 'receipts', supplier_invoices: 'supplier_invoices', inventory_balances: 'inventory', items: 'inventory', suppliers: 'suppliers' }
 
@@ -276,8 +278,14 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
     // The contact a draft is addressed to, from master data, only for readers
     // who may prepare drafts.
     const tierOf = (value) => ([1, 2, 3].includes(Number(value)) ? Number(value) : null)
+    // A tier keeps the reason the person who set it wrote, and when and by
+    // whom, as the supplier page shows them (2026-11-09 on Flash: "Acme 是几级
+    // 供应商？为什么？" was answered "the records do not say why").
+    const tierBasis = (row) => (tierOf(row.tier) && text(row.tierReason)
+      ? { tierReason: text(row.tierReason), tierSetOn: row.tierSetAt ? new Date(row.tierSetAt).toISOString().slice(0, 10) : null, tierSetBy: text(row.tierSetBy?.name) || null }
+      : {})
     facts.suppliers = array(business.suppliers).map((row) => ({
-      id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName), tier: tierOf(row.tier),
+      id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName), tier: tierOf(row.tier), ...tierBasis(row),
       ...(visibility.canDraft ? { email: text(row.email) || null, contactName: text(row.contactName) || null } : {}),
     })).filter((row) => row.id && row.name)
   }
@@ -431,12 +439,28 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
       unit: [...new Set(array(row.lines).map((line) => text(line.unit)).filter(Boolean))].join('/') || null,
       poOpen: openPoIds.has(text(row.poId)),
     }))
+    // Each item's latest receipts, newest first: what it last received and
+    // when, from the receipts read (2026-11-09 on Flash: "When did we last
+    // receive 85123A?" had no receipt lines to read). Reversed ones are left out.
+    const bySku = {}
+    for (const row of array(business.receipts)) {
+      if (row.reversedAt || text(row.postingStatus) === 'reversed') continue
+      for (const line of array(row.lines)) {
+        const sku = text(line.sku)
+        const accepted = amount(line.acceptedQty) ?? 0
+        if (!sku || accepted <= 0) continue
+        ;(bySku[sku] ||= []).push({ id: text(row.id), documentNumber: text(row.documentNumber || row.id), poId: text(row.poId) || null, supplier: text(row.supplierName || row.supplierId) || null, arrivedDay: dayOf(row.arrivedAt), accepted, rejected: amount(line.rejectedQty) ?? 0, unit: text(line.unit) || null, postingStatus: text(row.postingStatus) || null })
+      }
+    }
+    for (const sku of Object.keys(bySku)) bySku[sku] = bySku[sku].sort((a, b) => text(b.arrivedDay).localeCompare(text(a.arrivedDay)) || b.documentNumber.localeCompare(a.documentNumber)).slice(0, LATEST_RECEIPTS)
     facts.receipts = {
       // A rejection is still actionable while its purchase order is open.
       rejected: receipts.filter((row) => row.rejected > 0 && row.poOpen),
       unposted: receipts.filter((row) => row.postingStatus === 'unposted'),
       // Arrived in the last AI_SKILL_RECENT_DAYS days, for recent supplier activity.
       recent: receipts.filter((row) => isRecent(row.arrivedDay, facts.asOf)).map(({ id, documentNumber, supplierId, supplier, arrivedDay }) => ({ id, documentNumber, supplierId, supplier, arrivedDay })),
+      latestBySku: bySku,
+      read: receipts.length,
     }
   }
 

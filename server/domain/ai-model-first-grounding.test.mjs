@@ -335,3 +335,22 @@ test('aging bucket labels are no figures in an answer about overdue or aged amou
   // Without an aging cue the same figures are read as figures.
   assert.deepEqual(numbers('Order 31–60 units next month.'), ['31', '60'])
 })
+
+// 2026-11-10 on Flash: "To put a number on that top-10 share" was marked as
+// a record no result holds.
+test('top-10 and the like are words, not record numbers; their number is checked as a figure, and an unknown record still is', () => {
+  const customers = Array.from({ length: 10 }, (_, index) => ({ customer: `Customer ${14090 + index} (United Kingdom)`, amount: 1000 - index * 10, currency: 'GBP' }))
+  const problems = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results: [{ rows: customers, total: 10, share: 0.331 }] }).problems.map((row) => `${row.kind}:${row.value}`)
+  assert.deepEqual(problems('That top-10 share is 33.1% of the month.'), [])
+  assert.deepEqual(problems('That top-12 share is 33.1% of the month.'), ['number:12'])
+  assert.deepEqual(problems('PO-202611-9999 is late.'), ['record:PO-202611-9999'])
+})
+
+// 2026-11-10 on Flash: "Acme 是几级供应商？为什么？" quoted the buyer's reason.
+test('figures in a tier reason count as the words of the person who wrote it', () => {
+  const reason = 'Tier 1: sole source of our White Hanging Heart T-Light Holder (No. 2 of 200 products by sales value over the last 12 months) and of 4 other 85xxx lines; 7% of purchase spend over the last 12 months.'
+  const numbers = (answer, results) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
+  const answer = 'Acme 是 1 级供应商：按过去 12 个月的销售价值在 200 个产品中排第 2，另有 4 个 85xxx 物料，占采购支出的 7%。'
+  assert.deepEqual(numbers(answer, [{ rows: [{ name: 'Acme Home Goods', tier: 1, tierReason: reason }] }]), [])
+  assert.deepEqual(numbers(answer, [{ rows: [{ name: 'Acme Home Goods', tier: 1, note: reason }] }]).sort(), ['12', '2', '200', '4', '7%'].sort())
+})
