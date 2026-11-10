@@ -29,12 +29,22 @@ const order = (id: string, status: string, currency = 'USD') => ({
   lines: [{ poLineId: `${id}-L1`, sku: 'SKU-1', itemName: 'Control module', quantityOrdered: 200, quantityReceived: 0, unit: 'pcs', unitPrice: 12, currency, status: 'pending_receipt' }],
 });
 
+// The workbench mock: the list and Order lines read every order; the PO
+// detail reads one order from /api/purchase-orders-workbench/:id.
+async function routeWorkbench(page: Page, purchaseOrders: ReturnType<typeof order>[]) {
+  await page.route('**/api/purchase-orders-workbench**', route => {
+    const id = new URL(route.request().url()).pathname.match(/\/api\/purchase-orders-workbench\/([^/]+)$/)?.[1];
+    if (!id) return route.fulfill({ json: { purchaseOrders, receivingDocs: [], supplierInvoices: [] } });
+    const found = purchaseOrders.find((row) => row.po === decodeURIComponent(id));
+    return found
+      ? route.fulfill({ json: { purchaseOrder: found, receivingDocs: [], supplierInvoices: [], documentLinks: [], procurementFollowups: [] } })
+      : route.fulfill({ status: 404, json: { code: 'PURCHASE_ORDER_NOT_FOUND', message: 'Purchase order not found.' } });
+  });
+}
+
 test('PO currency follows the document; cancelled orders are excluded from open fulfillment', async ({ page }) => {
   await signIn(page);
-  await page.route('**/api/purchase-orders-workbench*', route => route.fulfill({ json: {
-    purchaseOrders: [order('PO-CANCELLED', 'cancelled'), order('PO-OPEN', 'issued'), order('PO-EUR', 'issued', 'EUR')],
-    receivingDocs: [], supplierInvoices: [],
-  } }));
+  await routeWorkbench(page, [order('PO-CANCELLED', 'cancelled'), order('PO-OPEN', 'issued'), order('PO-EUR', 'issued', 'EUR')]);
   await page.goto('/app/procurement/orders/PO-CANCELLED');
   await expect(page.getByTestId('po-line-cards')).toContainText('$2,400.00');
   await expect(page.getByTestId('po-line-cards')).toContainText('$12.00');

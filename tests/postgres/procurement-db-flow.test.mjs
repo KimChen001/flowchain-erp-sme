@@ -464,6 +464,15 @@ test('step 3b: an approved PR becomes an approved PO (POST /api/procurement/requ
   const workbench = await api(tokens.managerA, 'GET', '/api/purchase-orders-workbench')
   const benchRow = workbench.body.purchaseOrders.find((row) => row.id === po.id)
   assert.deepEqual([benchRow?.po, benchRow?.number], [po.id, po.number])
+  // The PO detail reads only this order, by id or by its number, as the workbench shows it.
+  const single = await api(tokens.managerA, 'GET', `/api/purchase-orders-workbench/${encodeURIComponent(po.id)}`)
+  assert.equal(single.status, 200, describe(single))
+  assert.deepEqual(single.body.purchaseOrder, benchRow)
+  const singleByNumber = await api(tokens.managerA, 'GET', `/api/purchase-orders-workbench/${encodeURIComponent(po.number)}`)
+  assert.deepEqual([singleByNumber.status, singleByNumber.body.purchaseOrder?.po], [200, po.id])
+  const listView = await api(tokens.managerA, 'GET', '/api/purchase-orders-workbench?view=list')
+  const listRow = listView.body.purchaseOrders.find((row) => row.id === po.id)
+  assert.deepEqual([listRow?.number, listRow?.lines.length], [po.number, benchRow.lines.length])
   const document = await api(tokens.managerA, 'GET', `/api/procurement/documents/po/${encodeURIComponent(po.number)}`)
   assert.deepEqual([document.status, document.body.document?.id, document.body.document?.number], [200, po.id, po.number])
   const search = await api(tokens.managerA, 'GET', `/api/search?q=${encodeURIComponent(po.number)}`)
@@ -844,6 +853,18 @@ test('a second tenant cannot see or change the first tenant\'s purchase orders a
   const workbench = await api(tokens.managerB, 'GET', '/api/purchase-orders-workbench')
   assert.deepEqual(workbench.body.purchaseOrders.filter((po) => po.id.startsWith('PO-FLOW-')), [])
   assert.deepEqual(workbench.body.receivingDocs.filter((doc) => doc.poId === approvedPoId), [])
+  // One order of the first tenant answers the second as an unknown id does.
+  const foreignOrder = await api(tokens.managerB, 'GET', `/api/purchase-orders-workbench/${approvedPoId}`)
+  assert.equal(foreignOrder.status, 404, describe(foreignOrder))
+  const unknownOrder = await api(tokens.managerA, 'GET', '/api/purchase-orders-workbench/PO-FLOW-NONE')
+  assert.deepEqual([unknownOrder.status, unknownOrder.body], [foreignOrder.status, foreignOrder.body])
+  const ownOrder = await api(tokens.managerA, 'GET', `/api/purchase-orders-workbench/${approvedPoId}`)
+  assert.equal(ownOrder.status, 200, describe(ownOrder))
+  assert.equal(ownOrder.body.purchaseOrder.po, approvedPoId)
+  // The order's receipts, as the full workbench lists them for it.
+  const ownWorkbench = await api(tokens.managerA, 'GET', '/api/purchase-orders-workbench')
+  assert.deepEqual(ownOrder.body.receivingDocs, ownWorkbench.body.receivingDocs.filter((doc) => doc.po === approvedPoId))
+  assert.ok(ownOrder.body.receivingDocs.some((doc) => doc.grn === postedGrnId))
 
   const detail = await api(tokens.managerB, 'GET', `/api/mobile/purchase-orders/${pendingId}`)
   assert.equal(detail.status, 404, describe(detail))
@@ -868,7 +889,7 @@ test('the PO, PR and RFQ list endpoints answer once instead of falling through t
   // A route that sends a response but does not report the request as handled
   // lets the dispatcher run later routes, which write a second response and
   // log ERR_HTTP_HEADERS_SENT as a server error on every page load.
-  for (const path of ['/api/purchase-orders-workbench', '/api/purchase-orders', '/api/purchase-requests', '/api/rfqs']) {
+  for (const path of ['/api/purchase-orders-workbench', '/api/purchase-orders-workbench?view=list', `/api/purchase-orders-workbench/${approvedPoId}`, '/api/purchase-orders', '/api/purchase-requests', '/api/rfqs']) {
     const before = serverErrors.length
     const result = await api(tokens.managerA, 'GET', path)
     assert.equal(result.status, 200, `${path}: ${describe(result)}`)
