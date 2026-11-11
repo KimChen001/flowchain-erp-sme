@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { FilePlus2, RefreshCw } from "lucide-react";
-import { Link } from "react-router";
-import { A, Card } from "../../components/ui";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { Link, useNavigate } from "react-router";
+import { A, Card, Field, inputStyle } from "../../components/ui";
+import { FieldError, FormActionBar, FormHeader, FormSection, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
+import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -63,8 +65,49 @@ const unbilledQuantities = (order: Order) =>
 
 // -------------------------------------------------------------- new invoice
 
+// The entry form follows the form standard (components/ui/formLayout.tsx).
+// English source copy with its Chinese translation.
+const FORM_COPY: Record<string, [string, string]> = {
+  intro: ["Record the supplier’s invoice against a posted receipt, or against an open purchase order before the goods arrive. It is saved as a draft; submit it from its page.", "按已过账的收货单录入供应商发票；货物未到时，也可以先按采购订单录入。保存为草稿后，在发票页面提交。"],
+  details: ["Invoice details", "发票信息"],
+  lines: ["Lines to invoice", "开票明细"],
+  linesIntroReceipt: ["Each quantity starts at what was received. Clear a quantity to leave that line off this invoice.", "数量默认为已收数量。清空某行的数量，该行就不计入本张发票。"],
+  linesIntroOrder: ["Each quantity starts at what was ordered and not yet invoiced. Clear a quantity to leave that line off this invoice.", "数量默认为已订购、尚未开票的数量。清空某行的数量，该行就不计入本张发票。"],
+  linesNone: ["Choose a purchase order or a posted receipt to list its lines.", "选择采购订单或已过账的收货单后，这里会列出可开票的行。"],
+  sku: ["SKU", "物料编码"],
+  item: ["Item", "物料"],
+  amount: ["Amount", "金额"],
+  total: ["Total {amount}", "合计 {amount}"],
+  totalWithTax: ["Total {amount}, tax {tax}", "合计 {amount}，含税额 {tax}"],
+  supplierRequired: ["Choose the supplier.", "请选择供应商。"],
+  sourceRequired: ["Choose the purchase order or the posted receipt this invoice is for.", "请选择本发票对应的采购订单或已过账的收货单。"],
+  numberRequired: ["Enter the supplier’s invoice number.", "请输入供应商的发票编号。"],
+  invoiceDateRequired: ["Enter the invoice date.", "请输入发票日期。"],
+  dueDateRequired: ["Enter the due date.", "请输入到期日。"],
+  lineRequired: ["Enter a quantity on at least one line.", "请至少在一行填写开票数量。"],
+  numberInvalid: ["Enter a number with at most 4 decimals.", "请输入最多 4 位小数的数字。"],
+  priceRequired: ["Enter the unit price; 0 is allowed.", "请输入单价，可以为 0。"],
+  exceedsReceived: ["More than was received and not yet invoiced ({left} left).", "超过已收、尚未开票的数量（剩余 {left}）。"],
+  exceedsOrdered: ["More than was ordered and not yet invoiced ({left} left).", "超过已订购、尚未开票的数量（剩余 {left}）。"],
+  sourceChanged: ["The purchase order or receipt changed after this page opened. Reload the page and choose it again.", "页面打开后，采购订单或收货单已有变化。请刷新页面后重新选择。"],
+  amountMismatch: ["A line amount or the total does not add up. Check the quantities, prices and tax.", "行金额或合计对不上，请检查数量、单价和税额。"],
+  failed: ["The supplier invoice was not saved.", "供应商发票未保存。"],
+};
+// A quantity, price or tax as the server reads it: at most four decimals.
+const DECIMAL = /^\d+(\.\d{1,4})?$/;
+type HeaderKey = "supplier" | "source" | "number" | "invoiceDate" | "dueDate";
+type LineKey = "quantity" | "unitPrice" | "tax";
+// Messages already in the interface language: `form` has no field of its own.
+type Problems = { form: string[]; header: Partial<Record<HeaderKey, string>>; byLine: Record<string, Partial<Record<LineKey, string>>> };
+const noProblems = (): Problems => ({ form: [], header: {}, byLine: {} });
+
 export function NewSupplierInvoice() {
-  const { t, locale } = useI18n();
+  const { t, locale, language, formatNumber } = useI18n();
+  const formCopy = useFormCopy();
+  const tr = (key: string, variables: Record<string, string> = {}) =>
+    Object.entries(variables).reduce((text, [name, value]) => text.split(`{${name}}`).join(value), FORM_COPY[key][language === "en-US" ? 0 : 1]);
+  const navigate = useNavigate();
+  const formRef = useRef<HTMLDivElement>(null);
   const [entry, setEntry] = useState<EntryData | null>(null);
   const [supplierId, setSupplierId] = useState("");
   // The purchase order narrows the receipts; with no receipt chosen the bill
@@ -78,10 +121,15 @@ export function NewSupplierInvoice() {
   // the invoice date plus the term's days.
   const [dueTyped, setDueTyped] = useState(false);
   const [lines, setLines] = useState<Record<string, { quantity?: string; unitPrice?: string; tax?: string }>>({});
-  const [plan, setPlan] = useState<Plan | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [sourceNotice, setSourceNotice] = useState("");
+  // Save checks the rules; after the first try, messages follow the fields.
+  const [checked, setChecked] = useState(false);
+  // What the server's plan refused, until the next change.
+  const [refused, setRefused] = useState<Problems | null>(null);
+  const [saveError, setSaveError] = useState("");
+  const [saveErrorCode, setSaveErrorCode] = useState<string | undefined>();
   useEffect(() => {
     void apiJson<EntryData>("/api/finance/entry-data")
       .then((data) => {
@@ -135,22 +183,22 @@ export function NewSupplierInvoice() {
   const currency = receipt?.currency || order?.currency || "";
   const linePrice = (lineId: string, purchaseOrderLineId: string | null) => lines[lineId]?.unitPrice ?? poLine(purchaseOrderLineId)?.unitPrice ?? "";
   const formLines = receipt
-    ? receipt.lines.map((line) => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.id, sku: line.sku, itemName: line.itemName, unit: line.unit, context: `${t("finance.received")} ${line.acceptedQuantity} ${line.unit || ""}` }))
+    ? receipt.lines.map((line) => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.id, sku: line.sku, itemName: line.itemName, unit: line.unit, basis: [line.acceptedQuantity] }))
     : beforeReceipt && orderOpen && order
-      ? order.lines.map((line) => ({ id: line.id, purchaseOrderLineId: line.id, receivingLineId: "", sku: line.sku, itemName: line.itemName, unit: line.unit, context: `${t("finance.ordered")} ${Number(line.orderedQuantity)} ${line.unit || ""} · ${t("finance.billed")} ${Number(line.billedQuantity || 0)}` }))
+      ? order.lines.map((line) => ({ id: line.id, purchaseOrderLineId: line.id, receivingLineId: "", sku: line.sku, itemName: line.itemName, unit: line.unit, basis: [line.orderedQuantity, line.billedQuantity || "0"] }))
       : [];
+  // The lines this invoice bills: those with a quantity above zero.
+  const billed = formLines.filter((line) => DECIMAL.test((lines[line.id]?.quantity || "").trim()) && Number(lines[line.id]?.quantity) > 0);
   const body = () => {
-    const chosen = formLines
-      .filter((line) => Number(lines[line.id]?.quantity || 0) > 0)
-      .map((line) => {
-        const quantity = lines[line.id]?.quantity || "0";
-        const unitPrice = linePrice(line.id, line.purchaseOrderLineId) || "0";
-        const tax = lines[line.id]?.tax || "0";
-        return { purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, quantity, unitPrice, lineAmount: fixed(Number(quantity) * Number(unitPrice)), enteredTaxAmount: tax };
-      });
+    const chosen = billed.map((line) => {
+      const quantity = (lines[line.id]?.quantity || "").trim();
+      const unitPrice = String(linePrice(line.id, line.purchaseOrderLineId)).trim();
+      const tax = (lines[line.id]?.tax || "").trim() || "0";
+      return { purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, quantity, unitPrice, lineAmount: fixed(Number(quantity) * Number(unitPrice)), enteredTaxAmount: tax };
+    });
     const total = chosen.reduce((sum, line) => sum + Number(line.lineAmount) + Number(line.enteredTaxAmount || 0), 0);
     return {
-      invoiceNumber,
+      invoiceNumber: invoiceNumber.trim(),
       supplierId,
       currency,
       invoiceDate: invoiceDate ? new Date(`${invoiceDate}T00:00:00.000Z`).toISOString() : "",
@@ -159,7 +207,8 @@ export function NewSupplierInvoice() {
       lines: chosen,
     };
   };
-  const reset = () => setPlan(null);
+  // Any change makes the server's last answer stale.
+  const changed = () => { setRefused(null); setSaveError(""); };
   const term = entry?.suppliers.find((row) => row.id === supplierId)?.paymentTerm || null;
   const termDue = term && term.days !== null && /^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) ? addCalendarDays(invoiceDate, term.days) : "";
   useEffect(() => {
@@ -171,109 +220,243 @@ export function NewSupplierInvoice() {
     setPoId(id);
     setReceiptId(forPo.length === 1 ? forPo[0].id : "");
     setLines(forPo.length === 1 ? receivedQuantities(forPo[0]) : !forPo.length && next ? unbilledQuantities(next) : {});
-    reset();
+    changed();
   };
   const chooseReceipt = (id: string) => {
     const next = receipts.find((row) => row.id === id);
     setReceiptId(id);
     setLines(next ? receivedQuantities(next) : order ? unbilledQuantities(order) : {});
-    reset();
+    changed();
   };
-  const preview = async () => {
-    setNotice("");
-    try {
-      setPlan(await apiJson<Plan>("/api/finance/supplier-invoices/preview", { method: "POST", body: JSON.stringify(body()) }));
-    } catch (reason) {
-      setNotice(message(reason, t("finance.loadFailed")));
+  const setLine = (lineId: string, patch: { quantity?: string; unitPrice?: string; tax?: string }) => {
+    setLines({ ...lines, [lineId]: { ...lines[lineId], ...patch } });
+    changed();
+  };
+
+  // The server's own rules, said before the request: each message under its
+  // field. Quantity left empty or 0 leaves a line off the invoice.
+  const validation = useMemo(() => {
+    const found = noProblems();
+    if (!supplierId) found.header.supplier = tr("supplierRequired");
+    if (!formLines.length) found.header.source = tr("sourceRequired");
+    if (!invoiceNumber.trim()) found.header.number = tr("numberRequired");
+    if (!invoiceDate) found.header.invoiceDate = tr("invoiceDateRequired");
+    if (!dueDate) found.header.dueDate = tr("dueDateRequired");
+    let count = 0;
+    for (const line of formLines) {
+      const quantity = (lines[line.id]?.quantity || "").trim();
+      const issue: Partial<Record<LineKey, string>> = {};
+      if (quantity && !DECIMAL.test(quantity)) issue.quantity = tr("numberInvalid");
+      else if (quantity && Number(quantity) > 0) {
+        count += 1;
+        const price = String(linePrice(line.id, line.purchaseOrderLineId)).trim();
+        if (!price) issue.unitPrice = tr("priceRequired");
+        else if (!DECIMAL.test(price)) issue.unitPrice = tr("numberInvalid");
+        const tax = (lines[line.id]?.tax || "").trim();
+        if (tax && !DECIMAL.test(tax)) issue.tax = tr("numberInvalid");
+      }
+      if (Object.keys(issue).length) found.byLine[line.id] = issue;
     }
+    if (formLines.length && !count && !Object.keys(found.byLine).length) found.form.push(tr("lineRequired"));
+    return found;
+  }, [supplierId, formLines.length, invoiceNumber, invoiceDate, dueDate, lines, receipt, order, language]);
+  const hasProblems = (problems: Problems) => problems.form.length + Object.keys(problems.header).length + Object.keys(problems.byLine).length > 0;
+
+  // The plan's refusal, put under the fields it names where it names one.
+  const fromPlan = (issues: Issue[]): Problems => {
+    const found = noProblems();
+    const ids = billed.map((line) => line.id);
+    const left = (total: unknown, before: unknown) => formatNumber(Math.max(0, Number(total || 0) - Number(before || 0)));
+    const form = (text: string) => { if (!found.form.includes(text)) found.form.push(text); };
+    for (const item of issues) {
+      const details = (item.details || {}) as Record<string, string | undefined>;
+      const decimal = /^Line (\d+) (quantity|unit price|entered tax)/.exec(item.message || "");
+      if (item.code === "SUPPLIER_INVOICE_NUMBER_REQUIRED") found.header.number = tr("numberRequired");
+      else if (item.code === "SUPPLIER_REQUIRED" || item.code === "SUPPLIER_NOT_FOUND") found.header.supplier = tr("supplierRequired");
+      else if (item.code === "SUPPLIER_INVOICE_DATE_REQUIRED") {
+        if (!invoiceDate) found.header.invoiceDate = tr("invoiceDateRequired");
+        found.header.dueDate = tr("dueDateRequired");
+      } else if (item.code === "SUPPLIER_INVOICE_LINES_REQUIRED") form(tr("lineRequired"));
+      else if (item.code === "SUPPLIER_INVOICE_QUANTITY_EXCEEDS_RECEIVED" && details.receivingLineId)
+        found.byLine[details.receivingLineId] = { ...found.byLine[details.receivingLineId], quantity: tr("exceedsReceived", { left: left(details.receivedQuantity, details.previouslyInvoicedQuantity) }) };
+      else if (item.code === "SUPPLIER_INVOICE_QUANTITY_EXCEEDS_ORDERED" && details.purchaseOrderLineId)
+        found.byLine[details.purchaseOrderLineId] = { ...found.byLine[details.purchaseOrderLineId], quantity: tr("exceedsOrdered", { left: left(details.orderedQuantity, details.previouslyInvoicedQuantity) }) };
+      else if (item.code === "FINANCE_DECIMAL_INVALID" && decimal && ids[Number(decimal[1]) - 1]) {
+        const key: LineKey = decimal[2] === "quantity" ? "quantity" : decimal[2] === "unit price" ? "unitPrice" : "tax";
+        const id = ids[Number(decimal[1]) - 1];
+        found.byLine[id] = { ...found.byLine[id], [key]: tr("numberInvalid") };
+      } else if (item.code === "SUPPLIER_INVOICE_PO_NOT_OPEN") form(t("finance.poNotBillable"));
+      else if (item.code === "SUPPLIER_INVOICE_LINE_AMOUNT_MISMATCH" || item.code === "SUPPLIER_INVOICE_TOTAL_MISMATCH" || item.code === "FINANCE_DECIMAL_INVALID") form(tr("amountMismatch"));
+      else form(tr("sourceChanged"));
+    }
+    return found;
   };
-  const create = async () => {
-    setNotice("");
+
+  // Save checks the form, then asks the server's plan (the same rules the
+  // create runs), then creates the draft.
+  const save = async () => {
+    setChecked(true);
+    setRefused(null);
+    setSaveError("");
+    setSaveErrorCode(undefined);
+    if (hasProblems(validation)) { focusFirstInvalid(formRef.current); return; }
     setBusy(true);
     try {
+      const plan = await apiJson<Plan>("/api/finance/supplier-invoices/preview", { method: "POST", body: JSON.stringify(body()) });
+      if (!plan.allowed) {
+        setRefused(fromPlan(plan.blockingIssues || []));
+        setSaveErrorCode((plan.blockingIssues || []).map((issue) => issue.code).filter(Boolean).join(" · ") || undefined);
+        focusFirstInvalid(formRef.current);
+        return;
+      }
       const result = await apiJson<{ entityId: string }>("/api/finance/supplier-invoices", {
         method: "POST",
         body: JSON.stringify({ ...body(), idempotencyKey: createSecureClientMutationId("p2p") }),
       });
       window.location.assign(`/app/procurement/bills/${encodeURIComponent(result.entityId)}`);
     } catch (reason) {
-      setNotice(message(reason, t("finance.loadFailed")));
+      setSaveError(`${tr("failed")} ${procurementErrorText(reason, language, ["Try again in a moment.", "请稍后重试。"])}`);
+      setSaveErrorCode(procurementErrorCode(reason));
     } finally {
       setBusy(false);
     }
   };
   if (!entry) return notice ? <Notice>{notice}</Notice> : <Card className="p-6">{t("common.loading")}</Card>;
   const enabled = Boolean(entry.capabilities?.["supplier-invoice"]?.enabled);
+  const shown = checked ? validation : noProblems();
+  const problems: Problems = refused
+    ? { form: [...shown.form, ...refused.form], header: { ...shown.header, ...refused.header }, byLine: { ...shown.byLine, ...Object.fromEntries(Object.entries(refused.byLine).map(([id, issue]) => [id, { ...shown.byLine[id], ...issue }])) } }
+    : shown;
+  const fieldIssues = Object.keys(problems.header).length + Object.keys(problems.byLine).length > 0;
+  const barMessage = problems.form.length || fieldIssues || saveError ? (
+    <>
+      {problems.form.map((text) => <div key={text}>{text}</div>)}
+      {fieldIssues && <div>{formCopy("checkFields")}</div>}
+      {saveError && <div>{saveError}</div>}
+    </>
+  ) : null;
+  const amountOf = (line: (typeof formLines)[number]) => {
+    const quantity = (lines[line.id]?.quantity || "").trim();
+    const price = String(linePrice(line.id, line.purchaseOrderLineId)).trim();
+    return DECIMAL.test(quantity) && Number(quantity) > 0 && DECIMAL.test(price) ? Number(quantity) * Number(price) : null;
+  };
+  const subtotal = billed.reduce((sum, line) => sum + (amountOf(line) || 0), 0);
+  const tax = billed.reduce((sum, line) => sum + (DECIMAL.test((lines[line.id]?.tax || "").trim()) ? Number(lines[line.id]?.tax) : 0), 0);
+  const quantityText = (value: string, unit: string | null) => `${formatNumber(Number(value))}${unit ? ` ${unit}` : ""}`;
+  const cellInputClass = "w-24 rounded-lg border px-2 py-1.5 text-sm tabular-nums";
+  const lineErrorId = (lineId: string, key: LineKey) => `supplier-invoice-${key}-${lineId}`;
+  const lineInput = (line: (typeof formLines)[number], key: LineKey, label: string, value: string) => {
+    const error = problems.byLine[line.id]?.[key];
+    return (
+      <td className="px-3 py-2">
+        <input inputMode="decimal" aria-label={`${label} ${line.sku}`} {...invalidProps(lineErrorId(line.id, key), error)} className={cellInputClass} style={{ borderColor: A.border }} value={value} onChange={(event) => setLine(line.id, { [key]: event.target.value })} />
+        {error && <FieldError id={lineErrorId(line.id, key)} className="max-w-48">{error}</FieldError>}
+      </td>
+    );
+  };
+  const basisHeads = receipt ? [t("finance.received")] : [t("finance.ordered"), t("finance.billed")];
   return (
-    <div className="space-y-4" data-testid="new-supplier-invoice">
-      {!enabled && <Notice>{t("finance.capabilityDisabled")}</Notice>}
-      {notice && <Notice>{notice}</Notice>}
-      {sourceNotice && <Notice>{sourceNotice}</Notice>}
-      <Card className="space-y-4 p-5">
-        <div className="grid gap-3 md:grid-cols-3">
-          <label className="text-xs">{t("finance.supplier")}
-            <select data-testid="supplier-invoice-supplier" className={`${field} mt-1 w-full`} value={supplierId} onChange={(event) => { setSupplierId(event.target.value); setPoId(""); setReceiptId(""); setLines({}); reset(); }}>
+    <div ref={formRef} className="space-y-5" data-testid="new-supplier-invoice">
+      <FocusFirstField />
+      <FormHeader intro={tr("intro")}>
+        {(!enabled || notice || sourceNotice) && (
+          <div className="mt-3 space-y-2">
+            {!enabled && <Notice>{t("finance.capabilityDisabled")}</Notice>}
+            {notice && <Notice>{notice}</Notice>}
+            {sourceNotice && <Notice>{sourceNotice}</Notice>}
+          </div>
+        )}
+      </FormHeader>
+
+      <FormSection title={tr("details")}>
+        <div className={formGridClass}>
+          <Field label={t("finance.supplier")} required error={problems.header.supplier}>
+            <select data-testid="supplier-invoice-supplier" style={inputStyle} value={supplierId} onChange={(event) => { setSupplierId(event.target.value); setPoId(""); setReceiptId(""); setLines({}); changed(); }}>
               <option value="">—</option>
               {entry.suppliers.map((row) => <option key={row.id} value={row.id}>{row.name}{row.code ? ` · ${row.code}` : ""}</option>)}
             </select>
-          </label>
-          <label className="text-xs">{t("finance.purchaseOrder")}
-            <select data-testid="supplier-invoice-po" className={`${field} mt-1 w-full`} value={poId} onChange={(event) => chooseOrder(event.target.value)}>
+          </Field>
+          <Field label={t("finance.purchaseOrder")} error={problems.header.source}>
+            <select data-testid="supplier-invoice-po" style={inputStyle} value={poId} onChange={(event) => chooseOrder(event.target.value)}>
               <option value="">{t("finance.anyPurchaseOrder")}</option>
               {orders.map((row) => <option key={row.id} value={row.id}>{row.number || row.id} · {row.currency}</option>)}
             </select>
-          </label>
-          <label className="text-xs">{t("finance.postedReceipt")}
-            <select data-testid="supplier-invoice-receipt" className={`${field} mt-1 w-full`} value={receiptId} onChange={(event) => chooseReceipt(event.target.value)}>
+          </Field>
+          <Field label={t("finance.postedReceipt")}>
+            <select data-testid="supplier-invoice-receipt" style={inputStyle} value={receiptId} onChange={(event) => chooseReceipt(event.target.value)}>
               <option value="">{poId ? t("finance.noReceiptYet") : "—"}</option>
               {receipts.map((row) => <option key={row.id} value={row.id}>{row.documentNumber || row.id} · {documentNumberFor("purchase_order", row.poId, row.poNumber) || "—"}{row.supplierName ? ` · ${row.supplierName}` : ""}</option>)}
             </select>
-          </label>
-          <label className="text-xs">{t("finance.invoiceNumber")}
-            <input data-testid="supplier-invoice-number" className={`${field} mt-1 w-full`} value={invoiceNumber} onChange={(event) => { setInvoiceNumber(event.target.value); reset(); }} />
-          </label>
-          <label className="text-xs">{t("finance.invoiceDate")}
-            <input type="date" className={`${field} mt-1 w-full`} value={invoiceDate} onChange={(event) => { setInvoiceDate(event.target.value); reset(); }} />
-          </label>
-          <label className="text-xs">{t("finance.dueDate")}
-            <input type="date" data-testid="supplier-invoice-due" className={`${field} mt-1 w-full`} value={dueDate} onChange={(event) => { setDueDate(event.target.value); setDueTyped(true); reset(); }} />
-            {!dueTyped && termDue && dueDate === termDue && term && <span className="mt-1 block text-slate-500" data-testid="supplier-invoice-due-terms">{t("finance.dueFromTerms", { term: term.name, days: String(term.days) })}</span>}
-          </label>
-          <div className="text-xs">{t("finance.currency")}<div className="mt-1 rounded-lg bg-slate-50 px-3 py-2 text-sm">{currency || "—"}</div></div>
+          </Field>
+          <Field label={t("finance.currency")}>
+            <input readOnly data-testid="supplier-invoice-currency" style={{ ...inputStyle, background: A.gray6 }} value={currency || "—"} />
+          </Field>
+          <Field label={t("finance.invoiceNumber")} required error={problems.header.number}>
+            <input data-testid="supplier-invoice-number" style={inputStyle} value={invoiceNumber} onChange={(event) => { setInvoiceNumber(event.target.value); changed(); }} />
+          </Field>
+          <Field label={t("finance.invoiceDate")} required error={problems.header.invoiceDate}>
+            <input type="date" style={inputStyle} value={invoiceDate} onChange={(event) => { setInvoiceDate(event.target.value); changed(); }} />
+          </Field>
+          <Field label={t("finance.dueDate")} required error={problems.header.dueDate}>
+            <input type="date" data-testid="supplier-invoice-due" style={inputStyle} value={dueDate} onChange={(event) => { setDueDate(event.target.value); setDueTyped(true); changed(); }} />
+            {!dueTyped && termDue && dueDate === termDue && term ? <span className="block text-[12px] leading-[18px]" style={{ color: A.sub }} data-testid="supplier-invoice-due-terms">{t("finance.dueFromTerms", { term: term.name, days: String(term.days) })}</span> : null}
+          </Field>
         </div>
-        {beforeReceipt && orderOpen && <div data-testid="supplier-invoice-before-receipt"><Notice>{t("finance.billBeforeReceipt")}</Notice></div>}
-        {beforeReceipt && !orderOpen && <Notice>{order?.id}: {t("finance.poNotBillable")}</Notice>}
-        {receipt && !receipt.lines.length && <Notice>{t("finance.noReceiptLines")}</Notice>}
-        {formLines.map((line) => {
-          const po = poLine(line.purchaseOrderLineId);
-          return (
-            <div key={line.id} data-testid="supplier-invoice-line" className="grid items-end gap-3 rounded-xl bg-slate-50 p-3 md:grid-cols-5">
-              <div className="md:col-span-2">
-                <div className="font-medium">{line.sku} · {line.itemName}</div>
-                <div className="text-xs text-slate-500">{line.context} · {t("finance.poPrice")} {po?.unitPrice === null || po?.unitPrice === undefined ? "—" : money(po.unitPrice, currency, locale)}</div>
-              </div>
-              <label className="text-xs">{t("finance.quantity")}
-                <input inputMode="decimal" aria-label={`${t("finance.quantity")} ${line.sku}`} className={`${field} mt-1 w-full`} value={lines[line.id]?.quantity || ""} onChange={(event) => { setLines({ ...lines, [line.id]: { ...lines[line.id], quantity: event.target.value } }); reset(); }} />
-              </label>
-              <label className="text-xs">{t("finance.unitPrice")}
-                <input inputMode="decimal" aria-label={`${t("finance.unitPrice")} ${line.sku}`} className={`${field} mt-1 w-full`} value={linePrice(line.id, line.purchaseOrderLineId) || ""} onChange={(event) => { setLines({ ...lines, [line.id]: { ...lines[line.id], unitPrice: event.target.value } }); reset(); }} />
-              </label>
-              <label className="text-xs">{t("finance.tax")}
-                <input inputMode="decimal" aria-label={`${t("finance.tax")} ${line.sku}`} className={`${field} mt-1 w-full`} value={lines[line.id]?.tax || ""} onChange={(event) => { setLines({ ...lines, [line.id]: { ...lines[line.id], tax: event.target.value } }); reset(); }} />
-              </label>
+      </FormSection>
+
+      <FormSection
+        title={tr("lines")}
+        description={formLines.length ? tr(receipt ? "linesIntroReceipt" : "linesIntroOrder") : undefined}
+        right={billed.length ? <span className="text-sm font-semibold tabular-nums" style={{ color: A.label }} data-testid="supplier-invoice-total">{tax > 0 ? tr("totalWithTax", { amount: money(subtotal + tax, currency, locale), tax: money(tax, currency, locale) }) : tr("total", { amount: money(subtotal, currency, locale) })}</span> : undefined}
+        testId="supplier-invoice-lines"
+      >
+        <div className="space-y-3">
+          {beforeReceipt && orderOpen && <div data-testid="supplier-invoice-before-receipt"><Notice>{t("finance.billBeforeReceipt")}</Notice></div>}
+          {beforeReceipt && !orderOpen && <Notice>{order?.number || order?.id}: {t("finance.poNotBillable")}</Notice>}
+          {receipt && !receipt.lines.length && <Notice>{t("finance.noReceiptLines")}</Notice>}
+          {!poId && !receiptId && <p className="text-sm" style={{ color: A.sub }}>{tr("linesNone")}</p>}
+          {formLines.length > 0 && (
+            <div className="overflow-x-auto rounded-lg border" style={{ borderColor: A.border }}>
+              <table className="w-full min-w-[860px] text-left text-sm">
+                <thead className="bg-gray-50 text-xs" style={{ color: A.sub }}>
+                  <tr>
+                    {/* Figures read right-aligned; the inputs keep the left edge. */}
+                    {[[tr("sku"), false], [tr("item"), false], ...basisHeads.map((head) => [head, true] as const), [t("finance.poPrice"), true], [t("finance.quantity"), false], [t("finance.unitPrice"), false], [t("finance.tax"), false], [tr("amount"), true]].map(([head, right]) => (
+                      // The item name takes the spare width, so the input columns stay narrow.
+                      <th key={String(head)} className={`whitespace-nowrap px-3 py-2 font-medium${right ? " text-right" : ""}${head === tr("item") ? " w-full" : ""}`}>{head}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {formLines.map((line) => {
+                    const po = poLine(line.purchaseOrderLineId);
+                    const amount = amountOf(line);
+                    return (
+                      <tr key={line.id} data-testid="supplier-invoice-line" className="border-t align-top" style={{ borderColor: A.border }}>
+                        <td className="whitespace-nowrap px-3 pb-2 pt-[15px] font-mono text-xs">{line.sku}</td>
+                        <td className="min-w-40 px-3 pb-2 pt-[15px]">{line.itemName}</td>
+                        {line.basis.map((value, index) => <td key={index} className="whitespace-nowrap px-3 pb-2 pt-[15px] text-right tabular-nums">{quantityText(value, line.unit)}</td>)}
+                        <td className="whitespace-nowrap px-3 pb-2 pt-[15px] text-right tabular-nums">{po?.unitPrice === null || po?.unitPrice === undefined ? "—" : money(po.unitPrice, currency, locale)}</td>
+                        {lineInput(line, "quantity", t("finance.quantity"), lines[line.id]?.quantity || "")}
+                        {lineInput(line, "unitPrice", t("finance.unitPrice"), String(linePrice(line.id, line.purchaseOrderLineId) || ""))}
+                        {lineInput(line, "tax", t("finance.tax"), lines[line.id]?.tax || "")}
+                        <td className="whitespace-nowrap px-3 pb-2 pt-[15px] text-right tabular-nums">{amount === null ? "—" : money(amount, currency, locale)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          );
-        })}
-        <div className="flex flex-wrap gap-2">
-          <button type="button" data-testid="supplier-invoice-preview" className={`${button} border border-slate-200`} disabled={!enabled || !formLines.length} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
-          <button type="button" data-testid="supplier-invoice-create" className={`${button} text-white`} style={{ background: A.blue }} disabled={!enabled || !plan?.allowed || busy} onClick={() => void create()}><FilePlus2 size={14} />{t("finance.createDraft")}</button>
+          )}
         </div>
-        {plan && (
-          plan.allowed
-            ? <Notice tone="success">{t("finance.previewAllowed")} · {money(plan.invoice?.totalAmount, plan.invoice?.currency || currency, locale)}</Notice>
-            : <Notice>{(plan.blockingIssues || []).map((issue) => issue.message).join(" · ")}</Notice>
-        )}
-      </Card>
+      </FormSection>
+
+      <FormActionBar
+        onCancel={() => (window.history.length > 1 ? navigate(-1) : navigate("/app/procurement/bills"))}
+        submit={{ label: t("finance.createDraft"), onClick: () => void save(), busy, disabled: !enabled, testId: "supplier-invoice-create" }}
+        message={barMessage ? <div title={saveErrorCode}>{barMessage}</div> : null}
+        messageTestId="supplier-invoice-errors"
+      />
     </div>
   );
 }

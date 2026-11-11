@@ -351,7 +351,8 @@ export default function SupplierMasterPage({
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) issues.push({ field: 'email', message: 'Enter a valid email address.' });
     if (form.deliveryCycleDays && (!Number.isInteger(Number(form.deliveryCycleDays)) || Number(form.deliveryCycleDays) < 0)) issues.push({ field: 'deliveryCycleDays', message: 'Lead time must be a whole number of days, zero or greater.' });
     setFieldErrors(issues);
-    if (issues.length) { document.getElementById('supplier-' + issues[0].field)?.focus(); return; }
+    // The form focuses the first field with a message.
+    if (issues.length) return;
     savingRef.current = true; setSaving(true);
     try {
       const body: any = {

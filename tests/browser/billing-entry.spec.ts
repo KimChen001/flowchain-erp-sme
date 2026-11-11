@@ -44,7 +44,6 @@ test("a bill opened from its purchase order starts with the received goods", asy
   await expect(page.getByTestId("supplier-invoice-line").first().locator("input").first()).toHaveValue("10");
   await page.getByTestId("supplier-invoice-number").fill("UI-BILL-FROM-PO");
   await page.getByTestId("supplier-invoice-due").fill("2026-11-01");
-  await page.getByTestId("supplier-invoice-preview").click();
   await expect(page.getByTestId("supplier-invoice-create")).toBeEnabled();
   await page.getByTestId("supplier-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}$/);
@@ -55,7 +54,34 @@ test("an unknown purchase order is explained, not billed", async ({ page }) => {
   await signIn(page, "manager@example.com");
   await page.goto("/app/procurement/bills/new?po=NO-SUCH-PO");
   await expect(page.getByRole("alert").filter({ hasText: "NO-SUCH-PO" })).toBeVisible();
-  await expect(page.getByTestId("supplier-invoice-preview")).toBeDisabled();
+  // Save says what is missing, under its field, and stays on the form. The
+  // seeded workspace reads Chinese; the messages are matched in either language.
+  await page.getByTestId("supplier-invoice-create").click();
+  await expect(page.getByTestId("supplier-invoice-po")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("supplier-invoice-errors")).toContainText(/Check the highlighted fields\.|请检查标出的字段。/);
+  await expect(page).toHaveURL(/\/app\/procurement\/bills\/new\?po=NO-SUCH-PO$/);
+});
+
+test("save names a missing field under it, and the server's limit under its line", async ({ page }) => {
+  await signIn(page, "manager@example.com");
+  await page.goto("/app/procurement/bills/new?po=finance-browser-po");
+  await expect(page.getByTestId("supplier-invoice-receipt")).toHaveValue("finance-browser-grn");
+  await page.getByTestId("supplier-invoice-due").fill("");
+  await page.getByTestId("supplier-invoice-create").click();
+  const number = page.getByTestId("supplier-invoice-number");
+  await expect(number).toHaveAttribute("aria-invalid", "true");
+  await expect(number).toBeFocused();
+  await expect(page.getByText(/^(Enter the supplier’s invoice number\.|请输入供应商的发票编号。)$/)).toBeVisible();
+  await expect(page.getByText(/^(Enter the due date\.|请输入到期日。)$/)).toBeVisible();
+  await number.fill("UI-BILL-TOO-MANY");
+  await page.getByTestId("supplier-invoice-due").fill("2026-11-01");
+  // Ten were received: eleven is refused by the server's plan, on that line.
+  const line = page.getByTestId("supplier-invoice-line").first();
+  await line.locator("input").first().fill("11");
+  await page.getByTestId("supplier-invoice-create").click();
+  await expect(line.locator("input").first()).toHaveAttribute("aria-invalid", "true");
+  await expect(line).toContainText(/More than was received and not yet invoiced|超过已收、尚未开票的数量/);
+  await expect(page).toHaveURL(/\/app\/procurement\/bills\/new\?po=finance-browser-po$/);
 });
 
 test("a bill that arrives before the goods is recorded and waits for its receipt", async ({ page }) => {
@@ -68,7 +94,6 @@ test("a bill that arrives before the goods is recorded and waits for its receipt
   await expect(page.getByTestId("supplier-invoice-line").first().locator("input").first()).toHaveValue("6");
   await page.getByTestId("supplier-invoice-number").fill("UI-BILL-EARLY");
   await page.getByTestId("supplier-invoice-due").fill("2026-11-01");
-  await page.getByTestId("supplier-invoice-preview").click();
   await expect(page.getByTestId("supplier-invoice-create")).toBeEnabled();
   await page.getByTestId("supplier-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}$/);
@@ -92,7 +117,6 @@ test("a waiting bill is linked to its receipt, then matched and approved", async
   await page.getByTestId("supplier-invoice-line").first().locator("input").first().fill("4");
   await page.getByTestId("supplier-invoice-number").fill("UI-BILL-LINK");
   await page.getByTestId("supplier-invoice-due").fill("2026-11-01");
-  await page.getByTestId("supplier-invoice-preview").click();
   await expect(page.getByTestId("supplier-invoice-create")).toBeEnabled();
   await page.getByTestId("supplier-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}$/);
