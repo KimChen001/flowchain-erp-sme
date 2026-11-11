@@ -184,7 +184,20 @@ const APPROX_AFTER = /^\s*(?:左右|上下)/
 // What points at a step of a numbered list: "step 2", "steps 1 and 2", 第 2 步, 步骤 3.
 // What makes a number the size of a ranked list: "top 10", "top-10", 前 10.
 const TOP_BEFORE = /(?:\b(?:top|first|largest|biggest|leading)[\s-]*|前\s*)$/i
-const STEP_BEFORE =/(?:\bsteps?|步骤|第)[^.\n。！？!?]{0,16}$/i
+// How many rows each list of the results holds, also one cut at its limit.
+function listSizesOf(results) {
+  const sizes = new Set()
+  const walk = (value) => {
+    if (Array.isArray(value)) {
+      const objects = value.filter((row) => row && typeof row === 'object' && !Array.isArray(row))
+      if (objects.length >= 2) sizes.add(objects.length)
+      value.forEach(walk)
+    } else if (value && typeof value === 'object') Object.values(value).forEach(walk)
+  }
+  walk(results)
+  return sizes
+}
+const STEP_BEFORE = /(?:\bsteps?|步骤|第)[^.\n。！？!?]{0,16}$/i
 const COUNT_NOUN =/^\s*(?:(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?|orders?|requests?|suppliers?|customers?|lines?|records?)(?![\p{L}])|(?:个|项|张|家|种|笔|条|款))/iu
 // An answer about overdue or aged amounts, and the bucket labels it may write:
 // 1–30, 31–60, 61–90, 91–120, 121–180, over 90 days, over-90-day, 90+ days,
@@ -217,7 +230,6 @@ export function aiGroundingSources(results = []) {
   const months = new Set()
   const names = new Set()
   const nameOrigins = new Map()
-  const listSizes = new Set()
   const addDates = (value) => {
     for (const match of value.matchAll(/(?<!\d)(\d{4})-(\d{2})(?:-(\d{2}))?(?!\d)/g)) {
       months.add(`${match[1]}-${match[2]}`)
@@ -285,9 +297,6 @@ export function aiGroundingSources(results = []) {
   // own size is its total field.
   const addCounts = (rows, parent) => {
     const objects = rows.filter((row) => row && typeof row === 'object' && !Array.isArray(row))
-    // How many rows the list holds, also when it was cut at its limit, for
-    // "the top 10" of those shown (see TOP_BEFORE); not a count on its own.
-    if (objects.length >= 2) listSizes.add(objects.length)
     if (objects.length < 2 || Number(parent?.more) > 0) return
     const groups = new Map()
     for (const row of objects) {
@@ -301,7 +310,7 @@ export function aiGroundingSources(results = []) {
     for (const count of new Set(groups.values())) numbers.push({ value: count, key: 'count', currency: null, unit: null })
   }
   for (const result of array(results)) walk(result)
-  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names], nameOrigins, listSizes }
+  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names], nameOrigins }
 }
 
 const NAME_KEYS = new Set(['customer', 'customerName', 'itemName', 'name', 'supplier', 'supplierName'])
@@ -599,7 +608,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
       || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && listCount(at, num.length) === value)
       // The top N of a list a result holds N rows of ("the top 10 items",
       // 前 10 位; 2026-11-11 on Flash: the 10 was flagged).
-      || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && TOP_BEFORE.test(rest.slice(Math.max(0, at - 16), at)) && sources.listSizes.has(value))
+      || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && TOP_BEFORE.test(rest.slice(Math.max(0, at - 16), at)) && listSizesOf(results).has(value))
       // A step of the answer's own numbered list ("steps 1 and 2", 第 2 步).
       || (kind === 'plain' && !decimals && factor === 1 && value >= 1 && value <= listItems && (STEP_BEFORE.test(rest.slice(Math.max(0, at - 24), at)) || /^\s*步/.test(rest.slice(at + num.length, at + num.length + 3))))
     const figure = { label: match[0].trim(), value, tolerance, kind, decimals, group: kind === 'money' ? `money:${(currencies || []).join('/')}` : kind }
