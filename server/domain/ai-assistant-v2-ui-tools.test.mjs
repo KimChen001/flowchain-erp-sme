@@ -1050,3 +1050,18 @@ test('a question of ordering words, the time and politeness names no item', () =
   for (const question of ['帮我下个单', '帮我下个单吧', 'What should I reorder this week?', 'Place an order for me please', '这周需要补什么货？', 'Order something']) assert.equal(namesAnItem(question), false, question)
   for (const question of ['Order 100 cakestands', '帮我订 60 个蛋糕架', '订一些温度传感器', 'Order more 85123A', 'I need bird ornaments']) assert.equal(namesAnItem(question), true, question)
 })
+
+// 2026-11-11 on Flash: "add 150 of 84879 too" after "Order 100 cakestands"
+// showed the cakestand at the suggested quantity, unticked, while the text said 100.
+test('adding to a form keeps a line of the latest form at the quantity the user typed earlier', async () => {
+  const { ctx, call, build } = await workspace({ userNamedSkus: ['LDM-002'], userText: 'add 30 of LDM-002 too\nOrder 100 of LDM-001', lastFormSkus: ['ldm-001'] })
+  ctx.question = 'add 30 of LDM-002 too'
+  await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'] })
+  const form = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 100 }, { sku: 'LDM-002', quantity: 30 }] }), 'pr_form')
+  const line = (sku) => [...form.lines, ...form.suggested].find((row) => row.item.sku === sku)
+  assert.deepEqual([line('LDM-001').suggestedQuantity, form.lines.some((row) => row.item.sku === 'LDM-001')], [{ value: 100, source: 'user_named' }, true])
+  assert.equal(line('LDM-002').suggestedQuantity.value, 30)
+  // A quantity nobody typed for an item of the latest form stays the server's suggestion.
+  const other = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 77 }, { sku: 'LDM-002', quantity: 30 }] }), 'pr_form')
+  assert.notEqual([...other.lines, ...other.suggested].find((row) => row.item.sku === 'LDM-001').suggestedQuantity.value, 77)
+})

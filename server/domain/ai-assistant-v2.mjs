@@ -597,6 +597,13 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
   // grounding check: a figure the user already saw there is no invented one
   // (2026-11-04: 5 of 23 answers flagged a correct earlier figure).
   const earlierResults = [...thread.results.values()].map((entry) => entry.output)
+  // The records those results gave, read once, for the links of a text that
+  // names them.
+  let earlierRefList = null
+  const earlierRefs = () => {
+    if (!earlierRefList) earlierRefList = earlierResults.flatMap((output) => { try { return aiReadToolRefs(output) } catch { return [] } })
+    return earlierRefList
+  }
   let callCount = 0
   // The display tools withdrawn for the rest of this answer, and whether the
   // next call is the last (no tool is admitted after it).
@@ -944,10 +951,16 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     // panel's record chips. Whole means no Latin letter, digit or hyphen next
     // to it, as the panel matches it, so a number written against Chinese
     // text (PO-001已逾期) counts. A number no result holds is never among them.
+    // Also a supplier by its name, and the records this conversation's earlier
+    // results gave: a follow-up that reads nothing again still links what it
+    // names (2026-11-11 on Flash: "Show me the supplier of the oldest one"
+    // named Acme Home Goods with no link).
     const namedRefs = (value) => {
       const written = fold(value)
-      const names = (entry) => /\d/.test(entry) && new RegExp(`(?<![a-z0-9-])${escape(fold(entry))}(?![a-z0-9-])`).test(written)
-      return refs.filter((ref) => refSchema.safeParse(ref).success && [ref.label, ref.id].some((entry) => text(entry) && names(text(entry)))).map(({ type, id, label }) => ({ type, id, label })).slice(0, 60)
+      const whole = (entry) => new RegExp(`(?<![a-z0-9-])${escape(fold(entry))}(?![a-z0-9-])`).test(written)
+      const names = (ref, entry) => (/\d/.test(entry) || (ref.type === 'supplier' && entry.length >= 4)) && whole(entry)
+      const candidates = [...refs, ...earlierRefs().filter((ref) => !refs.some((row) => row.type === ref.type && row.id === ref.id))]
+      return candidates.filter((ref) => refSchema.safeParse(ref).success && [ref.label, ref.id].some((entry) => text(entry) && names(ref, text(entry)))).map(({ type, id, label }) => ({ type, id, label })).slice(0, 60)
     }
     const flagEvent = (part, spans) => {
       const named = part.replaced ? [] : namedRefs(part.text)

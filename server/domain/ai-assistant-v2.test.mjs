@@ -509,11 +509,12 @@ test('one set of follow-up chips per answer: a later call replaces the earlier, 
   assert.deepEqual(JSON.parse(lastToolResults(client.requests[1]).find((block) => block.tool_use_id === 'tu_chips').content), { shown: 'followups', partId: 'p2' })
 })
 
-test('the records a text names come with its flag, from this answer\'s results only', async () => {
+test('the records a text names come with its flag, from this conversation\'s results only', async () => {
   const { events } = await ask([OVERDUE, [...say('PO-001 and PO-008 are overdue; PO-002 is due soon. Acme Components supplies both.'), end()]])
   assertProtocol(events)
   const [flag] = ofType(events, 'flag')
-  assert.deepEqual(flag.refs, [{ type: 'purchase_order', id: 'PO-001', label: 'PO-001' }, { type: 'purchase_order', id: 'PO-008', label: 'PO-008' }])
+  // A supplier by its name too (2026-11-11).
+  assert.deepEqual(flag.refs, [{ type: 'purchase_order', id: 'PO-001', label: 'PO-001' }, { type: 'purchase_order', id: 'PO-008', label: 'PO-008' }, { type: 'supplier', id: 'SUP-001', label: 'Acme Components' }])
   assert.deepEqual(flag.spans, [{ text: 'PO-002', kind: 'record', reason: 'not_in_results' }])
   // A text that names no record of the results has no refs.
   const plain = await ask([OVERDUE, [...say('Two orders are overdue.'), end()]])
@@ -1321,6 +1322,18 @@ test('text pointing to a card no part shows gets one more round to show it', asy
   // Once only, and not without such words.
   const plain = await ask([OVERDUE, [...say('PO-001 is the most overdue.'), end()]])
   assert.equal(plain.client.requests.length, 2)
+})
+
+// 2026-11-11 on Flash: "Show me the supplier of the oldest one" read nothing
+// again and named Acme Home Goods with no link.
+test('a follow-up links the supplier and records it names from the conversation\'s earlier results', async () => {
+  const thread = { messages: [], results: new Map() }
+  await ask([OVERDUE, [...say('PO-001 and PO-008 are overdue.'), end()]], { thread })
+  const { events } = await ask([[...say('The oldest is PO-001, from Acme Components.'), end()]], { thread, question: 'Show me the supplier of the oldest one' })
+  const linked = ofType(events, 'flag').flatMap((event) => event.refs || [])
+  assert.ok(linked.some((ref) => ref.type === 'supplier' && /Acme Components/.test(ref.label)), JSON.stringify(linked))
+  assert.ok(linked.some((ref) => ref.type === 'purchase_order' && ref.label === 'PO-001'))
+  assertProtocol(events)
 })
 
 // 2026-11-11 on Flash: "Assorted Colour Bird Ornament (UCI-ITEM-84879)".

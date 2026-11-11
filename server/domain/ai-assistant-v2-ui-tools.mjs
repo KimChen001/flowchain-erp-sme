@@ -910,6 +910,10 @@ const suggestPurchaseRequest = defineUiTool({
     // did not type is the server's suggestion, not "you asked for this".
     const question = String(ctx.question ?? '').normalize('NFKC')
     const typedNumbers = new Set([...question.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, ''))))
+    // The quantities typed in this conversation's questions, and the items of
+    // its latest form.
+    const typedEarlier = new Set([...String(ctx.userText ?? '').normalize('NFKC').matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, ''))))
+    const lastForm = new Set(array(ctx.lastFormSkus).map(fold))
     const namesNoSku = !/[A-Za-z]+[A-Za-z0-9]*-\d/.test(question)
     const resolved = (line) => {
       if (input.from !== 'user_named' || !line) return null
@@ -921,6 +925,11 @@ const suggestPurchaseRequest = defineUiTool({
       const line = linesBySku.get(fold(row.item.sku))
       if (agreed) return { row, isNamed: agreed.has(fold(row.item.sku)), line }
       if (userNamed.has(fold(row.item.sku))) return { row, isNamed: true, line }
+      // A line of the latest form at a quantity the user typed earlier in
+      // this conversation stays theirs when they add to the form (2026-11-11
+      // on Flash: "add 150 of 84879 too" after "Order 100 cakestands" showed
+      // the cakestand at the suggested 60, unticked, while the text said 100).
+      if (lastForm.has(fold(row.item.sku)) && isNumber(line?.quantity) && typedEarlier.has(line.quantity)) return { row, isNamed: true, line }
       const described = resolved(line)
       return { row, isNamed: Boolean(described), line: described || line }
     })
