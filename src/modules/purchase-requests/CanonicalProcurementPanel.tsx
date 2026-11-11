@@ -1,7 +1,8 @@
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useI18n } from "../../i18n/I18n";
-import { formatCalendarDay, formatLocaleAmount, todayInTimeZone } from "../../lib/format";
+import { formatCalendarDay, formatLocaleAmount, formatQuantity, todayInTimeZone } from "../../lib/format";
+import { unitLabel } from "../../i18n/unitLabels";
 import { formatInstantDay } from "../business-documents/documentFormat";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { usePermissionSet } from "../../lib/usePermissionSet";
@@ -26,7 +27,7 @@ function signedInName() {
 }
 import { A, Card, Field, inputStyle, useConfirm } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
-import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ExportButton, ListCard, ListSearchCard, ListStateRow, PrimaryButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { FormActionBar, FormHeader, FormLineCard, FormSection, focusFirstInvalid, formGridClass, useFormCopy } from "../../components/ui/formLayout";
@@ -178,7 +179,21 @@ const missingLineFields = (lines: Line[]): FieldError[] =>
   });
 // The line fields a handoff (the assistant's purchase request draft) can fill.
 type PrefillLineField = "itemId" | "itemNameSnapshot" | "unitSnapshot" | "supplierId" | "quantity" | "estimatedUnitPrice" | "targetWarehouseId" | "needByDate" | "internalLineComment";
-type LinePrefill = { origin: PrefillOrigin; intent: string | null; lineId: string; fields: Partial<Record<PrefillLineField, PrefillEntry>>; supplierChoices: SupplierChoice[] };
+// shortfall: the reorder list's shortfall when it raised the quantity to the
+// supplier's minimum order, named in the quantity's label.
+type LinePrefill = { origin: PrefillOrigin; intent: string | null; lineId: string; fields: Partial<Record<PrefillLineField, PrefillEntry>>; supplierChoices: SupplierChoice[]; shortfall?: number };
+// A reorder list row whose shortfall was raised to the supplier's minimum
+// order hands over quantityFrom=supplier_minimum and the shortfall
+// (ReorderListPage). The quantity it hands over is that minimum, so it is
+// labelled as the supplier's minimum, not as the shortfall, while the
+// planner keeps it as handed over (a larger minimum of another supplier is
+// labelled by the planner itself).
+function supplierMinimumPrefill(fields: Partial<Record<PrefillLineField, PrefillEntry>>, query: URLSearchParams) {
+  const shortfall = Number(query.get("shortfall"));
+  const quantity = fields.quantity;
+  if (query.get("origin") !== "reorder_list" || query.get("quantityFrom") !== "supplier_minimum" || quantity?.ref !== "reorder_list:gap" || !(shortfall > 0)) return { fields };
+  return { fields: { ...fields, quantity: { ...quantity, source: "default" as const, ref: "reorder_list:supplier_minimum" } }, shortfall };
+}
 // Today in the workspace timezone (America/New_York when unknown), not UTC.
 const today = (timeZone?: string) => todayInTimeZone(timeZone);
 const makeLine = (date = today()): Line => ({
@@ -208,15 +223,53 @@ const PR_STATUSES = ["draft", "submitted", "approved", "converted", "rejected", 
 // fills it (the assistant, the reorder list).
 const opensForm = (params: URLSearchParams) =>
   params.get("mode") === "create" || params.get("lineType") === "non_catalog" || Boolean(params.get("itemId") || params.get("sku"));
+// The status-based actions a request offers, on its list row and on its
+// detail page alike, each shown only to a person holding the permission the
+// server checks for it (PURCHASE_REQUEST_PERMISSIONS in
+// server/services/procurement-request-command-service.mjs).
+type RequestAction = "edit" | "submit" | "approve" | "reject" | "withdraw" | "generate-purchase-orders";
+const REQUEST_ACTION_PERMISSION: Record<RequestAction, string> = {
+  edit: "procurement.purchase_order.revise",
+  submit: "procurement.purchase_order.revise",
+  approve: "procurement.purchase_order.approve",
+  reject: "procurement.purchase_order.reject",
+  withdraw: "procurement.purchase_order.revise",
+  "generate-purchase-orders": "procurement.purchase_order.revise",
+};
+const REQUEST_ACTIONS_BY_STATUS: Record<string, RequestAction[]> = {
+  draft: ["edit", "submit"],
+  submitted: ["approve", "reject", "withdraw"],
+  approved: ["generate-purchase-orders"],
+};
+// How each action looks on a list row, and the main step of the detail header.
+const ROW_ACTION_TONE: Record<RequestAction, "primary" | "neutral" | "danger"> = {
+  edit: "primary",
+  submit: "neutral",
+  approve: "primary",
+  reject: "danger",
+  withdraw: "neutral",
+  "generate-purchase-orders": "primary",
+};
+const DETAIL_PRIMARY = new Set<RequestAction>(["submit", "approve", "generate-purchase-orders"]);
 const COPY = {
-  drafts: ["Drafts", "草稿"],
+  // The metric tiles name each state as its status chip does, so a state has
+  // one name on this page; the note says what it means.
   draftsNote: ["Saved, not yet submitted", "已保存，尚未提交"],
-  awaitingApproval: ["Awaiting approval", "待审批"],
-  awaitingApprovalNote: ["Submitted and waiting for an approver", "已提交，等待审批"],
-  readyForPo: ["Ready for a purchase order", "待生成采购订单"],
-  readyForPoNote: ["Approved, no purchase order yet", "已批准，尚未生成采购订单"],
-  converted: ["Converted to purchase orders", "已转采购订单"],
+  awaitingApprovalNote: ["Waiting for an approver", "等待审批"],
+  readyForPoNote: ["No purchase order yet", "尚未生成采购订单"],
+  converted: ["Converted to PO", "已转采购订单"],
   convertedNote: ["Purchase orders created from the request", "已据此生成采购订单"],
+  approve: ["Approve", "批准"],
+  submit: ["Submit", "提交"],
+  createPurchaseOrder: ["Create purchase order", "生成采购订单"],
+  approved: ["Approved {number}", "已批准 {number}"],
+  rejected: ["Rejected {number}", "已拒绝 {number}"],
+  withdrawn: ["Withdrew {number}; it is a draft again", "已撤回 {number}，已退回草稿"],
+  submittedNumber: ["Submitted {number} for approval", "已提交 {number} 审批"],
+  createdOrder: ["Created {po} from {number}", "已从 {number} 生成采购订单 {po}"],
+  createdOrders: ["Created {count} purchase orders from {number}", "已从 {number} 生成 {count} 张采购订单"],
+  createdOn: ["Created", "创建日期"],
+  deliverTo: ["Deliver to", "交付地点"],
   searchTitle: ["Purchase request search", "采购申请查询"],
   searchSubtitle: ["Search requests by number, item, requester and status.", "按申请编号、物料、申请人和状态查询采购申请。"],
   requestNumber: ["Request number", "申请编号"],
@@ -318,14 +371,22 @@ export default function CanonicalProcurementPanel({
   const formCopy = useFormCopy();
   const formRef = useRef<HTMLDivElement>(null);
   const confirmDialog = useConfirm();
-  // Editing and submitting a draft need the permission the server checks for
-  // them (PURCHASE_REQUEST_PERMISSIONS: update and submit follow PO revise).
+  // Each action needs the permission the server checks for it
+  // (REQUEST_ACTION_PERMISSION: editing and submitting follow PO revise).
   const permissions = usePermissionSet();
-  const canRevise = Boolean(permissions?.has("procurement.purchase_order.revise"));
   // The request whose detail page opened the edit form, if any.
   const detailEdit = useRef("");
   const [submitting, setSubmitting] = useState(false);
-  const statusLabel = (status: string) => statusCodeLabel(status, language) || copy(status);
+  // A converted request reads "Converted to PO" here, on its chip, tile and
+  // filter alike.
+  const statusLabel = (status: string) => (status === "converted" ? tr("converted") : statusCodeLabel(status, language) || copy(status));
+  // What this person may do to a request in its status; nothing while the
+  // permissions load or when they cannot be read.
+  const actionsFor = (pr: PR) => (REQUEST_ACTIONS_BY_STATUS[pr.status] || []).filter((action) => Boolean(permissions?.has(REQUEST_ACTION_PERMISSION[action])));
+  // The request an action is running on, so its buttons cannot be pressed twice.
+  const [acting, setActing] = useState("");
+  const actionLabel = (action: RequestAction) =>
+    tr(action === "generate-purchase-orders" ? "createPurchaseOrder" : action);
   // The list shows first; the form opens from "New purchase request", Edit,
   // or a link that asks for it.
   const [formOpen, setFormOpen] = useState(() => opensForm(searchParams));
@@ -493,13 +554,19 @@ export default function CanonicalProcurementPanel({
         };
         setLines([line]);
         followLineDate(line.needByDate);
-        setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: plan.supplierChoices });
+        setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, ...supplierMinimumPrefill(plan.fields, searchParams), supplierChoices: plan.supplierChoices });
       })
       .catch((error) => toast.error(errorText(error, SOURCES_FAILED)));
   }, [items, loaded, searchParams, location.key]);
   const prefillChip = (line: Line, field: PrefillLineField) =>
     prefill && line.lineId === prefill.lineId ? (
-      <PrefillSourceChip entry={prefill.fields[field]} current={line[field] ?? ""} testId={`prefill-source-${field}`} />
+      <PrefillSourceChip
+        entry={prefill.fields[field]}
+        current={line[field] ?? ""}
+        testId={`prefill-source-${field}`}
+        // "Supplier minimum (shortfall 19 pcs)": the shortfall in the line's unit.
+        params={field === "quantity" && prefill.shortfall ? { shortfall: `${formatQuantity(prefill.shortfall)}${line.unitSnapshot ? ` ${unitLabel(line.unitSnapshot, language, prefill.shortfall)}` : ""}` } : undefined}
+      />
     ) : null;
   // Earlier PO prices for every catalog line, in one request. Never fills a price.
   const priceHistoryKeyOf = (line: Line) => line.sourceType === "catalog_item" ? priceHistoryKey({ itemId: line.itemId, unit: line.unitSnapshot, currency: line.currency || currency }) : "";
@@ -804,12 +871,25 @@ export default function CanonicalProcurementPanel({
         }))
       )
         return;
+      setActing(pr.id);
       const result: any = await request(
         `/api/procurement/requests/${pr.id}/${action}`,
         "POST",
         { expectedVersion: pr.version, reason },
       );
       rememberDocumentNumbers("purchase_order", result.createdPurchaseOrders, (po: { id?: string; number?: string }) => [po.id, po.number]);
+      // Say what happened, by the request's number (and the order's).
+      const number = numberOf(pr);
+      const orders: { id?: string; number?: string }[] = result.createdPurchaseOrders || [];
+      const done =
+        action === "approve" ? tr("approved")
+          : action === "reject" ? tr("rejected")
+          : action === "withdraw" ? tr("withdrawn")
+          : action === "submit" ? tr("submittedNumber")
+          : orders.length > 1 ? tr("createdOrders").replace("{count}", String(orders.length))
+          : orders.length ? tr("createdOrder").replace("{po}", orders[0].number || orders[0].id || "")
+          : "";
+      if (done) toast.success(done.replace("{number}", number));
       if (result.createdPurchaseOrders?.[0])
         onNavigate?.("procurement:orders", {
           entityType: "purchase_order",
@@ -818,6 +898,10 @@ export default function CanonicalProcurementPanel({
       await load();
     } catch (e: any) {
       toast.error(errorText(e, UPDATE_FAILED));
+      // Changed elsewhere (a newer version or another status): show it as it is now.
+      if (e instanceof ApiError && e.status === 409) await load().catch(() => undefined);
+    } finally {
+      setActing("");
     }
   };
   const edit = async (pr: PR) => {
@@ -924,7 +1008,24 @@ export default function CanonicalProcurementPanel({
       </Card>
     );
   const editingSelected = Boolean(selected && formOpen && editing?.id === selected.id);
-  if (selected && !editingSelected)
+  // A label, then its value: "Requester: Kim" in English, "申请人：Kim" in Chinese.
+  const labelled = (label: string, value: string) => `${label}${language === "en-US" ? ": " : "："}${value}`;
+  // "60 pcs", "60 件": the quantity with its unit in the interface language.
+  const quantityText = (line: Line) => {
+    const quantity = Number(line.quantity);
+    const unit = line.unitSnapshot ? ` ${unitLabel(line.unitSnapshot, language, Number.isFinite(quantity) ? quantity : null)}` : "";
+    return `${formatQuantity(line.quantity)}${unit}`;
+  };
+  if (selected && !editingSelected) {
+    // The detail header offers what the list row offers for this status, the
+    // main step last; a draft's Submit asks for approval as it is.
+    const detailActions = [...actionsFor(selected)].sort((a, b) => Number(DETAIL_PRIMARY.has(a)) - Number(DETAIL_PRIMARY.has(b)));
+    const busy = submitting || acting === selected.id;
+    const runDetailAction = (action: RequestAction) => {
+      if (action === "edit") return editFromDetail(selected);
+      if (action === "submit") return void submitDraft(selected);
+      return void act(selected, action);
+    };
     return (
       <div className="space-y-5 pb-16">
         <Card className="p-5">
@@ -937,15 +1038,25 @@ export default function CanonicalProcurementPanel({
                 <h1 className="fc-page-title" style={{ color: A.label }}>{numberOf(selected)}</h1>
                 <StatusChip label={statusLabel(selected.status)} tone={statusToneOf(selected.status)} />
               </div>
-              <p className="mt-1 text-xs" style={{ color: A.sub }}>
-                {tr("requester")}: {requesterOf(selected)} · {tr("created")}: {dayText(selected.createdAt)} · v{selected.version}
+              <p className="mt-1 text-xs" style={{ color: A.sub }} data-testid="pr-detail-meta">
+                {[labelled(tr("requester"), requesterOf(selected)), selected.createdAt ? labelled(tr("createdOn"), dayText(selected.createdAt)) : ""].filter(Boolean).join(" · ")}
               </p>
             </div>
             <div className="flex flex-col items-end gap-3">
-              {selected.status === "draft" && canRevise && (
+              {detailActions.length > 0 && (
                 <div className="flex flex-wrap items-center justify-end gap-2" data-testid="pr-detail-actions">
-                  <button type="button" data-testid="pr-detail-edit" disabled={submitting} onClick={() => editFromDetail(selected)} className={listButtonClass.secondary}>{tr("edit")}</button>
-                  <button type="button" data-testid="pr-detail-submit" disabled={submitting} onClick={() => void submitDraft(selected)} className={listButtonClass.primary}>{tr("submitForApproval")}</button>
+                  {detailActions.map((action) => (
+                    <button
+                      key={action}
+                      type="button"
+                      data-testid={action === "generate-purchase-orders" ? "pr-detail-create-po" : `pr-detail-${action}`}
+                      disabled={busy}
+                      onClick={() => runDetailAction(action)}
+                      className={DETAIL_PRIMARY.has(action) ? listButtonClass.primary : action === "reject" ? `${listButtonClass.secondary} !bg-red-50 !text-red-700 hover:!bg-red-100` : listButtonClass.secondary}
+                    >
+                      {action === "submit" ? tr("submitForApproval") : actionLabel(action)}
+                    </button>
+                  ))}
                 </div>
               )}
               <div className="text-right">
@@ -956,33 +1067,36 @@ export default function CanonicalProcurementPanel({
           </div>
         </Card>
         <ListCard title={tr("lines")}>
+          {/* Fits a 1440 px window: the item, supplier, place and notes wrap
+              to two lines instead of widening the table; on a phone each line
+              is a card (ListCard). */}
           <div className={tableScrollClass}>
-            <table className={`w-full min-w-[980px] text-left ${tableBodyTextClass}`}>
+            <table className={`w-full min-w-[860px] text-left ${tableBodyTextClass}`} data-testid="pr-detail-lines">
               <thead>
                 <tr style={listHeadRowStyle}>
-                  {[tr("item"), tr("supplier"), tr("quantityPrice"), tr("needBy"), copy("目标仓库或服务地点"), copy("行级内部备注")].map((label) => <th key={label} className={thClass} style={{ color: A.gray1 }}>{label}</th>)}
+                  {[tr("item"), tr("supplier"), tr("quantityPrice"), tr("needBy"), tr("deliverTo"), copy("行级内部备注")].map((label) => <th key={label} className={thClass} style={{ color: A.gray1 }}>{label}</th>)}
                   <th className={thRightClass} style={{ color: A.gray1 }}>{tr("amount")}</th>
                 </tr>
               </thead>
               <tbody>
                 {selected.lines.map((line, index) => (
-                  <tr key={line.lineId} className={listRowClass} style={listRowStyle(index, selected.lines.length)}>
-                    <td className={`${tdNameClass} max-w-[240px]`}>
-                      <div className="truncate font-medium" style={{ color: A.label }}>{line.itemNameSnapshot || "—"}</div>
+                  <tr key={line.lineId} className={`${listRowClass} align-top`} style={listRowStyle(index, selected.lines.length)} data-testid="pr-detail-line">
+                    <td className={`${tdClass} min-w-[150px] max-w-[240px]`}>
+                      <div className="line-clamp-2 font-medium" style={{ color: A.label }} title={line.itemNameSnapshot}>{line.itemNameSnapshot || "—"}</div>
                       <div className="text-[11px]" style={{ color: A.sub }}>{line.sku || tr("nonCatalog")}</div>
                     </td>
-                    <td className={tdNameClass}>
+                    <td className={`${tdClass} min-w-[130px] max-w-[220px]`}>
                       <div>{line.supplierSnapshot?.supplierName || line.supplierId || "—"}</div>
                       <SupplierOverrideFlag override={line.supplierOverride} testId="pr-line-supplier-override" />
                     </td>
-                    <td className={tdNumericClass}>
+                    <td className={tdNumericClass} data-testid="pr-detail-line-quantity">
                       {line.lineBasis === "quantity"
-                        ? `${line.quantity} ${line.unitSnapshot || ""} × ${amount(line.estimatedUnitPrice, line.currency || selected.defaultCurrency)}`
+                        ? `${quantityText(line)} × ${amount(line.estimatedUnitPrice, line.currency || selected.defaultCurrency)}`
                         : copy("金额 / 服务型")}
                     </td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{dayText(line.needByDate || selected.defaultNeedByDate)}</td>
-                    <td className={tdNowrapClass}>{warehouseName(line.targetWarehouseId) || "—"}</td>
-                    <td className={`${tdNameClass} max-w-[220px] truncate`} title={line.internalLineComment}>{line.internalLineComment || "—"}</td>
+                    <td className={`${tdClass} min-w-[110px] max-w-[200px]`}>{warehouseName(line.targetWarehouseId) || "—"}</td>
+                    <td className={`${tdClass} min-w-[150px] max-w-[240px]`}><div className="line-clamp-2" title={line.internalLineComment}>{line.internalLineComment || "—"}</div></td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{amount(line.estimatedAmount, line.currency || selected.defaultCurrency)}</td>
                   </tr>
                 ))}
@@ -1002,18 +1116,20 @@ export default function CanonicalProcurementPanel({
             </div>
           )}
         </Card>
+        {confirmDialog.element}
       </div>
     );
+  }
   if (!formOpen) {
     const count = (status: string) => rows.filter((row) => row.status === status).length;
     const statusLink = (status: string) => `/app/procurement/requests?status=${status}`;
     return (
       <div className="space-y-5 pb-16" data-testid="purchase-request-list-page">
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <ActionableMetricCard label={tr("drafts")} value={String(count("draft"))} description={tr("draftsNote")} to={statusLink("draft")} icon={FileText} color={A.gray1} />
-          <ActionableMetricCard label={tr("awaitingApproval")} value={String(count("submitted"))} description={tr("awaitingApprovalNote")} to={statusLink("submitted")} icon={ClipboardCheck} color={A.orange} />
-          <ActionableMetricCard label={tr("readyForPo")} value={String(count("approved"))} description={tr("readyForPoNote")} to={statusLink("approved")} icon={CheckCircle2} color={A.blue} />
-          <ActionableMetricCard label={tr("converted")} value={String(count("converted"))} description={tr("convertedNote")} to={statusLink("converted")} icon={Truck} color={A.purple} />
+          <ActionableMetricCard label={statusLabel("draft")} value={String(count("draft"))} description={tr("draftsNote")} to={statusLink("draft")} icon={FileText} color={A.gray1} />
+          <ActionableMetricCard label={statusLabel("submitted")} value={String(count("submitted"))} description={tr("awaitingApprovalNote")} to={statusLink("submitted")} icon={ClipboardCheck} color={A.orange} />
+          <ActionableMetricCard label={statusLabel("approved")} value={String(count("approved"))} description={tr("readyForPoNote")} to={statusLink("approved")} icon={CheckCircle2} color={A.blue} />
+          <ActionableMetricCard label={statusLabel("converted")} value={String(count("converted"))} description={tr("convertedNote")} to={statusLink("converted")} icon={Truck} color={A.purple} />
         </div>
 
         <ListSearchCard
@@ -1064,6 +1180,7 @@ export default function CanonicalProcurementPanel({
                 {shownRows.map((pr, index) => {
                   const overrides = pr.lines.filter((line) => hasSupplierOverride(line.supplierOverride));
                   const suppliers = suppliersOf(pr);
+                  const rowActions = actionsFor(pr);
                   return (
                     <tr key={pr.id} className={listRowClass} style={listRowStyle(index, shownRows.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
@@ -1104,23 +1221,18 @@ export default function CanonicalProcurementPanel({
                       </td>
                       <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                         <div className="flex items-center gap-1.5">
-                          {pr.status === "draft" && (
-                            <>
-                              <button type="button" className={rowActionClass.primary} onClick={() => edit(pr)}>{copy("编辑")}</button>
-                              <button type="button" className={rowActionClass.neutral} onClick={() => act(pr, "submit")}>{copy("提交")}</button>
-                            </>
-                          )}
-                          {pr.status === "submitted" && (
-                            <>
-                              <button type="button" className={rowActionClass.primary} onClick={() => act(pr, "approve")}>{copy("批准")}</button>
-                              <button type="button" className={rowActionClass.danger} onClick={() => act(pr, "reject")}>{copy("拒绝")}</button>
-                              <button type="button" className={rowActionClass.neutral} onClick={() => act(pr, "withdraw")}>{copy("撤回")}</button>
-                            </>
-                          )}
-                          {pr.status === "approved" && (
-                            <button type="button" className={rowActionClass.primary} onClick={() => act(pr, "generate-purchase-orders")}>{copy("生成采购订单")}</button>
-                          )}
-                          {!["draft", "submitted", "approved"].includes(pr.status) && (
+                          {rowActions.map((action) => (
+                            <button
+                              key={action}
+                              type="button"
+                              disabled={acting === pr.id}
+                              className={`${rowActionClass[ROW_ACTION_TONE[action]]} disabled:opacity-60`}
+                              onClick={() => (action === "edit" ? void edit(pr) : void act(pr, action))}
+                            >
+                              {actionLabel(action)}
+                            </button>
+                          ))}
+                          {!rowActions.length && (
                             <EntityLink kind="purchase_request" id={pr.id} className={`${rowActionClass.neutral} !font-medium !text-slate-700 !no-underline`}>{tr("view")}</EntityLink>
                           )}
                         </div>

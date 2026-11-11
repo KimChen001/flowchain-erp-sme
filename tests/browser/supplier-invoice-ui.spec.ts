@@ -80,6 +80,57 @@ test("a rejected overcharge is not offered for approval and can be cancelled", a
   await expect(page.getByTestId("supplier-invoice-detail")).toContainText(/Cancelled|已取消/);
 });
 
+test("one note approves a price difference and the amount difference it causes", async ({ page }) => {
+  await signIn(page, "manager@example.com");
+  await page.goto("/app/procurement/bills");
+  await page.getByTestId("supplier-invoice-new").click();
+  await page.getByTestId("supplier-invoice-supplier").selectOption({ index: 1 });
+  await page.getByTestId("supplier-invoice-receipt").selectOption({ index: 1 });
+  await page.getByTestId("supplier-invoice-number").fill("UI-INV-PRICE");
+  await page.getByTestId("supplier-invoice-due").fill("2026-11-01");
+  const line = page.getByTestId("supplier-invoice-line").first();
+  await line.locator("input").nth(0).fill("2");
+  await line.locator("input").nth(1).fill("12");
+  // A hint, not a refusal: the price is above the order's.
+  await expect(line.getByTestId("supplier-invoice-price-above")).toContainText(/above the PO price|比采购单价高/);
+  await page.getByTestId("supplier-invoice-create").click();
+  await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}$/);
+  // The header says when the invoice was issued and is due, and in which currency.
+  await expect(page.getByTestId("supplier-invoice-due-date")).not.toHaveText("—");
+  await expect(page.getByTestId("supplier-invoice-currency-fact")).not.toHaveText("—");
+  await run(page, "invoice-submit");
+  await run(page, "invoice-match");
+  const match = page.getByTestId("supplier-invoice-match");
+  const price = match.locator('[data-testid="match-exception"][data-type="price"]');
+  const amount = match.locator('[data-testid="match-exception"][data-type="amount"]');
+  await expect(price).toContainText(/Price difference|价格差异/);
+  await expect(amount).toContainText(/Amount difference|金额差异/);
+  await expect(match.getByTestId("supplier-invoice-match-summary")).toContainText(/2 line differences to review|2 处行差异待复核/);
+  // The amount difference follows from the price: it has no buttons of its own.
+  await expect(amount.getByTestId("match-exception-follows-price")).toBeVisible();
+  await expect(amount.locator('[data-testid^="exception-approve-"]')).toHaveCount(0);
+  const approve = price.locator('[data-testid^="exception-approve-"]').first();
+  const approveId = String(await approve.getAttribute("data-testid"));
+  await approve.click();
+  await expect(page.getByTestId(`${approveId}-note`)).toContainText(/also accepts the amount difference it causes|一并接受由它造成的金额差异/);
+  // Confirm works before Preview; an empty note is named under its field.
+  await expect(page.getByTestId(`${approveId}-confirm`)).toBeEnabled();
+  await page.getByTestId(`${approveId}-confirm`).click();
+  await expect(page.getByTestId(`${approveId}-reason`)).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId(`${approveId}-reason-error`)).toContainText(/Enter why you accept this difference\.|请填写处理说明。/);
+  await page.getByTestId(`${approveId}-reason`).fill("Supplier raised the price; buyer agreed");
+  await page.getByTestId(`${approveId}-confirm`).click();
+  await expect(page.getByTestId(`${approveId}-panel`)).toHaveCount(0);
+  // Both are approved with the same note, and the match is no longer an exception.
+  await expect(match.locator('[data-testid^="exception-approve-"]')).toHaveCount(0);
+  await expect(amount).toContainText("Supplier raised the price; buyer agreed");
+  await expect(match).toContainText(/Variance approved|差异已批准/);
+  await expect(page.getByTestId("supplier-invoice-variance-reason")).toHaveCount(0);
+  await run(page, "invoice-approve");
+  await expect(page.getByTestId("supplier-invoice-payable")).toBeVisible();
+  await expect(page.getByTestId("supplier-invoice-next")).toContainText(/Next|下一步/);
+});
+
 test("a second bill numbered as a format variant is flagged, dismissed with a reason, then approved", async ({ page }) => {
   await signIn(page, "manager@example.com");
   // The supplier sends invoice 7 twice, written differently.

@@ -102,3 +102,13 @@ test('a phone card keeps its title readable beside a long status', async () => {
     assert.match(source, /className="mt-1 hidden text-\[11px\] sm:block"/, file)
   }
 })
+
+test('row buttons are thumb targets on a phone card', async () => {
+  // The flow walk on a phone (11/11) found Approve and Reject 28 px tall and
+  // side by side; row buttons are now at least 36 px on a phone, 8 px apart.
+  const layout = await read('src/components/ui/listLayout.tsx')
+  assert.match(layout, /const rowActionSize = "[^"]*max-sm:min-h-9[^"]*";/)
+  for (const tone of ['primary', 'neutral', 'danger']) assert.ok(layout.includes(tone + ': `${rowActionSize} '), tone)
+  const theme = await read('src/styles/theme.css')
+  assert.match(theme, /\[data-card-role="actions"\] \.flex \{ gap: 8px; \}/)
+})

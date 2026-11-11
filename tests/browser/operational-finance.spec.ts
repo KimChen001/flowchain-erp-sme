@@ -405,8 +405,10 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   );
   await page.getByTestId("customer-invoice-submit").click();
   await expect(page.getByTestId("customer-invoice-submit-panel")).toContainText("Someone else changed this invoice first.");
-  // The earlier preview no longer holds, so Confirm waits for a new preview.
-  await expect(page.getByTestId("customer-invoice-submit-confirm")).toBeDisabled();
+  // The earlier preview no longer holds: Confirm stays available and previews
+  // again before it runs (the form standard never disables it to wait).
+  await expect(page.getByTestId("customer-invoice-submit-confirm")).toBeEnabled();
+  await expect(page.getByTestId("customer-invoice-submit-panel")).not.toContainText(/Preview passed|预览通过/);
   await page.unroute("**/api/finance/customer-invoices/*/submit");
   await page.getByTestId("customer-invoice-submit-panel").getByRole("button", { name: /^(Close|关闭)$/ }).click();
   for (const action of ["submit", "approve", "issue"]) {
@@ -489,7 +491,11 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   // Match exceptions are reviewed on the bill they belong to.
   await page.goto("/app/procurement/bills");
   await page.getByRole("link", { name: "SUP-INV-BROWSER-VARIANCE", exact: true }).click();
-  await expect(page.getByTestId("supplier-invoice-match")).toContainText("price");
+  // The difference reads by its kind, never as the stored code; every one
+  // reviewed (above, through the API), the match no longer reads as an exception.
+  await expect(page.getByTestId("supplier-invoice-match")).toContainText(/Price difference|价格差异/);
+  await expect(page.getByTestId("supplier-invoice-match")).toContainText(/Variance approved|差异已批准/);
+  await expect(page.getByTestId("supplier-invoice-match")).not.toContainText(/line-level match exception/);
   await page.goto("/app/finance/payables");
   const payables = page.getByTestId("operational-finance-payable-list");
   await expect(payables).toContainText("AP-BROWSER-EXACT");

@@ -364,11 +364,24 @@ export function buildProcurementReceivingDocs(data = {}) {
   })
 }
 
+// The number each receipt in `data` shows (GRN-202611-0009), by id; a
+// receipt recorded without one is left out.
+function receiptNumberIndex(data = {}) {
+  return new Map(asArray(data.receivingDocs)
+    .map((grn, index) => [grnId(grn, index), text(grn.documentNumber || grn.number)])
+    .filter(([, number]) => number))
+}
+
 export function buildProcurementSupplierInvoices(data = {}) {
   const numbers = numberIndex(data)
+  const receiptNumbers = receiptNumberIndex(data)
   return asArray(data.supplierInvoices).map((invoice, index) => {
     const id = invoiceId(invoice, index)
     const poNumber = referenceNumber(numbers.po, invoice.relatedPo || invoice.po || invoice.poId, invoice.poNumber)
+    // The numbers people read: the supplier's own invoice number and the
+    // receipt's GRN number. The ids stay in id, relatedGrn and the links.
+    const invoiceNumber = text(invoice.supplierInvoiceNumber)
+    const grnNumber = referenceNumber(receiptNumbers, invoice.relatedGrn || invoice.grn || invoice.grnId, invoice.grnNumber)
     const amount = toNumber(invoice.amount ?? invoice.total ?? invoice.grossAmount, 0)
     const varianceAmount = toNumber(invoice.varianceAmount ?? invoice.variance ?? invoice.priceVariance, 0)
     return {
@@ -385,6 +398,8 @@ export function buildProcurementSupplierInvoices(data = {}) {
       poId: text(invoice.relatedPo || invoice.po || invoice.poId),
       grnId: text(invoice.relatedGrn || invoice.grn || invoice.grnId),
       ...numberField('poNumber', poNumber),
+      ...numberField('invoiceNumber', invoiceNumber),
+      ...numberField('grnNumber', grnNumber),
       invoiceDate: text(invoice.invoiceDate || invoice.date),
       createdAt: text(invoice.createdAt || invoice.invoiceDate || invoice.date),
       updatedAt: text(invoice.updatedAt),
@@ -396,7 +411,7 @@ export function buildProcurementSupplierInvoices(data = {}) {
       varianceAmount,
       relatedDocuments: compactRelatedDocuments([
         related('po', invoice.relatedPo || invoice.po || invoice.poId, '', poNumber),
-        related('grn', invoice.relatedGrn || invoice.grn || invoice.grnId),
+        related('grn', invoice.relatedGrn || invoice.grn || invoice.grnId, '', grnNumber),
         related('threeWayMatch', `MATCH-${id}`),
       ]),
       evidence: evidence('invoice', id, `${id} ${amount}`, { status: invoice.status || invoice.invoiceStatus, supplierName: invoice.supplier || invoice.supplierName, amount, currency: invoice.currency }),
@@ -638,6 +653,10 @@ export function buildProcurementThreeWayMatches(data = {}) {
       ...numberField('poNumber', poNumber),
       ...numberField('prNumber', prNumber),
       ...numberField('rfqNumber', rfqNumber),
+      // The supplier's invoice number and the GRN number, which the pages
+      // show and search; absent when not recorded (the page shows the id).
+      ...numberField('invoiceNumber', invoice.invoiceNumber),
+      ...numberField('grnNumber', invoice.grnNumber),
       supplierId: text(invoice.supplierId || po?.supplierId || grn?.supplierId),
       supplier: invoice.supplier || po?.supplier || grn?.supplier || '',
       supplierName: invoice.supplier || po?.supplier || grn?.supplier || '',
@@ -650,8 +669,10 @@ export function buildProcurementThreeWayMatches(data = {}) {
       currency: text(invoice.currency || po?.currency || grn?.currency),
       matchStatus: status,
       status,
-      blockingReason: varianceAmount ? 'PO 金额与发票金额存在差异，需复核后处理。' : '',
-      exceptionReason: varianceAmount ? `差异金额 ${varianceAmount}` : '',
+      // Every difference approved ("variance_approved"): the amount stays on
+      // record, but nothing is left to review.
+      blockingReason: varianceAmount && status !== 'variance_approved' ? 'PO 金额与发票金额存在差异，需复核后处理。' : '',
+      exceptionReason: varianceAmount && status !== 'variance_approved' ? `差异金额 ${varianceAmount}` : '',
       // Line by line: one entry per invoice line, against its PO line.
       lines,
       ...lineTotals,
@@ -659,8 +680,8 @@ export function buildProcurementThreeWayMatches(data = {}) {
         related('pr', po?.sourceRequest, '', prNumber),
         related('rfq', po?.linkedRfq, '', rfqNumber),
         related('po', invoice.relatedPo, '', poNumber),
-        related('grn', invoice.relatedGrn),
-        related('invoice', invoice.id),
+        related('grn', invoice.relatedGrn, '', invoice.grnNumber),
+        related('invoice', invoice.id, '', invoice.invoiceNumber),
       ]),
       evidence: [
         ...evidence('invoice', invoice.id, invoice.status, { status: invoice.invoiceStatus, supplierName: invoice.supplier, amount: invoiceAmount, currency: invoice.currency }),
@@ -759,7 +780,7 @@ export function buildProcurementFollowups(data = {}, options = {}) {
     }
   }
   for (const invoice of buildProcurementSupplierInvoices(data)) {
-    if (Math.abs(toNumber(invoice.varianceAmount)) > 0 || /差异|异常|待复核/.test(invoice.matchStatus)) {
+    if (invoice.matchStatus !== 'variance_approved' && (Math.abs(toNumber(invoice.varianceAmount)) > 0 || /差异|异常|待复核/.test(invoice.matchStatus))) {
       items.push({
         type: 'invoice_variance',
         id: `FOLLOWUP-invoice_variance-${invoice.id}`,
@@ -808,7 +829,7 @@ export function buildProcurementSummary(data = {}) {
     activeRfqCount: documents.filter((item) => item.documentType === 'rfq' && isOpenStatus(item.status)).length,
     openPoCount: documents.filter((item) => item.documentType === 'po' && isOpenStatus(item.status)).length,
     pendingReceivingCount: documents.filter((item) => item.documentType === 'grn' && isOpenStatus(item.status)).length,
-    invoiceExceptionCount: documents.filter((item) => item.documentType === 'invoice' && (toNumber(item.varianceAmount) !== 0 || /差异|异常|待复核/.test(item.matchStatus))).length,
+    invoiceExceptionCount: documents.filter((item) => item.documentType === 'invoice' && item.matchStatus !== 'variance_approved' && (toNumber(item.varianceAmount) !== 0 || /差异|异常|待复核/.test(item.matchStatus))).length,
     threeWayMatchExceptionCount: documents.filter((item) => item.documentType === 'threeWayMatch' && toNumber(item.varianceAmount) !== 0).length,
     // Never added across currencies: with several currencies there is no total.
     totalOpenAmount: openAmountCurrency.currencies.length > 1 ? null : openAmountDocuments.reduce((sum, item) => sum + toNumber(item.amount, 0), 0),

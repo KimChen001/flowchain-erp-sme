@@ -4,15 +4,20 @@ import { RefreshCw } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Card } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
-import { tableBodyTextClass, tableScrollClass, tdClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableBodyTextClass, tableScrollClass, tdClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { unitLabel } from "../../i18n/unitLabels";
 import { formatCalendarDay, formatInstantDay } from "../business-documents/documentFormat";
 import { ApiError } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { procurementApi } from "./procurementApi";
 import { BackToListLink } from "./BackToListLink";
-import { useDetailCrumb } from "../../components/navigation/detailCrumb";
+import { looksLikeStoredId, useDetailCrumb } from "../../components/navigation/detailCrumb";
 import type { ProcurementDocument } from "./procurementTypes";
+
+// The read model adds the receipt's GRN number (grnNumber) and the supplier's
+// invoice number (invoiceNumber) when they are recorded.
+type DetailRecord = ProcurementDocument & { grnNumber?: string };
 
 type DetailKind = "invoice" | "threeWayMatch";
 type ReadState = "loading" | "loaded" | "notFound" | "unauthenticated" | "forbidden" | "error";
@@ -177,7 +182,7 @@ function LineMatch({ match, invoiceTotal, currency, copy, locale }: {
   copy: Copy;
   locale: string;
 }) {
-  const { formatNumber } = useI18n();
+  const { formatNumber, language } = useI18n();
   const lines = match.lines || [];
   const amount = (value: number | null | undefined) => money(finite(value) ? value : undefined, currency, locale);
   // A variance with its sign: +$200.00 over the PO, -$50.00 under it.
@@ -206,7 +211,8 @@ function LineMatch({ match, invoiceTotal, currency, copy, locale }: {
       <p className="mt-1 text-xs" style={{ color: A.sub }}>
         {copy("Each invoice line against its purchase order line: the invoiced quantity at the PO price, and the quantity received. Amounts exclude tax.")}
       </p>
-      <div className={`mt-3 rounded-lg border ${tableScrollClass}`}>
+      {/* On a phone each invoice line is a card (listTableCardsRef), not a table to scroll sideways. */}
+      <div ref={listTableCardsRef} className={`mt-3 rounded-lg border ${tableScrollClass}`}>
         <table className={`w-full ${tableBodyTextClass}`}>
           <thead>
             <tr style={listHeadRowStyle}>
@@ -232,7 +238,7 @@ function LineMatch({ match, invoiceTotal, currency, copy, locale }: {
                 <tr key={line.invoiceLineId || index} className={listRowClass} style={listRowStyle(index, lines.length)} data-testid="three-way-match-line">
                   <td className={`${tdClass} align-top`}>
                     <div className="whitespace-nowrap font-medium" title={[line.poLineId, line.invoiceLineId].filter(Boolean).join(" · ") || undefined}>{copy("Line {n}", { n: String(index + 1) })}</div>
-                    <div className={subClass} style={{ color: A.sub }}>{[line.sku, line.itemName, line.unit ? copy(line.unit) : ""].filter(Boolean).join(" · ") || "—"}</div>
+                    <div className={subClass} style={{ color: A.sub }}>{[line.sku, line.itemName, line.unit ? unitLabel(line.unit, language) : ""].filter(Boolean).join(" · ") || "—"}</div>
                   </td>
                   <td className={`${tdNumericRightClass} align-top`}>{qty(line.orderedQty)}</td>
                   <td className={`${tdNumericRightClass} align-top`}>
@@ -304,8 +310,8 @@ export function ProcurementDocumentDetailPage({
   kind: DetailKind;
   documentId: string;
 }) {
-  const [record, setRecord] = useState<ProcurementDocument | null>(null);
-  const [relatedMatch, setRelatedMatch] = useState<ProcurementDocument | null>(null);
+  const [record, setRecord] = useState<DetailRecord | null>(null);
+  const [relatedMatch, setRelatedMatch] = useState<DetailRecord | null>(null);
   const [relatedMatchNotice, setRelatedMatchNotice] = useState("");
   const [state, setState] = useState<ReadState>("loading");
   const { copy, locale, timezone } = useDetailCopy();
@@ -357,12 +363,17 @@ export function ProcurementDocumentDetailPage({
   const poId = record?.relatedPo || record?.poId || record?.po;
   const grnId = record?.relatedGrn || record?.grnId;
   const invoiceId = isInvoice ? record?.id : record?.invoiceId;
-  const invoiceNumber = record?.invoiceNumber || (isInvoice ? record?.id : record?.invoiceId) || "";
-  // The page names the match by its invoice; the match's own id stays in the tooltip.
+  // The page names the match by the supplier's invoice number, and the
+  // receipt by its GRN number. Without a recorded number an id that reads as
+  // a name (INV-001) is shown, never a stored id such as a UUID: the heading
+  // and breadcrumb then say "Three-way match" without a number.
+  const readable = (value?: string) => (value && !looksLikeStoredId(value) ? value : "");
+  const invoiceNumber = record?.invoiceNumber || readable(invoiceId);
+  const grnNumber = record?.grnNumber || grnId;
   const heading = invoiceNumber
     ? copy(isInvoice ? "Supplier invoice · {invoice}" : "Three-way match · {invoice}", { invoice: invoiceNumber })
-    : record?.id || documentId;
-  useDetailCrumb(state === "loaded" ? invoiceNumber || record?.id : null);
+    : copy(isInvoice ? "Supplier invoice" : "Three-way match");
+  useDetailCrumb(state === "loaded" ? invoiceNumber || null : null);
   // A variance is resolved on the supplier invoice; this page only reads.
   const canResolveOnInvoice = !isInvoice && Boolean(invoiceId);
   // The match, read line by line when the server returns its lines. Without
@@ -450,16 +461,16 @@ export function ProcurementDocumentDetailPage({
                 <BusinessEntityLink entityType="purchase_order" entityId={poId} number={record?.poNumber} />
               </Fact>
               <Fact label={copy("Receipt")}>
-                <BusinessEntityLink entityType="receiving_doc" entityId={grnId}>{grnId || "—"}</BusinessEntityLink>
+                <BusinessEntityLink entityType="receiving_doc" entityId={grnId}>{grnNumber || "—"}</BusinessEntityLink>
               </Fact>
               {!isInvoice && (
                 <Fact label={copy("Supplier invoice")}>
-                  <BusinessEntityLink entityType="supplier_invoice" entityId={invoiceId}>{invoiceId || "—"}</BusinessEntityLink>
+                  <BusinessEntityLink entityType="supplier_invoice" entityId={invoiceId}>{record.invoiceNumber || invoiceId || "—"}</BusinessEntityLink>
                 </Fact>
               )}
               {isInvoice && relatedMatch && (
                 <Fact label={copy("Three-way match")}>
-                  <BusinessEntityLink entityType="three_way_match" entityId={relatedMatch.id}>{relatedMatch.id || "—"}</BusinessEntityLink>
+                  <BusinessEntityLink entityType="three_way_match" entityId={relatedMatch.id}>{relatedMatch.invoiceNumber || readable(relatedMatch.invoiceId) || relatedMatch.id || "—"}</BusinessEntityLink>
                 </Fact>
               )}
               {isInvoice ? (

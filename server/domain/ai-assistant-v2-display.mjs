@@ -176,7 +176,7 @@ const POSITIONS = [
 // 已驳回, 已取消; the owner's terminology of 2026-11-05).
 const CODE_LABELS = Object.freeze({
   risk: ['Risk', '风险'], warning: ['Warning', '警告'], info: ['Info', '提示'],
-  matched: ['Matched', '已匹配'], variance: ['Variance', '有差异'], exception: ['Exception', '异常'], mismatch: ['Mismatch', '不一致'], not_matched: ['Not matched', '未匹配'],
+  matched: ['Matched', '已匹配'], variance_approved: ['Variance approved', '差异已批准'], variance: ['Variance', '有差异'], exception: ['Exception', '异常'], mismatch: ['Mismatch', '不一致'], not_matched: ['Not matched', '未匹配'],
   pending: ['Pending', '待处理'], pending_approval: ['Pending approval', '待审批'], submitted: ['Submitted', '已提交'], draft: ['Draft', '草稿'],
   approved: ['Approved', '已批准'], rejected: ['Rejected', '已驳回'], cancelled: ['Cancelled', '已取消'], canceled: ['Cancelled', '已取消'],
   issued: ['Issued', '已下达'], partially_received: ['Partially received', '部分收货'], fully_received: ['Fully received', '全部收货'], received: ['Received', '已收货'],

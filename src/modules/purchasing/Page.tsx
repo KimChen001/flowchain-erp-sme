@@ -1,4 +1,4 @@
-import { invoiceVarianceLabelKey, isNoInvoiceVariance } from "../../domain/procurement/variance-types";
+import { invoiceVarianceCode, invoiceVarianceLabelKey, isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useI18n } from "../../i18n/I18n";
 import { unitLabel } from "../../i18n/unitLabels";
@@ -77,28 +77,48 @@ import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, RowMenu, StatusChip, metricGridClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import { BackToListLink } from "../procurement/BackToListLink";
 import { procurementErrorCode, procurementErrorText } from "../procurement/procurementErrors";
-import { PurchaseOrderReceiveAction, PurchaseOrderWorkflowActions, poSecondaryButtonClass, usePurchaseOrderActionNotes } from "./components/PurchaseOrderWorkflowActions";
+import { BILLABLE_PO_STATUSES, PurchaseOrderReceiveAction, PurchaseOrderWorkflowActions, poSecondaryButtonClass, receiveOrderPath, recordBillPath, usePurchaseOrderActionNotes, usePurchaseOrderEntryRules } from "./components/PurchaseOrderWorkflowActions";
 import { RecordBillAction } from "../../components/business/BillingEntryActions";
 import { PurchaseOrderPromiseDates } from "./components/PurchaseOrderPromiseDates";
+import { statusCodeLabel } from "../../i18n/statusLabels";
+import {
+  invoiceVarianceState,
+  isCancelledInvoice,
+  nextActionText,
+  nextOpenAction,
+  paymentAmountsText,
+  paymentStateLabel,
+  paymentSummary,
+  type NextAction,
+  type StoryExceptions,
+  type StoryInvoice,
+  type StoryLine,
+  type StoryPayment,
+  type StoryWords,
+  type VarianceState,
+} from "./components/purchaseOrderStory";
 
 // The words this page adds to the shared workspace copy, in English: the
-// match and next-step states of an order not yet approved or received.
+// receipt, invoice and match states of an order and the next steps before it
+// is issued. Each state has one name, the one the order's own status uses
+// (全部收货 / Fully received, as the "fully_received" status reads).
 const PAGE_ENGLISH: Record<string, string> = {
   "尚无可匹配": "Nothing to match yet",
   "无需匹配": "No match needed",
   "等待审批": "Awaiting approval",
   "提交审批": "Submit it for approval",
   "订单已驳回，修改后重新提交": "Rejected; revise it and submit again",
+  "全部收货": "Fully received",
+  "部分开票": "Partly invoiced",
+  "差异已批准": "Variance approved",
+  "差异已驳回": "Variance rejected",
+  "付款": "Payment",
 };
 const pageCopy = (label: string, language: string) => (language === "en-US" && PAGE_ENGLISH[label]) || workspaceCopy(label, language);
-const copy = (label: string) => pageCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 function usePageCopy() {
   const { language } = useI18n();
   return (label: string) => pageCopy(label, language);
 }
-// Statuses in which a bill can be recorded: a supplier's bill can arrive
-// before the goods (it then waits for the receipt) or after them.
-const BILLABLE_PO_STATUSES = new Set(["approved", "issued", "partially_received", "received", "fully_received", "closed"]);
 // Statuses a PO reaches once issued (or received), with the legacy labels older rows carry.
 const ISSUED_PO_STATUSES = new Set(["issued", "partially_received", "fully_received", "closed", "已发出", "部分到货", "已完成"]);
 
@@ -158,6 +178,10 @@ type PoEvidenceRow = {
 
 type GrnEvidenceRow = {
   grn: string;
+  // The GRN number people read (GRN-202611-0008); grn is the receipt's id.
+  receiptNumber: string;
+  // The receipt's state as a status code: posted, reversed, cancelled or its workflow status.
+  receiptStatus: string;
   grnLineId: string;
   // The line's position on its receipt, shown instead of its id.
   grnLineNumber: number;
@@ -165,28 +189,35 @@ type GrnEvidenceRow = {
   poLineId: string;
   supplier: string;
   sku: string;
-  receivedQty: number;
+  // Accepted into stock; the rejected quantity is shown beside it.
+  acceptedQty: number;
+  rejectedQty: number;
+  // The reason recorded on the receipt line for the rejected quantity, as entered.
+  rejectionReason: string;
   unit: string;
   arrived: string;
   receiver: string;
   unitPrice: number;
+  // The accepted quantity at the PO price, to the cent.
   lineAmount: number;
   status: string;
   qcStatus: string;
-  invoiceImpact: string;
-  invoiceLine: string;
-  note: string;
+  // The invoice lines that name this receipt line; none when it is not invoiced yet.
+  invoiceLineIds: string[];
 };
 
 type InvoiceEvidenceRow = {
   currency?: string;
+  // The invoice's id (links and calls) and the number people read.
   invoiceNumber: string;
+  displayNumber: string;
   invoiceLineId: string;
   // The line's position on its invoice, shown instead of its id.
   invoiceLineNumber: number;
   supplier: string;
   po: string;
   poLineId: string;
+  // The receipt line the invoice line names, "" when it names none.
   grnLineId: string;
   sku: string;
   quantity: number;
@@ -197,9 +228,12 @@ type InvoiceEvidenceRow = {
   totalAmount: number;
   invoiceDate: string;
   dueDate: string;
-  matchStatus: string;
+  // The invoice's match state in the page's words (已匹配, 差异已批准, 价格差异 …).
+  matchState: string;
   varianceType: string;
   varianceAmount: number;
+  hasVariance: boolean;
+  payment: StoryPayment | null;
   risk: string;
 };
 
@@ -208,6 +242,9 @@ type MatchEvidenceRow = {
   poLineId: string;
   grnLineId: string;
   invoiceLineId: string;
+  // The receipts and supplier invoices on this PO line (ids), in the order read.
+  receiptIds: string[];
+  invoiceIds: string[];
   // Invoice lines on this PO line beyond the first.
   moreInvoiceLines: number;
   poQty: number;
@@ -230,26 +267,33 @@ type MatchEvidenceRow = {
   // Received but not invoiced yet: not a variance either.
   invoiceGap: number;
   status: string;
-  suggestedAction: string;
+  // What to do about it, English first with its Chinese translation.
+  suggestedAction: [string, string];
 };
 
 // The receipt, invoice, match and risk states this page derives, in the brand
 // tones: gray not started, blue under way, teal done, orange waiting on
 // someone or at risk, red for a variance or exception.
 const EVIDENCE_TONES: Record<string, StatusTone> = {
-  "未收货": "neutral", "待收货": "neutral", "部分收货": "info", "部分到货": "info", "已收货": "success", "异常处理": "danger",
-  "未开票": "neutral", "已开票": "info", "已付款": "success", "发票差异": "danger",
-  "缺少发票": "neutral", "缺少收货": "warning", "已匹配": "success", "需人工复核": "warning", "已收未票": "warning", "已票未收": "warning",
+  "未收货": "neutral", "待收货": "neutral", "部分收货": "info", "部分到货": "info", "已收货": "success", "全部收货": "success", "异常处理": "danger",
+  "未开票": "neutral", "部分开票": "info", "已开票": "info", "已付款": "success", "发票差异": "danger",
+  "缺少发票": "neutral", "缺少收货": "warning", "已匹配": "success", "差异已批准": "success", "差异已驳回": "danger", "待匹配": "neutral",
+  "需人工复核": "warning", "已收未票": "warning", "已票未收": "warning",
   "低风险": "success", "无需收货": "neutral", "通过": "success", "质检中": "info", "质检异常": "danger",
-  "尚无可匹配": "neutral", "无需匹配": "neutral",
+  "尚无可匹配": "neutral", "无需匹配": "neutral", "已取消": "neutral",
 };
 
 function evidenceTone(status: string): StatusTone {
   return EVIDENCE_TONES[status] ?? (/差异/.test(status) ? "danger" : /风险/.test(status) ? "warning" : statusToneOf(status));
 }
 
-function statusChip(status: string) {
+// A derived state as a chip, in the interface language of this render.
+function EvidenceChip({ status }: { status: string }) {
+  const copy = usePageCopy();
   return <StatusChip label={copy(status)} tone={evidenceTone(status)} />;
+}
+function statusChip(status: string) {
+  return <EvidenceChip status={status} />;
 }
 
 // Copy written on this page: English first, with its Chinese translation.
@@ -381,91 +425,215 @@ function poLineAmount(line: { quantityOrdered?: number; unitPrice?: number }, po
 function unitPriceForLine(line: { quantityOrdered?: number; unitPrice?: number; poLineId?: string }, po: PurchaseOrder | null | undefined, facts: ProcurementRuntimeFacts) {
   const direct = toNumber(line.unitPrice);
   if (direct > 0) return direct;
-  const invoiceLine = facts.supplierInvoices.flatMap((invoice) => invoice.lines)
+  const invoiceLine = facts.supplierInvoices.flatMap(invoiceLinesOf)
     .find((item) => item.poLine === line.poLineId);
   if (invoiceLine?.unitPrice) return toNumber(invoiceLine.unitPrice);
   const qty = toNumber(line.quantityOrdered);
   return qty ? poLineAmount(line, po) / qty : 0;
 }
 
+const invoiceLinesOf = (invoice: SupplierInvoice) => (Array.isArray(invoice.lines) ? invoice.lines : []);
+
+// What the PO detail read adds to a supplier invoice
+// (purchaseOrderInvoiceProgress in server/repositories/db-procurement-read-repository.mjs),
+// with the supplier's own invoice number the read model carries.
+type PoInvoice = SupplierInvoice & {
+  supplierInvoiceNumber?: string;
+  workflowStatus?: string;
+  // The quantity invoiced on each PO line, for the list, whose read has no invoice lines.
+  poLineQuantities?: Record<string, number>;
+  matchExceptions?: StoryExceptions | null;
+  payment?: StoryPayment | null;
+};
+const poInvoice = (invoice: SupplierInvoice) => invoice as PoInvoice;
+// The number people read: the supplier's invoice number, else the record's id.
+const invoiceNumberOf = (invoice: SupplierInvoice) => poInvoice(invoice).supplierInvoiceNumber || invoice.invoiceNumber;
+
+// Every supplier invoice of the order, cancelled ones too (the invoice table lists them).
 function invoicesForPo(poId: string | undefined, facts: ProcurementRuntimeFacts) {
   return facts.supplierInvoices.filter((invoice) => invoice.relatedPo === poId);
+}
+
+// The match statuses that say an invoice has a variance.
+const VARIANCE_MATCH_STATUSES = new Set(["差异待处理", "exception", "variance"]);
+function storyInvoice(invoice: SupplierInvoice): StoryInvoice {
+  const extras = poInvoice(invoice);
+  return {
+    workflowStatus: extras.workflowStatus,
+    status: String(invoice.status || ""),
+    matchStatus: String(invoice.matchStatus || ""),
+    hasVariance: !isNoInvoiceVariance(invoice.varianceType) || Math.abs(toNumber(invoice.varianceAmount)) >= 0.005 || VARIANCE_MATCH_STATUSES.has(String(invoice.matchStatus || "")),
+    quantityVariance: invoiceVarianceCode(invoice.varianceType) === "quantity_variance" || invoiceLinesOf(invoice).some((line) => invoiceVarianceCode(line.varianceType) === "quantity_variance"),
+    matchExceptions: extras.matchExceptions ?? null,
+    // null: read, no payable; undefined: the read does not say (the PO list).
+    payment: extras.payment,
+    paid: Boolean(invoice.paid),
+  };
+}
+const varianceStateOf = (invoice: SupplierInvoice): VarianceState => invoiceVarianceState(storyInvoice(invoice));
+
+// The invoices that count: a cancelled one is no longer matched or owed.
+function activeInvoicesForPo(poId: string | undefined, facts: ProcurementRuntimeFacts) {
+  return invoicesForPo(poId, facts).filter((invoice) => !isCancelledInvoice(storyInvoice(invoice)));
+}
+// Whether the read says what each invoice bills on each PO line: its lines,
+// or on the PO list (whose read leaves the lines out) the quantities by line.
+const invoiceLinesRead = (invoices: SupplierInvoice[]) => invoices.every((invoice) => Array.isArray(invoice.lines) || Boolean(poInvoice(invoice).poLineQuantities));
+
+// An invoice line counts on the PO line it names; one that names none counts
+// on the PO line with its SKU when only one has it, else on the only line of
+// a single-line PO.
+function invoiceLineOnPoLine(invoiceLine: { poLine?: string; sku?: string }, line: { poLineId: string; sku?: string }, lines: Array<{ poLineId: string; sku?: string }>) {
+  if (invoiceLine.poLine) return invoiceLine.poLine === line.poLineId;
+  const bySku = lines.filter((candidate) => candidate.sku && candidate.sku === invoiceLine.sku);
+  return bySku.length === 1 ? bySku[0].poLineId === line.poLineId : lines.length === 1;
+}
+
+// The order's lines for its story: ordered, received (accepted) and invoiced
+// on its active supplier invoices.
+function storyLines(po: PurchaseOrder, facts: ProcurementRuntimeFacts): StoryLine[] {
+  const lines = poLinesOf(po);
+  const invoices = activeInvoicesForPo(po.po, facts);
+  const invoiceLines = invoices.flatMap(invoiceLinesOf);
+  // On the PO list the invoices come without lines, with their quantities by PO line.
+  const listQuantities = invoices.filter((invoice) => !Array.isArray(invoice.lines)).map((invoice) => poInvoice(invoice).poLineQuantities || {});
+  return lines.map((line) => ({
+    ordered: toNumber(line.quantityOrdered),
+    accepted: toNumber(line.quantityReceived),
+    invoiced: invoiceLines.filter((invoiceLine) => invoiceLineOnPoLine(invoiceLine, line, lines)).reduce((sum, invoiceLine) => sum + toNumber(invoiceLine.quantity), 0)
+      + listQuantities.reduce((sum, quantities) => sum + toNumber(quantities[line.poLineId]), 0),
+    unit: String(line.unit || po.unit || ""),
+  }));
 }
 
 function grnsForPo(poId: string | undefined, facts: ProcurementRuntimeFacts) {
   return facts.receivingDocs.filter((doc) => doc.po === poId);
 }
 
+// One name per receipt state, as the order's own status says it: 未收货 Not
+// received, 部分收货 Partially received, 全部收货 Fully received.
 function receivedStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
   const totals = poTotals(po);
   const grns = grnsForPo(po.po, facts);
   if (grns.some((doc) => doc.status === "异常处理")) return "异常处理";
-  if (totals.totalOrderedQty > 0 && totals.totalReceivedQty >= totals.totalOrderedQty) return "已收货";
+  if (totals.totalOrderedQty > 0 && totals.totalReceivedQty >= totals.totalOrderedQty) return "全部收货";
   if (totals.totalReceivedQty > 0) return "部分收货";
-  if (grns.length > 0) return "待收货";
   return "未收货";
 }
 
+// The supplier invoices' state: none yet, a variance still to decide, less
+// invoiced than ordered (than received, once the order is closed), or all
+// invoiced. Payment is a stage of its own (paymentSummary).
 function invoiceStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
-  const invoices = invoicesForPo(po.po, facts);
+  const invoices = activeInvoicesForPo(po.po, facts);
   if (!invoices.length) return "未开票";
-  if (invoices.some((invoice) => !isNoInvoiceVariance(invoice.varianceType) || invoice.matchStatus === "差异待处理")) return "发票差异";
-  if (invoices.every((invoice) => invoice.paid)) return "已付款";
+  if (invoices.some((invoice) => ["open", "rejected"].includes(varianceStateOf(invoice)))) return "发票差异";
+  if (invoiceLinesRead(invoices)) {
+    const closed = ["closed", "cancelled"].includes(purchaseOrderStatusCode(po.status));
+    if (storyLines(po, facts).some((line) => (closed ? line.accepted : line.ordered) - line.invoiced > 0.00005)) return "部分开票";
+  }
   return "已开票";
 }
 
+// Match statuses that say an invoice matched without a variance.
+const MATCHED_INVOICE_STATUSES = new Set(["自动匹配", "已解决", "matched", "已匹配"]);
 function matchStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
   if (purchaseOrderStatusCode(po.status) === "cancelled") return "无需匹配";
-  const invoices = invoicesForPo(po.po, facts);
+  const invoices = activeInvoicesForPo(po.po, facts);
   const grns = grnsForPo(po.po, facts);
   // An invoice is missing only once goods have arrived; before that (an order
   // awaiting approval, or issued and not received) there is nothing to match.
   if (!invoices.length) return grns.length || poTotals(po).totalReceivedQty > 0 ? "缺少发票" : "尚无可匹配";
   if (!grns.length || grns.some((doc) => doc.status === "待收货" || doc.status === "质检中")) return "缺少收货";
-  const variance = invoices.find((invoice) => !isNoInvoiceVariance(invoice.varianceType) || invoice.varianceAmount > 0);
-  if (variance) return invoiceVarianceLabelKey(variance.varianceType);
-  if (invoices.every((invoice) => invoice.matchStatus === "自动匹配" || invoice.matchStatus === "已解决")) return "已匹配";
-  return "需人工复核";
+  const states = invoices.map((invoice) => ({ invoice, state: varianceStateOf(invoice) }));
+  // A variance still waiting on a decision, by its type.
+  const open = states.find((entry) => entry.state === "open");
+  if (open) {
+    const label = invoiceVarianceLabelKey(open.invoice.varianceType);
+    return label && label !== "无差异" ? label : "需人工复核";
+  }
+  if (states.some((entry) => entry.state === "rejected")) return "差异已驳回";
+  // An invoice with no variance that has not been matched yet.
+  if (states.some(({ invoice, state }) => state === "none" && !MATCHED_INVOICE_STATUSES.has(String(invoice.matchStatus || "")) && !["matched", "approved"].includes(poInvoice(invoice).workflowStatus || ""))) return "待匹配";
+  // Every exception approved: the match is settled, with its variance accepted.
+  if (states.some((entry) => entry.state === "approved")) return "差异已批准";
+  return "已匹配";
 }
 
-function nextStepForPo(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
+function paymentOf(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
+  return paymentSummary(activeInvoicesForPo(po.po, facts).map(storyInvoice));
+}
+
+// The next action, from what is left. Before the supplier has the order it
+// waits on its approver or on being issued; after that, see nextOpenAction.
+type PoAction = NextAction | { kind: "cancelled" } | { kind: "submit" } | { kind: "awaiting_approval" } | { kind: "rejected" } | { kind: "issue" };
+function nextActionForPo(po: PurchaseOrder, facts: ProcurementRuntimeFacts): PoAction {
   const code = purchaseOrderStatusCode(po.status);
-  if (code === "cancelled") return "订单已取消，无需收货";
-  // Before approval the order waits on its approver, not on a receipt.
-  if (code === "draft") return "提交审批";
-  if (code === "pending_approval") return "等待审批";
-  if (code === "rejected") return "订单已驳回，修改后重新提交";
+  if (code === "cancelled") return { kind: "cancelled" };
+  if (code === "draft") return { kind: "submit" };
+  if (code === "pending_approval") return { kind: "awaiting_approval" };
+  if (code === "rejected") return { kind: "rejected" };
   // Approved but not issued: the supplier does not have it yet, so nothing
   // can arrive; it is sent first (decision V5).
-  if (code === "approved") return "发给供应商并标记为下达";
-  if (receivedStatus(po, facts) === "未收货") return "等待收货";
-  const status = matchStatus(po, facts);
-  if (status === "缺少收货") return "等待收货";
-  if (status === "缺少发票") return "等待发票";
-  if (status === "数量差异") return "复核收货记录";
-  if (status === "价格差异") return "复核采购发票";
-  if (status === "已匹配") return "财务协同复核";
-  if (receivedStatus(po, facts) === "异常处理") return "生成内部差异说明草稿";
-  return "需人工复核";
+  if (code === "approved") return { kind: "issue" };
+  const invoices = activeInvoicesForPo(po.po, facts);
+  return nextOpenAction({
+    // A closed or fully received order has nothing more to receive.
+    receivable: !["closed", "fully_received", "completed"].includes(code),
+    lines: storyLines(po, facts),
+    invoices: invoices.map(storyInvoice),
+    invoiceLinesKnown: invoiceLinesRead(invoices),
+  });
 }
 
-// The order's four stages in plain words, with exactly one marked current: the
-// first stage not finished. A stage with a problem (a receipt exception, an
-// invoice variance, a match to review) shows as a warning instead.
-function poTimeline(po: PurchaseOrder, facts: ProcurementRuntimeFacts, day: (value?: string | null) => string): TimelineStep[] {
+function poActionText(action: PoAction, words: StoryWords) {
+  const pick = (pair: [string, string]) => (words.language === "en-US" ? pair[0] : pair[1]);
+  switch (action.kind) {
+    case "cancelled": return pick(["Order cancelled; no receipt required", "订单已取消，无需收货"]);
+    case "submit": return pick(["Submit it for approval", "提交审批"]);
+    case "awaiting_approval": return pick(["Awaiting approval", "等待审批"]);
+    case "rejected": return pick(["Rejected; revise it and submit again", "订单已驳回，修改后重新提交"]);
+    // The words of the Mark as issued button and its note.
+    case "issue": return pick(["Send the PO to the supplier, then mark it issued", "将采购订单发给供应商，然后标记为已下达"]);
+    default: return nextActionText(action, words);
+  }
+}
+
+// Quantities, numbers and money in the interface language, for the story's sentences.
+function storyWords(language: string, formatNumber: (value: number) => string, currency?: string): StoryWords {
+  return {
+    language,
+    quantity: (value, unit) => `${formatNumber(value)} ${unitLabel(unit, language, value)}`.trim(),
+    number: formatNumber,
+    money: (value) => formatCurrencyAmount(value, currency),
+  };
+}
+
+const PAYMENT_TONES: Record<string, StatusTone> = { none: "neutral", unknown: "neutral", outstanding: "warning", partly_paid: "info", paid: "success" };
+
+// The order's five stages in plain words, with exactly one marked current: the
+// first stage not finished. A stage is finished only once the one before it is
+// (a match or payment of part of the order is not the order's); its note still
+// says how far it got. A stage with a problem (a receipt exception, a variance
+// to decide) shows as a warning instead.
+function poTimeline(po: PurchaseOrder, facts: ProcurementRuntimeFacts, day: (value?: string | null) => string, words: StoryWords): TimelineStep[] {
   const code = purchaseOrderStatusCode(po.status);
   const receipt = receivedStatus(po, facts);
   const invoice = invoiceStatus(po, facts);
   const match = matchStatus(po, facts);
+  const payment = paymentOf(po, facts);
   const placed = !NOT_ISSUED_PO_STATUSES.has(po.status) && !NOT_ISSUED_PO_STATUSES.has(code);
-  const received = receipt === "已收货";
-  const invoiced = invoice === "已开票" || invoice === "已付款";
-  const matched = match === "已匹配" || match === "无需匹配";
+  const received = receipt === "全部收货" || (code === "closed" && receipt !== "异常处理");
+  const invoiced = invoice === "已开票";
+  const settledMatch = ["已匹配", "差异已批准", "无需匹配"].includes(match);
+  const waitingMatch = ["缺少发票", "缺少收货", "尚无可匹配", "待匹配"].includes(match);
+  const paymentNote = paymentAmountsText(payment, words) || paymentStateLabel(payment.state, words.language);
   const steps: Array<{ label: string; done: boolean; warning?: boolean; helper: React.ReactNode }> = [
-    { label: "下单", done: placed, helper: placed ? day(po.created) : nextStepForPo(po, facts) },
+    { label: "下单", done: placed, helper: placed ? day(po.created) : poActionText(nextActionForPo(po, facts), words) },
     { label: "收货", done: received, warning: receipt === "异常处理", helper: receipt },
     { label: "供应商开票", done: invoiced, warning: invoice === "发票差异", helper: invoice },
-    { label: "三单匹配", done: matched, warning: !matched && !["缺少发票", "缺少收货", "尚无可匹配"].includes(match), helper: match },
+    { label: "三单匹配", done: invoiced && settledMatch, warning: !settledMatch && !waitingMatch, helper: match },
+    { label: "付款", done: invoiced && payment.state === "paid", helper: paymentNote },
   ];
   const current = code === "cancelled" ? -1 : steps.findIndex((step) => !step.done);
   return steps.map((step, index) => ({
@@ -479,13 +647,13 @@ function poTimeline(po: PurchaseOrder, facts: ProcurementRuntimeFacts, day: (val
 // not on a receipt.
 const NOT_ISSUED_PO_STATUSES = new Set(["draft", "pending_approval", "approved", "rejected", "草稿", "待审批", "已审批", "已驳回"]);
 
-// A line's receipt state from its quantities when they say more than its
-// stored status: a line still "open" with goods received is partly received.
+// A line's receipt state from its quantities, in the words the order's status
+// uses: 未收货, 部分收货, 全部收货 (a closed line says so).
 function lineReceiptStatus(status: string | undefined, ordered: number, received: number) {
   if (status === "closed") return lineStatusLabel(status);
-  if (ordered > 0 && received >= ordered) return "已收货";
-  if (received > 0) return "部分到货";
-  return lineStatusLabel(status);
+  if (ordered > 0 && received >= ordered) return "全部收货";
+  if (received > 0) return "部分收货";
+  return "未收货";
 }
 
 // The number people read; the id (po) stays in links and calls.
@@ -497,9 +665,11 @@ function purchaseOrderNumber(order: PurchaseOrder) {
 function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts, sourceNumbers: { request?: string; rfq?: string } = {}): PoEvidenceRow[] {
   const cancelled = ["cancelled", "已取消"].includes(po.status);
   const notIssued = NOT_ISSUED_PO_STATUSES.has(String(po.status));
-  return poLinesOf(po).map((line, index) => {
-    const invoiceQty = facts.supplierInvoices.flatMap((invoice) => invoice.lines)
-      .filter((invoiceLine) => invoiceLine.poLine === line.poLineId)
+  const lines = poLinesOf(po);
+  const invoiceLines = activeInvoicesForPo(po.po, facts).flatMap(invoiceLinesOf);
+  return lines.map((line, index) => {
+    const invoiceQty = invoiceLines
+      .filter((invoiceLine) => invoiceLineOnPoLine(invoiceLine, line, lines))
       .reduce((sum, invoiceLine) => sum + toNumber(invoiceLine.quantity), 0);
     const ordered = toNumber(line.quantityOrdered);
     const received = toNumber(line.quantityReceived);
@@ -532,52 +702,91 @@ function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts, sour
   });
 }
 
-const REJECTED_RECEIPT_NOTE = "拒收数量需要采购与财务协同复核";
 // The placeholder for a receipt or invoice line that names no PO line.
 const MISSING_PO_LINE = "采购订单行待补齐";
 
+// A receipt's state as a status code the shared labels know: posted or
+// reversed once it is, cancelled, else where its workflow stands.
+type PoReceipt = ReceivingDoc & { workflowStatus?: string; postingStatus?: string };
+function receiptStatusCode(grn: ReceivingDoc) {
+  const { postingStatus, workflowStatus } = grn as PoReceipt;
+  if (postingStatus === "posted" || postingStatus === "reversed") return postingStatus;
+  if (workflowStatus === "cancelled") return "cancelled";
+  return workflowStatus || postingStatus || String(grn.status || "");
+}
+// The GRN number people read; the id when the receipt has none.
+const receiptNumberOf = (grn: ReceivingDoc) => grn.documentNumber || grn.grn;
+
+const roundCents = (value: number) => Math.round(value * 100) / 100;
+
 function buildGrnRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): GrnEvidenceRow[] {
   const poLines = poLinesOf(po);
+  const invoiceLines = activeInvoicesForPo(po.po, facts).flatMap(invoiceLinesOf);
   return grnsForPo(po.po, facts).flatMap((grn) => {
     const lines = grnLinesOf(grn);
     return lines.map((line, index) => {
       const poLine = poLines.find((item) => item.poLineId === line.poLineId) || poLines[index] || poLines[0];
-      const relatedInvoiceLine = facts.supplierInvoices.flatMap((invoice) => invoice.lines.map((invoiceLine) => ({ invoice, invoiceLine })))
-        .find(({ invoice, invoiceLine }) => invoice.relatedPo === po.po && (invoiceLine.grnLine === line.grnLineId || invoiceLine.poLine === poLine?.poLineId));
+      const grnLineId = safeText(line.grnLineId, `${grn.grn}-L${String(index + 1).padStart(3, "0")}`);
+      // An invoice line belongs to a receipt line only when it names it.
+      const invoicedOn = invoiceLines.filter((invoiceLine) => invoiceLine.grnLine && invoiceLine.grnLine === line.grnLineId);
       const unitPrice = unitPriceForLine(poLine || {}, po, facts);
-      const receivedQty = toNumber(line.receivedQty);
+      const rejectedQty = toNumber(line.rejectedQty);
+      // Accepted into stock: what the PO line counts as received and what is
+      // invoiced against. A line recorded with neither (older rows) counts
+      // what arrived.
+      const acceptedQty = toNumber(line.acceptedQty) || (rejectedQty ? 0 : toNumber(line.receivedQty));
+      const stored = (Array.isArray(grn.lines) ? grn.lines[index] : undefined) as Record<string, unknown> | undefined;
       return {
         grn: grn.grn,
-        grnLineId: safeText(line.grnLineId, `${grn.grn}-L${String(index + 1).padStart(3, "0")}`),
+        receiptNumber: receiptNumberOf(grn),
+        receiptStatus: receiptStatusCode(grn),
+        grnLineId,
         grnLineNumber: index + 1,
         po: po.po,
         poLineId: safeText(line.poLineId || poLine?.poLineId, MISSING_PO_LINE),
         supplier: grn.supplier,
         sku: safeText(line.sku || poLine?.sku, "SKU 待补齐"),
-        receivedQty,
+        acceptedQty,
+        rejectedQty,
+        rejectionReason: String(stored?.rejectionReason ?? "").trim(),
         unit: safeText(line.unit || poLine?.unit, "件"),
         arrived: grn.arrived,
         receiver: safeText(grn.receiver, "收货人待补齐"),
         unitPrice,
-        lineAmount: Math.round(unitPrice * receivedQty),
+        lineAmount: roundCents(unitPrice * acceptedQty),
         status: grn.status,
-        qcStatus: toNumber(line.rejectedQty) > 0 || grn.failed > 0 ? "质检异常" : grn.status === "质检中" ? "质检中" : "通过",
-        invoiceImpact: relatedInvoiceLine ? "影响发票匹配" : "等待发票匹配",
-        invoiceLine: relatedInvoiceLine?.invoiceLine.lineId || "尚未开票",
-        note: toNumber(line.rejectedQty) > 0 ? REJECTED_RECEIPT_NOTE : "查看收货记录和匹配影响",
+        qcStatus: rejectedQty > 0 ? "质检异常" : grn.status === "质检中" ? "质检中" : "通过",
+        invoiceLineIds: invoicedOn.map((invoiceLine) => invoiceLine.lineId),
       };
     });
   });
 }
 
+// An invoice's match state in the page's words: its variance waiting on a
+// decision (by type), decided (approved or rejected), matched, or not matched yet.
+function invoiceMatchState(invoice: SupplierInvoice) {
+  if (isCancelledInvoice(storyInvoice(invoice))) return "已取消";
+  const state = varianceStateOf(invoice);
+  if (state === "open") {
+    const label = invoiceVarianceLabelKey(invoice.varianceType);
+    return label && label !== "无差异" ? label : "需人工复核";
+  }
+  if (state === "rejected") return "差异已驳回";
+  if (state === "approved") return "差异已批准";
+  return MATCHED_INVOICE_STATUSES.has(String(invoice.matchStatus || "")) || ["matched", "approved"].includes(poInvoice(invoice).workflowStatus || "") ? "已匹配" : "待匹配";
+}
+
 function buildInvoiceRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): InvoiceEvidenceRow[] {
   return invoicesForPo(po.po, facts).flatMap((invoice) => {
-    const invoiceLines = invoice.lines.length ? invoice.lines : [{
+    const story = storyInvoice(invoice);
+    // An invoice recorded without lines shows as one line; it names no
+    // receipt line, so it is linked to none.
+    const invoiceLines = invoiceLinesOf(invoice).length ? invoiceLinesOf(invoice) : [{
       lineId: `${invoice.invoiceNumber}-SUMMARY`,
       sku: po.sourceSku || "",
       name: po.sourceName || "",
       poLine: po.lines?.[0]?.poLineId,
-      grnLine: grnsForPo(po.po, facts)[0]?.lines?.[0]?.grnLineId,
+      grnLine: "",
       quantity: po.received || 0,
       unit: po.lines?.[0]?.unit || "",
       unitPrice: po.lines?.[0]?.unitPrice || 0,
@@ -589,27 +798,30 @@ function buildInvoiceRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): In
       varianceAmount: invoice.varianceAmount,
     }];
     return invoiceLines.map((line, index) => ({
-    currency: invoice.currency,
-    invoiceNumber: invoice.invoiceNumber,
-    invoiceLineId: line.lineId,
-    invoiceLineNumber: index + 1,
-    supplier: invoice.supplier,
-    po: invoice.relatedPo,
-    poLineId: safeText(line.poLine, MISSING_PO_LINE),
-    grnLineId: safeText(line.grnLine, "收货行待补齐"),
-    sku: safeText(line.sku, "SKU 待补齐"),
-    quantity: toNumber(line.quantity),
-    unit: safeText(line.unit, "件"),
-    unitPrice: toNumber(line.unitPrice),
-    invoiceAmount: toNumber(line.lineSubtotal),
-    taxAmount: toNumber(line.taxAmount),
-    totalAmount: toNumber(line.lineTotal),
-    invoiceDate: invoice.invoiceDate,
-    dueDate: invoice.dueDate,
-    matchStatus: invoice.matchStatus,
-    varianceType: invoiceVarianceLabelKey(line.varianceType || invoice.varianceType),
-    varianceAmount: toNumber(line.varianceAmount ?? invoice.varianceAmount),
-    risk: isNoInvoiceVariance(line.varianceType || invoice.varianceType) ? "低风险" : "需人工复核",
+      currency: invoice.currency,
+      invoiceNumber: invoice.invoiceNumber,
+      displayNumber: invoiceNumberOf(invoice),
+      invoiceLineId: line.lineId,
+      invoiceLineNumber: index + 1,
+      supplier: invoice.supplier,
+      po: invoice.relatedPo,
+      poLineId: safeText(line.poLine, MISSING_PO_LINE),
+      grnLineId: String(line.grnLine || ""),
+      sku: safeText(line.sku, "SKU 待补齐"),
+      quantity: toNumber(line.quantity),
+      unit: safeText(line.unit, "件"),
+      unitPrice: toNumber(line.unitPrice),
+      invoiceAmount: toNumber(line.lineSubtotal),
+      taxAmount: toNumber(line.taxAmount),
+      totalAmount: toNumber(line.lineTotal),
+      invoiceDate: invoice.invoiceDate,
+      dueDate: invoice.dueDate,
+      matchState: invoiceMatchState(invoice),
+      varianceType: invoiceVarianceLabelKey(line.varianceType || invoice.varianceType),
+      varianceAmount: toNumber(line.varianceAmount ?? invoice.varianceAmount),
+      hasVariance: story.hasVariance,
+      payment: story.payment ?? null,
+      risk: isNoInvoiceVariance(line.varianceType || invoice.varianceType) ? "低风险" : "需人工复核",
     }));
   });
 }
@@ -633,19 +845,23 @@ function matchStatusForLine(row: Omit<MatchEvidenceRow, "status" | "suggestedAct
   return "已匹配";
 }
 
-function suggestedActionForStatus(status: string, invoiceGap = 0) {
-  if (status === "缺少收货") return "等待收货";
-  if (status === "缺少发票" || status === "已收未票") return "等待发票";
-  if (status === "已票未收" || status === "数量差异") return "复核收货记录";
-  if (status === "价格差异" || status === "金额差异") return "复核采购发票";
+const LINE_VARIANCE_STATUSES = new Set(["数量差异", "价格差异", "金额差异"]);
+function suggestedActionForStatus(status: string, invoiceGap = 0): [string, string] {
+  if (status === "缺少收货") return ["Record the receipt", "登记收货"];
+  if (status === "缺少发票" || status === "已收未票") return ["Record the supplier invoice", "录入采购发票"];
+  if (status === "已票未收" || status === "数量差异") return ["Review the receipt", "复核收货记录"];
+  if (status === "价格差异" || status === "金额差异") return ["Review the supplier invoice", "复核采购发票"];
+  if (status === "差异已驳回") return ["Ask the supplier for a corrected invoice", "请供应商更正发票"];
   // Matched so far; the rest of what was received is still to be invoiced.
-  if (status === "已匹配" && invoiceGap > MATCH_QTY_EPSILON) return "等待发票";
-  return "财务协同复核";
+  if (invoiceGap > MATCH_QTY_EPSILON) return ["Record the supplier invoice for the rest", "为其余数量录入采购发票"];
+  return ["Nothing to do", "无需处理"];
 }
 
 function buildMatchRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): MatchEvidenceRow[] {
   const grnRows = buildGrnRows(po, facts);
-  const invoiceRows = buildInvoiceRows(po, facts);
+  const activeIds = new Set(activeInvoicesForPo(po.po, facts).map((invoice) => invoice.invoiceNumber));
+  const invoiceRows = buildInvoiceRows(po, facts).filter((row) => activeIds.has(row.invoiceNumber));
+  const invoices = new Map(invoicesForPo(po.po, facts).map((invoice) => [invoice.invoiceNumber, invoice]));
   const poLines = buildPoLineRows(po, facts);
   // An invoice line without a PO line reference counts on the PO line with its
   // SKU when only one has it, else on the only line of a single-line PO.
@@ -659,14 +875,17 @@ function buildMatchRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): Matc
     const invoiceLines = invoiceRows.filter((row) => onLine(row, line));
     // Received is what was accepted on the PO line; the receipt lines only
     // stand in when the PO line has none recorded.
-    const receivedQty = line.receivedQty > 0 || !grnLines.length ? line.receivedQty : grnLines.reduce((sum, row) => sum + row.receivedQty, 0);
+    const receivedQty = line.receivedQty > 0 || !grnLines.length ? line.receivedQty : grnLines.reduce((sum, row) => sum + row.acceptedQty, 0);
     const invoiceQty = invoiceLines.reduce((sum, row) => sum + row.quantity, 0);
     const invoiceAmount = invoiceLines.reduce((sum, row) => sum + row.invoiceAmount, 0);
     const expectedAmount = invoiceQty * line.unitPrice;
+    const invoiceIds = [...new Set(invoiceLines.map((row) => row.invoiceNumber))];
     const base = {
       poLineId: line.poLineId,
       grnLineId: grnLines[0]?.grnLineId || "尚未收货",
       invoiceLineId: invoiceLines[0]?.invoiceLineId || "尚未开票",
+      receiptIds: [...new Set(grnLines.map((row) => row.grn))],
+      invoiceIds,
       moreInvoiceLines: Math.max(0, invoiceLines.length - 1),
       poQty: line.quantity,
       receivedQty,
@@ -682,7 +901,14 @@ function buildMatchRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): Matc
       receivingGap: Math.max(0, line.quantity - receivedQty),
       invoiceGap: Math.max(0, receivedQty - invoiceQty),
     };
-    const status = matchStatusForLine(base);
+    let status = matchStatusForLine(base);
+    // A variance on the line is settled once each invoice that carries one
+    // had its exceptions approved; rejected, it waits on a corrected invoice.
+    if (LINE_VARIANCE_STATUSES.has(status)) {
+      const states = invoiceIds.map((id) => invoices.get(id)).filter((invoice): invoice is SupplierInvoice => Boolean(invoice)).map(varianceStateOf).filter((state) => state !== "none");
+      if (states.includes("rejected")) status = "差异已驳回";
+      else if (states.length && states.every((state) => state === "approved")) status = "差异已批准";
+    }
     return { ...base, status, suggestedAction: suggestedActionForStatus(status, base.invoiceGap) };
   });
 }
@@ -728,7 +954,7 @@ function PoProgress({ steps }: { steps: TimelineStep[] }) {
   const copy = usePageCopy();
   return (
     <Card className="p-4" data-testid="po-progress">
-      {/* Four steps fit a phone: no sideways scroll, the labels wrap. */}
+      {/* Five steps fit a phone: no sideways scroll, the labels wrap. */}
       <div>
         <ol className="grid" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
           {steps.map((step, index) => {
@@ -752,7 +978,9 @@ function PoProgress({ steps }: { steps: TimelineStep[] }) {
 // Receipt, invoice and match lines: fixed columns that fit beside the sidebar
 // at 1440px, headers that wrap, the first column pinned when a narrower
 // window scrolls, and an empty state in its own card instead of a row spread
-// across hidden columns.
+// across hidden columns. Below 640 px each row is a card (listTableCardsRef):
+// the first column names it, the status column sits beside it, the other
+// cells follow with their column names.
 type EvidenceColumn<T> = { key: string; label: string; width: number; align?: "right"; render: (row: T) => React.ReactNode };
 const evidenceHeadClass = `px-3 py-2.5 align-bottom ${typography.tableHeader}`;
 function EvidenceTable<T>({ columns, rows, rowKey, emptyText, testId }: { columns: EvidenceColumn<T>[]; rows: T[]; rowKey: (row: T, index: number) => string; emptyText: string; testId: string }) {
@@ -760,7 +988,7 @@ function EvidenceTable<T>({ columns, rows, rowKey, emptyText, testId }: { column
   const minWidth = columns.reduce((sum, column) => sum + column.width, 0);
   return (
     <Card className="overflow-hidden" data-testid={testId}>
-      <div className={tableScrollClass}>
+      <div className={tableScrollClass} ref={listTableCardsRef}>
         <table className={`w-full table-fixed text-left ${tableBodyTextClass}`} style={{ minWidth }}>
           <colgroup>{columns.map((column) => <col key={column.key} style={{ width: column.width }} />)}</colgroup>
           <thead>
@@ -946,30 +1174,54 @@ export default function PurchasingOrdersPage({
     const position = poLinesOf(selectedPO).findIndex((line) => line.poLineId === id);
     return position >= 0 ? lineName(position + 1) : copy(id);
   };
-  // "LOCAL-DEMO-GRN-001 · Line 1" for a receipt line id.
+  // "GRN-202611-0008 · Line 1" for a receipt line id: the GRN number, never
+  // the receipt's id; "" for a line the page cannot place.
   const receiptLineLabel = (id: string) => {
     for (const grn of receivingRecords) {
       const position = grnLinesOf(grn).findIndex((line) => line.grnLineId === id);
-      if (position >= 0) return `${grn.grn} · ${lineName(position + 1)}`;
+      if (position >= 0) return `${receiptNumberOf(grn)} · ${lineName(position + 1)}`;
     }
-    return copy(id);
+    return "";
   };
-  // "LOCAL-DEMO-INV-001 · Line 1" for a supplier invoice line id.
   // A line id for a tooltip: none for the "no receipt / invoice yet"
   // placeholders (尚未收货, 尚未开票, 待补齐), which are markers, not ids.
   const lineIdTitle = (id: string) => (!id || /尚未|待补齐/.test(id) ? undefined : id);
+  // "INV-UI7-B002 · Line 1" for a supplier invoice line id: the supplier's
+  // invoice number, never the record's id; "" for a line the page cannot place.
   const invoiceLineLabel = (id: string) => {
     for (const invoice of invoiceRecords) {
-      const position = invoice.lines.findIndex((line) => line.lineId === id);
-      if (position >= 0) return `${invoice.invoiceNumber} · ${lineName(position + 1)}`;
+      const position = invoiceLinesOf(invoice).findIndex((line) => line.lineId === id);
+      if (position >= 0) return `${invoiceNumberOf(invoice)} · ${lineName(position + 1)}`;
     }
-    return copy(id);
+    return "";
   };
+  // The numbers of receipts and supplier invoices, by id.
+  const receiptNumberFor = (id: string) => {
+    const grn = receivingRecords.find((doc) => doc.grn === id);
+    return grn ? receiptNumberOf(grn) : id;
+  };
+  const invoiceNumberFor = (id: string) => {
+    const invoice = invoiceRecords.find((record) => record.invoiceNumber === id);
+    return invoice ? invoiceNumberOf(invoice) : id;
+  };
+  // A status code (posted, cancelled …) in the interface language.
+  const codeLabel = (code: string) => statusCodeLabel(code, language) || copy(code);
+  // Quantities, numbers and money for the order's story sentences.
+  const words = (currency?: string) => storyWords(language, formatNumber, currency);
   // Earlier PO prices for each line's item, unit and currency, in one
   // request. The server leaves this PO out and, once it is issued, every PO
   // dated after it. Display only.
   // Notes for the header buttons, shown on a line under them.
-  const actionNotes = usePurchaseOrderActionNotes({ status: selectedPO?.status || "", version: selectedPO?.version, billable: BILLABLE_PO_STATUSES.has(selectedPO?.status || "") });
+  const actionNotes = usePurchaseOrderActionNotes({ status: selectedPO?.status || "", version: selectedPO?.version });
+  // Which rows of the list may offer Receive and Record supplier invoice.
+  const entryRules = usePurchaseOrderEntryRules();
+  // Open orders whose expected arrival is before today in the workspace's timezone.
+  const today = todayInTimeZone(timezone);
+  const daysLate = (order: PurchaseOrder) => {
+    if (!order.eta || !summary?.openPurchaseOrderIds?.includes(order.po)) return 0;
+    const days = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${String(order.eta).slice(0, 10)}T00:00:00Z`)) / 86_400_000);
+    return Number.isFinite(days) && days > 0 ? days : 0;
+  };
   const poLineHistoryKeys = new Map((viewMode === "detail" && selectedPO?.lines ? selectedPO.lines : []).map((line) => [line.poLineId, priceHistoryKey({ itemId: line.itemId, unit: line.unit, currency: line.currency || selectedPO?.currency })]));
   const poPriceHistory = usePriceHistory([...poLineHistoryKeys.values()], { excludePurchaseOrderId: selectedPO?.po });
   const sourceOptions = Array.from(new Set(orders.map((order) => order.source || "manual"))).sort();
@@ -1000,7 +1252,7 @@ export default function PurchasingOrdersPage({
   const invoiceExceptions = orders.filter((order) => invoiceStatus(order, facts) === "发票差异").length;
   // Orders whose match needs a person: not those matched, waiting for an
   // invoice, or with nothing to match yet.
-  const matchExceptions = orders.filter((order) => !["已匹配", "缺少发票", "尚无可匹配", "无需匹配"].includes(matchStatus(order, facts))).length;
+  const matchExceptions = orders.filter((order) => !["已匹配", "差异已批准", "待匹配", "缺少发票", "尚无可匹配", "无需匹配"].includes(matchStatus(order, facts))).length;
 
   function updateFilter<K extends keyof PurchaseOrderWorkbenchFilters>(key: K, value: PurchaseOrderWorkbenchFilters[K]) {
     setFilters((current) => {
@@ -1052,7 +1304,7 @@ export default function PurchasingOrdersPage({
       收货状态: receivedStatus(order, facts),
       发票状态: invoiceStatus(order, facts),
       三单匹配状态: matchStatus(order, facts),
-      下一步: nextStepForPo(order, facts),
+      下一步: poActionText(nextActionForPo(order, facts), words(order.currency)),
     })));
     toast.success(copy("当前结果已导出"));
   }
@@ -1143,9 +1395,12 @@ export default function PurchasingOrdersPage({
     // The order status ("Partially received") already says what a receiving
     // status of the same words would (compared in English, where the two
     // vocabularies share their labels).
-    const receiptStatusRepeatsOrder = workspaceCopy(receivedStatus(selectedPO, facts), "en-US") === workspaceCopy(String(selectedPO.status), "en-US");
+    const receiptStatusRepeatsOrder = pageCopy(receivedStatus(selectedPO, facts), "en-US") === workspaceCopy(String(selectedPO.status), "en-US");
+    const orderWords = words(selectedPO.currency);
+    const nextAction = poActionText(nextActionForPo(selectedPO, facts), orderWords);
+    const payment = paymentOf(selectedPO, facts);
     const overviewFields: OverviewField[] = [
-      { label: copy("来源 PR"), value: selectedPO.sourceRequest ? sourceRequestNumber : copy("未从采购申请创建") },
+      { label: say("Source PR", "来源采购申请"), value: selectedPO.sourceRequest ? sourceRequestNumber : copy("未从采购申请创建") },
       // A PO need not come from a request or an RFQ: neither is a gap (owner, 2026-11-03).
       { label: copy("来源询价单"), value: selectedPO.sourceRfq ? sourceRfqNumber : copy(selectedPO.sourceRequest ? "未经询价，由采购申请创建" : "未经询价") },
       { label: supplierLabel, value: selectedPO.supplier },
@@ -1158,67 +1413,92 @@ export default function PurchasingOrdersPage({
       ...(receiptStatusRepeatsOrder ? [] : [{ label: copy("收货状态"), value: statusChip(receivedStatus(selectedPO, facts)) }]),
       { label: copy("发票状态"), value: statusChip(invoiceStatus(selectedPO, facts)) },
       { label: copy("匹配状态"), value: statusChip(matchStatus(selectedPO, facts)) },
-      { label: copy("当前下一步"), value: copy(nextStepForPo(selectedPO, facts)) },
+      // Paid, partly paid or outstanding on the approved supplier invoices, with the amounts.
+      { label: say("Payment", "付款"), value: <StatusChip label={paymentStateLabel(payment.state, language)} tone={PAYMENT_TONES[payment.state]} testId="po-payment-status" />, helper: paymentAmountsText(payment, orderWords) || undefined },
+      { label: copy("当前下一步"), value: <span data-testid="po-next-action">{nextAction}</span> },
       // Plain words: is anything late to arrive? The note says what.
       { label: say("Late deliveries", "逾期未到"), value: <StatusChip label={delayed ? say("Some lines are late", "有逾期行") : say("None", "无")} tone={delayed ? "warning" : "success"} />, helper: delayNote },
     ];
     const lineLabel = poLineLabel;
+    const qty = (value: number, unit: string) => `${formatNumber(value)} ${unitLabel(unit, language, value)}`;
+    // A few document numbers, each kept on one line, then how many more.
+    const someNumbers = (numbers: string[]) => <>
+      {numbers.slice(0, 2).map((number, index) => <React.Fragment key={number}>{index ? ", " : ""}<span className="whitespace-nowrap">{number}</span></React.Fragment>)}
+      {numbers.length > 2 ? ` ${say(`+${formatNumber(numbers.length - 2)} more`, `等 ${formatNumber(numbers.length)} 张`)}` : null}
+    </>;
     const grnColumns: EvidenceColumn<GrnEvidenceRow>[] = [
       { key: "grn", label: say("Receipt", "收货单"), width: 180, render: (row) => <>
-        <button type="button" className={`${tableLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openReceipt(row.grn)}>{row.grn}</button>
+        <button type="button" className={`${tableLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openReceipt(row.grn)} data-testid="po-receipt-number">{row.receiptNumber}</button>
         <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.grnLineId)}>{lineName(row.grnLineNumber)}</span></Sub>
       </> },
-      { key: "poLine", label: say("PO line", "采购订单行"), width: 230, render: (row) => <>
+      { key: "poLine", label: say("PO line", "采购订单行"), width: 200, render: (row) => <>
         <div className="whitespace-nowrap">{lineLabel(row.poLineId)}</div>
         <Sub>{copy(row.sku)}</Sub>
       </> },
-      { key: "receivedQty", label: copy("收货数量"), width: 100, align: "right", render: (row) => <span className="whitespace-nowrap">{formatNumber(row.receivedQty)} {unitLabel(row.unit, language, row.receivedQty)}</span> },
+      // Accepted into stock, with what was rejected beside it.
+      { key: "receivedQty", label: copy("收货数量"), width: 130, align: "right", render: (row) => <span data-testid="po-receipt-quantity">
+        <span className="whitespace-nowrap">{qty(row.acceptedQty, row.unit)}</span>
+        {row.rejectedQty > 0 ? <> <span className="whitespace-nowrap">{say(`(${formatNumber(row.rejectedQty)} rejected)`, `（拒收 ${formatNumber(row.rejectedQty)}）`)}</span></> : null}
+      </span> },
       { key: "arrived", label: copy("收货日期"), width: 130, render: (row) => <>
         <div className="whitespace-nowrap">{day(row.arrived) || "—"}</div>
         <Sub>{copy(row.receiver)}</Sub>
       </> },
+      // The accepted quantity at the PO price, to the cent.
       { key: "lineAmount", label: copy("行金额"), width: 130, align: "right", render: (row) => <>
-        <div className="whitespace-nowrap">{fmt(hideAmounts ? null : amountOrNull(row.lineAmount))}</div>
+        <div className="whitespace-nowrap" data-testid="po-receipt-amount">{fmt(hideAmounts ? null : amountOrNull(row.lineAmount))}</div>
         <Sub><span className="whitespace-nowrap">{fmt(hideAmounts ? null : amountOrNull(row.unitPrice))} / {unitLabel(row.unit, language, 1)}</span></Sub>
       </> },
       { key: "status", label: copy("收货状态"), width: 150, render: (row) => <>
-        {statusChip(row.status === "partial" ? "部分收货" : row.status)}
+        <StatusChip label={codeLabel(row.receiptStatus)} tone={statusToneOf(row.receiptStatus)} />
         <Sub>{say("QC", "质检")}: {copy(row.qcStatus)}</Sub>
-        {row.note === REJECTED_RECEIPT_NOTE ? <Sub>{copy(row.note)}</Sub> : null}
+        {/* The rejected quantity with the reason recorded on the receipt, and the way to it. */}
+        {row.rejectedQty > 0 ? <Sub>
+          <span data-testid="po-receipt-rejection">{say(`${formatNumber(row.rejectedQty)} rejected: `, `拒收 ${formatNumber(row.rejectedQty)}：`)}{row.rejectionReason || say("no reason recorded", "未记录原因")}</span>
+          {" · "}<button type="button" className="text-blue-600 hover:underline" onClick={() => openReceipt(row.grn)}>{say("View receipt", "查看收货单")}</button>
+        </Sub> : null}
       </> },
-      { key: "invoiceLine", label: say("Invoice line", "发票行"), width: 180, render: (row) => <>
-        <div className="break-words" title={lineIdTitle(row.invoiceLine)}>{invoiceLineLabel(row.invoiceLine)}</div>
-        <Sub>{row.invoiceImpact === "影响发票匹配" ? say("Counted in the invoice match", "已计入发票匹配") : copy(row.invoiceImpact)}</Sub>
-      </> },
+      // The supplier invoice lines that name this receipt line, by number.
+      { key: "invoiceLine", label: say("Invoice line", "发票行"), width: 180, render: (row) => row.invoiceLineIds.length ? <>
+        <div className="break-words" title={lineIdTitle(row.invoiceLineIds[0])} data-testid="po-receipt-invoice">{invoiceLineLabel(row.invoiceLineIds[0])}{row.invoiceLineIds.length > 1 ? say(` +${formatNumber(row.invoiceLineIds.length - 1)} more`, ` 等 ${formatNumber(row.invoiceLineIds.length)} 行`) : ""}</div>
+        <Sub>{say("Counted in the invoice match", "已计入发票匹配")}</Sub>
+      </> : <div style={{ color: A.sub }} data-testid="po-receipt-invoice">{say("Not invoiced yet", "尚未开票")}</div> },
     ];
     const invoiceColumns: EvidenceColumn<InvoiceEvidenceRow>[] = [
       { key: "invoice", label: say("Supplier invoice", "采购发票"), width: 180, render: (row) => <>
         {canOpenInvoice
-          ? <button type="button" className={`${tableLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openInvoice(row.invoiceNumber)}>{row.invoiceNumber}</button>
-          : <span className="whitespace-nowrap font-medium" style={{ color: A.blue }}>{row.invoiceNumber}</span>}
+          ? <button type="button" className={`${tableLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openInvoice(row.invoiceNumber)} data-testid="po-invoice-number">{row.displayNumber}</button>
+          : <span className="whitespace-nowrap font-medium" style={{ color: A.blue }} data-testid="po-invoice-number">{row.displayNumber}</span>}
         <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.invoiceLineId)}>{lineName(row.invoiceLineNumber)}</span></Sub>
       </> },
-      { key: "poLine", label: say("PO line", "采购订单行"), width: 230, render: (row) => <>
+      { key: "poLine", label: say("PO line", "采购订单行"), width: 210, render: (row) => <>
         <div className="whitespace-nowrap">{lineLabel(row.poLineId)}</div>
         <Sub>{copy(row.sku)}</Sub>
-        <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.grnLineId)}>{say("Receipt: ", "收货：")}{receiptLineLabel(row.grnLineId)}</span></Sub>
+        <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.grnLineId)}>{say("Receipt: ", "收货：")}{receiptLineLabel(row.grnLineId) || say("not linked", "未关联")}</span></Sub>
       </> },
       { key: "quantity", label: copy("开票数量"), width: 120, align: "right", render: (row) => <>
-        <div className="whitespace-nowrap">{formatNumber(row.quantity)} {unitLabel(row.unit, language, row.quantity)}</div>
+        <div className="whitespace-nowrap">{qty(row.quantity, row.unit)}</div>
         <Sub><span className="whitespace-nowrap">@ {formatCurrencyAmount(row.unitPrice, row.currency)}</span></Sub>
       </> },
       { key: "invoiceAmount", label: copy("发票金额"), width: 120, align: "right", render: (row) => <span className="whitespace-nowrap">{formatCurrencyAmount(row.invoiceAmount, row.currency)}</span> },
-      { key: "totalAmount", label: say("Total incl. tax", "含税总额"), width: 130, align: "right", render: (row) => <>
-        <div className="whitespace-nowrap font-medium">{formatCurrencyAmount(row.totalAmount, row.currency)}</div>
-        <Sub><span className="whitespace-nowrap">{copy("税额")} {formatCurrencyAmount(row.taxAmount, row.currency)}</span></Sub>
-      </> },
+      { key: "totalAmount", label: say("Total incl. tax", "含税总额"), width: 140, align: "right", render: (row) => {
+        // What is paid on this invoice, once it is approved for payment.
+        const paid = paymentSummary([{ hasVariance: false, payment: row.payment }]);
+        const paidText = paymentAmountsText(paid, storyWords(language, formatNumber, row.currency));
+        return <>
+          <div className="whitespace-nowrap font-medium">{formatCurrencyAmount(row.totalAmount, row.currency)}</div>
+          <Sub><span className="whitespace-nowrap">{copy("税额")} {formatCurrencyAmount(row.taxAmount, row.currency)}</span></Sub>
+          {/* "Paid", or what is paid and still open; the state alone when amounts are hidden. */}
+          {paid.state !== "none" ? <Sub><span data-testid="po-invoice-payment">{paid.state === "paid" || !paidText ? paymentStateLabel(paid.state, language) : paidText}</span></Sub> : null}
+        </>;
+      } },
       { key: "invoiceDate", label: copy("发票日期"), width: 120, render: (row) => <>
         <div className="whitespace-nowrap">{day(row.invoiceDate) || "—"}</div>
         <Sub><span className="whitespace-nowrap">{say("Due", "到期")} {day(row.dueDate) || "—"}</span></Sub>
       </> },
       { key: "matchStatus", label: copy("匹配状态"), width: 160, render: (row) => <>
-        {statusChip(row.matchStatus)}
-        <Sub>{copy(row.varianceType)}{row.varianceAmount ? <> · <span className="whitespace-nowrap">{formatCurrencyAmount(row.varianceAmount, row.currency)}</span></> : null}</Sub>
+        {statusChip(row.matchState)}
+        {row.hasVariance ? <Sub>{copy(row.varianceType)}{row.varianceAmount ? <> · <span className="whitespace-nowrap">{formatCurrencyAmount(row.varianceAmount, row.currency)}</span></> : null}</Sub> : null}
       </> },
     ];
     // Price and amount differences only mean something once the line is invoiced.
@@ -1227,10 +1507,11 @@ export default function PurchasingOrdersPage({
     // A variance with its sign: +$200.00 over the PO price, -$50.00 under it.
     const signedMoney = (value: number) => (hideAmounts ? fmt(null) : `${value >= MATCH_MONEY_EPSILON ? "+" : ""}${fmt(Math.abs(value) < MATCH_MONEY_EPSILON ? 0 : value)}`);
     const matchColumns: EvidenceColumn<MatchEvidenceRow>[] = [
+      // The line with every receipt and supplier invoice on it, by number.
       { key: "poLine", label: say("PO line", "采购订单行"), width: 220, render: (row) => <>
         <div className="whitespace-nowrap">{lineLabel(row.poLineId)}</div>
-        <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.grnLineId)}>{say("Receipt: ", "收货：")}{receiptLineLabel(row.grnLineId)}</span></Sub>
-        <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.invoiceLineId)}>{say("Invoice: ", "发票：")}{invoiceLineLabel(row.invoiceLineId)}{row.moreInvoiceLines ? say(` +${formatNumber(row.moreInvoiceLines)} more`, ` 等 ${formatNumber(row.moreInvoiceLines + 1)} 行`) : ""}</span></Sub>
+        <Sub><span data-testid="po-match-receipts">{row.receiptIds.length ? <>{say(row.receiptIds.length > 1 ? "Receipts: " : "Receipt: ", "收货：")}{someNumbers(row.receiptIds.map(receiptNumberFor))}</> : say("Receipt: none yet", "收货：尚无")}</span></Sub>
+        <Sub><span data-testid="po-match-invoices">{row.invoiceIds.length ? <>{say(row.invoiceIds.length > 1 ? "Invoices: " : "Invoice: ", "发票：")}{someNumbers(row.invoiceIds.map(invoiceNumberFor))}</> : say("Invoice: none yet", "发票：尚无")}</span></Sub>
       </> },
       { key: "poQty", label: copy("订购数量"), width: 80, align: "right", render: (row) => formatNumber(row.poQty) },
       { key: "receivedQty", label: copy("已收数量"), width: 110, align: "right", render: (row) => <>
@@ -1261,12 +1542,13 @@ export default function PurchasingOrdersPage({
       // A line with nothing received and nothing invoiced is simply waiting:
       // gray, not the orange of a receipt missing behind an invoice.
       { key: "status", label: copy("匹配状态"), width: 170, render: (row) => row.status === "缺少收货" && row.receivedQty === 0 && !invoiced(row) ? <>
-        <StatusChip label={say("Awaiting receipt", "等待收货")} tone="neutral" />
+        <StatusChip label={copy("未收货")} tone="neutral" />
       </> : <>
         {statusChip(row.status)}
-        <Sub>{copy(row.suggestedAction)}</Sub>
+        <Sub>{say(...row.suggestedAction)}</Sub>
       </> },
     ];
+
     // Nothing received and nothing invoiced: the match reads as one sentence.
     const nothingToMatch = grnRows.length === 0 && invoiceRows.length === 0;
 
@@ -1319,10 +1601,10 @@ export default function PurchasingOrdersPage({
           <OverviewFields fields={overviewFields} />
         </div>
 
-        <PoProgress steps={poTimeline(selectedPO, facts, day)} />
+        <PoProgress steps={poTimeline(selectedPO, facts, day, orderWords)} />
 
         <div>
-          <SectionTitle title={copy("PO 明细行")} right={<Chip label={`${poLines.length} ${copy(poLines.length === 1 ? "单行" : "行")}`} color={A.blue} bg="#f0f6ff" />} />
+          <SectionTitle title={say("PO line items", "采购订单明细行")} right={<Chip label={say(`${formatNumber(poLines.length)} ${poLines.length === 1 ? "line" : "lines"}`, `${formatNumber(poLines.length)} 行`)} color={A.blue} bg="#f0f6ff" />} />
           <PurchaseOrderLineCards
             rows={poLines}
             currency={selectedPO.currency}
@@ -1347,7 +1629,7 @@ export default function PurchasingOrdersPage({
             <Card className="p-3" style={{ background: "#fffaf0", borderColor: `${A.orange}55` }}>
               <div className="text-xs font-semibold" style={{ color: A.orange }}>{copy("AI 已定位：收货、发票差异与建议下一步")}</div>
               <div className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>
-                {copy(receivedStatus(selectedPO, facts))} · {copy(invoiceStatus(selectedPO, facts))}{copy("· 建议：")}{copy(nextStepForPo(selectedPO, facts))}
+                {copy(receivedStatus(selectedPO, facts))} · {copy(invoiceStatus(selectedPO, facts))}{copy("· 建议：")}{nextAction}
               </div>
             </Card>
           ) : null}
@@ -1357,7 +1639,7 @@ export default function PurchasingOrdersPage({
             testId="po-receipt-lines"
             rows={grnRows}
             rowKey={(row) => `${row.grn}:${row.grnLineId}`}
-            emptyText={copy("当前 PO 暂无收货记录。")}
+            emptyText={say("No receipts for this PO yet.", "该采购订单暂无收货记录。")}
             columns={grnColumns}
           />
         </div>
@@ -1463,14 +1745,14 @@ export default function PurchasingOrdersPage({
 
       <ListSearchCard
         title={copy("采购订单查询")}
-        subtitle={copy("查询 PO、来源 PR / 询价单、供应商、收货、发票和三单匹配状态")}
+        subtitle={say("Search POs, source PRs and RFQs, suppliers, receipts, invoices, and match status", "查询采购订单、来源采购申请和询价单、供应商、收货、发票和三单匹配状态")}
         actions={<>
           <ResetButton onClick={resetFilters} />
           <RefreshButton onClick={() => loadWorkbench()} />
           <ExportButton onClick={exportCsv} />
         </>}
       >
-        <Field label={copy("PO 编号")}>
+        <Field label={say("PO number", "采购订单号")}>
           <input value={filters.poNumber} onChange={(event) => updateFilter("poNumber", event.target.value)}
             placeholder="PO-202611-0001" style={inputStyle} />
         </Field>
@@ -1501,11 +1783,11 @@ export default function PurchasingOrdersPage({
           <input value={filters.owner} onChange={(event) => updateFilter("owner", event.target.value)}
             placeholder={copy("采购负责人")} style={inputStyle} />
         </Field>
-        <Field label={copy("ETA 起始")}>
+        <Field label={say("ETA from", "预计到货起")}>
           <input type="date" value={filters.etaFrom} max={filters.etaTo || undefined} onChange={(event) => updateFilter("etaFrom", event.target.value)}
             style={inputStyle} />
         </Field>
-        <Field label={copy("ETA 结束")}>
+        <Field label={say("ETA to", "预计到货止")}>
           <input type="date" value={filters.etaTo} min={filters.etaFrom || undefined} onChange={(event) => updateFilter("etaTo", event.target.value)}
             style={inputStyle} />
         </Field>
@@ -1518,7 +1800,7 @@ export default function PurchasingOrdersPage({
           <table className={`w-full min-w-[1150px] table-fixed text-left ${tableBodyTextClass}`}>
             <thead>
               <tr style={listHeadRowStyle}>
-                <th className={`${thClass} sticky left-0 z-20 w-[160px] bg-white`} style={{ color: A.gray1 }}>{copy("PO 编号")}</th>
+                <th className={`${thClass} sticky left-0 z-20 w-[160px] bg-white`} style={{ color: A.gray1 }}>{say("PO number", "采购订单号")}</th>
                 <th className={`${thClass} w-[180px]`} style={{ color: A.gray1 }}>{supplierLabel}</th>
                 <th className={`${thClass} w-[130px]`} style={{ color: A.gray1 }}>{copy("状态")}</th>
                 <th className={`${thClass} w-[100px]`} style={{ color: A.gray1 }}>{copy("采购负责人")}</th>
@@ -1535,6 +1817,8 @@ export default function PurchasingOrdersPage({
               {paged.pageRows.map((order, index) => {
                 const firstGrn = grnsForPo(order.po, facts)[0];
                 const firstInvoice = invoicesForPo(order.po, facts)[0];
+                const late = daysLate(order);
+                const menuItemClass = "w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50";
                 return (
                   <tr key={order.po} className={listRowClass} style={listRowStyle(index, paged.pageRows.length)}>
                     <td className={`${tdIdClass} sticky left-0 z-10 truncate bg-white`}>
@@ -1544,7 +1828,11 @@ export default function PurchasingOrdersPage({
                     <td className={tdNowrapClass}><POStatusPill status={order.status} /></td>
                     <td className={`${tdNowrapClass} truncate`} style={{ color: A.sub }} title={order.owner}>{order.owner}</td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{formatCurrencyAmount(poAmount(order), order.currency)}</td>
-                    <td className={tdNowrapClass} style={{ color: A.sub }}>{order.eta ? day(order.eta) : "—"}</td>
+                    {/* An open order past its expected arrival reads red, with how many days late. */}
+                    <td className={tdNowrapClass} style={{ color: late ? A.red : A.sub }}>
+                      <div className={late ? "font-medium" : undefined}>{order.eta ? day(order.eta) : "—"}</div>
+                      {late ? <div className="mt-0.5" data-testid={`po-late-${order.po}`}><StatusChip label={say(late === 1 ? "1 day late" : `${formatNumber(late)} days late`, `逾期 ${formatNumber(late)} 天`)} tone="danger" /></div> : null}
+                    </td>
                     <td className={tdNowrapClass}>
                       {/* Receipt and invoice side by side; the match only when there is one to read. */}
                       <div className="flex flex-wrap items-center gap-1">
@@ -1557,11 +1845,14 @@ export default function PurchasingOrdersPage({
                       <div className="flex items-center gap-1.5">
                         <button onClick={() => openDetail(order.po)} className={rowActionClass.primary}>{copy("查看")}</button>
                         <RowMenu label={copy("更多")} testId={`po-row-more-${order.po}`}>
-                          {firstGrn && <button onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, firstGrn.grn)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看收货单")}</button>}
-                          {firstInvoice && canOpenRoute("procurement:bills") && <button onClick={() => navigateOrderWithReturn(order, "procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看采购发票")}</button>}
-                          {canOpenRoute("procurement:match") && (firstGrn || firstInvoice) && <button onClick={() => navigateOrderWithReturn(order, "procurement:match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看三单匹配")}</button>}
-                          {order.sourceRequest && <button onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, documentNumberFor("purchase_request", order.sourceRequest, order.prNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{say("View source PR", "查看来源采购申请")}</button>}
-                          {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, documentNumberFor("rfq", order.sourceRfq, order.rfqNumber))} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{say("View source RFQ", "查看来源询价单")}</button>}
+                          {/* What can be done next on the order, by the detail page's rules, then where to look. */}
+                          {entryRules.canReceive(order.status) && <button type="button" data-testid={`po-row-receive-${order.po}`} onClick={() => routerNavigate(receiveOrderPath(order.po))} className={`${menuItemClass} font-semibold text-blue-700`}>{say("Receive", "收货")}</button>}
+                          {entryRules.canRecordBill(order.status) && <button type="button" data-testid={`po-row-record-bill-${order.po}`} onClick={() => routerNavigate(recordBillPath(order.po))} className={menuItemClass}>{say("Record supplier invoice", "录入采购发票")}</button>}
+                          {firstGrn && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, receiptNumberOf(firstGrn))} className={menuItemClass}>{copy("查看收货单")}</button>}
+                          {firstInvoice && canOpenRoute("procurement:bills") && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, invoiceNumberOf(firstInvoice))} className={menuItemClass}>{copy("查看采购发票")}</button>}
+                          {canOpenRoute("procurement:match") && (firstGrn || firstInvoice) && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:match")} className={menuItemClass}>{copy("查看三单匹配")}</button>}
+                          {order.sourceRequest && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, documentNumberFor("purchase_request", order.sourceRequest, order.prNumber))} className={menuItemClass}>{say("View source PR", "查看来源采购申请")}</button>}
+                          {order.sourceRfq && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, documentNumberFor("rfq", order.sourceRfq, order.rfqNumber))} className={menuItemClass}>{say("View source RFQ", "查看来源询价单")}</button>}
                         </RowMenu>
                       </div>
                     </td>

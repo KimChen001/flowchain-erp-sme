@@ -61,3 +61,29 @@ export function matchesInvoiceVarianceFilter(value: unknown, filter: string) {
   const code = invoiceVarianceCode(filter);
   return Boolean(code) && invoiceVarianceCode(value) === code;
 }
+
+// The line exceptions a match run records (FinanceMatchException.exceptionType,
+// from buildSupplierMatchPlan in server/domain/operational-finance-policy.mjs):
+// the invoiced quantity, unit price or line amount differs from the receipt or
+// the purchase order. Shown as English and Chinese labels; the stored code
+// stays as it is.
+export const MATCH_EXCEPTION_TYPE_LABELS = Object.freeze({
+  quantity: ["Quantity difference", "数量差异"],
+  price: ["Price difference", "价格差异"],
+  amount: ["Amount difference", "金额差异"],
+} as const);
+
+export type MatchExceptionType = keyof typeof MATCH_EXCEPTION_TYPE_LABELS;
+
+export function isMatchExceptionType(value: unknown): value is MatchExceptionType {
+  return Object.prototype.hasOwnProperty.call(MATCH_EXCEPTION_TYPE_LABELS, String(value ?? "").trim());
+}
+
+// A match exception's type in the interface language. A variance code or a
+// legacy value falls back to the invoice variance label; free text is shown as
+// it is.
+export function matchExceptionLabel(value: unknown, language: string) {
+  const code = String(value ?? "").trim();
+  if (isMatchExceptionType(code)) return MATCH_EXCEPTION_TYPE_LABELS[code][language === "en-US" ? 0 : 1];
+  return invoiceVarianceLabel(code, language);
+}

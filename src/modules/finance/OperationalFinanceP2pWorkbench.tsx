@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useLocation, useSearchParams } from "react-router";
 import { AlertCircle, AlertTriangle, CheckCircle2, FileMinus, FileText, Inbox, MessageSquareWarning, PauseCircle, Plus, Send, ShieldCheck, Wallet } from "lucide-react";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
@@ -12,6 +12,8 @@ import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
 import { apiErrorView, type ApiErrorView } from "../../lib/apiErrorText";
 import { formatCalendarDay, todayInTimeZone } from "../../lib/format";
+import { financeStatusTone } from "./FinanceControls";
+import { matchExceptionLabel } from "../../domain/procurement/variance-types";
 
 type Landing = {
   dataSource: string;
@@ -73,6 +75,7 @@ const tokenKeys: Record<string, TranslationKey> = {
   reviewed: "finance.status.reviewed",
   resolved: "finance.status.resolved",
   cancelled: "finance.status.cancelled",
+  variance_approved: "finance.status.variance_approved",
   revise: "finance.action.revise",
   submit: "finance.action.submit",
   match: "finance.action.match",
@@ -231,6 +234,11 @@ const LIST_COPY = {
   emptyCreditDetail: ["A credit note appears here once a supplier return is posted and credited.", "供应商退货过账并生成贷项后，会显示在这里。"],
   emptyMatch: ["No match exceptions", "暂无匹配异常"],
   emptyMatchDetail: ["Price or quantity differences found when a supplier invoice is matched to its purchase order and receipt appear here.", "采购发票与采购订单、收货核对时发现的价格或数量差异会显示在这里。"],
+  // A receipt whose GRN number could not be read: named, never by its id.
+  receipt: ["Receipt", "收货单"],
+  toReview: ["To review", "待复核"],
+  rejected: ["Rejected", "已驳回"],
+  reviewOnInvoice: ["Review it on the supplier invoice", "在采购发票上复核"],
 } as const;
 
 // The statuses each list's filter offers, besides those on the page.
@@ -253,7 +261,7 @@ function FinanceList({
   capability: string;
   kind: "invoice" | "payable" | "credit" | "match";
 }) {
-  const { t, locale, language, timezone } = useI18n();
+  const { t, locale, language, timezone, formatNumber } = useI18n();
   const tr = (key: keyof typeof LIST_COPY) => LIST_COPY[key][language === "en-US" ? 0 : 1];
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<ListPayload | null>(null);
@@ -303,6 +311,23 @@ function FinanceList({
   useEffect(() => {
     if (data && !data.items.length && data.total > 0 && page > 1) update({ page: "" });
   }, [data]);
+  // The supplier invoice list names each receipt by its GRN number. The list
+  // API gives the receipt's id only, so the receiving list is read once for
+  // the numbers; a receipt it does not show (no receiving access) reads
+  // "Receipt", never its id.
+  const [receiptNumbers, setReceiptNumbers] = useState<Map<string, string>>(() => new Map());
+  const receiptsAsked = useRef(false);
+  const receiptMissing = invoices && Boolean(data?.items.some((row) => row.relatedGrnId && !receiptNumbers.has(String(row.relatedGrnId))));
+  useEffect(() => {
+    if (!receiptMissing || receiptsAsked.current) return;
+    receiptsAsked.current = true;
+    void apiJson<{ items?: Array<{ id: string; documentNumber?: string | null }> }>("/api/procurement/receiving")
+      .then((payload) => setReceiptNumbers(new Map((payload.items || []).filter((row) => row.documentNumber).map((row) => [String(row.id), String(row.documentNumber)]))))
+      .catch(() => undefined);
+  }, [receiptMissing]);
+  // A supplier invoice opened from the payables list returns to it, filters kept.
+  const location = useLocation();
+  const billFromPayables = (billId: string) => `/app/procurement/bills/${encodeURIComponent(billId)}?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`;
   if (error) return <Warning title={error.code}>{error.message}</Warning>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const enabled = data.capabilities?.[capability]?.enabled;
@@ -445,7 +470,10 @@ function FinanceList({
                 {emptyRow(8)}
                 {rows.map((row, index) => {
                   const id = String(row.id || "");
-                  const rawStatus = statusOf(row);
+                  // An invoice whose every match difference was approved is no
+                  // longer an open variance: it reads "Variance approved" until
+                  // the invoice itself is approved.
+                  const rawStatus = statusOf(row) === "exception" && row.matchStatus === "variance_approved" ? "variance_approved" : statusOf(row);
                   const next = actionsOf(row, ["cancel"]);
                   const varianceAmount = Number(row.varianceAmount || 0);
                   return (
@@ -456,7 +484,7 @@ function FinanceList({
                       <td className={`${tdNameClass} max-w-[200px] truncate`} title={row.supplierName}>{row.supplierName || "—"}</td>
                       <td className={tdNowrapClass}>
                         {row.relatedPoId ? <EntityLink kind="purchase_order" id={row.relatedPoId} number={row.relatedPoNumber || row.poNumber} className="font-medium" /> : <span style={{ color: A.gray2 }}>—</span>}
-                        <div className="text-[11px]" style={{ color: A.sub }}>{row.relatedGrnId ? <EntityLink kind="receiving_doc" id={row.relatedGrnId} className="text-[11px] font-normal">{row.relatedGrnId}</EntityLink> : "—"}</div>
+                        <div className="text-[11px]" style={{ color: A.sub }} data-testid="supplier-invoice-receipt-number">{row.relatedGrnId ? <EntityLink kind="receiving_doc" id={row.relatedGrnId} className="text-[11px] font-normal">{row.relatedGrnNumber || receiptNumbers.get(String(row.relatedGrnId)) || tr("receipt")}</EntityLink> : "—"}</div>
                       </td>
                       <td className={tdNowrapClass}>
                         <div>{formatCalendarDay(row.invoiceDate, locale)}</div>
@@ -466,7 +494,7 @@ function FinanceList({
                       <td className={tdNumericRightClass} style={{ color: varianceAmount ? PAST_DUE_COLOR : A.sub }}>{varianceAmount ? money(row.varianceAmount, row.currency, locale) : "—"}</td>
                       <td className={tdNowrapClass}>
                         <div className="flex flex-wrap items-center gap-1">
-                          <StatusChip label={statusText(rawStatus)} tone={statusToneOf(rawStatus)} />
+                          <StatusChip label={statusText(rawStatus)} tone={financeStatusTone(rawStatus)} />
                           {row.awaitingReceipt && (
                             <span data-testid="bill-awaiting-receipt">
                               <StatusChip label={t("finance.awaitingReceipt")} tone="warning" />
@@ -510,7 +538,7 @@ function FinanceList({
                     <tr className={listRowClass} style={listRowStyle(index, rows.length)} key={id} data-testid="payable-row">
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                         {billId
-                          ? <EntityLink kind="supplier_invoice" id={billId} className={tableLinkClass}>{String(row.obligationNumber || id)}</EntityLink>
+                          ? <Link to={billFromPayables(billId)} className={`fc-entity-link font-semibold text-blue-600 underline-offset-2 ${tableLinkClass}`}>{String(row.obligationNumber || id)}</Link>
                           : String(row.obligationNumber || id)}
                         {row.supplierInvoiceNumber && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{row.supplierInvoiceNumber}</div>}
                       </td>
@@ -525,7 +553,7 @@ function FinanceList({
                         {next.length > 0 && <div className="mt-1 hidden text-[11px] sm:block" style={{ color: A.sub }}>{tr("next")}: {next.join(" · ")}</div>}
                       </td>
                       <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
-                        {billId ? <EntityLink kind="supplier_invoice" id={billId} className={`${rowActionClass.primary} !no-underline`}>{tr("view")}</EntityLink> : <span style={{ color: A.gray2 }}>—</span>}
+                        {billId ? <Link to={billFromPayables(billId)} className={`${rowActionClass.primary} !no-underline`}>{tr("view")}</Link> : <span style={{ color: A.gray2 }}>—</span>}
                       </td>
                     </tr>
                   );
@@ -546,9 +574,10 @@ function FinanceList({
               <tbody>
                 {rows.map((row, index) => {
                   const id = String(value(row, "id") || "");
+                  // A match exception reads as its kind of difference, in the interface language.
                   const label = String(
                     (kind === "match"
-                      ? value(row, "exceptionType", "matchNumber")
+                      ? (row.exceptionType ? matchExceptionLabel(row.exceptionType, language) : value(row, "matchNumber"))
                       : value(row, "creditMemoNumber")) || id,
                   );
                   const source = String(
@@ -564,18 +593,26 @@ function FinanceList({
                   );
                   const amount = value(row, "totalAmount", "varianceValue");
                   const rawStatus = statusOf(row);
+                  // A match exception is reviewed on its supplier invoice: open
+                  // reads "To review", and the invoice number opens it.
+                  const matchRow = kind === "match";
+                  const shownStatus = matchRow && rawStatus === "open" ? tr("toReview") : matchRow && rawStatus === "rejected" ? tr("rejected") : statusText(rawStatus);
+                  const tone = matchRow && rawStatus === "open" ? "warning" : statusToneOf(rawStatus);
                   return (
                     <tr className={listRowClass} style={listRowStyle(index, rows.length)} key={id}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{label}</td>
-                      <td className={tdNameClass}>{source}</td>
+                      <td className={tdNameClass}>{matchRow && row.supplierInvoiceId ? <EntityLink kind="supplier_invoice" id={String(row.supplierInvoiceId)} className={tableLinkClass}>{source}</EntityLink> : source}</td>
                       <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>
-                        {money(amount, value(row, "currency"), locale)}
+                        {/* A quantity difference is a quantity, not money. */}
+                        {matchRow && row.exceptionType === "quantity"
+                          ? amount === null || amount === undefined || !Number.isFinite(Number(amount)) ? "—" : formatNumber(Number(amount))
+                          : money(amount, value(row, "currency"), locale)}
                       </td>
                       <td className={tdNowrapClass}>
-                        <StatusChip label={statusText(rawStatus)} tone={statusToneOf(rawStatus)} />
+                        <StatusChip label={shownStatus} tone={tone} />
                       </td>
                       <td className={tdNowrapClass} style={{ color: A.sub }}>
-                        {actionsOf(row).join(" · ") || "—"}
+                        {matchRow ? (rawStatus === "open" ? tr("reviewOnInvoice") : "—") : actionsOf(row).join(" · ") || "—"}
                       </td>
                     </tr>
                   );

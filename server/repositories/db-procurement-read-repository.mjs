@@ -139,6 +139,20 @@ const withNumber = (field, numbers, id) => {
   return value ? { [field]: value } : {}
 }
 
+// The GRN number of each receipt the invoices name (GRN-202611-0009), by id:
+// from the receipts already loaded, and one query in the workspace for the
+// ones that are not. A receipt recorded without a number is left out.
+async function receiptNumbersFor(client, tenantId, invoices = [], loaded = []) {
+  const numbers = new Map(loaded.filter((row) => text(row.documentNumber)).map((row) => [row.id, text(row.documentNumber)]))
+  const loadedIds = new Set(loaded.map((row) => row.id))
+  const missing = [...new Set(invoices.map((row) => text(row.relatedGrnId)).filter((id) => id && !loadedIds.has(id)))]
+  if (missing.length) {
+    const rows = await client.receivingDocument.findMany({ where: { tenantId, id: { in: missing } }, select: { id: true, documentNumber: true } })
+    for (const row of rows) if (text(row.documentNumber)) numbers.set(row.id, text(row.documentNumber))
+  }
+  return numbers
+}
+
 // The request with its requester's name, when the user is known.
 function withRequesterName(request, names) {
   const name = names.get(request.requesterId)
@@ -567,6 +581,9 @@ function mapSupplierInvoice(record = {}) {
   return {
     id: record.id,
     invoiceNumber: record.id,
+    // The supplier's own invoice number as recorded (INV-UI7-B002), which
+    // pages show; invoiceNumber above is the id the read model keys on.
+    supplierInvoiceNumber: text(record.invoiceNumber),
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
     relatedPo: text(record.relatedPoId),
@@ -741,6 +758,7 @@ async function readThreeWayMatchDocument(client, { id, tenantId }) {
       : null,
   ])
 
+  // The receipt read here gives the match its GRN number (documentNumber).
   return buildProcurementThreeWayMatches({
     supplierInvoices: [mapSupplierInvoice(invoice)],
     purchaseOrders: purchaseOrder ? [mapPurchaseOrder(purchaseOrder)] : [],
@@ -802,12 +820,17 @@ async function loadProcurementSnapshot(client, filters = {}) {
   const prNumbers = numbersById(purchaseRequests)
   const rfqNumbers = numbersById(rfqs)
   const poNumbers = numbersById(purchaseOrders)
+  const grnNumbers = await receiptNumbersFor(client, where.tenantId, supplierInvoices, receivingDocuments)
   return {
     purchaseRequests: purchaseRequests.map((record) => ({ ...withRequesterName(mapPurchaseRequest(record), requesters), ...withNumber('rfqNumber', rfqNumbers, record.linkedRfqId), ...withNumber('poNumber', poNumbers, record.linkedPoId) })),
     rfqs: rfqs.map((rfq) => ({ ...mapRfq(rfq, supplierQuotations), ...withNumber('prNumber', prNumbers, rfq.sourceRequestId), ...withNumber('poNumber', poNumbers, rfq.linkedPoId) })),
     purchaseOrders: purchaseOrders.map((record) => ({ ...mapPurchaseOrder(record), ...withNumber('prNumber', prNumbers, record.sourceRequestId), ...withNumber('rfqNumber', rfqNumbers, record.sourceRfqId) })),
     receivingDocs: receivingDocuments.map((record) => ({ ...mapReceivingDocument(record), ...withNumber('poNumber', poNumbers, record.poId) })),
-    supplierInvoices: supplierInvoices.map((record) => ({ ...mapSupplierInvoice(record), ...withNumber('poNumber', poNumbers, record.relatedPoId) })),
+    // workflowStatus and poLineQuantities: the invoice's own status and the
+    // quantity it invoices on each PO line, which the PO list (whose read
+    // leaves invoice lines out) uses to tell an approved invoice from an open
+    // variance and a partly invoiced order from a fully invoiced one.
+    supplierInvoices: supplierInvoices.map((record) => ({ ...mapSupplierInvoice(record), ...withNumber('poNumber', poNumbers, record.relatedPoId), ...withNumber('grnNumber', grnNumbers, record.relatedGrnId), workflowStatus: text(record.status), poLineQuantities: invoicedQuantitiesByPoLine(record) })),
     documentLinks: documentLinks.map(mapDocumentLink).filter((link) => link.sourceType && link.sourceId && link.targetType && link.targetId),
     procurementFollowups: procurementFollowups.map(mapFollowup).filter((item) => item.id && item.documentType && item.documentId),
   }
@@ -820,6 +843,44 @@ async function loadProcurementSnapshot(client, filters = {}) {
 // the detail page reads it as it read the snapshot. Null when the workspace
 // has no such order; another workspace's order is never found.
 const ORDER_DOCUMENTS_LIMIT = 500
+
+// What the PO detail shows of a supplier invoice beyond the shared record, for
+// display only: its own workflow status (the shared status reads 存在差异 while
+// the invoice has a variance, even once approved), how its match exceptions
+// were decided, and what is paid on it. The payment's money is in fields named
+// amount and openAmount, so the masking that hides invoice amounts from a role
+// without finance.amounts.read hides these too.
+const roundMoney = (value) => Math.round(value * 10000) / 10000
+
+// The quantity an invoice bills on each PO line it names, { poLineId: qty }.
+function invoicedQuantitiesByPoLine(record = {}) {
+  const quantities = {}
+  for (const line of asArray(record.lines)) {
+    const poLineId = text(line.purchaseOrderLineId)
+    if (poLineId) quantities[poLineId] = roundMoney((quantities[poLineId] || 0) + numberFrom(line.quantity, 0))
+  }
+  return quantities
+}
+
+export function purchaseOrderInvoiceProgress(record = {}) {
+  const exceptions = asArray(record.matchExceptions)
+  const decided = (status) => exceptions.filter((entry) => text(entry.status) === status).length
+  const payable = record.payableObligation
+  return {
+    workflowStatus: text(record.status),
+    matchExceptions: { count: exceptions.length, open: decided('open'), approved: decided('approved'), rejected: decided('rejected') },
+    payment: payable
+      ? {
+          status: text(payable.status),
+          // What is owed after approved supplier credits, and what is still open.
+          amount: roundMoney(numberFrom(payable.originalAmount, 0) - numberFrom(payable.approvedCreditAmount, 0)),
+          openAmount: roundMoney(numberFrom(payable.outstandingAmount, 0)),
+          currency: text(payable.currency),
+        }
+      : null,
+  }
+}
+
 async function loadPurchaseOrderWorkbench(client, { tenantId, id } = {}) {
   const scoped = requireTenantId({ tenantId })
   const requestedId = text(id)
@@ -834,18 +895,29 @@ async function loadPurchaseOrderWorkbench(client, { tenantId, id } = {}) {
   const newest = [{ createdAt: 'desc' }]
   const [receivingDocuments, supplierInvoices, documentLinks, procurementFollowups, request, rfq] = await Promise.all([
     client.receivingDocument.findMany({ where: forOrder('poId'), include: { lines: true }, orderBy: newest, take: ORDER_DOCUMENTS_LIMIT }),
-    client.supplierInvoice.findMany({ where: forOrder('relatedPoId'), include: { lines: true }, orderBy: newest, take: ORDER_DOCUMENTS_LIMIT }),
+    client.supplierInvoice.findMany({
+      where: forOrder('relatedPoId'),
+      include: {
+        lines: true,
+        matchExceptions: { select: { status: true } },
+        payableObligation: { select: { status: true, originalAmount: true, approvedCreditAmount: true, outstandingAmount: true, currency: true } },
+      },
+      orderBy: newest,
+      take: ORDER_DOCUMENTS_LIMIT,
+    }),
     client.documentLink.findMany({ where: { tenantId: scoped, OR: [{ sourceId: record.id }, { targetId: record.id }] }, orderBy: newest, take: ORDER_DOCUMENTS_LIMIT }),
     client.procurementFollowup.findMany({ where: { tenantId: scoped, documentId: record.id }, orderBy: newest, take: ORDER_DOCUMENTS_LIMIT }),
     record.sourceRequestId ? client.purchaseRequest.findFirst({ where: { tenantId: scoped, id: record.sourceRequestId }, select: { id: true, number: true } }) : null,
     record.sourceRfqId ? client.rfq.findFirst({ where: { tenantId: scoped, id: record.sourceRfqId }, select: { id: true, number: true } }) : null,
   ])
   const poNumbers = numbersById([record])
+  // The receipts loaded here are the order's own; an invoice naming another keeps its id.
+  const grnNumbers = new Map(receivingDocuments.filter((doc) => text(doc.documentNumber)).map((doc) => [doc.id, text(doc.documentNumber)]))
   const isThisOrder = (type, documentId) => type === 'po' && documentId === record.id
   return {
     purchaseOrders: [{ ...mapPurchaseOrder(record), ...withNumber('prNumber', numbersById(request ? [request] : []), record.sourceRequestId), ...withNumber('rfqNumber', numbersById(rfq ? [rfq] : []), record.sourceRfqId) }],
     receivingDocs: receivingDocuments.map((doc) => ({ ...mapReceivingDocument(doc), ...withNumber('poNumber', poNumbers, doc.poId) })),
-    supplierInvoices: supplierInvoices.map((invoice) => ({ ...mapSupplierInvoice(invoice), ...withNumber('poNumber', poNumbers, invoice.relatedPoId) })),
+    supplierInvoices: supplierInvoices.map((invoice) => ({ ...mapSupplierInvoice(invoice), ...withNumber('poNumber', poNumbers, invoice.relatedPoId), ...withNumber('grnNumber', grnNumbers, invoice.relatedGrnId), ...purchaseOrderInvoiceProgress(invoice) })),
     documentLinks: documentLinks.map(mapDocumentLink)
       .filter((link) => link.sourceType && link.sourceId && link.targetType && link.targetId)
       .filter((link) => isThisOrder(link.sourceType, link.sourceId) || isThisOrder(link.targetType, link.targetId)),

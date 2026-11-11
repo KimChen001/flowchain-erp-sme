@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { apiJson } from "../../../lib/api-client";
 import { useI18n } from "../../../i18n/I18n";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
+import { listTableCardsRef } from "../../../components/ui/workbenchTable";
 
 // Promised dates of an issued PO: each line's original promise, its current
 // date and the revisions between them. Revising needs a reason; the server
@@ -80,16 +81,19 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
         )}
       </div>
       {unchanged && <p className="mt-2 text-xs text-slate-700" data-testid="po-promise-summary">{tr("allSame").replace("{n}", String(po.lines.length)).replace("{date}", day(firstDate))}</p>}
-      {!folded && <div className="mt-2 overflow-x-auto">
+      {/* Below 640 px each line is a card (listTableCardsRef): the line on top,
+          the original and current dates under it with their names, and the
+          change button below at a full tap size. */}
+      {!folded && <div className="mt-2 overflow-x-auto" ref={listTableCardsRef} data-testid="po-promise-table">
         <table className="w-full min-w-[560px] text-xs">
-          <thead><tr>{[tr("line"), tr("original"), tr("current"), ""].map((header, index) => <th key={index} className="p-2 text-left text-slate-500">{header}</th>)}</tr></thead>
+          <thead><tr>{[tr("line"), tr("original"), tr("current"), ""].map((header, index) => <th key={index} className="p-2 text-left text-slate-500" {...(index === 0 ? { "data-card-title": "" } : {})}>{header}</th>)}</tr></thead>
           <tbody>
             {po.lines.map((line) => (
               <tr key={line.id} className="border-t" data-testid={`po-promise-line-${line.id}`}>
-                <td className="p-2">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
-                <td className="p-2">{line.originalPromisedDate ? day(line.originalPromisedDate) : tr("notRecorded")}</td>
-                <td className="p-2">{day(line.promisedDate)}</td>
-                <td className="p-2">{revisable && <button type="button" data-testid={`po-promise-change-${line.id}`} className="text-blue-600" onClick={() => setForm({ lineId: line.id, date: line.promisedDate || "", reason: "" })}>{tr("change")}</button>}</td>
+                <td className="p-2 font-medium">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
+                <td className="whitespace-nowrap p-2">{line.originalPromisedDate ? day(line.originalPromisedDate) : tr("notRecorded")}</td>
+                <td className="whitespace-nowrap p-2">{day(line.promisedDate)}</td>
+                <td className="p-2">{revisable && <button type="button" data-testid={`po-promise-change-${line.id}`} className="inline-flex h-8 items-center whitespace-nowrap rounded-lg px-2 text-xs font-medium text-blue-600 hover:bg-blue-50" onClick={() => setForm({ lineId: line.id, date: line.promisedDate || "", reason: "" })}>{tr("change")}</button>}</td>
               </tr>
             ))}
           </tbody>

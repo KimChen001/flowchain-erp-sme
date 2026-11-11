@@ -40,7 +40,8 @@ const COPY: Record<string, [string, string]> = {
   submit: ["Submit for approval", "提交审批"],
   approve: ["Approve", "批准"],
   reject: ["Reject", "驳回"],
-  issue: ["Mark as issued to supplier", "标记为已下达供应商"],
+  // "Issued" / 已下达, the PO status this sets; the next action and note use the same words.
+  issue: ["Mark as issued", "标记为已下达"],
   cancel: ["Cancel PO", "取消采购订单"],
   close: ["Close PO", "关闭采购订单"],
   closeTitle: ["Close this purchase order?", "关闭该采购订单？"],
@@ -152,20 +153,38 @@ export function PurchaseOrderWorkflowActions({
 // is gated by the receiving posting capability; the server checks
 // receiving.prepare, warehouse scope and open quantities again.
 const RECEIVE_STATUSES = new Set(["issued", "partially_received"]);
+// Statuses in which a supplier invoice can be recorded: it can arrive before
+// the goods (it then waits for the receipt) or after them.
+export const BILLABLE_PO_STATUSES = new Set(["approved", "issued", "partially_received", "received", "fully_received", "closed"]);
+
+export const receiveOrderPath = (poId: string) => `/app/procurement/receiving/new?po=${encodeURIComponent(poId)}`;
+export const recordBillPath = (poId: string) => `/app/procurement/bills/new?po=${encodeURIComponent(poId)}`;
+
+// Whether this user may receive against, or record a supplier invoice for, a
+// PO in a given status: the rules of the detail page's Receive and Record
+// supplier invoice buttons, for the PO list's row menu. The server checks
+// both again.
+export function usePurchaseOrderEntryRules() {
+  const permissions = usePermissionSet();
+  const canOpenRoute = useRouteAvailability();
+  return {
+    canReceive: (status: string) => RECEIVE_STATUSES.has(status) && Boolean(permissions?.has("receiving.prepare")) && canOpenRoute("procurement:receiving:new"),
+    canRecordBill: (status: string) => BILLABLE_PO_STATUSES.has(status) && Boolean(permissions?.has("finance.supplier_invoice.create")) && canOpenRoute("procurement:bill-new"),
+  };
+}
 
 export function PurchaseOrderReceiveAction({ poId, status, showNote = true }: { poId: string; status: string; showNote?: boolean }) {
   const { language } = useI18n();
   const tr = (key: string) => COPY[key][language === "en-US" ? 0 : 1];
-  const permissions = usePermissionSet();
-  const canOpenRoute = useRouteAvailability();
+  const rules = usePurchaseOrderEntryRules();
   const navigate = useNavigate();
-  if (!RECEIVE_STATUSES.has(status) || !permissions?.has("receiving.prepare") || !canOpenRoute("procurement:receiving:new")) return null;
+  if (!rules.canReceive(status)) return null;
   return (
     <div data-testid="po-receive-action" className="flex flex-wrap items-center gap-2">
       <button
         type="button"
         data-testid="po-action-receive"
-        onClick={() => navigate(`/app/procurement/receiving/new?po=${encodeURIComponent(poId)}`)}
+        onClick={() => navigate(receiveOrderPath(poId))}
         className={listButtonClass.primary}
       >
         {tr("receive")}
@@ -179,14 +198,14 @@ export function PurchaseOrderReceiveAction({ poId, status, showNote = true }: { 
 // for a page that shows them under the buttons instead of between them. Same
 // conditions as the buttons; billable is whether a supplier invoice can be
 // recorded for the order's status.
-export function usePurchaseOrderActionNotes({ status, version, billable }: { status: string; version?: number; billable: boolean }) {
+export function usePurchaseOrderActionNotes({ status, version }: { status: string; version?: number }) {
   const { language } = useI18n();
   const tr = (key: string) => COPY[key][language === "en-US" ? 0 : 1];
   const permissions = usePermissionSet();
-  const canOpenRoute = useRouteAvailability();
+  const rules = usePurchaseOrderEntryRules();
   const notes: string[] = [];
-  if (RECEIVE_STATUSES.has(status) && permissions?.has("receiving.prepare") && canOpenRoute("procurement:receiving:new")) notes.push(tr("receiveNote"));
+  if (rules.canReceive(status)) notes.push(tr("receiveNote"));
   if (Number.isInteger(version) && (ACTIONS_BY_STATUS[status] || []).includes("issue") && permissions?.has(PERMISSION.issue(status))) notes.push(tr("issueNote"));
-  if (billable && permissions?.has("finance.supplier_invoice.create") && canOpenRoute("procurement:bill-new")) notes.push(tr("billNote"));
+  if (rules.canRecordBill(status)) notes.push(tr("billNote"));
   return notes;
 }

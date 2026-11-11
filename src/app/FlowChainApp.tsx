@@ -569,6 +569,9 @@ export default function FlowChainApp() {
   useEffect(() => {
     if (location.pathname === "/" || location.pathname === "/app") {
       routerNavigate("/app/overview", { replace: true });
+    } else if (/^\/app\/today\/?$/.test(location.pathname)) {
+      // The sidebar calls the home page "Today"; its address opens it too.
+      routerNavigate(`/app/overview/risks${location.search}${location.hash}`, { replace: true });
     } else {
       const route = routeByPath(location.pathname);
       if (

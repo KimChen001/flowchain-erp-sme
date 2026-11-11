@@ -1,7 +1,10 @@
 import { isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { AlertCircle, ClipboardCheck, ListChecks, Truck } from "lucide-react";
+import { AlertCircle, ClipboardCheck, ListChecks, PackageSearch, Truck } from "lucide-react";
+import { useRouteAvailability } from "../../app/routeAvailability";
+import { apiJson } from "../../lib/api-client";
+import { purchaseOrderStatusCode } from "../purchasing/filters";
 import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
@@ -11,7 +14,7 @@ import { procurementApi } from "./procurementApi";
 import type { ProcurementNavigate, ProcurementWorkItem } from "./procurementTypes";
 import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
-import { formatCalendarDay, formatLocaleAmount } from "../../lib/format";
+import { formatCalendarDay, formatLocaleAmount, todayInTimeZone } from "../../lib/format";
 
 const FINISHED_PURCHASE_ORDER_STATUSES = ["fully_received", "completed", "closed", "cancelled", "已完成", "已关闭", "已取消"];
 
@@ -55,19 +58,40 @@ const COPY = {
   noMatch: ["No work matches these filters", "没有符合筛选条件的待办"],
   invoice_variance: ["Invoice variance", "发票差异"],
   match_exception: ["Three-way match exception", "三单匹配异常"],
+  lateOne: ["1 day late", "逾期 1 天"],
+  late: ["{n} days late", "逾期 {n} 天"],
+  reorder: ["Items to reorder", "待补货物料"],
+  reorderNote: ["To order now; {n} on the reorder list", "需立即下单；补货清单共 {n} 项"],
 } as const;
 
 type Queue = "all" | "approval" | "tracking" | "issues";
 const QUEUES: Queue[] = ["all", "approval", "tracking", "issues"];
+// The signals of the "Invoice or match issues" queue; a late order needs
+// chasing, not an invoice review, so it is not one of them.
+const ISSUE_SIGNALS = new Set(["invoice_variance", "match_exception"]);
+// Orders the supplier is expected to deliver: approved or issued and not yet
+// received in full (a legacy label older rows carry is read as its code).
+const EXPECTED_ORDER_STATUSES = new Set(["approved", "issued", "partially_received"]);
+// A row with how many days its order is past its expected arrival (0 when it is not).
+type WorkRow = ProcurementWorkItem & { daysLate?: number };
+type ReorderCounts = { orderNow: number; listed: number };
+
+// Whole calendar days from one YYYY-MM-DD day to another.
+const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from.slice(0, 10)}T00:00:00Z`)) / 86_400_000);
 
 export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate }) {
-  const { language, locale } = useI18n();
+  const { language, locale, timezone } = useI18n();
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
   const statusLabel = (code: string) => statusCodeLabel(code, language) || code;
   const navigate = useNavigate();
+  const canOpenRoute = useRouteAvailability();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [rows, setRows] = useState<ProcurementWorkItem[]>([]);
+  const [rows, setRows] = useState<WorkRow[]>([]);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
+  // The reorder list's counts, read on their own so a slow or refused read
+  // never holds up the work queue; null while unread or when it failed.
+  const [reorder, setReorder] = useState<ReorderCounts | null>(null);
+  const canOpenReorder = canOpenRoute("inventory:reorder");
   const [query, setQuery] = useState("");
   const [type, setType] = useState("");
   const [status, setStatus] = useState("");
@@ -80,6 +104,13 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
   };
   const load = async () => {
     setState("loading");
+    if (canOpenReorder) {
+      apiJson<{ summary?: { orderNow?: number; listed?: number } }>("/api/inventory/reorder-list")
+        .then((list) => setReorder(list?.summary ? { orderNow: Number(list.summary.orderNow || 0), listed: Number(list.summary.listed || 0) } : null))
+        .catch(() => setReorder(null));
+    }
+    // Open orders past their expected arrival, by the workspace's calendar day.
+    const today = todayInTimeZone(timezone);
     try {
       const [requests, orders, invoices] = await Promise.all([
         procurementApi.listRequests(),
@@ -96,11 +127,16 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
         ...orders
           // A fully received, closed or cancelled order needs no more purchasing work.
           .filter(row => !FINISHED_PURCHASE_ORDER_STATUSES.includes(row.status))
-          .map((row): ProcurementWorkItem => {
-            const relatedInvoices = invoices.filter(invoice => invoice.relatedPo === row.id);
+          .map((row): WorkRow => {
+            // An invoice whose match exceptions were all approved (match status
+            // variance_approved) has no variance left to review.
+            const relatedInvoices = invoices.filter(invoice => invoice.relatedPo === row.id && !/approved/i.test(String(invoice.matchStatus || "")));
             const hasInvoiceVariance = relatedInvoices.some(invoice => Number(invoice.varianceAmount || 0) !== 0 || (Boolean(invoice.varianceType) && !isNoInvoiceVariance(invoice.varianceType)) || /差异|variance/i.test(String(invoice.status || "")));
             const hasMatchException = relatedInvoices.some(invoice => /差异|异常|待处理|variance/i.test(String(invoice.matchStatus || "")));
+            const late = row.eta && EXPECTED_ORDER_STATUSES.has(purchaseOrderStatusCode(row.status)) ? daysBetween(String(row.eta), today) : 0;
+            const daysLate = Number.isFinite(late) && late > 0 ? late : 0;
             return {
+              daysLate,
               id: row.id,
               number: row.number || row.id,
               kind: "purchase_order",
@@ -114,6 +150,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
               supplier: row.supplier || row.supplierSnapshot?.supplierName || "",
               dueDate: row.eta,
               signals: [
+                ...(daysLate ? ["overdue"] : []),
                 ...(hasInvoiceVariance ? ["invoice_variance"] : []),
                 ...(hasMatchException ? ["match_exception"] : []),
               ],
@@ -124,17 +161,20 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
     } catch { setState("error"); }
   };
   useEffect(() => { void load(); }, []);
-  const inQueue = (row: ProcurementWorkItem, name: Queue) =>
-    name === "all" || (name === "issues" ? Boolean(row.signals?.length) : row.bucket === name);
+  const inQueue = (row: WorkRow, name: Queue) =>
+    name === "all" || (name === "issues" ? Boolean(row.signals?.some(signal => ISSUE_SIGNALS.has(signal))) : row.bucket === name);
   const statuses = useMemo(() => [...new Set(rows.map(row => row.status))], [rows]);
   const needle = query.trim().toLowerCase();
-  // Approvals first, then orders with an invoice or match issue.
+  // Approvals first, then rows that need attention (late, or an invoice or
+  // match issue), each group by its date, the earliest first; rows without a
+  // date last.
+  const byDate = (left: WorkRow, right: WorkRow) => (left.dueDate ? 0 : 1) - (right.dueDate ? 0 : 1) || String(left.dueDate || "").localeCompare(String(right.dueDate || "")) || String(left.number || left.id).localeCompare(String(right.number || right.id));
   const shown = rows
     .filter(row => inQueue(row, queue))
     .filter(row => !type || row.kind === type)
     .filter(row => !status || row.status === status)
     .filter(row => !needle || [row.number, row.id, row.item, row.supplier].some(value => String(value || "").toLowerCase().includes(needle)))
-    .sort((left, right) => Number(right.bucket === "approval") - Number(left.bucket === "approval") || Number(Boolean(right.signals?.length)) - Number(Boolean(left.signals?.length)));
+    .sort((left, right) => Number(right.bucket === "approval") - Number(left.bucket === "approval") || Number(Boolean(right.signals?.length)) - Number(Boolean(left.signals?.length)) || byDate(left, right));
   const count = (name: Queue) => rows.filter(row => inQueue(row, name)).length;
   const reset = () => { setQuery(""); setType(""); setStatus(""); setQueue("all"); };
   const money = (row: ProcurementWorkItem) => row.amount === null || !Number.isFinite(Number(row.amount)) ? "—" : formatLocaleAmount(Number(row.amount), row.currency, locale, { maximumFractionDigits: 2 });
@@ -142,11 +182,15 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
   const value = (name: Queue) => state === "loaded" ? String(count(name)) : "—";
   return (
     <div className="space-y-5" data-testid="procurement-workbench">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className={`grid grid-cols-2 gap-3 ${canOpenReorder ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
         <ActionableMetricCard label={tr("allWork")} value={value("all")} description={tr("allWorkNote")} to={queueLink("all")} icon={ListChecks} color={A.blue} />
         <ActionableMetricCard label={tr("approval")} value={value("approval")} description={tr("approvalNote")} to={queueLink("approval")} icon={ClipboardCheck} color={A.orange} />
         <ActionableMetricCard label={tr("tracking")} value={value("tracking")} description={tr("trackingNote")} to={queueLink("tracking")} icon={Truck} color={A.purple} />
         <ActionableMetricCard label={tr("issues")} value={value("issues")} description={tr("issuesNote")} to={queueLink("issues")} icon={AlertCircle} color={A.red} />
+        {/* What to order next comes from the reorder list, the inventory page that ranks it. */}
+        {canOpenReorder && (
+          <ActionableMetricCard label={tr("reorder")} value={reorder ? String(reorder.orderNow) : "—"} description={tr("reorderNote").replace("{n}", reorder ? String(reorder.listed) : "—")} to="/app/inventory/reorder" icon={PackageSearch} color={A.green} />
+        )}
       </div>
 
       <ListSearchCard
@@ -222,12 +266,15 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
                     <StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} />
                     {row.transmissionStatus && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{statusLabel(row.transmissionStatus)}</div>}
                   </td>
-                  <td className={tdNowrapClass} style={{ color: A.sub }}>{row.dueDate ? formatCalendarDay(row.dueDate, locale) : "—"}</td>
+                  {/* A late order's expected arrival reads red. */}
+                  <td className={`${tdNowrapClass} ${row.daysLate ? "font-medium" : ""}`} style={{ color: row.daysLate ? A.red : A.sub }}>{row.dueDate ? formatCalendarDay(row.dueDate, locale) : "—"}</td>
                   <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row)}</td>
                   {/* Signals wrap onto lines of their own, so the table fits and the sticky
                       Actions column does not cover them. */}
                   <td className={`${tdClass} min-w-[150px] [&_.fc-status-chip]:whitespace-normal`}>
-                    {row.signals?.length ? <div className="flex flex-wrap gap-1">{row.signals.map(signal => <StatusChip key={signal} label={signal in COPY ? tr(signal as keyof typeof COPY) : signal} tone="warning" />)}</div> : <span style={{ color: A.gray2 }}>—</span>}
+                    {row.signals?.length ? <div className="flex flex-wrap gap-1">{row.signals.map(signal => signal === "overdue"
+                      ? <StatusChip key={signal} testId={`workbench-late-${row.id}`} label={row.daysLate === 1 ? tr("lateOne") : tr("late").replace("{n}", String(row.daysLate))} tone="danger" />
+                      : <StatusChip key={signal} label={signal in COPY ? tr(signal as keyof typeof COPY) : signal} tone="warning" />)}</div> : <span style={{ color: A.gray2 }}>—</span>}
                   </td>
                   <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                     <EntityLink kind={row.kind} id={row.id} className={`${rowActionClass.primary} !no-underline`}>{tr("view")}</EntityLink>

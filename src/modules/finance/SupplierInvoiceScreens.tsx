@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import type { MouseEvent } from "react";
+import { ArrowLeft, RefreshCw } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { FieldError, FormActionBar, FormHeader, FormSection, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
+import { StatusChip as ToneChip, type StatusTone } from "../../components/ui/listLayout";
+import { listTableCardsRef } from "../../components/ui/workbenchTable";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { useI18n } from "../../i18n/I18n";
+import { unitLabel } from "../../i18n/unitLabels";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
-import { formatDateTimeInTimeZone } from "../../lib/format";
+import { formatCalendarDay, formatDateTimeInTimeZone } from "../../lib/format";
 import { Notice, StatusChip, TwoStepAction, button, field, message } from "./FinanceControls";
 import { PaymentRecords } from "./PaymentRecords";
 import { addCalendarDays } from "../../lib/prefill";
@@ -16,8 +20,7 @@ import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { documentNumberFor, rememberDocumentNumbers, useDocumentNumber } from "../../lib/documentNumbers";
 import { BackToListLink } from "../procurement/BackToListLink";
 import { procurementErrorCode, procurementErrorText } from "../procurement/procurementErrors";
-import { invoiceVarianceLabelKey } from "../../domain/procurement/variance-types";
-import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { matchExceptionLabel } from "../../domain/procurement/variance-types";
 
 // The supplier invoice screens of the trial's procure-to-pay chain: enter an
 // invoice against a posted receipt, then submit, match, review exceptions,
@@ -62,6 +65,31 @@ const receivedQuantities = (receipt: EntryData["receivingDocuments"][number]) =>
 // yet billed.
 const unbilledQuantities = (order: Order) =>
   Object.fromEntries(order.lines.map((line) => [line.id, { quantity: String(Math.max(0, Number(line.orderedQuantity) - Number(line.billedQuantity || 0))) }]));
+// The receipt a bill opened from a purchase order starts with: its only
+// receipt, or, with several, the oldest that still has goods not invoiced.
+// What other bills already claim on each order line is set against the
+// oldest receipts first (the server checks the exact quantities on save).
+// Entry data lists receipts newest first. Null when every receipt is billed.
+export const firstUnbilledReceipt = <R extends { lines: Array<{ purchaseOrderLineId: string | null; acceptedQuantity: string }> }>(
+  order: { lines: Array<{ id: string; billedQuantity: string }> } | null | undefined,
+  forPo: R[],
+): R | null => {
+  if (forPo.length <= 1) return forPo[0] || null;
+  const billedLeft = new Map((order?.lines || []).map((line) => [line.id, Math.max(0, Number(line.billedQuantity || 0))]));
+  for (const receipt of [...forPo].reverse()) {
+    let open = false;
+    for (const line of receipt.lines) {
+      const accepted = Math.max(0, Number(line.acceptedQuantity || 0));
+      const key = line.purchaseOrderLineId || "";
+      const billed = billedLeft.get(key) || 0;
+      const claimed = Math.min(accepted, billed);
+      if (key) billedLeft.set(key, billed - claimed);
+      if (accepted - claimed > 0) open = true;
+    }
+    if (open) return receipt;
+  }
+  return null;
+};
 
 // -------------------------------------------------------------- new invoice
 
@@ -92,6 +120,8 @@ const FORM_COPY: Record<string, [string, string]> = {
   sourceChanged: ["The purchase order or receipt changed after this page opened. Reload the page and choose it again.", "页面打开后，采购订单或收货单已有变化。请刷新页面后重新选择。"],
   amountMismatch: ["A line amount or the total does not add up. Check the quantities, prices and tax.", "行金额或合计对不上，请检查数量、单价和税额。"],
   failed: ["The supplier invoice was not saved.", "供应商发票未保存。"],
+  // A hint, not a rule: the match will raise the price difference for review.
+  aboveOrderPrice: ["+{amount} above the PO price", "比采购单价高 {amount}"],
 };
 // A quantity, price or tax as the server reads it: at most four decimals.
 const DECIMAL = /^\d+(\.\d{1,4})?$/;
@@ -160,9 +190,10 @@ export function NewSupplierInvoice() {
       if (!order && !forPo.length) { setSourceNotice(`${poParam}: ${t("finance.poNotBillable")}`); return; }
       setSupplierId(order?.supplierId || forPo[0].supplierId);
       setPoId(poParam);
-      if (forPo.length === 1) {
-        setReceiptId(forPo[0].id);
-        setLines(receivedQuantities(forPo[0]));
+      const first = firstUnbilledReceipt(order, forPo);
+      if (first) {
+        setReceiptId(first.id);
+        setLines(receivedQuantities(first));
       } else if (!forPo.length && order) setLines(unbilledQuantities(order));
     }
   }, [entry]);
@@ -217,9 +248,10 @@ export function NewSupplierInvoice() {
   const chooseOrder = (id: string) => {
     const next = entry?.purchaseOrders.find((row) => row.id === id);
     const forPo = (entry?.receivingDocuments || []).filter((row) => row.poId === id);
+    const first = id ? firstUnbilledReceipt(next, forPo) : null;
     setPoId(id);
-    setReceiptId(forPo.length === 1 ? forPo[0].id : "");
-    setLines(forPo.length === 1 ? receivedQuantities(forPo[0]) : !forPo.length && next ? unbilledQuantities(next) : {});
+    setReceiptId(first ? first.id : "");
+    setLines(first ? receivedQuantities(first) : !forPo.length && next ? unbilledQuantities(next) : {});
     changed();
   };
   const chooseReceipt = (id: string) => {
@@ -342,15 +374,27 @@ export function NewSupplierInvoice() {
   };
   const subtotal = billed.reduce((sum, line) => sum + (amountOf(line) || 0), 0);
   const tax = billed.reduce((sum, line) => sum + (DECIMAL.test((lines[line.id]?.tax || "").trim()) ? Number(lines[line.id]?.tax) : 0), 0);
-  const quantityText = (value: string, unit: string | null) => `${formatNumber(Number(value))}${unit ? ` ${unit}` : ""}`;
+  const quantityText = (value: string, unit: string | null) => `${formatNumber(Number(value))}${unit ? ` ${unitLabel(unit, language, Number(value))}` : ""}`;
   const cellInputClass = "w-24 rounded-lg border px-2 py-1.5 text-sm tabular-nums";
   const lineErrorId = (lineId: string, key: LineKey) => `supplier-invoice-${key}-${lineId}`;
+  // How far a typed unit price is above the order's: a hint under the field,
+  // never a refusal (the match raises the difference for review).
+  const aboveOrderPrice = (line: (typeof formLines)[number]) => {
+    const typed = String(linePrice(line.id, line.purchaseOrderLineId)).trim();
+    const ordered = poLine(line.purchaseOrderLineId)?.unitPrice;
+    if (!DECIMAL.test(typed) || ordered === null || ordered === undefined || ordered === "" || !Number.isFinite(Number(ordered))) return null;
+    const difference = Math.round((Number(typed) - Number(ordered)) * 10000) / 10000;
+    return difference > 0 ? difference : null;
+  };
   const lineInput = (line: (typeof formLines)[number], key: LineKey, label: string, value: string) => {
     const error = problems.byLine[line.id]?.[key];
+    const above = key === "unitPrice" && !error ? aboveOrderPrice(line) : null;
+    const hintId = `supplier-invoice-price-hint-${line.id}`;
     return (
-      <td className="px-3 py-2">
-        <input inputMode="decimal" aria-label={`${label} ${line.sku}`} {...invalidProps(lineErrorId(line.id, key), error)} className={cellInputClass} style={{ borderColor: A.border }} value={value} onChange={(event) => setLine(line.id, { [key]: event.target.value })} />
+      <td className="px-3 py-2" data-testid={`supplier-invoice-${key}-cell`}>
+        <input inputMode="decimal" aria-label={`${label} ${line.sku}`} {...invalidProps(lineErrorId(line.id, key), error)} {...(above !== null ? { "aria-describedby": hintId } : {})} className={cellInputClass} style={{ borderColor: A.border }} value={value} onChange={(event) => setLine(line.id, { [key]: event.target.value })} />
         {error && <FieldError id={lineErrorId(line.id, key)} className="max-w-48">{error}</FieldError>}
+        {above !== null && <p id={hintId} className="mt-1 max-w-48 text-[12px] leading-[18px] text-amber-700" data-testid="supplier-invoice-price-above">{tr("aboveOrderPrice", { amount: money(above, currency, locale) })}</p>}
       </td>
     );
   };
@@ -384,7 +428,8 @@ export function NewSupplierInvoice() {
           </Field>
           <Field label={t("finance.postedReceipt")}>
             <select data-testid="supplier-invoice-receipt" style={inputStyle} value={receiptId} onChange={(event) => chooseReceipt(event.target.value)}>
-              <option value="">{poId ? t("finance.noReceiptYet") : "—"}</option>
+              {/* "No receipt yet" only when the order has none; with receipts listed, a choice. */}
+              <option value="">{receipts.length ? t("finance.chooseReceipt") : poId ? t("finance.noReceiptYet") : "—"}</option>
               {receipts.map((row) => <option key={row.id} value={row.id}>{row.documentNumber || row.id} · {documentNumberFor("purchase_order", row.poId, row.poNumber) || "—"}{row.supplierName ? ` · ${row.supplierName}` : ""}</option>)}
             </select>
           </Field>
@@ -411,19 +456,21 @@ export function NewSupplierInvoice() {
         testId="supplier-invoice-lines"
       >
         <div className="space-y-3">
-          {beforeReceipt && orderOpen && <div data-testid="supplier-invoice-before-receipt"><Notice>{t("finance.billBeforeReceipt")}</Notice></div>}
+          {beforeReceipt && orderOpen && <div data-testid="supplier-invoice-before-receipt"><Notice>{receipts.length ? t("finance.billWithoutReceipt") : t("finance.billBeforeReceipt")}</Notice></div>}
           {beforeReceipt && !orderOpen && <Notice>{order?.number || order?.id}: {t("finance.poNotBillable")}</Notice>}
           {receipt && !receipt.lines.length && <Notice>{t("finance.noReceiptLines")}</Notice>}
           {!poId && !receiptId && <p className="text-sm" style={{ color: A.sub }}>{tr("linesNone")}</p>}
           {formLines.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border" style={{ borderColor: A.border }}>
+            // Phones show each line as a card (listTableCardsRef): the item
+            // first, then each figure and input with its column name.
+            <div className="overflow-x-auto rounded-lg border" style={{ borderColor: A.border }} ref={listTableCardsRef}>
               <table className="w-full min-w-[860px] text-left text-sm">
                 <thead className="bg-gray-50 text-xs" style={{ color: A.sub }}>
                   <tr>
                     {/* Figures read right-aligned; the inputs keep the left edge. */}
                     {[[tr("sku"), false], [tr("item"), false], ...basisHeads.map((head) => [head, true] as const), [t("finance.poPrice"), true], [t("finance.quantity"), false], [t("finance.unitPrice"), false], [t("finance.tax"), false], [tr("amount"), true]].map(([head, right]) => (
                       // The item name takes the spare width, so the input columns stay narrow.
-                      <th key={String(head)} className={`whitespace-nowrap px-3 py-2 font-medium${right ? " text-right" : ""}${head === tr("item") ? " w-full" : ""}`}>{head}</th>
+                      <th key={String(head)} className={`whitespace-nowrap px-3 py-2 font-medium${right ? " text-right" : ""}${head === tr("item") ? " w-full" : ""}`} {...(head === tr("item") ? { "data-card-title": "" } : {})}>{head}</th>
                     ))}
                   </tr>
                 </thead>
@@ -670,12 +717,22 @@ function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { i
 // ---------------------------------------------------------- variance reason
 
 // One line of the three-way match, as the procurement read model returns it.
-type VarianceLine = { sku?: string; itemName?: string; unit?: string; status?: string; invoicedQty?: number | null; receivedQty?: number | null; poUnitPrice?: number | null; invoiceUnitPrice?: number | null; varianceAmount?: number | null };
+// priceVariance is the price difference over the invoiced quantity.
+type VarianceLine = { sku?: string; itemName?: string; unit?: string; status?: string; invoicedQty?: number | null; receivedQty?: number | null; poUnitPrice?: number | null; invoiceUnitPrice?: number | null; priceVariance?: number | null; varianceAmount?: number | null };
+
+// A money amount with its sign: +$0.14, −$0.05.
+const signedMoney = (value: number, currency: unknown, locale: string) => `${value > 0 ? "+" : value < 0 ? "−" : ""}${money(Math.abs(value), currency, locale)}`;
+
+// Scrolls to a card of this page (an in-page link that keeps the address).
+const scrollToCard = (id: string) => (event: MouseEvent) => {
+  event.preventDefault();
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+};
 
 // Why a bill is in exception, at the top of the page: the recorded variance
 // and, when the three-way match can be read, each line that differs from the
-// purchase order or the receipt. Approving the bill accepts the difference, so
-// the reason comes before the buttons.
+// purchase order or the receipt: the price per unit and over the line. Each
+// difference is approved or rejected under Three-way match below.
 function VarianceReason({ invoice }: { invoice: { id: string; version?: number; currency?: string; varianceAmount?: string | number | null } }) {
   const { language, locale, formatNumber } = useI18n();
   const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
@@ -690,22 +747,220 @@ function VarianceReason({ invoice }: { invoice: { id: string; version?: number; 
     return () => { alive = false; };
   }, [matchId, invoice.version]);
   const amount = (value: unknown) => money(value, invoice.currency, locale);
-  const quantity = (value: number | null | undefined) => (typeof value === "number" && Number.isFinite(value) ? formatNumber(value) : "—");
+  const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+  const quantity = (value: number | null | undefined, unit?: string) => (finite(value) ? `${formatNumber(value)}${unit ? ` ${unitLabel(unit, language, value)}` : ""}` : "—");
   const lineText = (line: VarianceLine) => {
     const item = line.sku || line.itemName || say("A line", "某行");
-    const price = say(`invoice price ${amount(line.invoiceUnitPrice)}, PO price ${amount(line.poUnitPrice)}`, `发票单价 ${amount(line.invoiceUnitPrice)}，订单单价 ${amount(line.poUnitPrice)}`);
-    const qty = say(`invoiced ${quantity(line.invoicedQty)}, received ${quantity(line.receivedQty)}`, `开票 ${quantity(line.invoicedQty)}，已收 ${quantity(line.receivedQty)}`);
+    const unit = line.unit ? unitLabel(line.unit, language, 1) : say("unit", "单位");
+    // The difference per unit, and over the invoiced quantity.
+    const perUnit = finite(line.invoiceUnitPrice) && finite(line.poUnitPrice) ? Math.round((line.invoiceUnitPrice - line.poUnitPrice) * 10000) / 10000 : null;
+    const overLine = finite(line.priceVariance) ? line.priceVariance : finite(perUnit) && finite(line.invoicedQty) ? perUnit * line.invoicedQty : null;
+    const perUnitText = perUnit === null ? "" : signedMoney(perUnit, invoice.currency, locale);
+    const overLineText = overLine === null ? "" : signedMoney(overLine, invoice.currency, locale);
+    const priceDifference = perUnit === null || perUnit === 0
+      ? ""
+      : overLine === null
+        ? say(` (${perUnitText}/${unit})`, `（每${unit} ${perUnitText}）`)
+        : say(` (${perUnitText}/${unit}, ${overLineText} in total)`, `（每${unit} ${perUnitText}，合计 ${overLineText}）`);
+    const price = say(`invoice price ${amount(line.invoiceUnitPrice)}, PO price ${amount(line.poUnitPrice)}`, `发票单价 ${amount(line.invoiceUnitPrice)}，订单单价 ${amount(line.poUnitPrice)}`) + priceDifference;
+    const qty = say(`invoiced ${quantity(line.invoicedQty, line.unit)}, received ${quantity(line.receivedQty, line.unit)}`, `开票 ${quantity(line.invoicedQty, line.unit)}，已收 ${quantity(line.receivedQty, line.unit)}`);
     const parts = line.status === "price_variance" ? [price] : line.status === "quantity_variance" ? [qty] : line.status === "price_and_quantity_variance" ? [price, qty] : [];
-    const difference = typeof line.varianceAmount === "number" && line.varianceAmount ? say(` (${line.varianceAmount > 0 ? "+" : ""}${amount(line.varianceAmount)})`, `（${line.varianceAmount > 0 ? "+" : ""}${amount(line.varianceAmount)}）`) : "";
+    // An amount difference with no price or quantity part: the line total.
+    const difference = !parts.length && finite(line.varianceAmount) && line.varianceAmount ? say(` (${signedMoney(line.varianceAmount, invoice.currency, locale)})`, `（${signedMoney(line.varianceAmount, invoice.currency, locale)}）`) : "";
     return `${item}${say(": ", "：")}${parts.join(say("; ", "；")) || say("differs from the purchase order", "与采购订单不一致")}${difference}`;
   };
   const recorded = Number(invoice.varianceAmount || 0);
   return (
     <div className="mt-4 space-y-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" data-testid="supplier-invoice-variance-reason">
       <div className="font-medium">{recorded ? say(`This invoice differs from the purchase order or receipt by ${amount(recorded)}.`, `该发票与采购订单或收货相差 ${amount(recorded)}。`) : say("This invoice differs from the purchase order or receipt.", "该发票与采购订单或收货不一致。")}</div>
-      {lines.map((line, index) => <div key={index} className="text-xs">{lineText(line)}</div>)}
-      <div className="text-xs">{say("Review the difference before approving: approving accepts it.", "批准前请复核差异：批准即表示接受该差异。")}{" "}<Link to={`/app/procurement/three-way-match/${encodeURIComponent(matchId)}`} className="font-semibold text-blue-600 hover:underline" data-testid="supplier-invoice-variance-match">{say("Open the three-way match", "查看三单匹配")}</Link></div>
+      {lines.map((line, index) => <div key={index} className="text-xs" data-testid="supplier-invoice-variance-line">{lineText(line)}</div>)}
+      <div className="text-xs">
+        {say("Review each difference under Three-way match below: approve it with a note, or reject it.", "请在下方「三单匹配」逐条复核差异：填写说明后批准或驳回。")}{" "}
+        <a href="#supplier-invoice-match" onClick={scrollToCard("supplier-invoice-match")} className="font-semibold text-blue-600 hover:underline" data-testid="supplier-invoice-variance-actions">{say("Go to the differences", "前往复核差异")}</a>
+        {" · "}
+        <Link to={`/app/procurement/three-way-match/${encodeURIComponent(matchId)}`} className="font-semibold text-blue-600 hover:underline" data-testid="supplier-invoice-variance-match">{say("Open the three-way match", "查看三单匹配")}</Link>
+      </div>
     </div>
+  );
+}
+
+// ------------------------------------------------------------ match card
+
+type MatchLineView = { id: string; supplierInvoiceLineId?: string | null; invoiceQuantity?: string | null; priceVariance?: string | null };
+type MatchExceptionView = { id: string; matchLineId?: string | null; exceptionType: string; status: string; expectedValue?: string | null; actualValue?: string | null; varianceValue?: string | null; currency?: string | null; resolution?: string | null; version: number };
+
+// The order the differences are listed in: per line, quantity, price, amount.
+const EXCEPTION_ORDER: Record<string, number> = { quantity: 0, price: 1, amount: 2 };
+export const sortMatchExceptions = <E extends { exceptionType: string; matchLineId?: string | null }>(entries: E[], lineOrder: string[] = []) =>
+  entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => {
+      const line = (entry: E) => { const at = lineOrder.indexOf(String(entry.matchLineId || "")); return at < 0 ? lineOrder.length : at; };
+      return line(a.entry) - line(b.entry) || (EXCEPTION_ORDER[a.entry.exceptionType] ?? 3) - (EXCEPTION_ORDER[b.entry.exceptionType] ?? 3) || a.index - b.index;
+    })
+    .map(({ entry }) => entry);
+
+// An amount difference on the same line that the price difference alone
+// explains: invoiced quantity × price difference, to half a cent. Approving
+// the price difference approves it too, with the same note.
+export const amountFollowingPrice = <E extends MatchExceptionView>(price: E, entries: E[], lines: MatchLineView[]): E | null => {
+  if (price.exceptionType !== "price" || price.status !== "open" || !price.matchLineId) return null;
+  const amount = entries.find((entry) => entry.exceptionType === "amount" && entry.status === "open" && entry.matchLineId === price.matchLineId);
+  const line = lines.find((row) => row.id === price.matchLineId);
+  if (!amount || !line) return null;
+  const numbers = [line.invoiceQuantity, price.varianceValue, amount.varianceValue];
+  if (numbers.some((value) => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)))) return null;
+  const [quantity, perUnit, overLine] = numbers.map(Number);
+  return Math.abs(overLine - quantity * perUnit) < 0.005 ? amount : null;
+};
+
+// What the match card's status says: a match whose every difference was
+// approved is resolved, also when it was matched before the server recorded
+// that (variance_approved).
+export const shownMatchStatus = (status: string, exceptions: Array<{ status: string }>) =>
+  status === "exception" && exceptions.length > 0 && exceptions.every((entry) => entry.status === "approved") ? "variance_approved" : status;
+
+const EXCEPTION_CHIPS: Record<string, { label: [string, string]; tone: StatusTone }> = {
+  open: { label: ["To review", "待复核"], tone: "warning" },
+  approved: { label: ["Approved", "已批准"], tone: "success" },
+  rejected: { label: ["Rejected", "已驳回"], tone: "danger" },
+};
+
+// The three-way match of the bill: its status, one line on where the review
+// stands (counted here, in the interface language; the server's stored
+// sentence is not shown), and each line difference with its approve and
+// reject actions.
+function MatchCard({ invoice, onDone }: { invoice: any; onDone: () => void }) {
+  const { t, language, locale, formatNumber } = useI18n();
+  const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
+  const [followUpError, setFollowUpError] = useState("");
+  const match = invoice.match;
+  const lines: MatchLineView[] = match.lines || [];
+  const invoiceLines: Array<{ id: string; sku?: string; unit?: string | null }> = invoice.lines || [];
+  const exceptions = sortMatchExceptions<MatchExceptionView>(match.exceptions || [], lines.map((line) => line.id));
+  const count = (status: string) => exceptions.filter((entry) => entry.status === status).length;
+  const open = count("open");
+  const rejected = count("rejected");
+  const total = exceptions.length;
+  // The server's stored sentence ("2 line-level match exception(s)") is read
+  // for its count only, when the differences themselves are not listed.
+  const recordedCount = Number(/^(\d+) line-level/.exec(String(match.blockingReason || ""))?.[1] || 0);
+  const differences = (n: number) => (n === 1 ? "line difference" : "line differences");
+  const summary = total
+    ? open
+      ? open === total
+        ? say(`${total} ${differences(total)} to review.`, `${total} 处行差异待复核。`)
+        : say(`${open} of ${total} line differences still to review.`, `${total} 处行差异中还有 ${open} 处待复核。`)
+      : rejected
+        ? say(`${rejected} ${differences(rejected)} rejected: this invoice cannot be approved. Cancel it, or ask the supplier for a corrected invoice.`, `${rejected} 处行差异已驳回：该发票不能批准。请取消发票，或请供应商重开发票。`)
+        : say(`${total === 1 ? "The line difference is" : `All ${total} line differences are`} approved.`, `${total} 处行差异均已批准。`)
+    : recordedCount
+      ? say(`${recordedCount} ${differences(recordedCount)}.`, `${recordedCount} 处行差异。`)
+      : "";
+  const lineOf = (entry: MatchExceptionView) => {
+    const matchLine = lines.find((row) => row.id === entry.matchLineId);
+    return invoiceLines.find((row) => row.id === matchLine?.supplierInvoiceLineId) || null;
+  };
+  const value = (entry: MatchExceptionView, raw: string | null | undefined) => {
+    if (raw === null || raw === undefined || raw === "" || !Number.isFinite(Number(raw))) return "—";
+    if (entry.exceptionType === "quantity") {
+      const unit = lineOf(entry)?.unit;
+      return `${formatNumber(Number(raw))}${unit ? ` ${unitLabel(unit, language, Number(raw))}` : ""}`;
+    }
+    return money(raw, entry.currency || invoice.currency, locale);
+  };
+  const difference = (entry: MatchExceptionView) => {
+    const raw = entry.varianceValue;
+    if (raw === null || raw === undefined || raw === "" || !Number.isFinite(Number(raw)) || !Number(raw)) return "";
+    const number = Number(raw);
+    if (entry.exceptionType === "quantity") {
+      const unit = lineOf(entry)?.unit;
+      return `${number > 0 ? "+" : "−"}${formatNumber(Math.abs(number))}${unit ? ` ${unitLabel(unit, language, Math.abs(number))}` : ""}`;
+    }
+    const unit = entry.exceptionType === "price" ? lineOf(entry)?.unit : null;
+    return `${signedMoney(number, entry.currency || invoice.currency, locale)}${unit ? `/${unitLabel(unit, language, 1)}` : ""}`;
+  };
+  // Amount differences that follow from an open price difference on their line.
+  const following = new Map(exceptions.flatMap((entry) => {
+    const amount = amountFollowingPrice(entry, exceptions, lines);
+    return amount ? [[amount.id, entry] as const] : [];
+  }));
+  const reviewUrl = (entry: MatchExceptionView, step: "review" | "review-preview") => `/api/finance/match-exceptions/${encodeURIComponent(entry.id)}/${step}`;
+  const reviewIssue = (code: string | undefined) =>
+    code === "MATCH_EXCEPTION_RESOLUTION_REQUIRED" ? say("Enter why you accept or reject this difference.", "请填写处理说明。")
+      : code === "MATCH_EXCEPTION_STATUS_INVALID" ? say("This difference was already reviewed. Reload the page.", "该差异已复核，请刷新页面。")
+      : code === "FINANCE_VERSION_CONFLICT" ? say("This difference changed after the page opened. Reload the page.", "页面打开后该差异已有变化，请刷新页面。")
+      : undefined;
+  // After the price difference is approved: the amount difference it causes, with the same note.
+  const approveFollowing = (amount: MatchExceptionView) => async (sent: Record<string, unknown>) => {
+    setFollowUpError("");
+    try {
+      await apiJson(reviewUrl(amount, "review"), { method: "POST", body: JSON.stringify({ expectedVersion: amount.version, decision: "approved", resolution: sent.resolution, idempotencyKey: createSecureClientMutationId("p2p") }) });
+    } catch (reason) {
+      setFollowUpError(`${say("The amount difference was not approved; approve it below.", "金额差异未能一并批准，请在下方单独批准。")} ${procurementErrorText(reason, language, ["Try again in a moment.", "请稍后重试。"])}`);
+    }
+  };
+  const shownStatus = shownMatchStatus(match.status, exceptions);
+  return (
+    <Card className="space-y-3 p-5" data-testid="supplier-invoice-match" id="supplier-invoice-match">
+      <div className="flex items-center justify-between gap-2"><h3 className="font-semibold">{t("finance.threeWayMatch")}</h3><StatusChip status={shownStatus} /></div>
+      {summary && <p className="text-sm text-slate-600" data-testid="supplier-invoice-match-summary">{summary}</p>}
+      {followUpError && <Notice>{followUpError}</Notice>}
+      {exceptions.map((entry) => {
+        const chip = EXCEPTION_CHIPS[entry.status];
+        const sku = invoiceLines.length > 1 ? lineOf(entry)?.sku : null;
+        const amount = amountFollowingPrice(entry, exceptions, lines);
+        const causedBy = following.get(entry.id) || null;
+        const shownDifference = difference(entry);
+        return (
+          <div key={entry.id} className="space-y-2 rounded-xl bg-slate-50 p-3 text-sm" data-testid="match-exception" data-type={entry.exceptionType}>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-medium">{sku ? `${sku} · ` : ""}{matchExceptionLabel(entry.exceptionType, language)}</div>
+                <div className="text-xs text-slate-600 tabular-nums" data-testid="match-exception-values">
+                  {say("Expected", "应为")} {value(entry, entry.expectedValue)} · {say("Invoiced", "发票")} {value(entry, entry.actualValue)}
+                  {shownDifference && <> · {say("Difference", "差额")} {shownDifference}</>}
+                </div>
+              </div>
+              {chip ? <ToneChip label={say(...chip.label)} tone={chip.tone} /> : <StatusChip status={entry.status} />}
+            </div>
+            {entry.resolution && <div className="text-xs text-slate-500">{entry.resolution}</div>}
+            {entry.status === "open" && causedBy && (
+              <div className="text-xs text-slate-600" data-testid="match-exception-follows-price">{say("Caused by the price difference above: approving the price difference accepts it too.", "由上方的价格差异造成：批准价格差异时会一并接受。")}</div>
+            )}
+            {entry.status === "open" && !causedBy && (
+              <div className="flex flex-wrap gap-2">
+                <TwoStepAction
+                  label={say("Approve difference", "批准差异")}
+                  testId={`exception-approve-${entry.id}`}
+                  previewUrl={reviewUrl(entry, "review-preview")}
+                  runUrl={reviewUrl(entry, "review")}
+                  payload={() => ({ expectedVersion: entry.version, decision: "approved" })}
+                  reasonLabel={say("Resolution", "处理说明")}
+                  reasonRequired={say("Enter why you accept this difference.", "请填写处理说明。")}
+                  note={amount ? say("Approving the price difference also accepts the amount difference it causes.", "批准价格差异，也会一并接受由它造成的金额差异。") : undefined}
+                  afterRun={amount ? approveFollowing(amount) : undefined}
+                  issueText={reviewIssue}
+                  onDone={onDone}
+                />
+                <TwoStepAction
+                  label={say("Reject difference", "驳回差异")}
+                  testId={`exception-reject-${entry.id}`}
+                  tone="secondary"
+                  previewUrl={reviewUrl(entry, "review-preview")}
+                  runUrl={reviewUrl(entry, "review")}
+                  payload={() => ({ expectedVersion: entry.version, decision: "rejected" })}
+                  reasonLabel={say("Resolution", "处理说明")}
+                  reasonRequired={say("Enter why you reject this difference.", "请填写处理说明。")}
+                  issueText={reviewIssue}
+                  onDone={onDone}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </Card>
   );
 }
 
@@ -722,7 +977,12 @@ function billReadFailure(reason: unknown): BillReadFailure {
 
 export function SupplierInvoiceDetail() {
   const { t, locale, language, formatNumber } = useI18n();
+  const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
   const id = decodeURIComponent(window.location.pathname.split("/").filter(Boolean).at(-1) || "");
+  // Opened from the payables list (?returnTo=/app/finance/payables…): the
+  // back link returns there, with its filters.
+  const returnTo = new URLSearchParams(window.location.search).get("returnTo") || "";
+  const fromPayables = /^\/app\/finance\/payables(?:[?/]|$)/.test(returnTo);
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   // Why the first read failed; a failed reload after an action keeps the bill
@@ -757,19 +1017,36 @@ export function SupplierInvoiceDetail() {
   const base = `/api/finance/supplier-invoices/${encodeURIComponent(data.id)}`;
   const actions: string[] = Array.isArray(data.availableActions) ? data.availableActions : [];
   const version = { expectedVersion: data.version };
-  const exceptions: any[] = data.match?.exceptions || [];
+  const exceptions: Array<{ status: string }> = data.match?.exceptions || [];
   const payable = data.payable;
   const payableActions: string[] = Array.isArray(payable?.availableActions) ? payable.availableActions : [];
   // An invoice in exception differs from its PO or receipt: the reason is shown
   // first and Approve, which accepts the difference, is not the main button.
-  const inException = data.status === "exception" || exceptions.some((entry) => entry.status === "open");
+  // With the match readable, that is while a difference is open or rejected;
+  // once every difference is approved, approving the invoice is the next step.
+  const inException = data.match
+    ? exceptions.some((entry) => entry.status === "open" || entry.status === "rejected")
+    : data.status === "exception";
+  // Paid in part or in full: said on the invoice too, not only on its payable.
+  const shownStatus = payable && ["settled", "partially_settled"].includes(payable.status) ? payable.status : data.status;
+  // When the invoice has no step of its own left, the payable's is the next one.
+  const invoiceSteps = actions.filter((action) => !["link_receipt", "revise", "dismiss_duplicate"].includes(action)).length;
+  const nextOnPayable = payableActions.includes("record_payment")
+    ? say("Next: record the payment", "下一步：登记付款")
+    : payableActions.includes("release")
+      ? say("Next: release the hold, then record the payment", "下一步：解除暂停后登记付款")
+      : payableActions.length
+        ? say("Next: see the payable below", "下一步：查看下方应付款")
+        : "";
   return (
     <div className="space-y-4" data-testid="supplier-invoice-detail">
-      <BackToListLink list="bills" />
+      {fromPayables
+        ? <Link to={returnTo} data-testid="back-to-payables" className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"><ArrowLeft size={13} />{say("Back to payables", "返回应付款")}</Link>
+        : <BackToListLink list="bills" />}
       {error && <Notice>{error}</Notice>}
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <h1 className="fc-page-title" style={{ color: A.label }}>{data.invoiceNumber}</h1>
             <p className="mt-1 text-sm text-slate-500" data-testid="supplier-invoice-sources">
               {data.supplierName || "—"}
@@ -777,10 +1054,15 @@ export function SupplierInvoiceDetail() {
               {" · "}{t("finance.receipt")} {data.relatedGrnId ? <BusinessEntityLink entityType="receiving_doc" entityId={data.relatedGrnId}>{data.relatedGrnNumber || data.relatedGrnId}</BusinessEntityLink> : data.awaitingReceipt ? <span className="font-medium text-amber-700">{t("finance.awaitingReceipt")}</span> : "—"}
               {data.relatedPoId && <>{" · "}<BusinessEntityLink entityType="three_way_match" entityId={`MATCH-${data.id}`}>{t("finance.threeWayMatch")}</BusinessEntityLink></>}
             </p>
+            <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm" data-testid="supplier-invoice-facts">
+              <div><dt className="text-xs text-slate-500">{t("finance.invoiceDate")}</dt><dd className="font-medium tabular-nums" data-testid="supplier-invoice-date">{formatCalendarDay(data.invoiceDate, locale)}</dd></div>
+              <div><dt className="text-xs text-slate-500">{t("finance.dueDate")}</dt><dd className="font-medium tabular-nums" data-testid="supplier-invoice-due-date">{formatCalendarDay(data.dueDate, locale)}</dd></div>
+              <div><dt className="text-xs text-slate-500">{t("finance.currency")}</dt><dd className="font-medium" data-testid="supplier-invoice-currency-fact">{data.currency || "—"}</dd></div>
+            </dl>
           </div>
           <div className="text-right">
             <strong>{money(data.totalAmount, data.currency, locale)}</strong>
-            <div className="mt-1"><StatusChip status={data.status} /></div>
+            <div className="mt-1" data-testid="supplier-invoice-status"><StatusChip status={shownStatus} /></div>
           </div>
         </div>
         {inException && <VarianceReason invoice={data} />}
@@ -795,51 +1077,46 @@ export function SupplierInvoiceDetail() {
           {actions.includes("match") && <TwoStepAction label={t("finance.action.match")} testId="invoice-match" oneStep previewUrl={`${base}/match-preview`} runUrl={`${base}/match`} payload={() => version} onDone={load} />}
           {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="invoice-approve" tone={inException ? "secondary" : "primary"} oneStep previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={() => version} issueText={duplicateIssueText(t)} issueDetail={(issue) => <DuplicateApprovalDetail issue={issue} />} onDone={load} />}
           {actions.includes("cancel") && <TwoStepAction label={t("finance.action.cancel")} testId="invoice-cancel" tone="secondary" previewUrl={`${base}/cancel-preview`} runUrl={`${base}/cancel`} payload={() => version} reasonLabel={t("finance.cancelReason")} onDone={load} />}
-          {!actions.filter((action) => !["link_receipt", "revise", "dismiss_duplicate"].includes(action)).length && <span className="text-xs text-slate-500">{t("finance.noActions")}</span>}
+          {!invoiceSteps && (nextOnPayable
+            ? <a href="#supplier-invoice-payable" onClick={scrollToCard("supplier-invoice-payable")} className="text-sm font-semibold text-blue-600 hover:underline" data-testid="supplier-invoice-next">{nextOnPayable}</a>
+            : <span className="text-xs text-slate-500" data-testid="supplier-invoice-no-actions">{payable?.status === "settled" ? say("Paid in full. Nothing else to do.", "已全额付款，无需其他操作。") : t("finance.noActions")}</span>)}
         </div>
       </Card>
 
       {data.duplicateChecks && <DuplicateChecks invoice={data} checks={data.duplicateChecks} canDismiss={actions.includes("dismiss_duplicate")} onDone={load} />}
 
-      <Card className="overflow-x-auto p-5">
+      <Card className="p-5">
         <h3 className="mb-3 font-semibold">{t("finance.lines")}</h3>
-        <table className="w-full min-w-[640px] text-sm">
-          <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2">SKU</th><th className="py-2">{t("finance.quantity")}</th><th className="py-2">{t("finance.unitPrice")}</th><th className="py-2">{t("finance.tax")}</th><th className="py-2">{t("finance.amount")}</th></tr></thead>
-          <tbody>
-            {(data.lines || []).map((line: any) => (
-              <tr key={line.id} className="border-b border-slate-50"><td className="py-2">{line.sku} · {line.itemName}</td><td className="py-2">{Number.isFinite(Number(line.quantity)) && line.quantity !== null && line.quantity !== "" ? formatNumber(Number(line.quantity)) : "—"} {line.unit || ""}</td><td className="py-2">{money(line.unitPrice, data.currency, locale)}</td><td className="py-2">{money(line.enteredTaxAmount, data.currency, locale)}</td><td className="py-2">{money(line.totalAmount, data.currency, locale)}</td></tr>
-            ))}
-          </tbody>
-        </table>
+        {/* Phones show each line as a card (listTableCardsRef): the item first. */}
+        <div className="overflow-x-auto" ref={listTableCardsRef}>
+          <table className="w-full min-w-[640px] text-sm" data-testid="supplier-invoice-lines-table">
+            <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3" data-card-title="">{say("Item", "物料")}</th><th className="py-2 pr-3">{t("finance.quantity")}</th><th className="py-2 pr-3">{t("finance.unitPrice")}</th><th className="py-2 pr-3">{t("finance.tax")}</th><th className="py-2">{t("finance.amount")}</th></tr></thead>
+            <tbody>
+              {(data.lines || []).map((line: any) => {
+                const quantity = Number.isFinite(Number(line.quantity)) && line.quantity !== null && line.quantity !== "" ? Number(line.quantity) : null;
+                return (
+                  <tr key={line.id} className="border-b border-slate-50">
+                    <td className="py-2 pr-3">{line.sku} · {line.itemName}</td>
+                    <td className="py-2 pr-3 tabular-nums">{quantity === null ? "—" : `${formatNumber(quantity)}${line.unit ? ` ${unitLabel(line.unit, language, quantity)}` : ""}`}</td>
+                    <td className="py-2 pr-3 tabular-nums">{money(line.unitPrice, data.currency, locale)}</td>
+                    <td className="py-2 pr-3 tabular-nums">{money(line.enteredTaxAmount, data.currency, locale)}</td>
+                    <td className="py-2 tabular-nums">{money(line.totalAmount, data.currency, locale)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
-      {data.match && (
-        <Card className="space-y-3 p-5" data-testid="supplier-invoice-match">
-          <div className="flex items-center justify-between"><h3 className="font-semibold">{t("finance.threeWayMatch")}</h3><StatusChip status={data.match.status} /></div>
-          {data.match.blockingReason && <p className="text-sm text-slate-600">{data.match.blockingReason}</p>}
-          {exceptions.map((entry) => (
-            <div key={entry.id} className="space-y-2 rounded-xl bg-slate-50 p-3 text-sm" data-testid="match-exception">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div><span className="font-medium">{workspaceCopy(invoiceVarianceLabelKey(entry.exceptionType), language)}</span> · {t("finance.expected")} {entry.expectedValue ?? "—"} · {t("finance.actual")} {entry.actualValue ?? "—"}</div>
-                <StatusChip status={entry.status} />
-              </div>
-              {entry.resolution && <div className="text-xs text-slate-500">{entry.resolution}</div>}
-              {entry.status === "open" && (
-                <div className="flex flex-wrap gap-2">
-                  <TwoStepAction label={t("finance.approveException")} testId={`exception-approve-${entry.id}`} previewUrl={`/api/finance/match-exceptions/${encodeURIComponent(entry.id)}/review-preview`} runUrl={`/api/finance/match-exceptions/${encodeURIComponent(entry.id)}/review`} payload={() => ({ expectedVersion: entry.version, decision: "approved" })} reasonLabel={t("finance.resolution")} onDone={load} />
-                  <TwoStepAction label={t("finance.rejectException")} testId={`exception-reject-${entry.id}`} tone="secondary" previewUrl={`/api/finance/match-exceptions/${encodeURIComponent(entry.id)}/review-preview`} runUrl={`/api/finance/match-exceptions/${encodeURIComponent(entry.id)}/review`} payload={() => ({ expectedVersion: entry.version, decision: "rejected" })} reasonLabel={t("finance.resolution")} onDone={load} />
-                </div>
-              )}
-            </div>
-          ))}
-        </Card>
-      )}
+      {data.match && <MatchCard invoice={data} onDone={load} />}
 
       {payable && (
-        <Card className="space-y-3 p-5" data-testid="supplier-invoice-payable">
+        <Card className="space-y-3 p-5" data-testid="supplier-invoice-payable" id="supplier-invoice-payable">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-semibold">{t("finance.payables")} · {payable.obligationNumber || payable.id}</h3>
-            <div className="flex items-center gap-2"><strong>{money(payable.outstandingAmount, payable.currency, locale)}</strong><StatusChip status={payable.status} /></div>
+            {/* The payable's total stays here; what is paid and still owed is under it. */}
+            <div className="flex items-center gap-2" data-testid="supplier-invoice-payable-total"><strong>{money(payable.originalAmount ?? data.totalAmount, payable.currency, locale)}</strong><StatusChip status={payable.status} /></div>
           </div>
           <PaymentRecords kind="payable" obligation={payable} onDone={load} />
           <div className="flex flex-wrap gap-2">
@@ -848,7 +1125,8 @@ export function SupplierInvoiceDetail() {
                 key={action}
                 label={t(action === "hold" ? "finance.action.hold" : action === "release" ? "finance.action.release" : "finance.action.mark_export_ready")}
                 testId={`payable-${action}`}
-                tone={action === "hold" ? "secondary" : "primary"}
+                // Recording the payment is the main step; releasing a hold leads to it.
+                tone={action === "release" ? "primary" : "secondary"}
                 previewUrl={`/api/finance/payables/${encodeURIComponent(payable.id)}/${action === "mark_export_ready" ? "mark-export-ready" : action}-preview`}
                 runUrl={`/api/finance/payables/${encodeURIComponent(payable.id)}/${action === "mark_export_ready" ? "mark-export-ready" : action}`}
                 payload={() => ({ expectedVersion: payable.version })}
