@@ -20,6 +20,16 @@
 //               half-Chinese dates (10 月 1, 2026), no opening narration
 //               ("Let me check…", "让我查一下");
 //   clean       status 200, no error, and no figure the check flagged.
+//   Conversations, cards and links (2026-11-11):
+//   ui          cards it shows (has) or leaves out (hasNot);
+//   formLines   a form row of the SKU, at the quantity, ticked or not;
+//   formNoneChecked  no form row ticked (the user named no item);
+//   refs        records it links, by type and label (named in the text or
+//               on a card);
+//   matches / notMatches  wording it must have, or must not (in the text);
+//   languages   each turn's language, for a switch the user asked for;
+//   and always: the chips in the answer's language, and no English sentence
+//   (eight words or more) in a Chinese answer.
 //
 // A number may list anyOf: values, any one of which passes.
 
@@ -120,11 +130,60 @@ function displayRows(answer) {
   return rows
 }
 
-export function scoreAnswer(answer, expect = {}, { language = 'en-US' } = {}) {
+// A run of eight or more English words in a Chinese answer is a sentence in
+// the wrong language; record names are shorter.
+const ENGLISH_RUN = /(?:[A-Za-z][A-Za-z'’&.,-]*\s+){7,}[A-Za-z][A-Za-z'’&.-]*/
+export const englishRun = (text) => (String(text || '').replace(/`[^`]*`/g, ' ').match(ENGLISH_RUN) || [null])[0]
+const hasCjk = (value) => /[㐀-鿿]/.test(String(value))
+const formRows = (answer) => (answer.ui || []).filter((part) => part.component === 'pr_form').flatMap((part) => [...(part.props?.lines || []), ...(part.props?.suggested || [])])
+const patternOf = ({ pattern, flags = 'i' }) => new RegExp(pattern, flags)
+
+export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers = [answer] } = {}) {
   const checks = []
   const add = (name, ok, detail = '') => checks.push({ name, ok: Boolean(ok), detail })
   add('clean', answer.status === 200 && !(answer.errors || []).length, `status ${answer.status}${answer.errors?.length ? `, errors ${answer.errors.join(',')}` : ''}`)
   add('language', !answer.text || answerLanguage(answer.text) === language, answer.text ? answerLanguage(answer.text) : 'no text')
+  // English only for record names in a Chinese answer, and the chips in the
+  // answer's language.
+  if (language === 'zh-CN' && answer.text) {
+    const run = englishRun(answer.text)
+    add('no English prose', !run, run ? `"${run.slice(0, 60)}"` : '')
+  }
+  const chips = (answer.ui || []).filter((part) => part.component === 'followups').flatMap((part) => part.props?.questions || [])
+  if (chips.length) {
+    const wrong = chips.filter((chip) => (language === 'zh-CN' ? !hasCjk(chip) : hasCjk(chip)))
+    add('chips language', !wrong.length, wrong.join(' | '))
+  }
+  // Each turn in its language, when the case says so (a switch the user asked for).
+  for (const [index, wanted] of (expect.languages || []).entries()) {
+    const text = answers[index]?.text
+    if (wanted) add(`turn ${index + 1} language`, !text || answerLanguage(text) === wanted, text ? answerLanguage(text) : 'no text')
+  }
+  // The cards shown, or left out.
+  const components = (answer.ui || []).map((part) => part.component)
+  for (const component of expect.ui?.has || []) add(`shows ${component}`, components.includes(component), components.join(', ') || 'no cards')
+  for (const component of expect.ui?.hasNot || []) add(`no ${component}`, !components.includes(component), components.join(', ') || 'no cards')
+  // The form's lines: the SKU, its quantity and whether it is ticked.
+  for (const { sku, quantity, checked } of expect.formLines || []) {
+    const row = formRows(answer).find((entry) => entry.item?.sku === sku)
+    const ok = Boolean(row) && (quantity === undefined || row.suggestedQuantity?.value === quantity) && (checked === undefined || row.checked === checked)
+    add(`form line: ${sku}`, ok, row ? `quantity ${row.suggestedQuantity?.value}, ${row.checked ? 'ticked' : 'not ticked'}` : 'not in a form')
+  }
+  if (expect.formNoneChecked) {
+    const ticked = formRows(answer).filter((row) => row.checked).map((row) => row.item?.sku)
+    add('no line ticked', !ticked.length, ticked.join(', '))
+  }
+  // The records it links (named in its text, or on its cards).
+  for (const { type, label } of expect.refs || []) {
+    const found = (answer.refs || []).some((ref) => ref.type === type && (!label || String(ref.label || '').toLowerCase().includes(String(label).toLowerCase())))
+    add(`links ${type}${label ? ` ${label}` : ''}`, found, (answer.refs || []).map((ref) => `${ref.type}:${ref.label}`).join(', ') || 'no links')
+  }
+  // Wording the answer must have, and must not.
+  for (const entry of expect.matches || []) add(`says: ${entry.label}`, patternOf(entry).test(flat(answer)), entry.pattern)
+  for (const entry of expect.notMatches || []) {
+    const found = String(answer.text || '').match(patternOf(entry))
+    add(`not: ${entry.label}`, !found, found ? `"${found[0].slice(0, 60)}"` : '')
+  }
   const numbers = numbersIn(flat(answer))
   for (const { label, value, anyOf, tolerance = 0 } of expect.numbers || []) {
     const wanted = anyOf || [value]

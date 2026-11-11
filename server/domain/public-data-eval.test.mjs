@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { publicDataItem, readPublicDataInstance, readPublicDataInstances } from '../../scripts/public-data-instance.mjs'
 import { buildCases, inventoryWorth, itemEconomics, readReference } from '../../tests/ai-eval/v2-public/cases.mjs'
-import { answerLanguage, dateForms, numbersIn, repeatedPart, scoreAnswer, tidyProblems } from '../../tests/ai-eval/v2-public/score.mjs'
+import { answerLanguage, dateForms, englishRun, numbersIn, repeatedPart, scoreAnswer, tidyProblems } from '../../tests/ai-eval/v2-public/score.mjs'
 import { uciEconomics, uciFacts } from '../../tests/ai-eval/v2-public/uci-facts.mjs'
 import { buildUciCases, lastWholeMonths } from '../../tests/ai-eval/v2-public/uci-cases.mjs'
 
@@ -125,6 +125,28 @@ test('scoring: names or SKUs, dates in their usual forms, refusals, any of sever
   assert.equal(repeatedPart([first, next]), null)
   assert.equal(repeatedPart([first, 'I\'ve answered what 85123A is, and the next steps are there if you want to go further.']), null, 'a short closing line is not a repeat')
   assert.match(scoreAnswer({ ...answer, text: `${first}\n${again}`, textParts: [first, again] }, {}).checks.find((check) => check.name === 'tidy').detail, /repeats an earlier paragraph/)
+})
+
+test('scoring conversations: cards shown or left out, form lines and ticks, links, wording, each turn\'s language, chips and English prose', () => {
+  const row = (sku, quantity, checked) => ({ item: { id: `I-${sku}`, sku, name: sku }, suggestedQuantity: { value: quantity, source: 'user_named' }, checked })
+  const answer = { status: 200, text: '已为 22423 填好表单，Acme 的 PO-202610-0022 已逾期。', textParts: ['已为 22423 填好表单，Acme 的 PO-202610-0022 已逾期。'], flags: [], errors: [],
+    ui: [{ component: 'pr_form', props: { lines: [row('22423', 100, true)], suggested: [row('84879', 150, false)] } }, { component: 'followups', props: { questions: ['查看 84879 的库存', 'Show Acme orders'] } }],
+    refs: [{ type: 'purchase_order', id: 'UCI-PO-1', label: 'PO-202610-0022' }, { type: 'supplier', id: 'SUP-85', label: 'Acme Home Goods' }] }
+  const failed = (expect, options = { language: 'zh-CN' }) => scoreAnswer(answer, expect, options).checks.filter((check) => !check.ok).map((check) => check.name)
+  assert.deepEqual(failed({}), ['chips language'], 'an English chip in a Chinese answer')
+  assert.deepEqual(failed({ ui: { has: ['pr_form'], hasNot: ['record_actions'] } }).filter((name) => name !== 'chips language'), [])
+  assert.deepEqual(failed({ ui: { has: ['table'], hasNot: ['pr_form'] } }).filter((name) => name !== 'chips language'), ['shows table', 'no pr_form'])
+  assert.deepEqual(failed({ formLines: [{ sku: '22423', quantity: 100, checked: true }, { sku: '84879', quantity: 150, checked: false }] }).filter((name) => name !== 'chips language'), [])
+  assert.deepEqual(failed({ formLines: [{ sku: '22423', quantity: 120 }], formNoneChecked: true }).filter((name) => name !== 'chips language'), ['form line: 22423', 'no line ticked'])
+  assert.deepEqual(failed({ refs: [{ type: 'purchase_order' }, { type: 'supplier', label: 'acme' }, { type: 'item' }] }).filter((name) => name !== 'chips language'), ['links item'])
+  assert.deepEqual(failed({ matches: [{ label: 'late', pattern: '逾期' }], notMatches: [{ label: 'a phone', pattern: String.raw`\(\d{3}\) \d{3}-\d{4}` }] }).filter((name) => name !== 'chips language'), [])
+  assert.deepEqual(failed({ notMatches: [{ label: 'a PO', pattern: 'PO-\\d+' }] }).filter((name) => name !== 'chips language'), ['not: a PO'])
+  // Each turn's language, and English prose in a Chinese answer.
+  const turns = [{ text: 'You should reorder 22423 this week.' }, answer]
+  assert.deepEqual(failed({ languages: ['en-US', 'zh-CN'] }, { language: 'zh-CN', answers: turns }).filter((name) => name !== 'chips language'), [])
+  assert.deepEqual(failed({ languages: ['zh-CN', 'zh-CN'] }, { language: 'zh-CN', answers: turns }).filter((name) => name !== 'chips language'), ['turn 1 language'])
+  assert.equal(englishRun('PO-202610-0022 的 White Hanging Heart T-Light Holder 已逾期。'), null, 'a record name is not prose')
+  assert.match(englishRun('这一单 is overdue and you should chase the supplier for a firm date today。'), /is overdue and you should chase/)
 })
 
 // A small plan in the shape buildPublicDataPlan returns: seeded as of

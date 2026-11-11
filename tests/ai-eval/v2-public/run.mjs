@@ -104,7 +104,10 @@ async function askOnce(session, threadId, message, language) {
     body: JSON.stringify({ threadId, message, activeContext: { moduleId: 'overview', entityType: null, entityId: null }, answerLanguage: language }),
   })
   const parts = new Map()
-  const answer = { status: response.status, ms: 0, model: null, text: '', ui: [], flags: [], errors: [], notices: [], tools: [] }
+  const answer = { status: response.status, ms: 0, model: null, text: '', ui: [], flags: [], errors: [], notices: [], tools: [], refs: [] }
+  // The records the answer links: those its text names (flag refs) and those
+  // its cards carry, as the panel chips them.
+  const addRefs = (refs) => { for (const ref of refs || []) if (ref?.type && ref?.id && !answer.refs.some((known) => known.type === ref.type && known.id === ref.id)) answer.refs.push({ type: ref.type, id: ref.id, label: ref.label ?? null }) }
   const raw = await response.text()
   for (const line of raw.split('\n').filter(Boolean)) {
     let event
@@ -112,8 +115,8 @@ async function askOnce(session, threadId, message, language) {
     if (event.type === 'start') answer.model = event.model || null
     else if (event.type === 'text_delta') parts.set(event.partId, { type: 'text', text: (parts.get(event.partId)?.text || '') + event.text })
     else if (event.type === 'replace') parts.set(event.partId, { type: 'text', text: event.text })
-    else if (event.type === 'ui') parts.set(event.partId, { type: 'ui', component: event.component, props: event.props })
-    else if (event.type === 'flag') for (const span of event.spans || []) answer.flags.push(`${span.kind}:${span.text}${span.reason ? ` (${span.reason})` : ''}`)
+    else if (event.type === 'ui') { parts.set(event.partId, { type: 'ui', component: event.component, props: event.props }); addRefs(event.refs) }
+    else if (event.type === 'flag') { for (const span of event.spans || []) answer.flags.push(`${span.kind}:${span.text}${span.reason ? ` (${span.reason})` : ''}`); addRefs(event.refs) }
     else if (event.type === 'error') answer.errors.push(event.code)
     else if (event.type === 'notice') answer.notices.push(event.code)
     else if (event.type === 'tool' && event.state !== 'running') answer.tools.push(event.name)
@@ -150,10 +153,12 @@ for (const testCase of cases) {
     turn += 1
     const threadId = `thr_eval_${testCase.id.replace(/[^\w]/g, '')}_${Date.now().toString(36)}`.slice(0, 60)
     const answers = []
+    // The panel's language goes with every turn; a case may expect another one
+    // the user asked for in their words ("用中文说").
     for (const message of testCase.turns) answers.push(await ask(session, threadId, message, testCase.language))
     const last = answers.at(-1)
-    const score = scoreAnswer(last, testCase.expect, { language: testCase.language })
-    results.push({ id: testCase.id, kind: testCase.kind, language: testCase.language, round, pass: score.pass, checks: score.checks, turns: testCase.turns, seconds: Math.round(answers.reduce((total, row) => total + row.ms, 0) / 1000), costUsd: answers.reduce((total, row) => total + row.costUsd, 0), inputTokens: answers.reduce((total, row) => total + row.inputTokens, 0), tools: last.tools, model: last.model, asked: session.email, answer: last })
+    const score = scoreAnswer(last, testCase.expect, { language: testCase.expect?.language || testCase.language, answers })
+    results.push({ id: testCase.id, kind: testCase.kind, language: testCase.language, round, pass: score.pass, checks: score.checks, turns: testCase.turns, seconds: Math.round(answers.reduce((total, row) => total + row.ms, 0) / 1000), costUsd: answers.reduce((total, row) => total + row.costUsd, 0), inputTokens: answers.reduce((total, row) => total + row.inputTokens, 0), tools: last.tools, model: last.model, asked: session.email, answer: last, earlier: answers.slice(0, -1).map((row) => ({ text: row.text, ui: row.ui.map((part) => part.component), refs: row.refs, tools: row.tools })) })
     const failed = score.checks.filter((check) => !check.ok).map((check) => `${check.name} (${check.detail})`).join('; ')
     console.log(`${score.pass ? 'PASS' : 'FAIL'} ${testCase.id.padEnd(26)}${repeat > 1 ? ` #${round + 1}` : ''} ${String(results.at(-1).seconds).padStart(3)}s ${failed}`)
   }
