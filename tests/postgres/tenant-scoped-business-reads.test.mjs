@@ -107,7 +107,9 @@ test('reports and the business read context return only the signed-in workspace 
     const overview = await request(port, 'GET', '/api/reports/overview', { headers: signedInA })
     assert.equal(overview.status, 200)
     assert.deepEqual(overview.payload.dataScope.filterOptions.suppliers, ['Supplier A'])
-    assert.deepEqual(overview.payload.dataScope.filterOptions.customers, [])
+    // The customer filter lists the customers on this workspace's own orders
+    // (every order, not only the loaded ones), never another workspace's.
+    assert.deepEqual(overview.payload.dataScope.filterOptions.customers, ['Customer A'])
     assert.ok(!JSON.stringify(overview.payload).includes('PO-B'))
 
     // The test identity takes the configured workspace, now B.
