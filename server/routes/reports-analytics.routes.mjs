@@ -22,10 +22,32 @@ async function routeReports(ctx) {
   // unscoped context for each SKU's reserved and available quantity.
   // Inventory is read in the reader's warehouses only, so availability counts
   // every order's demand against the stock the reader may see.
-  const readerContext = async () => {
+  const readerContext = async (subject) => {
     const access = await reportReadAccess(ctx)
     const context = await readBusinessContext(ctx, { warehouseIds: access.warehouseIds })
-    return { context: scopeBusinessContext(context, access), allocationContext: context, warehouseIds: access.warehouseIds, access }
+    const scoped = scopeBusinessContext(context, access)
+    const salesOrderGroups = await salesOrderSummary(subject, context, access)
+    return { context: salesOrderGroups ? { ...scoped, salesOrderGroups } : scoped, allocationContext: context, warehouseIds: access.warehouseIds, access }
+  }
+  // The context reads the latest 500 sales orders. When there are more, the
+  // sales figures of the overview and sales dashboards (order count, amounts,
+  // months, customers, status and shipping) come from the database's totals
+  // over every order instead (summarizeOrdersForReport), so they are true; the
+  // detail rows and the download stay the orders read. Left out when the
+  // reader cannot read sales orders, or the totals cannot be read: the
+  // dashboard then counts the orders read and says they were cut off.
+  const salesOrderSummary = async (subject, context, access) => {
+    const dashboard = DASHBOARD_SUBJECTS.has(subject) ? subject : 'overview'
+    if (!['overview', 'sales'].includes(dashboard) || !access.collections.salesOrders || !ctx.identity?.tenantId) return null
+    if (!(context.truncatedSubjects || []).some((entry) => entry?.subject === 'sales_orders')) return null
+    const repository = ctx.repositories?.salesOrders
+    if (typeof repository?.summarizeOrdersForReport !== 'function') return null
+    try {
+      const groups = await repository.summarizeOrdersForReport({ tenantId: ctx.identity.tenantId, timeZone: await readTenantTimezone(ctx) })
+      return Array.isArray(groups) ? groups : null
+    } catch {
+      return null
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/api/reports/open-purchase-orders') {
@@ -95,7 +117,7 @@ async function routeReports(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/reports-analytics') {
-    const reader = await readerContext()
+    const reader = await readerContext('overview')
     send(res, 200, buildRuntimeGovernedReport(reader.context, { subject: 'overview' }, await overviewOptions(reader, 'overview')))
     return true
   }
@@ -107,7 +129,7 @@ async function routeReports(ctx) {
 
   if (req.method === 'POST' && url.pathname === '/api/reports/query') {
     const body = await readBody(req)
-    const reader = await readerContext()
+    const reader = await readerContext(body?.subject)
     send(res, 200, buildRuntimeGovernedReport(reader.context, body, await overviewOptions(reader, body?.subject)))
     return true
   }
@@ -115,7 +137,7 @@ async function routeReports(ctx) {
   const dashboardMatch = url.pathname.match(/^\/api\/reports\/(overview|procurement|sales|inventory|finance|suppliers)$/)
   if (req.method === 'GET' && dashboardMatch) {
     const filters = Object.fromEntries(url.searchParams.entries())
-    const reader = await readerContext()
+    const reader = await readerContext(dashboardMatch[1])
     send(res, 200, buildRuntimeGovernedReport(reader.context, { subject: dashboardMatch[1], filters }, await overviewOptions(reader, dashboardMatch[1])))
     return true
   }

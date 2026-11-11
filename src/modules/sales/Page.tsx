@@ -14,6 +14,7 @@ import { Link, useLocation, useSearchParams } from "react-router";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
 import { ListCard, ListSearchCard, ListStateRow, ResetButton, StatusChip, listButtonClass, listTableCardsRef, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { ListPager } from "../procurement/listPaging";
 import {
   tableBodyTextClass,
   tableLinkClass,
@@ -44,6 +45,8 @@ type SalesOrder = {
   fulfilledQty: number;
   shortageQty: number;
   promisedDate: string;
+  // The status code (fulfilled, ready_to_ship…) and the read API's Chinese label for it.
+  status?: string;
   statusLabel: string;
   priority: string;
   deliveryRiskLevel: "blocked" | "high" | "medium" | "low";
@@ -93,16 +96,20 @@ const riskColor: Record<string, string> = {
 
 // Brand tones for the risk levels; order status labels use statusToneOf.
 const RISK_TONE: Record<string, StatusTone> = { blocked: "danger", high: "danger", medium: "warning", low: "neutral" };
-const EVIDENCE_PAGE_SIZE = 15;
+// Fifty orders a page, as the sales order list and the purchase order list
+// show, so the same orders read the same number of pages on each.
+const EVIDENCE_PAGE_SIZE = 50;
 const RISK_PAGE_SIZE = 25;
 
-// The statuses the read API gives an order (statusLabel), by the code the
-// list filter sends (orderStatus); the label is translated where it is shown.
+// The statuses the read API gives an order, by their code (status, and the
+// orderStatus the list filter sends); the label is translated where it is
+// shown. A shipped order is "Fulfilled" / 已履约, the word the sales order list
+// and detail use, not the read API's 已完成 ("Completed").
 const ORDER_STATUS_LABELS: Record<string, string> = {
   "shortage_risk": "缺货风险",
   "ready_to_ship": "可发货",
   "partially_fulfilled": "部分履约",
-  "fulfilled": "已完成",
+  "fulfilled": "已履约",
   "cancelled": "已取消",
   "draft": "草稿",
   "confirmed": "已确认",
@@ -146,6 +153,11 @@ function useSalesCopy() {
     return { copy, say, customerLabel, itemLabel };
   }, [language]);
 }
+
+// An order's status as shown: by its code when the page knows it, else the
+// read API's label as sent. Both are translated where they are shown.
+const orderStatusLabel = (order: Pick<SalesOrder, "status" | "statusLabel">) =>
+  (order.status && ORDER_STATUS_LABELS[order.status]) || order.statusLabel;
 
 // An order is named by its document number; its stored id is never shown.
 const orderNumberOf = (order: Pick<SalesOrder, "orderNumber" | "salesOrderId">) => order.orderNumber || order.salesOrderId;
@@ -197,24 +209,6 @@ function useSettled(value: string, delay = 300) {
     return () => clearTimeout(timer);
   }, [value, delay]);
   return settled;
-}
-
-// The pager under a list read a page at a time, as the sales order list has.
-function PageFooter({ page, pages, total, onPage }: { page: number; pages: number; total: number; onPage: (page: number) => void }) {
-  const { copy, say } = useSalesCopy();
-  const { formatNumber } = useI18n();
-  if (total <= 0) return null;
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 text-xs" style={{ borderTop: "0.5px solid rgba(0,0,0,0.06)", color: A.sub }} data-testid="sales-demand-pager">
-      <span>{say(`Page ${page} of ${pages} · ${formatNumber(total)} results`, `第 ${page} / ${pages} 页 · 共 ${formatNumber(total)} 条`)}</span>
-      {pages > 1 && (
-        <div className="flex gap-2">
-          <button type="button" className={listButtonClass.secondary} disabled={page <= 1} onClick={() => onPage(page - 1)}>{copy("上一页")}</button>
-          <button type="button" className={listButtonClass.secondary} disabled={page >= pages} onClick={() => onPage(page + 1)}>{copy("下一页")}</button>
-        </div>
-      )}
-    </div>
-  );
 }
 
 function viewFromInitial(initialView?: string): SalesView {
@@ -300,7 +294,7 @@ function RiskView() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <ActionableMetricCard label={say("Customer order", "销售订单")} value={figure(summary?.totalOrders)} description={copy("查看当前工作区全部订单")} to="/app/sales/orders" icon={ClipboardList} color={A.blue} />
+        <ActionableMetricCard label={say("Sales orders", "销售订单")} value={figure(summary?.totalOrders, qty)} description={copy("查看当前工作区全部订单")} to="/app/sales/orders" icon={ClipboardList} color={A.blue} />
         <ActionableMetricCard label={copy("交付风险")} value={figure(summary?.riskOrderCount)} description={say(`${highRisk} high-risk ${highRisk === 1 ? "order" : "orders"}`, `${highRisk} 个高风险订单`)} to="/app/sales/orders?risk=true" icon={AlertTriangle} color={highRisk ? A.red : A.orange} />
         <ActionableMetricCard label={copy("缺口数量")} value={figure(summary?.shortageQty, qty)} description={copy("查看影响交付承诺的订单")} to="/app/sales/orders?shortage=true" icon={PackageSearch} color={A.red} />
         <ActionableMetricCard label={copy("已预留数量")} value={figure(summary?.reservedQty, qty)} description={say("Orders with stock reserved", "查看已预留库存的订单")} to="/app/sales/orders?reserved=true" icon={Boxes} color={A.green} />
@@ -325,9 +319,10 @@ function RiskView() {
                   <th className={thClass} style={{ color: A.gray1 }}>{copy("SKU / 物料")}</th>
                   <th className={thRightClass} style={{ color: A.gray1 }}>{copy("订购 / 预留 / 履约")}</th>
                   <th className={thRightClass} style={{ color: A.gray1 }}>{copy("缺口")}</th>
-                  {[copy("承诺交期"), copy("风险"), copy("风险原因")].map((header) => (
-                    <th key={header} className={thClass} style={{ color: A.gray1 }}>{header}</th>
-                  ))}
+                  <th className={thClass} style={{ color: A.gray1 }}>{copy("承诺交期")}</th>
+                  {/* The risk level is the order's status on a phone card. */}
+                  <th className={thClass} style={{ color: A.gray1 }} data-card-status="">{copy("风险")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{copy("风险原因")}</th>
                   <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{copy("操作")}</th>
                 </tr>
               </thead>
@@ -369,7 +364,7 @@ function RiskView() {
               <div className="p-6 text-sm" style={{ color: A.sub }}>{copy("当前没有需要进入风险队列的销售订单。")}</div>
             )}
           </div>
-          <PageFooter page={Math.min(page, risks.pages)} pages={risks.pages} total={risks.total} onPage={setPage} />
+          <ListPager page={Math.min(page, risks.pages)} pageSize={RISK_PAGE_SIZE} total={risks.total} onPage={setPage} testId="sales-demand-pager" />
         </Card>
       )}
     </div>
@@ -469,7 +464,7 @@ function EvidenceChainView({
     <Card className="p-4">
       <SectionHeader title={copy("工作区关联摘要")} right={<Chip label={copy("需人工复核")} color={A.orange} bg="#fff8f0" />} />
       <div className="grid grid-cols-1 gap-1.5 text-[11px] leading-5">
-        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ClipboardList size={12} />{copy("销售订单：")}{customerLabel(selectedOrder)} · {copy(selectedOrder.statusLabel)}</div>
+        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ClipboardList size={12} />{copy("销售订单：")}{customerLabel(selectedOrder)} · {copy(orderStatusLabel(selectedOrder))}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><PackageSearch size={12} />{copy("SKU库存：")}{selectedOrder.sku} / {itemLabel(selectedOrder)}{copy("· 已预留")}{qty(selectedOrder.reservedQty)}{copy("· 缺口")}{qty(selectedOrder.shortageQty)}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ShoppingCart size={12} />{copy("采购订单：")}{selectedOrder.linkedPurchaseOrders.length ? selectedOrder.linkedPurchaseOrders.map((po, index) => <span key={po.id}>{index ? "; " : ""}<DocumentNumber type="purchase_order" id={po.id} number={po.number} /> {po.status || ""}</span>) : copy("暂无完整采购订单关联")}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><Users size={12} />{copy("供应商：")}{selectedOrder.linkedSuppliers.map((supplier) => `${supplier.name}${supplier.risk ? ` · ${supplier.risk}` : ""}`).join("; ") || copy("暂无完整供应商记录")}</div>
@@ -519,6 +514,7 @@ function EvidenceChainView({
       <ListSearchCard
         title={copy("订单证据查询")}
         subtitle={copy("选择销售订单后读取其真实关联记录、风险信号和数据限制。")}
+        activeFilters={[risk, status].filter(Boolean).length}
         actions={<>
           <StatusChip label={copy("只读证据")} tone="info" />
           <ResetButton onClick={reset} />
@@ -571,7 +567,7 @@ function EvidenceChainView({
                       <EntityLink kind="item" id={order.itemId} className={tableLinkClass}>{order.sku}</EntityLink>
                       <div className="max-w-[220px] truncate text-[11px]" style={{ color: A.sub }} title={itemLabel(order)}>{itemLabel(order)}</div>
                     </td>
-                    <td className={tdNowrapClass}><StatusChip label={copy(order.statusLabel)} tone={statusToneOf(order.statusLabel)} /></td>
+                    <td className={tdNowrapClass}><StatusChip label={copy(orderStatusLabel(order))} tone={statusToneOf(order.statusLabel)} /></td>
                     <td className={tdNowrapClass}><StatusChip label={copy(order.deliveryRiskLabel)} tone={RISK_TONE[order.deliveryRiskLevel] || "neutral"} /></td>
                     <td className={`${tdNumericRightClass}${order.shortageQty > 0 ? " font-semibold text-red-700" : ""}`} style={order.shortageQty > 0 ? undefined : { color: A.gray2 }}>{qty(order.shortageQty)}</td>
                     <td className={tdNowrapClass}>
@@ -590,7 +586,7 @@ function EvidenceChainView({
             </tbody>
           </table>
         </div>
-        <PageFooter page={current} pages={list.pages} total={list.total} onPage={setPage} />
+        <ListPager page={current} pageSize={EVIDENCE_PAGE_SIZE} total={list.total} onPage={setPage} testId="sales-demand-pager" />
       </ListCard>
     </div>
   );

@@ -16,7 +16,9 @@ test('every analytics page, definitions, customization and workbook uses English
     await page.goto(`/app/reports/${view}`);
     const dashboard = page.getByTestId('bi-dashboard');
     await expect(dashboard.getByText('Loading report', { exact: true })).toHaveCount(0);
-    await expect(dashboard.getByTestId('reports-data-scope-limitations')).toBeVisible();
+    // A page with records shows its data scope notes; a page with none shows
+    // one empty state in place of its charts, notes and table.
+    await expect(dashboard.getByTestId('reports-data-scope-limitations').or(dashboard.getByTestId('report-empty-state')).first()).toBeVisible();
     await dashboard.getByRole('button', { name: 'Metric definitions', exact: true }).click();
     await expect(dashboard.getByTestId('metric-definitions')).toBeVisible();
     await expect(dashboard).not.toContainText(/[\u3400-\u9fff]/);
@@ -112,8 +114,17 @@ test('analytics pages offer only filters the report applies and promise no missi
     // Quality, aging and period comparisons are not measured, so no page names them.
     await expect(page.getByTestId('bi-dashboard')).not.toContainText(/OTIF|quality|aging|year over year/i);
   }
-  // Three-way match results are recorded on invoices, so the finance page reports them.
+  // With no supplier invoices the finance page says so once, not in six empty charts.
   await page.goto('/app/reports/finance');
+  await expect(page.getByTestId('report-empty-state')).toContainText('No supplier invoices in this range.');
+  await expect(page.locator('[data-chart-id]')).toHaveCount(0);
+  await expect(page.getByTestId('bi-dashboard')).not.toContainText('Select a currency to compare amounts.');
+  // Three-way match results are recorded on invoices, so the finance page reports them.
+  await page.route('**/api/reports/query', async route => {
+    const context = { purchaseOrders: [], salesOrders: [], suppliers: [], items: [], inventoryItems: [], receipts: [], dataLimitations: [], supplierInvoices: [{ id: 'INV-DEMO', invoiceNumber: 'INV-DEMO', supplierName: 'Acme Components', status: 'matched', matchStatus: 'matched', totalAmount: 90, currency: 'USD', invoiceDate: '2026-09-15' }] };
+    await route.fulfill({ json: buildRuntimeGovernedReport(context, route.request().postDataJSON()) });
+  });
+  await page.reload();
   await expect(page.locator('[data-chart-id="finance_match_rate"]')).toBeVisible();
   await expect(page.locator('[data-chart-id="finance_match_outcome"]')).toBeVisible();
 });

@@ -71,3 +71,47 @@ test('report endpoint uses the authenticated database workspace', async ({ page 
   await page.goto('/app/reports/procurement');
   await expect(page.getByTestId('open-purchase-orders-report')).toContainText('No orders match these filters.');
 });
+
+// Seven suppliers with overdue orders, one with two, and orders of several SKUs.
+const multiSku = ['A', 'B', 'C', 'D', 'E', 'F', 'G'].flatMap((supplier, index) => [
+  { id: `PO-MULTI-${supplier}`, orderNumber: `PO-MULTI-${supplier}`, supplierName: `Vendor ${supplier}`, createdAt: '2026-09-01', expectedDate: '2026-09-09', owner: 'Alex', status: 'issued', currency: 'USD', totalAmount: 100 + index, lines: Array.from({ length: 13 }, (_, line) => ({ sku: `SKU-${line}`, quantity: 10, receivedQuantity: 0, unit: 'pcs' })) },
+  ...(index === 0 ? [{ id: 'PO-MULTI-A2', orderNumber: 'PO-MULTI-A2', supplierName: 'Vendor A', createdAt: '2026-09-02', expectedDate: '2026-09-09', owner: 'Alex', status: 'issued', currency: 'USD', totalAmount: 50, lines: [{ sku: 'SKU-1', quantity: 10, receivedQuantity: 0, unit: 'pcs' }, { sku: 'SKU-2', quantity: 5, receivedQuantity: 5, unit: 'pcs' }] }] : []),
+]);
+
+test('procurement reports are sub-tabs; the overdue chart names the top five and what it leaves out', async ({ page }) => {
+  await authenticate(page);
+  await page.route('**/api/reports/open-purchase-orders?*', route => route.fulfill({ json: buildOpenPurchaseOrdersReport(multiSku, Object.fromEntries(new URL(route.request().url()).searchParams), new Date('2026-09-11T10:00:00Z')) }));
+  await page.goto('/app/reports/procurement');
+  const tabs = page.getByTestId('procurement-report-tabs');
+  await expect(tabs.getByRole('link', { name: 'Open purchase orders' })).toHaveAttribute('aria-current', 'page');
+  await expect(tabs.getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute('aria-current', 'page');
+  const report = page.getByTestId('open-purchase-orders-report');
+  const overdue = report.getByTestId('open-po-overdue-suppliers');
+  await expect(overdue.getByRole('heading', { name: 'Top 5 suppliers with overdue orders' })).toBeVisible();
+  await expect(overdue.getByTestId('open-po-overdue-more')).toHaveText('+2 more suppliers with 2 overdue orders');
+  // Quantities of several SKUs are never added: the row says how many lines are open.
+  const row = page.getByTestId('open-po-table').getByRole('row', { name: /PO-MULTI-A2/ });
+  await expect(row).toContainText('1 line open');
+  await expect(page.getByTestId('open-po-table').getByRole('row', { name: /PO-MULTI-B/ })).toContainText('13 lines open');
+  await expect(report).not.toContainText('Unavailable');
+  await tabs.getByRole('link', { name: 'Dashboard' }).click();
+  await expect(page).toHaveURL(/view=analytics/);
+  await expect(page.getByTestId('procurement-report-tabs').getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
+  // Business overview has no procurement sub-tabs.
+  await page.goto('/app/reports/overview');
+  await expect(page.getByTestId('bi-dashboard')).toBeVisible();
+  await expect(page.getByTestId('procurement-report-tabs')).toHaveCount(0);
+});
+
+test('on a phone the open purchase orders are cards that show every field', async ({ page }) => {
+  await authenticate(page, 'zh-CN');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/reports/open-purchase-orders?*', route => route.fulfill({ json: buildOpenPurchaseOrdersReport(multiSku, Object.fromEntries(new URL(route.request().url()).searchParams), new Date('2026-09-11T10:00:00Z')) }));
+  await page.goto('/app/reports/procurement');
+  const report = page.getByTestId('open-purchase-orders-report');
+  await expect(page.getByTestId('open-po-table')).toHaveAttribute('data-list-cards', '');
+  await expect(report).toContainText('第 1 页，共 1 页');
+  await expect(report).not.toContainText('页 1 / 1');
+  // No sideways scroll: the page fits the phone.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});

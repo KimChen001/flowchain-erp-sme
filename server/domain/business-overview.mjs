@@ -13,20 +13,25 @@ export const ALL_PURCHASE_ORDERS = 'All purchase orders in range, every status.'
 // reorder is the reorder list's summary ({ orderNow }), read as the reorder
 // list and Today read it, so the three show the same count; without it (no
 // database, a reader of only some warehouses) the card is left out.
-export function buildBusinessOverview(all, { salesDemand = null, reorder = null } = {}) {
+// salesActivity, when given, is the groups of sales orders the figures count
+// (each with its number of orders, count), so the monthly activity covers
+// every order even when only the latest were read; partial is the months the
+// range or today cuts short (partialMonths), which the chart marks.
+export function buildBusinessOverview(all, { salesDemand = null, reorder = null, salesActivity = null, partial = null } = {}) {
   const purchases = all.purchase_orders;
   const sales = all.sales_orders;
   const active = row => !['closed', 'cancelled', 'canceled', 'completed', 'fully_received', 'rejected'].includes(row.status);
   const ordersWithDemand = salesDemand ? new Set(salesDemand.filter(line => line.open > 0).map(line => line.orderId)) : null;
   const unfulfilled = row => ordersWithDemand ? ordersWithDemand.has(row.id) : row.quantity > row.fulfilled;
   const months = new Map();
-  for (const [rows, key] of [[purchases, 'Purchase orders'], [sales, 'Sales orders']]) {
+  for (const [rows, key] of [[purchases, 'Purchase orders'], [Array.isArray(salesActivity) ? salesActivity : sales, 'Sales orders']]) {
     for (const row of rows) {
       const month = /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? row.date.slice(0, 7) : 'Undated';
       if (!months.has(month)) months.set(month, { name: month, 'Purchase orders': 0, 'Sales orders': 0 });
-      months.get(month)[key] += 1;
+      months.get(month)[key] += Number.isFinite(row.count) ? row.count : 1;
     }
   }
+  const activity = [...months.values()].sort((a, b) => a.name.localeCompare(b.name));
   const groups = (rows, field) => {
     const counts = new Map();
     for (const row of rows) { const key = row[field] || 'Unspecified'; counts.set(key, (counts.get(key) || 0) + 1); }
@@ -35,7 +40,7 @@ export function buildBusinessOverview(all, { salesDemand = null, reorder = null 
   const common = { unit: 'number', valueFormat: 'number', categoryKey: 'name', valueKey: 'value', tooltip: true, legend: true, emptyState: 'No records in the selected range.' };
   return {
     charts: [
-      { ...common, id: 'overview_activity', title: 'Record activity by month', type: 'bar', data: [...months.values()].sort((a, b) => a.name.localeCompare(b.name)), seriesKeys: ['Purchase orders', 'Sales orders'], colors: ['#2563eb', '#14b8a6'], drilldownPath: '/app/reports/procurement', crossFilter: 'period', description: 'Purchase and sales orders in range by order date, every status, drafts included.' },
+      { ...common, id: 'overview_activity', title: 'Record activity by month', type: 'bar', data: activity, partialPeriods: activity.filter(row => partial?.has?.(row.name)).map(row => ({ period: row.name, reason: partial.get(row.name) })), seriesKeys: ['Purchase orders', 'Sales orders'], colors: ['#2563eb', '#14b8a6'], drilldownPath: '/app/reports/procurement', crossFilter: 'period', description: 'Purchase and sales orders in range by order date, every status, drafts included.' },
       { ...common, id: 'overview_status', title: 'Purchase order status', type: 'donut', data: groups(purchases, 'status'), drilldownPath: '/app/reports/procurement', crossFilter: 'status', description: ALL_PURCHASE_ORDERS },
       { ...common, id: 'overview_suppliers', title: 'Committed purchase orders by supplier', type: 'horizontal_bar', data: groups(purchases.filter(isCommittedPurchaseOrder), 'supplier').slice(0, 8), drilldownPath: '/app/reports/procurement', crossFilter: 'supplier', description: 'Committed purchase orders in range (approved, issued or received), counted per supplier.' },
     ],

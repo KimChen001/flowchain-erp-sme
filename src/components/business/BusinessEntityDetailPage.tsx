@@ -5,7 +5,8 @@ import { Link, useLocation, useSearchParams } from "react-router";
 import type { AppRouteDefinition } from "../../app/routeRegistry";
 import { apiJson } from "../../lib/api-client";
 import { DocumentNumber, isDocumentNumberType, useDocumentNumber } from "../../lib/documentNumbers";
-import { formatLocaleAmount } from "../../lib/format";
+import { formatDateTimeInTimeZone, formatLocaleAmount } from "../../lib/format";
+import { paymentTermLabel } from "../../modules/master-data/masterDataFormat";
 import { useI18n } from "../../i18n/I18n";
 import { DELIVERY_NOTES } from "../../modules/sales/deliveryData";
 import { SIGN_RECEIPTS } from "../../modules/sales/receiptData";
@@ -71,9 +72,9 @@ const MONEY_KEYS = /amount|subtotal|tax|total|balance|price|spend/i;
 const NON_MONEY_WORDS = new Set(["rate", "percent", "percentage", "ratio", "quantity", "qty", "count"]);
 const keyWords = (key: string) => key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[\s_-]+/).map((word) => word.toLowerCase());
 const NON_MONEY_KEYS = { test: (key: string) => keyWords(key).some((word) => NON_MONEY_WORDS.has(word)) };
-type FormatContext = { locale: string; currency: string; zh: boolean };
+type FormatContext = { locale: string; currency: string; zh: boolean; timezone?: string };
 
-function formatValue(key: string, value: unknown, { locale, currency, zh }: FormatContext) {
+function formatValue(key: string, value: unknown, { locale, currency, zh, timezone }: FormatContext) {
   if (value == null || value === "") return NOT_RECORDED_KEYS.has(key) ? COPY.notRecorded[zh ? 1 : 0] : "—";
   if (typeof value === "boolean") return (value ? COPY.yes : COPY.no)[zh ? 1 : 0];
   // A tax rate is stored as a fraction (0.0825); show it as a percent without losing digits.
@@ -85,6 +86,9 @@ function formatValue(key: string, value: unknown, { locale, currency, zh }: Form
     : value.toLocaleString(locale, { maximumFractionDigits: 6 });
   if (Array.isArray(value)) return value.join(zh ? "、" : ", ") || "—";
   if (typeof value === "object") return JSON.stringify(value);
+  // Stored timestamps ("2026-11-08T06:02:35.150Z") read as dates and times.
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return formatDateTimeInTimeZone(value, locale, timezone);
+  if (typeof value === "string" && NOT_RECORDED_KEYS.has(key)) return paymentTermLabel(value, zh ? "zh-CN" : "en-US");
   return String(value);
 }
 
@@ -119,7 +123,7 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
   const id = decodeURIComponent(location.pathname.split("/").filter(Boolean).at(-1) || "");
   const entityType = route.entityType as BusinessEntityType;
   const [params] = useSearchParams();
-  const { locale, language } = useI18n();
+  const { locale, language, timezone } = useI18n();
   const zh = language === "zh-CN";
   const text = (key: keyof typeof COPY, vars: Record<string, string> = {}) =>
     Object.entries(vars).reduce((out, [name, value]) => out.replaceAll(`{${name}}`, value), COPY[key][zh ? 1 : 0]);
@@ -166,7 +170,8 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
   const entityLabel = businessEntityCopy(routeInfo.label, language);
   const lines = useMemo(() => Array.isArray(record?.lines) ? record?.lines as RecordValue[] : [], [record]);
   const history = useMemo(() => Array.isArray(record?.history) ? record?.history as RecordValue[] : [], [record]);
-  const fields = useMemo(() => record ? Object.entries(record).filter(([key, value]) => !HIDDEN_KEYS.has(key) && typeof value !== "object") : [], [record]);
+  // The internal id is left out when the record has a code or a name to go by.
+  const fields = useMemo(() => record ? Object.entries(record).filter(([key, value]) => !HIDDEN_KEYS.has(key) && typeof value !== "object" && !(key === "id" && [record.code, record.customerCode, record.supplierCode, record.sku, record.name, record.warehouseName, record.label].some((named) => typeof named === "string" && named.trim()))) : [], [record]);
   const links = useMemo(() => record ? relatedLinks(entityType, record) : [], [entityType, record]);
   const recordCurrency = String(record?.currency || record?.defaultCurrency || "");
   // A purchase request, RFQ or purchase order is named by its document number; the id stays in the address.
@@ -188,15 +193,15 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><div className="fc-caption" style={{ color: A.gray2 }}>{entityLabel}{recordName && recordCode ? ` · ${recordCode}` : ""}</div><h1 className="fc-page-title mt-1 tabular-nums" style={{ color: A.label }}>{heading}</h1></div>
-          <Chip label={formatValue("status", record.status || record.matchStatus || record.settlementStatus || "active", { locale, currency: recordCurrency, zh })} color={A.blue} bg="#f0f6ff" />
+          <Chip label={formatValue("status", record.status || record.matchStatus || record.settlementStatus || "active", { locale, currency: recordCurrency, zh, timezone })} color={A.blue} bg="#f0f6ff" />
         </div>
       </Card>
 
       {links.length > 0 && <Card className="p-5"><SectionHeader title={text("related")} /><div className="flex flex-wrap gap-2">{links.map((link) => <BusinessEntityLink key={`${link.type}-${link.id}`} entityType={link.type} entityId={link.id} returnLabel={text("back", { label: entityLabel, id: shownId })} className="inline-flex rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs">{businessEntityCopy(link.label, language)} · {isDocumentNumberType(link.type) ? <DocumentNumber type={link.type} id={link.id} /> : link.id}</BusinessEntityLink>)}</div></Card>}
 
-      <Card className="p-5"><SectionHeader title={text("details")} /><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{fields.map(([key, value]) => <div key={key} className="rounded-lg p-3" style={{ background: A.gray6 }}><div className="fc-caption" style={{ color: A.gray2 }}>{fieldLabel(key)}</div><div className="mt-1 break-words text-sm font-medium" style={{ color: A.label }}>{formatValue(key, value, { locale, currency: recordCurrency, zh })}</div></div>)}</div></Card>
+      <Card className="p-5"><SectionHeader title={text("details")} /><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{fields.map(([key, value]) => <div key={key} className="rounded-lg p-3" style={{ background: A.gray6 }}><div className="fc-caption" style={{ color: A.gray2 }}>{fieldLabel(key)}</div><div className="mt-1 break-words text-sm font-medium" style={{ color: A.label }}>{formatValue(key, value, { locale, currency: recordCurrency, zh, timezone })}</div></div>)}</div></Card>
 
-      {lines.length > 0 && <Card><div className="px-5 pt-5"><SectionHeader title={text("lines")} /></div><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-xs"><thead><tr style={{ borderBottom: `1px solid ${A.border}` }}>{Object.keys(lines[0]).slice(0, 10).map((key) => <th key={key} className="px-4 py-3 text-left font-semibold whitespace-nowrap" style={{ color: A.gray1 }}>{fieldLabel(key)}</th>)}</tr></thead><tbody>{lines.map((line, index) => <tr key={String(line.lineId || index)} style={{ borderBottom: `1px solid ${A.border}` }}>{Object.keys(lines[0]).slice(0, 10).map((key) => <td key={key} className="px-4 py-3 whitespace-nowrap" style={{ color: A.label }}>{formatValue(key, line[key], { locale, currency: String(line.currency || recordCurrency), zh })}</td>)}</tr>)}</tbody></table></div></Card>}
+      {lines.length > 0 && <Card><div className="px-5 pt-5"><SectionHeader title={text("lines")} /></div><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-xs"><thead><tr style={{ borderBottom: `1px solid ${A.border}` }}>{Object.keys(lines[0]).slice(0, 10).map((key) => <th key={key} className="px-4 py-3 text-left font-semibold whitespace-nowrap" style={{ color: A.gray1 }}>{fieldLabel(key)}</th>)}</tr></thead><tbody>{lines.map((line, index) => <tr key={String(line.lineId || index)} style={{ borderBottom: `1px solid ${A.border}` }}>{Object.keys(lines[0]).slice(0, 10).map((key) => <td key={key} className="px-4 py-3 whitespace-nowrap" style={{ color: A.label }}>{formatValue(key, line[key], { locale, currency: String(line.currency || recordCurrency), zh, timezone })}</td>)}</tr>)}</tbody></table></div></Card>}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card className="p-5"><SectionHeader title={text("comments")} /><p className="text-sm leading-6" style={{ color: A.sub }}>{String(record.comments || record.notes || text("noComments"))}</p></Card>

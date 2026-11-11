@@ -17,6 +17,7 @@ const COPY = {
   retry: ["Retry", "重试"],
   shown: ["{total} total, {shown} shown", "共 {total} 条，当前显示 {shown} 条"],
   filters: ["Filters ({count})", "筛选（{count}）"],
+  filtersNone: ["Filters", "筛选"],
   hideFilters: ["Hide filters", "收起筛选"],
 } as const;
 
@@ -63,12 +64,15 @@ export function PrimaryButton({ onClick, children, testId }: { onClick: () => vo
 }
 
 // Below 768 px only the first field (the search) shows; the other filters
-// open from a Filters button.
-export function ListSearchCard({ title, subtitle, actions, children }: {
+// open from a Filters button. The button counts the filters in use
+// (`activeFilters`), never the fields it hides, so "Filters (2)" means two
+// filters narrow the list.
+export function ListSearchCard({ title, subtitle, actions, children, activeFilters = 0 }: {
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
+  activeFilters?: number;
 }) {
   const say = useListCopy();
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -97,7 +101,7 @@ export function ListSearchCard({ title, subtitle, actions, children }: {
           data-testid="list-search-filters-toggle"
         >
           <SlidersHorizontal size={13} />
-          {filtersOpen ? say("hideFilters") : say("filters", { count: rest.length })}
+          {filtersOpen ? say("hideFilters") : activeFilters > 0 ? say("filters", { count: activeFilters }) : say("filtersNone")}
         </button>
       )}
     </Card>

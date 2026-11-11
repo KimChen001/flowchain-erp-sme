@@ -18,13 +18,22 @@ export type ReportChart = {
   detail?: { count: number; total: number; exception?: number; pending?: number }; statusLabels?: boolean; limitations?: string[];
   /** The units a quantity visual's bars are in; bars in different units are not comparable. */
   units?: string[];
+  /** Months the visual holds only part of: the running month ("to_date") or a month the range cuts ("range"). */
+  partialPeriods?: Array<{ period: string; reason: "to_date" | "range" }>;
+  /** false when a stage chart's stages are counted on their own rather than narrowing like a funnel. */
+  nested?: boolean;
+  /** A ranking's number of rows before it kept its first ones. */
+  total?: number;
 };
 export type ReportColumnDefinition = { key: string; label: string; type: string; subject: string; valueMap?: Record<string, string> };
 export type GovernedReport = {
   totalRecords?: number;
-  /** Subjects the server read only up to a row limit; totals over them may be low. */
-  truncatedSubjects?: Array<{ subject: string; limit: number }>;
+  /** Subjects the server read only up to a row limit whose cut changes this dashboard; totals over them may be low.
+   * figuresComplete: the figures still count every record (total of them); only the table and download are cut. */
+  truncatedSubjects?: Array<{ subject: string; limit: number; figuresComplete?: boolean; openDemandComplete?: boolean; total?: number }>;
   attention?: Array<{ id: string; label: string; count: number; path: string; action: string }>;
+  /** Subjects the reader may not read; their figures are restricted, not zero. */
+  restrictedSubjects?: string[];
   query: Record<string, unknown>; generatedAt: string; dataScope: { label: string; company: string | null; currencyCode: string | null; currencyLabel: string; currencies: string[]; currencyAggregationStatus: CurrencyAggregationStatus; currencyAmounts: CurrencyAmount[]; fxConverted: boolean; from: string; to: string; activeFilterCount: number; sourceLabel: string; completenessLabel: string; filterOptions: { companies: string[]; warehouses: string[]; suppliers: string[]; customers: string[]; categories: string[]; currencies: string[] } };
   kpis: MetricDefinition[]; charts: ReportChart[]; rankings: ReportChart[]; details: Record<string, unknown>[]; columnDefinitions: ReportColumnDefinition[]; warnings: string[]; limitations: string[];
   drilldowns: Array<{ metricId: string; path: string }>; exportRows: Record<string, unknown>[]; metricDefinitions: Omit<MetricDefinition, "value">[];

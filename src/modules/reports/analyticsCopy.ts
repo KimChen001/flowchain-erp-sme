@@ -150,12 +150,36 @@ const chinese: Record<string, string> = {
   'Some figures may be incomplete for this range.': '部分数据可能不完整。',
   'No business records in this range. Adjust the filters or add business data.': '当前范围暂无业务记录，可调整筛选或录入业务数据。',
   'Date range': '日期范围', 'This month': '本月', 'Last 3 months': '近 3 个月', 'Year to date': '今年至今', 'Last 12 months': '近 12 个月', 'All dates': '全部日期',
+  // The lifecycle's stages are counted on their own (2026-11-10 review).
+  'Committed purchase orders in range. Each bar counts the orders that reached that step, whatever happened at the others: an order can be invoiced before it is fully received.': '当前范围内的已承诺采购订单。每个条形统计已到达该步骤的订单，与其他步骤无关：订单可在全部收货之前开票。',
+  // A month the visual holds only part of.
+  '(to date)': '（至今）', '(part month)': '（部分月份）',
+  // One empty state for a dashboard with no records.
+  'No purchase orders in this range.': '当前范围没有采购订单。', 'No sales orders in this range.': '当前范围没有销售订单。',
+  'No supplier invoices in this range.': '当前范围没有采购发票。', 'No inventory records yet.': '暂无库存记录。', 'No suppliers yet.': '暂无供应商。',
+  'Adjust the dates or filters, or add records, and the charts will appear here.': '调整日期或筛选条件，或录入业务记录后，图表会显示在这里。',
 };
 const english = Object.fromEntries(Object.entries(chinese).map(([en, zh]) => [zh, en]));
 // The English to Chinese pairs, read by the owner-rule tests.
 export const analyticsCopyPairs: Readonly<Record<string, string>> = chinese;
 export function analyticsCopy(value: string, language: string) {
   return language === 'en-US' ? english[value] || value : chinese[value] || value;
+}
+
+// Whole sentences with figures in them, as [English, Chinese] templates, so a
+// sentence is never put together from translated fragments. A key ending in
+// "One" is the form for a count of 1; the caller formats the figures.
+const SENTENCES: Record<string, [string, string]> = {
+  detailCount: ['Showing {shown} of {total} records', '显示 {shown} 条，共 {total} 条记录'],
+  detailCountOne: ['Showing {shown} of 1 record', '显示 {shown} 条，共 1 条记录'],
+  partialToDate: ['{month} runs to today, so it is not a whole month.', '{month} 为本月至今的数据，不是完整月份。'],
+  partialRange: ['Only part of {months} is in the selected range.', '{months} 只有部分日期在所选范围内。'],
+};
+export function analyticsSentence(key: string, language: string, values: Record<string, string | number> = {}, count?: number) {
+  const one = `${key}One`;
+  const pair = SENTENCES[count === 1 && SENTENCES[one] ? one : key];
+  if (!pair) return key;
+  return Object.entries(values).reduce((text, [name, value]) => text.split(`{${name}}`).join(String(value)), pair[language === 'zh-CN' ? 1 : 0]);
 }
 
 export function reportStatusCopy(value: string, language: string) {

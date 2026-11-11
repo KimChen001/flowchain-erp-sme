@@ -92,13 +92,38 @@ test('reports say which subjects were cut off at the read limit', async () => {
       assert.equal(context.payload.suppliers.length, 200)
       assert.equal(context.payload.items.length, 200)
 
-      for (const subject of ['overview', 'procurement', 'sales', 'finance', 'suppliers', 'inventory']) {
+      // Each dashboard names only the cut subjects its figures read. Every
+      // sales order still has demand left and only 500 were read, so open
+      // demand is not whole: the overview and inventory name sales orders.
+      // The sales dashboard's own figures count every order from the
+      // database's totals; only its table and download are cut.
+      const salesCut = { subject: 'sales_orders', limit: 500 }
+      const named = {
+        overview: [{ subject: 'purchase_orders', limit: 500 }, { subject: 'receipts', limit: 500 }, { subject: 'supplier_invoices', limit: 500 }, salesCut, { subject: 'items', limit: 200 }],
+        procurement: [{ subject: 'purchase_orders', limit: 500 }, { subject: 'receipts', limit: 500 }, { subject: 'supplier_invoices', limit: 500 }],
+        sales: [{ ...salesCut, figuresComplete: true, openDemandComplete: false, total: 501 }],
+        finance: [{ subject: 'supplier_invoices', limit: 500 }],
+        suppliers: [{ subject: 'purchase_orders', limit: 500 }, { subject: 'receipts', limit: 500 }, { subject: 'supplier_invoices', limit: 500 }, { subject: 'suppliers', limit: 200 }],
+        inventory: [{ subject: 'purchase_orders', limit: 500 }, salesCut, { subject: 'items', limit: 200 }],
+      }
+      for (const [subject, subjects] of Object.entries(named)) {
         const report = await asTenant(overTenant, 'POST', '/api/reports/query', { subject, filters: {} })
         assert.equal(report.status, 200, subject)
-        assert.deepEqual(bySubject(report.payload.truncatedSubjects), expected, subject)
+        assert.deepEqual(bySubject(report.payload.truncatedSubjects), bySubject(subjects), subject)
       }
       const dashboard = await asTenant(overTenant, 'GET', '/api/reports/procurement')
-      assert.deepEqual(bySubject(dashboard.payload.truncatedSubjects), expected)
+      assert.deepEqual(bySubject(dashboard.payload.truncatedSubjects), bySubject(named.procurement))
+
+      // The sales figures count all 501 orders, by month too, while the
+      // table lists the 500 read.
+      const sales = await asTenant(overTenant, 'POST', '/api/reports/query', { subject: 'sales', filters: {} })
+      assert.equal(sales.payload.kpis.find((item) => item.id === 'sales_order_count').currentValue, 501)
+      assert.equal(sales.payload.totalRecords, 501)
+      assert.equal(sales.payload.charts.find((item) => item.id === 'sales_order_trend').data.reduce((total, row) => total + row['Sales orders'], 0), 501)
+      assert.equal(sales.payload.charts.find((item) => item.id === 'sales_order_status').data.reduce((total, row) => total + row.value, 0), 501)
+      assert.equal(sales.payload.exportRows.length, 500)
+      const overview = await asTenant(overTenant, 'POST', '/api/reports/query', { subject: 'overview', filters: {} })
+      assert.equal(overview.payload.kpis.find((item) => item.id === 'sales_order_count').currentValue, 501)
 
       const exactContext = await asTenant(exactTenant, 'GET', '/api/business/read-context')
       assert.deepEqual(exactContext.payload.truncatedSubjects, [])

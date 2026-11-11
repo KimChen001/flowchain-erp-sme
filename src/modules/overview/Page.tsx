@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { ArrowRight, CheckCircle2, Circle, RefreshCw } from "lucide-react";
 import { A, Card } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
-import { tableBodyTextClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableBodyTextClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import AiSuggestionsPage from "./AiSuggestionsPage";
 import { useI18n } from "../../i18n/I18n";
@@ -156,8 +156,8 @@ function RuntimeHomepage() {
 
   const reasons = (item: WorkItem): string[] => {
     const d = item.detail || {};
-    const supplier = item.name ? t("supplier", { name: item.name }) : null;
-    const customer = item.name ? t("customer", { name: item.name }) : null;
+    const supplier = item.name ? t.partner("supplier", item.name) : null;
+    const customer = item.name ? t.partner("customer", item.name) : null;
     const amount = d.amount === null || d.amount === undefined ? null : t("amount", { amount: money(d.amount, d.currency) });
     const lines: Array<string | null> = (() => {
       switch (item.kind) {
@@ -330,10 +330,12 @@ function RuntimeHomepage() {
         ) : recent.length === 0 ? (
           <div className="py-12 text-center text-sm" style={{ color: A.sub }}><p>{t("recentEmpty")}</p><p className="text-xs">{t("recentEmptyHint")}</p></div>
         ) : (
-          <div className="overflow-x-auto">
+          // On a phone each document is a card: its number and status on top,
+          // the other columns as labelled lines (listTableCardsRef).
+          <div className="overflow-x-auto" ref={listTableCardsRef}>
             <table className={`w-full min-w-[860px] text-left ${tableBodyTextClass}`} data-testid="recent-documents">
               <thead>
-                <tr style={listHeadRowStyle}>{(["colType", "colNumber", "colStatus", "colPartner", "colAmount", "colUpdated"] as const).map((key) => <th key={key} className={key === "colAmount" ? thRightClass : thClass} style={{ color: A.gray1 }}>{t(key)}</th>)}</tr>
+                <tr style={listHeadRowStyle}>{(["colType", "colNumber", "colStatus", "colPartner", "colAmount", "colUpdated"] as const).map((key) => <th key={key} className={key === "colAmount" ? thRightClass : thClass} style={{ color: A.gray1 }} {...(key === "colNumber" ? { "data-card-title": "" } : {})}>{t(key)}</th>)}</tr>
               </thead>
               <tbody>
                 {recent.map((row, index) => (

@@ -113,9 +113,21 @@ function homeDocuments(context, customerInvoices = []) {
     ...rows(context.purchaseOrders).map(row => ({ type: 'purchase_order', id: row.id, number: row.number || row.orderNumber || row.id, status: row.status, partner: row.supplierSnapshot?.supplierName || row.supplierName || null, amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/orders', row.id) })),
     ...rows(context.receipts).map(row => ({ type: 'receipt', id: row.id, number: row.documentNumber || row.id, status: row.postingStatus || row.status, partner: row.supplierName || null, amount: null, currency: '', updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/receiving', row.id) })),
     ...rows(context.supplierInvoices).map(row => ({ type: 'supplier_invoice', id: row.id, number: row.invoiceNumber || row.id, status: row.status, partner: row.supplierName || null, amount: amountOf(row.totalAmount ?? row.amount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/bills', row.id) })),
-    ...rows(context.salesOrders).map(row => ({ type: 'sales_order', id: row.id || row.salesOrderId, number: row.orderNumber || row.id, status: row.workflowStatus || row.status, partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/orders', row.id || row.salesOrderId) })),
+    ...rows(context.salesOrders).map(row => ({ type: 'sales_order', id: row.id || row.salesOrderId, number: row.orderNumber || row.id, status: salesOrderHomeStatus(row), partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/orders', row.id || row.salesOrderId) })),
     ...rows(customerInvoices).map(row => ({ type: 'customer_invoice', id: row.id, number: row.invoiceNumber || row.id, status: row.status, partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/invoices', row.id) })),
   ].filter(row => row.id)
+}
+
+// A sales order shows the status the sales report shows once it has shipped:
+// fulfilled or partially fulfilled (as fulfillment status codes, which Today
+// labels "Fulfilled" and "Partially fulfilled"). Before it ships, and when it
+// is a draft or cancelled, it shows its workflow status.
+function salesOrderHomeStatus(row) {
+  const workflow = String(row.workflowStatus || '').trim()
+  if (['draft', 'cancelled', 'canceled'].includes(workflow)) return workflow
+  if (row.status === 'fulfilled' || row.fulfillmentStatus === 'fully_fulfilled') return 'fully_fulfilled'
+  if (row.status === 'partially_fulfilled' || row.fulfillmentStatus === 'partially_fulfilled') return 'partially_fulfilled'
+  return workflow || row.status
 }
 
 const instant = value => { const parsed = Date.parse(value); return Number.isFinite(parsed) ? parsed : 0 }

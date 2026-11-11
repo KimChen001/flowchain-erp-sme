@@ -8,6 +8,7 @@ import type { ReportChart } from "./governedReports";
 import { EChart, type EChartHandle } from "./charts/EChart";
 import { chartHeight, chartIsEmpty, chartOption, type ChartContext } from "./charts/chartOptions";
 import { chartTable, chartTableCsv } from "./charts/chartTable";
+import { analyticsSentence } from "./analyticsCopy";
 
 type VisualCardProps = {
   chart: ReportChart;
@@ -89,7 +90,16 @@ export function VisualCard({ chart, context, className = "", onDrill, onCrossFil
   const chartRef = useRef<EChartHandle>(null);
   const focusRef = useRef<EChartHandle>(null);
   const title = copy(chart.title);
+  const empty = chartIsEmpty(chart);
   const notes = [...new Set((chart.limitations || []).map(code => LIMITATION_NOTES[code]).filter(Boolean))];
+  // A month the chart holds only part of is said in words under it, as well
+  // as drawn lighter.
+  const partial = chart.partialPeriods || [];
+  const ranged = partial.filter(item => item.reason === "range").map(item => item.period);
+  const partialNotes = empty ? [] : [
+    ...partial.filter(item => item.reason === "to_date").map(item => analyticsSentence("partialToDate", context.language, { month: item.period })),
+    ...(ranged.length ? [analyticsSentence("partialRange", context.language, { months: ranged.join(", ") })] : []),
+  ];
   const largeContext = useMemo(() => ({ ...context, large: true }), [context]);
   const height = chartHeight(chart);
   const focusDialog = useRef<HTMLDivElement>(null);
@@ -108,7 +118,6 @@ export function VisualCard({ chart, context, className = "", onDrill, onCrossFil
     download(fileName(title, "csv"), new Blob([String.fromCharCode(0xfeff), chartTableCsv(chartTable(chart, context))], { type: "text/csv;charset=utf-8" }));
     toast.success(copy("Chart data downloaded"), { description: title });
   };
-  const empty = chartIsEmpty(chart);
   const tool = "rounded-md p-1.5 transition hover:bg-slate-100 disabled:opacity-30";
   const toolbar = (inFocus: boolean) => <div className="flex shrink-0 items-center gap-0.5">
     <button type="button" className={tool} title={copy(mode === "chart" ? "Show data" : "Show chart")} aria-label={`${copy(mode === "chart" ? "Show data" : "Show chart")}: ${title}`} aria-pressed={mode === "table"} disabled={empty} onClick={() => setMode(mode === "chart" ? "table" : "chart")}>{mode === "chart" ? <Table2 size={14} color={A.gray1} /> : <BarChart3 size={14} color={A.gray1} />}</button>
@@ -126,7 +135,7 @@ export function VisualCard({ chart, context, className = "", onDrill, onCrossFil
     {toolbar(inFocus)}
   </div>;
   const footer = <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-    <div className="space-y-0.5">{notes.map(note => <p key={note} className="text-[11px]" style={{ color: A.orange }}>{copy(note)}</p>)}{!notes.length && chart.crossFilter && chart.type !== "treemap" && <p className="text-[11px]" style={{ color: A.gray2 }}>{copy("Select the chart to filter this dashboard")}</p>}</div>
+    <div className="space-y-0.5">{partialNotes.map(note => <p key={note} className="text-[11px]" style={{ color: A.gray1 }} data-testid="visual-partial-note">{note}</p>)}{notes.map(note => <p key={note} className="text-[11px]" style={{ color: A.orange }}>{copy(note)}</p>)}{!notes.length && chart.crossFilter && chart.type !== "treemap" && <p className="text-[11px]" style={{ color: A.gray2 }}>{copy("Select the chart to filter this dashboard")}</p>}</div>
     <button type="button" onClick={() => onDrill(chart.drilldownPath)} className="text-[11px] font-medium" style={{ color: A.blue }}>{copy("View business details")}</button>
   </div>;
   return <>

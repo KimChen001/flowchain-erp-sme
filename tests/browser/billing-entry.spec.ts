@@ -122,8 +122,7 @@ test("an invoice opened from its shipment is submitted, approved and issued on s
   // No number to type: the server assigns CI-YYYYMM-NNNN when the draft is saved.
   await expect(page.getByTestId("customer-invoice-number-on-save")).toHaveText(/Invoice number: assigned when you save|发票编号：保存时自动生成/);
   await page.getByTestId("customer-invoice-due").fill("2026-11-15");
-  await page.getByTestId("customer-invoice-preview").click();
-  await expect(page.getByTestId("customer-invoice-create")).toBeEnabled();
+  // Create draft checks the form, previews the invoice and creates it in one click.
   await page.getByTestId("customer-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/sales\/invoices\/[0-9a-f-]{36}$/);
   const detail = page.getByTestId("customer-invoice-detail");
@@ -137,6 +136,52 @@ test("an invoice opened from its shipment is submitted, approved and issued on s
   // Issuing opens the receivable; nothing here collects money.
   await expect(page.getByTestId("customer-invoice-receivable")).toContainText(`AR-${invoiceNumber}`);
   await expect(page.getByTestId("customer-invoice-actions").getByRole("button")).toHaveCount(0);
+});
+
+// The form standard (formLayout.tsx): Create draft is always clickable; it
+// checks the form with the server's rules and says what is missing under the
+// field, and a refusal from the server's preview goes under its line.
+test("the new customer invoice form says what is missing under each field", async ({ page }) => {
+  await signIn(page, "manager@example.com");
+  await page.goto("/app/sales/invoices/new");
+  const form = page.getByTestId("new-customer-invoice");
+  await expect(form.getByTestId("customer-invoice-number-on-save")).toHaveText(/Invoice number: assigned when you save|发票编号：保存时自动生成/);
+  // The shipment menu says what to choose rather than showing a dash.
+  await expect(page.getByTestId("customer-invoice-shipment").locator("option").first()).toHaveText(/Choose a posted shipment|选择正式发货单/);
+  await expect(page.getByTestId("customer-invoice-create")).toBeEnabled();
+  await page.getByTestId("customer-invoice-create").click();
+  await expect(page.getByTestId("customer-invoice-shipment")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("customer-invoice-shipment")).toHaveAccessibleDescription(/Choose the posted shipment to invoice\.|请选择要开票的正式发货单。/);
+  await expect(page.getByTestId("customer-invoice-due")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("customer-invoice-shipment")).toBeFocused();
+  await expect(page.getByTestId("customer-invoice-form-errors")).toContainText(/Check the highlighted fields\.|请检查标出的字段。/);
+  await expect(page).toHaveURL(/\/app\/sales\/invoices\/new$/);
+
+  // More than was shipped is refused under the quantity, before anything is sent.
+  await page.getByTestId("customer-invoice-shipment").selectOption("finance-browser-shipment-USD");
+  await page.getByTestId("customer-invoice-due").fill("2026-11-15");
+  const quantity = page.getByTestId("customer-invoice-line").first().locator("input").first();
+  await quantity.fill("999");
+  let created = false;
+  page.on("request", (request) => { if (request.method() === "POST" && /\/api\/finance\/customer-invoices$/.test(request.url())) created = true; });
+  await page.getByTestId("customer-invoice-create").click();
+  await expect(quantity).toHaveAttribute("aria-invalid", "true");
+  await expect(quantity).toHaveAccessibleDescription(/More than the 10 .*shipped|超过已发货数量 10/);
+  await expect(quantity).toBeFocused();
+
+  // A refusal from the server's preview goes under the line it names.
+  await quantity.fill("1");
+  await page.route("**/api/finance/customer-invoices/preview", (route) => route.fulfill({ json: { allowed: false, blockingIssues: [{ code: "SALES_PRICE_FACT_REQUIRED", message: "Line 1 has no authoritative sales-order price and cannot be invoiced." }] } }));
+  await page.getByTestId("customer-invoice-create").click();
+  await expect(page.getByTestId("customer-invoice-line").first()).toContainText(/no sales order price|没有销售订单单价/);
+  await expect(page.getByTestId("customer-invoice-form-errors")).toContainText(/Check the highlighted fields\.|请检查标出的字段。/);
+  expect(created).toBe(false);
+  await page.unroute("**/api/finance/customer-invoices/preview");
+
+  // Cancel leaves without saving; opened directly, it goes to the invoice list.
+  await page.getByRole("button", { name: /^(Cancel|取消)$/ }).click();
+  await expect(page).toHaveURL(/\/app\/sales\/invoices$/);
+  expect(created).toBe(false);
 });
 
 test("an invoice opened from a sales order lists only that order's shipments", async ({ page }) => {

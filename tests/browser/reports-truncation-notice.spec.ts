@@ -51,3 +51,29 @@ test('a truncated report says which records are missing in Chinese', async ({ pa
   await expect(notice).toContainText('仅显示最新的 500 张采购订单。 合计可能不完整。')
   await expect(notice).toContainText('仅显示按名称排序的前 200 个供应商。 合计可能不完整。')
 })
+
+// When the server counted every sales order from its totals, only the table
+// and the download are cut, and the notice says just that. A customer list
+// cut is named in words of its own.
+test('sales figures over every order say only the table is cut, in English and Chinese', async ({ page }) => {
+  for (const language of ['en-US', 'zh-CN'] as const) {
+    await page.unrouteAll()
+    await login(page, language)
+    await page.route('**/api/reports/query', async route => {
+      const response = await route.fetch()
+      const payload = await response.json()
+      payload.truncatedSubjects = [{ subject: 'sales_orders', limit: 500, figuresComplete: true, openDemandComplete: true, total: 3548 }, { subject: 'customers', limit: 200 }]
+      await route.fulfill({ response, json: payload })
+    })
+    await page.goto('/app/reports/sales')
+    const notice = page.getByTestId('reports-truncation-notice')
+    if (language === 'en-US') {
+      await expect(notice).toContainText('The figures count all 3,548 sales orders. The details table and the download list the latest 500.')
+      await expect(notice).toContainText('Showing the first 200 customers by name. Totals may be incomplete.')
+      await expect(notice).not.toContainText(/[㐀-鿿]/)
+    } else {
+      await expect(notice).toContainText('各项数据统计了全部 3,548 张销售订单；明细表和导出仅列出最新的 500 张。')
+      await expect(notice).toContainText('仅显示按名称排序的前 200 个客户。')
+    }
+  }
+})

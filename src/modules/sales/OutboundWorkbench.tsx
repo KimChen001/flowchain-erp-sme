@@ -48,7 +48,9 @@ import { FormActionBar, FormHeader, FormLineCard, FormSection, focusFirstInvalid
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useConfirm } from "../../components/ui/ConfirmDialog";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { ListCard, ListSearchCard, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ListCard, ListSearchCard, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
+import { SALES_ORDER_STAGES, salesOrderStage, salesOrderStageHint } from "./salesOrderStatus";
 
 // The interface language for this render. OutboundWorkbench, the root of every
 // page here, sets it from the i18n context before its children render. The
@@ -84,6 +86,8 @@ type Order = {
   orderedQuantity?: string;
   reservedQuantity?: string;
   fulfilledQuantity?: string;
+  // The list sends each order's lines, for its amount.
+  lines?: Array<Pick<Line, "orderedQuantity" | "unitPrice">>;
 };
 type Line = {
   id: string;
@@ -340,6 +344,19 @@ function Collapsible({
     </>
   );
 }
+// An order's own lines (an order can hold 169) draw 50 at a time with the
+// shared pager; on a phone each line is a card, so all of them at once made
+// the page tens of thousands of pixels tall.
+const LINE_PAGE_SIZE = 50;
+function PagedRows<T>({ rows, resetKey, testId, children }: { rows: T[]; resetKey: string; testId?: string; children: (pageRows: T[]) => React.ReactNode }) {
+  const paged = usePagedRows(rows, LINE_PAGE_SIZE, resetKey);
+  return (
+    <>
+      {children(paged.pageRows)}
+      {rows.length > LINE_PAGE_SIZE && <ListPager page={paged.page} pageSize={LINE_PAGE_SIZE} total={rows.length} onPage={paged.setPage} testId={testId} />}
+    </>
+  );
+}
 const hasQuantity = (value?: string | null) => Number(value) > 0;
 // A stored four-decimal value ("12.5000") as an exact count of ten-thousandths;
 // null when there is no value.
@@ -356,7 +373,7 @@ const unitsText = (units: bigint) => {
 // The order total from its lines: ordered quantity times unit price, summed
 // exactly and rounded to cents only for display. A line without a unit price
 // is counted as unpriced, never as zero.
-function orderTotal(lines: Line[]) {
+function orderTotal(lines: Array<Pick<Line, "orderedQuantity" | "unitPrice">>) {
   let total = 0n,
     priced = 0;
   for (const line of lines) {
@@ -562,9 +579,14 @@ export default function OutboundWorkbench() {
   return <OrderList />;
 }
 
+// Fifty orders a page, as the purchase order list and the order evidence
+// page show, so the same orders read the same number of pages on each.
+const ORDER_LIST_PAGE_SIZE = 50;
+
 function OrderList() {
   const workspace = useWorkspaceCurrency();
   const stamp = useStamp();
+  const { locale } = useI18n();
   const [params, setParams] = useSearchParams(),
     [data, setData] = useState<{
       orders: Order[];
@@ -580,7 +602,7 @@ function OrderList() {
     [counts, setCounts] = useState<Record<string, number | null>>({});
   const value = (name: string, fallback = "") => params.get(name) || fallback;
   const page = Math.max(1, Number(value("page", "1")) || 1),
-    pageSize = 20;
+    pageSize = ORDER_LIST_PAGE_SIZE;
   const update = (changes: Record<string, string | number>) => {
     const next = new URLSearchParams(params);
     for (const [name, raw] of Object.entries(changes)) {
@@ -630,8 +652,26 @@ function OrderList() {
     void Promise.all(Object.entries(ORDER_CARDS).map(([key, card]) => read(key, card.filter)))
       .then((entries) => setCounts(Object.fromEntries(entries)));
   }, []);
-  const totalPages = Math.max(1, Math.ceil((data?.total || 0) / pageSize));
-  const filtered = ["search", "workflowStatus", "reservationStatus", "fulfillmentStatus", "currency", ...Object.keys(DEMAND_FILTERS)].some((name) => params.get(name));
+  const filterNames = ["workflowStatus", "reservationStatus", "fulfillmentStatus", "currency"],
+    activeFilters = filterNames.filter((name) => params.get(name)).length;
+  const filtered = ["search", ...filterNames, ...Object.keys(DEMAND_FILTERS)].some((name) => params.get(name));
+  // An order's amount, from its lines as read: ordered quantity × unit price.
+  const amountCell = (row: Order) => {
+    const lines = row.lines || [];
+    if (!lines.length) return "—";
+    const total = orderTotal(lines);
+    if (!total.priced) return <span className="font-normal" style={{ color: A.sub }}>{say("Not priced", "未定价")}</span>;
+    return (
+      <>
+        {formatLocaleAmount(total.amount, row.currency, locale, { maximumFractionDigits: 2 })}
+        {total.unpriced > 0 && (
+          <div className="text-[11px] font-normal text-amber-700">
+            {say(`${total.unpriced} ${total.unpriced === 1 ? "line" : "lines"} not priced`, `${total.unpriced} 行未定价`)}
+          </div>
+        )}
+      </>
+    );
+  };
   // The currencies the workspace's orders use; before the server lists them,
   // the workspace currency and the currencies on this page.
   const currencyOptions = orderedCurrencyCodes(
@@ -673,6 +713,7 @@ function OrderList() {
       <ListSearchCard
         title={copy("销售订单查询")}
         subtitle={copy("查询订单、客户、库存预留、履约状态和承诺交期。")}
+        activeFilters={activeFilters}
         actions={<>
           <ResetButton onClick={() => setParams({})} />
           <RefreshButton onClick={() => void load()} />
@@ -770,15 +811,20 @@ function OrderList() {
             <thead>
               <tr style={listHeadRowStyle}>
                 <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>{copy("订单号")}</th>
-                {[copy("客户"), copy("流程"), copy("预留状态"), copy("履约状态")].map((x) => (
-                  <th className={thClass} style={{ color: A.gray1 }} key={x}>{x}</th>
-                ))}
+                <th className={thClass} style={{ color: A.gray1 }}>{copy("客户")}</th>
+                {/* The order's one status, the first line of a phone card. */}
+                <th className={thClass} style={{ color: A.gray1 }} data-card-status="">{copy("状态")}</th>
+                <th className={thRightClass} style={{ color: A.gray1 }}>{copy("订单金额")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{copy("承诺交期")}</th>
                 <th className={thRightClass} style={{ color: A.gray1 }}>{copy("订购 / 预留 / 履约")}</th>
                 <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{copy("操作")}</th>
               </tr>
             </thead>
             <tbody>
-              {data?.orders.map((row, index) => (
+              {data?.orders.map((row, index) => {
+                const stage = salesOrderStage(row),
+                  hint = salesOrderStageHint(row, stage);
+                return (
                 <tr key={row.id} className={listRowClass} style={listRowStyle(index, data.orders.length)}>
                   <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                     <BusinessEntityLink entityType="sales_order" entityId={row.id} className={tableLinkClass}>
@@ -787,14 +833,13 @@ function OrderList() {
                     <div className="text-[11px] font-normal" style={{ color: A.sub }}>{copy("更新时间")} {stamp(row.updatedAt)}</div>
                   </td>
                   <td className={`${tdNameClass} max-w-[220px] truncate`} title={row.customerName}>{row.customerName}</td>
-                  <td className={tdNowrapClass}>
-                    <Badge value={row.workflowStatus} />
+                  <td className={tdNowrapClass} data-testid={`sales-order-status-${row.id}`}>
+                    <StatusChip label={say(...SALES_ORDER_STAGES[stage].label)} tone={SALES_ORDER_STAGES[stage].tone} />
+                    {hint && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{say(...hint)}</div>}
                   </td>
-                  <td className={tdNowrapClass}>
-                    <Badge value={row.reservationStatus} />
-                  </td>
-                  <td className={tdNowrapClass}>
-                    <Badge value={row.fulfillmentStatus} />
+                  <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{amountCell(row)}</td>
+                  <td className={tdNowrapClass} style={{ color: row.promisedDate ? A.label : A.sub }}>
+                    {row.promisedDate ? formatCalendarDay(row.promisedDate, locale) : say("Not set", "未设置")}
                   </td>
                   <td className={tdNumericRightClass}>
                     <span className="font-semibold" style={{ color: A.label }}>{formatQuantity(row.orderedQuantity)}</span>
@@ -812,7 +857,8 @@ function OrderList() {
                     </Link>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
           {/* Outside the table body: an empty or failed read leaves no rows. */}
@@ -830,20 +876,8 @@ function OrderList() {
             </div>
           )}
         </div>
-        {data && data.total > 0 && (
-          <div className="flex items-center justify-between px-5 py-3 text-xs" style={{ borderTop: "0.5px solid rgba(0,0,0,0.06)", color: A.sub }}>
-            <span>
-              {englishUi() ? `Page ${data?.page || page} of ${totalPages} · ${data?.total || 0} results` : `第 ${data?.page || page} / ${totalPages} 页 · 共 ${data?.total || 0} 条`}
-            </span>
-            <div className="flex gap-2">
-              <button type="button" className={listButtonClass.secondary} disabled={page <= 1} onClick={() => update({ page: page - 1 })}>
-                {copy("上一页")}
-              </button>
-              <button type="button" className={listButtonClass.secondary} disabled={page >= totalPages} onClick={() => update({ page: page + 1 })}>
-                {copy("下一页")}
-              </button>
-            </div>
-          </div>
+        {data && (
+          <ListPager page={data.page || page} pageSize={data.pageSize || pageSize} total={data.total} onPage={(next) => update({ page: next })} testId="sales-order-list-pager" />
         )}
       </ListCard>
     </div>
@@ -2037,7 +2071,10 @@ function OrderDetail({ id }: { id: string }) {
         </div>
       </Section>
       <Section title={copy("订单行与库存可用性")}>
-        <div className="overflow-x-auto">
+        {/* On a phone each line is a card: the SKU, item and unit price, then
+            each quantity with its label (workbenchTable.ts). */}
+        <PagedRows rows={data.lines} resetKey={data.order.id} testId="sales-order-lines-pager">{(pageLines) => (
+        <div className="overflow-x-auto" ref={listTableCardsRef} data-testid="sales-order-lines-table">
           <table className={`w-full min-w-[900px] ${tableBodyTextClass}`}>
             <thead>
               <tr style={listHeadRowStyle}>
@@ -2059,12 +2096,12 @@ function OrderDetail({ id }: { id: string }) {
               </tr>
             </thead>
             <tbody>
-              {data.lines.map((line, lineIndex) => {
+              {pageLines.map((line, lineIndex) => {
                 const av = data.availability.find(
                   (x) => x.salesOrderLineId === line.id,
                 );
                 return (
-                  <tr className={listRowClass} style={listRowStyle(lineIndex, data.lines.length)} key={line.id}>
+                  <tr className={listRowClass} style={listRowStyle(lineIndex, pageLines.length)} key={line.id}>
                     <td className="px-4 py-3">
                       <BusinessEntityLink entityType="item" entityId={line.itemId}>
                         {line.sku}
@@ -2101,6 +2138,7 @@ function OrderDetail({ id }: { id: string }) {
             </tbody>
           </table>
         </div>
+        )}</PagedRows>
         {/* Each stock balance for a line: where it is, its quantities and,
             when this user may not use it, why. Only an order still to be
             reserved or shipped lists them; the table above has the totals. */}
@@ -2722,8 +2760,10 @@ function Table({
   rows: Array<Array<string | number>>;
   numeric?: number[];
 }) {
+  // On a phone each row is a card (workbenchTable.ts): the first column names
+  // the record, a "Status" column sits beside it, the rest are labelled.
   return (
-    <div className={tableScrollClass}>
+    <div className={tableScrollClass} ref={listTableCardsRef}>
       <table className={`w-full min-w-[760px] ${tableBodyTextClass}`}>
         <thead>
           <tr style={{ ...listHeadRowStyle, color: A.sub }}>
