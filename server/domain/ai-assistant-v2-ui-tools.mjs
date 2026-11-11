@@ -826,6 +826,17 @@ function formRow(row, output, { named, line, scope }) {
   }
 }
 
+// Whether a question names an item at all: words other than asking for an
+// order, the time and politeness. "帮我下个单" and "What should I reorder
+// this week?" name none, so the item the model picks for them is its
+// suggestion, not ticked as the user's (2026-11-11 on Flash: 22423 was ticked
+// for both).
+const ORDER_WORDS_EN = /\b(?:please|pls|can|could|would|will|you|help|me|i|we|us|our|my|should|shall|what|which|do|does|did|need|needs|want|wants|to|a|an|the|some|more|any|anything|something|for|this|that|these|now|today|tomorrow|week|month|order|orders|reorder|re-order|buy|purchase|place|make|create|draft|raise|request|requests|restock|replenish|stock|up|new|get|is|are|it|and|of|in)\b/gi
+const ORDER_WORDS_ZH = /帮我|帮忙|给我|我们|我|请|一下|下个?单|下单|订单|订购|采购|补货|进货|补|买|订|要|需要|应该|什么|哪些|哪个|这周|本周|今天|现在|一些|一点|点|些|个|吧|呢|吗|的|了|货|单|再|还/g
+export function namesAnItem(question) {
+  return String(question || '').replace(ORDER_WORDS_EN, ' ').replace(ORDER_WORDS_ZH, ' ').replace(/[\s\p{P}\p{S}\d]+/gu, '').length > 0
+}
+
 const suggestPurchaseRequest = defineUiTool({
   name: 'suggest_purchase_request',
   description: 'Show the in-chat purchase request form from a suggest_purchase_lines result (source). from user_named: the items the user named in this question, listed in lines. from agreed: the items the user agreed to, named or proposed earlier in this conversation, listed in lines, or no lines for every item of the latest form. from suggestions: the suggested items (all, or those listed in lines), for the user to choose. Quantity, supplier and need-by date in a line are used only for an item the user named or agreed to, and only when the user gave or changed them; otherwise the server fills every value. A line may also carry an item\'s quantity from the latest optimize_order_plan decision, which the form shows as the best plan\'s. Named and agreed items are ticked (unless open orders already cover them); the user ticks the rest and creates the draft with their own click. A supplier the user named that is not yet an approved supplier of the item, but is an active supplier of the workspace, goes on the line when the user may add approved suppliers: when the user clicks Create, the form adds it as an approved supplier of the item, then creates the request. Pass unitPrice, currency and leadTimeDays only for such a supplier and only as the user typed them; the user can also enter them in the form.',
@@ -904,7 +915,7 @@ const suggestPurchaseRequest = defineUiTool({
       if (input.from !== 'user_named' || !line) return null
       const quantityTyped = isNumber(line.quantity) && typedNumbers.has(line.quantity)
       if (quantityTyped) return line
-      return lines.length === 1 && namesNoSku && question.trim() ? { ...line, quantity: undefined } : null
+      return lines.length === 1 && namesNoSku && question.trim() && namesAnItem(question) ? { ...line, quantity: undefined } : null
     }
     const entries = requestable.map((row) => {
       const line = linesBySku.get(fold(row.item.sku))

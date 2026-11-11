@@ -398,11 +398,14 @@ const priceHistory = defineAiTool({
       service.lastOrders(itemId, identityOf(context)),
     ])
     const history = array(read.histories)[0] || {}
-    const fact = (row) => (row ? { ...primitives(row, ['unitPrice', 'currency', 'unit', 'orderedQuantity', 'date', 'orderNumber', 'supplierName']), ref: aiToolRef('purchase_order', row.purchaseOrderId, row.orderNumber) } : null)
+    // A price as a number, not the stored text with its four places
+    // (2026-11-11 on Flash: "£2.9500/pcs" copied into the answer).
+    const priced = (row) => (row && typeof row.unitPrice === 'string' && /^-?\d+(?:\.\d+)?$/.test(row.unitPrice.trim()) ? { ...row, unitPrice: Number(row.unitPrice) } : row)
+    const fact = (row) => (row ? { ...priced(primitives(row, ['unitPrice', 'currency', 'unit', 'orderedQuantity', 'date', 'orderNumber', 'supplierName'])), ref: aiToolRef('purchase_order', row.purchaseOrderId, row.orderNumber) } : null)
     const supplierName = (id) => array(facts.suppliers).find((row) => row.id === id)?.name || null
     return {
       sku: item.sku, unit: history.unit ?? null, currency: history.currency ?? currency, status: history.status ?? null,
-      latest: fact(history.latest), earlier: array(history.earlier).map(fact), average: history.average ? primitives(history.average, ['unitPrice', 'quantity', 'orderedQuantity', 'count', 'lineCount']) : null,
+      latest: fact(history.latest), earlier: array(history.earlier).map(fact), average: history.average ? priced(primitives(history.average, ['unitPrice', 'quantity', 'orderedQuantity', 'count', 'lineCount'])) : null,
       otherCurrencies: array(history.otherCurrencies), otherUnits: array(history.otherUnits),
       pricesHidden: Boolean(read.restrictedFields?.length),
       lastOrderBySupplier: array(last.lastOrders).map((row) => ({ supplier: supplierName(row.supplierId), orderNumber: row.orderNumber, day: row.day, ref: aiToolRef('purchase_order', row.purchaseOrderId, row.orderNumber) })),

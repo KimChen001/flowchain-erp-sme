@@ -4,7 +4,7 @@ import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_READ_TOOL_COLUMNS, runAiReadTool } from './ai-read-tool-runner.mjs'
-import { AI_ASSISTANT_V2_UI_TOOLS, aiUiColumnCode, aiUiSourceHandles, aiUiToolsFor } from './ai-assistant-v2-ui-tools.mjs'
+import { AI_ASSISTANT_V2_UI_TOOLS, aiUiColumnCode, aiUiSourceHandles, aiUiToolsFor, namesAnItem } from './ai-assistant-v2-ui-tools.mjs'
 import { AI_SKILL_SIGNAL_SEVERITY } from './ai-skill-signals.mjs'
 import { safeParsePartProps } from '../../shared/assistant-protocol.mjs'
 import { PURCHASE_SUGGESTION_SOURCES } from '../../shared/purchase-suggestion.mjs'
@@ -1042,4 +1042,11 @@ test('the record card is not offered to a viewer, and takes only a request or or
   assertError(await admin.offer('purchase_request', 'PR-0231', 'list_purchase_requests#2'), 'source_missing')
   // Without the workspace's records nothing is shown.
   assertError(await tool('offer_record_actions').build({ source: 'list_purchase_requests#1', ref: { type: 'purchase_request', id: 'PR-0231' } }, { ...admin.ctx, prisma: null }), 'record_unavailable')
+})
+
+// 2026-11-11 on Flash: for "帮我下个单" and "What should I reorder this week?"
+// the item the model picked was ticked as if the user had named it.
+test('a question of ordering words, the time and politeness names no item', () => {
+  for (const question of ['帮我下个单', '帮我下个单吧', 'What should I reorder this week?', 'Place an order for me please', '这周需要补什么货？', 'Order something']) assert.equal(namesAnItem(question), false, question)
+  for (const question of ['Order 100 cakestands', '帮我订 60 个蛋糕架', '订一些温度传感器', 'Order more 85123A', 'I need bird ornaments']) assert.equal(namesAnItem(question), true, question)
 })

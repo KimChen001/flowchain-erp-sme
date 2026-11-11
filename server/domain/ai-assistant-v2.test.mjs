@@ -1294,6 +1294,35 @@ test('chips in a round with no text do not end the answer on an earlier opening 
   assert.match(body.conclusion.summary, /PO-001 is the most overdue\./)
 })
 
+// 2026-11-11 on Flash, the conversation cases.
+test('a price "we paid" is no claim, and a decimal point never ends the sentence a claim takes out', async () => {
+  const price = await ask([[...say('Here is how that comes out:\n\n- **What we sell it for:** about £2.75 a piece.\n- **What we paid:** £2.95 per pcs from Acme Components.\n\nSo it sells below cost.'), end()]], { question: 'What is our margin on LDM-001?' })
+  assert.ok(!ofType(price.events, 'replace').some((event) => event.code === 'unbacked_action_claim'), JSON.stringify(ofType(price.events, 'replace')))
+  assert.match(price.body.conclusion.summary, /What we paid:\*\* £2\.95 per pcs/)
+  // A real claim still goes, as its whole sentence: "£2.95" stays one figure.
+  const claim = await ask([[...say('LDM-001 costs £2.95 each. We paid the invoice of £2.95 yesterday. Nothing else is due.'), end()]], { question: 'Is anything due?' })
+  const replaced = ofType(claim.events, 'replace').find((event) => event.code === 'unbacked_action_claim')
+  assert.ok(replaced)
+  assert.equal(replaced.text, 'LDM-001 costs £2.95 each. Nothing else is due.')
+})
+
+test('text pointing to a card no part shows gets one more round to show it', async () => {
+  const { client, body, audit } = await ask([
+    OVERDUE,
+    [...say('PO-001 is waiting for approval. You can approve or reject it in the card with your own click.'), end()],
+    [...call('tu_cards', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()],
+    [end()],
+  ])
+  assert.ok(client.requests.length >= 3)
+  assert.match(client.requests[2].messages.at(-1).content.map((block) => block.text || '').join(' '), /none is shown in this answer/)
+  assert.ok(!client.requests.slice(3).some((request) => /none is shown in this answer/.test(JSON.stringify(request.messages.at(-1)))), 'once only')
+  assert.deepEqual(body.parts.map((part) => part.type), ['text', 'ui'])
+  assert.equal(audit.stopReason, 'end_turn')
+  // Once only, and not without such words.
+  const plain = await ask([OVERDUE, [...say('PO-001 is the most overdue.'), end()]])
+  assert.equal(plain.client.requests.length, 2)
+})
+
 // 2026-11-11 on Flash: "Assorted Colour Bird Ornament (UCI-ITEM-84879)".
 test('an internal record id in the text is replaced with the number people see', async () => {
   const { events, body, audit } = await ask([

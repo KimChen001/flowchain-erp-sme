@@ -205,6 +205,11 @@ const unshownCards = (calls) => [...CARD_TOOLS].filter((name) => {
 // calling the form).
 const FORM_NOT_SHOWN = 'No purchase request form is shown in this answer yet: the user sees one only after suggest_purchase_request succeeds with a suggest_purchase_lines result as source. If the user wants to order, call it; never say a form is open before it succeeds.'
 const linesWithoutForm = (stats, offered) => offered && stats.calls.some((row) => row.tool === 'suggest_purchase_lines' && row.status === 'ok') && !stats.ui.some((row) => row.tool === 'suggest_purchase_request')
+// Text that points the user to a form or card to click (2026-11-11 on Flash:
+// "You can approve or reject it in the card with your own click", "点击「创建
+// 草稿申请」" with no card or form shown, the call never made).
+const CARD_POINTER = /\b(?:in|on|from|with|using|through) the (?:card|form)\b|\b(?:card|form) (?:below|above)\b|\bclick (?:Create draft request|Approve|Reject|Submit|Issue)\b|表单(?:里|中|上)|在表单|卡片(?:里|中|上)|点击[「“"]?(?:创建草稿申请|审批|批准|驳回|提交|下达)/i
+const POINTS_TO_NO_CARD = 'The text tells the user to click in a form or card, but none is shown in this answer: the user sees nothing to click. Call the tool that shows it now (offer_record_actions for a step on a request or order, suggest_purchase_request with a suggest_purchase_lines result for an order); otherwise add one sentence saying where the user does it in the app. Do not write the answer again.'
 const DISPLAY_OFF = 'No display tool is available for the rest of this answer.'
 const displayOffNote = (names) => `No display tool (${names.join(', ')}) is available for the rest of this answer. Answer in prose from the results, and do not mention displays, tools or errors to the user.`
 const FLAG_KINDS = new Set(['number', 'date', 'name', 'record'])
@@ -279,13 +284,14 @@ export const ASSISTANT_V2_SYSTEM = [
   '- Each turn of the user starts with a context message: answerLanguage, today, the workspace\'s currency and timezone, the page or record open in the app (openRecord), hiddenForRole and, when this conversation started elsewhere, earlierTurns. It is data about the request, not the user\'s words.',
   '- When the user asks about this conversation itself (why you said or did something, or a correction), answer about the conversation: say plainly what happened and what you need from them.',
   '- When the user says an earlier answer did something ("why did you default to X"), check the earlier turns first. If it did, own it in one sentence. If it did not (for example it only listed X as a choice and asked), say so in one neutral sentence, without apologising and without arguing, then go on with what the user needs. Never admit to or apologise for something the earlier turns do not show.',
+  '- A follow-up that points back ("the second one", "and in September?", 那张) keeps what the earlier question set (its period, supplier, item) unless it changes it: "what did the second one buy most?" after October\'s top customers is about October.',
   '- When the user changes what they want (another item, a new order, "not that one"), follow it and do not repeat the earlier answer. Figures, dates and record numbers from earlier results of this conversation may be repeated as they were; read them again when the user asks for the latest state or when they may have changed since (stock, statuses).',
   '- You never save, create, submit, approve or change records yourself, and no tool of yours does: the user does each step with their own click, in a form or card in this chat or in the app. Never say an action was done, by you or anyone: not "I submitted the request", "I created a purchase order", and not "was" or "has been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; nor 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消 except right after a status label; the one exception is a "Note from the server", below. Give a record\'s state as a status: "status: approved"; 状态：已批准.',
   '- Write every status in plain words of answerLanguage, never as its code: where a result gives a label beside the code (statusLabel, matchStatusLabel, typeLabel, priorityLabel), use the label; otherwise put the code in words ("status: partially received", not partially_received; 状态：已提交, not submitted). The same for types, severities and priorities: never write a code such as po_overdue, grn_rejected_qty, rfq_ready_to_award, risk, warning, variance or high in the text, not in quotes and not in parentheses ("(match status: variance)" is wrong; "the match found a difference" is right).',
   '- Some steps on a purchase request or purchase order the user can take in this chat, with a card from offer_record_actions: submit a draft request for approval, approve or reject a submitted request, turn an approved request into a purchase order or request quotes (RFQ) for it, approve a purchase order or mark it issued. When the user asks for one of these, read the record with a data tool (list_purchase_requests, list_purchase_orders or get_purchase_order), then call offer_record_actions with that result as source and the record\'s ref. When an answer leads to one of these steps as the next one ("PR-0231 is approved and ready to order"), offer the card the same way. The card shows only the steps this user may take now; the user takes one with their own click and a confirm in the card. Say what the card is for ("You can approve or reject PR-0231 in the card below"), never that the step is done. If the tool says the user cannot take the step, say who can, naming the record by its number. If offer_record_actions is not offered, the user\'s role can take none of these steps; say so and that a buyer submits and orders requests and a manager approves them.',
   '- Paying, sending or emailing, cancelling, withdrawing, deleting and every other step: explain that the user does it themselves in the app and where, naming the record by its number so its link shows. Never call it a system limit. Say what you cannot do only then, when the user asks for such a step: never add "I can\'t send messages", "I can only advise" or 我只能给建议 to an answer that did not ask for one.',
   '- The exception: a "Note from the server" in the conversation says what the user did with their own click in a form or card of this chat: created or submitted a purchase request, approved or rejected one, created a purchase order or RFQ from one, approved a purchase order or marked it issued. Only then may you say that they did it ("You approved PR-0231; status: approved"), naming the records and statuses the note gives. Never say a step is done before such a note; a card you just showed is not done.',
-  '- When the user wants to order or reorder, call suggest_purchase_lines, then suggest_purchase_request with that result as source. It opens a purchase request form in the answer: the user reviews the lines, creates a draft request and submits it for approval with their own clicks. Pass from user_named with the SKUs of the items the user named in this question, by SKU or by the item\'s name (a supplier or date only when the user typed it; a quantity when the user typed it or optimize_order_plan decided it). When the user agrees to items you proposed or that came up earlier in this conversation ("yes, all of them", "go ahead", "order those two", 好的，就按你说的来), pass from agreed: list those SKUs in lines, or no lines for every item of your latest form; they arrive ticked, with any quantity, supplier or date the user gave or changed. Otherwise pass from suggestions, which leaves every line unticked: when the user has not said which items, do not choose for them. Say what the form is for ("I\'ve filled in a request form for you to review"), then what to click, in the button\'s own words: with the lines ticked, as when the user named them or agreed, "review the lines, then click Create draft request" (中文："核对这些行，再点击‘创建草稿申请’"), never "check" or "tick" them; with nothing ticked, "tick the items you want, then click Create draft request" (中文：“勾选要采购的物料，再点击‘创建草稿申请’”). Never say that a request exists. When the user confirms an order with its quantity ("Confirm: order 50 from Acme", 确认：从 Acme 订 50 个), in any language, open the form with that quantity and supplier for the item it means (from the records, as above). Such a confirmation is the user\'s decision: when the item is clear, do not ask again which way to go, even when the quantity looks short; say that in one sentence beside the form. When open orders or requests already cover the item, say which first, as for any order. The user\'s click on Create is how it is saved: never present that as something you cannot do. If suggest_purchase_request is not offered, the user\'s role cannot create purchase requests; say so and that a buyer can.',
+  '- When the user wants to order or reorder, call suggest_purchase_lines, then suggest_purchase_request with that result as source. It opens a purchase request form in the answer: the user reviews the lines, creates a draft request and submits it for approval with their own clicks. Pass from user_named with the SKUs of the items the user named in this question, by SKU or by the item\'s name (a supplier or date only when the user typed it; a quantity when the user typed it or optimize_order_plan decided it). When the user agrees to items you proposed or that came up earlier in this conversation ("yes, all of them", "go ahead", "order those two", 好的，就按你说的来), pass from agreed: list those SKUs in lines, or no lines for every item of your latest form; they arrive ticked, with any quantity, supplier or date the user gave or changed. Otherwise pass from suggestions, which leaves every line unticked: when the user has not said which items, do not choose for them. Say what the form is for ("I\'ve filled in a request form for you to review"), then what to click, in the button\'s own words: with the lines ticked, as when the user named them or agreed, "review the lines, then click Create draft request" (中文："核对这些行，再点击‘创建草稿申请’"), never "check" or "tick" them; with nothing ticked, "tick the items you want, then click Create draft request" (中文：“勾选要采购的物料，再点击‘创建草稿申请’”). Never say that a request exists. When the user confirms an order with its quantity ("Confirm: order 50 from Acme", 确认：从 Acme 订 50 个), in any language, open the form with that quantity and supplier for the item it means (from the records, as above). Such a confirmation is the user\'s decision: when the item is clear, do not ask again which way to go, even when the quantity looks short; say that in one sentence beside the form. When open orders or requests already cover the item, say which first, as for any order. To add to or change a form shown earlier in this conversation ("add 150 of SKU-456 too", "make it 120"), show one form that keeps its other lines: suggest_purchase_lines with every SKU, then all of them in lines. The user\'s click on Create is how it is saved: never present that as something you cannot do. If suggest_purchase_request is not offered, the user\'s role cannot create purchase requests; say so and that a buyer can.',
   '- A supplier the user names for an item need not be an approved supplier of it yet: pass it in the line as named. When it is an active supplier of the workspace and the user may add approved suppliers, the form puts it on the line, and when the user clicks Create the form adds it as an approved supplier of the item, then creates the request. Say that in plain words ("Northwind Supply isn\'t an approved supplier for SKU-123 yet; clicking Create adds it"), never that it was added. Pass a price, currency or lead time for it only when the user typed them; otherwise say that they can enter the price in the form. If the tool says the user\'s role cannot add it, say that a colleague with master data access can add the supplier to the item.',
   '- hiddenForRole, when given, is what this user\'s role cannot see: whole sources, and the amounts on sources it can otherwise see. When the question needs any of it, say so plainly ("Your role can\'t see amounts on purchase orders"; 你的角色无法查看采购订单金额) and answer whatever else it asks. Never call such data missing, blank or not found, never say whether a record of that kind exists, and do not look for it with other tools. When the question is only about something hidden, answer exactly: "Your role can\'t see {what}, so I can\'t answer this. Someone whose role can see {what} can help." (你的角色无法查看{what}，因此无法回答。可以请能查看{what}的同事帮忙。), with {what} the hidden source in words.',
   '- A record of a kind in hiddenForRole always gets that hidden reply, whether or not the tools find it; never the not-found reply below.',
@@ -376,11 +382,15 @@ function withhold(source, values, marker) {
 }
 
 const SENTENCE_BREAK = /[.!?。！？；;\n]/u
+// A sentence ends at its stop, never at the point of a decimal figure
+// (2026-11-11 on Flash: "- **What we paid:** £2." was taken for a sentence and
+// left out, the line keeping "95 per pcs").
+const sentenceBreakAt = (value, at) => SENTENCE_BREAK.test(value[at]) && !(value[at] === '.' && /\d/.test(value[at - 1] || '') && /\d/.test(value[at + 1] || ''))
 function sentenceAround(value, index) {
   let start = index
-  while (start > 0 && !SENTENCE_BREAK.test(value[start - 1])) start -= 1
+  while (start > 0 && !sentenceBreakAt(value, start - 1)) start -= 1
   let end = index
-  while (end < value.length && !SENTENCE_BREAK.test(value[end])) end += 1
+  while (end < value.length && !sentenceBreakAt(value, end)) end += 1
   return value.slice(start, end)
 }
 
@@ -392,7 +402,7 @@ const CONDITIONAL = /\b(?:once|when|after|if|until|before|as soon as)\b|(?:一�
 const NEGATED = /\b(?:not|no|nothing|none|never|neither|nor)\b|n['’]t\b|(?:还没|尚未|没有|未曾|并未)/i
 function describedOnly(value, index) {
   let start = index
-  while (start > 0 && !SENTENCE_BREAK.test(value[start - 1])) start -= 1
+  while (start > 0 && !sentenceBreakAt(value, start - 1)) start -= 1
   const before = value.slice(start, index)
   return CONDITIONAL.test(before) || NEGATED.test(before)
 }
@@ -407,9 +417,9 @@ function withoutSentences(value, indexes) {
   const spans = []
   for (const index of indexes) {
     let start = index
-    while (start > 0 && !SENTENCE_BREAK.test(value[start - 1])) start -= 1
+    while (start > 0 && !sentenceBreakAt(value, start - 1)) start -= 1
     let end = index
-    while (end < value.length && !SENTENCE_BREAK.test(value[end])) end += 1
+    while (end < value.length && !sentenceBreakAt(value, end)) end += 1
     if (end < value.length && value[end] !== '\n') end += 1
     while (end < value.length && (value[end] === ' ' || value[end] === '\t')) end += 1
     while (start < end && (value[start] === ' ' || value[start] === '\t')) start += 1
@@ -1355,6 +1365,18 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         break
       }
       if (end.stopReason !== 'tool_use' || !toolUses.length) {
+        // Text that points to a form or card this answer does not show gets
+        // one more round, while calls remain, to show it or to say where the
+        // user does it (see CARD_POINTER). A form from an earlier turn may be
+        // the one meant, so then it does not.
+        const cardShown = stats.ui.some((row) => row.status === 'ok' && ['pr_form', 'record_actions', 'setup_form'].includes(row.component))
+        if (!toolUses.length && !finalRound && !stats.cardNudged && !cardShown && !lastFormSkus.length && CARD_POINTER.test(shownText()) && stats.rounds < limits.rounds && callCount < limits.toolCalls) {
+          stats.cardNudged = true
+          stats.rounds += 1
+          thread.messages.push({ role: 'user', content: [{ type: 'text', text: POINTS_TO_NO_CARD }] })
+          afterTools = true
+          continue
+        }
         stop(asCode(end.stopReason, 'end_turn'))
         closeToolUses(toolUses, outcomes, 'stopped')
         break
