@@ -361,8 +361,9 @@ test('a call the provider reports no usage for is metered by estimate, so the ce
       FLOWCHAIN_AI_PROVIDER_API_KEY: 'placeholder-key', FLOWCHAIN_AI_PROVIDER_MODEL: 'claude-sonnet-5-5',
     })
     // Sized to the prompt and tools (raised from 100,000 when the cost tools
-    // came, 2026-11-06, and from 120,000 with the reorder paging rules, 2026-11-08).
-    const ceiling = 135000
+    // came, 2026-11-06, and from 120,000 with the reorder paging rules and the
+    // read tools' item receipts, units ranking and 90-day scorecard, 2026-11-10).
+    const ceiling = 145000
     const chat = await ask(null, { client, limits: { costCeilingMicros: ceiling } })
     assertProtocol(chat.events)
     assert.ok(requests.length < ASSISTANT_V2_LIMITS.rounds, 'the cost stopped the answer, not the round limit')
