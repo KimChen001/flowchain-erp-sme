@@ -1294,6 +1294,20 @@ test('chips in a round with no text do not end the answer on an earlier opening 
   assert.match(body.conclusion.summary, /PO-001 is the most overdue\./)
 })
 
+// 2026-11-11 on Flash: "Assorted Colour Bird Ornament (UCI-ITEM-84879)".
+test('an internal record id in the text is replaced with the number people see', async () => {
+  const { events, body, audit } = await ask([
+    [...call('tu_stock', 'stock_position', {}), end()],
+    [...say('LDM-001 (ITEM-001) is below its reorder point; Acme Components (SUP-001) supplies it.'), end()],
+  ], { question: 'What is low?' })
+  const replaced = ofType(events, 'replace').find((event) => event.code === 'record_label')
+  assert.ok(replaced, JSON.stringify(ofType(events, 'replace')))
+  assert.match(body.conclusion.summary, /LDM-001 \(LDM-001\) is below/)
+  assert.match(body.conclusion.summary, /\(SUP-001\)/, 'a supplier code beside its name stays')
+  assert.ok(audit.replaces.includes('record_label'))
+  assertProtocol(events)
+})
+
 // 2026-11-09 on Flash, the UCI question set: the answer, then a round of
 // chips alone, then a call that said where the answer was or wrote it again.
 const WRITTEN = 'PO-001 and PO-008 are overdue. PO-001 is the oldest, so chase it first with its supplier today, and check PO-008 after it, since both hold stock you need this week.'
@@ -1380,6 +1394,14 @@ test('a short text already shown is taken back when a call that reads follows', 
     [...say('PO-001 is the most overdue.'), end()],
   ], { limits: { narrationWaitMs: 100 } })
   assert.ok(!ofType(kept.events, 'replace').some((event) => event.code === 'narration'))
+  // An answer written before reading that ends by saying it will look
+  // something up goes whole (2026-11-11 on Flash: 264, then 168 after reading).
+  const early = await ask([
+    [...say('**Only the remaining line would bring PO-001\'s item to 264 pcs available.**\n\nLet me confirm which order that is and what it still owes you.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [...say('PO-001 is the most overdue.'), end()],
+  ], { limits: { narrationWaitMs: 100 } })
+  assert.ok(ofType(early.events, 'replace').some((event) => event.code === 'narration' && event.text === ''))
+  assert.doesNotMatch(early.body.conclusion.summary, /264/)
   const paragraphs = await ask([
     [...say('Two orders are overdue.\n\nPO-001 is the older one.\n\n'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
     [...say('PO-001 is the most overdue.'), end()],

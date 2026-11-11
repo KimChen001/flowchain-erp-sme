@@ -346,6 +346,27 @@ test('top-10 and the like are words, not record numbers; their number is checked
   assert.deepEqual(problems('PO-202611-9999 is late.'), ['record:PO-202611-9999'])
 })
 
+// 2026-11-11 on Flash, the UCI question set a day after its seed day: right
+// answers flagged for the aging buckets, a top 10 and "a week" in days.
+test('aging bucket amounts and labels, the top N of a list, and a week the question names are grounded', () => {
+  const numbers = (answer, results, question = '') => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results, question }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
+  const aging = [{ aging: [{ currency: 'GBP', current: '74505.50', '1_30': '4478.51', '31_60': '0.00', '61_90': '0.00', '90_plus': '0.00', total: '78984.01', count: 542 }] }]
+  assert.deepEqual(numbers('按期划分：未到期 £74,505.50，逾期 1–30 天 £4,478.51，逾期 31 天以上没有。', aging), [])
+  assert.deepEqual(numbers('£74,505.50 of that is not yet due and £4,478.51 is overdue; nothing is more than 30 days past due.', aging), [])
+  assert.deepEqual(numbers('£4,500.00 is overdue.', aging), ['£4,500.00'])
+  // The top N of a list cut at its limit: only right after top / first / 前.
+  const items = [{ rows: Array.from({ length: 10 }, (_, index) => ({ sku: `S-${index}`, value: 100 - index })), total: 200, more: 190 }]
+  assert.deepEqual(numbers('The top 10 items together hold about 28% of the stock value.', items), ['28%'])
+  assert.deepEqual(numbers('前 10 个物料。', items), [])
+  assert.deepEqual(numbers('There are 10 items in stock.', items), ['10'])
+  assert.deepEqual(numbers('The top 12 items.', items), ['12'])
+  // "再晚一周": 7 days is the user's week.
+  const stock = [{ sku: '84879', available: 98, averageDailyDemand: 20.5 }]
+  assert.deepEqual(numbers('7 天约需 143.5 件。', stock, '如果 Globex 再晚一周，84879 会缺货吗？'), ['143.5'])
+  assert.deepEqual(numbers('7 天约需 143.5 件。', stock, '84879 会缺货吗？'), ['7 天', '143.5'])
+  assert.deepEqual(numbers('Over 14 days it needs 287 pcs.', stock, 'What if Acme is two weeks late?'), ['287'])
+})
+
 // 2026-11-10 on Flash: "Acme 是几级供应商？为什么？" quoted the buyer's reason.
 test('figures in a tier reason count as the words of the person who wrote it', () => {
   const reason = 'Tier 1: sole source of our White Hanging Heart T-Light Holder (No. 2 of 200 products by sales value over the last 12 months) and of 4 other 85xxx lines; 7% of purchase spend over the last 12 months.'

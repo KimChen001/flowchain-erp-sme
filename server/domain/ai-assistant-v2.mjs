@@ -100,7 +100,24 @@ const REPEAT_MIN = 120
 // (2026-11-10 on Flash: "…two of them are for the same item — but I need to
 // see whether the open sales orders actually depend on that stock.", 165
 // characters, before three more reads).
+// Up to this long, text that ends by saying it will look something up is an
+// answer written before reading, taken back when a read follows.
+const EARLY_ANSWER_LENGTH = 600
 const LOOKUP_CUE = /\b(?:I(?:'ll| will| need to| want to| have to|'m going to| am going to)|let me|let's|first,? I)\s+(?:\w+\s+){0,2}?(?:check|look|see|pull|read|confirm|find|verify|get|review|open|work out)\b|(?:我|先)(?:需要|要|来|再|先)?(?:查|看|核对|确认|读|拉)(?:一下|看|下)?/i
+
+// The text with every internal record id a result gave written as the number
+// people see, its label (UCI-ITEM-84879 as 84879, UCI-PO-00332 as
+// PO-202610-0022), whole ids only. A label without a digit is a name (a
+// supplier's), and its code is left alone.
+function withRecordLabels(value, refs) {
+  let out = String(value)
+  const internal = refs.filter((ref) => text(ref?.id) && text(ref?.label) && ref.id !== ref.label && /\d/.test(ref.id) && /\d/.test(ref.label))
+  for (const ref of [...internal].sort((a, b) => b.id.length - a.id.length)) {
+    if (!out.includes(ref.id)) continue
+    out = out.replace(new RegExp(`(?<![\\w-])${ref.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'g'), ref.label)
+  }
+  return out
+}
 
 // Whether a text mostly says what the answer already shows: half of its
 // six-character runs (spaces and punctuation aside), or 60% of its words and
@@ -950,6 +967,16 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         stats.replaces.push('tool_call_text')
       }
       if (!text(part.text)) { release(part, part.text.length); return }
+      // A record's internal id written for its number is replaced with the
+      // number people see (2026-11-11 on Flash: "Assorted Colour Bird
+      // Ornament (UCI-ITEM-84879)" for 84879).
+      const labelled = withRecordLabels(part.text, refs)
+      if (labelled !== part.text) {
+        part.text = labelled
+        part.sent = part.text.length
+        stats.replaces.push('record_label')
+        send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: 'record_label' })
+      }
       const check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today })
       // A sentence that claims an action no record backs is left out; the
       // rest of the part stays (2026-11-04: the whole part went for one
@@ -1054,7 +1081,12 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // It is taken back; the model is told it was not shown.
       const said = part.raw.trim()
       const narrationLike = weightedLength(said) < NARRATION_LENGTH || (weightedLength(said) < 2 * NARRATION_LENGTH && LOOKUP_CUE.test(said))
-      if (beforeRead && part.sent > 0 && !part.held && narrationLike && !/\n\s*\n/.test(said)) {
+      // An answer written before reading that ends by saying it will look
+      // something up goes too (2026-11-11 on Flash: "Only the remaining line
+      // … would bring 85123A to 264 pcs available.\n\nLet me confirm which
+      // order that is", then 168 after reading).
+      const answeredEarly = weightedLength(said) < EARLY_ANSWER_LENGTH && LOOKUP_CUE.test(said.split(/\n\s*\n/).at(-1))
+      if (beforeRead && part.sent > 0 && !part.held && ((narrationLike && !/\n\s*\n/.test(said)) || answeredEarly)) {
         part.dropped = true
         part.narration = true
         part.retracted = true
