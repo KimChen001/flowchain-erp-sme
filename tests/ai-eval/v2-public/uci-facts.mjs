@@ -19,6 +19,8 @@ const sum = (rows, pick) => rows.reduce((total, row) => total + pick(row), 0)
 
 export const UCI_HOLDING_RATE = 0.25
 export const SCORECARD_PERIOD_DAYS = 90
+// The recorded demand window of the assistant's stock tools.
+export const DEMAND_WINDOW_DAYS = 90
 
 // today: the workspace's date when the questions are asked (YYYY-MM-DD). The
 // seed day by default; a server running a day before or after its seed day
@@ -57,10 +59,22 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
       safetyStock: row.safetyStock,
       reorderPoint: row.reorderPoint,
       minimumOrderQuantity: row.minimumOrderQuantity,
-      // The last 90 days of the data: the window the thresholds use.
-      averageDailyDemand: row.meanDaily,
-      daysOfStock: onHand / row.meanDaily,
+      // Shipped a day over the 90 days before today, as the tools read it
+      // (the seed's thresholds use the 90 days before the seed day: the same
+      // window when the questions are asked on the seed day). 2026-11-11, a
+      // day after the seed day: 6.6 a day for 22423, not the seed's 7.24.
+      averageDailyDemand: recentDemand(row),
+      daysOfStock: onHand / recentDemand(row),
     }
+  }
+  // Days after the data's last day shipped nothing.
+  const recentDemand = (row) => {
+    let shipped = 0
+    for (let back = 1; back <= DEMAND_WINDOW_DAYS; back += 1) {
+      const index = todayIndex - back
+      if (index >= 0 && index < plan.days) shipped += Number(row.daily?.[index]) || 0
+    }
+    return row.daily ? shipped / DEMAND_WINDOW_DAYS : row.meanDaily
   }
 
   // Late: issued, promised before today, not fully received.

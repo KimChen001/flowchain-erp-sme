@@ -189,6 +189,13 @@ test('the UCI figures: stock and position, late orders, the reorder rule, months
   assert.equal(uciEconomics({ averageDailyDemand: 10, price: 2, minimumOrderQuantity: 70 }).eoq(20), Math.round(Math.sqrt((2 * 3650 * 20) / 0.5)))
   // A server running before its seed day: only the orders promised before then are late.
   assert.equal(uciFacts(smallPlan(), { today: '2026-11-05' }).late.length, 1)
+  // The average daily demand is over the 90 days before the day asked, as the
+  // tools read it (days with no data count as none shipped): asked on
+  // 2026-11-01, the last 9 days of these 70 fall outside it.
+  const shipped = smallPlan()
+  shipped.items[0].daily = Array.from({ length: 70 }, (_, index) => (index === 0 ? 90 : 9))
+  assert.equal(uciFacts(shipped).item('H1').averageDailyDemand, (90 + 69 * 9) / 90)
+  assert.equal(uciFacts(shipped, { today: '2026-11-01' }).item('H1').averageDailyDemand, (90 + 60 * 9) / 90)
 })
 
 test('the UCI question set: every case in English or Chinese, on fixed months, with the scene figures', () => {

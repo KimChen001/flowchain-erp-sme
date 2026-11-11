@@ -142,6 +142,7 @@ It calls the configured model: about $0.6 for the 13 cases on Sonnet 5.5.
 | Date | Code, model | Passed | Notes |
 |---|---|---|---|
 | 2026-11-09 | main 666b9335, DeepSeek V4.1 Flash | 45/58, then 42/58 | Baseline, two runs: $0.95 a run, median 10 s and 57k input tokens a case. Four cases failed both times. One answer in run 2 was lost to a network drop. Failures by cause are below. |
+| 2026-11-11 | main a7065fbe + #300 + #301 + #305, Flash through OpenCode | 104/116 (`--repeat=2`) | Asked a day after the seed day, which moved the tools' 90-day window: 4 more answers (6.6 a day, EOQ 575) were right but scored against the seed day's 7.24 and 581, so the average now counts from the day asked. $1.75, median 14 s. Better than the baseline: 13 cases. Worse: 6. The 12 left: receivables split into not yet due and overdue (right, but the aging fields read as no amount, 4), an answer written before reading (264, then 168), "蛋糕架" not found (#290 not merged), a supplier question given up after one lookup, items not named on late orders, and 3 flags for "7 天", "top 10" and "90 天". |
 
 What the baseline found (both runs):
 
