@@ -367,6 +367,17 @@ test('aging bucket amounts and labels, the top N of a list, and a week the quest
   assert.deepEqual(numbers('Over 14 days it needs 287 pcs.', stock, 'What if Acme is two weeks late?'), ['287'])
 })
 
+// 2026-11-11 on Flash, the UCI workspace's SKUs are digits: "450 件 84879 未到".
+test('a SKU of digits the workspace holds is a name, found in a result\'s words; one no result names is still refused', () => {
+  const facts = { inventory: { rows: [{ sku: '84879', itemName: 'Assorted Colour Bird Ornament' }, { sku: '22423', itemName: 'Regency Cakestand 3 Tier' }] } }
+  const problems = (answer, results) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results, facts }).problems.map((row) => `${row.kind}:${row.value}`)
+  const titled = [{ rows: [{ title: 'PO-202610-0023: 450 pcs of 84879 still to receive', remaining: 450 }] }]
+  assert.deepEqual(problems('450 件 84879 未到。', titled), [])
+  assert.deepEqual(problems('450 件 84879 未到，22423 也要补。', titled), ['name:22423'])
+  // A quantity under four digits is never read as a SKU.
+  assert.deepEqual(problems('450 pcs are still to come.', [{ rows: [{ remaining: 120 }] }]), ['number:450'])
+})
+
 // 2026-11-10 on Flash: "Acme 是几级供应商？为什么？" quoted the buyer's reason.
 test('figures in a tier reason count as the words of the person who wrote it', () => {
   const reason = 'Tier 1: sole source of our White Hanging Heart T-Light Holder (No. 2 of 200 products by sales value over the last 12 months) and of 4 other 85xxx lines; 7% of purchase spend over the last 12 months.'

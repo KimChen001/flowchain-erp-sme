@@ -329,7 +329,14 @@ export function aiGroundingNames(facts) {
   const names = new Set()
   const add = (value) => { const name = text(value); if (name.length >= 3 && /[\p{L}]/u.test(name)) names.add(name) }
   for (const row of array(facts?.suppliers)) { add(row.name); add(row.code) }
-  for (const row of [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)]) { add(row.itemName); add(row.sku) }
+  for (const row of [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)]) {
+    add(row.itemName)
+    add(row.sku)
+    // A SKU of digits only is the item's code too, not a figure (2026-11-11
+    // on Flash, the UCI workspace: "450 件 84879 未到" was flagged). Four
+    // digits or more, so a small quantity is never read as one.
+    if (/^\d{4,}$/.test(text(row.sku))) names.add(text(row.sku))
+  }
   for (const row of array(facts?.salesOrders)) add(row.customer)
   for (const row of array(facts?.purchaseOrders?.index)) add(row.supplier)
   return [...names].sort((a, b) => b.length - a.length)
