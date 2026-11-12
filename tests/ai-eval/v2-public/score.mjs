@@ -33,6 +33,9 @@
 //   matches / notMatches  wording it must have, or must not (in the text);
 //   and when the text says it filled in a form: that form is shown;
 //   languages   each turn's language, for a switch the user asked for;
+//   calls       the tools it must call (2026-11-12): the solver for an order
+//               under a budget, the cost tool for one item's order size, so
+//               the model's own arithmetic fails the case;
 //   and always: the chips in the answer's language, and no English sentence
 //   (eight words or more) in a Chinese answer.
 //
@@ -266,6 +269,7 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     const said = Boolean(expect.form.orSaidEarlier && row) && answers.slice(0, -1).some((earlier) => String(earlier?.text || '').split(/\n|(?<=[.;。；])/).some((line) => line.includes(expect.form.sku) && numbersIn(line).includes(value)))
     add('form', Boolean(row) && (value === expect.form.quantity || said), !form ? 'no form' : !row ? `${expect.form.sku} not on the form` : `${expect.form.sku} at ${value}${said ? ', as said earlier' : ''}`)
   }
+  for (const tool of expect.calls || []) add(`calls ${tool}`, (answer.tools || []).includes(tool), (answer.tools || []).join(', ') || 'no tools')
   if (expect.tidy !== false) {
     const problems = tidyProblems(answer.text, answer.textParts)
     add('tidy', !problems.length, problems.join('; '))

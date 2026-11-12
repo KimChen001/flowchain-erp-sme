@@ -1573,3 +1573,17 @@ test('the prompt offers the record card for the steps it takes, and keeps every 
   assert.match(ASSISTANT_V2_SYSTEM, /Never say a step is done before such a note; a card you just showed is not done/)
   assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /When the user asks you to approve, pay, send, issue, cancel or delete something/)
 })
+
+// 2026-11-12: answers sent users to the "cancel action" of an issued order,
+// and to 催货 and 改期 buttons. The prompt lists the app's buttons, and a
+// button the app does not have is marked like a figure no result holds.
+test('the prompt lists the app\'s buttons, and a button the app does not have is flagged', async () => {
+  assert.match(ASSISTANT_V2_SYSTEM, /Close PO \/ 关闭采购订单/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Copy and mark chased \/ 复制并记为已催/)
+  const { events } = await ask([OVERDUE, [...say('PO-001 is overdue. Open it and click **Cancel order**, or click **Close PO**.'), end()]])
+  assertProtocol(events)
+  const [flag] = ofType(events, 'flag')
+  assert.deepEqual(flag.spans, [{ text: 'Cancel order', kind: 'name', reason: 'not_an_app_button' }])
+  const fine = await ask([OVERDUE, [...say('PO-001 is overdue. Open it and click **Close PO**.'), end()]])
+  assert.deepEqual(ofType(fine.events, 'flag')[0].spans, [])
+})

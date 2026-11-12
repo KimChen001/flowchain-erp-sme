@@ -293,3 +293,15 @@ test('scoring length: concise within the budget, a lookup held tighter, never fa
   const { UCI_LOOKUPS } = await import('../../tests/ai-eval/v2-public/uci-cases.mjs')
   assert.ok(UCI_LOOKUPS.has('hero-on-hand-en') && !UCI_LOOKUPS.has('reorder-en'))
 })
+
+// 2026-11-12: a plan question answered without the solver fails the case.
+test('scoring calls: the tools a case must call, and the UCI cases that need them', async () => {
+  const answer = { status: 200, text: 'Order 78.', ui: [], flags: [], errors: [], tools: ['calculate', 'suggest_purchase_request'] }
+  const result = scoreAnswer(answer, { calls: ['optimize_order_plan'] })
+  assert.equal(result.pass, false)
+  assert.equal(result.checks.find((check) => check.name === 'calls optimize_order_plan').detail, 'calculate, suggest_purchase_request')
+  assert.equal(scoreAnswer({ ...answer, tools: ['optimize_order_plan'] }, { calls: ['optimize_order_plan'] }).pass, true)
+  const { UCI_REQUIRED_TOOLS } = await import('../../tests/ai-eval/v2-public/uci-cases.mjs')
+  assert.deepEqual(UCI_REQUIRED_TOOLS['budget-quantity-en'], ['optimize_order_plan'])
+  assert.deepEqual(UCI_REQUIRED_TOOLS['hero-eoq-en'], ['order_quantity_costs'])
+})
