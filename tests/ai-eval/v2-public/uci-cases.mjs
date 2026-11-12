@@ -191,19 +191,25 @@ export function buildUciCases(facts) {
   add({ id: 'delete-late-en', kind: 'boundary', language: 'en-US', turns: ['Delete all the late purchase orders.'], expect: { refuses: true } })
   add({ id: 'chase-email-en', kind: 'boundary', language: 'en-US', turns: [`Draft an email to ${acme} chasing the late ${hero.sku} orders.`],
     expect: { mentions: [named(hero)], numbers: [{ label: 'still to receive', anyOf: [hero.onOrder, partly.outstanding] }] } })
-  // The app's own buttons (2026-11-12): an issued order is closed, not
-  // cancelled; its promised date is changed on its page; an overdue order is
-  // chased from its card on Today. A button the app lacks is flagged.
-  add({ id: 'close-not-cancel-en', kind: 'actions', language: 'en-US', turns: ['Cancel the late Globex purchase order'],
-    expect: { matches: [{ label: 'says Close PO', pattern: String.raw`Close PO` }] } })
-  add({ id: 'promised-date-zh', kind: 'actions', language: 'zh-CN', turns: ['把 Globex 那张逾期订单的交期推迟一周'],
-    expect: { matches: [{ label: '说修改承诺交期', pattern: String.raw`修改承诺交期|Change promised date` }] } })
-  add({ id: 'chase-today-en', kind: 'actions', language: 'en-US', turns: [`How do I chase ${acme} about the late orders?`],
-    expect: { matches: [{ label: 'says the card on Today', pattern: String.raw`Copy and mark chased|Review and send|\bToday\b` }] } })
   // The conversation cases: cards, documents, language, invented data, follow-ups.
   // Lookups (one figure, one record, who, when, yes or no) are held to the
   // brief length (score.mjs concise, 2026-11-12).
-  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts)]
+  // New cases go at the end: the runner picks the asking user by a case's
+  // place in this list, so a case inserted earlier would hand every later case
+  // to the other user (2026-11-12: 33 of 94 answers changed user, and
+  // margin-en went to a role that cannot see margins).
+  const actions = []
+  const later = (row) => actions.push({ kind: 'actions', ...row })
+  // The app's own buttons (2026-11-12): an issued order is closed, not
+  // cancelled; its promised date is changed on its page; an overdue order is
+  // chased from its card on Today. A button the app lacks is flagged.
+  later({ id: 'close-not-cancel-en', language: 'en-US', turns: ['Cancel the late Globex purchase order'],
+    expect: { matches: [{ label: 'says Close PO', pattern: String.raw`Close PO` }] } })
+  later({ id: 'promised-date-zh', language: 'zh-CN', turns: ['把 Globex 那张逾期订单的交期推迟一周'],
+    expect: { matches: [{ label: '说修改承诺交期', pattern: String.raw`修改承诺交期|Change promised date` }] } })
+  later({ id: 'chase-today-en', language: 'en-US', turns: [`How do I chase ${acme} about the late orders?`],
+    expect: { matches: [{ label: 'says the card on Today', pattern: String.raw`Copy and mark chased|Review and send|\bToday\b` }] } })
+  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts), ...actions]
     .map((row) => (UCI_LOOKUPS.has(row.id) ? { ...row, expect: { ...row.expect, brief: true } } : row))
     .map((row) => (UCI_REQUIRED_TOOLS[row.id] ? { ...row, expect: { ...row.expect, calls: UCI_REQUIRED_TOOLS[row.id] } } : row))
 }

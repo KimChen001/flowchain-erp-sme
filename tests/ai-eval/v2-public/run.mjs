@@ -146,11 +146,14 @@ async function ask(session, threadId, message, language) {
 }
 
 const results = []
-let turn = 0
+// Who asks: by the case's place in the whole list, and the round, so a run
+// of some cases (--only, --kind) asks each as a full run does, and repeats
+// alternate users (2026-11-12: with a running count, three inserted cases
+// moved 33 of 94 answers to the other user).
 for (const testCase of cases) {
+  const place = built.cases.indexOf(testCase)
   for (let round = 0; round < repeat; round += 1) {
-    const session = sessions[turn % sessions.length]
-    turn += 1
+    const session = sessions[(place + round) % sessions.length]
     const threadId = `thr_eval_${testCase.id.replace(/[^\w]/g, '')}_${Date.now().toString(36)}`.slice(0, 60)
     const answers = []
     // The panel's language goes with every turn; a case may expect another one
