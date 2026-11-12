@@ -69,9 +69,30 @@ const salesOrderNumberOf = (facts, id) => array(facts.salesOrders).find((row) =>
 const orderDatesOf = (facts, ids) => array(ids).map((id) => array(facts.purchaseOrders?.index).find((row) => row.id === id)).filter(Boolean)
   .map((row) => ({ orderNumber: row.orderNumber, dueDate: row.dueDate || null, overdueDays: row.overdueDays || 0 }))
 
+// The amounts of some orders added up by currency, never across currencies;
+// null when the role does not see amounts (2026-11-12 on Flash: "What is the
+// total value of our open purchase orders?" was answered with committedSpend,
+// £613,812.39, which counts every approved, issued or received order, open or
+// closed, over the report period, against open orders worth far less).
+function orderAmounts(rows) {
+  if (rows.length && rows.every((row) => row.amount === null || row.amount === undefined)) return null
+  const byCurrency = new Map()
+  let withoutAmount = 0
+  for (const row of rows) {
+    const value = Number(row.amount)
+    if (row.amount === null || row.amount === undefined || row.amount === '' || !Number.isFinite(value)) { withoutAmount += 1; continue }
+    const entry = byCurrency.get(row.currency || null) || { currency: row.currency || null, amount: 0, orders: 0 }
+    entry.amount += value
+    entry.orders += 1
+    byCurrency.set(row.currency || null, entry)
+  }
+  return { amounts: [...byCurrency.values()].map((entry) => ({ ...entry, amount: Math.round(entry.amount * 100) / 100 })), ...(withoutAmount ? { ordersWithoutAmount: withoutAmount } : {}) }
+}
+const COMMITTED_SPEND = 'committedSpend is every approved, issued, partly or fully received order, open or closed, as the dashboard counts it: never the value of the open orders.'
+
 const listPurchaseOrders = defineAiTool({
   name: 'list_purchase_orders',
-  description: 'Purchase orders the user may read, with supplier, status, the SKUs and item names, promised date, days overdue, quantities still to receive and amount. Filter by status, supplier, supplier tier or SKU. Most overdue first, then by promised date. total counts every matching order and bySupplier counts them per supplier.',
+  description: `Purchase orders the user may read, with supplier, status, the SKUs and item names, promised date, days overdue, quantities still to receive and amount. Filter by status, supplier, supplier tier or SKU. Most overdue first, then by promised date. total counts every matching order and bySupplier counts them per supplier. amountTotal adds up the amounts of every matching order by currency: the value of the open (or overdue, or one supplier\'s) orders. ${COMMITTED_SPEND}`,
   parameters: {
     status: { type: 'string', enum: ['open', 'overdue', 'pending_approval', 'all'], description: 'open (default): not closed or fully received; overdue: open and past the promised date; pending_approval; all.' },
     supplier: { type: 'string', description: 'A supplier name, code or id.' },
@@ -102,6 +123,7 @@ const listPurchaseOrders = defineAiTool({
     return {
       asOf: facts.asOf,
       workspace: { open: facts.purchaseOrders.open, overdue: facts.purchaseOrders.overdue, committedSpend: facts.purchaseOrders.committedSpend ?? null },
+      amountTotal: rows.length ? orderAmounts(rows) : null,
       ...aiToolList(rows.map((row) => ({ ...orderRow(row), itemNames: itemNamesOf(facts, row.skus) })), args.limit),
       bySupplier: ordersBySupplier(rows),
     }
@@ -407,13 +429,13 @@ const lateOrderImpact = defineAiTool({
 
 const workspaceSummary = defineAiTool({
   name: 'workspace_summary',
-  description: 'Counts across the workspace as the reports show them: open and overdue purchase orders and committed spend, orders waiting for approval, SKUs at risk as the reports count them (short against open sales orders; stock_position counts those below safety stock or the reorder point too), supplier invoice matching, open RFQs, receipts with rejections or not posted, and records missing data. What the user may not read is left out.',
+  description: `Counts across the workspace as the reports show them: open and overdue purchase orders, the open orders' amount (openOrdersAmount) and committed spend, orders waiting for approval, SKUs at risk as the reports count them (short against open sales orders; stock_position counts those below safety stock or the reorder point too), supplier invoice matching, open RFQs, receipts with rejections or not posted, and records missing data. What the user may not read is left out. ${COMMITTED_SPEND}`,
   available: () => true,
   run(_args, { facts }) {
     return {
       asOf: facts.asOf,
       currency: facts.currency,
-      purchaseOrders: facts.purchaseOrders ? { open: facts.purchaseOrders.open, overdue: facts.purchaseOrders.overdue, committedSpend: facts.purchaseOrders.committedSpend ?? null, waitingForApproval: array(facts.purchaseOrders.pendingApproval).length } : null,
+      purchaseOrders: facts.purchaseOrders ? { open: facts.purchaseOrders.open, overdue: facts.purchaseOrders.overdue, openOrdersAmount: orderAmounts(array(facts.purchaseOrders.index).filter((row) => row.isOpen)), committedSpend: facts.purchaseOrders.committedSpend ?? null, waitingForApproval: array(facts.purchaseOrders.pendingApproval).length } : null,
       purchaseRequestsWaitingForApproval: facts.purchaseRequests ? array(facts.purchaseRequests.awaitingApproval).length : null,
       inventory: facts.inventory ? { skus: array(facts.inventory.rows).length, atRisk: facts.inventory.atRiskCount, atRiskSkus: array(facts.inventory.atRisk) } : null,
       supplierInvoices: facts.invoices ? { committedTotal: facts.invoices.committed ?? null, committedCount: facts.invoices.committedCount, match: facts.invoices.matchCounts } : null,

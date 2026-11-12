@@ -489,6 +489,9 @@ const suggestPurchaseLines = defineAiTool({
         openSalesDemand: row.openSalesDemand ?? null, incoming: row.incomingApprovedPo ?? null, openRequests: openRequestsOf(facts, row),
         target: row.noStock ? null : quantity.target, gap: row.noStock ? null : quantity.gap,
         suggestedQuantity: notRun ? { value: null, source: notRun } : quantity.quantity,
+        // The chosen supplier's minimum order in the item's unit, so the form
+        // raises a quantity below it (2026-11-11).
+        minimumOrderQuantity: minimum > 0 ? minimum : null,
         supplier: suppliersVisible && chosen ? { id: chosen.id, name: chosen.name, source: SUPPLIER_SOURCE[plan.fields.supplierId?.ref] || 'approved_supplier' } : null,
         supplierChoices: suppliersVisible ? plan.supplierChoices.map((choice) => ({ id: choice.id, name: choice.name })) : [],
         // Every approved source, so the form's select holds them all and a
@@ -576,14 +579,49 @@ const setupStatus = defineAiTool({
 // set-up records them (the purchase request form's read, itemSources): for
 // "should I switch supplier" the answer had no lead time or minimum order of
 // the other supplier (2026-11-05). Prices only for a user who may see them.
+// Every item one supplier is an approved supplier of, with its terms
+// (2026-11-12 on Flash: "What is the lead time from Globex Party Supplies?"
+// was answered "I don't have its item list to read the lead times from":
+// lead times sit on each item's supplier link, and item_suppliers took a SKU).
+const SUPPLIER_ITEMS_DEFAULT = 20
+async function supplierItems(args, { facts, context }) {
+  const found = aiToolSupplier(facts, args.supplier)
+  if (!found.supplier) return { error: found.error || 'not_found', candidates: found.candidates || [] }
+  // Linked items, and items naming it as preferred supplier with no link yet.
+  const [links, preferring] = await Promise.all([
+    listItemSupplierRecords(context.prisma, context.tenantId, { supplierId: found.supplier.id }),
+    context.prisma.item.findMany({ where: { tenantId: context.tenantId, preferredSupplierId: found.supplier.id }, select: { id: true } }),
+  ])
+  const itemIds = [...new Set([...array(links).map((row) => text(row.payload?.itemId)), ...array(preferring).map((row) => text(row.id))].filter(Boolean))]
+  const items = [...(await storedItems(context, itemIds)).values()]
+  const { byItem, prices } = await itemSources(context, items)
+  const number = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
+  const rows = items.flatMap((item) => {
+    const source = (byItem.get(text(item.id)) || []).find((entry) => entry.id === found.supplier.id)
+    if (!source) return []
+    return [{
+      sku: text(item.sku), itemName: text(item.name) || null, unit: itemStockUnit(item) || null, preferred: source.preferred,
+      leadTimeDays: source.leadTimeDays ?? null, minimumOrderQuantity: number(source.minimumOrderQuantity),
+      referencePrice: prices ? number(source.referencePrice) : null, currency: source.currency || null, ref: aiToolRef('item', text(item.id), text(item.sku)),
+    }]
+  }).sort((a, b) => a.sku.localeCompare(b.sku))
+  const leadTimes = rows.map((row) => row.leadTimeDays).filter((value) => value !== null)
+  return {
+    supplier: found.supplier.name, supplierRef: aiToolRef('supplier', found.supplier.id, found.supplier.name), pricesHidden: !prices,
+    leadTimeDays: leadTimes.length ? { shortest: Math.min(...leadTimes), longest: Math.max(...leadTimes), itemsWithLeadTime: leadTimes.length } : null,
+    ...aiToolList(rows, args.limit || SUPPLIER_ITEMS_DEFAULT),
+  }
+}
+
 const itemSuppliers = defineAiTool({
   name: 'item_suppliers',
-  description: 'An item\'s approved suppliers as its purchasing set-up records them, the preferred first: each with its lead time in days, minimum order quantity and reference price (hidden from users who may not see prices). Use it to compare suppliers of an item or to judge a switch; price_history gives what was actually paid, supplier_performance how each delivers.',
-  parameters: { sku: { type: 'string', description: 'The item\'s SKU.' } },
-  required: ['sku'],
+  description: 'An item\'s approved suppliers as its purchasing set-up records them, the preferred first: each with its lead time in days, minimum order quantity and reference price (hidden from users who may not see prices). Use it to compare suppliers of an item or to judge a switch; price_history gives what was actually paid, supplier_performance how each delivers. With supplier instead of sku: every item that supplier is an approved supplier of, with the same terms, for "what is the lead time from Acme" or "what do we buy from Acme".',
+  parameters: { sku: { type: 'string', description: 'The item\'s SKU.' }, supplier: { type: 'string', description: 'Instead of sku: a supplier name, code or id.' }, limit: { type: 'integer', minimum: 1, maximum: 50, description: 'With supplier: 20 items by default.' } },
   available: (facts, context) => Boolean(facts.inventory) && Array.isArray(facts.suppliers) && Boolean(context?.actor && context.prisma),
   assistantV2Only: true,
   async run(args, { facts, context }) {
+    if (!args.sku && args.supplier) return supplierItems(args, { facts, context })
+    if (!args.sku) return { error: 'invalid_arguments', detail: 'Give sku or supplier.' }
     const row = stockRow(facts, args.sku) || array(facts.inventory.masterOnly).find((entry) => fold(entry.sku) === fold(args.sku))
     if (!row || !text(row.itemId)) return { error: 'not_found' }
     const item = (await storedItems(context, [text(row.itemId)])).get(text(row.itemId))

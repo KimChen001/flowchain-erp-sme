@@ -200,6 +200,12 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     lastReceipt,
     waitingForApproval,
     supplierCount: plan.suppliers.length,
+    // Every item's SKU in the plan's order, and its unit price and minimum
+    // order by SKU, for the constraint cases' form checks (an object lists
+    // integer-like keys such as 16014 first, so pick from skus).
+    skus: plan.items.map((row) => row.sku),
+    prices: Object.fromEntries(plan.items.map((row) => [row.sku, row.price])),
+    minimums: Object.fromEntries(plan.items.map((row) => [row.sku, row.minimumOrderQuantity])),
     scene: plan.scene,
     holdingRate: UCI_HOLDING_RATE,
   }
