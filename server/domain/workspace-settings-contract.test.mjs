@@ -72,9 +72,9 @@ const serverSources = () => {
   return files.map(path => ({ path: relative(serverRoot, path).replaceAll('\\', '/'), source: readFileSync(path, 'utf8') }))
 }
 
-test('only the numbering prefixes, the four invoice matching tolerances, PO approval from an approved request, the AI switch and the document settings are read from the operational settings the UI edits', () => {
+test('only the numbering prefixes, the four invoice matching tolerances, PO approval from an approved request, the supplier email switch, the AI switch and the document settings are read from the operational settings the UI edits', () => {
   assert.deepEqual(REVIEW_TOLERANCE_FIELDS, ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance'])
-  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: ['prefix'], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
+  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: ['prefix'], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder', 'supplierFollowUpEmail'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
 
   const sources = serverSources()
   // Every server reader of tenant.operationalSettings. Document numbering reads the
@@ -95,6 +95,7 @@ test('only the numbering prefixes, the four invoice matching tolerances, PO appr
     'domain/workspace-settings-contract.mjs',
     'routes/settings-runtime.routes.mjs',
     'services/procurement-request-command-service.mjs',
+    'services/supplier-follow-up-email-service.mjs',
   ])
   // The assistant reads only the AI switch (ai-workspace-access.mjs).
   const access = sources.find(file => file.path === 'domain/ai-workspace-access.mjs').source
@@ -104,6 +105,9 @@ test('only the numbering prefixes, the four invoice matching tolerances, PO appr
   // Converting an approved purchase request reads only the PO approval switch (owner decision D3).
   const conversion = sources.find(file => file.path === 'services/procurement-request-command-service.mjs').source
   assert.deepEqual([...new Set([...conversion.matchAll(/review\.([A-Za-z]+)/g)].map(match => match[1]))], ['approvedRequestApprovesPurchaseOrder'])
+  // Emailing a supplier from Today reads only the supplier email switch (DD-9).
+  const supplierEmail = sources.find(file => file.path === 'services/supplier-follow-up-email-service.mjs').source
+  assert.deepEqual([...new Set([...supplierEmail.matchAll(/review\.([A-Za-z]+)/g)].map(match => match[1]))], ['supplierFollowUpEmail'])
 
   // Settings marked "Not in effect yet" have no reader anywhere on the server.
   for (const key of ['nextSequence', 'sequenceLength', 'amountThreshold', 'inventoryTolerancePercent', 'reviewerRoles', 'defaultModule', 'evidenceRequired', 'retainDays', 'sessionTimeoutMinutes', 'exportLimit', 'negativeInventoryBlocked', 'maintenanceNotice']) {

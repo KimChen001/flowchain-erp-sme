@@ -78,6 +78,35 @@ function attentionItemName(facts, item) {
   return text(row?.itemName) || null
 }
 
+// The late lines' total per SKU where they span more than one late order, so
+// an answer need not add them up itself (2026-11-09 on Flash, today's
+// priorities: "a call with Acme covers both of its late orders, 360 pcs of
+// 85123A in all", 120 + 240, flagged as a figure no tool gave). It follows
+// the list's focus: a supplier's orders, the SKUs of one order, or one SKU.
+const LATE_BY_SKU_LISTED = 10
+function lateLinesBySku(facts, focus) {
+  if (!Array.isArray(facts.purchaseOrders?.rows)) return []
+  const late = facts.purchaseOrders.rows.filter((po) => (po.overdueDays || 0) > 0 && (focus?.entityType !== 'supplier' || po.supplierId === focus.entityId))
+  const groups = new Map()
+  for (const po of late) {
+    for (const line of array(po.openLines)) {
+      const remaining = Number(line.remaining)
+      if (!text(line.sku) || !(remaining > 0)) continue
+      const key = `${fold(line.sku)}|${text(line.unit)}`
+      const group = groups.get(key) || { sku: text(line.sku), itemName: text(line.itemName) || null, unit: text(line.unit) || null, lateQuantity: 0, orders: [], suppliers: [] }
+      group.lateQuantity = Math.round((group.lateQuantity + remaining) * 1000) / 1000
+      if (!group.orders.includes(po.orderNumber)) group.orders.push(po.orderNumber)
+      if (po.supplier && !group.suppliers.includes(po.supplier)) group.suppliers.push(po.supplier)
+      groups.set(key, group)
+    }
+  }
+  return [...groups.values()]
+    .filter((group) => group.orders.length > 1)
+    .filter((group) => focus?.entityType !== 'purchase_order' || group.orders.includes(focus.label))
+    .filter((group) => focus?.entityType !== 'item' || fold(group.sku) === fold(focus.label))
+    .slice(0, LATE_BY_SKU_LISTED)
+}
+
 function attentionRow(facts, item, rank) {
   const data = isObject(item.data) ? { ...item.data, ...requestCoverOf(facts, item) } : {}
   const details = Object.fromEntries(ATTENTION_DETAILS
@@ -99,7 +128,7 @@ function attentionTypeCounts(items) {
 
 const attentionList = defineAiTool({
   name: 'attention_list',
-  description: 'What needs attention, ranked by date and never by a score. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it. byType counts the rows of each type in the whole list, also those past the limit: stock rows come last, so read byType (stock_below_safety, stock_below_reorder, stock_shortage) before saying nothing is short or below its levels, and ask again with types to list them. On a stock row, pendingRequests and covered count the open purchase requests in any status, drafts included.',
+  description: 'What needs attention, ranked by date and never by a score. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it. byType counts the rows of each type in the whole list, also those past the limit: stock rows come last, so read byType (stock_below_safety, stock_below_reorder, stock_shortage) before saying nothing is short or below its levels, and ask again with types to list them. On a stock row, pendingRequests and covered count the open purchase requests in any status, drafts included. lateLinesBySku gives, for a SKU on more than one late purchase order, the late lines\' total still to receive (lateQuantity) with those orders and their suppliers.',
   parameters: {
     kind: { type: 'string', enum: ['today', 'problems'], description: 'today by default.' },
     focus: { type: 'string', description: 'A purchase order number, a SKU, or a supplier name or code.' },
@@ -118,6 +147,7 @@ const attentionList = defineAiTool({
     const types = array(args.types).length ? new Set(args.types) : null
     const items = types ? result.items.filter((item) => types.has(item.type) || array(item.also).some((type) => types.has(type))) : result.items
     const limit = args.limit || 5
+    const lateBySku = lateLinesBySku(facts, focus)
     return {
       asOf: facts.asOf,
       kind,
@@ -132,6 +162,7 @@ const attentionList = defineAiTool({
       byType: attentionTypeCounts(items),
       // The window of po_due_7d, for "7 orders fall due within 7 days".
       dueSoonDays: DUE_SOON_DAYS,
+      ...(lateBySku.length ? { lateLinesBySku: lateBySku } : {}),
     }
   },
 })
@@ -292,6 +323,21 @@ async function recordedDemand(context, facts, items) {
 // What an item needs to cover a period: recorded daily demand over the
 // supplier's lead time and the days to cover after the order arrives, plus
 // safety stock. null without enough recorded demand.
+// Whether the user's words name a period of stock to order for: "2 weeks",
+// "a month's worth", "for the next two weeks", 两周的量, 一个月, 下个月的量,
+// 够卖到月底. "This week", 这周 and 本周 say when, so they do not.
+const COVER_PERIOD = [
+  /\d+\s*-?\s*(?:days?|weeks?|wks?|months?|mos?)\b/i,
+  /\b(?:a|one|two|three|four|five|six|eight|ten|twelve|a\s+couple\s+of|a\s+few|several)\s+(?:days?|weeks?|months?|quarters?)\b/i,
+  /\b(?:week|month|quarter|year)(?:'s|s')\s+(?:worth|supply|stock|demand|sales)\b/i,
+  /\b(?:for|cover(?:ing)?|enough\s+for|to\s+last|through|until\s+the\s+end\s+of)\s+(?:the\s+)?(?:next|coming|rest\s+of\s+the)\s+(?:\w+\s+)?(?:days?|weeks?|month|quarter|year)\b/i,
+  /\b(?:until|through|to)\s+(?:the\s+)?end\s+of\s+(?:the\s+)?(?:week|month|quarter|year)\b/i,
+  /[\d一二两三四五六七八九十半几]+\s*(?:个)?\s*(?:天|日|周|星期|礼拜|月|季度)/,
+  /下(?:个)?(?:周|星期|礼拜|月|季度)的?(?:量|用量|需求|销量|库存)/,
+  /(?:够|撑)(?:用|卖|到)|到(?:月底|月末|年底|季度末)/,
+]
+export const namesCoverPeriod = (value) => COVER_PERIOD.some((pattern) => pattern.test(String(value || '')))
+
 const coverTargetOf = (row, rate, lead, coverDays) => (rate === null || !coverDays ? null : Math.ceil(rate * ((lead ?? 0) + coverDays) + Math.max(0, Number(row.safetyStock) || 0)))
 const COVER_SOURCE = Object.freeze({ [PURCHASE_SUGGESTION_SOURCES.reorderGap]: PURCHASE_SUGGESTION_SOURCES.coverDays, [PURCHASE_SUGGESTION_SOURCES.raisedToMoq]: PURCHASE_SUGGESTION_SOURCES.coverDaysRaisedToMoq })
 // The shared quantity rule with the cover target in place of the reorder
@@ -324,7 +370,7 @@ const suggestPurchaseLines = defineAiTool({
   parameters: {
     skus: { type: 'array', items: { type: 'string' }, maxItems: AI_TOOL_LIMITS.items, description: 'The SKUs the user named.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_SUGGESTED, description: `How many items to suggest when none is named, ${MAX_SUGGESTED} by default.` },
-    coverDays: { type: 'integer', minimum: 1, maximum: COVER_DAYS_MAX, description: 'Size each line to cover this many days after the order arrives, when the user asks to order for a period ("what we need for the next 2 weeks", 一个月的量): target = average daily demand (posted shipments over the last 90 days) × (lead time + coverDays) + safety stock. Without names, any stocked item that falls short of it is suggested. Each row\'s cover gives the basis; an item without enough shipment history keeps the reorder point quantity (cover.basis says so).' },
+    coverDays: { type: 'integer', minimum: 1, maximum: COVER_DAYS_MAX, description: 'Size each line to cover this many days after the order arrives, when the user asks to order for a period ("what we need for the next 2 weeks", 一个月的量): target = average daily demand (posted shipments over the last 90 days) × (lead time + coverDays) + safety stock. Without names, any stocked item that falls short of it is suggested. Each row\'s cover gives the basis; an item without enough shipment history keeps the reorder point quantity (cover.basis says so). "This week" or 这周 says when to order, not a period: leave coverDays out.' },
   },
   available: (facts, context) => Boolean(facts.inventory) && Boolean(context?.actor && context.prisma),
   assistantV2Only: true,
@@ -333,7 +379,13 @@ const suggestPurchaseLines = defineAiTool({
     // a reader of requests never gets suggestions that ignore them.
     if (facts.purchaseRequests && !openRequestsRead(facts)) return { error: 'open_purchase_requests_not_read' }
     const named = array(args.skus).length > 0
-    const coverDays = Number.isInteger(args.coverDays) && args.coverDays >= 1 && args.coverDays <= COVER_DAYS_MAX ? args.coverDays : null
+    const asked = Number.isInteger(args.coverDays) && args.coverDays >= 1 && args.coverDays <= COVER_DAYS_MAX ? args.coverDays : null
+    // A period to cover comes from the user's questions: "this week" says
+    // when (2026-11-09 on Flash: "这周需要补什么货" sized the cakestand at 72,
+    // 7 days of cover, where the reorder list says its minimum order of 60).
+    // Without the questions (another caller), the argument stands.
+    const periodLeftOut = asked !== null && typeof context?.question === 'string' && !namesCoverPeriod(context.question)
+    const coverDays = periodLeftOut ? null : asked
     let rows = []
     if (named) {
       for (const sku of args.skus) {
@@ -437,6 +489,7 @@ const suggestPurchaseLines = defineAiTool({
       today: facts.today,
       from: named ? 'named' : 'suggestions',
       ...(coverDays ? { coverDays } : {}),
+      ...(periodLeftOut ? { coverDaysLeftOut: 'The questions name no period to cover, so each line is sized to the reorder point, as the reorder list does.' } : {}),
       pricesHidden: !prices,
       suppliersHidden: !suppliersVisible,
       purchaseRequestsRead: openRequestsRead(facts),

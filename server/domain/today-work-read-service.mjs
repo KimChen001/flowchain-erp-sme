@@ -47,7 +47,7 @@ const FINANCE_LIMIT = 100
 const decimal = (value) => (value === null || value === undefined ? null : String(value))
 const iso = (value) => (value instanceof Date ? value.toISOString() : value ? String(value) : null)
 
-async function databaseClient(ctx) {
+export async function databaseClient(ctx) {
   if (ctx.homeOverviewPrisma) return ctx.homeOverviewPrisma
   if (ctx.inventoryPrisma) return ctx.inventoryPrisma
   const env = ctx.env || process.env

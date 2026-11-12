@@ -19,7 +19,7 @@ export const ANSWER_LANGUAGES = Object.freeze(['en-US', 'zh-CN'])
 export const PROGRESS_STEPS = Object.freeze(['reading', 'writing', 'checking'])
 export const TOOL_STATES = Object.freeze(['running', 'done', 'error'])
 export const FLAG_KINDS = Object.freeze(['number', 'date', 'name', 'record'])
-export const REPLACE_CODES = Object.freeze(['unbacked_action_claim', 'foreign_record', 'hidden_value'])
+export const REPLACE_CODES = Object.freeze(['unbacked_action_claim', 'foreign_record', 'hidden_value', 'item_name', 'narration', 'record_label'])
 // ai_off: the workspace has not switched AI on; no_provider: no model is set
 // up on this server. Assistant v2 answers every question; when it cannot, a
 // notice says why (owner direction 2026-11-05: no rules answer behind it).

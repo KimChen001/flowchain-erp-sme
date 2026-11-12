@@ -776,6 +776,7 @@ export function createScmServer({
     sessionStore,
     emailLinks,
     approvalNotifier,
+    mailer: sharedMailer,
     localSessionSecret,
     errorReporter,
     domain: {
