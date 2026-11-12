@@ -64,7 +64,9 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
       <div className="flex items-start gap-2.5">
         <Database aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-sky-700" />
         <div className="min-w-0 flex-1">
-          <p>
+          {/* On a phone the summary keeps to two lines until opened, so the
+              page's own content starts on the first screen. */}
+          <p className={open ? undefined : "line-clamp-2 sm:line-clamp-none"} data-testid="public-data-note-summary">
             <span className="font-semibold text-slate-900">{t("publicData.title")}</span>
             <span className="mx-1.5 text-slate-400" aria-hidden="true">·</span>
             {summary}

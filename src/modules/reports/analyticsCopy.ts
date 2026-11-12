@@ -135,6 +135,15 @@ const chinese: Record<string, string> = {
   'Deliveries on time against the date on the PO. Bubble size is the number of deliveries measured. The guides are the median spend and the average on-time rate.': '按采购订单日期计算交付准时率。气泡大小表示计量的交付次数。参考线为采购额中位数和平均准时率。',
   'Committed purchase orders by supplier': '按供应商统计已承诺采购订单', 'Committed purchase orders in range (approved, issued or received), counted per supplier.': '当前范围内已承诺（已批准、已下达或已收货）的采购订单，按供应商计数。',
   'All purchase orders in range, every status.': '当前范围内全部状态的采购订单。',
+  // The business overview: one figure and one chart per area (round 8).
+  'Low-stock SKUs': '库存偏低 SKU',
+  'SKUs out of stock, below safety stock, or at or below the reorder point once incoming purchase orders and open demand are counted: the stock statuses other than in stock and unknown.': '缺货、低于安全库存，或计入在途采购订单和未履约需求后不高于再订货点的 SKU，即库存状态为“库存正常”和“未知”以外的 SKU。',
+  'Purchases and sales by month': '每月采购与销售金额',
+  'Committed purchase orders and confirmed sales orders in range, by order date. The two are shown side by side, never added.': '当前范围内的已承诺采购订单和已确认销售订单，按订单日期统计。两者并列显示，不相加。',
+  'SKUs by stock status': '按库存状态统计 SKU',
+  'Every SKU with stock, open demand or incoming orders, by its stock status today.': '每个有库存、未履约需求或在途订单的 SKU，按其当前库存状态统计。',
+  'Your role cannot view purchase orders.': '你的角色无权查看采购订单。', 'Your role cannot view sales orders.': '你的角色无权查看销售订单。',
+  'Your role cannot view inventory.': '你的角色无权查看库存。', 'Your role cannot view these records.': '你的角色无权查看这些记录。',
   'Purchase and sales orders in range by order date, every status, drafts included.': '当前范围内的采购订单和销售订单，按订单日期统计，包含草稿在内的全部状态。',
   // Visual cards, insights and date ranges.
   'Focus mode': '聚焦模式', 'Close focus mode': '退出聚焦模式', 'Show data': '查看数据', 'Show chart': '查看图表', 'Download image': '下载图片', 'Download CSV': '下载 CSV',

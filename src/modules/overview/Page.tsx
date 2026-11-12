@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ArrowRight, CheckCircle2, Circle, RefreshCw } from "lucide-react";
+import { AlarmClock, ArrowRight, CheckCircle2, Circle, FileClock, ListChecks, RefreshCw } from "lucide-react";
 import { A, Card } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
@@ -93,6 +93,18 @@ const PHONE_TAP = "max-sm:inline-flex max-sm:min-h-9 max-sm:items-center";
 // An approved supplier invoice still to pay is in progress (blue); the
 // shared tones do not know the code.
 const documentTone = (status: string) => (status === "to_pay" ? "info" : statusToneOf(status));
+
+// The value of a Today tile, at the KPI size of the list pages' cards from a
+// tablet up and a step smaller three to a row on a phone.
+const TILE_VALUE = "text-xl font-semibold leading-7 tabular-nums sm:text-2xl";
+
+function TileIcon({ icon: Icon, color }: { icon: ElementType; color: string }) {
+  return (
+    <span aria-hidden className="mb-3 hidden h-8 w-8 items-center justify-center rounded-lg sm:flex" style={{ background: `${color}12`, color }}>
+      <Icon size={15} strokeWidth={1.8} />
+    </span>
+  );
+}
 
 export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi, onReviewActionDraft }: { initialView?: string; onNavigate: Navigate; onOpenAi: () => void; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void }) {
   if (initialView === "ai") return <AiSuggestionsPage onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} onOpenAi={onOpenAi} />;
@@ -224,8 +236,8 @@ function RuntimeHomepage() {
   if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("contracts") ? "sourceContracts" : code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
 
   const tiles = [
-    { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: overview?.workTotal ?? 0 },
-    { id: "overdue" as const, label: t("tileOverdue"), note: t("tileOverdueNote"), value: overview?.overdue ?? 0 },
+    { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: overview?.workTotal ?? 0, icon: ListChecks, color: A.blue },
+    { id: "overdue" as const, label: t("tileOverdue"), note: t("tileOverdueNote"), value: overview?.overdue ?? 0, icon: AlarmClock, color: A.red },
   ];
   // Under the count of documents changed today: when the last change was, from
   // the newest recent document (the same documents the count reads), never
@@ -240,10 +252,10 @@ function RuntimeHomepage() {
         ? t("changesNoneLast", { date: day(lastChangeDay) })
         : t("changesNone");
 
-  // The tiles read like the cards on top of every list page, white and
-  // full-width; the two counts filter the list below. On a phone the three
-  // sit in one short row without their notes, so the first task shows on the
-  // first screen.
+  // The tiles read like the cards on top of every list page
+  // (ActionableMetricCard): icon, count, label, note. The two counts filter the
+  // list below. On a phone the three sit in one short row without icons or
+  // notes, so the first task shows on the first screen.
   const tileClass = "flex min-w-0 flex-col items-start justify-start rounded-xl border bg-white p-3 text-left sm:p-4";
   const tileStyle = { borderColor: A.border, boxShadow: "0 1px 2px rgba(15,23,42,0.04)" };
 
@@ -279,15 +291,17 @@ function RuntimeHomepage() {
             style={{ ...tileStyle, background: filter === tile.id && !kindFilter ? "#f0f6ff" : A.white, borderColor: filter === tile.id && !kindFilter ? "#bfdbfe" : A.border }}
             data-testid={`today-tile-${tile.id}`}
           >
-            <div className="text-xs" style={{ color: A.sub }}>{tile.label}</div>
-            <div className="mt-1 text-xl font-semibold sm:text-2xl">{tile.value}</div>
-            <div className="mt-1 hidden text-xs sm:block" style={{ color: A.gray2 }}>{tile.note}</div>
+            <TileIcon icon={tile.icon} color={tile.color} />
+            <div className={TILE_VALUE}>{tile.value}</div>
+            <div className="fc-label mt-0.5" style={{ color: A.sub }}>{tile.label}</div>
+            <div className="fc-caption mt-1 hidden sm:block" style={{ color: A.gray2 }}>{tile.note}</div>
           </button>
         ))}
         <div className={tileClass} style={tileStyle} data-testid="today-tile-changes" title={today ? t("changesNote", { date: day(today) }) : undefined}>
-          <div className="text-xs" style={{ color: A.sub }}>{t("tileChanges")}</div>
-          <div className="mt-1 text-xl font-semibold sm:text-2xl">{overview?.todayChanges ?? 0}</div>
-          {changesSub ? <div className="mt-1 hidden text-xs sm:block" style={{ color: A.gray2 }} data-testid="today-tile-changes-note">{changesSub}</div> : null}
+          <TileIcon icon={FileClock} color={A.purple} />
+          <div className={TILE_VALUE}>{overview?.todayChanges ?? 0}</div>
+          <div className="fc-label mt-0.5" style={{ color: A.sub }}>{t("tileChanges")}</div>
+          {changesSub ? <div className="fc-caption mt-1 hidden sm:block" style={{ color: A.gray2 }} data-testid="today-tile-changes-note">{changesSub}</div> : null}
         </div>
       </div>
 

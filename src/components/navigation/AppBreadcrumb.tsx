@@ -37,8 +37,13 @@ export function AppBreadcrumb({ route }: { route: AppRouteDefinition }) {
       return null;
     }
   };
+  // A one-step trail (Today on Today) only repeats the page's tab and title
+  // below it, so a top-level page shows none.
+  if (items.length < 2) return null;
   return (
-    <nav aria-label={t("breadcrumb")} className="fc-breadcrumb" data-testid="app-breadcrumb">
+    // On a phone a list page's trail repeats its tab and title, so only a
+    // record's page, where it leads back to the list, keeps it there.
+    <nav aria-label={t("breadcrumb")} className={`fc-breadcrumb ${route.pageType === "detail" ? "" : "max-sm:hidden"}`} data-testid="app-breadcrumb">
       {items.map((item, index) => {
         const current = index === items.length - 1;
         const href = current ? null : crumbHref(item);

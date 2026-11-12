@@ -434,9 +434,27 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
 
   await page.goto("/app/finance/overview");
   await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
+  // The overview shows the money first, one amount per currency and never
+  // added together: CNY 52 less the 25 credit plus the 12.50 invoice, and
+  // USD 25, all owed and all overdue.
+  const overviewCards = page.getByTestId("finance-overview-cards");
+  const owedTile = overviewCards.getByRole("link", { name: /^(应收未收|Owed to us):/ });
+  await expect(owedTile).toContainText("39.50");
+  await expect(owedTile).toContainText("25.00");
+  await expect(owedTile).toContainText(/3 张发票已开具|3 invoices issued/);
+  const overdueTile = overviewCards.getByRole("link", { name: /^(逾期应收款|Overdue receivables):/ });
+  await expect(overdueTile).toContainText("39.50");
+  await expect(overdueTile).toContainText("25.00");
+  // The aging strip: due 2026-07-10, so every receivable is over 90 days
+  // past due, and each bucket opens the aging page for its currency.
+  const agingStrip = page.getByTestId("finance-aging-receivables");
+  await expect(agingStrip.getByTestId("finance-aging-receivables-CNY-90_plus")).toContainText("39.50");
+  await expect(agingStrip.getByTestId("finance-aging-receivables-USD-90_plus")).toContainText("25.00");
+  await expect(agingStrip.getByTestId("finance-aging-receivables-USD-90_plus")).toHaveAttribute("href", "/app/finance/aging?currency=USD");
+  await expect(page.getByTestId("finance-aging-payables")).toContainText("CNY");
   // Every receivable here is past its 2026-07-10 due date, so the overdue
   // card's link must list them although none has the stored status overdue.
-  await page.getByRole("link", { name: /逾期应收款|Overdue receivables/ }).click();
+  await overdueTile.click();
   await expect(page).toHaveURL(/\/app\/finance\/receivables\?status=overdue$/);
   const receivables = page.getByTestId("receivables-workbench");
   for (const number of [cnyNumber, usdNumber, uiNumber])
@@ -466,14 +484,18 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
   // One notice, and the cards are router links to the lists they count.
   await expect(page.getByTestId("finance-overview-notice")).toContainText(/应付款和应收款记录的是欠款|Payables and receivables record what is owed/);
-  await expect(page.getByTestId("finance-overview-cards").getByRole("link")).toHaveCount(8);
+  // Four money and decision tiles, and five quieter ones shown even at 0.
+  await expect(page.getByTestId("finance-overview-cards").getByRole("link")).toHaveCount(4);
+  await expect(page.getByTestId("finance-overview-secondary").getByRole("link")).toHaveCount(5);
+  await expect(page.getByTestId("finance-overview-secondary").getByRole("link", { name: /^(有争议的应收款|Disputed receivables): 0,/ })).toBeVisible();
   await expect(page.getByText("应付款不代表已付款。")).toHaveCount(0);
-  await page.getByTestId("finance-overview-cards").getByRole("link", { name: /已批准应付款|Approved supplier invoices to pay/ }).click();
+  await page.getByTestId("finance-overview-cards").getByRole("link", { name: /^(待付款|To pay):/ }).click();
   await expect(page).toHaveURL(/\/app\/finance\/payables\?status=outstanding$/);
   await expect(page.getByTestId("operational-finance-payable-list")).toContainText("AP-BROWSER-EXACT");
   await page.goto("/app/finance/overview");
+  // The currency card is one line now.
   await expect(page.getByTestId("finance-currency-limitation")).toContainText(
-    "多币种，未折算",
+    /金额按币种分别列示|Amounts per currency/,
   );
   await expect(page.getByTestId("finance-currency-limitation")).toContainText(
     "CNY",
@@ -545,6 +567,17 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
     viewerPage.getByRole("link", { name: "New customer invoice" }),
   ).toHaveAttribute("aria-disabled", "true");
   await viewerPage.goto("/app/finance/overview");
+  // The viewer reads receivables and payables but not their amounts: the
+  // counts stay, each tile says its amount is hidden, and the aging bar
+  // counts invoices. No amount reaches the page.
+  const viewerLanding = viewerPage.getByTestId("operational-finance-landing");
+  const viewerOwed = viewerLanding.getByTestId("finance-overview-cards").getByRole("link", { name: /^(应收未收|Owed to us):/ });
+  await expect(viewerOwed).toContainText("3");
+  await expect(viewerOwed).toContainText(/当前角色无权查看金额|amount hidden for your role/);
+  await expect(viewerLanding.getByTestId("finance-aging-receivables")).toContainText(/当前角色无权查看金额|Amounts hidden for your role/);
+  await expect(viewerLanding.getByTestId("finance-aging-receivables-CNY-90_plus")).toContainText("2");
+  await expect(viewerLanding).not.toContainText("39.50");
+  await expect(viewerLanding).not.toContainText("25.00");
   const financeTabs = viewerPage.getByTestId("module-subnav");
   await expect(
     financeTabs.getByRole("link", { name: "Overview", exact: true }),

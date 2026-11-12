@@ -68,8 +68,9 @@ test('without the database totals, sales figures count the orders read and the n
 
 test('the overview counts every sales order by month, and needs no sales note when the totals are whole', () => {
   const report = buildRuntimeGovernedReport(context({ salesOrders: latest, salesOrderGroups: groups, truncatedSubjects: [truncatedSales, { subject: 'purchase_orders', limit: 500 }] }), { subject: 'overview' }, { now, timeZone: 'Europe/London' })
-  assert.equal(kpi(report, 'sales_order_count').currentValue, 1000)
+  assert.equal(kpi(report, 'sales_order_amount').currentValue, 10010)
   assert.deepEqual(chart(report, 'overview_activity').data.map(row => [row.name, row['Sales orders']]), [['2025-11', 600], ['2026-10', 1], ['2026-11', 399]])
+  assert.deepEqual(chart(report, 'overview_purchases_and_sales').data.map(row => [row.name, row['Sales order amount']]), [['2025-11', 6000], ['2026-10', 20], ['2026-11', 3990]])
   assert.deepEqual(report.truncatedSubjects, [{ subject: 'purchase_orders', limit: 500 }])
 })
 
@@ -81,6 +82,8 @@ test('a cut-off subject is named only on the dashboards whose figures read it', 
   assert.deepEqual(named('procurement'), ['purchase_orders', 'receipts', 'supplier_invoices'])
   assert.deepEqual(named('suppliers'), ['purchase_orders', 'receipts', 'supplier_invoices', 'suppliers'])
   assert.deepEqual(named('inventory'), ['inventory_items', 'items', 'purchase_orders', 'sales_orders'])
+  // The overview reads no receipts since round 8 (one figure per area).
+  assert.deepEqual(named('overview'), ['inventory_items', 'items', 'purchase_orders', 'sales_orders', 'supplier_invoices'])
   for (const subject of ['overview', 'procurement', 'sales', 'inventory', 'finance', 'suppliers']) {
     assert.ok(!named(subject).includes('customers'), subject)
     assert.ok(!named(subject).includes('rfqs'), subject)
@@ -116,7 +119,7 @@ test('the running month is marked on monthly charts and left out of KPI sparklin
   assert.deepEqual(chart(report, 'procurement_spend_trend').partialPeriods, [{ period: '2026-11', reason: 'to_date' }])
   assert.deepEqual(kpi(report, 'purchase_order_amount').trend, [{ period: '2026-09', value: 100 }, { period: '2026-10', value: 120 }])
   const overview = buildRuntimeGovernedReport(data, { subject: 'overview' }, { now, timeZone: 'UTC' })
-  assert.deepEqual(chart(overview, 'overview_spend_trend').partialPeriods, [{ period: '2026-11', reason: 'to_date' }])
+  assert.deepEqual(chart(overview, 'overview_purchases_and_sales').partialPeriods, [{ period: '2026-11', reason: 'to_date' }])
   assert.deepEqual(chart(overview, 'overview_activity').partialPeriods, [{ period: '2026-11', reason: 'to_date' }])
   // A past range ending on a month's last day has no partial month.
   const past = buildRuntimeGovernedReport(data, { subject: 'procurement', filters: { from: '2026-09-01', to: '2026-10-31' } }, { now, timeZone: 'UTC' })
@@ -223,9 +226,14 @@ test('a key finding says when suppliers tie for the highest or lowest on-time sh
 test('the last-month finding skips the month to date, and customer shares wait for whole sales figures', async () => {
   const { reportInsights } = await import('../../src/modules/reports/reportInsights.ts')
   const format = (value, unit) => unit === 'currency' ? `$${value}` : unit === 'percentage' ? `${value}%` : String(value)
-  const overview = { kpis: [], dataScope: { currencyCode: 'USD' }, truncatedSubjects: [], charts: [{ id: 'overview_spend_trend', type: 'combo', unit: 'currency', currencyCode: 'USD', title: '', drilldownPath: '/x', data: [{ name: '2026-10', 'Committed amount': 4000, 'Purchase orders': 21 }, { name: '2026-11', 'Committed amount': 900, 'Purchase orders': 7 }], partialPeriods: [{ period: '2026-11', reason: 'to_date' }] }] }
-  const last = reportInsights('overview', overview, { language: 'en-US', format, category: (_chart, name) => name }).find(item => item.id === 'overview_last_month')
-  assert.equal(last.text, '2026-10: $4000 committed across 21 purchase orders.')
+  const money = { id: 'overview_purchases_and_sales', type: 'bar', unit: 'currency', currencyCode: 'USD', title: '', drilldownPath: '/x', seriesKeys: ['Committed PO amount', 'Sales order amount'], data: [{ name: '2026-10', 'Committed PO amount': 4000, 'Sales order amount': 5200 }, { name: '2026-11', 'Committed PO amount': 900, 'Sales order amount': 300 }], partialPeriods: [{ period: '2026-11', reason: 'to_date' }] }
+  const overview = (truncatedSubjects = []) => ({ kpis: [], dataScope: { currencyCode: 'USD' }, truncatedSubjects, charts: [money] })
+  const last = (report, language = 'en-US') => reportInsights('overview', report, { language, format, category: (_chart, name) => name }).find(item => item.id === 'overview_last_month')
+  assert.equal(last(overview()).text, '2026-10, the last whole month: $5200 in sales orders and $4000 in committed purchases.')
+  assert.equal(last(overview()).figure, '$5200')
+  assert.equal(last(overview(), 'zh-CN').text, '2026-10（最近一个完整月份）：销售订单 $5200，已承诺采购 $4000。')
+  // Sales counted from only the latest orders read are left out of the finding.
+  assert.equal(last(overview([{ subject: 'sales_orders', limit: 500 }])).text, '2026-10, the last whole month: $4000 in committed purchases.')
   const pareto = { id: 'sales_customer_pareto', type: 'pareto', unit: 'currency', title: '', drilldownPath: '/x', data: [{ name: 'Customer 14096', value: 10, filterValue: 'Customer 14096', 'Cumulative share': 11.1 }] }
   const sales = (truncatedSubjects) => reportInsights('sales', { kpis: [], dataScope: { currencyCode: 'GBP' }, truncatedSubjects, charts: [pareto] }, { language: 'en-US', format, category: (_chart, name) => name }).map(item => item.id)
   assert.deepEqual(sales([{ subject: 'sales_orders', limit: 500 }]), [])

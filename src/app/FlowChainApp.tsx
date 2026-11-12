@@ -12,7 +12,6 @@ import {
   Settings,
   User,
   Activity,
-  Sparkles,
   Loader2,
   ShieldCheck,
   ShieldAlert,
@@ -1387,25 +1386,8 @@ export default function FlowChainApp() {
             );
           })}
         </nav>
-
-        <div
-          className={rail ? "space-y-1 p-2 xl:p-3" : "space-y-1 p-3"}
-          style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
-        >
-          <button
-            type="button"
-            title={rail ? t("nav.ai") : undefined}
-            onClick={() => {
-              setMobileNavOpen(false);
-              setAiOpenSignal(Date.now());
-            }}
-            className={`w-full flex items-center gap-2.5 rounded-md py-2 text-sm font-medium transition-colors duration-150 ${rail ? "justify-center px-0 xl:justify-start xl:px-2.5" : "px-2.5"}`}
-            style={{ background: "transparent", color: A.sidebarSub }}
-          >
-            <Sparkles size={rail ? 17 : 15} className="shrink-0" strokeWidth={1.8} />
-            <span className={label}>{t("nav.ai")}</span>
-          </button>
-        </div>
+        {/* The assistant opens from its own button at the bottom right of
+            every page, so the sidebar carries no second entry to it. */}
       </>
     );
   }

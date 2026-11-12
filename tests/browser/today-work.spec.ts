@@ -59,9 +59,9 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
   await expect(list).toBeVisible();
   await expect(root.getByTestId("first-run-checklist")).toHaveCount(0);
   // The tiles count the rows; no "Assigned to me" or unconnected risk tile.
-  await expect(root.getByTestId("today-tile-all")).toContainText(`Needs action${overview.workTotal}`);
-  await expect(root.getByTestId("today-tile-overdue")).toContainText(`Overdue${overview.overdue}`);
-  await expect(root.getByTestId("today-tile-changes")).toContainText(`Documents updated today${overview.todayChanges}`);
+  await expect(root.getByTestId("today-tile-all")).toContainText(`${overview.workTotal}Needs action`);
+  await expect(root.getByTestId("today-tile-overdue")).toContainText(`${overview.overdue}Overdue`);
+  await expect(root.getByTestId("today-tile-changes")).toContainText(`${overview.todayChanges}Documents updated today`);
   await expect(root).not.toContainText(/Assigned to me|Risk exceptions|Changes today|No work items/);
   // The page is named as the sidebar names it.
   await expect(page.getByTestId("page-title")).toHaveText("Today");
@@ -159,7 +159,7 @@ test("Today stays in Chinese for a Chinese reader, with the same rows", async ({
   await page.goto("/app/overview/risks");
   const root = page.getByTestId("runtime-homepage");
   await expect(root.getByText("今日需处理", { exact: true })).toBeVisible();
-  await expect(root.getByTestId("today-tile-all")).toContainText(`待处理${overview.workTotal}`);
+  await expect(root.getByTestId("today-tile-all")).toContainText(`${overview.workTotal}待处理`);
   await expect(root.getByTestId("today-tile-changes")).toContainText("今日更新的单据");
   await expect(root.getByTestId("today-work-item").first()).toContainText(CJK);
   // Every kind of work is among the first rows, the sales order too.

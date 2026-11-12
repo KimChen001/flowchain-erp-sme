@@ -477,9 +477,12 @@ test('KPI sparklines need two dated months and a single currency', () => {
   assert.equal(kpi(buildRuntimeGovernedReport(procurementContext(), { subject: 'procurement' }), 'purchase_order_amount').trend, null)
 })
 
-test('the overview keeps its first three charts and adds spend and lifecycle visuals', () => {
+test('the overview shows purchases and sales, stock, activity and suppliers, not the procurement charts again', () => {
+  // Round 8: the spend trend, lifecycle and status donut are Procurement analytics' own.
   const report = buildRuntimeGovernedReport(procurementContext(), { subject: 'overview' })
-  assert.deepEqual(report.charts.map(item => item.id), ['overview_activity', 'overview_status', 'overview_suppliers', 'overview_spend_trend', 'overview_lifecycle'])
+  assert.deepEqual(report.charts.map(item => item.id), ['overview_purchases_and_sales', 'overview_stock_status', 'overview_activity', 'overview_suppliers'])
+  // The inventory tab's stock status donut is built by the same builder.
+  assert.deepEqual(chart(report, 'overview_stock_status').data, chart(buildRuntimeGovernedReport(procurementContext(), { subject: 'inventory' }), 'inventory_stock_status').data)
 })
 
 test('report days follow the workspace timezone around midnight', () => {

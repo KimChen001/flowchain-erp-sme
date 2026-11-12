@@ -136,7 +136,28 @@ function salesOrderHomeStatus(row) {
 }
 
 const instant = value => { const parsed = Date.parse(value); return Number.isFinite(parsed) ? parsed : 0 }
-export const RECENT_DOCUMENTS = 10
+export const RECENT_DOCUMENTS = 8
+// At most this many rows of one document type while other types have recent
+// documents too, so a day of seeded invoices does not fill the whole list.
+export const RECENT_DOCUMENTS_PER_TYPE = 3
+
+// The latest changed documents, newest first, with no type taking more than
+// RECENT_DOCUMENTS_PER_TYPE rows while another type has rows to show; rows of
+// a type are always its newest. Fewer types than that fill up from the rest.
+export function pickRecentDocuments(documents, { limit = RECENT_DOCUMENTS, perType = RECENT_DOCUMENTS_PER_TYPE } = {}) {
+  const order = (a, b) => instant(b.updatedAt) - instant(a.updatedAt) || a.type.localeCompare(b.type) || String(a.id).localeCompare(String(b.id))
+  const sorted = [...documents].sort(order)
+  const picked = []
+  const skipped = []
+  const perTypeCount = new Map()
+  for (const row of sorted) {
+    if (picked.length >= limit) break
+    const count = perTypeCount.get(row.type) || 0
+    if (count < perType) { picked.push(row); perTypeCount.set(row.type, count + 1) } else skipped.push(row)
+  }
+  for (const row of skipped) { if (picked.length >= limit) break; picked.push(row) }
+  return picked.sort(order)
+}
 
 // The home page (GET /api/home/overview) from the reader's scoped context and
 // the sources the route reads for it (server/domain/today-work-read-service.mjs):
@@ -147,7 +168,8 @@ export const RECENT_DOCUMENTS = 10
 //   todayChanges     how many documents the reader can open were last changed
 //                    on the workspace day; the audit log is not counted (see
 //                    countDocumentsUpdatedToday);
-//   recentDocuments  the latest changed documents of every type, with the
+//   recentDocuments  the latest changed documents of every type (no more than
+//                    three of one type while others have some), with the
 //                    instant of the change;
 //   firstRun         the first-day checklist while any step is open.
 export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, sources = {}, setup = null, setupOptions = {}, hidden = [], limitations = [] } = {}) {
@@ -165,9 +187,7 @@ export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAUL
   }, { now, timeZone })
   const documents = homeDocuments(context, sources.recentCustomerInvoices, sources.billPayableStatuses)
   const todayChanges = countDocumentsUpdatedToday(documents, { now, timeZone })
-  const recentDocuments = [...documents]
-    .sort((a, b) => instant(b.updatedAt) - instant(a.updatedAt) || a.type.localeCompare(b.type) || String(a.id).localeCompare(String(b.id)))
-    .slice(0, RECENT_DOCUMENTS)
+  const recentDocuments = pickRecentDocuments(documents)
   // A reader of only some warehouses gets the reorder list's items as not
   // checked, so Today names that instead of showing no stock to reorder.
   const reorderScoped = sources.reorder?.scope?.kind === 'reader_warehouses'

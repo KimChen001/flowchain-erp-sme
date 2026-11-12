@@ -238,6 +238,41 @@ export function agingBucket(days) {
   return "90_plus";
 }
 
+export const AGING_BUCKETS = Object.freeze(["current", "1_30", "31_60", "61_90", "90_plus"]);
+// The finance landing's "due soon" window for payables: due today or within
+// this many days.
+export const LANDING_DUE_SOON_DAYS = 7;
+
+// Money still owed, by currency and aging bucket, in 1/10000 units: what the
+// aging page totals and the finance landing's aging strip shows. Rows carry
+// currency, dueDate and outstandingAmount (receivables or payables); currencies
+// are never added together.
+export function ageByCurrency(rows, asOf, timezone) {
+  const groups = new Map();
+  for (const row of rows) {
+    const bucket = agingBucket(agingDays(row.dueDate, asOf, timezone));
+    const group =
+      groups.get(row.currency) || {
+        currency: row.currency,
+        current: 0n,
+        "1_30": 0n,
+        "31_60": 0n,
+        "61_90": 0n,
+        "90_plus": 0n,
+        total: 0n,
+        count: 0,
+        counts: Object.fromEntries(AGING_BUCKETS.map((key) => [key, 0])),
+      };
+    const amount = units(row.outstandingAmount);
+    group[bucket] += amount;
+    group.total += amount;
+    group.count += 1;
+    group.counts[bucket] += 1;
+    groups.set(row.currency, group);
+  }
+  return groups;
+}
+
 // An overdue receivable is past its due date with money still owed. The stored
 // status says "overdue" only after a dispute is resolved, so overdue is derived
 // from the due date instead. The landing count and the receivables list's
@@ -512,26 +547,7 @@ export function createOperationalFinanceO2cReadService({
       include: { customerInvoice: true },
       orderBy: [{ currency: "asc" }, { dueDate: "asc" }, { id: "asc" }],
     });
-    const groups = new Map();
-    for (const row of rows) {
-      const bucket = agingBucket(agingDays(row.dueDate, asOf, timezone));
-      const group =
-        groups.get(row.currency) || {
-          currency: row.currency,
-          current: 0n,
-          "1_30": 0n,
-          "31_60": 0n,
-          "61_90": 0n,
-          "90_plus": 0n,
-          total: 0n,
-          count: 0,
-        };
-      const amount = units(row.outstandingAmount);
-      group[bucket] += amount;
-      group.total += amount;
-      group.count += 1;
-      groups.set(row.currency, group);
-    }
+    const groups = ageByCurrency(rows, asOf, timezone);
     const currencies = [...groups.keys()].sort();
     return {
       dataSource: "Authoritative PostgreSQL",
@@ -705,6 +721,17 @@ export function createOperationalFinanceO2cReadService({
     assertRead(current, "finance.overview.read");
     const asOf = now();
     const timezone = await workspaceTimezone(current.tenantId);
+    // The money on the landing follows the lists it totals: payables need
+    // finance.payable.read and receivables finance.receivable.read, as their
+    // lists and the aging page do, and every amount needs finance.amounts.read
+    // as well. A reader without them keeps the counts below; the amounts are
+    // null, never 0.
+    const allowed = (permission) => can({ actor: current, permission, tenantId: current.tenantId });
+    const amountsVisible = amountsVisibleFor(current);
+    const payablesReadable = allowed("finance.payable.read");
+    const receivablesReadable = allowed("finance.receivable.read");
+    const noRows = Promise.resolve([]);
+    const owedFields = { currency: true, dueDate: true, outstandingAmount: true };
     const [
       supplierInvoicesAwaitingMatch,
       matchExceptions,
@@ -718,6 +745,10 @@ export function createOperationalFinanceO2cReadService({
       receivableCurrencies,
       supplierInvoiceCurrencies,
       customerInvoiceCurrencies,
+      openReceivables,
+      openPayableRows,
+      openReceivableRows,
+      overdueReceivableRows,
     ] = await Promise.all([
       prisma.supplierInvoice.count({
         where: { tenantId: current.tenantId, status: "submitted", relatedGrnId: { not: null } },
@@ -778,19 +809,97 @@ export function createOperationalFinanceO2cReadService({
         distinct: ["currency"],
         select: { currency: true },
       }),
+      // The receivables list's "outstanding" filter, which "Owed to us" opens.
+      prisma.receivableObligation.count({
+        where: { tenantId: current.tenantId, ...outstandingReceivableWhere() },
+      }),
+      // What the amounts and aging strips total: the same rules as the counts
+      // and the lists the cards open.
+      payablesReadable
+        ? prisma.payableObligation.findMany({ where: { tenantId: current.tenantId, ...outstandingPayableWhere() }, select: owedFields })
+        : noRows,
+      receivablesReadable
+        ? prisma.receivableObligation.findMany({ where: { tenantId: current.tenantId, ...outstandingReceivableWhere() }, select: owedFields })
+        : noRows,
+      receivablesReadable
+        ? prisma.receivableObligation.findMany({ where: { tenantId: current.tenantId, ...overdueReceivableWhere(asOf, timezone) }, select: owedFields })
+        : noRows,
     ]);
+    const payableAging = ageByCurrency(openPayableRows, asOf, timezone);
+    const receivableAging = ageByCurrency(openReceivableRows, asOf, timezone);
+    const overdueByCurrency = ageByCurrency(overdueReceivableRows, asOf, timezone);
+    // Payables falling due from today through the next DUE_SOON_DAYS days,
+    // counted in the aging page's days (agingDays: negative before the due day).
+    const dueSoon = ageByCurrency(
+      openPayableRows.filter((row) => {
+        const days = agingDays(row.dueDate, asOf, timezone);
+        return days <= 0 && days >= -LANDING_DUE_SOON_DAYS;
+      }),
+      asOf,
+      timezone,
+    );
+    const shown = (value, visible) => (visible ? fixed(value) : null);
+    const currencies = (groups) => [...groups.keys()].sort();
+    const totals = (groups, readable) => ({
+      readable,
+      amountsVisible: readable && amountsVisible,
+      byCurrency: currencies(groups).map((currency) => ({
+        currency,
+        count: groups.get(currency).count,
+        amount: shown(groups.get(currency).total, readable && amountsVisible),
+      })),
+    });
+    const agingView = (groups, readable) => ({
+      readable,
+      amountsVisible: readable && amountsVisible,
+      groups: currencies(groups).map((currency) => {
+        const group = groups.get(currency);
+        return {
+          currency,
+          count: group.count,
+          amount: shown(group.total, readable && amountsVisible),
+          buckets: AGING_BUCKETS.map((bucket) => ({
+            bucket,
+            count: group.counts[bucket],
+            amount: shown(group[bucket], readable && amountsVisible),
+          })),
+        };
+      }),
+    });
+    const payableTotals = totals(payableAging, payablesReadable);
     return {
       dataSource: "Authoritative PostgreSQL",
       generatedAt: asOf.toISOString(),
+      timezone,
       cards: {
         supplierInvoicesAwaitingMatch,
         matchExceptions,
         approvedPayableObligations: approvedPayables,
         customerInvoicesAwaitingIssue,
+        openReceivables,
         overdueReceivables,
         disputedReceivables,
         supplierCreditMemos,
         customerCreditNotes,
+      },
+      // Amounts per currency, never added across currencies.
+      money: {
+        dueSoonDays: LANDING_DUE_SOON_DAYS,
+        payables: {
+          ...payableTotals,
+          byCurrency: payableTotals.byCurrency.map((row) => ({
+            ...row,
+            dueSoonCount: dueSoon.get(row.currency)?.count || 0,
+            dueSoonAmount: shown(dueSoon.get(row.currency)?.total || 0n, payableTotals.amountsVisible),
+          })),
+        },
+        receivables: totals(receivableAging, receivablesReadable),
+        overdueReceivables: totals(overdueByCurrency, receivablesReadable),
+      },
+      aging: {
+        asOf: asOf.toISOString(),
+        receivables: agingView(receivableAging, receivablesReadable),
+        payables: agingView(payableAging, payablesReadable),
       },
       currencyLimitations: financeCurrencyLimitations(
         payableCurrencies,

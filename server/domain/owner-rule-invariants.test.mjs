@@ -55,8 +55,13 @@ test('rule 1: report KPIs, charts and totals never add amounts across currencies
   for (const subject of SUBJECTS) {
     const report = buildRuntimeGovernedReport(mixedContext(), { subject }, asOf)
     if (report.dataScope.currencyAggregationStatus !== 'multi_currency_unconverted') continue
-    // A money KPI has no value; the amounts are kept per currency.
-    for (const kpi of report.kpis.filter((item) => item.unit === 'currency')) assert.equal(kpi.currentValue, null, `${subject} ${kpi.id}`)
+    // A money KPI over records in two currencies has no value; the amounts are
+    // kept per currency. A money KPI over records in one currency (the
+    // overview's sales amount beside mixed purchase orders) is that currency's total.
+    for (const kpi of report.kpis.filter((item) => item.unit === 'currency')) {
+      if (kpi.currencyAmounts.length > 1) assert.equal(kpi.currentValue, null, `${subject} ${kpi.id}`)
+      else assert.equal(kpi.currentValue, kpi.currencyAmounts[0]?.amount ?? 0, `${subject} ${kpi.id}`)
+    }
     // A money chart over two currencies draws nothing rather than one total.
     for (const chart of report.charts.filter((item) => item.unit === 'currency')) assert.deepEqual(chart.data, [], `${subject} ${chart.id}`)
     for (const row of report.dataScope.currencyAmounts) assert.match(row.currencyCode, /^[A-Z]{3}$/, subject)

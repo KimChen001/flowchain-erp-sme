@@ -1,5 +1,5 @@
 import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-inventory-allocation-read-model.mjs'
-import { buildBusinessOverview } from './business-overview.mjs'
+import { OVERVIEW_TABS, buildBusinessOverview } from './business-overview.mjs'
 import { isCommittedPurchaseOrder, isOpenPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
@@ -130,10 +130,22 @@ const metricDefinitions = {
   order_fulfillment_rate: ['Orders shipped in full', 'sales_orders', 'percentage', 'Share of confirmed sales orders whose every line has shipped its ordered quantity.', '/app/sales/orders'],
   out_of_stock_sku: ['Out-of-stock SKUs', 'inventory_balances', 'number', 'SKUs with no available stock under the shared availability calculation.', '/app/inventory?risk=high'],
   negative_atp_sku: ['SKUs short after incoming', 'inventory_balances', 'number', 'SKUs whose available-to-promise quantity (available stock plus incoming purchase orders, less open demand) is below zero.', '/app/inventory?risk=high'],
+  low_stock_sku: ['Low-stock SKUs', 'inventory_balances', 'number', 'SKUs out of stock, below safety stock, or at or below the reorder point once incoming purchase orders and open demand are counted: the stock statuses other than in stock and unknown.', '/app/inventory'],
 }
 
+// The stock statuses (runtime-inventory-allocation-read-model.mjs) the
+// low-stock KPI counts, as the stock status chart beside it shows them.
+const LOW_STOCK_STATUSES = new Set(['out_of_stock', 'below_safety_stock', 'below_reorder_point'])
+
+// The overview has one figure per area (owner review, round 8): purchasing,
+// sales, inventory and supplier invoices. Open purchase orders and SKUs short
+// for sales orders are its Needs attention cards. Each figure opens its
+// area's analytics tab rather than a record list.
+const OVERVIEW_DRILLDOWNS = { purchase_order_amount: OVERVIEW_TABS.procurement, sales_order_amount: OVERVIEW_TABS.sales, low_stock_sku: OVERVIEW_TABS.inventory, invoice_amount: OVERVIEW_TABS.finance }
+const drilldownOf = (id, subject) => (subject === 'overview' && OVERVIEW_DRILLDOWNS[id]) || metricDefinitions[id][4]
+
 const dashboardMetrics = {
-  overview: ['purchase_order_amount', 'open_po_count', 'inventory_risk_sku', 'sales_order_count'],
+  overview: ['purchase_order_amount', 'sales_order_amount', 'low_stock_sku', 'invoice_amount'],
   procurement: ['purchase_order_amount', 'open_po_count', 'overdue_open_po_count', 'on_time_receipt_rate'],
   sales: ['sales_order_count', 'open_sales_demand', 'sales_order_amount', 'order_fulfillment_rate'],
   inventory: ['inventory_on_hand', 'inventory_risk_sku', 'out_of_stock_sku', 'negative_atp_sku'],
@@ -221,6 +233,7 @@ function value(id, all, inventory, facts) {
   if (id === 'order_fulfillment_rate') return facts.orderFulfillmentRate
   if (id === 'out_of_stock_sku') return inventory.availability.filter(row => row.stockStatus === 'out_of_stock').length
   if (id === 'negative_atp_sku') return inventory.availability.filter(row => row.availableToPromise !== null && row.availableToPromise < 0).length
+  if (id === 'low_stock_sku') return inventory.availability.filter(row => LOW_STOCK_STATUSES.has(row.stockStatus)).length
   return 0
 }
 
@@ -284,7 +297,8 @@ function metric(id, all, inventory, query, primaryKey, facts, restriction = {}, 
 }
 
 function unrestrictedMetric(id, all, inventory, query, primaryKey, facts, partial) {
-  const [label, subject, unit, description, drilldownPath] = metricDefinitions[id]
+  const [label, subject, unit, description] = metricDefinitions[id]
+  const drilldownPath = drilldownOf(id, query.subject)
   const money = unit === 'currency' ? currencySummary(all[moneySubject(subject)].filter(committed[moneySubject(subject)]), query) : null
   const currentValue = money ? money.total : value(id, all, inventory, facts)
   const unconverted = money?.currencyAggregationStatus === 'multi_currency_unconverted'
@@ -344,8 +358,9 @@ const noteApplies = (code, subject) => SUBJECT_NOTES[code] ? SUBJECT_NOTES[code]
 // The subjects each dashboard's figures read. A subject cut off at the read
 // limit is named only on the dashboards it changes: customers and the other
 // document lists change none (filter lists also take the names on orders).
+// The overview reads no receipts since its figures are one per area (round 8).
 const DASHBOARD_TRUNCATION_SUBJECTS = {
-  overview: ['purchase_orders', 'receipts', 'supplier_invoices', 'sales_orders', 'inventory_items', 'items'],
+  overview: ['purchase_orders', 'supplier_invoices', 'sales_orders', 'inventory_items', 'items'],
   procurement: ['purchase_orders', 'receipts', 'supplier_invoices'],
   sales: ['sales_orders'],
   inventory: ['inventory_items', 'items', 'purchase_orders', 'sales_orders'],
@@ -435,7 +450,7 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const promisePurchaseOrderIds = query.subject === 'suppliers' && query.currency ? new Set(filtered(source.purchase_orders, { ...query, from: '', to: '', currency: '' }, applicableFilters('purchase_orders', primaryKey)).map(row => row.id)) : null
   const promiseOptions = { graceDays: query.graceDays, warehouseIds: Array.isArray(options.warehouseIds) ? options.warehouseIds : null, purchaseOrderIds: promisePurchaseOrderIds }
   const facts = { ...buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand, onTimeWithheld, promiseOptions }), salesDemandTotal: salesDemandTotal(salesDemand), inventoryOnHand: inventoryOnHandTotal(source.inventory_balances, inventory.units) }
-  const visuals = options.kpisOnly ? [] : buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts, today, timeZone, salesDemand, onTimeWithheld, promiseOptions, partial })
+  const visuals = options.kpisOnly ? [] : buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts, restrictedSubjects: restriction.subjects, today, timeZone, salesDemand, onTimeWithheld, promiseOptions, partial })
   const inventoryLabels = primaryKey === 'inventory_balances' ? { id: 'SKU', itemName: '物料名称', status: 'Risk' } : primaryKey === 'suppliers' ? { number: '供应商编号' } : {}
   const repeatsId = key => key === 'number' && details.every(row => !text(row.number) || text(row.number) === text(row.id))
   const columns = [...new Set(details.flatMap(row => Object.keys(row)))].filter(key => !repeatsId(key)).map(key => ({ key, label: inventoryLabels[key] || ({ id: '业务编号', number: '单据号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', unit: '单位', fulfilled: '已履约', reserved: 'Reserved quantity', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: 'Short now', availableToPromise: 'Available to promise', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'fulfilled', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
@@ -451,11 +466,11 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   // orders read for the table.
   const totalRecords = primaryKey === 'sales_orders' ? totalWeight(all.sales_order_groups) : all[primaryKey].length
   const dataScope = { label: '当前工作区数据', company: null, currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from, to: query.to, activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => ['from', 'to'].includes(key) ? text(input.filters?.[key]) : query[key]).length, sourceLabel: '业务记录', completenessLabel: totalRecords ? `已读取 ${totalRecords} 条真实记录` : '当前范围无真实业务记录', filterOptions: { companies: [], suppliers: distinct([...array(context.suppliers).map(row => row.supplierName || row.name), ...source.purchase_orders.map(row => row.supplier)]), customers: distinct([...array(context.customers).map(row => row.name || row.customerName), ...source.sales_order_groups.map(row => row.customer)]), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_order_groups, ...source.supplier_invoices].map(row => row.currency)) } }
-  const overview = query.subject === 'overview' && !options.kpisOnly ? buildBusinessOverview(all, { salesDemand, reorder: options.reorder || null, salesActivity: all.sales_order_groups, partial }) : null
+  const overview = query.subject === 'overview' && !options.kpisOnly ? buildBusinessOverview(all, { salesDemand, reorder: options.reorder || null, salesActivity: all.sales_order_groups, partial, restrictedSubjects: restriction.subjects }) : null
   // Subjects the read context could not load in full whose cut changes this
   // dashboard's figures; totals over them may be low.
   const truncatedSubjects = dashboardTruncation(context, query.subject, totalWeight(source.sales_order_groups))
-  return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, restrictedSubjects: [...restriction.subjects], restrictedAmounts: Object.keys(restriction.amounts).filter(key => restriction.amounts[key]), kpis, charts: overview ? [...overview.charts, ...visuals] : visuals, attention: overview?.attention || [], totalRecords, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: metricDefinitions[id][4] })), exportRows: listed, metricDefinitions: kpis }
+  return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, restrictedSubjects: [...restriction.subjects], restrictedAmounts: Object.keys(restriction.amounts).filter(key => restriction.amounts[key]), kpis, charts: overview ? [...visuals, ...overview.charts] : visuals, attention: overview?.attention || [], totalRecords, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: drilldownOf(id, query.subject) })), exportRows: listed, metricDefinitions: kpis }
 }
 
 export function getRuntimeReportCatalog() {
