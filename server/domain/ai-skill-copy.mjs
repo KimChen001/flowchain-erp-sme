@@ -62,6 +62,14 @@ export function aiSkillQuestionLanguageSignal(message) {
     return ENGLISH_OPENER.has(word) && /(^|[.!?;:,，。？！；：])\s*$/u.test(stripped.slice(0, match.index))
   }).map((match) => match.index)
   const chinese = [...stripped.matchAll(CHINESE_QUESTION)].map((match) => match.index)
+  // A short English opener before Chinese words ("show me 85123A 的库存",
+  // "Show me 华东电子的订单") says no language: the conversation's, else the
+  // interface's, decides (the owner, 2026-11-12: in the Chinese interface
+  // such a question is answered in Chinese; it was answered in English).
+  // An English question word ("What is 茶杯 stock?") still makes it English.
+  const latin = words.filter((match) => shouting || !acronym(match[0])).length
+  const openersOnly = words.filter((match) => english.includes(match.index)).every((match) => !ENGLISH_QUESTION.has(match[0].toLowerCase()))
+  if (english.length && !chinese.length && openersOnly && latin <= 3 && /[㐀-鿿]{2,}/u.test(stripped)) return null
   if (english.length && !chinese.length) return strong('en-US')
   if (chinese.length && !english.length) return strong('zh-CN')
   if (english.length) {

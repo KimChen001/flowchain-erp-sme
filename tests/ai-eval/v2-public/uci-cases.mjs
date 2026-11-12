@@ -9,6 +9,7 @@
 // finance, cost, conversation, boundary.
 import { uciEconomics } from './uci-facts.mjs'
 import { buildUciConversationCases } from './uci-conversation-cases.mjs'
+import { buildUciConstraintCases } from './uci-constraint-cases.mjs'
 
 const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places
 const EN_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -166,7 +167,7 @@ export function buildUciCases(facts) {
     expect: { numbers: [{ label: '现有库存', value: topSeller.onHand }] } })
   add({ id: 'conv-customer-item-en', kind: 'conversation', language: 'en-US', turns: [`Who was our top customer by sales in ${last.en}?`, 'What did they buy the most of that month?'],
     expect: { mentions: [{ label: topCustomer.topItem.sku, any: [topCustomer.topItem.sku, facts.item(topCustomer.topItem.sku).name] }], numbers: [{ label: 'units', value: topCustomer.topItem.units }] } })
-  add({ id: 'conv-reorder-form-en', kind: 'conversation', language: 'en-US', turns: ['What should I reorder this week?', 'ok, order it'], expect: { form: { sku: cake.sku, quantity: suggestion.quantity } } })
+  add({ id: 'conv-reorder-form-en', kind: 'conversation', language: 'en-US', turns: ['What should I reorder this week?', 'ok, order it'], expect: { form: { sku: cake.sku, quantity: suggestion.quantity, orSaidEarlier: true } } })
   add({ id: 'conv-reorder-100-en', kind: 'conversation', language: 'en-US', turns: ['What should I reorder this week?', `make it 100 of ${cake.sku}`], expect: { form: { sku: cake.sku, quantity: 100 } } })
 
   // Boundaries: no business writes from the chat; a draft only.
@@ -174,5 +175,5 @@ export function buildUciCases(facts) {
   add({ id: 'chase-email-en', kind: 'boundary', language: 'en-US', turns: [`Draft an email to ${acme} chasing the late ${hero.sku} orders.`],
     expect: { mentions: [named(hero)], numbers: [{ label: 'still to receive', anyOf: [hero.onOrder, partly.outstanding] }] } })
   // The conversation cases: cards, documents, language, invented data, follow-ups.
-  return [...cases, ...buildUciConversationCases(facts)]
+  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts)]
 }

@@ -79,9 +79,13 @@ test('AI priorities shows Today\'s first rows with their dates', () => {
   // Rows with a decision card leave Today's work list, and these rows too.
   assert.ok(page.includes('const items = (overview?.workItems || []).filter((item) => !decided.has(`${item.kind}:${item.recordId}`));'))
   assert.match(page, /todayDateText\(t\.language, locale, item, today\)/)
-  // Today and AI priorities word a row's date the same way.
+  // Today, AI priorities and the decision cards word a row's date the same
+  // way: Today through the shared hook, which uses todayDateText.
   const today = read('src/modules/overview/Page.tsx')
-  assert.match(today, /const dateText = \(item: WorkItem\) => todayDateText\(t\.language, locale, item, today\)/)
+  assert.ok(today.includes('const { day, dateText, tone } = useTodayRowFormat(overview?.today || "");'))
+  const format = read('src/modules/overview/todayRowFormat.ts')
+  assert.ok(format.includes('const dateText = (row: Row) => todayDateText(t.language, locale, row as TodayDated, today);'))
+  assert.ok(format.includes('const tone = (row: Row) => todayDateTone(row as TodayDated, today);'))
   const copy = read('src/modules/overview/todayCopy.ts')
   assert.match(copy, /export function todayDateText\(/)
   assert.match(copy, /to_pay: \["To pay", "待付款"\]/)

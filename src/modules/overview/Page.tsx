@@ -12,10 +12,11 @@ import { useDocumentNumbers } from "../../lib/documentNumbers";
 import { formatDateTimeInTimeZone, formatLocaleAmount, formatQuantity, instantDayInTimeZone } from "../../lib/format";
 import { unitLabel } from "../../i18n/unitLabels";
 import { reorderListText } from "../inventory/reorderListCopy";
-import { formatTodayDay, todayDateText, todayDateTone, useTodayCopy, type TodayCopyKey } from "./todayCopy";
+import { useTodayCopy, type TodayCopyKey } from "./todayCopy";
 import { firstRowsByKind, reorderRequestHref, rowsPerKind, type ReorderRequest } from "./todayRows";
 import { DecisionSection, type TodayDecisions } from "./DecisionCards";
 import { useDecisionCopy } from "./decisionCopy";
+import { useTodayRowFormat } from "./todayRowFormat";
 
 // Today: the work that needs doing, from the rules the rest of the app uses
 // (GET /api/home/overview, server/domain/today-work.mjs), earliest date first,
@@ -142,6 +143,8 @@ function RuntimeHomepage() {
   const labelled = [...(overview?.workItems || []), ...waiting.map((entry) => entry.row as WorkItem), ...setAside.map((entry) => entry.row as WorkItem)];
   const shownNumber = useDocumentNumbers(labelled.filter((item) => item.label === item.recordId).map((item) => [item.entityType, item.recordId] as const));
   const labelOf = (item: WorkItem) => item.label === item.recordId ? shownNumber(item.entityType, item.recordId) || item.label : item.label;
+  // A row's date chip and its colours, as the assistant's decision cards show them too.
+  const { day, dateText, tone } = useTodayRowFormat(overview?.today || "");
 
   if (state === "error") {
     return (
@@ -173,7 +176,6 @@ function RuntimeHomepage() {
   const quantity = (value: unknown, unit?: string | null) => `${formatQuantity(value as number)}${unit ? ` ${unitLabel(unit, t.language, Number(value))}` : ""}`;
   // Amounts use the document currency; a hidden amount (null) is never shown as 0.
   const money = (value: unknown, currency?: string | null) => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "—" : formatLocaleAmount(Number(value), currency, locale, { maximumFractionDigits: 2 });
-  const day = (value: string) => formatTodayDay(value, locale);
   // A reorder row opens the purchase request the reorder list's "Create
   // purchase request" opens for the item, with the same reason.
   const reorderHref = (item: WorkItem) => {
@@ -183,10 +185,6 @@ function RuntimeHomepage() {
     return reorderRequestHref(request, reason, item.detail.shortfall);
   };
   const showKind = (kind: WorkKind) => { setKindFilter(kind); setExpanded(true); };
-
-  // The date and its colour, as AI priorities shows them too (todayCopy.ts).
-  const dateText = (item: WorkItem) => todayDateText(t.language, locale, item, today);
-  const tone = (item: WorkItem) => todayDateTone(item, today);
 
   const reasons = (item: WorkItem): string[] => {
     const d = item.detail || {};
@@ -321,8 +319,8 @@ function RuntimeHomepage() {
             overdueOnly={filter === "overdue"}
             today={today}
             day={day}
-            dateText={(row) => dateText(row as WorkItem)}
-            tone={(row) => tone(row as WorkItem)}
+            dateText={dateText}
+            tone={tone}
             kindLabel={(row) => t(`kind_${row.kind}` as TodayCopyKey)}
             labelOf={(row) => labelOf(row as WorkItem)}
             onChanged={() => { void load(true); }}

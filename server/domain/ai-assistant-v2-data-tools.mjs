@@ -5,6 +5,7 @@ import { runHighestRisk } from './ai-skill-highest-risk.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { AI_SKILL_SIGNAL_TYPES, DUE_SOON_DAYS, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { readFirstRunSetup } from './first-run-setup.mjs'
+import { decisionHistoryTool, decisionItemsTool } from './ai-assistant-v2-decision-tools.mjs'
 import { createRfqSupplierComparisonService } from './rfq-supplier-comparison-service.mjs'
 import { listItemSupplierRecords, mapItemSupplierRecord } from './master-data-commands.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
@@ -120,6 +121,31 @@ function attentionRow(facts, item, rank) {
   }
 }
 
+// What the user decided on Today about the records the attention list names
+// (docs/drafted-decisions-design.md §4.5): an overdue order chased or set
+// aside, an item's reorder set aside or covered. Keyed by entity type and id;
+// empty without the decision items table (no database).
+const ASIDE_ENTITY = Object.freeze({ purchase_order_overdue: 'purchase_order', reorder_now: 'item' })
+const ASIDE_SIGNALS = Object.freeze({ purchase_order: ['po_overdue', 'po_due_7d'], item: ['stock_shortage', 'stock_below_safety', 'stock_below_reorder'] })
+async function setAsideOnToday(context) {
+  const model = context?.prisma?.decisionItem
+  if (!model || typeof model.findMany !== 'function' || !context.tenantId) return new Map()
+  try {
+    const items = await model.findMany({ where: { tenantId: context.tenantId, state: 'decided', activeKey: { not: null } }, select: { kind: true, recordId: true, decision: true, note: true, returnOn: true, snapshot: true } })
+    return new Map(items.filter((item) => ASIDE_ENTITY[item.kind]).map((item) => [`${ASIDE_ENTITY[item.kind]}:${item.recordId}`, {
+      decision: item.decision, decidedOn: item.snapshot?.decidedOn || null, ...(item.returnOn ? { returnOn: item.returnOn } : {}), ...(item.decision === 'chased' && item.note === 'email' ? { emailed: true } : {}),
+    }]))
+  } catch {
+    return new Map()
+  }
+}
+const asideOf = (aside, item) => {
+  const found = aside.get(`${item.entityType}:${item.entityId}`)
+  if (!found) return null
+  const types = [item.type, ...array(item.also)]
+  return types.some((type) => array(ASIDE_SIGNALS[item.entityType]).includes(type)) ? found : null
+}
+
 function attentionTypeCounts(items) {
   const counts = {}
   for (const item of items) for (const type of new Set([item.type, ...array(item.also)])) counts[type] = (counts[type] || 0) + 1
@@ -128,7 +154,7 @@ function attentionTypeCounts(items) {
 
 const attentionList = defineAiTool({
   name: 'attention_list',
-  description: 'What needs attention, ranked by date and never by a score. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it. byType counts the rows of each type in the whole list, also those past the limit: stock rows come last, so read byType (stock_below_safety, stock_below_reorder, stock_shortage) before saying nothing is short or below its levels, and ask again with types to list them. On a stock row, pendingRequests and covered count the open purchase requests in any status, drafts included. lateLinesBySku gives, for a SKU on more than one late purchase order, the late lines\' total still to receive (lateQuantity) with those orders and their suppliers.',
+  description: 'What needs attention, ranked by date and never by a score. A row the user already decided on Today carries setAside (decision: chased, not_now, not_needed, accepted or covered, with decidedOn); never present such a row as new or as something to do first. setAsideCount counts them in the whole list. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it. byType counts the rows of each type in the whole list, also those past the limit: stock rows come last, so read byType (stock_below_safety, stock_below_reorder, stock_shortage) before saying nothing is short or below its levels, and ask again with types to list them. On a stock row, pendingRequests and covered count the open purchase requests in any status, drafts included. lateLinesBySku gives, for a SKU on more than one late purchase order, the late lines\' total still to receive (lateQuantity) with those orders and their suppliers.',
   parameters: {
     kind: { type: 'string', enum: ['today', 'problems'], description: 'today by default.' },
     focus: { type: 'string', description: 'A purchase order number, a SKU, or a supplier name or code.' },
@@ -137,9 +163,10 @@ const attentionList = defineAiTool({
   },
   available: (facts) => Boolean(facts.purchaseOrders || facts.inventory || facts.invoices || facts.purchaseRequests || facts.rfqs || facts.receipts),
   assistantV2Only: true,
-  run(args, { facts }) {
+  async run(args, { facts, context }) {
     const kind = args.kind || 'today'
     const focus = args.focus ? attentionFocus(facts, args.focus) : null
+    const aside = await setAsideOnToday(context)
     if (args.focus && !focus) return { error: 'not_found' }
     // The skills' own engines, every item kept: the type filter applies
     // before the limit, so the total counts what matches.
@@ -152,8 +179,13 @@ const attentionList = defineAiTool({
       asOf: facts.asOf,
       kind,
       ...(focus ? { focus: { label: focus.label, ref: aiToolRef(focus.entityType, focus.entityId, focus.label) } } : {}),
-      rows: items.slice(0, limit).map((item, index) => attentionRow(facts, item, index + 1)),
+      rows: items.slice(0, limit).map((item, index) => {
+        const row = attentionRow(facts, item, index + 1)
+        const setAside = asideOf(aside, item)
+        return setAside ? { ...row, setAside } : row
+      }),
       total: items.length,
+      ...(aside.size ? { setAsideCount: items.filter((item) => asideOf(aside, item)).length } : {}),
       more: Math.max(0, items.length - limit),
       // How many rows of each type the whole list holds, those past the
       // limit too (2026-11-09 on Flash: "nothing is short on stock today"
@@ -457,6 +489,9 @@ const suggestPurchaseLines = defineAiTool({
         openSalesDemand: row.openSalesDemand ?? null, incoming: row.incomingApprovedPo ?? null, openRequests: openRequestsOf(facts, row),
         target: row.noStock ? null : quantity.target, gap: row.noStock ? null : quantity.gap,
         suggestedQuantity: notRun ? { value: null, source: notRun } : quantity.quantity,
+        // The chosen supplier's minimum order in the item's unit, so the form
+        // raises a quantity below it (2026-11-11).
+        minimumOrderQuantity: minimum > 0 ? minimum : null,
         supplier: suppliersVisible && chosen ? { id: chosen.id, name: chosen.name, source: SUPPLIER_SOURCE[plan.fields.supplierId?.ref] || 'approved_supplier' } : null,
         supplierChoices: suppliersVisible ? plan.supplierChoices.map((choice) => ({ id: choice.id, name: choice.name })) : [],
         // Every approved source, so the form's select holds them all and a
@@ -544,14 +579,49 @@ const setupStatus = defineAiTool({
 // set-up records them (the purchase request form's read, itemSources): for
 // "should I switch supplier" the answer had no lead time or minimum order of
 // the other supplier (2026-11-05). Prices only for a user who may see them.
+// Every item one supplier is an approved supplier of, with its terms
+// (2026-11-12 on Flash: "What is the lead time from Globex Party Supplies?"
+// was answered "I don't have its item list to read the lead times from":
+// lead times sit on each item's supplier link, and item_suppliers took a SKU).
+const SUPPLIER_ITEMS_DEFAULT = 20
+async function supplierItems(args, { facts, context }) {
+  const found = aiToolSupplier(facts, args.supplier)
+  if (!found.supplier) return { error: found.error || 'not_found', candidates: found.candidates || [] }
+  // Linked items, and items naming it as preferred supplier with no link yet.
+  const [links, preferring] = await Promise.all([
+    listItemSupplierRecords(context.prisma, context.tenantId, { supplierId: found.supplier.id }),
+    context.prisma.item.findMany({ where: { tenantId: context.tenantId, preferredSupplierId: found.supplier.id }, select: { id: true } }),
+  ])
+  const itemIds = [...new Set([...array(links).map((row) => text(row.payload?.itemId)), ...array(preferring).map((row) => text(row.id))].filter(Boolean))]
+  const items = [...(await storedItems(context, itemIds)).values()]
+  const { byItem, prices } = await itemSources(context, items)
+  const number = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
+  const rows = items.flatMap((item) => {
+    const source = (byItem.get(text(item.id)) || []).find((entry) => entry.id === found.supplier.id)
+    if (!source) return []
+    return [{
+      sku: text(item.sku), itemName: text(item.name) || null, unit: itemStockUnit(item) || null, preferred: source.preferred,
+      leadTimeDays: source.leadTimeDays ?? null, minimumOrderQuantity: number(source.minimumOrderQuantity),
+      referencePrice: prices ? number(source.referencePrice) : null, currency: source.currency || null, ref: aiToolRef('item', text(item.id), text(item.sku)),
+    }]
+  }).sort((a, b) => a.sku.localeCompare(b.sku))
+  const leadTimes = rows.map((row) => row.leadTimeDays).filter((value) => value !== null)
+  return {
+    supplier: found.supplier.name, supplierRef: aiToolRef('supplier', found.supplier.id, found.supplier.name), pricesHidden: !prices,
+    leadTimeDays: leadTimes.length ? { shortest: Math.min(...leadTimes), longest: Math.max(...leadTimes), itemsWithLeadTime: leadTimes.length } : null,
+    ...aiToolList(rows, args.limit || SUPPLIER_ITEMS_DEFAULT),
+  }
+}
+
 const itemSuppliers = defineAiTool({
   name: 'item_suppliers',
-  description: 'An item\'s approved suppliers as its purchasing set-up records them, the preferred first: each with its lead time in days, minimum order quantity and reference price (hidden from users who may not see prices). Use it to compare suppliers of an item or to judge a switch; price_history gives what was actually paid, supplier_performance how each delivers.',
-  parameters: { sku: { type: 'string', description: 'The item\'s SKU.' } },
-  required: ['sku'],
+  description: 'An item\'s approved suppliers as its purchasing set-up records them, the preferred first: each with its lead time in days, minimum order quantity and reference price (hidden from users who may not see prices). Use it to compare suppliers of an item or to judge a switch; price_history gives what was actually paid, supplier_performance how each delivers. With supplier instead of sku: every item that supplier is an approved supplier of, with the same terms, for "what is the lead time from Acme" or "what do we buy from Acme".',
+  parameters: { sku: { type: 'string', description: 'The item\'s SKU.' }, supplier: { type: 'string', description: 'Instead of sku: a supplier name, code or id.' }, limit: { type: 'integer', minimum: 1, maximum: 50, description: 'With supplier: 20 items by default.' } },
   available: (facts, context) => Boolean(facts.inventory) && Array.isArray(facts.suppliers) && Boolean(context?.actor && context.prisma),
   assistantV2Only: true,
   async run(args, { facts, context }) {
+    if (!args.sku && args.supplier) return supplierItems(args, { facts, context })
+    if (!args.sku) return { error: 'invalid_arguments', detail: 'Give sku or supplier.' }
     const row = stockRow(facts, args.sku) || array(facts.inventory.masterOnly).find((entry) => fold(entry.sku) === fold(args.sku))
     if (!row || !text(row.itemId)) return { error: 'not_found' }
     const item = (await storedItems(context, [text(row.itemId)])).get(text(row.itemId))
@@ -1097,4 +1167,4 @@ const stockProjection = defineAiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan, stockProjection])
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan, stockProjection, decisionItemsTool, decisionHistoryTool])

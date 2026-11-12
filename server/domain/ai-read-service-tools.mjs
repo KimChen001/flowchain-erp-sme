@@ -287,17 +287,30 @@ function salesRange(args, today) {
   const period = args.period || 'last_12_months'
   return aiSkillSpendPeriod(SALES_DAYS[period] ? { kind: 'last_days', days: SALES_DAYS[period] } : { kind: period }, today)
 }
+// The item a sales question names, by its SKU, its name or its item id; an
+// SKU no item holds any more is counted as asked (2026-11-12 on Flash:
+// "84879 在 2026 年 10 月卖了多少件" came back as 0 invoices and 0 units, where
+// the invoices hold 611: the lines were matched on the exact SKU only).
+function salesItem(facts, value) {
+  const items = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)]
+  const byId = items.find((row) => row.itemId && fold(row.itemId) === fold(value))
+  if (byId) return { sku: text(byId.sku), itemId: text(byId.itemId) }
+  const found = aiStockSku(facts, value)
+  if (found.error) return found
+  return { sku: text(found.sku), itemId: text(items.find((row) => fold(row.sku) === fold(found.sku))?.itemId) || null }
+}
 const salesSummary = defineAiTool({
   name: 'sales_summary',
-  description: 'Completed sales from customer invoices over a period: the total, and the largest customers or items, or each month, by invoiced amount with each one\'s share (and, for customers and items, a rank, 1 the largest, with runningAmount and runningSharePercent: the rows up to and including it together, so the top N together are the figures at rank N). rankBy quantity ranks items by units sold ("sold the most units"). Invoices dated in the period, not drafts or cancelled, before tax; credit notes are not subtracted. For "last month\'s sales", "our top customers this quarter" or "which products sold most".',
+  description: 'Completed sales from customer invoices over a period: the total, and the largest customers or items, or each month, by invoiced amount with each one\'s share (and, for customers and items, a rank, 1 the largest, with runningAmount and runningSharePercent: the rows up to and including it together, so the top N together are the figures at rank N). rankBy quantity ranks items by units sold: for "sold the most units", "bought the most of", 卖得最多/买得最多 (a count of pieces, not money). Invoices dated in the period, not drafts or cancelled, before tax; credit notes are not subtracted. For "last month\'s sales", "our top customers this quarter" or "which products sold most".',
   parameters: {
     by: { type: 'string', enum: ['customer', 'item', 'month'], description: 'customer (default), item or month.' },
     period: { type: 'string', enum: SALES_PERIODS, description: 'Counted from the workspace day; last_12_months by default.' },
-    from: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'A first day, with to, instead of period.' },
+    from: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'A first day, with to, instead of period; the same day as to for one day\'s sales.' },
     to: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'The last day, included.' },
     customer: { type: 'string', description: 'Only this customer (part of its name).' },
-    sku: { type: 'string', description: 'Only this item.' },
-    rankBy: { type: 'string', enum: ['amount', 'quantity'], description: 'With by item: rank by invoiced amount (default) or by quantity sold.' },
+    sku: { type: 'string', description: 'Only this item: its SKU (or its name).' },
+    unsold: { type: 'boolean', description: 'Instead of sales: the items with stock on hand that sold nothing in the period (no invoice line in any currency), most stock first. For "what has not sold in 30 days", 没卖出去的, slow movers.' },
+    rankBy: { type: 'string', enum: ['amount', 'quantity'], description: 'With by item: rank by invoiced amount (default) or by quantity sold ("the most of" an item is quantity).' },
     currency: { type: 'string', pattern: '^[A-Z]{3}$', description: 'A currency code; the workspace currency by default.' },
     limit: limitParam,
   },
@@ -305,6 +318,10 @@ const salesSummary = defineAiTool({
   async run(args, { facts, context }) {
     const range = salesRange(args, salesDay(facts.today || facts.asOf))
     if (!range) return { error: 'invalid_period' }
+    const item = args.sku ? salesItem(facts, args.sku) : null
+    if (item?.error === 'ambiguous') return { error: 'ambiguous', candidates: item.candidates }
+    const sku = item ? item.sku || text(args.sku) : null
+    const lineOf = (line) => (item?.itemId && text(line.itemId) === item.itemId) || fold(line.sku) === fold(sku)
     const found = array(await context.prisma.customerInvoice.findMany({
       where: { tenantId: context.tenantId, status: { notIn: ['draft', 'cancelled'] }, invoiceDate: { gte: new Date(`${range.from}T00:00:00Z`), lt: new Date(`${addCalendarDays(range.to, 1)}T00:00:00Z`) } },
       select: { id: true, customerNameSnapshot: true, invoiceDate: true, subtotalAmount: true, currency: true, lines: { select: { itemId: true, sku: true, itemName: true, quantity: true, unit: true, lineAmount: true } } },
@@ -312,6 +329,24 @@ const salesSummary = defineAiTool({
     }))
     let invoices = found.slice(0, SALES_INVOICES_MAX).map((row) => ({ id: text(row.id), customer: text(row.customerNameSnapshot) || null, day: salesDay(row.invoiceDate), amount: Number(row.subtotalAmount) || 0, currency: text(row.currency).toUpperCase() || null, lines: array(row.lines) }))
     if (args.customer) invoices = invoices.filter((row) => fold(row.customer).includes(fold(args.customer)))
+    // The stocked items no invoice of the period sold, in any currency
+    // (2026-11-12 on Flash: "最近 30 天哪些商品一件都没卖出去？" had no tool, and
+    // the answer listed only the unsold items below safety stock).
+    if (args.unsold) {
+      const soldIds = new Set(invoices.flatMap((row) => row.lines.map((line) => text(line.itemId))).filter(Boolean))
+      const soldSkus = new Set(invoices.flatMap((row) => row.lines.map((line) => fold(line.sku))).filter(Boolean))
+      const unsold = array(facts.inventory?.rows)
+        .filter((row) => Number(row.onHand) > 0 && !(row.itemId && soldIds.has(text(row.itemId))) && !soldSkus.has(fold(row.sku)))
+        .sort((a, b) => Number(b.onHand) - Number(a.onHand) || text(a.sku).localeCompare(text(b.sku)))
+        .map((row) => ({ sku: row.sku, itemName: row.itemName || null, onHand: Number(row.onHand), unit: row.unit || null, ref: aiToolRef('item', row.itemId || row.sku, row.sku) }))
+      return {
+        period: range, basis: `Items with stock on hand and no line on any customer invoice dated in the period. ${SALES_BASIS}`, unsold: true,
+        stockedItems: array(facts.inventory?.rows).filter((row) => Number(row.onHand) > 0).length,
+        ...(args.customer ? { customer: args.customer } : {}),
+        ...(found.length > SALES_INVOICES_MAX ? { onlyFirstInvoices: SALES_INVOICES_MAX } : {}),
+        ...aiToolList(unsold, args.limit),
+      }
+    }
     const currencies = new Map()
     for (const row of invoices) {
       const entry = currencies.get(row.currency) || { currency: row.currency, invoices: 0, amount: 0 }
@@ -322,8 +357,8 @@ const salesSummary = defineAiTool({
     const workspace = text(facts.currency).toUpperCase()
     const currency = args.currency || (currencies.has(workspace) ? workspace : [...currencies.values()].sort((a, b) => b.amount - a.amount)[0]?.currency) || workspace || null
     // Each sale counted: the invoice, or its lines for one item.
-    const sales = invoices.filter((row) => row.currency === currency).flatMap((row) => (args.sku || args.by === 'item'
-      ? row.lines.filter((line) => !args.sku || fold(line.sku) === fold(args.sku)).map((line) => ({ invoice: row.id, customer: row.customer, day: row.day, amount: Number(line.lineAmount) || 0, quantity: Number(line.quantity) || 0, sku: text(line.sku), itemName: text(line.itemName) || null, unit: text(line.unit) || null, itemId: text(line.itemId) || null }))
+    const sales = invoices.filter((row) => row.currency === currency).flatMap((row) => (sku || args.by === 'item'
+      ? row.lines.filter((line) => !sku || lineOf(line)).map((line) => ({ invoice: row.id, customer: row.customer, day: row.day, amount: Number(line.lineAmount) || 0, quantity: Number(line.quantity) || 0, sku: text(line.sku), itemName: text(line.itemName) || null, unit: text(line.unit) || null, itemId: text(line.itemId) || null }))
       : [{ invoice: row.id, customer: row.customer, day: row.day, amount: row.amount }]))
     const total = sales.reduce((sum, row) => sum + row.amount, 0)
     const by = args.by || 'customer'
@@ -358,7 +393,7 @@ const salesSummary = defineAiTool({
       invoices: new Set(sales.map((row) => row.invoice)).size,
       amount: money2(total),
       ...(byQuantity ? { rankedBy: 'quantity' } : {}),
-      ...(args.sku ? { sku: args.sku, quantity: Math.round(sales.reduce((sum, row) => sum + row.quantity, 0) * 10000) / 10000 } : {}),
+      ...(sku ? { sku, quantity: Math.round(sales.reduce((sum, row) => sum + row.quantity, 0) * 10000) / 10000, ...(item.error && !sales.length ? { itemNotFound: true } : {}) } : {}),
       ...(args.customer ? { customer: args.customer } : {}),
       otherCurrencies: [...currencies.values()].filter((entry) => entry.currency !== currency).map((entry) => ({ currency: entry.currency, invoices: entry.invoices, amount: money2(entry.amount) })),
       ...(found.length > SALES_INVOICES_MAX ? { onlyFirstInvoices: SALES_INVOICES_MAX } : {}),

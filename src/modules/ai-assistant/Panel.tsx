@@ -1,4 +1,5 @@
 import { KnowledgeLibrary } from "./KnowledgeLibrary";
+import { TodayDecisionCards } from "../overview/DecisionCards";
 import { useDialogFocus } from "../../components/ui/useDialogFocus";
 import { translate, useI18n } from "../../i18n/I18n";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -491,6 +492,8 @@ export default function FloatingAiAssistant({
                     {translate(language, `ai.v2.notice.${notice}` as const)}
                   </p>
                 ) : null}
+                {/* The decisions waiting on Today, with their buttons (docs/drafted-decisions-design.md §4.8). */}
+                <div className="mt-5"><TodayDecisionCards /></div>
                 {emptyPrompts.length ? (
                   <div className="mt-5 grid grid-cols-2 gap-2.5">
                     {emptyPrompts.slice(0, 4).map((prompt, index) => {

@@ -689,7 +689,15 @@ test('every data tool declares its columns, and each declared column is in its r
   const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
   const reorderList = { read: async (input) => buildReorderList({ allocationRows: input.allocationRows, items, supplierLinks: [link()], suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }) }
   const invoiced = (data) => { data.customerInvoices = [{ id: 'CI-1', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-09-10T00:00:00Z'), subtotalAmount: '950.0000', currency: 'USD', lines: [{ itemId: 'ITEM-001', sku: 'LDM-001', itemName: 'Flow Controller', quantity: '10', unit: 'pcs', lineAmount: '950.0000' }] }] }
-  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data); invoiced(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList } } })
+  // Today's decision items and a record's decision history, as Today would read them.
+  const todayRow = (kind, recordId, label) => ({ id: `${kind}:${recordId}`, kind, entityType: kind === 'reorder_now' ? 'item' : 'purchase_order', recordId, label, name: 'Acme Components', date: '2026-09-20', dateKind: 'due', overdueDays: 3, detail: {} })
+  const todayDecisions = async () => ({
+    available: true, canDecide: true, supplierEmail: { enabled: false, canSend: false, outbox: true },
+    waiting: [{ key: 'purchase_order_overdue:PO-001', row: todayRow('purchase_order_overdue', 'PO-001', 'PO-001'), raisedAt: null, returned: true, draft: null }],
+    setAside: [{ key: 'reorder_now:ITEM-001', row: todayRow('reorder_now', 'ITEM-001', 'LDM-001'), decision: 'not_needed', reasonCode: 'seasonal', note: null, returnOn: null, decidedAt: null, decidedOn: '2026-09-18', decidedBy: { name: 'Sam' }, documentType: null, documentIds: [], documentNumber: null }],
+  })
+  const decisionHistory = { read: async () => ({ items: [{ kind: 'purchase_order_overdue', state: 'decided', raisedAt: new Date('2026-09-17T12:00:00Z'), decidedAt: new Date('2026-09-18T12:00:00Z'), resolvedAt: new Date('2026-09-19T12:00:00Z'), decision: 'chased', reasonCode: null, note: null, returnOn: '2026-09-22', snapshot: { raisedOn: '2026-09-17', decidedOn: '2026-09-18' }, decidedBy: { name: 'Sam' } }], emails: [] }) }
+  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data); invoiced(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList, todayDecisions, decisionHistory } } })
   // The calls that fill each table; a tool not named here is called once
   // without arguments.
   const calls = {
@@ -708,10 +716,12 @@ test('every data tool declares its columns, and each declared column is in its r
     // A row's details depend on its signal: today's list and the problems
     // between them hold every detail column.
     attention_list: [{ limit: 10 }, { kind: 'problems', limit: 10 }],
-    item_suppliers: [{ sku: 'LDM-001' }],
+    item_suppliers: [{ sku: 'LDM-001' }, { supplier: 'Acme Components' }],
     rfq_quotes: [{}],
     order_quantity_costs: [{ sku: 'LDM-001', quantities: [50, 100] }],
     optimize_order_plan: [{ plan: [{ sku: 'LDM-001', quantity: 100 }] }],
+    decision_items: [{ include: 'all' }],
+    decision_history: [{ record: 'PO-001' }],
   }
   // A nested column under a null value (a rate with too few deliveries) is
   // there, and null. Each column must be in a row of one of the tool's calls.
@@ -793,6 +803,17 @@ test('item_suppliers gives an item\'s approved suppliers with lead time, minimum
   assert.equal(typeof first.referencePrice, 'number')
   assert.deepEqual(first.ref, { type: 'supplier', id: 'SUP-001', label: 'Acme Components' })
   assert.equal((await run('item_suppliers', { sku: 'NOPE-9' })).error, 'not_found')
+  // One supplier's items with their terms (2026-11-12 on Flash: "What is the
+  // lead time from Globex Party Supplies?" found no item list to read).
+  const acme = await run('item_suppliers', { supplier: 'Acme Components' })
+  assert.ok(acme.ok, acme.error)
+  assert.equal(acme.result.supplier, 'Acme Components')
+  const ldm = acme.result.rows.find((row) => row.sku === 'LDM-001')
+  assert.deepEqual([ldm.preferred, ldm.leadTimeDays, ldm.ref.type], [true, 12, 'item'])
+  assert.ok(acme.result.leadTimeDays.shortest <= 12 && acme.result.leadTimeDays.longest >= 12)
+  assert.equal(acme.result.total, acme.result.rows.length)
+  assert.equal((await run('item_suppliers', { supplier: 'Nobody Ltd' })).result?.error ?? (await run('item_suppliers', { supplier: 'Nobody Ltd' })).error, 'supplier_not_found')
+  assert.equal((await run('item_suppliers', {})).error ?? (await run('item_suppliers', {})).result?.error, 'invalid_arguments')
 })
 
 test('rfq_quotes reads each open RFQ\'s latest quotes through the RFQ comparison, only for a user who may see prices', async () => {

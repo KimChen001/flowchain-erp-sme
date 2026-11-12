@@ -82,6 +82,9 @@ test('a short reply keeps the conversation\'s language, and a clear question set
   // A new conversation: a short reply's own script, then the interface language.
   const fresh = async (question, ui) => (await ask([[...say('OK.'), end()]], { question, body: { answerLanguage: ui } })).events[0].language
   assert.deepEqual([await fresh('ok 100', 'zh-CN'), await fresh('好', 'en-US'), await fresh('100', 'zh-CN'), await fresh('100', 'en-US')], ['en-US', 'zh-CN', 'zh-CN', 'en-US'])
+  // An English opener before Chinese words follows the interface (the owner,
+  // 2026-11-12: "show me 85123A 的库存" was answered in English in Chinese).
+  assert.deepEqual([await fresh('show me LDM-001 的库存', 'zh-CN'), await fresh('show me LDM-001 的库存', 'en-US')], ['zh-CN', 'en-US'])
 })
 
 test('a longer text streams as deltas up to each word break, so no figure leaves in pieces', async () => {
@@ -453,12 +456,12 @@ test('a failed display says how to fix it; a second failure withdraws the displa
   const second = JSON.parse(lastToolResults(client.requests[3])[0].content)
   assert.equal(second.error, 'unknown_column')
   assert.equal(second.details.at(-1), 'No display tool is available for the rest of this answer.')
-  assert.match(client.requests[3].messages.at(-1).content.at(-1).text, /^No display tool \(show_table, show_records, show_chart, show_kpis, offer_choices, show_setup_steps\) is available for the rest of this answer\. Answer in prose/)
+  assert.match(client.requests[3].messages.at(-1).content.at(-1).text, /^No display tool \(show_table, show_records, show_chart, show_kpis, offer_choices, show_setup_steps, show_decisions\) is available for the rest of this answer\. Answer in prose/)
   // The tool list the model was first sent stays (the cached prefix); the
   // withdrawn tools are named beside it.
   assert.deepEqual(client.requests[3].tools, client.requests[0].tools)
   assert.equal(client.requests[2].withdrawnTools, undefined)
-  assert.deepEqual(client.requests[3].withdrawnTools, ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps'])
+  assert.deepEqual(client.requests[3].withdrawnTools, ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps', 'show_decisions'])
   // A display called after that is refused, not counted, and the model gets
   // the refusal and one more call, its last, to answer in prose.
   assert.deepEqual(JSON.parse(lastToolResults(client.requests[4])[0].content), { error: 'display_off', details: ['No display tool is available for the rest of this answer.'] })
@@ -1322,6 +1325,33 @@ test('text pointing to a card no part shows gets one more round to show it', asy
   // Once only, and not without such words.
   const plain = await ask([OVERDUE, [...say('PO-001 is the most overdue.'), end()]])
   assert.equal(plain.client.requests.length, 2)
+})
+
+// 2026-11-11 on Flash, a £500 budget: "I've filled in a purchase request form
+// for you to review, with both lines ticked … then click **Create draft
+// request**." after optimize_order_plan, with no form called.
+test('text saying it filled in a form, or naming a button in bold, gets one more round when no form is shown', async () => {
+  for (const words of ["I've filled in a purchase request form for you to review, with both lines ticked.", 'Set the suppliers, then click **Create draft request**.', '我按 60 件给你填了一张采购申请单。']) {
+    const { client } = await ask([OVERDUE, [...say(`PO-001 is the most overdue. ${words}`), end()], [end()]])
+    assert.ok(client.requests.length >= 3, words)
+    assert.match(client.requests[2].messages.at(-1).content.map((block) => block.text || '').join(' '), /none is shown in this answer/, words)
+  }
+})
+
+// 2026-11-11: the text said 78 pcs while the form held 60. The model reads
+// back each line as the form shows it.
+test('a shown form tells the model each line\'s quantity, where it came from and whether it is ticked', async () => {
+  const { client, events } = await ask([
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'] }), end()],
+    [...call('tu_form', 'suggest_purchase_request', { source: 'tu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 30 }] }), end()],
+    [...say('Here is the form.'), end()],
+  ], { question: 'Order 30 of LDM-001', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  const form = ofType(events, 'ui').find((event) => event.component === 'pr_form').props
+  const results = client.requests[2].messages.at(-1).content.filter((block) => block.type === 'tool_result')
+  const shown = JSON.parse(results.map((block) => (typeof block.content === 'string' ? block.content : block.content.map((part) => part.text).join(''))).join(''))
+  assert.deepEqual(shown.lines, [...form.lines, ...form.suggested].map((row) => ({ sku: row.item.sku, quantity: row.suggestedQuantity.value, source: row.suggestedQuantity.source, supplier: row.supplier?.name ?? null, ticked: row.checked })))
+  assert.deepEqual(shown.lines[0], { sku: 'LDM-001', quantity: 30, source: 'user_named', supplier: form.lines[0].supplier.name, ticked: false })
+  assert.ok(shown.lines[0].supplier)
 })
 
 // 2026-11-11 on Flash: "Show me the supplier of the oldest one" read nothing
