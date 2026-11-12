@@ -90,6 +90,11 @@ const EN = {
   reopen: "Reopen",
   failed: "That did not work: {message}",
   stale: "Someone has already decided on this. Today was reloaded.",
+  chatLoading: "Loading the cards from Today…",
+  chatUnavailable: "Today's decisions could not be loaded here. Open Today to see them.",
+  chatGone: "This is no longer on Today.",
+  chatMore: "{n} more waiting on Today",
+  welcomeTitle: "Waiting for your decision · {n}",
 } as const;
 
 export type DecisionCopyKey = keyof typeof EN;
@@ -175,6 +180,11 @@ const ZH: Record<DecisionCopyKey, string> = {
   reopen: "重新打开",
   failed: "操作没有成功：{message}",
   stale: "已有人对这件事做了决定，今日页已刷新。",
+  chatLoading: "正在从今日页加载卡片…",
+  chatUnavailable: "这里无法加载今日页的决定事项，请打开今日页查看。",
+  chatGone: "这件事已不在今日页上。",
+  chatMore: "今日页上还有 {n} 件等你决定",
+  welcomeTitle: "等你决定 · {n}",
 };
 
 const COPY: Record<"en-US" | "zh-CN", Record<DecisionCopyKey, string>> = { "en-US": EN, "zh-CN": ZH };

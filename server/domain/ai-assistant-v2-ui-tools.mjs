@@ -1,4 +1,4 @@
-import { CHART_KINDS, CHOICE_PROMPTS, NEW_SUPPLIER_LINK, RECORD_ACTION_TYPES, RECORD_EMPHASES, SETUP_FORM_ROWS, SETUP_STEP_IDS, refSchema, safeParsePartProps } from '../../shared/assistant-protocol.mjs'
+import { CHART_KINDS, CHOICE_PROMPTS, DECISION_CARDS_MAX, NEW_SUPPLIER_LINK, RECORD_ACTION_TYPES, RECORD_EMPHASES, SETUP_FORM_ROWS, SETUP_STEP_IDS, refSchema, safeParsePartProps } from '../../shared/assistant-protocol.mjs'
 import { RECORD_ACTION_RULES, recordActionsNow } from '../../shared/assistant-record-actions.mjs'
 import { PURCHASE_SUGGESTION_SOURCES, suggestNeedByDate } from '../../shared/purchase-suggestion.mjs'
 import { can } from '../auth/authorization-service.mjs'
@@ -1032,6 +1032,40 @@ const showSetupSteps = defineUiTool({
   },
 })
 
+// Today's decision cards in the chat (docs/drafted-decisions-design.md §4.8),
+// from a decision_items result: the waiting items it lists, or those of them
+// named in keys. Each card reads its own draft from Today and carries the same
+// buttons, so "go ahead" is the user's own click on the card.
+const showDecisions = defineUiTool({
+  name: 'show_decisions',
+  display: true,
+  description: `Show Today's decision cards from a decision_items result: each waiting item with the step FlowChain prepared and its buttons (open the prefilled request, copy or send the follow-up, create the orders, not now, not needed), the same cards as the Today page. Pass keys to show only some (at most ${DECISION_CARDS_MAX}, for example the one the user means by "the first one" or "go ahead"); without keys the first ${DECISION_CARDS_MAX} waiting items are shown. Use it after decision_items when the user asks what to handle first, what is waiting, or to act on one of them.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      source: { ...sourceParam, description: 'The source of a decision_items result of this answer, for example decision_items#1.' },
+      keys: { type: 'array', items: { type: 'string', minLength: 3, maxLength: 200 }, minItems: 1, maxItems: DECISION_CARDS_MAX, description: 'The key of each item to show, as the result gives it.' },
+    },
+    required: ['source'],
+    additionalProperties: false,
+  },
+  build(input, ctx) {
+    const source = sourceOf(ctx, input.source)
+    if (source.error) return source
+    if (source.tool !== 'decision_items') return fail('wrong_source', `show_decisions takes a decision_items result; ${input.source} is ${source.tool}. Call decision_items first.`)
+    const waiting = array(source.output.waiting)
+    if (!waiting.length) return fail('nothing_waiting', 'Nothing is waiting for a decision in this result, so there are no cards to show. Say so in words.')
+    const known = new Map(waiting.map((row) => [text(row.key), row]))
+    const asked = array(input.keys).map(text)
+    const unknown = asked.filter((key) => !known.has(key))
+    if (unknown.length) return fail('unknown_key', `${unknown.join(', ')} is not a waiting item of ${input.source}. Pass keys exactly as the result gives them: ${[...known.keys()].slice(0, 10).join(', ')}.`)
+    const keys = asked.length ? [...new Set(asked)] : [...known.keys()].slice(0, DECISION_CARDS_MAX)
+    const total = Number.isInteger(source.output.waitingTotal) ? source.output.waitingTotal : waiting.length
+    const refs = keys.map((key) => known.get(key)?.ref).filter(Boolean).map((ref) => refOf(ref))
+    return part('decisions', { source: source.id, keys, more: Math.max(0, total - keys.length) }, refs)
+  },
+})
+
 const allowedTo = (actor, permission) => Boolean(actor?.tenantId) && can({ actor, permission, tenantId: actor.tenantId })
 // The permissions of the Suppliers and Items pages' writes, and of an item's
 // supplier links, which share the item's (master-data.routes.mjs WRITE_RULES).
@@ -1490,7 +1524,7 @@ const suggestFollowups = defineUiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_UI_TOOLS = Object.freeze([showTable, showRecords, showChart, showKpis, offerChoices, suggestPurchaseRequest, showSetupSteps, suggestSetupRecords, offerRecordActions, suggestFollowups])
+export const AI_ASSISTANT_V2_UI_TOOLS = Object.freeze([showTable, showRecords, showChart, showKpis, offerChoices, suggestPurchaseRequest, showSetupSteps, suggestSetupRecords, offerRecordActions, suggestFollowups, showDecisions])
 
 // The UI tools the model is offered for this user (design §4.1: the request
 // form is not offered to a user who may not create requests, nor the setup

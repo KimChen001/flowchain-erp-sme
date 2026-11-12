@@ -129,7 +129,7 @@ test('the protocol accepts the design example and every event type, and lists th
     assert.ok(result.success, `${line.slice(0, 60)}: ${result.success ? '' : JSON.stringify(result.error.issues)}`)
   }
   assert.deepEqual([...STREAM_EVENT_TYPES], ['start', 'progress', 'tool', 'text_delta', 'ui', 'flag', 'replace', 'notice', 'error', 'answer'])
-  assert.deepEqual([...UI_COMPONENTS], ['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form', 'record_actions'])
+  assert.deepEqual([...UI_COMPONENTS], ['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form', 'record_actions', 'decisions'])
   const envelope = { v: 2, seq: 3 }
   for (const event of [
     { ...envelope, type: 'flag', partId: 'p1', spans: [{ text: '600', kind: 'number', reason: 'not_in_tool_results' }] },
