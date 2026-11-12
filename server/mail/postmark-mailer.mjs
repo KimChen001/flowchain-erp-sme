@@ -6,7 +6,7 @@ const POSTMARK_EMAIL_URL = "https://api.postmarkapp.com/email";
 export function createPostmarkMailer({ serverToken, from, fetch = globalThis.fetch }) {
   return {
     provider: "postmark",
-    async send({ to, subject, text, html, tag }) {
+    async send({ to, subject, text, html, tag, replyTo }) {
       let response;
       try {
         response = await fetch(POSTMARK_EMAIL_URL, {
@@ -16,7 +16,7 @@ export function createPostmarkMailer({ serverToken, from, fetch = globalThis.fet
             "Content-Type": "application/json",
             "X-Postmark-Server-Token": serverToken,
           },
-          body: JSON.stringify({ From: from, To: to, Subject: subject, TextBody: text, HtmlBody: html, Tag: tag, MessageStream: "outbound" }),
+          body: JSON.stringify({ From: from, To: to, Subject: subject, TextBody: text, HtmlBody: html, Tag: tag, ...(replyTo ? { ReplyTo: replyTo } : {}), MessageStream: "outbound" }),
           signal: AbortSignal.timeout(MAIL_REQUEST_TIMEOUT_MS),
         });
       } catch (error) {

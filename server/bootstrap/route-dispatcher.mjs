@@ -41,6 +41,7 @@ import { handlePurchaseOrdersRoute } from "../routes/purchase-orders.routes.mjs"
 import { handlePurchaseRequestsRoute } from "../routes/purchase-requests.routes.mjs";
 import { handleReceivingRoute } from "../routes/receiving.routes.mjs";
 import { handleReportViewsRoute } from "../routes/report-views.routes.mjs";
+import { handleDecisionItemsRoute } from "../routes/decision-items.routes.mjs";
 import { handleReportsAnalyticsRoute } from "../routes/reports-analytics.routes.mjs";
 import { handleReviewFirstActionWorkflowRoute } from "../routes/review-first-action-workflow.routes.mjs";
 import { handleRfqsRoute } from "../routes/rfqs.routes.mjs";
@@ -74,6 +75,7 @@ const orderedRouteHandlers = Object.freeze([
   handleSopRoute,
   handleContextRoute,
   handleBusinessReadContextRoute,
+  handleDecisionItemsRoute,
   handleSearchRoute,
   handleSalesDemandRoute,
   handleEvidenceGraphRoute,

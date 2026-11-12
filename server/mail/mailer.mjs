@@ -3,7 +3,7 @@ import { createOutboxMailer, defaultOutboxPath } from "./outbox-mailer.mjs";
 import { createPostmarkMailer } from "./postmark-mailer.mjs";
 import { createResendMailer } from "./resend-mailer.mjs";
 
-// Every adapter has one method: send({ to, subject, text, html, tag }),
+// Every adapter has one method: send({ to, subject, text, html, tag, replyTo }),
 // resolving to { provider, messageId }. FLOWCHAIN_MAIL_PROVIDER picks it:
 //   outbox   - local JSON file for development and tests (the default outside production)
 //   postmark - Postmark HTTPS API, POSTMARK_SERVER_TOKEN and FLOWCHAIN_MAIL_FROM

@@ -121,6 +121,7 @@ model Tenant {
   customFieldOptions                    CustomFieldOption[]
   intakeSchemaSnapshots                 IntakeSchemaSnapshot[]
   documentNumberSequences               DocumentNumberSequence[]
+  decisionItems                         DecisionItem[]
 }
 
 enum IntakeSourceType {
@@ -570,6 +571,7 @@ model User {
   roleGrantsCreated    TenantRolePermission[]      @relation("RolePermissionCreator")
   suppliersOwned       Supplier[]                  @relation("SupplierBusinessOwner")
   supplierTiersSet     Supplier[]                  @relation("SupplierTierSetBy")
+  decisionItemsDecided DecisionItem[]              @relation("DecisionItemDecidedBy")
   invitationsSent      WorkspaceInvitation[]       @relation("InvitationInviter")
   invitationsAccepted  WorkspaceInvitation[]       @relation("InvitationAcceptor")
   workspaceSessions    WorkspaceSession[]
@@ -3631,4 +3633,38 @@ model DocumentNumberSequence {
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@id([tenantId, documentType, period])
+}
+
+// A finding on Today that a person decides on (docs/drafted-decisions-design.md):
+// raised when its Today row first appears, decided (set aside, chased or
+// accepted), and resolved or expired when the row goes away. activeKey is
+// "kind:recordId" while the item is open or decided and null afterwards, so a
+// record that comes back later raises a new item and the old one stays as
+// history.
+model DecisionItem {
+  id           String    @id
+  tenantId     String
+  activeKey    String?
+  kind         String
+  entityType   String
+  recordId     String
+  state        String    @default("open")
+  raisedAt     DateTime  @default(now())
+  decidedAt    DateTime?
+  resolvedAt   DateTime?
+  decision     String?
+  reasonCode   String?
+  note         String?
+  returnOn     String?
+  snapshot     Json?
+  documentType String?
+  documentId   String?
+  decidedById  String?
+  updatedAt    DateTime  @default(now()) @updatedAt
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  decidedBy    User?     @relation("DecisionItemDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, activeKey])
+  @@index([tenantId, state])
+  @@index([tenantId, kind, recordId])
 }

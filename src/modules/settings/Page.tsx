@@ -84,7 +84,7 @@ const sectionDescriptions: Record<View, { en: string; zh: string }> = {
   company: { en: 'Basic information for this workspace.', zh: '维护当前业务空间的基础信息。' },
   roles: { en: 'Manage members, roles and whether they are active.', zh: '管理访问成员、角色和启用状态。' },
   numbering: { en: 'Each document FlowChain issues is numbered prefix-year-month-sequence when it is saved. Set the prefixes here.', zh: 'FlowChain 开出的每张单据在保存时按“前缀-年月-流水号”自动编号。可在此设置前缀。' },
-  review: { en: 'Purchase order approval and invoice matching tolerances are in effect. The other review settings are not in effect yet.', zh: '采购订单审批和发票匹配容差已生效；其他复核设置尚未生效。' },
+  review: { en: 'Purchase order approval, supplier follow-up email and invoice matching tolerances are in effect. The other review settings are not in effect yet.', zh: '采购订单审批、供应商催货邮件和发票匹配容差已生效；其他复核设置尚未生效。' },
   modules: { en: 'Choose enabled modules, their order, the default entry and which roles see them.', zh: '配置启用模块、顺序、默认入口和角色可见性。' },
   ai: { en: 'Set each AI capability to allowed, allowed after review, or not allowed.', zh: '按能力设置允许、复核或禁止等级。' },
   audit: { en: 'Search recorded settings and business audit entries.', zh: '检索真实设置与业务审计记录。' },
@@ -191,9 +191,14 @@ function Review({ value, onChange }: { value: SettingsRuntime['review']; onChang
   const reviewerNames = roleNames(value.reviewerRoles, language);
   const [amount, setAmount] = useState(120000); const requires = value.enabled && amount >= value.amountThreshold;
   const approvesPo = value.approvedRequestApprovesPurchaseOrder !== false;
+  const supplierEmail = value.supplierFollowUpEmail === true;
   return <div className="space-y-6"><section data-testid="settings-review-po-approval" className="rounded-xl border border-slate-200 p-4">
     <div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-medium" style={{ color: A.label }}>{t('settings.poApproval')}</h2><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{t('settings.inEffect')}</span></div>
     <label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" data-testid="settings-approved-request-approves-po" className="mt-1" checked={approvesPo} onChange={e => onChange({ ...value, approvedRequestApprovesPurchaseOrder: e.target.checked })} /><span><span style={{ color: A.label }}>{t('settings.approvedRequestApprovesPo')}</span><span className="mt-1 block" style={{ color: A.sub }}>{t(approvesPo ? 'settings.approvedRequestApprovesPoOn' : 'settings.approvedRequestApprovesPoOff')}</span></span></label>
+  </section>
+  <section data-testid="settings-review-supplier-email" className="rounded-xl border border-slate-200 p-4">
+    <div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-medium" style={{ color: A.label }}>{t('settings.supplierEmail')}</h2><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{t('settings.inEffect')}</span></div>
+    <label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" data-testid="settings-supplier-email" className="mt-1" checked={supplierEmail} onChange={e => onChange({ ...value, supplierFollowUpEmail: e.target.checked })} /><span><span style={{ color: A.label }}>{t('settings.supplierEmailToggle')}</span><span className="mt-1 block" style={{ color: A.sub }}>{t(supplierEmail ? 'settings.supplierEmailOn' : 'settings.supplierEmailOff')}</span></span></label>
   </section>
   <section data-testid="settings-review-tolerances" className="rounded-xl border border-slate-200 p-4">
     <div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-medium" style={{ color: A.label }}>{t('settings.matchingTolerances')}</h2><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{t('settings.inEffect')}</span></div>

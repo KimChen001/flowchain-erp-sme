@@ -30,6 +30,10 @@ export const operationalSettingsSeed = {
     // (owner decision D3, 2026-10-07). Off: such a PO starts as a draft and
     // goes through PO approval as before.
     approvedRequestApprovesPurchaseOrder: true,
+    // Off by default: Today may email a follow-up on an overdue order to its
+    // supplier, after the person confirms the text and then the address, only
+    // once an administrator turns this on (docs/drafted-decisions-design.md §4.11).
+    supplierFollowUpEmail: false,
     quantityTolerance: '0.0000',
     pricePercentageTolerance: '0.0000',
     priceAbsoluteTolerance: '0.0000',
@@ -79,7 +83,7 @@ export const operationalSettingsSeed = {
 // Nothing reads the other sections yet, so the settings UI shows them
 // read-only as "Not in effect yet" and keeps their stored values.
 export const REVIEW_TOLERANCE_FIELDS = ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance']
-export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: ['prefix'], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
+export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: ['prefix'], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder', 'supplierFollowUpEmail'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
 const TOLERANCE_PATTERN = /^\d+(\.\d{1,4})?$/
 
 const clone = value => structuredClone(value)
@@ -178,8 +182,10 @@ export function validateOperationalSection(section, value, options = {}) {
   if (section === 'review' && !Array.isArray(value.policies)) throw Object.assign(new Error('Review policies are required.'), { code: 'REVIEW_POLICY_VALIDATION_FAILED', status: 400 })
   if (section === 'review') {
     const next = clone(value)
-    if (value.approvedRequestApprovesPurchaseOrder !== undefined && typeof value.approvedRequestApprovesPurchaseOrder !== 'boolean') {
-      throw Object.assign(new Error('approvedRequestApprovesPurchaseOrder must be true or false.'), { code: 'SETTINGS_VALIDATION_FAILED', status: 400, details: { field: 'approvedRequestApprovesPurchaseOrder' } })
+    for (const field of ['approvedRequestApprovesPurchaseOrder', 'supplierFollowUpEmail']) {
+      if (value[field] !== undefined && typeof value[field] !== 'boolean') {
+        throw Object.assign(new Error(`${field} must be true or false.`), { code: 'SETTINGS_VALIDATION_FAILED', status: 400, details: { field } })
+      }
     }
     for (const field of REVIEW_TOLERANCE_FIELDS) {
       if (value[field] === undefined) continue
