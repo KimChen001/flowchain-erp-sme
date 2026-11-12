@@ -80,7 +80,7 @@
 - [AI chat copilot plan](ai-chat-copilot-v1-plan.md)
 - [AI provider baseline, 2026-10-04](ai-provider-baseline-2026-10-04.md)
 - [Onboarding and standing instructions (L3) design](ai-onboarding-and-automation-design.md): proposal of 2026-10-29; setup by chat on the existing import, scheduled rules that leave drafts; decisions O1–O6 and A1–A8 approved 2026-10-29
-- [Drafted decisions](drafted-decisions-design.md): proposal of 2026-11-11; Today and the assistant prepare the next step (a prefilled request, a supplier follow-up, draft orders) and remember what a person decided; decisions DD-1 to DD-8 open
+- [Drafted decisions](drafted-decisions-design.md): proposal of 2026-11-11; Today and the assistant prepare the next step (a prefilled request, a supplier follow-up email sent after the text and address are confirmed, draft orders) and remember what a person decided; decisions DD-1 to DD-9 open
 
 ## UI
 

@@ -1,6 +1,8 @@
 # Drafted decisions: the system prepares the next step, a person decides
 
-Status: proposal of 2026-11-11. Nothing is built by this document. Decisions DD-1 to DD-8 (§9) are open.
+Status: proposal of 2026-11-11. Nothing is built by this document.
+- Decisions DD-1 to DD-9 (§9) are open.
+- Revised the same day: the owner asked that FlowChain send the supplier follow-up itself, once the person has confirmed the text and then the address (§4.11).
 
 **Where it comes from.** On 2026-11-11 the owner asked what a WeChat article suggests for FlowChain.
 - The article: 卡兹克 on a year of building an agent automation system for his own work ([source](https://mp.weixin.qq.com/s/2R9xtPdgYr3kF6L-LGr8aA)).
@@ -21,7 +23,8 @@ The owner chose to have that idea written up for FlowChain. This is that design.
   - 每张卡片写明依据和日期。用户点一下确认，或选"以后再说""不需要"并给出理由。
 - **不变的规则：**
   - 系统只起草；确认后写入的也只是草稿或记录。
-  - 提交、审批、下发给供应商、发邮件、付款、删除，系统都不做。
+  - 唯一的例外是催货邮件（11/11 的方向）：系统写好邮件，用户先确认内容，再确认收件邮箱，然后由 FlowChain 发给供应商，并记在采购单的历史里（§4.11）。
+  - 提交、审批、下发采购单、给客户发邮件、付款、删除，系统都不做。
   - 排序仍按日期，不打分。
 - **新东西只有三样：**
   1. 一张"决定事项"表，记录每件事从出现、决定到解决的全过程；
@@ -30,14 +33,21 @@ The owner chose to have that idea written up for FlowChain. This is that design.
 - **和已有设计的关系：** L3 定时指令（#229）、报表提醒（#234）、供应链智能草稿里的每日提示，都把结果写进同一张决定事项表，不另开渠道。
 - **第一批只做三类：**
   - 补货：预填采购申请；
-  - 采购单逾期：催货文字，加记录新的承诺日期；
+  - 采购单逾期：写好催货邮件，两次确认后发给供应商；或者记录新的承诺日期；
   - 已批准的申请：生成采购订单草稿。
+- **发邮件的保护：**
+  - 单独的权限，工作区默认关闭；
+  - 回复直接回到采购员自己的邮箱；
+  - 每张单每天最多一封；
+  - 邮件里不写价格；
+  - 研究用的公开数据工作区只写进本地发件箱，不会真的发出去。
 - **不调用模型也能运行：** 起草全部来自现有规则和表单。模型只在用户问"为什么"、或在对话里修改草稿时使用。
-- **决定：** §9 共 8 项。最关键的是：
+- **决定：** §9 共 9 项。最关键的是：
   - DD-1：是否采用这个方向；
   - DD-3：一键能做什么；
-  - DD-4："不需要"对谁生效。
-- **时间：** 等助手的 5 个 PR 合并后开始。12 月做第 1–2 步，1 月做第 3–4 步。
+  - DD-4："不需要"对谁生效；
+  - DD-9：发邮件的保护措施。
+- **时间：** 等助手的 5 个 PR 合并后开始。12 月做第 1–2 步，1 月做第 2b–4 步（2b 是发邮件）。
 
 ## 1. The problem in FlowChain terms
 
@@ -124,14 +134,17 @@ open ──► decided ──► resolved
 | Today kind | The draft | Primary click | Other options | Writes through |
 | --- | --- | --- | --- | --- |
 | `reorder_now` | A purchase request: the supplier and quantity the reorder list prefills (shortfall raised to the minimum order). Items due the same day for the same supplier are offered together | Create the request. It is a draft; Submit stays a second click (V2-3) | Edit in the form | `POST /api/procurement/requests` |
-| `purchase_order_overdue` | A follow-up message from `buildSupplierFollowupDraftPreview`: the order, the lines still to receive and the promised date | Chase: copy the message and record "chased" | Record a new promised date with the supplier's reason | `POST /api/procurement/orders/:id/promised-dates`; "chased" is a decision only |
+| `purchase_order_overdue` | A follow-up email from `buildSupplierFollowupDraftPreview`: the order, the lines still to receive and the promised date | Chase: check the text, check the address, send (§4.11) | Record a new promised date with the supplier's reason | A new send route (§4.11); `POST /api/procurement/orders/:id/promised-dates` |
 | `purchase_request_to_convert` | The draft purchase orders the request would make, one per supplier, currency and delivery warehouse. A line missing any of the three is named, and there is no button until it is filled in | Create the draft orders | Open the request | `POST /api/procurement/requests/:id/generate-purchase-orders` |
 
 - **Why these three:**
-  - each has a command already on `main`;
-  - its draft is fully set by rules already on `main`;
-  - none of them sends, approves or pays.
-- **Chasing a supplier:** FlowChain sends nothing. Supplier email is its own step, with its own permission and mail channel (decision 4 of 2026-10-05). The person copies the text into their own mail.
+  - each draft is fully set by rules already on `main`;
+  - two of them use a command already on `main`;
+  - none of them approves or pays.
+- **Chasing a supplier:**
+  - FlowChain sends the email itself, after the person confirms the text and then the address (§4.11).
+  - This is the "supplier email" step that decision 4 of 2026-10-05 kept apart, with its own permission, mail channel and rate limit.
+  - Until a workspace turns it on, the card offers "Copy the message" instead.
 - **Every other Today kind** keeps its row as now and gains only "Not now" and "Not needed". Kinds join one at a time later (§8, step 6).
 
 ### 4.4 What the system may do, and what it may not
@@ -142,7 +155,7 @@ open ──► decided ──► resolved
 | Draft | Prefill requests and orders; write follow-up text | — | — |
 | Create | — | A draft purchase request; draft purchase orders from an approved request | Submit, approve, or issue a purchase order to a supplier |
 | Record | — | A new promised date with its reason; a decision with its reason | Change master data, settings or permissions |
-| Outside the workspace | — | — | Email or message suppliers or customers; pay; post; delete |
+| Outside the workspace | — | A follow-up email to a supplier, after two confirmations: the text, then the address (§4.11) | Email customers; pay; post; delete |
 
 - **Permissions:** each click runs as the person, through the existing route and its permission check. Someone without the permission sees the item but not the button.
 - **Amounts:** no amount threshold exists on `main` (#229, O4). Approval stays by role, after Submit, as today.
@@ -243,6 +256,53 @@ Three measures per kind follow:
 
 Only codes, ids and dates are recorded. Using people's decisions as research data needs COUHES review first (#225 §13). The public-data workspaces need none.
 
+### 4.11 Sending the follow-up to the supplier
+
+On 2026-11-11 the owner asked that FlowChain write the chase, let the person check it, confirm the email address, and then send it. The flow:
+
+1. **The draft.**
+   - The card shows the email FlowChain wrote:
+     - the subject;
+     - the order number;
+     - the lines still to receive, with their quantities;
+     - the promised date and the days late.
+   - The figures come from the order and cannot be edited on the card; the wording can.
+   - The text comes from a template (`buildSupplierFollowupDraftPreview`), in English or Chinese as the person picks. Prices are left out.
+   - With AI on, "make it firmer" or "shorter" rewrites the wording through the v2 loop. The answer check confirms that every figure still matches the order.
+2. **Confirm the text.** The button reads "Next: check the recipient".
+3. **Confirm the address.** A second step shows only who it goes to:
+   - the supplier's email on record (the supplier form's Email field) and the contact name;
+   - the reply-to, which is the person's own address;
+   - and the question: "Send to orders@acme.example?"
+
+   If the supplier has no email on record, the person types one. It is used for this message only; the card links to the supplier page to save it there.
+4. **Send.** Through the workspace mailer (`server/mail/mailer.mjs`): Postmark or Resend in production, the local outbox file everywhere else.
+   - From: the workspace's sending address, with the person's name ("Sam at Example Co via FlowChain").
+   - Reply-To: the person, so the supplier's answer goes straight to them.
+5. **Recorded.**
+   - The message is saved in the order's history: recipient, subject, body, the provider's message id, who sent it and when.
+   - The decision item becomes "chased by email". It comes back after 3 workdays with no receipt and no new promised date (§4.5).
+   - An `AuditLog` row is written.
+
+| Guard | Default (DD-9) |
+| --- | --- |
+| Permission | A new code, `procurement.supplier_message.send`, given to the buyer and administrator roles |
+| Workspace switch | Off until an administrator turns supplier email on. It can be turned on only once a mail provider and a verified sending domain are configured |
+| Two confirmations | The text, then the address. Nothing is sent from a single click, from "go ahead" in chat, or by a #229 rule |
+| Rate limits | One email per order per day; 20 per workspace per day |
+| Content | Order number, items, quantities and dates only: no prices, no other suppliers, no internal notes |
+| Double sends | An idempotency key from the item and the message text, so a retry sends once |
+| Failure | The card says it was not sent and why, and the item stays open |
+| Public-data and local workspaces | The outbox only, so nothing leaves the machine. The card says "Saved to the outbox, not sent" |
+| Replies | Not read by FlowChain in v1. The person records the new promised date from the reply, on the same card |
+
+**What changes in code:**
+- the mail adapters gain `replyTo` (Postmark `ReplyTo`, Resend `reply_to`);
+- a send route;
+- a message record on the order's history;
+- the permission code;
+- the workspace setting.
+
 ## 5. Data model sketch
 
 - **`DecisionItem`** holds:
@@ -272,7 +332,7 @@ The inbox works with AI off. The model adds explanations and editing by chat, at
 ## 7. What this does not do
 
 - It does not act alone. L4 stays as #229 A8 left it.
-- It does not send anything to suppliers or customers.
+- It sends nothing to a supplier without the person's two confirmations, and nothing to customers.
 - It adds no channel (chat apps, push). Email waits for the #229 digest (A7).
 - It does not score or rank by importance. The order is by date.
 - It does not replace the record pages. Each card opens its record.
@@ -285,7 +345,8 @@ Sizes are rough, in working days.
 | --- | --- | --- | --- |
 | 0 | Merge the five open assistant PRs first (#301 → #300 → #305 → #297 → #290). Step 3 changes `attention_list` | — | The owner's merges |
 | 1 | `DecisionItem` table and migration; raising on read; Today's three parts with "Not now", "Not needed" and "Reopen"; the come-back rules; tests | 4–6 | — |
-| 2 | The drafts and one-click actions for the three kinds; the checks of §4.9 | 4–5 | 1 |
+| 2 | The drafts and one-click actions for the three kinds; the checks of §4.9. The chase card offers "Copy the message" until step 2b | 4–5 | 1 |
+| 2b | Sending the follow-up (§4.11): `replyTo` in the mail adapters, the send route, the message on the order's history, the permission, the workspace switch, the rate limits; tests against the outbox | 3–4 | 2 |
 | 3 | The assistant: welcome card, `attention_list` reading items, "go ahead", `decision_history` | 3–4 | 2; step 0 |
 | 4 | Outcome codes and a measures table on an admin page or export | 2 | 2 |
 | 5 | Hourly raising and the digest | 2 | The #229 runner |
@@ -295,7 +356,7 @@ Sizes are rough, in working days.
 - **Timing:**
   - November holds the course report, IPSERA and the PhD applications.
   - Steps 1–2 fit December, next to supply chain intelligence steps 1–3, which change the same Today rows.
-  - Steps 3–4 follow in January (DD-8).
+  - Steps 2b–4 follow in January (DD-8).
 
 ## 9. Decisions for the owner
 
@@ -303,12 +364,13 @@ Sizes are rough, in working days.
 | --- | --- | --- |
 | DD-1 | Direction: (a) decision items as one shared layer under Today, the assistant, #229 rules and #234 alerts; (b) cards in the assistant only; (c) not now | (a). One record of what was found and decided, used everywhere, instead of three lists |
 | DD-2 | The first kinds | `reorder_now`, `purchase_order_overdue` and `purchase_request_to_convert`. Each has a command on `main` and a draft set by existing rules |
-| DD-3 | What one click may do | Create draft documents, record a promised date, and record a decision. Never submit, approve, issue, send, pay, post, delete, or change master data |
+| DD-3 | What one click may do | Create draft documents, record a promised date, and record a decision. Send a supplier follow-up only after two confirmations (DD-9). Never submit, approve, issue a purchase order, email customers, pay, post, delete, or change master data |
 | DD-4 | Who a "Not needed" applies to: (a) the whole workspace, showing who, when and why, with Reopen for anyone with the permission; (b) only the person | (a). Purchasing is shared work; otherwise each teammate makes the same decision again |
 | DD-5 | When a set-aside item comes back | The table in §4.5 |
 | DD-6 | How items are raised | On read in v1; hourly on the #229 runner in v2 |
 | DD-7 | What is recorded | Codes, ids and dates, plus an optional short note. Research use only on the public-data workspaces unless COUHES approves |
-| DD-8 | Timing | After the five assistant PRs merge. Steps 1–2 in December, steps 3–4 in January |
+| DD-8 | Timing | After the five assistant PRs merge. Steps 1–2 in December, steps 2b–4 in January |
+| DD-9 | Supplier email guards. The direction is the owner's (2026-11-11): FlowChain sends after the text and then the address are confirmed | The defaults in §4.11: own permission; off per workspace until a provider and domain are set; reply-to the person; one email per order per day and 20 per workspace per day; no prices; outbox only on public-data and local workspaces |
 
 ## 10. Risks
 
@@ -320,3 +382,8 @@ Sizes are rough, in working days.
 | Reading Today now writes | Insert-if-absent by unique key; a failed write never blocks Today |
 | Two people decide the same item | The item's state is checked in the same transaction; the second person sees who decided |
 | Overlap with three approved designs | §3: they all write into this layer, so no list is duplicated |
+| An email goes to the wrong address | The address is its own confirmation step. An address typed on the card is used once and never saved there |
+| Too many emails annoy a supplier | One per order per day and 20 per workspace per day; the decision item waits 3 workdays before it asks again |
+| Email text states a wrong figure | Figures come from the order and are locked; model wording passes the answer check |
+| A research workspace emails a real company | Public-data and local workspaces write to the outbox only |
+| Mail from FlowChain lands in spam | Sending only from a verified domain; replies go to the person's own address |
