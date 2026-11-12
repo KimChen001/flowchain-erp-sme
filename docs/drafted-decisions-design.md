@@ -1,8 +1,7 @@
 # Drafted decisions: the system prepares the next step, a person decides
 
-Status: proposal of 2026-11-11. Nothing is built by this document.
-- Decisions DD-1 to DD-9 (§9) are open.
-- Revised the same day: the owner asked that FlowChain send the supplier follow-up itself, once the person has confirmed the text and then the address (§4.11).
+Status: proposal of 2026-11-11; DD-1 to DD-9 (§9) were approved as recommended by the owner the same day ("按推荐批准"). Nothing is built by this document; the build follows §8.
+- Revised before the approval: the owner asked that FlowChain send the supplier follow-up itself, once the person has confirmed the text and then the address (§4.11).
 
 **Where it comes from.** On 2026-11-11 the owner asked what a WeChat article suggests for FlowChain.
 - The article: 卡兹克 on a year of building an agent automation system for his own work ([source](https://mp.weixin.qq.com/s/2R9xtPdgYr3kF6L-LGr8aA)).
@@ -42,7 +41,7 @@ The owner chose to have that idea written up for FlowChain. This is that design.
   - 邮件里不写价格；
   - 研究用的公开数据工作区只写进本地发件箱，不会真的发出去。
 - **不调用模型也能运行：** 起草全部来自现有规则和表单。模型只在用户问"为什么"、或在对话里修改草稿时使用。
-- **决定：** §9 共 9 项。最关键的是：
+- **决定：** §9 共 9 项，2026-11-11 已按推荐批准。最关键的是：
   - DD-1：是否采用这个方向；
   - DD-3：一键能做什么；
   - DD-4："不需要"对谁生效；
@@ -359,6 +358,8 @@ Sizes are rough, in working days.
   - Steps 2b–4 follow in January (DD-8).
 
 ## 9. Decisions for the owner
+
+**Decided 2026-11-11:** the owner approved every decision below as recommended ("按推荐批准").
 
 | # | Decision | Recommendation |
 | --- | --- | --- |
