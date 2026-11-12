@@ -5,7 +5,7 @@ import { AI_SKILL_OTHER_TENANT, AI_SKILL_TENANT, aiSkillActor, aiSkillScenario }
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_READ_TOOLS } from './ai-read-tools.mjs'
-import { AI_ASSISTANT_V2_TOOLS } from './ai-assistant-v2-data-tools.mjs'
+import { AI_ASSISTANT_V2_TOOLS, namesCoverPeriod } from './ai-assistant-v2-data-tools.mjs'
 import { AI_READ_TOOL_COLUMNS, aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { buildReorderList } from './reorder-list.mjs'
@@ -237,6 +237,24 @@ test('suggest_purchase_lines with coverDays sizes a line from recorded demand an
   assert.equal(before.suggestedQuantity.source, 'covered_by_open_orders')
 })
 
+// 2026-11-09 on Flash: "这周需要补什么货" became coverDays 7, and the form held 72
+// cakestands where the reorder list says its minimum order of 60.
+test('coverDays stands only when the questions name a period to cover; "this week" says when', async () => {
+  const { facts, context } = await v2({ change: shipping, actor: everyWarehouse })
+  const lines = async (question) => (await runAiReadTool('suggest_purchase_lines', { skus: ['LDM-001'], coverDays: 7 }, { facts, context: { ...context, question } })).result
+  const thisWeek = await lines('这周需要补什么货？')
+  assert.equal(thisWeek.coverDays, undefined)
+  assert.match(thisWeek.coverDaysLeftOut, /no period to cover/)
+  assert.equal(thisWeek.rows[0].cover, undefined)
+  assert.notEqual(thisWeek.rows[0].suggestedQuantity.source, 'cover_days')
+  assert.equal((await lines('What should I reorder this week?')).coverDays, undefined)
+  const period = await lines('What do we need for the next 2 weeks?')
+  assert.equal(period.coverDays, 7)
+  assert.equal(period.coverDaysLeftOut, undefined)
+  for (const question of ['Order a month\'s worth of LDM-001', 'enough for the next two weeks', '两周的量', '下个月的量', '备一个月的货', '够卖到月底', '30 days of stock']) assert.ok(namesCoverPeriod(question), question)
+  for (const question of ['这周需要补什么货？', '本周要下哪些单', 'What should I reorder this week?', 'What needs ordering today?', 'Reorder LDM-001']) assert.ok(!namesCoverPeriod(question), question)
+})
+
 // 2026-11-07 (public data): every sales order had shipped, so the projection
 // showed no demand for an item shipping 17 a day.
 test('stock_projection also runs the weeks at the recorded shipping rate, apart from the open sales orders', async () => {
@@ -260,6 +278,46 @@ test('stock_projection also runs the weeks at the recorded shipping rate, apart 
   }
   // The open sales order weeks are as the read tool gives them.
   assert.ok(Array.isArray(result.weeks) && result.weeks.length === 3)
+})
+
+// 2026-11-08: "the other 195 are due Nov 10 to Nov 16" came from the first 20
+// rows, and "the details of the 195" could not be read (50 rows were too large).
+test('reorder_list counts and dates every row, narrows to a window and pages with offset', async () => {
+  const scenario = aiSkillScenario()
+  const loaded = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(loaded)
+  const today = facts.today
+  // One to order now, then one a day from tomorrow: 30 rows over a month.
+  const rows = Array.from({ length: 30 }, (_, index) => ({ sku: `SKU-${String(index).padStart(3, '0')}`, itemName: `Item ${index}`, orderNow: index === 0, orderByDate: index === 0 ? today : addCalendarDays(today, index), supplier: { id: 'SUP-1', name: 'Supplier One' } }))
+  const reorderList = { read: async () => ({ rows }) }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  const run = async (args) => (await runAiReadTool('reorder_list', args, { facts: await readAiSkillFacts(context), context })).result
+  const first = await run({ limit: 10 })
+  assert.deepEqual(first.counts, { orderNow: 1, dueWithin7Days: 8, dueWithin30Days: 30, noOrderByDate: 0, raisedToMinimum: 0 })
+  assert.deepEqual(first.orderByRange, { earliest: today, latest: addCalendarDays(today, 29) })
+  assert.deepEqual([first.total, first.shownFrom, first.shownTo, first.more], [30, 1, 10, 20])
+  // The next page.
+  const second = await run({ limit: 10, offset: 10 })
+  assert.deepEqual([second.rows[0].sku, second.shownFrom, second.shownTo, second.more], ['SKU-010', 11, 20, 10])
+  // A window, and past the end.
+  const week = await run({ due: 'within_7_days' })
+  assert.deepEqual([week.total, week.rows.at(-1).sku], [8, 'SKU-007'])
+  assert.deepEqual((await run({ due: 'now' })).rows.map((row) => row.sku), ['SKU-000'])
+  const beyond = await run({ offset: 99 })
+  assert.deepEqual([beyond.rows.length, beyond.shownFrom, beyond.more], [0, 0, 0])
+  // An item by its name; the counts stay the whole list's.
+  const named = await run({ sku: 'item 7' })
+  assert.deepEqual([named.rows.map((row) => row.sku), named.counts.orderNow, named.counts.dueWithin30Days], [['SKU-007'], 1, 30])
+  // 2026-11-08: a SKU filter that matched nothing gave "0 to order now".
+  const missing = await runAiReadTool('reorder_list', { sku: '蛋糕架' }, { facts: await readAiSkillFacts(context), context })
+  assert.equal(missing.error, 'not_found')
+  assert.match(missing.details.join(' '), /another language than the question/)
+})
+
+test('the prompt keeps an answer to the rows it read, pages for more, and explains a questioned figure', () => {
+  assert.match(ASSISTANT_V2_SYSTEM, /Say only what the rows you read show\. For the rest of a list, use the counts, totals and ranges the tool gives/)
+  assert.match(ASSISTANT_V2_SYSTEM, /read the next page with offset/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Call a figure a mistake only when a result shows it is wrong/)
 })
 
 // 2026-11-08 (rehearsal): asked to add "our stock is already below safety
@@ -560,7 +618,7 @@ test('reorder_list returns the preferred supplier\'s name, lead time and minimum
   assert.equal(row.shortfall, 102)
   assert.deepEqual([row.requestQuantity, row.raisedToMinimum], [150, true])
   // Counts over every row, for the answer to read instead of counting.
-  assert.deepEqual(list.counts, { orderNow: list.rows.filter((entry) => entry.orderNow === true).length, raisedToMinimum: 1 })
+  assert.deepEqual([list.counts.orderNow, list.counts.raisedToMinimum], [list.rows.filter((entry) => entry.orderNow === true).length, 1])
   assert.ok(Array.isArray(row.flags) && row.flags.every((flag) => typeof flag.code === 'string'))
   // Every open line counts in the position, late or not, and says whether it is late.
   assert.ok(row.incomingLines.length && row.incomingLines.every((line) => typeof line.late === 'boolean'))
@@ -631,7 +689,15 @@ test('every data tool declares its columns, and each declared column is in its r
   const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
   const reorderList = { read: async (input) => buildReorderList({ allocationRows: input.allocationRows, items, supplierLinks: [link()], suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }) }
   const invoiced = (data) => { data.customerInvoices = [{ id: 'CI-1', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-09-10T00:00:00Z'), subtotalAmount: '950.0000', currency: 'USD', lines: [{ itemId: 'ITEM-001', sku: 'LDM-001', itemName: 'Flow Controller', quantity: '10', unit: 'pcs', lineAmount: '950.0000' }] }] }
-  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data); invoiced(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList } } })
+  // Today's decision items and a record's decision history, as Today would read them.
+  const todayRow = (kind, recordId, label) => ({ id: `${kind}:${recordId}`, kind, entityType: kind === 'reorder_now' ? 'item' : 'purchase_order', recordId, label, name: 'Acme Components', date: '2026-09-20', dateKind: 'due', overdueDays: 3, detail: {} })
+  const todayDecisions = async () => ({
+    available: true, canDecide: true, supplierEmail: { enabled: false, canSend: false, outbox: true },
+    waiting: [{ key: 'purchase_order_overdue:PO-001', row: todayRow('purchase_order_overdue', 'PO-001', 'PO-001'), raisedAt: null, returned: true, draft: null }],
+    setAside: [{ key: 'reorder_now:ITEM-001', row: todayRow('reorder_now', 'ITEM-001', 'LDM-001'), decision: 'not_needed', reasonCode: 'seasonal', note: null, returnOn: null, decidedAt: null, decidedOn: '2026-09-18', decidedBy: { name: 'Sam' }, documentType: null, documentIds: [], documentNumber: null }],
+  })
+  const decisionHistory = { read: async () => ({ items: [{ kind: 'purchase_order_overdue', state: 'decided', raisedAt: new Date('2026-09-17T12:00:00Z'), decidedAt: new Date('2026-09-18T12:00:00Z'), resolvedAt: new Date('2026-09-19T12:00:00Z'), decision: 'chased', reasonCode: null, note: null, returnOn: '2026-09-22', snapshot: { raisedOn: '2026-09-17', decidedOn: '2026-09-18' }, decidedBy: { name: 'Sam' } }], emails: [] }) }
+  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data); invoiced(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList, todayDecisions, decisionHistory } } })
   // The calls that fill each table; a tool not named here is called once
   // without arguments.
   const calls = {
@@ -650,10 +716,12 @@ test('every data tool declares its columns, and each declared column is in its r
     // A row's details depend on its signal: today's list and the problems
     // between them hold every detail column.
     attention_list: [{ limit: 10 }, { kind: 'problems', limit: 10 }],
-    item_suppliers: [{ sku: 'LDM-001' }],
+    item_suppliers: [{ sku: 'LDM-001' }, { supplier: 'Acme Components' }],
     rfq_quotes: [{}],
     order_quantity_costs: [{ sku: 'LDM-001', quantities: [50, 100] }],
     optimize_order_plan: [{ plan: [{ sku: 'LDM-001', quantity: 100 }] }],
+    decision_items: [{ include: 'all' }],
+    decision_history: [{ record: 'PO-001' }],
   }
   // A nested column under a null value (a rate with too few deliveries) is
   // there, and null. Each column must be in a row of one of the tool's calls.
@@ -735,6 +803,17 @@ test('item_suppliers gives an item\'s approved suppliers with lead time, minimum
   assert.equal(typeof first.referencePrice, 'number')
   assert.deepEqual(first.ref, { type: 'supplier', id: 'SUP-001', label: 'Acme Components' })
   assert.equal((await run('item_suppliers', { sku: 'NOPE-9' })).error, 'not_found')
+  // One supplier's items with their terms (2026-11-12 on Flash: "What is the
+  // lead time from Globex Party Supplies?" found no item list to read).
+  const acme = await run('item_suppliers', { supplier: 'Acme Components' })
+  assert.ok(acme.ok, acme.error)
+  assert.equal(acme.result.supplier, 'Acme Components')
+  const ldm = acme.result.rows.find((row) => row.sku === 'LDM-001')
+  assert.deepEqual([ldm.preferred, ldm.leadTimeDays, ldm.ref.type], [true, 12, 'item'])
+  assert.ok(acme.result.leadTimeDays.shortest <= 12 && acme.result.leadTimeDays.longest >= 12)
+  assert.equal(acme.result.total, acme.result.rows.length)
+  assert.equal((await run('item_suppliers', { supplier: 'Nobody Ltd' })).result?.error ?? (await run('item_suppliers', { supplier: 'Nobody Ltd' })).error, 'supplier_not_found')
+  assert.equal((await run('item_suppliers', {})).error ?? (await run('item_suppliers', {})).result?.error, 'invalid_arguments')
 })
 
 test('rfq_quotes reads each open RFQ\'s latest quotes through the RFQ comparison, only for a user who may see prices', async () => {
@@ -764,4 +843,31 @@ test('the prompt words a ticked form as reviewing it, an unticked one as ticking
   assert.match(ASSISTANT_V2_SYSTEM, /review the lines, then click Create draft request/)
   assert.match(ASSISTANT_V2_SYSTEM, /tick the items you want, then click Create draft request/)
   assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /"check the lines, then click Create draft request"/)
+})
+
+// 2026-11-09 on Flash, today's priorities: "a call with Acme covers both of
+// its late orders, 360 pcs of 85123A in all" (120 + 240) was flagged, as no
+// tool gave the total.
+test('attention_list gives the late lines\' total for a SKU on more than one late order, following its focus', async () => {
+  const { facts, run } = await v2()
+  // What the purchase orders say, worked out here.
+  const late = facts.purchaseOrders.rows.filter((po) => po.overdueDays > 0)
+  const bySku = new Map()
+  for (const po of late) for (const line of po.openLines) if (line.remaining > 0) bySku.set(line.sku, [...(bySku.get(line.sku) || []), { order: po.orderNumber, remaining: line.remaining, supplierId: po.supplierId }])
+  const shared = [...bySku.entries()].filter(([, lines]) => new Set(lines.map((line) => line.order)).size > 1)
+  assert.ok(shared.length > 0, 'the scenario has a SKU on two late orders')
+  const [sku, lines] = shared[0]
+  const today = (await run('attention_list')).result
+  const row = today.lateLinesBySku.find((entry) => entry.sku === sku)
+  assert.equal(row.lateQuantity, lines.reduce((sum, line) => sum + line.remaining, 0))
+  assert.deepEqual(row.orders.sort(), [...new Set(lines.map((line) => line.order))].sort())
+  assert.ok(today.lateLinesBySku.every((entry) => entry.orders.length > 1))
+  // Focused on the SKU, on one of its orders, or on its supplier, it stays.
+  assert.deepEqual((await run('attention_list', { focus: sku })).result.lateLinesBySku.map((entry) => entry.sku), [sku])
+  assert.ok((await run('attention_list', { focus: lines[0].order })).result.lateLinesBySku.some((entry) => entry.sku === sku))
+  const supplier = facts.suppliers.find((entry) => entry.id === lines[0].supplierId)
+  if (supplier && lines.every((line) => line.supplierId === supplier.id)) assert.ok((await run('attention_list', { focus: supplier.name })).result.lateLinesBySku.some((entry) => entry.sku === sku))
+  // A role that cannot read purchase orders gets none.
+  const noOrders = { ...facts, purchaseOrders: undefined }
+  assert.equal((await runAiReadTool('attention_list', {}, { facts: noOrders })).result.lateLinesBySku, undefined)
 })

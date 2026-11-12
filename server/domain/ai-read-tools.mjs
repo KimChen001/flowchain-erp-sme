@@ -1,4 +1,6 @@
-import { AI_TOOL_LIMITS, aiToolList, aiToolPurchaseOrder, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
+import { AI_TOOL_LIMITS, aiStockSku, aiToolList, aiToolPurchaseOrder, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
+// The item lookup lives with the contract, so the service tools can use it too.
+export { aiStockSku }
 import { runLateOrderImpact } from './ai-skill-late-order-impact.mjs'
 import { runSpendAnalysis } from './ai-skill-spend-analysis.mjs'
 import { aiSkillPrepareComparison, runSupplierComparison } from './ai-skill-supplier-comparison.mjs'
@@ -23,6 +25,10 @@ const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRow
 const PERIODS = ['all', 'this_month', 'last_month', 'this_quarter', 'last_quarter', 'this_year', 'last_year']
 const periodParam = { type: 'string', enum: PERIODS, description: 'The period, counted from the workspace day. all by default.' }
 const periodOf = (value) => (value && value !== 'all' ? { kind: value } : null)
+// The scorecard's periods: its own last 90 days (the default, read as no
+// period), or a calendar one.
+const SCORECARD_PERIODS = ['last_90_days', ...PERIODS.filter((value) => value !== 'all')]
+const scorecardPeriodOf = (value) => (value && value !== 'last_90_days' ? periodOf(value) : null)
 const byDue = (a, b) => (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99') || text(a.orderNumber).localeCompare(text(b.orderNumber))
 const supplierError = (found) => ({ error: found.error, candidates: found.candidates || [] })
 
@@ -63,9 +69,30 @@ const salesOrderNumberOf = (facts, id) => array(facts.salesOrders).find((row) =>
 const orderDatesOf = (facts, ids) => array(ids).map((id) => array(facts.purchaseOrders?.index).find((row) => row.id === id)).filter(Boolean)
   .map((row) => ({ orderNumber: row.orderNumber, dueDate: row.dueDate || null, overdueDays: row.overdueDays || 0 }))
 
+// The amounts of some orders added up by currency, never across currencies;
+// null when the role does not see amounts (2026-11-12 on Flash: "What is the
+// total value of our open purchase orders?" was answered with committedSpend,
+// £613,812.39, which counts every approved, issued or received order, open or
+// closed, over the report period, against open orders worth far less).
+function orderAmounts(rows) {
+  if (rows.length && rows.every((row) => row.amount === null || row.amount === undefined)) return null
+  const byCurrency = new Map()
+  let withoutAmount = 0
+  for (const row of rows) {
+    const value = Number(row.amount)
+    if (row.amount === null || row.amount === undefined || row.amount === '' || !Number.isFinite(value)) { withoutAmount += 1; continue }
+    const entry = byCurrency.get(row.currency || null) || { currency: row.currency || null, amount: 0, orders: 0 }
+    entry.amount += value
+    entry.orders += 1
+    byCurrency.set(row.currency || null, entry)
+  }
+  return { amounts: [...byCurrency.values()].map((entry) => ({ ...entry, amount: Math.round(entry.amount * 100) / 100 })), ...(withoutAmount ? { ordersWithoutAmount: withoutAmount } : {}) }
+}
+const COMMITTED_SPEND = 'committedSpend is every approved, issued, partly or fully received order, open or closed, as the dashboard counts it: never the value of the open orders.'
+
 const listPurchaseOrders = defineAiTool({
   name: 'list_purchase_orders',
-  description: 'Purchase orders the user may read, with supplier, status, the SKUs and item names, promised date, days overdue, quantities still to receive and amount. Filter by status, supplier, supplier tier or SKU. Most overdue first, then by promised date. total counts every matching order and bySupplier counts them per supplier.',
+  description: `Purchase orders the user may read, with supplier, status, the SKUs and item names, promised date, days overdue, quantities still to receive and amount. Filter by status, supplier, supplier tier or SKU. Most overdue first, then by promised date. total counts every matching order and bySupplier counts them per supplier. amountTotal adds up the amounts of every matching order by currency: the value of the open (or overdue, or one supplier\'s) orders. ${COMMITTED_SPEND}`,
   parameters: {
     status: { type: 'string', enum: ['open', 'overdue', 'pending_approval', 'all'], description: 'open (default): not closed or fully received; overdue: open and past the promised date; pending_approval; all.' },
     supplier: { type: 'string', description: 'A supplier name, code or id.' },
@@ -96,6 +123,7 @@ const listPurchaseOrders = defineAiTool({
     return {
       asOf: facts.asOf,
       workspace: { open: facts.purchaseOrders.open, overdue: facts.purchaseOrders.overdue, committedSpend: facts.purchaseOrders.committedSpend ?? null },
+      amountTotal: rows.length ? orderAmounts(rows) : null,
       ...aiToolList(rows.map((row) => ({ ...orderRow(row), itemNames: itemNamesOf(facts, row.skus) })), args.limit),
       bySupplier: ordersBySupplier(rows),
     }
@@ -126,25 +154,6 @@ const getPurchaseOrder = defineAiTool({
 // The inventory page's terms, said with every result: its status is not the
 // reorder list's rule, and on 2026-11-03 the model took stock_position's "ok"
 // as reversing the reorder list's "order now".
-// An item named by its SKU or by its name, as the user or a draft wrote it
-// (2026-11-08: a lookup of "White Hanging Heart T-Light Holder" in the SKU
-// field found nothing, and the answer would not state the stock). Case,
-// quotes, dashes and spaces do not matter; one item whose name holds the
-// words is that item; several are offered back to choose from.
-const nameKey = (value) => text(value).normalize('NFKC').toLowerCase().replace(/[\u2018\u2019\u201c\u201d"'`]/g, '').replace(/[\u2010-\u2015\u2212]/g, '-').replace(/\s+/g, ' ').trim()
-export function aiStockSku(facts, value) {
-  const wanted = text(value)
-  if (!wanted) return { error: 'not_found' }
-  const items = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)]
-  const bySku = items.find((row) => fold(row.sku) === fold(wanted))
-  if (bySku) return { sku: bySku.sku }
-  const key = nameKey(wanted)
-  const exact = items.filter((row) => row.itemName && nameKey(row.itemName) === key)
-  const matches = exact.length ? exact : items.filter((row) => row.itemName && key.length >= 3 && nameKey(row.itemName).includes(key))
-  if (matches.length === 1) return { sku: matches[0].sku }
-  if (matches.length > 1) return { error: 'ambiguous', candidates: matches.slice(0, 10).map((row) => ({ sku: row.sku, itemName: row.itemName || null })) }
-  return { error: 'not_found' }
-}
 
 const STOCK_BASIS = 'incomingOnPurchaseOrders counts every open approved purchase order line. status compares available stock with safety stock, then available to promise (available + incoming - unreserved demand) with the reorder point. Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point. belowSafetyStock gives that judgement. It is not the reorder list: for whether, when and how much to order, use reorder_list.'
 // At risk as the parameter says: short against open sales orders, or out of
@@ -222,10 +231,21 @@ const listSalesOrders = defineAiTool({
 const RECENT_DAYS = AI_SKILL_RECENT_DAYS
 const listReceipts = defineAiTool({
   name: 'list_receipts',
-  description: 'Goods receipts: those with rejected quantities on open purchase orders, those not yet posted to stock, or those that arrived in the last 7 days.',
-  parameters: { kind: { type: 'string', enum: ['rejected', 'unposted', 'recent'], description: 'rejected by default.' }, limit: limitParam },
+  description: 'Goods receipts: those with rejected quantities on open purchase orders, those not yet posted to stock, or those that arrived in the last 7 days. With sku, that item\'s latest receipts (up to 3, newest first).',
+  parameters: { kind: { type: 'string', enum: ['rejected', 'unposted', 'recent'], description: 'rejected by default.' }, sku: { type: 'string', description: 'One item: its latest receipts.' }, limit: limitParam },
   available: (facts) => Boolean(facts.receipts),
   run(args, { facts }) {
+    if (args.sku) {
+      const sku = Object.keys(facts.receipts.latestBySku || {}).find((key) => fold(key) === fold(args.sku))
+      const rows = sku ? facts.receipts.latestBySku[sku] : []
+      return {
+        asOf: facts.asOf,
+        sku: sku || args.sku,
+        receiptsRead: facts.receipts.read ?? null,
+        ...(rows.length ? {} : { note: `No receipt of this item among the ${facts.receipts.read ?? 0} newest receipts read.` }),
+        rows: rows.map((row) => ({ documentNumber: row.documentNumber, arrived: row.arrivedDay, accepted: row.accepted, rejected: row.rejected, unit: row.unit, purchaseOrder: row.poId ? orderNumberOf(facts, row.poId) : null, supplier: row.supplier, postingStatus: row.postingStatus, ref: aiToolRef('receiving_doc', row.id, row.documentNumber) })),
+      }
+    }
     const kind = args.kind || 'rejected'
     const rows = [...array(facts.receipts[kind])].sort((a, b) => text(a.arrivedDay).localeCompare(text(b.arrivedDay)))
     return {
@@ -285,7 +305,7 @@ const listRfqs = defineAiTool({
 
 const listSuppliers = defineAiTool({
   name: 'list_suppliers',
-  description: 'Suppliers the user may read, with their code and tier (1 strategic, 2 core, 3 transactional, or none). Use it to find a supplier\'s exact name.',
+  description: 'Suppliers the user may read, with their code and tier (1 strategic, 2 core, 3 transactional, or none). A tiered supplier gives tierReason (why, as its setter wrote), tierSetOn and tierSetBy. Use it to find a supplier\'s exact name.',
   parameters: { name: { type: 'string', description: 'Part of a supplier name.' }, tier: { type: 'integer', minimum: 1, maximum: 3 }, limit: limitParam },
   available: (facts) => Array.isArray(facts.suppliers),
   run(args, { facts }) {
@@ -293,7 +313,7 @@ const listSuppliers = defineAiTool({
     if (args.name) rows = rows.filter((row) => fold(row.name).includes(fold(args.name)) || fold(row.code) === fold(args.name))
     if (args.tier) rows = rows.filter((row) => row.tier === args.tier)
     rows = [...rows].sort((a, b) => text(a.name).localeCompare(text(b.name)))
-    return aiToolList(rows.map((row) => ({ name: row.name, code: row.code, tier: row.tier, ref: aiToolRef('supplier', row.id, row.name) })), args.limit)
+    return aiToolList(rows.map((row) => ({ name: row.name, code: row.code, tier: row.tier, ...(row.tierReason ? { tierReason: row.tierReason, tierSetOn: row.tierSetOn ?? null, tierSetBy: row.tierSetBy ?? null } : {}), ref: aiToolRef('supplier', row.id, row.name) })), args.limit)
   },
 })
 
@@ -335,11 +355,14 @@ const spendAnalysis = defineAiTool({
 
 const supplierPerformance = defineAiTool({
   name: 'supplier_performance',
-  description: 'Delivery performance from the supplier scorecard: on-time, in-full and on-time-in-full rates with their counts, rejection rate and average delay. Every figure counts only deliveries promised in the period and judges them against the original promised date, so its count of deliveries still undelivered past that date can differ from the orders overdue today; for those, use list_purchase_orders. A rate needs at least 5 deliveries in the period. Name up to 5 suppliers to compare them, or none for the best or worst.',
+  description: 'Delivery performance from the supplier scorecard: on-time, in-full and on-time-in-full rates with their counts, rejection rate and average delay. Every figure counts only deliveries promised in the period and judges them against the original promised date, so its count of deliveries still undelivered past that date can differ from the orders overdue today; for those, use list_purchase_orders. A rate needs at least 5 deliveries in the period. The period is the last 90 days unless another is given. Name up to 5 suppliers to compare them, or none for the best or worst.',
   parameters: {
     suppliers: { type: 'array', items: { type: 'string' }, maxItems: 5, description: 'Supplier names or codes.' },
     order: { type: 'string', enum: ['best', 'worst'], description: 'Without suppliers: best (default) or worst on time first.' },
-    period: periodParam,
+    // The scorecard's own window is the last 90 days (2026-11-09 on Flash: told
+    // the period was "all", the model said the scorecard had no 90-day view
+    // and gave a quarter instead).
+    period: { type: 'string', enum: SCORECARD_PERIODS, description: 'The period, counted from the workspace day. last_90_days by default, the scorecard\'s own window.' },
   },
   available: (facts) => typeof facts.supplierScorecard === 'function',
   async run(args, { facts }) {
@@ -349,7 +372,7 @@ const supplierPerformance = defineAiTool({
       if (!found.supplier) return supplierError(found)
       named.push(found.supplier)
     }
-    const route = await aiSkillPrepareComparison({ skillId: 'supplier_comparison', signals: { compare: { mode: args.order === 'worst' ? 'worst' : 'best', period: periodOf(args.period) } }, entities: { suppliers: named } }, facts)
+    const route = await aiSkillPrepareComparison({ skillId: 'supplier_comparison', signals: { compare: { mode: args.order === 'worst' ? 'worst' : 'best', period: scorecardPeriodOf(args.period) } }, entities: { suppliers: named } }, facts)
     const result = runSupplierComparison(facts, { route })
     if (result.unavailable) return { error: 'scorecard_unavailable' }
     if (result.hidden) return { error: 'not_allowed' }
@@ -406,13 +429,13 @@ const lateOrderImpact = defineAiTool({
 
 const workspaceSummary = defineAiTool({
   name: 'workspace_summary',
-  description: 'Counts across the workspace as the reports show them: open and overdue purchase orders and committed spend, orders waiting for approval, SKUs at risk as the reports count them (short against open sales orders; stock_position counts those below safety stock or the reorder point too), supplier invoice matching, open RFQs, receipts with rejections or not posted, and records missing data. What the user may not read is left out.',
+  description: `Counts across the workspace as the reports show them: open and overdue purchase orders, the open orders' amount (openOrdersAmount) and committed spend, orders waiting for approval, SKUs at risk as the reports count them (short against open sales orders; stock_position counts those below safety stock or the reorder point too), supplier invoice matching, open RFQs, receipts with rejections or not posted, and records missing data. What the user may not read is left out. ${COMMITTED_SPEND}`,
   available: () => true,
   run(_args, { facts }) {
     return {
       asOf: facts.asOf,
       currency: facts.currency,
-      purchaseOrders: facts.purchaseOrders ? { open: facts.purchaseOrders.open, overdue: facts.purchaseOrders.overdue, committedSpend: facts.purchaseOrders.committedSpend ?? null, waitingForApproval: array(facts.purchaseOrders.pendingApproval).length } : null,
+      purchaseOrders: facts.purchaseOrders ? { open: facts.purchaseOrders.open, overdue: facts.purchaseOrders.overdue, openOrdersAmount: orderAmounts(array(facts.purchaseOrders.index).filter((row) => row.isOpen)), committedSpend: facts.purchaseOrders.committedSpend ?? null, waitingForApproval: array(facts.purchaseOrders.pendingApproval).length } : null,
       purchaseRequestsWaitingForApproval: facts.purchaseRequests ? array(facts.purchaseRequests.awaitingApproval).length : null,
       inventory: facts.inventory ? { skus: array(facts.inventory.rows).length, atRisk: facts.inventory.atRiskCount, atRiskSkus: array(facts.inventory.atRisk) } : null,
       supplierInvoices: facts.invoices ? { committedTotal: facts.invoices.committed ?? null, committedCount: facts.invoices.committedCount, match: facts.invoices.matchCounts } : null,

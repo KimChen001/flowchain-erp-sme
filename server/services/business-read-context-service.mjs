@@ -178,9 +178,13 @@ export function pickRecentDocuments(documents, { limit = RECENT_DOCUMENTS, perTy
 //   recentDocuments  the latest changed documents of every type (no more than
 //                    three of one type while others have some), with the
 //                    instant of the change;
-//   firstRun         the first-day checklist while any step is open.
-export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, sources = {}, setup = null, setupOptions = {}, hidden = [], limitations = [] } = {}) {
-  const work = buildTodayWork({
+//   firstRun         the first-day checklist while any step is open;
+//   decisions        the rows the system prepared a next step for and the
+//                    rows set aside (server/services/decision-item-service.mjs),
+//                    or { available: false } without a database. workItems
+//                    still lists every row; the page splits them.
+export function todayWorkOf(context, sources = {}, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
+  return buildTodayWork({
     purchaseOrders: context.purchaseOrders,
     reportPurchaseOrders: sources.reportPurchaseOrders,
     purchaseRequests: context.purchaseRequests,
@@ -192,6 +196,10 @@ export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAUL
     receivables: sources.receivables,
     contracts: sources.contracts,
   }, { now, timeZone })
+}
+
+export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, sources = {}, setup = null, setupOptions = {}, hidden = [], limitations = [], work: computed = null, decisions = { available: false } } = {}) {
+  const work = computed || todayWorkOf(context, sources, { now, timeZone })
   const documents = homeDocuments(context, sources.recentCustomerInvoices, sources.billPayableStatuses, sources.customerInvoiceReceivableStatuses)
   const todayChanges = countDocumentsUpdatedToday(documents, { now, timeZone })
   const recentDocuments = pickRecentDocuments(documents)
@@ -207,6 +215,7 @@ export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAUL
     todayChanges,
     recentDocuments,
     firstRun: buildFirstRunChecklist(setup, setupOptions),
+    decisions,
     hidden: [...new Set(hidden)],
     counts: { workItems: work.total, overdue: work.overdue, todayChanges, recentDocuments: recentDocuments.length },
     limitations: [...new Set([...(context.dataLimitations || []), ...limitations, ...(reorderScoped ? ['reorder_not_checked_for_warehouse_scope'] : [])])],

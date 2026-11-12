@@ -58,8 +58,9 @@ test('Today shows every kind in its first rows, links a reorder row to its reque
   // One request at a time, shared by a page drawn twice (the /app/overview redirect).
   assert.match(page, /if \(!overviewRequest\) overviewRequest = apiJson<HomeOverview>\("\/api\/home\/overview"\)\.finally/)
   assert.doesNotMatch(page, /setOverview\(await apiJson/)
-  // On a phone the three tiles share one short row, notes hidden.
-  assert.match(page, /className="grid grid-cols-3 gap-2 sm:gap-4" data-testid="today-tiles"/)
+  // On a phone the three tiles share one short row, notes hidden; with the
+  // decisions tile, four sit two to a row.
+  assert.ok(page.includes('className={`grid gap-2 sm:gap-4 ${decisions ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-3"}`} data-testid="today-tiles"'))
   const copy = read('src/modules/overview/todayCopy.ts')
   assert.match(copy, /position: "库存位置（含在途）\{position\}，再订货点 \{reorderPoint\}"/)
   assert.doesNotMatch(copy, /库存头寸/)
@@ -75,10 +76,16 @@ test('AI priorities shows Today\'s first rows with their dates', () => {
   assert.match(page, /const shown = firstRowsByKind\(items, SHOWN\)/)
   assert.doesNotMatch(page, /items\.filter\(\(item\) => item\.overdueDays > 0\)/)
   assert.doesNotMatch(page, /overdue and earliest first/)
+  // Rows with a decision card leave Today's work list, and these rows too.
+  assert.ok(page.includes('const items = (overview?.workItems || []).filter((item) => !decided.has(`${item.kind}:${item.recordId}`));'))
   assert.match(page, /todayDateText\(t\.language, locale, item, today\)/)
-  // Today and AI priorities word a row's date the same way.
+  // Today, AI priorities and the decision cards word a row's date the same
+  // way: Today through the shared hook, which uses todayDateText.
   const today = read('src/modules/overview/Page.tsx')
-  assert.match(today, /const dateText = \(item: WorkItem\) => todayDateText\(t\.language, locale, item, today\)/)
+  assert.ok(today.includes('const { day, dateText, tone } = useTodayRowFormat(overview?.today || "");'))
+  const format = read('src/modules/overview/todayRowFormat.ts')
+  assert.ok(format.includes('const dateText = (row: Row) => todayDateText(t.language, locale, row as TodayDated, today);'))
+  assert.ok(format.includes('const tone = (row: Row) => todayDateTone(row as TodayDated, today);'))
   const copy = read('src/modules/overview/todayCopy.ts')
   assert.match(copy, /export function todayDateText\(/)
   assert.match(copy, /to_pay: \["To pay", "待付款"\]/)

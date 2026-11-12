@@ -11,7 +11,7 @@ import { firstRowsByKind } from "./todayRows";
 
 type NavigateFn = (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null, options?: unknown) => void;
 type WorkItem = TodayDated & { id: string; entityType: string; recordId: string; label: string; name: string | null; href: string };
-type HomeOverview = { today?: string; workItems: WorkItem[]; workTotal: number; overdue: number };
+type HomeOverview = { today?: string; workItems: WorkItem[]; workTotal: number; overdue: number; decisions?: { available: boolean; waiting?: Array<{ key: string }>; setAside?: Array<{ key: string }> } };
 
 // AI priorities: the first rows of Today's work (GET /api/home/overview, the
 // rules the rest of the app uses), the same rows Today shows before "Show
@@ -72,7 +72,10 @@ export default function AiSuggestionsPage({ onOpenAi }: { onNavigate: NavigateFn
     try { setOverview(await apiJson<HomeOverview>("/api/home/overview")); setState("loaded"); } catch { setOverview(null); setState("error"); }
   };
   useEffect(() => { void load(); }, []);
-  const items = overview?.workItems || [];
+  // A row with a decision card, or set aside, has left Today's work list
+  // (DecisionCards.tsx), so it is not among these rows either.
+  const decided = new Set(overview?.decisions?.available ? [...(overview.decisions.waiting || []), ...(overview.decisions.setAside || [])].map((entry) => entry.key) : []);
+  const items = (overview?.workItems || []).filter((item) => !decided.has(`${item.kind}:${item.recordId}`));
   const today = overview?.today || "";
   // Today's first rows: the earliest of every kind, then the next earliest.
   const shown = firstRowsByKind(items, SHOWN);

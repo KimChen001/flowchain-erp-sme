@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
 import { Link } from "react-router";
-import { AlarmClock, ArrowRight, CheckCircle2, Circle, FileClock, ListChecks, RefreshCw } from "lucide-react";
+import { AlarmClock, ArrowRight, CheckCircle2, Circle, ClipboardCheck, FileClock, ListChecks, RefreshCw } from "lucide-react";
 import { A, Card } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
@@ -13,8 +13,11 @@ import { formatDateTimeInTimeZone, formatLocaleAmount, formatQuantity, instantDa
 import { unitLabel } from "../../i18n/unitLabels";
 import { documentStatusLabel } from "../../i18n/statusLabels";
 import { reorderListText } from "../inventory/reorderListCopy";
-import { formatTodayDay, todayDateText, todayDateTone, useTodayCopy, type TodayCopyKey } from "./todayCopy";
+import { useTodayCopy, type TodayCopyKey } from "./todayCopy";
 import { firstRowsByKind, reorderRequestHref, rowsPerKind, type ReorderRequest } from "./todayRows";
+import { DecisionSection, type TodayDecisions } from "./DecisionCards";
+import { useDecisionCopy } from "./decisionCopy";
+import { useTodayRowFormat } from "./todayRowFormat";
 
 // Today: the work that needs doing, from the rules the rest of the app uses
 // (GET /api/home/overview, server/domain/today-work.mjs), earliest date first,
@@ -52,6 +55,10 @@ type HomeOverview = {
   todayChanges: number;
   recentDocuments: DocumentRow[];
   firstRun: { steps: SetupStep[]; done: number; total: number } | null;
+  // The rows FlowChain prepared a next step for, and those set aside
+  // (DecisionCards.tsx); without a database, { available: false } and
+  // every row stays in Today's work.
+  decisions?: TodayDecisions;
   hidden: string[];
   limitations: string[];
   generatedAt: string;
@@ -116,6 +123,7 @@ export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi, 
 function RuntimeHomepage() {
   const { locale, timezone } = useI18n();
   const t = useTodayCopy();
+  const d = useDecisionCopy();
   const [overview, setOverview] = useState<HomeOverview | null>(null);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   const [filter, setFilter] = useState<"all" | "overdue">("all");
@@ -123,8 +131,9 @@ function RuntimeHomepage() {
   const [kindFilter, setKindFilter] = useState<WorkKind | null>(null);
   const [expanded, setExpanded] = useState(false);
   const mounted = useRef(true);
-  const load = async () => {
-    setState("loading");
+  // After a decision Today reloads quietly, so the cards do not flash.
+  const load = async (quiet = false) => {
+    if (!quiet) setState("loading");
     try {
       const next = await requestOverview();
       if (!mounted.current) return;
@@ -141,21 +150,31 @@ function RuntimeHomepage() {
     void load();
     return () => { mounted.current = false; };
   }, []);
+  const decisions = overview?.decisions?.available ? overview.decisions : null;
+  const waiting = decisions?.waiting || [];
+  const setAside = decisions?.setAside || [];
   // A work item labelled with a purchase request's, RFQ's or order's id shows its document number.
-  const shownNumber = useDocumentNumbers((overview?.workItems || []).filter((item) => item.label === item.recordId).map((item) => [item.entityType, item.recordId] as const));
+  const labelled = [...(overview?.workItems || []), ...waiting.map((entry) => entry.row as WorkItem), ...setAside.map((entry) => entry.row as WorkItem)];
+  const shownNumber = useDocumentNumbers(labelled.filter((item) => item.label === item.recordId).map((item) => [item.entityType, item.recordId] as const));
   const labelOf = (item: WorkItem) => item.label === item.recordId ? shownNumber(item.entityType, item.recordId) || item.label : item.label;
+  // A row's date chip and its colours, as the assistant's decision cards show them too.
+  const { day, dateText, tone } = useTodayRowFormat(overview?.today || "");
 
   if (state === "error") {
     return (
       <Card className="p-12 text-center">
         <h2 className="text-lg font-semibold">{t("loadFailed")}</h2>
-        <button onClick={load} className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600"><RefreshCw size={14} />{t("retry")}</button>
+        <button onClick={() => load()} className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600"><RefreshCw size={14} />{t("retry")}</button>
       </Card>
     );
   }
 
   const today = overview?.today || "";
-  const items = overview?.workItems || [];
+  // Rows with a decision card, or set aside, leave Today's work.
+  const decisionKeys = new Set([...waiting, ...setAside].map((entry) => entry.key));
+  const items = (overview?.workItems || []).filter((item) => !decisionKeys.has(`${item.kind}:${item.recordId}`));
+  const workTotal = Math.max(0, (overview?.workTotal ?? 0) - decisionKeys.size);
+  const overdueTotal = Math.max(0, (overview?.overdue ?? 0) - setAside.filter((entry) => entry.row.overdueDays > 0).length);
   const byTile = filter === "overdue" ? items.filter((item) => item.overdueDays > 0) : items;
   const shown = kindFilter ? byTile.filter((item) => item.kind === kindFilter) : byTile;
   // Collapsed: the earliest row of every kind, then the next earliest.
@@ -165,13 +184,12 @@ function RuntimeHomepage() {
   const leadRows = new Set(visible.filter((item, index) => visible.findIndex((other) => other.kind === item.kind) === index).map((item) => item.id));
   const perKind = rowsPerKind(byTile);
   // The response holds every row, so a kind's count is its true total.
-  const complete = !overview || overview.workTotal <= items.length;
+  const complete = !overview || overview.workTotal <= (overview.workItems || []).length;
   const recent = overview?.recentDocuments || [];
   // A unit reads in the interface language (unitLabel): "35 pcs" in English.
   const quantity = (value: unknown, unit?: string | null) => `${formatQuantity(value as number)}${unit ? ` ${unitLabel(unit, t.language, Number(value))}` : ""}`;
   // Amounts use the document currency; a hidden amount (null) is never shown as 0.
   const money = (value: unknown, currency?: string | null) => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "—" : formatLocaleAmount(Number(value), currency, locale, { maximumFractionDigits: 2 });
-  const day = (value: string) => formatTodayDay(value, locale);
   // A reorder row opens the purchase request the reorder list's "Create
   // purchase request" opens for the item, with the same reason.
   const reorderHref = (item: WorkItem) => {
@@ -181,10 +199,6 @@ function RuntimeHomepage() {
     return reorderRequestHref(request, reason, item.detail.shortfall);
   };
   const showKind = (kind: WorkKind) => { setKindFilter(kind); setExpanded(true); };
-
-  // The date and its colour, as AI priorities shows them too (todayCopy.ts).
-  const dateText = (item: WorkItem) => todayDateText(t.language, locale, item, today);
-  const tone = (item: WorkItem) => todayDateTone(item, today);
 
   const reasons = (item: WorkItem): string[] => {
     const d = item.detail || {};
@@ -238,8 +252,8 @@ function RuntimeHomepage() {
   if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("contracts") ? "sourceContracts" : code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
 
   const tiles = [
-    { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: overview?.workTotal ?? 0, icon: ListChecks, color: A.blue },
-    { id: "overdue" as const, label: t("tileOverdue"), note: t("tileOverdueNote"), value: overview?.overdue ?? 0, icon: AlarmClock, color: A.red },
+    { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: workTotal, icon: ListChecks, color: A.blue },
+    { id: "overdue" as const, label: t("tileOverdue"), note: t("tileOverdueNote"), value: overdueTotal, icon: AlarmClock, color: A.red },
   ];
   // Under the count of documents changed today: when the last change was, from
   // the newest recent document (the same documents the count reads), never
@@ -282,7 +296,15 @@ function RuntimeHomepage() {
         </Card>
       ) : null}
 
-      <div className="grid grid-cols-3 gap-2 sm:gap-4" data-testid="today-tiles">
+      <div className={`grid gap-2 sm:gap-4 ${decisions ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-3"}`} data-testid="today-tiles">
+        {decisions ? (
+          <a href="#today-decisions" className={`${tileClass} outline-none transition hover:bg-slate-50 focus:ring-2 focus:ring-blue-500 !no-underline`} style={{ ...tileStyle, borderColor: waiting.length ? "#bfdbfe" : A.border }} data-testid="today-tile-decisions">
+            <TileIcon icon={ClipboardCheck} color={A.orange} />
+            <div className={TILE_VALUE} style={{ color: waiting.length ? "#1d4ed8" : undefined }}>{waiting.length}</div>
+            <div className="fc-label mt-0.5" style={{ color: A.sub }}>{d("tile")}</div>
+            <div className="fc-caption mt-1 hidden sm:block" style={{ color: A.gray2 }}>{d("tileNote")}</div>
+          </a>
+        ) : null}
         {tiles.map((tile) => (
           <button
             key={tile.id}
@@ -307,13 +329,29 @@ function RuntimeHomepage() {
         </div>
       </div>
 
+      {decisions && state === "loaded" ? (
+        <div id="today-decisions" className="scroll-mt-4">
+          <DecisionSection
+            decisions={decisions}
+            overdueOnly={filter === "overdue"}
+            today={today}
+            day={day}
+            dateText={dateText}
+            tone={tone}
+            kindLabel={(row) => t(`kind_${row.kind}` as TodayCopyKey)}
+            labelOf={(row) => labelOf(row as WorkItem)}
+            onChanged={() => { void load(true); }}
+          />
+        </div>
+      ) : null}
+
       <Card className="p-5">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold">{t("workTitle")}</h2>
             <p className="mt-0.5 text-xs" style={{ color: A.sub }}>{t("workNote")}</p>
           </div>
-          <button onClick={load} aria-label={t("refresh")} title={t("refresh")} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100"><RefreshCw size={15} /></button>
+          <button onClick={() => load()} aria-label={t("refresh")} title={t("refresh")} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100"><RefreshCw size={15} /></button>
         </div>
         {state === "loaded" && kindFilter ? (
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-3 py-2 text-xs" style={{ background: "#f0f6ff", color: A.label }} data-testid="today-kind-filter">
@@ -366,8 +404,8 @@ function RuntimeHomepage() {
         {state === "loaded" && shown.length > firstRows.length ? (
           <button className="mt-2 text-xs text-blue-600" onClick={() => setExpanded((value) => !value)}>{expanded ? t("showFewer") : t("showAll", { n: shown.length })}</button>
         ) : null}
-        {state === "loaded" && filter === "all" && overview && overview.workTotal > items.length ? (
-          <div className="mt-2 text-xs" style={{ color: A.sub }}>{t("moreNotShown", { n: overview.workTotal - items.length })}</div>
+        {state === "loaded" && filter === "all" && overview && workTotal > items.length ? (
+          <div className="mt-2 text-xs" style={{ color: A.sub }}>{t("moreNotShown", { n: workTotal - items.length })}</div>
         ) : null}
         {state === "loaded" && notes.length ? (
           <div className="mt-3 space-y-1 border-t pt-3 text-xs" style={{ color: A.sub }} data-testid="today-work-notes">
