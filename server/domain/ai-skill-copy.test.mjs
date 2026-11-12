@@ -13,7 +13,16 @@ test('the answer follows the language the question is phrased in', () => {
     ['华东电子 has how many open orders?', 'zh-CN', 'en-US'],
     ['列出 overdue POs', 'en-US', 'zh-CN'],
     ['这个 SKU available to promise 是多少', 'en-US', 'zh-CN'],
-    ['Show me 华东电子的订单', 'zh-CN', 'en-US'],
+    // A short English opener before Chinese words follows the interface (the
+    // owner, 2026-11-12); an English question word keeps it English.
+    ['Show me 华东电子的订单', 'zh-CN', 'zh-CN'],
+    ['Show me 华东电子的订单', 'en-US', 'en-US'],
+    ['show me 85123A 的库存', 'zh-CN', 'zh-CN'],
+    ['show me 85123A 的库存', 'en-US', 'en-US'],
+    ['list 逾期订单', 'zh-CN', 'zh-CN'],
+    ['Show me the stock of 茶杯', 'zh-CN', 'en-US'],
+    ['What is 茶杯 stock?', 'zh-CN', 'en-US'],
+    ['How many 茶杯 do we have', 'zh-CN', 'en-US'],
     ['A类物料有哪些', 'en-US', 'zh-CN'],
     ['What does 可承诺量 mean?', 'zh-CN', 'en-US'],
     ['WHAT IS OVERDUE', 'zh-CN', 'en-US'],

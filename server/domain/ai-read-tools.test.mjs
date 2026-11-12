@@ -54,6 +54,15 @@ test('an administrator is offered every read tool, and each answers with capped 
   // Counts per supplier are the tool's own, over every matching order.
   assert.equal(overdue.result.bySupplier.reduce((sum, row) => sum + row.orders, 0), overdue.result.total)
   assert.ok(overdue.result.bySupplier.every((row) => row.ref.type === 'supplier'))
+  // The matching orders' amounts added up by currency, the value of the open
+  // orders; committedSpend counts closed ones too (2026-11-12 on Flash: the
+  // open orders' value was answered with committedSpend).
+  const open = (await runAiReadTool('list_purchase_orders', {}, { facts })).result
+  const openRows = facts.purchaseOrders.index.filter((row) => row.isOpen)
+  const sum = (rows, currency) => Math.round(rows.filter((row) => row.currency === currency && row.amount !== null).reduce((total, row) => total + Number(row.amount), 0) * 100) / 100
+  assert.deepEqual(open.amountTotal.amounts.map((row) => [row.currency, row.amount, row.orders]), [...new Set(openRows.map((row) => row.currency))].map((currency) => [currency, sum(openRows, currency), openRows.filter((row) => row.currency === currency).length]))
+  assert.deepEqual((await runAiReadTool('workspace_summary', {}, { facts })).result.purchaseOrders.openOrdersAmount, open.amountTotal)
+  assert.match(AI_READ_TOOLS.find((tool) => tool.name === 'workspace_summary').description, /never the value of the open orders/)
   // A supplier tier's orders, with their own total: "which Tier 1 suppliers
   // have overdue orders" needs a count no other field holds.
   const first = facts.purchaseOrders.index.find((row) => row.isOpen && row.overdueDays > 0)
@@ -158,6 +167,8 @@ test('a role gets only the tools and the fields it may read', async () => {
   assert.ok((await runAiReadTool('get_purchase_order', { order: 'PO-001' }, { facts: viewer })).result.openLines.every((line) => !('unitPrice' in line)))
   assert.deepEqual((await runAiReadTool('get_purchase_order', { order: 'PO-001' }, { facts: await factsFor() })).result.openLines.map((line) => [line.unitPrice, line.currency]), [[100, 'USD']])
   assert.equal(orders.result.workspace.committedSpend, null)
+  assert.equal(orders.result.amountTotal, null)
+  assert.equal((await runAiReadTool('workspace_summary', {}, { facts: viewer })).result.purchaseOrders.openOrdersAmount, null)
   // Nobody gets a contact's email address from a tool.
   for (const facts of [await factsFor(), finance, operations, viewer]) assert.doesNotMatch(await everyOutput(facts), /@/)
 })
@@ -366,6 +377,24 @@ test('sales_summary totals customer invoices in a period by customer, item or mo
   assert.deepEqual(items.rows[0].ref, { type: 'item', id: 'ITEM-X-1', label: 'X-1' })
   const oneItem = await run({ sku: 'Y-2' })
   assert.deepEqual([oneItem.amount, oneItem.quantity, oneItem.invoices, oneItem.rows.map((row) => row.customer)], [40, 5, 1, ['Harbor Supply Co']])
+  // The item asked for by its name or its item id counts the same lines
+  // (2026-11-12 on Flash: 84879's October came back as 0 units against 611).
+  const stocked = { ...facts, inventory: { ...facts.inventory, rows: [...(facts.inventory?.rows || []), { sku: 'Y-2', itemName: 'Tea Towel', itemId: 'ITEM-Y-2' }] } }
+  const named = async (sku) => (await runAiReadTool('sales_summary', { from: '2026-10-01', to: '2026-10-31', currency: 'GBP', sku }, { facts: stocked, context })).result
+  for (const asked of ['Tea Towel', 'ITEM-Y-2', 'y-2']) assert.deepEqual([(await named(asked)).sku, (await named(asked)).quantity, (await named(asked)).amount], ['Y-2', 5, 40], asked)
+  // The stocked items no invoice of the period sold, in any currency, most
+  // stock first (2026-11-12: "最近 30 天哪些商品一件都没卖出去？" had no tool).
+  const shelf = { ...facts, inventory: { ...facts.inventory, rows: [
+    { sku: 'X-1', itemName: 'Cake Stand', itemId: 'ITEM-X-1', onHand: 4, unit: 'pcs' },
+    { sku: 'W-5', itemName: 'Wall Clock', itemId: 'ITEM-W-5', onHand: 3, unit: 'pcs' },
+    { sku: 'V-6', itemName: 'Vase', itemId: 'ITEM-V-6', onHand: 12, unit: 'pcs' },
+    { sku: 'U-7', itemName: 'Umbrella', itemId: 'ITEM-U-7', onHand: 0, unit: 'pcs' },
+  ] } }
+  const unsold = (await runAiReadTool('sales_summary', { from: '2026-10-01', to: '2026-10-31', unsold: true }, { facts: shelf, context })).result
+  assert.deepEqual(unsold.rows.map((row) => [row.sku, row.onHand]), [['V-6', 12], ['W-5', 3]])
+  assert.deepEqual([unsold.unsold, unsold.stockedItems, unsold.total, unsold.rows[0].ref.type], [true, 3, 2, 'item'])
+  const unknown = await run({ sku: 'Q-9' })
+  assert.deepEqual([unknown.quantity, unknown.invoices, unknown.itemNotFound], [0, 0, true])
   const months = await run({ by: 'month' })
   assert.deepEqual(months.rows.map((row) => [row.month, row.amount]), [['2026-10', 350]])
   assert.deepEqual([months.rows[0].runningAmount, months.rows[0].runningSharePercent], [undefined, undefined])
