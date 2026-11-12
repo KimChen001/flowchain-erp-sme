@@ -114,7 +114,7 @@ const NONE_ARRIVE = new RegExp(`${NONE_ARRIVE_EN}|${NONE_ARRIVE_ZH}`, 'gi')
 const NONE_ARRIVE_START = new RegExp(`^(?:[（(,，]\\s*)?(?:${NONE_ARRIVE_EN})|^without(?=[)）,，;；.。]|$)|^[（(]\\s*(?:如果|若|假如|要是|在)?\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_ZH})|^[,，]\\s*(?:如果|若|假如|要是)\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_ZH})`, 'i')
 // Words that make the figure another measure: a shortfall, demand, a rate,
 // safety stock, a week.
-const NOT_STOCK = /short|gap|need|demand|outstanding|on\s+order|to\s+receive|still\s+due|\btotal\b|in\s+all|未收|在途|合计|总计|共计|cost|price|spend|value|safety|reorder|\brate\b|\bper\b|\ba\s+(?:day|week|month)\b|weekly|daily|\bweeks?\b|\bdays?\b|\bmonths?\b|sold|sell|ship|缺|不足|需求|需要|成本|价格|金额|安全库存|再订货|补货|每天|每周|每月|日均|周均|销量|发货|出货|订货量|采购量|(?:[一二两三四五六七八九十几]|下)(?:周|天|个月)/i
+const NOT_STOCK = /short|gap|need|demand|outstanding|on\s+order|to\s+receive|still\s+due|\btotal\b|in\s+all|differ|未收|在途|合计|总计|差额|相差|差距|共计|cost|price|spend|value|safety|reorder|\brate\b|\bper\b|\ba\s+(?:day|week|month)\b|weekly|daily|\bweeks?\b|\bdays?\b|\bmonths?\b|sold|sell|ship|缺|不足|需求|需要|成本|价格|金额|安全库存|再订货|补货|每天|每周|每月|日均|周均|销量|发货|出货|订货量|采购量|(?:[一二两三四五六七八九十几]|下)(?:周|天|个月)/i
 const NOT_STOCK_AFTER = /^\s*(?:[A-Za-z]{1,6}\.?|[件个箱卷套只台])?\s*(?:short|below|less|fewer|more|a\s+(?:day|week|month)\b|per\b|each\b|\/|缺|短缺|不足|每|多|少)/i
 const NONE_UNIT = /^\s*(?:[A-Za-z]{1,6}\b|[件个箱卷套只台])?\s*(?:available|可用)?\s*/i
 // And a word that says the figure is a stock quantity, so a count ("if none
@@ -133,13 +133,19 @@ function noneArriveFigure(before, after) {
   if (NOT_STOCK.test(after.split(/[，,。；;：:（(]/)[0].slice(0, 14)) ||NOT_STOCK_AFTER.test(after) || !STOCK_CUE.test(`${before} ${unit}`)) return false
   const found = [...before.matchAll(NONE_ARRIVE)].pop()
   if (found) {
-    const between = before.slice(found.index + found[0].length)
+    // "从 408 件降到 168 件", "drops from 408 pcs to 168": the change's
+    // starting figure is a joining span, and the figure after it is the
+    // scenario's.
+    const between = before.slice(found.index + found[0].length).replace(/(?:\bfrom|从|由)\s*[\d,.]+\s*(?:[A-Za-z]{1,6}\b|[件个箱卷套只台])?\s*(?:to|down\s+to|降到|降至|减少到|减到|变为|变成|到)\s*$/i, ' ')
     // "两批未到的 360 件" and "去掉这两单的 360 件" are the orders' own
     // quantity; "不计入这两批货的 168 件" is stock without them.
     const ordersOwn = /^\s*的/.test(between) && !/^(?:不计|不算|不含)/.test(found[0])
     // A colon starts another point, and "都到的话" or "once both arrive" turns
     // to the other case ("两单都到 vs 都不来：** 都到的话可用量是 408 件").
-    if (!ordersOwn && between.length <= 30 && !/[\d.!?。！？；;:：\n]/.test(between) && !NOT_STOCK.test(between) && !BOTH_ARRIVE.test(between)) return true
+    // "从 408 件降到 48 件", "drops from 408 to 48": the figure after "from" is
+    // the one before the change.
+    const fromFigure = /(?:\bfrom|从|由)\s*$/i.test(between)
+    if (!ordersOwn && !fromFigure && between.length <= 30 && !/[\d.!?。！？；;:：\n]/.test(between) && !NOT_STOCK.test(between) && !BOTH_ARRIVE.test(between)) return true
   }
   return NONE_ARRIVE_START.test(after.slice(unit.length)) && !NOT_STOCK.test(before.slice(-24))
 }
