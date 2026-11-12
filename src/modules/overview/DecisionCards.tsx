@@ -55,7 +55,11 @@ export type SetAsideEntry = {
   returnOn: string | null; decidedAt: string | null; decidedOn: string | null; decidedBy: { name: string } | null;
   documentType: string | null; documentIds: string[]; documentNumber: string | null;
 };
-export type TodayDecisions = { available: boolean; canDecide?: boolean; waiting?: WaitingEntry[]; setAside?: SetAsideEntry[] };
+// supplierEmail: whether follow-ups may be emailed from the cards (the
+// workspace switch, the reader's permission and a mail provider), and whether
+// an email would only reach the local outbox.
+export type SupplierEmail = { enabled: boolean; canSend: boolean; outbox: boolean };
+export type TodayDecisions = { available: boolean; canDecide?: boolean; supplierEmail?: SupplierEmail; waiting?: WaitingEntry[]; setAside?: SetAsideEntry[] };
 
 const REASONS = ["seasonal", "discontinued", "covered_elsewhere", "supplier_confirmed", "other"] as const;
 // A card's actions read like the buttons on top of the list pages: the one
@@ -107,7 +111,7 @@ export function DecisionSection({ decisions, overdueOnly, ...rest }: Omit<Shared
         <p className="py-6 text-center text-sm" style={{ color: A.sub }} data-testid="today-decisions-empty">{t("none")}</p>
       ) : (
         <ul className="mt-3 space-y-3" data-testid="today-decision-list">
-          {waiting.map((entry) => <DecisionCard key={entry.key} entry={entry} {...shared} />)}
+          {waiting.map((entry) => <DecisionCard key={entry.key} entry={entry} email={decisions.supplierEmail?.canSend ? decisions.supplierEmail : null} {...shared} />)}
         </ul>
       )}
       {setAside.length ? <SetAsideList entries={setAside} {...shared} /> : null}
@@ -115,7 +119,7 @@ export function DecisionSection({ decisions, overdueOnly, ...rest }: Omit<Shared
   );
 }
 
-function DecisionCard({ entry, canDecide, today, day, dateText, tone, kindLabel, labelOf, onChanged }: Shared & { entry: WaitingEntry }) {
+function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kindLabel, labelOf, onChanged }: Shared & { entry: WaitingEntry; email: SupplierEmail | null }) {
   const t = useDecisionCopy();
   const { row, draft } = entry;
   const [mode, setMode] = useState<null | "not_now" | "not_needed">(null);
@@ -154,10 +158,14 @@ function DecisionCard({ entry, canDecide, today, day, dateText, tone, kindLabel,
         {entry.returned ? <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">{t("returned")}</span> : null}
       </div>
       {draft?.type === "purchase_request" ? <ReorderBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} aside={aside} />
-        : draft?.type === "supplier_follow_up" ? <FollowUpBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} aside={aside} onChased={(text) => run(async () => {
+        : draft?.type === "supplier_follow_up" ? <FollowUpBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} aside={aside} email={email} onChased={(text) => run(async () => {
           try { await navigator.clipboard.writeText(text); } catch { throw new Error(t("copyFailed")); }
           await decide(entry.key, { option: "chased" });
           return t("copied");
+        })} onSend={(mail) => run(async () => {
+          // The address the person confirmed on the second step is the one sent to.
+          const result = await apiJson<{ outbox?: boolean }>("/api/decision-items/send-follow-up", { method: "POST", body: JSON.stringify({ key: entry.key, to: mail.to, confirmedTo: mail.to, subject: mail.subject, body: mail.body }) });
+          return result?.outbox ? t("sentOutbox") : t("sentEmail", { to: mail.to });
         })} />
           : draft?.type === "purchase_orders_from_request" ? <ConversionBody draft={draft} row={row} busy={busy} canDecide={canDecide} aside={aside} onCreate={() => run(async () => {
             const result = await apiJson<any>(`/api/procurement/requests/${encodeURIComponent(draft.purchaseRequestId)}/generate-purchase-orders`, {
@@ -226,7 +234,7 @@ function ReorderBody({ draft, row, day, busy, canDecide, aside }: { draft: Reord
   );
 }
 
-function FollowUpBody({ draft, row, day, busy, canDecide, aside, onChased }: { draft: FollowUpDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode; onChased: (text: string) => void }) {
+function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased, onSend }: { draft: FollowUpDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode; email: SupplierEmail | null; onChased: (text: string) => void; onSend: (mail: { to: string; subject: string; body: string }) => void }) {
   const t = useDecisionCopy();
   const { language } = useI18n();
   const [mailLanguage, setMailLanguage] = useState<"en-US" | "zh-CN">(language === "zh-CN" ? "zh-CN" : "en-US");
@@ -245,6 +253,12 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, onChased }: { d
   const [edited, setEdited] = useState<{ language: string; text: string } | null>(null);
   const text = edited && edited.language === mailLanguage ? edited.text : `${generated.subject}\n\n${generated.body}`;
   const [showMessage, setShowMessage] = useState(false);
+  // Sending takes two confirmations (DD-9): the text, then the address.
+  const [step, setStep] = useState<"text" | "address" | null>(null);
+  const [to, setTo] = useState(draft.supplier.email || "");
+  const [subjectLine, ...bodyLines] = text.split("\n");
+  const mail = { to: to.trim(), subject: subjectLine.trim(), body: bodyLines.join("\n").trim() };
+  const addressOk = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/.test(mail.to);
   const who = [draft.supplier.contactName, draft.supplier.email ? `<${draft.supplier.email}>` : null].filter(Boolean).join(" ");
   const qty = (value: number | null, unit: string | null) => (value === null ? "—" : `${formatQuantity(value)}${unit ? ` ${unitLabel(unit, t.language, value)}` : ""}`);
   const first = draft.lines[0];
@@ -278,13 +292,34 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, onChased }: { d
             onChange={(event) => setEdited({ language: mailLanguage, text: event.target.value })}
             data-testid="decision-follow-up-text"
           />
-          <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{t("followUpNotSent")}</p>
+          <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{email ? t("followUpSendNote") : t("followUpNotSent")}</p>
         </>
+      ) : null}
+      {email && step === "text" ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="decision-send-text">
+          <span style={{ color: A.sub }}>{t("confirmText")}</span>
+          <button type="button" className={BUTTON.primary} disabled={!mail.subject || !mail.body} onClick={() => setStep("address")} data-testid="decision-send-next">{t("nextRecipient")}</button>
+          <button type="button" className={BUTTON.secondary} onClick={() => setStep(null)}>{t("cancel")}</button>
+        </div>
+      ) : null}
+      {email && step === "address" ? (
+        <div className="mt-2 space-y-2 rounded-md bg-slate-50 p-3 text-xs" data-testid="decision-send-address">
+          <label className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{t("toLabel")}</span>
+            <input type="email" className="min-w-64 flex-1 rounded border px-2 py-1" value={to} onChange={(event) => setTo(event.target.value)} data-testid="decision-send-to" />
+          </label>
+          <p style={{ color: A.sub }}>{t("replyToYou")}{email.outbox ? " " + t("outboxNote") : ""}</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={BUTTON.primary} disabled={busy || !addressOk} onClick={() => onSend(mail)} data-testid="decision-send-confirm">{t("sendTo", { to: mail.to || "—" })}</button>
+            <button type="button" className={BUTTON.secondary} onClick={() => setStep("text")}>{t("back")}</button>
+          </div>
+        </div>
       ) : null}
       <Actions aside={aside}>
         {canDecide ? (
           <>
-            <button type="button" disabled={busy} className={BUTTON.primary} onClick={() => onChased(text)} data-testid="decision-primary">{t("copyAndChased")}</button>
+            {email ? <button type="button" disabled={busy || step !== null} className={BUTTON.primary} onClick={() => { setShowMessage(true); setStep("text"); }} data-testid="decision-primary">{t("reviewAndSend")}</button> : null}
+            <button type="button" disabled={busy} className={email ? BUTTON.secondary : BUTTON.primary} onClick={() => onChased(text)} data-testid={email ? "decision-copy" : "decision-primary"}>{t("copyAndChased")}</button>
             <Link to={row.href} className={BUTTON.secondary}>{t("recordNewDate")}</Link>
           </>
         ) : null}
@@ -361,7 +396,7 @@ function SetAsideList({ entries, canDecide, day, kindLabel, labelOf, onChanged }
     switch (entry.decision) {
       case "not_now": return t("aside_not_now", { date: entry.returnOn ? day(entry.returnOn) : "—" });
       case "not_needed": return t("aside_not_needed", { reason: entry.reasonCode ? t(`reason_${entry.reasonCode}` as DecisionCopyKey) : "—" }) + (entry.note ? ` (${entry.note})` : "");
-      case "chased": return t("aside_chased", { date: entry.decidedOn ? day(entry.decidedOn) : "—" });
+      case "chased": return t(entry.note === "email" ? "aside_emailed" : "aside_chased", { date: entry.decidedOn ? day(entry.decidedOn) : "—" });
       case "accepted": return t("aside_accepted", { document: documents(entry) });
       default: return t("aside_covered", { document: documents(entry) });
     }
