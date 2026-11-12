@@ -383,6 +383,9 @@ export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFA
     items: items.slice(0, TODAY_WORK_LIMIT),
     total: items.length,
     overdue: items.filter((item) => item.overdueDays > 0).length,
+    // Every row, for the decision items (server/services/decision-item-service.mjs);
+    // the response carries only items.
+    all: items,
   }
 }
 

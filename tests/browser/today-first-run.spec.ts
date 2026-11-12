@@ -57,12 +57,15 @@ test("a new workspace shows where to start and only the reorder list's work", as
 
   const root = page.getByTestId("runtime-homepage");
   await expect(root.getByText("No recent documents", { exact: true })).toBeVisible();
-  await expect(root.getByTestId("today-tile-all")).toContainText(`Needs action${overview.workTotal}`);
+  // Items to reorder wait for a decision (DecisionCards.tsx), so they leave
+  // the count of Today's other work.
+  const waiting = overview.decisions?.available ? overview.decisions.waiting || [] : [];
+  await expect(root.getByTestId("today-tile-all")).toContainText(`Needs action${overview.workTotal - waiting.length}`);
   await expect(root.getByTestId("today-tile-overdue")).toContainText("Overdue0");
   await expect(root.getByTestId("today-tile-changes")).toContainText("Documents updated today0");
   // With nothing changed, the tile says so instead of showing today's date.
   await expect(root.getByTestId("today-tile-changes-note")).toHaveText("Nothing changed today");
-  if (overview.workItems.length) await expect(root.getByTestId("today-work-item").first()).toContainText("Reorder now");
+  if (waiting.length) await expect(root.getByTestId("today-decision").first()).toContainText("Reorder now");
   await root.getByTestId("today-tile-overdue").click();
   await expect(root.getByText("Nothing is overdue", { exact: true })).toBeVisible();
 });

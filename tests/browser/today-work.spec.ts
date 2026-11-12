@@ -25,7 +25,23 @@ async function signIn(page: Page, language: "en-US" | "zh-CN" = "en-US") {
 }
 
 type WorkItem = { kind: string; recordId: string; label: string; date: string | null; overdueDays: number; href: string };
-type Overview = { today: string; workItems: WorkItem[]; workTotal: number; overdue: number; todayChanges: number; firstRun: unknown; recentDocuments: Array<{ type: string; number: string; updatedAt: string }> };
+type Decisions = { available: boolean; waiting?: Array<{ key: string; row: WorkItem; draft: any }>; setAside?: Array<{ key: string; row: WorkItem }> };
+type Overview = { today: string; workItems: WorkItem[]; workTotal: number; overdue: number; todayChanges: number; firstRun: unknown; decisions: Decisions; recentDocuments: Array<{ type: string; number: string; updatedAt: string }> };
+
+// The rows with a decision card, or set aside, leave Today's work
+// (DecisionCards.tsx); the tiles count what is left.
+function split(overview: Overview) {
+  const waiting = overview.decisions?.available ? overview.decisions.waiting || [] : [];
+  const aside = overview.decisions?.available ? overview.decisions.setAside || [] : [];
+  const keys = new Set([...waiting, ...aside].map((entry) => entry.key));
+  const work = overview.workItems.filter((item) => !keys.has(`${item.kind}:${item.recordId}`));
+  return {
+    waiting,
+    work,
+    workTotal: overview.workTotal - keys.size,
+    overdue: overview.overdue - aside.filter((entry) => entry.row.overdueDays > 0).length,
+  };
+}
 
 test("Today lists the walkthrough's work from the report and reorder rules, earliest date first", async ({ page }) => {
   const headers = await signIn(page);
@@ -53,20 +69,27 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
   // On the walkthrough every step of the first-day checklist is done.
   expect(overview.firstRun).toBeNull();
 
+  // The drafted kinds wait for a decision, each with its draft.
+  const parts = split(overview);
+  expect(overview.decisions.available).toBe(true);
+  expect(parts.waiting.every((entry) => ["reorder_now", "purchase_order_overdue", "purchase_request_to_convert"].includes(entry.row.kind))).toBe(true);
+  expect(parts.waiting.some((entry) => entry.row.kind === "purchase_order_overdue" && entry.draft?.type === "supplier_follow_up")).toBe(true);
+
   await page.goto("/app/overview/risks");
   const root = page.getByTestId("runtime-homepage");
   const list = root.getByTestId("today-work-list");
   await expect(list).toBeVisible();
   await expect(root.getByTestId("first-run-checklist")).toHaveCount(0);
   // The tiles count the rows; no "Assigned to me" or unconnected risk tile.
-  await expect(root.getByTestId("today-tile-all")).toContainText(`Needs action${overview.workTotal}`);
-  await expect(root.getByTestId("today-tile-overdue")).toContainText(`Overdue${overview.overdue}`);
+  await expect(root.getByTestId("today-tile-decisions")).toContainText(`Waiting for your decision${parts.waiting.length}`);
+  await expect(root.getByTestId("today-tile-all")).toContainText(`Needs action${parts.workTotal}`);
+  await expect(root.getByTestId("today-tile-overdue")).toContainText(`Overdue${parts.overdue}`);
   await expect(root.getByTestId("today-tile-changes")).toContainText(`Documents updated today${overview.todayChanges}`);
   await expect(root).not.toContainText(/Assigned to me|Risk exceptions|Changes today|No work items/);
 
   // The first row is the most overdue purchase order, with its reason.
   const first = list.getByTestId("today-work-item").first();
-  const firstItem = overview.workItems[0];
+  const firstItem = parts.work[0];
   await expect(first).toHaveAttribute("data-kind", firstItem.kind);
   await expect(first).toContainText(firstItem.label);
   if (firstItem.kind === "purchase_order_overdue") {
@@ -74,21 +97,28 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
     await expect(first).toContainText(/still to receive|lines? still to receive/);
   }
   // The sales order row says what is left to reserve.
-  if (overview.workItems.length > 5) await root.getByRole("button", { name: /Show all/ }).click();
+  if (parts.work.length > 5) await root.getByRole("button", { name: /Show all/ }).click();
   const salesOrder = list.locator('[data-kind="sales_order_to_reserve"]');
   await expect(salesOrder).toContainText("Sales order to reserve");
   await expect(salesOrder).toContainText("35 pcs still to reserve");
   await expect(salesOrder).toContainText("Customer Redwood Retail");
-  // A reorder row links to its item and to the reorder list.
-  const reorderRow = list.locator('[data-kind="reorder_now"]').first();
-  if (await reorderRow.count()) {
-    await expect(reorderRow).toContainText(/Stock position .+, reorder point /);
-    await expect(reorderRow.getByRole("link", { name: "Open reorder list" })).toHaveAttribute("href", "/app/inventory/reorder");
+  // A reorder card says why and opens the prefilled request form.
+  const decisions = root.getByTestId("today-decisions");
+  const reorderCard = decisions.locator('[data-testid="today-decision"][data-kind="reorder_now"]').first();
+  if (await reorderCard.count()) {
+    await expect(reorderCard).toContainText(/Stock position .+ against reorder point /);
+    await expect(reorderCard.getByTestId("decision-primary")).toHaveAttribute("href", /^\/app\/procurement\/requests\?itemId=.+origin=reorder_list/);
   }
+  // An overdue order's card holds the follow-up to copy; FlowChain sends nothing.
+  const followUp = decisions.locator('[data-testid="today-decision"][data-kind="purchase_order_overdue"]').first();
+  await expect(followUp.getByTestId("decision-follow-up-text")).toHaveValue(/^Purchase order .+: delivery overdue/);
+  await expect(followUp).toContainText("FlowChain does not send it");
 
   // The overdue tile filters the list to overdue rows.
   await root.getByTestId("today-tile-overdue").click();
-  await expect(list.getByTestId("today-work-item")).toHaveCount(Math.min(overview.overdue, 5));
+  const overdueWork = parts.work.filter((item) => item.overdueDays > 0).length;
+  if (overdueWork) await expect(list.getByTestId("today-work-item")).toHaveCount(Math.min(overdueWork, 5));
+  await expect(decisions.getByTestId("today-decision")).toHaveCount(parts.waiting.filter((entry) => entry.row.overdueDays > 0).length);
   await expect(list.locator('[data-kind="purchase_order_due"]')).toHaveCount(0);
   await root.getByTestId("today-tile-all").click();
 
@@ -118,10 +148,30 @@ test("Today stays in Chinese for a Chinese reader, with the same rows", async ({
   await page.goto("/app/overview/risks");
   const root = page.getByTestId("runtime-homepage");
   await expect(root.getByText("今日需处理", { exact: true })).toBeVisible();
-  await expect(root.getByTestId("today-tile-all")).toContainText(`待处理${overview.workTotal}`);
+  await expect(root.getByTestId("today-tile-all")).toContainText(`待处理${split(overview).workTotal}`);
+  await expect(root.getByTestId("today-decisions")).toContainText("等你决定");
   await expect(root.getByTestId("today-tile-changes")).toContainText("今日更新的单据");
   await expect(root.getByTestId("today-work-item").first()).toContainText(CJK);
-  if (overview.workItems.length > 10) await root.getByRole("button", { name: /显示全部/ }).click();
+  if (split(overview).work.length > 5) await root.getByRole("button", { name: /显示全部/ }).click();
   await expect(root.getByText("销售订单待预留", { exact: true })).toBeVisible();
   await expect(root.locator('[data-kind="sales_order_to_reserve"]')).toContainText("仍待预留 35 件");
+});
+
+test("Not now sets a card aside until its day, and Reopen brings it back", async ({ page }) => {
+  const headers = await signIn(page);
+  const overview: Overview = await (await page.request.get("/api/home/overview", { headers })).json();
+  const target = split(overview).waiting.find((entry) => entry.row.kind === "purchase_order_overdue");
+  expect(target).toBeTruthy();
+  await page.goto("/app/overview/risks");
+  const decisions = page.getByTestId("today-decisions");
+  const card = decisions.locator(`[data-testid="today-decision"][data-key="${target!.key}"]`);
+  await card.getByTestId("decision-not-now").click();
+  await card.getByRole("button", { name: "Tomorrow" }).click();
+  await expect(card).toHaveCount(0);
+  await decisions.getByRole("button", { name: /Set aside \(\d+\)/ }).click();
+  const aside = decisions.getByTestId("today-set-aside-item").filter({ hasText: target!.row.label });
+  await expect(aside).toHaveAttribute("data-decision", "not_now");
+  await expect(aside).toContainText(/Not now, until /);
+  await aside.getByRole("button", { name: "Reopen" }).click();
+  await expect(decisions.locator(`[data-testid="today-decision"][data-key="${target!.key}"]`)).toContainText("Back again");
 });
