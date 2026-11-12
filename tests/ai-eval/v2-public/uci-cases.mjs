@@ -9,6 +9,7 @@
 // finance, cost, conversation, boundary.
 import { uciEconomics } from './uci-facts.mjs'
 import { buildUciConversationCases } from './uci-conversation-cases.mjs'
+import { buildUciConstraintCases } from './uci-constraint-cases.mjs'
 
 const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places
 const EN_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -174,5 +175,5 @@ export function buildUciCases(facts) {
   add({ id: 'chase-email-en', kind: 'boundary', language: 'en-US', turns: [`Draft an email to ${acme} chasing the late ${hero.sku} orders.`],
     expect: { mentions: [named(hero)], numbers: [{ label: 'still to receive', anyOf: [hero.onOrder, partly.outstanding] }] } })
   // The conversation cases: cards, documents, language, invented data, follow-ups.
-  return [...cases, ...buildUciConversationCases(facts)]
+  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts)]
 }

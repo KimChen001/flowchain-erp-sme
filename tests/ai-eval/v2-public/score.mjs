@@ -24,9 +24,14 @@
 //   ui          cards it shows (has) or leaves out (hasNot);
 //   formLines   a form row of the SKU, at the quantity, ticked or not;
 //   formNoneChecked  no form row ticked (the user named no item);
+//   formRules   the ticked rows keep to the user's and the suppliers' limits
+//               (2026-11-11): within a budget at each item's price, none
+//               below its minimum order, only the items allowed (onlySkus)
+//               and none left out (notSkus);
 //   refs        records it links, by type and label (named in the text or
 //               on a card);
 //   matches / notMatches  wording it must have, or must not (in the text);
+//   and when the text says it filled in a form: that form is shown;
 //   languages   each turn's language, for a switch the user asked for;
 //   and always: the chips in the answer's language, and no English sentence
 //   (eight words or more) in a Chinese answer.
@@ -137,6 +142,7 @@ export const englishRun = (text) => (String(text || '').replace(/`[^`]*`/g, ' ')
 const hasCjk = (value) => /[㐀-鿿]/.test(String(value))
 const formRows = (answer) => (answer.ui || []).filter((part) => part.component === 'pr_form').flatMap((part) => [...(part.props?.lines || []), ...(part.props?.suggested || [])])
 const patternOf = ({ pattern, flags = 'i' }) => new RegExp(pattern, flags)
+const FORM_CLAIM = /\bI(?:'ve| have)\s+(?:just\s+|also\s+)?(?:filled in|filled out|put together|prepared|drafted|set up)\b[^.\n]{0,60}\bform\b|(?:填好|填了|已填写?)[^。\n]{0,20}(?:申请单|表单)/i
 
 export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers = [answer] } = {}) {
   const checks = []
@@ -172,6 +178,31 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
   if (expect.formNoneChecked) {
     const ticked = formRows(answer).filter((row) => row.checked).map((row) => row.item?.sku)
     add('no line ticked', !ticked.length, ticked.join(', '))
+  }
+  if (expect.formRules) {
+    const { budget, prices = {}, minimums = {}, onlySkus, notSkus } = expect.formRules
+    const ticked = formRows(answer).filter((row) => row.checked).map((row) => ({ sku: row.item?.sku, quantity: Number(row.suggestedQuantity?.value) || 0 }))
+    if (budget !== undefined) {
+      const spend = Math.round(ticked.reduce((total, row) => total + row.quantity * (prices[row.sku] ?? Infinity), 0) * 100) / 100
+      add('form within budget', spend <= budget + 1e-9, `${spend} of ${budget}${ticked.length ? `: ${ticked.map((row) => `${row.sku} x${row.quantity}`).join(', ')}` : ', nothing ticked'}`)
+    }
+    const below = ticked.filter((row) => minimums[row.sku] && row.quantity < minimums[row.sku])
+    add('form at or above minimums', !below.length, below.map((row) => `${row.sku} ${row.quantity} < ${minimums[row.sku]}`).join(', '))
+    if (onlySkus) {
+      const other = ticked.filter((row) => !onlySkus.includes(row.sku)).map((row) => row.sku)
+      add('form only allowed items', !other.length, other.join(', '))
+    }
+    if (notSkus) {
+      const kept = ticked.filter((row) => notSkus.includes(row.sku)).map((row) => row.sku)
+      add('form leaves out', !kept.length, kept.join(', '))
+    }
+  }
+  // A form the text says it filled in is shown, on this answer or an earlier
+  // turn's (2026-11-11: "I've filled in a purchase request form … with both
+  // lines ticked" with no form).
+  if (FORM_CLAIM.test(answer.text || '')) {
+    const shown = components.includes('pr_form') || answers.slice(0, -1).some((earlier) => (earlier?.ui || []).some((part) => part.component === 'pr_form'))
+    add('form it speaks of is shown', shown, shown ? '' : `"${(answer.text.match(FORM_CLAIM) || [''])[0].slice(0, 60)}"`)
   }
   // The records it links (named in its text, or on its cards).
   for (const { type, label } of expect.refs || []) {

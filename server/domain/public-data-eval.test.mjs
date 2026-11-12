@@ -220,6 +220,34 @@ test('the UCI figures: stock and position, late orders, the reorder rule, months
   assert.equal(uciFacts(shipped, { today: '2026-11-01' }).item('H1').averageDailyDemand, (90 + 60 * 9) / 90)
 })
 
+// 2026-11-11, the owner's "先测再改" on hard limits.
+test('scoring constraints: the form within the budget, at or above each minimum, only the items allowed, and a form it claims is shown', () => {
+  const form = (lines) => ({ component: 'pr_form', props: { lines, suggested: [] } })
+  const row = (sku, quantity, checked = true) => ({ item: { sku }, suggestedQuantity: { value: quantity }, checked })
+  const rules = { budget: 100, prices: { A: 2, B: 5 }, minimums: { A: 20, B: 10 }, onlySkus: ['A', 'B'], notSkus: ['B'] }
+  const failed = (ui, text = 'Done.') => scoreAnswer({ status: 200, text, ui, flags: [] }, { formRules: rules }).checks.filter((check) => !check.ok).map((check) => check.name)
+  assert.deepEqual(failed([form([row('A', 20)])]), [])
+  assert.deepEqual(failed([form([row('A', 60)])]), ['form within budget'])
+  assert.deepEqual(failed([form([row('A', 10)])]), ['form at or above minimums'])
+  assert.deepEqual(failed([form([row('B', 10)])]), ['form leaves out'])
+  assert.deepEqual(failed([form([row('C', 1)])]), ['form within budget', 'form only allowed items'])
+  // An unticked line is the user's to choose.
+  assert.deepEqual(failed([form([row('A', 500, false)])]), [])
+  // A form the text says it filled in: shown on this answer or an earlier one.
+  assert.deepEqual(failed([], "I've filled in a purchase request form for you to review."), ['form it speaks of is shown'])
+  const earlier = { status: 200, text: 'Here.', ui: [form([row('A', 20)])], flags: [] }
+  const later = { status: 200, text: "I've filled in a purchase request form for you to review.", ui: [], flags: [] }
+  assert.ok(scoreAnswer(later, {}, { answers: [earlier, later] }).pass)
+  // The cases: eight, the figures from the plan.
+  const facts = uciFacts(smallPlan())
+  const cases = buildUciCases(facts).filter((entry) => entry.kind === 'constraints')
+  assert.equal(cases.length, 8)
+  const expect = (id) => cases.find((entry) => entry.id === id).expect
+  assert.deepEqual(expect('minimum-multiple-en').numbers.map((entry) => entry.value), [3 * facts.item('C1').minimumOrderQuantity, 3 * facts.item('C1').minimumOrderQuantity * facts.item('C1').price])
+  assert.deepEqual(expect('budget-quantity-en').formLines, [{ sku: 'C1', quantity: Math.floor(1000 / facts.item('C1').price), checked: true }])
+  assert.deepEqual(expect('supplier-only-en').formRules.onlySkus, ['H1', 'P1'])
+})
+
 test('the UCI question set: every case in English or Chinese, on fixed months, with the scene figures', () => {
   const cases = buildUciCases(uciFacts(smallPlan()))
   const ids = cases.map((row) => row.id)
