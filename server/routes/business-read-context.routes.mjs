@@ -2,6 +2,8 @@ import { buildHomeOverview, createBusinessReadContextService, todayWorkOf } from
 import { syncTodayDecisions } from '../services/decision-item-service.mjs'
 import { can } from '../auth/authorization-service.mjs'
 import { DECISION_PERMISSION } from '../domain/decision-items.mjs'
+import { SUPPLIER_EMAIL_PERMISSION, supplierEmailDelivery } from '../domain/supplier-follow-up-email.mjs'
+import { supplierEmailSettingOn } from '../services/supplier-follow-up-email-service.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { readTenantTimezone } from '../domain/tenant-timezone.mjs'
 import { tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
@@ -48,14 +50,22 @@ async function todayDecisions(ctx, reader) {
     const tenantId = String(ctx.identity?.tenantId || '').trim()
     if (!prisma?.decisionItem || !tenantId) return { available: false }
     let canDecide = false
+    let canSend = false
     try {
       const actor = await resolveProvisionedActor(prisma, ctx.identity)
       canDecide = can({ actor, permission: DECISION_PERMISSION, tenantId: actor.tenantId })
+      canSend = can({ actor, permission: SUPPLIER_EMAIL_PERMISSION, tenantId: actor.tenantId })
     } catch { canDecide = false }
-    return await syncTodayDecisions({
+    const decisions = await syncTodayDecisions({
       prisma, tenantId, rows: reader.work.all, today: reader.today, now: reader.now, timeZone: reader.timeZone,
       hidden: reader.hidden, limitations: todayReadLimitations(reader), context: reader.context, sources: reader.read.sources, canDecide,
     })
+    // Whether the follow-up cards may email the supplier
+    // (server/services/supplier-follow-up-email-service.mjs), and whether an
+    // email would only reach the local outbox.
+    const delivery = supplierEmailDelivery(ctx.env || process.env)
+    const enabled = await supplierEmailSettingOn(prisma, tenantId).catch(() => false)
+    return { ...decisions, supplierEmail: { enabled, canSend: enabled && canSend && delivery !== 'none', outbox: delivery === 'outbox' } }
   } catch (error) {
     ctx.reportError?.(error)
     return { available: false }

@@ -32,7 +32,7 @@
     "test:api:data-import": "node scripts/smoke-data-import-api.mjs",
     "test:db:golden-path": "node scripts/run-postgres-test-files.mjs tests/postgres/golden-path-fresh-tenant.test.mjs",
     "test:db:supplier-tiers": "node scripts/run-postgres-test-files.mjs tests/postgres/supplier-tiers.test.mjs",
-    "test:db:decision-items": "node scripts/run-postgres-test-files.mjs tests/postgres/decision-items.test.mjs",
+    "test:db:decision-items": "node scripts/run-postgres-test-files.mjs tests/postgres/decision-items.test.mjs tests/postgres/supplier-follow-up-email.test.mjs",
     "test:db:supplier-insights": "node scripts/run-postgres-test-files.mjs tests/postgres/supplier-insights.test.mjs",
     "test:db:item-supplier-links": "node scripts/run-postgres-test-files.mjs tests/postgres/item-supplier-links.test.mjs",
     "test:db:ai-workspace-access": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-workspace-access.test.mjs",
