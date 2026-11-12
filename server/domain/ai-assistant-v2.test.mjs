@@ -1324,6 +1324,32 @@ test('text pointing to a card no part shows gets one more round to show it', asy
   assert.equal(plain.client.requests.length, 2)
 })
 
+// 2026-11-11 on Flash, a £500 budget: "I've filled in a purchase request form
+// for you to review, with both lines ticked … then click **Create draft
+// request**." after optimize_order_plan, with no form called.
+test('text saying it filled in a form, or naming a button in bold, gets one more round when no form is shown', async () => {
+  for (const words of ["I've filled in a purchase request form for you to review, with both lines ticked.", 'Set the suppliers, then click **Create draft request**.', '我按 60 件给你填了一张采购申请单。']) {
+    const { client } = await ask([OVERDUE, [...say(`PO-001 is the most overdue. ${words}`), end()], [end()]])
+    assert.ok(client.requests.length >= 3, words)
+    assert.match(client.requests[2].messages.at(-1).content.map((block) => block.text || '').join(' '), /none is shown in this answer/, words)
+  }
+})
+
+// 2026-11-11: the text said 78 pcs while the form held 60. The model reads
+// back each line as the form shows it.
+test('a shown form tells the model each line\'s quantity, where it came from and whether it is ticked', async () => {
+  const { client, events } = await ask([
+    [...call('tu_lines', 'suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'] }), end()],
+    [...call('tu_form', 'suggest_purchase_request', { source: 'tu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 30 }] }), end()],
+    [...say('Here is the form.'), end()],
+  ], { question: 'Order 30 of LDM-001', uiTools: AI_ASSISTANT_V2_UI_TOOLS })
+  const form = ofType(events, 'ui').find((event) => event.component === 'pr_form').props
+  const results = client.requests[2].messages.at(-1).content.filter((block) => block.type === 'tool_result')
+  const shown = JSON.parse(results.map((block) => (typeof block.content === 'string' ? block.content : block.content.map((part) => part.text).join(''))).join(''))
+  assert.deepEqual(shown.lines, [...form.lines, ...form.suggested].map((row) => ({ sku: row.item.sku, quantity: row.suggestedQuantity.value, source: row.suggestedQuantity.source, ticked: row.checked })))
+  assert.deepEqual(shown.lines[0], { sku: 'LDM-001', quantity: 30, source: 'user_named', ticked: false })
+})
+
 // 2026-11-11 on Flash: "Show me the supplier of the oldest one" read nothing
 // again and named Acme Home Goods with no link.
 test('a follow-up links the supplier and records it names from the conversation\'s earlier results', async () => {

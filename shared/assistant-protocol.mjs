@@ -34,7 +34,9 @@ export const CHOICE_PROMPTS = Object.freeze(['pick_item', 'pick_supplier', 'pick
 export const RELATIVE_DATE_KINDS = Object.freeze(['overdue', 'due', 'waiting', 'on'])
 export const STATUS_TONES = Object.freeze(['danger', 'warning', 'success', 'info', 'neutral'])
 // Where a suggested quantity came from (shared quantity engine, V2-5).
-export const QUANTITY_SOURCES = Object.freeze(['user_named', 'reorder_gap', 'reorder_gap_raised_to_moq', 'cover_days', 'cover_days_raised_to_moq', 'order_plan', 'none'])
+// user_named_raised_to_moq: the user's quantity was below the supplier's
+// minimum order, so the form starts at the minimum (requested keeps theirs).
+export const QUANTITY_SOURCES = Object.freeze(['user_named', 'user_named_raised_to_moq', 'reorder_gap', 'reorder_gap_raised_to_moq', 'cover_days', 'cover_days_raised_to_moq', 'order_plan', 'none'])
 export const SUPPLIER_SOURCES = Object.freeze(['preferred', 'only_approved', 'user_named'])
 export const NEED_BY_SOURCES = Object.freeze(['lead_time', 'user_named', 'today'])
 export const PRICE_SOURCES = Object.freeze(['reference_price', 'masked', 'missing'])
@@ -138,7 +140,7 @@ export const prFormRowSchema = z.object({
   onHand: amount.nullable().optional(),
   safetyStock: amount.nullable().optional(),
   reorderPoint: amount.nullable().optional(),
-  suggestedQuantity: z.object({ value: amount.positive().nullable(), source: z.enum(QUANTITY_SOURCES), minimum: amount.positive().nullable().optional(), coverDays: z.number().int().positive().optional() }),
+  suggestedQuantity: z.object({ value: amount.positive().nullable(), source: z.enum(QUANTITY_SOURCES), minimum: amount.positive().nullable().optional(), requested: amount.positive().optional(), coverDays: z.number().int().positive().optional() }),
   supplier: z.object({ id, name: label, source: z.enum(SUPPLIER_SOURCES), link: supplierLink.optional() }).nullable(),
   suppliers: z.array(approvedSupplier).max(20).optional(),
   needByDate: z.object({ value: day, source: z.enum(NEED_BY_SOURCES), leadTimeDays: z.number().int().nonnegative().nullable().optional(), shortWeekOf: day.nullable().optional() }),

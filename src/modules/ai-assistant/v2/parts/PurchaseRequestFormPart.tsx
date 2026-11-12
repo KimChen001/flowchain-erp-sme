@@ -602,7 +602,7 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
           // unchanged, then "Edited", or "Your choice" where nothing was suggested.
           const quantitySource = !line.quantity ? ""
             : row.suggestedQuantity.value !== null && line.quantity === String(row.suggestedQuantity.value)
-              ? copy.t(`ai.v2.form.source.${row.suggestedQuantity.source}`, { minimum: copy.number(row.suggestedQuantity.minimum ?? row.suggestedQuantity.value), days: copy.number(row.suggestedQuantity.coverDays ?? 0) })
+              ? copy.t(`ai.v2.form.source.${row.suggestedQuantity.source}`, { minimum: copy.number(row.suggestedQuantity.minimum ?? row.suggestedQuantity.value), requested: copy.number(row.suggestedQuantity.requested ?? 0), days: copy.number(row.suggestedQuantity.coverDays ?? 0) })
               : copy.t(row.suggestedQuantity.value !== null ? "ai.v2.form.source.edited" : "ai.v2.form.source.chosen");
           const supplierSource = !line.supplierId ? ""
             : row.supplier && line.supplierId === row.supplier.id ? copy.t(`ai.v2.form.source.${row.supplier.source}`)

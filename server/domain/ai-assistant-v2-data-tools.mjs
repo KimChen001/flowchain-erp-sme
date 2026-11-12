@@ -457,6 +457,9 @@ const suggestPurchaseLines = defineAiTool({
         openSalesDemand: row.openSalesDemand ?? null, incoming: row.incomingApprovedPo ?? null, openRequests: openRequestsOf(facts, row),
         target: row.noStock ? null : quantity.target, gap: row.noStock ? null : quantity.gap,
         suggestedQuantity: notRun ? { value: null, source: notRun } : quantity.quantity,
+        // The chosen supplier's minimum order in the item's unit, so the form
+        // raises a quantity below it (2026-11-11).
+        minimumOrderQuantity: minimum > 0 ? minimum : null,
         supplier: suppliersVisible && chosen ? { id: chosen.id, name: chosen.name, source: SUPPLIER_SOURCE[plan.fields.supplierId?.ref] || 'approved_supplier' } : null,
         supplierChoices: suppliersVisible ? plan.supplierChoices.map((choice) => ({ id: choice.id, name: choice.name })) : [],
         // Every approved source, so the form's select holds them all and a
