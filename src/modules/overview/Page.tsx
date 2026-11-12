@@ -11,6 +11,7 @@ import { apiJson } from "../../lib/api-client";
 import { useDocumentNumbers } from "../../lib/documentNumbers";
 import { formatDateTimeInTimeZone, formatLocaleAmount, formatQuantity, instantDayInTimeZone } from "../../lib/format";
 import { unitLabel } from "../../i18n/unitLabels";
+import { documentStatusLabel } from "../../i18n/statusLabels";
 import { reorderListText } from "../inventory/reorderListCopy";
 import { formatTodayDay, todayDateText, todayDateTone, useTodayCopy, type TodayCopyKey } from "./todayCopy";
 import { firstRowsByKind, reorderRequestHref, rowsPerKind, type ReorderRequest } from "./todayRows";
@@ -90,9 +91,10 @@ const SOURCE_KEYS: Record<string, TodayCopyKey> = {
 const LINK = "fc-entity-link font-semibold text-blue-600 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
 // A text link or button at least 36 px tall on a phone, for a finger.
 const PHONE_TAP = "max-sm:inline-flex max-sm:min-h-9 max-sm:items-center";
-// An approved supplier invoice still to pay is in progress (blue); the
-// shared tones do not know the code.
-const documentTone = (status: string) => (status === "to_pay" ? "info" : statusToneOf(status));
+// An approved supplier invoice still to pay, or an issued customer invoice
+// still to be paid, is in progress (blue); the shared tones do not know the
+// codes.
+const documentTone = (status: string) => (status === "to_pay" || status === "to_be_paid" ? "info" : statusToneOf(status));
 
 // The value of a Today tile, at the KPI size of the list pages' cards from a
 // tablet up and a step smaller three to a row on a phone.
@@ -396,7 +398,8 @@ function RuntimeHomepage() {
                   <tr key={`${row.type}-${row.id}`} className={listRowClass} style={listRowStyle(index, recent.length)}>
                     <td className={tdNameClass} style={{ color: A.sub }}>{t(`type_${row.type}` as TodayCopyKey) || row.type}</td>
                     <td className={tdIdClass}><Link to={row.canonicalRoute} className={LINK}>{row.number}</Link></td>
-                    <td className={tdNowrapClass}><StatusChip label={t.status(row.status)} tone={documentTone(row.status)} /></td>
+                    {/* A customer invoice words "Issued" as the finance pages do, a purchase order as purchasing does (documentStatusLabel). */}
+                    <td className={tdNowrapClass}><StatusChip label={documentStatusLabel(row.type, row.status, t.language) ?? t.status(row.status)} tone={documentTone(row.status)} /></td>
                     <td className={`${tdNameClass} max-w-[240px] truncate`} title={row.partner || undefined}>{row.partner || "—"}</td>
                     <td className={tdNumericRightClass}>{money(row.amount, row.currency)}</td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{formatDateTimeInTimeZone(row.updatedAt, locale, timezone)}</td>

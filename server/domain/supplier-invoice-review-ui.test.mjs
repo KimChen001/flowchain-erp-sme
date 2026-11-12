@@ -166,7 +166,10 @@ test('review and payment panels follow the form standard', () => {
   const payments = read('src/modules/finance/PaymentRecords.tsx')
   for (const label of ['finance.paymentDate', 'finance.paymentMethod']) assert.match(payments, new RegExp(`<Field label=\\{t\\("${label.replace('.', '\\.')}"\\)\\} required`))
   assert.match(payments, /useState<string>\("wire"\)/)
-  assert.match(payments, /data-testid="payment-confirm"[^\n]*disabled=\{busy \|\| Boolean\(plan && !plan\.allowed\)\}/)
+  // Round 8b: one step, Cancel · Record payment on the right (the action
+  // bar); Record payment checks the form and previews on the server itself.
+  assert.match(payments, /submit=\{\{ label: t\(kind === "payable" \? "finance\.action\.record_payment" : "finance\.action\.record_receivable_payment"\), onClick: \(\) => void confirm\(\), busy, testId: "payment-confirm" \}\}/)
+  assert.match(payments, /const current = plan\?\.allowed \? plan : await preview\(\);/)
 })
 
 test('payment amounts are offered as the currency writes them', async () => {
@@ -228,7 +231,7 @@ test('a payable opened from the payables list starts at the payment card, and ph
 test('Chinese copy puts no space after a full-width colon', () => {
   const payments = read('src/modules/finance/PaymentRecords.tsx')
   // "状态：" then the chip, with no space between in Chinese.
-  assert.match(payments, /\{language === "en-US" \? " " : ""\}<StatusChip status=\{plan\.after\?\.status \|\| ""\} \/>/)
+  assert.match(payments, /\{language === "en-US" \? " " : ""\}<StatusChip status=\{after\.status\} \/>/)
   const dictionary = read('src/i18n/I18n.tsx')
   assert.match(dictionary, /"finance\.paymentAfter": "登记后未结 \{outstanding\}，状态："/)
   const screens = read('src/modules/finance/SupplierInvoiceScreens.tsx')

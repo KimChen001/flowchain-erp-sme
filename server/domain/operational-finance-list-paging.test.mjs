@@ -184,8 +184,18 @@ test('the customer invoice cards count every invoice; past due is an issued invo
   const result = await o2c(fakePrisma()).listCustomerInvoices({ pageSize: '5' }, { identity })
   assert.equal(result.items.length, 5)
   assert.equal(result.total, 35)
-  // Paid invoices past their due date are not past due.
-  assert.deepEqual(result.counts, { toApprove: 0, toIssue: 0, issued: 35, pastDue: 2 })
+  // Paid invoices past their due date are not past due. Issued invoices are
+  // also counted by where their payment stands (round 8b): the disputed one
+  // has no payment state.
+  assert.deepEqual(result.counts, { toApprove: 0, toIssue: 0, issued: 35, pastDue: 2, to_be_paid: 3, partially_settled: 1, settled: 30 })
+  // Each row says where its payment stands, and the list filters by it.
+  const byNumber = Object.fromEntries((await o2c(fakePrisma()).listCustomerInvoices({ pageSize: '100' }, { identity })).items.map((row) => [row.invoiceNumber, row.paymentStatus]))
+  assert.equal(byNumber['CI-P01'], 'settled')
+  assert.equal(byNumber['CI-O2'], 'partially_settled')
+  assert.equal(byNumber['CI-N1'], 'to_be_paid')
+  assert.equal(byNumber['CI-D1'], null)
+  const toBePaid = await o2c(fakePrisma()).listCustomerInvoices({ status: 'to_be_paid', pageSize: '100' }, { identity })
+  assert.deepEqual(toBePaid.items.map((row) => row.invoiceNumber).sort(), ['CI-N1', 'CI-N2', 'CI-O1'])
 })
 
 test('payables page like receivables: overdue first, true total, cards over every payable, search by number or supplier', async () => {

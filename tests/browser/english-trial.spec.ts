@@ -138,6 +138,41 @@ test("English trial: global search answers in English", async ({ page }) => {
 test.describe("sales delivery risks with the trial orders", () => {
   test.skip(process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY === "true", "the trial orders are seeded on the walkthrough data only");
 
+  // UI review 8, findings 13 and 31: a customer's page lists its orders,
+  // invoices and balance and starts a new order; an item's page shows its
+  // stock, movements and the orders still to ship it, with filtered links.
+  // LOCAL-TRIAL-SO-101 is Harbor Supply Co's order (recorded by name) for
+  // TST-001 among others.
+  test("the customer and item pages show their related records in English", async ({ page }) => {
+    await signIn(page);
+    const session = await (await page.request.post("/api/auth/login", { data: { email: "admin@flowchain.local", name: "English trial", company: "FlowChain" } })).json();
+    const headers = { Authorization: `Bearer ${session.token}` };
+    const listed = await (await page.request.get("/api/master-data/customers?query=Harbor%20Supply%20Co", { headers })).json();
+    let customer = (listed.customers || []).find((row: { name: string }) => row.name === "Harbor Supply Co");
+    if (!customer) {
+      const created = await page.request.post("/api/master-data/customers", { headers, data: { code: `TRIAL-HARBOR-${Date.now()}`, name: "Harbor Supply Co", currency: "USD" } });
+      expect(created.ok()).toBeTruthy();
+      customer = (await created.json()).customer;
+    }
+    await page.goto(`/app/master-data/customers/${encodeURIComponent(customer.code)}`);
+    await settle(page);
+    await expect(page.getByTestId("customer-orders").getByRole("link", { name: "LOCAL-TRIAL-SO-101" })).toHaveAttribute("href", "/app/sales/orders/LOCAL-TRIAL-SO-101");
+    await expect(page.getByTestId("customer-invoices")).toBeVisible();
+    await expect(page.getByTestId("customer-balance")).toContainText("Open balance");
+    await expect(page.getByTestId("customer-new-sales-order")).toHaveAttribute("href", `/app/sales/orders/new?customerId=${encodeURIComponent(customer.id)}`);
+    // "Back to customers" once, above the record.
+    await expect(page.getByRole("link", { name: "Back to customers" })).toHaveCount(1);
+    await expectEnglish(page);
+
+    await page.goto("/app/master-data/items/TST-001");
+    await settle(page);
+    await expect(page.getByTestId("item-stock").getByRole("link", { name: "Stock records" })).toHaveAttribute("href", "/app/inventory/stock?sku=TST-001");
+    await expect(page.getByTestId("item-movements")).toBeVisible();
+    await expect(page.getByTestId("item-open-orders").getByRole("link", { name: "LOCAL-TRIAL-SO-101" })).toBeVisible();
+    await expect(page.getByTestId("item-open-orders").getByRole("link", { name: "Open purchase orders" })).toHaveAttribute("href", "/app/procurement/orders?item=TST-001&status=open");
+    await expectEnglish(page);
+  });
+
   test("a trial sales order opens in English", async ({ page }) => {
     await signIn(page);
     await page.goto("/app/sales/orders/LOCAL-TRIAL-SO-101");
@@ -152,13 +187,20 @@ test.describe("sales delivery risks with the trial orders", () => {
     await settle(page);
     const multiLine = page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ });
     await expect(multiLine).toContainText("Harbor Supply Co");
-    await expect(multiLine).toContainText("Flow Controller and 2 more");
+    // UI review 8b, finding 15: each short line with its own SKU and
+    // quantities, never three SKUs added up; plain words; a reorder link.
+    for (const sku of ["TST-001", "TST-002", "TST-003"]) await expect(page.getByTestId("delivery-risk-lines-LOCAL-TRIAL-SO-101")).toContainText(sku);
+    await expect(multiLine).toContainText("Flow Controller");
+    await expect(multiLine).not.toContainText("and 2 more");
     await expect(multiLine).toContainText("High risk");
-    await expect(multiLine).toContainText("Order quantities are not fully covered by reservations or fulfillment records; a delivery shortage remains.");
+    await expect(multiLine).toContainText("Part of the order is not yet reserved or shipped.");
+    await expect(multiLine).toContainText("Stock on hand and incoming purchases are not counted here.");
+    await expect(multiLine).not.toContainText("Data limitations");
+    await expect(page.getByTestId("delivery-risk-reorder-LOCAL-TRIAL-SO-101")).toHaveAttribute("href", "/app/inventory/reorder");
     const onHold = page.getByRole("row", { name: /LOCAL-TRIAL-SO-102/ });
     await expect(onHold).toContainText("Unnamed customer");
     await expect(onHold).toContainText("Blocked");
-    await expect(onHold).toContainText("The order is on hold. Review delivery conditions and next steps.");
+    await expect(onHold).toContainText("The order is on hold.");
     // The first card counts every order in the list's own term: "Sales orders".
     await expect(page.getByRole("link", { name: /^Sales orders: [\d,]+,/ })).toBeVisible();
     await expectEnglish(page);
@@ -185,7 +227,7 @@ test.describe("sales delivery risks with the trial orders", () => {
     const listed = page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ });
     await expect(listed).toContainText("Not priced");
     await expect(listed).not.toContainText("Not set");
-    await expect(page.getByRole("columnheader")).toHaveText(["Order number", "Customer", "Status", "Order amount", "Promised date", "Ordered / reserved / fulfilled", "Actions"]);
+    await expect(page.getByRole("columnheader")).toHaveText(["Order number", "Customer", "Status", "Order amount", "Promised date", "Ordered / reserved / fulfilled", "Invoicing", "Actions"]);
     await expectEnglish(page);
   });
 
@@ -195,13 +237,16 @@ test.describe("sales delivery risks with the trial orders", () => {
     await settle(page);
     await expect(page.getByText("交付风险查询", { exact: true })).toBeVisible();
     const multiLine = page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ });
-    await expect(multiLine).toContainText("Flow Controller 等 3 个物料");
+    // Each line by its SKU, as in English (UI review 8b, finding 15).
+    for (const sku of ["TST-001", "TST-002", "TST-003"]) await expect(page.getByTestId("delivery-risk-lines-LOCAL-TRIAL-SO-101")).toContainText(sku);
     await expect(multiLine).toContainText("高风险");
-    await expect(multiLine).toContainText("订单数量尚未被库存预留或履约记录覆盖，存在交付缺口。");
+    await expect(multiLine).toContainText("订单有部分数量尚未预留或发货。");
+    await expect(multiLine).toContainText("此处未计入在手库存和在途采购。");
+    await expect(multiLine).toContainText("补货清单");
     const onHold = page.getByRole("row", { name: /LOCAL-TRIAL-SO-102/ });
     await expect(onHold).toContainText("未命名客户");
     await expect(onHold).toContainText("已阻塞");
-    await expect(onHold).toContainText("订单已暂停，需要复核交付条件和后续处理。");
+    await expect(onHold).toContainText("订单已暂停。");
     await expect(page.locator("main").first()).not.toContainText(/Unnamed customer|Blocked|and 2 more/);
 
     await page.goto("/app/sales/evidence");

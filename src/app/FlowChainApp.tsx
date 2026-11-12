@@ -830,6 +830,21 @@ export default function FlowChainApp() {
       experimentalModuleIds,
     ],
   );
+  // The way on from a page that is not available here: the module's own
+  // first page when it can be opened, else Today. Never a dead end. (Menus &
+  // modules cannot turn a feature on yet, so it is not offered.)
+  const blockedRouteLinks = (route: NonNullable<typeof activeRoute>) => {
+    const english = language === "en-US";
+    const home = defaultRouteForModule(route.moduleId);
+    const moduleHome = home && home.id !== route.id && canOpenRoute(home.id) ? home : null;
+    return (
+      <div className="mt-5 flex flex-wrap justify-center gap-2" data-testid="blocked-route-links">
+        <button type="button" className="fc-action-button fc-action-primary" onClick={() => routerNavigate(moduleHome?.path || "/app/today")} data-testid="blocked-route-home">
+          {moduleHome ? (english ? `Go to ${routeLabel(moduleHome)}` : `前往${routeLabel(moduleHome)}`) : english ? "Go to Today" : "前往今日"}
+        </button>
+      </div>
+    );
+  };
   const contentMaxWidthClass =
     ["srm", "supplier-evaluation", "supplier-risks", "contracts"].includes(panelModule)
       ? "max-w-[1440px]"
@@ -1918,6 +1933,7 @@ export default function FlowChainApp() {
                       <Lock className="mx-auto text-slate-500" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability unavailable" : "能力暂不可用"}</h2>
                       <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "This part of FlowChain is not available." : "FlowChain 的这部分功能暂不提供。"}</p>
+                      {blockedRouteLinks(activeRoute)}
                     </Card>
                   ) : activeRoute.requiredPermission &&
                     authorizationLoadState === "loading" ? (
@@ -1961,6 +1977,7 @@ export default function FlowChainApp() {
                       <Lock className="mx-auto text-slate-500" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability unavailable" : "能力暂不可用"}</h2>
                       <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "You have access, but this feature is turned off for this workspace." : "你有访问权限，但此功能在当前工作区未开启。"}</p>
+                      {blockedRouteLinks(activeRoute)}
                     </Card>
                   ) : (
                     <PanelErrorBoundary

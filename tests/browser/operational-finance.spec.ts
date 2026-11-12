@@ -417,7 +417,13 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
     await expect(page.getByTestId(`customer-invoice-${action}`)).toHaveCount(0);
     await expect(page.getByTestId(`customer-invoice-${action}-panel`)).toHaveCount(0);
   }
-  await expect(page.getByTestId("customer-invoice-actions")).toContainText(/当前状态下没有可执行的操作|No action is available/);
+  // With no step of its own left, the invoice points to recording the
+  // payment, and never says "No action is available" next to an action.
+  await expect(page.getByTestId("customer-invoice-next")).toContainText(/Next: record the payment received|下一步：登记收款/);
+  await expect(page.getByTestId("customer-invoice-actions")).not.toContainText(/当前状态下没有可执行的操作|No action is available/);
+  // Issued and nothing received: the header reads To be paid, and Overdue past its due date.
+  await expect(page.getByTestId("customer-invoice-status")).toContainText(/To be paid|待收款/);
+  await expect(page.getByTestId("customer-invoice-status")).toContainText(/Overdue|已逾期/);
   const uiIssued = await api(
     request,
     manager.token,

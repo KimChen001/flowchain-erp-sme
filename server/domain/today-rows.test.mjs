@@ -91,8 +91,9 @@ test('Today\'s reorder links and "{n} in all" are 36 px tall on a phone, with ro
   assert.match(page, /className=\{`\$\{LINK\} \$\{PHONE_TAP\}`\} data-testid="today-reorder-list"/)
   assert.match(page, /flex flex-wrap gap-x-3 text-xs max-sm:gap-x-6/)
   assert.match(page, /\$\{PHONE_TAP\} max-sm:px-1`\} data-testid="today-kind-all"/)
-  // A supplier invoice still to pay reads in progress (blue).
-  assert.match(page, /status === "to_pay" \? "info" : statusToneOf\(status\)/)
+  // A supplier invoice still to pay, or a customer invoice still to be paid
+  // (round 8b), reads in progress (blue).
+  assert.match(page, /status === "to_pay" \|\| status === "to_be_paid" \? "info" : statusToneOf\(status\)/)
 })
 
 test('Today is named as the sidebar names it, and /app/today opens it', () => {

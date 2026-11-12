@@ -15,7 +15,10 @@ test("a reserved sales order is cancelled from its workbench", async ({ page, re
 
   await page.goto("/app/sales/orders");
   await page.getByRole("link", { name: /New sales order|新建销售订单/ }).click();
-  await page.getByLabel(/^(Customer|客户)$/).selectOption({ label: "Cancelling Customer · CUST-CANCEL" });
+  const customer = page.getByRole("combobox", { name: /^(Customer|客户)$/ });
+  await customer.click();
+  await customer.fill("CUST-CANCEL");
+  await page.getByRole("option", { name: "Cancelling Customer · CUST-CANCEL" }).click();
   await page.getByLabel(/^(Item, line 1|物料（第 1 行）)$/).selectOption({ index: 1 });
   await page.getByLabel(/^(Quantity, line 1|数量（第 1 行）)$/).fill("2.0000");
   await page.getByLabel(/^(Unit price, line 1|单价（第 1 行）)$/).fill("8.0000");

@@ -32,6 +32,7 @@ import { unitLabel as sharedUnitLabel } from "../../i18n/unitLabels";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
+import { ItemStockAndOrders } from "./ItemStockAndOrders";
 
 export type MasterItem = {
   itemId: string;
@@ -383,6 +384,7 @@ export default function ItemMasterWorkbench({
   };
   if (selected)
     return (
+      <div className="space-y-4">
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -426,6 +428,9 @@ export default function ItemMasterWorkbench({
           {copy("Updated: {by} · {at}", { by: actorName(selected.updatedBy), at: auditTime(selected.updatedAt) })}
         </div>
       </Card>
+      {/* Its stock per warehouse, latest movements and orders still to ship. */}
+      <ItemStockAndOrders itemId={selected.itemId} sku={selected.sku} baseUnit={selected.baseUnit} />
+      </div>
     );
   // Laid out like the other list pages (purchase orders, sales orders):
   // item-level counts, a search card with labelled filters, then the list.

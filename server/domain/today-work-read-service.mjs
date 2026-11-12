@@ -63,12 +63,16 @@ function customerInvoiceRow(row, access) {
     totalAmount: access.amounts ? decimal(row.totalAmount) : null,
     currency: row.currency,
     status: row.status,
+    // The receivable's status, so Recent documents shows an issued invoice
+    // as To be paid, Partly paid or Paid (customerInvoicePaymentStatus in
+    // business-read-context-service.mjs reads row.receivableStatus).
+    receivableStatus: row.receivableObligation?.status ?? null,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   }
 }
 
-const CUSTOMER_INVOICE_SELECT = { id: true, invoiceNumber: true, customerNameSnapshot: true, invoiceDate: true, totalAmount: true, currency: true, status: true, createdAt: true, updatedAt: true }
+const CUSTOMER_INVOICE_SELECT = { id: true, invoiceNumber: true, customerNameSnapshot: true, invoiceDate: true, totalAmount: true, currency: true, status: true, createdAt: true, updatedAt: true, receivableObligation: { select: { status: true } } }
 
 export async function readTodayWorkSources(ctx, { access, rawContext, now, today, timeZone }) {
   const tenantId = ctx.identity?.tenantId

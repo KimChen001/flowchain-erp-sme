@@ -124,6 +124,20 @@ test("an invoice is checked as a document when approved and printed alone once i
   expect(await figures(page)).toEqual(english);
   // The interface stays in English.
   await expect(page.getByTestId("business-document-print")).toHaveText("Print or save as PDF");
+
+  // On a phone the A4 sheet is scaled to the screen: nothing scrolls
+  // sideways and the totals are in view across. Printing keeps its own size.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(async () => Number(await page.locator(".business-document-stage").getAttribute("data-scale"))).toBeLessThan(0.5);
+  const sheetBox = await sheet.boundingBox();
+  expect(sheetBox && sheetBox.x >= 0 && sheetBox.x + sheetBox.width <= 390).toBe(true);
+  const totalsBox = await page.getByTestId("invoice-document-totals").boundingBox();
+  expect(totalsBox && totalsBox.x + totalsBox.width <= 390).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  expect(await page.locator(".business-document-stage").evaluate((stage) => stage.scrollWidth <= stage.clientWidth)).toBe(true);
+  await page.emulateMedia({ media: "print" });
+  expect(await sheet.evaluate((element) => getComputedStyle(element).zoom)).toBe("1");
+  await page.emulateMedia({ media: "screen" });
 });
 
 test("an invoice that does not exist shows the page's own notice inside the app", async ({ page }) => {

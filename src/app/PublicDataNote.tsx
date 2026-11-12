@@ -93,7 +93,7 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
           )}
           <button
             type="button"
-            className="mt-1 text-xs font-semibold text-sky-800 underline-offset-2 hover:underline"
+            className="mt-1 text-xs font-semibold text-sky-800 underline-offset-2 hover:underline max-sm:min-h-9"
             aria-expanded={open}
             onClick={() => setOpen((value) => !value)}
           >
@@ -102,7 +102,7 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
         </div>
         <button
           type="button"
-          className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-sky-100 hover:text-slate-800"
+          className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-sky-100 hover:text-slate-800 max-sm:flex max-sm:h-9 max-sm:w-9 max-sm:items-center max-sm:justify-center"
           aria-label={t("publicData.dismiss")}
           title={t("publicData.dismiss")}
           onClick={() => {
