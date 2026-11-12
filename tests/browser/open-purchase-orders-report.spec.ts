@@ -19,7 +19,7 @@ async function fixture(page: Page) {
 test('English report pages through every row, preserves scope on links and exports all results', async ({ page }) => {
   await authenticate(page); await fixture(page);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/app/reports/procurement');
+  await page.goto('/app/reports/procurement?view=orders');
   const report = page.getByTestId('open-purchase-orders-report');
   await expect(report.getByRole('heading', { name: 'Open purchase orders' })).toBeVisible();
   await expect(report).toContainText('Showing 1–25 of 61');
@@ -52,7 +52,7 @@ test('English report pages through every row, preserves scope on links and expor
 
 test('Chinese report keeps the same business values', async ({ page }) => {
   await authenticate(page, 'zh-CN'); await fixture(page);
-  await page.goto('/app/reports/procurement');
+  await page.goto('/app/reports/procurement?view=orders');
   const report = page.getByTestId('open-purchase-orders-report');
   await expect(report.getByRole('heading', { name: '未结采购订单' })).toBeVisible();
   await expect(report).toContainText('Acme Components');
@@ -68,7 +68,7 @@ test('report endpoint uses the authenticated database workspace', async ({ page 
   expect(body.total).toBe(body.exportRows.length);
   const invalid = await page.request.get('/api/reports/open-purchase-orders?from=invalid', { headers: { Authorization: `Bearer ${session.token}` } });
   expect(invalid.status()).toBe(422);
-  await page.goto('/app/reports/procurement');
+  await page.goto('/app/reports/procurement?view=orders');
   await expect(page.getByTestId('open-purchase-orders-report')).toContainText('No orders match these filters.');
 });
 
@@ -81,7 +81,7 @@ const multiSku = ['A', 'B', 'C', 'D', 'E', 'F', 'G'].flatMap((supplier, index) =
 test('procurement reports are sub-tabs; the overdue chart names the top five and what it leaves out', async ({ page }) => {
   await authenticate(page);
   await page.route('**/api/reports/open-purchase-orders?*', route => route.fulfill({ json: buildOpenPurchaseOrdersReport(multiSku, Object.fromEntries(new URL(route.request().url()).searchParams), new Date('2026-09-11T10:00:00Z')) }));
-  await page.goto('/app/reports/procurement');
+  await page.goto('/app/reports/procurement?view=orders');
   const tabs = page.getByTestId('procurement-report-tabs');
   await expect(tabs.getByRole('link', { name: 'Open purchase orders' })).toHaveAttribute('aria-current', 'page');
   await expect(tabs.getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute('aria-current', 'page');
@@ -94,9 +94,11 @@ test('procurement reports are sub-tabs; the overdue chart names the top five and
   await expect(row).toContainText('1 line open');
   await expect(page.getByTestId('open-po-table').getByRole('row', { name: /PO-MULTI-B/ })).toContainText('13 lines open');
   await expect(report).not.toContainText('Unavailable');
+  // The tab opens the dashboard by default (owner 11/11), as the other analytics tabs do.
   await tabs.getByRole('link', { name: 'Dashboard' }).click();
-  await expect(page).toHaveURL(/view=analytics/);
+  await expect(page).toHaveURL(/\/app\/reports\/procurement$/);
   await expect(page.getByTestId('procurement-report-tabs').getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('bi-dashboard')).toBeVisible();
   // Business overview has no procurement sub-tabs.
   await page.goto('/app/reports/overview');
   await expect(page.getByTestId('bi-dashboard')).toBeVisible();
@@ -107,7 +109,7 @@ test('on a phone the open purchase orders are cards that show every field', asyn
   await authenticate(page, 'zh-CN');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/api/reports/open-purchase-orders?*', route => route.fulfill({ json: buildOpenPurchaseOrdersReport(multiSku, Object.fromEntries(new URL(route.request().url()).searchParams), new Date('2026-09-11T10:00:00Z')) }));
-  await page.goto('/app/reports/procurement');
+  await page.goto('/app/reports/procurement?view=orders');
   const report = page.getByTestId('open-purchase-orders-report');
   await expect(page.getByTestId('open-po-table')).toHaveAttribute('data-list-cards', '');
   await expect(report).toContainText('第 1 页，共 1 页');

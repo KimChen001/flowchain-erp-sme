@@ -20,11 +20,12 @@ export type ChartContext = {
 type Row = Record<string, unknown> & { name?: unknown; filterValue?: unknown };
 type TooltipParam = { marker?: string; seriesName?: string; name?: string; value?: unknown; data?: unknown; dataIndex: number; percent?: number; seriesIndex?: number; treePathInfo?: Array<{ name: string }> };
 
-// Categories take these slots in this order: brand blue, then teal, gold,
-// violet, pink and sky. Neighbouring slots stay apart for color-blind readers,
-// and the first three stay apart in every pair, as scatter and radar need.
-// Slots are never reused: a seventh category and beyond are drawn in OTHER.
-export const PALETTE = ["#2563eb", "#0d9488", "#a16207", "#7c3aed", "#db2777", "#0284c7"];
+// Categories take these slots in this order: the bright set the dashboards
+// were first drawn with (10/01; owner 11/11 preferred it again): blue, teal,
+// amber, violet, pink, sky, green, orange, slate, red, aqua and purple.
+// Neighbouring slots stay apart for color-blind readers. Slots are never
+// reused: a thirteenth category and beyond are drawn in OTHER.
+export const PALETTE = ["#2563eb", "#0d9488", "#f59e0b", "#8b5cf6", "#ec4899", "#0ea5e9", "#65a30d", "#ea580c", "#64748b", "#dc2626", "#14b8a6", "#a855f7"];
 const OTHER = "#64748b";
 const INK = "#0f172a";
 const SUB = "#64748b";
@@ -39,16 +40,17 @@ const DONE = "#0d9488";
 const WAITING = "#f59e0b";
 const PROBLEM = "#dc2626";
 const SEMANTIC: Record<string, string> = {
-  draft: "#cbd5e1", pending_approval: WAITING, approved: "#1e3a8a", issued: "#2563eb", partially_received: "#60a5fa",
+  draft: "#94a3b8", pending_approval: WAITING, approved: "#0ea5e9", issued: "#2563eb", partially_received: "#8b5cf6",
   fully_received: DONE, received: DONE, closed: "#64748b", cancelled: "#94a3b8", canceled: "#94a3b8", rejected: PROBLEM,
-  submitted: "#2563eb", matching: "#60a5fa", exception: PROBLEM, matched: DONE, held: WAITING,
-  confirmed: "#2563eb", shortage_risk: PROBLEM, fulfilled: DONE, partially_fulfilled: "#60a5fa", ready_to_ship: "#1e3a8a",
-  out_of_stock: PROBLEM, below_safety_stock: "#ea580c", below_reorder_point: WAITING, ok: DONE, unknown: "#cbd5e1",
+  submitted: "#0ea5e9", matching: "#6366f1", exception: PROBLEM, matched: DONE, held: WAITING,
+  confirmed: "#2563eb", shortage_risk: PROBLEM, fulfilled: DONE, partially_fulfilled: "#8b5cf6", ready_to_ship: "#0ea5e9",
+  out_of_stock: PROBLEM, below_safety_stock: "#ea580c", below_reorder_point: WAITING, ok: DONE, unknown: "#94a3b8",
   high: PROBLEM, medium: WAITING, low: DONE,
   Matched: DONE, "Match exception": PROBLEM, "Awaiting match": WAITING,
 };
-// Stages run from dark to light blue, one step apart in lightness.
-const STAGES = ["#172554", "#1e3a8a", "#1d4ed8", "#3b82f6", "#60a5fa"];
+// Stages run from indigo through blue and sky to teal and green as work moves
+// toward done: bright, never the near-black navy of the 11/08 theme.
+const STAGES = ["#4f46e5", "#2563eb", "#0ea5e9", "#14b8a6", "#16a34a"];
 
 const rowsOf = (chart: ReportChart) => (chart.data || []) as Row[];
 const num = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : value === null || value === undefined || value === "" || value === "-" ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -228,7 +230,7 @@ function pareto(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
     series: [
       { name: ctx.copy(barMeasure?.label || chart.title), type: "bar", barMaxWidth: 38, data: rows.map((row, index) => ({ value: num(row.value), filterValue: String(row.filterValue ?? ""), itemStyle: { color: classColor[classes[index]], borderRadius: [4, 4, 0, 0] } })), emphasis: { focus: "series" } },
       // The running share is a reading guide, so it is drawn in ink, not in a category color.
-      { name: ctx.copy("Cumulative share"), type: "line", yAxisIndex: 1, smooth: 0.25, symbol: "circle", symbolSize: 8, lineStyle: { width: 2, color: "#334155" }, itemStyle: { color: "#334155", borderColor: "#fff", borderWidth: 2 }, z: 3, data: rows.map(row => num(row["Cumulative share"])),
+      { name: ctx.copy("Cumulative share"), type: "line", yAxisIndex: 1, smooth: 0.25, symbol: "circle", symbolSize: 8, lineStyle: { width: 3, color: "#f59e0b" }, itemStyle: { color: "#f59e0b", borderColor: "#fff", borderWidth: 2 }, z: 3, data: rows.map(row => num(row["Cumulative share"])),
         markLine: { silent: true, symbol: "none", lineStyle: { color: "#94a3b8", type: "dashed", width: 1 }, label: { color: SUB, fontSize: 10, formatter: "80%", position: "insideEndTop" }, data: [{ yAxis: 80 }] } },
     ],
   };
@@ -559,7 +561,9 @@ export function chartOption(chart: ReportChart, ctx: ChartContext): EChartsCoreO
     case "combo": return combo(chart, ctx);
     case "pareto": return pareto(chart, ctx);
     case "pie": return pie(chart, ctx);
-    case "donut": return segmented(chart, ctx);
+    // Status and breakdown charts are donuts again (owner 11/11); the 11/08
+    // theme drew each as one segmented bar.
+    case "donut": return pie(chart, ctx);
     case "funnel": return stageBars(chart, ctx);
     case "waterfall": return waterfall(chart, ctx);
     case "treemap": return treemap(chart, ctx);
@@ -579,7 +583,8 @@ export function chartHeight(chart: ReportChart) {
   const rows = (chart.data || []).length;
   if (chart.type === "horizontal_bar" || (chart.type === "stacked_bar" && chart.orientation === "horizontal")) return Math.max(260, rows * 30 + 56);
   if (chart.type === "heatmap") return Math.max(250, rows * 36 + 88);
-  if (chart.type === "donut") return Math.max(210, 106 + Math.min(rows, SEGMENT_LIMIT + 6) * 22);
+  // A donut with its legend beneath: one more legend row for every three parts.
+  if (chart.type === "donut") return 270 + Math.ceil(Math.min(rows, 12) / 3) * 22;
   if (chart.type === "funnel") return Math.max(200, rows * 44 + 16);
   if (chart.type === "waterfall") return Math.max(240, rows * 40 + 56);
   if (chart.type === "calendar") return 210;

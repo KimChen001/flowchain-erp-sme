@@ -11,19 +11,24 @@ type NavigateFn = (moduleId: string, focusTarget?: { entityType: string; entityI
 type ReportsPanelProps = { onNavigate?: NavigateFn; initialView?: DashboardView | "library" };
 export const REPORT_DATA_SOURCE_LABEL = "API / 当前数据范围";
 
-// Procurement analytics has two views: the open purchase orders report (the
-// default, which links such as "?status=open" and "?scope=overdue" open) and
-// the procurement dashboard (?view=analytics, or a saved view). They are
-// sub-tabs, the one shown marked as the current page.
+// Procurement analytics has two views: the procurement dashboard (the
+// default: the tab opens the charts, as the other analytics tabs do; owner
+// 11/11) and the open purchase orders report (?view=orders, or a link that
+// carries one of its filters, such as "?status=open" or "?scope=overdue").
+// They are sub-tabs, the one shown marked as the current page.
 const SUB_TABS = [
-  { id: "orders", to: "/app/reports/procurement", label: ["Open purchase orders", "未结采购订单"] },
-  { id: "analytics", to: "/app/reports/procurement?view=analytics", label: ["Dashboard", "分析看板"] },
+  { id: "analytics", to: "/app/reports/procurement", label: ["Dashboard", "分析看板"] },
+  { id: "orders", to: "/app/reports/procurement?view=orders", label: ["Open purchase orders", "未结采购订单"] },
 ] as const;
+// The open purchase orders report's own URL filters: a link with any of them
+// opens that report.
+const ORDER_PARAMS = ["status", "scope", "overdue", "from", "to", "supplier", "currency", "search", "sort", "direction", "hiddenColumns"];
 
 export default function ReportsPanel({ onNavigate, initialView = "overview" }: ReportsPanelProps) {
   const [params] = useSearchParams();
   const { language } = useI18n();
-  const openOrders = initialView === "procurement" && params.get("view") !== "analytics" && !params.has("savedView");
+  const openOrders = initialView === "procurement" && !params.has("savedView") && params.get("view") !== "analytics"
+    && (params.get("view") === "orders" || ORDER_PARAMS.some(name => params.has(name)));
   if (initialView === "library") return <ReportLibraryV2 />;
   const current = openOrders ? "orders" : "analytics";
   return <div className="space-y-4">

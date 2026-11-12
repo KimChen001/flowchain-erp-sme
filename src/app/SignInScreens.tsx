@@ -17,6 +17,9 @@ export type LocalDevelopmentStatus = {
   // A workspace seeded from public data says which and what is assumed.
   publicData: PublicDataNote | null;
   universalIntakeEnabled: boolean;
+  // Local only, set by the walkthrough launcher: sign the local administrator
+  // in without the sign-in steps.
+  autoSignIn?: boolean;
 };
 
 export const SIGN_IN_CONFIRM_PATH = "/sign-in/confirm";
@@ -55,6 +58,8 @@ const COPY = {
   localTitle: { en: "Local development", zh: "本地开发" },
   localAccounts: { en: "Available local accounts: ", zh: "本地可用账户：" },
   useAdmin: { en: "Use local administrator", zh: "使用本地管理员" },
+  autoSigningIn: { en: "Signing in as {email}…", zh: "正在以 {email} 登录…" },
+  autoSignInFailed: { en: "Could not sign in by itself. Use the steps below.", zh: "未能自动登录，请按下面的步骤登录。" },
   useManager: { en: "Use local manager", zh: "使用本地经理" },
   viewLink: { en: "View the sign-in link", zh: "查看登录链接" },
   openLocalLink: { en: "Open the sign-in link", zh: "打开登录链接" },
@@ -215,6 +220,35 @@ const primaryButton = "w-full h-11 rounded-lg flex items-center justify-center g
 const inputClass = "mt-1.5 w-full h-11 rounded-lg border bg-white px-3 text-sm outline-none transition-shadow focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 const secondaryButton = "w-full h-10 rounded-lg flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-60";
 
+// Set when someone signs out of a local workspace, so the page does not sign
+// them straight back in (they may want another local account); read once.
+export const LOCAL_SIGNED_OUT_KEY = "flowchain:local-signed-out";
+function takeLocalSignedOut() {
+  try {
+    const value = sessionStorage.getItem(LOCAL_SIGNED_OUT_KEY);
+    sessionStorage.removeItem(LOCAL_SIGNED_OUT_KEY);
+    return value === "true";
+  } catch {
+    return false;
+  }
+}
+
+// Local development only: the sign-in steps done for the person, through the
+// same local-only path the page offers by hand: ask for a link, read it from
+// the local outbox, confirm it. Off local development the outbox endpoint
+// answers 404, so this cannot sign anyone in.
+async function signInLocally(email: string) {
+  await apiJson("/api/auth/email-link", { method: "POST", body: JSON.stringify({ email }) });
+  const { links } = await apiJson<{ links: Array<{ url: string }> }>(`/api/dev/sign-in-links?email=${encodeURIComponent(email)}`);
+  const link = links[0]?.url ? new URL(links[0].url, window.location.origin) : null;
+  const token = link?.searchParams.get("token") || "";
+  if (!token) throw new Error("No local sign-in link");
+  const result = await apiJson<{ token: string; user: WorkspaceUser }>("/api/auth/email-link/confirm", { method: "POST", body: JSON.stringify({ token }) });
+  localStorage.setItem(AUTH_TOKEN_KEY, result.token);
+  localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(result.user));
+  return result;
+}
+
 // In local development the outbox holds the email instead of sending it;
 // this reads the latest link for the address from the local-only endpoint.
 function LocalSignInLink({ email }: { email: string }) {
@@ -243,9 +277,31 @@ function LocalSignInLink({ email }: { email: string }) {
   );
 }
 
-export function LoginScreen({ localStatus }: { localStatus: LocalDevelopmentStatus | null }) {
+export function LoginScreen({ localStatus, onSignedIn }: { localStatus: LocalDevelopmentStatus | null; onSignedIn?: (user: WorkspaceUser, token: string) => void }) {
   const copy = useCopy();
   const [email, setEmail] = useState(localStatus?.availableLoginEmails[0] || "");
+  // Local walkthrough: sign in by itself as the first local account (the
+  // administrator), unless the person just signed out; the account buttons
+  // then sign in with one click.
+  const quickSignIn = Boolean(localStatus?.autoSignIn && onSignedIn);
+  const [justSignedOut] = useState(() => takeLocalSignedOut());
+  const [autoState, setAutoState] = useState<"idle" | "signing" | "failed">("idle");
+  const [autoEmail, setAutoEmail] = useState("");
+  async function quickSignInAs(address: string) {
+    if (!onSignedIn) return;
+    setAutoEmail(address);
+    setAutoState("signing");
+    try {
+      const result = await signInLocally(address);
+      onSignedIn(result.user, result.token);
+    } catch {
+      setAutoState("failed");
+    }
+  }
+  useEffect(() => {
+    const first = localStatus?.availableLoginEmails[0];
+    if (quickSignIn && !justSignedOut && first && autoState === "idle") void quickSignInAs(first);
+  }, [quickSignIn, justSignedOut]);
   const [sentTo, setSentTo] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
@@ -317,6 +373,8 @@ export function LoginScreen({ localStatus }: { localStatus: LocalDevelopmentStat
       <form onSubmit={submit} className="space-y-4" data-testid="sign-in-email-form">
         <CardHeading icon={<Lock size={16} />} title={copy("title")} subtitle={copy("subtitle")} />
         {signedOut && <p role="status" data-testid="sign-in-signed-out" className="rounded-lg px-3 py-2 text-xs leading-5" style={{ background: "#eff4ff", color: A.label }}>{copy("signedOut")}</p>}
+        {autoState === "signing" && <p role="status" data-testid="local-auto-sign-in" className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs leading-5" style={{ background: "#eff4ff", color: A.label }}><Loader2 size={13} className="animate-spin" />{copy("autoSigningIn", { email: autoEmail })}</p>}
+        {autoState === "failed" && <p role="alert" data-testid="local-auto-sign-in-failed" className="rounded-lg px-3 py-2 text-xs leading-5" style={{ background: "#fff7ed", color: A.label }}>{copy("autoSignInFailed")}</p>}
         {localStatus && (
           <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs leading-5 text-amber-900" data-testid="local-login-metadata">
             <div className="font-semibold">{copy("localTitle")} · {localStatus.workspaceName}</div>
@@ -325,7 +383,7 @@ export function LoginScreen({ localStatus }: { localStatus: LocalDevelopmentStat
                 <div className="mt-0.5">{copy("localAccounts")}{localStatus.availableLoginEmails.join(", ")}</div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {localStatus.availableLoginEmails.map((address) => (
-                    <button key={address} type="button" className="rounded-md border border-amber-200 bg-white px-2 py-1 hover:bg-amber-100" onClick={() => setEmail(address)}>
+                    <button key={address} type="button" className="rounded-md border border-amber-200 bg-white px-2 py-1 hover:bg-amber-100" onClick={() => (quickSignIn ? void quickSignInAs(address) : setEmail(address))} data-testid={`local-sign-in-${address}`}>
                       {address === "admin@flowchain.local" ? copy("useAdmin") : copy("useManager")}
                     </button>
                   ))}
