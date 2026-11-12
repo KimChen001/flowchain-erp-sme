@@ -82,6 +82,9 @@ test('a short reply keeps the conversation\'s language, and a clear question set
   // A new conversation: a short reply's own script, then the interface language.
   const fresh = async (question, ui) => (await ask([[...say('OK.'), end()]], { question, body: { answerLanguage: ui } })).events[0].language
   assert.deepEqual([await fresh('ok 100', 'zh-CN'), await fresh('好', 'en-US'), await fresh('100', 'zh-CN'), await fresh('100', 'en-US')], ['en-US', 'zh-CN', 'zh-CN', 'en-US'])
+  // An English opener before Chinese words follows the interface (the owner,
+  // 2026-11-12: "show me 85123A 的库存" was answered in English in Chinese).
+  assert.deepEqual([await fresh('show me LDM-001 的库存', 'zh-CN'), await fresh('show me LDM-001 的库存', 'en-US')], ['zh-CN', 'en-US'])
 })
 
 test('a longer text streams as deltas up to each word break, so no figure leaves in pieces', async () => {
