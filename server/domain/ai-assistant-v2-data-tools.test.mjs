@@ -280,6 +280,46 @@ test('stock_projection also runs the weeks at the recorded shipping rate, apart 
   assert.ok(Array.isArray(result.weeks) && result.weeks.length === 3)
 })
 
+// 2026-11-08: "the other 195 are due Nov 10 to Nov 16" came from the first 20
+// rows, and "the details of the 195" could not be read (50 rows were too large).
+test('reorder_list counts and dates every row, narrows to a window and pages with offset', async () => {
+  const scenario = aiSkillScenario()
+  const loaded = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(loaded)
+  const today = facts.today
+  // One to order now, then one a day from tomorrow: 30 rows over a month.
+  const rows = Array.from({ length: 30 }, (_, index) => ({ sku: `SKU-${String(index).padStart(3, '0')}`, itemName: `Item ${index}`, orderNow: index === 0, orderByDate: index === 0 ? today : addCalendarDays(today, index), supplier: { id: 'SUP-1', name: 'Supplier One' } }))
+  const reorderList = { read: async () => ({ rows }) }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  const run = async (args) => (await runAiReadTool('reorder_list', args, { facts: await readAiSkillFacts(context), context })).result
+  const first = await run({ limit: 10 })
+  assert.deepEqual(first.counts, { orderNow: 1, dueWithin7Days: 8, dueWithin30Days: 30, noOrderByDate: 0, raisedToMinimum: 0 })
+  assert.deepEqual(first.orderByRange, { earliest: today, latest: addCalendarDays(today, 29) })
+  assert.deepEqual([first.total, first.shownFrom, first.shownTo, first.more], [30, 1, 10, 20])
+  // The next page.
+  const second = await run({ limit: 10, offset: 10 })
+  assert.deepEqual([second.rows[0].sku, second.shownFrom, second.shownTo, second.more], ['SKU-010', 11, 20, 10])
+  // A window, and past the end.
+  const week = await run({ due: 'within_7_days' })
+  assert.deepEqual([week.total, week.rows.at(-1).sku], [8, 'SKU-007'])
+  assert.deepEqual((await run({ due: 'now' })).rows.map((row) => row.sku), ['SKU-000'])
+  const beyond = await run({ offset: 99 })
+  assert.deepEqual([beyond.rows.length, beyond.shownFrom, beyond.more], [0, 0, 0])
+  // An item by its name; the counts stay the whole list's.
+  const named = await run({ sku: 'item 7' })
+  assert.deepEqual([named.rows.map((row) => row.sku), named.counts.orderNow, named.counts.dueWithin30Days], [['SKU-007'], 1, 30])
+  // 2026-11-08: a SKU filter that matched nothing gave "0 to order now".
+  const missing = await runAiReadTool('reorder_list', { sku: '蛋糕架' }, { facts: await readAiSkillFacts(context), context })
+  assert.equal(missing.error, 'not_found')
+  assert.match(missing.details.join(' '), /another language than the question/)
+})
+
+test('the prompt keeps an answer to the rows it read, pages for more, and explains a questioned figure', () => {
+  assert.match(ASSISTANT_V2_SYSTEM, /Say only what the rows you read show\. For the rest of a list, use the counts, totals and ranges the tool gives/)
+  assert.match(ASSISTANT_V2_SYSTEM, /read the next page with offset/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Call a figure a mistake only when a result shows it is wrong/)
+})
+
 // 2026-11-08 (rehearsal): asked to add "our stock is already below safety
 // stock" to a draft, the answer "corrected" it from the position (408, above
 // the reorder point), though 48 on hand was below the safety stock of 119.
@@ -578,7 +618,7 @@ test('reorder_list returns the preferred supplier\'s name, lead time and minimum
   assert.equal(row.shortfall, 102)
   assert.deepEqual([row.requestQuantity, row.raisedToMinimum], [150, true])
   // Counts over every row, for the answer to read instead of counting.
-  assert.deepEqual(list.counts, { orderNow: list.rows.filter((entry) => entry.orderNow === true).length, raisedToMinimum: 1 })
+  assert.deepEqual([list.counts.orderNow, list.counts.raisedToMinimum], [list.rows.filter((entry) => entry.orderNow === true).length, 1])
   assert.ok(Array.isArray(row.flags) && row.flags.every((flag) => typeof flag.code === 'string'))
   // Every open line counts in the position, late or not, and says whether it is late.
   assert.ok(row.incomingLines.length && row.incomingLines.every((line) => typeof line.late === 'boolean'))

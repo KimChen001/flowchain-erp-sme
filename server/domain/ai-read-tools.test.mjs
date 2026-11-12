@@ -4,7 +4,7 @@ import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { validateAiToolArgs, aiToolList, AI_TOOL_LIMITS } from './ai-read-tool-contract.mjs'
-import { AI_READ_TOOLS } from './ai-read-tools.mjs'
+import { AI_READ_TOOLS, aiStockSku } from './ai-read-tools.mjs'
 import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { createSupplierInsightsReadService } from './supplier-insights.mjs'
@@ -430,6 +430,13 @@ test('stock_position and stock_projection find an item by its name, in any case,
   const many = await runAiReadTool('stock_position', { sku: item.itemName.split(' ')[0] }, { facts: twin })
   assert.equal(many.error, 'ambiguous')
   assert.ok(many.candidates.some((row) => row.sku === 'LDM-001') && many.candidates.some((row) => row.sku === 'LDM-001-B'), JSON.stringify(many.candidates))
+})
+
+// 2026-11-08: "Cake Stand" for Regency Cakestand 3 Tier found nothing.
+test('an item name matches whatever its spaces and dashes', () => {
+  const facts = { inventory: { rows: [{ sku: '22423', itemName: 'Regency Cakestand 3 Tier' }, { sku: '85123A', itemName: 'White Hanging Heart T-Light Holder' }], masterOnly: [] } }
+  assert.deepEqual(aiStockSku(facts, 'Cake Stand'), { sku: '22423' })
+  assert.deepEqual(aiStockSku(facts, 'tlight holder'), { sku: '85123A' })
 })
 
 // 2026-11-08 on DeepSeek: "7.1556 件" a day, copied from four decimals.
