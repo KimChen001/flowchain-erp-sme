@@ -244,10 +244,16 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
       add(`quantity: ${sku}`, inRow || inText, `expected ${quantity}`)
     }
   }
+  // The item on the form at the expected quantity, or (orSaidEarlier) at the
+  // quantity an earlier answer gave it, when the user agrees to that answer
+  // (2026-11-12: "ok, order it" after a recommendation of the solver's 91
+  // cakestands made a form at 91, where the case knew only the reorder list's 60).
   if (expect.form) {
     const form = (answer.ui || []).find((part) => part.component === 'pr_form')
-    const lines = JSON.stringify(form?.props || {})
-    add('form', Boolean(form) && lines.includes(expect.form.sku) && numbersIn(lines).includes(expect.form.quantity), form ? 'form shown' : 'no form')
+    const row = formRows(answer).find((entry) => entry.item?.sku === expect.form.sku)
+    const value = Number(row?.suggestedQuantity?.value ?? row?.quantity)
+    const said = Boolean(expect.form.orSaidEarlier && row) && answers.slice(0, -1).some((earlier) => String(earlier?.text || '').split(/\n|(?<=[.;。；])/).some((line) => line.includes(expect.form.sku) && numbersIn(line).includes(value)))
+    add('form', Boolean(row) && (value === expect.form.quantity || said), !form ? 'no form' : !row ? `${expect.form.sku} not on the form` : `${expect.form.sku} at ${value}${said ? ', as said earlier' : ''}`)
   }
   if (expect.tidy !== false) {
     const problems = tidyProblems(answer.text, answer.textParts)

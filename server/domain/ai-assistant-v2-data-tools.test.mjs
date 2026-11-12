@@ -708,7 +708,7 @@ test('every data tool declares its columns, and each declared column is in its r
     // A row's details depend on its signal: today's list and the problems
     // between them hold every detail column.
     attention_list: [{ limit: 10 }, { kind: 'problems', limit: 10 }],
-    item_suppliers: [{ sku: 'LDM-001' }],
+    item_suppliers: [{ sku: 'LDM-001' }, { supplier: 'Acme Components' }],
     rfq_quotes: [{}],
     order_quantity_costs: [{ sku: 'LDM-001', quantities: [50, 100] }],
     optimize_order_plan: [{ plan: [{ sku: 'LDM-001', quantity: 100 }] }],
@@ -793,6 +793,17 @@ test('item_suppliers gives an item\'s approved suppliers with lead time, minimum
   assert.equal(typeof first.referencePrice, 'number')
   assert.deepEqual(first.ref, { type: 'supplier', id: 'SUP-001', label: 'Acme Components' })
   assert.equal((await run('item_suppliers', { sku: 'NOPE-9' })).error, 'not_found')
+  // One supplier's items with their terms (2026-11-12 on Flash: "What is the
+  // lead time from Globex Party Supplies?" found no item list to read).
+  const acme = await run('item_suppliers', { supplier: 'Acme Components' })
+  assert.ok(acme.ok, acme.error)
+  assert.equal(acme.result.supplier, 'Acme Components')
+  const ldm = acme.result.rows.find((row) => row.sku === 'LDM-001')
+  assert.deepEqual([ldm.preferred, ldm.leadTimeDays, ldm.ref.type], [true, 12, 'item'])
+  assert.ok(acme.result.leadTimeDays.shortest <= 12 && acme.result.leadTimeDays.longest >= 12)
+  assert.equal(acme.result.total, acme.result.rows.length)
+  assert.equal((await run('item_suppliers', { supplier: 'Nobody Ltd' })).result?.error ?? (await run('item_suppliers', { supplier: 'Nobody Ltd' })).error, 'supplier_not_found')
+  assert.equal((await run('item_suppliers', {})).error ?? (await run('item_suppliers', {})).result?.error, 'invalid_arguments')
 })
 
 test('rfq_quotes reads each open RFQ\'s latest quotes through the RFQ comparison, only for a user who may see prices', async () => {

@@ -98,6 +98,12 @@ test('scoring: figures within tolerance, SKUs named, quantities by their SKU, th
   const form = { status: 200, text: 'I have filled in the form.', ui: [{ component: 'pr_form', props: { lines: [{ item: { sku: 'FOODS_3_090' }, quantity: 400 }] } }], flags: [], errors: [] }
   assert.equal(scoreAnswer(form, { form: { sku: 'FOODS_3_090', quantity: 400 } }).pass, true)
   assert.equal(scoreAnswer(form, { form: { sku: 'FOODS_3_090', quantity: 500 } }).pass, false)
+  // Agreeing to an earlier answer: the quantity it gave the item counts.
+  const agreed = { ...form, ui: [{ component: 'pr_form', props: { lines: [{ item: { sku: 'FOODS_3_090' }, suggestedQuantity: { value: 450 }, checked: true }] } }] }
+  const earlier = { text: 'Order FOODS_3_090 at 450 units, the planner quantity.' }
+  assert.equal(scoreAnswer(agreed, { form: { sku: 'FOODS_3_090', quantity: 400, orSaidEarlier: true } }, { answers: [earlier, agreed] }).pass, true)
+  assert.equal(scoreAnswer(agreed, { form: { sku: 'FOODS_3_090', quantity: 400 } }, { answers: [earlier, agreed] }).pass, false)
+  assert.equal(scoreAnswer(agreed, { form: { sku: 'FOODS_3_090', quantity: 400, orSaidEarlier: true } }, { answers: [{ text: 'Order FOODS_3_090.' }, agreed] }).pass, false)
 })
 
 test('scoring: names or SKUs, dates in their usual forms, refusals, any of several figures, and tidy text', () => {

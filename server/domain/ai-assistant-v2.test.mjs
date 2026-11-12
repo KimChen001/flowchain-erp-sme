@@ -1346,8 +1346,9 @@ test('a shown form tells the model each line\'s quantity, where it came from and
   const form = ofType(events, 'ui').find((event) => event.component === 'pr_form').props
   const results = client.requests[2].messages.at(-1).content.filter((block) => block.type === 'tool_result')
   const shown = JSON.parse(results.map((block) => (typeof block.content === 'string' ? block.content : block.content.map((part) => part.text).join(''))).join(''))
-  assert.deepEqual(shown.lines, [...form.lines, ...form.suggested].map((row) => ({ sku: row.item.sku, quantity: row.suggestedQuantity.value, source: row.suggestedQuantity.source, ticked: row.checked })))
-  assert.deepEqual(shown.lines[0], { sku: 'LDM-001', quantity: 30, source: 'user_named', ticked: false })
+  assert.deepEqual(shown.lines, [...form.lines, ...form.suggested].map((row) => ({ sku: row.item.sku, quantity: row.suggestedQuantity.value, source: row.suggestedQuantity.source, supplier: row.supplier?.name ?? null, ticked: row.checked })))
+  assert.deepEqual(shown.lines[0], { sku: 'LDM-001', quantity: 30, source: 'user_named', supplier: form.lines[0].supplier.name, ticked: false })
+  assert.ok(shown.lines[0].supplier)
 })
 
 // 2026-11-11 on Flash: "Show me the supplier of the oldest one" read nothing

@@ -1085,6 +1085,17 @@ test('the item the user described keeps the order plan\'s quantity, and a budget
   ctx.question = 'I want 900 temperature sensors but can only spend 20,000'
   const described = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity }] }), 'pr_form')
   assert.deepEqual([described.lines[0].suggestedQuantity, described.lines[0].checked], [{ value: quantity, source: 'order_plan' }, true])
+  // A quantity the model worked out itself for a budget question sends it to
+  // the solver first (2026-11-12 on Flash: 78 from calculate, the form at 60);
+  // the typed 900 and the line's own suggestion are kept as before.
+  const suggestion = described.lines[0].suggestedQuantity.value
+  assertError(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: quantity + 1 }] }), 'quantity_not_planned')
+  assert.equal(assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 900 }] }), 'pr_form').lines[0].suggestedQuantity.value, 900)
+  ctx.orderPlan = new Map()
+  assert.ok(assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001' }] }), 'pr_form').lines.length)
+  ctx.question = 'I want 900 temperature sensors'
+  assert.ok(assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: suggestion + 1 }] }), 'pr_form'))
+  ctx.orderPlan = latestOrderPlan(ctx.results)
   ctx.question = '预算只有 300 英镑，这周该补什么货？'
   const budget = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity }] }), 'pr_form')
   assert.deepEqual([budget.lines.length, budget.suggested[0].suggestedQuantity, budget.suggested[0].checked], [0, { value: quantity, source: 'order_plan' }, false])
