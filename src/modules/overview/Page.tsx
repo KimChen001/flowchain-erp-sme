@@ -12,6 +12,8 @@ import { useDocumentNumbers } from "../../lib/documentNumbers";
 import { formatDateTimeInTimeZone, formatLocaleAmount, formatQuantity, instantDayInTimeZone } from "../../lib/format";
 import { unitLabel } from "../../i18n/unitLabels";
 import { useTodayCopy, type TodayCopyKey } from "./todayCopy";
+import { DecisionSection, type TodayDecisions } from "./DecisionCards";
+import { useDecisionCopy } from "./decisionCopy";
 
 // Today: the work that needs doing, from the rules the rest of the app uses
 // (GET /api/home/overview, server/domain/today-work.mjs), earliest date first;
@@ -48,6 +50,10 @@ type HomeOverview = {
   todayChanges: number;
   recentDocuments: DocumentRow[];
   firstRun: { steps: SetupStep[]; done: number; total: number } | null;
+  // The rows FlowChain prepared a next step for, and those set aside
+  // (DecisionCards.tsx); without a database, { available: false } and
+  // every row stays in Today's work.
+  decisions?: TodayDecisions;
   hidden: string[];
   limitations: string[];
   generatedAt: string;
@@ -95,12 +101,14 @@ export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi, 
 function RuntimeHomepage() {
   const { locale, timezone } = useI18n();
   const t = useTodayCopy();
+  const d = useDecisionCopy();
   const [overview, setOverview] = useState<HomeOverview | null>(null);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   const [filter, setFilter] = useState<"all" | "overdue">("all");
   const [expanded, setExpanded] = useState(false);
-  const load = async () => {
-    setState("loading");
+  // After a decision Today reloads quietly, so the cards do not flash.
+  const load = async (quiet = false) => {
+    if (!quiet) setState("loading");
     try {
       setOverview(await apiJson<HomeOverview>("/api/home/overview"));
       setState("loaded");
@@ -110,21 +118,29 @@ function RuntimeHomepage() {
     }
   };
   useEffect(() => { void load(); }, []);
+  const decisions = overview?.decisions?.available ? overview.decisions : null;
+  const waiting = decisions?.waiting || [];
+  const setAside = decisions?.setAside || [];
   // A work item labelled with a purchase request's, RFQ's or order's id shows its document number.
-  const shownNumber = useDocumentNumbers((overview?.workItems || []).filter((item) => item.label === item.recordId).map((item) => [item.entityType, item.recordId] as const));
+  const labelled = [...(overview?.workItems || []), ...waiting.map((entry) => entry.row as WorkItem), ...setAside.map((entry) => entry.row as WorkItem)];
+  const shownNumber = useDocumentNumbers(labelled.filter((item) => item.label === item.recordId).map((item) => [item.entityType, item.recordId] as const));
   const labelOf = (item: WorkItem) => item.label === item.recordId ? shownNumber(item.entityType, item.recordId) || item.label : item.label;
 
   if (state === "error") {
     return (
       <Card className="p-12 text-center">
         <h2 className="text-lg font-semibold">{t("loadFailed")}</h2>
-        <button onClick={load} className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600"><RefreshCw size={14} />{t("retry")}</button>
+        <button onClick={() => load()} className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600"><RefreshCw size={14} />{t("retry")}</button>
       </Card>
     );
   }
 
   const today = overview?.today || "";
-  const items = overview?.workItems || [];
+  // Rows with a decision card, or set aside, leave Today's work.
+  const decisionKeys = new Set([...waiting, ...setAside].map((entry) => entry.key));
+  const items = (overview?.workItems || []).filter((item) => !decisionKeys.has(`${item.kind}:${item.recordId}`));
+  const workTotal = Math.max(0, (overview?.workTotal ?? 0) - decisionKeys.size);
+  const overdueTotal = Math.max(0, (overview?.overdue ?? 0) - setAside.filter((entry) => entry.row.overdueDays > 0).length);
   const shown = filter === "overdue" ? items.filter((item) => item.overdueDays > 0) : items;
   const visible = expanded ? shown : shown.slice(0, COLLAPSED);
   const recent = overview?.recentDocuments || [];
@@ -206,8 +222,8 @@ function RuntimeHomepage() {
   if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("contracts") ? "sourceContracts" : code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
 
   const tiles = [
-    { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: overview?.workTotal ?? 0 },
-    { id: "overdue" as const, label: t("tileOverdue"), note: t("tileOverdueNote"), value: overview?.overdue ?? 0 },
+    { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: workTotal },
+    { id: "overdue" as const, label: t("tileOverdue"), note: t("tileOverdueNote"), value: overdueTotal },
   ];
   // Under the count of documents changed today: when the last change was, from
   // the newest recent document (the same documents the count reads), never
@@ -248,7 +264,14 @@ function RuntimeHomepage() {
         </Card>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-3" data-testid="today-tiles">
+      <div className={`grid gap-4 ${decisions ? "sm:grid-cols-2 lg:grid-cols-4" : "md:grid-cols-3"}`} data-testid="today-tiles">
+        {decisions ? (
+          <a href="#today-decisions" className={`${tileClass} outline-none transition hover:bg-slate-50 focus:ring-2 focus:ring-blue-500 !no-underline`} style={{ ...tileStyle, borderColor: waiting.length ? "#bfdbfe" : A.border }} data-testid="today-tile-decisions">
+            <div className="text-xs" style={{ color: A.sub }}>{d("tile")}</div>
+            <div className="mt-1 text-2xl font-semibold" style={{ color: waiting.length ? "#1d4ed8" : undefined }}>{waiting.length}</div>
+            <div className="mt-1 text-xs" style={{ color: A.gray2 }}>{d("tileNote")}</div>
+          </a>
+        ) : null}
         {tiles.map((tile) => (
           <button
             key={tile.id}
@@ -271,13 +294,29 @@ function RuntimeHomepage() {
         </div>
       </div>
 
+      {decisions && state === "loaded" ? (
+        <div id="today-decisions" className="scroll-mt-4">
+          <DecisionSection
+            decisions={decisions}
+            overdueOnly={filter === "overdue"}
+            today={today}
+            day={day}
+            dateText={(row) => dateText(row as WorkItem)}
+            tone={(row) => tone(row as WorkItem)}
+            kindLabel={(row) => t(`kind_${row.kind}` as TodayCopyKey)}
+            labelOf={(row) => labelOf(row as WorkItem)}
+            onChanged={() => { void load(true); }}
+          />
+        </div>
+      ) : null}
+
       <Card className="p-5">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold">{t("workTitle")}</h2>
             <p className="mt-0.5 text-xs" style={{ color: A.sub }}>{t("workNote")}</p>
           </div>
-          <button onClick={load} aria-label={t("refresh")} title={t("refresh")} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100"><RefreshCw size={15} /></button>
+          <button onClick={() => load()} aria-label={t("refresh")} title={t("refresh")} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100"><RefreshCw size={15} /></button>
         </div>
         {state === "loading" ? (
           <div className="py-10 text-center text-xs">{t("loading")}</div>
@@ -310,8 +349,8 @@ function RuntimeHomepage() {
         {state === "loaded" && shown.length > COLLAPSED ? (
           <button className="mt-2 text-xs text-blue-600" onClick={() => setExpanded((value) => !value)}>{expanded ? t("showFewer") : t("showAll", { n: shown.length })}</button>
         ) : null}
-        {state === "loaded" && filter === "all" && overview && overview.workTotal > items.length ? (
-          <div className="mt-2 text-xs" style={{ color: A.sub }}>{t("moreNotShown", { n: overview.workTotal - items.length })}</div>
+        {state === "loaded" && filter === "all" && overview && workTotal > items.length ? (
+          <div className="mt-2 text-xs" style={{ color: A.sub }}>{t("moreNotShown", { n: workTotal - items.length })}</div>
         ) : null}
         {state === "loaded" && notes.length ? (
           <div className="mt-3 space-y-1 border-t pt-3 text-xs" style={{ color: A.sub }} data-testid="today-work-notes">
