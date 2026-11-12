@@ -6,7 +6,7 @@ import { databaseClient } from '../domain/today-work-read-service.mjs'
 import { SUPPLIER_EMAIL_PERMISSION } from '../domain/supplier-follow-up-email.mjs'
 import { createDecisionItemRepository } from '../repositories/decision-item-repository.mjs'
 import { sendSupplierFollowUp } from '../services/supplier-follow-up-email-service.mjs'
-import { readTodayForReader } from './business-read-context.routes.mjs'
+import { readTodayForReader } from '../services/today-read-service.mjs'
 
 // A person's decision on a row of their Today (docs/drafted-decisions-design.md):
 //   POST /api/decision-items/decide  { key, option, reasonCode?, note?, returnOn?, documentType?, documentIds? }

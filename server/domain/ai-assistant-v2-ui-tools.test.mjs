@@ -58,7 +58,7 @@ function assertPart(built, component) {
 const assertError = (built, code) => assert.equal(built.error?.code, code, JSON.stringify(built))
 
 test('every UI tool follows the contract: kind ui, a closed input schema, frozen', () => {
-  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'suggest_purchase_request', 'show_setup_steps', 'suggest_setup_records', 'offer_record_actions', 'suggest_followups'])
+  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'suggest_purchase_request', 'show_setup_steps', 'suggest_setup_records', 'offer_record_actions', 'suggest_followups', 'show_decisions'])
   assert.ok(Object.isFrozen(AI_ASSISTANT_V2_UI_TOOLS))
   for (const entry of AI_ASSISTANT_V2_UI_TOOLS) {
     assert.ok(Object.isFrozen(entry))
@@ -71,7 +71,7 @@ test('every UI tool follows the contract: kind ui, a closed input schema, frozen
 })
 
 test('the display tools are marked, and every source parameter asks for the handle a result gives', () => {
-  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.filter((entry) => entry.display).map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps'])
+  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.filter((entry) => entry.display).map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps', 'show_decisions'])
   for (const entry of AI_ASSISTANT_V2_UI_TOOLS.filter((item) => item.inputSchema.properties.source)) {
     assert.match(entry.inputSchema.properties.source.description, /#1/, entry.name)
     assert.doesNotMatch(entry.inputSchema.properties.source.description, /tool_use id/, entry.name)

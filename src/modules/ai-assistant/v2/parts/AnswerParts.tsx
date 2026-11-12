@@ -13,6 +13,7 @@ import { RecordCardsPart } from "./RecordCardsPart";
 import { SetupRecordsPart } from "./SetupRecordsPart";
 import { SetupStepsPart } from "./SetupStepsPart";
 import { StreamingText } from "./StreamingText";
+import { TodayDecisionCards } from "../../../overview/DecisionCards";
 import type { AnswerPart, PartRef, PrReceipt, RecordActionReceipt, SetupReceipt } from "./types";
 
 type Context = {
@@ -46,6 +47,8 @@ const RENDERERS: Record<string, (part: Extract<AnswerPart, { type: "ui" }>, prop
   setup_steps: (_part, props, context) => <SetupStepsPart props={props} language={context.language} onNavigate={context.onNavigate} />,
   setup_form: (part, props, context) => <SetupRecordsPart props={props} partId={part.id} language={context.language} onNavigate={context.onNavigate} receipt={context.setupReceipts?.[part.id] || null} onReceipt={context.onSetupReceipt ? (receipt) => context.onSetupReceipt?.(part.id, receipt) : undefined} />,
   record_actions: (part, props, context) => <RecordActionsPart props={props} language={context.language} onNavigate={context.onNavigate} receipt={context.actionReceipts?.[part.id] || null} onReceipt={context.onActionReceipt ? (receipt) => context.onActionReceipt?.(part.id, receipt) : undefined} />,
+  // Today's decision cards, read from Today with their own buttons (show_decisions).
+  decisions: (_part, props: { keys: string[]; more?: number }) => <TodayDecisionCards keys={props.keys} more={props.more || 0} />,
   // Next questions only under the latest answer.
   followups: (_part, props, context) => context.latest ? <FollowupChips props={props} language={context.language} onFollowUp={context.onFollowUp} /> : null,
 };
@@ -53,7 +56,7 @@ const RENDERERS: Record<string, (part: Extract<AnswerPart, { type: "ui" }>, prop
 // The parts that show records or a form. The answer's first sentence goes
 // above the first of them, whenever the model wrote it (2026-11-05: fifteen
 // order cards came before "The table lists all 15").
-const DISPLAYS = new Set(["table", "records", "chart", "kpis", "choices", "pr_form", "setup_steps", "setup_form"]);
+const DISPLAYS = new Set(["table", "records", "chart", "kpis", "choices", "pr_form", "setup_steps", "setup_form", "decisions"]);
 const isDisplay = (part: AnswerPart) => part.type === "ui" && DISPLAYS.has(part.component);
 
 export function textFirst(parts: AnswerPart[]): AnswerPart[] {

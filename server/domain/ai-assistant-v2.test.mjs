@@ -453,12 +453,12 @@ test('a failed display says how to fix it; a second failure withdraws the displa
   const second = JSON.parse(lastToolResults(client.requests[3])[0].content)
   assert.equal(second.error, 'unknown_column')
   assert.equal(second.details.at(-1), 'No display tool is available for the rest of this answer.')
-  assert.match(client.requests[3].messages.at(-1).content.at(-1).text, /^No display tool \(show_table, show_records, show_chart, show_kpis, offer_choices, show_setup_steps\) is available for the rest of this answer\. Answer in prose/)
+  assert.match(client.requests[3].messages.at(-1).content.at(-1).text, /^No display tool \(show_table, show_records, show_chart, show_kpis, offer_choices, show_setup_steps, show_decisions\) is available for the rest of this answer\. Answer in prose/)
   // The tool list the model was first sent stays (the cached prefix); the
   // withdrawn tools are named beside it.
   assert.deepEqual(client.requests[3].tools, client.requests[0].tools)
   assert.equal(client.requests[2].withdrawnTools, undefined)
-  assert.deepEqual(client.requests[3].withdrawnTools, ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps'])
+  assert.deepEqual(client.requests[3].withdrawnTools, ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps', 'show_decisions'])
   // A display called after that is refused, not counted, and the model gets
   // the refusal and one more call, its last, to answer in prose.
   assert.deepEqual(JSON.parse(lastToolResults(client.requests[4])[0].content), { error: 'display_off', details: ['No display tool is available for the rest of this answer.'] })

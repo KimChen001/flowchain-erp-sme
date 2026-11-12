@@ -14,6 +14,7 @@ import { unitLabel } from "../../i18n/unitLabels";
 import { useTodayCopy, type TodayCopyKey } from "./todayCopy";
 import { DecisionSection, type TodayDecisions } from "./DecisionCards";
 import { useDecisionCopy } from "./decisionCopy";
+import { useTodayRowFormat } from "./todayRowFormat";
 
 // Today: the work that needs doing, from the rules the rest of the app uses
 // (GET /api/home/overview, server/domain/today-work.mjs), earliest date first;
@@ -81,18 +82,6 @@ const SOURCE_KEYS: Record<string, TodayCopyKey> = {
 };
 const LINK = "fc-entity-link font-semibold text-blue-600 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
 
-// A workspace calendar day (YYYY-MM-DD) in the interface locale. The day is
-// already the workspace's, so it is formatted as a date, not an instant.
-function formatDay(day: string, locale: string) {
-  const date = new Date(`${day}T00:00:00Z`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(date.getTime())) return day;
-  try {
-    return new Intl.DateTimeFormat(locale || "en-US", { timeZone: "UTC", dateStyle: "medium" }).format(date);
-  } catch {
-    return day;
-  }
-}
-
 export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi, onReviewActionDraft }: { initialView?: string; onNavigate: Navigate; onOpenAi: () => void; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void }) {
   if (initialView === "ai") return <AiSuggestionsPage onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} onOpenAi={onOpenAi} />;
   return <RuntimeHomepage />;
@@ -125,6 +114,8 @@ function RuntimeHomepage() {
   const labelled = [...(overview?.workItems || []), ...waiting.map((entry) => entry.row as WorkItem), ...setAside.map((entry) => entry.row as WorkItem)];
   const shownNumber = useDocumentNumbers(labelled.filter((item) => item.label === item.recordId).map((item) => [item.entityType, item.recordId] as const));
   const labelOf = (item: WorkItem) => item.label === item.recordId ? shownNumber(item.entityType, item.recordId) || item.label : item.label;
+  // A row's date chip and its colours, as the assistant's decision cards show them too.
+  const { day, dateText, tone } = useTodayRowFormat(overview?.today || "");
 
   if (state === "error") {
     return (
@@ -148,27 +139,6 @@ function RuntimeHomepage() {
   const quantity = (value: unknown, unit?: string | null) => `${formatQuantity(value as number)}${unit ? ` ${unitLabel(unit, t.language, Number(value))}` : ""}`;
   // Amounts use the document currency; a hidden amount (null) is never shown as 0.
   const money = (value: unknown, currency?: string | null) => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "—" : formatLocaleAmount(Number(value), currency, locale, { maximumFractionDigits: 2 });
-  const day = (value: string) => formatDay(value, locale);
-
-  const dateText = (item: WorkItem) => {
-    if (!item.date) return t("noDate");
-    if (item.dateKind === "due") return item.overdueDays > 0 ? t.count("overdueDays", item.overdueDays) : item.date === today ? t("dueToday") : t("dueOn", { date: day(item.date) });
-    if (item.dateKind === "order_by") return item.date <= today ? t("orderToday") : t("orderBy", { date: day(item.date) });
-    if (item.dateKind === "promised") return item.overdueDays > 0 ? t.count("lateDays", item.overdueDays) : item.date === today ? t("promisedToday") : t("promisedOn", { date: day(item.date) });
-    if (item.dateKind === "required") return t("neededBy", { date: day(item.date) });
-    if (item.dateKind === "notice_by") return item.date === today ? t("noticeToday") : t("noticeBy", { date: day(item.date) });
-    if (item.dateKind === "ends") return item.date === today ? t("endsToday") : t("endsOn", { date: day(item.date) });
-    if (item.dateKind === "ended") return t.count("endedDays", item.overdueDays);
-    return t("invoiceOn", { date: day(item.date) });
-  };
-  // Red for what is late or an exception, orange for today and for approvals
-  // and stock warnings, blue for the rest, gray without a date.
-  const tone = (item: WorkItem) => {
-    if (item.overdueDays > 0 || item.kind === "bill_exception") return { color: "#b91c1c", background: "#fef2f2" };
-    if (item.date === today || item.kind === "reorder_now" || item.kind.endsWith("_to_approve")) return { color: "#b45309", background: "#fffbeb" };
-    if (!item.date) return { color: A.gray1, background: A.gray6 };
-    return { color: "#1d4ed8", background: "#eff6ff" };
-  };
 
   const reasons = (item: WorkItem): string[] => {
     const d = item.detail || {};
@@ -301,8 +271,8 @@ function RuntimeHomepage() {
             overdueOnly={filter === "overdue"}
             today={today}
             day={day}
-            dateText={(row) => dateText(row as WorkItem)}
-            tone={(row) => tone(row as WorkItem)}
+            dateText={dateText}
+            tone={tone}
             kindLabel={(row) => t(`kind_${row.kind}` as TodayCopyKey)}
             labelOf={(row) => labelOf(row as WorkItem)}
             onChanged={() => { void load(true); }}

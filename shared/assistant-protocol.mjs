@@ -14,7 +14,7 @@ export const PROTOCOL_VERSION = 2
 export const PART_SCHEMA_VERSION = 1
 
 export const STREAM_EVENT_TYPES = Object.freeze(['start', 'progress', 'tool', 'text_delta', 'ui', 'flag', 'replace', 'notice', 'error', 'answer'])
-export const UI_COMPONENTS = Object.freeze(['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form', 'record_actions'])
+export const UI_COMPONENTS = Object.freeze(['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form', 'record_actions', 'decisions'])
 export const ANSWER_LANGUAGES = Object.freeze(['en-US', 'zh-CN'])
 export const PROGRESS_STEPS = Object.freeze(['reading', 'writing', 'checking'])
 export const TOOL_STATES = Object.freeze(['running', 'done', 'error'])
@@ -275,6 +275,21 @@ const recordActionsProps = z.object({
   poBlocked: z.enum(PO_BLOCKS).optional(),
 }).refine((props) => props.actions.every((action) => props.allowed.includes(action)), { message: 'an action the user is not allowed', path: ['actions'] })
 
+// Today's decision cards in the chat (docs/drafted-decisions-design.md §4.8):
+// the keys of the items a decision_items result showed ("kind:recordId"). The
+// card reads each item's draft from Today itself, so the prepared step, its
+// buttons and the supplier's address for a follow-up never pass through the
+// model; an item no longer waiting shows how it was settled.
+export const DECISION_CARD_KINDS = Object.freeze(['reorder_now', 'purchase_order_overdue', 'purchase_request_to_convert'])
+export const DECISION_CARDS_MAX = 5
+const decisionKey = z.string().regex(/^(reorder_now|purchase_order_overdue|purchase_request_to_convert):[^\s:][^\s]{0,159}$/)
+const decisionsProps = z.object({
+  source: id.optional(),
+  keys: z.array(decisionKey).min(1).max(DECISION_CARDS_MAX),
+  // How many more were waiting than the cards show, for "Show all on Today".
+  more: z.number().int().nonnegative().optional(),
+})
+
 export const partPropsSchemas = Object.freeze({
   table: tableProps,
   records: recordsProps,
@@ -287,6 +302,7 @@ export const partPropsSchemas = Object.freeze({
   setup_steps: setupStepsProps,
   setup_form: setupFormProps,
   record_actions: recordActionsProps,
+  decisions: decisionsProps,
 })
 
 const envelope = { v: z.literal(PROTOCOL_VERSION), seq: z.number().int().nonnegative() }

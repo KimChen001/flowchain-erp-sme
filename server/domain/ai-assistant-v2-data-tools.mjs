@@ -5,6 +5,7 @@ import { runHighestRisk } from './ai-skill-highest-risk.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { AI_SKILL_SIGNAL_TYPES, DUE_SOON_DAYS, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { readFirstRunSetup } from './first-run-setup.mjs'
+import { decisionHistoryTool, decisionItemsTool } from './ai-assistant-v2-decision-tools.mjs'
 import { createRfqSupplierComparisonService } from './rfq-supplier-comparison-service.mjs'
 import { listItemSupplierRecords, mapItemSupplierRecord } from './master-data-commands.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
@@ -120,6 +121,31 @@ function attentionRow(facts, item, rank) {
   }
 }
 
+// What the user decided on Today about the records the attention list names
+// (docs/drafted-decisions-design.md §4.5): an overdue order chased or set
+// aside, an item's reorder set aside or covered. Keyed by entity type and id;
+// empty without the decision items table (no database).
+const ASIDE_ENTITY = Object.freeze({ purchase_order_overdue: 'purchase_order', reorder_now: 'item' })
+const ASIDE_SIGNALS = Object.freeze({ purchase_order: ['po_overdue', 'po_due_7d'], item: ['stock_shortage', 'stock_below_safety', 'stock_below_reorder'] })
+async function setAsideOnToday(context) {
+  const model = context?.prisma?.decisionItem
+  if (!model || typeof model.findMany !== 'function' || !context.tenantId) return new Map()
+  try {
+    const items = await model.findMany({ where: { tenantId: context.tenantId, state: 'decided', activeKey: { not: null } }, select: { kind: true, recordId: true, decision: true, note: true, returnOn: true, snapshot: true } })
+    return new Map(items.filter((item) => ASIDE_ENTITY[item.kind]).map((item) => [`${ASIDE_ENTITY[item.kind]}:${item.recordId}`, {
+      decision: item.decision, decidedOn: item.snapshot?.decidedOn || null, ...(item.returnOn ? { returnOn: item.returnOn } : {}), ...(item.decision === 'chased' && item.note === 'email' ? { emailed: true } : {}),
+    }]))
+  } catch {
+    return new Map()
+  }
+}
+const asideOf = (aside, item) => {
+  const found = aside.get(`${item.entityType}:${item.entityId}`)
+  if (!found) return null
+  const types = [item.type, ...array(item.also)]
+  return types.some((type) => array(ASIDE_SIGNALS[item.entityType]).includes(type)) ? found : null
+}
+
 function attentionTypeCounts(items) {
   const counts = {}
   for (const item of items) for (const type of new Set([item.type, ...array(item.also)])) counts[type] = (counts[type] || 0) + 1
@@ -128,7 +154,7 @@ function attentionTypeCounts(items) {
 
 const attentionList = defineAiTool({
   name: 'attention_list',
-  description: 'What needs attention, ranked by date and never by a score. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it. byType counts the rows of each type in the whole list, also those past the limit: stock rows come last, so read byType (stock_below_safety, stock_below_reorder, stock_shortage) before saying nothing is short or below its levels, and ask again with types to list them. On a stock row, pendingRequests and covered count the open purchase requests in any status, drafts included. lateLinesBySku gives, for a SKU on more than one late purchase order, the late lines\' total still to receive (lateQuantity) with those orders and their suppliers.',
+  description: 'What needs attention, ranked by date and never by a score. A row the user already decided on Today carries setAside (decision: chased, not_now, not_needed, accepted or covered, with decidedOn); never present such a row as new or as something to do first. setAsideCount counts them in the whole list. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it. byType counts the rows of each type in the whole list, also those past the limit: stock rows come last, so read byType (stock_below_safety, stock_below_reorder, stock_shortage) before saying nothing is short or below its levels, and ask again with types to list them. On a stock row, pendingRequests and covered count the open purchase requests in any status, drafts included. lateLinesBySku gives, for a SKU on more than one late purchase order, the late lines\' total still to receive (lateQuantity) with those orders and their suppliers.',
   parameters: {
     kind: { type: 'string', enum: ['today', 'problems'], description: 'today by default.' },
     focus: { type: 'string', description: 'A purchase order number, a SKU, or a supplier name or code.' },
@@ -137,9 +163,10 @@ const attentionList = defineAiTool({
   },
   available: (facts) => Boolean(facts.purchaseOrders || facts.inventory || facts.invoices || facts.purchaseRequests || facts.rfqs || facts.receipts),
   assistantV2Only: true,
-  run(args, { facts }) {
+  async run(args, { facts, context }) {
     const kind = args.kind || 'today'
     const focus = args.focus ? attentionFocus(facts, args.focus) : null
+    const aside = await setAsideOnToday(context)
     if (args.focus && !focus) return { error: 'not_found' }
     // The skills' own engines, every item kept: the type filter applies
     // before the limit, so the total counts what matches.
@@ -152,8 +179,13 @@ const attentionList = defineAiTool({
       asOf: facts.asOf,
       kind,
       ...(focus ? { focus: { label: focus.label, ref: aiToolRef(focus.entityType, focus.entityId, focus.label) } } : {}),
-      rows: items.slice(0, limit).map((item, index) => attentionRow(facts, item, index + 1)),
+      rows: items.slice(0, limit).map((item, index) => {
+        const row = attentionRow(facts, item, index + 1)
+        const setAside = asideOf(aside, item)
+        return setAside ? { ...row, setAside } : row
+      }),
       total: items.length,
+      ...(aside.size ? { setAsideCount: items.filter((item) => asideOf(aside, item)).length } : {}),
       more: Math.max(0, items.length - limit),
       // How many rows of each type the whole list holds, those past the
       // limit too (2026-11-09 on Flash: "nothing is short on stock today"
@@ -1097,4 +1129,4 @@ const stockProjection = defineAiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan, stockProjection])
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan, stockProjection, decisionItemsTool, decisionHistoryTool])

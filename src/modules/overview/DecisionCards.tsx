@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown, ChevronRight, Sparkles } from "lucide-react";
 import { A, Card } from "../../components/ui";
@@ -9,6 +9,7 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { useDocumentNumbers } from "../../lib/documentNumbers";
 import { formatQuantity } from "../../lib/format";
 import { followUpMessage, useDecisionCopy, type DecisionCopyKey } from "./decisionCopy";
+import { useTodayRowFormat } from "./todayRowFormat";
 
 // The decision cards on Today (docs/drafted-decisions-design.md): for each row
 // the server prepared a next step for (GET /api/home/overview, decisions),
@@ -116,6 +117,63 @@ export function DecisionSection({ decisions, overdueOnly, ...rest }: Omit<Shared
       )}
       {setAside.length ? <SetAsideList entries={setAside} {...shared} /> : null}
     </Card>
+  );
+}
+
+type Overview = { today: string; decisions?: TodayDecisions };
+
+// Today's decision cards inside an assistant answer (the decisions part of
+// assistant v2, show_decisions): the items the answer named, read from Today
+// itself (GET /api/home/overview), each with the same card and buttons as on
+// Today. After a click the cards read Today again; an item no longer waiting
+// says how it was settled. Without keys (the assistant's welcome) it shows the
+// first `limit` items waiting, under a heading, and nothing when none waits.
+export function TodayDecisionCards({ keys: named, more: namedMore = 0, limit = 3 }: { keys?: string[]; more?: number; limit?: number }) {
+  const t = useDecisionCopy();
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [failed, setFailed] = useState(false);
+  const load = async () => {
+    try {
+      setOverview(await apiJson<Overview>("/api/home/overview"));
+      setFailed(false);
+    } catch {
+      setFailed(true);
+    }
+  };
+  useEffect(() => { void load(); }, [(named || []).join("|")]);
+  const today = overview?.today || "";
+  const { day, dateText, tone, kindLabel } = useTodayRowFormat(today);
+  const decisions = overview?.decisions;
+  const waiting = new Map((decisions?.waiting || []).map((entry) => [entry.key, entry]));
+  const aside = new Map((decisions?.setAside || []).map((entry) => [entry.key, entry]));
+  const welcome = !named;
+  const keys = named || [...waiting.keys()].slice(0, limit);
+  const more = named ? namedMore : Math.max(0, waiting.size - keys.length);
+  const shownRows = keys.map((key) => waiting.get(key)?.row || aside.get(key)?.row).filter((row): row is TodayRow => Boolean(row));
+  const shownNumber = useDocumentNumbers(shownRows.filter((row) => row.label === row.recordId).map((row) => [row.entityType, row.recordId] as const));
+  const labelOf = (row: TodayRow) => (row.label === row.recordId ? shownNumber(row.entityType, row.recordId) || row.label : row.label);
+  const status = useAsideStatus([...aside.values()], day);
+  if (welcome && (failed || !overview || !decisions?.available || !keys.length)) return null;
+  if (failed || (overview && !decisions?.available)) return <p className="text-xs" style={{ color: A.sub }} data-testid="ai-decisions-unavailable">{t("chatUnavailable")}</p>;
+  if (!overview) return <p className="text-xs" style={{ color: A.sub }}>{t("chatLoading")}</p>;
+  const shared: Shared = { canDecide: decisions?.canDecide === true, today, day, dateText, tone, kindLabel, labelOf, onChanged: () => { void load(); } };
+  return (
+    <div className="space-y-2" data-testid={welcome ? "ai-welcome-decisions" : "ai-decisions"}>
+      {welcome ? <h4 className="flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: A.label }}><Sparkles size={14} style={{ color: "#2563eb" }} aria-hidden />{t("welcomeTitle", { n: waiting.size })}</h4> : null}
+      <ul className="space-y-2">
+        {keys.map((key) => {
+          const entry = waiting.get(key);
+          if (entry) return <DecisionCard key={key} entry={entry} email={decisions?.supplierEmail?.canSend ? decisions.supplierEmail : null} {...shared} />;
+          const settled = aside.get(key);
+          return (
+            <li key={key} className="rounded-lg border px-3 py-2 text-xs" style={{ borderColor: A.gray4, color: A.sub }} data-testid="ai-decision-settled">
+              {settled ? <><span className="font-medium" style={{ color: A.label }}>{kindLabel(settled.row)}</span> <Link to={settled.row.href} className={LINK}>{labelOf(settled.row)}</Link> · {status(settled)}</> : t("chatGone")}
+            </li>
+          );
+        })}
+      </ul>
+      {more > 0 ? <Link to="/app/overview/risks" className={`text-xs ${LINK}`}>{t("chatMore", { n: more })}</Link> : null}
+    </div>
   );
 }
 
@@ -385,14 +443,13 @@ function NotNeededForm({ busy, onSave, onCancel }: { busy: boolean; onSave: (rea
   );
 }
 
-function SetAsideList({ entries, canDecide, day, kindLabel, labelOf, onChanged }: Shared & { entries: SetAsideEntry[] }) {
+// How a set-aside item was settled, in words: "Not now, until Nov 13, 2026",
+// "Emailed on Nov 12, 2026", "Created PO-202611-0003".
+function useAsideStatus(entries: SetAsideEntry[], day: (value: string) => string) {
   const t = useDecisionCopy();
-  const [open, setOpen] = useState(false);
-  const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const numberOf = useDocumentNumbers(entries.flatMap((entry) => entry.documentIds.map((id) => [entry.documentType, id] as const)));
   const documents = (entry: SetAsideEntry) => entry.documentNumber || entry.documentIds.map((id) => numberOf(entry.documentType, id) || id).join(", ") || "—";
-  const status = (entry: SetAsideEntry) => {
+  return (entry: SetAsideEntry) => {
     switch (entry.decision) {
       case "not_now": return t("aside_not_now", { date: entry.returnOn ? day(entry.returnOn) : "—" });
       case "not_needed": return t("aside_not_needed", { reason: entry.reasonCode ? t(`reason_${entry.reasonCode}` as DecisionCopyKey) : "—" }) + (entry.note ? ` (${entry.note})` : "");
@@ -401,6 +458,14 @@ function SetAsideList({ entries, canDecide, day, kindLabel, labelOf, onChanged }
       default: return t("aside_covered", { document: documents(entry) });
     }
   };
+}
+
+function SetAsideList({ entries, canDecide, day, kindLabel, labelOf, onChanged }: Shared & { entries: SetAsideEntry[] }) {
+  const t = useDecisionCopy();
+  const [open, setOpen] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const status = useAsideStatus(entries, day);
   const reopen = async (key: string) => {
     setBusyKey(key);
     setMessage(null);

@@ -61,6 +61,9 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   records_missing_data: { rows: ['type', 'label', 'source', 'missing'] },
   suggest_purchase_lines: { rows: ['item.sku', 'item.name', 'item.unit', 'onHand', 'safetyStock', 'reorderPoint', 'suggestedQuantity.value', 'suggestedQuantity.source', 'supplier.name', 'needByDate.value', 'estimatedUnitPrice.value', 'estimatedUnitPrice.currency'] },
   setup_status: { steps: ['id', 'done', 'count'] },
+  // Today's decision items (ai-assistant-v2-decision-tools.mjs); show_decisions shows them as cards.
+  decision_items: { waiting: ['kind', 'label', 'name', 'date', 'overdueDays', 'returned'], setAside: ['kind', 'label', 'name', 'decision', 'reasonCode', 'returnOn', 'decidedOn', 'decidedBy', 'documentNumber'] },
+  decision_history: { items: ['kind', 'state', 'raisedOn', 'decision', 'reasonCode', 'decidedOn', 'decidedBy', 'returnOn', 'endedOn'] },
   item_suppliers: { suppliers: ['name', 'preferred', 'leadTimeDays', 'minimumOrderQuantity', 'referencePrice', 'currency'] },
   rfq_quotes: { rows: ['rfq', 'supplier', 'sku', 'quantity', 'unitPrice', 'currency', 'deliveryDate', 'validUntil'], rfqs: ['rfq', 'title', 'due', 'quotes'] },
   order_quantity_costs: { options: ['quantity', 'orderValue', 'daysOfDemand', 'ordersPerYear', 'averageCycleStock', 'holdingCostPerYear', 'orderingCostPerYear', 'totalCostPerYear', 'belowSupplierMinimum'], comparisons: ['smaller', 'larger', 'ordersSavedPerYear', 'extraHoldingCostPerYear', 'breakEvenCostPerOrder', 'cheaperAtUserCostPerOrder', 'largerSavesPerYear'] },
