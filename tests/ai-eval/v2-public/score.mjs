@@ -153,6 +153,11 @@ const formRows = (answer) => (answer.ui || []).filter((part) => part.component =
 const patternOf = ({ pattern, flags = 'i' }) => new RegExp(pattern, flags)
 const FORM_CLAIM = /\bI(?:'ve| have)\s+(?:just\s+|also\s+)?(?:filled in|filled out|put together|prepared|drafted|set up)\b[^.\n]{0,60}\bform\b|(?:填好|填了|已填写?)[^。\n]{0,20}(?:申请单|表单)/i
 
+// Sentences: a figure counts beside its SKU anywhere in the same sentence, a
+// clause after ； or ; included (2026-11-12: "22423 …，缺口 20 件；但最小起订量为
+// 60 件，所以建议按 60 件下单。" missed its 60). A full stop inside a figure
+// (£12.75) does not end one.
+const SENTENCE = /\n|(?<=[。！？])|(?<=[.!?])\s+/
 export const LENGTH_BUDGET = Object.freeze({ brief: 350, other: 900 })
 const WIDE = /[\u3000-\u303f\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/g
 // The text's length in English-letter terms: a Chinese character counts twice.
@@ -254,7 +259,7 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     const text = answer.text || ''
     for (const { sku, quantity } of expect.quantities.filter((row) => row.quantity > 0)) {
       const inRow = rows.some((row) => JSON.stringify(row).includes(sku) && numbersIn(JSON.stringify(row)).includes(quantity))
-      const inText = text.split(/\n|(?<=[.;。；])/).some((line) => line.includes(sku) && numbersIn(line).includes(quantity))
+      const inText = text.split(SENTENCE).some((line) => line.includes(sku) && numbersIn(line).includes(quantity))
       add(`quantity: ${sku}`, inRow || inText, `expected ${quantity}`)
     }
   }
@@ -266,7 +271,7 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     const form = (answer.ui || []).find((part) => part.component === 'pr_form')
     const row = formRows(answer).find((entry) => entry.item?.sku === expect.form.sku)
     const value = Number(row?.suggestedQuantity?.value ?? row?.quantity)
-    const said = Boolean(expect.form.orSaidEarlier && row) && answers.slice(0, -1).some((earlier) => String(earlier?.text || '').split(/\n|(?<=[.;。；])/).some((line) => line.includes(expect.form.sku) && numbersIn(line).includes(value)))
+    const said = Boolean(expect.form.orSaidEarlier && row) && answers.slice(0, -1).some((earlier) => String(earlier?.text || '').split(SENTENCE).some((line) => line.includes(expect.form.sku) && numbersIn(line).includes(value)))
     add('form', Boolean(row) && (value === expect.form.quantity || said), !form ? 'no form' : !row ? `${expect.form.sku} not on the form` : `${expect.form.sku} at ${value}${said ? ', as said earlier' : ''}`)
   }
   for (const tool of expect.calls || []) add(`calls ${tool}`, (answer.tools || []).includes(tool), (answer.tools || []).join(', ') || 'no tools')

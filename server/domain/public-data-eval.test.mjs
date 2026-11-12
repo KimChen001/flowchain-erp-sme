@@ -305,3 +305,14 @@ test('scoring calls: the tools a case must call, and the UCI cases that need the
   assert.deepEqual(UCI_REQUIRED_TOOLS['budget-quantity-en'], ['optimize_order_plan'])
   assert.deepEqual(UCI_REQUIRED_TOOLS['hero-eoq-en'], ['order_quantity_costs'])
 })
+
+// 2026-11-12: "22423 …缺口 20 件；但……建议按 60 件下单。" names its quantity in
+// the next clause of the same sentence.
+test('scoring quantities: a quantity counts anywhere in its SKU\'s sentence, not across a full stop', () => {
+  const answer = (text) => ({ status: 200, text, ui: [], flags: [], errors: [] })
+  const ok = (text) => scoreAnswer(answer(text), { quantities: [{ sku: '22423', quantity: 60 }] }).checks.find((check) => check.name === 'quantity: 22423').ok
+  assert.equal(ok('只有 1 个物料：22423 缺口 20 件；但最小起订量为 60 件，所以建议按 60 件下单。'), true)
+  assert.equal(ok('Order 22423 now; the minimum is 60 pcs at £12.75.'), true)
+  assert.equal(ok('Order 22423 now. The minimum of another item is 60 pcs.'), false)
+  assert.equal(ok('22423 需要补货。另一个物料要 60 件。'), false)
+})
