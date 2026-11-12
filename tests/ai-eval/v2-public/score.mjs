@@ -37,6 +37,12 @@
 //   (eight words or more) in a Chinese answer.
 //
 // A number may list anyOf: values, any one of which passes.
+//
+// concise (2026-11-12, the owner: "一次性对话出来就是太多了"): the text within
+// LENGTH_BUDGET, brief for a lookup (expect.brief), other for the rest, where
+// a Chinese character counts twice. It is soft: it is reported with each
+// answer and in the summary, and does not fail the case, so the pass rate
+// stays comparable across length changes.
 
 const CJK = /[㐀-鿿]/g
 const LATIN = /[A-Za-z]/g
@@ -143,6 +149,11 @@ const hasCjk = (value) => /[㐀-鿿]/.test(String(value))
 const formRows = (answer) => (answer.ui || []).filter((part) => part.component === 'pr_form').flatMap((part) => [...(part.props?.lines || []), ...(part.props?.suggested || [])])
 const patternOf = ({ pattern, flags = 'i' }) => new RegExp(pattern, flags)
 const FORM_CLAIM = /\bI(?:'ve| have)\s+(?:just\s+|also\s+)?(?:filled in|filled out|put together|prepared|drafted|set up)\b[^.\n]{0,60}\bform\b|(?:填好|填了|已填写?)[^。\n]{0,20}(?:申请单|表单)/i
+
+export const LENGTH_BUDGET = Object.freeze({ brief: 350, other: 900 })
+const WIDE = /[\u3000-\u303f\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/g
+// The text's length in English-letter terms: a Chinese character counts twice.
+export const answerLength = (text) => { const value = String(text || ''); return value.length + (value.match(WIDE) || []).length }
 
 export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers = [answer] } = {}) {
   const checks = []
@@ -260,5 +271,10 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     add('tidy', !problems.length, problems.join('; '))
   }
   add('no flagged figure', !(answer.flags || []).length, (answer.flags || []).join(' | '))
-  return { pass: checks.every((check) => check.ok), checks }
+  if (expect.length !== false) {
+    const limit = expect.brief ? LENGTH_BUDGET.brief : LENGTH_BUDGET.other
+    const length = answerLength(answer.text)
+    checks.push({ name: 'concise', ok: length <= limit, detail: `${length} of ${limit}${expect.brief ? ' (lookup)' : ''}`, soft: true })
+  }
+  return { pass: checks.every((check) => check.ok || check.soft), checks }
 }

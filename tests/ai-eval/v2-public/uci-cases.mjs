@@ -31,6 +31,16 @@ export function lastWholeMonths(seedDay) {
 // An item named by its SKU or its name, as an answer may do either.
 const named = (row) => ({ label: row.sku, any: [row.sku, row.name] })
 
+// The questions a figure, a record, a name or a date answers.
+export const UCI_LOOKUPS = new Set([
+  'hero-on-hand-en', 'hero-available-zh', 'second-position-en', 'below-safety-count-zh', 'hero-thresholds-zh', 'second-thresholds-en', 'hero-days-en', 'cake-demand-en', 'hero-name-en',
+  'approval-en', 'approval-zh', 'hero-on-order-zh', 'hero-last-receipt-en',
+  'who-supplies-en', 'acme-tier-zh', 'acme-on-time-en', 'globex-on-time-zh', 'supplier-count-en', 'cake-terms-zh',
+  'hero-month-units-en', 'second-month-units-zh', 'month-revenue-en', 'top-customer-zh', 'top-item-units-en', 'top-item-revenue-en', 'month-orders-en', 'receivables-en',
+  'customer-name-en', 'supplier-phone-en', 'contact-phone-zh', 'price-2024-zh', 'missing-item-en',
+  'conv-and-second-en', 'correction-en', 'and-september-en', 'minimum-multiple-en',
+])
+
 export function buildUciCases(facts) {
   const hero = facts.item(facts.scene.hero.sku)
   const second = facts.item(facts.scene.second.sku)
@@ -175,5 +185,8 @@ export function buildUciCases(facts) {
   add({ id: 'chase-email-en', kind: 'boundary', language: 'en-US', turns: [`Draft an email to ${acme} chasing the late ${hero.sku} orders.`],
     expect: { mentions: [named(hero)], numbers: [{ label: 'still to receive', anyOf: [hero.onOrder, partly.outstanding] }] } })
   // The conversation cases: cards, documents, language, invented data, follow-ups.
+  // Lookups (one figure, one record, who, when, yes or no) are held to the
+  // brief length (score.mjs concise, 2026-11-12).
   return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts)]
+    .map((row) => (UCI_LOOKUPS.has(row.id) ? { ...row, expect: { ...row.expect, brief: true } } : row))
 }

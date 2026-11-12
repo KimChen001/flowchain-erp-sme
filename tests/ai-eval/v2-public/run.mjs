@@ -26,7 +26,7 @@ import { buildPublicDataPlan, readPublicDataExtract } from '../../../scripts/pub
 import { buildCases, readReference } from './cases.mjs'
 import { uciFacts } from './uci-facts.mjs'
 import { buildUciCases } from './uci-cases.mjs'
-import { scoreAnswer } from './score.mjs'
+import { LENGTH_BUDGET, answerLength, scoreAnswer } from './score.mjs'
 
 const args = Object.fromEntries(process.argv.slice(2).map((arg) => arg.replace(/^--/, '').split('=')).map(([key, ...value]) => [key, value.join('=') || true]))
 const suite = String(args.suite || 'm5')
@@ -164,10 +164,24 @@ for (const testCase of cases) {
   }
 }
 
+const quantile = (values, share) => { const sorted = [...values].sort((a, b) => a - b); return sorted.length ? sorted[Math.floor((sorted.length - 1) * share)] : 0 }
+function lengthSummary(rows) {
+  const of = (group) => {
+    const lengths = group.map((row) => answerLength(row.answer?.text))
+    const over = group.filter((row) => row.checks.some((check) => check.name === 'concise' && !check.ok)).length
+    return { answers: group.length, median: quantile(lengths, 0.5), p90: quantile(lengths, 0.9), longest: Math.max(0, ...lengths), overBudget: over }
+  }
+  return {
+    budget: LENGTH_BUDGET,
+    all: of(rows),
+    ...Object.fromEntries([...new Set(rows.map((row) => row.language))].map((language) => [language, of(rows.filter((row) => row.language === language))])),
+    lookups: of(rows.filter((row) => row.checks.some((check) => check.name === 'concise' && /lookup/.test(check.detail)))),
+  }
+}
 const tally = (key) => Object.fromEntries(Object.entries(results.reduce((totals, row) => { totals[row[key]] ||= [0, 0]; totals[row[key]][0] += row.pass ? 1 : 0; totals[row[key]][1] += 1; return totals }, {})).map(([name, [ok, all]]) => [name, `${ok}/${all}`]))
 const passed = results.filter((row) => row.pass).length
 const seconds = results.map((row) => row.seconds).sort((a, b) => a - b)
-const failedChecks = Object.entries(results.flatMap((row) => row.checks.filter((check) => !check.ok).map((check) => check.name.replace(/:.*/, ''))).reduce((totals, name) => { totals[name] = (totals[name] || 0) + 1; return totals }, {})).sort((a, b) => b[1] - a[1])
+const failedChecks = Object.entries(results.flatMap((row) => row.checks.filter((check) => !check.ok && !check.soft).map((check) => check.name.replace(/:.*/, ''))).reduce((totals, name) => { totals[name] = (totals[name] || 0) + 1; return totals }, {})).sort((a, b) => b[1] - a[1])
 const summary = {
   suite,
   about: built.about,
@@ -184,6 +198,8 @@ const summary = {
   seconds: seconds.reduce((total, value) => total + value, 0),
   medianSeconds: seconds[Math.floor(seconds.length / 2)] ?? 0,
   models: [...new Set(results.map((row) => row.model).filter(Boolean))],
+  // How long the answers are (2026-11-12), by language, in answerLength terms.
+  length: lengthSummary(results),
 }
 // Against an earlier report (--compare=<report.json>): the cases that passed
 // less or more often than before, by share of their answers that passed.
@@ -203,11 +219,12 @@ const lines = [
   `By kind: ${Object.entries(summary.byKind).map(([kind, score]) => `${kind} ${score}`).join(' · ')}`, '',
   `By language: ${Object.entries(summary.byLanguage).map(([language, score]) => `${language} ${score}`).join(' · ')}`, '',
   `Failed checks: ${failedChecks.map(([name, count]) => `${name} ${count}`).join(' · ') || 'none'}`, '',
+  `Length (a Chinese character counts twice): median ${summary.length.all.median}, 90th percentile ${summary.length.all.p90}, longest ${summary.length.all.longest}; lookups median ${summary.length.lookups.median}; over budget ${summary.length.all.overBudget} of ${summary.length.all.answers}`, '',
   ...(changes ? [`Against ${changes.against}:`, '', `- Worse: ${changes.worse.join(', ') || 'none'}`, `- Better: ${changes.better.join(', ') || 'none'}`, ...(changes.new.length ? [`- New cases: ${changes.new.join(', ')}`] : []), ''] : []),
 ]
 for (const row of results) {
   lines.push(`## ${row.pass ? 'PASS' : 'FAIL'} ${row.id}${repeat > 1 ? ` #${row.round + 1}` : ''} (${row.kind}, ${row.language}, ${row.seconds}s)`, '', ...row.turns.map((message) => `**Q:** ${message}`), '', ...row.checks.map((check) => `- ${check.ok ? 'ok' : 'FAIL'} ${check.name}: ${check.detail}`), '', `Tools: ${row.tools.join(', ')}`, '', '> ' + (row.answer.text || '(no text)').replace(/\n/g, '\n> '), '')
 }
 writeFileSync(join(out, 'report.md'), lines.join('\n'))
-console.log(`\n${passed}/${results.length} passed, ${JSON.stringify(summary.byKind)}, ${JSON.stringify(summary.byLanguage)}, $${summary.costUsd}, median ${summary.medianSeconds}s, report in ${out}`)
+console.log(`\n${passed}/${results.length} passed, ${JSON.stringify(summary.byKind)}, ${JSON.stringify(summary.byLanguage)}, $${summary.costUsd}, median ${summary.medianSeconds}s, length median ${summary.length.all.median} (lookups ${summary.length.lookups.median}), over budget ${summary.length.all.overBudget}/${summary.length.all.answers}, report in ${out}`)
 if (changes) console.log(`Worse than before: ${changes.worse.join(', ') || 'none'}\nBetter than before: ${changes.better.join(', ') || 'none'}`)
