@@ -6,6 +6,7 @@ import {
   isCancelledInvoice,
   nextActionText,
   nextOpenAction,
+  notInvoicedOf,
   paymentAmountsText,
   paymentStateLabel,
   paymentSummary,
@@ -68,6 +69,40 @@ test('payment reads paid, partly paid or outstanding from the payables, with the
   const hidden = paymentSummary([{ hasVariance: false, payment: { status: 'settled', amount: null, openAmount: null } }])
   assert.deepEqual(hidden, { state: 'paid', paid: null, open: null, owed: null })
   assert.equal(paymentAmountsText(hidden, words()), '')
+})
+
+test('the order reads paid only once all of it is invoiced and paid (round 7b, finding 1)', () => {
+  // The Chinese walk's PO-202611-0010: 110 pcs at £0.42 (£46.20), 70 invoiced
+  // and paid in full (£31.50), 40 not invoiced yet.
+  const settled = { ...invoiceB, payment: { status: 'settled', amount: 31.5, openAmount: 0 } }
+  const left = notInvoicedOf([line(110, 110, 70)])
+  assert.deepEqual(left, { quantity: 40, unit: 'pcs', lines: 1 })
+  const partly = paymentSummary([settled], { ordered: 46.2, notInvoiced: left })
+  assert.equal(partly.state, 'partly_paid')
+  assert.equal(paymentStateLabel(partly.state, 'en-US'), 'Partly paid')
+  assert.equal(paymentStateLabel(partly.state, 'zh-CN'), '部分付款')
+  assert.equal(paymentAmountsText(partly, words('en-US', '£')), '£31.50 paid of £46.20 ordered · 40 pcs not invoiced')
+  assert.equal(paymentAmountsText(partly, words('zh-CN', '£')), '已付 £31.50 / 订单 £46.20 · 40 件未开票')
+  // The progress steps leave the not-invoiced part to the invoice step and say the state.
+  assert.equal(paymentAmountsText(partly, words('en-US', '£'), { brief: true }), 'Partly paid')
+  assert.equal(paymentAmountsText(partly, words('zh-CN', '£'), { brief: true }), '部分付款')
+  // Amounts hidden: the state alone.
+  assert.equal(paymentAmountsText(paymentSummary([{ ...settled, payment: { status: 'settled', amount: null, openAmount: null } }], { ordered: null, notInvoiced: left }), words()), '')
+  // Some of the invoices still open: what is paid, outstanding and not invoiced.
+  const open = paymentSummary([invoiceA, invoiceB], { ordered: 98, notInvoiced: notInvoicedOf([line(48, 24, 24)]) })
+  assert.equal(open.state, 'partly_paid')
+  assert.equal(paymentAmountsText(open, words()), '$39.20 paid · $9.80 outstanding · 24 pcs not invoiced')
+  // Lines in different units are counted as lines.
+  assert.equal(paymentAmountsText(paymentSummary([settled], { ordered: 46.2, notInvoiced: notInvoicedOf([line(5, 5, 0, 'box'), line(3, 3, 1)]) }), words('en-US', '£')), '£31.50 paid of £46.20 ordered · 2 lines not invoiced')
+  // The whole order invoiced and paid: paid.
+  const whole = paymentSummary([settled], { ordered: 31.5, notInvoiced: notInvoicedOf([line(75, 75, 75)]) })
+  assert.equal(whole.state, 'paid')
+  assert.equal(paymentAmountsText(whole, words('en-US', '£')), '£31.50 paid')
+  // A closed order counts what was received, not what was ordered.
+  assert.equal(notInvoicedOf([line(110, 70, 70)], true), null)
+  assert.deepEqual(notInvoicedOf([line(110, 70, 70)]), { quantity: 40, unit: 'pcs', lines: 1 })
+  // Nothing approved yet: nothing to pay, whatever is not invoiced.
+  assert.equal(paymentSummary([{ hasVariance: false, workflowStatus: 'submitted', payment: null }], { ordered: 46.2, notInvoiced: left }).state, 'none')
 })
 
 test('the next action follows what is left, in the order the work happens', () => {

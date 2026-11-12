@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { A } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { nameSaysRole } from "./partnerName";
@@ -314,8 +315,53 @@ export function todayCount(language: string, key: TodayCopyKey, count: number, p
   return todayText(language, count === 1 && one in COPY["en-US"] ? one : key, { n: count, ...params });
 }
 
+// A workspace calendar day (YYYY-MM-DD) in the interface locale. The day is
+// already the workspace's, so it is formatted as a date, not an instant.
+export function formatTodayDay(day: string, locale: string) {
+  const date = new Date(`${day}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(date.getTime())) return day;
+  try {
+    return new Intl.DateTimeFormat(locale || "en-US", { timeZone: "UTC", dateStyle: "medium" }).format(date);
+  } catch {
+    return day;
+  }
+}
+
+// What a row of Today's work says about its date, and its colours, as Today
+// and AI priorities both show them.
+export type TodayDated = {
+  kind: string;
+  date: string | null;
+  dateKind: "due" | "order_by" | "invoice" | "promised" | "required" | "notice_by" | "ends" | "ended";
+  overdueDays: number;
+};
+export function todayDateText(language: string, locale: string, item: TodayDated, today: string) {
+  const t = (key: TodayCopyKey, params?: Record<string, string | number>) => todayText(language, key, params);
+  const day = (value: string) => formatTodayDay(value, locale);
+  if (!item.date) return t("noDate");
+  if (item.dateKind === "due") return item.overdueDays > 0 ? todayCount(language, "overdueDays", item.overdueDays) : item.date === today ? t("dueToday") : t("dueOn", { date: day(item.date) });
+  if (item.dateKind === "order_by") return item.date <= today ? t("orderToday") : t("orderBy", { date: day(item.date) });
+  if (item.dateKind === "promised") return item.overdueDays > 0 ? todayCount(language, "lateDays", item.overdueDays) : item.date === today ? t("promisedToday") : t("promisedOn", { date: day(item.date) });
+  if (item.dateKind === "required") return t("neededBy", { date: day(item.date) });
+  if (item.dateKind === "notice_by") return item.date === today ? t("noticeToday") : t("noticeBy", { date: day(item.date) });
+  if (item.dateKind === "ends") return item.date === today ? t("endsToday") : t("endsOn", { date: day(item.date) });
+  if (item.dateKind === "ended") return todayCount(language, "endedDays", item.overdueDays);
+  return t("invoiceOn", { date: day(item.date) });
+}
+// Red for what is late or an exception, orange for today and for approvals
+// and stock warnings, blue for the rest, gray without a date.
+export function todayDateTone(item: TodayDated, today: string) {
+  if (item.overdueDays > 0 || item.kind === "bill_exception") return { color: "#b91c1c", background: "#fef2f2" };
+  if (item.date === today || item.kind === "reorder_now" || item.kind.endsWith("_to_approve")) return { color: "#b45309", background: "#fffbeb" };
+  if (!item.date) return { color: A.gray1, background: A.gray6 };
+  return { color: "#1d4ed8", background: "#eff6ff" };
+}
+
 // Statuses the shared labels do not cover, for the document types Today lists.
 const EXTRA_STATUS: Record<string, [string, string]> = {
+  // An approved supplier invoice still to pay (the server's billPaymentStatus;
+  // partly paid and paid are partially_settled and settled below).
+  to_pay: ["To pay", "待付款"],
   confirmed: ["Confirmed", "已确认"],
   fulfilled: ["Fulfilled", "已完成"],
   matching: ["Matching", "匹配中"],

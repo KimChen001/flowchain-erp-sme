@@ -61,7 +61,8 @@ const COPY = {
   lateOne: ["1 day late", "逾期 1 天"],
   late: ["{n} days late", "逾期 {n} 天"],
   reorder: ["Items to reorder", "待补货物料"],
-  reorderNote: ["To order now; {n} on the reorder list", "需立即下单；补货清单共 {n} 项"],
+  // The tile's number is the items to order now; {n} is how many the list checked, not more to order.
+  reorderNote: ["{now} to order now · {n} items checked", "需立即下单 {now} 项 · 已检查 {n} 项"],
 } as const;
 
 type Queue = "all" | "approval" | "tracking" | "issues";
@@ -102,13 +103,17 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
     if (next === "all") params.delete("queue"); else params.set("queue", next);
     setSearchParams(params, { replace: true });
   };
+  // The reorder list is read only after the work queue has drawn: it ranks
+  // every item, and reading it beside the queue's lists slowed the whole page
+  // (0.6 s to 1.5 s, UI review 7b, finding 10).
+  const loadReorder = () => {
+    if (!canOpenReorder) return;
+    apiJson<{ summary?: { orderNow?: number; listed?: number } }>("/api/inventory/reorder-list")
+      .then((list) => setReorder(list?.summary ? { orderNow: Number(list.summary.orderNow || 0), listed: Number(list.summary.listed || 0) } : null))
+      .catch(() => setReorder(null));
+  };
   const load = async () => {
     setState("loading");
-    if (canOpenReorder) {
-      apiJson<{ summary?: { orderNow?: number; listed?: number } }>("/api/inventory/reorder-list")
-        .then((list) => setReorder(list?.summary ? { orderNow: Number(list.summary.orderNow || 0), listed: Number(list.summary.listed || 0) } : null))
-        .catch(() => setReorder(null));
-    }
     // Open orders past their expected arrival, by the workspace's calendar day.
     const today = todayInTimeZone(timezone);
     try {
@@ -159,6 +164,8 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
       ]);
       setState("loaded");
     } catch { setState("error"); }
+    // After the queue's lists, loaded or not; the tile shows "—" until then.
+    window.setTimeout(loadReorder, 0);
   };
   useEffect(() => { void load(); }, []);
   const inQueue = (row: WorkRow, name: Queue) =>
@@ -189,7 +196,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
         <ActionableMetricCard label={tr("issues")} value={value("issues")} description={tr("issuesNote")} to={queueLink("issues")} icon={AlertCircle} color={A.red} />
         {/* What to order next comes from the reorder list, the inventory page that ranks it. */}
         {canOpenReorder && (
-          <ActionableMetricCard label={tr("reorder")} value={reorder ? String(reorder.orderNow) : "—"} description={tr("reorderNote").replace("{n}", reorder ? String(reorder.listed) : "—")} to="/app/inventory/reorder" icon={PackageSearch} color={A.green} />
+          <ActionableMetricCard label={tr("reorder")} value={reorder ? String(reorder.orderNow) : "—"} description={tr("reorderNote").replace("{now}", reorder ? String(reorder.orderNow) : "—").replace("{n}", reorder ? String(reorder.listed) : "—")} to="/app/inventory/reorder" icon={PackageSearch} color={A.green} />
         )}
       </div>
 

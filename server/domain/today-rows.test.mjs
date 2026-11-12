@@ -66,6 +66,35 @@ test('Today shows every kind in its first rows, links a reorder row to its reque
   assert.match(copy, /createRequest: "Create purchase request"/)
 })
 
+// Round 7b (2026-11-11): AI priorities listed only overdue purchase orders
+// ("the first 5 of 16, overdue and earliest first") while Today mixes kinds
+// of work in its first rows; on a phone Today's reorder links were 16 px tall.
+test('AI priorities shows Today\'s first rows with their dates', () => {
+  const page = read('src/modules/overview/AiSuggestionsPage.tsx')
+  assert.match(page, /import \{ firstRowsByKind \} from "\.\/todayRows"/)
+  assert.match(page, /const shown = firstRowsByKind\(items, SHOWN\)/)
+  assert.doesNotMatch(page, /items\.filter\(\(item\) => item\.overdueDays > 0\)/)
+  assert.doesNotMatch(page, /overdue and earliest first/)
+  assert.match(page, /todayDateText\(t\.language, locale, item, today\)/)
+  // Today and AI priorities word a row's date the same way.
+  const today = read('src/modules/overview/Page.tsx')
+  assert.match(today, /const dateText = \(item: WorkItem\) => todayDateText\(t\.language, locale, item, today\)/)
+  const copy = read('src/modules/overview/todayCopy.ts')
+  assert.match(copy, /export function todayDateText\(/)
+  assert.match(copy, /to_pay: \["To pay", "待付款"\]/)
+})
+
+test('Today\'s reorder links and "{n} in all" are 36 px tall on a phone, with room between the links', () => {
+  const page = read('src/modules/overview/Page.tsx')
+  assert.match(page, /const PHONE_TAP = "max-sm:inline-flex max-sm:min-h-9 max-sm:items-center"/)
+  assert.match(page, /className=\{`\$\{LINK\} \$\{PHONE_TAP\}`\} data-testid="today-reorder-request"/)
+  assert.match(page, /className=\{`\$\{LINK\} \$\{PHONE_TAP\}`\} data-testid="today-reorder-list"/)
+  assert.match(page, /flex flex-wrap gap-x-3 text-xs max-sm:gap-x-6/)
+  assert.match(page, /\$\{PHONE_TAP\} max-sm:px-1`\} data-testid="today-kind-all"/)
+  // A supplier invoice still to pay reads in progress (blue).
+  assert.match(page, /status === "to_pay" \? "info" : statusToneOf\(status\)/)
+})
+
 test('Today is named as the sidebar names it, and /app/today opens it', () => {
   const registry = read('src/app/routeRegistry.tsx')
   assert.match(registry, /id: "overview:risks",\s+path: "\/app\/overview\/risks",\s+moduleId: "overview",\s+moduleLabel: "首页",\s+label: "今日",/)

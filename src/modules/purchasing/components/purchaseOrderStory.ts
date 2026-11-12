@@ -56,7 +56,12 @@ export function invoiceVarianceState(invoice: StoryInvoice): VarianceState {
 
 // unknown: the read says nothing about payment (the PO list's read).
 export type PaymentState = "none" | "outstanding" | "partly_paid" | "paid" | "unknown";
-export type PaymentSummary = { state: PaymentState; paid: number | null; open: number | null; owed: number | null };
+// With the order (OrderPayment): what was ordered, and what is not invoiced
+// yet, so "paid" is said only of the whole order.
+export type PaymentSummary = { state: PaymentState; paid: number | null; open: number | null; owed: number | null; ordered?: number | null; notInvoiced?: Remaining | null };
+// The order a payment stage belongs to: its amount (null when hidden) and
+// what it still has to invoice (null when everything is invoiced).
+export type OrderPayment = { ordered: number | null; notInvoiced: Remaining | null };
 
 const PAYABLE_DONE = new Set(["draft", "cancelled"]);
 const round2 = (value: number) => Math.round(value * 100) / 100;
@@ -65,8 +70,17 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
 // invoice is approved (its payable exists), then outstanding, partly paid or
 // paid. An approved invoice with no payable recorded is owed, its amount not
 // known. The amounts are null when a role cannot see them. payment undefined
-// means the read did not say; null, that there is no payable.
-export function paymentSummary(invoices: StoryInvoice[]): PaymentSummary {
+// means the read did not say; null, that there is no payable. Given the order,
+// paid means the whole order: invoices paid in full while some of the order is
+// not invoiced yet read partly paid (UI review 7b, finding 1).
+export function paymentSummary(invoices: StoryInvoice[], order?: OrderPayment): PaymentSummary {
+  const summary = invoicePaymentSummary(invoices);
+  if (!order) return summary;
+  const state: PaymentState = summary.state === "paid" && order.notInvoiced ? "partly_paid" : summary.state;
+  return { ...summary, state, ordered: order.ordered, notInvoiced: order.notInvoiced };
+}
+
+function invoicePaymentSummary(invoices: StoryInvoice[]): PaymentSummary {
   const active = invoices.filter((invoice) => !isCancelledInvoice(invoice));
   const approvedUnread = active.filter((invoice) => invoice.workflowStatus === "approved" && invoice.payment === undefined && !invoice.paid);
   const payables = active.filter((invoice) => (invoice.payment && !PAYABLE_DONE.has(invoice.payment.status)) || invoice.paid || (invoice.workflowStatus === "approved" && invoice.payment === null));
@@ -115,6 +129,13 @@ function remainingOf(lines: StoryLine[], left: (line: StoryLine) => number): Rem
   const units = new Set(open.map((entry) => entry.line.unit));
   if (units.size === 1) return { quantity: open.reduce((sum, entry) => sum + entry.left, 0), unit: open[0].line.unit, lines: open.length };
   return { quantity: null, unit: null, lines: open.length };
+}
+
+// What the order still has to invoice: on each line, what was ordered (what
+// was received, once the order is closed or cancelled) less what is invoiced.
+// Null when nothing is left, so the order is fully invoiced.
+export function notInvoicedOf(lines: StoryLine[], closed = false): Remaining | null {
+  return remainingOf(lines, (line) => (closed ? line.accepted : line.ordered) - line.invoiced);
 }
 
 export type NextAction =
@@ -218,12 +239,29 @@ export function paymentStateLabel(state: PaymentState, language: string) {
   return pairs[state][language === "en-US" ? 0 : 1];
 }
 
-export function paymentAmountsText(summary: PaymentSummary, words: StoryWords): string {
+// The amounts under the payment stage. An order not fully invoiced says what
+// is paid of what was ordered and what is not invoiced yet ("£31.50 paid of
+// £46.20 ordered · 40 pcs not invoiced"); brief leaves the not-invoiced part
+// out (the progress steps, where the invoice step already says it) and says
+// "Partly paid" there.
+export function paymentAmountsText(summary: PaymentSummary, words: StoryWords, { brief = false }: { brief?: boolean } = {}): string {
   const pick = (pair: [string, string]) => (words.language === "en-US" ? pair[0] : pair[1]);
   if (summary.state === "none" || summary.paid === null || summary.open === null) return "";
   const paid = words.money(summary.paid);
   const open = words.money(summary.open);
+  const left = summary.notInvoiced;
+  const notInvoiced = !left || brief ? ""
+    : left.quantity === null
+      ? pick([` · ${words.number(left.lines)} lines not invoiced`, ` · ${words.number(left.lines)} 行未开票`])
+      : pick([` · ${words.quantity(left.quantity, left.unit)} not invoiced`, ` · ${words.quantity(left.quantity, left.unit)}未开票`]);
   if (summary.state === "paid") return pick([`${paid} paid`, `已付 ${paid}`]);
-  if (summary.state === "outstanding") return pick([`${open} outstanding`, `未付 ${open}`]);
-  return pick([`${paid} paid · ${open} outstanding`, `已付 ${paid} · 未付 ${open}`]);
+  if (summary.state === "outstanding") return `${pick([`${open} outstanding`, `未付 ${open}`])}${notInvoiced}`;
+  // Every invoice paid, part of the order not invoiced: paid of what was
+  // ordered; in brief, the state alone, which fits a phone's progress step.
+  if (left && summary.open < CENT && brief) return paymentStateLabel(summary.state, words.language);
+  if (left && summary.open < CENT && summary.ordered !== null && summary.ordered !== undefined) {
+    const ordered = words.money(summary.ordered);
+    return `${pick([`${paid} paid of ${ordered} ordered`, `已付 ${paid} / 订单 ${ordered}`])}${notInvoiced}`;
+  }
+  return `${pick([`${paid} paid · ${open} outstanding`, `已付 ${paid} · 未付 ${open}`])}${notInvoiced}`;
 }

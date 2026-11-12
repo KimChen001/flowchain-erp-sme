@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 import { Link, useNavigate } from "react-router";
+import { toast } from "sonner";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { FieldError, FormActionBar, FormHeader, FormSection, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
@@ -13,7 +14,7 @@ import { unitLabel } from "../../i18n/unitLabels";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { formatCalendarDay, formatDateTimeInTimeZone } from "../../lib/format";
-import { Notice, StatusChip, TwoStepAction, button, field, message } from "./FinanceControls";
+import { Notice, StatusChip, TwoStepAction, button, field, message, shownBillStatus } from "./FinanceControls";
 import { PaymentRecords } from "./PaymentRecords";
 import { addCalendarDays } from "../../lib/prefill";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
@@ -53,6 +54,11 @@ const money = (amount: unknown, currency: unknown, locale: string) => {
     : `${amount} ${code}`.trim();
 };
 const fixed = (value: number) => (Number.isFinite(value) ? value.toFixed(4) : "0.0000");
+// A label and what follows it: "Other bill: …", or "另一张发票：…" with the
+// full-width colon and no space after it.
+const colonOf = (language: string) => (language === "en-US" ? ": " : "：");
+// A text link that is at least 36 px tall on a phone, for a finger.
+const phoneTapClass = "max-sm:inline-flex max-sm:min-h-9 max-sm:items-center";
 // Today on the user's calendar, not in UTC.
 const localToday = () => {
   const now = new Date();
@@ -613,7 +619,7 @@ const duplicateIssueText = (t: Translate) => (code: string | undefined) =>
 // At the approval step: each open flag the approver can see, with the other
 // bill, so they need not look for it on the page.
 function DuplicateApprovalDetail({ issue }: { issue: Issue }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   if (issue.code !== "DUPLICATE_REVIEW_REQUIRED") return null;
   const flags = (issue.details as { flags?: DuplicateIssueFlag[] } | undefined)?.flags || [];
   if (!flags.length) return null;
@@ -622,7 +628,7 @@ function DuplicateApprovalDetail({ issue }: { issue: Issue }) {
       {flags.map((flag) => (
         <li key={`${flag.kind}-${flag.otherInvoiceId}`} className="flex flex-wrap items-center gap-1 rounded-lg bg-amber-50 p-2" data-testid="invoice-approve-duplicate" data-kind={flag.kind}>
           <span className="font-medium">{duplicateFlagLabel(flag, t)}</span>
-          {" · "}{t("finance.duplicates.otherBill")}: <DuplicateOtherBill other={flag.otherInvoice} id={flag.otherInvoiceId} />
+          {" · "}{t("finance.duplicates.otherBill")}{colonOf(language)}<DuplicateOtherBill other={flag.otherInvoice} id={flag.otherInvoiceId} />
         </li>
       ))}
     </ul>
@@ -636,7 +642,7 @@ function DuplicateApprovalDetail({ issue }: { issue: Issue }) {
 // this bill is past approval (approved, held or cancelled) its flags are
 // shown for information.
 function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { id: string; version: number; invoiceNumber?: string }; checks: DuplicateChecksData; canDismiss: boolean; onDone: () => void }) {
-  const { t, locale } = useI18n();
+  const { t, locale, language } = useI18n();
   const base = `/api/finance/supplier-invoices/${encodeURIComponent(invoice.id)}`;
   const notCheckedText: Record<string, string> = {
     no_supplier: t("finance.duplicates.noSupplier"),
@@ -676,8 +682,8 @@ function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { i
             <span className="font-medium">{duplicateFlagLabel(flag, t)}</span>
             <span className="text-xs text-slate-600" data-testid="duplicate-flag-status">{statusText(flag)}</span>
           </div>
-          {flag.kind === "likely" && invoice.invoiceNumber && <div className="text-slate-600">{t("finance.duplicates.thisBill")}: <span className="font-medium">{invoice.invoiceNumber}</span></div>}
-          <div className="flex flex-wrap items-center gap-1 text-slate-600">{t("finance.duplicates.otherBill")}: <DuplicateOtherBill other={flag.otherInvoice} id={flag.otherInvoiceId} /></div>
+          {flag.kind === "likely" && invoice.invoiceNumber && <div className="text-slate-600">{t("finance.duplicates.thisBill")}{colonOf(language)}<span className="font-medium">{invoice.invoiceNumber}</span></div>}
+          <div className="flex flex-wrap items-center gap-1 text-slate-600">{t("finance.duplicates.otherBill")}{colonOf(language)}<DuplicateOtherBill other={flag.otherInvoice} id={flag.otherInvoiceId} /></div>
           {flag.dismissal && <div className="text-xs text-slate-600" data-testid="duplicate-dismissal">{dismissedText(flag.dismissal)}</div>}
           {flag.otherSideDismissal && <div className="text-xs text-slate-600" data-testid="duplicate-other-side-dismissal">{otherSideText(flag.otherSideDismissal)}</div>}
           {flag.status === "open" && canDismiss && (
@@ -728,6 +734,12 @@ const scrollToCard = (id: string) => (event: MouseEvent) => {
   event.preventDefault();
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 };
+// Up to the invoice's actions, with the focus on Approve.
+const goToApprove = () => {
+  const actions = document.getElementById("supplier-invoice-actions");
+  actions?.scrollIntoView({ behavior: "smooth", block: "center" });
+  actions?.querySelector<HTMLElement>('[data-testid="invoice-approve"]')?.focus({ preventScroll: true });
+};
 
 // Why a bill is in exception, at the top of the page: the recorded variance
 // and, when the three-way match can be read, each line that differs from the
@@ -774,11 +786,11 @@ function VarianceReason({ invoice }: { invoice: { id: string; version?: number; 
     <div className="mt-4 space-y-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" data-testid="supplier-invoice-variance-reason">
       <div className="font-medium">{recorded ? say(`This invoice differs from the purchase order or receipt by ${amount(recorded)}.`, `该发票与采购订单或收货相差 ${amount(recorded)}。`) : say("This invoice differs from the purchase order or receipt.", "该发票与采购订单或收货不一致。")}</div>
       {lines.map((line, index) => <div key={index} className="text-xs" data-testid="supplier-invoice-variance-line">{lineText(line)}</div>)}
-      <div className="text-xs">
-        {say("Review each difference under Three-way match below: approve it with a note, or reject it.", "请在下方「三单匹配」逐条复核差异：填写说明后批准或驳回。")}{" "}
-        <a href="#supplier-invoice-match" onClick={scrollToCard("supplier-invoice-match")} className="font-semibold text-blue-600 hover:underline" data-testid="supplier-invoice-variance-actions">{say("Go to the differences", "前往复核差异")}</a>
-        {" · "}
-        <Link to={`/app/procurement/three-way-match/${encodeURIComponent(matchId)}`} className="font-semibold text-blue-600 hover:underline" data-testid="supplier-invoice-variance-match">{say("Open the three-way match", "查看三单匹配")}</Link>
+      <div className="text-xs">{say("Review each difference under Three-way match below: approve it with a note, or reject it.", "请在下方「三单匹配」逐条复核差异：填写说明后批准或驳回。")}</div>
+      {/* Two links with room between them; each 36 px tall on a phone. */}
+      <div className="flex flex-wrap gap-x-4 text-xs">
+        <a href="#supplier-invoice-match" onClick={scrollToCard("supplier-invoice-match")} className={`font-semibold text-blue-600 hover:underline ${phoneTapClass}`} data-testid="supplier-invoice-variance-actions">{say("Go to the differences", "前往复核差异")}</a>
+        <Link to={`/app/procurement/three-way-match/${encodeURIComponent(matchId)}`} className={`font-semibold text-blue-600 hover:underline ${phoneTapClass}`} data-testid="supplier-invoice-variance-match">{say("Open the three-way match", "查看三单匹配")}</Link>
       </div>
     </div>
   );
@@ -999,6 +1011,30 @@ export function SupplierInvoiceDetail() {
   }, [id]);
   useEffect(() => { load(); }, [load]);
   useDetailCrumb(data?.invoiceNumber);
+  // Opened from the payables list: the payable and its payments are what the
+  // reader came for, so the page starts there, once.
+  const scrolledToPayable = useRef(false);
+  useEffect(() => {
+    if (!fromPayables || !data?.payable || scrolledToPayable.current) return;
+    scrolledToPayable.current = true;
+    requestAnimationFrame(() => document.getElementById("supplier-invoice-payable")?.scrollIntoView({ block: "start" }));
+  }, [data, fromPayables]);
+  // The page stays at the match card after a difference is approved; when
+  // the last one is, a toast says so and leads back up to Approve. It reads
+  // the reloaded invoice, so a follow-up that failed says nothing.
+  const reviewWasOpen = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!data) return;
+    const reviewed: Array<{ status: string }> = data.match?.exceptions || [];
+    const open = reviewed.some((entry) => entry.status === "open" || entry.status === "rejected");
+    if (reviewWasOpen.current && !open && reviewed.length > 0 && data.status === "exception") {
+      toast.success(say("Differences approved. Next: approve the invoice", "差异已批准，下一步：批准发票"), {
+        action: { label: say("Go to Approve", "前往批准"), onClick: () => goToApprove() },
+        duration: 10000,
+      });
+    }
+    reviewWasOpen.current = open;
+  }, [data]);
   if (failure && !data) {
     const testId = { notFound: "supplier-invoice-not-found", unauthenticated: "supplier-invoice-unauthenticated", forbidden: "supplier-invoice-forbidden", error: "supplier-invoice-read-error" }[failure];
     const text = { notFound: t("finance.billNotFound"), unauthenticated: t("finance.billSignedOut"), forbidden: t("finance.billForbidden"), error: t("finance.billReadError") }[failure];
@@ -1024,11 +1060,19 @@ export function SupplierInvoiceDetail() {
   // first and Approve, which accepts the difference, is not the main button.
   // With the match readable, that is while a difference is open or rejected;
   // once every difference is approved, approving the invoice is the next step.
+  // Without the match to read, the invoice's match status says whether every
+  // difference was approved.
   const inException = data.match
     ? exceptions.some((entry) => entry.status === "open" || entry.status === "rejected")
-    : data.status === "exception";
-  // Paid in part or in full: said on the invoice too, not only on its payable.
-  const shownStatus = payable && ["settled", "partially_settled"].includes(payable.status) ? payable.status : data.status;
+    : data.status === "exception" && data.matchStatus !== "variance_approved";
+  // Still "exception" on record, with every difference approved: the next
+  // step is approving the invoice, and the header says so instead of
+  // "Exception" (the stored status does not change).
+  const readyToApprove = data.status === "exception" && !inException && (data.match ? exceptions.length > 0 : data.matchStatus === "variance_approved");
+  // Once approved, where the payment stands (To pay, Partly paid, Paid): the
+  // server's paymentStatus, else read from the payable shown below.
+  const paymentStatus = data.paymentStatus ?? (payable && ["settled", "partially_settled"].includes(payable.status) ? payable.status : null);
+  const shownStatus = shownBillStatus({ ...data, paymentStatus });
   // When the invoice has no step of its own left, the payable's is the next one.
   const invoiceSteps = actions.filter((action) => !["link_receipt", "revise", "dismiss_duplicate"].includes(action)).length;
   const nextOnPayable = payableActions.includes("record_payment")
@@ -1062,7 +1106,11 @@ export function SupplierInvoiceDetail() {
           </div>
           <div className="text-right">
             <strong>{money(data.totalAmount, data.currency, locale)}</strong>
-            <div className="mt-1" data-testid="supplier-invoice-status"><StatusChip status={shownStatus} /></div>
+            <div className="mt-1" data-testid="supplier-invoice-status">
+              {readyToApprove
+                ? <ToneChip label={say("Variance approved, ready to approve", "差异已批准，待批准")} tone="warning" testId="supplier-invoice-ready-to-approve" />
+                : <StatusChip status={shownStatus} />}
+            </div>
           </div>
         </div>
         {inException && <VarianceReason invoice={data} />}
@@ -1072,13 +1120,13 @@ export function SupplierInvoiceDetail() {
             {actions.includes("link_receipt") && <LinkReceipt invoice={data} onDone={load} />}
           </div>
         )}
-        <div className="mt-4 flex flex-wrap gap-2" data-testid="supplier-invoice-actions">
+        <div className="mt-4 flex flex-wrap gap-2" data-testid="supplier-invoice-actions" id="supplier-invoice-actions">
           {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="invoice-submit" oneStep previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={() => version} onDone={load} />}
           {actions.includes("match") && <TwoStepAction label={t("finance.action.match")} testId="invoice-match" oneStep previewUrl={`${base}/match-preview`} runUrl={`${base}/match`} payload={() => version} onDone={load} />}
-          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="invoice-approve" tone={inException ? "secondary" : "primary"} oneStep previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={() => version} issueText={duplicateIssueText(t)} issueDetail={(issue) => <DuplicateApprovalDetail issue={issue} />} onDone={load} />}
+          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="invoice-approve" tone={inException ? "secondary" : "primary"} oneStep previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={() => version} issueText={duplicateIssueText(t)} issueDetail={(issue) => <DuplicateApprovalDetail issue={issue} />} onDone={() => { toast.success(say(`Approved ${data.invoiceNumber}`, `已批准 ${data.invoiceNumber}`)); load(); }} />}
           {actions.includes("cancel") && <TwoStepAction label={t("finance.action.cancel")} testId="invoice-cancel" tone="secondary" previewUrl={`${base}/cancel-preview`} runUrl={`${base}/cancel`} payload={() => version} reasonLabel={t("finance.cancelReason")} onDone={load} />}
           {!invoiceSteps && (nextOnPayable
-            ? <a href="#supplier-invoice-payable" onClick={scrollToCard("supplier-invoice-payable")} className="text-sm font-semibold text-blue-600 hover:underline" data-testid="supplier-invoice-next">{nextOnPayable}</a>
+            ? <a href="#supplier-invoice-payable" onClick={scrollToCard("supplier-invoice-payable")} className={`text-sm font-semibold text-blue-600 hover:underline ${phoneTapClass}`} data-testid="supplier-invoice-next">{nextOnPayable}</a>
             : <span className="text-xs text-slate-500" data-testid="supplier-invoice-no-actions">{payable?.status === "settled" ? say("Paid in full. Nothing else to do.", "已全额付款，无需其他操作。") : t("finance.noActions")}</span>)}
         </div>
       </Card>

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { CheckCircle2, Info, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import { A, Field } from "../../components/ui";
 import { focusFirstInvalid } from "../../components/ui/formLayout";
 import { listTableCardsRef } from "../../components/ui/workbenchTable";
@@ -90,6 +91,8 @@ const PAYMENT_COPY = {
   changed: ["This record changed after the page opened. Close the form, reload the page and try again.", "页面打开后记录已有变化，请关闭表单、刷新页面后重试。"],
   currency: ["Payments on this document are in {currency}; no currency is converted.", "该单据按 {currency} 付款，不做币种换算。"],
   checkFields: ["Check the highlighted fields.", "请检查标出的字段。"],
+  recordedPaid: ["Payment of {amount} recorded", "已登记付款 {amount}"],
+  recordedReceived: ["Customer payment of {amount} recorded", "已登记收款 {amount}"],
 } as const;
 type PaymentField = "date" | "amount" | "method" | "reference" | "note";
 type PaymentProblems = { fields: Partial<Record<PaymentField, string>>; form: string[] };
@@ -192,6 +195,9 @@ function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
       const current = plan?.allowed ? plan : await preview();
       if (!current?.allowed) return;
       await apiJson(base, { method: "POST", body: JSON.stringify({ ...body(), idempotencyKey: createSecureClientMutationId("payment") }) });
+      // The form closes and the page reloads: the toast says what was recorded.
+      const recorded = money(amount.trim(), obligation.currency, locale);
+      toast.success(kind === "payable" ? say("recordedPaid", { amount: recorded }) : say("recordedReceived", { amount: recorded }));
       onDone();
     } catch (reason) {
       setPlan(null);
@@ -233,7 +239,8 @@ function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
       {plan?.allowed && (
         <div role="status" data-testid="payment-preview-result" className="flex gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
           <CheckCircle2 className="mt-0.5 shrink-0" size={16} />
-          <span>{t("finance.paymentAfter", { outstanding: money(plan.after?.outstandingAmount, obligation.currency, locale) })} <StatusChip status={plan.after?.status || ""} /></span>
+          {/* "Status: Paid"; in Chinese "状态：" takes no space before the chip. */}
+          <span>{t("finance.paymentAfter", { outstanding: money(plan.after?.outstandingAmount, obligation.currency, locale) })}{language === "en-US" ? " " : ""}<StatusChip status={plan.after?.status || ""} /></span>
         </div>
       )}
       {(problems.form.length > 0 || fieldIssues) && (

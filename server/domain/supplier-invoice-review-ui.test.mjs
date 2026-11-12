@@ -25,6 +25,7 @@ async function load(entry) {
     for (const [name, file] of Object.entries({
       screens: 'src/modules/finance/SupplierInvoiceScreens.tsx',
       payments: 'src/modules/finance/PaymentRecords.tsx',
+      controls: 'src/modules/finance/FinanceControls.tsx',
       variance: 'src/domain/procurement/variance-types.ts',
     })) {
       const outfile = path.join(dir, `${name}.mjs`)
@@ -136,16 +137,19 @@ test('the new invoice form never says "No receipt yet" above listed receipts and
 test('the invoice page shows its dates, payment state and next step, and returns to payables', () => {
   const screens = read('src/modules/finance/SupplierInvoiceScreens.tsx')
   for (const testId of ['supplier-invoice-date', 'supplier-invoice-due-date', 'supplier-invoice-currency-fact', 'supplier-invoice-next', 'back-to-payables']) assert.match(screens, new RegExp(`data-testid="${testId}"`))
-  assert.match(screens, /\["settled", "partially_settled"\]\.includes\(payable\.status\) \? payable\.status : data\.status/)
+  assert.match(screens, /data\.paymentStatus \?\? \(payable && \["settled", "partially_settled"\]\.includes\(payable\.status\) \? payable\.status : null\)/)
+  assert.match(screens, /const shownStatus = shownBillStatus\(\{ \.\.\.data, paymentStatus \}\)/)
   assert.match(screens, /money\(payable\.originalAmount \?\? data\.totalAmount/)
   const list = read('src/modules/finance/OperationalFinanceP2pWorkbench.tsx')
   assert.match(list, /\?returnTo=\$\{encodeURIComponent\(`\$\{location\.pathname\}\$\{location\.search\}`\)\}/)
   // The receipt reads by its GRN number, else "Receipt", never its id.
   assert.match(list, /row\.relatedGrnNumber \|\| receiptNumbers\.get\(String\(row\.relatedGrnId\)\) \|\| tr\("receipt"\)/)
   assert.doesNotMatch(list, />\{row\.relatedGrnId\}</)
-  // An invoice whose differences are all approved no longer reads "Exception".
-  assert.match(list, /statusOf\(row\) === "exception" && row\.matchStatus === "variance_approved" \? "variance_approved"/)
+  // An invoice whose differences are all approved no longer reads
+  // "Exception"; an approved one reads where its payment stands.
+  assert.match(list, /const rawStatus = shownBillStatus\(row\)/)
   assert.match(list, /variance_approved: "finance\.status\.variance_approved"/)
+  assert.match(list, /to_pay: "finance\.status\.to_pay"/)
   // A match exception in the finance list reads by its kind of difference.
   assert.match(list, /matchExceptionLabel\(row\.exceptionType, language\)/)
 })
@@ -173,6 +177,67 @@ test('payment amounts are offered as the currency writes them', async () => {
   // More decimals than the currency uses: kept, never rounded past what is owed.
   assert.equal(paymentAmountText('19.6050', 'USD'), '19.605')
   assert.equal(paymentAmountText(null, 'USD'), '')
+})
+
+// Round 7b, the re-walk of the flow (2026-11-11).
+test('an invoice shows where its payment stands, and an exception with every difference approved reads ready to approve', async () => {
+  const { shownBillStatus, financeStatusTone } = await load('controls')
+  assert.equal(shownBillStatus({ status: 'approved', paymentStatus: 'settled' }), 'settled')
+  assert.equal(shownBillStatus({ status: 'approved', paymentStatus: 'partially_settled' }), 'partially_settled')
+  assert.equal(shownBillStatus({ status: 'approved', paymentStatus: 'to_pay' }), 'to_pay')
+  // No payable (a seeded or imported invoice): as stored.
+  assert.equal(shownBillStatus({ status: 'approved', paymentStatus: null }), 'approved')
+  assert.equal(shownBillStatus({ status: 'exception', matchStatus: 'variance_approved' }), 'variance_approved')
+  assert.equal(shownBillStatus({ status: 'exception', matchStatus: 'exception' }), 'exception')
+  assert.equal(financeStatusTone('to_pay'), 'info')
+  const list = read('src/modules/finance/OperationalFinanceP2pWorkbench.tsx')
+  // To pay, Partly paid and Paid cards, each opening the list it counts.
+  for (const [count, status] of [['to_pay', 'to_pay'], ['partially_settled', 'partially_settled'], ['settled', 'settled']])
+    assert.match(list, new RegExp(`value=\\{count\\("${count}"\\)\\}[^\\n]*to="/app/procurement/bills\\?status=${status}"`))
+  assert.doesNotMatch(list, /count\("approved"\)/)
+  assert.match(list, /invoice: \["draft", "submitted", "matched", "exception", "approved", "to_pay", "partially_settled", "settled", "cancelled"\]/)
+  const screens = read('src/modules/finance/SupplierInvoiceScreens.tsx')
+  assert.match(screens, /readyToApprove\s*\? <ToneChip label=\{say\("Variance approved, ready to approve", "差异已批准，待批准"\)\} tone="warning"/)
+  // Without the match to read, the invoice's own match status decides.
+  assert.match(screens, /data\.status === "exception" && data\.matchStatus !== "variance_approved"/)
+})
+
+test('approving, the last difference approved and a recorded payment each say so in a toast', () => {
+  const screens = read('src/modules/finance/SupplierInvoiceScreens.tsx')
+  assert.match(screens, /import \{ toast \} from "sonner"/)
+  assert.match(screens, /toast\.success\(say\(`Approved \$\{data\.invoiceNumber\}`, `已批准 \$\{data\.invoiceNumber\}`\)\); load\(\);/)
+  // The last open difference approved: read from the reloaded invoice, with a way back up to Approve.
+  assert.match(screens, /if \(reviewWasOpen\.current && !open && reviewed\.length > 0 && data\.status === "exception"\)/)
+  assert.match(screens, /say\("Differences approved\. Next: approve the invoice", "差异已批准，下一步：批准发票"\)/)
+  assert.match(screens, /action: \{ label: say\("Go to Approve", "前往批准"\), onClick: \(\) => goToApprove\(\) \}/)
+  assert.match(screens, /id="supplier-invoice-actions"/)
+  const payments = read('src/modules/finance/PaymentRecords.tsx')
+  assert.match(payments, /recordedPaid: \["Payment of \{amount\} recorded", "已登记付款 \{amount\}"\]/)
+  assert.match(payments, /toast\.success\(kind === "payable" \? say\("recordedPaid"/)
+})
+
+test('a payable opened from the payables list starts at the payment card, and phone links are 36 px tall', () => {
+  const screens = read('src/modules/finance/SupplierInvoiceScreens.tsx')
+  assert.match(screens, /if \(!fromPayables \|\| !data\?\.payable \|\| scrolledToPayable\.current\) return;/)
+  assert.match(screens, /getElementById\("supplier-invoice-payable"\)\?\.scrollIntoView\(\{ block: "start" \}\)/)
+  assert.match(screens, /const phoneTapClass = "max-sm:inline-flex max-sm:min-h-9 max-sm:items-center"/)
+  for (const testId of ['supplier-invoice-variance-actions', 'supplier-invoice-variance-match', 'supplier-invoice-next'])
+    assert.match(screens, new RegExp(`\\$\\{phoneTapClass\\}\`\\} data-testid="${testId}"`), testId)
+})
+
+test('Chinese copy puts no space after a full-width colon', () => {
+  const payments = read('src/modules/finance/PaymentRecords.tsx')
+  // "状态：" then the chip, with no space between in Chinese.
+  assert.match(payments, /\{language === "en-US" \? " " : ""\}<StatusChip status=\{plan\.after\?\.status \|\| ""\} \/>/)
+  const dictionary = read('src/i18n/I18n.tsx')
+  assert.match(dictionary, /"finance\.paymentAfter": "登记后未结 \{outstanding\}，状态："/)
+  const screens = read('src/modules/finance/SupplierInvoiceScreens.tsx')
+  const list = read('src/modules/finance/OperationalFinanceP2pWorkbench.tsx')
+  // Labels joined in JSX use the full-width colon in Chinese, never ": ".
+  assert.doesNotMatch(screens, /\)\}: </)
+  assert.doesNotMatch(list, /\{tr\("next"\)\}: /)
+  assert.match(list, /const colon = language === "en-US" \? ": " : "："/)
+  for (const source of [screens, list, payments, dictionary]) assert.doesNotMatch(source, /： /)
 })
 
 test('the finance dictionary has the approved-variance status and the Chinese wording the walk asked for', () => {

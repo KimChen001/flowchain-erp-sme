@@ -1096,7 +1096,8 @@ export default function CanonicalProcurementPanel({
                     </td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{dayText(line.needByDate || selected.defaultNeedByDate)}</td>
                     <td className={`${tdClass} min-w-[110px] max-w-[200px]`}>{warehouseName(line.targetWarehouseId) || "—"}</td>
-                    <td className={`${tdClass} min-w-[150px] max-w-[240px]`}><div className="line-clamp-2" title={line.internalLineComment}>{line.internalLineComment || "—"}</div></td>
+                    {/* Two lines in the table; whole on a phone card, where there is no tooltip to read the rest. */}
+                    <td className={`${tdClass} min-w-[150px] max-w-[240px] max-sm:max-w-none`}><div className="line-clamp-2 max-sm:line-clamp-none max-sm:whitespace-normal max-sm:break-words" title={line.internalLineComment} data-testid="pr-detail-line-note">{line.internalLineComment || "—"}</div></td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{amount(line.estimatedAmount, line.currency || selected.defaultCurrency)}</td>
                   </tr>
                 ))}
@@ -1505,7 +1506,8 @@ export default function CanonicalProcurementPanel({
                 {line.lineBasis === "quantity" && (
                   <>
                     <Field label={copy("单位")} required={line.sourceType === "non_catalog_item"} error={line.sourceType === "non_catalog_item" ? lineError(index, "unitSnapshot") : null}>
-                      {line.sourceType === "catalog_item" ? <input readOnly value={line.unitSnapshot || ""} style={{ ...inputStyle, background: A.gray6 }} /> : <select value={line.unitSnapshot || ""} onChange={(e) => patchLine(index, { unitSnapshot: e.target.value })} style={inputStyle}><option value="">{copy("选择单位")}</option>{units.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
+                      {/* The item's unit in the interface language ("件" for pcs); the stored code stays. */}
+                      {line.sourceType === "catalog_item" ? <input readOnly value={line.unitSnapshot ? unitLabel(line.unitSnapshot, language) : ""} data-testid="pr-line-unit" style={{ ...inputStyle, background: A.gray6 }} /> : <select value={line.unitSnapshot || ""} onChange={(e) => patchLine(index, { unitSnapshot: e.target.value })} style={inputStyle}><option value="">{copy("选择单位")}</option>{units.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
                       {prefillChip(line, "unitSnapshot")}
                     </Field>
                     <Field label={copy("数量")} required error={lineError(index, "quantity")}>

@@ -86,6 +86,7 @@ import {
   isCancelledInvoice,
   nextActionText,
   nextOpenAction,
+  notInvoicedOf,
   paymentAmountsText,
   paymentStateLabel,
   paymentSummary,
@@ -113,6 +114,7 @@ const PAGE_ENGLISH: Record<string, string> = {
   "差异已批准": "Variance approved",
   "差异已驳回": "Variance rejected",
   "付款": "Payment",
+  "开票": "Invoice",
 };
 const pageCopy = (label: string, language: string) => (language === "en-US" && PAGE_ENGLISH[label]) || workspaceCopy(label, language);
 function usePageCopy() {
@@ -528,10 +530,7 @@ function invoiceStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
   const invoices = activeInvoicesForPo(po.po, facts);
   if (!invoices.length) return "未开票";
   if (invoices.some((invoice) => ["open", "rejected"].includes(varianceStateOf(invoice)))) return "发票差异";
-  if (invoiceLinesRead(invoices)) {
-    const closed = ["closed", "cancelled"].includes(purchaseOrderStatusCode(po.status));
-    if (storyLines(po, facts).some((line) => (closed ? line.accepted : line.ordered) - line.invoiced > 0.00005)) return "部分开票";
-  }
+  if (notInvoicedOnPo(po, facts)) return "部分开票";
   return "已开票";
 }
 
@@ -560,8 +559,27 @@ function matchStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
   return "已匹配";
 }
 
+// What the order still has to invoice, by the invoice status's rule (ordered,
+// or received once the order is closed); null when all of it is invoiced, or
+// when the read does not say what each invoice bills.
+function notInvoicedOnPo(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
+  const invoices = activeInvoicesForPo(po.po, facts);
+  if (!invoiceLinesRead(invoices)) return null;
+  return notInvoicedOf(storyLines(po, facts), ["closed", "cancelled"].includes(purchaseOrderStatusCode(po.status)));
+}
+
+// Every line of the order is on its active supplier invoices: there is nothing
+// left to record a supplier invoice for (UI review 7b, finding 4).
+function fullyInvoiced(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
+  const invoices = activeInvoicesForPo(po.po, facts);
+  return invoices.length > 0 && poLinesOf(po).length > 0 && invoiceLinesRead(invoices) && !notInvoicedOnPo(po, facts);
+}
+
+// Paid only once the whole order is invoiced and paid: paid invoices on part
+// of the order read partly paid, with what was ordered and what is not invoiced.
 function paymentOf(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
-  return paymentSummary(activeInvoicesForPo(po.po, facts).map(storyInvoice));
+  const invoices = activeInvoicesForPo(po.po, facts);
+  return paymentSummary(invoices.map(storyInvoice), { ordered: poAmount(po), notInvoiced: notInvoicedOnPo(po, facts) });
 }
 
 // The next action, from what is left. Before the supplier has the order it
@@ -627,11 +645,13 @@ function poTimeline(po: PurchaseOrder, facts: ProcurementRuntimeFacts, day: (val
   const invoiced = invoice === "已开票";
   const settledMatch = ["已匹配", "差异已批准", "无需匹配"].includes(match);
   const waitingMatch = ["缺少发票", "缺少收货", "尚无可匹配", "待匹配"].includes(match);
-  const paymentNote = paymentAmountsText(payment, words) || paymentStateLabel(payment.state, words.language);
+  // Brief: the invoice step beside it already says what is not invoiced.
+  const paymentNote = paymentAmountsText(payment, words, { brief: true }) || paymentStateLabel(payment.state, words.language);
   const steps: Array<{ label: string; done: boolean; warning?: boolean; helper: React.ReactNode }> = [
     { label: "下单", done: placed, helper: placed ? day(po.created) : poActionText(nextActionForPo(po, facts), words) },
     { label: "收货", done: received, warning: receipt === "异常处理", helper: receipt },
-    { label: "供应商开票", done: invoiced, warning: invoice === "发票差异", helper: invoice },
+    // "开票" / "Invoice": short enough for one line on a phone with five steps.
+    { label: "开票", done: invoiced, warning: invoice === "发票差异", helper: invoice },
     { label: "三单匹配", done: invoiced && settledMatch, warning: !settledMatch && !waitingMatch, helper: match },
     { label: "付款", done: invoiced && payment.state === "paid", helper: paymentNote },
   ];
@@ -1018,7 +1038,11 @@ function Sub({ children }: { children: React.ReactNode }) {
   return <div className="mt-0.5 text-[11px] leading-4" style={{ color: A.sub }}>{children}</div>;
 }
 
-const relatedLinkClass = `inline-flex items-center ${typography.denseButton} text-blue-600 hover:underline rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200`;
+// At least 36 px tall on a phone, where they are tapped (UI review 7b, finding 7).
+const relatedLinkClass = `inline-flex items-center ${typography.denseButton} text-blue-600 hover:underline rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 max-sm:min-h-9`;
+// A receipt or invoice number in the evidence tables: a link-sized button,
+// 36 px tall on a phone.
+const evidenceLinkClass = "max-sm:inline-flex max-sm:min-h-9 max-sm:items-center";
 
 // The list's filters from the address. A status the list does not offer
 // (or a legacy Chinese one) is read as its code, else as All.
@@ -1212,7 +1236,9 @@ export default function PurchasingOrdersPage({
   // request. The server leaves this PO out and, once it is issued, every PO
   // dated after it. Display only.
   // Notes for the header buttons, shown on a line under them.
-  const actionNotes = usePurchaseOrderActionNotes({ status: selectedPO?.status || "", version: selectedPO?.version });
+  // A fully invoiced order offers no supplier invoice entry, nor its note.
+  const selectedPOFullyInvoiced = selectedPO ? fullyInvoiced(selectedPO, facts) : false;
+  const actionNotes = usePurchaseOrderActionNotes({ status: selectedPO?.status || "", version: selectedPO?.version, nothingToInvoice: selectedPOFullyInvoiced });
   // Which rows of the list may offer Receive and Record supplier invoice.
   const entryRules = usePurchaseOrderEntryRules();
   // Open orders whose expected arrival is before today in the workspace's timezone.
@@ -1428,7 +1454,7 @@ export default function PurchasingOrdersPage({
     </>;
     const grnColumns: EvidenceColumn<GrnEvidenceRow>[] = [
       { key: "grn", label: say("Receipt", "收货单"), width: 180, render: (row) => <>
-        <button type="button" className={`${tableLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openReceipt(row.grn)} data-testid="po-receipt-number">{row.receiptNumber}</button>
+        <button type="button" className={`${tableLinkClass} ${evidenceLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openReceipt(row.grn)} data-testid="po-receipt-number">{row.receiptNumber}</button>
         <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.grnLineId)}>{lineName(row.grnLineNumber)}</span></Sub>
       </> },
       { key: "poLine", label: say("PO line", "采购订单行"), width: 200, render: (row) => <>
@@ -1451,11 +1477,11 @@ export default function PurchasingOrdersPage({
       </> },
       { key: "status", label: copy("收货状态"), width: 150, render: (row) => <>
         <StatusChip label={codeLabel(row.receiptStatus)} tone={statusToneOf(row.receiptStatus)} />
-        <Sub>{say("QC", "质检")}: {copy(row.qcStatus)}</Sub>
+        <Sub>{say("QC: ", "质检：")}{copy(row.qcStatus)}</Sub>
         {/* The rejected quantity with the reason recorded on the receipt, and the way to it. */}
         {row.rejectedQty > 0 ? <Sub>
           <span data-testid="po-receipt-rejection">{say(`${formatNumber(row.rejectedQty)} rejected: `, `拒收 ${formatNumber(row.rejectedQty)}：`)}{row.rejectionReason || say("no reason recorded", "未记录原因")}</span>
-          {" · "}<button type="button" className="text-blue-600 hover:underline" onClick={() => openReceipt(row.grn)}>{say("View receipt", "查看收货单")}</button>
+          {" · "}<button type="button" className={`${evidenceLinkClass} text-blue-600 hover:underline`} onClick={() => openReceipt(row.grn)}>{say("View receipt", "查看收货单")}</button>
         </Sub> : null}
       </> },
       // The supplier invoice lines that name this receipt line, by number.
@@ -1467,7 +1493,7 @@ export default function PurchasingOrdersPage({
     const invoiceColumns: EvidenceColumn<InvoiceEvidenceRow>[] = [
       { key: "invoice", label: say("Supplier invoice", "采购发票"), width: 180, render: (row) => <>
         {canOpenInvoice
-          ? <button type="button" className={`${tableLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openInvoice(row.invoiceNumber)} data-testid="po-invoice-number">{row.displayNumber}</button>
+          ? <button type="button" className={`${tableLinkClass} ${evidenceLinkClass} whitespace-nowrap text-blue-600`} onClick={() => openInvoice(row.invoiceNumber)} data-testid="po-invoice-number">{row.displayNumber}</button>
           : <span className="whitespace-nowrap font-medium" style={{ color: A.blue }} data-testid="po-invoice-number">{row.displayNumber}</span>}
         <Sub><span className="whitespace-nowrap" title={lineIdTitle(row.invoiceLineId)}>{lineName(row.invoiceLineNumber)}</span></Sub>
       </> },
@@ -1576,10 +1602,10 @@ export default function PurchasingOrdersPage({
               document and supplier invoice entry sit to the right. */}
           <div className="flex flex-wrap items-center gap-2">
             <PurchaseOrderReceiveAction poId={selectedPO.po} status={selectedPO.status} showNote={false} />
-            <PurchaseOrderWorkflowActions poId={selectedPO.po} status={selectedPO.status} version={selectedPO.version} onChanged={loadWorkbench} showNote={false} />
+            <PurchaseOrderWorkflowActions poId={selectedPO.po} number={selectedPONumber} status={selectedPO.status} version={selectedPO.version} onChanged={loadWorkbench} showNote={false} />
             <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-              {/* A bill can arrive before or after the goods. */}
-              {BILLABLE_PO_STATUSES.has(selectedPO.status) && <span className="inline-flex [&_button]:h-8 [&_button]:py-0"><RecordBillAction purchaseOrderId={selectedPO.po} /></span>}
+              {/* A bill can arrive before or after the goods; none once every line is invoiced. */}
+              {BILLABLE_PO_STATUSES.has(selectedPO.status) && !selectedPOFullyInvoiced && <span className="inline-flex [&_button]:h-8 [&_button]:py-0"><RecordBillAction purchaseOrderId={selectedPO.po} /></span>}
               {/* The PO as a document to print or save as PDF; the buyer sends it. */}
               {canOpenRoute("procurement:order-document") && (
                 <button
@@ -1818,7 +1844,7 @@ export default function PurchasingOrdersPage({
                 const firstGrn = grnsForPo(order.po, facts)[0];
                 const firstInvoice = invoicesForPo(order.po, facts)[0];
                 const late = daysLate(order);
-                const menuItemClass = "w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50";
+                const menuItemClass = "w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50 max-sm:min-h-9";
                 return (
                   <tr key={order.po} className={listRowClass} style={listRowStyle(index, paged.pageRows.length)}>
                     <td className={`${tdIdClass} sticky left-0 z-10 truncate bg-white`}>
@@ -1847,7 +1873,7 @@ export default function PurchasingOrdersPage({
                         <RowMenu label={copy("更多")} testId={`po-row-more-${order.po}`}>
                           {/* What can be done next on the order, by the detail page's rules, then where to look. */}
                           {entryRules.canReceive(order.status) && <button type="button" data-testid={`po-row-receive-${order.po}`} onClick={() => routerNavigate(receiveOrderPath(order.po))} className={`${menuItemClass} font-semibold text-blue-700`}>{say("Receive", "收货")}</button>}
-                          {entryRules.canRecordBill(order.status) && <button type="button" data-testid={`po-row-record-bill-${order.po}`} onClick={() => routerNavigate(recordBillPath(order.po))} className={menuItemClass}>{say("Record supplier invoice", "录入采购发票")}</button>}
+                          {entryRules.canRecordBill(order.status) && !fullyInvoiced(order, facts) && <button type="button" data-testid={`po-row-record-bill-${order.po}`} onClick={() => routerNavigate(recordBillPath(order.po))} className={menuItemClass}>{say("Record supplier invoice", "录入采购发票")}</button>}
                           {firstGrn && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, receiptNumberOf(firstGrn))} className={menuItemClass}>{copy("查看收货单")}</button>}
                           {firstInvoice && canOpenRoute("procurement:bills") && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, invoiceNumberOf(firstInvoice))} className={menuItemClass}>{copy("查看采购发票")}</button>}
                           {canOpenRoute("procurement:match") && (firstGrn || firstInvoice) && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:match")} className={menuItemClass}>{copy("查看三单匹配")}</button>}

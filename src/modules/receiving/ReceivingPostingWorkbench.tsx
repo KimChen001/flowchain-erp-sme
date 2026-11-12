@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
+import { useNavigate } from "react-router";
+import { toast } from "sonner";
 import { AlertTriangle, ArrowRight, Link2, Loader2, Printer, ShieldCheck } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { usePermissionSet } from "../../lib/usePermissionSet";
+import { useRouteAvailability } from "../../app/routeAvailability";
 import { A, useConfirm } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, statusToneOf } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableMinSmClass, tableScrollClass, tdClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
@@ -53,6 +57,13 @@ const DRAFT_COPY: Record<string, Pair> = {
   cancelReason: ["Why is it cancelled?", "取消原因"],
   keepReceipt: ["Keep receipt", "保留收货单"],
   cancelFailed: ["The receipt could not be cancelled.", "收货单取消失败。"],
+  // After an action, with the receipt's number ({doc}).
+  posted: ["Posted {doc}", "已过账 {doc}"],
+  reversed: ["Reversed {doc}", "已冲销 {doc}"],
+  submitted: ["Submitted {doc}", "已提交 {doc}"],
+  cancelled: ["Cancelled {doc}", "已取消 {doc}"],
+  // A posted receipt that left part of the order open: the receipt form for the rest.
+  receiveRest: ["Receive the rest", "收货剩余"],
 };
 
 // The command errors by their stable code, in English with the Chinese translation.
@@ -114,7 +125,8 @@ const MOVEMENT_COPY: Record<string, Pair> = {
 const AUDIT_COPY: Record<string, Pair> = {
   receiving_draft_created: ["Receipt draft {doc} created", "收货草稿 {doc} 已创建"],
   receiving_draft_revised: ["Receipt draft {doc} revised", "收货草稿 {doc} 已修改"],
-  receiving_submitted: ["Receipt {doc} submitted for posting", "收货单 {doc} 已提交过账"],
+  // "Submitted", as the form's Save and submit button says: posting is its own step.
+  receiving_submitted: ["Receipt {doc} submitted", "收货单 {doc} 已提交"],
   receiving_cancelled: ["Receipt {doc} cancelled", "收货单 {doc} 已取消"],
   receiving_posted: ["Receipt {doc} posted to inventory", "收货单 {doc} 已过账入库"],
   receiving_reversed: ["Receipt {doc} reversed", "收货单 {doc} 已冲销"],
@@ -147,6 +159,11 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const draftCopy = (key: string) => sayPair(DRAFT_COPY[key]);
   const confirmDialog = useConfirm();
   const warehouseName = useWarehouseNames();
+  const navigate = useNavigate();
+  const permissions = usePermissionSet();
+  const canOpenRoute = useRouteAvailability();
+  // The receipt form for the order, by the PO page's rule for its Receive button.
+  const canStartReceipt = Boolean(permissions?.has("receiving.prepare")) && canOpenRoute("procurement:receiving:new");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [links, setLinks] = useState<Link[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
@@ -165,8 +182,9 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   // The reconciliation table, when every balance matches, opens on request.
   const [showReconciliation, setShowReconciliation] = useState(false);
 
-  const refresh = useCallback(async () => {
-    if (!receivingDocumentId) return;
+  // Reads the receipt again; returns it, or null when it could not be read.
+  const refresh = useCallback(async (): Promise<Detail | null> => {
+    if (!receivingDocumentId) return null;
     setLoading(true); setError(""); setErrorCode(undefined);
     try {
       const encoded = encodeURIComponent(receivingDocumentId);
@@ -177,9 +195,19 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
         apiJson<Reconciliation>(`/api/procurement/receiving/${encoded}/reconciliation`),
       ]);
       setDetail(nextDetail); setLinks(nextLinks.links); setEvents(nextEvidence.events); setReconciliation(nextReconciliation);
-    } catch (nextError) { setError(errorMessage(nextError, languageRef.current)); setErrorCode(procurementErrorCode(nextError)); setDetail(null); }
+      return nextDetail;
+    } catch (nextError) { setError(errorMessage(nextError, languageRef.current)); setErrorCode(procurementErrorCode(nextError)); setDetail(null); return null; }
     finally { setLoading(false); }
   }, [receivingDocumentId]);
+
+  // The order still has quantity to receive after this posted receipt: the
+  // way to the receipt form for the rest. Closed or cancelled orders take no
+  // more receipts.
+  const restToReceive = (next: Detail | null) => Boolean(next && canStartReceipt
+    && next.receivingDocument.postingStatus === "posted"
+    && next.purchaseOrder.fulfillmentStatus === "partially_received"
+    && !["closed", "cancelled"].includes(next.purchaseOrder.workflowStatus));
+  const receiveRestPath = (next: Detail) => `/app/procurement/receiving/new?po=${encodeURIComponent(next.purchaseOrder.id)}`;
 
   useEffect(() => { void refresh(); }, [refresh]);
   useDetailCrumb(detail?.receivingDocument.documentNumber);
@@ -194,6 +222,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     setSaving(true); setError("");
     try {
       await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/submit`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version }) });
+      toast.success(draftCopy("submitted").replace("{doc}", detail.receivingDocument.documentNumber || receivingDocumentId));
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof ApiError ? `${draftCopy("submitFailed")} ${errorMessage(nextError, language, RETRY)}` : draftCopy("submitFailed"));
@@ -216,6 +245,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     setSaving(true); setError("");
     try {
       await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/cancel`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version, reason }) });
+      toast.success(draftCopy("cancelled").replace("{doc}", detail.receivingDocument.documentNumber || receivingDocumentId));
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof ApiError ? `${draftCopy("cancelFailed")} ${errorMessage(nextError, language, RETRY)}` : draftCopy("cancelFailed"));
@@ -237,7 +267,14 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/${preview.operation}`, {
         method: "POST", body: JSON.stringify(preview.operation === "post" ? { idempotencyKey: actionKey, expectedVersion: detail.receivingDocument.version } : { idempotencyKey: actionKey, reason: reason.trim() }),
       });
-      setPreview(null); await refresh();
+      const done = preview.operation;
+      setPreview(null);
+      const next = await refresh();
+      // "Posted GRN-…", with the way to receive what the order still expects.
+      const doc = next?.receivingDocument.documentNumber || detail.receivingDocument.documentNumber || receivingDocumentId;
+      const message = draftCopy(done === "post" ? "posted" : "reversed").replace("{doc}", doc);
+      if (done === "post" && next && restToReceive(next)) toast.success(message, { action: { label: draftCopy("receiveRest"), onClick: () => navigate(receiveRestPath(next)) } });
+      else toast.success(message);
     } catch (nextError) {
       setError(errorMessage(nextError, language, ["The receiving action could not be completed.", "收货操作未完成。"]));
       setErrorCode(procurementErrorCode(nextError));
@@ -382,10 +419,13 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const showLineWarehouse = detail.lines.some((line) => warehouseKey(line.warehouse) !== warehouseKey(grn.warehouse));
   // On a phone each line is a card (listTableCardsRef) titled by its item.
   const itemColumn = say("Item", "物料");
+  // A posted receipt counts only the receipts posted before it, and what was
+  // still open right after it; one not posted (or reversed) shows everything
+  // posted so far and what is open now (receiptLineProgress on the server).
   const lineColumns: Array<[string, boolean]> = [
     ["SKU", false], [itemColumn, false], [say("Ordered", "订购"), true], [say("Received before", "此前已收"), true],
     [say("Accepted", "本单合格"), true], [say("Posted qty", "已过账数量"), true], [say("Rejected", "拒收"), true],
-    [say("Open", "未收"), true], ...(showLineWarehouse ? [[say("Warehouse", "仓库"), false] as [string, boolean]] : []), [say("Location", "库位"), false], [say("Unit", "单位"), false],
+    [grn.postingStatus === "posted" ? say("Open after this receipt", "本单后未收") : say("Open", "未收"), true], ...(showLineWarehouse ? [[say("Warehouse", "仓库"), false] as [string, boolean]] : []), [say("Location", "库位"), false], [say("Unit", "单位"), false],
   ];
   // Every balance matching its movements is said in one line; the table
   // opens on request. Any difference shows the table at once.
@@ -415,6 +455,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
           <button data-testid="receiving-print-sheet" aria-label={say(`Print receive sheet ${grn.documentNumber}`, `打印入库单 ${grn.documentNumber}`)} onClick={() => setPrinting(true)} className={BUTTON.secondary}><Printer size={14} />{say("Print receive sheet", "打印入库单")}</button>
           {detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className={BUTTON.secondary}>{draftCopy("editDraft")}</a>}
           {detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className={BUTTON.secondary}>{say("View reversal", "查看冲销")}</button>}
+          {restToReceive(detail) && <button type="button" data-testid="receiving-receive-rest" onClick={() => navigate(receiveRestPath(detail))} className={BUTTON.secondary}>{draftCopy("receiveRest")}</button>}
           {grn.postingStatus === 'posted' && <RecordBillAction receiptId={grn.id} />}
           {detail.availableActions.canCancel && <button data-testid="receiving-cancel" disabled={saving} onClick={() => void cancelReceipt()} className={BUTTON.danger}>{draftCopy("cancelReceipt")}</button>}
           {operation === "reverse" && actionButton}

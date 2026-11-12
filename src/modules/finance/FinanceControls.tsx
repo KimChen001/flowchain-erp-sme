@@ -38,10 +38,23 @@ const STATUS_KEYS: Record<string, TranslationKey> = {
   recorded: "finance.status.recorded",
   voided: "finance.status.voided",
   variance_approved: "finance.status.variance_approved",
+  to_pay: "finance.status.to_pay",
 };
-// Finance statuses the shared tones do not know: an approved variance is done.
-const STATUS_TONES: Record<string, StatusTone> = { variance_approved: "success" };
+// Finance statuses the shared tones do not know: an approved variance is
+// done; an approved invoice still to pay is in progress.
+const STATUS_TONES: Record<string, StatusTone> = { variance_approved: "success", to_pay: "info" };
 export const financeStatusTone = (status: string): StatusTone => STATUS_TONES[status] || statusToneOf(status);
+
+// The status a supplier invoice shows. Once approved, where its payment
+// stands (to_pay, partially_settled, settled: the server's paymentStatus);
+// in exception with every difference approved, "Variance approved". The
+// stored status does not change.
+export const shownBillStatus = (row: { status?: unknown; matchStatus?: unknown; paymentStatus?: unknown }) => {
+  const status = String(row.status || "");
+  if (status === "approved" && row.paymentStatus) return String(row.paymentStatus);
+  if (status === "exception" && row.matchStatus === "variance_approved") return "variance_approved";
+  return status;
+};
 
 export function Notice({ children, tone = "warning" }: { children: ReactNode; tone?: "warning" | "success" }) {
   const colors = tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900";

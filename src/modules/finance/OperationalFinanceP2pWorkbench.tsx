@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
-import { AlertCircle, AlertTriangle, CheckCircle2, FileMinus, FileText, Inbox, MessageSquareWarning, PauseCircle, Plus, Send, ShieldCheck, Wallet } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Coins, FileMinus, FileText, Inbox, MessageSquareWarning, PauseCircle, Plus, Send, ShieldCheck, Wallet } from "lucide-react";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
@@ -12,7 +12,7 @@ import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
 import { apiErrorView, type ApiErrorView } from "../../lib/apiErrorText";
 import { formatCalendarDay, todayInTimeZone } from "../../lib/format";
-import { financeStatusTone } from "./FinanceControls";
+import { financeStatusTone, shownBillStatus } from "./FinanceControls";
 import { matchExceptionLabel } from "../../domain/procurement/variance-types";
 
 type Landing = {
@@ -76,6 +76,7 @@ const tokenKeys: Record<string, TranslationKey> = {
   resolved: "finance.status.resolved",
   cancelled: "finance.status.cancelled",
   variance_approved: "finance.status.variance_approved",
+  to_pay: "finance.status.to_pay",
   revise: "finance.action.revise",
   submit: "finance.action.submit",
   match: "finance.action.match",
@@ -177,10 +178,13 @@ const LIST_COPY = {
   exceptionsNote: ["Price or quantity differs from the PO or receipt", "价格或数量与采购订单、收货不一致"],
   matched: ["Matched, to approve", "已匹配待批准"],
   matchedNote: ["Matched and waiting for approval", "已匹配，等待批准"],
-  approved: ["Approved", "已批准"],
-  // Approving a bill in FlowChain records its payable, but a seeded or
-  // imported bill can be approved without one, so the card does not say so.
-  approvedNote: ["Approved by finance", "财务已批准"],
+  // Approved invoices by where their payment stands, from their payable
+  // (the server's paymentStatus). A seeded or imported invoice approved
+  // without a payable is in none of these and reads "Approved".
+  toPay: ["To pay", "待付款"],
+  toPayNote: ["Approved, nothing paid yet", "已批准，尚未付款"],
+  partlyPaid: ["Partly paid", "部分付款"],
+  partlyPaidNote: ["Approved and paid in part", "已批准，已付部分款项"],
   // The payables cards, as the receivables page has them.
   unpaid: ["To pay", "待付款"],
   unpaidNote: ["Approved, not yet paid in full", "已批准，尚未全额付款"],
@@ -243,7 +247,8 @@ const LIST_COPY = {
 
 // The statuses each list's filter offers, besides those on the page.
 const STATUS_OPTIONS: Record<string, string[]> = {
-  invoice: ["draft", "submitted", "matched", "exception", "approved", "cancelled"],
+  // to_pay, partially_settled and settled: approved invoices by payment state.
+  invoice: ["draft", "submitted", "matched", "exception", "approved", "to_pay", "partially_settled", "settled", "cancelled"],
   payable: ["outstanding", "overdue", "approved", "export_ready", "held", "partially_settled", "settled", "cancelled"],
   credit: [],
   match: [],
@@ -263,6 +268,8 @@ function FinanceList({
 }) {
   const { t, locale, language, timezone, formatNumber } = useI18n();
   const tr = (key: keyof typeof LIST_COPY) => LIST_COPY[key][language === "en-US" ? 0 : 1];
+  // "Next: Approve"; in Chinese the full-width colon, with no space after it.
+  const colon = language === "en-US" ? ": " : "：";
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<ListPayload | null>(null);
   const [error, setError] = useState<ApiErrorView | null>(null);
@@ -391,11 +398,14 @@ function FinanceList({
   return (
     <div className="space-y-5" data-testid={`operational-finance-${kind}-list`}>
       {invoices && (
-        <div className={metricGridClass} data-testid="supplier-invoice-metrics">
+        // Six cards: three rows of two on a phone, two rows of three wider.
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3" data-testid="supplier-invoice-metrics">
           <ActionableMetricCard label={tr("awaitingMatch")} value={count("submitted")} description={tr("awaitingMatchNote")} to="/app/procurement/bills?status=submitted" icon={Inbox} color={A.orange} />
           <ActionableMetricCard label={tr("exceptions")} value={count("exception")} description={tr("exceptionsNote")} to="/app/procurement/bills?status=exception" icon={AlertCircle} color={A.red} />
           <ActionableMetricCard label={tr("matched")} value={count("matched")} description={tr("matchedNote")} to="/app/procurement/bills?status=matched" icon={ShieldCheck} color={A.blue} />
-          <ActionableMetricCard label={tr("approved")} value={count("approved")} description={tr("approvedNote")} to="/app/procurement/bills?status=approved" icon={CheckCircle2} color={A.purple} />
+          <ActionableMetricCard label={tr("toPay")} value={count("to_pay")} description={tr("toPayNote")} to="/app/procurement/bills?status=to_pay" icon={Wallet} color={A.blue} />
+          <ActionableMetricCard label={tr("partlyPaid")} value={count("partially_settled")} description={tr("partlyPaidNote")} to="/app/procurement/bills?status=partially_settled" icon={Coins} color={A.orange} />
+          <ActionableMetricCard label={tr("paid")} value={count("settled")} description={tr("paidNote")} to="/app/procurement/bills?status=settled" icon={CheckCircle2} color={A.purple} />
         </div>
       )}
       {payables && (
@@ -472,8 +482,9 @@ function FinanceList({
                   const id = String(row.id || "");
                   // An invoice whose every match difference was approved is no
                   // longer an open variance: it reads "Variance approved" until
-                  // the invoice itself is approved.
-                  const rawStatus = statusOf(row) === "exception" && row.matchStatus === "variance_approved" ? "variance_approved" : statusOf(row);
+                  // the invoice itself is approved. Once approved it reads where
+                  // its payment stands: To pay, Partly paid or Paid.
+                  const rawStatus = shownBillStatus(row);
                   const next = actionsOf(row, ["cancel"]);
                   const varianceAmount = Number(row.varianceAmount || 0);
                   return (
@@ -501,7 +512,7 @@ function FinanceList({
                             </span>
                           )}
                         </div>
-                        {next.length > 0 && <div className="mt-1 hidden text-[11px] sm:block" style={{ color: A.sub }}>{tr("next")}: {next.join(" · ")}</div>}
+                        {next.length > 0 && <div className="mt-1 hidden text-[11px] sm:block" style={{ color: A.sub }}>{tr("next")}{colon}{next.join(" · ")}</div>}
                       </td>
                       <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                         <EntityLink kind="supplier_invoice" id={id} className={`${rowActionClass.primary} !no-underline`}>{tr("view")}</EntityLink>
@@ -550,7 +561,7 @@ function FinanceList({
                           <StatusChip label={statusText(rawStatus)} tone={statusToneOf(rawStatus)} />
                           {pastDue && <StatusChip label={statusText("overdue")} tone="danger" />}
                         </div>
-                        {next.length > 0 && <div className="mt-1 hidden text-[11px] sm:block" style={{ color: A.sub }}>{tr("next")}: {next.join(" · ")}</div>}
+                        {next.length > 0 && <div className="mt-1 hidden text-[11px] sm:block" style={{ color: A.sub }}>{tr("next")}{colon}{next.join(" · ")}</div>}
                       </td>
                       <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                         {billId ? <Link to={billFromPayables(billId)} className={`${rowActionClass.primary} !no-underline`}>{tr("view")}</Link> : <span style={{ color: A.gray2 }}>—</span>}

@@ -73,6 +73,9 @@ const zh: Record<string, string> = {
   "Line {n}": "第 {n} 行",
   "Variances are reviewed and resolved on the supplier invoice.": "差异在采购发票上复核和处理。",
   "Resolve it on the supplier invoice": "到采购发票上处理差异",
+  // Every difference approved: nothing left to resolve.
+  "Differences approved on {invoice}.": "差异已在 {invoice} 上批准。",
+  "Differences approved on the supplier invoice.": "差异已在采购发票上批准。",
 };
 
 function useDetailCopy() {
@@ -391,9 +394,13 @@ export function ProcurementDocumentDetailPage({
     record?.exceptionReason ||
     relatedMatch?.blockingReason ||
     relatedMatch?.exceptionReason;
+  // Every difference approved (the read model's variance_approved, also for
+  // invoices approved before it was stored): the variance stays on record,
+  // but there is nothing left to review or resolve.
+  const varianceApproved = [status, match?.matchStatus, record?.matchStatus].includes("variance_approved");
   // With lines, the reason comes from them; the stored reason speaks of PO and
   // invoice totals.
-  const blockingReason = matchLines
+  const blockingReason = varianceApproved ? "" : matchLines
     ? match?.lineMatchStatus === "variance" ? "One or more invoice lines differ from the purchase order price or the quantity received. Review the variance before proceeding." : ""
     : storedReason;
 
@@ -496,7 +503,12 @@ export function ProcurementDocumentDetailPage({
                 )}
               </div>
             )}
-            {!blockingReason && canResolveOnInvoice && (
+            {varianceApproved && (
+              <div className="mt-4 rounded-lg bg-emerald-50 px-3 py-3 text-sm text-emerald-900" data-testid="three-way-match-variance-approved">
+                {invoiceNumber ? copy("Differences approved on {invoice}.", { invoice: invoiceNumber }) : copy("Differences approved on the supplier invoice.")}
+              </div>
+            )}
+            {!blockingReason && !varianceApproved && canResolveOnInvoice && (
               <p className="mt-4 text-xs" style={{ color: A.sub }}>{copy("Variances are reviewed and resolved on the supplier invoice.")}</p>
             )}
             {matchLines && match ? (

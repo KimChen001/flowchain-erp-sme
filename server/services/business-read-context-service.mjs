@@ -1,6 +1,7 @@
 import { DEFAULT_TENANT_TIMEZONE } from '../domain/tenant-calendar-day.mjs'
 import { orderHasOpenDemand } from '../repositories/db-sales-order-read-repository.mjs'
 import { buildFirstRunChecklist, buildTodayWork, countDocumentsUpdatedToday } from '../domain/today-work.mjs'
+import { billPaymentStatus } from '../domain/operational-finance-read-service.mjs'
 
 const clone = value => structuredClone(value)
 const array = value => Array.isArray(value) ? value : []
@@ -105,14 +106,18 @@ const route = (path, id) => `${path}/${encodeURIComponent(id)}`
 // "未命名客户"; that placeholder is not a recorded name, so the row shows none.
 const UNNAMED_CUSTOMER = '未命名客户'
 const recordedCustomer = name => name && name !== UNNAMED_CUSTOMER ? name : null
-function homeDocuments(context, customerInvoices = []) {
+// An approved supplier invoice shows where its payment stands (to_pay,
+// partially_settled, settled), as the supplier invoice list shows it, when
+// its payable's status was read (payableStatuses: invoice id to status).
+const billStatus = (row, payableStatuses) => billPaymentStatus(row.status, payableStatuses?.[row.id]) || row.status
+function homeDocuments(context, customerInvoices = [], payableStatuses = {}) {
   const rows = value => Array.isArray(value) ? value : []
   return [
     ...rows(context.purchaseRequests).map(row => ({ type: 'purchase_request', id: row.id, number: row.number || row.id, status: row.status, partner: row.lines?.[0]?.supplierSnapshot?.supplierName || null, amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/requests', row.id) })),
     ...rows(context.rfqs).map(row => ({ type: 'rfq', id: row.id, number: row.number || row.id, status: row.status, partner: null, amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/rfq', row.id) })),
     ...rows(context.purchaseOrders).map(row => ({ type: 'purchase_order', id: row.id, number: row.number || row.orderNumber || row.id, status: row.status, partner: row.supplierSnapshot?.supplierName || row.supplierName || null, amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/orders', row.id) })),
     ...rows(context.receipts).map(row => ({ type: 'receipt', id: row.id, number: row.documentNumber || row.id, status: row.postingStatus || row.status, partner: row.supplierName || null, amount: null, currency: '', updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/receiving', row.id) })),
-    ...rows(context.supplierInvoices).map(row => ({ type: 'supplier_invoice', id: row.id, number: row.invoiceNumber || row.id, status: row.status, partner: row.supplierName || null, amount: amountOf(row.totalAmount ?? row.amount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/bills', row.id) })),
+    ...rows(context.supplierInvoices).map(row => ({ type: 'supplier_invoice', id: row.id, number: row.invoiceNumber || row.id, status: billStatus(row, payableStatuses), partner: row.supplierName || null, amount: amountOf(row.totalAmount ?? row.amount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/bills', row.id) })),
     ...rows(context.salesOrders).map(row => ({ type: 'sales_order', id: row.id || row.salesOrderId, number: row.orderNumber || row.id, status: salesOrderHomeStatus(row), partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/orders', row.id || row.salesOrderId) })),
     ...rows(customerInvoices).map(row => ({ type: 'customer_invoice', id: row.id, number: row.invoiceNumber || row.id, status: row.status, partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/invoices', row.id) })),
   ].filter(row => row.id)
@@ -158,7 +163,7 @@ export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAUL
     receivables: sources.receivables,
     contracts: sources.contracts,
   }, { now, timeZone })
-  const documents = homeDocuments(context, sources.recentCustomerInvoices)
+  const documents = homeDocuments(context, sources.recentCustomerInvoices, sources.billPayableStatuses)
   const todayChanges = countDocumentsUpdatedToday(documents, { now, timeZone })
   const recentDocuments = [...documents]
     .sort((a, b) => instant(b.updatedAt) - instant(a.updatedAt) || a.type.localeCompare(b.type) || String(a.id).localeCompare(String(b.id)))

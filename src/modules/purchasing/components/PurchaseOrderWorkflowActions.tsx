@@ -55,6 +55,13 @@ const COPY: Record<string, [string, string]> = {
   cancelReason: ["Why is it cancelled?", "取消原因"],
   goBack: ["Go back", "返回"],
   done: ["Purchase order updated", "采购订单已更新"],
+  // What was done, with the order's number ({po}), in the words of the status it now has.
+  doneSubmit: ["Submitted {po} for approval", "已提交审批 {po}"],
+  doneApprove: ["Approved {po}", "已批准 {po}"],
+  doneReject: ["Rejected {po}", "已驳回 {po}"],
+  doneIssue: ["Issued {po}", "已下达 {po}"],
+  doneCancel: ["Cancelled {po}", "已取消 {po}"],
+  doneClose: ["Closed {po}", "已关闭 {po}"],
   failed: ["The purchase order could not be updated", "采购订单更新失败"],
   issueNote: ["Print or save the PO document and send it yourself, then mark it issued.", "请打印或另存采购订单文件并自行发送，然后标记为已下达。"],
   receive: ["Receive", "收货"],
@@ -73,12 +80,15 @@ const STALE_CODES = new Set(["SYNC_VERSION_CONFLICT", "PURCHASE_ORDER_WORKFLOW_C
 
 export function PurchaseOrderWorkflowActions({
   poId,
+  number,
   status,
   version,
   onChanged,
   showNote = true,
 }: {
   poId: string;
+  // The number the order shows (PO-202611-0009), for the message after an action.
+  number?: string;
   status: string;
   version?: number;
   onChanged: () => void;
@@ -114,7 +124,9 @@ export function PurchaseOrderWorkflowActions({
         method: "POST",
         body: JSON.stringify({ expectedVersion: version, reason }),
       });
-      toast.success(tr("done"));
+      // "Issued PO-202611-0009"; the general message when the number is not known.
+      const doneKey = `done${action[0].toUpperCase()}${action.slice(1)}`;
+      toast.success(number && COPY[doneKey] ? tr(doneKey).replace("{po}", number) : tr("done"));
       onChanged();
     } catch (error) {
       if (error instanceof ApiError && error.status === 409 && STALE_CODES.has(error.code || "")) {
@@ -197,8 +209,9 @@ export function PurchaseOrderReceiveAction({ poId, status, showNote = true }: { 
 // The notes for the actions the PO header shows, in the order of its buttons,
 // for a page that shows them under the buttons instead of between them. Same
 // conditions as the buttons; billable is whether a supplier invoice can be
-// recorded for the order's status.
-export function usePurchaseOrderActionNotes({ status, version }: { status: string; version?: number }) {
+// recorded for the order's status. nothingToInvoice: every line is already
+// invoiced, so the page shows no supplier invoice entry and no note for it.
+export function usePurchaseOrderActionNotes({ status, version, nothingToInvoice = false }: { status: string; version?: number; nothingToInvoice?: boolean }) {
   const { language } = useI18n();
   const tr = (key: string) => COPY[key][language === "en-US" ? 0 : 1];
   const permissions = usePermissionSet();
@@ -206,6 +219,6 @@ export function usePurchaseOrderActionNotes({ status, version }: { status: strin
   const notes: string[] = [];
   if (rules.canReceive(status)) notes.push(tr("receiveNote"));
   if (Number.isInteger(version) && (ACTIONS_BY_STATUS[status] || []).includes("issue") && permissions?.has(PERMISSION.issue(status))) notes.push(tr("issueNote"));
-  if (rules.canRecordBill(status)) notes.push(tr("billNote"));
+  if (rules.canRecordBill(status) && !nothingToInvoice) notes.push(tr("billNote"));
   return notes;
 }

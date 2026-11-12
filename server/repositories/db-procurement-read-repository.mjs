@@ -725,13 +725,21 @@ async function readReceivingDocument(client, { id, tenantId }) {
   })[0] || null
 }
 
+// A supplier invoice with what decides how its match reads (settledMatchStatus
+// in procurement-read-model.mjs): its own workflow status and how its match
+// exceptions were decided, as counts.
+const INVOICE_DOCUMENT_INCLUDE = Object.freeze({ lines: true, matchExceptions: { select: { status: true } } })
+function mapInvoiceWithDecisions(record = {}) {
+  return { ...mapSupplierInvoice(record), workflowStatus: text(record.status), matchExceptions: matchExceptionCounts(record) }
+}
+
 async function readSupplierInvoiceDocument(client, { id, tenantId }) {
   const record = await client.supplierInvoice.findFirst({
     where: documentWhere(tenantId, id),
-    include: { lines: true },
+    include: INVOICE_DOCUMENT_INCLUDE,
   })
   if (!record) return null
-  return buildProcurementSupplierInvoices({ supplierInvoices: [mapSupplierInvoice(record)] })[0] || null
+  return buildProcurementSupplierInvoices({ supplierInvoices: [mapInvoiceWithDecisions(record)] })[0] || null
 }
 
 async function readThreeWayMatchDocument(client, { id, tenantId }) {
@@ -739,7 +747,7 @@ async function readThreeWayMatchDocument(client, { id, tenantId }) {
   if (!matchId?.[1]) return null
   const invoice = await client.supplierInvoice.findFirst({
     where: documentWhere(tenantId, matchId[1]),
-    include: { lines: true },
+    include: INVOICE_DOCUMENT_INCLUDE,
   })
   if (!invoice) return null
 
@@ -760,7 +768,7 @@ async function readThreeWayMatchDocument(client, { id, tenantId }) {
 
   // The receipt read here gives the match its GRN number (documentNumber).
   return buildProcurementThreeWayMatches({
-    supplierInvoices: [mapSupplierInvoice(invoice)],
+    supplierInvoices: [mapInvoiceWithDecisions(invoice)],
     purchaseOrders: purchaseOrder ? [mapPurchaseOrder(purchaseOrder)] : [],
     receivingDocs: receivingDocument ? [mapReceivingDocument(receivingDocument)] : [],
   })[0] || null
@@ -804,7 +812,7 @@ async function loadProcurementSnapshot(client, filters = {}) {
     client.supplierQuotation.findMany({ where, orderBy: [{ createdAt: 'desc' }], take }),
     client.purchaseOrder.findMany({ where, include: { lines: true }, orderBy: [{ createdAt: 'desc' }], take }),
     client.receivingDocument.findMany({ where, include: { lines: true }, orderBy: [{ createdAt: 'desc' }], take }),
-    client.supplierInvoice.findMany({ where, include: { lines: true }, orderBy: [{ createdAt: 'desc' }], take }),
+    client.supplierInvoice.findMany({ where, include: INVOICE_DOCUMENT_INCLUDE, orderBy: [{ createdAt: 'desc' }], take }),
     client.documentLink.findMany({ where, orderBy: [{ createdAt: 'desc' }], take }),
     client.procurementFollowup.findMany({ where, orderBy: [{ createdAt: 'desc' }], take }),
   ])
@@ -830,7 +838,9 @@ async function loadProcurementSnapshot(client, filters = {}) {
     // quantity it invoices on each PO line, which the PO list (whose read
     // leaves invoice lines out) uses to tell an approved invoice from an open
     // variance and a partly invoiced order from a fully invoiced one.
-    supplierInvoices: supplierInvoices.map((record) => ({ ...mapSupplierInvoice(record), ...withNumber('poNumber', poNumbers, record.relatedPoId), ...withNumber('grnNumber', grnNumbers, record.relatedGrnId), workflowStatus: text(record.status), poLineQuantities: invoicedQuantitiesByPoLine(record) })),
+    // matchExceptions: how its match exceptions were decided, so a variance
+    // already decided reads variance_approved (settledMatchStatus).
+    supplierInvoices: supplierInvoices.map((record) => ({ ...mapInvoiceWithDecisions(record), ...withNumber('poNumber', poNumbers, record.relatedPoId), ...withNumber('grnNumber', grnNumbers, record.relatedGrnId), poLineQuantities: invoicedQuantitiesByPoLine(record) })),
     documentLinks: documentLinks.map(mapDocumentLink).filter((link) => link.sourceType && link.sourceId && link.targetType && link.targetId),
     procurementFollowups: procurementFollowups.map(mapFollowup).filter((item) => item.id && item.documentType && item.documentId),
   }
@@ -862,13 +872,18 @@ function invoicedQuantitiesByPoLine(record = {}) {
   return quantities
 }
 
-export function purchaseOrderInvoiceProgress(record = {}) {
+// How an invoice's match exceptions were decided, as counts.
+function matchExceptionCounts(record = {}) {
   const exceptions = asArray(record.matchExceptions)
   const decided = (status) => exceptions.filter((entry) => text(entry.status) === status).length
+  return { count: exceptions.length, open: decided('open'), approved: decided('approved'), rejected: decided('rejected') }
+}
+
+export function purchaseOrderInvoiceProgress(record = {}) {
   const payable = record.payableObligation
   return {
     workflowStatus: text(record.status),
-    matchExceptions: { count: exceptions.length, open: decided('open'), approved: decided('approved'), rejected: decided('rejected') },
+    matchExceptions: matchExceptionCounts(record),
     payment: payable
       ? {
           status: text(payable.status),

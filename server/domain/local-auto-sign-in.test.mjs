@@ -20,12 +20,15 @@ test('the switch is reported only by the local development status route, and onl
   assert.match(launcher, /FLOWCHAIN_LOCAL_AUTO_SIGN_IN: process\.argv\.includes\("--no-auto-sign-in"\) \? "false" : "true"/)
 })
 
-test('the sign-in page signs in through the local outbox link, never around it', async () => {
+test('the sign-in page signs in through the local-only direct route, which production never has', async () => {
   const page = await read('src/app/SignInScreens.tsx')
   const helper = page.slice(page.indexOf('async function signInLocally'), page.indexOf('// In local development the outbox holds the email'))
-  assert.match(helper, /\/api\/auth\/email-link"/)
-  assert.match(helper, /\/api\/dev\/sign-in-links\?email=/)
-  assert.match(helper, /\/api\/auth\/email-link\/confirm"/)
+  // The direct route: no email link, so no email-link rate limit.
+  assert.match(helper, /apiJson<\{ token: string; user: WorkspaceUser \}>\("\/api\/auth\/login"/)
+  const routes = await read('server/bootstrap/session-routes.mjs')
+  assert.match(routes, /url\.pathname === "\/api\/auth\/login"\) \{\s*if \(!directEmailLoginEnabled\(env\)\) \{\s*send\(res, 404/)
+  const contract = await read('server/domain/local-development-contract.mjs')
+  assert.match(contract, /if \(String\(env\.FLOWCHAIN_DEPLOYMENT_PROFILE \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'production'\) return false/)
   // Only when the local status says so, and not right after a sign-out.
   assert.match(page, /const quickSignIn = Boolean\(localStatus\?\.autoSignIn && onSignedIn\);/)
   assert.match(page, /if \(quickSignIn && !justSignedOut && first && autoState === "idle"\)/)

@@ -76,6 +76,8 @@ test("a bill to pay is paid in two parts and a wrong payment is voided", async (
   await expect(page.getByTestId("payment-record-panel")).toContainText(/Enter the amount\.|请输入金额。/);
   await page.getByTestId("payment-record-panel").getByRole("button", { name: /^(Close|关闭)$/ }).click();
   await recordPayment(page, { amount: (offered) => (offered / 2).toFixed(2), reference: "CHK-1001", status: /Partly paid|部分付款/ });
+  // The form closes and a toast says what was recorded.
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: /Payment of .+ recorded|已登记付款 / })).toBeVisible();
   await expect(payable.getByTestId("payment-row")).toHaveCount(1);
   await expect(payable).toContainText(/Partly paid|部分付款/);
   // The form offers what is still outstanding: paying it settles the bill.
@@ -94,10 +96,19 @@ test("a bill to pay is paid in two parts and a wrong payment is voided", async (
   await expect(payable).toContainText(/Partly paid|部分付款/);
   await expect(page.getByTestId("payment-record")).toBeVisible();
 
-  // Bills to pay link back to their bill, which links back to the payables.
+  // The supplier invoice list says where the payment stands, not "Approved",
+  // and its Partly paid card lists it.
+  await page.goto("/app/procurement/bills?status=partially_settled");
+  const billRow = page.getByTestId("operational-finance-invoice-list").locator("tbody tr").filter({ hasText: "UI-PAY-BILL" });
+  await expect(billRow).toContainText(/Partly paid|部分付款/);
+  await expect(page.getByTestId("supplier-invoice-metrics")).toContainText(/Partly paid|部分付款/);
+
+  // Bills to pay link back to their bill, which opens at its payment card
+  // and links back to the payables.
   await page.goto("/app/finance/payables");
   await page.getByTestId("operational-finance-payable-list").getByRole("link", { name: "AP-UI-PAY-BILL" }).click();
   await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}\?returnTo=%2Fapp%2Ffinance%2Fpayables$/);
+  await expect(page.getByTestId("supplier-invoice-payable")).toBeInViewport();
   await page.getByTestId("back-to-payables").click();
   await expect(page).toHaveURL(/\/app\/finance\/payables$/);
 });

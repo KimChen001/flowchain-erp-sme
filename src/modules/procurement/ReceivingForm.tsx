@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
+import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { FieldError, FormActionBar, FormHeader, FormLineCard, FormSection, RequiredMark, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
@@ -54,6 +55,9 @@ const COPY: Record<string, [string, string]> = {
   saveDraft: ["Save draft", "保存草稿"],
   // Submitting does not post: the receipt page then offers Post receipt.
   saveSubmit: ["Save and submit", "保存并提交"],
+  // After saving, with the receipt's number ({doc}).
+  doneSubmit: ["Submitted {doc}", "已提交 {doc}"],
+  doneDraft: ["Saved draft {doc}", "已保存草稿 {doc}"],
   lineLabel: ["Line {n}", "第 {n} 行"],
   lineRequired: ["Select at least one line to receive.", "请至少选择一行收货。"],
   acceptedPositive: ["Accepted quantity must be greater than zero.", "合格数量必须大于零。"],
@@ -276,6 +280,8 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
       setCreatedId(saved.entityId);
       setDraft({ ...(draft || { warehouse: null, arrivedAt: null }), ...saved.receivingDocument });
       if (submit) await receivingApi.submit(saved.entityId, saved.receivingDocument.version, createSecureClientMutationId("receipt-submit"));
+      // "Submitted GRN-…" / "Saved draft GRN-…": the number the receipt now has.
+      toast.success(tr(submit ? "doneSubmit" : "doneDraft").replace("{doc}", saved.receivingDocument.documentNumber || saved.entityId));
       navigate(`/app/procurement/receiving/${encodeURIComponent(saved.entityId)}`);
     } catch (error) {
       setServerError(serverMessage(error));

@@ -66,7 +66,8 @@ test('finding 7: the PO list row menu offers Receive and Record supplier invoice
   assert.match(actions, /export function usePurchaseOrderEntryRules\(\)/)
   assert.match(actions, /const rules = usePurchaseOrderEntryRules\(\);\n  const navigate = useNavigate\(\);\n  if \(!rules\.canReceive\(status\)\) return null;/)
   assert.match(page, /entryRules\.canReceive\(order\.status\) && <button type="button" data-testid=\{`po-row-receive-\$\{order\.po\}`\}/)
-  assert.match(page, /entryRules\.canRecordBill\(order\.status\) && <button type="button" data-testid=\{`po-row-record-bill-\$\{order\.po\}`\}/)
+  // Not once every line is invoiced (round 7b, finding 4).
+  assert.match(page, /entryRules\.canRecordBill\(order\.status\) && !fullyInvoiced\(order, facts\) && <button type="button" data-testid=\{`po-row-record-bill-\$\{order\.po\}`\}/)
 })
 
 test('finding 8: the promised dates table turns into phone cards with a full-size change button', () => {

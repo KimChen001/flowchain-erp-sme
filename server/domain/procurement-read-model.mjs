@@ -372,6 +372,42 @@ function receiptNumberIndex(data = {}) {
     .filter(([, number]) => number))
 }
 
+// The server's word for a match whose every difference was approved; the
+// variance amount stays on record, but nothing is left to review.
+const MATCH_VARIANCE_APPROVED = 'variance_approved'
+// An invoice's own statuses at or past approval. An invoice with a variance is
+// approved only after each of its exceptions is, so approving it accepted them.
+const APPROVED_INVOICE_STATUSES = new Set(['approved', 'held', 'paid', 'partially_paid', 'settled', 'posted'])
+// Stored match statuses that say the match found a variance (codes, or the
+// Chinese labels older rows and the database read carry).
+const VARIANCE_MATCH_STATUS = /^(exception|variance|mismatch)$|差异|异常|待复核/i
+// Stored match statuses that say it matched without one.
+const MATCHED_STATUS = /^(matched|resolved|auto_matched)$|已匹配|自动匹配|已解决/i
+
+// Whether every exception on the invoice's match was approved, from the
+// counts the read carries ({ count, open, approved, rejected }) or the rows.
+function exceptionsAllApproved(exceptions) {
+  if (Array.isArray(exceptions)) return exceptions.length > 0 && exceptions.every((entry) => text(entry?.status) === 'approved')
+  if (!exceptions || typeof exceptions !== 'object') return false
+  const count = toNumber(exceptions.count, 0)
+  return count > 0 && toNumber(exceptions.approved, 0) === count
+}
+
+// The match status a supplier invoice reads with. A variance whose invoice is
+// approved (or later), or whose exceptions were all approved, reads
+// variance_approved, also on rows decided before the server began to store
+// that status (UI review 7b, finding 3). The rule is the PO page's
+// (invoiceVarianceState in purchaseOrderStory.ts). Read time only: nothing
+// stored changes. Any other status is returned as stored.
+export function settledMatchStatus(invoice = {}, varianceAmount = 0) {
+  const stored = text(invoice.matchStatus)
+  if (stored === MATCH_VARIANCE_APPROVED) return stored
+  const hasVariance = VARIANCE_MATCH_STATUS.test(stored) || (Math.abs(toNumber(varianceAmount, 0)) >= MONEY_EPSILON && !MATCHED_STATUS.test(stored))
+  if (!hasVariance) return stored
+  const workflowStatus = text(invoice.workflowStatus)
+  return APPROVED_INVOICE_STATUSES.has(workflowStatus) || exceptionsAllApproved(invoice.matchExceptions) ? MATCH_VARIANCE_APPROVED : stored
+}
+
 export function buildProcurementSupplierInvoices(data = {}) {
   const numbers = numberIndex(data)
   const receiptNumbers = receiptNumberIndex(data)
@@ -406,7 +442,8 @@ export function buildProcurementSupplierInvoices(data = {}) {
       dueDate: text(invoice.dueDate),
       amount,
       currency: text(invoice.currency),
-      matchStatus: text(invoice.matchStatus, varianceAmount ? '存在差异' : '待匹配'),
+      // As stored, except a variance already decided (settledMatchStatus).
+      matchStatus: settledMatchStatus({ ...invoice, matchStatus: text(invoice.matchStatus, varianceAmount ? '存在差异' : '待匹配') }, varianceAmount),
       invoiceStatus: text(invoice.status || invoice.invoiceStatus, '待处理'),
       varianceAmount,
       relatedDocuments: compactRelatedDocuments([
@@ -671,8 +708,8 @@ export function buildProcurementThreeWayMatches(data = {}) {
       status,
       // Every difference approved ("variance_approved"): the amount stays on
       // record, but nothing is left to review.
-      blockingReason: varianceAmount && status !== 'variance_approved' ? 'PO 金额与发票金额存在差异，需复核后处理。' : '',
-      exceptionReason: varianceAmount && status !== 'variance_approved' ? `差异金额 ${varianceAmount}` : '',
+      blockingReason: varianceAmount && status !== MATCH_VARIANCE_APPROVED ? 'PO 金额与发票金额存在差异，需复核后处理。' : '',
+      exceptionReason: varianceAmount && status !== MATCH_VARIANCE_APPROVED ? `差异金额 ${varianceAmount}` : '',
       // Line by line: one entry per invoice line, against its PO line.
       lines,
       ...lineTotals,
@@ -830,7 +867,8 @@ export function buildProcurementSummary(data = {}) {
     openPoCount: documents.filter((item) => item.documentType === 'po' && isOpenStatus(item.status)).length,
     pendingReceivingCount: documents.filter((item) => item.documentType === 'grn' && isOpenStatus(item.status)).length,
     invoiceExceptionCount: documents.filter((item) => item.documentType === 'invoice' && item.matchStatus !== 'variance_approved' && (toNumber(item.varianceAmount) !== 0 || /差异|异常|待复核/.test(item.matchStatus))).length,
-    threeWayMatchExceptionCount: documents.filter((item) => item.documentType === 'threeWayMatch' && toNumber(item.varianceAmount) !== 0).length,
+    // A match whose differences were all approved keeps its variance amount but is no exception.
+    threeWayMatchExceptionCount: documents.filter((item) => item.documentType === 'threeWayMatch' && item.matchStatus !== MATCH_VARIANCE_APPROVED && toNumber(item.varianceAmount) !== 0).length,
     // Never added across currencies: with several currencies there is no total.
     totalOpenAmount: openAmountCurrency.currencies.length > 1 ? null : openAmountDocuments.reduce((sum, item) => sum + toNumber(item.amount, 0), 0),
     currency: openAmountCurrency.currency,

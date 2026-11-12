@@ -138,6 +138,21 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
   await expect(page).toHaveURL(new RegExp(`${firstItem.href.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
 });
 
+test("AI priorities lists the rows Today shows first, every kind of work, with their dates", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/app/overview/risks");
+  const today = page.getByTestId("today-work-list").getByTestId("today-work-item");
+  await expect(today.first()).toBeVisible();
+  const todayRows = await today.evaluateAll((rows) => rows.map((row) => `${row.getAttribute("data-kind")} ${row.querySelector("a")?.textContent?.trim()}`));
+  await page.goto("/app/overview/ai");
+  const priorities = page.getByTestId("ai-priorities-list").locator("li");
+  await expect(priorities.first()).toBeVisible();
+  expect(await priorities.evaluateAll((rows) => rows.map((row) => `${row.getAttribute("data-kind")} ${row.querySelector("a")?.textContent?.trim()}`))).toEqual(todayRows);
+  // More than overdue orders: the walkthrough has other kinds of work.
+  expect(new Set(todayRows.map((row) => row.split(" ")[0])).size).toBeGreaterThan(1);
+  await expect(priorities.first().getByTestId("ai-priorities-date")).not.toBeEmpty();
+});
+
 test("Today stays in Chinese for a Chinese reader, with the same rows", async ({ page }) => {
   const headers = await signIn(page, "zh-CN");
   const overview: Overview = await (await page.request.get("/api/home/overview", { headers })).json();

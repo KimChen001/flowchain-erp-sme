@@ -21,7 +21,8 @@ const COPY = {
   all: ["Matches", "匹配记录"],
   allNote: ["Supplier invoices checked against PO and receipt", "已与采购订单和收货核对的发票"],
   matched: ["Matched", "已匹配"],
-  matchedNote: ["Amounts and quantities agree", "金额与数量一致"],
+  // The tile also counts matches whose differences were all approved.
+  matchedNote: ["Amounts agree, or differences approved", "金额一致，或差异已批准"],
   pending: ["Pending", "待处理"],
   pendingNote: ["Waiting for a receipt or a review", "等待收货或复核"],
   variance: ["Variances", "差异"],
@@ -56,8 +57,10 @@ type MatchRow = ProcurementDocument & { grnNumber?: string };
 
 type Result = "matched" | "pending" | "variance";
 // The server's match status, a code or its Chinese label, read as one of three results.
-// A match whose every difference was approved ("variance_approved") is
-// resolved, though its variance amount stays on record.
+// A match whose every difference was approved ("variance_approved", which the
+// read model also says of an invoice approved before that status was stored)
+// is resolved, though its variance amount stays on record; the Matched tile
+// says it counts them.
 const resultOf = (row: ProcurementDocument): Result => {
   const tone: StatusTone = statusToneOf(row.matchStatus || row.status);
   if (row.matchStatus === "variance_approved" || row.status === "variance_approved") return "matched";
@@ -194,7 +197,8 @@ export function ThreeWayMatchListPage() {
                       </div>
                     </td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row.invoiceAmount, row.currency, locale)}</td>
-                    <td className={tdNumericRightClass} style={{ color: variance ? "#b91c1c" : A.sub }}>{money(row.varianceAmount, row.currency, locale)}</td>
+                    {/* Red only while the variance waits on a decision; an approved one stays on record in gray. */}
+                    <td className={tdNumericRightClass} style={{ color: variance && resultOf(row) === "variance" ? "#b91c1c" : A.sub }}>{money(row.varianceAmount, row.currency, locale)}</td>
                     <td className={`${tdNameClass} min-w-[160px]`}>
                       <StatusChip label={copy(row.matchStatus || row.status || "—")} tone={RESULT_TONE[resultOf(row)]} />
                       {reason && <div className="mt-1 max-w-[260px] whitespace-normal text-[11px] leading-4 text-amber-800">{copy(reason)}</div>}

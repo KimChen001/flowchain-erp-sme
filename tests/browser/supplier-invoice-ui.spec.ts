@@ -126,8 +126,18 @@ test("one note approves a price difference and the amount difference it causes",
   await expect(amount).toContainText("Supplier raised the price; buyer agreed");
   await expect(match).toContainText(/Variance approved|差异已批准/);
   await expect(page.getByTestId("supplier-invoice-variance-reason")).toHaveCount(0);
+  // The header no longer reads "Exception", and a toast leads back up to Approve.
+  await expect(page.getByTestId("supplier-invoice-ready-to-approve")).toHaveText(/Variance approved, ready to approve|差异已批准，待批准/);
+  await expect(page.getByTestId("supplier-invoice-status")).not.toContainText(/^(Exception|异常)$/);
+  const toast = page.locator("[data-sonner-toast]").filter({ hasText: /Differences approved\. Next: approve the invoice|差异已批准，下一步：批准发票/ });
+  await expect(toast).toBeVisible();
+  await toast.getByRole("button", { name: /Go to Approve|前往批准/ }).click();
+  await expect(page.getByTestId("invoice-approve")).toBeFocused();
   await run(page, "invoice-approve");
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: /Approved UI-INV-PRICE|已批准 UI-INV-PRICE/ })).toBeVisible();
   await expect(page.getByTestId("supplier-invoice-payable")).toBeVisible();
+  // Approved, nothing paid yet: the invoice reads "To pay".
+  await expect(page.getByTestId("supplier-invoice-status")).toContainText(/To pay|待付款/);
   await expect(page.getByTestId("supplier-invoice-next")).toContainText(/Next|下一步/);
 });
 

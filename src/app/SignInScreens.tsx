@@ -233,17 +233,13 @@ function takeLocalSignedOut() {
   }
 }
 
-// Local development only: the sign-in steps done for the person, through the
-// same local-only path the page offers by hand: ask for a link, read it from
-// the local outbox, confirm it. Off local development the outbox endpoint
-// answers 404, so this cannot sign anyone in.
+// Local development only: the local account is signed in through the
+// direct local sign-in route (/api/auth/login), which exists only in local
+// development and tests and never under the production profile. It creates
+// the session without an email link, so repeated local sign-ins never meet
+// the email-link limit (five links an hour per address).
 async function signInLocally(email: string) {
-  await apiJson("/api/auth/email-link", { method: "POST", body: JSON.stringify({ email }) });
-  const { links } = await apiJson<{ links: Array<{ url: string }> }>(`/api/dev/sign-in-links?email=${encodeURIComponent(email)}`);
-  const link = links[0]?.url ? new URL(links[0].url, window.location.origin) : null;
-  const token = link?.searchParams.get("token") || "";
-  if (!token) throw new Error("No local sign-in link");
-  const result = await apiJson<{ token: string; user: WorkspaceUser }>("/api/auth/email-link/confirm", { method: "POST", body: JSON.stringify({ token }) });
+  const result = await apiJson<{ token: string; user: WorkspaceUser }>("/api/auth/login", { method: "POST", body: JSON.stringify({ email }) });
   localStorage.setItem(AUTH_TOKEN_KEY, result.token);
   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(result.user));
   return result;

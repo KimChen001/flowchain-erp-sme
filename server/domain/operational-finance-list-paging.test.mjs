@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createOperationalFinanceO2cReadService } from './operational-finance-o2c-read-service.mjs'
-import { createOperationalFinanceReadService, pagedInGroups } from './operational-finance-read-service.mjs'
+import { billPaymentStatus, createOperationalFinanceReadService, pagedInGroups } from './operational-finance-read-service.mjs'
 
 // 2026-11-10 screenshot review: the receivables and customer invoice lists
 // showed the server's first 25 records as the whole set ("25 total", "Open
@@ -200,6 +200,68 @@ test('payables page like receivables: overdue first, true total, cards over ever
   assert.deepEqual((await read.listPayables({ sort: 'attention', search: 'acme' }, { identity })).items.map((row) => row.obligationNumber), ['AP-SOON', 'AP-HELD', 'AP-PAID'])
   // A paid payable offers no payment.
   assert.deepEqual(result.items.find((row) => row.obligationNumber === 'AP-PAID').availableActions, [])
+})
+
+// 2026-11-11 walk: every approved supplier invoice read "Approved" in the
+// list and its card read "Approved 4", though two were paid. The list now
+// says where each approved invoice's payment stands, from its payable, and
+// its cards count to pay, partly paid and paid; each card's filter lists
+// what it counts. The stored status stays "approved".
+test('the supplier invoice list shows and counts approved invoices by where their payment stands', async () => {
+  const bill = (number, status, payableStatus, created) => ({
+    id: `BILL-${number}`, tenantId: TENANT, invoiceNumber: number, supplierName: 'Foods 1 vendor', status, matchStatus: status === 'exception' ? 'variance_approved' : 'matched',
+    currency: 'USD', totalAmount: '19.6000', invoiceDate: day('2026-11-11'), dueDate: day('2026-12-11'), createdAt: day(created), version: 2,
+    payableObligation: payableStatus ? { status: payableStatus } : null,
+  })
+  const bills = [
+    bill('INV-A001', 'approved', 'settled', '2026-11-01'),
+    bill('INV-B002', 'approved', 'partially_settled', '2026-11-02'),
+    bill('INV-C003', 'approved', 'approved', '2026-11-03'),
+    bill('INV-D004', 'approved', 'held', '2026-11-04'),
+    bill('INV-E005', 'approved', null, '2026-11-05'),
+    bill('INV-F006', 'exception', null, '2026-11-06'),
+    bill('INV-G007', 'approved', 'cancelled', '2026-11-07'),
+  ]
+  const calls = []
+  const prisma = {
+    tenant: { findUnique: async () => ({ timezone: 'Europe/London' }) },
+    user: { findFirst: async () => structuredClone(userWith(PERMISSIONS)) },
+    supplierInvoice: model(bills, calls, 'supplierInvoice'),
+    financeMatchException: { groupBy: async () => [] },
+  }
+  const read = createOperationalFinanceReadService({ prisma, capabilities: { 'supplier-invoice': { enabled: true } }, now: () => NOW })
+  const result = await read.listSupplierInvoices({ pageSize: '50' }, { identity })
+  const shown = Object.fromEntries(result.items.map((row) => [row.invoiceNumber, [row.status, row.paymentStatus]]))
+  assert.deepEqual(shown, {
+    'INV-A001': ['approved', 'settled'],
+    'INV-B002': ['approved', 'partially_settled'],
+    'INV-C003': ['approved', 'to_pay'],
+    // Held from payment: still to pay.
+    'INV-D004': ['approved', 'to_pay'],
+    // No payable (seeded or imported) or a cancelled one: no payment state.
+    'INV-E005': ['approved', null],
+    'INV-F006': ['exception', null],
+    'INV-G007': ['approved', null],
+  })
+  assert.deepEqual(result.counts, { submitted: 0, exception: 1, matched: 0, approved: 6, to_pay: 2, partially_settled: 1, settled: 1 })
+  // Each card's filter lists what it counts; "approved" is still every approved invoice.
+  for (const [status, numbers] of [['to_pay', ['INV-D004', 'INV-C003']], ['partially_settled', ['INV-B002']], ['settled', ['INV-A001']]]) {
+    const filtered = await read.listSupplierInvoices({ status }, { identity })
+    assert.deepEqual(filtered.items.map((row) => row.invoiceNumber), numbers, status)
+    assert.equal(filtered.total, numbers.length, status)
+  }
+  assert.equal((await read.listSupplierInvoices({ status: 'approved' }, { identity })).total, 6)
+})
+
+test('billPaymentStatus reads an approved invoice\'s payable, and nothing else', () => {
+  assert.equal(billPaymentStatus('approved', 'settled'), 'settled')
+  assert.equal(billPaymentStatus('approved', 'partially_settled'), 'partially_settled')
+  for (const payable of ['approved', 'export_ready', 'held']) assert.equal(billPaymentStatus('approved', payable), 'to_pay', payable)
+  assert.equal(billPaymentStatus('approved', 'cancelled'), null)
+  assert.equal(billPaymentStatus('approved', undefined), null)
+  // Only an approved invoice has a payment state.
+  assert.equal(billPaymentStatus('exception', 'settled'), null)
+  assert.equal(billPaymentStatus('cancelled', 'settled'), null)
 })
 
 test('pagedInGroups pages across groups without overlap', async () => {
