@@ -312,8 +312,11 @@ test('a figure worked out from the answer\'s own figures is grounded; wrong arit
   const late = [{ rows: [{ order: 'HV-PO-101', remaining: 120 }, { order: 'HV-PO-102', remaining: 240 }] }]
   assert.deepEqual(numbers('HV-PO-101 has 120 pcs outstanding and HV-PO-102 has 240 pcs. That leaves 360 pcs still to arrive across the two orders.', late), [])
   assert.deepEqual(numbers('HV-PO-101 has 120 pcs outstanding and HV-PO-102 has 240 pcs. That leaves 350 pcs still to arrive.', late), ['350'])
-  // Only from figures the answer writes: 360 alone is not worked out.
-  assert.deepEqual(numbers('360 pcs are still to arrive.', late), ['360'])
+  // Only from figures the answer writes: 360 alone is not worked out. (Here
+  // it is the whole list's remaining, a total the results hold; from a list
+  // cut at its limit it is neither.)
+  assert.deepEqual(numbers('360 pcs are still to arrive.', late), [])
+  assert.deepEqual(numbers('360 pcs are still to arrive.', [{ ...late[0], more: 4 }]), ['360'])
   const cover = [{ sku: 'HV-1', onHand: 132, averageDailyDemand: 7.2 }]
   assert.deepEqual(numbers('Stock on hand is 132 pcs. At the recorded average of 7.2 pcs a day it would cover roughly 18 days.', cover), [])
   assert.deepEqual(numbers('Stock on hand is 132 pcs. At 7.2 pcs a day it would cover roughly 25 days.', cover), ['25 days'])
@@ -333,6 +336,61 @@ test('"SKU-" before a SKU the results hold is that SKU; before any other it is s
   const problems = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results: [{ rows: [{ sku: '85123A', order: 'HV-PO-101' }] }] }).problems.map((row) => `${row.kind}:${row.value}`)
   assert.deepEqual(problems('Two orders for SKU-85123A are late.'), [])
   assert.deepEqual(problems('Two orders for SKU-99999X are late.'), ['record:SKU-99999X'])
+})
+
+// 2026-11-09 on Flash, the UCI walkthrough question set: totals of
+// list_purchase_orders' rows the answer did not add up in writing.
+test('a whole list\'s totals, over every row and the rows sharing a value, are grounded; never available stock', () => {
+  const lateOrders = [{ rows: [
+    { orderNumber: 'PO-202610-0022', supplier: 'Acme Home Goods', status: 'partially_received', skus: ['85123A'], overdueDays: 5, ordered: 240, received: 120, remaining: 120, unit: 'pcs', amount: 708, currency: 'GBP' },
+    { orderNumber: 'PO-202610-0023', supplier: 'Globex Party Supplies', status: 'issued', skus: ['84879'], overdueDays: 4, ordered: 450, received: 0, remaining: 450, unit: 'pcs', amount: 760.5, currency: 'GBP' },
+    { orderNumber: 'PO-202610-0024', supplier: 'Acme Home Goods', status: 'issued', skus: ['85123A'], overdueDays: 3, ordered: 240, received: 0, remaining: 240, unit: 'pcs', amount: 708, currency: 'GBP' },
+  ], total: 3, more: 0 }]
+  const numbers = (answer, results = lateOrders) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
+  assert.deepEqual(numbers('共有 3 张采购订单逾期。这 3 张订单合计待收货 810 件，涉及 2 家供应商。'), [])
+  assert.deepEqual(numbers('Acme Home Goods accounts for 2 of them, both for 85123A: 360 pcs are still to receive across the two orders.'), [])
+  assert.deepEqual(numbers('The late orders are worth £2,176.50, £1,416.00 of it with Acme Home Goods.'), [])
+  // A total no rows add up to is still refused, and so is a cut list's.
+  assert.deepEqual(numbers('360 of the 810 pcs are 84879.'), [])
+  assert.deepEqual(numbers('There are 900 pcs still to receive.'), ['900'])
+  assert.deepEqual(numbers('There are 810 pcs still to receive.', [{ ...lateOrders[0], more: 2 }]), ['810'])
+  // Rows in two currencies give no amount total.
+  const mixed = [{ rows: [{ supplier: 'A', amount: 100, currency: 'GBP' }, { supplier: 'B', amount: 50, currency: 'USD' }] }]
+  assert.deepEqual(numbers('The two orders come to £150.00.', mixed), ['£150.00'])
+  // Several items' available stock together is no item's available stock.
+  const stock = [{ rows: [{ sku: '85123A', available: 48 }, { sku: '84879', available: 98 }] }]
+  assert.deepEqual(numbers('85123A has 146 pcs available.', stock), ['146'])
+})
+
+// 2026-11-09 on Flash, the question set: "If only the remaining 120 pcs on
+// PO-202610-0022 arrive, 85123A would have 168 pcs available — your 48 pcs
+// available now plus those 120 pcs." Right, and flagged: no field held 168.
+test('a figure for only some of an item\'s open orders arriving is its stock today plus what those orders still bring', () => {
+  const results = [
+    { rows: [{ sku: '85123A', available: 48, availableToPromise: 408, incomingOnPurchaseOrders: 360 }] },
+    { rows: [
+      { orderNumber: 'PO-202610-0022', supplier: 'Acme Home Goods', skus: ['85123A'], ordered: 240, received: 120, remaining: 120 },
+      { orderNumber: 'PO-202610-0024', supplier: 'Acme Home Goods', skus: ['85123A'], ordered: 240, received: 0, remaining: 240 },
+      { orderNumber: 'PO-202610-0023', supplier: 'Globex Party Supplies', skus: ['84879'], ordered: 450, received: 0, remaining: 450 },
+    ] },
+  ]
+  const numbers = (answer, given = results) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results: given }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
+  assert.deepEqual(numbers('If only the remaining 120 pcs on PO-202610-0022 arrive, 85123A would have **168 pcs available** — your 48 pcs available now plus those 120 pcs.'), [])
+  assert.deepEqual(numbers('如果只有 PO-202610-0024（240 件，一件都还没收到）到货，85123A 的可用量会是 **288 件**。'), [])
+  assert.deepEqual(numbers('With only PO-202610-0024 in, 85123A has 288 pcs available.'), [])
+  assert.deepEqual(numbers('85123A would have 168 pcs available if only PO-202610-0022 arrives.'), [])
+  // Not in that scenario, an available figure still comes from its own field.
+  assert.deepEqual(numbers('85123A stays at 168 pcs available to promise.'), ['168'])
+  assert.deepEqual(numbers('If neither order arrives, 85123A has 168 pcs available.'), ['168'])
+  // Another SKU's order, an order counted twice, or a figure no subset makes
+  // is refused.
+  assert.deepEqual(numbers('If only PO-202610-0023 arrives, 85123A would have 498 pcs available.'), ['498'])
+  assert.deepEqual(numbers('If only PO-202610-0022 arrives, 85123A would have 200 pcs available.'), ['200'])
+  // stock_projection's late lines tie to the SKU too, read once with the orders.
+  const projection = [{ sku: '85123A', availableToday: 48, notPlacedInAWeek: { incomingPastPromisedDate: [{ orderNumber: 'PO-202610-0022', quantity: 120 }, { orderNumber: 'PO-202610-0024', quantity: 240 }] } }, results[1]]
+  assert.deepEqual(numbers('If only PO-202610-0022 arrives, 85123A would have 168 pcs available.', projection), [])
+  assert.deepEqual(numbers('If only PO-202610-0022 arrives, 85123A would have 288 pcs available.', [projection[0]]), [])
+  assert.deepEqual(numbers('If only one order arrives, 85123A would have 528 pcs available.', projection), ['528'])
 })
 
 test('aging bucket labels are no figures in an answer about overdue or aged amounts', () => {
