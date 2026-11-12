@@ -6,7 +6,73 @@ checking every change against the same questions). It asks a live assistant
 v2, on a workspace seeded from public demand data, questions whose answers are
 worked out independently, and scores what it says.
 
-## The data
+Two suites:
+
+- **uci** (the question set, run after every assistant change): 58 questions,
+  37 in English and 21 in Chinese, on the UCI walkthrough workspace that the
+  local walkthrough and the showcase use. See
+  [The question set](#the-question-set-uci-walkthrough) below.
+- **m5** (the first lane): 13 questions on the 12-item M5 research instance,
+  including the order decisions checked against the research solver.
+
+## The question set (UCI walkthrough)
+
+The workspace is the one `npm run walkthrough:local` seeds
+(docs/public-data-workspaces.md): 200 UCI products, a year of public sales,
+and the assumed purchasing side with its scene. The scene has two late Acme
+orders for 85123A (one partly received), a late Globex order, a cakestand
+under its reorder point, and an order waiting for approval.
+
+Expected figures come from the seed's own plan (`scripts/public-data/plan.mjs`,
+rebuilt from the local extract and the seed day). The formulas are written
+out in `uci-facts.mjs`, and nothing is read from the assistant's tools, so a
+tool that computes wrongly fails its case. The cases are in `uci-cases.mjs`.
+
+| Kind | What it asks |
+|---|---|
+| today | what to handle first, which orders are late (EN, ZH) |
+| stock | on hand, available to promise, position with what is on order, below safety stock, thresholds, days of stock, average demand, an item's name |
+| scenario | if neither late order arrives, only one of them, both; another week's delay at Acme or Globex |
+| reorder | what to reorder this week (EN, ZH), "蛋糕架还要补货吗", why the hero is not listed |
+| purchasing | the order waiting for approval, what is on order, Acme's items, the last receipt and its date |
+| supplier | who supplies an item, Acme's tier, on-time rates over 90 days (the scorecard's rule), the supplier count, terms |
+| sales | units and sales in the last two whole months, top customers and products, month on month |
+| finance | receivables and the largest debtor, stock value and a year's holding cost |
+| cost | EOQ at £20 an order; 240 against 120 at a time |
+| conversation | a second turn that leans on the first, and the order form after the reorder list |
+| boundary | "delete all the late orders" is declined; a chasing email names what is still due |
+
+Sales questions name the two whole months before the seed day, so a case
+asks the same thing whatever day it runs. "Late" and the 90-day on-time rate
+count from the day the questions are asked (Europe/London).
+
+Besides its figures, every answer is checked for: status 200 and no error,
+the language asked in, no figure the answer check flagged, and tidy text (no
+raw decimals such as 7.1556, no "10 月 1, 2026", no opening "Let me check…",
+and no text part after a table that says the answer again).
+
+One run varies: on DeepSeek V4.1 Flash, 11 cases passed in one run and failed
+in the next, and 9 the other way. To judge a change, run it with
+`--repeat=2` or more and `--compare=<the earlier report.json>`, which lists
+the cases that passed less or more often than before.
+
+Run it on a walkthrough server with a model (`--ai-env`), from a checkout
+whose `node_modules` the walkthrough can use:
+
+```
+npm run walkthrough:local -- --ai-env=<provider env file>
+npm run eval:assistant:uci -- --port=<the UCI API port> --walkthrough-dir=<the walkthrough data folder>
+```
+
+`--walkthrough-dir` reads the extract and the seed day from its `seeded.json`.
+Without it, pass `--extract=<extract.json> --as-of=<seed day>`. Also:
+`--only=<ids>`, `--kind=<kinds>`, `--repeat=<n>` (each case n times, for a
+model that varies), `--list` (the cases and expected figures, nothing asked),
+`--out=<folder>`, `--compare=<report.json>`. Cases take turns between kim@example.com and
+daniel@example.com (`--emails=`), since each user may ask 30 questions in 10
+minutes; a question the limit turns away is asked again after a minute.
+
+## M5: the data
 
 Real demand, assumed supply side, as in the research instances
 (`.local/research/interactive-optimization`, local only, git-ignored):
@@ -31,7 +97,7 @@ entry, and the 90 days of demand as customer orders shipped in full on their
 day through the outbound posting commands, ending yesterday. Stock ends at the
 assumed on hand.
 
-## The cases (`cases.mjs`)
+## M5: the cases (`cases.mjs`)
 
 | Kind | Cases | Expected answer from |
 |---|---|---|
@@ -45,7 +111,7 @@ tolerance, SKUs named, each optimal quantity next to its SKU, the form's line,
 the reply in the question's language, status 200, and no figure the answer
 check flagged.
 
-## Running it
+## M5: running it
 
 It calls the configured model: about $0.6 for the 13 cases on Sonnet 5.5.
 
@@ -70,6 +136,32 @@ It calls the configured model: about $0.6 for the 13 cases on Sonnet 5.5.
    `report.md` and `report.json` there.
 
 ## Results so far
+
+### uci
+
+| Date | Code, model | Passed | Notes |
+|---|---|---|---|
+| 2026-11-09 | main 666b9335, DeepSeek V4.1 Flash | 45/58, then 42/58 | Baseline, two runs: $0.95 a run, median 10 s and 57k input tokens a case. Four cases failed both times. One answer in run 2 was lost to a network drop. Failures by cause are below. |
+| 2026-11-11 | main a7065fbe + #300 + #301 + #305, Flash through OpenCode | 104/116 (`--repeat=2`) | Asked a day after the seed day, which moved the tools' 90-day window: 4 more answers (6.6 a day, EOQ 575) were right but scored against the seed day's 7.24 and 581, so the average now counts from the day asked. $1.75, median 14 s. Better than the baseline: 13 cases. Worse: 6. The 12 left: receivables split into not yet due and overdue (right, but the aging fields read as no amount, 4), an answer written before reading (264, then 168), "蛋糕架" not found (#290 not merged), a supplier question given up after one lookup, items not named on late orders, and 3 flags for "7 天", "top 10" and "90 天". |
+
+What the baseline found (both runs):
+
+- **Correct figures flagged by the answer check (6–7 cases a run).** These are figures the model works out itself and that no tool returned. Examples: the 360 still to receive on two orders, "the other 14 open orders", "48 short of its safety stock", the top five customers' £24,562 (31%), a position of 232 after a 100-unit order, and the ageing buckets "1–30, 31–60". A figure written as "available" is also flagged even when `calculate` worked it out (168).
+- **Tool gaps.**
+  - "Which product sold the most units" gets the top earner. `sales_summary` sorts by value, so the answer named 23084 instead of 16014.
+  - The last receipt of an item can't be read, since receipts carry no item lines.
+  - The supplier scorecard gives months and quarters, not the last 90 days. That worked in 1 of 2 runs for Acme and 1 of 2 for Globex.
+  - Acme's written tier reason isn't readable.
+  - "84879 在 10 月卖了多少件" once answered 0.
+  - "蛋糕架" was not found once.
+- **Reasoning slips.**
+  - "No items are below their stock levels" (18 are).
+  - "Cover you to Feb 2026 levels" (flagged).
+  - "前 10 位合计不到两成" (the top five are 31%).
+  - The reorder form's cover-days rule suggested 72 cakestands where the reorder list says 60.
+- **Answers said twice.** A second text part after the table repeats the answer (4 in run 2), or adds a filler line ("Your answer is above").
+
+### m5
 
 | Date | Code | Passed | Notes |
 |---|---|---|---|
