@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown, ChevronRight, Sparkles } from "lucide-react";
 import { A, Card } from "../../components/ui";
-import { rowActionClass } from "../../components/ui/listLayout";
+import { listButtonClass, rowActionClass } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { unitLabel } from "../../i18n/unitLabels";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -58,6 +58,9 @@ export type SetAsideEntry = {
 export type TodayDecisions = { available: boolean; canDecide?: boolean; waiting?: WaitingEntry[]; setAside?: SetAsideEntry[] };
 
 const REASONS = ["seasonal", "discontinued", "covered_elsewhere", "supplier_confirmed", "other"] as const;
+// A card's actions read like the buttons on top of the list pages: the one
+// that acts in blue, the others light.
+const BUTTON = { primary: `${listButtonClass.primary} !text-[12px] !no-underline`, secondary: `${listButtonClass.secondary} !text-[12px] !no-underline` };
 const LINK = "fc-entity-link font-semibold text-blue-600 underline-offset-2 hover:underline";
 
 const addDays = (day: string, days: number) => {
@@ -133,6 +136,13 @@ function DecisionCard({ entry, canDecide, today, day, dateText, tone, kindLabel,
       setBusy(false);
     }
   };
+  // "Not now" and "Not needed", at the end of the card's row of actions.
+  const aside = canDecide ? (
+    <>
+      <button type="button" disabled={busy} className={BUTTON.secondary} aria-expanded={mode === "not_now"} onClick={() => setMode(mode === "not_now" ? null : "not_now")} data-testid="decision-not-now">{t("notNow")}</button>
+      <button type="button" disabled={busy} className={BUTTON.secondary} aria-expanded={mode === "not_needed"} onClick={() => setMode(mode === "not_needed" ? null : "not_needed")} data-testid="decision-not-needed">{t("notNeeded")}</button>
+    </>
+  ) : null;
 
   return (
     <li className="rounded-lg border p-4" style={{ borderColor: A.gray4 }} data-testid="today-decision" data-kind={row.kind} data-key={entry.key}>
@@ -143,13 +153,13 @@ function DecisionCard({ entry, canDecide, today, day, dateText, tone, kindLabel,
         {row.name ? <span className="text-xs" style={{ color: A.sub }}>{row.name}</span> : null}
         {entry.returned ? <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">{t("returned")}</span> : null}
       </div>
-      {draft?.type === "purchase_request" ? <ReorderBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} />
-        : draft?.type === "supplier_follow_up" ? <FollowUpBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} onChased={(text) => run(async () => {
+      {draft?.type === "purchase_request" ? <ReorderBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} aside={aside} />
+        : draft?.type === "supplier_follow_up" ? <FollowUpBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} aside={aside} onChased={(text) => run(async () => {
           try { await navigator.clipboard.writeText(text); } catch { throw new Error(t("copyFailed")); }
           await decide(entry.key, { option: "chased" });
           return t("copied");
         })} />
-          : draft?.type === "purchase_orders_from_request" ? <ConversionBody draft={draft} row={row} busy={busy} canDecide={canDecide} onCreate={() => run(async () => {
+          : draft?.type === "purchase_orders_from_request" ? <ConversionBody draft={draft} row={row} busy={busy} canDecide={canDecide} aside={aside} onCreate={() => run(async () => {
             const result = await apiJson<any>(`/api/procurement/requests/${encodeURIComponent(draft.purchaseRequestId)}/generate-purchase-orders`, {
               method: "POST",
               body: JSON.stringify({ expectedVersion: draft.version, idempotencyKey: `today-decision:${entry.key}:v${draft.version}` }),
@@ -161,13 +171,7 @@ function DecisionCard({ entry, canDecide, today, day, dateText, tone, kindLabel,
             if (ids.length) await decide(entry.key, { option: "accepted", documentType: "purchase_order", documentIds: ids }).catch(() => null);
             return t("created", { numbers: orders.map((order) => order.orderNumber || order.number || order.id).join(", ") });
           })} />
-            : null}
-      {canDecide ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button type="button" disabled={busy} className={rowActionClass.neutral} aria-expanded={mode === "not_now"} onClick={() => setMode(mode === "not_now" ? null : "not_now")} data-testid="decision-not-now">{t("notNow")}</button>
-          <button type="button" disabled={busy} className={rowActionClass.neutral} aria-expanded={mode === "not_needed"} onClick={() => setMode(mode === "not_needed" ? null : "not_needed")} data-testid="decision-not-needed">{t("notNeeded")}</button>
-        </div>
-      ) : null}
+            : <Actions aside={aside} />}
       {mode === "not_now" ? <NotNowForm today={today} busy={busy} onCancel={() => setMode(null)} onSave={(returnOn) => run(async () => { await decide(entry.key, { option: "not_now", returnOn }); setMode(null); })} /> : null}
       {mode === "not_needed" ? <NotNeededForm busy={busy} onCancel={() => setMode(null)} onSave={(reasonCode, note) => run(async () => { await decide(entry.key, { option: "not_needed", reasonCode, note }); setMode(null); })} /> : null}
       {message ? <p className="mt-2 text-xs" style={{ color: A.sub }} role="status">{message}</p> : null}
@@ -177,14 +181,25 @@ function DecisionCard({ entry, canDecide, today, day, dateText, tone, kindLabel,
 
 function Prepared({ children }: { children: ReactNode }) {
   const t = useDecisionCopy();
-  return <div className="mt-2 text-sm"><span className="mr-1 text-xs font-medium uppercase tracking-wide text-blue-700">{t("prepared")}</span>{children}</div>;
+  return <div className="mt-2 text-sm"><span className="mr-1.5 text-xs font-medium text-blue-700">{t("prepared")}</span>{children}</div>;
 }
 function Basis({ children }: { children: ReactNode }) {
   const t = useDecisionCopy();
-  return <div className="mt-1 text-xs" style={{ color: A.sub }}><span className="mr-1 font-medium">{t("basis")}</span>{children}</div>;
+  return <div className="mt-1 text-xs" style={{ color: A.sub }}><span className="mr-1.5 font-medium">{t("basis")}</span>{children}</div>;
+}
+// One row of actions: what the card prepared first, then "Not now" and
+// "Not needed" on the right.
+function Actions({ children, aside }: { children?: ReactNode; aside: ReactNode }) {
+  if (!children && !aside) return null;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      {children}
+      {aside ? <div className="flex gap-2 sm:ml-auto">{aside}</div> : null}
+    </div>
+  );
 }
 
-function ReorderBody({ draft, row, day, busy, canDecide }: { draft: ReorderDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean }) {
+function ReorderBody({ draft, row, day, busy, canDecide, aside }: { draft: ReorderDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode }) {
   const t = useDecisionCopy();
   const qty = (value: number | null) => (value === null ? "—" : `${formatQuantity(value)}${draft.unit ? ` ${unitLabel(draft.unit, t.language, value)}` : ""}`);
   const supplier = draft.supplier?.name || "";
@@ -204,16 +219,14 @@ function ReorderBody({ draft, row, day, busy, canDecide }: { draft: ReorderDraft
     <>
       <Prepared>{prepared}{draft.raisedToMinimum && draft.supplier?.minimumOrderQuantity ? <span className="text-xs" style={{ color: A.sub }}> {t("raisedToMinimum", { shortfall: qty(draft.shortfall), minimum: qty(draft.supplier.minimumOrderQuantity) })}</span> : null}</Prepared>
       <Basis>{t("reorderBasis", { position: qty(draft.position), reorderPoint: qty(draft.reorderPoint) })}{row.actionHref ? <> <Link to={row.actionHref} className={LINK}>↗</Link></> : null}</Basis>
-      {canDecide ? (
-        <div className="mt-3">
-          <Link to={`/app/procurement/requests?${params.toString()}`} aria-disabled={busy} className={`${rowActionClass.primary} inline-block !no-underline`} data-testid="decision-primary">{t("reviewRequest")}</Link>
-        </div>
-      ) : null}
+      <Actions aside={aside}>
+        {canDecide ? <Link to={`/app/procurement/requests?${params.toString()}`} aria-disabled={busy} className={BUTTON.primary} data-testid="decision-primary">{t("reviewRequest")}</Link> : null}
+      </Actions>
     </>
   );
 }
 
-function FollowUpBody({ draft, row, day, busy, canDecide, onChased }: { draft: FollowUpDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; onChased: (text: string) => void }) {
+function FollowUpBody({ draft, row, day, busy, canDecide, aside, onChased }: { draft: FollowUpDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode; onChased: (text: string) => void }) {
   const t = useDecisionCopy();
   const { language } = useI18n();
   const [mailLanguage, setMailLanguage] = useState<"en-US" | "zh-CN">(language === "zh-CN" ? "zh-CN" : "en-US");
@@ -231,37 +244,56 @@ function FollowUpBody({ draft, row, day, busy, canDecide, onChased }: { draft: F
   }), [draft, mailLanguage, day]);
   const [edited, setEdited] = useState<{ language: string; text: string } | null>(null);
   const text = edited && edited.language === mailLanguage ? edited.text : `${generated.subject}\n\n${generated.body}`;
+  const [showMessage, setShowMessage] = useState(false);
   const who = [draft.supplier.contactName, draft.supplier.email ? `<${draft.supplier.email}>` : null].filter(Boolean).join(" ");
+  const qty = (value: number | null, unit: string | null) => (value === null ? "—" : `${formatQuantity(value)}${unit ? ` ${unitLabel(unit, t.language, value)}` : ""}`);
+  const first = draft.lines[0];
+  const linesLeft = draft.lines.length + draft.moreLines;
   return (
     <>
       <Prepared>{t("followUpDraft", { supplier: draft.supplier.name || row.name || "—" })}</Prepared>
-      <Basis>{who ? t("followUpTo", { who }) : t("followUpNoEmail")}</Basis>
-      <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: A.sub }}>
-        <span>{t("followUpLanguage")}</span>
-        {(["en-US", "zh-CN"] as const).map((code) => (
-          <button key={code} type="button" aria-pressed={mailLanguage === code} onClick={() => setMailLanguage(code)} className={mailLanguage === code ? rowActionClass.primary : rowActionClass.neutral}>{code === "en-US" ? "English" : "中文"}</button>
-        ))}
-      </div>
-      <textarea
-        className="mt-2 w-full rounded-md border p-2 font-mono text-xs leading-5"
-        style={{ borderColor: A.gray4 }}
-        rows={Math.min(14, text.split("\n").length + 1)}
-        value={text}
-        onChange={(event) => setEdited({ language: mailLanguage, text: event.target.value })}
-        data-testid="decision-follow-up-text"
-      />
-      <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{t("followUpNotSent")}</p>
-      {canDecide ? (
-        <div className="mt-2 flex flex-wrap gap-2">
-          <button type="button" disabled={busy} className={rowActionClass.primary} onClick={() => onChased(text)} data-testid="decision-primary">{t("copyAndChased")}</button>
-          <Link to={row.href} className={`${rowActionClass.neutral} inline-block !no-underline`}>{t("recordNewDate")}</Link>
-        </div>
+      <Basis>
+        {linesLeft === 1 && first
+          ? t("followUpBasisOne", { sku: first.sku || "—", qty: qty(first.remaining, first.unit), date: draft.dueDate ? day(draft.dueDate) : "—" })
+          : t("followUpBasis", { n: linesLeft, date: draft.dueDate ? day(draft.dueDate) : "—" })}
+      </Basis>
+      <div className="mt-1 text-xs" style={{ color: A.sub }}>{who ? t("followUpTo", { who }) : t("followUpNoEmail")}</div>
+      <button type="button" className="mt-2 flex items-center gap-1 text-xs font-medium text-blue-600" aria-expanded={showMessage} onClick={() => setShowMessage((value) => !value)} data-testid="decision-follow-up-toggle">
+        {showMessage ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+        {showMessage ? t("hideMessage") : t("showMessage")}
+      </button>
+      {showMessage ? (
+        <>
+          <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: A.sub }}>
+            <span>{t("followUpLanguage")}</span>
+            {(["en-US", "zh-CN"] as const).map((code) => (
+              <button key={code} type="button" aria-pressed={mailLanguage === code} onClick={() => setMailLanguage(code)} className={mailLanguage === code ? rowActionClass.primary : rowActionClass.neutral}>{code === "en-US" ? "English" : "中文"}</button>
+            ))}
+          </div>
+          <textarea
+            className="mt-2 w-full rounded-md border p-2 font-mono text-xs leading-5"
+            style={{ borderColor: A.gray4 }}
+            rows={Math.min(14, text.split("\n").length + 1)}
+            value={text}
+            onChange={(event) => setEdited({ language: mailLanguage, text: event.target.value })}
+            data-testid="decision-follow-up-text"
+          />
+          <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{t("followUpNotSent")}</p>
+        </>
       ) : null}
+      <Actions aside={aside}>
+        {canDecide ? (
+          <>
+            <button type="button" disabled={busy} className={BUTTON.primary} onClick={() => onChased(text)} data-testid="decision-primary">{t("copyAndChased")}</button>
+            <Link to={row.href} className={BUTTON.secondary}>{t("recordNewDate")}</Link>
+          </>
+        ) : null}
+      </Actions>
     </>
   );
 }
 
-function ConversionBody({ draft, row, busy, canDecide, onCreate }: { draft: ConversionDraft; row: TodayRow; busy: boolean; canDecide: boolean; onCreate: () => void }) {
+function ConversionBody({ draft, row, busy, canDecide, aside, onCreate }: { draft: ConversionDraft; row: TodayRow; busy: boolean; canDecide: boolean; aside: ReactNode; onCreate: () => void }) {
   const t = useDecisionCopy();
   const fields = (codes: string[]) => codes.map((code) => t(`field_${code}` as DecisionCopyKey)).join(t.language === "zh-CN" ? "、" : ", ");
   return (
@@ -271,12 +303,12 @@ function ConversionBody({ draft, row, busy, canDecide, onCreate }: { draft: Conv
         {draft.orders.map((order) => <li key={`${order.supplierId}:${order.currency}:${order.warehouseId}`}>{t.count("convertOrder", order.lines, { supplier: order.supplierName, currency: order.currency })}</li>)}
       </ul>
       {draft.missing.map((line) => <p key={line.line} className="mt-1 text-xs text-amber-700">{t("convertMissing", { line: line.line, sku: line.sku || "—", fields: fields(line.fields) })}</p>)}
-      <div className="mt-3 flex flex-wrap gap-2">
+      <Actions aside={aside}>
         {canDecide && draft.missing.length === 0 && draft.orders.length > 0 ? (
-          <button type="button" disabled={busy} className={rowActionClass.primary} onClick={onCreate} data-testid="decision-primary">{busy ? t("creating") : t("createOrders")}</button>
+          <button type="button" disabled={busy} className={BUTTON.primary} onClick={onCreate} data-testid="decision-primary">{busy ? t("creating") : t("createOrders")}</button>
         ) : null}
-        <Link to={row.href} className={`${rowActionClass.neutral} inline-block !no-underline`}>{t("openRequest")}</Link>
-      </div>
+        <Link to={row.href} className={BUTTON.secondary}>{t("openRequest")}</Link>
+      </Actions>
     </>
   );
 }
@@ -286,14 +318,14 @@ function NotNowForm({ today, busy, onSave, onCancel }: { today: string; busy: bo
   const [picked, setPicked] = useState("");
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-slate-50 p-2 text-xs" data-testid="decision-not-now-form">
-      <button type="button" disabled={busy} className={rowActionClass.neutral} onClick={() => onSave(addDays(today, 1))}>{t("tomorrow")}</button>
-      <button type="button" disabled={busy} className={rowActionClass.neutral} onClick={() => onSave(nextMonday(today))}>{t("nextMonday")}</button>
+      <button type="button" disabled={busy} className={BUTTON.secondary} onClick={() => onSave(addDays(today, 1))}>{t("tomorrow")}</button>
+      <button type="button" disabled={busy} className={BUTTON.secondary} onClick={() => onSave(nextMonday(today))}>{t("nextMonday")}</button>
       <label className="flex items-center gap-1">
         <span>{t("pickDay")}</span>
         <input type="date" className="rounded border px-1 py-0.5" min={addDays(today, 1)} max={addDays(today, 90)} value={picked} onChange={(event) => setPicked(event.target.value)} />
       </label>
-      <button type="button" disabled={busy || !picked} className={rowActionClass.primary} onClick={() => onSave(picked)}>{t("save")}</button>
-      <button type="button" className={rowActionClass.neutral} onClick={onCancel}>{t("cancel")}</button>
+      <button type="button" disabled={busy || !picked} className={BUTTON.primary} onClick={() => onSave(picked)}>{t("save")}</button>
+      <button type="button" className={BUTTON.secondary} onClick={onCancel}>{t("cancel")}</button>
     </div>
   );
 }
@@ -312,8 +344,8 @@ function NotNeededForm({ busy, onSave, onCancel }: { busy: boolean; onSave: (rea
         </select>
       </label>
       <input className="min-w-48 flex-1 rounded border px-2 py-0.5" maxLength={200} placeholder={t("notePlaceholder")} value={note} onChange={(event) => setNote(event.target.value)} />
-      <button type="button" disabled={busy || !ready} className={rowActionClass.primary} onClick={() => onSave(reason, note.trim())}>{t("save")}</button>
-      <button type="button" className={rowActionClass.neutral} onClick={onCancel}>{t("cancel")}</button>
+      <button type="button" disabled={busy || !ready} className={BUTTON.primary} onClick={() => onSave(reason, note.trim())}>{t("save")}</button>
+      <button type="button" className={BUTTON.secondary} onClick={onCancel}>{t("cancel")}</button>
     </div>
   );
 }
@@ -362,7 +394,7 @@ function SetAsideList({ entries, canDecide, day, kindLabel, labelOf, onChanged }
                 <Link to={entry.row.href} className={LINK}>{labelOf(entry.row)}</Link>
                 <span style={{ color: A.sub }}>{status(entry)}</span>
                 {entry.decidedBy ? <span style={{ color: A.gray2 }}>{t("by", { name: entry.decidedBy.name, date: entry.decidedOn ? day(entry.decidedOn) : "" })}</span> : null}
-                {canDecide ? <button type="button" disabled={busyKey === entry.key} className={`${rowActionClass.neutral} ml-auto`} onClick={() => reopen(entry.key)}>{t("reopen")}</button> : null}
+                {canDecide ? <button type="button" disabled={busyKey === entry.key} className={`${BUTTON.secondary} ml-auto`} onClick={() => reopen(entry.key)}>{t("reopen")}</button> : null}
               </li>
             ))}
           </ul>

@@ -111,6 +111,8 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
   }
   // An overdue order's card holds the follow-up to copy; FlowChain sends nothing.
   const followUp = decisions.locator('[data-testid="today-decision"][data-kind="purchase_order_overdue"]').first();
+  await expect(followUp).toContainText(/still to receive, due /);
+  await followUp.getByTestId("decision-follow-up-toggle").click();
   await expect(followUp.getByTestId("decision-follow-up-text")).toHaveValue(/^Purchase order .+: delivery overdue/);
   await expect(followUp).toContainText("FlowChain does not send it");
 
