@@ -15,7 +15,8 @@ export type AppRoute = { moduleId: string; query?: Record<string, string> };
 // arrives whole.
 // replaced: why the server replaced the text (unbacked_action_claim: a
 // sentence that read as an action was left out, or the whole part when the
-// text is empty), for the note under it.
+// text is empty), for the note under it. narration: a short line shown before
+// the model read its data, taken back (empty) with no note, or put back.
 export type AnswerPart =
   | { id: string; type: "text"; text: string; flags?: FlagSpan[]; refs?: PartRef[]; replaced?: string }
   | { id: string; type: "ui"; component: string; schemaVersion?: number; props: unknown; refs?: PartRef[] };

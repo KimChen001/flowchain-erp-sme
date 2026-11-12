@@ -253,7 +253,7 @@ function salesRange(args, today) {
 }
 const salesSummary = defineAiTool({
   name: 'sales_summary',
-  description: 'Completed sales from customer invoices over a period: the total, and the largest customers or items, or each month, by invoiced amount with each one\'s share (and, for customers and items, a rank, 1 the largest, with runningAmount and runningSharePercent: the rows up to and including it together, so the top N together are the figures at rank N). Invoices dated in the period, not drafts or cancelled, before tax; credit notes are not subtracted. For "last month\'s sales", "our top customers this quarter" or "which products sold most".',
+  description: 'Completed sales from customer invoices over a period: the total, and the largest customers or items, or each month, by invoiced amount with each one\'s share (and, for customers and items, a rank, 1 the largest, with runningAmount and runningSharePercent: the rows up to and including it together, so the top N together are the figures at rank N). rankBy quantity ranks items by units sold ("sold the most units"). Invoices dated in the period, not drafts or cancelled, before tax; credit notes are not subtracted. For "last month\'s sales", "our top customers this quarter" or "which products sold most".',
   parameters: {
     by: { type: 'string', enum: ['customer', 'item', 'month'], description: 'customer (default), item or month.' },
     period: { type: 'string', enum: SALES_PERIODS, description: 'Counted from the workspace day; last_12_months by default.' },
@@ -261,6 +261,7 @@ const salesSummary = defineAiTool({
     to: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'The last day, included.' },
     customer: { type: 'string', description: 'Only this customer (part of its name).' },
     sku: { type: 'string', description: 'Only this item.' },
+    rankBy: { type: 'string', enum: ['amount', 'quantity'], description: 'With by item: rank by invoiced amount (default) or by quantity sold.' },
     currency: { type: 'string', pattern: '^[A-Z]{3}$', description: 'A currency code; the workspace currency by default.' },
     limit: limitParam,
   },
@@ -302,9 +303,13 @@ const salesSummary = defineAiTool({
     // Customers and items, largest first, carry the share of all the rows up
     // to them (2026-11-07: "前五大客户合计" was summed by the model, written as
     // 25.4% and corrected to 29.4% in the same answer).
+    // Items may rank by quantity sold (2026-11-09 on Flash: "which product sold
+    // the most units" named the top earner, 1,969 units, over one that sold
+    // 3,020 for less).
+    const byQuantity = by === 'item' && args.rankBy === 'quantity'
     let running = 0
     const rows = [...groups.values()]
-      .sort(by === 'month' ? (a, b) => a.key.localeCompare(b.key) : (a, b) => b.amount - a.amount || a.key.localeCompare(b.key))
+      .sort(by === 'month' ? (a, b) => a.key.localeCompare(b.key) : byQuantity ? (a, b) => b.quantity - a.quantity || b.amount - a.amount || a.key.localeCompare(b.key) : (a, b) => b.amount - a.amount || a.key.localeCompare(b.key))
       .map((entry, index) => ({
         ...(by === 'month' ? {} : { rank: index + 1 }),
         ...(by === 'item' ? { sku: entry.row.sku, itemName: entry.row.itemName, quantity: Math.round(entry.quantity * 10000) / 10000, unit: entry.row.unit, ref: aiToolRef('item', entry.row.itemId || entry.row.sku, entry.row.sku) }
@@ -316,6 +321,7 @@ const salesSummary = defineAiTool({
       period: range, basis: SALES_BASIS, by, currency,
       invoices: new Set(sales.map((row) => row.invoice)).size,
       amount: money2(total),
+      ...(byQuantity ? { rankedBy: 'quantity' } : {}),
       ...(args.sku ? { sku: args.sku, quantity: Math.round(sales.reduce((sum, row) => sum + row.quantity, 0) * 10000) / 10000 } : {}),
       ...(args.customer ? { customer: args.customer } : {}),
       otherCurrencies: [...currencies.values()].filter((entry) => entry.currency !== currency).map((entry) => ({ currency: entry.currency, invoices: entry.invoices, amount: money2(entry.amount) })),
@@ -392,11 +398,14 @@ const priceHistory = defineAiTool({
       service.lastOrders(itemId, identityOf(context)),
     ])
     const history = array(read.histories)[0] || {}
-    const fact = (row) => (row ? { ...primitives(row, ['unitPrice', 'currency', 'unit', 'orderedQuantity', 'date', 'orderNumber', 'supplierName']), ref: aiToolRef('purchase_order', row.purchaseOrderId, row.orderNumber) } : null)
+    // A price as a number, not the stored text with its four places
+    // (2026-11-11 on Flash: "£2.9500/pcs" copied into the answer).
+    const priced = (row) => (row && typeof row.unitPrice === 'string' && /^-?\d+(?:\.\d+)?$/.test(row.unitPrice.trim()) ? { ...row, unitPrice: Number(row.unitPrice) } : row)
+    const fact = (row) => (row ? { ...priced(primitives(row, ['unitPrice', 'currency', 'unit', 'orderedQuantity', 'date', 'orderNumber', 'supplierName'])), ref: aiToolRef('purchase_order', row.purchaseOrderId, row.orderNumber) } : null)
     const supplierName = (id) => array(facts.suppliers).find((row) => row.id === id)?.name || null
     return {
       sku: item.sku, unit: history.unit ?? null, currency: history.currency ?? currency, status: history.status ?? null,
-      latest: fact(history.latest), earlier: array(history.earlier).map(fact), average: history.average ? primitives(history.average, ['unitPrice', 'quantity', 'orderedQuantity', 'count', 'lineCount']) : null,
+      latest: fact(history.latest), earlier: array(history.earlier).map(fact), average: history.average ? priced(primitives(history.average, ['unitPrice', 'quantity', 'orderedQuantity', 'count', 'lineCount'])) : null,
       otherCurrencies: array(history.otherCurrencies), otherUnits: array(history.otherUnits),
       pricesHidden: Boolean(read.restrictedFields?.length),
       lastOrderBySupplier: array(last.lastOrders).map((row) => ({ supplier: supplierName(row.supplierId), orderNumber: row.orderNumber, day: row.day, ref: aiToolRef('purchase_order', row.purchaseOrderId, row.orderNumber) })),

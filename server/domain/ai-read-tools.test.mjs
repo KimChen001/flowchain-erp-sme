@@ -238,6 +238,50 @@ test('list_suppliers gives no contact email, though the facts hold one for draft
   for (const row of rows) assert.ok(!('email' in row) && !('contactName' in row), row.name)
 })
 
+// 2026-11-09 on Flash: "Acme 是几级供应商？为什么？" got "the records do not say
+// why", though the buyer wrote a reason when setting the tier.
+test('list_suppliers gives a tier\'s written reason, when it was set and by whom; an untiered supplier none', async () => {
+  const facts = await factsFor()
+  const tiered = { ...facts.suppliers[0], tier: 1, tierReason: 'Sole source of our best seller; 6% of purchase spend.', tierSetOn: '2026-10-12', tierSetBy: 'Daniel' }
+  const plain = { ...facts.suppliers[1], tier: null }
+  const rows = (await runAiReadTool('list_suppliers', {}, { facts: { ...facts, suppliers: [tiered, plain] } })).result.rows
+  const one = rows.find((row) => row.name === tiered.name)
+  assert.deepEqual([one.tier, one.tierReason, one.tierSetOn, one.tierSetBy], [1, 'Sole source of our best seller; 6% of purchase spend.', '2026-10-12', 'Daniel'])
+  assert.ok(!('tierReason' in rows.find((row) => row.name === plain.name)))
+})
+
+// 2026-11-09 on Flash: "When did we last receive 85123A?" had no receipt
+// lines to read.
+test('list_receipts with a SKU gives that item\'s latest receipts, newest first', async () => {
+  const facts = await factsFor()
+  const one = (await runAiReadTool('list_receipts', { sku: 'ldm-001' }, { facts })).result
+  assert.equal(one.sku, 'LDM-001')
+  assert.deepEqual(one.rows.map((row) => [row.documentNumber, row.accepted, row.rejected, row.unit, row.purchaseOrder, row.postingStatus]), [['GRN-001', 20, 0, 'pcs', 'PO-001', 'posted']])
+  assert.match(one.rows[0].arrived, /^\d{4}-\d{2}-\d{2}$/)
+  assert.deepEqual(one.rows[0].ref, { type: 'receiving_doc', id: 'GRN-001', label: 'GRN-001' })
+  const none = (await runAiReadTool('list_receipts', { sku: 'NOPE-1' }, { facts })).result
+  assert.deepEqual(none.rows, [])
+  assert.match(none.note, /No receipt of this item among the \d+ newest receipts read/)
+  // Without a SKU the kinds are as before.
+  assert.ok(Array.isArray((await runAiReadTool('list_receipts', { kind: 'unposted' }, { facts })).result.rows))
+})
+
+// 2026-11-09 on Flash: told the period was "all", the model said the
+// scorecard had no 90-day view and gave the quarter.
+test('supplier_performance reads the last 90 days by default, or the calendar period asked for', async () => {
+  const facts = await factsFor()
+  const asked = []
+  const scorecard = async (query) => { asked.push(query); return { period: query.from ? query : { from: '2026-08-12', to: '2026-11-09' }, suppliers: [], fieldVisibility: {} } }
+  const tool = AI_READ_TOOLS.find((entry) => entry.name === 'supplier_performance')
+  assert.equal(tool.schema.properties.period.enum[0], 'last_90_days')
+  assert.ok(!tool.schema.properties.period.enum.includes('all'))
+  await runAiReadTool('supplier_performance', {}, { facts: { ...facts, supplierScorecard: scorecard } })
+  await runAiReadTool('supplier_performance', { period: 'last_90_days' }, { facts: { ...facts, supplierScorecard: scorecard } })
+  await runAiReadTool('supplier_performance', { period: 'last_quarter' }, { facts: { ...facts, supplierScorecard: scorecard } })
+  assert.deepEqual(asked.slice(0, 2), [{}, {}])
+  assert.ok(asked[2].from && asked[2].to)
+})
+
 test('an order row names its items as the stock rows do, so a draft can name them', async () => {
   const facts = await factsFor()
   const names = new Map(facts.inventory.rows.map((row) => [row.sku, row.itemName]))
@@ -327,6 +371,14 @@ test('sales_summary totals customer invoices in a period by customer, item or mo
   assert.deepEqual([months.rows[0].runningAmount, months.rows[0].runningSharePercent], [undefined, undefined])
   const harbor = await run({ customer: 'harbor', by: 'item' })
   assert.deepEqual(harbor.rows.map((row) => [row.sku, row.amount]), [['X-1', 60], ['Y-2', 40]])
+  // Ranked by quantity, the item that sold the most units comes first, though
+  // it earned less (2026-11-09 on Flash: "most units" named the top earner).
+  const cheap = [...invoices, { id: 'CI-4', customerNameSnapshot: 'Redwood Retail', invoiceDate: new Date('2026-10-22T00:00:00Z'), subtotalAmount: '30.0000', currency: 'GBP', lines: [line('Z-3', 'Paper Clip', 300, 30)] }]
+  const byUnits = async (args) => (await runAiReadTool('sales_summary', { from: '2026-10-01', to: '2026-10-31', currency: 'GBP', by: 'item', ...args }, { facts, context: { ...context, prisma: { ...context.prisma, customerInvoice: { findMany: async () => cheap } } } })).result
+  assert.deepEqual((await byUnits({})).rows.map((row) => row.sku), ['X-1', 'Y-2', 'Z-3'])
+  const units = await byUnits({ rankBy: 'quantity' })
+  assert.equal(units.rankedBy, 'quantity')
+  assert.deepEqual(units.rows.map((row) => [row.rank, row.sku, row.quantity]), [[1, 'Z-3', 300], [2, 'X-1', 35], [3, 'Y-2', 5]])
   // A named period is counted from the workspace day; to before from is refused.
   const lastMonth = (await runAiReadTool('sales_summary', { period: 'last_month' }, { facts, context })).result
   assert.ok(lastMonth.period.from.endsWith('-01') && lastMonth.period.to < String(facts.today || facts.asOf))

@@ -23,6 +23,10 @@ const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRow
 const PERIODS = ['all', 'this_month', 'last_month', 'this_quarter', 'last_quarter', 'this_year', 'last_year']
 const periodParam = { type: 'string', enum: PERIODS, description: 'The period, counted from the workspace day. all by default.' }
 const periodOf = (value) => (value && value !== 'all' ? { kind: value } : null)
+// The scorecard's periods: its own last 90 days (the default, read as no
+// period), or a calendar one.
+const SCORECARD_PERIODS = ['last_90_days', ...PERIODS.filter((value) => value !== 'all')]
+const scorecardPeriodOf = (value) => (value && value !== 'last_90_days' ? periodOf(value) : null)
 const byDue = (a, b) => (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99') || text(a.orderNumber).localeCompare(text(b.orderNumber))
 const supplierError = (found) => ({ error: found.error, candidates: found.candidates || [] })
 
@@ -222,10 +226,21 @@ const listSalesOrders = defineAiTool({
 const RECENT_DAYS = AI_SKILL_RECENT_DAYS
 const listReceipts = defineAiTool({
   name: 'list_receipts',
-  description: 'Goods receipts: those with rejected quantities on open purchase orders, those not yet posted to stock, or those that arrived in the last 7 days.',
-  parameters: { kind: { type: 'string', enum: ['rejected', 'unposted', 'recent'], description: 'rejected by default.' }, limit: limitParam },
+  description: 'Goods receipts: those with rejected quantities on open purchase orders, those not yet posted to stock, or those that arrived in the last 7 days. With sku, that item\'s latest receipts (up to 3, newest first).',
+  parameters: { kind: { type: 'string', enum: ['rejected', 'unposted', 'recent'], description: 'rejected by default.' }, sku: { type: 'string', description: 'One item: its latest receipts.' }, limit: limitParam },
   available: (facts) => Boolean(facts.receipts),
   run(args, { facts }) {
+    if (args.sku) {
+      const sku = Object.keys(facts.receipts.latestBySku || {}).find((key) => fold(key) === fold(args.sku))
+      const rows = sku ? facts.receipts.latestBySku[sku] : []
+      return {
+        asOf: facts.asOf,
+        sku: sku || args.sku,
+        receiptsRead: facts.receipts.read ?? null,
+        ...(rows.length ? {} : { note: `No receipt of this item among the ${facts.receipts.read ?? 0} newest receipts read.` }),
+        rows: rows.map((row) => ({ documentNumber: row.documentNumber, arrived: row.arrivedDay, accepted: row.accepted, rejected: row.rejected, unit: row.unit, purchaseOrder: row.poId ? orderNumberOf(facts, row.poId) : null, supplier: row.supplier, postingStatus: row.postingStatus, ref: aiToolRef('receiving_doc', row.id, row.documentNumber) })),
+      }
+    }
     const kind = args.kind || 'rejected'
     const rows = [...array(facts.receipts[kind])].sort((a, b) => text(a.arrivedDay).localeCompare(text(b.arrivedDay)))
     return {
@@ -285,7 +300,7 @@ const listRfqs = defineAiTool({
 
 const listSuppliers = defineAiTool({
   name: 'list_suppliers',
-  description: 'Suppliers the user may read, with their code and tier (1 strategic, 2 core, 3 transactional, or none). Use it to find a supplier\'s exact name.',
+  description: 'Suppliers the user may read, with their code and tier (1 strategic, 2 core, 3 transactional, or none). A tiered supplier gives tierReason (why, as its setter wrote), tierSetOn and tierSetBy. Use it to find a supplier\'s exact name.',
   parameters: { name: { type: 'string', description: 'Part of a supplier name.' }, tier: { type: 'integer', minimum: 1, maximum: 3 }, limit: limitParam },
   available: (facts) => Array.isArray(facts.suppliers),
   run(args, { facts }) {
@@ -293,7 +308,7 @@ const listSuppliers = defineAiTool({
     if (args.name) rows = rows.filter((row) => fold(row.name).includes(fold(args.name)) || fold(row.code) === fold(args.name))
     if (args.tier) rows = rows.filter((row) => row.tier === args.tier)
     rows = [...rows].sort((a, b) => text(a.name).localeCompare(text(b.name)))
-    return aiToolList(rows.map((row) => ({ name: row.name, code: row.code, tier: row.tier, ref: aiToolRef('supplier', row.id, row.name) })), args.limit)
+    return aiToolList(rows.map((row) => ({ name: row.name, code: row.code, tier: row.tier, ...(row.tierReason ? { tierReason: row.tierReason, tierSetOn: row.tierSetOn ?? null, tierSetBy: row.tierSetBy ?? null } : {}), ref: aiToolRef('supplier', row.id, row.name) })), args.limit)
   },
 })
 
@@ -335,11 +350,14 @@ const spendAnalysis = defineAiTool({
 
 const supplierPerformance = defineAiTool({
   name: 'supplier_performance',
-  description: 'Delivery performance from the supplier scorecard: on-time, in-full and on-time-in-full rates with their counts, rejection rate and average delay. Every figure counts only deliveries promised in the period and judges them against the original promised date, so its count of deliveries still undelivered past that date can differ from the orders overdue today; for those, use list_purchase_orders. A rate needs at least 5 deliveries in the period. Name up to 5 suppliers to compare them, or none for the best or worst.',
+  description: 'Delivery performance from the supplier scorecard: on-time, in-full and on-time-in-full rates with their counts, rejection rate and average delay. Every figure counts only deliveries promised in the period and judges them against the original promised date, so its count of deliveries still undelivered past that date can differ from the orders overdue today; for those, use list_purchase_orders. A rate needs at least 5 deliveries in the period. The period is the last 90 days unless another is given. Name up to 5 suppliers to compare them, or none for the best or worst.',
   parameters: {
     suppliers: { type: 'array', items: { type: 'string' }, maxItems: 5, description: 'Supplier names or codes.' },
     order: { type: 'string', enum: ['best', 'worst'], description: 'Without suppliers: best (default) or worst on time first.' },
-    period: periodParam,
+    // The scorecard's own window is the last 90 days (2026-11-09 on Flash: told
+    // the period was "all", the model said the scorecard had no 90-day view
+    // and gave a quarter instead).
+    period: { type: 'string', enum: SCORECARD_PERIODS, description: 'The period, counted from the workspace day. last_90_days by default, the scorecard\'s own window.' },
   },
   available: (facts) => typeof facts.supplierScorecard === 'function',
   async run(args, { facts }) {
@@ -349,7 +367,7 @@ const supplierPerformance = defineAiTool({
       if (!found.supplier) return supplierError(found)
       named.push(found.supplier)
     }
-    const route = await aiSkillPrepareComparison({ skillId: 'supplier_comparison', signals: { compare: { mode: args.order === 'worst' ? 'worst' : 'best', period: periodOf(args.period) } }, entities: { suppliers: named } }, facts)
+    const route = await aiSkillPrepareComparison({ skillId: 'supplier_comparison', signals: { compare: { mode: args.order === 'worst' ? 'worst' : 'best', period: scorecardPeriodOf(args.period) } }, entities: { suppliers: named } }, facts)
     const result = runSupplierComparison(facts, { route })
     if (result.unavailable) return { error: 'scorecard_unavailable' }
     if (result.hidden) return { error: 'not_allowed' }

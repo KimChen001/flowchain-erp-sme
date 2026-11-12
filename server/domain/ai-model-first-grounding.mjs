@@ -50,7 +50,10 @@ const LIMIT_CLAIMS = [
 
 // Record numbers: letters, then hyphenated parts ending in digits.
 const RECORD = /(?<![\w-])[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+[A-Za-z0-9]*(?![\w-])/g
-const NOT_RECORD = /^tier-\d$/i
+// Words written with a number that are no record: tier-1, and top-10,
+// last-30 and the like (2026-11-10 on Flash: "that top-10 share" was marked
+// as an unknown record).
+const NOT_RECORD = /^(?:tier|top|bottom|first|last|next|past|best|worst)-\d+$/i
 
 // The record numbers in a text as this check reads them, NFKC-normalised.
 export function aiGroundingRecordNumbers(value) {
@@ -85,7 +88,16 @@ const CURRENCY_WORDS = [
 ]
 const NUMBER = /(?<cur>US\$|\$|€|£|¥|￥|\b(?:USD|EUR|GBP|CNY|RMB|JPY|CAD|AUD)\b)?\s?(?<![\w.])(?<num>[-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?![\d.,]\d)(?!(?:st|nd|rd|th)\b)(?<scale>[kK](?![a-zA-Z])|[mM](?![a-zA-Z])|bn\b|万|亿|千)?\s?(?<suffix>%|％|percent\b|per cent\b|个百分点|USD\b|EUR\b|GBP\b|CNY\b|美元|欧元|英镑|人民币|元|days?\b|天|日)?/g
 const SCALES = { k: 1e3, K: 1e3, m: 1e6, M: 1e6, bn: 1e9, 千: 1e3, 万: 1e4, 亿: 1e8 }
-const MONEY_KEY = /amount|value|total|spend|committed|difference|variance|price|cost|balance|outstanding|budget|result/i
+// Periods a question names in words, and their days.
+const PERIOD_WORDS = Object.freeze([
+  [/\b(?:a|one|another|next)\s+week\b|一周|一个星期|一星期|一礼拜/i, 7],
+  [/\btwo\s+weeks\b|两周|两个星期|二周/i, 14],
+  [/\b(?:a|one|next)\s+month\b|一个月/i, 30],
+])
+// Receivables aging buckets are amounts too: current, 1_30 … 90_plus
+// (2026-11-11 on Flash: "未到期 £74,505.50，逾期 1–30 天 £4,478.51" was right
+// and flagged).
+const MONEY_KEY = /amount|value|total|spend|committed|difference|variance|price|cost|balance|outstanding|budget|result|^current$|^\d+_(?:\d+|plus)$/i
 const PERCENT_KEY = /percent|share|rate|result/i
 const DAYS_KEY = /day|delay|overdue|result|between|lead/i
 // A figure written as available or available to promise comes from such a
@@ -166,7 +178,9 @@ function currencyCodes(word) {
 
 // Fields that hold a document's own words (search_documents passages): a
 // number or a date written in them counts as given, whatever it measures.
-const PROSE_KEYS = new Set(['excerpt', 'section', 'document'])
+// A supplier tier's reason is a person's words too (2026-11-10 on Flash: its
+// "No. 2 of 200 products… 7% of purchase spend", quoted, was flagged).
+const PROSE_KEYS = new Set(['excerpt', 'section', 'document', 'tierReason'])
 const PROSE_NUMBER = /(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w.])\d+(?:\.\d+)?/g
 // A count a passage writes as a word ("within three business days",
 // 三个工作日), which an answer writes as 3. From two to twenty only: "one" and
@@ -183,6 +197,21 @@ const PAYMENT_TERMS = /(?:\b\d{1,2}\/\d{1,2}\s+)?\bnet\s?\d{1,3}\b|月结\s*\d{1
 const APPROX_BEFORE = /(?:\babout|\baround|\broughly|\bapproximately|\bapprox\.?|~|≈|约|大约|大概|近)\s*$/i
 const APPROX_AFTER = /^\s*(?:左右|上下)/
 // What points at a step of a numbered list: "step 2", "steps 1 and 2", 第 2 步, 步骤 3.
+// What makes a number the size of a ranked list: "top 10", "top-10", 前 10.
+const TOP_BEFORE = /(?:\b(?:top|first|largest|biggest|leading)[\s-]*|前\s*)$/i
+// How many rows each list of the results holds, also one cut at its limit.
+function listSizesOf(results) {
+  const sizes = new Set()
+  const walk = (value) => {
+    if (Array.isArray(value)) {
+      const objects = value.filter((row) => row && typeof row === 'object' && !Array.isArray(row))
+      if (objects.length >= 2) sizes.add(objects.length)
+      value.forEach(walk)
+    } else if (value && typeof value === 'object') Object.values(value).forEach(walk)
+  }
+  walk(results)
+  return sizes
+}
 const STEP_BEFORE = /(?:\bsteps?|步骤|第)[^.\n。！？!?]{0,16}$/i
 const COUNT_NOUN =/^\s*(?:(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?|orders?|requests?|suppliers?|customers?|lines?|records?)(?![\p{L}])|(?:个|项|张|家|种|笔|条|款))/iu
 // An answer about overdue or aged amounts, and the bucket labels it may write:
@@ -192,9 +221,10 @@ const AGING_CUE = /\bage?ing\b|overdue|past[\s-]due|\bbuckets?\b|账龄|逾期/i
 const BUCKET_DASH = String.raw`\s*[-–—~～至到]\s*`
 const AGING_BUCKET = new RegExp([
   `(?<!\\d|\\d[.,])(?:[01]${BUCKET_DASH}30|31${BUCKET_DASH}60|61${BUCKET_DASH}90|91${BUCKET_DASH}120|121${BUCKET_DASH}180)(?!\\d|[.,]\\d)`,
-  String.raw`(?:\bover|>|超过)\s*-?\s*(?:30|60|90|120|180|365)\s*-?\s*(?:days?\b|天)`,
+  String.raw`(?:\bover|\bmore\s+than|\bolder\s+than|\bbeyond|>|超过)\s*-?\s*(?:30|60|90|120|180|365)\s*-?\s*(?:days?\b|天)`,
   String.raw`(?<!\d|\d[.,])(?:30|60|90|120|180|365)\s*\+(?:\s*(?:days?\b|天))?`,
-  String.raw`(?<!\d|\d[.,])(?:30|60|90|120|180|365)\s*天以上`,
+  // 2026-11-11 on Flash: "逾期 31 天以上没有".
+  String.raw`(?<!\d|\d[.,])(?:30|31|60|61|90|91|120|121|180|181|365)\s*天以上`,
 ].join('|'), 'gi')
 const ZH_DIGITS = Object.freeze({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 })
 const ZH_COUNT = /([二两三四五六七八九]?十[一二三四五六七八九]?|[二两三四五六七八九])\s*(?=个|天|日|周|次|件|家|笔|名|项|条|份|小时|工作日|月|年)/g
@@ -403,7 +433,14 @@ export function aiGroundingNames(facts) {
   const names = new Set()
   const add = (value) => { const name = text(value); if (name.length >= 3 && /[\p{L}]/u.test(name)) names.add(name) }
   for (const row of array(facts?.suppliers)) { add(row.name); add(row.code) }
-  for (const row of [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)]) { add(row.itemName); add(row.sku) }
+  for (const row of [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)]) {
+    add(row.itemName)
+    add(row.sku)
+    // A SKU of digits only is the item's code too, not a figure (2026-11-11
+    // on Flash, the UCI workspace: "450 件 84879 未到" was flagged). Four
+    // digits or more, so a small quantity is never read as one.
+    if (/^\d{4,}$/.test(text(row.sku))) names.add(text(row.sku))
+  }
   for (const row of array(facts?.salesOrders)) add(row.customer)
   for (const row of array(facts?.purchaseOrders?.index)) add(row.supplier)
   return [...names].sort((a, b) => b.length - a.length)
@@ -641,6 +678,9 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   if (AGING_CUE.test(body)) rest = rest.replace(AGING_BUCKET, blank)
   // Numbers, with what they measure.
   const givenNumbers = [...figuresText(question).matchAll(/\d+(?:,\d{3})*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, '')))
+  // A period the question names in words is given in days as well: "再晚一周"
+  // makes 7 天 the user's (2026-11-11 on Flash: "7 天约需 143.5 件" was flagged).
+  for (const [pattern, days] of PERIOD_WORDS) if (pattern.test(question)) givenNumbers.push(days)
   // The answer's figures read from the results or the question, in order, and
   // those no result holds.
   const operands = []
@@ -682,6 +722,9 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const grounded = read
       || (kind === 'plain' && !decimals && factor === 1 && value >= 1900 && value <= 2100 && [...sources.months].some((month) => month.startsWith(String(value))))
       || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && listCount(at, num.length) === value)
+      // The top N of a list a result holds N rows of ("the top 10 items",
+      // 前 10 位; 2026-11-11 on Flash: the 10 was flagged).
+      || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && TOP_BEFORE.test(rest.slice(Math.max(0, at - 16), at)) && listSizesOf(results).has(value))
       // A step of the answer's own numbered list ("steps 1 and 2", 第 2 步).
       || (kind === 'plain' && !decimals && factor === 1 && value >= 1 && value <= listItems && (STEP_BEFORE.test(rest.slice(Math.max(0, at - 24), at)) || /^\s*步/.test(rest.slice(at + num.length, at + num.length + 3))))
     const figure = { label: match[0].trim(), value, tolerance, kind, decimals, group: kind === 'money' ? `money:${(currencies || []).join('/')}` : kind }

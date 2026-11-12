@@ -360,8 +360,10 @@ test('a call the provider reports no usage for is metered by estimate, so the ce
       FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted', FLOWCHAIN_AI_PROVIDER_KIND: 'deepseek_chat', FLOWCHAIN_AI_PROVIDER_ENDPOINT: `http://127.0.0.1:${server.address().port}/v1/chat/completions`,
       FLOWCHAIN_AI_PROVIDER_API_KEY: 'placeholder-key', FLOWCHAIN_AI_PROVIDER_MODEL: 'claude-sonnet-5-5',
     })
-    // Sized to the prompt and tools (raised from 100,000 when the cost tools came, 2026-11-06).
-    const ceiling = 120000
+    // Sized to the prompt and tools (raised from 100,000 when the cost tools
+    // came, 2026-11-06, and from 120,000 with the reorder paging rules and the
+    // read tools' item receipts, units ranking and 90-day scorecard, 2026-11-10).
+    const ceiling = 145000
     const chat = await ask(null, { client, limits: { costCeilingMicros: ceiling } })
     assertProtocol(chat.events)
     assert.ok(requests.length < ASSISTANT_V2_LIMITS.rounds, 'the cost stopped the answer, not the round limit')
@@ -507,11 +509,12 @@ test('one set of follow-up chips per answer: a later call replaces the earlier, 
   assert.deepEqual(JSON.parse(lastToolResults(client.requests[1]).find((block) => block.tool_use_id === 'tu_chips').content), { shown: 'followups', partId: 'p2' })
 })
 
-test('the records a text names come with its flag, from this answer\'s results only', async () => {
+test('the records a text names come with its flag, from this conversation\'s results only', async () => {
   const { events } = await ask([OVERDUE, [...say('PO-001 and PO-008 are overdue; PO-002 is due soon. Acme Components supplies both.'), end()]])
   assertProtocol(events)
   const [flag] = ofType(events, 'flag')
-  assert.deepEqual(flag.refs, [{ type: 'purchase_order', id: 'PO-001', label: 'PO-001' }, { type: 'purchase_order', id: 'PO-008', label: 'PO-008' }])
+  // A supplier by its name too (2026-11-11).
+  assert.deepEqual(flag.refs, [{ type: 'purchase_order', id: 'PO-001', label: 'PO-001' }, { type: 'purchase_order', id: 'PO-008', label: 'PO-008' }, { type: 'supplier', id: 'SUP-001', label: 'Acme Components' }])
   assert.deepEqual(flag.spans, [{ text: 'PO-002', kind: 'record', reason: 'not_in_results' }])
   // A text that names no record of the results has no refs.
   const plain = await ask([OVERDUE, [...say('Two orders are overdue.'), end()]])
@@ -1290,6 +1293,170 @@ test('chips in a round with no text do not end the answer on an earlier opening 
   ])
   assert.equal(client.requests.length, 3)
   assert.match(body.conclusion.summary, /PO-001 is the most overdue\./)
+})
+
+// 2026-11-11 on Flash, the conversation cases.
+test('a price "we paid" is no claim, and a decimal point never ends the sentence a claim takes out', async () => {
+  const price = await ask([[...say('Here is how that comes out:\n\n- **What we sell it for:** about £2.75 a piece.\n- **What we paid:** £2.95 per pcs from Acme Components.\n\nSo it sells below cost.'), end()]], { question: 'What is our margin on LDM-001?' })
+  assert.ok(!ofType(price.events, 'replace').some((event) => event.code === 'unbacked_action_claim'), JSON.stringify(ofType(price.events, 'replace')))
+  assert.match(price.body.conclusion.summary, /What we paid:\*\* £2\.95 per pcs/)
+  // A real claim still goes, as its whole sentence: "£2.95" stays one figure.
+  const claim = await ask([[...say('LDM-001 costs £2.95 each. We paid the invoice of £2.95 yesterday. Nothing else is due.'), end()]], { question: 'Is anything due?' })
+  const replaced = ofType(claim.events, 'replace').find((event) => event.code === 'unbacked_action_claim')
+  assert.ok(replaced)
+  assert.equal(replaced.text, 'LDM-001 costs £2.95 each. Nothing else is due.')
+})
+
+test('text pointing to a card no part shows gets one more round to show it', async () => {
+  const { client, body, audit } = await ask([
+    OVERDUE,
+    [...say('PO-001 is waiting for approval. You can approve or reject it in the card with your own click.'), end()],
+    [...call('tu_cards', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()],
+    [end()],
+  ])
+  assert.ok(client.requests.length >= 3)
+  assert.match(client.requests[2].messages.at(-1).content.map((block) => block.text || '').join(' '), /none is shown in this answer/)
+  assert.ok(!client.requests.slice(3).some((request) => /none is shown in this answer/.test(JSON.stringify(request.messages.at(-1)))), 'once only')
+  assert.deepEqual(body.parts.map((part) => part.type), ['text', 'ui'])
+  assert.equal(audit.stopReason, 'end_turn')
+  // Once only, and not without such words.
+  const plain = await ask([OVERDUE, [...say('PO-001 is the most overdue.'), end()]])
+  assert.equal(plain.client.requests.length, 2)
+})
+
+// 2026-11-11 on Flash: "Show me the supplier of the oldest one" read nothing
+// again and named Acme Home Goods with no link.
+test('a follow-up links the supplier and records it names from the conversation\'s earlier results', async () => {
+  const thread = { messages: [], results: new Map() }
+  await ask([OVERDUE, [...say('PO-001 and PO-008 are overdue.'), end()]], { thread })
+  const { events } = await ask([[...say('The oldest is PO-001, from Acme Components.'), end()]], { thread, question: 'Show me the supplier of the oldest one' })
+  const linked = ofType(events, 'flag').flatMap((event) => event.refs || [])
+  assert.ok(linked.some((ref) => ref.type === 'supplier' && /Acme Components/.test(ref.label)), JSON.stringify(linked))
+  assert.ok(linked.some((ref) => ref.type === 'purchase_order' && ref.label === 'PO-001'))
+  assertProtocol(events)
+})
+
+// 2026-11-11 on Flash: "Assorted Colour Bird Ornament (UCI-ITEM-84879)".
+test('an internal record id in the text is replaced with the number people see', async () => {
+  const { events, body, audit } = await ask([
+    [...call('tu_stock', 'stock_position', {}), end()],
+    [...say('LDM-001 (ITEM-001) is below its reorder point; Acme Components (SUP-001) supplies it.'), end()],
+  ], { question: 'What is low?' })
+  const replaced = ofType(events, 'replace').find((event) => event.code === 'record_label')
+  assert.ok(replaced, JSON.stringify(ofType(events, 'replace')))
+  assert.match(body.conclusion.summary, /LDM-001 \(LDM-001\) is below/)
+  assert.match(body.conclusion.summary, /\(SUP-001\)/, 'a supplier code beside its name stays')
+  assert.ok(audit.replaces.includes('record_label'))
+  assertProtocol(events)
+})
+
+// 2026-11-09 on Flash, the UCI question set: the answer, then a round of
+// chips alone, then a call that said where the answer was or wrote it again.
+const WRITTEN = 'PO-001 and PO-008 are overdue. PO-001 is the oldest, so chase it first with its supplier today, and check PO-008 after it, since both hold stock you need this week.'
+test('chips alone after an answer written in an earlier round end it', async () => {
+  const { client, body, audit } = await ask([
+    OVERDUE,
+    [...say(WRITTEN), ...call('tu_cards', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()],
+    [...call('tu_chips', 'suggest_followups', { questions: ['Which supplier is it?'] }), end()],
+    [...say('Your answer is above.'), end()],
+  ], { uiTools: [showRecords, followups] })
+  assert.equal(client.requests.length, 3)
+  assert.equal(audit.stopReason, 'end_turn')
+  assert.doesNotMatch(body.conclusion.summary, /Your answer is above/)
+  assert.deepEqual(body.parts.map((part) => part.type), ['text', 'ui', 'ui'])
+})
+
+test('a part that says the shown answer again is left out; one that says something new is shown', async () => {
+  const again = 'To sum up: PO-001 and PO-008 are overdue. PO-001 is the oldest, so chase it first with its supplier today, then check PO-008, since both hold stock you need this week.'
+  const repeated = await ask([OVERDUE, [...say(WRITTEN), ...call('tu_cards', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()], [...say(again), end()]])
+  const sent = (outcome) => ofType(outcome.events, 'text_delta').map((event) => event.text).join('')
+  assert.doesNotMatch(sent(repeated), /To sum up/)
+  assert.doesNotMatch(repeated.body.conclusion.summary, /To sum up/)
+  assert.ok(repeated.audit.replaces.includes('repeated_text'))
+  assertProtocol(repeated.events)
+  // Streamed in pieces, it waits while it repeats and is never sent.
+  const pieces = again.match(/.{1,20}/g)
+  const streamed = await ask([OVERDUE, [...say(WRITTEN), ...call('tu_cards', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()], [...say(...pieces), end()]])
+  assert.doesNotMatch(sent(streamed), /To sum up/)
+  // New words after the cards are shown, and stream once they differ.
+  const next = 'The cards show each order\'s supplier. If PO-001 slips another week, the stock it brings runs short before the next delivery, so ask for a firm date in the same call and note it on the order.'
+  const added = await ask([OVERDUE, [...say(WRITTEN), ...call('tu_cards', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()], [...say(...next.match(/.{1,20}/g)), end()]])
+  assert.match(sent(added), /firm date/)
+  assert.match(added.body.conclusion.summary, /firm date/)
+  // A short closing line is no repeat, and text after an opening line is not held.
+  const closing = await ask([OVERDUE, [...say(WRITTEN), ...call('tu_cards', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()], [...say('Chase PO-001 first.'), end()]])
+  assert.match(sent(closing), /Chase PO-001 first\./)
+  const opening = await ask([[...say('Two orders are overdue.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()], [...say(again), end()]])
+  assert.match(opening.body.conclusion.summary, /To sum up/)
+})
+
+// 2026-11-09 on Flash through OpenCode: "I'll look at what's flagged for
+// today." opened about 1 in 3 answers, a longer pause not helping: a blank
+// line after it, or a pause before the call, let it out.
+test('a short text already shown is taken back when a call that reads follows', async () => {
+  for (const [label, opening] of [
+    ['a blank line', [...say("I'll look at what's flagged for today.\n\n")]],
+    ['the pause', [...say("I'll look at what's flagged for today. "), { type: 'pause', ms: 300 }]],
+  ]) {
+    const { events, body, client, audit } = await ask([
+      [...opening, ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+      [...say('PO-001 is the most overdue.'), end()],
+    ], { limits: { narrationWaitMs: 100 } })
+    assert.ok(ofType(events, 'text_delta').some((event) => /flagged for today/.test(event.text)), `${label}: shown first`)
+    const replaced = ofType(events, 'replace').find((event) => event.code === 'narration')
+    assert.ok(replaced, `${label}: ${JSON.stringify(ofType(events, 'replace'))}`)
+    assert.equal(replaced.text, '')
+    assert.doesNotMatch(body.conclusion.summary, /flagged for today/)
+    assert.match(body.conclusion.summary, /PO-001 is the most overdue\./)
+    assert.match(client.requests[1].messages.at(-1).content.map((block) => block.text || '').join(' '), /not shown to the user/)
+    assert.ok(audit.replaces.includes('narration'))
+    assertProtocol(events)
+  }
+  // Before a display tool it stays: the line above the cards. So does text of
+  // two paragraphs, or two sentences' length, before a read.
+  const shown = await ask([
+    OVERDUE,
+    [...say('PO-001 is the most overdue.\n\n'), ...call('tu_cards', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()],
+    [end()],
+  ], { limits: { narrationWaitMs: 100 } })
+  assert.ok(!ofType(shown.events, 'replace').some((event) => event.code === 'narration'))
+  assert.match(shown.body.conclusion.summary, /PO-001 is the most overdue\./)
+  // Up to twice as long, it is narration when it says it is about to look
+  // (2026-11-10 on Flash, 165 characters before three more reads).
+  const looking = 'The three overdue purchase orders matter most, and two of them are for the same item — but I need to see whether the open sales orders actually depend on that stock.'
+  const longer = await ask([
+    [...say(looking), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [...say('PO-001 is the most overdue.'), end()],
+  ], { limits: { narrationWaitMs: 100 } })
+  assert.ok(ofType(longer.events, 'replace').some((event) => event.code === 'narration' && event.text === ''))
+  assert.doesNotMatch(longer.body.conclusion.summary, /I need to see/)
+  const statement = 'The three overdue purchase orders matter most, and two of them are for the same item, 85123A, which is already below its safety stock with 48 pcs available today.'
+  const kept = await ask([
+    [...say(statement), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [...say('PO-001 is the most overdue.'), end()],
+  ], { limits: { narrationWaitMs: 100 } })
+  assert.ok(!ofType(kept.events, 'replace').some((event) => event.code === 'narration'))
+  // An answer written before reading that ends by saying it will look
+  // something up goes whole (2026-11-11 on Flash: 264, then 168 after reading).
+  const early = await ask([
+    [...say('**Only the remaining line would bring PO-001\'s item to 264 pcs available.**\n\nLet me confirm which order that is and what it still owes you.'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [...say('PO-001 is the most overdue.'), end()],
+  ], { limits: { narrationWaitMs: 100 } })
+  assert.ok(ofType(early.events, 'replace').some((event) => event.code === 'narration' && event.text === ''))
+  assert.doesNotMatch(early.body.conclusion.summary, /264/)
+  const paragraphs = await ask([
+    [...say('Two orders are overdue.\n\nPO-001 is the older one.\n\n'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [...say('PO-001 is the most overdue.'), end()],
+  ], { limits: { narrationWaitMs: 100 } })
+  assert.ok(!ofType(paragraphs.events, 'replace').some((event) => event.code === 'narration'))
+  // An answer that ends with no other text puts the line back.
+  const alone = await ask([
+    [...say('PO-001 and PO-008 are overdue.\n\n'), ...call('tu_po', 'list_purchase_orders', { status: 'overdue' }), end()],
+    [end()],
+  ], { limits: { narrationWaitMs: 100 } })
+  const replaces = ofType(alone.events, 'replace').filter((event) => event.code === 'narration')
+  assert.deepEqual(replaces.map((event) => event.text.trim()), ['', 'PO-001 and PO-008 are overdue.'])
+  assert.equal(alone.body.conclusion.summary, 'PO-001 and PO-008 are overdue.')
 })
 
 test('the system prompt asks for the answer first, display strings, whole record numbers and the app\'s terms', () => {
