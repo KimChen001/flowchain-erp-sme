@@ -9,6 +9,8 @@ const FORMS = [
   'src/modules/purchase-requests/CanonicalProcurementPanel.tsx',
   'src/modules/sales/OutboundWorkbench.tsx',
   'src/modules/procurement/ReceivingForm.tsx',
+  'src/modules/finance/SupplierInvoiceScreens.tsx',
+  'src/modules/srm/SupplierForm.tsx',
 ]
 
 test('the form standard sits beside the shared UI and covers sections, fields, required marks, messages and actions', () => {
@@ -41,7 +43,36 @@ test('Field marks a required control and ties a message to it', () => {
   assert.match(ui, /\{labelElement\}<span aria-hidden="true" className="[^"]*text-blue-600">\*<\/span>/)
 })
 
-test('the purchase request, sales order and receipt forms use the standard', () => {
+test('the supplier invoice form marks what the server refuses a bill without and checks on Save', () => {
+  const invoice = read(FORMS[3])
+  // buildSupplierInvoicePlan: supplier, invoice number, invoice date and due date.
+  for (const key of ['supplier', 'number', 'invoiceDate', 'dueDate']) {
+    assert.match(invoice, new RegExp(`required error=\\{problems\\.header\\.${key}\\}`), key)
+  }
+  // One action: Save runs the server's plan, then creates the draft. A
+  // missing field never disables it; only a workspace without finance does.
+  assert.doesNotMatch(invoice, /supplier-invoice-preview/)
+  assert.match(invoice, /testId: "supplier-invoice-create"/)
+  assert.match(invoice, /disabled: !enabled, testId: "supplier-invoice-create"/)
+  assert.match(invoice, /"\/api\/finance\/supplier-invoices\/preview"[\s\S]{0,400}if \(!plan\.allowed\)/)
+  // An empty unit price is asked for, not sent as 0.
+  assert.doesNotMatch(invoice, /linePrice\(line\.id, line\.purchaseOrderLineId\) \|\| "0"/)
+  // The plan's refusals land under the line they name.
+  assert.match(invoice, /SUPPLIER_INVOICE_QUANTITY_EXCEEDS_RECEIVED" && details\.receivingLineId/)
+})
+
+test('the supplier form stars what save needs and keeps its messages beside the fields', () => {
+  const form = read(FORMS[4])
+  assert.match(form, /const REQUIRED = \['supplierCode', 'supplierName', 'defaultCurrency'\]/)
+  const page = read('src/modules/srm/Page.tsx')
+  for (const key of ['supplierCode', 'supplierName', 'defaultCurrency']) assert.match(page, new RegExp(`field: '${key}'`), key)
+  // The old bar sat 80 px up and the page also padded for the assistant button.
+  assert.doesNotMatch(form, /sticky bottom-20/)
+  assert.doesNotMatch(form, /max-w-5xl/)
+  assert.match(form, /label: t\('Save supplier'\)/)
+})
+
+test('the purchase request, sales order, receipt, supplier invoice and supplier forms use the standard', () => {
   for (const file of FORMS) {
     const source = read(file)
     for (const part of ['<FormHeader', '<FormSection', '<FormActionBar', 'focusFirstInvalid(formRef.current)', '<FocusFirstField />', 'formGridClass']) {
