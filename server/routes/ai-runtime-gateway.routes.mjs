@@ -6,6 +6,7 @@ import { aiRuntimeProgressStream } from './ai-runtime-stream.mjs'
 import { assistantV2Enabled, assistantV2ModelClient } from '../domain/ai-assistant-v2-controls.mjs'
 import { QUESTION_LIMITS } from '../../shared/assistant-protocol.mjs'
 import { answerWithAssistantV2, answerWithAssistantV2Notice, assistantV2SetupState, validateAssistantV2Question } from './ai-assistant-v2-gateway.mjs'
+import { readAssistantFeedback, recordAssistantFeedback } from '../domain/ai-assistant-v2-feedback.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
 // was asked in Chinese. The client maps the codes to its own recovery text.
@@ -94,6 +95,33 @@ async function handleGatewayRequest(ctx) {
     // it, notice: why the assistant cannot answer here.
     const assistantV2 = assistantV2Enabled(ctx)
     send(res, 200, { assistantV2, ...(assistantV2 ? { setup: await assistantV2SetupState(ctx) } : { notice: assistantV2OffNotice(ctx) }) })
+    return true
+  }
+
+  // A thumbs up or down on one answer (ai-assistant-v2-feedback.mjs).
+  if (req.method === 'POST' && url.pathname === '/api/ai-runtime/feedback') {
+    if (!identity?.authenticated) {
+      send(res, 401, errorBody('AUTHENTICATION_REQUIRED'))
+      return true
+    }
+    if (!identity.tenantId) {
+      send(res, 403, errorBody('TENANT_CONTEXT_REQUIRED'))
+      return true
+    }
+    let body = {}
+    try {
+      body = await readBody(req)
+    } catch {
+      send(res, 400, errorBody('AI_REQUEST_UNREADABLE'))
+      return true
+    }
+    const feedback = readAssistantFeedback(body)
+    if (!feedback.ok) {
+      send(res, 400, { code: 'AI_FEEDBACK_INVALID', error: feedback.error })
+      return true
+    }
+    await recordAssistantFeedback(ctx, feedback.value, { env: ctx.env || process.env })
+    send(res, 200, { ok: true })
     return true
   }
 

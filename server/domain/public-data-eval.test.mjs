@@ -271,3 +271,48 @@ test('the UCI question set: every case in English or Chinese, on fixed months, w
   assert.match(cases.find((row) => row.id === 'hero-month-units-en').turns[0], /October 2026/)
   assert.match(cases.find((row) => row.id === 'month-compare-zh').turns[0], /2026 年 10 月的销售额和 9 月/)
 })
+
+// 2026-11-12, the owner: "一次性对话出来就是太多了". Each answer's length is
+// reported against a budget (a Chinese character counts twice), a lookup's
+// smaller; it never fails the case.
+test('scoring length: concise within the budget, a lookup held tighter, never failing the case', async () => {
+  const { LENGTH_BUDGET, answerLength } = await import('../../tests/ai-eval/v2-public/score.mjs')
+  assert.equal(answerLength('ab'), 2)
+  assert.equal(answerLength('库存 48'), 7)
+  const answer = (text) => ({ status: 200, text, ui: [], flags: [], errors: [] })
+  const concise = (text, expect = {}) => scoreAnswer(answer(text), expect).checks.find((check) => check.name === 'concise')
+  assert.equal(concise('x'.repeat(LENGTH_BUDGET.other)).ok, true)
+  const long = scoreAnswer(answer('x'.repeat(LENGTH_BUDGET.other + 1)), {})
+  assert.deepEqual([long.pass, long.checks.find((check) => check.name === 'concise').ok], [true, false])
+  assert.equal(concise('x'.repeat(LENGTH_BUDGET.brief + 1), { brief: true }).ok, false)
+  assert.match(concise('x', { brief: true }).detail, /lookup/)
+  assert.equal(concise('库'.repeat(LENGTH_BUDGET.brief / 2), { brief: true }).ok, true)
+  assert.equal(concise('库'.repeat(LENGTH_BUDGET.brief / 2 + 1), { brief: true }).ok, false)
+  assert.equal(concise('x', { length: false }), undefined)
+  // The lookups of the UCI set carry brief.
+  const { UCI_LOOKUPS } = await import('../../tests/ai-eval/v2-public/uci-cases.mjs')
+  assert.ok(UCI_LOOKUPS.has('hero-on-hand-en') && !UCI_LOOKUPS.has('reorder-en'))
+})
+
+// 2026-11-12: a plan question answered without the solver fails the case.
+test('scoring calls: the tools a case must call, and the UCI cases that need them', async () => {
+  const answer = { status: 200, text: 'Order 78.', ui: [], flags: [], errors: [], tools: ['calculate', 'suggest_purchase_request'] }
+  const result = scoreAnswer(answer, { calls: ['optimize_order_plan'] })
+  assert.equal(result.pass, false)
+  assert.equal(result.checks.find((check) => check.name === 'calls optimize_order_plan').detail, 'calculate, suggest_purchase_request')
+  assert.equal(scoreAnswer({ ...answer, tools: ['optimize_order_plan'] }, { calls: ['optimize_order_plan'] }).pass, true)
+  const { UCI_REQUIRED_TOOLS } = await import('../../tests/ai-eval/v2-public/uci-cases.mjs')
+  assert.deepEqual(UCI_REQUIRED_TOOLS['budget-quantity-en'], ['optimize_order_plan'])
+  assert.deepEqual(UCI_REQUIRED_TOOLS['hero-eoq-en'], ['order_quantity_costs'])
+})
+
+// 2026-11-12: "22423 …缺口 20 件；但……建议按 60 件下单。" names its quantity in
+// the next clause of the same sentence.
+test('scoring quantities: a quantity counts anywhere in its SKU\'s sentence, not across a full stop', () => {
+  const answer = (text) => ({ status: 200, text, ui: [], flags: [], errors: [] })
+  const ok = (text) => scoreAnswer(answer(text), { quantities: [{ sku: '22423', quantity: 60 }] }).checks.find((check) => check.name === 'quantity: 22423').ok
+  assert.equal(ok('只有 1 个物料：22423 缺口 20 件；但最小起订量为 60 件，所以建议按 60 件下单。'), true)
+  assert.equal(ok('Order 22423 now; the minimum is 60 pcs at £12.75.'), true)
+  assert.equal(ok('Order 22423 now. The minimum of another item is 60 pcs.'), false)
+  assert.equal(ok('22423 需要补货。另一个物料要 60 件。'), false)
+})

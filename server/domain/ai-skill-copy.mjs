@@ -122,6 +122,9 @@ const entries = {
   'source.contracts': ['contracts', '合同'],
   'source.supplier_risks': ['supplier risks', '供应商风险'],
   'source.workspace': ['workspace records', '工作区记录'],
+  // The answer's sources line only.
+  'source.receivables': ['receivables', '应收账款'],
+  'source.overview': ['the business overview', '业务概况'],
   // Status labels the model reads beside the codes (statusLabel).
   'po_status.draft': ['Draft', '草稿'],
   'po_status.pending_approval': ['Waiting for approval', '待审批'],
