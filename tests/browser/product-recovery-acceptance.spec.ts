@@ -204,11 +204,17 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByTestId("inventory-item-TST-002")).toContainText("150");
   await capture(page, "08-inventory-stock");
 
-  // TST-002's 150 available are at or under its reorder point of 270 too;
-  // the other items are above theirs.
+  // Need replenishment is the reorder list's stock position (on hand -
+  // reserved + open purchase order lines). TST-002 is 150 on hand plus 115 on
+  // order against a reorder point of 270: order now. TST-001's 28 on hand are
+  // below its safety stock of 30, but 70 on order (PO-001's 30 left and
+  // PO-015's 40) keep it above its reorder point of 40: below safety stock on
+  // hand, covered by open orders. The other items are above theirs.
   await page.goto("/app/inventory/warnings");
-  await expect(page.getByTestId("inventory-item-TST-001")).toContainText("需补货");
+  await expect(page.getByTestId("inventory-item-TST-001")).toContainText("低于安全库存（现有）");
+  await expect(page.getByTestId("inventory-item-TST-001")).toContainText("已有在途采购覆盖");
   await expect(page.getByTestId("inventory-item-TST-001")).toContainText("30 / 40");
+  await expect(page.getByTestId("inventory-item-TST-002")).toContainText("需补货");
   await expect(page.getByTestId("inventory-item-TST-002")).toContainText("100 / 270");
   await expect(page.getByTestId("inventory-item-TST-003")).toHaveCount(0);
   await capture(page, "09-inventory-warnings");
