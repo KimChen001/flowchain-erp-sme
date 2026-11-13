@@ -148,7 +148,8 @@ test('sales risk and evidence views translate system reasons and preserve custom
   }] } }));
   await page.goto('/app/sales/risks');
   await expect(page.locator('tbody')).toContainText('SO-TEST');
-  await expect(page.locator('tbody')).toContainText('a delivery shortage remains');
+  // The reason in plain words (round 8b), translated from the server's Chinese.
+  await expect(page.locator('tbody')).toContainText('Part of the order is not yet reserved or shipped.');
   await expectEnglish(page);
   await page.goto('/app/sales/evidence');
   await expect(page.locator('tbody')).toContainText('Shortage risk');

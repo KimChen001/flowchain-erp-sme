@@ -6,8 +6,10 @@ import { outboundEnglish } from '../../src/modules/sales/outboundCopy.ts'
 
 // The reserve, delivery draft and shipment dialogs say what the server's
 // preview will do in plain sentences, in English by default and in Chinese
-// through the language setting. SKUs, units, warehouse names and locations pass
-// through as stored; the page resolves warehouse ids to names.
+// through the language setting. SKUs, warehouse names and locations pass
+// through as stored; a unit reads by its label in the interface language
+// ("EA" is "ea" in English and 个 in Chinese, unitLabels.ts); the page resolves
+// warehouse ids to names.
 
 const names = { 'WH-e48e0d48': 'Main Warehouse' }
 const lookup = {
@@ -42,32 +44,41 @@ const post = {
 
 test('reserve, delivery draft and post previews read as plain English sentences', () => {
   assert.deepEqual(outboundPreviewSentences('en-US', reserve, lookup), [
-    'Reserves 10 EA of VALVE-100 at Main Warehouse / A-01. Available stock there goes down by 10.',
+    'Reserves 10 ea of VALVE-100 at Main Warehouse / A-01. Available stock there goes down by 10.',
   ])
   assert.deepEqual(outboundPreviewSentences('en-US', draft, lookup), [
-    'Creates a shipment for 10 EA of VALVE-100 from Main Warehouse / A-01. Stock does not change until the shipment is posted.',
+    'Creates a shipment for 10 ea of VALVE-100 from Main Warehouse / A-01. Stock does not change until the shipment is posted.',
   ])
   assert.deepEqual(outboundPreviewSentences('en-US', post, lookup), [
-    'Ships 10 EA of VALVE-100 from Main Warehouse / A-01. On hand and reserved both go down by 10.',
+    'Ships 10 ea of VALVE-100 from Main Warehouse / A-01. On hand and reserved both go down by 10.',
   ])
 })
 
 test('the same previews in Chinese, with the same SKU, unit, warehouse and quantity', () => {
-  assert.deepEqual(outboundPreviewSentences('zh-CN', reserve, lookup), ['在 Main Warehouse / A-01 预留 VALVE-100 10 EA。该库位可用量减少 10。'])
-  assert.deepEqual(outboundPreviewSentences('zh-CN', draft, lookup), ['创建发货单：从 Main Warehouse / A-01 发出 VALVE-100 10 EA。发货过账前库存不变。'])
-  assert.deepEqual(outboundPreviewSentences('zh-CN', post, lookup), ['从 Main Warehouse / A-01 发出 VALVE-100 10 EA。在库量和预留量各减少 10。'])
+  assert.deepEqual(outboundPreviewSentences('zh-CN', reserve, lookup), ['在 Main Warehouse / A-01 预留 VALVE-100 10 个。该库位可用量减少 10。'])
+  assert.deepEqual(outboundPreviewSentences('zh-CN', draft, lookup), ['创建发货单：从 Main Warehouse / A-01 发出 VALVE-100 10 个。发货过账前库存不变。'])
+  assert.deepEqual(outboundPreviewSentences('zh-CN', post, lookup), ['从 Main Warehouse / A-01 发出 VALVE-100 10 个。在手量和预留量各减少 10。'])
 })
 
 test('release, cancel and reverse previews name the reservation by its warehouse, never its id', () => {
   const release = { operation: 'release', allowed: true, normalizedPlan: { releases: [{ reservationId: 'res-1', quantity: '2.5000' }] }, balanceImpacts: [], reservationImpacts: [] }
   const cancel = { operation: 'cancel_shipment_draft', allowed: true, normalizedPlan: { shipmentId: 'ship-1' }, balanceImpacts: [], reservationImpacts: [{ reservationId: 'res-1', quantity: '10.0000' }] }
   const reverse = { ...post, operation: 'reverse_shipment', balanceImpacts: [{ ...post.balanceImpacts[0], onHandBefore: '15.0000', onHandAfter: '25.0000' }] }
-  assert.deepEqual(outboundPreviewSentences('en-US', release, lookup), ['Releases 2.5 EA of VALVE-100 reserved at Main Warehouse / A-01. Available stock there goes up by 2.5.'])
-  assert.deepEqual(outboundPreviewSentences('en-US', cancel, lookup), ['Cancels this shipment draft. 10 EA of VALVE-100 at Main Warehouse / A-01 stays reserved for the order.'])
-  assert.deepEqual(outboundPreviewSentences('en-US', reverse, lookup), ['Returns 10 EA of VALVE-100 to Main Warehouse / A-01. On hand and reserved both go up by 10.'])
+  assert.deepEqual(outboundPreviewSentences('en-US', release, lookup), ['Releases 2.5 ea of VALVE-100 reserved at Main Warehouse / A-01. Available stock there goes up by 2.5.'])
+  assert.deepEqual(outboundPreviewSentences('en-US', cancel, lookup), ['Cancels this shipment draft. 10 ea of VALVE-100 at Main Warehouse / A-01 stays reserved for the order.'])
+  assert.deepEqual(outboundPreviewSentences('en-US', reverse, lookup), ['Returns 10 ea of VALVE-100 to Main Warehouse / A-01. On hand and reserved both go up by 10.'])
   for (const sentence of [release, cancel, reverse].flatMap((preview) => outboundPreviewSentences('en-US', preview, lookup))) {
     assert.doesNotMatch(sentence, /res-1|WH-e48e0d48|\{|\}/)
   }
+})
+
+test('no English unit inside a Chinese sentence: "pcs" reads 件 (round 8b #27)', () => {
+  const pcs = { ...lookup, unit: () => 'pcs' }
+  const reservePcs = { ...reserve, normalizedPlan: { allocations: [{ ...reserve.normalizedPlan.allocations[0], sku: '21326', unit: 'pcs', quantity: '15.0000' }] } }
+  assert.deepEqual(outboundPreviewSentences('zh-CN', reservePcs, pcs), ['在 Main Warehouse / A-01 预留 21326 15 件。该库位可用量减少 15。'])
+  assert.deepEqual(outboundPreviewSentences('en-US', reservePcs, pcs), ['Reserves 15 pcs of 21326 at Main Warehouse / A-01. Available stock there goes down by 15.'])
+  // An SKU of digits stays as written: never "21,326".
+  for (const sentence of outboundPreviewSentences('en-US', reservePcs, pcs)) assert.doesNotMatch(sentence, /21,326/)
 })
 
 test('a blocked preview has no sentences; the dialog shows why it is blocked', () => {
@@ -80,7 +91,7 @@ test('quantities are exact decimal differences in the shared quantity format', (
   assert.equal(decimalDifference('1234.5000', '0'), '1234.5000')
   assert.equal(decimalDifference('abc', '1'), '')
   const large = { ...post, balanceImpacts: [{ ...post.balanceImpacts[0], onHandBefore: '1500.0000', onHandAfter: '0.0000' }] }
-  assert.match(outboundPreviewSentences('en-US', large, lookup)[0], /^Ships 1,500 EA of VALVE-100/)
+  assert.match(outboundPreviewSentences('en-US', large, lookup)[0], /^Ships 1,500 ea of VALVE-100/)
 })
 
 test('every timeline title the order workbench API builds has an English label', async () => {

@@ -227,8 +227,10 @@ const filterContext = () => context({
 test('a supplier filter narrows supplier subjects and leaves sales orders and inventory alone', () => {
   const report = buildRuntimeGovernedReport(filterContext(), { subject: 'overview', filters: { supplier: 'Acme' } })
   assert.equal(kpi(report, 'purchase_order_amount').currentValue, 300)
-  assert.equal(kpi(report, 'sales_order_count').currentValue, 2)
-  assert.equal(kpi(report, 'inventory_risk_sku').currentValue, 1)
+  // The overview's invoice figure follows the supplier filter too (round 8).
+  assert.equal(kpi(report, 'invoice_amount').currentValue, 70)
+  assert.equal(kpi(report, 'sales_order_amount').currentValue, 120)
+  assert.equal(report.charts.find(item => item.id === 'overview_activity').data[0]['Sales orders'], 2)
   assert.equal(report.attention.find(item => item.id === 'inventory_shortages').count, 1)
   assert.equal(report.attention.find(item => item.id === 'unfulfilled_sales').count, 2)
   const finance = buildRuntimeGovernedReport(filterContext(), { subject: 'finance', filters: { supplier: 'Acme' } })
@@ -238,14 +240,14 @@ test('a supplier filter narrows supplier subjects and leaves sales orders and in
 test('a customer filter narrows sales orders and leaves purchase order amount alone', () => {
   const report = buildRuntimeGovernedReport(filterContext(), { subject: 'overview', filters: { customer: 'Northwind' } })
   assert.equal(kpi(report, 'purchase_order_amount').currentValue, 600)
-  assert.equal(kpi(report, 'open_po_count').currentValue, 3)
-  assert.equal(kpi(report, 'sales_order_count').currentValue, 1)
+  assert.equal(report.attention.find(item => item.id === 'open_orders').count, 3)
+  assert.equal(kpi(report, 'sales_order_amount').currentValue, 80)
 })
 
 test('a status filter from the purchase order status chart does not zero out sales orders', () => {
   const report = buildRuntimeGovernedReport(filterContext(), { subject: 'overview', filters: { status: 'issued' } })
   assert.equal(kpi(report, 'purchase_order_amount').currentValue, 400)
-  assert.equal(kpi(report, 'sales_order_count').currentValue, 2)
+  assert.equal(kpi(report, 'sales_order_amount').currentValue, 120)
   const sales = buildRuntimeGovernedReport(filterContext(), { subject: 'sales', filters: { status: 'confirmed' } })
   assert.equal(kpi(sales, 'sales_order_count').currentValue, 2)
 })
@@ -253,8 +255,9 @@ test('a status filter from the purchase order status chart does not zero out sal
 test('metrics list only the filters their subject can apply', () => {
   const report = buildRuntimeGovernedReport(filterContext(), { subject: 'overview' })
   assert.deepEqual(kpi(report, 'purchase_order_amount').applicableFilters, ['from', 'to', 'supplier', 'currency', 'status'])
-  assert.deepEqual(kpi(report, 'sales_order_count').applicableFilters, ['from', 'to', 'customer', 'currency'])
-  assert.deepEqual(kpi(report, 'inventory_risk_sku').applicableFilters, [])
+  assert.deepEqual(kpi(report, 'sales_order_amount').applicableFilters, ['from', 'to', 'customer', 'currency'])
+  assert.deepEqual(kpi(report, 'low_stock_sku').applicableFilters, [])
+  assert.deepEqual(kpi(report, 'invoice_amount').applicableFilters, ['from', 'to', 'supplier', 'currency'])
 })
 
 test('purchase orders use the order date, then the creation date, never the last update', () => {
@@ -267,7 +270,7 @@ test('purchase orders use the order date, then the creation date, never the last
   assert.equal(kpi(september, 'purchase_order_amount').currentValue, 600)
   assert.deepEqual(september.details.map(row => row.id).sort(), ['PO-ORDER-DATE', 'PO-SEPTEMBER'])
   const all = buildRuntimeGovernedReport(context({ purchaseOrders }), { subject: 'overview' })
-  assert.deepEqual(all.charts[0].data.map(row => [row.name, row['Purchase orders']]), [['2026-08', 1], ['2026-09', 2]])
+  assert.deepEqual(all.charts.find(item => item.id === 'overview_activity').data.map(row => [row.name, row['Purchase orders']]), [['2026-08', 1], ['2026-09', 2]])
 })
 
 test('records without a business date are left out of date-filtered totals', () => {
@@ -277,7 +280,8 @@ test('records without a business date are left out of date-filtered totals', () 
   const filters = { from: '2026-09-01', to: '2026-09-30' }
   const overview = buildRuntimeGovernedReport(context({ purchaseOrders, salesOrders }), { subject: 'overview', filters })
   assert.equal(kpi(overview, 'purchase_order_amount').currentValue, 100)
-  assert.equal(kpi(overview, 'sales_order_count').currentValue, 0)
+  assert.equal(kpi(overview, 'sales_order_amount').currentValue, 0)
+  assert.deepEqual(overview.charts.find(item => item.id === 'overview_activity').data.map(row => row['Sales orders']), [0])
   assert.equal(overview.attention.find(item => item.id === 'open_orders').count, 1)
   assert.equal(kpi(buildRuntimeGovernedReport(context({ supplierInvoices }), { subject: 'finance', filters }), 'invoice_amount').currentValue, 0)
   // Without a date range the undated order still counts.

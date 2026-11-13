@@ -129,6 +129,15 @@ test('text streams as deltas in order, the start comes first and the answer last
   assert.deepEqual(request.tools.find((tool) => tool.name === 'show_records').input_schema, showRecords.inputSchema)
 })
 
+test('the open record reaches the model with its number, so an answer never names it by its id', async () => {
+  const { client } = await ask([[...say('Two orders are overdue.'), end()]], { body: { activeContext: { moduleId: 'purchase-orders', entityType: 'purchase_order', entityId: 'UCI-PO-00356', entityLabel: 'PO-202611-0015' } } })
+  const context = JSON.parse(client.requests[0].messages[0].content[0].text.replace(/^[^{]*/, ''))
+  assert.deepEqual(context.openRecord, { moduleId: 'purchase-orders', entityType: 'purchase_order', entityId: 'UCI-PO-00356', label: 'PO-202611-0015' })
+  // Without a label the record goes as before.
+  const plain = await ask([[...say('Two orders are overdue.'), end()]], { body: { activeContext: { moduleId: 'purchase-orders', entityType: 'purchase_order', entityId: 'UCI-PO-00356' } } })
+  assert.equal(JSON.parse(plain.client.requests[0].messages[0].content[0].text.replace(/^[^{]*/, '')).openRecord.label, undefined)
+})
+
 test('a data tool, then a UI tool on its result: the part shows where the model called it', async () => {
   const { events, body, audit, client, thread } = await ask([
     OVERDUE,
@@ -548,10 +557,25 @@ test('the records a text names come with its flag, from this conversation\'s res
   assert.ok(order.indexOf('flag:p1', order.indexOf('tool:get_purchase_order')) < order.indexOf('text_delta:p2'), 'the late flag comes before the next text')
 })
 
+test('the answer says what it read, as of which day, and how many of its facts were checked or flagged', async () => {
+  // PO-001 is in the results; PO-002 is not, so it is flagged.
+  const { body } = await ask([OVERDUE, [...say('PO-001 and PO-002 are overdue.'), end()]])
+  assert.deepEqual(body.basis.sources, ['purchase orders'])
+  assert.equal(body.basis.asOf, body.skill.asOf)
+  assert.equal(body.basis.figures, 2)
+  assert.equal(body.basis.flagged, 1)
+  assert.deepEqual(body.basis.tools, ['list_purchase_orders'])
+  // An answer that read nothing names no source and checked nothing.
+  const general = await ask([[...say('A three-way match compares the order, the receipt and the invoice.'), end()]], { question: 'What is a three-way match?' })
+  assert.deepEqual(general.body.basis, { sources: [], asOf: general.body.skill.asOf, figures: 0, flagged: 0, tools: [] })
+})
+
 test('the system prompt asks for the source handle, status words, one set of chips and no talk of tools', () => {
   assert.match(ASSISTANT_V2_SYSTEM, /starts with its source, such as "list_purchase_orders#1": pass that as source/)
   assert.match(ASSISTANT_V2_SYSTEM, /Never mention tools, displays, sources, ids, errors or retries to the user/)
   assert.match(ASSISTANT_V2_SYSTEM, /never as its code: where a result gives a label beside the code \(statusLabel/)
+  // One assistant on every page: the open record is used only when the question points to it.
+  assert.match(ASSISTANT_V2_SYSTEM, /openRecord only says where the user is: use it when the question points to it .*, and name it by its label, never its entityId\. Any other question is about the whole workspace, whichever page is open, and its answer leaves the open record out\./)
   assert.match(ASSISTANT_V2_SYSTEM, /suggest_followups, called once/)
   // Chips only when there is a next step (2026-11-04), never beside a question to the user.
   assert.match(ASSISTANT_V2_SYSTEM, /When the answer has a clear next step, end it with suggest_followups/)

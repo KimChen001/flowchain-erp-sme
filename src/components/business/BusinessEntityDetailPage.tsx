@@ -14,6 +14,7 @@ import { INVENTORY_ADJUSTMENTS } from "../../modules/inventory/adjustmentData";
 import { A, Card, Chip, SectionHeader } from "../ui";
 import { BusinessEntityLink } from "./BusinessEntityLink";
 import { businessEntityCopy } from "./businessEntityCopy";
+import { CustomerNewOrderAction, CustomerRelatedRecords, type CustomerSummary } from "./CustomerRelatedRecords";
 import { businessEntityRouteRegistry, type BusinessEntityType } from "./businessEntityRoutes";
 
 type RecordValue = Record<string, unknown>;
@@ -183,6 +184,11 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
   const recordCode = nameOf(record?.code) || nameOf(record?.customerCode) || nameOf(record?.supplierCode) || nameOf(record?.sku);
   const heading = recordName || shownId;
   useDetailCrumb(record ? heading : null);
+  // A customer's page also shows its orders, invoices and balance, and starts
+  // a new order for it (CustomerRelatedRecords).
+  const customer: CustomerSummary | null = entityType === "customer" && record
+    ? { id: String(record.id || id), code: recordCode, name: recordName, status: String(record.status || "active") }
+    : null;
 
   if (loading) return <Card className="p-8" data-testid="business-entity-detail"><div className="animate-pulse text-sm" style={{ color: A.gray1 }}>{text("loading", { label: entityLabel })}</div></Card>;
   if (!record) return <Card className="p-8" data-testid="business-entity-detail"><Link to={returnTo} className="text-sm text-blue-600 hover:underline">← {returnLabel}</Link><h2 className="mt-5 text-lg font-semibold">{text("notFound", { label: entityLabel, id: shownId })}</h2><p className="mt-2 text-sm" style={{ color: A.gray1 }}>{text("notFoundHint")}</p></Card>;
@@ -193,9 +199,14 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><div className="fc-caption" style={{ color: A.gray2 }}>{entityLabel}{recordName && recordCode ? ` · ${recordCode}` : ""}</div><h1 className="fc-page-title mt-1 tabular-nums" style={{ color: A.label }}>{heading}</h1></div>
-          <Chip label={formatValue("status", record.status || record.matchStatus || record.settlementStatus || "active", { locale, currency: recordCurrency, zh, timezone })} color={A.blue} bg="#f0f6ff" />
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip label={formatValue("status", record.status || record.matchStatus || record.settlementStatus || "active", { locale, currency: recordCurrency, zh, timezone })} color={A.blue} bg="#f0f6ff" />
+            {customer && <CustomerNewOrderAction customer={customer} />}
+          </div>
         </div>
       </Card>
+
+      {customer && <CustomerRelatedRecords customer={customer} />}
 
       {links.length > 0 && <Card className="p-5"><SectionHeader title={text("related")} /><div className="flex flex-wrap gap-2">{links.map((link) => <BusinessEntityLink key={`${link.type}-${link.id}`} entityType={link.type} entityId={link.id} returnLabel={text("back", { label: entityLabel, id: shownId })} className="inline-flex rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs">{businessEntityCopy(link.label, language)} · {isDocumentNumberType(link.type) ? <DocumentNumber type={link.type} id={link.id} /> : link.id}</BusinessEntityLink>)}</div></Card>}
 
@@ -207,7 +218,7 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
         <Card className="p-5"><SectionHeader title={text("comments")} /><p className="text-sm leading-6" style={{ color: A.sub }}>{String(record.comments || record.notes || text("noComments"))}</p></Card>
         <Card className="p-5"><SectionHeader title={text("history")} />{history.length ? <div className="space-y-2">{history.map((item, index) => <div key={index} className="rounded-lg p-3 text-xs" style={{ background: A.gray6 }}><div className="font-semibold" style={{ color: A.label }}>{String(item.action || text("historyUpdate"))}</div><div className="mt-1" style={{ color: A.gray2 }}>{String(item.time || item.date || "—")} · {String(item.operator || record.owner || text("system"))}</div></div>)}</div> : <div className="rounded-lg p-3 text-xs" style={{ background: A.gray6, color: A.gray1 }}>{text("noHistory")}</div>}</Card>
       </div>
-      <Link to={returnTo} className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:underline"><ArrowLeft size={15} />{returnLabel}</Link>
+      {/* "Back to …" is said once, above the record. */}
     </div>
   );
 }

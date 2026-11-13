@@ -46,6 +46,60 @@ function lifecycle(chart: ReportChart, zh: boolean, format: Format): Insight | n
     : `Receiving has started on ${share} of committed purchase orders and ${full} ${plural(full, "is", "are")} fully received; ${invoiced} ${plural(invoiced, "has", "have")} a supplier invoice and ${matched} a matched invoice.` };
 }
 
+// The overview's last whole month of sales and committed purchases, from its
+// purchases and sales chart: the month to date, or a month the range cuts,
+// would read as a fall. Sales counted from only the latest orders read
+// (salesCut) are left out.
+function lastWholeMonth(chart: ReportChart, zh: boolean, format: Format, salesCut: boolean): Insight | null {
+  const partial = new Set((chart.partialPeriods || []).map(item => item.period));
+  const last = (chart.data || []).filter(row => row.name !== "Undated" && !partial.has(String(row.name))).at(-1);
+  if (!last) return null;
+  const series = chart.seriesKeys || [];
+  const purchases = series.includes("Committed PO amount") ? num(last["Committed PO amount"]) : null;
+  const sales = !salesCut && series.includes("Sales order amount") ? num(last["Sales order amount"]) : null;
+  if (purchases === null && sales === null) return null;
+  const money = (value: number) => format(value, "currency", chart.currencyCode);
+  const parts = zh
+    ? [sales !== null ? `销售订单 ${money(sales)}` : "", purchases !== null ? `已承诺采购 ${money(purchases)}` : ""].filter(Boolean)
+    : [sales !== null ? `${money(sales)} in sales orders` : "", purchases !== null ? `${money(purchases)} in committed purchases` : ""].filter(Boolean);
+  return { id: "overview_last_month", tone: "neutral", figure: money(sales ?? purchases ?? 0), path: chart.drilldownPath, text: zh
+    ? `${last.name}（最近一个完整月份）：${parts.join("，")}。`
+    : `${last.name}, the last whole month: ${parts.join(" and ")}.` };
+}
+
+// SKUs low on stock, from the overview's stock status chart: the statuses the
+// low-stock KPI counts, each named as the chart names it.
+const LOW_STOCK: Array<[string, string, string]> = [["out_of_stock", "out of stock", "缺货"], ["below_safety_stock", "below safety stock", "低于安全库存"], ["below_reorder_point", "below reorder point", "低于再订货点"]];
+function stockHealth(chart: ReportChart, zh: boolean, format: Format): Insight | null {
+  const rows = chart.data || [];
+  const count = (code: string) => num(rows.find(row => row.name === code)?.value) ?? 0;
+  const total = rows.reduce((sum, row) => sum + (num(row.value) ?? 0), 0);
+  if (!total) return null;
+  const low = LOW_STOCK.reduce((sum, [code]) => sum + count(code), 0);
+  const n = (value: number) => format(value, "number");
+  if (!low) return { id: "stock", tone: "positive", figure: n(0), path: chart.drilldownPath, text: zh ? "没有 SKU 缺货、低于安全库存或低于再订货点。" : "No SKU is out of stock or below its safety stock or reorder point." };
+  const parts = LOW_STOCK.filter(([code]) => count(code)).map(([code, en, cn]) => zh ? `${cn} ${n(count(code))} 个` : `${n(count(code))} ${en}`);
+  const list = zh ? parts.join("、") : parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+  return { id: "stock", tone: "attention", figure: n(low), path: chart.drilldownPath, text: zh
+    ? `${n(total)} 个 SKU 中有 ${n(low)} 个库存偏低：${list}。`
+    : `${n(low)} of ${n(total)} ${plural(total, "SKU", "SKUs")} ${plural(low, "is", "are")} low on stock: ${list}.` };
+}
+
+// The supplier with the most committed purchase orders, from the overview's
+// supplier chart, saying when several tie. When every bar ties there is no
+// leader, and suppliers past the chart's last bar may tie too.
+function busiestSupplier(chart: ReportChart, zh: boolean, format: Format): Insight | null {
+  const rows = chart.data || [];
+  const top = num(rows[0]?.value);
+  if (!top || rows.length < 2) return null;
+  const tied = rows.filter(row => num(row.value) === top);
+  if (tied.length === rows.length) return null;
+  const figure = format(top, "number");
+  return { id: "busiest_supplier", tone: "neutral", figure, path: chart.drilldownPath, text: tied.length === 1
+    ? zh ? `${tied[0].name} 的已承诺采购订单最多：${figure} 张。` : `${tied[0].name} has the most committed purchase orders: ${figure}.`
+    : zh ? `${tied.length} 家供应商并列已承诺采购订单最多：各 ${figure} 张。` : `${tied.length} suppliers tie for the most committed purchase orders: ${figure} each.` };
+}
+
 // The highest and lowest on-time share among suppliers, saying when several
 // tie. The ranking keeps its first rows only; when it left some out (total),
 // its last bar is not the lowest, so only the highest is named.
@@ -100,19 +154,16 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
   const compared = report.kpis.filter(item => item.comparisonDelta !== null && item.comparisonValue !== null && item.comparisonDelta !== 0 && !(salesCut && item.subject === "sales_orders")).sort((a, b) => size(b) - size(a))[0];
   if (compared) insights.push(change(compared, zh, format, label, report.dataScope.currencyCode));
 
+  // The overview speaks for every area it shows (round 8): sales and
+  // purchases by month, stock, and suppliers, each from its chart on the page.
+  // A chart the reader may not read has no data and so no finding.
   if (view === "overview") {
-    const trend = chartById(report, "overview_spend_trend");
-    // The last whole month: the month to date, or a month the range cuts,
-    // would read as a fall.
-    const partial = new Set((trend?.partialPeriods || []).map(item => item.period));
-    const last = trend?.data?.filter(row => row.name !== "Undated" && !partial.has(String(row.name))).at(-1);
-    if (trend && last && trend.unit === "currency") {
-      const amount = num(last["Committed amount"]);
-      const count = num(last["Purchase orders"]) ?? 0;
-      if (amount !== null) insights.push({ id: "overview_last_month", tone: "neutral", figure: format(amount, "currency", trend.currencyCode), path: trend.drilldownPath, text: zh ? `${last.name}：已承诺采购额 ${format(amount, "currency", trend.currencyCode)}，共 ${count} 张采购订单。` : `${last.name}: ${format(amount, "currency", trend.currencyCode)} committed across ${count} purchase ${plural(count, "order", "orders")}.` });
-    }
-    const flow = chartById(report, "overview_lifecycle");
-    if (flow) insights.push(lifecycle(flow, zh, format));
+    const money = chartById(report, "overview_purchases_and_sales");
+    if (money) insights.push(lastWholeMonth(money, zh, format, salesCut));
+    const stock = chartById(report, "overview_stock_status");
+    if (stock) insights.push(stockHealth(stock, zh, format));
+    const suppliers = chartById(report, "overview_suppliers");
+    if (suppliers) insights.push(busiestSupplier(suppliers, zh, format));
   }
 
   if (view === "procurement") {

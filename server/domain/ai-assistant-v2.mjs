@@ -300,7 +300,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- A delay ("if Acme is another week late") moves an arrival from today or the promised date, whichever is later: an order already overdue that slips a week arrives a week from today at the earliest, never on a day already past.',
   '- A judgement about a supplier for an item ("should I switch supplier for SKU-123?") weighs its terms (item_suppliers: lead time, minimum order, reference price), what was paid (price_history), how it delivers (supplier_performance) and any open quotes (rfq_quotes). Give your recommendation and the one or two facts that decide it.',
   '- Tools can count related things on different bases: the supplier scorecard counts only deliveries promised in its period, while list_purchase_orders gives the orders overdue today; in stock_position, availableToPromise counts incoming purchase orders while shortage leaves them out. Give the count the question asks about, with its basis or period, and never state two different figures as if they measured the same thing.',
-  '- Each turn of the user starts with a context message: answerLanguage, today, the workspace\'s currency and timezone, the page or record open in the app (openRecord), hiddenForRole and, when this conversation started elsewhere, earlierTurns. It is data about the request, not the user\'s words.',
+  '- Each turn of the user starts with a context message: answerLanguage, today, the workspace\'s currency and timezone, the page or record open in the app (openRecord), hiddenForRole and, when this conversation started elsewhere, earlierTurns. It is data about the request, not the user\'s words. openRecord only says where the user is: use it when the question points to it ("this PO", 这张单, "it" with nothing earlier to point to), and name it by its label, never its entityId. Any other question is about the whole workspace, whichever page is open, and its answer leaves the open record out.',
   '- When the user asks about this conversation itself (why you said or did something, or a correction), answer about the conversation: say plainly what happened and what you need from them.',
   '- When the user says an earlier answer did something ("why did you default to X"), check the earlier turns first. If it did, own it in one sentence. If it did not (for example it only listed X as a choice and asked), say so in one neutral sentence, without apologising and without arguing, then go on with what the user needs. Never admit to or apologise for something the earlier turns do not show.',
   '- A follow-up that points back ("the second one", "and in September?", 那张) keeps what the earlier question set (its period, supplier, item) unless it changes it: "what did the second one buy most?" after October\'s top customers is about October.',
@@ -720,7 +720,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       thread.lastFormSkus = skus
     }
     const active = body.activeContext && typeof body.activeContext === 'object' ? body.activeContext : null
-    const openRecord = active && (text(active.moduleId) || text(active.entityType)) ? { moduleId: clip(active.moduleId, 80) || null, entityType: clip(active.entityType, 40) || null, entityId: clip(active.entityId, 120) || null } : null
+    const openRecord = active && (text(active.moduleId) || text(active.entityType)) ? { moduleId: clip(active.moduleId, 80) || null, entityType: clip(active.entityType, 40) || null, entityId: clip(active.entityId, 120) || null, ...(text(active.entityLabel) ? { label: clip(active.entityLabel, 80) } : {}) } : null
     thread.messages.push(
       { role: 'user', content: [{ type: 'text', text: `${CONTEXT_PREFIX}${JSON.stringify({ answerLanguage: language, today: context.today, workspace: { currency: context.tenant?.currency || null, timezone: context.tenant?.timezone || null }, ...(hidden ? { hiddenForRole: hidden } : {}), ...(openRecord ? { openRecord } : {}), ...(restartTurns.length ? { earlierTurns: restartTurns } : {}) })}` }] },
       { role: 'user', content: [{ type: 'text', text: question }] },
@@ -1002,6 +1002,10 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       }
     }
 
+    // How many figures each text part's check read (records, names, dates,
+    // numbers) and how many it flagged, for the answer's sources line
+    // (owner 2026-11-13: show that the figures were checked).
+    const figureChecks = new Map()
     // A text part is complete: check it against this answer's results. A
     // hard finding replaces it; otherwise its held rest is sent, then flags
     // and the records it names.
@@ -1023,6 +1027,8 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: 'record_label' })
       }
       const check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today })
+      const read = check.checked || {}
+      const figures = (read.record || 0) + (read.name || 0) + (read.date || 0) + (read.number || 0)
       // A sentence that claims an action no record backs is left out; the
       // rest of the part stays (2026-11-04: the whole part went for one
       // sentence), and the panel says under it that a sentence was left out.
@@ -1084,6 +1090,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: withheld.some((row) => row.code === 'foreign_record') ? 'foreign_record' : 'hidden_value' })
       } else release(part, part.text.length)
       stats.flags += spans.length
+      figureChecks.set(part.id, { figures, flagged: spans.length })
       send(flagEvent(part, spans.slice(0, 50)))
     }
 
@@ -1565,6 +1572,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       records: cited.map((ref) => ({ type: ref.type, id: ref.id })),
       refs: [...refs, ...shownRefs.filter((ref) => !refs.some((row) => row.type === ref.type && row.id === ref.id))],
       calls: stats.calls, facts, language, query: question, results,
+      figures: [...figureChecks.entries()].filter(([id]) => parts.some((part) => part.id === id && part.type === 'text' && !part.dropped)).map(([, value]) => value),
     })
     const answer = {
       ...response,

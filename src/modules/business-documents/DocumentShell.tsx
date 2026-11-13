@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowLeft, Lock, Printer } from "lucide-react";
 import { Link } from "react-router";
 import type { DocumentLanguage } from "../../../shared/business-documents.mjs";
@@ -16,6 +16,36 @@ const BLOCK_MESSAGES = {
   not_issued: "documents.notIssuedPreview",
   amounts_hidden: "documents.blocked.amounts",
 } as const;
+
+// The sheet is A4 wide (210 mm, about 794 px). On a screen narrower than
+// that (a phone) it is scaled down to the width there is, as a PDF viewer
+// fits a page, so the whole page and its totals show without scrolling
+// sideways; pinch to zoom in. Screen only: the rule sits in a screen media
+// query, so printing and saving as PDF keep the sheet at its own size.
+const SHEET_WIDTH_PX = (210 / 25.4) * 96;
+const SCREEN_SCALE_CSS = "@media screen { .business-document-stage .business-document-sheet { zoom: var(--fc-document-scale, 1); } }";
+export const documentSheetScale = (stageWidth: number) =>
+  stageWidth > 0 && stageWidth < SHEET_WIDTH_PX ? Math.max(0.3, Math.floor((stageWidth / SHEET_WIDTH_PX) * 1000) / 1000) : 1;
+
+// `shown`: the sheet is on the page; measured again whenever it appears.
+function useSheetScale(shown: boolean) {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+  const measure = () => {
+    const stage = stageRef.current;
+    if (stage) setScale(documentSheetScale(stage.clientWidth));
+  };
+  // Measured before the first paint, so a phone never shows the wide sheet.
+  useLayoutEffect(measure, [shown]);
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [shown]);
+  return { stageRef, scale };
+}
 
 // The frame of a printable business document: back link, the document
 // language for this print only (never saved), "Print or save as PDF", and
@@ -47,9 +77,10 @@ export function DocumentShell({
     return () => document.body.classList.remove("fc-business-document-open");
   }, []);
   const printable = blocked === null;
+  const { stageRef, scale } = useSheetScale(showSheet);
   return (
     <div className="space-y-4" data-testid="business-document" data-printable={printable ? "true" : "false"}>
-      <style>{"@media print { @page { size: A4; margin: 12mm; } }"}</style>
+      <style>{`@media print { @page { size: A4; margin: 12mm; } } ${SCREEN_SCALE_CSS}`}</style>
       <Card className="p-4">
         <div className="business-document-toolbar" data-testid="business-document-toolbar">
           <Link to={backTo} className="inline-flex items-center gap-2 text-sm font-semibold" style={{ color: A.blue }}>
@@ -91,7 +122,7 @@ export function DocumentShell({
         </div>
       )}
       {showSheet && (
-        <div className="business-document-stage">
+        <div ref={stageRef} className="business-document-stage" data-scale={scale} style={{ "--fc-document-scale": String(scale) } as CSSProperties}>
           <article
             data-testid="business-document-sheet"
             lang={language}

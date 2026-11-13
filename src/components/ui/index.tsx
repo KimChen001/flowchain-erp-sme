@@ -343,7 +343,7 @@ export function Modal({ open, onClose, title, subtitle, width = 560, children, f
             <h2 id={titleId} className="fc-modal-title" style={{ color: A.label }}>{copy(title)}</h2>
             {subtitle && <p className="fc-page-subtitle mt-0.5" style={{ color: A.sub }}>{subtitle}</p>}
           </div>
-          <button aria-label={copy("关闭")} onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors"
+          <button aria-label={copy("关闭")} onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors max-sm:h-9 max-sm:w-9"
             style={{ color: A.gray1 }}>
             <X size={15} />
           </button>

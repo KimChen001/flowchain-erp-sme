@@ -109,7 +109,7 @@ const SWITCHABLE = new Set(["bar", "line", "area", "stacked_bar", "horizontal_ba
 // Grid columns, of 12 on wide screens, for each visual; any other visual takes
 // its type's width.
 const SPAN: Record<string, number> = {
-  overview_activity: 8, overview_status: 4, overview_suppliers: 12, overview_spend_trend: 8, overview_lifecycle: 4,
+  overview_purchases_and_sales: 8, overview_stock_status: 4, overview_activity: 6, overview_suppliers: 6,
   procurement_spend_trend: 8, procurement_lifecycle: 4, procurement_supplier_pareto: 7, procurement_value_bridge: 5, procurement_spend_treemap: 7, procurement_po_status: 5, procurement_receipt_calendar: 12,
   finance_invoice_trend: 8, finance_match_rate: 4, finance_match_outcome: 4, finance_invoice_flow: 8, finance_variance_by_supplier: 6, finance_invoice_status: 6,
   sales_order_trend: 8, sales_fulfillment: 4, sales_customer_pareto: 7, sales_shipped_in_full: 5, sales_open_demand: 7, sales_order_status: 5,
@@ -177,7 +177,11 @@ const SUPPLIER_CHARTS = ["supplier_spend_treemap", "procurement_spend_treemap", 
 const OTHER_COLOR = "#64748b";
 // Figures that are a state as of today rather than a total over the range;
 // the server does not compare them with an earlier period.
-const AS_OF_TODAY_METRICS = new Set(["open_po_count", "overdue_open_po_count", "open_sales_demand", "inventory_on_hand", "inventory_risk_sku", "out_of_stock_sku", "negative_atp_sku", "invoices_awaiting_match", "invoices_with_exception"]);
+const AS_OF_TODAY_METRICS = new Set(["open_po_count", "overdue_open_po_count", "open_sales_demand", "inventory_on_hand", "inventory_risk_sku", "out_of_stock_sku", "negative_atp_sku", "low_stock_sku", "invoices_awaiting_match", "invoices_with_exception"]);
+// Chart ids a link or saved view names that the report no longer has (the
+// overview's charts before round 8, say) are ignored: they neither hide a
+// chart nor count against "keep one chart visible", and are not saved again.
+const knownChartIds = (ids: string[], charts: Array<{ id: string }> | undefined) => charts ? ids.filter((id) => charts.some((chart) => chart.id === id)) : ids;
 
 export function BiDashboard({ view, onNavigate: _onNavigate, afterInsights }: { view: DashboardView; onNavigate?: NavigateFn; afterInsights?: React.ReactNode }) {
   const { language, locale, timezone, formatDateTime } = useI18n();
@@ -203,7 +207,7 @@ export function BiDashboard({ view, onNavigate: _onNavigate, afterInsights }: { 
   const visibleFilterEntries = useMemo(() => [...params.entries()].filter(([key]) => APPLIED_FILTER_KEYS.includes(key)), [params]);
   // The dates show in their own inputs, so only the other filters get a chip.
   const filterChips = visibleFilterEntries.filter(([key]) => key !== "from" && key !== "to");
-  const hiddenChartIds = useMemo(() => (params.get("hiddenCharts") || "").split(",").filter(Boolean), [params]);
+  const hiddenChartIds = useMemo(() => knownChartIds((params.get("hiddenCharts") || "").split(",").filter(Boolean), report?.charts), [params, report]);
   const chartOrderIds = useMemo(() => (params.get("chartOrder") || "").split(",").filter(Boolean), [params]);
   const orderedCharts = useMemo(() => {
     if (!report) return [];
@@ -327,7 +331,7 @@ export function BiDashboard({ view, onNavigate: _onNavigate, afterInsights }: { 
       {/* A white card like the rest of the page (owner 11/11: the dark band
           read as black); each finding sits in a light tile with a blue edge,
           orange when it needs attention. */}
-      {insights.length > 0 && <section className="rounded-xl border bg-white p-4" style={{ borderColor: A.border }} data-testid="report-insights"><div className="flex flex-wrap items-center gap-x-2 gap-y-1"><Sparkles size={15} className="text-blue-600" aria-hidden="true" /><h2 className="text-sm font-semibold" style={{ color: A.label }}>{copy("Key findings")}</h2><span className="text-[11px]" style={{ color: A.sub }}>{copy("Generated from the figures on this page.")}</span></div><ul className={`mt-3 grid gap-3 ${insights.length > 2 ? "sm:grid-cols-2 xl:grid-cols-4" : "sm:grid-cols-2"}`}>{insights.map(item => <li key={item.id} className="flex flex-col rounded-lg bg-slate-50 p-3" style={{ boxShadow: `inset 3px 0 0 ${item.tone === "attention" ? A.orange : A.blue}` }}>{item.figure && <div className="text-xl font-semibold tabular-nums tracking-tight" style={{ color: A.label }}>{item.figure}</div>}<p className="mt-1 flex-1 text-xs leading-5" style={{ color: A.sub }}>{item.text}</p>{item.path && <button type="button" onClick={() => drill(item.path!)} className="mt-2 self-start text-[11px] font-medium text-blue-600 hover:underline">{copy("Open the records")} →</button>}</li>)}</ul></section>}
+      {insights.length > 0 && <section className="rounded-xl border bg-white p-4" style={{ borderColor: A.border }} data-testid="report-insights"><div className="flex flex-wrap items-center gap-x-2 gap-y-1"><Sparkles size={15} className="text-blue-600" aria-hidden="true" /><h2 className="text-sm font-semibold" style={{ color: A.label }}>{copy("Key findings")}</h2><span className="text-[11px]" style={{ color: A.sub }}>{copy("Generated from the figures on this page.")}</span></div><ul className={`mt-3 grid gap-3 ${insights.length === 3 ? "sm:grid-cols-2 xl:grid-cols-3" : insights.length > 3 ? "sm:grid-cols-2 xl:grid-cols-4" : "sm:grid-cols-2"}`}>{insights.map(item => <li key={item.id} className="flex flex-col rounded-lg bg-slate-50 p-3" style={{ boxShadow: `inset 3px 0 0 ${item.tone === "attention" ? A.orange : A.blue}` }}>{item.figure && <div className="text-xl font-semibold tabular-nums tracking-tight" style={{ color: A.label }}>{item.figure}</div>}<p className="mt-1 flex-1 text-xs leading-5" style={{ color: A.sub }}>{item.text}</p>{item.path && <button type="button" onClick={() => drill(item.path!)} className="mt-2 self-start text-[11px] font-medium text-blue-600 hover:underline">{copy("Open the records")} →</button>}</li>)}</ul></section>}
       {afterInsights}
       {/* What needs attention sits with the findings, above the charts. */}
       {view === "overview" && report.attention?.length ? <OverviewAttention items={report.attention} copy={copy} onDrill={drill} /> : null}

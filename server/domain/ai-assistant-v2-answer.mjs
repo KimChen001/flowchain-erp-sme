@@ -51,6 +51,15 @@ const TOOL_SOURCES = Object.freeze({
   list_contracts: 'contracts', supplier_risks: 'supplier_risks',
 })
 const PROGRESS_SOURCES = Object.freeze({ search_records: 'records', calculate: 'calculation', list_receivables: 'receivables', workspace_summary: 'workspace' })
+// The sources line names every tool that read business data; a calculation
+// or the clock reads none.
+const BASIS_SOURCES = Object.freeze({
+  ...TOOL_SOURCES,
+  inventory_value: 'inventory', stock_on_hand: 'inventory', optimize_order_plan: 'inventory', order_quantity_costs: 'inventory', suggest_purchase_lines: 'inventory', suggest_purchase_request: 'inventory',
+  item_suppliers: 'suppliers', rfq_quotes: 'rfqs', sales_summary: 'sales_orders', list_receivables: 'receivables',
+  records_missing_data: 'items', setup_status: 'items', suggest_setup_records: 'items',
+  workspace_summary: 'overview', attention_list: 'overview', decision_items: 'overview', decision_history: 'overview', search_records: 'overview',
+})
 export const assistantV2ProgressSources = (names) => [...new Set(array(names).map((name) => PROGRESS_SOURCES[name] || TOOL_SOURCES[name] || 'records'))]
 
 // The page each kind of record opens. A document has none (the knowledge
@@ -76,7 +85,7 @@ const firstSentence = (value) => text(value).split(/(?<=[.!?。！？])\s*/u)[0]
 // relied on as evidence and links, built from the refs the tools returned.
 // `summary` is the answer's text; `records` the refs the text cites; `calls`
 // the loop's tool calls; `results` its data results.
-export function presentAssistantV2Answer({ summary = '', records = [], refs = [], calls = [], facts = null, language, query = '', results = [] }) {
+export function presentAssistantV2Answer({ summary = '', records = [], refs = [], calls = [], facts = null, language, query = '', results = [], figures = [] }) {
   const cited = aiModelFirstCitedRefs(records, refs)
   // A cited document names the sections this answer's searches returned from
   // it (the last part of each heading), so the reader sees where to look.
@@ -109,6 +118,17 @@ export function presentAssistantV2Answer({ summary = '', records = [], refs = []
     skill: { id: 'assistant_v2', asOf: facts?.asOf || null, timezone: facts?.timezone || null },
     checked,
     checkedLabel: checked.length ? aiSkillText('answer.checked', language, { sources: aiSkillList(checked.map((source) => aiSkillText(`source.${source}`, language)), language) }) : '',
+    // The sources line under the answer: what it read, as of which day, and
+    // how many of its figures (records, names, dates, numbers) the check read
+    // against the results, and how many it could not match (flagged).
+    basis: {
+      sources: [...new Set(array(calls).filter((call) => call.status === 'ok').map((call) => BASIS_SOURCES[call.tool]).filter(Boolean))].map((source) => aiSkillText(`source.${source}`, language)),
+      asOf: facts?.asOf || null,
+      figures: array(figures).reduce((total, row) => total + (Number(row?.figures) || 0), 0),
+      flagged: array(figures).reduce((total, row) => total + (Number(row?.flagged) || 0), 0),
+      // The tools that answered, for feedback on this answer (not shown).
+      tools: [...new Set(array(calls).filter((call) => call.status === 'ok').map((call) => text(call.tool)).filter(Boolean))].slice(0, 20),
+    },
     scope: { module: 'workspace', timeRange: facts?.asOf || undefined, dataScopeLabel: scopeLabel },
     conclusion: { title: firstSentence(summary), summary: text(summary), severity: 'info', confidence: 'medium' },
     keyEvidence,

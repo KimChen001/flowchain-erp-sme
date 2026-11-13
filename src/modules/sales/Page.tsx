@@ -6,6 +6,7 @@ import { AlertTriangle, Boxes, ClipboardList, FileText, PackageSearch, ShoppingC
 import { ApiError, apiJson } from "../../lib/api-client";
 import { DocumentNumber } from "../../lib/documentNumbers";
 import { formatCalendarDay } from "../../lib/format";
+import { unitLabel } from "../../i18n/unitLabels";
 import { A, Card, Chip, Field, SectionHeader, inputStyle } from "../../components/ui";
 import EvidenceGraphPanel, { type EvidenceGraphResponse, type EvidenceNavigate } from "../../components/evidence/EvidenceGraphPanel";
 import SalesReturnPage from "./SalesReturnPage";
@@ -60,8 +61,33 @@ type SalesOrder = {
   linkedExceptionCases: string[];
   evidence: Array<{ type: string; id: string; label: string; summary?: string; status?: string }>;
   dataLimitations: string[];
-  lines?: Array<{ sku?: string; itemName?: string }>;
+  // The order's lines with their own quantities (db-sales-order-read-repository.mjs).
+  lines?: Array<{
+    id?: string;
+    itemId?: string;
+    sku?: string;
+    itemName?: string;
+    orderedQuantity?: number;
+    reservedQuantity?: number;
+    fulfilledQuantity?: number;
+    unit?: string | null;
+  }>;
 };
+type SalesOrderLine = NonNullable<SalesOrder["lines"]>[number];
+
+// What a line still needs: ordered less reserved and shipped (the server's
+// shortage, line by line, so lines of different SKUs are never added up).
+const lineShort = (line: SalesOrderLine) =>
+  Math.max(0, Number(line.orderedQuantity || 0) - Number(line.reservedQuantity || 0) - Number(line.fulfilledQuantity || 0));
+// The lines a risk row lists: the short ones (all of them when none is short),
+// at most three; the order page has the rest.
+const RISK_LINES = 3;
+function riskLines(order: SalesOrder) {
+  const lines = order.lines || [];
+  const short = lines.filter((line) => lineShort(line) > 0);
+  const shown = short.length ? short : lines;
+  return { shown: shown.slice(0, RISK_LINES), more: Math.max(0, lines.length - Math.min(shown.length, RISK_LINES)) };
+}
 
 type SalesSummary = {
   totalOrders: number;
@@ -128,6 +154,26 @@ function limitationLabel(code: string) {
     purchase_supply_not_joined: "尚未关联采购在途与供应商交付承诺",
     risk_summary_aggregates_multiple_lines: "风险数量为多明细行汇总",
   } as Record<string, string>)[code] || code;
+}
+
+// What a delivery risk row leaves out, in plain words: the shortage is what is
+// not yet reserved or shipped, without stock on hand or incoming purchases.
+// The risk page shows each line's own quantities, so the note that the
+// figures add up several lines is not needed there.
+function riskNote(codes: string[], say: (english: string, chinese: string) => string) {
+  const stock = codes.includes("inventory_availability_not_joined"),
+    incoming = codes.includes("purchase_supply_not_joined");
+  if (stock && incoming)
+    return say("Stock on hand and incoming purchases are not counted here.", "此处未计入在手库存和在途采购。");
+  if (stock) return say("Stock on hand is not counted here.", "此处未计入在手库存。");
+  if (incoming) return say("Incoming purchases are not counted here.", "此处未计入在途采购。");
+  return "";
+}
+// The risk reason by level, in plain words; another reason is shown as sent.
+function riskReason(order: SalesOrder, say: (english: string, chinese: string) => string, copy: (label: string) => string) {
+  if (order.deliveryRiskLevel === "blocked") return say("The order is on hold.", "订单已暂停。");
+  if (order.deliveryRiskLevel === "high") return say("Part of the order is not yet reserved or shipped.", "订单有部分数量尚未预留或发货。");
+  return copy(order.deliveryRiskReason);
 }
 
 // Display copy in the interface language: the page's own map first, then the
@@ -271,7 +317,7 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
 // filtered to the orders it counts, and the orders at risk a page at a time.
 function RiskView() {
   const { copy, say, customerLabel, itemLabel } = useSalesCopy();
-  const { locale } = useI18n();
+  const { locale, language } = useI18n();
   // A promised date as the workspace shows dates ("Nov 8, 2026"), or "to be confirmed".
   const promised = (order: SalesOrder) => (order.promisedDate ? formatCalendarDay(order.promisedDate, locale) : copy("待确认"));
   const qty = useQty();
@@ -312,12 +358,12 @@ function RiskView() {
             <span className="text-xs" style={{ color: A.sub }}>{risks.loading ? copy("正在读取销售订单…") : say(`${risks.total} ${risks.total === 1 ? "order" : "orders"} at risk`, `${risks.total} 条风险订单`)}</span>
           </div>
           <div className={tableScrollClass} ref={listTableCardsRef}>
-            <table className={`w-full min-w-[1080px] text-left ${tableBodyTextClass}`}>
+            <table className={`w-full min-w-[1000px] text-left ${tableBodyTextClass}`}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${A.border}` }}>
                   <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>{say("Sales order", "销售订单")}</th>
                   <th className={thClass} style={{ color: A.gray1 }}>{copy("SKU / 物料")}</th>
-                  <th className={thRightClass} style={{ color: A.gray1 }}>{copy("订购 / 预留 / 履约")}</th>
+                  <th className={`${thRightClass} !whitespace-normal`} style={{ color: A.gray1 }}>{copy("订购 / 预留 / 履约")}</th>
                   <th className={thRightClass} style={{ color: A.gray1 }}>{copy("缺口")}</th>
                   <th className={thClass} style={{ color: A.gray1 }}>{copy("承诺交期")}</th>
                   {/* The risk level is the order's status on a phone card. */}
@@ -327,44 +373,98 @@ function RiskView() {
                 </tr>
               </thead>
               <tbody>
-                {risks.orders.map((order) => (
+                {risks.orders.map((order) => {
+                  // Each line with its own SKU and quantities: lines of
+                  // different SKUs are never added up. An order read without
+                  // its lines keeps the order's own figures.
+                  const { shown, more } = riskLines(order);
+                  const byLine = shown.length > 0;
+                  const note = riskNote(order.dataLimitations, say);
+                  // One block per line, the same height in each column, so a
+                  // line's SKU, quantities and shortage sit side by side.
+                  const block = "flex min-h-10 flex-col justify-center";
+                  return (
                   <tr key={order.salesOrderId} style={{ borderBottom: `1px solid ${A.border}` }}>
                     <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                       <EntityLink kind="sales_order" id={order.salesOrderId} className={tableLinkClass}>{orderNumberOf(order)}</EntityLink>
-                      <div className="max-w-[200px] truncate text-[11px] font-normal" style={{ color: A.sub }}>{customerLabel(order)}</div>
+                      <div className="max-w-[260px] whitespace-normal text-[11px] font-normal" style={{ color: A.sub }}>{customerLabel(order)}</div>
                     </td>
-                    <td className={tdNameClass}>
-                      <EntityLink kind="item" id={order.itemId}>{order.sku}</EntityLink>
-                      <div className="max-w-[180px] truncate text-xs" style={{ color: A.sub }}>{itemLabel(order)}</div>
+                    <td className={tdNameClass} data-testid={`delivery-risk-lines-${order.salesOrderId}`}>
+                      {byLine ? (
+                        <>
+                          {shown.map((line, index) => (
+                            <div className={block} key={line.id || index}>
+                              <EntityLink kind="item" id={line.itemId || order.itemId}>{line.sku || order.sku}</EntityLink>
+                              <div className="max-w-[180px] truncate text-xs" style={{ color: A.sub }}>{line.itemName || ""}</div>
+                            </div>
+                          ))}
+                          {more > 0 && (
+                            <Link to={`/app/sales/orders/${encodeURIComponent(order.salesOrderId)}`} className="text-[11px] font-medium text-blue-600 hover:underline">
+                              {say(`${more} more ${more === 1 ? "line" : "lines"} on the order`, `订单还有 ${more} 行`)}
+                            </Link>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <EntityLink kind="item" id={order.itemId}>{order.sku}</EntityLink>
+                          <div className="max-w-[180px] truncate text-xs" style={{ color: A.sub }}>{itemLabel(order)}</div>
+                        </>
+                      )}
                     </td>
                     <td className={tdNumericRightClass}>
-                      <span className="font-semibold" style={{ color: A.label }}>{qty(order.orderedQty)}</span>
-                      <span style={{ color: A.sub }}> / {qty(order.reservedQty)} / {qty(order.fulfilledQty)}</span>
+                      {(byLine ? shown : [null]).map((line, index) => (
+                        <div className={byLine ? `${block} items-end` : ""} key={line?.id || index}>
+                          <span>
+                            {/* On a phone card the cells stack, so each figure names its SKU. */}
+                            {byLine && line?.sku && <span className="mr-1.5 text-[11px] font-normal sm:hidden" style={{ color: A.sub }}>{line.sku}</span>}
+                            <span className="font-semibold" style={{ color: A.label }}>{qty(line ? Number(line.orderedQuantity || 0) : order.orderedQty)}</span>
+                            <span style={{ color: A.sub }}> / {qty(line ? Number(line.reservedQuantity || 0) : order.reservedQty)} / {qty(line ? Number(line.fulfilledQuantity || 0) : order.fulfilledQty)}</span>
+                          </span>
+                        </div>
+                      ))}
                     </td>
-                    <td className={`${tdNumericRightClass} font-semibold`} style={{ color: order.shortageQty > 0 ? A.red : A.gray2 }}>{qty(order.shortageQty)}</td>
-                    <td className={tdNowrapClass}>{promised(order)}</td>
+                    <td className={`${tdNumericRightClass} font-semibold`}>
+                      {(byLine ? shown : [null]).map((line, index) => {
+                        const short = line ? lineShort(line) : order.shortageQty;
+                        return (
+                          <div className={byLine ? `${block} items-end` : ""} key={line?.id || index} style={{ color: short > 0 ? A.red : A.gray2 }}>
+                            <span>
+                              {byLine && line?.sku && <span className="mr-1.5 text-[11px] font-normal sm:hidden" style={{ color: A.sub }}>{line.sku}</span>}
+                              {short > 0 && line?.unit ? `${qty(short)} ${unitLabel(line.unit, language, short)}` : qty(short)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </td>
+                    <td className="min-w-[110px] px-4 py-3">{promised(order)}</td>
                     <td className={tdNowrapClass}><Chip label={copy(order.deliveryRiskLabel)} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
-                    <td className="min-w-[260px] max-w-[360px] whitespace-normal px-4 py-3 align-top" data-testid={`delivery-risk-reason-${order.salesOrderId}`}>
-                      <div className="text-xs leading-5" style={{ color: A.gray1 }}>{copy(order.deliveryRiskReason)}</div>
-                      {order.dataLimitations.length > 0 && (
-                        <div className="mt-1 text-[11px] leading-4" style={{ color: A.orange }}>{copy("数据限制：")}{order.dataLimitations.map(code => copy(limitationLabel(code))).join(say("; ", "；"))}</div>
-                      )}
+                    <td className="px-4 py-3 align-top" data-testid={`delivery-risk-reason-${order.salesOrderId}`}>
+                      {/* A table cell's own min-width is not kept; the block inside holds the column open. */}
+                      <div className="w-[200px] whitespace-normal">
+                        <div className="text-xs leading-5" style={{ color: A.gray1 }}>{riskReason(order, say, copy)}</div>
+                        {note && <div className="mt-1 text-[11px] leading-4" style={{ color: A.sub }}>{note}</div>}
+                      </div>
                     </td>
                     <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                       <div className="flex flex-col items-start gap-1">
                         <Link to={`/app/sales/orders/${encodeURIComponent(order.salesOrderId)}`} className={rowActionClass.primary}>{copy("查看订单")}</Link>
+                        {order.shortageQty > 0 && (
+                          <Link to="/app/inventory/reorder" className={rowActionClass.neutral} data-testid={`delivery-risk-reorder-${order.salesOrderId}`}>{say("Reorder list", "补货清单")}</Link>
+                        )}
                         <Link to={`/app/sales/evidence?orderId=${encodeURIComponent(order.salesOrderId)}`} className={rowActionClass.neutral}>{copy("查看证据")}</Link>
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             {empty && (
               <div className="p-6 text-sm" style={{ color: A.sub }}>{copy("当前没有需要进入风险队列的销售订单。")}</div>
             )}
           </div>
-          <ListPager page={Math.min(page, risks.pages)} pageSize={RISK_PAGE_SIZE} total={risks.total} onPage={setPage} testId="sales-demand-pager" />
+          {/* The count is in the card's header; the pager shows only when there is more than one page. */}
+          {risks.pages > 1 && <ListPager page={Math.min(page, risks.pages)} pageSize={RISK_PAGE_SIZE} total={risks.total} onPage={setPage} testId="sales-demand-pager" />}
         </Card>
       )}
     </div>
@@ -562,7 +662,8 @@ function EvidenceChainView({
                 return (
                   <tr key={order.salesOrderId} className={listRowClass} style={{ ...listRowStyle(index, list.orders.length), background: chosen ? "#f0f6ff" : undefined }}>
                     <td className={tdIdClass}><EntityLink kind="sales_order" id={order.salesOrderId} className={tableLinkClass}>{orderNumberOf(order)}</EntityLink></td>
-                    <td className={`${tdNameClass} max-w-[200px] truncate`} title={customerLabel(order)}>{customerLabel(order)}</td>
+                    {/* The whole name, wrapped when long, never cut off. */}
+                    <td className="min-w-[200px] max-w-[320px] whitespace-normal px-4 py-3">{customerLabel(order)}</td>
                     <td className={tdNameClass}>
                       <EntityLink kind="item" id={order.itemId} className={tableLinkClass}>{order.sku}</EntityLink>
                       <div className="max-w-[220px] truncate text-[11px]" style={{ color: A.sub }} title={itemLabel(order)}>{itemLabel(order)}</div>
