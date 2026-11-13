@@ -9,7 +9,9 @@ const ORDER_FIELDS = ['po', 'number', 'orderNumber', 'status', 'supplier', 'supp
 const ORDER_LINE_FIELDS = ['poLineId', 'sku', 'itemName', 'unit', 'quantityOrdered', 'quantityReceived', 'unitPrice', 'currency']
 const RECEIPT_FIELDS = ['grn', 'documentNumber', 'po']
 const RECEIPT_LINE_FIELDS = ['poLineId']
-const INVOICE_FIELDS = ['id', 'invoiceNumber', 'relatedPo', 'restrictedFields']
+// invoiceNumber is the record id the read model keys on; supplierInvoiceNumber
+// is the supplier's own number (S21-7790), which the page shows.
+const INVOICE_FIELDS = ['id', 'invoiceNumber', 'supplierInvoiceNumber', 'relatedPo', 'restrictedFields']
 const INVOICE_LINE_FIELDS = ['poLine', 'quantity', 'varianceAmount']
 
 function pick(record, fields) {

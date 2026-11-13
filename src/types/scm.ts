@@ -379,6 +379,8 @@ export type SupplierInvoiceLine = {
 export type SupplierInvoice = {
   id: string;
   invoiceNumber: string;
+  // The supplier's own invoice number as recorded; invoiceNumber may be the record id.
+  supplierInvoiceNumber?: string;
   supplier: string;
   supplierCode?: string;
   relatedPo: string;

@@ -84,7 +84,7 @@ export default function AiSuggestionsPage({ onOpenAi }: { onNavigate: NavigateFn
   const total = overview?.workTotal ?? items.length;
   const overdue = overview?.overdue ?? 0;
   const reorder = items.some((item) => item.kind === "reorder_now");
-  const linkClass = "text-xs font-semibold text-blue-600 hover:underline";
+  const linkClass = "text-xs font-semibold text-blue-600 hover:underline max-sm:inline-flex max-sm:min-h-9 max-sm:items-center";
 
   return <div className="space-y-4" data-testid="ai-priorities">
     <Card className="p-5">
@@ -104,10 +104,10 @@ export default function AiSuggestionsPage({ onOpenAi }: { onNavigate: NavigateFn
           {shown.map((item) => <li key={item.id} className="flex items-start gap-3 py-3" data-kind={item.kind}>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2 text-sm font-medium">{t(`kind_${item.kind}` as TodayCopyKey)}<span className="rounded px-1.5 py-0.5 text-[11px] font-medium" style={todayDateTone(item, today)} data-testid="ai-priorities-date">{todayDateText(t.language, locale, item, today)}</span></div>
-              <Link to={item.href} className="mt-0.5 inline-block text-xs font-semibold text-blue-600 hover:underline">{labelOf(item)}</Link>
+              <Link to={item.href} className="mt-0.5 inline-block text-xs font-semibold text-blue-600 hover:underline max-sm:inline-flex max-sm:min-h-9 max-sm:items-center">{labelOf(item)}</Link>
               {item.name && <div className="text-xs" style={{ color: A.sub }}>{item.name}</div>}
             </div>
-            <Link to={item.href} className="p-1" aria-label={labelOf(item)}><ArrowRight size={16} /></Link>
+            <Link to={item.href} className="p-1 max-sm:p-2.5" aria-label={labelOf(item)}><ArrowRight size={16} /></Link>
           </li>)}
         </ul>
         {total > shown.length && <p className="text-[11px]" style={{ color: A.gray2 }}>{fill(copy.shownNote, { shown: count.format(shown.length), total: count.format(total) })}</p>}

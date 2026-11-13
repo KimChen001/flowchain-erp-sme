@@ -392,8 +392,8 @@ export function FinanceLanding() {
               <div className="text-[12px]" style={{ color: A.sub }}>{say("agingCaption", { day: asOfDay, timezone })}</div>
             </div>
             <div className="flex flex-wrap gap-x-3 text-[12px] font-medium">
-              <Link to="/app/finance/aging" className="text-blue-600 hover:underline">{say("openAging")}</Link>
-              <Link to="/app/finance/payables?status=outstanding" className="text-blue-600 hover:underline">{say("openPayables")}</Link>
+              <Link to="/app/finance/aging" className="text-blue-600 hover:underline max-sm:inline-flex max-sm:min-h-9 max-sm:items-center">{say("openAging")}</Link>
+              <Link to="/app/finance/payables?status=outstanding" className="text-blue-600 hover:underline max-sm:inline-flex max-sm:min-h-9 max-sm:items-center">{say("openPayables")}</Link>
             </div>
           </div>
           <AgingStrip title={say("receivablesAging")} view={data.aging.receivables} empty={say("nothingOwed")} linkFor={receivableLink} testId="finance-aging-receivables" />

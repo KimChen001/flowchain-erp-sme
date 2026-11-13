@@ -5,7 +5,7 @@ import { useDetailBack } from "../../components/navigation/useDetailBack";
 import { ListPager, usePagedRows } from "../procurement/listPaging";
 
 const ITEM_PAGE_SIZE = 50;
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
@@ -184,7 +184,8 @@ export default function ItemMasterWorkbench({
   useDetailCrumb(selected ? `${selected.sku} · ${selected.itemName}` : null);
   // On the item's own page (/app/master-data/items/:id) the item is the page
   // title (H1); opened in place from the list it sits under the list's H1.
-  const onDetailRoute = /^\/app\/master-data\/items\/[^/]+$/.test(useLocation().pathname);
+  const pathname = useLocation().pathname;
+  const onDetailRoute = /^\/app\/master-data\/items\/[^/]+$/.test(pathname);
   const ItemTitle = onDetailRoute ? "h1" : "h2";
   const detailBack = useDetailBack("/app/master-data/items", ["Back to items", "返回 SKU 列表"], () => setSelected(null));
   // A failed request in the interface language, never the server's own words.
@@ -382,19 +383,27 @@ export default function ItemMasterWorkbench({
     if (!value || Number.isNaN(new Date(value).getTime())) return NOT_PROVIDED;
     return formatDateTime(value);
   };
+  // On an item's own address, wait for the item rather than drawing the list
+  // and its empty counts first; an address that names no item shows the list.
+  const routeKey = onDetailRoute ? decodeURIComponent(pathname.split("/").pop() || "").toLowerCase() : "";
+  const routeNamesItem = !loaded || items.some((row) => [row.itemId, row.sku].some((value) => String(value || "").toLowerCase() === routeKey));
+  if (!selected && onDetailRoute && !error && routeNamesItem)
+    return <Card className="p-5" data-testid="item-detail-loading"><p className="text-sm" style={{ color: A.sub }}>{copy("Loading item…")}</p></Card>;
   if (selected)
     return (
       <div className="space-y-4">
+      {/* Above the card, as on the other detail pages (BackToListLink). */}
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9"
+        onClick={detailBack.back}
+      >
+        <ArrowLeft size={13} />{detailBack.label}
+      </button>
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <button
-              className="text-xs text-blue-600"
-              onClick={detailBack.back}
-            >
-              ← {detailBack.label}
-            </button>
-            <ItemTitle className={onDetailRoute ? "fc-page-title mt-2" : "mt-2 text-base font-semibold"} style={{ color: A.label }} data-testid="item-detail-title">
+            <ItemTitle className={onDetailRoute ? "fc-page-title" : "text-base font-semibold"} style={{ color: A.label }} data-testid="item-detail-title">
               {selected.sku} · {selected.itemName}
             </ItemTitle>
             <p className="text-xs" style={{ color: A.sub }}>

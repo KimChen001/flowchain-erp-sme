@@ -199,18 +199,20 @@ function EvidenceLinks({ row, type }: { row: OrderFulfillmentLine; type: "receiv
     : unique(row.invoiceEvidence.map((entry) => entry.invoice.id).filter(Boolean));
   // A receipt is shown by its number (GRN-202611-0002); its id stays in the link.
   const receiptNumbers = new Map(row.receivingEvidence.map((entry) => [entry.document.grn, entry.document.documentNumber || entry.document.grn]));
+  // A supplier invoice is shown by the supplier's invoice number (S21-7790), never its id.
+  const invoiceNumbers = new Map(row.invoiceEvidence.map((entry) => [entry.invoice.id, entry.invoice.supplierInvoiceNumber || entry.invoice.invoiceNumber || entry.invoice.id]));
   if (ids.length === 0)
     return <span style={{ color: A.gray2 }}>—</span>;
   return (
-    <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+    <div className="flex flex-wrap gap-x-2 gap-y-0.5 max-sm:gap-x-4 max-sm:gap-y-0">
       {ids.map((id) => (
         <BusinessEntityLink
           key={id}
           entityType={type === "receiving" ? "receiving_doc" : "supplier_invoice"}
           entityId={id}
-          className="!font-medium"
+          className="!font-medium max-sm:inline-flex max-sm:min-h-9 max-sm:items-center"
         >
-          {type === "receiving" ? receiptNumbers.get(id) || id : id}
+          {type === "receiving" ? receiptNumbers.get(id) || id : invoiceNumbers.get(id) || id}
         </BusinessEntityLink>
       ))}
     </div>
