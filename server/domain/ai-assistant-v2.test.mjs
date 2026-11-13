@@ -557,6 +557,19 @@ test('the records a text names come with its flag, from this conversation\'s res
   assert.ok(order.indexOf('flag:p1', order.indexOf('tool:get_purchase_order')) < order.indexOf('text_delta:p2'), 'the late flag comes before the next text')
 })
 
+test('the answer says what it read, as of which day, and how many of its facts were checked or flagged', async () => {
+  // PO-001 is in the results; PO-002 is not, so it is flagged.
+  const { body } = await ask([OVERDUE, [...say('PO-001 and PO-002 are overdue.'), end()]])
+  assert.deepEqual(body.basis.sources, ['purchase orders'])
+  assert.equal(body.basis.asOf, body.skill.asOf)
+  assert.equal(body.basis.figures, 2)
+  assert.equal(body.basis.flagged, 1)
+  assert.deepEqual(body.basis.tools, ['list_purchase_orders'])
+  // An answer that read nothing names no source and checked nothing.
+  const general = await ask([[...say('A three-way match compares the order, the receipt and the invoice.'), end()]], { question: 'What is a three-way match?' })
+  assert.deepEqual(general.body.basis, { sources: [], asOf: general.body.skill.asOf, figures: 0, flagged: 0, tools: [] })
+})
+
 test('the system prompt asks for the source handle, status words, one set of chips and no talk of tools', () => {
   assert.match(ASSISTANT_V2_SYSTEM, /starts with its source, such as "list_purchase_orders#1": pass that as source/)
   assert.match(ASSISTANT_V2_SYSTEM, /Never mention tools, displays, sources, ids, errors or retries to the user/)

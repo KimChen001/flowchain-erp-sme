@@ -1002,6 +1002,10 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       }
     }
 
+    // How many figures each text part's check read (records, names, dates,
+    // numbers) and how many it flagged, for the answer's sources line
+    // (owner 2026-11-13: show that the figures were checked).
+    const figureChecks = new Map()
     // A text part is complete: check it against this answer's results. A
     // hard finding replaces it; otherwise its held rest is sent, then flags
     // and the records it names.
@@ -1023,6 +1027,8 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: 'record_label' })
       }
       const check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today })
+      const read = check.checked || {}
+      const figures = (read.record || 0) + (read.name || 0) + (read.date || 0) + (read.number || 0)
       // A sentence that claims an action no record backs is left out; the
       // rest of the part stays (2026-11-04: the whole part went for one
       // sentence), and the panel says under it that a sentence was left out.
@@ -1084,6 +1090,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: withheld.some((row) => row.code === 'foreign_record') ? 'foreign_record' : 'hidden_value' })
       } else release(part, part.text.length)
       stats.flags += spans.length
+      figureChecks.set(part.id, { figures, flagged: spans.length })
       send(flagEvent(part, spans.slice(0, 50)))
     }
 
@@ -1565,6 +1572,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       records: cited.map((ref) => ({ type: ref.type, id: ref.id })),
       refs: [...refs, ...shownRefs.filter((ref) => !refs.some((row) => row.type === ref.type && row.id === ref.id))],
       calls: stats.calls, facts, language, query: question, results,
+      figures: [...figureChecks.entries()].filter(([id]) => parts.some((part) => part.id === id && part.type === 'text' && !part.dropped)).map(([, value]) => value),
     })
     const answer = {
       ...response,
