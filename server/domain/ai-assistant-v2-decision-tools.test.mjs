@@ -106,3 +106,23 @@ test('a held invoice reads as its differences and causes, never the supplier\'s 
   const written = JSON.stringify(result)
   assert.ok(!written.includes('orders@acme.example') && !written.includes('Order desk'))
 })
+
+test('counts cover every waiting item, not only the rows listed', () => {
+  const invoice = (id, differences) => ({ key: `bill_exception:${id}`, row: { kind: 'bill_exception', entityType: 'supplier_invoice', recordId: id, label: id }, draft: { type: 'invoice_exception', invoiceNumber: id, step: 'ask_supplier', supplier: {}, moreDifferences: 0, differences } })
+  const above = { kind: 'price', cause: 'invoice_price', expected: 1, actual: 1.05 }
+  const below = { kind: 'price', cause: 'invoice_price', expected: 1, actual: 0.9 }
+  const early = { kind: 'quantity', cause: 'not_yet_received' }
+  const waiting = [
+    ...Array.from({ length: 12 }, (_, at) => invoice(`INV-${at}`, [above])),
+    invoice('INV-B', [below, early]),
+    invoice('INV-Q', [early]),
+    { key: 'purchase_order_overdue:PO-1', row: { kind: 'purchase_order_overdue', recordId: 'PO-1', label: 'PO-1' }, draft: null },
+  ]
+  const result = decisionItemsResult({ available: true, waiting }, { limit: 5 })
+  assert.equal(result.waiting.length, 5)
+  assert.equal(result.waitingTotal, 15)
+  assert.deepEqual(result.waitingByKind, { bill_exception: 14, purchase_order_overdue: 1 })
+  assert.deepEqual(result.heldInvoices, { total: 14, withDifference: { price: 13, quantity: 2 }, byCause: { invoice_price: 13, not_yet_received: 2 }, priceAboveOrder: 12 })
+  // Without held invoices there is no invoice count.
+  assert.equal(decisionItemsResult({ available: true, waiting: waiting.slice(-1) }).heldInvoices, undefined)
+})
