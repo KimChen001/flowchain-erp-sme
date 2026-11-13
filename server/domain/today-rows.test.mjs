@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { firstRowsByKind, reorderRequestHref, rowsPerKind } from '../../src/modules/overview/todayRows.ts'
+import { firstRowsByKind, groupsByKind, reorderRequestHref, rowsPerKind } from '../../src/modules/overview/todayRows.ts'
 
 const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')
 
@@ -49,18 +49,40 @@ test('a reorder row opens the purchase request the reorder list prefills for tha
   assert.match(list, /itemId: row\.purchaseRequest\.itemId, origin: "reorder_list", reason/)
 })
 
-test('Today shows every kind in its first rows, links a reorder row to its request and asks for the overview once', () => {
+test('groups hold every row of a kind, in the order of each kind\'s earliest row', () => {
+  const rows = [
+    { id: 'po1', kind: 'purchase_order_overdue' },
+    { id: 'ar1', kind: 'receivable_overdue' },
+    { id: 'po2', kind: 'purchase_order_overdue' },
+    { id: 'ro1', kind: 'reorder_now' },
+    { id: 'ar2', kind: 'receivable_overdue' },
+  ]
+  assert.deepEqual(groupsByKind(rows).map((group) => [group.kind, group.rows.map((row) => row.id)]), [
+    ['purchase_order_overdue', ['po1', 'po2']],
+    ['receivable_overdue', ['ar1', 'ar2']],
+    ['reorder_now', ['ro1']],
+  ])
+  assert.deepEqual(groupsByKind([]), [])
+})
+
+// Owner 11/13 ("首页感觉铺的太满了"): Today's work is one line per kind that
+// opens to its rows; two tiles, the decisions counted in their own section and
+// the documents changed today beside Recent documents.
+test('Today groups its work by kind, links a reorder row to its request and asks for the overview once', () => {
   const page = read('src/modules/overview/Page.tsx')
-  assert.match(page, /firstRowsByKind\(shown, COLLAPSED\)/)
-  assert.match(page, /data-testid="today-kind-all"/)
+  assert.ok(page.includes('const groups = groupsByKind(shown);'))
+  assert.ok(page.includes('data-testid="today-work-group" data-kind={kind} data-count={rows.length}'))
+  assert.ok(page.includes('aria-expanded={open}'))
+  assert.ok(page.includes('const listed = fullKinds[kind] ? rows : rows.slice(0, GROUP_ROWS);'))
   assert.match(page, /data-testid="today-reorder-request"/)
   assert.match(page, /reorderListText\(t\.language, "reason"/)
   // One request at a time, shared by a page drawn twice (the /app/overview redirect).
   assert.match(page, /if \(!overviewRequest\) overviewRequest = apiJson<HomeOverview>\("\/api\/home\/overview"\)\.finally/)
   assert.doesNotMatch(page, /setOverview\(await apiJson/)
-  // On a phone the three tiles share one short row, notes hidden; with the
-  // decisions tile, four sit two to a row.
-  assert.ok(page.includes('className={`grid gap-2 sm:gap-4 ${decisions ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-3"}`} data-testid="today-tiles"'))
+  // Two tiles that filter the list; no decisions tile, no changes tile.
+  assert.ok(page.includes('className="grid grid-cols-2 gap-2 sm:gap-4" data-testid="today-tiles"'))
+  assert.doesNotMatch(page, /today-tile-decisions|today-tile-changes/)
+  assert.ok(page.includes('data-testid="today-changes"'))
   const copy = read('src/modules/overview/todayCopy.ts')
   assert.match(copy, /position: "库存位置（含在途）\{position\}，再订货点 \{reorderPoint\}"/)
   assert.doesNotMatch(copy, /库存头寸/)
@@ -97,7 +119,9 @@ test('Today\'s reorder links and "{n} in all" are 36 px tall on a phone, with ro
   assert.match(page, /className=\{`\$\{LINK\} \$\{PHONE_TAP\}`\} data-testid="today-reorder-request"/)
   assert.match(page, /className=\{`\$\{LINK\} \$\{PHONE_TAP\}`\} data-testid="today-reorder-list"/)
   assert.match(page, /flex flex-wrap gap-x-3 text-xs max-sm:gap-x-6/)
-  assert.match(page, /\$\{PHONE_TAP\} max-sm:px-1`\} data-testid="today-kind-all"/)
+  // A kind's line is 44 px tall, its "Show all" 36 px on a phone.
+  assert.ok(page.includes('className="flex min-h-11 min-w-0 flex-1 items-center gap-3'))
+  assert.match(page, /\$\{PHONE_TAP\}`\} onClick=\{\(\) => setFullKinds/)
   // A supplier invoice still to pay, or a customer invoice still to be paid
   // (round 8b), reads in progress (blue).
   assert.match(page, /status === "to_pay" \|\| status === "to_be_paid" \? "info" : statusToneOf\(status\)/)

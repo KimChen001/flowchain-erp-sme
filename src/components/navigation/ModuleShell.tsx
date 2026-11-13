@@ -80,7 +80,12 @@ export function ModuleShell({ route, children, routeAccess }: { route: GovernedA
           {subnav.end ? <button type="button" className="fc-subnav-arrow right-1" onClick={() => subnav.move(1)} aria-label={english ? "Show more tabs" : "显示更多标签"} data-testid="module-subnav-more"><ChevronRight size={16} aria-hidden /></button> : null}
         </nav>
       )}
-      {showPageHeader && (
+      {showPageHeader && route.moduleId === "overview" ? (
+        // Today: its tab row (Today, AI priorities) is the header, so the
+        // title is read out but not drawn a second time (owner 11/13: Today
+        // said "Today" four times).
+        <h1 className="sr-only" data-testid="page-title">{routeLabel(route)}</h1>
+      ) : showPageHeader && (
         <div className="fc-page-header" data-testid="page-header">
           <div className="min-w-0">
             {/* The page's one heading; settings cards below carry no second title. */}

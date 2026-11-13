@@ -37,12 +37,17 @@ for (const language of ['en-US', 'zh-CN']) {
     await page.goto('/app/overview/risks');
     const root = page.getByTestId('runtime-homepage');
     await expect(root.getByText(language === 'en-US' ? 'Draft purchase order awaiting review' : '采购订单草稿待复核', { exact: true })).toBeVisible();
+    // Today's work is one line per kind (owner 11/13); opening each lists its rows.
+    const groups = root.getByTestId('today-work-group');
+    await expect(groups).toHaveCount(4);
     const rows = root.getByTestId('today-work-item');
+    await expect(rows).toHaveCount(0);
+    for (const toggle of await root.getByTestId('today-work-group-toggle').all()) await toggle.click();
     await expect(rows).toHaveCount(4);
     if (language === 'en-US') {
       await expect(root).not.toContainText(/[㐀-鿿]/);
       await expect(rows.nth(0)).toContainText('3 days overdue');
-      await expect(rows.nth(0)).toContainText('Purchase order overdue');
+      await expect(groups.nth(0)).toContainText('Purchase order overdue');
       // Units read in the interface language (unitLabel): EA is "ea", 个 in Chinese.
       await expect(rows.nth(0)).toContainText('20 ea still to receive · 30 of 50 ea received · Supplier Acme Components');
       await expect(rows.nth(1)).toContainText('Order today');
@@ -57,9 +62,10 @@ for (const language of ['en-US', 'zh-CN']) {
       await expect(rows.nth(3)).toContainText('No date');
       await expect(root.getByTestId('today-tile-all')).toContainText('4Needs action');
       await expect(root.getByTestId('today-tile-overdue')).toContainText('1Overdue');
-      await expect(root.getByTestId('today-tile-changes')).toContainText('2Documents updated today');
-      // The note under the count is the last change, not just today's date.
-      await expect(root.getByTestId('today-tile-changes-note')).toHaveText('Last change Oct 7, 2026, 12:59 PM');
+      // Beside Recent documents: how many changed today, and when the last
+      // change was, not just today's date.
+      await expect(root.getByTestId('today-changes')).toContainText('2 updated today');
+      await expect(root.getByTestId('today-changes-note')).toHaveText('Last change Oct 7, 2026, 12:59 PM');
       await expect(root.getByTestId('today-work-notes')).toContainText('Not listed for your role: receivables.');
       await expect(root.getByText('Fully received', { exact: true })).toBeVisible();
       await expect(root.getByText('Pending approval', { exact: true })).toBeVisible();
@@ -89,7 +95,7 @@ for (const language of ['en-US', 'zh-CN']) {
       await expect(root.getByText('待审批', { exact: true })).toBeVisible();
       await expect(root.getByText('已确认', { exact: true })).toBeVisible();
       await expect(root.getByTestId('first-run-checklist')).toContainText('已完成 3/5 步');
-      await expect(root.getByTestId('today-tile-changes')).toContainText('2今日更新的单据');
+      await expect(root.getByTestId('today-changes')).toContainText('今日更新 2 张');
     }
   });
 }

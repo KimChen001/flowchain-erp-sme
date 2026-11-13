@@ -24,9 +24,18 @@ test('the assistant has one entry, its floating button', async () => {
   assert.match(panel, /data-testid="ai-assistant-toggle"/)
 })
 
-test('a phone keeps the public data note to two lines until it is opened', async () => {
+test('the public data note keeps to one line until it is opened (owner 11/13)', async () => {
   const note = await read('src/app/PublicDataNote.tsx')
-  assert.match(note, /open \? undefined : "line-clamp-2 sm:line-clamp-none"/)
+  assert.ok(note.includes('<p className={open ? undefined : "truncate"}'))
+  assert.ok(note.includes('className={`flex gap-2.5 ${open ? "items-start" : "items-center"}`}'))
+  // "What is assumed" sits on the same line, before the hide button.
+  assert.ok(note.includes('className="shrink-0 whitespace-nowrap text-xs font-semibold text-sky-800'))
+})
+
+test("Today's tab row is its header: the title is read out, not drawn again (owner 11/13)", async () => {
+  const shell = await read('src/components/navigation/ModuleShell.tsx')
+  assert.ok(shell.includes('{showPageHeader && route.moduleId === "overview" ? ('))
+  assert.ok(shell.includes('<h1 className="sr-only" data-testid="page-title">{routeLabel(route)}</h1>'))
 })
 
 test('module tabs stay on one row that scrolls, with arrows from a tablet up', async () => {
@@ -62,7 +71,6 @@ test("Today's tiles are drawn like the cards on the list pages", async () => {
   const page = await read('src/modules/overview/Page.tsx')
   assert.match(page, /icon: ListChecks, color: A\.blue/)
   assert.match(page, /icon: AlarmClock, color: A\.red/)
-  assert.match(page, /<TileIcon icon=\{FileClock\} color=\{A\.purple\} \/>/)
   // Count first, then its name, as ActionableMetricCard reads.
   assert.match(page, /<div className=\{TILE_VALUE\}>\{tile\.value\}<\/div>\s*<div className="fc-label mt-0\.5"/)
 })
