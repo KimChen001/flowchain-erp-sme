@@ -12,8 +12,8 @@
 export const ASSISTANT_APP_BUTTONS = Object.freeze([
   { where: 'the request form in chat', buttons: [['Create draft request', '创建草稿申请'], ['Submit for approval', '提交审批'], ['Cancel draft', '取消草稿'], ['Cancel request', '取消申请'], ['Withdraw', '撤回']] },
   { where: 'the card on a request or an order in chat', buttons: [['Approve', '批准'], ['Reject', '驳回'], ['Create purchase order', '生成采购订单'], ['Request quotes (RFQ)', '发起询价'], ['Mark as issued', '标记为已下达']] },
-  { where: 'a purchase order\'s page', buttons: [['Submit for approval', '提交审批'], ['Approve', '批准'], ['Reject', '驳回'], ['Mark as issued to supplier', '标记为已下达供应商'], ['Cancel PO', '取消采购订单'], ['Close PO', '关闭采购订单'], ['Change promised date', '修改承诺交期'], ['Save revision', '保存修改'], ['Receive', '收货']] },
-  { where: 'the receiving form', buttons: [['Save draft', '保存草稿'], ['Save and submit for posting', '保存并提交过账']] },
+  { where: 'a purchase order\'s page', buttons: [['Submit for approval', '提交审批'], ['Approve', '批准'], ['Reject', '驳回'], ['Mark as issued', '标记为已下达'], ['Cancel PO', '取消采购订单'], ['Close PO', '关闭采购订单'], ['Change promised date', '修改承诺交期'], ['Save revision', '保存修改'], ['Receive', '收货']] },
+  { where: 'the receiving form', buttons: [['Save draft', '保存草稿'], ['Save and submit', '保存并提交']] },
   { where: 'a decision card on Today', buttons: [['Review and create the request', '核对并创建申请'], ['Copy and mark chased', '复制并记为已催'], ['Review and send', '核对并发送'], ['Create the purchase orders', '生成采购订单'], ['Open the request', '打开申请'], ['Not now', '以后再说'], ['Not needed', '不需要'], ['Reopen', '重新打开']] },
 ])
 

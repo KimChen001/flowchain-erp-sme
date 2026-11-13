@@ -381,11 +381,15 @@ test('a call the provider reports no usage for is metered by estimate, so the ce
 })
 
 test('a long thread is sent its latest turns only, as many as leave room for two calls', async () => {
-  // Ten earlier turns, each with a list result of 24,000 characters.
+  // A hundred earlier turns, each with a list result of 2,400 characters:
+  // small enough that some always fit, many enough that not all do, however
+  // the prompt and the tools grow (2026-11-13: ten turns of 24,000 characters
+  // stopped fitting at all once the open assistant PRs were combined).
+  const TURNS = 100
   const rows = Array.from({ length: 160 }, (_, at) => ({ orderNumber: `PO-${String(at).padStart(4, '0')}`, supplier: 'Acme Components Limited', status: 'issued', expectedDate: '2026-10-01' }))
-  const big = JSON.stringify({ source: 'list_purchase_orders#1', rows }).slice(0, 24000)
+  const big = JSON.stringify({ source: 'list_purchase_orders#1', rows }).slice(0, 2400)
   const messages = []
-  for (let turn = 0; turn < 10; turn += 1) {
+  for (let turn = 0; turn < TURNS; turn += 1) {
     messages.push(
       { role: 'user', content: [{ type: 'text', text: 'Which orders are open?' }] },
       { role: 'assistant', content: [{ type: 'tool_use', id: `tu_${turn}`, name: 'list_purchase_orders', input: {} }] },
@@ -399,12 +403,12 @@ test('a long thread is sent its latest turns only, as many as leave room for two
   assert.equal(ofType(events, 'notice').length, 0)
   assert.equal(body.conclusion.summary, 'PO-001 is overdue.')
   const sent = client.requests[0].messages
-  assert.ok(audit.turnsLeftOut > 0 && audit.turnsLeftOut < 10, String(audit.turnsLeftOut))
-  assert.equal(sent.length, (10 - audit.turnsLeftOut) * 4 + 2)
+  assert.ok(audit.turnsLeftOut > 0 && audit.turnsLeftOut < TURNS, String(audit.turnsLeftOut))
+  assert.equal(sent.length, (TURNS - audit.turnsLeftOut) * 4 + 2)
   assert.deepEqual(sent[0].content, [{ type: 'text', text: 'Which orders are open?' }], 'the transcript starts at a turn')
   assert.equal(sent.at(-1).content[0].text, 'Which purchase orders are overdue?')
   // The thread keeps every turn; only what is sent is shorter.
-  assert.equal(thread.messages.length, 40 + 3)
+  assert.equal(thread.messages.length, TURNS * 4 + 3)
   // A short thread is sent whole.
   const short = await ask([[...say('PO-001 is overdue.'), end()]], { thread: { messages: messages.slice(0, 4), results: new Map() } })
   assert.equal(short.audit.turnsLeftOut, 0)
