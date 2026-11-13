@@ -72,8 +72,14 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
   // The drafted kinds wait for a decision, each with its draft.
   const parts = split(overview);
   expect(overview.decisions.available).toBe(true);
-  expect(parts.waiting.every((entry) => ["reorder_now", "purchase_order_overdue", "purchase_request_to_convert"].includes(entry.row.kind))).toBe(true);
+  // A supplier invoice the three-way match held is a drafted kind too (2026-11-13).
+  expect(parts.waiting.every((entry) => ["reorder_now", "purchase_order_overdue", "purchase_request_to_convert", "bill_exception"].includes(entry.row.kind))).toBe(true);
   expect(parts.waiting.some((entry) => entry.row.kind === "purchase_order_overdue" && entry.draft?.type === "supplier_follow_up")).toBe(true);
+  // Every held invoice's card says what differs and why.
+  for (const entry of parts.waiting.filter((row) => row.row.kind === "bill_exception" && row.draft)) {
+    expect(entry.draft?.type).toBe("invoice_exception");
+    expect(["ask_supplier", "review_price", "wait_receipt"]).toContain(entry.draft?.step);
+  }
 
   await page.goto("/app/overview/risks");
   const root = page.getByTestId("runtime-homepage");
