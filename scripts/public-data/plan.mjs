@@ -11,7 +11,8 @@
 //
 // [public data]  items, prices, customers, every sales order line and its day.
 // [assumed]      suppliers, lead times, minimum orders, reorder points, stock,
-//                purchase orders and receipts, purchase prices, payment terms.
+//                purchase orders and receipts, purchase prices, payment terms,
+//                and (UCI) supplier invoices, their differences and payments.
 //
 // Dates move by whole days so the last day of the data is yesterday in the
 // workspace timezone; each document keeps its original date in its metadata.
@@ -28,8 +29,54 @@ export const PUBLIC_DATA_WORKSPACE_ASSUMPTIONS = Object.freeze({
   shortageToHolding: 5,
   // Weekly purchasing review on Mondays (workspace calendar).
   reviewWeekday: 1,
-  // UCI customer invoices: due 30 days after the invoice, paid on the due date.
+  // UCI invoices, both ways: due 30 days after the invoice (NET30). Customers
+  // pay on the due date; supplier invoices follow PUBLIC_DATA_SUPPLIER_INVOICE_RULES.
   paymentTermsDays: 30,
+})
+
+// Purchase prices [assumed]: neither dataset has costs, so a purchase order
+// line is priced at this share of the item's public selling price (M5: the
+// price of the day the order is placed), rounded to the penny or cent. The
+// item's supplier terms carry the same price (M5: at the last day's price).
+// The research instances (scripts/public-data-instance.mjs) keep the selling
+// price as their proxy.
+export const PUBLIC_DATA_PURCHASE_PRICE_PERCENT = Object.freeze({ uci: 50, m5: 75 })
+
+// percent of a selling price, worked in whole pence so 2.55 at 50% is 1.28.
+export function purchasePrice(sellingPrice, percent) {
+  return Math.round((Math.round(sellingPrice * 100) * percent) / 100) / 100
+}
+
+// UCI supplier invoices and their payments [assumed] (planSupplierInvoices;
+// scripts/public-data/seed.mjs records them through FlowChain's own supplier
+// invoice, three-way match, approval, purchase order close and payment
+// commands, so the match results, exceptions and payables come from the app's
+// rules). The shares are of the invoices, each picked by a fixed hash of its
+// order, so the same plan always picks the same invoices.
+export const PUBLIC_DATA_SUPPLIER_INVOICE_RULES = Object.freeze({
+  // One invoice per posted receipt, dated 0 to 5 days after it and due
+  // paymentTermsDays after the invoice. A receipt whose invoice day is not
+  // before the seed day is received and not invoiced yet.
+  delayDays: 5,
+  // About 5%: one line priced 2 to 5% above the order, rounded up to the penny.
+  priceAbovePercent: 5,
+  priceAboveFrom: 2,
+  priceAboveTo: 5,
+  // About 3%: one line was delivered 5% short (at least one unit) and is
+  // billed as ordered; the buyer closes the rest of the order that day.
+  shortDeliveryPercent: 3,
+  shortByPercent: 5,
+  // About 2%: dated 1 to 3 days before the goods arrived, recorded against
+  // the order and linked to the receipt when it is posted.
+  beforeReceiptPercent: 2,
+  beforeReceiptFrom: 1,
+  beforeReceiptTo: 3,
+  // A matched invoice due before the seed day is paid on its due date, except
+  // 10% of those due in the 60 days before the seed day, which are overdue.
+  // An invoice with a difference stays held at the match: not approved, so
+  // there is nothing to pay yet.
+  unpaidPercent: 10,
+  unpaidWithinDays: 60,
 })
 
 export const PUBLIC_DATA_WORKSPACE_DATASETS = Object.freeze({
@@ -331,7 +378,12 @@ export function buildPublicDataPlan(extract, dataset, { seedDay, lastDays = null
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(seedDay))) throw new Error('buildPublicDataPlan needs seedDay as YYYY-MM-DD.')
   const base = lastDaysOf(dataset === 'm5' ? m5Plan(extract.m5) : uciPlan(extract.uci), lastDays)
   const { days } = base
-  const assumptions = PUBLIC_DATA_WORKSPACE_ASSUMPTIONS
+  const purchasePricePercent = PUBLIC_DATA_PURCHASE_PRICE_PERCENT[dataset]
+  const assumptions = {
+    ...PUBLIC_DATA_WORKSPACE_ASSUMPTIONS,
+    purchasePricePercent,
+    ...(dataset === 'uci' ? { supplierInvoices: PUBLIC_DATA_SUPPLIER_INVOICE_RULES } : {}),
+  }
   const firstShifted = dayNumber(seedDay) - days
   const shiftDays = firstShifted - dayNumber(base.sourceWindow.first)
   // Thresholds from the average over the last 90 days, the window the reorder
@@ -340,8 +392,10 @@ export function buildPublicDataPlan(extract, dataset, { seedDay, lastDays = null
   const items = base.items.map((item) => {
     const units = item.daily.reduce((total, quantity) => total + quantity, 0)
     const meanDaily = item.daily.slice(-recent).reduce((total, quantity) => total + quantity, 0) / recent
-    return { ...item, units, saleDays: item.daily.filter((quantity) => quantity > 0).length, meanDaily, ...itemThresholds(meanDaily, assumptions) }
+    return { ...item, purchasePrice: purchasePrice(item.price, purchasePricePercent), units, saleDays: item.daily.filter((quantity) => quantity > 0).length, meanDaily, ...itemThresholds(meanDaily, assumptions) }
   })
+  // The price a purchase order placed on day index pays for an item [assumed].
+  const purchasePriceOf = (item, index) => (item.prices ? purchasePrice(item.prices[index], purchasePricePercent) : item.purchasePrice)
   const reviewIndexes = []
   for (let index = 0; index < days; index += 1) {
     if (new Date((firstShifted + index) * DAY_MS).getUTCDay() === assumptions.reviewWeekday) reviewIndexes.push(index)
@@ -361,6 +415,10 @@ export function buildPublicDataPlan(extract, dataset, { seedDay, lastDays = null
     receipts: order.arrival < days ? [{ index: order.arrival, lines: order.lines.map((line) => ({ itemKey: line.itemKey, quantity: line.quantity })) }] : [],
   }))
   const sceneFacts = scene ? finishScene({ items, purchasing, days }) : null
+  // UCI: the supplier invoices of the received orders and their payments.
+  const payables = dataset === 'uci'
+    ? planSupplierInvoices({ orders: purchasing.orders, items, suppliers, days, termsDays: assumptions.paymentTermsDays, priceOf: purchasePriceOf })
+    : null
   return {
     dataset,
     profile,
@@ -372,11 +430,13 @@ export function buildPublicDataPlan(extract, dataset, { seedDay, lastDays = null
     window: { first: isoOf(firstShifted), last: isoOf(firstShifted + days - 1) },
     offsetOf: (index) => index - days,
     items,
+    purchasePriceOf,
     suppliers,
     customers: base.customers,
     salesOrders: base.salesOrders,
     cancellations: base.cancellations,
     purchasing,
+    payables,
     reviewIndexes,
     scene: sceneFacts,
     sources: dataset === 'm5' ? extract.m5.source : extract.uci.source,
@@ -384,11 +444,117 @@ export function buildPublicDataPlan(extract, dataset, { seedDay, lastDays = null
   }
 }
 
+// A fixed draw in [0, 1) for a key (32-bit FNV-1a), so a pick repeats from
+// run to run and from machine to machine.
+export function publicDataDraw(key) {
+  let hash = 0x811c9dc5
+  for (const character of String(key)) {
+    hash ^= character.codePointAt(0)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash / 2 ** 32
+}
+
+const pence = (value) => Math.round(value * 100)
+
+// The UCI supplier invoices and their payments [assumed], by
+// PUBLIC_DATA_SUPPLIER_INVOICE_RULES: one invoice per received delivery of
+// an issued order, in date order, numbered INV-<supplier code>-0001 upwards
+// per supplier. days is the seed day's index; priceOf(item, index) is the
+// order price. A short-delivered line's ordered quantity is raised by what
+// was not delivered (the receipt stays as received) and its order gets
+// closed = { day, itemKey, missing }, the day the buyer closes the rest.
+//
+// An invoice: { key, orderPosition, receiptIndex, receiptDay, supplierKey,
+// number, rule (as_ordered, dated_before_receipt, price_above_order,
+// short_delivery), day, due, percent, changedLine, recordedAgainstOrder,
+// match (matched, exception), payment (paid, overdue, open, held), paidDay,
+// lines: [{ itemKey, orderLine, receiptLine, quantity, received,
+// orderPricePence, unitPricePence, amountPence }], totalPence, total }.
+export function planSupplierInvoices({ orders, items, suppliers, days, termsDays, priceOf, rules = PUBLIC_DATA_SUPPLIER_INVOICE_RULES }) {
+  const itemOf = new Map(items.map((item) => [item.key, item]))
+  const supplierOf = new Map(suppliers.map((supplier) => [supplier.key, supplier]))
+  // Each value draws on its own salt, never the one that picked its invoice:
+  // the picked invoices are the lowest draws of their salt.
+  const between = (key, low, high) => low + Math.floor(publicDataDraw(key) * (high - low + 1))
+  const ranked = (rows, salt) => [...rows].sort((a, b) => publicDataDraw(`${salt}|${a.key}`) - publicDataDraw(`${salt}|${b.key}`) || a.key.localeCompare(b.key))
+  const share = (count, percent) => Math.round((count * percent) / 100)
+  const receipts = []
+  orders.forEach((order, position) => {
+    if (order.status !== 'issued') return
+    order.receipts.forEach((receipt, receiptIndex) => {
+      const key = order.scene ? `${order.scene}|${receiptIndex}` : `${order.created}|${order.supplierKey}|${receiptIndex}`
+      receipts.push({ key, order, position, receipt, receiptIndex, day: receipt.index + between(`delay|${key}`, 0, rules.delayDays) })
+    })
+  })
+  const invoiced = receipts.filter((row) => row.day < days)
+  // The differences fall on weekly orders received in one delivery; the
+  // scene's orders keep their story.
+  const pick = (rows, percent, salt) => new Set(ranked(rows, salt).slice(0, share(invoiced.length, percent)).map((row) => row.key))
+  let candidates = invoiced.filter((row) => !row.order.scene && row.order.receipts.length === 1)
+  const short = pick(candidates, rules.shortDeliveryPercent, 'short')
+  candidates = candidates.filter((row) => !short.has(row.key))
+  const above = pick(candidates, rules.priceAbovePercent, 'price')
+  candidates = candidates.filter((row) => !above.has(row.key))
+  const early = pick(candidates, rules.beforeReceiptPercent, 'before')
+
+  const invoices = invoiced.map((row) => {
+    const { order, receipt } = row
+    const rule = short.has(row.key) ? 'short_delivery' : above.has(row.key) ? 'price_above_order' : early.has(row.key) ? 'dated_before_receipt' : 'as_ordered'
+    const day = rule === 'dated_before_receipt' ? receipt.index - between(`days-before|${row.key}`, rules.beforeReceiptFrom, rules.beforeReceiptTo) : row.day
+    const differs = rule === 'short_delivery' || rule === 'price_above_order'
+    const changedLine = differs ? between(`line|${row.key}`, 0, receipt.lines.length - 1) : null
+    const percent = rule === 'price_above_order' ? between(`percent|${row.key}`, rules.priceAboveFrom, rules.priceAboveTo) : null
+    const lines = receipt.lines.map((received, receiptLine) => {
+      const orderLine = order.lines.findIndex((line) => line.itemKey === received.itemKey)
+      const orderPricePence = pence(priceOf(itemOf.get(received.itemKey), order.created))
+      let quantity = received.quantity
+      let unitPricePence = orderPricePence
+      if (receiptLine === changedLine && rule === 'short_delivery') {
+        order.lines[orderLine].quantity += Math.max(1, Math.ceil((received.quantity * rules.shortByPercent) / 100))
+        quantity = order.lines[orderLine].quantity
+      }
+      if (receiptLine === changedLine && rule === 'price_above_order') unitPricePence = Math.ceil((orderPricePence * (100 + percent)) / 100)
+      return { itemKey: received.itemKey, orderLine, receiptLine, quantity, received: received.quantity, orderPricePence, unitPricePence, amountPence: quantity * unitPricePence }
+    })
+    if (rule === 'short_delivery') order.closed = { day, itemKey: lines[changedLine].itemKey, missing: lines[changedLine].quantity - lines[changedLine].received }
+    const totalPence = lines.reduce((total, line) => total + line.amountPence, 0)
+    return {
+      key: row.key, orderPosition: row.position, receiptIndex: row.receiptIndex, receiptDay: receipt.index, supplierKey: order.supplierKey,
+      rule, day, due: day + termsDays, percent, changedLine, recordedAgainstOrder: rule === 'short_delivery' || rule === 'dated_before_receipt',
+      match: differs ? 'exception' : 'matched', lines, totalPence, total: totalPence / 100,
+    }
+  })
+
+  // Payments: matched and due before the seed day is paid on the due date,
+  // apart from the overdue share of the last unpaidWithinDays days.
+  const recentlyDue = invoices.filter((row) => row.match === 'matched' && row.due < days && row.due >= days - rules.unpaidWithinDays)
+  const overdue = new Set(ranked(recentlyDue, 'unpaid').slice(0, share(recentlyDue.length, rules.unpaidPercent)).map((row) => row.key))
+  const sequence = new Map()
+  const dated = invoices.sort((a, b) => a.day - b.day || a.key.localeCompare(b.key))
+  for (const invoice of dated) {
+    invoice.payment = invoice.match === 'exception' ? 'held' : invoice.due >= days ? 'open' : overdue.has(invoice.key) ? 'overdue' : 'paid'
+    invoice.paidDay = invoice.payment === 'paid' ? invoice.due : null
+    const next = (sequence.get(invoice.supplierKey) || 0) + 1
+    sequence.set(invoice.supplierKey, next)
+    invoice.number = `INV-${supplierOf.get(invoice.supplierKey).code}-${String(next).padStart(4, '0')}`
+  }
+  // Received, not invoiced yet: the supplier's invoice is not due to arrive
+  // before the seed day.
+  const notYetInvoiced = receipts.filter((row) => row.day >= days).map((row) => ({
+    key: row.key, orderPosition: row.position, receiptIndex: row.receiptIndex, receiptDay: row.receipt.index, supplierKey: row.order.supplierKey,
+    totalPence: row.receipt.lines.reduce((total, line) => total + line.quantity * pence(priceOf(itemOf.get(line.itemKey), row.order.created)), 0),
+  }))
+  return { invoices: dated, notYetInvoiced }
+}
+
 const orderedOf = (order) => order.lines.reduce((total, line) => total + line.quantity, 0)
 const receivedOf = (order) => order.receipts.reduce((total, receipt) => total + receipt.lines.reduce((sum, line) => sum + line.quantity, 0), 0)
 
-// What the plan holds, for the seed's report and the workspace note.
+// What the plan holds, for the seed's report and the workspace note. An
+// order closed short is not open.
 export function publicDataPlanCounts(plan) {
+  const invoices = plan.payables?.invoices || []
   return {
     items: plan.items.length,
     suppliers: plan.suppliers.length,
@@ -398,8 +564,16 @@ export function publicDataPlanCounts(plan) {
     unitsSold: plan.items.reduce((total, item) => total + item.units, 0),
     purchaseOrders: plan.purchasing.orders.length,
     purchaseOrderLines: plan.purchasing.orders.reduce((total, order) => total + order.lines.length, 0),
-    openPurchaseOrders: plan.purchasing.orders.filter((order) => order.status === 'issued' && orderedOf(order) > receivedOf(order)).length,
+    openPurchaseOrders: plan.purchasing.orders.filter((order) => order.status === 'issued' && !order.closed && orderedOf(order) > receivedOf(order)).length,
+    closedShortPurchaseOrders: plan.purchasing.orders.filter((order) => order.closed).length,
     raisedForDemandSpikes: plan.purchasing.raisedDays,
     cancellations: plan.cancellations.length,
+    ...(plan.payables ? {
+      supplierInvoices: invoices.length,
+      supplierInvoicesWithDifferences: invoices.filter((row) => row.match === 'exception').length,
+      supplierInvoicesPaid: invoices.filter((row) => row.payment === 'paid').length,
+      supplierInvoicesOverdue: invoices.filter((row) => row.payment === 'overdue').length,
+      receiptsNotInvoiced: plan.payables.notYetInvoiced.length,
+    } : {}),
   }
 }

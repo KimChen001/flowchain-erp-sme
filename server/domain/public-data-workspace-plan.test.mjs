@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PUBLIC_DATA_WORKSPACE_EXTRACT_SCHEMA, buildPublicDataPlan, itemThresholds, publicDataPlanCounts, readPublicDataExtract, simulatePurchasing, titleCase } from '../../scripts/public-data/plan.mjs'
+import { PUBLIC_DATA_SUPPLIER_INVOICE_RULES, PUBLIC_DATA_WORKSPACE_EXTRACT_SCHEMA, buildPublicDataPlan, itemThresholds, planSupplierInvoices, publicDataDraw, publicDataPlanCounts, purchasePrice, readPublicDataExtract, simulatePurchasing, titleCase } from '../../scripts/public-data/plan.mjs'
 import { UCI_SCENE } from '../../scripts/public-data/scene.mjs'
 import { publicDataNoteSummary } from './public-data-note.mjs'
 
@@ -62,6 +62,24 @@ test('public data plan moves the window so its last day is yesterday', () => {
   assert.equal(plan.items[0].name, 'Dept A item 001')
   assert.deepEqual(plan.suppliers.map((supplier) => supplier.name), ['Dept A vendor (assumed)', 'Dept B vendor (assumed)'])
   assert.equal(plan.items[0].price, 2.5)
+  // Purchases at 75% of the day's selling price [assumed], to the cent; the
+  // supplier terms at the last day's. M5 has no supplier invoices.
+  assert.equal(plan.assumptions.purchasePricePercent, 75)
+  assert.equal(plan.purchasePriceOf(plan.items[0], 0), 1.5)
+  assert.equal(plan.purchasePriceOf(plan.items[0], plan.days - 1), 1.88)
+  assert.equal(plan.items[0].purchasePrice, 1.88)
+  assert.equal(plan.payables, null)
+  assert.equal(plan.assumptions.supplierInvoices, undefined)
+})
+
+test('a purchase price is a share of the selling price, worked in whole pence', () => {
+  assert.equal(purchasePrice(2.55, 50), 1.28)
+  assert.equal(purchasePrice(0.85, 50), 0.43)
+  assert.equal(purchasePrice(2.55, 75), 1.91)
+  assert.equal(purchasePrice(4, 50), 2)
+  // A draw repeats for its key and stays in [0, 1).
+  assert.equal(publicDataDraw('price|7|22|0'), publicDataDraw('price|7|22|0'))
+  for (const key of ['a', 'b', 'delay|1|85|0']) assert.ok(publicDataDraw(key) >= 0 && publicDataDraw(key) < 1)
 })
 
 test('public data plan keeps every UCI invoice line and its customer', () => {
@@ -122,13 +140,14 @@ test('a missing public data extract says how to write one', () => {
 test('the workspace note sends only its known fields', () => {
   const note = publicDataNoteSummary({
     dataset: 'uci', sourceWindow: { first: '2010-12-10', last: '2011-12-09' }, window: { first: '2025-11-07', last: '2026-11-06' }, shiftDays: 5446,
-    counts: { items: 200, customers: 1023, secret: 1 }, assumptions: { leadTimeDays: 14, paymentTermsDays: 30 },
+    counts: { items: 200, customers: 1023, supplierInvoices: 335, secret: 1 },
+    assumptions: { leadTimeDays: 14, paymentTermsDays: 30, purchasePricePercent: 50, supplierInvoices: { delayDays: 5, unpaidPercent: 10, note: 'not sent', ratio: 0.5 } },
     source: { citation: 'Chen, D. (2012). Online Retail II.', licence: 'CC BY 4.0', url: 'https://archive.ics.uci.edu/dataset/502/online+retail+ii' },
     rules: ['not sent'],
   })
   assert.deepEqual(note, {
     dataset: 'uci', sourceWindow: { first: '2010-12-10', last: '2011-12-09' }, window: { first: '2025-11-07', last: '2026-11-06' }, shiftDays: 5446,
-    counts: { items: 200, customers: 1023 }, assumptions: { leadTimeDays: 14, paymentTermsDays: 30 },
+    counts: { items: 200, customers: 1023, supplierInvoices: 335 }, assumptions: { leadTimeDays: 14, paymentTermsDays: 30, purchasePricePercent: 50, supplierInvoices: { delayDays: 5, unpaidPercent: 10 } },
     citation: 'Chen, D. (2012). Online Retail II.', licence: 'CC BY 4.0', url: 'https://archive.ics.uci.edu/dataset/502/online+retail+ii', sceneSuppliers: [],
   })
   assert.equal(publicDataNoteSummary({ dataset: 'other' }), null)
@@ -186,7 +205,7 @@ test('the walkthrough scene holds: a late-covered hero, a second late supplier, 
   const n = plan.days
   const received = (order) => order.receipts.reduce((total, receipt) => total + receipt.lines.reduce((sum, line) => sum + line.quantity, 0), 0)
   const ordered = (order) => order.lines.reduce((total, line) => total + line.quantity, 0)
-  const lateOpen = plan.purchasing.orders.filter((order) => order.status === 'issued' && order.promised < n && received(order) < ordered(order))
+  const lateOpen = plan.purchasing.orders.filter((order) => order.status === 'issued' && !order.closed && order.promised < n && received(order) < ordered(order))
   assert.deepEqual(lateOpen.map((order) => order.scene).sort(), ['hero_nothing_received', 'hero_partly_received', 'second_supplier_late'])
   assert.deepEqual(plan.purchasing.orders.filter((order) => order.status === 'pending_approval').map((order) => order.scene), ['waiting_for_approval'])
   // Acme delivered some weekly orders after their promised date.
@@ -195,6 +214,72 @@ test('the walkthrough scene holds: a late-covered hero, a second late supplier, 
   assert.ok(acme.some((order) => order.receipts[0].index === order.promised))
   // The public sales are untouched by the scene.
   assert.equal(plan.salesOrders.length, 140)
+})
+
+test('UCI supplier invoices: one per receipt by the stated rules, the same every time', () => {
+  const rules = PUBLIC_DATA_SUPPLIER_INVOICE_RULES
+  const plan = buildPublicDataPlan(sceneExtract(), 'uci', { seedDay: '2026-11-10' })
+  const again = buildPublicDataPlan(sceneExtract(), 'uci', { seedDay: '2026-11-10' })
+  assert.deepEqual(again.payables, plan.payables, 'the same plan picks the same invoices')
+  // Purchases at half the selling price [assumed].
+  assert.equal(plan.assumptions.purchasePricePercent, 50)
+  assert.equal(plan.items[0].purchasePrice, 1)
+  assert.deepEqual(plan.assumptions.supplierInvoices, rules)
+  const n = plan.days
+  const { invoices, notYetInvoiced } = plan.payables
+  const receipts = plan.purchasing.orders.filter((order) => order.status === 'issued').reduce((total, order) => total + order.receipts.length, 0)
+  assert.equal(invoices.length + notYetInvoiced.length, receipts, 'every receipt is invoiced or waits for its invoice')
+  assert.ok(invoices.length > 40)
+  const count = (rule) => invoices.filter((row) => row.rule === rule).length
+  assert.equal(count('short_delivery'), Math.round((invoices.length * rules.shortDeliveryPercent) / 100))
+  assert.equal(count('price_above_order'), Math.round((invoices.length * rules.priceAbovePercent) / 100))
+  assert.equal(count('dated_before_receipt'), Math.round((invoices.length * rules.beforeReceiptPercent) / 100))
+  for (const row of invoices) {
+    const order = plan.purchasing.orders[row.orderPosition]
+    assert.ok(row.day < n, `${row.number} is dated before the seed day`)
+    assert.equal(row.due, row.day + 30)
+    assert.equal(row.totalPence, row.lines.reduce((total, line) => total + line.quantity * line.unitPricePence, 0))
+    if (row.rule === 'dated_before_receipt') assert.ok(row.receiptDay - row.day >= rules.beforeReceiptFrom && row.receiptDay - row.day <= rules.beforeReceiptTo)
+    else assert.ok(row.day - row.receiptDay >= 0 && row.day - row.receiptDay <= rules.delayDays)
+    // Differences fall only on weekly orders, on one line, and hold the invoice at the match.
+    if (row.match === 'exception') {
+      assert.equal(order.scene, undefined)
+      assert.equal(row.payment, 'held')
+      const changed = row.lines.filter((line) => line.unitPricePence !== line.orderPricePence || line.quantity !== line.received)
+      assert.deepEqual(changed, [row.lines[row.changedLine]])
+    }
+    if (row.rule === 'price_above_order') {
+      const line = row.lines[row.changedLine]
+      assert.ok(row.percent >= rules.priceAboveFrom && row.percent <= rules.priceAboveTo)
+      assert.equal(line.unitPricePence, Math.ceil((line.orderPricePence * (100 + row.percent)) / 100))
+    }
+    // A short delivery is billed as ordered; the order closes the rest that day.
+    if (row.rule === 'short_delivery') {
+      const line = row.lines[row.changedLine]
+      assert.equal(line.quantity - line.received, Math.max(1, Math.ceil((line.received * rules.shortByPercent) / 100)))
+      assert.equal(order.lines[line.orderLine].quantity, line.quantity)
+      assert.deepEqual(order.closed, { day: row.day, itemKey: line.itemKey, missing: line.quantity - line.received })
+    }
+    // Matched: paid on the due date before the seed day unless left overdue; later ones open.
+    if (row.match === 'matched') assert.equal(row.payment, row.due >= n ? 'open' : row.paidDay === row.due ? 'paid' : 'overdue')
+    if (row.payment === 'overdue') assert.ok(row.due < n && row.due >= n - rules.unpaidWithinDays)
+  }
+  // Numbered per supplier in date order.
+  const acme = invoices.filter((row) => row.supplierKey === '85')
+  assert.deepEqual(acme.map((row) => row.number), acme.map((_, index) => `INV-ACME-${String(index + 1).padStart(4, '0')}`))
+  // Orders closed short are not open; the counts say how many invoices of each kind.
+  const counts = publicDataPlanCounts(plan)
+  assert.equal(counts.closedShortPurchaseOrders, count('short_delivery'))
+  assert.equal(counts.supplierInvoices, invoices.length)
+  assert.equal(counts.supplierInvoicesWithDifferences, count('short_delivery') + count('price_above_order'))
+  assert.equal(counts.receiptsNotInvoiced, notYetInvoiced.length)
+  // A rule's value does not lean on the draw that picked the invoice: with
+  // half the invoices dated early, every number of days in the range occurs.
+  const early = planSupplierInvoices({
+    orders: plan.purchasing.orders, items: plan.items, suppliers: plan.suppliers, days: n, termsDays: 30, priceOf: plan.purchasePriceOf,
+    rules: { ...rules, shortDeliveryPercent: 0, priceAbovePercent: 0, beforeReceiptPercent: 50 },
+  }).invoices.filter((row) => row.rule === 'dated_before_receipt')
+  assert.deepEqual([...new Set(early.map((row) => row.receiptDay - row.day))].sort(), [1, 2, 3])
 })
 
 test('a scene product missing from the extract stops the plan with its code', () => {

@@ -10,12 +10,25 @@ export type PublicDataNote = {
   sourceWindow: { first: string; last: string };
   window: { first: string; last: string };
   shiftDays: number;
-  counts: Partial<Record<"items" | "suppliers" | "customers" | "salesOrders" | "salesOrderLines" | "purchaseOrders" | "openPurchaseOrders" | "customerInvoices" | "cancellations", number>>;
-  assumptions: Partial<Record<"leadTimeDays" | "reviewDays" | "holdingRatePercent" | "shortageToHolding" | "paymentTermsDays", number>>;
+  counts: Partial<Record<"items" | "suppliers" | "customers" | "salesOrders" | "salesOrderLines" | "purchaseOrders" | "openPurchaseOrders" | "customerInvoices" | "supplierInvoices" | "cancellations", number>>;
+  assumptions: Partial<Record<"leadTimeDays" | "reviewDays" | "holdingRatePercent" | "shortageToHolding" | "paymentTermsDays" | "purchasePricePercent", number>> & {
+    // UCI: the rules the supplier invoices and their payments follow.
+    supplierInvoices?: Partial<Record<SupplierInvoiceRule, number>>;
+  };
   citation: string | null;
   licence: string | null;
   url: string | null;
   sceneSuppliers: string[];
+};
+
+type SupplierInvoiceRule = "delayDays" | "priceAbovePercent" | "priceAboveFrom" | "priceAboveTo" | "shortDeliveryPercent" | "shortByPercent" | "beforeReceiptPercent" | "beforeReceiptFrom" | "beforeReceiptTo" | "unpaidPercent" | "unpaidWithinDays";
+
+// The seed's supplier invoice rules (PUBLIC_DATA_SUPPLIER_INVOICE_RULES in
+// scripts/public-data/plan.mjs), for any rule a note leaves out. A workspace
+// seeded before 2026-11-12 has no supplier invoices and shows no rules.
+const SUPPLIER_INVOICE_RULES: Record<SupplierInvoiceRule, number> = {
+  delayDays: 5, priceAbovePercent: 5, priceAboveFrom: 2, priceAboveTo: 5, shortDeliveryPercent: 3, shortByPercent: 5,
+  beforeReceiptPercent: 2, beforeReceiptFrom: 1, beforeReceiptTo: 3, unpaidPercent: 10, unpaidWithinDays: 60,
 };
 
 const hiddenKey = (note: PublicDataNote) => `flowchain.publicDataNote.hidden.${note.dataset}.${note.window.last}`;
@@ -52,6 +65,10 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
   if (hidden) return null;
   const leadTimeDays = note.assumptions.leadTimeDays ?? 14;
   const reviewDays = note.assumptions.reviewDays ?? 7;
+  // A workspace seeded before purchase prices were a share of the selling
+  // price says nothing of a percent: its purchase prices are the selling prices.
+  const purchasePricePercent = note.assumptions.purchasePricePercent ?? 100;
+  const supplierInvoices = note.assumptions.supplierInvoices ? { ...SUPPLIER_INVOICE_RULES, ...note.assumptions.supplierInvoices } : null;
   const summary = note.dataset === "m5"
     ? t("publicData.m5Summary", { sourceFirst: note.sourceWindow.first, sourceLast: note.sourceWindow.last, shiftDays: formatNumber(note.shiftDays), last: note.window.last, items: formatNumber(note.counts.items ?? 0) })
     : t("publicData.uciSummary", { sourceFirst: note.sourceWindow.first, sourceLast: note.sourceWindow.last, shiftDays: formatNumber(note.shiftDays), last: note.window.last, items: formatNumber(note.counts.items ?? 0), customers: formatNumber(note.counts.customers ?? 0) });
@@ -71,8 +88,14 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
           </p>
           {open && (
             <div className="mt-2 space-y-1.5 text-slate-600" data-testid="public-data-note-details">
-              <p>{t("publicData.assumed", { leadTimeDays, reviewDays, cover: leadTimeDays + reviewDays })}</p>
+              <p>
+                {t("publicData.assumed", { leadTimeDays, reviewDays, cover: leadTimeDays + reviewDays })}{" "}
+                {purchasePricePercent === 100 ? t("publicData.purchasePriceSame") : t("publicData.purchasePriceShare", { percent: purchasePricePercent })}
+              </p>
               {note.dataset === "uci" && <p>{t("publicData.uciAssumed", { paymentTermsDays: note.assumptions.paymentTermsDays ?? 30 })}</p>}
+              {note.dataset === "uci" && supplierInvoices && (
+                <p data-testid="public-data-note-supplier-invoices">{t("publicData.uciSupplierInvoices", { ...supplierInvoices, paymentTermsDays: note.assumptions.paymentTermsDays ?? 30 })}</p>
+              )}
               {note.sceneSuppliers?.length > 0 && <p>{t("publicData.scene", { suppliers: note.sceneSuppliers.join(", ") })}</p>}
               <p>{t("publicData.dates")}</p>
               {note.citation && (

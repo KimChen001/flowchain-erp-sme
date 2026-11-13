@@ -76,8 +76,10 @@ export function buildUciConversationCases(facts) {
     expect: { matches: [{ label: 'says it is not found', pattern: String.raw`\b(?:no|not|couldn't|can't|cannot|doesn't|does not)\b` }], notMatches: [{ label: 'a stock figure for it', pattern: String.raw`99999[^.\n]{0,40}\b\d+\s*(?:pcs|units)` }] } })
   add({ id: 'forecast-en', kind: 'invented', language: 'en-US', turns: ['Forecast our sales for next quarter'],
     expect: { matches: [{ label: 'says what it is based on, or that it cannot', pattern: String.raw`\b(?:based on|at the (?:recorded|shipped|current) rate|if (?:the|demand|sales)|assum|no (?:sales )?forecast|not a forecast|(?:doesn't|does not|don't|do not) (?:hold|have|record|keep) (?:a |any )?(?:sales )?forecast|isn't something|can(?:no|')t (?:be )?(?:forecast|predict)(?:ed)?|cannot (?:be )?(?:forecast|predict)(?:ed)?)` }] } })
+  // Since 2026-11-12 the purchase price is an assumed share of the selling
+  // price: a margin can be worked out, and the answer says it rests on that.
   add({ id: 'margin-en', kind: 'invented', language: 'en-US', turns: [`What is our gross margin on ${hero.sku}?`],
-    expect: { matches: [{ label: 'says the purchase price is assumed, or that no margin is recorded', pattern: String.raw`assum|same as|equal|not meaningful|no (?:separate |real )?(?:cost|purchase price)|proxy|no (?:gross )?margin|(?:doesn't|does not) record` }] } })
+    expect: { matches: [{ label: 'says the purchase price is assumed', pattern: String.raw`assum|estimated purchase|not (?:an? )?(?:real|actual|recorded) (?:cost|purchase price)` }] } })
 
   // Follow-ups.
   add({ id: 'correction-en', kind: 'followup', language: 'en-US', turns: [`How much ${hero.sku} do we have in stock?`, `no, I meant ${second.sku}`],

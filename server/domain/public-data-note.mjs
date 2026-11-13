@@ -5,8 +5,11 @@
 // fields leave the server, and nothing else from the record.
 const DATASETS = new Set(['m5', 'uci'])
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
-const COUNT_KEYS = ['items', 'suppliers', 'customers', 'salesOrders', 'salesOrderLines', 'purchaseOrders', 'openPurchaseOrders', 'customerInvoices', 'cancellations']
-const ASSUMPTION_KEYS = ['leadTimeDays', 'reviewDays', 'holdingRatePercent', 'shortageToHolding', 'paymentTermsDays']
+const COUNT_KEYS = ['items', 'suppliers', 'customers', 'salesOrders', 'salesOrderLines', 'purchaseOrders', 'openPurchaseOrders', 'customerInvoices', 'supplierInvoices', 'cancellations']
+const ASSUMPTION_KEYS = ['leadTimeDays', 'reviewDays', 'holdingRatePercent', 'shortageToHolding', 'paymentTermsDays', 'purchasePricePercent']
+// The UCI supplier invoice rules (PUBLIC_DATA_SUPPLIER_INVOICE_RULES in
+// scripts/public-data/plan.mjs), whole numbers only.
+const SUPPLIER_INVOICE_KEYS = ['delayDays', 'priceAbovePercent', 'priceAboveFrom', 'priceAboveTo', 'shortDeliveryPercent', 'shortByPercent', 'beforeReceiptPercent', 'beforeReceiptFrom', 'beforeReceiptTo', 'unpaidPercent', 'unpaidWithinDays']
 
 const day = (value) => (ISO_DAY.test(String(value || '')) ? String(value) : null)
 const whole = (value) => (Number.isInteger(value) ? value : null)
@@ -21,6 +24,8 @@ export function publicDataNoteSummary(payload) {
   if (!sourceFirst || !sourceLast || !first || !last || whole(payload.shiftDays) === null) return null
   const counts = Object.fromEntries(COUNT_KEYS.map((key) => [key, whole(payload.counts?.[key])]).filter(([, value]) => value !== null))
   const assumptions = Object.fromEntries(ASSUMPTION_KEYS.map((key) => [key, whole(payload.assumptions?.[key])]).filter(([, value]) => value !== null))
+  const supplierInvoices = Object.fromEntries(SUPPLIER_INVOICE_KEYS.map((key) => [key, whole(payload.assumptions?.supplierInvoices?.[key])]).filter(([, value]) => value !== null))
+  if (Object.keys(supplierInvoices).length) assumptions.supplierInvoices = supplierInvoices
   return {
     dataset: payload.dataset,
     sourceWindow: { first: sourceFirst, last: sourceLast },
