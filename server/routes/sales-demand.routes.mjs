@@ -12,8 +12,11 @@ async function actorFor(ctx) {
   return resolveProvisionedActor(await getPrismaClient(ctx.env || process.env), identity)
 }
 
+// Filters (db-sales-order-read-repository.mjs) and paging: offset and limit
+// (at most 500 orders a read; the response's total counts every match).
 function query(url) {
-  return { q: url.searchParams.get('q') || '', sku: url.searchParams.get('sku') || '', status: url.searchParams.get('status') || '', risk: url.searchParams.get('risk') || '' }
+  const value = (name) => url.searchParams.get(name) || ''
+  return { q: value('q'), sku: value('sku'), status: value('status'), risk: value('risk'), orderStatus: value('orderStatus'), sort: value('sort'), offset: value('offset'), limit: value('limit') }
 }
 
 export async function handleSalesDemandRoute(ctx) {
@@ -39,7 +42,14 @@ export async function handleSalesDemandRoute(ctx) {
     return true
   }
   if (req.method === 'GET' && url.pathname === '/api/sales-demand/orders') {
-    send(res, 200, { orders: await repository.listOrders(filters()), summary: await repository.getSummary(filters()), evidenceLinks: [], dataLimitations: [] })
+    const scope = filters()
+    const [orders, total, summary] = await Promise.all([
+      repository.listOrders(scope),
+      typeof repository.countOrders === 'function' ? repository.countOrders(scope) : null,
+      repository.getSummary(scope),
+    ])
+    const offset = Math.max(0, Math.floor(Number(scope.offset) || 0))
+    send(res, 200, { orders, total: total ?? offset + orders.length, offset, summary, evidenceLinks: [], dataLimitations: [] })
     return true
   }
   if (req.method === 'POST' && url.pathname === '/api/sales-demand/orders') {
@@ -61,7 +71,7 @@ export async function handleSalesDemandRoute(ctx) {
     return true
   }
   if (req.method === 'GET' && url.pathname === '/api/sales-demand/risks') {
-    const orders = await repository.listOrders(filters())
+    const orders = await repository.listOrders({ ...filters(), risk: filters().risk || 'true' })
     send(res, 200, { risks: orders.filter(row => row.deliveryRiskLevel !== 'low'), summary: await repository.getSummary(filters()), evidenceLinks: [], dataLimitations: [] })
     return true
   }

@@ -29,7 +29,15 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   // The buyer agrees a price below the reference price, so the PO price
   // (4.10) and the reference price (4.25) tell the two sources apart below.
   await page.getByLabel('Estimated unit price 1').fill('4.10')
+  // Required fields are marked; a missing one is named under it and gets focus.
+  await expect(page.getByTestId('form-required-note')).toHaveText('* Required')
+  await expect(field(page, 'Quantity').locator('input')).toHaveAttribute('aria-required', 'true')
+  await page.getByRole('button', { name: 'Save and submit' }).click()
+  await expect(field(page, 'Quantity').locator('input')).toHaveAccessibleDescription('Enter a quantity above 0.')
+  await expect(field(page, 'Quantity').locator('input')).toBeFocused()
+  await expect(page.getByTestId('purchase-request-form-errors')).toHaveText('Check the highlighted fields.')
   await field(page, 'Quantity').locator('input').fill('12')
+  await expect(field(page, 'Quantity').locator('input')).not.toHaveAttribute('aria-invalid', 'true')
   await field(page, 'Destination warehouse or service location').locator('select').selectOption('browser-warehouse')
   await page.getByRole('button', { name: 'Save and submit' }).click()
   await expect(page.getByText('Purchase request submitted')).toBeVisible()
@@ -41,6 +49,8 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   // Pages show the document number (PR-YYYYMM-NNNN); the id stays in links and calls.
   const row = page.locator('tr', { hasText: submitted.number || submitted.id })
   await row.getByRole('button', { name: 'Approve' }).click()
+  // The list row says what happened, by number (UI review 7).
+  await expect(page.getByText(`Approved ${submitted.number || submitted.id}`)).toBeVisible()
   await expect(row.getByRole('button', { name: 'Create purchase order' })).toBeVisible()
   await row.getByRole('button', { name: 'Create purchase order' }).click()
 
@@ -139,6 +149,17 @@ test('a purchase request opened from the assistant arrives prefilled, labels eac
   await page.goto(`/app/procurement/requests?mode=create&itemId=browser-pr-item&sku=browser-pr-item&quantity=17&due=${due}&origin=ai_assistant`)
   await expect(field(page, 'Required date').locator('input').first()).toHaveValue(due)
   await expect(page.getByLabel('Default required date')).toHaveValue(due)
+
+  // A reorder list row whose shortfall (19) was raised to the supplier's
+  // minimum (20) labels the quantity as that minimum, not as the shortfall
+  // (UI review 7: "20 · Shortfall from the reorder list").
+  await page.goto('/app/procurement/requests?itemId=browser-pr-item&quantity=20&quantityFrom=supplier_minimum&shortfall=19&suppliers=browser-supplier&origin=reorder_list&reason=Reorder')
+  await expect(field(page, 'Quantity').locator('input')).toHaveValue('20')
+  await expect(page.getByTestId('prefill-source-quantity')).toHaveText('Supplier minimum (shortfall 19 ea)')
+  await expect(page.getByTestId('prefill-source-quantity')).toHaveAttribute('data-prefill-ref', 'reorder_list:supplier_minimum')
+  // A plain shortfall keeps its own label.
+  await page.goto('/app/procurement/requests?itemId=browser-pr-item&quantity=19&suppliers=browser-supplier&origin=reorder_list&reason=Reorder&plain=1')
+  await expect(page.getByTestId('prefill-source-quantity')).toHaveText('Shortfall from the reorder list')
 })
 
 // Suppliers and items made through the API, so each run has its own:
@@ -268,9 +289,22 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   await row.getByText(submitted.number || submitted.id).click()
   await expect(page.getByTestId('pr-line-supplier-override')).toHaveText(flag)
 
-  await page.goto('/app/procurement/requests')
-  await row.getByRole('button', { name: 'Approve' }).click()
-  await row.getByRole('button', { name: 'Create purchase order' }).click()
+  // The approver acts on the detail page itself (UI review 7: a submitted
+  // request's page had no Approve, an approved one no Create purchase order).
+  const number = submitted.number || submitted.id
+  await expect(page.getByTestId('pr-detail-meta')).toHaveText(/^Requester: .+ · Created: [A-Z][a-z]{2} \d{1,2}, \d{4}$/)
+  await expect(page.getByTestId('pr-detail-line-quantity')).toHaveText('6 ea × $3.20')
+  await expect(page.getByTestId('pr-detail-actions').getByRole('button')).toHaveText(['Reject', 'Withdraw', 'Approve'])
+  // Withdraw asks first here too; going back changes nothing.
+  await page.getByTestId('pr-detail-withdraw').click()
+  await expect(page.getByTestId('withdraw-request-dialog')).toContainText(`Withdraw ${number}?`)
+  await page.getByRole('button', { name: 'Go back' }).click()
+  await expect(page.getByTestId('withdraw-request-dialog')).toHaveCount(0)
+  await page.getByTestId('pr-detail-approve').click()
+  await expect(page.getByText(`Approved ${number}`)).toBeVisible()
+  await expect(page.getByTestId('pr-detail-actions').getByRole('button')).toHaveText(['Create purchase order'])
+  await page.getByTestId('pr-detail-create-po').click()
+  await expect(page.getByText(new RegExp(`^Created PO-\\S+ from ${number}$`))).toBeVisible()
   await expect.poll(async () => (await api('/api/procurement/orders')).filter((po: { sourceRequest: string }) => po.sourceRequest === submitted.id).length).toBe(1)
   const po = (await api('/api/procurement/orders')).find((order: { sourceRequest: string }) => order.sourceRequest === submitted.id)
   await page.goto(`/app/procurement/orders/${encodeURIComponent(po.id)}`)

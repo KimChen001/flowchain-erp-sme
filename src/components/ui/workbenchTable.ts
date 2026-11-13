@@ -30,10 +30,11 @@ export const tableLinkClass = `${typography.tableLink} tabular-nums hover:underl
 // under table[data-list-cards]): the record's number or name with its status
 // on the first line, the other cells as label/value pairs, the row's actions
 // at the bottom. The roles come from the header: the first column (after a
-// checkbox column) is the record, the first column named "Status" its
-// status, a column named "Actions" (or an unnamed last column) its actions;
-// each other cell gets its column name in data-label. Wider screens ignore
-// these attributes, so the table there is unchanged.
+// checkbox column) is the record, the column marked data-card-status (else
+// the first column named "Status") its status, a column named "Actions" (or
+// an unnamed last column) its actions; each other cell gets its column name
+// in data-label. Wider screens ignore these attributes, so the table there
+// is unchanged.
 const STATUS_HEADER = /status|状态/i;
 const ACTION_HEADER = /^(actions?|操作)$/i;
 
@@ -41,16 +42,21 @@ function setAttribute(element: Element, name: string, value: string) {
   if (element.getAttribute(name) !== value) element.setAttribute(name, value);
 }
 
-function labelListTable(table: HTMLTableElement) {
+// Exported for its unit test (server/domain/list-table-cards.test.mjs).
+export function labelListTable(table: HTMLTableElement) {
   const head = table.tHead?.rows[0];
   if (!head) return;
   const labels: string[] = [];
   // A header cell marked data-card-title names the record when the first
-  // column does not (a date, say).
-  let markedTitle = -1;
+  // column does not (a date, say); one marked data-card-status is the
+  // record's status when no column is named "Status" or a column named so is
+  // not the one to show (a reservation status beside the order's own).
+  let markedTitle = -1,
+    markedStatus = -1;
   for (const cell of Array.from(head.cells)) {
     const text = (cell.textContent || "").replace(/\s+/g, " ").trim();
     if (cell.hasAttribute("data-card-title")) markedTitle = labels.length;
+    if (cell.hasAttribute("data-card-status")) markedStatus = labels.length;
     for (let span = 0; span < Math.max(1, cell.colSpan); span += 1) labels.push(text);
   }
   if (labels.length < 2) return;
@@ -58,7 +64,12 @@ function labelListTable(table: HTMLTableElement) {
   const titleColumn = markedTitle >= 0 ? markedTitle : selectColumn === 0 ? 1 : 0;
   // A column named just "Status" wins over "Credit status" and the like.
   const statusNamed = (pattern: RegExp) => labels.findIndex((label, index) => index > titleColumn && pattern.test(label));
-  const statusColumn = statusNamed(/^(status|状态)$/i) >= 0 ? statusNamed(/^(status|状态)$/i) : statusNamed(STATUS_HEADER);
+  const statusColumn =
+    markedStatus > titleColumn
+      ? markedStatus
+      : statusNamed(/^(status|状态)$/i) >= 0
+        ? statusNamed(/^(status|状态)$/i)
+        : statusNamed(STATUS_HEADER);
   const last = labels.length - 1;
   const isActions = (column: number) => column > titleColumn && (ACTION_HEADER.test(labels[column]) || (column === last && !labels[column]));
   setAttribute(table, "data-list-cards", "");

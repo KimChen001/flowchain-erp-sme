@@ -31,7 +31,10 @@ test('a manager receives an issued purchase order on the desktop and posts the r
   await form.getByLabel('Accepted BROWSER-SKU').fill('4')
   await form.getByLabel('Rejected BROWSER-SKU').fill('1')
   await form.getByTestId('receiving-form-save').click()
-  await expect(form.getByTestId('receiving-form-errors')).toContainText('Enter a reason for the rejected quantity.')
+  // The message sits under the field it is about, and focus goes there.
+  await expect(form.getByLabel('Rejection reason BROWSER-SKU')).toHaveAccessibleDescription('Enter a reason for the rejected quantity.')
+  await expect(form.getByLabel('Rejection reason BROWSER-SKU')).toBeFocused()
+  await expect(form.getByTestId('receiving-form-errors')).toHaveText('Check the highlighted fields.')
   await form.getByLabel('Rejection reason BROWSER-SKU').fill('Carton crushed in transit')
   await form.getByLabel('Location BROWSER-SKU').fill('B-02')
   await form.getByTestId('receiving-form-save').click()
@@ -48,10 +51,16 @@ test('a manager receives an issued purchase order on the desktop and posts the r
   await expect(page.getByLabel('Accepted BROWSER-SKU')).toHaveValue('4')
   await expect(page.getByLabel('Rejection reason BROWSER-SKU')).toHaveValue('Carton crushed in transit')
   await page.getByLabel('Accepted BROWSER-SKU').fill('5')
+  // Submitting does not post: the button says so, and the receipt page then
+  // puts Post receipt first.
+  await expect(page.getByTestId('receiving-form-submit')).toHaveText('Save and submit')
   await page.getByTestId('receiving-form-submit').click()
 
   await expect(page.getByTestId('receiving-workbench')).toBeVisible()
   await expect(page.getByText('Ready to post', { exact: true }).first()).toBeVisible()
+  await expect(page.getByTestId('receiving-ready-note')).toContainText('Post the receipt to add the accepted quantity to stock')
+  // The rejected quantity shows its recorded reason.
+  await expect(page.getByTestId('receiving-line-rejection-reason')).toHaveText('Reason: Carton crushed in transit')
   await page.getByTestId('receiving-primary-action').click()
   await expect(page.getByTestId('impact-preview')).toBeVisible()
   await expect(page.getByTestId('balance-impact')).toContainText('0 → 5')
@@ -59,6 +68,12 @@ test('a manager receives an issued purchase order on the desktop and posts the r
   await expect(page.getByText('Posted', { exact: true }).first()).toBeVisible()
   await expect(page.getByText(/Movements · 1/)).toBeVisible()
   await expect(page.getByText(/Audit · 4/)).toBeVisible()
+  // Posted, it has one status: no "Workflow: Ready to post" beside "Posted".
+  await expect(page.getByText('Workflow', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Ready to post', { exact: true })).toHaveCount(0)
+  await expect(page.getByTestId('receiving-ready-note')).toHaveCount(0)
+  // The receipt's creation is recorded, not posted.
+  await expect(page.getByTestId('evidence-event').filter({ hasText: /Receipt GRN-\d{6}-\d{4,} created/ }).first()).toContainText('Recorded')
 
   const po = await api('/api/procurement/orders/browser-receive-po')
   expect(po.status).toBe('partially_received')

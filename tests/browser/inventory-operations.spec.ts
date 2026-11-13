@@ -28,8 +28,17 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await page.getByRole("link", { name: "新建" }).click();
   // The server numbers the transfer when it is saved; nobody types it.
   await expect(page.getByTestId("transfer-number-on-save")).toHaveText(
-    "保存时自动生成",
+    "调拨单号：保存时自动生成",
   );
+  // Save checks the server's rules first: the missing item is said under its
+  // field, which gets the focus, and nothing is sent.
+  await page.getByTestId("create-transfer").click();
+  await expect(page.getByText("请选择物料。")).toBeVisible();
+  await expect(page.getByLabel("调拨物料 1")).toBeFocused();
+  await expect(page.getByTestId("transfer-create-errors")).toContainText(
+    "请检查标出的字段。",
+  );
+  await expect(page).toHaveURL(/\/app\/inventory\/transfers\/new$/);
   await page.getByLabel("调拨物料 1").selectOption("inventory-browser-item");
   await page.getByLabel("调拨数量 1").fill("3.0000");
   await page.getByLabel("来源仓库 1").selectOption("inventory-browser-a");
@@ -46,7 +55,7 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await page.getByTestId("create-transfer").click();
   await expect(page.getByTestId("inventory-transfer-workbench")).toBeVisible();
   await expect(
-    page.getByTestId("inventory-transfer-workbench").locator("h2").first(),
+    page.getByTestId("inventory-transfer-workbench").locator("h1"),
   ).toHaveText(/^TR-\d{6}-\d{4,}$/);
   const transferUrl = page.url();
   await page.getByTestId("operation-ready").click();
@@ -86,6 +95,9 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   ).toBe("9.0000");
   await page.getByTestId("operation-preview-reverse").click();
   await page.getByTestId("confirm-inventory-operation").click();
+  // The posting and its reversal make eight movements: few enough to stay
+  // listed, not folded.
+  await expect(page.getByTestId("operation-movements-summary")).toHaveCount(0);
   await expect(
     page.getByTestId("operation-movement-stock_transfer_reversal_in").first(),
   ).toBeVisible();
@@ -100,6 +112,9 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   ).toBe("10.0000");
 
   await page.goto("/app/inventory/counts/new");
+  await page.getByTestId("create-count").click();
+  await expect(page.getByText("请选择盘点仓库。")).toBeVisible();
+  await expect(page.getByLabel("盘点仓库")).toBeFocused();
   await page.getByLabel("盘点仓库").selectOption("inventory-browser-a");
   await page.getByRole("checkbox").nth(1).check();
   await page.getByTestId("create-count").click();
@@ -133,6 +148,9 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   ).toContainText("入 1");
 
   await page.goto("/app/inventory/adjustments/new");
+  await page.getByTestId("create-adjustment").click();
+  await expect(page.getByText("请选择库存余额。")).toBeVisible();
+  await expect(page.getByLabel("调整余额 1")).toBeFocused();
   await page
     .getByLabel("调整余额 1")
     .selectOption("inventory-browser-balance-b");

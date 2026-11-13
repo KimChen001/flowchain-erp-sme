@@ -9,8 +9,9 @@ import { aiAnswerActionClaims, aiAnswerRecordStates } from './ai-answer-claims.m
 //   - every number, with its currency, percent sign or days;
 // and each must appear in a tool result of this answer, after normalising
 // formats (1,234.50 is 1234.5; $47.2k is 47,200 give or take 50), or come from
-// the calculate tool, whose results are tool results too. A number may be
-// rounded. The question's own words count as given: a figure or a name the
+// the calculate tool, whose results are tool results too, or be worked out
+// from the answer's own grounded figures (120 + 240 = 360; see workedOut;
+// never an available figure). A number may be rounded. The question's own words count as given: a figure or a name the
 // user wrote is not the model's invention. A cited record must be one a tool
 // returned, and the text may not claim the assistant acted. What fails is
 // listed with its kind; the loop gives the model one retry with the list, and
@@ -49,7 +50,10 @@ const LIMIT_CLAIMS = [
 
 // Record numbers: letters, then hyphenated parts ending in digits.
 const RECORD = /(?<![\w-])[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+[A-Za-z0-9]*(?![\w-])/g
-const NOT_RECORD = /^tier-\d$/i
+// Words written with a number that are no record: tier-1, and top-10,
+// last-30 and the like (2026-11-10 on Flash: "that top-10 share" was marked
+// as an unknown record).
+const NOT_RECORD = /^(?:tier|top|bottom|first|last|next|past|best|worst)-\d+$/i
 
 // The record numbers in a text as this check reads them, NFKC-normalised.
 export function aiGroundingRecordNumbers(value) {
@@ -63,6 +67,9 @@ const DATE_PATTERNS = [
   { pattern: /(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月/g, read: (m) => ({ year: +m[1], month: +m[2], day: null }) },
   // A month alone (上季度 7月至9月), not a count of months (3 个月).
   { pattern: /(?<![\d.])(\d{1,2})\s*月(?!\s*\d)/g, read: (m) => ({ year: null, month: +m[1], day: null }) },
+  // A range of days in one month, both checked (2026-11-08 on DeepSeek: "本周内
+  // （Nov 9–15, 2026）", a week the projection gave, read as Nov 9 and the number 15).
+  { pattern: new RegExp(`\\b${MONTH}\\.?\\s+(\\d{1,2})\\s*[–—-]\\s*(\\d{1,2})(?:,?\\s+(\\d{4}))?(?!\\d)`, 'gi'), read: (m) => ({ year: m[4] ? +m[4] : null, month: MONTHS[m[1].slice(0, 3).toLowerCase()], day: +m[2], endDay: +m[3] }) },
   { pattern: new RegExp(`\\b${MONTH}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?(?!\\d)`, 'gi'), read: (m) => ({ year: m[3] ? +m[3] : null, month: MONTHS[m[1].slice(0, 3).toLowerCase()], day: +m[2] }) },
   { pattern: new RegExp(`(?<!\\d)(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH}\\b\\.?(?:,?\\s+(\\d{4}))?`, 'gi'), read: (m) => ({ year: m[3] ? +m[3] : null, month: MONTHS[m[2].slice(0, 3).toLowerCase()], day: +m[1] }) },
   { pattern: new RegExp(`\\b${MONTH}\\s+(\\d{4})(?!\\d)`, 'gi'), read: (m) => ({ year: +m[2], month: MONTHS[m[1].slice(0, 3).toLowerCase()], day: null }) },
@@ -81,9 +88,88 @@ const CURRENCY_WORDS = [
 ]
 const NUMBER = /(?<cur>US\$|\$|€|£|¥|￥|\b(?:USD|EUR|GBP|CNY|RMB|JPY|CAD|AUD)\b)?\s?(?<![\w.])(?<num>[-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?![\d.,]\d)(?!(?:st|nd|rd|th)\b)(?<scale>[kK](?![a-zA-Z])|[mM](?![a-zA-Z])|bn\b|万|亿|千)?\s?(?<suffix>%|％|percent\b|per cent\b|个百分点|USD\b|EUR\b|GBP\b|CNY\b|美元|欧元|英镑|人民币|元|days?\b|天|日)?/g
 const SCALES = { k: 1e3, K: 1e3, m: 1e6, M: 1e6, bn: 1e9, 千: 1e3, 万: 1e4, 亿: 1e8 }
-const MONEY_KEY = /amount|value|total|spend|committed|difference|variance|price|cost|balance|outstanding|result/i
+// Periods a question names in words, and their days.
+const PERIOD_WORDS = Object.freeze([
+  [/\b(?:a|one|another|next)\s+week\b|一周|一个星期|一星期|一礼拜/i, 7],
+  [/\btwo\s+weeks\b|两周|两个星期|二周/i, 14],
+  [/\b(?:a|one|next)\s+month\b|一个月/i, 30],
+])
+// Receivables aging buckets are amounts too: current, 1_30 … 90_plus
+// (2026-11-11 on Flash: "未到期 £74,505.50，逾期 1–30 天 £4,478.51" was right
+// and flagged).
+const MONEY_KEY = /amount|value|total|spend|committed|difference|variance|price|cost|balance|outstanding|budget|result|^current$|^\d+_(?:\d+|plus)$/i
 const PERCENT_KEY = /percent|share|rate|result/i
 const DAYS_KEY = /day|delay|overdue|result|between|lead/i
+// A figure written as available or available to promise comes from such a
+// field (2026-11-08 on DeepSeek: "stays at 168 pcs available to promise",
+// 48 on hand plus one late order of 120, where the tools gave 408).
+// late_order_impact's figures without some late lines are available to
+// promise too ("PO-202610-0022 不来，可承诺量 288 件").
+const AVAILABLE_KEY = /avail|atp|^without(?:These|Every)/i
+const AVAILABLE_AFTER = /^\s*(?:[A-Za-z]{1,6}\.?\s+|[件个箱卷套只台]\s*)?(?:are\s+|is\s+|of\s+)?(?:available|atp\b|可用|可承诺)/i
+const AVAILABLE_BEFORE = /(?:available(?:\s+to\s+promise)?|\bATP|可承诺量?|可用(?:量|库存)?)\s*(?:is|was|of|stays at|would be|:|：|(?:就|仍|还|也|只)?(?:为|是|有)|只剩|剩下?)?\s*(?:about|约)?\s*$/i
+// A stock figure written for "if neither arrives" or "without both" is
+// today's available stock (2026-11-08 on DeepSeek: "即便这两批货都不来…不计入
+// 这两批货的 168 件", the figure without one of two late orders; without both
+// it was 48). Only that scenario is checked: which order a figure "without
+// PO-…" leaves out is not read.
+// late_order_impact's withoutEveryLateLine counts too (2026-11-09 on Flash:
+// "408 pcs with these late lines counted (288 without)", 288 being the figure
+// without one of the two).
+const NONE_ARRIVE_KEY = /^(?:available|availableToday|availableIfNoLateLinesArrive|withoutEveryLateLine)$/
+const NONE_ARRIVE_EN = String.raw`\b(?:without|excluding|not\s+counting)\s+(?:both|either|any|all|the\s+two|these\s+two|those\s+two)\b|\b(?:without|excluding|not\s+counting)\s+(?:them|these(?:\s+late)?\s+(?:lines|orders)|the\s+late\s+(?:lines|orders|ones))\b|\b(?:if|when|even\s+if)\s+(?:neither|none|nothing)\b|\bwith\s+(?:neither|none)\b|\b(?:before|until)\s+(?:either|any|both)\s+(?:of\s+them\s+)?(?:\w+\s+)?(?:arrives?|lands?|comes?)\b`
+const NONE_ARRIVE_ZH = String.raw`(?:两|二|2|几|所有|全部|这些|那些)\s*(?:批|张|笔|单|份)[^，。；！？\d]{0,8}?都?不(?:来|到|计|算|含)|(?:都|全都|全部|全)不(?:来|到)|(?:不计入?|不算|不含|扣除|去掉|排除|除去)\s*(?:这|那)?\s*(?:两|二|2|几|所有|全部|这些)\s*(?:批|张|笔|单)|(?:两|二|2|所有|全部|这些)\s*(?:批|张|笔|单)[^，。；！？\d]{0,8}?(?:到货|到达|入库)之?前`
+const NONE_ARRIVE = new RegExp(`${NONE_ARRIVE_EN}|${NONE_ARRIVE_ZH}`, 'gi')
+// After the figure, the phrase is its condition ("48 pcs if neither arrives",
+// "48 件（两批都不来时）", "(48 without)" after "with the late lines counted"),
+// not its subject ("PO-…的 240 件都不来").
+const NONE_ARRIVE_START = new RegExp(`^(?:[（(,，]\\s*)?(?:${NONE_ARRIVE_EN})|^without(?=[)）,，;；.。]|$)|^[（(]\\s*(?:如果|若|假如|要是|在)?\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_ZH})|^[,，]\\s*(?:如果|若|假如|要是)\\s*(?:这|那)?\\s*(?:${NONE_ARRIVE_ZH})`, 'i')
+// Words that make the figure another measure: a shortfall, demand, a rate,
+// safety stock, a week.
+const NOT_STOCK = /short|gap|need|demand|outstanding|on\s+order|to\s+receive|still\s+due|\btotal\b|in\s+all|differ|未收|在途|合计|总计|差额|相差|差距|共计|cost|price|spend|value|safety|reorder|\brate\b|\bper\b|\ba\s+(?:day|week|month)\b|weekly|daily|\bweeks?\b|\bdays?\b|\bmonths?\b|sold|sell|ship|缺|不足|需求|需要|成本|价格|金额|安全库存|再订货|补货|每天|每周|每月|日均|周均|销量|发货|出货|订货量|采购量|(?:[一二两三四五六七八九十几]|下)(?:周|天|个月)/i
+const NOT_STOCK_AFTER = /^\s*(?:[A-Za-z]{1,6}\.?|[件个箱卷套只台])?\s*(?:short|below|less|fewer|more|a\s+(?:day|week|month)\b|per\b|each\b|\/|缺|短缺|不足|每|多|少)/i
+const NONE_UNIT = /^\s*(?:[A-Za-z]{1,6}\b|[件个箱卷套只台])?\s*(?:available|可用)?\s*/i
+// And a word that says the figure is a stock quantity, so a count ("if none
+// of the 5 orders is late") is left alone.
+const BOTH_ARRIVE = /都到|全到|到齐|都来|到货后|计入后|算上|\b(?:once|if|when|with)\s+(?:both|they|them|all)\b|\bvs\b|versus/i
+const STOCK_CUE = /avail|stock|on\s*hand|\bleft\b|remain|\bunits?\b|\bpcs\b|pieces|\bATP\b|可用|库存|现货|件|个|箱|卷|套|只|台|剩/i
+// The scenario where only some of an item's open orders arrive: "If only the
+// remaining 120 pcs on PO-… arrive, 85123A would have 168 pcs available",
+// 如果只有 PO-…到货，可用量会是 288 件 (2026-11-09 on Flash, the UCI walkthrough
+// question set: right, and flagged, since stock_projection was not called and
+// no field held 168). A figure written in that scenario may be today's
+// available stock of one SKU plus what is still to receive on some of its open
+// orders (see onlyArriveFigures); outside it, an available figure still comes
+// from its own field, so "stays at 168 pcs available to promise" is refused.
+const ONLY_ARRIVE = /\b(?:if|when)\s+only\b|\bonly\s+(?:the\s+)?(?:\S+\s+){0,10}?(?:arrives?|arrived|lands?|comes?\s+in|is\s+received)\b|\bwith\s+(?:just|only)\b|只有.{0,60}?(?:到货|到达|到了|来了|来的话|入库|收到)|只(?:来|收到)|只到(?!期|\s*\d)|仅.{0,60}?(?:到货|到达|入库)/i
+
+// Whether a plain figure is written for the scenario where none of the late
+// orders arrives: the phrase ends shortly before it with only joining words
+// between ("从不计入这两批货的 168 件", "without both orders it would be 48
+// pcs"), or follows it ("48 pcs if neither arrives").
+function noneArriveFigure(before, after) {
+  const unit = after.match(NONE_UNIT)[0]
+  // A measure named right after the figure ("358 件的再订货点") makes it that
+  // measure; one in the next clause ("288 件，仍高于安全库存") does not.
+  if (NOT_STOCK.test(after.split(/[，,。；;：:（(]/)[0].slice(0, 14)) ||NOT_STOCK_AFTER.test(after) || !STOCK_CUE.test(`${before} ${unit}`)) return false
+  const found = [...before.matchAll(NONE_ARRIVE)].pop()
+  if (found) {
+    // "从 408 件降到 168 件", "drops from 408 pcs to 168": the change's
+    // starting figure is a joining span, and the figure after it is the
+    // scenario's.
+    const between = before.slice(found.index + found[0].length).replace(/(?:\bfrom|从|由)\s*[\d,.]+\s*(?:[A-Za-z]{1,6}\b|[件个箱卷套只台])?\s*(?:to|down\s+to|降到|降至|减少到|减到|变为|变成|到)\s*$/i, ' ')
+    // "两批未到的 360 件" and "去掉这两单的 360 件" are the orders' own
+    // quantity; "不计入这两批货的 168 件" is stock without them.
+    const ordersOwn = /^\s*的/.test(between) && !/^(?:不计|不算|不含)/.test(found[0])
+    // A colon starts another point, and "都到的话" or "once both arrive" turns
+    // to the other case ("两单都到 vs 都不来：** 都到的话可用量是 408 件").
+    // "从 408 件降到 48 件", "drops from 408 to 48": the figure after "from" is
+    // the one before the change.
+    const fromFigure = /(?:\bfrom|从|由)\s*$/i.test(between)
+    if (!ordersOwn && !fromFigure && between.length <= 30 && !/[\d.!?。！？；;:：\n]/.test(between) && !NOT_STOCK.test(between) && !BOTH_ARRIVE.test(between)) return true
+  }
+  return NONE_ARRIVE_START.test(after.slice(unit.length)) && !NOT_STOCK.test(before.slice(-24))
+}
 
 function currencyCodes(word) {
   const found = CURRENCY_WORDS.find(([pattern]) => pattern.test(text(word)))
@@ -92,7 +178,9 @@ function currencyCodes(word) {
 
 // Fields that hold a document's own words (search_documents passages): a
 // number or a date written in them counts as given, whatever it measures.
-const PROSE_KEYS = new Set(['excerpt', 'section', 'document'])
+// A supplier tier's reason is a person's words too (2026-11-10 on Flash: its
+// "No. 2 of 200 products… 7% of purchase spend", quoted, was flagged).
+const PROSE_KEYS = new Set(['excerpt', 'section', 'document', 'tierReason'])
 const PROSE_NUMBER = /(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w.])\d+(?:\.\d+)?/g
 // A count a passage writes as a word ("within three business days",
 // 三个工作日), which an answer writes as 3. From two to twenty only: "one" and
@@ -101,7 +189,43 @@ const PROSE_WORDS = Object.freeze({ two: 2, three: 3, four: 4, five: 5, six: 6, 
 const PROSE_WORD = new RegExp(`\\b(${Object.keys(PROSE_WORDS).join('|')})\\b(?!-)`, 'gi')
 // What a count beside a list counts: up to two words, then the noun (6 FOODS_3
 // items, 3 late purchase orders), or a Chinese measure word (6 个, 3 张).
-const COUNT_NOUN = /^\s*(?:(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?|orders?|requests?|suppliers?|customers?|lines?|records?)(?![\p{L}])|(?:个|项|张|家|种|笔|条|款))/iu
+// An item of a numbered list, quoted or not, with its number.
+const LIST_ITEM = /^\s*(?:>\s*)*(\d{1,2})[.)]\s+/gm
+// Payment terms, read as a term: Net 30, 2/10 net 30, 月结 30 天.
+const PAYMENT_TERMS = /(?:\b\d{1,2}\/\d{1,2}\s+)?\bnet\s?\d{1,3}\b|月结\s*\d{1,3}\s*天/giu
+// What marks a figure as rounded, before or after it.
+const APPROX_BEFORE = /(?:\babout|\baround|\broughly|\bapproximately|\bapprox\.?|~|≈|约|大约|大概|近)\s*$/i
+const APPROX_AFTER = /^\s*(?:左右|上下)/
+// What points at a step of a numbered list: "step 2", "steps 1 and 2", 第 2 步, 步骤 3.
+// What makes a number the size of a ranked list: "top 10", "top-10", 前 10.
+const TOP_BEFORE = /(?:\b(?:top|first|largest|biggest|leading)[\s-]*|前\s*)$/i
+// How many rows each list of the results holds, also one cut at its limit.
+function listSizesOf(results) {
+  const sizes = new Set()
+  const walk = (value) => {
+    if (Array.isArray(value)) {
+      const objects = value.filter((row) => row && typeof row === 'object' && !Array.isArray(row))
+      if (objects.length >= 2) sizes.add(objects.length)
+      value.forEach(walk)
+    } else if (value && typeof value === 'object') Object.values(value).forEach(walk)
+  }
+  walk(results)
+  return sizes
+}
+const STEP_BEFORE = /(?:\bsteps?|步骤|第)[^.\n。！？!?]{0,16}$/i
+const COUNT_NOUN =/^\s*(?:(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?|orders?|requests?|suppliers?|customers?|lines?|records?)(?![\p{L}])|(?:个|项|张|家|种|笔|条|款))/iu
+// An answer about overdue or aged amounts, and the bucket labels it may write:
+// 1–30, 31–60, 61–90, 91–120, 121–180, over 90 days, over-90-day, 90+ days,
+// 超过 90 天, 90 天以上.
+const AGING_CUE = /\bage?ing\b|overdue|past[\s-]due|\bbuckets?\b|账龄|逾期/i
+const BUCKET_DASH = String.raw`\s*[-–—~～至到]\s*`
+const AGING_BUCKET = new RegExp([
+  `(?<!\\d|\\d[.,])(?:[01]${BUCKET_DASH}30|31${BUCKET_DASH}60|61${BUCKET_DASH}90|91${BUCKET_DASH}120|121${BUCKET_DASH}180)(?!\\d|[.,]\\d)`,
+  String.raw`(?:\bover|\bmore\s+than|\bolder\s+than|\bbeyond|>|超过)\s*-?\s*(?:30|60|90|120|180|365)\s*-?\s*(?:days?\b|天)`,
+  String.raw`(?<!\d|\d[.,])(?:30|60|90|120|180|365)\s*\+(?:\s*(?:days?\b|天))?`,
+  // 2026-11-11 on Flash: "逾期 31 天以上没有".
+  String.raw`(?<!\d|\d[.,])(?:30|31|60|61|90|91|120|121|180|181|365)\s*天以上`,
+].join('|'), 'gi')
 const ZH_DIGITS = Object.freeze({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 })
 const ZH_COUNT = /([二两三四五六七八九]?十[一二三四五六七八九]?|[二两三四五六七八九])\s*(?=个|天|日|周|次|件|家|笔|名|项|条|份|小时|工作日|月|年)/g
 const zhCount = (value) => {
@@ -119,6 +243,8 @@ export function aiGroundingSources(results = []) {
   const numbers = []
   const days = new Set()
   const months = new Set()
+  const names = new Set()
+  const nameOrigins = new Map()
   const addDates = (value) => {
     for (const match of value.matchAll(/(?<!\d)(\d{4})-(\d{2})(?:-(\d{2}))?(?!\d)/g)) {
       months.add(`${match[1]}-${match[2]}`)
@@ -130,11 +256,12 @@ export function aiGroundingSources(results = []) {
     for (const { pattern, read } of DATE_PATTERNS) {
       rest = rest.replace(pattern, (...match) => {
         const date = read(match)
-        if (!date.month || date.month > 12) return match[0]
+        if (!date.month || date.month > 12 || (date.endDay !== undefined && (date.endDay <= date.day || date.endDay > 31))) return match[0]
         const year = date.year ? String(date.year) : '????'
         const month = String(date.month).padStart(2, '0')
         months.add(`${year}-${month}`)
         if (date.day) days.add(`${year}-${month}-${String(date.day).padStart(2, '0')}`)
+        if (date.endDay) days.add(`${year}-${month}-${String(date.endDay).padStart(2, '0')}`)
         return ' '.repeat(match[0].length)
       })
     }
@@ -148,6 +275,22 @@ export function aiGroundingSources(results = []) {
     if (typeof value === 'string') {
       strings.push(fold(value))
       addDates(value)
+      // A name with a number in it (Customer 14096 (United Kingdom)): its
+      // number is part of the name, not a figure (2026-11-07: a top-customers
+      // answer had every customer's number flagged).
+      // So is the part before a bracket, which a Chinese answer may follow
+      // with its own words (Customer 16684（英国）).
+      if (NAME_KEYS.has(key) && /\p{L}/u.test(value) && /\d/.test(value) && value.trim().length >= 3) {
+        const head = value.split(/\s*[(（]/)[0].trim()
+        for (const name of new Set([value.trim(), head])) {
+          if (!/\p{L}/u.test(name) || !/\d/.test(name) || name.length < 3) continue
+          names.add(name)
+          // Also with its long numbers grouped, as an answer may write them
+          // (2026-11-08 on DeepSeek: "Customer 16,684" for Customer 16684).
+          const grouped = name.replace(/\d{4,}/g, (digits) => Number(digits).toLocaleString('en-US'))
+          if (grouped !== name) { names.add(grouped); nameOrigins.set(grouped, name) }
+        }
+      }
       if (/^-?[\d,]+(?:\.\d+)?$/.test(value.trim())) numbers.push({ value: Number(value.replace(/,/g, '')), key, currency: text(parent?.currency).toUpperCase() || null, unit: null })
       else if (PROSE_KEYS.has(key)) addProse(value)
       // A plan's lines as the solver writes them ("FOODS_3_090 390, ..."):
@@ -176,14 +319,105 @@ export function aiGroundingSources(results = []) {
         const value = typeof entry === 'boolean' ? String(entry) : typeof entry === 'string' ? fold(entry) : typeof entry?.name === 'string' ? fold(entry.name) : ''
         if (!value) continue
         const group = `${name}\u0000${value}`
-        groups.set(group, (groups.get(group) || 0) + 1)
+        groups.set(group, [...(groups.get(group) || []), row])
       }
     }
-    for (const count of new Set(groups.values())) numbers.push({ value: count, key: 'count', currency: null, unit: null })
+    for (const count of new Set([...groups.values()].map((members) => members.length))) numbers.push({ value: count, key: 'count', currency: null, unit: null })
+    addTotals(objects, groups)
+  }
+  // The totals a whole list holds without writing them: a quantity or amount
+  // added up over every row, and over the rows that share a value (two late
+  // orders from one supplier). 2026-11-09 on Flash, the UCI walkthrough
+  // question set: "360 pcs are still to receive across the two orders" and
+  // "这 3 张订单合计待收货 810 件" from list_purchase_orders' remaining 120,
+  // 240 and 450 were flagged. Each total keeps its field's name, so it
+  // measures what the field does; amounts only in one currency. Never
+  // available stock: several items' available stock together is no item's.
+  const addTotals = (rows, groups) => {
+    if (rows.length > TOTAL_ROWS) return
+    const sets = [rows, ...[...groups.values()].filter((members) => members.length >= 2 && members.length < rows.length)]
+    for (const members of sets) {
+      const totals = new Map()
+      for (const row of members) {
+        for (const [name, entry] of Object.entries(row)) {
+          if (!TOTAL_KEY.test(name) || NOT_TOTAL_KEY.test(name) || AVAILABLE_KEY.test(name)) continue
+          const amount = typeof entry === 'number' ? entry : typeof entry?.amount === 'number' ? entry.amount : null
+          if (amount === null || !Number.isFinite(amount)) continue
+          const currency = text(typeof entry === 'number' ? row.currency : entry.currency).toUpperCase() || null
+          const total = totals.get(name) || { value: 0, rows: 0, currencies: new Set() }
+          total.value += amount
+          total.rows += 1
+          total.currencies.add(currency)
+          totals.set(name, total)
+        }
+      }
+      for (const [name, total] of totals) {
+        if (total.rows < 2 || total.currencies.size > 1) continue
+        numbers.push({ value: Math.round(total.value * 100) / 100, key: name, currency: [...total.currencies][0], unit: null })
+      }
+    }
   }
   for (const result of array(results)) walk(result)
-  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months }
+  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names], nameOrigins, onlyArrive: onlyArriveFigures(results) }
 }
+
+// The fields a list's totals are taken from: quantities and amounts, not
+// prices, rates, averages, days or thresholds.
+const TOTAL_ROWS = 200
+const TOTAL_KEY = /quantity|remaining|ordered|received|outstanding|toReceive|amount|balance|value|spend|revenue|sales|units|shortage|incoming|onHand/i
+const NOT_TOTAL_KEY = /price|rate|percent|share|average|avg|perDay|daily|days|lead|minimum|moq|reorder|safety|rank/i
+
+// The figures for some of an item's open orders arriving (see ONLY_ARRIVE):
+// its available stock today plus what is still to receive on each subset of
+// its open orders, from the results that tie both to its SKU: a stock row
+// (available, availableToday), purchase order rows of that SKU alone
+// (remaining), stock_projection's late lines and late_order_impact's rows on
+// one order (stillToReceive). An order read twice counts once.
+const ONLY_ARRIVE_LINES = 6
+function onlyArriveFigures(results) {
+  const available = new Map()
+  const lines = new Map()
+  const addLine = (sku, order, quantity) => {
+    if (!sku || !(quantity > 0)) return
+    const byOrder = lines.get(sku) || new Map()
+    byOrder.set(order ? fold(order) : `#${byOrder.size}:${quantity}`, quantity)
+    lines.set(sku, byOrder)
+  }
+  const skuOf = (row) => {
+    if (typeof row.sku === 'string' && row.sku.trim()) return fold(row.sku)
+    const skus = Array.isArray(row.skus) ? row.skus : typeof row.skus === 'string' ? row.skus.split(/[,;\s]+/) : []
+    const one = skus.map((value) => text(typeof value === 'object' ? value?.sku : value)).filter(Boolean)
+    return one.length === 1 ? fold(one[0]) : null
+  }
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return }
+    if (!value || typeof value !== 'object') return
+    const sku = skuOf(value)
+    if (sku) {
+      for (const key of ['available', 'availableToday', 'availableIfNoLateLinesArrive']) {
+        if (typeof value[key] === 'number' && Number.isFinite(value[key])) available.set(sku, new Set([...(available.get(sku) || []), value[key]]))
+      }
+      const order = text(value.orderNumber || value.order || value.ref?.label || (Array.isArray(value.judgedOrders) && value.judgedOrders.length === 1 ? value.judgedOrders[0] : ''))
+      if (typeof value.remaining === 'number' && order) addLine(sku, order, value.remaining)
+      if (typeof value.stillToReceive === 'number' && Array.isArray(value.judgedOrders) && value.judgedOrders.length === 1) addLine(sku, order, value.stillToReceive)
+      for (const entry of array(value.notPlacedInAWeek?.incomingPastPromisedDate)) addLine(sku, text(entry?.orderNumber), Number(entry?.quantity))
+    }
+    for (const entry of Object.values(value)) walk(entry)
+  }
+  walk(results)
+  const figures = new Set()
+  for (const [sku, byOrder] of lines) {
+    const quantities = [...byOrder.values()].slice(0, ONLY_ARRIVE_LINES)
+    for (const today of available.get(sku) || []) {
+      for (let mask = 1; mask < 1 << quantities.length; mask += 1) {
+        figures.add(today + quantities.reduce((sum, quantity, index) => sum + (mask & (1 << index) ? quantity : 0), 0))
+      }
+    }
+  }
+  return figures
+}
+
+const NAME_KEYS = new Set(['customer', 'customerName', 'itemName', 'name', 'supplier', 'supplierName'])
 
 const inText = (haystack, needle) => {
   const value = fold(needle)
@@ -199,7 +433,14 @@ export function aiGroundingNames(facts) {
   const names = new Set()
   const add = (value) => { const name = text(value); if (name.length >= 3 && /[\p{L}]/u.test(name)) names.add(name) }
   for (const row of array(facts?.suppliers)) { add(row.name); add(row.code) }
-  for (const row of [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)]) { add(row.itemName); add(row.sku) }
+  for (const row of [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)]) {
+    add(row.itemName)
+    add(row.sku)
+    // A SKU of digits only is the item's code too, not a figure (2026-11-11
+    // on Flash, the UCI workspace: "450 件 84879 未到" was flagged). Four
+    // digits or more, so a small quantity is never read as one.
+    if (/^\d{4,}$/.test(text(row.sku))) names.add(text(row.sku))
+  }
   for (const row of array(facts?.salesOrders)) add(row.customer)
   for (const row of array(facts?.purchaseOrders?.index)) add(row.supplier)
   return [...names].sort((a, b) => b.length - a.length)
@@ -221,7 +462,109 @@ function numberKindFits(source, kind, currencies) {
   if (kind === 'money') return MONEY_KEY.test(source.key) && (!currencies || !source.currency || currencies.includes(source.currency))
   if (kind === 'percent') return PERCENT_KEY.test(source.key) || source.unit === 'percent'
   if (kind === 'days') return DAYS_KEY.test(source.key) || source.unit === 'days'
+  if (kind === 'available') return AVAILABLE_KEY.test(source.key)
+  if (kind === 'available_now') return NONE_ARRIVE_KEY.test(source.key)
   return true
+}
+
+// A figure no result holds that the answer works out from its own figures,
+// those read from the results or the question: the sum, difference, product
+// or ratio of two, a share of one in another (for a percent), the sum of
+// three, or the sum of a run of figures of one kind written one after another
+// (a table's top five). 2026-11-09 on Flash, the UCI walkthrough: "That leaves 360
+// pcs" after 120 and 240 pcs, "roughly 18 days" from 132 pcs at 7.2 a day,
+// "about 43%" for £17,142.45 of £39,929.35 — each right, each flagged. The
+// arithmetic itself is checked, so 350 for 120 + 240 is still flagged.
+// Never for an available figure: it must come from its own field (2026-11-08:
+// 168 and 288 "if neither order arrives" are sums of real figures, and
+// wrong). A whole number under 10 is not worked out: too many pairs make one.
+const WORKED_KINDS = new Set(['plain', 'money', 'days', 'percent'])
+const WORKED_MAX = 60
+function workedOut(figure, operands) {
+  if (!WORKED_KINDS.has(figure.kind)) return false
+  if (!figure.decimals && figure.value < 10) return false
+  const near = (candidate) => Number.isFinite(candidate) && Math.abs(Math.abs(candidate) - figure.value) <= figure.tolerance
+  // A zero or a one adds nothing: any figure is itself plus 0, or times 1.
+  const usable = operands.filter((row) => Math.abs(row.value) > 1e-9 && row.value !== 1).slice(0, WORKED_MAX)
+  const values = usable.map((row) => row.value)
+  const percent = figure.kind === 'percent'
+  for (let i = 0; i < values.length; i += 1) {
+    for (let j = i + 1; j < values.length; j += 1) {
+      const [a, b] = [values[i], values[j]]
+      if (near(a + b) || near(a - b) || near(a * b) || near(a / b) || near(b / a)) return true
+      if (percent && (near((a / b) * 100) || near((b / a) * 100))) return true
+      if (values.length > 40) continue
+      for (let k = j + 1; k < values.length; k += 1) if (near(a + b + values[k])) return true
+    }
+  }
+  // Runs of one kind, in the order written.
+  const groups = new Map()
+  for (const row of usable) groups.set(row.group, [...(groups.get(row.group) || []), row.value])
+  for (const run of groups.values()) {
+    for (let start = 0; start < run.length; start += 1) {
+      let sum = run[start]
+      for (let end = start + 1; end < Math.min(run.length, start + 12); end += 1) {
+        sum += run[end]
+        if (near(sum)) return true
+      }
+    }
+  }
+  return false
+}
+
+// The item names the records give each SKU: the facts' stock rows and every
+// result row holding a SKU and a name.
+function itemNamesBySku(facts, results) {
+  const names = new Map()
+  const add = (sku, name) => {
+    const key = text(sku).toLowerCase()
+    const value = text(name)
+    if (!key || !value || !/\p{L}/u.test(value)) return
+    if (!names.has(key)) names.set(key, new Set())
+    names.get(key).add(value)
+  }
+  for (const row of [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)]) add(row.sku, row.itemName)
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return }
+    if (!value || typeof value !== 'object') return
+    if (typeof value.sku === 'string') add(value.sku, value.itemName ?? value.name ?? value.item?.name)
+    if (value.item && typeof value.item.sku === 'string') add(value.item.sku, value.item.name)
+    for (const entry of Object.values(value)) if (entry && typeof entry === 'object') walk(entry)
+  }
+  walk(array(results))
+  return names
+}
+const nameKey = (value) => text(value).normalize('NFKC').toLowerCase().replace(/[\u2018\u2019\u201c\u201d"'`…]|\.{3}/g, '').replace(/[\u2010-\u2015\u2212]/g, '-').replace(/\s+/g, ' ').trim()
+const compactKey = (value) => nameKey(value).replace(/[\s-]+/g, '')
+// A bracket holding figures or states, not a name.
+const NOT_A_NAME = /\d+\s*(?:pcs|pc|units?|days?|%|件|个|天)|[£$€¥]|\b(?:overdue|late|due|available|on hand|incoming|short|order now|below|above|safety|reorder|pcs|units?)\b/i
+export function aiGroundingItemNamePairs(body, facts, results) {
+  const out = []
+  const value = String(body || '')
+  const bySku = itemNamesBySku(facts, results)
+  for (const [sku, names] of bySku) {
+    if (sku.length < 3) continue
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}-])${sku.replace(/[.*+?^${}()|[\]\\]/g, '\\// Checks one answer. `answer` is { title, answer, records }; `results` the')}(?![\\p{L}\\p{N}-])`, 'giu')
+    for (const match of value.matchAll(pattern)) {
+      const after = value.slice(match.index + match[0].length, match.index + match[0].length + 110)
+      const before = value.slice(Math.max(0, match.index - 110), match.index)
+      const candidates = []
+      const quotedAfter = after.match(/^\s*(?:[-–—:,，]\s*)?[(（]?\s*['‘"“「]([^'’"”」\n]{3,90})['’"”」]/)
+      if (quotedAfter) candidates.push(quotedAfter[1])
+      const bracketAfter = after.match(/^\s*[(（]([^()（）\n]{3,90})[)）]/)
+      if (bracketAfter && !NOT_A_NAME.test(bracketAfter[1]) && /\p{L}{2,}\s+\p{L}{2,}/u.test(bracketAfter[1])) candidates.push(bracketAfter[1])
+      const quotedBefore = before.match(/['‘"“「]([^'’"”」\n]{3,90})['’"”」]\s*[(（]?\s*(?:SKU\s*)?$/i)
+      if (quotedBefore) candidates.push(quotedBefore[1])
+      for (const candidate of candidates) {
+        const written = candidate.trim()
+        if (!/[A-Za-z]{2,}/.test(written) || /[\u3400-\u9fff]/.test(written)) continue
+        if (written.toLowerCase().replace(/^sku\s*/, '') === sku) continue
+        const fits = [...names].some((name) => nameKey(name).includes(nameKey(written)) || nameKey(written).includes(nameKey(name)) || compactKey(name).includes(compactKey(written)) || compactKey(written).includes(compactKey(name)))
+        if (!fits && !out.some((row) => row.value === written)) out.push({ sku, value: written, expected: [...names][0] })
+      }
+    }
+  }
+  return out
 }
 
 // Checks one answer. `answer` is { title, answer, records }; `results` the
@@ -244,7 +587,13 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   const named = fold(`${question}\n${conversation}`)
   const given = aiGroundingSources([question])
   if (today) { sources.days.add(today); sources.months.add(today.slice(0, 7)) }
-  let rest = figuresText(`${title}\n${body}`).replace(/^\s*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
+  // The highest item number of the answer's own numbered lists, quoted ones
+  // (a drafted message) included: "steps 1 and 2" points into them.
+  const listItems = Math.max(0, ...[...figuresText(body).matchAll(LIST_ITEM)].map((match) => Number(match[1])))
+  // List marks go, also inside a quoted draft ("> 3. The reason for the delay").
+  let rest = figuresText(`${title}\n${body}`).replace(/^\s*(?:>\s*)*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
+    // Payment terms are a term, not a figure: "Net 30", "2/10 net 30", 月结 30 天.
+    .replace(PAYMENT_TERMS, (match) => ' '.repeat(match.length))
   const blank = (match) => ' '.repeat(match.length)
   // Where each grounded record and name sits, for a count written beside the
   // list it counts ("FOODS_3 items (6): FOODS_3_064, …"). An item's name and
@@ -266,20 +615,30 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const value = fold(token)
     // The question may write it without the hyphen ("LDM001").
     const squeezed = (value) => value.replace(/[-\s]/g, '')
+    // "SKU-85123A" is the SKU 85123A with a label (2026-11-09 on Flash, an
+    // email to a supplier).
+    const sku = /^sku-./.test(value) ? value.slice(4) : null
     const found = inText(sources.haystack, value) || new RegExp(`-${escape(value)}($|[^a-z0-9])`, 'u').test(sources.haystack) || inText(named, value) || inText(squeezed(named), squeezed(value))
+      || Boolean(sku && (inText(sources.haystack, sku) || inText(named, sku)))
     if (!found) fail('record', token)
     else listed.push({ at: offsetOf(args), key: entities.get(value) || `record:${value}` })
     return blank(token)
   })
   // Names the workspace knows.
-  for (const name of aiGroundingNames(facts)) {
+  for (const name of [...new Set([...aiGroundingNames(facts), ...sources.names])].sort((a, b) => b.length - a.length)) {
     rest = rest.replace(nameMatch(name), (found, ...args) => {
       checked.name += 1
-      if (!inText(sources.haystack, name) && !inText(named, name)) fail('name', found)
+      const origin = sources.nameOrigins?.get(name) || name
+      if (!inText(sources.haystack, origin) && !inText(named, origin)) fail('name', found)
       else listed.push({ at: offsetOf(args), key: entities.get(fold(name)) || `name:${fold(name)}` })
       return blank(found)
     })
   }
+  // A name written beside a SKU, in quotes or in brackets, is that SKU's item
+  // name as the records give it (2026-11-08 on DeepSeek: "85123A 'Famous
+  // Paint Your Own…' style item"). A name in Chinese cannot be checked and
+  // is left alone.
+  for (const pair of aiGroundingItemNamePairs(body, facts, results)) problems.push({ kind: 'item_name', value: pair.value, expected: pair.expected, sku: pair.sku })
   // A whole number in brackets, or before what it counts (6 items, 6 个),
   // that equals the records and names its own line lists.
   const listCount = (at, length) => {
@@ -300,8 +659,9 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     rest = rest.replace(pattern, (...match) => {
       const date = read(match)
       if (!date.month || date.month > 12 || (date.day !== null && (date.day < 1 || date.day > 31))) return match[0]
+      if (date.endDay !== undefined && (date.endDay <= date.day || date.endDay > 31)) return match[0]
       checked.date += 1
-      if (!dayKnown(date)) fail('date', match[0])
+      if (!dayKnown(date) || (date.endDay && !dayKnown({ ...date, day: date.endDay }))) fail('date', match[0])
       return blank(match[0])
     })
   }
@@ -312,8 +672,19 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
       return blank(whole)
     })
   }
+  // Aging buckets are labels, not figures, in an answer about overdue or aged
+  // amounts: "nothing in the 1–30, 31–60, 61–90 or over-90-day buckets"
+  // (2026-11-09 on Flash: five flagged in a receivables answer).
+  if (AGING_CUE.test(body)) rest = rest.replace(AGING_BUCKET, blank)
   // Numbers, with what they measure.
   const givenNumbers = [...figuresText(question).matchAll(/\d+(?:,\d{3})*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, '')))
+  // A period the question names in words is given in days as well: "再晚一周"
+  // makes 7 天 the user's (2026-11-11 on Flash: "7 天约需 143.5 件" was flagged).
+  for (const [pattern, days] of PERIOD_WORDS) if (pattern.test(question)) givenNumbers.push(days)
+  // The answer's figures read from the results or the question, in order, and
+  // those no result holds.
+  const operands = []
+  const unread = []
   for (const match of rest.matchAll(NUMBER)) {
     const { cur, num, scale, suffix } = match.groups
     // A number run into letters is part of a word (3PL, 2FA), not a figure.
@@ -325,18 +696,49 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const decimals = (digits.split('.')[1] || '').length
     const factor = SCALES[scale] || 1
     const value = written * factor
-    const tolerance = 0.5 * 10 ** -decimals * factor + 1e-9
+    // A figure the answer marks as rounded ("about $7,300", 约 7,300 美元,
+    // 7,300 美元左右) may be off by half the place of its last non-zero
+    // digit; any other by half its last digit.
+    const at = match.index + match[0].indexOf(num)
+    const approximate = APPROX_BEFORE.test(rest.slice(Math.max(0, match.index - 16), match.index)) || APPROX_AFTER.test(rest.slice(match.index + match[0].length, match.index + match[0].length + 6))
+    const zeros = !decimals && approximate ? (digits.replace(/^-/, '').match(/0+$/) || [''])[0].length : 0
+    const tolerance = (zeros ? 0.5 * 10 ** zeros : 0.5 * 10 ** -decimals) * factor + 1e-9
     const unit = text(suffix).toLowerCase()
     const currencies = currencyCodes(cur) || currencyCodes(unit)
-    const kind = currencies ? 'money' : /%|％|percent|per cent|百分点/.test(unit) ? 'percent' : /day|天|日/.test(unit) ? 'days' : 'plain'
+    const measured = currencies ? 'money' : /%|％|percent|per cent|百分点/.test(unit) ? 'percent' : /day|天|日/.test(unit) ? 'days' : 'plain'
+    const afterText = rest.slice(match.index + match[0].length, match.index + match[0].length + 40)
+    const kind = measured !== 'plain' ? measured
+      : noneArriveFigure(rest.slice(Math.max(0, match.index - 60), match.index), afterText) ? 'available_now'
+        : AVAILABLE_AFTER.test(afterText) || AVAILABLE_BEFORE.test(rest.slice(Math.max(0, match.index - 40), match.index)) ? 'available' : measured
     checked.number += 1
     const near = (candidate) => Math.abs(Math.abs(candidate) - value) <= tolerance
-    const grounded = sources.numbers.some((source) => numberKindFits(source, kind, currencies) && (near(source.value) || (kind === 'percent' && near(source.value * 100))))
+    // A figure written for only some of an item's open orders arriving, in its
+    // sentence or the clause after it (see ONLY_ARRIVE).
+    const onlyArrive = (kind === 'available' || kind === 'plain') && !decimals && factor === 1 && [...sources.onlyArrive].some(near)
+      && (ONLY_ARRIVE.test(rest.slice(Math.max(0, match.index - 160), match.index).split(/[。！？!?\n]|\.(?!\d)/).pop()) || ONLY_ARRIVE.test(afterText.split(/[。；;\n]|\.(?!\d)/)[0]))
+    const read = sources.numbers.some((source) => numberKindFits(source, kind, currencies) && (near(source.value) || (kind === 'percent' && near(source.value * 100))))
       || givenNumbers.some(near)
+      || onlyArrive
+    const grounded = read
       || (kind === 'plain' && !decimals && factor === 1 && value >= 1900 && value <= 2100 && [...sources.months].some((month) => month.startsWith(String(value))))
-      || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && listCount(match.index + match[0].indexOf(num), num.length) === value)
-    if (!grounded) fail('number', match[0].trim())
+      || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && listCount(at, num.length) === value)
+      // The top N of a list a result holds N rows of ("the top 10 items",
+      // 前 10 位; 2026-11-11 on Flash: the 10 was flagged).
+      || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && TOP_BEFORE.test(rest.slice(Math.max(0, at - 16), at)) && listSizesOf(results).has(value))
+      // A step of the answer's own numbered list ("steps 1 and 2", 第 2 步).
+      || (kind === 'plain' && !decimals && factor === 1 && value >= 1 && value <= listItems && (STEP_BEFORE.test(rest.slice(Math.max(0, at - 24), at)) || /^\s*步/.test(rest.slice(at + num.length, at + num.length + 3))))
+    const figure = { label: match[0].trim(), value, tolerance, kind, decimals, group: kind === 'money' ? `money:${(currencies || []).join('/')}` : kind }
+    if (read) operands.push(figure)
+    else if (!grounded) unread.push(figure)
   }
+  for (const value of givenNumbers) operands.push({ value, kind: 'plain', group: 'given' })
+  // Figures worked out from the answer's own figures (see workedOut).
+  for (let round = 0; round < 2; round += 1) {
+    const worked = unread.filter((figure) => workedOut(figure, operands))
+    if (!worked.length) break
+    for (const figure of worked) { unread.splice(unread.indexOf(figure), 1); operands.push(figure) }
+  }
+  for (const figure of unread) fail('number', figure.label)
   // Cited records: each one a tool returned.
   for (const record of array(answer?.records)) {
     checked.citation += 1

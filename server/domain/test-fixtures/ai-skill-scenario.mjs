@@ -114,6 +114,8 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     workspaceInvitation: { count: () => 0 },
     // The workspace's payment terms, for the setup card.
     paymentTerm: { findMany: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? array(data.paymentTerms) : []) },
+    // Customer invoices with their lines (none unless a test adds them).
+    customerInvoice: { findMany: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? array(data.customerInvoices) : []) },
     rfqSupplierParticipation: { findMany: ({ where }) => data.participations.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
     rfqAwardDecision: { findMany: ({ where }) => data.awards.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
     // Item-supplier links (master-data-commands.mjs listItemSupplierRecords),
@@ -128,8 +130,13 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     purchaseOrder: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.purchaseOrders.filter((row) => !where.status?.notIn?.includes(row.status) && (typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : Boolean(row.supplierId))) },
     receivingDocument: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.receipts.filter((row) => where.poId.in.includes(row.poId) && (!where.postingStatus || row.postingStatus === where.postingStatus)) },
     supplierInvoice: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.supplierInvoices.filter((row) => typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : true).map((row) => ({ ...row, lines: row.lines || [], matchRuns: [] })) },
-    // Suppliers, read by both the minimum order and the scorecard.
-    supplier: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.suppliers.filter((row) => !where.id || row.id === where.id).map((row) => ({ id: row.id, code: row.supplierCode || row.id, name: row.name, status: row.status || 'active' })), count: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? data.suppliers.length : 0) },
+    // Suppliers, read by both the minimum order and the scorecard, and one by
+    // id for a supplier's detail page (supplier-insights.mjs readActivity).
+    supplier: {
+      findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.suppliers.filter((row) => !where.id || row.id === where.id).map((row) => ({ id: row.id, code: row.supplierCode || row.id, name: row.name, status: row.status || 'active' })),
+      findFirst: ({ where }) => (where.tenantId === AI_SKILL_TENANT && data.suppliers.some((row) => row.id === where.id) ? { id: where.id } : null),
+      count: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? data.suppliers.length : 0),
+    },
   }
   return new Proxy({}, {
     get(_target, model) {
@@ -165,6 +172,7 @@ export function aiSkillRepositories(data, calls = [], { truncated = [] } = {}) {
     procurementRuntime: {
       snapshot: scoped('procurementRuntime.snapshot', { purchaseRequests: data.purchaseRequests, rfqs: data.rfqs, purchaseOrders: data.purchaseOrders, receipts: data.receipts, receivingDocs: data.receipts, supplierInvoices: data.supplierInvoices }),
       listForReport: scoped('procurementRuntime.listForReport', data.purchaseOrders),
+      listReceiptsAndInvoices: scoped('procurementRuntime.listReceiptsAndInvoices', { receipts: data.receipts, supplierInvoices: data.supplierInvoices }),
     },
   }
 }

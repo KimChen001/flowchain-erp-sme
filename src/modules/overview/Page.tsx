@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ArrowRight, CheckCircle2, Circle, RefreshCw } from "lucide-react";
 import { A, Card } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
-import { tableBodyTextClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableBodyTextClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import AiSuggestionsPage from "./AiSuggestionsPage";
 import { useI18n } from "../../i18n/I18n";
@@ -11,12 +11,18 @@ import { apiJson } from "../../lib/api-client";
 import { useDocumentNumbers } from "../../lib/documentNumbers";
 import { formatDateTimeInTimeZone, formatLocaleAmount, formatQuantity, instantDayInTimeZone } from "../../lib/format";
 import { unitLabel } from "../../i18n/unitLabels";
+import { reorderListText } from "../inventory/reorderListCopy";
 import { useTodayCopy, type TodayCopyKey } from "./todayCopy";
+import { firstRowsByKind, reorderRequestHref, rowsPerKind, type ReorderRequest } from "./todayRows";
+import { DecisionSection, type TodayDecisions } from "./DecisionCards";
+import { useDecisionCopy } from "./decisionCopy";
+import { useTodayRowFormat } from "./todayRowFormat";
 
 // Today: the work that needs doing, from the rules the rest of the app uses
-// (GET /api/home/overview, server/domain/today-work.mjs), earliest date first;
-// the first-day checklist while any setup step is open; and the documents
-// changed most recently. Every row links to its record.
+// (GET /api/home/overview, server/domain/today-work.mjs), earliest date first,
+// with the earliest row of every kind among the first rows; the first-day
+// checklist while any setup step is open; and the documents changed most
+// recently. Every row links to its record.
 
 type Navigate = (moduleId: string, focus?: { entityType: string; entityId: string } | null, options?: any) => void;
 type WorkKind =
@@ -48,13 +54,28 @@ type HomeOverview = {
   todayChanges: number;
   recentDocuments: DocumentRow[];
   firstRun: { steps: SetupStep[]; done: number; total: number } | null;
+  // The rows FlowChain prepared a next step for, and those set aside
+  // (DecisionCards.tsx); without a database, { available: false } and
+  // every row stays in Today's work.
+  decisions?: TodayDecisions;
   hidden: string[];
   limitations: string[];
   generatedAt: string;
 };
 
-// Today shows its five earliest rows; "Show all" opens the rest.
+// Today shows five rows, the earliest of every kind among them (more when
+// there are more kinds); "Show all" opens the rest.
 const COLLAPSED = 5;
+
+// One request for the overview at a time. Opening Today from the menu
+// (/app/overview) draws the page, then the redirect to /app/overview/risks
+// draws it again: the second waits for the answer the first asked for
+// instead of asking again (two at once made each take twice as long).
+let overviewRequest: Promise<HomeOverview> | null = null;
+function requestOverview() {
+  if (!overviewRequest) overviewRequest = apiJson<HomeOverview>("/api/home/overview").finally(() => { overviewRequest = null; });
+  return overviewRequest;
+}
 const HIDDEN_KEYS: Record<string, TodayCopyKey> = {
   purchasing: "hiddenPurchasing",
   inventory: "hiddenInventory",
@@ -74,18 +95,11 @@ const SOURCE_KEYS: Record<string, TodayCopyKey> = {
   contracts: "sourceContracts",
 };
 const LINK = "fc-entity-link font-semibold text-blue-600 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
-
-// A workspace calendar day (YYYY-MM-DD) in the interface locale. The day is
-// already the workspace's, so it is formatted as a date, not an instant.
-function formatDay(day: string, locale: string) {
-  const date = new Date(`${day}T00:00:00Z`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(date.getTime())) return day;
-  try {
-    return new Intl.DateTimeFormat(locale || "en-US", { timeZone: "UTC", dateStyle: "medium" }).format(date);
-  } catch {
-    return day;
-  }
-}
+// A text link or button at least 36 px tall on a phone, for a finger.
+const PHONE_TAP = "max-sm:inline-flex max-sm:min-h-9 max-sm:items-center";
+// An approved supplier invoice still to pay is in progress (blue); the
+// shared tones do not know the code.
+const documentTone = (status: string) => (status === "to_pay" ? "info" : statusToneOf(status));
 
 export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi, onReviewActionDraft }: { initialView?: string; onNavigate: Navigate; onOpenAi: () => void; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void }) {
   if (initialView === "ai") return <AiSuggestionsPage onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} onOpenAi={onOpenAi} />;
@@ -95,69 +109,87 @@ export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi, 
 function RuntimeHomepage() {
   const { locale, timezone } = useI18n();
   const t = useTodayCopy();
+  const d = useDecisionCopy();
   const [overview, setOverview] = useState<HomeOverview | null>(null);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   const [filter, setFilter] = useState<"all" | "overdue">("all");
+  // One kind of work only, chosen from a row's "{n} in all".
+  const [kindFilter, setKindFilter] = useState<WorkKind | null>(null);
   const [expanded, setExpanded] = useState(false);
-  const load = async () => {
-    setState("loading");
+  const mounted = useRef(true);
+  // After a decision Today reloads quietly, so the cards do not flash.
+  const load = async (quiet = false) => {
+    if (!quiet) setState("loading");
     try {
-      setOverview(await apiJson<HomeOverview>("/api/home/overview"));
+      const next = await requestOverview();
+      if (!mounted.current) return;
+      setOverview(next);
       setState("loaded");
     } catch {
+      if (!mounted.current) return;
       setOverview(null);
       setState("error");
     }
   };
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    mounted.current = true;
+    void load();
+    return () => { mounted.current = false; };
+  }, []);
+  const decisions = overview?.decisions?.available ? overview.decisions : null;
+  const waiting = decisions?.waiting || [];
+  const setAside = decisions?.setAside || [];
   // A work item labelled with a purchase request's, RFQ's or order's id shows its document number.
-  const shownNumber = useDocumentNumbers((overview?.workItems || []).filter((item) => item.label === item.recordId).map((item) => [item.entityType, item.recordId] as const));
+  const labelled = [...(overview?.workItems || []), ...waiting.map((entry) => entry.row as WorkItem), ...setAside.map((entry) => entry.row as WorkItem)];
+  const shownNumber = useDocumentNumbers(labelled.filter((item) => item.label === item.recordId).map((item) => [item.entityType, item.recordId] as const));
   const labelOf = (item: WorkItem) => item.label === item.recordId ? shownNumber(item.entityType, item.recordId) || item.label : item.label;
+  // A row's date chip and its colours, as the assistant's decision cards show them too.
+  const { day, dateText, tone } = useTodayRowFormat(overview?.today || "");
 
   if (state === "error") {
     return (
       <Card className="p-12 text-center">
         <h2 className="text-lg font-semibold">{t("loadFailed")}</h2>
-        <button onClick={load} className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600"><RefreshCw size={14} />{t("retry")}</button>
+        <button onClick={() => load()} className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600"><RefreshCw size={14} />{t("retry")}</button>
       </Card>
     );
   }
 
   const today = overview?.today || "";
-  const items = overview?.workItems || [];
-  const shown = filter === "overdue" ? items.filter((item) => item.overdueDays > 0) : items;
-  const visible = expanded ? shown : shown.slice(0, COLLAPSED);
+  // Rows with a decision card, or set aside, leave Today's work.
+  const decisionKeys = new Set([...waiting, ...setAside].map((entry) => entry.key));
+  const items = (overview?.workItems || []).filter((item) => !decisionKeys.has(`${item.kind}:${item.recordId}`));
+  const workTotal = Math.max(0, (overview?.workTotal ?? 0) - decisionKeys.size);
+  const overdueTotal = Math.max(0, (overview?.overdue ?? 0) - setAside.filter((entry) => entry.row.overdueDays > 0).length);
+  const byTile = filter === "overdue" ? items.filter((item) => item.overdueDays > 0) : items;
+  const shown = kindFilter ? byTile.filter((item) => item.kind === kindFilter) : byTile;
+  // Collapsed: the earliest row of every kind, then the next earliest.
+  const firstRows = kindFilter ? shown.slice(0, COLLAPSED) : firstRowsByKind(shown, COLLAPSED);
+  const visible = expanded ? shown : firstRows;
+  // A kind's count shows once, on its first row in the list.
+  const leadRows = new Set(visible.filter((item, index) => visible.findIndex((other) => other.kind === item.kind) === index).map((item) => item.id));
+  const perKind = rowsPerKind(byTile);
+  // The response holds every row, so a kind's count is its true total.
+  const complete = !overview || overview.workTotal <= (overview.workItems || []).length;
   const recent = overview?.recentDocuments || [];
   // A unit reads in the interface language (unitLabel): "35 pcs" in English.
   const quantity = (value: unknown, unit?: string | null) => `${formatQuantity(value as number)}${unit ? ` ${unitLabel(unit, t.language, Number(value))}` : ""}`;
   // Amounts use the document currency; a hidden amount (null) is never shown as 0.
   const money = (value: unknown, currency?: string | null) => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "—" : formatLocaleAmount(Number(value), currency, locale, { maximumFractionDigits: 2 });
-  const day = (value: string) => formatDay(value, locale);
-
-  const dateText = (item: WorkItem) => {
-    if (!item.date) return t("noDate");
-    if (item.dateKind === "due") return item.overdueDays > 0 ? t.count("overdueDays", item.overdueDays) : item.date === today ? t("dueToday") : t("dueOn", { date: day(item.date) });
-    if (item.dateKind === "order_by") return item.date <= today ? t("orderToday") : t("orderBy", { date: day(item.date) });
-    if (item.dateKind === "promised") return item.overdueDays > 0 ? t.count("lateDays", item.overdueDays) : item.date === today ? t("promisedToday") : t("promisedOn", { date: day(item.date) });
-    if (item.dateKind === "required") return t("neededBy", { date: day(item.date) });
-    if (item.dateKind === "notice_by") return item.date === today ? t("noticeToday") : t("noticeBy", { date: day(item.date) });
-    if (item.dateKind === "ends") return item.date === today ? t("endsToday") : t("endsOn", { date: day(item.date) });
-    if (item.dateKind === "ended") return t.count("endedDays", item.overdueDays);
-    return t("invoiceOn", { date: day(item.date) });
+  // A reorder row opens the purchase request the reorder list's "Create
+  // purchase request" opens for the item, with the same reason.
+  const reorderHref = (item: WorkItem) => {
+    const request = item.detail?.purchaseRequest as ReorderRequest | null | undefined;
+    if (!request?.itemId) return null;
+    const reason = reorderListText(t.language, "reason", { position: quantity(item.detail.position, item.detail.unit), reorderPoint: quantity(item.detail.reorderPoint, item.detail.unit), date: item.date || "" });
+    return reorderRequestHref(request, reason, item.detail.shortfall);
   };
-  // Red for what is late or an exception, orange for today and for approvals
-  // and stock warnings, blue for the rest, gray without a date.
-  const tone = (item: WorkItem) => {
-    if (item.overdueDays > 0 || item.kind === "bill_exception") return { color: "#b91c1c", background: "#fef2f2" };
-    if (item.date === today || item.kind === "reorder_now" || item.kind.endsWith("_to_approve")) return { color: "#b45309", background: "#fffbeb" };
-    if (!item.date) return { color: A.gray1, background: A.gray6 };
-    return { color: "#1d4ed8", background: "#eff6ff" };
-  };
+  const showKind = (kind: WorkKind) => { setKindFilter(kind); setExpanded(true); };
 
   const reasons = (item: WorkItem): string[] => {
     const d = item.detail || {};
-    const supplier = item.name ? t("supplier", { name: item.name }) : null;
-    const customer = item.name ? t("customer", { name: item.name }) : null;
+    const supplier = item.name ? t.partner("supplier", item.name) : null;
+    const customer = item.name ? t.partner("customer", item.name) : null;
     const amount = d.amount === null || d.amount === undefined ? null : t("amount", { amount: money(d.amount, d.currency) });
     const lines: Array<string | null> = (() => {
       switch (item.kind) {
@@ -206,8 +238,8 @@ function RuntimeHomepage() {
   if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("contracts") ? "sourceContracts" : code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
 
   const tiles = [
-    { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: overview?.workTotal ?? 0 },
-    { id: "overdue" as const, label: t("tileOverdue"), note: t("tileOverdueNote"), value: overview?.overdue ?? 0 },
+    { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: workTotal },
+    { id: "overdue" as const, label: t("tileOverdue"), note: t("tileOverdueNote"), value: overdueTotal },
   ];
   // Under the count of documents changed today: when the last change was, from
   // the newest recent document (the same documents the count reads), never
@@ -223,8 +255,10 @@ function RuntimeHomepage() {
         : t("changesNone");
 
   // The tiles read like the cards on top of every list page, white and
-  // full-width; the two counts filter the list below.
-  const tileClass = "flex flex-col items-start justify-start rounded-xl border bg-white p-4 text-left";
+  // full-width; the two counts filter the list below. On a phone the three
+  // sit in one short row without their notes, so the first task shows on the
+  // first screen.
+  const tileClass = "flex min-w-0 flex-col items-start justify-start rounded-xl border bg-white p-3 text-left sm:p-4";
   const tileStyle = { borderColor: A.border, boxShadow: "0 1px 2px rgba(15,23,42,0.04)" };
 
   return (
@@ -248,28 +282,51 @@ function RuntimeHomepage() {
         </Card>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-3" data-testid="today-tiles">
+      <div className={`grid gap-2 sm:gap-4 ${decisions ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-3"}`} data-testid="today-tiles">
+        {decisions ? (
+          <a href="#today-decisions" className={`${tileClass} outline-none transition hover:bg-slate-50 focus:ring-2 focus:ring-blue-500 !no-underline`} style={{ ...tileStyle, borderColor: waiting.length ? "#bfdbfe" : A.border }} data-testid="today-tile-decisions">
+            <div className="text-xs" style={{ color: A.sub }}>{d("tile")}</div>
+            <div className="mt-1 text-xl font-semibold sm:text-2xl" style={{ color: waiting.length ? "#1d4ed8" : undefined }}>{waiting.length}</div>
+            <div className="mt-1 hidden text-xs sm:block" style={{ color: A.gray2 }}>{d("tileNote")}</div>
+          </a>
+        ) : null}
         {tiles.map((tile) => (
           <button
             key={tile.id}
             type="button"
-            aria-pressed={filter === tile.id}
-            onClick={() => { setFilter(tile.id); setExpanded(false); }}
+            aria-pressed={filter === tile.id && !kindFilter}
+            onClick={() => { setFilter(tile.id); setKindFilter(null); setExpanded(false); }}
             className={`${tileClass} outline-none transition hover:bg-slate-50 focus:ring-2 focus:ring-blue-500`}
-            style={{ ...tileStyle, background: filter === tile.id ? "#f0f6ff" : A.white, borderColor: filter === tile.id ? "#bfdbfe" : A.border }}
+            style={{ ...tileStyle, background: filter === tile.id && !kindFilter ? "#f0f6ff" : A.white, borderColor: filter === tile.id && !kindFilter ? "#bfdbfe" : A.border }}
             data-testid={`today-tile-${tile.id}`}
           >
             <div className="text-xs" style={{ color: A.sub }}>{tile.label}</div>
-            <div className="mt-1 text-2xl font-semibold">{tile.value}</div>
-            <div className="mt-1 text-xs" style={{ color: A.gray2 }}>{tile.note}</div>
+            <div className="mt-1 text-xl font-semibold sm:text-2xl">{tile.value}</div>
+            <div className="mt-1 hidden text-xs sm:block" style={{ color: A.gray2 }}>{tile.note}</div>
           </button>
         ))}
         <div className={tileClass} style={tileStyle} data-testid="today-tile-changes" title={today ? t("changesNote", { date: day(today) }) : undefined}>
           <div className="text-xs" style={{ color: A.sub }}>{t("tileChanges")}</div>
-          <div className="mt-1 text-2xl font-semibold">{overview?.todayChanges ?? 0}</div>
-          {changesSub ? <div className="mt-1 text-xs" style={{ color: A.gray2 }} data-testid="today-tile-changes-note">{changesSub}</div> : null}
+          <div className="mt-1 text-xl font-semibold sm:text-2xl">{overview?.todayChanges ?? 0}</div>
+          {changesSub ? <div className="mt-1 hidden text-xs sm:block" style={{ color: A.gray2 }} data-testid="today-tile-changes-note">{changesSub}</div> : null}
         </div>
       </div>
+
+      {decisions && state === "loaded" ? (
+        <div id="today-decisions" className="scroll-mt-4">
+          <DecisionSection
+            decisions={decisions}
+            overdueOnly={filter === "overdue"}
+            today={today}
+            day={day}
+            dateText={dateText}
+            tone={tone}
+            kindLabel={(row) => t(`kind_${row.kind}` as TodayCopyKey)}
+            labelOf={(row) => labelOf(row as WorkItem)}
+            onChanged={() => { void load(true); }}
+          />
+        </div>
+      ) : null}
 
       <Card className="p-5">
         <div className="flex items-center justify-between">
@@ -277,8 +334,14 @@ function RuntimeHomepage() {
             <h2 className="text-sm font-semibold">{t("workTitle")}</h2>
             <p className="mt-0.5 text-xs" style={{ color: A.sub }}>{t("workNote")}</p>
           </div>
-          <button onClick={load} aria-label={t("refresh")}><RefreshCw size={15} /></button>
+          <button onClick={() => load()} aria-label={t("refresh")} title={t("refresh")} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100"><RefreshCw size={15} /></button>
         </div>
+        {state === "loaded" && kindFilter ? (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-3 py-2 text-xs" style={{ background: "#f0f6ff", color: A.label }} data-testid="today-kind-filter">
+            <span>{t("kindShowing", { kind: t(`kind_${kindFilter}` as TodayCopyKey) })}</span>
+            <button type="button" className="font-semibold text-blue-600 hover:underline" onClick={() => { setKindFilter(null); setExpanded(false); }}>{t("kindShowEvery")}</button>
+          </div>
+        ) : null}
         {state === "loading" ? (
           <div className="py-10 text-center text-xs">{t("loading")}</div>
         ) : shown.length === 0 ? (
@@ -292,26 +355,40 @@ function RuntimeHomepage() {
               <li key={item.id} className="flex items-start gap-3 py-3" data-testid="today-work-item" data-kind={item.kind}>
                 {/* A fixed column, so every row's title starts at the same place;
                     on a phone the date sits above the title instead. */}
-                <div className="mt-0.5 hidden w-48 shrink-0 sm:block" data-testid="today-work-date">
+                <div className="mt-0.5 hidden w-36 shrink-0 sm:block" data-testid="today-work-date">
                   <span className="inline-block max-w-full rounded px-2 py-1 text-xs font-medium" style={tone(item)}>{dateText(item)}</span>
                 </div>
                 <div className="min-w-0 flex-1">
                   <span className="mb-1 inline-block rounded px-2 py-0.5 text-xs font-medium sm:hidden" style={tone(item)}>{dateText(item)}</span>
-                  <div className="text-sm font-medium">{t(`kind_${item.kind}` as TodayCopyKey)}</div>
+                  <div className="flex flex-wrap items-baseline gap-x-2 text-sm font-medium">
+                    <span>{t(`kind_${item.kind}` as TodayCopyKey)}</span>
+                    {/* How many rows of this kind there are, on the kind's first row; it lists only those. */}
+                    {!kindFilter && leadRows.has(item.id) && (perKind.get(item.kind) || 0) > 1 ? (
+                      <button type="button" onClick={() => showKind(item.kind)} className={`text-xs font-medium text-blue-600 hover:underline ${PHONE_TAP} max-sm:px-1`} data-testid="today-kind-all">
+                        {complete ? t("kindAll", { n: perKind.get(item.kind) || 0 }) : t("kindOnly")}
+                      </button>
+                    ) : null}
+                  </div>
                   <Link to={item.href} className={`mt-0.5 inline-block text-xs ${LINK}`}>{labelOf(item)}</Link>
                   <div className="text-xs" style={{ color: A.sub }}>{reasons(item).join(" · ")}</div>
-                  {item.actionHref ? <Link to={item.actionHref} className={`text-xs ${LINK}`}>{t("openReorderList")}</Link> : null}
+                  {item.kind === "reorder_now" || item.actionHref ? (
+                    // Each link 36 px tall on a phone, with room between them.
+                    <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs max-sm:gap-x-6">
+                      {item.kind === "reorder_now" && reorderHref(item) ? <Link to={reorderHref(item)!} className={`${LINK} ${PHONE_TAP}`} data-testid="today-reorder-request">{t("createRequest")}</Link> : null}
+                      {item.actionHref ? <Link to={item.actionHref} className={`${LINK} ${PHONE_TAP}`} data-testid="today-reorder-list">{t("openReorderList")}</Link> : null}
+                    </div>
+                  ) : null}
                 </div>
                 <Link to={item.href} className="p-1" aria-label={labelOf(item)}><ArrowRight size={16} /></Link>
               </li>
             ))}
           </ul>
         )}
-        {state === "loaded" && shown.length > COLLAPSED ? (
+        {state === "loaded" && shown.length > firstRows.length ? (
           <button className="mt-2 text-xs text-blue-600" onClick={() => setExpanded((value) => !value)}>{expanded ? t("showFewer") : t("showAll", { n: shown.length })}</button>
         ) : null}
-        {state === "loaded" && filter === "all" && overview && overview.workTotal > items.length ? (
-          <div className="mt-2 text-xs" style={{ color: A.sub }}>{t("moreNotShown", { n: overview.workTotal - items.length })}</div>
+        {state === "loaded" && filter === "all" && overview && workTotal > items.length ? (
+          <div className="mt-2 text-xs" style={{ color: A.sub }}>{t("moreNotShown", { n: workTotal - items.length })}</div>
         ) : null}
         {state === "loaded" && notes.length ? (
           <div className="mt-3 space-y-1 border-t pt-3 text-xs" style={{ color: A.sub }} data-testid="today-work-notes">
@@ -330,17 +407,19 @@ function RuntimeHomepage() {
         ) : recent.length === 0 ? (
           <div className="py-12 text-center text-sm" style={{ color: A.sub }}><p>{t("recentEmpty")}</p><p className="text-xs">{t("recentEmptyHint")}</p></div>
         ) : (
-          <div className="overflow-x-auto">
+          // On a phone each document is a card: its number and status on top,
+          // the other columns as labelled lines (listTableCardsRef).
+          <div className="overflow-x-auto" ref={listTableCardsRef}>
             <table className={`w-full min-w-[860px] text-left ${tableBodyTextClass}`} data-testid="recent-documents">
               <thead>
-                <tr style={listHeadRowStyle}>{(["colType", "colNumber", "colStatus", "colPartner", "colAmount", "colUpdated"] as const).map((key) => <th key={key} className={key === "colAmount" ? thRightClass : thClass} style={{ color: A.gray1 }}>{t(key)}</th>)}</tr>
+                <tr style={listHeadRowStyle}>{(["colType", "colNumber", "colStatus", "colPartner", "colAmount", "colUpdated"] as const).map((key) => <th key={key} className={key === "colAmount" ? thRightClass : thClass} style={{ color: A.gray1 }} {...(key === "colNumber" ? { "data-card-title": "" } : {})}>{t(key)}</th>)}</tr>
               </thead>
               <tbody>
                 {recent.map((row, index) => (
                   <tr key={`${row.type}-${row.id}`} className={listRowClass} style={listRowStyle(index, recent.length)}>
                     <td className={tdNameClass} style={{ color: A.sub }}>{t(`type_${row.type}` as TodayCopyKey) || row.type}</td>
                     <td className={tdIdClass}><Link to={row.canonicalRoute} className={LINK}>{row.number}</Link></td>
-                    <td className={tdNowrapClass} title={row.status || undefined}><StatusChip label={t.status(row.status)} tone={statusToneOf(row.status)} /></td>
+                    <td className={tdNowrapClass}><StatusChip label={t.status(row.status)} tone={documentTone(row.status)} /></td>
                     <td className={`${tdNameClass} max-w-[240px] truncate`} title={row.partner || undefined}>{row.partner || "—"}</td>
                     <td className={tdNumericRightClass}>{money(row.amount, row.currency)}</td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{formatDateTimeInTimeZone(row.updatedAt, locale, timezone)}</td>

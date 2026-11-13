@@ -14,12 +14,12 @@ export const PROTOCOL_VERSION = 2
 export const PART_SCHEMA_VERSION = 1
 
 export const STREAM_EVENT_TYPES = Object.freeze(['start', 'progress', 'tool', 'text_delta', 'ui', 'flag', 'replace', 'notice', 'error', 'answer'])
-export const UI_COMPONENTS = Object.freeze(['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form', 'record_actions'])
+export const UI_COMPONENTS = Object.freeze(['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form', 'record_actions', 'decisions'])
 export const ANSWER_LANGUAGES = Object.freeze(['en-US', 'zh-CN'])
 export const PROGRESS_STEPS = Object.freeze(['reading', 'writing', 'checking'])
 export const TOOL_STATES = Object.freeze(['running', 'done', 'error'])
 export const FLAG_KINDS = Object.freeze(['number', 'date', 'name', 'record'])
-export const REPLACE_CODES = Object.freeze(['unbacked_action_claim', 'foreign_record', 'hidden_value'])
+export const REPLACE_CODES = Object.freeze(['unbacked_action_claim', 'foreign_record', 'hidden_value', 'item_name', 'narration', 'record_label'])
 // ai_off: the workspace has not switched AI on; no_provider: no model is set
 // up on this server. Assistant v2 answers every question; when it cannot, a
 // notice says why (owner direction 2026-11-05: no rules answer behind it).
@@ -34,7 +34,9 @@ export const CHOICE_PROMPTS = Object.freeze(['pick_item', 'pick_supplier', 'pick
 export const RELATIVE_DATE_KINDS = Object.freeze(['overdue', 'due', 'waiting', 'on'])
 export const STATUS_TONES = Object.freeze(['danger', 'warning', 'success', 'info', 'neutral'])
 // Where a suggested quantity came from (shared quantity engine, V2-5).
-export const QUANTITY_SOURCES = Object.freeze(['user_named', 'reorder_gap', 'reorder_gap_raised_to_moq', 'cover_days', 'cover_days_raised_to_moq', 'order_plan', 'none'])
+// user_named_raised_to_moq: the user's quantity was below the supplier's
+// minimum order, so the form starts at the minimum (requested keeps theirs).
+export const QUANTITY_SOURCES = Object.freeze(['user_named', 'user_named_raised_to_moq', 'reorder_gap', 'reorder_gap_raised_to_moq', 'cover_days', 'cover_days_raised_to_moq', 'order_plan', 'none'])
 export const SUPPLIER_SOURCES = Object.freeze(['preferred', 'only_approved', 'user_named'])
 export const NEED_BY_SOURCES = Object.freeze(['lead_time', 'user_named', 'today'])
 export const PRICE_SOURCES = Object.freeze(['reference_price', 'masked', 'missing'])
@@ -138,7 +140,7 @@ export const prFormRowSchema = z.object({
   onHand: amount.nullable().optional(),
   safetyStock: amount.nullable().optional(),
   reorderPoint: amount.nullable().optional(),
-  suggestedQuantity: z.object({ value: amount.positive().nullable(), source: z.enum(QUANTITY_SOURCES), minimum: amount.positive().nullable().optional(), coverDays: z.number().int().positive().optional() }),
+  suggestedQuantity: z.object({ value: amount.positive().nullable(), source: z.enum(QUANTITY_SOURCES), minimum: amount.positive().nullable().optional(), requested: amount.positive().optional(), coverDays: z.number().int().positive().optional() }),
   supplier: z.object({ id, name: label, source: z.enum(SUPPLIER_SOURCES), link: supplierLink.optional() }).nullable(),
   suppliers: z.array(approvedSupplier).max(20).optional(),
   needByDate: z.object({ value: day, source: z.enum(NEED_BY_SOURCES), leadTimeDays: z.number().int().nonnegative().nullable().optional(), shortWeekOf: day.nullable().optional() }),
@@ -275,6 +277,21 @@ const recordActionsProps = z.object({
   poBlocked: z.enum(PO_BLOCKS).optional(),
 }).refine((props) => props.actions.every((action) => props.allowed.includes(action)), { message: 'an action the user is not allowed', path: ['actions'] })
 
+// Today's decision cards in the chat (docs/drafted-decisions-design.md §4.8):
+// the keys of the items a decision_items result showed ("kind:recordId"). The
+// card reads each item's draft from Today itself, so the prepared step, its
+// buttons and the supplier's address for a follow-up never pass through the
+// model; an item no longer waiting shows how it was settled.
+export const DECISION_CARD_KINDS = Object.freeze(['reorder_now', 'purchase_order_overdue', 'purchase_request_to_convert'])
+export const DECISION_CARDS_MAX = 5
+const decisionKey = z.string().regex(/^(reorder_now|purchase_order_overdue|purchase_request_to_convert):[^\s:][^\s]{0,159}$/)
+const decisionsProps = z.object({
+  source: id.optional(),
+  keys: z.array(decisionKey).min(1).max(DECISION_CARDS_MAX),
+  // How many more were waiting than the cards show, for "Show all on Today".
+  more: z.number().int().nonnegative().optional(),
+})
+
 export const partPropsSchemas = Object.freeze({
   table: tableProps,
   records: recordsProps,
@@ -287,6 +304,7 @@ export const partPropsSchemas = Object.freeze({
   setup_steps: setupStepsProps,
   setup_form: setupFormProps,
   record_actions: recordActionsProps,
+  decisions: decisionsProps,
 })
 
 const envelope = { v: z.literal(PROTOCOL_VERSION), seq: z.number().int().nonnegative() }

@@ -426,7 +426,18 @@ test(
         where: { supplierInvoiceId: exceptionDraft.entityId },
         orderBy: { id: "asc" },
       });
-      for (const entry of exceptions) {
+      // An empty resolution is refused with its own code.
+      const unexplained = await command.previewReviewMatchException(
+        exceptions[0].id,
+        { expectedVersion: 0, decision: "approved", resolution: " " },
+        manager,
+      );
+      assert.equal(unexplained.allowed, false);
+      assert.ok(unexplained.blockingIssues.some((issue) => issue.code === "MATCH_EXCEPTION_RESOLUTION_REQUIRED"));
+      for (const [index, entry] of exceptions.entries()) {
+        // Until the last exception is approved, the match stays an exception.
+        const before = await prisma.threeWayMatch.findUnique({ where: { id: entry.matchId } });
+        assert.equal(before.status, "exception", `match before review ${index + 1}`);
         const reviewPreview = await command.previewReviewMatchException(
           entry.id,
           {
@@ -448,6 +459,14 @@ test(
           manager,
         );
       }
+      // Every exception approved: the match and the invoice's match status
+      // say so; the invoice keeps its status and version for its approval.
+      const resolvedMatch = await prisma.threeWayMatch.findUnique({ where: { id: exceptions[0].matchId } });
+      assert.equal(resolvedMatch.status, "variance_approved");
+      const resolvedInvoice = await prisma.supplierInvoice.findUnique({ where: { id: exceptionDraft.entityId } });
+      assert.equal(resolvedInvoice.matchStatus, "variance_approved");
+      assert.equal(resolvedInvoice.status, "exception");
+      assert.equal(resolvedInvoice.version, 2);
       const exceptionApproved = await command.approveSupplierInvoice(
         exceptionDraft.entityId,
         {

@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
+import { useNavigate } from "react-router";
+import { toast } from "sonner";
 import { AlertTriangle, ArrowRight, Link2, Loader2, Printer, ShieldCheck } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { usePermissionSet } from "../../lib/usePermissionSet";
+import { useRouteAvailability } from "../../app/routeAvailability";
 import { A, useConfirm } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, statusToneOf } from "../../components/ui/listLayout";
-import { tableMinSmClass, tableScrollClass, tdClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableMinSmClass, tableScrollClass, tdClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { useI18n } from "../../i18n/I18n";
+import { unitLabel } from "../../i18n/unitLabels";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { RecordBillAction } from "../../components/business/BillingEntryActions";
@@ -20,17 +25,17 @@ import { procurementErrorCode, procurementErrorText } from "../procurement/procu
 
 type Capability = { enabled?: boolean; maturity?: string };
 type Detail = {
-  receivingDocument: { id: string; documentNumber: string; workflowStatus: string; postingStatus: string; qualityStatus: string; version: number; arrivedAt?: string | null; postedAt?: string | null; postedById?: string | null; reversedAt?: string | null; reversedById?: string | null; reversalReason?: string | null; receiver?: string | null; supplier?: { name?: string }; warehouse?: { name?: string; code?: string } | null };
+  receivingDocument: { id: string; documentNumber: string; workflowStatus: string; postingStatus: string; qualityStatus: string; version: number; arrivedAt?: string | null; postedAt?: string | null; postedById?: string | null; reversedAt?: string | null; reversedById?: string | null; reversalReason?: string | null; receiver?: string | null; supplier?: { name?: string }; warehouse?: { id?: string; name?: string; code?: string } | null };
   // number: the order's document number (shown); id: its internal id (links).
   purchaseOrder: { id: string; number?: string; workflowStatus: string; fulfillmentStatus: string };
-  lines: Array<{ id: string; poLineId: string; sku: string; itemName: string; orderedQuantity: string; previouslyReceivedQuantity: string; documentAcceptedQuantity: string; currentlyAppliedQuantity: string; acceptedQuantity: string; rejectedQuantity: string; remainingReceivableQuantity: string; unit?: string; warehouse?: { name?: string; code?: string } | null; location?: string; lotSerialCapability: { postingAvailable: boolean; message: string } }>;
+  lines: Array<{ id: string; poLineId: string; sku: string; itemName: string; orderedQuantity: string; previouslyReceivedQuantity: string; documentAcceptedQuantity: string; currentlyAppliedQuantity: string; acceptedQuantity: string; rejectedQuantity: string; rejectionReason?: string | null; remainingReceivableQuantity: string; unit?: string; warehouse?: { id?: string; name?: string; code?: string } | null; location?: string; lotSerialCapability: { postingAvailable: boolean; message: string } }>;
   postingSummary: { acceptedQuantity: string; rejectedQuantity: string; lineCount: number };
   capabilities: { posting?: Capability; reversal?: Capability };
   availableActions: { canEditDraft?: boolean; canSubmit?: boolean; canCancel?: boolean; canPost: boolean; canReverse: boolean; canViewReversal: boolean; primaryAction: "post" | "reverse" | "view_reversal" | null; blockingReasonCodes: string[] };
   limitations: string[];
 };
 type Preview = { operation: "post" | "reverse"; allowed: boolean; blockingIssues: Array<{ code: string; message: string }>; warnings: Array<{ code: string; message: string }>; inventoryImpacts: Array<Record<string, string>>; purchaseOrderImpacts: Array<Record<string, string>>; statusImpact: Record<string, string>; factsToCreate: { inventoryMovementCount: number; auditEventCount: number; commandExecutionCount: number }; limitations: string[] };
-type Link = { label: string; count: number; targetRouteId: string; targetType: string; targetId?: string; filter?: Record<string, unknown>; enabled: boolean; unavailableReason?: string | null };
+type Link = { label: string; count: number; targetRouteId: string; targetType: string; targetId?: string; filter?: Record<string, unknown>; enabled: boolean; unavailableReason?: string | null; unavailableReasonCode?: string | null };
 type TimelineEvent = { id: string; type: string; event: string; occurredAt: string; label: string; actorId?: string; actorName?: string | null; postedFact: boolean; data?: Record<string, unknown> | null };
 type Reconciliation = { status: "matched" | "mismatch" | "unavailable"; reason?: string; entries: Array<{ sku: string; warehouseId?: string | null; locationKey: string; status: string; calculatedQuantity: string; recordedQuantity: string | null; differenceQuantity: string | null }> };
 type Navigate = (routeId: string, focus?: { entityType: string; entityId: string } | null, options?: { source?: string; entityLabel?: string }) => void;
@@ -44,12 +49,21 @@ const DRAFT_COPY: Record<string, Pair> = {
   submitting: ["Submitting…", "正在提交…"],
   submitFailed: ["The receipt could not be submitted.", "收货单提交失败。"],
   draftNote: ["This receipt is a draft. Submit it to post it to inventory.", "该收货单为草稿，提交后方可过账入库。"],
+  // Submitted, not yet posted: the next step is Post receipt, first among the actions.
+  readyNote: ["Submitted, not posted yet. Post the receipt to add the accepted quantity to stock.", "已提交，尚未过账。过账后，合格数量才会计入库存。"],
   cancelReceipt: ["Cancel receipt", "取消收货单"],
   cancelTitle: ["Cancel this receipt?", "取消该收货单？"],
   cancelBody: ["Nothing from it will be posted to inventory.", "其中的内容不会过账入库。"],
   cancelReason: ["Why is it cancelled?", "取消原因"],
   keepReceipt: ["Keep receipt", "保留收货单"],
   cancelFailed: ["The receipt could not be cancelled.", "收货单取消失败。"],
+  // After an action, with the receipt's number ({doc}).
+  posted: ["Posted {doc}", "已过账 {doc}"],
+  reversed: ["Reversed {doc}", "已冲销 {doc}"],
+  submitted: ["Submitted {doc}", "已提交 {doc}"],
+  cancelled: ["Cancelled {doc}", "已取消 {doc}"],
+  // A posted receipt that left part of the order open: the receipt form for the rest.
+  receiveRest: ["Receive the rest", "收货剩余"],
 };
 
 // The command errors by their stable code, in English with the Chinese translation.
@@ -93,6 +107,13 @@ const LINK_COPY: Record<string, Pair> = {
   Reversal: ["Reversal", "冲销"],
 };
 
+// Why a related-records button is off, by the server's code (or, from an
+// older server, its English sentence).
+const LINK_UNAVAILABLE_COPY: Record<string, Pair> = {
+  NO_RECORDS: ["No related records yet.", "暂无相关记录。"],
+  "No authoritative records are available.": ["No related records yet.", "暂无相关记录。"],
+};
+
 // Movement kinds as the server's timeline names them.
 const MOVEMENT_COPY: Record<string, Pair> = {
   "Receipt posting": ["Receipt posting", "收货过账"],
@@ -104,7 +125,8 @@ const MOVEMENT_COPY: Record<string, Pair> = {
 const AUDIT_COPY: Record<string, Pair> = {
   receiving_draft_created: ["Receipt draft {doc} created", "收货草稿 {doc} 已创建"],
   receiving_draft_revised: ["Receipt draft {doc} revised", "收货草稿 {doc} 已修改"],
-  receiving_submitted: ["Receipt {doc} submitted for posting", "收货单 {doc} 已提交过账"],
+  // "Submitted", as the form's Save and submit button says: posting is its own step.
+  receiving_submitted: ["Receipt {doc} submitted", "收货单 {doc} 已提交"],
   receiving_cancelled: ["Receipt {doc} cancelled", "收货单 {doc} 已取消"],
   receiving_posted: ["Receipt {doc} posted to inventory", "收货单 {doc} 已过账入库"],
   receiving_reversed: ["Receipt {doc} reversed", "收货单 {doc} 已冲销"],
@@ -137,9 +159,16 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const draftCopy = (key: string) => sayPair(DRAFT_COPY[key]);
   const confirmDialog = useConfirm();
   const warehouseName = useWarehouseNames();
+  const navigate = useNavigate();
+  const permissions = usePermissionSet();
+  const canOpenRoute = useRouteAvailability();
+  // The receipt form for the order, by the PO page's rule for its Receive button.
+  const canStartReceipt = Boolean(permissions?.has("receiving.prepare")) && canOpenRoute("procurement:receiving:new");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [links, setLinks] = useState<Link[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
+  // Timeline groups a person opened to read line by line.
+  const [openEventGroups, setOpenEventGroups] = useState<Set<string>>(() => new Set());
   const [reconciliation, setReconciliation] = useState<Reconciliation | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -150,9 +179,12 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [printing, setPrinting] = useState(false);
+  // The reconciliation table, when every balance matches, opens on request.
+  const [showReconciliation, setShowReconciliation] = useState(false);
 
-  const refresh = useCallback(async () => {
-    if (!receivingDocumentId) return;
+  // Reads the receipt again; returns it, or null when it could not be read.
+  const refresh = useCallback(async (): Promise<Detail | null> => {
+    if (!receivingDocumentId) return null;
     setLoading(true); setError(""); setErrorCode(undefined);
     try {
       const encoded = encodeURIComponent(receivingDocumentId);
@@ -163,9 +195,19 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
         apiJson<Reconciliation>(`/api/procurement/receiving/${encoded}/reconciliation`),
       ]);
       setDetail(nextDetail); setLinks(nextLinks.links); setEvents(nextEvidence.events); setReconciliation(nextReconciliation);
-    } catch (nextError) { setError(errorMessage(nextError, languageRef.current)); setErrorCode(procurementErrorCode(nextError)); setDetail(null); }
+      return nextDetail;
+    } catch (nextError) { setError(errorMessage(nextError, languageRef.current)); setErrorCode(procurementErrorCode(nextError)); setDetail(null); return null; }
     finally { setLoading(false); }
   }, [receivingDocumentId]);
+
+  // The order still has quantity to receive after this posted receipt: the
+  // way to the receipt form for the rest. Closed or cancelled orders take no
+  // more receipts.
+  const restToReceive = (next: Detail | null) => Boolean(next && canStartReceipt
+    && next.receivingDocument.postingStatus === "posted"
+    && next.purchaseOrder.fulfillmentStatus === "partially_received"
+    && !["closed", "cancelled"].includes(next.purchaseOrder.workflowStatus));
+  const receiveRestPath = (next: Detail) => `/app/procurement/receiving/new?po=${encodeURIComponent(next.purchaseOrder.id)}`;
 
   useEffect(() => { void refresh(); }, [refresh]);
   useDetailCrumb(detail?.receivingDocument.documentNumber);
@@ -180,6 +222,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     setSaving(true); setError("");
     try {
       await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/submit`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version }) });
+      toast.success(draftCopy("submitted").replace("{doc}", detail.receivingDocument.documentNumber || receivingDocumentId));
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof ApiError ? `${draftCopy("submitFailed")} ${errorMessage(nextError, language, RETRY)}` : draftCopy("submitFailed"));
@@ -202,6 +245,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     setSaving(true); setError("");
     try {
       await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/cancel`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version, reason }) });
+      toast.success(draftCopy("cancelled").replace("{doc}", detail.receivingDocument.documentNumber || receivingDocumentId));
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof ApiError ? `${draftCopy("cancelFailed")} ${errorMessage(nextError, language, RETRY)}` : draftCopy("cancelFailed"));
@@ -223,7 +267,14 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/${preview.operation}`, {
         method: "POST", body: JSON.stringify(preview.operation === "post" ? { idempotencyKey: actionKey, expectedVersion: detail.receivingDocument.version } : { idempotencyKey: actionKey, reason: reason.trim() }),
       });
-      setPreview(null); await refresh();
+      const done = preview.operation;
+      setPreview(null);
+      const next = await refresh();
+      // "Posted GRN-…", with the way to receive what the order still expects.
+      const doc = next?.receivingDocument.documentNumber || detail.receivingDocument.documentNumber || receivingDocumentId;
+      const message = draftCopy(done === "post" ? "posted" : "reversed").replace("{doc}", doc);
+      if (done === "post" && next && restToReceive(next)) toast.success(message, { action: { label: draftCopy("receiveRest"), onClick: () => navigate(receiveRestPath(next)) } });
+      else toast.success(message);
     } catch (nextError) {
       setError(errorMessage(nextError, language, ["The receiving action could not be completed.", "收货操作未完成。"]));
       setErrorCode(procurementErrorCode(nextError));
@@ -235,6 +286,11 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   if (!detail) return <div className="space-y-3"><BackToListLink list="receiving" /><div className="rounded-xl border p-6" data-testid="receiving-error" title={errorCode}><AlertTriangle className="mb-2" color={A.red} />{error || say("This receipt is unavailable.", "该收货单暂时无法查看。")}<button className="ml-3 underline" onClick={() => void refresh()}>{say("Retry", "重试")}</button></div></div>;
 
   const unavailable = say("Unavailable", "不可用");
+  // A disabled related-records button says why in the interface language.
+  const linkUnavailableText = (link: Link) => {
+    const pair = LINK_UNAVAILABLE_COPY[link.unavailableReasonCode || ""] || LINK_UNAVAILABLE_COPY[link.unavailableReason || ""];
+    return pair ? sayPair(pair) : language === "en-US" ? link.unavailableReason || undefined : sayPair(LINK_UNAVAILABLE_COPY.NO_RECORDS);
+  };
   // Quantities are recorded as decimal strings; they are shown in the
   // workspace number format, with only the fraction digits that are not zero.
   const qty = (value?: string | null) => formatDecimal(value, locale);
@@ -247,8 +303,10 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   // The timeline says what happened and who did it. Command bookkeeping
   // repeats the change log, and notes are shown once below, so both stay out.
   const shownEvents = events.filter((event) => event.type !== "human_activity" && event.type !== "limitation");
+  // The receipt's creation is a recorded fact, not a posting: it reads
+  // "Recorded" even though the server counts it among the facts.
   const eventKind = (event: TimelineEvent) =>
-    event.type === "audit" ? say("Change", "变更") : event.postedFact ? say("Posted", "已过账") : say("Recorded", "已记录");
+    event.type === "audit" ? say("Change", "变更") : event.postedFact && event.event !== "receiving_created" ? say("Posted", "已过账") : say("Recorded", "已记录");
   // Lot and serial numbers are the one limitation a user can act on.
   const notes = detail.limitations.some((item) => /lot\/serial/i.test(item))
     ? [say("Lot and serial numbers are not recorded on receipts yet.", "收货暂不记录批次号和序列号。")]
@@ -291,6 +349,38 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     }
     return event.label;
   };
+  // One receipt posts a movement, a balance change and a PO quantity change
+  // for every line, all at the same moment. More than three of a kind read as
+  // one entry ("On hand updated for 18 items") that opens to the lines.
+  const EVENT_GROUP_AFTER = 3;
+  const eventGroupKey = (event: TimelineEvent) =>
+    [event.event, event.event === "inventory_movement_created" ? event.label.split(" · ")[0] : "", stamp(event.occurredAt), eventKind(event)].join("|");
+  // Consecutive events of one kind at one moment form a group; the group's
+  // key adds its position, so two runs of the same kind stay apart.
+  const eventGroups = shownEvents.reduce<Array<{ kind: string; key: string; events: TimelineEvent[] }>>((groups, event) => {
+    const kind = eventGroupKey(event);
+    const last = groups[groups.length - 1];
+    if (last && last.kind === kind) last.events.push(event);
+    else groups.push({ kind, key: `${kind}#${groups.length}`, events: [event] });
+    return groups;
+  }, []);
+  const eventGroupLabel = (group: TimelineEvent[]) => {
+    const first = group[0];
+    const count = group.length;
+    if (first.event === "inventory_movement_created") {
+      const kind = first.label.split(" · ")[0];
+      const name = MOVEMENT_COPY[kind] ? sayPair(MOVEMENT_COPY[kind]) : kind;
+      return say(`${name} · ${count} lines`, `${name} · ${count} 行`);
+    }
+    if (first.event === "inventory_balance_changed") return say(`On hand updated for ${count} items`, `${count} 个物料的在手库存已更新`);
+    if (first.event === "purchase_order_line_received_changed") return say(`PO received quantity updated on ${count} lines`, `采购订单 ${count} 行的已收数量已更新`);
+    return say(`${eventLabel(first)} and ${count - 1} more`, `${eventLabel(first)} 等 ${count} 条`);
+  };
+  const toggleEventGroup = (key: string) => setOpenEventGroups((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
   // The balance key lower-cases the location; show the location as the
   // receipt line recorded it when the line can be found.
   const recordedLocation = (sku: string, locationKey: string) =>
@@ -298,28 +388,53 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const reconciliationReason = reconciliation?.status === "unavailable" && !reconciliation.entries.length
     ? say("Nothing from this receipt has been posted to inventory yet.", "该收货单尚未过账入库，暂无可核对的库存。")
     : reconciliation?.reason || say("Reconciliation is unavailable.", "暂无库存核对结果。");
+  // Before posting, the workflow (draft, ready to post, cancelled) and the
+  // posting status both count. Once posted or reversed, the posting status
+  // is the receipt's one status, as on the receipt list: the workflow still
+  // reads "ready to post" there and would contradict it.
+  const settled = grn.postingStatus === "posted" || grn.postingStatus === "reversed";
+  const statusFacts: Array<[string, React.ReactNode]> = settled
+    ? [[say("Status", "状态"), chip(grn.postingStatus)]]
+    : [[say("Workflow", "流程状态"), chip(grn.workflowStatus)], [say("Posting", "过账状态"), chip(grn.postingStatus)]];
   const facts: Array<[string, React.ReactNode]> = [
-    [say("Workflow", "流程状态"), chip(grn.workflowStatus)],
-    [say("Posting", "过账状态"), chip(grn.postingStatus)],
+    ...statusFacts,
     [say("PO fulfillment", "订单履约"), chip(detail.purchaseOrder.fulfillmentStatus)],
     [say("Warehouse", "仓库"), grn.warehouse?.name || unavailable],
     [say("Receiver", "收货人"), grn.receiver || "—"],
     [say("Arrived", "到货时间"), stamp(grn.arrivedAt)],
     [grn.postingStatus === "reversed" ? say("Reversed", "冲销时间") : say("Posted", "过账时间"), stamp(grn.reversedAt || grn.postedAt)],
   ];
+  // One row of totals under the header facts; the posting status is already
+  // among the header facts, so it is not repeated here.
   const summary: Array<[string, React.ReactNode]> = [
     [say("Total accepted", "合格总数"), qty(detail.postingSummary.acceptedQuantity)],
     [say("Total rejected", "拒收总数"), qty(detail.postingSummary.rejectedQuantity)],
     [say("Movements", "库存移动"), totals.movement === undefined ? "—" : String(totals.movement)],
     [say("Affected balances", "影响的库存余额"), totals.balances === undefined ? "—" : String(totals.balances)],
-    [say("Posting status", "过账状态"), chip(grn.postingStatus)],
     [say("Reconciliation", "库存核对"), reconciliation ? chip(reconciliation.status) : unavailable],
   ];
+  // The lines' warehouse column shows only when a line is stored somewhere
+  // other than the receipt's warehouse, which the header already names.
+  const warehouseKey = (warehouse?: { id?: string; name?: string; code?: string } | null) => warehouse ? warehouse.id || warehouse.code || warehouse.name || "" : "";
+  const showLineWarehouse = detail.lines.some((line) => warehouseKey(line.warehouse) !== warehouseKey(grn.warehouse));
+  // On a phone each line is a card (listTableCardsRef) titled by its item.
+  const itemColumn = say("Item", "物料");
+  // A posted receipt counts only the receipts posted before it, and what was
+  // still open right after it; one not posted (or reversed) shows everything
+  // posted so far and what is open now (receiptLineProgress on the server).
   const lineColumns: Array<[string, boolean]> = [
-    ["SKU", false], [say("Item", "物料"), false], [say("Ordered", "订购"), true], [say("Received before", "此前已收"), true],
+    ["SKU", false], [itemColumn, false], [say("Ordered", "订购"), true], [say("Received before", "此前已收"), true],
     [say("Accepted", "本单合格"), true], [say("Posted qty", "已过账数量"), true], [say("Rejected", "拒收"), true],
-    [say("Open", "未收"), true], [say("Warehouse", "仓库"), false], [say("Location", "库位"), false], [say("Unit", "单位"), false],
+    [grn.postingStatus === "posted" ? say("Open after this receipt", "本单后未收") : say("Open", "未收"), true], ...(showLineWarehouse ? [[say("Warehouse", "仓库"), false] as [string, boolean]] : []), [say("Location", "库位"), false], [say("Unit", "单位"), false],
   ];
+  // Every balance matching its movements is said in one line; the table
+  // opens on request. Any difference shows the table at once.
+  const reconciliationEntries = reconciliation?.entries || [];
+  const allBalancesMatch = reconciliation?.status === "matched" && reconciliationEntries.length > 0 && reconciliationEntries.every((entry) => entry.status === "matched");
+  const matchedSummary = reconciliationEntries.length === 1
+    ? say("The balance matches its movements.", "该库存余额与库存移动一致。")
+    : say(`All ${reconciliationEntries.length} balances match their movements.`, `全部 ${reconciliationEntries.length} 个库存余额与库存移动一致。`);
+  const showReconciliationTable = reconciliationEntries.length > 0 && (!allBalancesMatch || showReconciliation);
   const reconciliationColumns: Array<[string, boolean]> = [
     ["SKU", false], [say("Warehouse", "仓库"), false], [say("Location", "库位"), false], [say("Calculated from movements", "按库存移动计算"), true],
     [say("Recorded balance", "账面余额"), true], [say("Difference", "差异"), true], [say("Status", "状态"), false],
@@ -331,56 +446,67 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><h1 className="fc-page-title">{grn.documentNumber}</h1><p className="mt-1 text-sm text-gray-500">{grn.supplier?.name || say("Unknown supplier", "未知供应商")} · {say("Purchase order", "采购订单")} <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}><DocumentNumber type="purchase_order" id={detail.purchaseOrder.id} number={detail.purchaseOrder.number} /></a></p></div>
-        {/* Non-destructive actions first; cancelling or reversing the receipt comes last, tinted red. */}
+        {/* The next step first (Submit for a draft, Post once submitted), then
+            the other non-destructive actions; cancelling or reversing the
+            receipt comes last, tinted red. */}
         <div className="flex flex-wrap items-center gap-2">
-          <button data-testid="receiving-print-sheet" aria-label={say(`Print receive sheet ${grn.documentNumber}`, `打印入库单 ${grn.documentNumber}`)} onClick={() => setPrinting(true)} className={BUTTON.secondary}><Printer size={14} />{say("Print receive sheet", "打印入库单")}</button>
-          {detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className={BUTTON.secondary}>{draftCopy("editDraft")}</a>}
           {detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className={BUTTON.primary}>{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}
           {operation === "post" && actionButton}
+          <button data-testid="receiving-print-sheet" aria-label={say(`Print receive sheet ${grn.documentNumber}`, `打印入库单 ${grn.documentNumber}`)} onClick={() => setPrinting(true)} className={BUTTON.secondary}><Printer size={14} />{say("Print receive sheet", "打印入库单")}</button>
+          {detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className={BUTTON.secondary}>{draftCopy("editDraft")}</a>}
           {detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className={BUTTON.secondary}>{say("View reversal", "查看冲销")}</button>}
+          {restToReceive(detail) && <button type="button" data-testid="receiving-receive-rest" onClick={() => navigate(receiveRestPath(detail))} className={BUTTON.secondary}>{draftCopy("receiveRest")}</button>}
           {grn.postingStatus === 'posted' && <RecordBillAction receiptId={grn.id} />}
           {detail.availableActions.canCancel && <button data-testid="receiving-cancel" disabled={saving} onClick={() => void cancelReceipt()} className={BUTTON.danger}>{draftCopy("cancelReceipt")}</button>}
           {operation === "reverse" && actionButton}
         </div>
       </div>
       {detail.availableActions.canSubmit && <div className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{draftCopy("draftNote")}</div>}
+      {operation === "post" && canOfferAction && capability?.enabled && !detail.availableActions.canSubmit && <div className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800" data-testid="receiving-ready-note">{draftCopy("readyNote")}</div>}
       {!capability?.enabled && <div className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{say("Read-only. Receipt posting is turned off for this workspace; an administrator can turn it on.", "只读。当前工作区未开启收货过账，可由管理员开启。")}</div>}
       <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
         {facts.map(([name, value]) => <div key={name} className="rounded-xl bg-gray-50 p-3"><div className="text-xs" style={{ color: A.sub }}>{name}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>)}
       </div>
-    </section>
-
-    <section className="grid gap-3 md:grid-cols-3">
-      {summary.map(([name, value]) => <div key={name} className="rounded-xl border bg-white p-4"><div className="text-xs" style={{ color: A.sub }}>{name}</div><div className="mt-1 font-semibold tabular-nums">{value}</div></div>)}
+      <dl className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 border-t pt-3" data-testid="receiving-summary">
+        {summary.map(([name, value]) => <div key={name} className="flex items-center gap-2"><dt className="text-xs" style={{ color: A.sub }}>{name}</dt><dd className="text-sm font-semibold tabular-nums">{value}</dd></div>)}
+      </dl>
     </section>
 
     <section className="overflow-hidden rounded-2xl border bg-white">
       <div className="border-b px-4 py-3 text-sm font-semibold">{say("Receiving lines", "收货明细")}</div>
-      <div className={tableScrollClass}><table className={tableMinSmClass}>
-        <thead><tr style={listHeadRowStyle}>{lineColumns.map(([label, numeric]) => <th key={label} className={numeric ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
+      <div className={tableScrollClass} ref={listTableCardsRef} data-testid="receiving-lines"><table className={tableMinSmClass}>
+        <thead><tr style={listHeadRowStyle}>{lineColumns.map(([label, numeric]) => <th key={label} className={numeric ? thRightClass : thClass} style={{ color: A.gray1 }} data-card-title={label === itemColumn ? "" : undefined}>{label}</th>)}</tr></thead>
         <tbody>{detail.lines.map((line) => <tr key={line.id} className="border-t">
           <td className={tdIdClass}>{line.sku}</td>
-          <td className={`${tdClass} min-w-[160px]`}>{line.itemName}</td>
+          <td className={tdNowrapClass}><div className="max-w-[320px] truncate max-sm:max-w-none max-sm:whitespace-normal max-sm:font-semibold" title={line.itemName}>{line.itemName}</div></td>
           <td className={tdNumericRightClass}>{qty(line.orderedQuantity)}</td>
           <td className={tdNumericRightClass}>{qty(line.previouslyReceivedQuantity)}</td>
           <td className={`${tdNumericRightClass} font-semibold text-teal-700`}>{qty(line.documentAcceptedQuantity)}</td>
           <td className={tdNumericRightClass}>{qty(line.currentlyAppliedQuantity)}</td>
-          <td className={tdNumericRightClass}>{qty(line.rejectedQuantity)}</td>
+          {/* The reason recorded for a rejected quantity sits under it, as recorded. */}
+          <td className={tdNumericRightClass}>
+            {qty(line.rejectedQuantity)}
+            {line.rejectionReason && /[1-9]/.test(line.rejectedQuantity || "") ? <div className="ml-auto mt-0.5 max-w-[240px] whitespace-normal text-xs font-normal max-sm:ml-0" style={{ color: A.sub }} data-testid="receiving-line-rejection-reason">{say("Reason: ", "原因：")}{line.rejectionReason}</div> : null}
+          </td>
           <td className={tdNumericRightClass}>{qty(line.remainingReceivableQuantity)}</td>
-          <td className={`${tdClass} min-w-[140px]`}>{line.warehouse?.name || line.warehouse?.code || unavailable}</td>
+          {showLineWarehouse && <td className={`${tdClass} min-w-[140px]`}>{line.warehouse?.name || line.warehouse?.code || unavailable}</td>}
           <td className={tdNowrapClass}>{line.location || "—"}</td>
-          <td className={tdNowrapClass}>{line.unit || "—"}</td>
+          <td className={tdNowrapClass}>{line.unit ? unitLabel(line.unit, language) : "—"}</td>
         </tr>)}</tbody>
       </table></div>
     </section>
 
-    <section className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Link2 size={16} />{say("Related records", "关联记录")}</div><div className="flex flex-wrap gap-2">{links.map((link) => <button key={link.label} disabled={!link.enabled} title={link.unavailableReason || undefined} onClick={() => onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link', entityLabel: link.label })} className={`rounded-lg border px-3 py-1.5 text-sm ${link.enabled ? 'text-blue-700 hover:bg-blue-50' : 'text-gray-400'}`}>{LINK_COPY[link.label] ? sayPair(LINK_COPY[link.label]) : link.label} · {link.count}</button>)}</div></section>
+    <section className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Link2 size={16} />{say("Related records", "关联记录")}</div><div className="flex flex-wrap gap-2">{links.map((link) => <button key={link.label} disabled={!link.enabled} title={link.enabled ? undefined : linkUnavailableText(link)} onClick={() => onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link', entityLabel: link.label })} className={`rounded-lg border px-3 py-1.5 text-sm ${link.enabled ? 'text-blue-700 hover:bg-blue-50' : 'text-gray-400'}`}>{LINK_COPY[link.label] ? sayPair(LINK_COPY[link.label]) : link.label} · {link.count}</button>)}</div></section>
 
     <section className="overflow-hidden rounded-2xl border bg-white" data-testid="receiving-reconciliation">
       <div className="flex items-center gap-2 border-b px-4 py-3 text-sm font-semibold">{say("Inventory reconciliation", "库存核对")}{reconciliation && chip(reconciliation.status)}</div>
-      {reconciliation?.entries.length ? <div className={tableScrollClass}><table className={tableMinSmClass}>
+      {allBalancesMatch && <div className={`flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm${showReconciliation ? " border-b" : ""}`}>
+        <span data-testid="receiving-reconciliation-summary">{matchedSummary}</span>
+        <button type="button" data-testid="receiving-reconciliation-toggle" aria-expanded={showReconciliation} aria-controls={showReconciliation ? "receiving-reconciliation-table" : undefined} onClick={() => setShowReconciliation((open) => !open)} className="text-sm font-medium text-blue-600 hover:underline">{showReconciliation ? say("Hide details", "收起明细") : say("Show details", "显示明细")}</button>
+      </div>}
+      {showReconciliationTable ? <div id="receiving-reconciliation-table" className={tableScrollClass}><table className={tableMinSmClass}>
         <thead><tr style={listHeadRowStyle}>{reconciliationColumns.map(([label, numeric]) => <th key={label} className={numeric ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
-        <tbody>{reconciliation.entries.map((entry) => <tr key={`${entry.sku}-${entry.warehouseId || ''}-${entry.locationKey}`} className="border-t">
+        <tbody>{reconciliationEntries.map((entry) => <tr key={`${entry.sku}-${entry.warehouseId || ''}-${entry.locationKey}`} className="border-t">
           <td className={tdIdClass}>{entry.sku}</td>
           <td className={tdClass}>{warehouseName(entry.warehouseId) || say("No warehouse", "未指定仓库")}</td>
           <td className={tdNowrapClass}>{recordedLocation(entry.sku, entry.locationKey)}</td>
@@ -389,10 +515,19 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
           <td className={`${tdNumericRightClass} ${entry.differenceQuantity != null && /[1-9]/.test(entry.differenceQuantity) ? 'text-red-700' : ''}`}>{qty(entry.differenceQuantity)}</td>
           <td className={tdNowrapClass}>{chip(entry.status)}</td>
         </tr>)}</tbody>
-      </table></div> : <div className="p-4 text-sm text-gray-500">{reconciliationReason}</div>}
+      </table></div> : !reconciliationEntries.length && <div className="p-4 text-sm text-gray-500">{reconciliationReason}</div>}
     </section>
 
-    <section id="evidence" className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><ShieldCheck size={16} />{say("Evidence timeline", "证据时间线")}</div><div className="space-y-3">{shownEvents.length ? shownEvents.map((event) => <div key={event.id} className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="w-40 shrink-0 text-xs tabular-nums text-gray-500">{stamp(event.occurredAt)}</div><div><div className="text-sm font-medium">{eventLabel(event)}</div><div className="text-[11px] text-gray-500">{eventKind(event)}{event.actorName ? ` · ${event.actorName}` : ''}</div></div></div>) : <div className="text-sm text-gray-500">{say("No evidence connected.", "暂无关联证据。")}</div>}</div></section>
+    <section id="evidence" className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><ShieldCheck size={16} />{say("Evidence timeline", "证据时间线")}</div><div className="space-y-3">{shownEvents.length ? eventGroups.map((group) => {
+      const eventRow = (event: TimelineEvent) => <div key={event.id} className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="w-40 shrink-0 text-xs tabular-nums text-gray-500">{stamp(event.occurredAt)}</div><div><div className="text-sm font-medium">{eventLabel(event)}</div><div className="text-[11px] text-gray-500">{eventKind(event)}{event.actorName ? ` · ${event.actorName}` : ''}</div></div></div>;
+      if (group.events.length <= EVENT_GROUP_AFTER) return group.events.map(eventRow);
+      const first = group.events[0];
+      const open = openEventGroups.has(group.key);
+      return <div key={group.key} className="space-y-3" data-testid="evidence-event-group">
+        <div className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="w-40 shrink-0 text-xs tabular-nums text-gray-500">{stamp(first.occurredAt)}</div><div className="min-w-0 flex-1"><div className="text-sm font-medium">{eventGroupLabel(group.events)}</div><div className="text-[11px] text-gray-500">{eventKind(first)}{first.actorName ? ` · ${first.actorName}` : ''}</div></div><button type="button" aria-expanded={open} data-testid="evidence-event-group-toggle" onClick={() => toggleEventGroup(group.key)} className="h-7 shrink-0 self-start rounded-md px-2 text-xs font-medium text-blue-600 hover:bg-blue-50">{open ? say("Hide lines", "收起") : say("Show lines", "展开")}</button></div>
+        {open ? <div className="ml-4 space-y-3">{group.events.map(eventRow)}</div> : null}
+      </div>;
+    }) : <div className="text-sm text-gray-500">{say("No evidence connected.", "暂无关联证据。")}</div>}</div></section>
     {notes.length > 0 && <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900" data-testid="receiving-notes">{notes.join(' ')}</div>}
 
     {preview && <div className="fc-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-testid="impact-preview"><div className="fc-dialog-enter max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">

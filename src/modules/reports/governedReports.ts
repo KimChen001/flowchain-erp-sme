@@ -6,7 +6,7 @@ export type CurrencyAggregationStatus = "single_currency" | "filtered_currency" 
 export type CurrencyAmount = { currencyCode: string | null; currencyLabel: string; amount: number | null; recordCount?: number };
 // Money metrics carry their own currency, computed from their own rows.
 export type MetricCurrency = { currencyCode?: string | null; currencyLabel?: string; currencies?: string[]; currencyAggregationStatus?: CurrencyAggregationStatus; currencyAmounts?: CurrencyAmount[] };
-export type MetricDefinition = MetricCurrency & { id: string; label: string; description: string; subject: string; unit: string; format: string; aggregation: string; numerator: string; denominator: string | null; dateField: string; applicableFilters: string[]; drilldownPath: string; emptyValue: number; version: string; value: number | null; currentValue: number | null; dataStatus?: "complete" | "no_records" | "numeric_zero" | "incomplete" | "multi_currency_unconverted" | "restricted"; limitations?: string[]; /** The one unit an open-quantity figure is in, when it has one. */ quantityUnit?: string | null; comparisonValue: number | null; comparisonDelta: number | null; comparisonRate: number | null; comparisonDirection: "up" | "down" | "flat"; comparisonLabel: string; comparisonUnit: string; calculationLabel: string; trend?: Array<{ period: string; value: number }> | null };
+export type MetricDefinition = MetricCurrency & { id: string; label: string; description: string; subject: string; unit: string; format: string; aggregation: string; numerator: string; denominator: string | null; dateField: string; applicableFilters: string[]; drilldownPath: string; emptyValue: number; version: string; value: number | null; currentValue: number | null; dataStatus?: "complete" | "no_records" | "numeric_zero" | "incomplete" | "multi_currency_unconverted" | "restricted"; limitations?: string[]; /** The one unit an open-quantity figure is in, when it has one. */ quantityUnit?: string | null; comparisonValue: number | null; comparisonDelta: number | null; comparisonRate: number | null; comparisonDirection: "up" | "down" | "flat"; comparisonLabel: string; comparisonUnit: string; /** The earlier period a compared figure was set against. */ comparisonRange?: { from: string; to: string }; calculationLabel: string; trend?: Array<{ period: string; value: number }> | null };
 export type ReportChartType = "line" | "bar" | "horizontal_bar" | "area" | "stacked_bar" | "pie" | "donut" | "combo" | "pareto" | "funnel" | "waterfall" | "treemap" | "gauge" | "heatmap" | "calendar" | "sankey" | "scatter" | "radar";
 // A measure of a combo, Pareto or scatter visual: which value axis it uses (or
 // the x, y and size of a scatter) and its unit.
@@ -18,13 +18,22 @@ export type ReportChart = {
   detail?: { count: number; total: number; exception?: number; pending?: number }; statusLabels?: boolean; limitations?: string[];
   /** The units a quantity visual's bars are in; bars in different units are not comparable. */
   units?: string[];
+  /** Months the visual holds only part of: the running month ("to_date") or a month the range cuts ("range"). */
+  partialPeriods?: Array<{ period: string; reason: "to_date" | "range" }>;
+  /** false when a stage chart's stages are counted on their own rather than narrowing like a funnel. */
+  nested?: boolean;
+  /** A ranking's number of rows before it kept its first ones. */
+  total?: number;
 };
 export type ReportColumnDefinition = { key: string; label: string; type: string; subject: string; valueMap?: Record<string, string> };
 export type GovernedReport = {
   totalRecords?: number;
-  /** Subjects the server read only up to a row limit; totals over them may be low. */
-  truncatedSubjects?: Array<{ subject: string; limit: number }>;
+  /** Subjects the server read only up to a row limit whose cut changes this dashboard; totals over them may be low.
+   * figuresComplete: the figures still count every record (total of them); only the table and download are cut. */
+  truncatedSubjects?: Array<{ subject: string; limit: number; figuresComplete?: boolean; openDemandComplete?: boolean; total?: number }>;
   attention?: Array<{ id: string; label: string; count: number; path: string; action: string }>;
+  /** Subjects the reader may not read; their figures are restricted, not zero. */
+  restrictedSubjects?: string[];
   query: Record<string, unknown>; generatedAt: string; dataScope: { label: string; company: string | null; currencyCode: string | null; currencyLabel: string; currencies: string[]; currencyAggregationStatus: CurrencyAggregationStatus; currencyAmounts: CurrencyAmount[]; fxConverted: boolean; from: string; to: string; activeFilterCount: number; sourceLabel: string; completenessLabel: string; filterOptions: { companies: string[]; warehouses: string[]; suppliers: string[]; customers: string[]; categories: string[]; currencies: string[] } };
   kpis: MetricDefinition[]; charts: ReportChart[]; rankings: ReportChart[]; details: Record<string, unknown>[]; columnDefinitions: ReportColumnDefinition[]; warnings: string[]; limitations: string[];
   drilldowns: Array<{ metricId: string; path: string }>; exportRows: Record<string, unknown>[]; metricDefinitions: Omit<MetricDefinition, "value">[];

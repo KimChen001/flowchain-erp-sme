@@ -108,6 +108,81 @@ function movementWhere(actor, query = {}) {
   };
 }
 
+// The movement list's context: the filters a link opens it with (a sales
+// order, a document, a posting batch, an item, a location), without the
+// person's own type, warehouse and search choices. The type and warehouse
+// menus are built over this, so they offer every type the list holds, not
+// only the types on the page shown.
+function movementContextWhere(actor, query = {}) {
+  return movementWhere(actor, { ...query, movementType: "", warehouseId: "", q: "" });
+}
+
+// The documents a movement can come from: the model, the field holding the
+// number people read, and the source document types stored for it.
+const RECEIPT_SOURCE = { model: "receivingDocument", number: "documentNumber", types: ["receiving_document", "ReceivingDocument", "receipt"] };
+const SOURCE_DOCUMENTS = [
+  RECEIPT_SOURCE,
+  { model: "shipmentDocument", number: "shipmentNumber", types: ["ShipmentDocument", "shipment"] },
+  { model: "inventoryAdjustmentDocument", number: "adjustmentNumber", types: ["InventoryAdjustmentDocument"] },
+  { model: "stockTransferDocument", number: "transferNumber", types: ["StockTransferDocument"] },
+  { model: "cycleCountSession", number: "countNumber", types: ["CycleCountSession"] },
+  { model: "returnPostingDocument", number: "postingNumber", types: ["ReturnPostingDocument"] },
+];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function sourceDocumentRef(row) {
+  const kind = SOURCE_DOCUMENTS.find((entry) => entry.types.includes(text(row.sourceDocumentType)));
+  if (kind === RECEIPT_SOURCE || (!kind && text(row.relatedGrnId)))
+    return { kind: RECEIPT_SOURCE, id: text(row.relatedGrnId) || text(row.sourceDocumentId) };
+  return kind && text(row.sourceDocumentId) ? { kind, id: text(row.sourceDocumentId) } : null;
+}
+
+// The number of each movement's source document (the receipt, shipment,
+// adjustment, transfer, count or return posting) and of its sales order, read
+// for the page of movements shown. A movement whose document has no number
+// keeps a recorded text reference that is not an internal id, else none.
+async function movementDocumentNumbers(prisma, tenantId, rows) {
+  const wanted = new Map();
+  for (const row of rows) {
+    const ref = sourceDocumentRef(row);
+    if (!ref?.id) continue;
+    if (!wanted.has(ref.kind)) wanted.set(ref.kind, new Set());
+    wanted.get(ref.kind).add(ref.id);
+  }
+  const numbers = new Map();
+  await Promise.all([...wanted].map(async ([kind, ids]) => {
+    const delegate = prisma[kind.model];
+    if (typeof delegate?.findMany !== "function") return;
+    const found = await delegate.findMany({ where: { tenantId, id: { in: [...ids] } }, select: { id: true, [kind.number]: true } });
+    for (const document of found) if (text(document[kind.number])) numbers.set(`${kind.model}:${document.id}`, text(document[kind.number]));
+  }));
+  const orderIds = [...new Set(rows.map((row) => text(row.relatedSalesOrderId)).filter(Boolean))];
+  const orders = orderIds.length && typeof prisma.salesOrder?.findMany === "function"
+    ? await prisma.salesOrder.findMany({ where: { tenantId, id: { in: orderIds } }, select: { id: true, orderNumber: true } })
+    : [];
+  const orderNumbers = new Map(orders.map((order) => [order.id, text(order.orderNumber)]));
+  return (row) => {
+    const ref = sourceDocumentRef(row);
+    const recorded = text(row.sourceDocument);
+    return {
+      sourceDocumentNumber: (ref && numbers.get(`${ref.kind.model}:${ref.id}`)) || (recorded && !UUID.test(recorded) ? recorded : null),
+      relatedSalesOrderNumber: orderNumbers.get(text(row.relatedSalesOrderId)) || null,
+    };
+  };
+}
+
+// Every movement type and warehouse in the list's context, for its menus.
+async function movementFacets(prisma, where) {
+  if (typeof prisma.inventoryMovement.groupBy !== "function") return null;
+  const groups = await prisma.inventoryMovement.groupBy({ by: ["movementType", "warehouseId"], where, _count: { _all: true } });
+  const types = new Map();
+  for (const group of groups) if (text(group.movementType)) types.set(group.movementType, (types.get(group.movementType) || 0) + (group._count?._all || 0));
+  return {
+    movementTypes: [...types].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)),
+    warehouseIds: [...new Set(groups.map((group) => text(group.warehouseId)).filter(Boolean))].sort(),
+  };
+}
+
 function balanceWhere(actor, query = {}) {
   return {
     tenantId: actor.tenantId,
@@ -180,8 +255,9 @@ function quarantineBalanceWhere(actor, query = {}, { selector = false } = {}) {
   };
 }
 
-function movementModel(row) {
+function movementModel(row, numbers = () => ({})) {
   return {
+    ...numbers(row),
     movementId: row.id,
     id: row.id,
     itemId: row.itemId,
@@ -304,7 +380,7 @@ export function createInventoryAuthoritativeReadService({ prisma } = {}) {
     );
     const { page, pageSize, skip } = pageOptions(query);
     const where = movementWhere(actor, query);
-    const [total, rows] = await Promise.all([
+    const [total, rows, facets] = await Promise.all([
       prisma.inventoryMovement.count({ where }),
       prisma.inventoryMovement.findMany({
         where,
@@ -312,13 +388,16 @@ export function createInventoryAuthoritativeReadService({ prisma } = {}) {
         skip,
         take: pageSize,
       }),
+      movementFacets(prisma, movementContextWhere(actor, query)),
     ]);
+    const numbers = await movementDocumentNumbers(prisma, actor.tenantId, rows);
     return {
       dataSource: "Authoritative PostgreSQL",
       page,
       pageSize,
       total,
-      movements: rows.map(movementModel),
+      ...(facets ? { facets } : {}),
+      movements: rows.map((row) => movementModel(row, numbers)),
     };
   }
 

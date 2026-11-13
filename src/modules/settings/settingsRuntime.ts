@@ -11,6 +11,8 @@ export type SettingsRuntime = {
     quantityTolerance: string; pricePercentageTolerance: string; priceAbsoluteTolerance: string; amountTolerance: string;
     // A PO created from an approved purchase request is approved with it (default on).
     approvedRequestApprovesPurchaseOrder?: boolean;
+    // Today may email follow-ups on overdue orders to suppliers (default off).
+    supplierFollowUpEmail?: boolean;
   };
   modules: { defaultModule: string; items: Array<{ id: string; label: string; enabled: boolean; order: number; roles: string[] }> };
   ai: { modelAssistEnabled?: boolean; capabilities: Array<{ id: string; label: string; level: string }>; evidenceRequired: boolean; retainDays: number };
@@ -30,7 +32,15 @@ export async function saveSettingsSection<K extends keyof SettingsRuntime>(secti
   });
 }
 
-export const fetchSettingsAudit = () => apiJson<SettingsAuditEntry[]>('/api/audit-log?limit=200');
+// The latest 200 entries, or those of one record (entityType and entityId).
+export const fetchSettingsAudit = (filter: { entityType?: string; entityId?: string } = {}) => {
+  const query = new URLSearchParams({ limit: '200' });
+  if (filter.entityType && filter.entityId) {
+    query.set('entityType', filter.entityType);
+    query.set('entityId', filter.entityId);
+  }
+  return apiJson<SettingsAuditEntry[]>(`/api/audit-log?${query}`);
+};
 
 // The workspace's AI status (server/domain/ai-workspace-access.mjs).
 export type AiWorkspaceStatus = {

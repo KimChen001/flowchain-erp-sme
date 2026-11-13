@@ -21,7 +21,8 @@ const COPY = {
   all: ["Matches", "匹配记录"],
   allNote: ["Supplier invoices checked against PO and receipt", "已与采购订单和收货核对的发票"],
   matched: ["Matched", "已匹配"],
-  matchedNote: ["Amounts and quantities agree", "金额与数量一致"],
+  // The tile also counts matches whose differences were all approved.
+  matchedNote: ["Amounts agree, or differences approved", "金额一致，或差异已批准"],
   pending: ["Pending", "待处理"],
   pendingNote: ["Waiting for a receipt or a review", "等待收货或复核"],
   variance: ["Variances", "差异"],
@@ -35,9 +36,9 @@ const COPY = {
   result: ["Result", "结果"],
   allResults: ["All results", "全部结果"],
   listTitle: ["Match list", "匹配列表"],
+  // A match is named by its supplier invoice's number, as its page is.
   match: ["Match", "匹配"],
-  documents: ["PO / receipt / invoice", "采购订单 / 收货单 / 发票"],
-  poAmount: ["PO amount", "采购订单金额"],
+  documents: ["PO / receipt", "采购订单 / 收货单"],
   invoiceAmount: ["Invoice amount", "发票金额"],
   varianceAmount: ["Variance", "差异金额"],
   status: ["Status", "状态"],
@@ -49,10 +50,20 @@ const COPY = {
   noMatch: ["No matches fit these filters", "没有符合筛选条件的匹配记录"],
 } as const;
 
+// A match as the list reads it: the read model adds the supplier's invoice
+// number (invoiceNumber) and the receipt's GRN number (grnNumber), when
+// recorded, to the ids it links by.
+type MatchRow = ProcurementDocument & { grnNumber?: string };
+
 type Result = "matched" | "pending" | "variance";
 // The server's match status, a code or its Chinese label, read as one of three results.
+// A match whose every difference was approved ("variance_approved", which the
+// read model also says of an invoice approved before that status was stored)
+// is resolved, though its variance amount stays on record; the Matched tile
+// says it counts them.
 const resultOf = (row: ProcurementDocument): Result => {
   const tone: StatusTone = statusToneOf(row.matchStatus || row.status);
+  if (row.matchStatus === "variance_approved" || row.status === "variance_approved") return "matched";
   if (tone === "danger" || Number(row.varianceAmount || 0) !== 0) return "variance";
   return tone === "success" ? "matched" : "pending";
 };
@@ -62,7 +73,7 @@ export function ThreeWayMatchListPage() {
   const copy = useWorkspaceCopy();
   const { locale, language } = useI18n();
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
-  const [rows, setRows] = useState<ProcurementDocument[]>([]);
+  const [rows, setRows] = useState<MatchRow[]>([]);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   const [query, setQuery] = useState("");
   const [supplier, setSupplier] = useState("");
@@ -89,12 +100,15 @@ export function ThreeWayMatchListPage() {
     void load();
   }, [load]);
 
-  const poOf = (row: ProcurementDocument) => row.poId || row.po || row.relatedPo || "";
+  const poOf = (row: MatchRow) => row.poId || row.po || row.relatedPo || "";
+  // The numbers people read; the id only when no number is recorded.
+  const invoiceOf = (row: MatchRow) => row.invoiceNumber || row.invoiceId || row.id || "";
+  const receiptOf = (row: MatchRow) => row.grnNumber || row.grnId || "";
   const needle = query.trim().toLowerCase();
   const shown = rows.filter((row) =>
     (!result || resultOf(row) === result)
     && (!supplier || row.supplierName === supplier)
-    && (!needle || [row.id, row.poNumber, poOf(row), row.grnId, row.invoiceId].some((value) => String(value || "").toLowerCase().includes(needle))),
+    && (!needle || [row.invoiceNumber, row.poNumber, row.grnNumber, row.id, poOf(row), row.grnId, row.invoiceId].some((value) => String(value || "").toLowerCase().includes(needle))),
   );
   const suppliers = [...new Set(rows.map((row) => String(row.supplierName || "")).filter(Boolean))].sort();
   const count = (name: Result) => rows.filter((row) => resultOf(row) === name).length;
@@ -142,49 +156,52 @@ export function ThreeWayMatchListPage() {
       </ListSearchCard>
 
       <ListCard title={tr("listTitle")} total={state === "loaded" ? rows.length : undefined} shown={shown.length} testId="three-way-match-record-list">
+        {/* Six columns that fit a 1440 px window: the match by its invoice
+            number, the PO and receipt by theirs, the invoice amount, the
+            variance and the status. The whole PO amount is not a column: an
+            invoice may bill part of the order, and the match page compares
+            it line by line. */}
         <div className={tableScrollClass}>
-          <table className={`w-full min-w-[1080px] text-left ${tableBodyTextClass}`}>
+          <table className={`w-full min-w-[900px] text-left ${tableBodyTextClass}`} data-testid="three-way-match-table">
             <thead>
               <tr style={listHeadRowStyle}>
                 <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>{tr("match")}</th>
                 <th className={thClass} style={{ color: A.gray1 }}>{tr("supplier")}</th>
                 <th className={thClass} style={{ color: A.gray1 }}>{tr("documents")}</th>
-                <th className={thRightClass} style={{ color: A.gray1 }}>{tr("poAmount")}</th>
                 <th className={thRightClass} style={{ color: A.gray1 }}>{tr("invoiceAmount")}</th>
                 <th className={thRightClass} style={{ color: A.gray1 }}>{tr("varianceAmount")}</th>
-                <th className={thClass} style={{ color: A.gray1 }}>{tr("status")}</th>
+                <th className={thClass} style={{ color: A.gray1 }} data-card-status="">{tr("status")}</th>
               </tr>
             </thead>
             <tbody>
-              {state === "loading" && <tr><td colSpan={7} className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>{tr("loading")}</td></tr>}
-              {state === "error" && <ListStateRow colSpan={7} state="error" title={tr("loadFailed")} onRetry={() => void load()} />}
+              {state === "loading" && <tr><td colSpan={6} className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>{tr("loading")}</td></tr>}
+              {state === "error" && <ListStateRow colSpan={6} state="error" title={tr("loadFailed")} onRetry={() => void load()} />}
               {state === "loaded" && shown.length === 0 && (
                 rows.length === 0
-                  ? <ListStateRow colSpan={7} state="empty" title={tr("empty")} detail={tr("emptyDetail")} />
-                  : <ListStateRow colSpan={7} state="empty" title={tr("noMatch")} />
+                  ? <ListStateRow colSpan={6} state="empty" title={tr("empty")} detail={tr("emptyDetail")} />
+                  : <ListStateRow colSpan={6} state="empty" title={tr("noMatch")} />
               )}
               {state === "loaded" && shown.map((row, index) => {
                 const reason = row.blockingReason || row.exceptionReason;
                 const variance = Number(row.varianceAmount || 0);
                 return (
-                  <tr key={row.id} className={`${listRowClass} align-top`} style={listRowStyle(index, shown.length)}>
+                  <tr key={row.id} className={`${listRowClass} align-top`} style={listRowStyle(index, shown.length)} data-testid="three-way-match-row">
                     <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
-                      <BusinessEntityLink entityType="three_way_match" entityId={row.id} className={tableLinkClass}>{row.id}</BusinessEntityLink>
+                      <BusinessEntityLink entityType="three_way_match" entityId={row.id} className={tableLinkClass}>{invoiceOf(row)}</BusinessEntityLink>
                     </td>
                     <td className={`${tdNameClass} max-w-[200px] truncate`} title={row.supplierName}>{row.supplierName || <span style={{ color: A.gray2 }}>{tr("noSupplier")}</span>}</td>
                     <td className={tdNowrapClass}>
                       <div className="flex flex-col gap-0.5 text-[12px]">
                         <BusinessEntityLink entityType="purchase_order" entityId={poOf(row)} number={row.poNumber} />
-                        <BusinessEntityLink entityType="receiving_doc" entityId={row.grnId}>{row.grnId || "—"}</BusinessEntityLink>
-                        <BusinessEntityLink entityType="supplier_invoice" entityId={row.invoiceId}>{row.invoiceId || "—"}</BusinessEntityLink>
+                        <BusinessEntityLink entityType="receiving_doc" entityId={row.grnId}>{receiptOf(row) || "—"}</BusinessEntityLink>
                       </div>
                     </td>
-                    <td className={tdNumericRightClass}>{money(row.poAmount, row.currency, locale)}</td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row.invoiceAmount, row.currency, locale)}</td>
-                    <td className={tdNumericRightClass} style={{ color: variance ? "#b91c1c" : A.sub }}>{money(row.varianceAmount, row.currency, locale)}</td>
-                    <td className={`${tdNameClass} w-[300px]`}>
+                    {/* Red only while the variance waits on a decision; an approved one stays on record in gray. */}
+                    <td className={tdNumericRightClass} style={{ color: variance && resultOf(row) === "variance" ? "#b91c1c" : A.sub }}>{money(row.varianceAmount, row.currency, locale)}</td>
+                    <td className={`${tdNameClass} min-w-[160px]`}>
                       <StatusChip label={copy(row.matchStatus || row.status || "—")} tone={RESULT_TONE[resultOf(row)]} />
-                      {reason && <div className="mt-1 max-w-[300px] whitespace-normal text-[11px] leading-4 text-amber-800">{copy(reason)}</div>}
+                      {reason && <div className="mt-1 max-w-[260px] whitespace-normal text-[11px] leading-4 text-amber-800">{copy(reason)}</div>}
                     </td>
                   </tr>
                 );

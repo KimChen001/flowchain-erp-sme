@@ -3,8 +3,9 @@ import { AI_TOOL_LIMITS, aiToolList, aiToolPurchaseOrder, aiToolRef, aiToolSuppl
 import { aiStockProjection } from './ai-read-tools.mjs'
 import { runHighestRisk } from './ai-skill-highest-risk.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
-import { AI_SKILL_SIGNAL_TYPES, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
+import { AI_SKILL_SIGNAL_TYPES, DUE_SOON_DAYS, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { readFirstRunSetup } from './first-run-setup.mjs'
+import { decisionHistoryTool, decisionItemsTool } from './ai-assistant-v2-decision-tools.mjs'
 import { createRfqSupplierComparisonService } from './rfq-supplier-comparison-service.mjs'
 import { listItemSupplierRecords, mapItemSupplierRecord } from './master-data-commands.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
@@ -32,6 +33,8 @@ const array = (value) => (Array.isArray(value) ? value : [])
 const fold = (value) => text(value).toLowerCase()
 const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `How many rows to return, ${AI_TOOL_LIMITS.rows} by default.` }
+// A rate as the model reads it: one decimal; calculations keep the exact one.
+const rate1 = (value) => (value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Math.round(Number(value) * 10) / 10)
 const stockRow = (facts, sku) => array(facts.inventory?.rows).find((row) => fold(row.sku) === fold(sku)) || null
 const openRequestsRead = (facts) => Array.isArray(facts.purchaseRequests?.open)
 
@@ -68,6 +71,43 @@ function requestCoverOf(facts, item) {
   return row ? { pendingRequests: openRequestsOf(facts, row), covered: quantityOf(facts, row).covered } : {}
 }
 
+// The item's name for an item row, so a table or card shows it beside the
+// SKU (2026-11-08: today's priorities read "21166 · 21166").
+function attentionItemName(facts, item) {
+  if (item.entityType !== 'item') return null
+  const row = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)].find((entry) => (entry.itemId && entry.itemId === item.entityId) || fold(entry.sku) === fold(item.label))
+  return text(row?.itemName) || null
+}
+
+// The late lines' total per SKU where they span more than one late order, so
+// an answer need not add them up itself (2026-11-09 on Flash, today's
+// priorities: "a call with Acme covers both of its late orders, 360 pcs of
+// 85123A in all", 120 + 240, flagged as a figure no tool gave). It follows
+// the list's focus: a supplier's orders, the SKUs of one order, or one SKU.
+const LATE_BY_SKU_LISTED = 10
+function lateLinesBySku(facts, focus) {
+  if (!Array.isArray(facts.purchaseOrders?.rows)) return []
+  const late = facts.purchaseOrders.rows.filter((po) => (po.overdueDays || 0) > 0 && (focus?.entityType !== 'supplier' || po.supplierId === focus.entityId))
+  const groups = new Map()
+  for (const po of late) {
+    for (const line of array(po.openLines)) {
+      const remaining = Number(line.remaining)
+      if (!text(line.sku) || !(remaining > 0)) continue
+      const key = `${fold(line.sku)}|${text(line.unit)}`
+      const group = groups.get(key) || { sku: text(line.sku), itemName: text(line.itemName) || null, unit: text(line.unit) || null, lateQuantity: 0, orders: [], suppliers: [] }
+      group.lateQuantity = Math.round((group.lateQuantity + remaining) * 1000) / 1000
+      if (!group.orders.includes(po.orderNumber)) group.orders.push(po.orderNumber)
+      if (po.supplier && !group.suppliers.includes(po.supplier)) group.suppliers.push(po.supplier)
+      groups.set(key, group)
+    }
+  }
+  return [...groups.values()]
+    .filter((group) => group.orders.length > 1)
+    .filter((group) => focus?.entityType !== 'purchase_order' || group.orders.includes(focus.label))
+    .filter((group) => focus?.entityType !== 'item' || fold(group.sku) === fold(focus.label))
+    .slice(0, LATE_BY_SKU_LISTED)
+}
+
 function attentionRow(facts, item, rank) {
   const data = isObject(item.data) ? { ...item.data, ...requestCoverOf(facts, item) } : {}
   const details = Object.fromEntries(ATTENTION_DETAILS
@@ -75,15 +115,46 @@ function attentionRow(facts, item, rank) {
     .map((key) => [key, typeof data[key] === 'string' ? data[key].slice(0, AI_TOOL_LIMITS.text) : data[key]]))
   return {
     rank, type: item.type, also: [...new Set(array(item.also))], ...(item.type === 'supplier_exposure' ? { problemTypes: array(data.types) } : {}),
-    severity: item.severity, label: item.label, whenKind: item.when?.kind || 'undated', days: item.when?.days ?? null, date: item.when?.date ?? null,
+    severity: item.severity, label: item.label, ...(attentionItemName(facts, item) ? { itemName: attentionItemName(facts, item) } : {}), whenKind: item.when?.kind || 'undated', days: item.when?.days ?? null, date: item.when?.date ?? null,
     supplier: item.supplier || null, details,
     ref: aiToolRef(item.entityType, item.entityId, item.label),
   }
 }
 
+// What the user decided on Today about the records the attention list names
+// (docs/drafted-decisions-design.md §4.5): an overdue order chased or set
+// aside, an item's reorder set aside or covered. Keyed by entity type and id;
+// empty without the decision items table (no database).
+const ASIDE_ENTITY = Object.freeze({ purchase_order_overdue: 'purchase_order', reorder_now: 'item' })
+const ASIDE_SIGNALS = Object.freeze({ purchase_order: ['po_overdue', 'po_due_7d'], item: ['stock_shortage', 'stock_below_safety', 'stock_below_reorder'] })
+async function setAsideOnToday(context) {
+  const model = context?.prisma?.decisionItem
+  if (!model || typeof model.findMany !== 'function' || !context.tenantId) return new Map()
+  try {
+    const items = await model.findMany({ where: { tenantId: context.tenantId, state: 'decided', activeKey: { not: null } }, select: { kind: true, recordId: true, decision: true, note: true, returnOn: true, snapshot: true } })
+    return new Map(items.filter((item) => ASIDE_ENTITY[item.kind]).map((item) => [`${ASIDE_ENTITY[item.kind]}:${item.recordId}`, {
+      decision: item.decision, decidedOn: item.snapshot?.decidedOn || null, ...(item.returnOn ? { returnOn: item.returnOn } : {}), ...(item.decision === 'chased' && item.note === 'email' ? { emailed: true } : {}),
+    }]))
+  } catch {
+    return new Map()
+  }
+}
+const asideOf = (aside, item) => {
+  const found = aside.get(`${item.entityType}:${item.entityId}`)
+  if (!found) return null
+  const types = [item.type, ...array(item.also)]
+  return types.some((type) => array(ASIDE_SIGNALS[item.entityType]).includes(type)) ? found : null
+}
+
+function attentionTypeCounts(items) {
+  const counts = {}
+  for (const item of items) for (const type of new Set([item.type, ...array(item.also)])) counts[type] = (counts[type] || 0) + 1
+  return counts
+}
+
 const attentionList = defineAiTool({
   name: 'attention_list',
-  description: 'What needs attention, ranked by date and never by a score. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it. On a stock row, pendingRequests and covered count the open purchase requests in any status, drafts included.',
+  description: 'What needs attention, ranked by date and never by a score. A row the user already decided on Today carries setAside (decision: chased, not_now, not_needed, accepted or covered, with decidedOn); never present such a row as new or as something to do first. setAsideCount counts them in the whole list. kind today (default): today\'s priorities, the longest overdue first, then what falls due within 7 days, then the oldest open problems, then stock below its levels. kind problems: the open problems (late purchase orders, stock below its levels, supplier invoice differences, rejected receipts, and suppliers with several of them), the oldest date first. Narrow it to one record with focus (a purchase order number, a SKU or a supplier) or to some signal types with types. Each row gives the date that places it. byType counts the rows of each type in the whole list, also those past the limit: stock rows come last, so read byType (stock_below_safety, stock_below_reorder, stock_shortage) before saying nothing is short or below its levels, and ask again with types to list them. On a stock row, pendingRequests and covered count the open purchase requests in any status, drafts included. lateLinesBySku gives, for a SKU on more than one late purchase order, the late lines\' total still to receive (lateQuantity) with those orders and their suppliers.',
   parameters: {
     kind: { type: 'string', enum: ['today', 'problems'], description: 'today by default.' },
     focus: { type: 'string', description: 'A purchase order number, a SKU, or a supplier name or code.' },
@@ -92,9 +163,10 @@ const attentionList = defineAiTool({
   },
   available: (facts) => Boolean(facts.purchaseOrders || facts.inventory || facts.invoices || facts.purchaseRequests || facts.rfqs || facts.receipts),
   assistantV2Only: true,
-  run(args, { facts }) {
+  async run(args, { facts, context }) {
     const kind = args.kind || 'today'
     const focus = args.focus ? attentionFocus(facts, args.focus) : null
+    const aside = await setAsideOnToday(context)
     if (args.focus && !focus) return { error: 'not_found' }
     // The skills' own engines, every item kept: the type filter applies
     // before the limit, so the total counts what matches.
@@ -102,13 +174,27 @@ const attentionList = defineAiTool({
     const types = array(args.types).length ? new Set(args.types) : null
     const items = types ? result.items.filter((item) => types.has(item.type) || array(item.also).some((type) => types.has(type))) : result.items
     const limit = args.limit || 5
+    const lateBySku = lateLinesBySku(facts, focus)
     return {
       asOf: facts.asOf,
       kind,
       ...(focus ? { focus: { label: focus.label, ref: aiToolRef(focus.entityType, focus.entityId, focus.label) } } : {}),
-      rows: items.slice(0, limit).map((item, index) => attentionRow(facts, item, index + 1)),
+      rows: items.slice(0, limit).map((item, index) => {
+        const row = attentionRow(facts, item, index + 1)
+        const setAside = asideOf(aside, item)
+        return setAside ? { ...row, setAside } : row
+      }),
       total: items.length,
+      ...(aside.size ? { setAsideCount: items.filter((item) => asideOf(aside, item)).length } : {}),
       more: Math.max(0, items.length - limit),
+      // How many rows of each type the whole list holds, those past the
+      // limit too (2026-11-09 on Flash: "nothing is short on stock today"
+      // read off the first eight of 29 rows, with 85123A below its safety
+      // stock further down). A row counts under its type and each also.
+      byType: attentionTypeCounts(items),
+      // The window of po_due_7d, for "7 orders fall due within 7 days".
+      dueSoonDays: DUE_SOON_DAYS,
+      ...(lateBySku.length ? { lateLinesBySku: lateBySku } : {}),
     }
   },
 })
@@ -269,6 +355,21 @@ async function recordedDemand(context, facts, items) {
 // What an item needs to cover a period: recorded daily demand over the
 // supplier's lead time and the days to cover after the order arrives, plus
 // safety stock. null without enough recorded demand.
+// Whether the user's words name a period of stock to order for: "2 weeks",
+// "a month's worth", "for the next two weeks", 两周的量, 一个月, 下个月的量,
+// 够卖到月底. "This week", 这周 and 本周 say when, so they do not.
+const COVER_PERIOD = [
+  /\d+\s*-?\s*(?:days?|weeks?|wks?|months?|mos?)\b/i,
+  /\b(?:a|one|two|three|four|five|six|eight|ten|twelve|a\s+couple\s+of|a\s+few|several)\s+(?:days?|weeks?|months?|quarters?)\b/i,
+  /\b(?:week|month|quarter|year)(?:'s|s')\s+(?:worth|supply|stock|demand|sales)\b/i,
+  /\b(?:for|cover(?:ing)?|enough\s+for|to\s+last|through|until\s+the\s+end\s+of)\s+(?:the\s+)?(?:next|coming|rest\s+of\s+the)\s+(?:\w+\s+)?(?:days?|weeks?|month|quarter|year)\b/i,
+  /\b(?:until|through|to)\s+(?:the\s+)?end\s+of\s+(?:the\s+)?(?:week|month|quarter|year)\b/i,
+  /[\d一二两三四五六七八九十半几]+\s*(?:个)?\s*(?:天|日|周|星期|礼拜|月|季度)/,
+  /下(?:个)?(?:周|星期|礼拜|月|季度)的?(?:量|用量|需求|销量|库存)/,
+  /(?:够|撑)(?:用|卖|到)|到(?:月底|月末|年底|季度末)/,
+]
+export const namesCoverPeriod = (value) => COVER_PERIOD.some((pattern) => pattern.test(String(value || '')))
+
 const coverTargetOf = (row, rate, lead, coverDays) => (rate === null || !coverDays ? null : Math.ceil(rate * ((lead ?? 0) + coverDays) + Math.max(0, Number(row.safetyStock) || 0)))
 const COVER_SOURCE = Object.freeze({ [PURCHASE_SUGGESTION_SOURCES.reorderGap]: PURCHASE_SUGGESTION_SOURCES.coverDays, [PURCHASE_SUGGESTION_SOURCES.raisedToMoq]: PURCHASE_SUGGESTION_SOURCES.coverDaysRaisedToMoq })
 // The shared quantity rule with the cover target in place of the reorder
@@ -301,7 +402,7 @@ const suggestPurchaseLines = defineAiTool({
   parameters: {
     skus: { type: 'array', items: { type: 'string' }, maxItems: AI_TOOL_LIMITS.items, description: 'The SKUs the user named.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_SUGGESTED, description: `How many items to suggest when none is named, ${MAX_SUGGESTED} by default.` },
-    coverDays: { type: 'integer', minimum: 1, maximum: COVER_DAYS_MAX, description: 'Size each line to cover this many days after the order arrives, when the user asks to order for a period ("what we need for the next 2 weeks", 一个月的量): target = average daily demand (posted shipments over the last 90 days) × (lead time + coverDays) + safety stock. Without names, any stocked item that falls short of it is suggested. Each row\'s cover gives the basis; an item without enough shipment history keeps the reorder point quantity (cover.basis says so).' },
+    coverDays: { type: 'integer', minimum: 1, maximum: COVER_DAYS_MAX, description: 'Size each line to cover this many days after the order arrives, when the user asks to order for a period ("what we need for the next 2 weeks", 一个月的量): target = average daily demand (posted shipments over the last 90 days) × (lead time + coverDays) + safety stock. Without names, any stocked item that falls short of it is suggested. Each row\'s cover gives the basis; an item without enough shipment history keeps the reorder point quantity (cover.basis says so). "This week" or 这周 says when to order, not a period: leave coverDays out.' },
   },
   available: (facts, context) => Boolean(facts.inventory) && Boolean(context?.actor && context.prisma),
   assistantV2Only: true,
@@ -310,7 +411,13 @@ const suggestPurchaseLines = defineAiTool({
     // a reader of requests never gets suggestions that ignore them.
     if (facts.purchaseRequests && !openRequestsRead(facts)) return { error: 'open_purchase_requests_not_read' }
     const named = array(args.skus).length > 0
-    const coverDays = Number.isInteger(args.coverDays) && args.coverDays >= 1 && args.coverDays <= COVER_DAYS_MAX ? args.coverDays : null
+    const asked = Number.isInteger(args.coverDays) && args.coverDays >= 1 && args.coverDays <= COVER_DAYS_MAX ? args.coverDays : null
+    // A period to cover comes from the user's questions: "this week" says
+    // when (2026-11-09 on Flash: "这周需要补什么货" sized the cakestand at 72,
+    // 7 days of cover, where the reorder list says its minimum order of 60).
+    // Without the questions (another caller), the argument stands.
+    const periodLeftOut = asked !== null && typeof context?.question === 'string' && !namesCoverPeriod(context.question)
+    const coverDays = periodLeftOut ? null : asked
     let rows = []
     if (named) {
       for (const sku of args.skus) {
@@ -382,6 +489,9 @@ const suggestPurchaseLines = defineAiTool({
         openSalesDemand: row.openSalesDemand ?? null, incoming: row.incomingApprovedPo ?? null, openRequests: openRequestsOf(facts, row),
         target: row.noStock ? null : quantity.target, gap: row.noStock ? null : quantity.gap,
         suggestedQuantity: notRun ? { value: null, source: notRun } : quantity.quantity,
+        // The chosen supplier's minimum order in the item's unit, so the form
+        // raises a quantity below it (2026-11-11).
+        minimumOrderQuantity: minimum > 0 ? minimum : null,
         supplier: suppliersVisible && chosen ? { id: chosen.id, name: chosen.name, source: SUPPLIER_SOURCE[plan.fields.supplierId?.ref] || 'approved_supplier' } : null,
         supplierChoices: suppliersVisible ? plan.supplierChoices.map((choice) => ({ id: choice.id, name: choice.name })) : [],
         // Every approved source, so the form's select holds them all and a
@@ -389,6 +499,9 @@ const suggestPurchaseLines = defineAiTool({
         approvedSuppliers: suppliersVisible ? sources.map((source) => ({ id: source.id, name: source.name, preferred: source.preferred, leadTimeDays: source.leadTimeDays, unitPrice: source.referencePrice === null || source.referencePrice === undefined ? null : Number(source.referencePrice), currency: source.currency })) : [],
         needByDate: { value: needBy.value, source: needBy.source, leadTimeDays: needBy.leadTimeDays, warning: needBy.warning },
         estimatedUnitPrice: plan.values.estimatedUnitPrice ? { value: Number(plan.values.estimatedUnitPrice), currency: plan.values.currency || null, source: 'reference_price' } : null,
+        // The line's value at that price, so an answer reads it instead of
+        // multiplying (2026-11-07: Haiku wrote $32,541 for 1,735 × $18.75).
+        estimatedValue: !notRun && plan.values.estimatedUnitPrice && Number.isFinite(Number(quantity.quantity?.value)) && Number(quantity.quantity.value) > 0 ? { value: Math.round(Number(quantity.quantity.value) * Number(plan.values.estimatedUnitPrice) * 100) / 100, currency: plan.values.currency || null } : null,
         warehouseId: plan.values.targetWarehouseId || null,
         covered,
         // The basis of a period's quantity: recorded_demand, or why the
@@ -397,7 +510,7 @@ const suggestPurchaseLines = defineAiTool({
         ...(coverDays ? { cover: {
           days: coverDays,
           basis: coverTarget !== null ? 'recorded_demand' : row.noStock ? 'no_stock_position' : demand?.scoped ? 'warehouse_scope' : 'not_enough_shipment_history',
-          averageDailyDemand: rateOf(row),
+          averageDailyDemand: rate1(rateOf(row)),
           demandWindowDays: DEMAND_WINDOW_DAYS,
           shipmentDays: demandOf(row)?.shipmentDays ?? 0,
           leadTimeDays: chosen?.leadTimeDays ?? null,
@@ -411,6 +524,7 @@ const suggestPurchaseLines = defineAiTool({
       today: facts.today,
       from: named ? 'named' : 'suggestions',
       ...(coverDays ? { coverDays } : {}),
+      ...(periodLeftOut ? { coverDaysLeftOut: 'The questions name no period to cover, so each line is sized to the reorder point, as the reorder list does.' } : {}),
       pricesHidden: !prices,
       suppliersHidden: !suppliersVisible,
       purchaseRequestsRead: openRequestsRead(facts),
@@ -465,14 +579,49 @@ const setupStatus = defineAiTool({
 // set-up records them (the purchase request form's read, itemSources): for
 // "should I switch supplier" the answer had no lead time or minimum order of
 // the other supplier (2026-11-05). Prices only for a user who may see them.
+// Every item one supplier is an approved supplier of, with its terms
+// (2026-11-12 on Flash: "What is the lead time from Globex Party Supplies?"
+// was answered "I don't have its item list to read the lead times from":
+// lead times sit on each item's supplier link, and item_suppliers took a SKU).
+const SUPPLIER_ITEMS_DEFAULT = 20
+async function supplierItems(args, { facts, context }) {
+  const found = aiToolSupplier(facts, args.supplier)
+  if (!found.supplier) return { error: found.error || 'not_found', candidates: found.candidates || [] }
+  // Linked items, and items naming it as preferred supplier with no link yet.
+  const [links, preferring] = await Promise.all([
+    listItemSupplierRecords(context.prisma, context.tenantId, { supplierId: found.supplier.id }),
+    context.prisma.item.findMany({ where: { tenantId: context.tenantId, preferredSupplierId: found.supplier.id }, select: { id: true } }),
+  ])
+  const itemIds = [...new Set([...array(links).map((row) => text(row.payload?.itemId)), ...array(preferring).map((row) => text(row.id))].filter(Boolean))]
+  const items = [...(await storedItems(context, itemIds)).values()]
+  const { byItem, prices } = await itemSources(context, items)
+  const number = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
+  const rows = items.flatMap((item) => {
+    const source = (byItem.get(text(item.id)) || []).find((entry) => entry.id === found.supplier.id)
+    if (!source) return []
+    return [{
+      sku: text(item.sku), itemName: text(item.name) || null, unit: itemStockUnit(item) || null, preferred: source.preferred,
+      leadTimeDays: source.leadTimeDays ?? null, minimumOrderQuantity: number(source.minimumOrderQuantity),
+      referencePrice: prices ? number(source.referencePrice) : null, currency: source.currency || null, ref: aiToolRef('item', text(item.id), text(item.sku)),
+    }]
+  }).sort((a, b) => a.sku.localeCompare(b.sku))
+  const leadTimes = rows.map((row) => row.leadTimeDays).filter((value) => value !== null)
+  return {
+    supplier: found.supplier.name, supplierRef: aiToolRef('supplier', found.supplier.id, found.supplier.name), pricesHidden: !prices,
+    leadTimeDays: leadTimes.length ? { shortest: Math.min(...leadTimes), longest: Math.max(...leadTimes), itemsWithLeadTime: leadTimes.length } : null,
+    ...aiToolList(rows, args.limit || SUPPLIER_ITEMS_DEFAULT),
+  }
+}
+
 const itemSuppliers = defineAiTool({
   name: 'item_suppliers',
-  description: 'An item\'s approved suppliers as its purchasing set-up records them, the preferred first: each with its lead time in days, minimum order quantity and reference price (hidden from users who may not see prices). Use it to compare suppliers of an item or to judge a switch; price_history gives what was actually paid, supplier_performance how each delivers.',
-  parameters: { sku: { type: 'string', description: 'The item\'s SKU.' } },
-  required: ['sku'],
+  description: 'An item\'s approved suppliers as its purchasing set-up records them, the preferred first: each with its lead time in days, minimum order quantity and reference price (hidden from users who may not see prices). Use it to compare suppliers of an item or to judge a switch; price_history gives what was actually paid, supplier_performance how each delivers. With supplier instead of sku: every item that supplier is an approved supplier of, with the same terms, for "what is the lead time from Acme" or "what do we buy from Acme".',
+  parameters: { sku: { type: 'string', description: 'The item\'s SKU.' }, supplier: { type: 'string', description: 'Instead of sku: a supplier name, code or id.' }, limit: { type: 'integer', minimum: 1, maximum: 50, description: 'With supplier: 20 items by default.' } },
   available: (facts, context) => Boolean(facts.inventory) && Array.isArray(facts.suppliers) && Boolean(context?.actor && context.prisma),
   assistantV2Only: true,
   async run(args, { facts, context }) {
+    if (!args.sku && args.supplier) return supplierItems(args, { facts, context })
+    if (!args.sku) return { error: 'invalid_arguments', detail: 'Give sku or supplier.' }
     const row = stockRow(facts, args.sku) || array(facts.inventory.masterOnly).find((entry) => fold(entry.sku) === fold(args.sku))
     if (!row || !text(row.itemId)) return { error: 'not_found' }
     const item = (await storedItems(context, [text(row.itemId)])).get(text(row.itemId))
@@ -571,7 +720,7 @@ const preferredSource = (sources) => sources.find((source) => source.preferred) 
 
 const orderQuantityCosts = defineAiTool({
   name: 'order_quantity_costs',
-  description: `Compares order quantities for one item over a year: for each quantity the days of demand it covers, orders a year, average cycle stock, the order's value, the yearly holding cost and, when the user gives a cost per order, the yearly ordering cost and the total. For each pair, the extra holding cost of the larger one, the orders it saves and the break-even cost per order (the larger is cheaper overall when placing and receiving one order costs more than that). Also the economic order quantity (EOQ) at the user's cost per order, or at example costs per order of ${EOQ_EXAMPLE_ORDER_COSTS.join(', ')}. Demand is the item's recorded average daily demand (posted shipments over the last ${DEMAND_WINDOW_DAYS} days); price is the approved supplier's reference price. FlowChain records no price breaks and no cost per order, so the result says what it assumed. Use it for "order 100 instead of 50?", "is a bigger order cheaper?", "what quantity should I order?".`,
+  description: `Compares order quantities for one item over a year: for each quantity the days of demand it covers, orders a year, average cycle stock, the order's value, the yearly holding cost and, when the user gives a cost per order, the yearly ordering cost and the total. For each pair, the extra holding cost of the larger one, the orders it saves and the break-even cost per order (the larger is cheaper overall when placing and receiving one order costs more than that), and, at the user's cost per order, how much less the larger costs a year in all (negative when it costs more). Also the economic order quantity (EOQ) at the user's cost per order, or at example costs per order of ${EOQ_EXAMPLE_ORDER_COSTS.join(', ')}. Demand is the item's recorded average daily demand (posted shipments over the last ${DEMAND_WINDOW_DAYS} days); price is the approved supplier's reference price. FlowChain records no price breaks and no cost per order, so the result says what it assumed. Use it for "order 100 instead of 50?", "is a bigger order cheaper?", "what quantity should I order?".`,
   parameters: {
     sku: { type: 'string', description: 'The item\'s SKU.' },
     quantities: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 10000000 }, maxItems: 5, description: 'The order quantities to compare, in the item\'s stock unit (for example [50, 100]).' },
@@ -630,6 +779,9 @@ const orderQuantityCosts = defineAiTool({
         extraHoldingCostPerYear: holdingPerUnit === null ? null : round(((larger - smaller) / 2) * holdingPerUnit),
         breakEvenCostPerOrder: round(breakEven),
         cheaperAtUserCostPerOrder: costPerOrder === null || breakEven === null ? null : costPerOrder > breakEven ? larger : costPerOrder < breakEven ? smaller : 'equal',
+        // The yearly saving of the larger at the user's cost per order, so an
+        // answer reads it instead of subtracting the totals (2026-11-07).
+        largerSavesPerYear: options[index].totalCostPerYear === null || options[index + 1].totalCostPerYear === null ? null : round(options[index].totalCostPerYear - options[index + 1].totalCostPerYear),
       }
     })
     const eoqQuantity = (cost) => (annual === null || !holdingPerUnit ? null : Math.max(minimum, Math.round(Math.sqrt((2 * annual * cost) / holdingPerUnit))))
@@ -648,7 +800,7 @@ const orderQuantityCosts = defineAiTool({
       priceBreaksRecorded: false,
       demand: rate === null
         ? { averageDailyDemand: null, basis: demand.scoped ? 'warehouse_scope' : 'not_enough_shipment_history', windowDays: DEMAND_WINDOW_DAYS }
-        : { averageDailyDemand: round(rate), annualDemand: Math.round(annual), basis: 'recorded_demand', windowDays: DEMAND_WINDOW_DAYS, shipmentDays: demand.byItem.get(text(item.id))?.shipmentDays ?? null },
+        : { averageDailyDemand: rate1(rate), annualDemand: Math.round(annual), basis: 'recorded_demand', windowDays: DEMAND_WINDOW_DAYS, shipmentDays: demand.byItem.get(text(item.id))?.shipmentDays ?? null },
       assumptions: { ...assumptions, holdingCostPerUnitPerYear: round(holdingPerUnit), costPerOrder, costPerOrderSource: costPerOrder === null ? 'not_recorded' : 'user' },
       options,
       comparisons,
@@ -954,4 +1106,65 @@ function orderPlanResult(result, { facts, records, items, args }) {
   }
 }
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan])
+// The stock projection with the demand the reorder list plans on (2026-11-07:
+// on public data, where every sales order has shipped, it showed no demand
+// for an item shipping 17 a day). weeks keep the open sales orders in the week
+// promised; atRecordedRate runs the same weeks at the average shipped per day
+// over the last 90 days, with the same incoming lines. The two are never
+// added: an open sales order becomes a shipment.
+const stockProjection = defineAiTool({
+  name: 'stock_projection',
+  description: 'How one SKU\'s available stock moves over the next weeks, from what is available today and adding open purchase order lines in the week they are promised. weeks takes off open sales orders in the week promised to the customer. atRecordedRate takes off the average quantity shipped per day over the last 90 days instead (recordedDemand, the reorder list\'s demand), for stock that sells without open sales orders. Lines past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed; lateLinesQuantity is their total; availableIfLateLinesArrive is what is available once the late ones arrive, a figure for later, never today\'s stock; availableIfNoLateLinesArrive is what is available if none of them arrives (today\'s stock), the figure for "if neither arrives" or "without both"; with more than one late line, each gives availableIfOnlyThisArrives and availableWithoutThisLine. belowSafetyStockNow judges today\'s available stock against safety stock (Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point.) runsOutIfNothingArrives gives when today\'s available stock runs out at the shipped rate, in days and as a date. Gives the first week the SKU falls below safety stock or short, on each basis.',
+  parameters: { sku: { type: 'string', description: 'The SKU, or the item\'s name.' }, weeks: { type: 'integer', minimum: 1, maximum: 12, description: '4 by default.' } },
+  required: ['sku'],
+  available: (facts, context) => Boolean(facts.inventory) && Boolean(facts.asOf || facts.today) && Boolean(context?.actor && context.prisma),
+  assistantV2Only: true,
+  async run(args, { facts, context }) {
+    const base = aiStockProjection(facts, { sku: args.sku, weeks: args.weeks || 4 })
+    if (base.error || base.noStockOrOrders) return base
+    // What is available once the lines past their promised date arrive, which
+    // answers add up themselves otherwise (2026-11-07: "库存会增加到 408 件").
+    const late = array(base.notPlacedInAWeek?.incomingPastPromisedDate).reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0)
+    const safetyNow = base.safetyStock !== null && base.safetyStock !== undefined && base.availableToday !== null && base.availableToday !== undefined ? { belowSafetyStockNow: base.availableToday < base.safetyStock } : {}
+    // And what is available if none of them arrives, which is today's stock,
+    // named so (2026-11-08: "即便这两批货都不来…不计入这两批货的 168 件", the
+    // figure without one of the two; without both it was 48).
+    // The late lines' total is given too, which answers otherwise add up
+    // without calculate ("两张逾期单合计还有 360 件未到").
+    // With more than one late line, each line's own cases too (2026-11-08 on
+    // DeepSeek: "either one alone lifts you to 168 pcs or 288 pcs", added up
+    // without calculate).
+    const today = base.availableToday ?? 0
+    const lateLines = array(base.notPlacedInAWeek?.incomingPastPromisedDate)
+    const notPlacedInAWeek = lateLines.length > 1 ? { ...base.notPlacedInAWeek, incomingPastPromisedDate: lateLines.map((entry) => ({ ...entry, availableIfOnlyThisArrives: today + (Number(entry.quantity) || 0), availableWithoutThisLine: today + late - (Number(entry.quantity) || 0) })) } : base.notPlacedInAWeek
+    const projection = { ...base, notPlacedInAWeek, ...safetyNow, ...(late ? { lateLinesQuantity: late, availableIfLateLinesArrive: today + late, availableIfNoLateLinesArrive: today } : {}) }
+    const row = stockRow(facts, base.sku)
+    const item = row?.itemId ? (await storedItems(context, [text(row.itemId)])).get(text(row.itemId)) : null
+    const demand = item ? await recordedDemand(context, facts, [item]) : null
+    if (!demand || demand.scoped) return { ...projection, recordedDemand: { averageDailyDemand: null, reason: demand?.scoped ? 'warehouse_scope' : 'no_item_record' } }
+    const history = demand.byItem.get(text(item.id))
+    const rate = history?.averageDailyDemand ?? null
+    const recordedDemandRow = { averageDailyDemand: rate1(rate), windowDays: DEMAND_WINDOW_DAYS, shipmentDays: history?.shipmentDays ?? 0, ...(rate === null ? { reason: 'not_enough_shipment_history' } : {}) }
+    if (rate === null) return { ...projection, recordedDemand: recordedDemandRow }
+    const weekly = Math.round(rate * 7)
+    const safety = projection.safetyStock
+    let balance = projection.availableToday ?? 0
+    const atRecordedRate = projection.weeks.map((week) => {
+      balance += week.incoming - weekly
+      return { from: week.from, to: week.to, incoming: week.incoming, demand: weekly, endAvailable: balance, belowSafetyStock: safety !== null && safety !== undefined && balance < safety, short: balance < 0 }
+    })
+    return {
+      ...projection,
+      recordedDemand: recordedDemandRow,
+      // The day today's available stock runs out at the shipped rate, if no
+      // order arrives (2026-11-08: "48 pcs would run out within the first
+      // week (by Nov 8)" at 17 a day, about three days, on Nov 8 itself).
+      ...(rate > 0 ? { runsOutIfNothingArrives: (() => { const days = Math.max(0, projection.availableToday ?? 0) / rate; return { days: Math.round(days * 10) / 10, date: addCalendarDays(text(facts.asOf || facts.today).slice(0, 10), Math.floor(days)) } })() } : {}),
+      atRecordedRate,
+      firstWeekBelowSafetyStockAtRecordedRate: atRecordedRate.find((week) => week.belowSafetyStock)?.from || null,
+      firstWeekShortAtRecordedRate: atRecordedRate.find((week) => week.short)?.from || null,
+    }
+  },
+})
+
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan, stockProjection, decisionItemsTool, decisionHistoryTool])

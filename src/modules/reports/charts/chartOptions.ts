@@ -13,16 +13,19 @@ export type ChartContext = {
   ratio: (count: number, total: number) => string;
   language: string;
   large?: boolean;
+  /** One color per supplier (or other business name) across the page's charts, so a supplier keeps its color. */
+  entityColor?: (name: string) => string | undefined;
 };
 
 type Row = Record<string, unknown> & { name?: unknown; filterValue?: unknown };
 type TooltipParam = { marker?: string; seriesName?: string; name?: string; value?: unknown; data?: unknown; dataIndex: number; percent?: number; seriesIndex?: number; treePathInfo?: Array<{ name: string }> };
 
-// Categories take these slots in this order: brand blue, then teal, gold,
-// violet, pink and sky. Neighbouring slots stay apart for color-blind readers,
-// and the first three stay apart in every pair, as scatter and radar need.
-// Slots are never reused: a seventh category and beyond are drawn in OTHER.
-export const PALETTE = ["#2563eb", "#0d9488", "#a16207", "#7c3aed", "#db2777", "#0284c7"];
+// Categories take these slots in this order: the bright set the dashboards
+// were first drawn with (10/01; owner 11/11 preferred it again): blue, teal,
+// amber, violet, pink, sky, green, orange, slate, red, aqua and purple.
+// Neighbouring slots stay apart for color-blind readers. Slots are never
+// reused: a thirteenth category and beyond are drawn in OTHER.
+export const PALETTE = ["#2563eb", "#0d9488", "#f59e0b", "#8b5cf6", "#ec4899", "#0ea5e9", "#65a30d", "#ea580c", "#64748b", "#dc2626", "#14b8a6", "#a855f7"];
 const OTHER = "#64748b";
 const INK = "#0f172a";
 const SUB = "#64748b";
@@ -37,21 +40,39 @@ const DONE = "#0d9488";
 const WAITING = "#f59e0b";
 const PROBLEM = "#dc2626";
 const SEMANTIC: Record<string, string> = {
-  draft: "#cbd5e1", pending_approval: WAITING, approved: "#1e3a8a", issued: "#2563eb", partially_received: "#60a5fa",
+  draft: "#94a3b8", pending_approval: WAITING, approved: "#0ea5e9", issued: "#2563eb", partially_received: "#8b5cf6",
   fully_received: DONE, received: DONE, closed: "#64748b", cancelled: "#94a3b8", canceled: "#94a3b8", rejected: PROBLEM,
-  submitted: "#2563eb", matching: "#60a5fa", exception: PROBLEM, matched: DONE, held: WAITING,
-  confirmed: "#2563eb", shortage_risk: PROBLEM, fulfilled: DONE, partially_fulfilled: "#60a5fa", ready_to_ship: "#1e3a8a",
-  out_of_stock: PROBLEM, below_safety_stock: "#ea580c", below_reorder_point: WAITING, ok: DONE, unknown: "#cbd5e1",
+  submitted: "#0ea5e9", matching: "#6366f1", exception: PROBLEM, matched: DONE, held: WAITING,
+  confirmed: "#2563eb", shortage_risk: PROBLEM, fulfilled: DONE, partially_fulfilled: "#8b5cf6", ready_to_ship: "#0ea5e9",
+  out_of_stock: PROBLEM, below_safety_stock: "#ea580c", below_reorder_point: WAITING, ok: DONE, unknown: "#94a3b8",
   high: PROBLEM, medium: WAITING, low: DONE,
   Matched: DONE, "Match exception": PROBLEM, "Awaiting match": WAITING,
 };
-// Stages run from dark to light blue, one step apart in lightness.
-const STAGES = ["#172554", "#1e3a8a", "#1d4ed8", "#3b82f6", "#60a5fa"];
+// Stages run from indigo through blue and sky to teal and green as work moves
+// toward done: bright, never the near-black navy of the 11/08 theme.
+const STAGES = ["#4f46e5", "#2563eb", "#0ea5e9", "#14b8a6", "#16a34a"];
 
 const rowsOf = (chart: ReportChart) => (chart.data || []) as Row[];
 const num = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : value === null || value === undefined || value === "" || value === "-" ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const filterValueOf = (row: Row) => String(row.filterValue ?? row.name ?? "");
 const slot = (index: number, palette = PALETTE) => palette[index] ?? OTHER;
+// A business name's page-wide color when the page set one, else its slot here.
+const entitySlot = (ctx: ChartContext, name: string, index: number) => ctx.entityColor?.(name) ?? slot(index);
+// The page's font, named so ECharts measures text with the font it draws in:
+// with "inherit" it measured in its default font, so legend entries and
+// captions ran into each other.
+export const CHART_FONT = 'Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, -apple-system, "Segoe UI", sans-serif';
+
+// Months a visual holds only part of (the month to date, or a month the range
+// cuts): their label says so and their bars are drawn lighter and hatched.
+const partialOf = (chart: ReportChart) => new Map((chart.partialPeriods || []).map(item => [item.period, item.reason]));
+function periodLabel(chart: ReportChart, ctx: ChartContext, name: string, partial = partialOf(chart)) {
+  const reason = partial.get(name);
+  const shown = ctx.category(chart, name);
+  // On a second line, so the label stays as narrow as the months beside it.
+  return reason ? `${shown}\n${ctx.copy(reason === "to_date" ? "(to date)" : "(part month)")}` : shown;
+}
+const PARTIAL_BAR = { opacity: 0.45, borderType: "dashed", borderWidth: 1, decal: { symbol: "rect", symbolSize: 1, dashArrayX: [1, 0], dashArrayY: [2, 4], rotation: -Math.PI / 4, color: "rgba(255,255,255,0.7)" } };
 const colorFor = (name: string, index: number, palette = PALETTE) => SEMANTIC[name] || slot(index, palette);
 const escape = (value: unknown) => String(value ?? "").replace(/[&<>"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" })[char] || char);
 
@@ -70,13 +91,13 @@ function axisLabel(ctx: ChartContext, extra: Record<string, unknown> = {}) {
 
 // Legends wrap onto a second line instead of paging, so every entry shows.
 function legend(ctx: ChartContext, extra: Record<string, unknown> = {}) {
-  return { type: "plain", top: 0, left: 0, icon: "roundRect", itemWidth: 10, itemHeight: 10, itemGap: 14, textStyle: { color: SUB, fontSize: ctx.large ? 12 : 11 }, ...extra };
+  return { type: "plain", top: 0, left: 0, icon: "roundRect", itemWidth: 10, itemHeight: 10, itemGap: 18, textStyle: { color: SUB, fontSize: ctx.large ? 12 : 11, fontFamily: CHART_FONT, padding: [0, 2, 0, 0] }, ...extra };
 }
 
 // The chart container is labelled with the visual's title and the card's
 // "Show data" table lists its values, so ECharts' generated description is off.
 function base(chart: ReportChart): Record<string, unknown> {
-  return { color: chart.colors?.length ? chart.colors : PALETTE, animationDuration: 650, animationEasing: "cubicOut", textStyle: { fontFamily: "inherit" }, aria: { enabled: false } };
+  return { color: chart.colors?.length ? chart.colors : PALETTE, animationDuration: 650, animationEasing: "cubicOut", textStyle: { fontFamily: CHART_FONT }, aria: { enabled: false } };
 }
 
 const grid = (extra: Record<string, unknown> = {}) => ({ left: 12, right: 16, top: 36, bottom: 4, outerBoundsMode: "same", ...extra });
@@ -99,6 +120,7 @@ function cartesian(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   const unit = chart.unit || "number";
   const palette = chart.colors?.length ? chart.colors : PALETTE;
   const single = keys.length === 1;
+  const partial = partialOf(chart);
   const series = keys.map((key, index) => {
     const color = slot(index, palette);
     return {
@@ -111,11 +133,12 @@ function cartesian(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       ...(single && !line && rows.length <= 16 ? { label: { show: true, position: sideways ? "right" : "top", color: SUB, fontSize: ctx.large ? 12 : 10, formatter: (param: TooltipParam) => ctx.compact(num((param.data as Row)?.value) ?? 0, unit, chart.currencyCode) } } : {}),
       data: rows.map(row => {
         const value = num(row[key]);
-        return { value, filterValue: filterValueOf(row), ...(single && value !== null && value < 0 ? { itemStyle: { color: PROBLEM, borderRadius: sideways ? [4, 0, 0, 4] : [0, 0, 4, 4] } } : {}) };
+        const partBar = !line && partial.has(String(row.name ?? "")) ? { itemStyle: { color, borderColor: color, borderRadius: stacked ? 0 : sideways ? [0, 4, 4, 0] : [4, 4, 0, 0], ...PARTIAL_BAR } } : {};
+        return { value, filterValue: filterValueOf(row), ...partBar, ...(single && value !== null && value < 0 ? { itemStyle: { color: PROBLEM, borderRadius: sideways ? [4, 0, 0, 4] : [0, 0, 4, 4] } } : {}) };
       }),
     };
   });
-  const names = rows.map(row => ctx.category(chart, String(row.name ?? "")));
+  const names = rows.map(row => periodLabel(chart, ctx, String(row.name ?? ""), partial));
   const categories = categoryAxis(ctx, names, sideways ? { inverse: true, axisLabel: axisLabel(ctx, { width: 150, overflow: "break", lineHeight: 14, interval: 0 }) } : {});
   const values = valueAxis(ctx, unit, chart.currencyCode);
   return {
@@ -139,24 +162,39 @@ function combo(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
     const measure = measures.find(item => axisIndexOf(item) === axis)!;
     return valueAxis(ctx, measure.unit, chart.currencyCode, index ? { splitLine: { show: false } } : {});
   });
-  const series = measures.map((measure, index) => {
+  const partial = partialOf(chart);
+  const isPartial = (index: number) => partial.has(String(rows[index]?.name ?? ""));
+  // The measure each series draws: a line with a partial month gets a second,
+  // dashed series for the stretch to and from that month.
+  const seriesMeasure: ReportMeasure[] = [];
+  const series = measures.flatMap((measure, index): Array<Record<string, unknown>> => {
     const color = slot(index);
-    const data = rows.map(row => ({ value: num(row[measure.key]), filterValue: filterValueOf(row) }));
     const yAxisIndex = Math.max(0, axes.indexOf(axisIndexOf(measure)));
     const name = ctx.copy(measure.label || measure.key);
-    return measure.kind === "line"
-      ? { name, type: "line", yAxisIndex, smooth: 0.35, symbol: "circle", symbolSize: 8, lineStyle: { width: 2, color }, itemStyle: { color, borderColor: "#fff", borderWidth: 2 }, z: 3, data }
-      : { name, type: "bar", yAxisIndex, barMaxWidth: 38, itemStyle: { color, borderRadius: [4, 4, 0, 0] }, emphasis: { focus: "series" }, data };
+    if (measure.kind === "line") {
+      const point = (row: Row, rowIndex: number, keep: boolean) => ({ value: keep ? num(row[measure.key]) : null, filterValue: filterValueOf(row), ...(isPartial(rowIndex) ? { itemStyle: { color: "#fff", borderColor: color, borderWidth: 2 } } : {}) });
+      const line = { name, type: "line", yAxisIndex, smooth: 0.35, symbol: "circle", symbolSize: 8, lineStyle: { width: 2, color }, itemStyle: { color, borderColor: "#fff", borderWidth: 2 }, z: 3 };
+      seriesMeasure.push(measure);
+      if (!partial.size) return [{ ...line, data: rows.map((row, rowIndex) => point(row, rowIndex, true)) }];
+      const near = (rowIndex: number) => isPartial(rowIndex) || isPartial(rowIndex - 1) || isPartial(rowIndex + 1);
+      seriesMeasure.push(measure);
+      return [
+        { ...line, data: rows.map((row, rowIndex) => point(row, rowIndex, !isPartial(rowIndex))) },
+        { ...line, lineStyle: { width: 2, color, type: "dashed" }, data: rows.map((row, rowIndex) => point(row, rowIndex, near(rowIndex))) },
+      ];
+    }
+    seriesMeasure.push(measure);
+    return [{ name, type: "bar", yAxisIndex, barMaxWidth: 38, itemStyle: { color, borderRadius: [4, 4, 0, 0] }, emphasis: { focus: "series" }, data: rows.map((row, rowIndex) => ({ value: num(row[measure.key]), filterValue: filterValueOf(row), ...(isPartial(rowIndex) ? { itemStyle: { color, borderColor: color, borderRadius: [4, 4, 0, 0], ...PARTIAL_BAR } } : {}) })) }];
   });
   return {
     ...base(chart),
     legend: legend(ctx),
     tooltip: tooltip({ trigger: "axis", axisPointer: { type: "shadow", shadowStyle: { color: "rgba(37,99,235,0.06)" } }, formatter: (params: TooltipParam[]) => {
-      const list = Array.isArray(params) ? params : [params];
-      return [`<b>${escape(list[0]?.name)}</b>`, ...list.map(param => `${param.marker}${escape(param.seriesName)}&nbsp;&nbsp;<b>${escape(ctx.format(num((param.data as Row)?.value), measures[param.seriesIndex ?? 0]?.unit || "number", chart.currencyCode))}</b>`)].join("<br/>");
+      const list = (Array.isArray(params) ? params : [params]).filter((param, index, all) => num((param.data as Row)?.value) !== null && all.findIndex(other => other.seriesName === param.seriesName && num((other.data as Row)?.value) !== null) === index);
+      return [`<b>${escape(list[0]?.name ?? (Array.isArray(params) ? params[0]?.name : ""))}</b>`, ...list.map(param => `${param.marker}${escape(param.seriesName)}&nbsp;&nbsp;<b>${escape(ctx.format(num((param.data as Row)?.value), seriesMeasure[param.seriesIndex ?? 0]?.unit || "number", chart.currencyCode))}</b>`)].join("<br/>");
     } }),
     grid: grid(),
-    xAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? "")))),
+    xAxis: categoryAxis(ctx, rows.map(row => periodLabel(chart, ctx, String(row.name ?? ""), partial))),
     yAxis,
     series,
   };
@@ -183,13 +221,16 @@ function pareto(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       const group = classes[index] === "other" ? "" : ` · ${ctx.copy(`Class ${classes[index]}`)}`;
       return `<b>${escape(ctx.category(chart, String(row?.name ?? "")))}</b>${escape(group)}<br/>${escape(ctx.copy(barMeasure?.label || chart.title))}&nbsp;&nbsp;<b>${escape(ctx.format(num(row?.value), unit, chart.currencyCode))}</b><br/>${escape(ctx.copy("Cumulative share"))}&nbsp;&nbsp;<b>${escape(ctx.format(num(row?.["Cumulative share"]), "percentage"))}</b>`;
     } }),
-    grid: grid({ left: rows.length > 6 ? 36 : 12 }),
-    xAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { axisLabel: axisLabel(ctx, { width: 64, overflow: "break", lineHeight: 13, rotate: rows.length > 6 ? 28 : 0, interval: 0 }) }),
+    // Up to eight names break onto lines under their bars. More turn
+    // sideways, cut to one line (the tooltip has the whole name), every one
+    // shown, and the plot moves right so the first clears the value axis.
+    grid: grid({ left: rows.length > 8 ? 52 : 12 }),
+    xAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { axisLabel: axisLabel(ctx, rows.length > 8 ? { width: 96, overflow: "truncate", ellipsis: "…", rotate: 40, interval: 0, hideOverlap: false, margin: 10 } : { width: 76, overflow: "break", lineHeight: 13, interval: 0, hideOverlap: false }) }),
     yAxis: [valueAxis(ctx, unit, chart.currencyCode), valueAxis(ctx, "percentage", null, { min: 0, max: 100, splitLine: { show: false }, axisLabel: axisLabel(ctx, { formatter: (value: number) => `${value}%` }) })],
     series: [
       { name: ctx.copy(barMeasure?.label || chart.title), type: "bar", barMaxWidth: 38, data: rows.map((row, index) => ({ value: num(row.value), filterValue: String(row.filterValue ?? ""), itemStyle: { color: classColor[classes[index]], borderRadius: [4, 4, 0, 0] } })), emphasis: { focus: "series" } },
       // The running share is a reading guide, so it is drawn in ink, not in a category color.
-      { name: ctx.copy("Cumulative share"), type: "line", yAxisIndex: 1, smooth: 0.25, symbol: "circle", symbolSize: 8, lineStyle: { width: 2, color: "#334155" }, itemStyle: { color: "#334155", borderColor: "#fff", borderWidth: 2 }, z: 3, data: rows.map(row => num(row["Cumulative share"])),
+      { name: ctx.copy("Cumulative share"), type: "line", yAxisIndex: 1, smooth: 0.25, symbol: "circle", symbolSize: 8, lineStyle: { width: 3, color: "#f59e0b" }, itemStyle: { color: "#f59e0b", borderColor: "#fff", borderWidth: 2 }, z: 3, data: rows.map(row => num(row["Cumulative share"])),
         markLine: { silent: true, symbol: "none", lineStyle: { color: "#94a3b8", type: "dashed", width: 1 }, label: { color: SUB, fontSize: 10, formatter: "80%", position: "insideEndTop" }, data: [{ yAxis: 80 }] } },
     ],
   };
@@ -214,29 +255,82 @@ function pie(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   };
 }
 
-function funnel(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
+// Each status as a segment of one bar (design §13, P2: segmented bars instead
+// of every donut), with every status listed beneath it: its count and share.
+// Status charts list every status; any other breakdown shows its six largest
+// parts and the rest as "Other" (P3).
+const SEGMENT_LIMIT = 6;
+function segmented(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
+  const unit = chart.unit || "number";
+  const status = Boolean(chart.statusLabels) || chart.id.endsWith("_status") || chart.crossFilter === "status";
+  const sorted = rowsOf(chart).filter(row => (num(row.value) ?? 0) > 0);
+  const kept = status || sorted.length <= SEGMENT_LIMIT ? sorted : [...sorted].sort((a, b) => (num(b.value) ?? 0) - (num(a.value) ?? 0)).slice(0, SEGMENT_LIMIT - 1);
+  const rest = sorted.filter(row => !kept.includes(row));
+  const parts = [
+    ...kept.map((row, index) => ({ name: ctx.category(chart, String(row.name ?? "")), value: num(row.value) ?? 0, filterValue: filterValueOf(row), color: colorFor(String(row.name ?? ""), index, chart.colors?.length ? chart.colors : PALETTE) })),
+    ...(rest.length ? [{ name: ctx.copy("Other"), value: rest.reduce((sum, row) => sum + (num(row.value) ?? 0), 0), filterValue: "", color: OTHER }] : []),
+  ];
+  const total = parts.reduce((sum, part) => sum + part.value, 0);
+  const share = (value: number) => total ? Math.round(value / total * 1000) / 10 : 0;
+  const clean = (value: string) => value.replace(/[{}|]/g, "");
+  const byName = new Map(parts.map(part => [part.name, part]));
+  const big = ctx.large ? 26 : 22;
+  return {
+    ...base(chart),
+    // The total under a small "Total" caption, like a KPI tile: two titles
+    // at fixed places, so the caption never runs into the figure.
+    title: [
+      { text: ctx.copy("Total"), left: 0, top: 0, padding: 0, textStyle: { fontSize: 11, lineHeight: 14, fontWeight: 500, color: SUB } },
+      { text: ctx.format(total, unit, chart.currencyCode), left: 0, top: 18, padding: 0, textStyle: { fontSize: big, lineHeight: big + 4, fontWeight: 650, color: INK } },
+    ],
+    tooltip: tooltip({ trigger: "item", formatter: (param: TooltipParam) => `${param.marker}${escape(param.seriesName)}<br/><b>${escape(ctx.format(num(param.value), unit, chart.currencyCode))}</b>&nbsp;·&nbsp;${share(num(param.value) ?? 0)}%` }),
+    legend: legend(ctx, {
+      top: 92, left: 0, orient: "vertical", itemGap: 9, icon: "circle", itemWidth: 9, itemHeight: 9,
+      formatter: (name: string) => { const part = byName.get(name); return `{name|${clean(name)}}{count|${clean(ctx.format(part?.value ?? 0, unit, chart.currencyCode))}}{share|${share(part?.value ?? 0)}%}`; },
+      textStyle: { rich: { name: { width: ctx.large ? 220 : 150, color: INK, fontSize: ctx.large ? 13 : 12 }, count: { width: ctx.large ? 110 : 80, align: "right", color: INK, fontSize: ctx.large ? 13 : 12, fontWeight: 600 }, share: { width: 54, align: "right", color: SUB, fontSize: ctx.large ? 12 : 11 } } },
+    }),
+    grid: { left: 0, right: 0, top: 52, height: 26, outerBoundsMode: "none" },
+    xAxis: { type: "value", max: total || 1, show: false },
+    yAxis: { type: "category", data: [""], show: false },
+    series: parts.map((part, index) => ({
+      name: part.name, type: "bar", stack: "share", barWidth: 26,
+      itemStyle: { color: part.color, borderColor: "#fff", borderWidth: 1, borderRadius: parts.length === 1 ? 6 : index === 0 ? [6, 0, 0, 6] : index === parts.length - 1 ? [0, 6, 6, 0] : 0 },
+      label: { show: share(part.value) >= 9, position: "inside", color: "#fff", fontSize: 10, fontWeight: 600, formatter: () => `${Math.round(share(part.value))}%` },
+      emphasis: { focus: "series" },
+      data: [{ value: part.value, filterValue: part.filterValue }],
+    })),
+  };
+}
+
+// Stages as horizontal bars from the first stage down (P2: stage bars instead
+// of every funnel), each with its count and its share of the first stage.
+function stageBars(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   const rows = rowsOf(chart);
   const first = num(rows[0]?.value) || 0;
+  const names = rows.map(row => ctx.category(chart, String(row.name ?? "")));
   return {
     ...base(chart),
     tooltip: tooltip({ trigger: "item", formatter: (param: TooltipParam) => {
       const index = param.dataIndex;
-      const value = num(param.value) ?? 0;
+      const value = num((param.data as Row)?.value) ?? 0;
       const previous = index ? num(rows[index - 1]?.value) ?? 0 : value;
-      return `<b>${escape(param.name)}</b>&nbsp;&nbsp;${escape(ctx.format(value, "number"))}<br/>${escape(ctx.copy("Share of first stage"))}&nbsp;&nbsp;<b>${escape(ctx.format(first ? value / first * 100 : null, "percentage"))}</b>${index ? `<br/>${escape(ctx.copy("From previous stage"))}&nbsp;&nbsp;<b>${escape(ctx.format(previous ? value / previous * 100 : null, "percentage"))}</b>` : ""}`;
+      const fromPrevious = index && chart.nested !== false ? `<br/>${escape(ctx.copy("From previous stage"))}&nbsp;&nbsp;<b>${escape(ctx.format(previous ? value / previous * 100 : null, "percentage"))}</b>` : "";
+      return `<b>${escape(names[index])}</b>&nbsp;&nbsp;${escape(ctx.format(value, "number"))}<br/>${escape(ctx.copy("Share of first stage"))}&nbsp;&nbsp;<b>${escape(ctx.format(first ? value / first * 100 : null, "percentage"))}</b>${fromPrevious}`;
     } }),
+    grid: grid({ top: 4, right: ctx.large ? 120 : 96 }),
+    xAxis: { type: "value", max: first || undefined, show: false },
+    yAxis: categoryAxis(ctx, names, { inverse: true, axisLine: { show: false }, axisLabel: axisLabel(ctx, { width: ctx.large ? 200 : 132, overflow: "break", lineHeight: 14, interval: 0, color: INK }) }),
     series: [{
-      type: "funnel", sort: "none", left: "2%", width: "52%", top: 6, bottom: 6, minSize: "18%", maxSize: "100%", gap: 4, funnelAlign: "center",
-      label: { show: true, position: "right", color: INK, fontSize: ctx.large ? 13 : 11, formatter: (param: TooltipParam) => `{name|${String(param.name ?? "").replace(/[{}|]/g, "")}}\n{value|${ctx.format(num(param.value), "number")}${param.dataIndex && first ? `  ·  ${Math.round((num(param.value) ?? 0) / first * 100)}%` : ""}}`, rich: { name: { color: SUB, fontSize: ctx.large ? 12 : 11, lineHeight: 16 }, value: { color: INK, fontSize: ctx.large ? 15 : 13, fontWeight: 600, lineHeight: 18 } } },
-      labelLine: { show: true, length: 10, lineStyle: { color: AXIS_LINE } }, itemStyle: { borderColor: "#fff", borderWidth: 1 },
-      emphasis: { label: { fontWeight: 700 } },
-      data: rows.map((row, index) => ({ name: ctx.category(chart, String(row.name ?? "")), value: num(row.value), itemStyle: { color: STAGES[Math.min(index, STAGES.length - 1)] } })),
+      type: "bar", barWidth: ctx.large ? 26 : 20, showBackground: true, backgroundStyle: { color: "#f1f5f9", borderRadius: 4 },
+      label: { show: true, position: "right", color: INK, fontSize: ctx.large ? 13 : 11, formatter: (param: TooltipParam) => { const value = num((param.data as Row)?.value) ?? 0; return `{value|${ctx.format(value, "number")}}${param.dataIndex && first ? `{share|${Math.round(value / first * 100)}%}` : ""}`; }, rich: { value: { color: INK, fontWeight: 600, fontSize: ctx.large ? 13 : 12 }, share: { color: SUB, fontSize: ctx.large ? 12 : 11, padding: [0, 0, 0, 8] } } },
+      data: rows.map((row, index) => ({ value: num(row.value), itemStyle: { color: STAGES[Math.min(index, STAGES.length - 1)], borderRadius: 4 } })),
     }],
   };
 }
 
-// A stacked bar with an invisible base: totals rise from zero, steps float
-// from the running total, decreases (still waiting) in orange and increases in teal.
+// A value bridge read top to bottom (P2: a horizontal bridge instead of the
+// waterfall): totals start at zero, steps float from the running total,
+// decreases (still waiting) in orange and increases in teal.
 function waterfall(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   const rows = rowsOf(chart);
   const totals = new Set(chart.totals || []);
@@ -249,7 +343,7 @@ function waterfall(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
     else if (value >= 0) { lift.push(running); up.push(value); total.push("-"); down.push("-"); running += value; }
     else { running += value; lift.push(running); down.push(-value); total.push("-"); up.push("-"); }
   }
-  const label = (sign: string) => ({ show: true, position: "top", color: SUB, fontSize: ctx.large ? 12 : 10, formatter: (param: TooltipParam) => `${sign}${ctx.compact(num(param.value) ?? 0, unit, chart.currencyCode)}` });
+  const label = (sign: string) => ({ show: true, position: "right", color: INK, fontSize: ctx.large ? 12 : 11, fontWeight: 600, formatter: (param: TooltipParam) => `${sign}${ctx.compact(num(param.value) ?? 0, unit, chart.currencyCode)}` });
   return {
     ...base(chart),
     legend: legend(ctx, { data: [ctx.copy("Total"), ctx.copy("Decrease"), ctx.copy("Increase")] }),
@@ -257,14 +351,14 @@ function waterfall(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       const row = rows[params[0]?.dataIndex ?? 0];
       return `<b>${escape(ctx.category(chart, String(row?.name ?? "")))}</b><br/>${escape(ctx.format(num(row?.value), unit, chart.currencyCode))}`;
     } }),
-    grid: grid(),
-    xAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { axisLabel: axisLabel(ctx, { width: 90, overflow: "break", interval: 0 }) }),
-    yAxis: valueAxis(ctx, unit, chart.currencyCode),
+    grid: grid({ right: 64 }),
+    yAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { inverse: true, axisLabel: axisLabel(ctx, { width: ctx.large ? 200 : 130, overflow: "break", lineHeight: 14, interval: 0, color: INK }) }),
+    xAxis: valueAxis(ctx, unit, chart.currencyCode),
     series: [
       { name: "lift", type: "bar", stack: "bridge", silent: true, itemStyle: { color: "transparent" }, emphasis: { disabled: true }, tooltip: { show: false }, data: lift },
-      { name: ctx.copy("Total"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: PALETTE[0], borderRadius: [4, 4, 0, 0] }, label: label(""), data: total },
-      { name: ctx.copy("Decrease"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: WAITING, borderRadius: 4 }, label: label("−"), data: down },
-      { name: ctx.copy("Increase"), type: "bar", stack: "bridge", barMaxWidth: 52, itemStyle: { color: DONE, borderRadius: 4 }, label: label("+"), data: up },
+      { name: ctx.copy("Total"), type: "bar", stack: "bridge", barMaxWidth: 26, itemStyle: { color: PALETTE[0], borderRadius: 4 }, label: label(""), data: total },
+      { name: ctx.copy("Decrease"), type: "bar", stack: "bridge", barMaxWidth: 26, itemStyle: { color: WAITING, borderRadius: 4 }, label: label("−"), data: down },
+      { name: ctx.copy("Increase"), type: "bar", stack: "bridge", barMaxWidth: 26, itemStyle: { color: DONE, borderRadius: 4 }, label: label("+"), data: up },
     ],
   };
 }
@@ -281,13 +375,13 @@ function treemap(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       return `<b>${path}</b><br/>${escape(ctx.format(value, unit, chart.currencyCode))}${(param.treePathInfo || []).length === 2 && total ? `&nbsp;·&nbsp;${escape(ctx.format(value / total * 100, "percentage"))}` : ""}`;
     } }),
     series: [{
-      name: ctx.copy("All suppliers"), type: "treemap", roam: false, nodeClick: "zoomToNode", leafDepth: 1, top: 4, left: 4, right: 4, bottom: 30,
+      name: ctx.copy("All suppliers"), type: "treemap", roam: false, nodeClick: "zoomToNode", leafDepth: 1, drillDownIcon: "", top: 4, left: 4, right: 4, bottom: 30,
       breadcrumb: { show: true, left: "center", bottom: 2, height: 20, itemStyle: { color: "#f1f5f9", borderColor: "#e2e8f0", textStyle: { color: SUB, fontSize: 11 } }, emphasis: { itemStyle: { color: "#e2e8f0" } } },
       label: { show: true, formatter: (param: TooltipParam) => `{name|${String(param.name ?? "").replace(/[{}|]/g, "")}}\n{value|${ctx.compact(num(param.value) ?? 0, unit, chart.currencyCode)}}`, rich: { name: { fontSize: ctx.large ? 14 : 12, fontWeight: 600, color: "#fff" }, value: { fontSize: ctx.large ? 13 : 11, color: "rgba(255,255,255,0.86)", padding: [4, 0, 0, 0] } } },
       upperLabel: { show: false },
       itemStyle: { borderColor: "#fff", borderWidth: 2, gapWidth: 2, borderRadius: 6 },
       levels: [{ itemStyle: { borderWidth: 0, gapWidth: 3 } }, { colorSaturation: [0.35, 0.55], itemStyle: { gapWidth: 2, borderRadius: 4 } }],
-      data: rows.map((row, index) => ({ name: ctx.category(chart, String(row.name ?? "")), value: num(row.value), filterValue: filterValueOf(row), itemStyle: { color: slot(index) }, children: (chart.breakdown?.[String(row.name)] || []).map(item => ({ name: ctx.category(chart, item.name), value: item.value })) })),
+      data: rows.map((row, index) => ({ name: ctx.category(chart, String(row.name ?? "")), value: num(row.value), filterValue: filterValueOf(row), itemStyle: { color: entitySlot(ctx, String(row.name ?? ""), index) }, children: (chart.breakdown?.[String(row.name)] || []).map(item => ({ name: ctx.category(chart, item.name), value: item.value })) })),
     }],
   };
 }
@@ -316,16 +410,18 @@ function heatmap(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   const columns = chart.seriesKeys || [];
   const values = rows.flatMap(row => columns.map(key => num(row[key]) ?? 0));
   const max = Math.max(1, ...values);
-  const columnLabel = (key: string) => chart.statusLabels ? ctx.category(chart, key) : key;
+  const partial = partialOf(chart);
+  const columnLabel = (key: string) => chart.statusLabels ? ctx.category(chart, key) : partial.has(key) ? periodLabel(chart, ctx, key, partial) : key;
   return {
     ...base(chart),
     tooltip: tooltip({ trigger: "item", formatter: (param: TooltipParam) => {
       const [x, y, value] = (param.data as { value: [number, number, number] }).value;
       return `<b>${escape(ctx.category(chart, String(rows[y]?.name ?? "")))}</b> · ${escape(columnLabel(columns[x]))}<br/>${escape(ctx.format(value, chart.unit || "number"))}`;
     } }),
-    grid: grid({ top: 8, bottom: 44 }),
+    // A fixed name column: the outer bounds do not hold the wrapped names here.
+    grid: grid({ top: 8, bottom: 56, left: ctx.large ? 176 : 152, outerBoundsMode: "none" }),
     xAxis: categoryAxis(ctx, columns.map(columnLabel), { splitArea: { show: false }, axisLine: { show: false }, axisLabel: axisLabel(ctx, { interval: 0 }) }),
-    yAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { inverse: true, axisLine: { show: false }, axisLabel: axisLabel(ctx, { width: 130, overflow: "truncate", interval: 0 }) }),
+    yAxis: categoryAxis(ctx, rows.map(row => ctx.category(chart, String(row.name ?? ""))), { inverse: true, axisLine: { show: false }, axisLabel: axisLabel(ctx, { lineHeight: 13, interval: 0, formatter: (value: string) => wrap(value, 20) }) }),
     visualMap: { min: 0, max, calculable: false, orient: "horizontal", left: "center", bottom: 0, itemWidth: 10, itemHeight: 140, text: [ctx.copy("More"), ctx.copy("Less")], textStyle: { color: SUB, fontSize: 10 }, inRange: { color: ["#eff6ff", "#93c5fd", "#2563eb", "#1e3a8a"] } },
     series: [{
       type: "heatmap",
@@ -395,17 +491,23 @@ function scatter(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   const size = measures.find(item => item.axis === "size");
   if (!x || !y) return {};
   const largest = Math.max(1, ...rows.map(row => num(row[size?.key || ""]) ?? 1));
+  const hasX = chart.guides?.x !== null && chart.guides?.x !== undefined;
+  const hasY = chart.guides?.y !== null && chart.guides?.y !== undefined;
   const guides = [
-    ...(chart.guides?.x !== null && chart.guides?.x !== undefined ? [{ xAxis: chart.guides.x, label: { formatter: ctx.copy("Median"), position: "end", color: SUB, fontSize: 10 } }] : []),
-    ...(chart.guides?.y !== null && chart.guides?.y !== undefined ? [{ yAxis: chart.guides.y, label: { formatter: ctx.copy("Average"), position: "insideEndTop", color: SUB, fontSize: 10 } }] : []),
+    ...(hasX ? [{ xAxis: chart.guides!.x }] : []),
+    ...(hasY ? [{ yAxis: chart.guides!.y }] : []),
   ];
+  // The dashed guides are named in one line above the plot, with their
+  // values, instead of a label on each line that could cover a supplier.
+  const guideNote = [hasX ? `${ctx.copy("Median")} ${ctx.format(chart.guides!.x!, x.unit, chart.currencyCode)}` : "", hasY ? `${ctx.copy("Average")} ${ctx.format(chart.guides!.y!, y.unit)}` : ""].filter(Boolean).join(" · ");
   return {
     ...base(chart),
+    ...(guideNote ? { title: { text: `- -  ${guideNote}`, right: 0, top: 0, padding: 0, textStyle: { fontSize: 10, fontWeight: 500, color: SUB } } } : {}),
     tooltip: tooltip({ trigger: "item", formatter: (param: TooltipParam) => {
       const row = rows[param.dataIndex];
       return `<b>${escape(row?.name)}</b><br/>${escape(ctx.copy(x.key))}&nbsp;&nbsp;<b>${escape(ctx.format(num(row?.[x.key]), x.unit, chart.currencyCode))}</b><br/>${escape(ctx.copy(y.key))}&nbsp;&nbsp;<b>${escape(ctx.format(num(row?.[y.key]), y.unit))}</b>${size ? `<br/>${escape(ctx.copy(size.key))}&nbsp;&nbsp;<b>${escape(ctx.format(num(row?.[size.key]), size.unit))}</b>` : ""}`;
     } }),
-    grid: grid({ top: 30, bottom: 30, left: 12, right: 24 }),
+    grid: grid({ top: 36, bottom: 30, left: 12, right: 24 }),
     xAxis: valueAxis(ctx, x.unit, chart.currencyCode, { name: ctx.copy(x.key), nameLocation: "middle", nameGap: 26, nameTextStyle: { color: SUB, fontSize: 11 }, scale: true }),
     yAxis: valueAxis(ctx, "percentage", null, { name: ctx.copy(y.key), nameLocation: "middle", nameGap: 40, nameTextStyle: { color: SUB, fontSize: 11 }, min: 0, max: 100, axisLabel: axisLabel(ctx, { formatter: (value: number) => `${value}%` }) }),
     series: [{
@@ -415,8 +517,8 @@ function scatter(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
       labelLayout: { hideOverlap: true, moveOverlap: "shiftY" },
       itemStyle: { opacity: 0.85, borderColor: "#fff", borderWidth: 1.5, shadowBlur: 6, shadowColor: "rgba(15,23,42,0.15)" },
       emphasis: { focus: "self", scale: 1.15 },
-      markLine: { silent: true, symbol: "none", lineStyle: { type: "dashed", color: "#94a3b8", width: 1 }, data: guides },
-      data: rows.map((row, index) => ({ name: String(row.name ?? ""), value: [num(row[x.key]), num(row[y.key]), num(row[size?.key || ""]) ?? 1], filterValue: filterValueOf(row), itemStyle: { color: slot(index) } })),
+      markLine: { silent: true, symbol: "none", label: { show: false }, lineStyle: { type: "dashed", color: "#94a3b8", width: 1 }, data: guides },
+      data: rows.map((row, index) => ({ name: String(row.name ?? ""), value: [num(row[x.key]), num(row[y.key]), num(row[size?.key || ""]) ?? 1], filterValue: filterValueOf(row), itemStyle: { color: entitySlot(ctx, String(row.name ?? ""), index) } })),
     }],
   };
 }
@@ -437,15 +539,20 @@ function wrap(name: string, width = 14) {
 function radar(chart: ReportChart, ctx: ChartContext): EChartsCoreOption {
   const rows = rowsOf(chart);
   const keys = chart.seriesKeys || [];
+  const color = (row: Row, index: number) => entitySlot(ctx, String(row.name ?? ""), index);
+  const radarBase = { center: ["50%", "48%"], splitNumber: 4, splitLine: { lineStyle: { color: GRID_LINE } }, splitArea: { areaStyle: { color: ["#ffffff", "#f8fafc"] } }, axisLine: { lineStyle: { color: AXIS_LINE } } };
   return {
+    // On a card narrower than 460 px (a phone) the web is smaller and the
+    // axis names wrap shorter, so none is cut at the card's edge.
+    media: [{ query: { maxWidth: 460 }, option: { radar: { ...radarBase, radius: "40%", indicator: keys.map(key => ({ name: wrap(ctx.copy(key), 10), max: 100 })), axisName: { color: SUB, fontSize: 10, lineHeight: 12 } } } }],
     ...base(chart),
     legend: legend(ctx, { top: "auto", bottom: 0, left: "center", textStyle: { color: SUB, fontSize: ctx.large ? 12 : 11, width: 110, overflow: "truncate" } }),
     tooltip: tooltip({ trigger: "item", formatter: (param: TooltipParam) => {
       const row = rows.find(item => item.name === param.name);
       return [`<b>${escape(param.name)}</b>`, ...keys.map(key => `${escape(ctx.copy(key))}&nbsp;&nbsp;<b>${escape(ctx.format(num(row?.[key]), "percentage"))}</b>`)].join("<br/>");
     } }),
-    radar: { indicator: keys.map(key => ({ name: wrap(ctx.copy(key)), max: 100 })), radius: "58%", center: ["50%", "48%"], splitNumber: 4, axisName: { color: SUB, fontSize: ctx.large ? 12 : 11, lineHeight: 14 }, splitLine: { lineStyle: { color: GRID_LINE } }, splitArea: { areaStyle: { color: ["#ffffff", "#f8fafc"] } }, axisLine: { lineStyle: { color: AXIS_LINE } } },
-    series: [{ type: "radar", symbol: "circle", symbolSize: 5, emphasis: { focus: "self", lineStyle: { width: 3 } }, data: rows.map((row, index) => ({ name: String(row.name ?? ""), value: keys.map(key => num(row[key]) ?? 0), lineStyle: { width: 2, color: slot(index) }, itemStyle: { color: slot(index) }, areaStyle: { color: slot(index), opacity: 0.1 } })) }],
+    radar: { ...radarBase, indicator: keys.map(key => ({ name: wrap(ctx.copy(key)), max: 100 })), radius: "58%", axisName: { color: SUB, fontSize: ctx.large ? 12 : 11, lineHeight: 14 } },
+    series: [{ type: "radar", symbol: "circle", symbolSize: 5, emphasis: { focus: "self", lineStyle: { width: 3 } }, data: rows.map((row, index) => ({ name: String(row.name ?? ""), value: keys.map(key => num(row[key]) ?? 0), lineStyle: { width: 2, color: color(row, index) }, itemStyle: { color: color(row, index) }, areaStyle: { color: color(row, index), opacity: 0.1 } })) }],
   };
 }
 
@@ -453,9 +560,11 @@ export function chartOption(chart: ReportChart, ctx: ChartContext): EChartsCoreO
   switch (chart.type) {
     case "combo": return combo(chart, ctx);
     case "pareto": return pareto(chart, ctx);
-    case "pie":
+    case "pie": return pie(chart, ctx);
+    // Status and breakdown charts are donuts again (owner 11/11); the 11/08
+    // theme drew each as one segmented bar.
     case "donut": return pie(chart, ctx);
-    case "funnel": return funnel(chart, ctx);
+    case "funnel": return stageBars(chart, ctx);
     case "waterfall": return waterfall(chart, ctx);
     case "treemap": return treemap(chart, ctx);
     case "gauge": return gauge(chart, ctx);
@@ -473,7 +582,11 @@ export function chartOption(chart: ReportChart, ctx: ChartContext): EChartsCoreO
 export function chartHeight(chart: ReportChart) {
   const rows = (chart.data || []).length;
   if (chart.type === "horizontal_bar" || (chart.type === "stacked_bar" && chart.orientation === "horizontal")) return Math.max(260, rows * 30 + 56);
-  if (chart.type === "heatmap") return Math.max(240, rows * 36 + 76);
+  if (chart.type === "heatmap") return Math.max(250, rows * 36 + 88);
+  // A donut with its legend beneath: one more legend row for every three parts.
+  if (chart.type === "donut") return 270 + Math.ceil(Math.min(rows, 12) / 3) * 22;
+  if (chart.type === "funnel") return Math.max(200, rows * 44 + 16);
+  if (chart.type === "waterfall") return Math.max(240, rows * 40 + 56);
   if (chart.type === "calendar") return 210;
   if (chart.type === "gauge") return 250;
   if (["treemap", "sankey", "scatter", "radar"].includes(chart.type)) return 330;

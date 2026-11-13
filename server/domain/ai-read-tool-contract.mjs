@@ -143,3 +143,27 @@ function numbered(value) {
   const match = fold(value).match(/^(.*?)(\d+)$/)
   return match ? { prefix: match[1].replace(/[\s_-]+/g, ''), number: Number(match[2]) } : null
 }
+
+// An item named by its SKU or by its name, as the user or a draft wrote it
+// (2026-11-08: a lookup of "White Hanging Heart T-Light Holder" in the SKU
+// field found nothing, and the answer would not state the stock). Case,
+// quotes, dashes and spaces do not matter; one item whose name holds the
+// words is that item; several are offered back to choose from.
+const nameKey = (value) => text(value).normalize('NFKC').toLowerCase().replace(/[\u2018\u2019\u201c\u201d"'`]/g, '').replace(/[\u2010-\u2015\u2212]/g, '-').replace(/\s+/g, ' ').trim()
+export function aiStockSku(facts, value) {
+  const wanted = text(value)
+  if (!wanted) return { error: 'not_found' }
+  const items = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)]
+  const bySku = items.find((row) => text(row.sku).toLowerCase() === wanted.toLowerCase())
+  if (bySku) return { sku: bySku.sku }
+  const key = nameKey(wanted)
+  const exact = items.filter((row) => row.itemName && nameKey(row.itemName) === key)
+  // Spaces and dashes do not matter either ("Cake Stand" for Regency
+  // Cakestand 3 Tier, 2026-11-08).
+  const compact = (value) => nameKey(value).replace(/[\s-]+/g, '')
+  const contains = (row) => row.itemName && key.length >= 3 && (nameKey(row.itemName).includes(key) || compact(row.itemName).includes(compact(key)))
+  const matches = exact.length ? exact : items.filter(contains)
+  if (matches.length === 1) return { sku: matches[0].sku }
+  if (matches.length > 1) return { error: 'ambiguous', candidates: matches.slice(0, 10).map((row) => ({ sku: row.sku, itemName: row.itemName || null })) }
+  return { error: 'not_found' }
+}

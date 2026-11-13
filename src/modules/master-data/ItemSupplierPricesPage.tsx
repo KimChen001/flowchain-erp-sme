@@ -15,6 +15,7 @@ import {
 } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
 import { DataImportLink } from "./DataImportLink";
+import { ListPager } from "../procurement/listPaging";
 import { NOT_PROVIDED, useMasterDataCopy } from "./masterDataCopy";
 
 // Supplier prices (owner decision 2026-10-09): every item-supplier link across
@@ -50,12 +51,15 @@ type LinkPage = {
   visibility: { prices: boolean };
 };
 
-const PAGE_SIZE = 200;
+// The server pages the links (offset / limit); the list shows 50 at a time,
+// with the shared pager, like the other long lists.
+const PAGE_SIZE = 50;
 
 export default function ItemSupplierPricesPage() {
   const { copy, locale } = useMasterDataCopy();
   const [rows, setRows] = useState<LinkRow[]>([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [truncated, setTruncated] = useState(false);
   const [pricesVisible, setPricesVisible] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -70,15 +74,16 @@ export default function ItemSupplierPricesPage() {
   const sequence = useRef(0);
   const loadedOnce = useRef(false);
 
-  const load = async (offset = 0) => {
+  const load = async (nextPage = 1) => {
     const current = ++sequence.current;
     setLoading(true);
     setError(false);
+    setPage(nextPage);
     try {
-      const params = new URLSearchParams({ query, supplierId, itemId, limit: String(PAGE_SIZE), offset: String(offset) });
+      const params = new URLSearchParams({ query, supplierId, itemId, limit: String(PAGE_SIZE), offset: String((nextPage - 1) * PAGE_SIZE) });
       const page = await apiJson<LinkPage>(`/api/master-data/item-suppliers?${params}`);
       if (current !== sequence.current) return;
-      setRows((existing) => (offset ? [...existing, ...page.rows] : page.rows));
+      setRows(page.rows);
       setTotal(page.total);
       setTruncated(Boolean(page.truncated));
       setPricesVisible(page.visibility?.prices !== false);
@@ -94,7 +99,7 @@ export default function ItemSupplierPricesPage() {
   };
   // Filters apply as they change; typing waits for a short pause.
   useEffect(() => {
-    const timer = setTimeout(() => load(0), loadedOnce.current ? 300 : 0);
+    const timer = setTimeout(() => load(1), loadedOnce.current ? 300 : 0);
     loadedOnce.current = true;
     return () => clearTimeout(timer);
   }, [query, supplierId, itemId]);
@@ -107,7 +112,6 @@ export default function ItemSupplierPricesPage() {
     if (row.referencePrice !== null) return number(row.referencePrice, 2);
     return row.restrictedFields?.includes("referencePrice") ? muted(copy("Hidden for your role")) : muted(copy("Not recorded"));
   };
-  const remaining = Math.max(0, total - rows.length);
 
   return (
     <div className="space-y-5" data-testid="item-supplier-prices">
@@ -119,7 +123,7 @@ export default function ItemSupplierPricesPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={resetFilters} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>{copy("Reset")}</button>
-            <button type="button" onClick={() => load(0)} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>{copy("Refresh")}</button>
+            <button type="button" onClick={() => load(page)} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>{copy("Refresh")}</button>
             <DataImportLink type="item-suppliers" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700" />
           </div>
         </div>
@@ -147,7 +151,7 @@ export default function ItemSupplierPricesPage() {
           <div>
             <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("Supplier price list")}</div>
             <div className="mt-0.5 text-[11px]" style={{ color: A.sub }} data-testid="item-supplier-prices-count">
-              {copy(total === 1 ? "1 link, {shown} shown" : "{total} links, {shown} shown", { total, shown: rows.length })}
+              {copy(total === 1 ? "1 link, {shown} shown" : "{total} links, {shown} shown", { total: number(total), shown: number(rows.length) })}
             </div>
           </div>
         </div>
@@ -156,7 +160,7 @@ export default function ItemSupplierPricesPage() {
         {error ? (
           <div className="p-8 text-center">
             <div className="text-sm" style={{ color: A.red }}>{copy("Could not load supplier prices.")}</div>
-            <button type="button" onClick={() => load(0)} className="mt-3 text-xs text-blue-600">{copy("Try again")}</button>
+            <button type="button" onClick={() => load(page)} className="mt-3 text-xs text-blue-600">{copy("Try again")}</button>
           </div>
         ) : loading && rows.length === 0 ? (
           <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{copy("Loading supplier prices…")}</div>
@@ -206,15 +210,9 @@ export default function ItemSupplierPricesPage() {
                 ))}
               </tbody>
             </table>
-            {remaining > 0 && (
-              <div className="flex justify-center p-4">
-                <button type="button" disabled={loading} onClick={() => load(rows.length)} className="h-8 rounded-lg px-3 text-xs font-medium disabled:opacity-50" style={{ background: A.gray6, color: A.label }}>
-                  {copy("Load {count} more", { count: Math.min(PAGE_SIZE, remaining) })}
-                </button>
-              </div>
-            )}
           </div>
         )}
+        {!error && rows.length > 0 && <ListPager page={page} pageSize={PAGE_SIZE} total={total} onPage={(next) => void load(next)} testId="item-supplier-prices-pager" />}
       </Card>
     </div>
   );

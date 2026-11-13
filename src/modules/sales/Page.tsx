@@ -14,27 +14,27 @@ import { Link, useLocation, useSearchParams } from "react-router";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
 import { ListCard, ListSearchCard, ListStateRow, ResetButton, StatusChip, listButtonClass, listTableCardsRef, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { ListPager } from "../procurement/listPaging";
 import {
   tableBodyTextClass,
   tableLinkClass,
   tdNumericRightClass,
   thRightClass,
-  tableMinMdClass,
-  tableBaseClass,
   tableScrollClass,
-  tdActionClass,
   tdIdClass,
   tdNameClass,
   tdNowrapClass,
-  tdNumericClass,
   thClass,
 } from "../../components/ui/workbenchTable";
 import OutboundWorkbench from "./OutboundWorkbench";
 
 const RESTRICTED_GRAPH = "evidence.restricted";
+const LOAD_ERROR = "当前未读取到销售订单记录，请检查工作区数据或刷新后重试。";
 
 type SalesOrder = {
   salesOrderId: string;
+  // The order's document number (SO-YYYYMM-NNNN), shown in place of its id.
+  orderNumber?: string;
   customerName: string;
   customerTier: string;
   itemId: string;
@@ -45,6 +45,8 @@ type SalesOrder = {
   fulfilledQty: number;
   shortageQty: number;
   promisedDate: string;
+  // The status code (fulfilled, ready_to_ship…) and the read API's Chinese label for it.
+  status?: string;
   statusLabel: string;
   priority: string;
   deliveryRiskLevel: "blocked" | "high" | "medium" | "low";
@@ -94,13 +96,24 @@ const riskColor: Record<string, string> = {
 
 // Brand tones for the risk levels; order status labels use statusToneOf.
 const RISK_TONE: Record<string, StatusTone> = { blocked: "danger", high: "danger", medium: "warning", low: "neutral" };
-const EVIDENCE_PAGE_SIZE = 15;
+// Fifty orders a page, as the sales order list and the purchase order list
+// show, so the same orders read the same number of pages on each.
+const EVIDENCE_PAGE_SIZE = 50;
+const RISK_PAGE_SIZE = 25;
 
-const riskRank: Record<SalesOrder["deliveryRiskLevel"], number> = {
-  blocked: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
+// The statuses the read API gives an order, by their code (status, and the
+// orderStatus the list filter sends); the label is translated where it is
+// shown. A shipped order is "Fulfilled" / 已履约, the word the sales order list
+// and detail use, not the read API's 已完成 ("Completed").
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  "shortage_risk": "缺货风险",
+  "ready_to_ship": "可发货",
+  "partially_fulfilled": "部分履约",
+  "fulfilled": "已履约",
+  "cancelled": "已取消",
+  "draft": "草稿",
+  "confirmed": "已确认",
+  "on_hold": "已暂停",
 };
 
 function limitationLabel(code: string) {
@@ -141,10 +154,61 @@ function useSalesCopy() {
   }, [language]);
 }
 
+// An order's status as shown: by its code when the page knows it, else the
+// read API's label as sent. Both are translated where they are shown.
+const orderStatusLabel = (order: Pick<SalesOrder, "status" | "statusLabel">) =>
+  (order.status && ORDER_STATUS_LABELS[order.status]) || order.statusLabel;
+
+// An order is named by its document number; its stored id is never shown.
+const orderNumberOf = (order: Pick<SalesOrder, "orderNumber" | "salesOrderId">) => order.orderNumber || order.salesOrderId;
+
 // Quantities follow the workspace number locale.
 function useQty() {
   const { formatNumber } = useI18n();
   return (value: number) => formatNumber(Number(value || 0));
+}
+
+// One page of the orders the filters select, read from the server: `total`
+// counts every matching order in the workspace, not only the page.
+function useOrderPage(filters: Record<string, string>, page: number, pageSize: number, enabled: boolean) {
+  const query = useMemo(() => {
+    const params = new URLSearchParams();
+    for (const [name, value] of Object.entries(filters)) if (value) params.set(name, value);
+    params.set("offset", String((page - 1) * pageSize));
+    params.set("limit", String(pageSize));
+    return params.toString();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(filters), page, pageSize]);
+  const [state, setState] = useState<{ orders: SalesOrder[]; total: number; loading: boolean; error: string }>({ orders: [], total: 0, loading: true, error: "" });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+    setState((current) => ({ ...current, loading: true, error: "" }));
+    apiJson<{ orders?: SalesOrder[]; total?: number }>(`/api/sales-demand/orders?${query}`)
+      .then((payload) => {
+        if (!alive) return;
+        // A server without paging returns its whole list and no total; the
+        // page is then cut from that list.
+        const rows = payload.orders || [];
+        const offset = (page - 1) * pageSize;
+        const orders = rows.length > pageSize ? rows.slice(offset, offset + pageSize) : rows;
+        setState({ orders, total: typeof payload.total === "number" ? payload.total : rows.length, loading: false, error: "" });
+      })
+      .catch(() => { if (alive) setState({ orders: [], total: 0, loading: false, error: LOAD_ERROR }); });
+    return () => { alive = false; };
+  }, [query, enabled, attempt, pageSize]);
+  return { ...state, pages: Math.max(1, Math.ceil(state.total / pageSize)), retry: () => setAttempt((value) => value + 1) };
+}
+
+// A typed value, once typing pauses, so a search reads the server once.
+function useSettled(value: string, delay = 300) {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return settled;
 }
 
 function viewFromInitial(initialView?: string): SalesView {
@@ -158,41 +222,15 @@ export default function SalesDemandPage(props: SalesDemandPageProps) {
   if (location.pathname === "/app/sales/orders" || location.pathname === "/app/sales/orders/new" || /^\/app\/sales\/orders\/[^/]+$/.test(location.pathname) || /^\/app\/sales\/shipments\/[^/]+$/.test(location.pathname)) return <OutboundWorkbench />;
   if (props.initialView === "returns-new") return <BusinessDocumentForm documentLabel="Sales return" listPath="/app/sales/returns" />;
   if (props.initialView === "returns") return <SalesReturnPage />;
+  // The order list is the sales order workbench list, read a page at a time.
+  if (viewFromInitial(props.initialView) === "orders") return <OutboundWorkbench />;
   return <SalesDemandCore {...props} />;
 }
 
 function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProps) {
-  const { copy, say, customerLabel, itemLabel } = useSalesCopy();
-  const { locale } = useI18n();
-  // A promised date as the workspace shows dates ("Nov 8, 2026"), or "to be confirmed".
-  const promised = (order: SalesOrder) => (order.promisedDate ? formatCalendarDay(order.promisedDate, locale) : copy("待确认"));
-  const qty = useQty();
-  const [searchParams, setSearchParams] = useSearchParams();
   const view = viewFromInitial(initialView);
-  const [orders, setOrders] = useState<SalesOrder[]>([]);
-  const [summary, setSummary] = useState<SalesSummary | null>(null);
-  const [loadingOrders, setLoadingOrders] = useState(true);
-  const [ordersError, setOrdersError] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedOrderId, setSelectedOrderId] = useState(() => searchParams.get("orderId") || "");
-
-  useEffect(() => {
-    let alive = true;
-    setLoadingOrders(true);
-    setOrdersError("");
-    apiJson<{ orders: SalesOrder[]; summary: SalesSummary }>("/api/sales-demand/orders")
-      .then((payload) => {
-        if (!alive) return;
-        setOrders(payload.orders || []);
-        setSummary(payload.summary || null);
-      })
-      .catch(() => {
-        if (!alive) return;
-        setOrdersError("当前未读取到销售订单记录，请检查工作区数据或刷新后重试。");
-      })
-      .finally(() => { if (alive) setLoadingOrders(false); });
-
-    return () => { alive = false; };
-  }, []);
 
   useEffect(() => {
     if (view !== "evidence" || focus?.entityId) return;
@@ -208,6 +246,8 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
     setSearchParams(next, { replace: true });
   }
 
+  // A sales order in focus is chosen; an item in focus chooses the latest
+  // order for it.
   useEffect(() => {
     if (!focus?.entityId) return;
     if (focus.entityType === "sales_order" || focus.entityType === "customer_order") {
@@ -215,108 +255,61 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
       return;
     }
     if (focus.entityType === "inventory_item" || focus.entityType === "item" || focus.entityType === "sku") {
-      const related = orders.find((order) => order.sku === focus.entityId);
-      if (related) setSelectedOrderId(related.salesOrderId);
+      let alive = true;
+      apiJson<{ orders?: SalesOrder[] }>(`/api/sales-demand/orders?sku=${encodeURIComponent(focus.entityId)}&limit=1`)
+        .then((payload) => { const related = payload.orders?.[0]; if (alive && related) setSelectedOrderId(related.salesOrderId); })
+        .catch(() => {});
+      return () => { alive = false; };
     }
-  }, [focus?.entityId, focus?.entityType, orders]);
+  }, [focus?.entityId, focus?.entityType]);
 
-  const focusedOrder = useMemo(() => {
-    if (!focus?.entityId) return null;
-    return orders.find((order) => order.salesOrderId === focus.entityId) || null;
-  }, [focus, orders]);
-  const selectedOrder = useMemo(() => {
-    return orders.find((order) => order.salesOrderId === selectedOrderId) || focusedOrder || null;
-  }, [focusedOrder, orders, selectedOrderId]);
-  const visibleOrders = useMemo(() => {
-    const customer = searchParams.get("customer") || "";
-    const status = searchParams.get("status") || "";
-    const risk = searchParams.get("risk") || "";
-    const filtered = orders.filter((order) => (!customer || order.customerName === customer)
-      && (!status || (status === "unshipped" ? !/已完成|已交付/.test(order.statusLabel) : order.statusLabel === status))
-      && (!risk || (risk === "true" ? order.deliveryRiskLevel !== "low" : order.deliveryRiskLevel === risk)));
-    if (!focusedOrder) return filtered;
-    return [focusedOrder, ...filtered.filter((order) => order.salesOrderId !== focusedOrder.salesOrderId)];
-  }, [orders, focusedOrder, searchParams]);
-  const riskOrders = useMemo(() => {
-    return orders
-      .filter((order) => order.deliveryRiskLevel !== "low")
-      .sort((a, b) => riskRank[a.deliveryRiskLevel] - riskRank[b.deliveryRiskLevel] || b.shortageQty - a.shortageQty);
-  }, [orders]);
-  const activeSummary = summary || {
-    totalOrders: orders.length,
-    riskOrderCount: riskOrders.length,
-    highRiskOrderCount: orders.filter((order) => order.deliveryRiskLevel === "high" || order.deliveryRiskLevel === "blocked").length,
-    shortageQty: orders.reduce((sum, order) => sum + order.shortageQty, 0),
-    reservedQty: orders.reduce((sum, order) => sum + order.reservedQty, 0),
-    affectedCustomerCount: new Set(riskOrders.map((order) => order.customerName)).size,
-  };
+  if (view === "evidence") return <EvidenceChainView selectedOrderId={selectedOrderId} onSelectOrder={selectEvidenceOrder} onNavigate={onNavigate} />;
+  return <RiskView />;
+}
+
+// Delivery risk: the workspace's figures, each opening the order list
+// filtered to the orders it counts, and the orders at risk a page at a time.
+function RiskView() {
+  const { copy, say, customerLabel, itemLabel } = useSalesCopy();
+  const { locale } = useI18n();
+  // A promised date as the workspace shows dates ("Nov 8, 2026"), or "to be confirmed".
+  const promised = (order: SalesOrder) => (order.promisedDate ? formatCalendarDay(order.promisedDate, locale) : copy("待确认"));
+  const qty = useQty();
+  const [summary, setSummary] = useState<SalesSummary | null>(null);
+  const [page, setPage] = useState(1);
+  const risks = useOrderPage({ risk: "true", sort: "risk" }, page, RISK_PAGE_SIZE, true);
+
+  useEffect(() => {
+    let alive = true;
+    apiJson<{ summary?: SalesSummary }>("/api/sales-demand/summary")
+      .then((payload) => { if (alive) setSummary(payload.summary || null); })
+      .catch(() => { if (alive) setSummary(null); });
+    return () => { alive = false; };
+  }, []);
+
+  const figure = (value: number | undefined, format: (value: number) => string = String) => (summary && typeof value === "number" ? format(value) : "—");
+  const highRisk = summary?.highRiskOrderCount ?? 0;
+  const empty = !risks.loading && !risks.error && risks.total === 0;
 
   return (
     <div className="space-y-5">
-      {view === "risks" && <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <ActionableMetricCard label={say("Customer order", "销售订单")} value={String(activeSummary.totalOrders)} description={copy("查看当前工作区全部订单")} to="/app/sales/orders" icon={ClipboardList} color={A.blue} />
-        <ActionableMetricCard label={copy("交付风险")} value={String(activeSummary.riskOrderCount)} description={say(`${activeSummary.highRiskOrderCount} high-risk ${activeSummary.highRiskOrderCount === 1 ? "order" : "orders"}`, `${activeSummary.highRiskOrderCount} 个高风险订单`)} to="/app/sales/orders?risk=true" icon={AlertTriangle} color={activeSummary.highRiskOrderCount ? A.red : A.orange} />
-        <ActionableMetricCard label={copy("缺口数量")} value={qty(activeSummary.shortageQty)} description={copy("查看影响交付承诺的订单")} to="/app/sales/orders?risk=blocked" icon={PackageSearch} color={A.red} />
-        <ActionableMetricCard label={copy("已预留数量")} value={qty(activeSummary.reservedQty)} description={copy("查看库存分配证据")} to="/app/sales/orders?status=unshipped" icon={Boxes} color={A.green} />
-      </div>}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <ActionableMetricCard label={say("Sales orders", "销售订单")} value={figure(summary?.totalOrders, qty)} description={copy("查看当前工作区全部订单")} to="/app/sales/orders" icon={ClipboardList} color={A.blue} />
+        <ActionableMetricCard label={copy("交付风险")} value={figure(summary?.riskOrderCount)} description={say(`${highRisk} high-risk ${highRisk === 1 ? "order" : "orders"}`, `${highRisk} 个高风险订单`)} to="/app/sales/orders?risk=true" icon={AlertTriangle} color={highRisk ? A.red : A.orange} />
+        <ActionableMetricCard label={copy("缺口数量")} value={figure(summary?.shortageQty, qty)} description={copy("查看影响交付承诺的订单")} to="/app/sales/orders?shortage=true" icon={PackageSearch} color={A.red} />
+        <ActionableMetricCard label={copy("已预留数量")} value={figure(summary?.reservedQty, qty)} description={say("Orders with stock reserved", "查看已预留库存的订单")} to="/app/sales/orders?reserved=true" icon={Boxes} color={A.green} />
+      </div>
 
-      {ordersError && <Card className="p-4 text-sm" style={{ color: A.red }}>{copy(ordersError)}</Card>}
-      {loadingOrders && <Card className="p-6 text-sm" style={{ color: A.sub }}>{copy("正在读取销售订单…")}</Card>}
-      {!loadingOrders && !ordersError && orders.length === 0 && (
-        <Card className="p-6 text-sm" style={{ color: A.sub }}>{copy("当前工作区暂无销售订单记录。后续可通过订单导入或业务数据接入生成销售订单视图。")}</Card>
-      )}
+      {risks.error && <Card className="p-4 text-sm" style={{ color: A.red }}>{copy(risks.error)}</Card>}
 
-      {!loadingOrders && !ordersError && orders.length > 0 && view === "orders" && (
-        <div className="space-y-3">
-          <Card>
-            <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${A.border}` }}>
-              <SectionHeader title={copy("销售订单列表")} />
-              <span className="text-[11px]" style={{ color: A.sub }}>{visibleOrders.length} {copy("条")}</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[980px] text-xs">
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${A.border}` }}>
-                    {[copy("销售订单号"), copy("客户"), copy("SKU / 物料"), copy("订单数量"), copy("已预留"), copy("缺口"), copy("承诺交期"), copy("风险等级"), copy("状态"), copy("操作")].map((header) => (
-                      <th key={header} className="px-3 py-3 text-left font-semibold" style={{ color: A.gray1 }}>{header}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleOrders.map((order, index) => (
-                    <tr key={order.salesOrderId} data-testid={`sales-order-${order.salesOrderId}`} style={{ borderBottom: index < visibleOrders.length - 1 ? `1px solid ${A.border}` : "none", background: selectedOrder?.salesOrderId === order.salesOrderId ? "#f0f6ff" : A.white }}>
-                      <td className="px-3 py-3 tabular-nums" style={{ color: A.blue }}><EntityLink kind="sales_order" id={order.salesOrderId}>{order.salesOrderId}</EntityLink></td>
-                      <td className="px-3 py-3" style={{ color: A.label }}>{customerLabel(order)}</td>
-                      <td className="px-3 py-3">
-                        <div className="tabular-nums" style={{ color: A.label }}><EntityLink kind="item" id={order.itemId}>{order.sku}</EntityLink></div>
-                        <div className="fc-caption truncate max-w-[180px]" style={{ color: A.sub }}>{itemLabel(order)}</div>
-                      </td>
-                      <td className="px-3 py-3 tabular-nums" style={{ color: A.label }}>{qty(order.orderedQty)}</td>
-                      <td className="px-3 py-3 tabular-nums" style={{ color: A.green }}>{qty(order.reservedQty)}</td>
-                      <td className="px-3 py-3 tabular-nums font-semibold" style={{ color: order.shortageQty > 0 ? A.red : A.gray2 }}>{qty(order.shortageQty)}</td>
-                      <td className="px-3 py-3" style={{ color: A.sub }}>{promised(order)}</td>
-                      <td className="px-3 py-3"><Chip label={copy(order.deliveryRiskLabel)} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
-                      <td className="px-3 py-3" style={{ color: A.sub }}>{copy(order.statusLabel)}</td>
-                      <td className="px-3 py-3">
-                        <Link to={`/app/sales/orders/${encodeURIComponent(order.salesOrderId)}`} className="px-2.5 py-1.5 rounded-md font-medium" style={{ background: A.gray6, color: A.blue }}>{copy("查看详情")}</Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {!loadingOrders && !ordersError && orders.length > 0 && view === "risks" && (
+      {!risks.error && (
         <Card>
-          <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${A.border}` }}>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-4" style={{ borderBottom: `1px solid ${A.border}` }}>
             <div>
               <SectionHeader title={copy("交付风险查询")} />
               <p className="mt-1 text-xs" style={{ color: A.sub }}>{copy("逐行查看订单缺口、承诺交期、风险原因和可核验履约事实。")}</p>
             </div>
-            <span className="text-xs" style={{ color: A.sub }}>{say(`${riskOrders.length} ${riskOrders.length === 1 ? "order" : "orders"} at risk`, `${riskOrders.length} 条风险订单`)}</span>
+            <span className="text-xs" style={{ color: A.sub }}>{risks.loading ? copy("正在读取销售订单…") : say(`${risks.total} ${risks.total === 1 ? "order" : "orders"} at risk`, `${risks.total} 条风险订单`)}</span>
           </div>
           <div className={tableScrollClass} ref={listTableCardsRef}>
             <table className={`w-full min-w-[1080px] text-left ${tableBodyTextClass}`}>
@@ -326,17 +319,18 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
                   <th className={thClass} style={{ color: A.gray1 }}>{copy("SKU / 物料")}</th>
                   <th className={thRightClass} style={{ color: A.gray1 }}>{copy("订购 / 预留 / 履约")}</th>
                   <th className={thRightClass} style={{ color: A.gray1 }}>{copy("缺口")}</th>
-                  {[copy("承诺交期"), copy("风险"), copy("风险原因")].map((header) => (
-                    <th key={header} className={thClass} style={{ color: A.gray1 }}>{header}</th>
-                  ))}
+                  <th className={thClass} style={{ color: A.gray1 }}>{copy("承诺交期")}</th>
+                  {/* The risk level is the order's status on a phone card. */}
+                  <th className={thClass} style={{ color: A.gray1 }} data-card-status="">{copy("风险")}</th>
+                  <th className={thClass} style={{ color: A.gray1 }}>{copy("风险原因")}</th>
                   <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{copy("操作")}</th>
                 </tr>
               </thead>
               <tbody>
-                {riskOrders.map((order) => (
+                {risks.orders.map((order) => (
                   <tr key={order.salesOrderId} style={{ borderBottom: `1px solid ${A.border}` }}>
                     <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
-                      <EntityLink kind="sales_order" id={order.salesOrderId} className={tableLinkClass}>{order.salesOrderId}</EntityLink>
+                      <EntityLink kind="sales_order" id={order.salesOrderId} className={tableLinkClass}>{orderNumberOf(order)}</EntityLink>
                       <div className="max-w-[200px] truncate text-[11px] font-normal" style={{ color: A.sub }}>{customerLabel(order)}</div>
                     </td>
                     <td className={tdNameClass}>
@@ -366,27 +360,22 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
                 ))}
               </tbody>
             </table>
-            {riskOrders.length === 0 && (
+            {empty && (
               <div className="p-6 text-sm" style={{ color: A.sub }}>{copy("当前没有需要进入风险队列的销售订单。")}</div>
             )}
           </div>
+          <ListPager page={Math.min(page, risks.pages)} pageSize={RISK_PAGE_SIZE} total={risks.total} onPage={setPage} testId="sales-demand-pager" />
         </Card>
-      )}
-
-      {!loadingOrders && !ordersError && orders.length > 0 && view === "evidence" && (
-        <EvidenceChainView allOrders={orders} selectedOrderId={selectedOrderId} onSelectOrder={selectEvidenceOrder} onNavigate={onNavigate} />
       )}
     </div>
   );
 }
 
 function EvidenceChainView({
-  allOrders,
   selectedOrderId,
   onSelectOrder,
   onNavigate,
 }: {
-  allOrders: SalesOrder[];
   selectedOrderId: string;
   onSelectOrder: (orderId: string) => void;
   onNavigate?: EvidenceNavigate;
@@ -394,7 +383,6 @@ function EvidenceChainView({
   const { copy, say, customerLabel, itemLabel } = useSalesCopy();
   const qty = useQty();
   const hasSelectedOrder = Boolean(selectedOrderId);
-  const selectedOrder = allOrders.find((order) => order.salesOrderId === selectedOrderId) || null;
   const [graph, setGraph] = useState<EvidenceGraphResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -404,11 +392,29 @@ function EvidenceChainView({
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
   const evidenceRef = useRef<HTMLDivElement>(null);
+  // The list is searched, filtered and read a page at a time on the server,
+  // so every order in the workspace can be reached, however many there are.
+  const search = useSettled(query.trim());
+  const list = useOrderPage({ q: search, risk, orderStatus: status }, page, EVIDENCE_PAGE_SIZE, true);
+  const current = Math.min(page, list.pages);
+  // The chosen order: from the page when it is there, else read by itself.
+  const [chosenOrder, setChosenOrder] = useState<SalesOrder | null>(null);
+  const selectedOrder = list.orders.find((order) => order.salesOrderId === selectedOrderId) || (chosenOrder?.salesOrderId === selectedOrderId ? chosenOrder : null);
+  const selectedNumber = selectedOrder ? orderNumberOf(selectedOrder) : "";
   // A 403 means the reader's role cannot open this record's evidence chain;
   // it is translated when shown so a language change applies to it.
   const graphError = (reason: unknown) => reason instanceof ApiError && reason.status === 403
     ? RESTRICTED_GRAPH
     : "当前暂未读取到完整证据链，请返回销售订单列表或切换业务对象后重试。";
+
+  useEffect(() => {
+    if (!selectedOrderId || list.orders.some((order) => order.salesOrderId === selectedOrderId)) return;
+    let alive = true;
+    apiJson<{ order?: SalesOrder }>(`/api/sales-demand/orders/${encodeURIComponent(selectedOrderId)}`)
+      .then((payload) => { if (alive) setChosenOrder(payload.order || null); })
+      .catch(() => { if (alive) setChosenOrder(null); });
+    return () => { alive = false; };
+  }, [selectedOrderId, list.orders]);
 
   useEffect(() => {
     if (!selectedOrderId) {
@@ -438,8 +444,8 @@ function EvidenceChainView({
     sourceRoute: "sales:evidence",
     sourceEntityType: "sales_order",
     sourceEntityId: selectedOrder.salesOrderId,
-    sourceLabel: say(`Sales order ${selectedOrder.salesOrderId}`, `销售订单 ${selectedOrder.salesOrderId}`),
-    returnLabel: say(`Back to sales order ${selectedOrder.salesOrderId}`, `返回销售订单 ${selectedOrder.salesOrderId}`),
+    sourceLabel: say(`Sales order ${selectedNumber}`, `销售订单 ${selectedNumber}`),
+    returnLabel: say(`Back to sales order ${selectedNumber}`, `返回销售订单 ${selectedNumber}`),
     originIntent: "evidenceGraph",
   } : null;
 
@@ -458,7 +464,7 @@ function EvidenceChainView({
     <Card className="p-4">
       <SectionHeader title={copy("工作区关联摘要")} right={<Chip label={copy("需人工复核")} color={A.orange} bg="#fff8f0" />} />
       <div className="grid grid-cols-1 gap-1.5 text-[11px] leading-5">
-        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ClipboardList size={12} />{copy("销售订单：")}{customerLabel(selectedOrder)} · {copy(selectedOrder.statusLabel)}</div>
+        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ClipboardList size={12} />{copy("销售订单：")}{customerLabel(selectedOrder)} · {copy(orderStatusLabel(selectedOrder))}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><PackageSearch size={12} />{copy("SKU库存：")}{selectedOrder.sku} / {itemLabel(selectedOrder)}{copy("· 已预留")}{qty(selectedOrder.reservedQty)}{copy("· 缺口")}{qty(selectedOrder.shortageQty)}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ShoppingCart size={12} />{copy("采购订单：")}{selectedOrder.linkedPurchaseOrders.length ? selectedOrder.linkedPurchaseOrders.map((po, index) => <span key={po.id}>{index ? "; " : ""}<DocumentNumber type="purchase_order" id={po.id} number={po.number} /> {po.status || ""}</span>) : copy("暂无完整采购订单关联")}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><Users size={12} />{copy("供应商：")}{selectedOrder.linkedSuppliers.map((supplier) => `${supplier.name}${supplier.risk ? ` · ${supplier.risk}` : ""}`).join("; ") || copy("暂无完整供应商记录")}</div>
@@ -470,30 +476,20 @@ function EvidenceChainView({
     </Card>
   ) : null;
 
-  // The list: searched, filtered and shown a page at a time, so the evidence
-  // of a chosen order sits above it instead of below every order.
-  const statuses = useMemo(() => [...new Set(allOrders.map((order) => order.statusLabel).filter(Boolean))], [allOrders]);
-  const needle = query.trim().toLowerCase();
-  const shown = allOrders.filter((order) =>
-    (!risk || order.deliveryRiskLevel === risk)
-    && (!status || order.statusLabel === status)
-    && (!needle || [order.salesOrderId, order.customerName, customerLabel(order), order.sku, order.itemName, itemLabel(order)].some((value) => String(value || "").toLowerCase().includes(needle))),
-  );
-  const pages = Math.max(1, Math.ceil(shown.length / EVIDENCE_PAGE_SIZE));
-  const current = Math.min(page, pages);
-  const pageRows = shown.slice((current - 1) * EVIDENCE_PAGE_SIZE, current * EVIDENCE_PAGE_SIZE);
   const reset = () => { setQuery(""); setRisk(""); setStatus(""); setPage(1); };
   const choose = (orderId: string) => {
     onSelectOrder(orderId);
     requestAnimationFrame(() => evidenceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
+  // A new search starts again from the first page.
+  useEffect(() => { setPage(1); }, [search]);
 
   return (
     <div className="space-y-5">
       {hasSelectedOrder && (
         <div ref={evidenceRef} className="scroll-mt-4 space-y-3">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-sm font-semibold" style={{ color: A.label }}>{say(`Evidence for sales order ${selectedOrderId}`, `销售订单 ${selectedOrderId} 的证据`)}</div>
+            <div className="text-sm font-semibold" style={{ color: A.label }}>{selectedNumber ? say(`Evidence for sales order ${selectedNumber}`, `销售订单 ${selectedNumber} 的证据`) : say("Evidence for the sales order", "销售订单的证据")}</div>
             <button type="button" onClick={() => onSelectOrder("")} className={listButtonClass.secondary}>{say("Close", "关闭")}</button>
           </div>
           <EvidenceGraphPanel
@@ -504,8 +500,8 @@ function EvidenceChainView({
             onRetry={retry}
             onBack={() => onNavigate?.("sales")}
             onReturnList={() => onNavigate?.("sales")}
-            onReturnSource={() => onNavigate?.("sales", { entityType: "sales_order", entityId: selectedOrderId }, { returnTo: "sales:evidence", entityLabel: say(`Sales order ${selectedOrderId}`, `销售订单 ${selectedOrderId}`), returnContext })}
-            sourceLabel={selectedOrder ? say(`Sales order ${selectedOrder.salesOrderId}`, `销售订单 ${selectedOrder.salesOrderId}`) : ""}
+            onReturnSource={() => onNavigate?.("sales", { entityType: "sales_order", entityId: selectedOrderId }, { returnTo: "sales:evidence", entityLabel: say(`Sales order ${selectedNumber}`, `销售订单 ${selectedNumber}`), returnContext })}
+            sourceLabel={selectedOrder ? say(`Sales order ${selectedNumber}`, `销售订单 ${selectedNumber}`) : ""}
             returnContext={returnContext}
             returnTo="sales:evidence"
             showReturnPath={false}
@@ -518,32 +514,32 @@ function EvidenceChainView({
       <ListSearchCard
         title={copy("订单证据查询")}
         subtitle={copy("选择销售订单后读取其真实关联记录、风险信号和数据限制。")}
+        activeFilters={[risk, status].filter(Boolean).length}
         actions={<>
           <StatusChip label={copy("只读证据")} tone="info" />
           <ResetButton onClick={reset} />
         </>}
       >
         <Field label={say("Search", "搜索")}>
-          <input aria-label={say("Search sales orders", "搜索销售订单")} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder={say("Order, customer or SKU", "订单、客户或 SKU")} style={inputStyle} />
+          <input aria-label={say("Search sales orders", "搜索销售订单")} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={say("Order, customer or SKU", "订单、客户或 SKU")} style={inputStyle} />
         </Field>
         <Field label={say("Shipment risk", "交付风险")}>
           <select aria-label={say("Shipment risk filter", "交付风险筛选")} value={risk} onChange={(event) => { setRisk(event.target.value); setPage(1); }} style={inputStyle}>
             <option value="">{say("All risk levels", "全部风险")}</option>
             <option value="blocked">{copy("已阻塞")}</option>
             <option value="high">{copy("高风险")}</option>
-            <option value="medium">{copy("需关注")}</option>
             <option value="low">{copy("正常")}</option>
           </select>
         </Field>
         <Field label={say("Status", "状态")}>
           <select aria-label={say("Status filter", "状态筛选")} value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} style={inputStyle}>
             <option value="">{say("All statuses", "全部状态")}</option>
-            {statuses.map((label) => <option key={label} value={label}>{copy(label)}</option>)}
+            {Object.entries(ORDER_STATUS_LABELS).map(([code, label]) => <option key={code} value={code}>{copy(label)}</option>)}
           </select>
         </Field>
       </ListSearchCard>
 
-      <ListCard title={say("Sales orders", "销售订单")} total={allOrders.length} shown={shown.length}>
+      <ListCard title={say("Sales orders", "销售订单")} total={list.loading ? undefined : list.total} shown={list.orders.length}>
         <div className={tableScrollClass}>
           <table className={`w-full min-w-[960px] text-left ${tableBodyTextClass}`}>
             <thead>
@@ -558,18 +554,20 @@ function EvidenceChainView({
               </tr>
             </thead>
             <tbody>
-              {pageRows.length === 0 && <ListStateRow colSpan={7} state="empty" title={say("No sales orders match these filters", "没有符合筛选条件的销售订单")} />}
-              {pageRows.map((order, index) => {
+              {list.loading && list.orders.length === 0 && <ListStateRow colSpan={7} state="loading" />}
+              {list.error && <ListStateRow colSpan={7} state="error" title={copy(list.error)} onRetry={list.retry} />}
+              {!list.loading && !list.error && list.orders.length === 0 && <ListStateRow colSpan={7} state="empty" title={search || risk || status ? say("No sales orders match these filters", "没有符合筛选条件的销售订单") : copy("当前工作区暂无销售订单记录。后续可通过订单导入或业务数据接入生成销售订单视图。")} />}
+              {list.orders.map((order, index) => {
                 const chosen = selectedOrderId === order.salesOrderId;
                 return (
-                  <tr key={order.salesOrderId} className={listRowClass} style={{ ...listRowStyle(index, pageRows.length), background: chosen ? "#f0f6ff" : undefined }}>
-                    <td className={tdIdClass}><EntityLink kind="sales_order" id={order.salesOrderId} className={tableLinkClass}>{order.salesOrderId}</EntityLink></td>
+                  <tr key={order.salesOrderId} className={listRowClass} style={{ ...listRowStyle(index, list.orders.length), background: chosen ? "#f0f6ff" : undefined }}>
+                    <td className={tdIdClass}><EntityLink kind="sales_order" id={order.salesOrderId} className={tableLinkClass}>{orderNumberOf(order)}</EntityLink></td>
                     <td className={`${tdNameClass} max-w-[200px] truncate`} title={customerLabel(order)}>{customerLabel(order)}</td>
                     <td className={tdNameClass}>
                       <EntityLink kind="item" id={order.itemId} className={tableLinkClass}>{order.sku}</EntityLink>
                       <div className="max-w-[220px] truncate text-[11px]" style={{ color: A.sub }} title={itemLabel(order)}>{itemLabel(order)}</div>
                     </td>
-                    <td className={tdNowrapClass}><StatusChip label={copy(order.statusLabel)} tone={statusToneOf(order.statusLabel)} /></td>
+                    <td className={tdNowrapClass}><StatusChip label={copy(orderStatusLabel(order))} tone={statusToneOf(order.statusLabel)} /></td>
                     <td className={tdNowrapClass}><StatusChip label={copy(order.deliveryRiskLabel)} tone={RISK_TONE[order.deliveryRiskLevel] || "neutral"} /></td>
                     <td className={`${tdNumericRightClass}${order.shortageQty > 0 ? " font-semibold text-red-700" : ""}`} style={order.shortageQty > 0 ? undefined : { color: A.gray2 }}>{qty(order.shortageQty)}</td>
                     <td className={tdNowrapClass}>
@@ -588,15 +586,7 @@ function EvidenceChainView({
             </tbody>
           </table>
         </div>
-        {shown.length > EVIDENCE_PAGE_SIZE && (
-          <div className="flex items-center justify-between px-5 py-3 text-xs" style={{ borderTop: "0.5px solid rgba(0,0,0,0.06)", color: A.sub }}>
-            <span>{say(`Page ${current} of ${pages}`, `第 ${current} / ${pages} 页`)}</span>
-            <div className="flex gap-2">
-              <button type="button" className={listButtonClass.secondary} disabled={current <= 1} onClick={() => setPage(current - 1)}>{copy("上一页")}</button>
-              <button type="button" className={listButtonClass.secondary} disabled={current >= pages} onClick={() => setPage(current + 1)}>{copy("下一页")}</button>
-            </div>
-          </div>
-        )}
+        <ListPager page={current} pageSize={EVIDENCE_PAGE_SIZE} total={list.total} onPage={setPage} testId="sales-demand-pager" />
       </ListCard>
     </div>
   );

@@ -5,8 +5,9 @@ import { apiErrorText } from "../../lib/apiErrorText";
 import { A, Chip, useConfirm } from "../../components/ui";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import type { CustomerMaster, PrintTemplateCatalogItem } from "./standardData";
-import { orNotProvided, useMasterDataCopy } from "./masterDataCopy";
+import { orNotProvided, paymentTermLabel, useMasterDataCopy } from "./masterDataCopy";
 import { useMasterDataWriteAccess } from "./writeAccess";
+import { RowMenu, RowPopover } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tableMinSmClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, thClass } from "../../components/ui/workbenchTable";
 
 function creditStyle(status: string) {
@@ -133,12 +134,17 @@ export function CustomerTable({ customers, onChanged, creating = false, onCreati
                   <td className={tdNowrapClass} style={{ color: A.sub }}>{orNotProvided(item.phone)}</td>
                   <td className="px-4 py-3 max-w-[160px] truncate" style={{ color: A.sub }} title={item.address || undefined}>{orNotProvided(item.address)}</td>
                   <td className={tdNowrapClass}>{item.creditStatus ? <Chip label={item.creditStatus} color={credit.color} bg={credit.bg} /> : orNotProvided(item.creditStatus)}</td>
-                  <td className={tdNowrapClass} style={{ color: A.sub }}>{orNotProvided(item.paymentTerms)}</td>
+                  <td className={tdNowrapClass} style={{ color: A.sub }}>{orNotProvided(paymentTermLabel(item.paymentTerms, language))}</td>
                   <td className={tdNowrapClass}><Chip label={item.status} color={inactive ? A.gray1 : A.green} bg={inactive ? A.gray6 : "#f0faf4"} /></td>
                   <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                     <div className="flex items-center gap-1.5">
                       <BusinessEntityLink entityType="customer" entityId={item.code} className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600">{copy("View")}</BusinessEntityLink>
-                      {canEdit && item.id ? <button type="button" data-testid={`customer-status-${item.code}`} onClick={() => void setStatus(item, inactive)} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">{copy(inactive ? "Set active" : "Set inactive")}</button> : null}
+                      {/* Changing the status sits in the row's menu, as on the purchase order list. */}
+                      {canEdit && item.id ? (
+                        <RowMenu label={say("More", "更多")} testId={`customer-row-more-${item.code}`}>
+                          <button type="button" data-testid={`customer-status-${item.code}`} onClick={() => void setStatus(item, inactive)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy(inactive ? "Set active" : "Set inactive")}</button>
+                        </RowMenu>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -155,7 +161,8 @@ export function PrintTemplateTable({ templates, onCopy }: { templates: PrintTemp
   const { copy, locale } = useMasterDataCopy();
   const updated = (value: string) => { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" }) : value; };
   return (
-    <div className={tableScrollClass}>
+    // Phone rows become cards, as on the other master data lists.
+    <div className={tableScrollClass} ref={listTableCardsRef}>
       <table className={`w-full min-w-[820px] text-left ${tableBodyTextClass}`}>
         <thead><tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
           {["Template name", "Document type", "Default", "Last updated", "Actions"].map((item) => <th key={item} className={thClass} style={{ color: A.gray1 }}>{copy(item)}</th>)}
@@ -171,7 +178,7 @@ export function PrintTemplateTable({ templates, onCopy }: { templates: PrintTemp
               <td className={tdNowrapClass}>
                 <div className="flex items-center gap-1.5">
                   <button type="button" onClick={() => onCopy(item)} className="flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium" style={{ color: A.label }}><Copy size={12} />{copy("Copy template")}</button>
-                  <details className="relative"><summary className="flex cursor-pointer list-none items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium" style={{ color: A.label }}><Eye size={12} />{copy("Preview")}</summary><div className="absolute right-0 z-20 mt-1 w-64 rounded-lg border bg-white p-3 shadow-lg"><div className="font-semibold">{name}</div><div className="mt-2 text-slate-500">{copy("Document type: {value}", { value: copy(item.documentType) })}</div><div className="mt-1 text-slate-500">{copy("Updated: {value}", { value: updated(item.updatedAt) })}</div></div></details>
+                  <RowPopover summary={<><Eye size={12} />{copy("Preview")}</>} summaryClassName="flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-900" panelClassName="w-64 p-3" testId={`print-template-preview-${item.id}`}><div className="font-semibold">{name}</div><div className="mt-2 text-slate-500">{copy("Document type: {value}", { value: copy(item.documentType) })}</div><div className="mt-1 text-slate-500">{copy("Updated: {value}", { value: updated(item.updatedAt) })}</div></RowPopover>
                 </div>
               </td>
             </tr>

@@ -79,13 +79,20 @@ test("SME navigation, direct access and browser history follow the route manifes
 
   await page.goto("/app/overview");
   await expect(page).toHaveURL(/\/app\/overview\/risks$/);
+  // The home page is named as the sidebar names it, once in the trail.
   await expect(
     page.getByTestId("module-subnav").getByRole("link", {
-      name: "首页概览",
+      name: "今日",
       exact: true,
     }),
   ).toHaveAttribute("aria-current", "page");
-  await expect(page.getByTitle(/Universal Intake disabled/)).toBeVisible();
+  await expect(page.getByTestId("app-breadcrumb")).toHaveText("今日");
+  // /app/today opens the same page.
+  await page.goto("/app/today");
+  await expect(page).toHaveURL(/\/app\/overview\/risks$/);
+  await expect(page.getByTestId("not-found-recovery")).toHaveCount(0);
+  // The badge's details follow the interface language (Chinese here).
+  await expect(page.getByTitle(/通用录入已关闭/)).toBeVisible();
   const sidebar = page.locator("aside");
   for (const label of [
     "今日",
@@ -221,13 +228,14 @@ test("SME navigation, direct access and browser history follow the route manifes
   await expect(
     sidebar.getByRole("button", { name: "收货", exact: true }),
   ).toHaveAttribute("aria-current", "page");
+  // Units read in the interface language: pcs is 件 on a Chinese page.
   const fulfilledPoLine = page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-001-LINE-001");
-  await expect(fulfilledPoLine).toContainText("50 pcs");
-  await expect(fulfilledPoLine).toContainText("20 pcs");
+  await expect(fulfilledPoLine).toContainText("50 件");
+  await expect(fulfilledPoLine).toContainText("20 件");
   await expect(
     page.getByTestId("order-fulfillment-line-list").getByRole("columnheader", { name: "待收", exact: true }),
   ).toBeVisible();
-  await expect(fulfilledPoLine).toContainText("30 pcs");
+  await expect(fulfilledPoLine).toContainText("30 件");
   await expect(fulfilledPoLine).toContainText("部分收货");
   await expect(
     fulfilledPoLine.getByRole("link", { name: "收货单 LOCAL-DEMO-GRN-001" }),
@@ -262,9 +270,12 @@ test("SME navigation, direct access and browser history follow the route manifes
 
   await page.goto("/app/procurement/three-way-match");
   await expect(page.getByTestId("procurement-three-way-match-list")).toBeVisible();
+  // A match is shown by its supplier invoice number; the MATCH- id stays in
+  // the link's address (UI review 7).
   await expect(
-    page.getByText("MATCH-LOCAL-DEMO-INV-001", { exact: true }),
+    page.getByTestId("three-way-match-record-list").getByText("LOCAL-DEMO-INV-001", { exact: true }),
   ).toBeVisible();
+  await expect(page.getByText("MATCH-LOCAL-DEMO-INV-001", { exact: true })).toHaveCount(0);
   await expect(page.getByText("三单匹配列表尚未接入")).toHaveCount(0);
   await expect(
     page.getByTestId("module-subnav").getByRole("link", {
@@ -412,7 +423,7 @@ test("procurement invoice and match records use canonical authoritative read det
 
 test("order fulfillment lines keep empty workspaces truthful", async ({ page, request }) => {
   await login(page, request);
-  await page.route("**/api/purchase-orders-workbench", async (route) => {
+  await page.route("**/api/purchase-orders-workbench*", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

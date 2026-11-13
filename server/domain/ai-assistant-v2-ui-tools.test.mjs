@@ -4,7 +4,7 @@ import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_READ_TOOL_COLUMNS, runAiReadTool } from './ai-read-tool-runner.mjs'
-import { AI_ASSISTANT_V2_UI_TOOLS, aiUiColumnCode, aiUiSourceHandles, aiUiToolsFor } from './ai-assistant-v2-ui-tools.mjs'
+import { AI_ASSISTANT_V2_UI_TOOLS, aiUiColumnCode, aiUiSourceHandles, aiUiToolsFor, namesAnItem } from './ai-assistant-v2-ui-tools.mjs'
 import { AI_SKILL_SIGNAL_SEVERITY } from './ai-skill-signals.mjs'
 import { safeParsePartProps } from '../../shared/assistant-protocol.mjs'
 import { PURCHASE_SUGGESTION_SOURCES } from '../../shared/purchase-suggestion.mjs'
@@ -58,7 +58,7 @@ function assertPart(built, component) {
 const assertError = (built, code) => assert.equal(built.error?.code, code, JSON.stringify(built))
 
 test('every UI tool follows the contract: kind ui, a closed input schema, frozen', () => {
-  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'suggest_purchase_request', 'show_setup_steps', 'suggest_setup_records', 'offer_record_actions', 'suggest_followups'])
+  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'suggest_purchase_request', 'show_setup_steps', 'suggest_setup_records', 'offer_record_actions', 'suggest_followups', 'show_decisions'])
   assert.ok(Object.isFrozen(AI_ASSISTANT_V2_UI_TOOLS))
   for (const entry of AI_ASSISTANT_V2_UI_TOOLS) {
     assert.ok(Object.isFrozen(entry))
@@ -71,7 +71,7 @@ test('every UI tool follows the contract: kind ui, a closed input schema, frozen
 })
 
 test('the display tools are marked, and every source parameter asks for the handle a result gives', () => {
-  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.filter((entry) => entry.display).map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps'])
+  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.filter((entry) => entry.display).map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps', 'show_decisions'])
   for (const entry of AI_ASSISTANT_V2_UI_TOOLS.filter((item) => item.inputSchema.properties.source)) {
     assert.match(entry.inputSchema.properties.source.description, /#1/, entry.name)
     assert.doesNotMatch(entry.inputSchema.properties.source.description, /tool_use id/, entry.name)
@@ -217,9 +217,9 @@ test('show_table picks the list of a result that holds the columns, or the one n
 test('show_table refuses unknown columns, a missing or failed source and a UI result as source', async () => {
   const { ctx, call, build } = await workspace()
   await call('toolu_po', 'list_purchase_orders')
-  const unknown = build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'skus'] })
+  const unknown = build('show_table', { source: 'toolu_po', columns: ['orderNumber', 'itemIds'] })
   assertError(unknown, 'unknown_column')
-  assert.match(unknown.error.message, /no column skus.*orderNumber/)
+  assert.match(unknown.error.message, /no column itemIds.*orderNumber/)
   // A key in the rows that the tool does not declare is not a column either.
   assertError(build('show_table', { source: 'toolu_po', columns: ['ref'] }), 'unknown_column')
   assertError(build('show_table', { source: 'toolu_nope', columns: ['orderNumber'] }), 'source_missing')
@@ -1042,4 +1042,76 @@ test('the record card is not offered to a viewer, and takes only a request or or
   assertError(await admin.offer('purchase_request', 'PR-0231', 'list_purchase_requests#2'), 'source_missing')
   // Without the workspace's records nothing is shown.
   assertError(await tool('offer_record_actions').build({ source: 'list_purchase_requests#1', ref: { type: 'purchase_request', id: 'PR-0231' } }, { ...admin.ctx, prisma: null }), 'record_unavailable')
+})
+
+// 2026-11-11 on Flash: for "帮我下个单" and "What should I reorder this week?"
+// the item the model picked was ticked as if the user had named it.
+test('a question of ordering words, the time and politeness names no item', () => {
+  for (const question of ['帮我下个单', '帮我下个单吧', 'What should I reorder this week?', 'Place an order for me please', '这周需要补什么货？', 'Order something']) assert.equal(namesAnItem(question), false, question)
+  // A budget names no item either (2026-11-11).
+  for (const question of ['预算只有 300 英镑，这周该补什么货？', 'I have £500 to spend on stock this week. What should I order?', 'What can I buy with $2,000 at most?']) assert.equal(namesAnItem(question), false, question)
+  for (const question of ['Order 100 cakestands', '帮我订 60 个蛋糕架', '订一些温度传感器', 'Order more 85123A', 'I need bird ornaments', 'I want 100 cakestands but I can only spend £1,000']) assert.equal(namesAnItem(question), true, question)
+})
+
+// 2026-11-11, the owner's hard limits: "Order 30 cakestands" made a 30 pcs
+// form against a minimum of 60, and half the answers never said so.
+test('a named quantity below the supplier\'s minimum order starts at the minimum and keeps what the user asked for', async () => {
+  const second = { id: 'ITEM-001::SUP-002', payload: { itemId: 'ITEM-001', supplierId: 'SUP-002', preferred: false, active: true, approved: true, leadTimeDays: 5, referencePrice: 80, currency: 'USD' } }
+  const { call, build } = await workspace({ supplierLinks: [link(), second], userNamedSkus: ['LDM-001'] })
+  const lines = await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  assert.equal(lines.rows[0].minimumOrderQuantity, 100)
+  const form = (line) => assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [line] }), 'pr_form').lines[0]
+  const below = form({ sku: 'LDM-001', quantity: 30 })
+  assert.deepEqual([below.suggestedQuantity, below.checked], [{ value: 100, source: 'user_named_raised_to_moq', minimum: 100, requested: 30 }, true])
+  // At or above the minimum the user's quantity stands.
+  assert.deepEqual(form({ sku: 'LDM-001', quantity: 100 }).suggestedQuantity, { value: 100, source: 'user_named' })
+  assert.deepEqual(form({ sku: 'LDM-001', quantity: 150 }).suggestedQuantity, { value: 150, source: 'user_named' })
+  // Another supplier the user picked is not held to the preferred one's minimum.
+  assert.deepEqual(form({ sku: 'LDM-001', quantity: 30, supplier: 'Summit Packaging' }).suggestedQuantity, { value: 30, source: 'user_named' })
+})
+
+// 2026-11-11: "I want 100 cakestands but I can only spend £1,000" got the
+// reorder list's 60 on the form while the solver and the text said 78; "预算只有
+// 300 英镑，这周该补什么货？" ticked the solver's pick as the user's.
+test('the item the user described keeps the order plan\'s quantity, and a budget question ticks nothing', async () => {
+  const shipping = (data) => {
+    data.shipmentLines = Array.from({ length: 18 }, (_, index) => ({ itemId: 'ITEM-001', unit: 'pcs', postedQuantity: 50, shipment: { postedAt: new Date(`2026-09-${String(index + 1).padStart(2, '0')}T16:00:00Z`) } }))
+  }
+  const { ctx, call, build } = await workspace({ change: shipping, actor: (actor) => { actor.allWarehouses = true } })
+  const plan = await call('toolu_plan', 'optimize_order_plan')
+  const quantity = plan.decision.lines[0].quantity
+  await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  ctx.orderPlan = latestOrderPlan(ctx.results)
+  ctx.question = 'I want 900 temperature sensors but can only spend 20,000'
+  const described = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity }] }), 'pr_form')
+  assert.deepEqual([described.lines[0].suggestedQuantity, described.lines[0].checked], [{ value: quantity, source: 'order_plan' }, true])
+  // A quantity the model worked out itself for a budget question sends it to
+  // the solver first (2026-11-12 on Flash: 78 from calculate, the form at 60);
+  // the typed 900 and the line's own suggestion are kept as before.
+  const suggestion = described.lines[0].suggestedQuantity.value
+  assertError(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: quantity + 1 }] }), 'quantity_not_planned')
+  assert.equal(assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 900 }] }), 'pr_form').lines[0].suggestedQuantity.value, 900)
+  ctx.orderPlan = new Map()
+  assert.ok(assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001' }] }), 'pr_form').lines.length)
+  ctx.question = 'I want 900 temperature sensors'
+  assert.ok(assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: suggestion + 1 }] }), 'pr_form'))
+  ctx.orderPlan = latestOrderPlan(ctx.results)
+  ctx.question = '预算只有 300 英镑，这周该补什么货？'
+  const budget = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity }] }), 'pr_form')
+  assert.deepEqual([budget.lines.length, budget.suggested[0].suggestedQuantity, budget.suggested[0].checked], [0, { value: quantity, source: 'order_plan' }, false])
+})
+
+// 2026-11-11 on Flash: "add 150 of 84879 too" after "Order 100 cakestands"
+// showed the cakestand at the suggested quantity, unticked, while the text said 100.
+test('adding to a form keeps a line of the latest form at the quantity the user typed earlier', async () => {
+  const { ctx, call, build } = await workspace({ userNamedSkus: ['LDM-002'], userText: 'add 30 of LDM-002 too\nOrder 100 of LDM-001', lastFormSkus: ['ldm-001'] })
+  ctx.question = 'add 30 of LDM-002 too'
+  await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'] })
+  const form = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 100 }, { sku: 'LDM-002', quantity: 30 }] }), 'pr_form')
+  const line = (sku) => [...form.lines, ...form.suggested].find((row) => row.item.sku === sku)
+  assert.deepEqual([line('LDM-001').suggestedQuantity, form.lines.some((row) => row.item.sku === 'LDM-001')], [{ value: 100, source: 'user_named' }, true])
+  assert.equal(line('LDM-002').suggestedQuantity.value, 30)
+  // A quantity nobody typed for an item of the latest form stays the server's suggestion.
+  const other = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 77 }, { sku: 'LDM-002', quantity: 30 }] }), 'pr_form')
+  assert.notEqual([...other.lines, ...other.suggested].find((row) => row.item.sku === 'LDM-001').suggestedQuantity.value, 77)
 })

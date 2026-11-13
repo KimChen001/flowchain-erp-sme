@@ -4,7 +4,7 @@ import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { validateAiToolArgs, aiToolList, AI_TOOL_LIMITS } from './ai-read-tool-contract.mjs'
-import { AI_READ_TOOLS } from './ai-read-tools.mjs'
+import { AI_READ_TOOLS, aiStockSku } from './ai-read-tools.mjs'
 import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { createSupplierInsightsReadService } from './supplier-insights.mjs'
@@ -54,6 +54,15 @@ test('an administrator is offered every read tool, and each answers with capped 
   // Counts per supplier are the tool's own, over every matching order.
   assert.equal(overdue.result.bySupplier.reduce((sum, row) => sum + row.orders, 0), overdue.result.total)
   assert.ok(overdue.result.bySupplier.every((row) => row.ref.type === 'supplier'))
+  // The matching orders' amounts added up by currency, the value of the open
+  // orders; committedSpend counts closed ones too (2026-11-12 on Flash: the
+  // open orders' value was answered with committedSpend).
+  const open = (await runAiReadTool('list_purchase_orders', {}, { facts })).result
+  const openRows = facts.purchaseOrders.index.filter((row) => row.isOpen)
+  const sum = (rows, currency) => Math.round(rows.filter((row) => row.currency === currency && row.amount !== null).reduce((total, row) => total + Number(row.amount), 0) * 100) / 100
+  assert.deepEqual(open.amountTotal.amounts.map((row) => [row.currency, row.amount, row.orders]), [...new Set(openRows.map((row) => row.currency))].map((currency) => [currency, sum(openRows, currency), openRows.filter((row) => row.currency === currency).length]))
+  assert.deepEqual((await runAiReadTool('workspace_summary', {}, { facts })).result.purchaseOrders.openOrdersAmount, open.amountTotal)
+  assert.match(AI_READ_TOOLS.find((tool) => tool.name === 'workspace_summary').description, /never the value of the open orders/)
   // A supplier tier's orders, with their own total: "which Tier 1 suppliers
   // have overdue orders" needs a count no other field holds.
   const first = facts.purchaseOrders.index.find((row) => row.isOpen && row.overdueDays > 0)
@@ -154,7 +163,12 @@ test('a role gets only the tools and the fields it may read', async () => {
   const orders = await runAiReadTool('list_purchase_orders', { status: 'all' }, { facts: viewer })
   assert.ok(orders.result.rows.length > 0)
   assert.ok(orders.result.rows.every((row) => row.amount === null))
+  // An order's unit price only for a role that sees prices (2026-11-07: an answer divided the amount itself).
+  assert.ok((await runAiReadTool('get_purchase_order', { order: 'PO-001' }, { facts: viewer })).result.openLines.every((line) => !('unitPrice' in line)))
+  assert.deepEqual((await runAiReadTool('get_purchase_order', { order: 'PO-001' }, { facts: await factsFor() })).result.openLines.map((line) => [line.unitPrice, line.currency]), [[100, 'USD']])
   assert.equal(orders.result.workspace.committedSpend, null)
+  assert.equal(orders.result.amountTotal, null)
+  assert.equal((await runAiReadTool('workspace_summary', {}, { facts: viewer })).result.purchaseOrders.openOrdersAmount, null)
   // Nobody gets a contact's email address from a tool.
   for (const facts of [await factsFor(), finance, operations, viewer]) assert.doesNotMatch(await everyOutput(facts), /@/)
 })
@@ -191,6 +205,103 @@ test('the stock projection places only dated lines in a week and lists the rest 
   for (const entry of projection.notPlacedInAWeek.incomingPastPromisedDate) assert.ok(!placed.has(entry.orderNumber))
   assert.ok(projection.notPlacedInAWeek.incomingPastPromisedDate.some((entry) => entry.orderNumber === 'PO-001'), 'PO-001 is overdue')
   assert.deepEqual(await runAiReadTool('stock_projection', { sku: 'NOPE-1' }, { facts }), { ok: false, error: 'not_found' })
+})
+
+test('at risk covers short, out of stock, below safety stock and below the reorder point, as the parameter says', async () => {
+  const facts = await factsFor()
+  const all = facts.inventory.rows
+  // As on the public data: below safety stock with no open sales demand short.
+  const calm = all.find((row) => !facts.inventory.atRisk.includes(row.sku) && row.stockStatus !== 'below_safety_stock')
+  calm.stockStatus = 'below_safety_stock'
+  const risky = (row) => facts.inventory.atRisk.includes(row.sku) || ['out_of_stock', 'below_safety_stock', 'below_reorder_point'].includes(row.stockStatus)
+  const result = (await runAiReadTool('stock_position', { only: 'at_risk', limit: 50 }, { facts })).result
+  assert.deepEqual(result.rows.map((row) => row.sku), all.filter(risky).map((row) => row.sku).sort())
+  assert.ok(result.rows.some((row) => row.status === 'below_safety_stock' && !(row.shortage > 0)), 'an item below safety stock with no shortage is at risk')
+  assert.deepEqual(result.counts, {
+    atRisk: all.filter(risky).length,
+    shortAgainstSalesOrders: all.filter((row) => facts.inventory.atRisk.includes(row.sku)).length,
+    outOfStock: all.filter((row) => row.stockStatus === 'out_of_stock').length,
+    belowSafetyStock: all.filter((row) => row.stockStatus === 'below_safety_stock').length,
+    belowReorderPoint: all.filter((row) => row.stockStatus === 'below_reorder_point').length,
+  })
+})
+
+test('a stock row gives each incoming order\'s promised date and days overdue, as the order list does', async () => {
+  const facts = await factsFor()
+  const row = (await runAiReadTool('stock_position', { sku: 'LDM-001' }, { facts })).result.rows[0]
+  assert.ok(row.purchaseOrders.length > 0)
+  assert.deepEqual(row.purchaseOrderDates.map((entry) => entry.orderNumber), row.purchaseOrders)
+  const listed = (await runAiReadTool('list_purchase_orders', { status: 'all', limit: 50 }, { facts })).result.rows
+  for (const entry of row.purchaseOrderDates) {
+    const order = listed.find((candidate) => candidate.orderNumber === entry.orderNumber)
+    assert.deepEqual({ dueDate: entry.dueDate, overdueDays: entry.overdueDays }, { dueDate: order.dueDate, overdueDays: order.overdueDays })
+  }
+  assert.ok(row.purchaseOrderDates.some((entry) => entry.orderNumber === 'PO-001' && entry.overdueDays > 0), 'PO-001 is overdue')
+})
+
+// No read tool gives an email address (tests/postgres/ai-read-tools.test.mjs
+// holds every output to it): a draft leaves the To: line for the user.
+test('list_suppliers gives no contact email, though the facts hold one for drafting roles', async () => {
+  const facts = await factsFor()
+  assert.ok(facts.suppliers.some((row) => 'email' in row))
+  const rows = (await runAiReadTool('list_suppliers', {}, { facts })).result.rows
+  assert.ok(rows.length > 0)
+  for (const row of rows) assert.ok(!('email' in row) && !('contactName' in row), row.name)
+})
+
+// 2026-11-09 on Flash: "Acme 是几级供应商？为什么？" got "the records do not say
+// why", though the buyer wrote a reason when setting the tier.
+test('list_suppliers gives a tier\'s written reason, when it was set and by whom; an untiered supplier none', async () => {
+  const facts = await factsFor()
+  const tiered = { ...facts.suppliers[0], tier: 1, tierReason: 'Sole source of our best seller; 6% of purchase spend.', tierSetOn: '2026-10-12', tierSetBy: 'Daniel' }
+  const plain = { ...facts.suppliers[1], tier: null }
+  const rows = (await runAiReadTool('list_suppliers', {}, { facts: { ...facts, suppliers: [tiered, plain] } })).result.rows
+  const one = rows.find((row) => row.name === tiered.name)
+  assert.deepEqual([one.tier, one.tierReason, one.tierSetOn, one.tierSetBy], [1, 'Sole source of our best seller; 6% of purchase spend.', '2026-10-12', 'Daniel'])
+  assert.ok(!('tierReason' in rows.find((row) => row.name === plain.name)))
+})
+
+// 2026-11-09 on Flash: "When did we last receive 85123A?" had no receipt
+// lines to read.
+test('list_receipts with a SKU gives that item\'s latest receipts, newest first', async () => {
+  const facts = await factsFor()
+  const one = (await runAiReadTool('list_receipts', { sku: 'ldm-001' }, { facts })).result
+  assert.equal(one.sku, 'LDM-001')
+  assert.deepEqual(one.rows.map((row) => [row.documentNumber, row.accepted, row.rejected, row.unit, row.purchaseOrder, row.postingStatus]), [['GRN-001', 20, 0, 'pcs', 'PO-001', 'posted']])
+  assert.match(one.rows[0].arrived, /^\d{4}-\d{2}-\d{2}$/)
+  assert.deepEqual(one.rows[0].ref, { type: 'receiving_doc', id: 'GRN-001', label: 'GRN-001' })
+  const none = (await runAiReadTool('list_receipts', { sku: 'NOPE-1' }, { facts })).result
+  assert.deepEqual(none.rows, [])
+  assert.match(none.note, /No receipt of this item among the \d+ newest receipts read/)
+  // Without a SKU the kinds are as before.
+  assert.ok(Array.isArray((await runAiReadTool('list_receipts', { kind: 'unposted' }, { facts })).result.rows))
+})
+
+// 2026-11-09 on Flash: told the period was "all", the model said the
+// scorecard had no 90-day view and gave the quarter.
+test('supplier_performance reads the last 90 days by default, or the calendar period asked for', async () => {
+  const facts = await factsFor()
+  const asked = []
+  const scorecard = async (query) => { asked.push(query); return { period: query.from ? query : { from: '2026-08-12', to: '2026-11-09' }, suppliers: [], fieldVisibility: {} } }
+  const tool = AI_READ_TOOLS.find((entry) => entry.name === 'supplier_performance')
+  assert.equal(tool.schema.properties.period.enum[0], 'last_90_days')
+  assert.ok(!tool.schema.properties.period.enum.includes('all'))
+  await runAiReadTool('supplier_performance', {}, { facts: { ...facts, supplierScorecard: scorecard } })
+  await runAiReadTool('supplier_performance', { period: 'last_90_days' }, { facts: { ...facts, supplierScorecard: scorecard } })
+  await runAiReadTool('supplier_performance', { period: 'last_quarter' }, { facts: { ...facts, supplierScorecard: scorecard } })
+  assert.deepEqual(asked.slice(0, 2), [{}, {}])
+  assert.ok(asked[2].from && asked[2].to)
+})
+
+test('an order row names its items as the stock rows do, so a draft can name them', async () => {
+  const facts = await factsFor()
+  const names = new Map(facts.inventory.rows.map((row) => [row.sku, row.itemName]))
+  const rows = (await runAiReadTool('list_purchase_orders', { status: 'all', limit: 50 }, { facts })).result.rows
+  const withItems = rows.filter((row) => row.skus.length)
+  assert.ok(withItems.length > 0)
+  for (const row of withItems) assert.deepEqual(row.itemNames, row.skus.map((sku) => names.get(sku)).filter(Boolean), row.orderNumber)
+  const one = await runAiReadTool('get_purchase_order', { order: withItems[0].orderNumber }, { facts })
+  assert.deepEqual(one.result.order.itemNames, withItems[0].itemNames)
 })
 
 test('supplier_risks lists the Supplier risks page\'s issues, counted per supplier and never scored', async () => {
@@ -237,4 +348,162 @@ test('list_contracts gives a contract\'s title, dates, value and terms, the valu
   assert.equal(viewer.pricesHidden, true)
   assert.equal(viewer.rows[0].totalValue, null)
   assert.equal(viewer.rows[0].currency, 'USD')
+})
+
+// 2026-11-07: "上个月销售额是多少？", top customers and best sellers had no tool.
+test('sales_summary totals customer invoices in a period by customer, item or month, in one currency', async () => {
+  const scenario = aiSkillScenario()
+  const loaded = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(loaded)
+  const seen = []
+  const line = (sku, itemName, quantity, lineAmount) => ({ itemId: `ITEM-${sku}`, sku, itemName, quantity: String(quantity), unit: 'pcs', lineAmount: String(lineAmount) })
+  const invoices = [
+    { id: 'CI-1', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-10-03T00:00:00Z'), subtotalAmount: '100.0000', currency: 'GBP', lines: [line('X-1', 'Cake Stand', 10, 60), line('Y-2', 'Tea Towel', 5, 40)] },
+    { id: 'CI-2', customerNameSnapshot: 'Redwood Retail', invoiceDate: new Date('2026-10-20T00:00:00Z'), subtotalAmount: '250.0000', currency: 'GBP', lines: [line('X-1', 'Cake Stand', 25, 250)] },
+    { id: 'CI-3', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-10-21T00:00:00Z'), subtotalAmount: '50.0000', currency: 'USD', lines: [line('X-1', 'Cake Stand', 4, 50)] },
+  ]
+  const context = { ...loaded, prisma: { ...loaded.prisma, customerInvoice: { findMany: async (query) => { seen.push(query); return invoices } } } }
+  const run = async (args) => (await runAiReadTool('sales_summary', { from: '2026-10-01', to: '2026-10-31', currency: 'GBP', ...args }, { facts, context })).result
+  const customers = await run({})
+  assert.deepEqual(seen[0].where.status, { notIn: ['draft', 'cancelled'] })
+  assert.deepEqual([seen[0].where.invoiceDate.gte.toISOString(), seen[0].where.invoiceDate.lt.toISOString()], ['2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'])
+  assert.deepEqual([customers.currency, customers.invoices, customers.amount], ['GBP', 2, 350])
+  assert.deepEqual(customers.rows.map((row) => [row.customer, row.invoices, row.amount, row.sharePercent]), [['Redwood Retail', 1, 250, 71.4], ['Harbor Supply Co', 1, 100, 28.6]])
+  assert.deepEqual(customers.otherCurrencies, [{ currency: 'USD', invoices: 1, amount: 50 }])
+  // The share of the rows so far, so the top N together comes from the tool.
+  assert.deepEqual(customers.rows.map((row) => [row.rank, row.runningAmount, row.runningSharePercent]), [[1, 250, 71.4], [2, 350, 100]])
+  const items = await run({ by: 'item' })
+  assert.deepEqual(items.rows.map((row) => [row.sku, row.itemName, row.quantity, row.amount, row.sharePercent]), [['X-1', 'Cake Stand', 35, 310, 88.6], ['Y-2', 'Tea Towel', 5, 40, 11.4]])
+  assert.deepEqual(items.rows[0].ref, { type: 'item', id: 'ITEM-X-1', label: 'X-1' })
+  const oneItem = await run({ sku: 'Y-2' })
+  assert.deepEqual([oneItem.amount, oneItem.quantity, oneItem.invoices, oneItem.rows.map((row) => row.customer)], [40, 5, 1, ['Harbor Supply Co']])
+  // The item asked for by its name or its item id counts the same lines
+  // (2026-11-12 on Flash: 84879's October came back as 0 units against 611).
+  const stocked = { ...facts, inventory: { ...facts.inventory, rows: [...(facts.inventory?.rows || []), { sku: 'Y-2', itemName: 'Tea Towel', itemId: 'ITEM-Y-2' }] } }
+  const named = async (sku) => (await runAiReadTool('sales_summary', { from: '2026-10-01', to: '2026-10-31', currency: 'GBP', sku }, { facts: stocked, context })).result
+  for (const asked of ['Tea Towel', 'ITEM-Y-2', 'y-2']) assert.deepEqual([(await named(asked)).sku, (await named(asked)).quantity, (await named(asked)).amount], ['Y-2', 5, 40], asked)
+  // The stocked items no invoice of the period sold, in any currency, most
+  // stock first (2026-11-12: "最近 30 天哪些商品一件都没卖出去？" had no tool).
+  const shelf = { ...facts, inventory: { ...facts.inventory, rows: [
+    { sku: 'X-1', itemName: 'Cake Stand', itemId: 'ITEM-X-1', onHand: 4, unit: 'pcs' },
+    { sku: 'W-5', itemName: 'Wall Clock', itemId: 'ITEM-W-5', onHand: 3, unit: 'pcs' },
+    { sku: 'V-6', itemName: 'Vase', itemId: 'ITEM-V-6', onHand: 12, unit: 'pcs' },
+    { sku: 'U-7', itemName: 'Umbrella', itemId: 'ITEM-U-7', onHand: 0, unit: 'pcs' },
+  ] } }
+  const unsold = (await runAiReadTool('sales_summary', { from: '2026-10-01', to: '2026-10-31', unsold: true }, { facts: shelf, context })).result
+  assert.deepEqual(unsold.rows.map((row) => [row.sku, row.onHand]), [['V-6', 12], ['W-5', 3]])
+  assert.deepEqual([unsold.unsold, unsold.stockedItems, unsold.total, unsold.rows[0].ref.type], [true, 3, 2, 'item'])
+  const unknown = await run({ sku: 'Q-9' })
+  assert.deepEqual([unknown.quantity, unknown.invoices, unknown.itemNotFound], [0, 0, true])
+  const months = await run({ by: 'month' })
+  assert.deepEqual(months.rows.map((row) => [row.month, row.amount]), [['2026-10', 350]])
+  assert.deepEqual([months.rows[0].runningAmount, months.rows[0].runningSharePercent], [undefined, undefined])
+  const harbor = await run({ customer: 'harbor', by: 'item' })
+  assert.deepEqual(harbor.rows.map((row) => [row.sku, row.amount]), [['X-1', 60], ['Y-2', 40]])
+  // Ranked by quantity, the item that sold the most units comes first, though
+  // it earned less (2026-11-09 on Flash: "most units" named the top earner).
+  const cheap = [...invoices, { id: 'CI-4', customerNameSnapshot: 'Redwood Retail', invoiceDate: new Date('2026-10-22T00:00:00Z'), subtotalAmount: '30.0000', currency: 'GBP', lines: [line('Z-3', 'Paper Clip', 300, 30)] }]
+  const byUnits = async (args) => (await runAiReadTool('sales_summary', { from: '2026-10-01', to: '2026-10-31', currency: 'GBP', by: 'item', ...args }, { facts, context: { ...context, prisma: { ...context.prisma, customerInvoice: { findMany: async () => cheap } } } })).result
+  assert.deepEqual((await byUnits({})).rows.map((row) => row.sku), ['X-1', 'Y-2', 'Z-3'])
+  const units = await byUnits({ rankBy: 'quantity' })
+  assert.equal(units.rankedBy, 'quantity')
+  assert.deepEqual(units.rows.map((row) => [row.rank, row.sku, row.quantity]), [[1, 'Z-3', 300], [2, 'X-1', 35], [3, 'Y-2', 5]])
+  // A named period is counted from the workspace day; to before from is refused.
+  const lastMonth = (await runAiReadTool('sales_summary', { period: 'last_month' }, { facts, context })).result
+  assert.ok(lastMonth.period.from.endsWith('-01') && lastMonth.period.to < String(facts.today || facts.asOf))
+  assert.equal((await runAiReadTool('sales_summary', { from: '2026-10-31', to: '2026-10-01' }, { facts, context })).error, 'invalid_period')
+  // Only for users who may read customer invoices.
+  const tool = AI_READ_SERVICE_TOOLS.find((entry) => entry.name === 'sales_summary')
+  assert.equal(tool.available(facts, context), true)
+  assert.equal(tool.available(facts, { ...context, actor: { ...context.actor, permissionCodes: new Set() } }), false)
+})
+
+// 2026-11-07: "Which customer owes us the most?" read the first 100 of 542 open
+// items, and a customer's items were filtered from that page only.
+test('list_receivables by_customer totals every open item over all pages; one customer\'s items come from every page', async () => {
+  const scenario = aiSkillScenario()
+  const all = [
+    ...Array.from({ length: 100 }, (_, index) => ({ id: `AR-A${index}`, obligationNumber: `AR-A${index}`, customerName: 'Harbor Supply Co', outstandingAmount: '1.00', currency: 'GBP', dueDate: '2026-01-05T00:00:00.000Z', status: 'open' })),
+    ...Array.from({ length: 30 }, (_, index) => ({ id: `AR-B${index}`, obligationNumber: `AR-B${index}`, customerName: 'Redwood Retail', outstandingAmount: '10.00', currency: 'GBP', dueDate: index ? '2099-01-01T00:00:00.000Z' : '2026-02-01T00:00:00.000Z', status: 'open' })),
+    { id: 'AR-PAID', obligationNumber: 'AR-PAID', customerName: 'Paid Up Ltd', outstandingAmount: '0.00', currency: 'GBP', dueDate: '2026-01-01T00:00:00.000Z', status: 'paid' },
+  ]
+  const pages = []
+  const receivables = { listReceivables: async ({ page = 1, pageSize }) => { pages.push(page); return { total: all.length, items: all.slice((page - 1) * pageSize, page * pageSize) } } }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { receivables } })
+  const facts = await readAiSkillFacts(context)
+  const result = (await runAiReadTool('list_receivables', { view: 'by_customer' }, { facts, context })).result
+  assert.deepEqual(pages, [1, 2])
+  assert.deepEqual(result.rows.map((row) => [row.customer, row.balance, row.items]), [['Redwood Retail', 300, 30], ['Harbor Supply Co', 100, 100]])
+  assert.deepEqual([result.rows[0].overdueAmount, result.rows[0].oldestDueDate], [10, '2026-02-01'])
+  assert.deepEqual(result.totals, [{ currency: 'GBP', balance: 400, items: 130, customers: 2 }])
+  pages.length = 0
+  const redwood = (await runAiReadTool('list_receivables', { customer: 'redwood', limit: 50 }, { facts, context })).result
+  assert.deepEqual([pages, redwood.total, redwood.rows.length], [[1, 2], 30, 30])
+})
+
+// 2026-11-08: a lookup of the item's full name in the SKU field found
+// nothing, and the answer would not state the stock.
+test('stock_position and stock_projection find an item by its name, in any case, quotes or dash; several matches come back to choose from', async () => {
+  const facts = await factsFor()
+  const item = facts.inventory.rows.find((row) => row.sku === 'LDM-001')
+  const named = `“${item.itemName.toUpperCase().replace('-', '‑')}”`
+  const position = (await runAiReadTool('stock_position', { sku: named }, { facts })).result
+  assert.deepEqual(position.rows.map((row) => row.sku), ['LDM-001'])
+  const projection = (await runAiReadTool('stock_projection', { sku: item.itemName.toLowerCase() }, { facts })).result
+  assert.equal(projection.sku, 'LDM-001')
+  // The SKU still works, and a name nothing fits is not found.
+  assert.equal((await runAiReadTool('stock_position', { sku: 'ldm-001' }, { facts })).result.rows[0].sku, 'LDM-001')
+  assert.equal((await runAiReadTool('stock_position', { sku: 'No Such Item Here' }, { facts })).error, 'not_found')
+  // Part of a name several items share.
+  const twin = { ...facts, inventory: { ...facts.inventory, rows: [...facts.inventory.rows, { ...item, sku: 'LDM-001-B', itemName: `${item.itemName} Spare` }] } }
+  const many = await runAiReadTool('stock_position', { sku: item.itemName.split(' ')[0] }, { facts: twin })
+  assert.equal(many.error, 'ambiguous')
+  assert.ok(many.candidates.some((row) => row.sku === 'LDM-001') && many.candidates.some((row) => row.sku === 'LDM-001-B'), JSON.stringify(many.candidates))
+})
+
+// 2026-11-08: "Cake Stand" for Regency Cakestand 3 Tier found nothing.
+test('an item name matches whatever its spaces and dashes', () => {
+  const facts = { inventory: { rows: [{ sku: '22423', itemName: 'Regency Cakestand 3 Tier' }, { sku: '85123A', itemName: 'White Hanging Heart T-Light Holder' }], masterOnly: [] } }
+  assert.deepEqual(aiStockSku(facts, 'Cake Stand'), { sku: '22423' })
+  assert.deepEqual(aiStockSku(facts, 'tlight holder'), { sku: '85123A' })
+})
+
+// 2026-11-08 on DeepSeek: "7.1556 件" a day, copied from four decimals.
+test('the reorder list gives the model its daily demand to one decimal', async () => {
+  const scenario = aiSkillScenario()
+  const reorderList = { read: async () => ({ rows: [{ sku: 'SKU-1', itemName: 'Item', orderNow: true, orderByDate: '2026-11-08', demand: { averageDailyDemand: 7.1556 }, supplier: { id: 'SUP-1', name: 'Supplier One' } }] }) }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  const row = (await runAiReadTool('reorder_list', {}, { facts: await readAiSkillFacts(context), context })).result.rows[0]
+  assert.equal(row.averageDailyDemand, 7.2)
+})
+
+// 2026-11-09 on Flash (UCI scene): "available to promise for 85123A is 408
+// pcs with these late lines counted (288 without)". The two named late orders
+// gave two rows for 85123A, 288 and 168, with nothing to say which order each
+// left out; without both it is 48.
+test('late order impact names the orders each row leaves out, and judges named orders on one SKU together too', async () => {
+  const po = (id, orderNumber, sku, remaining, overdueDays) => ({ id, orderNumber, isOpen: true, overdueDays, openLines: [{ sku, remaining, unit: 'pcs' }] })
+  const facts = {
+    asOf: '2026-11-10',
+    purchaseOrders: { index: [po('po-22', 'PO-202610-0022', '85123A', 120, 5), po('po-24', 'PO-202610-0024', '85123A', 240, 3), po('po-23', 'PO-202610-0023', '84879', 450, 4)] },
+    inventory: { rows: [
+      { sku: '85123A', itemId: 'item-1', unit: 'pcs', available: 48, availableToPromise: 408, purchaseOrderIds: ['po-22', 'po-24'] },
+      { sku: '84879', itemId: 'item-2', unit: 'pcs', available: 98, availableToPromise: 548, purchaseOrderIds: ['po-23'] },
+    ] },
+    salesOrders: [],
+  }
+  const rows = (result) => result.skus.map((row) => [row.sku, row.judgedOrders.join('+'), row.withoutTheseLines, row.withoutEveryLateLine ?? null, row.together ?? false])
+  const named = (await runAiReadTool('late_order_impact', { orders: ['PO-202610-0022', 'PO-202610-0024', 'PO-202610-0023'] }, { facts })).result
+  assert.deepEqual(rows(named), [
+    ['85123A', 'PO-202610-0022', 288, null, false],
+    ['85123A', 'PO-202610-0024', 168, null, false],
+    ['84879', 'PO-202610-0023', 98, 98, false],
+    ['85123A', 'PO-202610-0022+PO-202610-0024', 48, 48, true],
+  ])
+  // One named order of two leaves the other late line counted.
+  const one = (await runAiReadTool('late_order_impact', { orders: ['PO-202610-0024'] }, { facts })).result
+  assert.deepEqual(rows(one), [['85123A', 'PO-202610-0024', 168, null, false]])
+  // With none named, the overdue orders are judged together.
+  const all = (await runAiReadTool('late_order_impact', {}, { facts })).result
+  assert.deepEqual(rows(all).sort(), [['84879', 'PO-202610-0023', 98, 98, false], ['85123A', 'PO-202610-0022+PO-202610-0024', 48, 48, false]])
 })

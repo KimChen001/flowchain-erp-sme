@@ -15,6 +15,8 @@ import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, Sta
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useReorderListCopy } from "./reorderListCopy";
+import { useRouteAvailability } from "../../app/routeAvailability";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
 
 type Item = {
   id?: string;
@@ -57,7 +59,13 @@ type Movement = {
   movementId?: string;
   movementType?: string;
   reason?: string | null;
+  sourceDocumentType?: string | null;
   sourceDocumentId?: string;
+  // The source document's number (a receipt, shipment, adjustment...), when the server found it.
+  sourceDocumentNumber?: string | null;
+  relatedSalesOrderId?: string | null;
+  relatedSalesOrderNumber?: string | null;
+  postingBatchId?: string | null;
   relatedGrnId?: string;
   sku?: string;
   itemName?: string;
@@ -87,6 +95,27 @@ type Focus = {
 // Stock records are read 200 at a time, up to 50 pages (10,000 records).
 const BALANCE_PAGE_SIZE = 200;
 const BALANCE_PAGE_LIMIT = 50;
+// Movements are paged on the server (there can be tens of thousands): one
+// page of 50 at a time, as on the other long lists, with the type, warehouse
+// and search applied there.
+const MOVEMENT_PAGE_SIZE = 50;
+// The other lists (balances, warnings, lots, serials) hold every row in the
+// browser, so search and the cards count them all, and draw 50 at a time.
+const LIST_PAGE_SIZE = 50;
+// Every type and warehouse in the list, from the server, for the menus.
+type MovementFacets = { movementTypes: Array<{ code: string; count: number }>; warehouseIds: string[] };
+
+// A movement's source document opens on its own page, by its type.
+const SOURCE_ROUTES: Array<{ types: string[]; routeId: string; path: (id: string) => string }> = [
+  { types: ["receiving_document", "ReceivingDocument", "receipt"], routeId: "procurement:receiving-detail", path: (id) => `/app/procurement/receiving/${encodeURIComponent(id)}` },
+  { types: ["ShipmentDocument", "shipment"], routeId: "sales:shipment-detail", path: (id) => `/app/sales/shipments/${encodeURIComponent(id)}` },
+  { types: ["InventoryAdjustmentDocument"], routeId: "inventory:adjustment-detail", path: (id) => `/app/inventory/adjustments/${encodeURIComponent(id)}` },
+  { types: ["StockTransferDocument"], routeId: "inventory:transfer-detail", path: (id) => `/app/inventory/transfers/${encodeURIComponent(id)}` },
+  { types: ["CycleCountSession"], routeId: "inventory:count-detail", path: (id) => `/app/inventory/counts/${encodeURIComponent(id)}` },
+  { types: ["ReturnPostingDocument"], routeId: "inventory:return-posting-detail", path: (id) => `/app/inventory/returns/postings/${encodeURIComponent(id)}` },
+];
+// Internal ids are never shown; a filter on one names what it is instead.
+const INTERNAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const endpointFor: Record<string, { url: string; key: string }> = {
   overview: { url: "/api/inventory/balances", key: "balances" },
@@ -171,6 +200,12 @@ const COPY = {
   activeFilters: ["Filtered by", "当前筛选"],
   clearFilters: ["Clear filters", "清除筛选"],
   closeDetail: ["Close", "关闭"],
+  // Filter values that are internal ids, named instead of shown.
+  selectedOrder: ["selected order", "所选订单"],
+  selectedDocument: ["selected document", "所选单据"],
+  selectedLine: ["selected line", "所选单据行"],
+  selectedPosting: ["selected posting", "所选过账"],
+  selectedRecord: ["selected record", "所选记录"],
 } as const;
 
 // Built when the page renders, so the copy follows the interface language.
@@ -253,6 +288,8 @@ export default function InventoryPage({
   const [stockStatus, setStockStatus] = useState("");
   const [movementType, setMovementType] = useState("");
   const [status, setStatus] = useState("");
+  const [facets, setFacets] = useState<MovementFacets | null>(null);
+  const canOpenRoute = useRouteAvailability();
   const detailRef = useRef<HTMLDivElement>(null);
   const supportedFilterNames =
     view === "movements"
@@ -290,6 +327,11 @@ export default function InventoryPage({
       return next;
     }, new URLSearchParams())
     .toString();
+  // The movement page goes back to 1 whenever the filters or search change.
+  const movementFilterKey = [queryString, movementQuery, movementType, warehouse].join("|");
+  const [movementPageState, setMovementPageState] = useState({ key: movementFilterKey, page: 1 });
+  const movementPage = movementPageState.key === movementFilterKey ? movementPageState.page : 1;
+  const setMovementPage = (page: number) => setMovementPageState({ key: movementFilterKey, page });
   const load = () => {
     const request = (loadRequest.current += 1);
     const latest = () => request === loadRequest.current;
@@ -333,12 +375,16 @@ export default function InventoryPage({
       })();
     } else if (view === "movements") {
       const params = new URLSearchParams(queryString);
-      if (!params.get("pageSize")) params.set("pageSize", String(BALANCE_PAGE_SIZE));
+      params.set("page", String(movementPage));
+      params.set("pageSize", String(MOVEMENT_PAGE_SIZE));
       if (movementQuery) params.set("q", movementQuery);
+      if (movementType) params.set("movementType", movementType);
+      if (warehouse) params.set("warehouseId", warehouse);
       work = read(params).then((payload) => {
         if (!latest()) return;
         setRows(rowsOf(payload));
         setServerTotal(totalOf(payload));
+        setFacets(payload.facets && Array.isArray(payload.facets.movementTypes) ? payload.facets : null);
       });
     } else {
       work = read(new URLSearchParams(queryString)).then((payload) => {
@@ -349,7 +395,7 @@ export default function InventoryPage({
       .then(() => { if (latest()) setState("ready"); })
       .catch(() => { if (latest()) setState("error"); });
   };
-  useEffect(load, [view, queryString, movementQuery]);
+  useEffect(load, [view, queryString, movementQuery, view === "movements" ? `${movementType}|${warehouse}|${movementPage}` : ""]);
   useEffect(() => {
     if (view !== "movements") return;
     const timer = setTimeout(() => setMovementQuery(query.trim()), 300);
@@ -373,16 +419,14 @@ export default function InventoryPage({
         && (!warehouse || (item.warehouseId || item.defaultWarehouseId) === warehouse)
         && (!stockStatus || stockStateOf(item) === stockStatus);
     }
-    if (view === "movements") {
-      // The server has already searched the movements for the query.
-      const movement = row as Movement;
-      return (Boolean(movementQuery) || contains(query, movement.sku, movement.itemName, movement.sourceDocumentId, movement.relatedGrnId))
-        && (!warehouse || movement.warehouseId === warehouse)
-        && (!movementType || movement.movementType === movementType);
-    }
+    // The server has already searched and filtered the page of movements.
+    if (view === "movements") return true;
     return contains(query, row.lotId, row.lot, row.serialId, row.sn, row.id, row.sku, row.itemName)
       && (!status || row.status === status);
   });
+  // One page of rows is drawn; movements arrive a page at a time already.
+  const paged = usePagedRows(visible, LIST_PAGE_SIZE, [view, queryString, query, warehouse, stockStatus, status].join("|"));
+  const drawn: any[] = view === "movements" ? visible : paged.pageRows;
   const selected =
     view === "overview" || view === "warnings"
       ? items.find(
@@ -394,6 +438,19 @@ export default function InventoryPage({
   }, [selectedSku]);
   // Each filter chip names one value, so its label is singular.
   const english = language === "en-US";
+  const movements = rows as Movement[];
+  const filterValue = (name: string, value: string) => {
+    const named = (key: keyof typeof COPY) => (INTERNAL_ID.test(value) ? tr(key) : value);
+    if (name === "relatedSalesOrderId") return movements.find((row) => row.relatedSalesOrderId === value)?.relatedSalesOrderNumber || named("selectedOrder");
+    if (name === "sourceDocumentId") return movements.find((row) => row.sourceDocumentId === value)?.sourceDocumentNumber || named("selectedDocument");
+    // A posting batch is named by the document it posted.
+    if (name === "postingBatchId") return movements.find((row) => row.postingBatchId === value)?.sourceDocumentNumber || tr("selectedPosting");
+    if (name === "sourceDocumentLineId") return named("selectedLine");
+    if (name === "movementType") return movementTypeLabel(value, language);
+    if (name === "warehouseId") return warehouseName(value) || named("selectedRecord");
+    if (name === "status") return statusLabel(value);
+    return named("selectedRecord");
+  };
   const activeFilters = [
     { name: "relatedSalesOrderId", en: "Sales order", zh: "销售订单" },
     { name: "sourceDocumentId", en: "Source document", zh: "来源单据" },
@@ -407,7 +464,7 @@ export default function InventoryPage({
     { name: "status", en: "Status", zh: "状态" },
   ].flatMap(({ name, en, zh }) =>
     searchParams.get(name)
-      ? [{ name, label: english ? en : zh, value: searchParams.get(name)! }]
+      ? [{ name, label: english ? en : zh, value: filterValue(name, searchParams.get(name)!) }]
       : [],
   );
   const clearFilters = () => {
@@ -427,8 +484,24 @@ export default function InventoryPage({
     title: copy("当前工作区暂无库存记录"),
     description: copy("页面不会用固定 SKU、批次、序列号或移动记录补足空数据。"),
   };
-  const warehouseIds = [...new Set(rows.map((row: any) => row.warehouseId || row.defaultWarehouseId).filter(Boolean))] as string[];
-  const movementTypes = [...new Set((rows as Movement[]).map((row) => row.movementType).filter(Boolean))] as string[];
+  const warehouseIds = view === "movements" && facets
+    ? [...new Set([...facets.warehouseIds, warehouse].filter(Boolean))]
+    : [...new Set(rows.map((row: any) => row.warehouseId || row.defaultWarehouseId).filter(Boolean))] as string[];
+  const movementTypes = view === "movements" && facets
+    ? [...new Set([...facets.movementTypes.map((entry) => entry.code), movementType].filter(Boolean))]
+    : [...new Set([...(rows as Movement[]).map((row) => row.movementType), movementType].filter(Boolean))] as string[];
+  // A movement's source document by its number, linked to its page when that page is open to the user.
+  const sourceDocument = (row: Movement) => {
+    const route = SOURCE_ROUTES.find((entry) => entry.types.includes(String(row.sourceDocumentType || "")));
+    const id = route?.routeId === "procurement:receiving-detail" ? row.relatedGrnId || row.sourceDocumentId : row.sourceDocumentId;
+    if (row.sourceDocumentNumber) {
+      return route && id && canOpenRoute(route.routeId)
+        ? <Link to={route.path(id)} className={`fc-entity-link font-semibold text-blue-600 underline-offset-2 hover:underline ${tableLinkClass}`}>{row.sourceDocumentNumber}</Link>
+        : row.sourceDocumentNumber;
+    }
+    if (row.relatedGrnId) return <EntityLink kind="receiving_doc" id={row.relatedGrnId} className={tableLinkClass}>{row.relatedGrnId}</EntityLink>;
+    return row.sourceDocumentId && !INTERNAL_ID.test(row.sourceDocumentId) ? row.sourceDocumentId : <span style={{ color: A.gray2 }}>—</span>;
+  };
   const statuses = [...new Set(rows.map((row: any) => row.status).filter(Boolean))] as string[];
   const balances = view === "overview" || view === "warnings";
   const count = (value: number) => (state === "ready" ? String(value) : "—");
@@ -437,7 +510,7 @@ export default function InventoryPage({
   const stateRow = (colSpan: number) =>
     state === "loading" ? <ListStateRow colSpan={colSpan} state="loading" />
       : state === "error" ? <ListStateRow colSpan={colSpan} state="error" title={tr("loadFailed")} onRetry={load} />
-        : visible.length === 0 ? (base.length === 0 && !activeFilters.length
+        : visible.length === 0 ? (base.length === 0 && !activeFilters.length && !(view === "movements" && (movementQuery || movementType || warehouse))
           ? <ListStateRow colSpan={colSpan} state="empty" title={emptyState.title} detail={emptyState.description} />
           : <ListStateRow colSpan={colSpan} state="empty" title={tr("noMatch")} />)
           : null;
@@ -584,21 +657,21 @@ export default function InventoryPage({
       )}
 
       {listTitle && (
-        <ListCard title={tr(listTitle)} total={state === "ready" ? (view === "movements" && serverTotal !== null ? serverTotal : view === "overview" && serverTotal !== null ? Math.max(serverTotal, base.length) : base.length) : undefined} shown={visible.length}>
+        <ListCard title={tr(listTitle)} total={state === "ready" ? (view === "movements" && serverTotal !== null ? serverTotal : view === "overview" && serverTotal !== null ? Math.max(serverTotal, base.length) : base.length) : undefined} shown={drawn.length} testId={`inventory-${view}-list`}>
           <div className={tableScrollClass}>
             {balances && (
               <table className={`w-full min-w-[1000px] text-left ${tableBodyTextClass}`}>
                 {head([[tr("skuItem"), "left"], [tr("warehouseLocation"), "left"], [tr("onHand"), "right"], [tr("reservedQty"), "right"], [tr("available"), "right"], [tr("safetyReorder"), "right"], [tr("status"), "left"], [tr("actions"), "left"]])}
                 <tbody>
                   {stateRow(8)}
-                  {state === "ready" && (visible as Item[]).map((item, index) => {
+                  {state === "ready" && (drawn as Item[]).map((item, index) => {
                     const stock = stockStateOf(item);
                     return (
                       <tr
                         key={item.id || `${item.sku}-${item.warehouseId}-${item.locationKey}`}
                         data-testid={`inventory-item-${item.sku}`}
                         className={listRowClass}
-                        style={listRowStyle(index, visible.length)}
+                        style={listRowStyle(index, drawn.length)}
                       >
                         <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                           <EntityLink kind="item" id={item.itemId || item.sku} className={tableLinkClass}>{item.sku}</EntityLink>
@@ -641,15 +714,11 @@ export default function InventoryPage({
                 {head([[tr("type"), "left"], [tr("source"), "left"], [tr("skuItem"), "left"], [tr("warehouseLocation"), "left"], [tr("quantityIn"), "right"], [tr("quantityOut"), "right"], [tr("date"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(8)}
-                  {state === "ready" && (visible as Movement[]).map((row, index) => (
-                    <tr key={row.movementId || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as Movement[]).map((row, index) => (
+                    <tr key={row.movementId || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       {/* The movement's own id is an internal UUID; show what moved it instead. */}
                       <td className={`${tdNowrapClass} sticky left-0 z-10 bg-white font-medium`} style={{ color: A.label }}>{movementTypeLabel(row.movementType || "", language, row.reason)}</td>
-                      <td className={tdNowrapClass}>
-                        {row.relatedGrnId
-                          ? <EntityLink kind="receiving_doc" id={row.relatedGrnId} className={tableLinkClass}>{row.relatedGrnId}</EntityLink>
-                          : row.sourceDocumentId && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(row.sourceDocumentId) ? row.sourceDocumentId : <span style={{ color: A.gray2 }}>—</span>}
-                      </td>
+                      <td className={tdNowrapClass}>{sourceDocument(row)}</td>
                       <td className={tdNameClass}>
                         <EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink>
                         {row.itemName && <div className="max-w-[200px] truncate text-[11px]" style={{ color: A.sub }}>{row.itemName}</div>}
@@ -672,8 +741,8 @@ export default function InventoryPage({
                 {head([[tr("lot"), "left"], [tr("skuItem"), "left"], [tr("warehouse"), "left"], [tr("quantity"), "right"], [tr("expiry"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(6)}
-                  {state === "ready" && (visible as Lot[]).map((row, index) => (
-                    <tr key={row.lotId || row.lot || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as Lot[]).map((row, index) => (
+                    <tr key={row.lotId || row.lot || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.lotId || row.lot || "—"}</td>
                       <td className={tdNameClass}>
                         <EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink>
@@ -693,8 +762,8 @@ export default function InventoryPage({
                 {head([[tr("serial"), "left"], [tr("skuItem"), "left"], [tr("warehouse"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(4)}
-                  {state === "ready" && (visible as Serial[]).map((row, index) => (
-                    <tr key={row.serialId || row.sn || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as Serial[]).map((row, index) => (
+                    <tr key={row.serialId || row.sn || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.serialId || row.sn || "—"}</td>
                       <td className={tdNameClass}><EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink></td>
                       <td className={tdNowrapClass}>{warehouseName(row.warehouseId) || "—"}</td>
@@ -709,8 +778,8 @@ export default function InventoryPage({
                 {head([[tr("exception"), "left"], [tr("skuItem"), "left"], [tr("impact"), "right"], [tr("reason"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(5)}
-                  {state === "ready" && (visible as InventoryException[]).map((row, index) => (
-                    <tr key={row.id || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as InventoryException[]).map((row, index) => (
+                    <tr key={row.id || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.id}</td>
                       <td className={tdNameClass}>
                         <EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink>
@@ -725,6 +794,12 @@ export default function InventoryPage({
               </table>
             )}
           </div>
+          {view === "movements" && state === "ready" && serverTotal !== null && (
+            <ListPager page={movementPage} pageSize={MOVEMENT_PAGE_SIZE} total={serverTotal} onPage={setMovementPage} testId="inventory-movement-pager" />
+          )}
+          {view !== "movements" && state === "ready" && (
+            <ListPager page={paged.page} pageSize={LIST_PAGE_SIZE} total={visible.length} onPage={paged.setPage} testId={`inventory-${view}-pager`} />
+          )}
         </ListCard>
       )}
     </div>

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useDialogFocus } from "../../components/ui/useDialogFocus";
 import type { ECElementEvent } from "echarts/core";
 import { BarChart3, Download, ImageDown, Maximize2, Table2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -7,6 +8,7 @@ import type { ReportChart } from "./governedReports";
 import { EChart, type EChartHandle } from "./charts/EChart";
 import { chartHeight, chartIsEmpty, chartOption, type ChartContext } from "./charts/chartOptions";
 import { chartTable, chartTableCsv } from "./charts/chartTable";
+import { analyticsSentence } from "./analyticsCopy";
 
 type VisualCardProps = {
   chart: ReportChart;
@@ -88,15 +90,20 @@ export function VisualCard({ chart, context, className = "", onDrill, onCrossFil
   const chartRef = useRef<EChartHandle>(null);
   const focusRef = useRef<EChartHandle>(null);
   const title = copy(chart.title);
+  const empty = chartIsEmpty(chart);
   const notes = [...new Set((chart.limitations || []).map(code => LIMITATION_NOTES[code]).filter(Boolean))];
+  // A month the chart holds only part of is said in words under it, as well
+  // as drawn lighter.
+  const partial = chart.partialPeriods || [];
+  const ranged = partial.filter(item => item.reason === "range").map(item => item.period);
+  const partialNotes = empty ? [] : [
+    ...partial.filter(item => item.reason === "to_date").map(item => analyticsSentence("partialToDate", context.language, { month: item.period })),
+    ...(ranged.length ? [analyticsSentence("partialRange", context.language, { months: ranged.join(", ") })] : []),
+  ];
   const largeContext = useMemo(() => ({ ...context, large: true }), [context]);
   const height = chartHeight(chart);
-  useEffect(() => {
-    if (!focused) return;
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setFocused(false); };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [focused]);
+  const focusDialog = useRef<HTMLDivElement>(null);
+  useDialogFocus(focused, focusDialog, () => setFocused(false));
   const downloadImage = async () => {
     const instance = (focused ? focusRef : chartRef).current?.instance();
     if (!instance) return;
@@ -111,7 +118,6 @@ export function VisualCard({ chart, context, className = "", onDrill, onCrossFil
     download(fileName(title, "csv"), new Blob([String.fromCharCode(0xfeff), chartTableCsv(chartTable(chart, context))], { type: "text/csv;charset=utf-8" }));
     toast.success(copy("Chart data downloaded"), { description: title });
   };
-  const empty = chartIsEmpty(chart);
   const tool = "rounded-md p-1.5 transition hover:bg-slate-100 disabled:opacity-30";
   const toolbar = (inFocus: boolean) => <div className="flex shrink-0 items-center gap-0.5">
     <button type="button" className={tool} title={copy(mode === "chart" ? "Show data" : "Show chart")} aria-label={`${copy(mode === "chart" ? "Show data" : "Show chart")}: ${title}`} aria-pressed={mode === "table"} disabled={empty} onClick={() => setMode(mode === "chart" ? "table" : "chart")}>{mode === "chart" ? <Table2 size={14} color={A.gray1} /> : <BarChart3 size={14} color={A.gray1} />}</button>
@@ -129,7 +135,7 @@ export function VisualCard({ chart, context, className = "", onDrill, onCrossFil
     {toolbar(inFocus)}
   </div>;
   const footer = <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-    <div className="space-y-0.5">{notes.map(note => <p key={note} className="text-[11px]" style={{ color: A.orange }}>{copy(note)}</p>)}{!notes.length && chart.crossFilter && chart.type !== "treemap" && <p className="text-[11px]" style={{ color: A.gray2 }}>{copy("Select the chart to filter this dashboard")}</p>}</div>
+    <div className="space-y-0.5">{partialNotes.map(note => <p key={note} className="text-[11px]" style={{ color: A.gray1 }} data-testid="visual-partial-note">{note}</p>)}{notes.map(note => <p key={note} className="text-[11px]" style={{ color: A.orange }}>{copy(note)}</p>)}{!notes.length && chart.crossFilter && chart.type !== "treemap" && <p className="text-[11px]" style={{ color: A.gray2 }}>{copy("Select the chart to filter this dashboard")}</p>}</div>
     <button type="button" onClick={() => onDrill(chart.drilldownPath)} className="text-[11px] font-medium" style={{ color: A.blue }}>{copy("View business details")}</button>
   </div>;
   return <>
@@ -139,7 +145,7 @@ export function VisualCard({ chart, context, className = "", onDrill, onCrossFil
       {footer}
     </Card>
     {focused && <div className="fc-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-[2px]" onMouseDown={event => { if (event.currentTarget === event.target) setFocused(false); }}>
-      <div role="dialog" aria-modal="true" aria-label={`${copy("Focus mode")}: ${title}`} className="fc-dialog-enter w-full max-w-6xl rounded-2xl bg-white p-6 shadow-2xl">
+      <div ref={focusDialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`${copy("Focus mode")}: ${title}`} className="fc-dialog-enter outline-none w-full max-w-6xl rounded-2xl bg-white p-6 shadow-2xl">
         {header(true)}
         <div className="mt-4"><VisualBody chart={chart} context={largeContext} height={Math.max(420, Math.round(window.innerHeight * 0.66))} mode={mode} chartRef={focusRef} onCrossFilter={(key, value) => { setFocused(false); onCrossFilter(key, value); }} /></div>
         {footer}

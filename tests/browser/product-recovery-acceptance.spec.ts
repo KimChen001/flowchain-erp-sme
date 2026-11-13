@@ -63,8 +63,9 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByText("LOCAL-DEMO-PO-001", { exact: true })).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-PO-002", { exact: true })).toBeVisible();
   await expect(page.getByText("Acme Components").first()).toBeVisible();
-  await expect(page.getByText("部分收货").first()).toBeVisible();
-  await expect(page.getByText("发票差异").first()).toBeVisible();
+  // Read in the list: the Status filter offers "部分收货" (partially received) too.
+  await expect(page.locator("tbody").getByText("部分收货").first()).toBeVisible();
+  await expect(page.locator("tbody").getByText("发票差异").first()).toBeVisible();
   await capture(page, "01-procurement-orders");
 
   await page.goto("/app/procurement/order-lines");
@@ -72,8 +73,9 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(fulfillmentTable).toBeVisible();
   await expect(fulfillmentTable.getByRole("columnheader", { name: "已收", exact: true })).toBeVisible();
   await expect(fulfillmentTable.getByRole("columnheader", { name: "已开票", exact: true })).toBeVisible();
-  await expect(page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-001-LINE-001")).toContainText("20 pcs");
-  await expect(page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-002-LINE-001")).toContainText("40 pcs");
+  // Units read in the interface language: pcs is 件 on a Chinese page.
+  await expect(page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-001-LINE-001")).toContainText("20 件");
+  await expect(page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-002-LINE-001")).toContainText("40 件");
   await capture(page, "01a-order-fulfillment-lines");
 
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-001");
@@ -97,12 +99,28 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page).toHaveURL(/\/app\/procurement\/orders\/LOCAL-DEMO-PO-001/);
   await expect(page.getByTestId("po-fulfillment-focus")).toHaveAttribute("data-focus-highlight", "true");
 
+  // The open price variance on LOCAL-DEMO-INV-001 (no exception approved yet) is
+  // what the order waits on; the receipt line is valued at its accepted 20 pcs.
+  await expect(page.getByTestId("po-next-action")).toHaveText("复核采购发票的差异");
+  await expect(page.getByTestId("po-receipt-amount").first()).toHaveText("$2,000.00");
+  await expect(page.getByTestId("po-receipt-invoice").first()).toContainText("LOCAL-DEMO-INV-001 · 第 1 行");
+
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-002");
   await expect(page.getByTestId("po-line-name").first()).toHaveAttribute("title", "LOCAL-DEMO-PO-002-LINE-001");
-  await expect(page.getByText("当前 PO 暂无收货记录。")).toBeVisible();
+  await expect(page.getByText("该采购订单暂无收货记录。")).toBeVisible();
   await expect(page.getByText("当前采购订单暂无发票行。")).toBeVisible();
-  await expect(page.getByText("等待收货", { exact: true }).first()).toBeVisible();
+  // Issued and nothing received: one name for the state, and the next action is to receive.
+  await expect(page.getByTestId("po-next-action")).toHaveText("到货后收货 40 件");
+  await expect(page.getByTestId("po-line-cards")).toContainText("未收货");
+  await expect(page.getByTestId("po-line-cards")).not.toContainText("待收货");
+  await expect(page.getByTestId("po-payment-status")).toHaveText("暂无应付");
   await capture(page, "03-po-002-detail");
+
+  // An approved invoice with no payment recorded: the order waits on payment.
+  await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-003");
+  await expect(page.getByTestId("po-next-action")).toHaveText("等待付款");
+  await expect(page.getByTestId("po-payment-status")).toHaveText("待付款");
+  await expect(page.getByTestId("po-progress")).toContainText("全部收货");
 
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-002?focus=receiving-invoice-variance");
   await expect(page.getByTestId("po-fulfillment-focus")).toHaveAttribute("data-focus-highlight", "true");

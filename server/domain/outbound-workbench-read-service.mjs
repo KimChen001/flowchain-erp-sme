@@ -195,7 +195,8 @@ function smartLinks({ order, reservations, shipments, movements, balances }) {
       targetRouteId: "settings:audit",
       targetType: "audit",
       targetId: order.id,
-      filter: { entityType: "SalesOrder", entityId: order.id },
+      // entityLabel names the order on the audit page by its number.
+      filter: { entityType: "SalesOrder", entityId: order.id, entityLabel: order.orderNumber },
       enabled: true,
       unavailableReason: null,
     },
@@ -318,6 +319,87 @@ export function outboundAuditTimelineText(row, { orderNumber = "", shipmentNumbe
   return { title, summary: [number, reason].filter(Boolean).join(" · ") };
 }
 
+// The outbound commands that post and reverse a shipment
+// (OUTBOUND_COMMAND_TYPES in outbound-posting-command-service.mjs).
+const SHIPMENT_POSTING_COMMAND = "post_sales_shipment",
+  SHIPMENT_REVERSAL_COMMAND = "reverse_sales_shipment";
+const commandKey = (commandType, idempotencyKey) => `${text(commandType)}\u0000${text(idempotencyKey)}`;
+const timeOf = (value) => {
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : null;
+};
+
+// Every event on the order timeline is placed and shown at its business time,
+// on one clock. A history import replays an order's commands at the business
+// time it imports, while the records themselves are written when the import
+// runs: a posted shipment and its stock movements carry the business time, but
+// the reservation events and audit records carry the import run. Ordered by
+// those creation times, the goods left a day before the shipment existed. So:
+// a stock movement is at its occurredAt; an event of a shipment posting or
+// reversal at the shipment's postedAt or reversedAt (the time on its
+// movements); an event of any other command at the time the command
+// completed, which the command takes from the same clock; anything else at the
+// time it was recorded. Events at the same time keep the order they were
+// recorded in, so a command's reservation events, movements and audit record
+// read in the order they were written.
+function timelineClock(shipments, executions) {
+  const shipmentsById = new Map(shipments.map((row) => [row.id, row])),
+    byId = new Map(),
+    byKey = new Map();
+  for (const execution of executions) {
+    if (!execution?.id) continue;
+    byId.set(execution.id, execution);
+    if (execution.idempotencyKey) byKey.set(commandKey(execution.commandType, execution.idempotencyKey), execution);
+  }
+  const shipmentTime = (commandType, shipmentId) => {
+    const shipment = shipmentsById.get(text(shipmentId));
+    if (commandType === SHIPMENT_POSTING_COMMAND) return timeOf(shipment?.postedAt);
+    if (commandType === SHIPMENT_REVERSAL_COMMAND) return timeOf(shipment?.reversedAt);
+    return null;
+  };
+  const commandTime = (execution, commandType, shipmentId) =>
+    shipmentTime(commandType, shipmentId) ?? timeOf(execution?.completedAt);
+  // The command an audit record wrote, by its execution id or by its command
+  // type and idempotency key.
+  const auditExecution = (row) =>
+    byId.get(text(row.metadata?.commandExecutionId)) ||
+    byKey.get(commandKey(row.metadata?.commandType || row.action, row.metadata?.idempotencyKey));
+  return {
+    auditExecution,
+    audit: (row) => {
+      const execution = auditExecution(row),
+        commandType = text(row.metadata?.commandType || execution?.commandType || row.action),
+        shipmentId = row.entityType === "ShipmentDocument" ? row.entityId : execution?.entityId;
+      return commandTime(execution, commandType, shipmentId) ?? timeOf(row.createdAt);
+    },
+    reservationEvent: (row) => {
+      const execution = row.commandExecution;
+      return commandTime(execution, text(execution?.commandType || row.commandType), execution?.entityId) ?? timeOf(row.createdAt);
+    },
+    movement: (row) => timeOf(row.occurredAt) ?? timeOf(row.createdAt),
+  };
+}
+
+// The command executions behind audit records that the reservation events do
+// not already name (an order's draft, confirm, hold and resume commands, say).
+async function auditExecutions(prisma, tenantId, audits, known) {
+  const clock = timelineClock([], known);
+  const missing = audits.filter((row) => !clock.auditExecution(row));
+  const ids = [...new Set(missing.map((row) => text(row.metadata?.commandExecutionId)).filter(Boolean))],
+    keys = [...new Set(missing.map((row) => text(row.metadata?.idempotencyKey)).filter(Boolean))];
+  if (!ids.length && !keys.length) return [];
+  return prisma.businessCommandExecution.findMany({
+    where: {
+      tenantId,
+      OR: [
+        ...(ids.length ? [{ id: { in: ids } }] : []),
+        ...(keys.length ? [{ idempotencyKey: { in: keys } }] : []),
+      ],
+    },
+    select: { id: true, commandType: true, idempotencyKey: true, entityType: true, entityId: true, completedAt: true },
+  });
+}
+
 async function evidence(
   prisma,
   actor,
@@ -384,11 +466,21 @@ async function evidence(
       affectedReservationIds.every((id) => visibleReservationIds.has(id))
     );
   });
+  const knownExecutions = events.map((row) => row.commandExecution).filter(Boolean);
+  const clock = timelineClock(visibleShipments, [
+    ...knownExecutions,
+    ...(await auditExecutions(prisma, actor.tenantId, visibleAudits, knownExecutions)),
+  ]);
+  // A row at its business time (`at`, shown as occurredAt) and the time it
+  // was recorded (recordedAt), both kept in milliseconds for the sort below.
+  const stamped = (at, recordedAt, fields) => {
+    const recorded = timeOf(recordedAt) ?? at;
+    return { at, recorded, row: { ...fields, occurredAt: iso(at), recordedAt: iso(recorded) } };
+  };
   const rows = [
-    ...visibleAudits.map((row) => ({
+    ...visibleAudits.map((row) => stamped(clock.audit(row), row.createdAt, {
       eventType: row.action,
       ...outboundAuditTimelineText(row, { orderNumber: order.orderNumber, shipmentNumbers }),
-      occurredAt: iso(row.createdAt),
       actor: row.actor ? { id: row.actor.id, name: row.actor.name } : null,
       entityType: row.entityType,
       entityId: row.entityId,
@@ -398,11 +490,10 @@ async function evidence(
       evidenceLinks: [{ type: row.entityType, id: row.entityId }],
       limitations: [],
     })),
-    ...events.map((row) => ({
+    ...events.map((row) => stamped(clock.reservationEvent(row), row.createdAt, {
       eventType: `reservation_${row.eventType}`,
       title: `库存预留${{ reserved: "已创建", released: "已释放", allocated: "已分配", deallocated: "已取消分配", consumed: "已消耗", restored: "已恢复" }[row.eventType] || "已更新"}`,
       summary: `${q(row.quantity)} · ${row.reservationId}`,
-      occurredAt: iso(row.createdAt),
       actor: row.actor ? { id: row.actor.id, name: row.actor.name } : null,
       entityType: "InventoryReservation",
       entityId: row.reservationId,
@@ -414,14 +505,13 @@ async function evidence(
     })),
     ...movements
       .filter((row) => canRead(actor, row.warehouseId))
-      .map((row) => ({
+      .map((row) => stamped(clock.movement(row), row.createdAt, {
         eventType: row.movementType,
         title:
           row.movementType === "shipment_reversal"
             ? "发货冲销流水已创建"
             : "发货出库流水已创建",
         summary: `${row.sku} · ${row.warehouseId || "未指定仓库"} · ${q(row.quantityOut || row.quantityIn)}`,
-        occurredAt: iso(row.occurredAt),
         actor: row.actorId ? { id: row.actorId, name: row.actorId } : null,
         entityType: "InventoryMovement",
         entityId: row.id,
@@ -431,7 +521,11 @@ async function evidence(
         evidenceLinks: [{ type: "inventory_movement", id: row.id }],
         limitations: [],
       })),
-  ].sort((a, b) => String(a.occurredAt).localeCompare(String(b.occurredAt)));
+  ]
+    // By business time, then by when each was recorded; a row with neither
+    // time last. The sort is stable, so ties keep the order above.
+    .sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity) || (a.recorded ?? Infinity) - (b.recorded ?? Infinity))
+    .map((entry) => entry.row);
   const visibleMovements = movements.filter((row) =>
     canRead(actor, row.warehouseId),
   );
@@ -534,6 +628,15 @@ export function createOutboundWorkbenchReadService({
       lifecycleEnabled = capabilities.lifecycle?.enabled === true,
       reservationEnabled = capabilities.reservation?.enabled === true,
       confirmed = order.workflowStatus === "confirmed",
+      // A fully shipped order has nothing left to hold, reserve or ship.
+      shippedInFull = order.fulfillmentStatus === "fully_fulfilled",
+      openToReserve = order.lines.some(
+        (line) =>
+          units(line.orderedQuantity) -
+            units(line.reservedQuantity) -
+            units(line.fulfilledQuantity) >
+          0n,
+      ),
       operateWarehouses = balances.filter((row) =>
         canOperate(actor, row.warehouseId),
       );
@@ -547,7 +650,7 @@ export function createOutboundWorkbenchReadService({
         permission(actor, "sales_order.submit") &&
         order.workflowStatus === "draft" &&
         order.lines.length > 0,
-      canHold: lifecycleEnabled && permission(actor, "sales_order.revise") && confirmed,
+      canHold: lifecycleEnabled && permission(actor, "sales_order.revise") && confirmed && !shippedInFull,
       canResume:
         lifecycleEnabled && permission(actor, "sales_order.revise") && order.workflowStatus === "on_hold",
       // Cancelling releases the order's reservations and cancels its unposted
@@ -561,6 +664,7 @@ export function createOutboundWorkbenchReadService({
         reservationEnabled &&
         permission(actor, "shipment.prepare") &&
         confirmed &&
+        openToReserve &&
         operateWarehouses.some((row) => units(row.availableQuantity) > 0n),
       canRelease:
         reservationEnabled &&
@@ -802,6 +906,8 @@ export function createOutboundWorkbenchReadService({
       allocations: allocations.map((row) => ({
         id: row.id,
         reservationId: row.reservationId,
+        // The item the allocation ships, so the page names it, not the reservation id.
+        sku: row.reservation?.sku || null,
         warehouseId: row.warehouseId,
         location: row.location || "",
         locationKey: row.locationKey,

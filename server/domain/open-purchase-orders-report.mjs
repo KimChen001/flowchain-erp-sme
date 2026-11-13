@@ -46,6 +46,8 @@ export function purchaseOrderDueDay(po) {
   return dates[0] || (!lines.length ? day(po?.expectedDate) : '')
 }
 
+export const OVERDUE_SUPPLIERS_SHOWN = 5
+
 // Overdue days count to the tenant's calendar day (options.timeZone, the
 // workspace timezone), so an order due today is not late in the evening
 // merely because UTC has moved on to tomorrow.
@@ -68,6 +70,9 @@ export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {},
       id: text(po.id), orderNumber: text(po.orderNumber || po.id), supplier: text(po.supplierSnapshot?.supplierName || po.supplierName || po.supplierId),
       supplierId: text(po.supplierId), createdDate: purchaseOrderBusinessDate(po, timezone), dueDate, overdueDays, owner: text(po.owner),
       ...orderQuantities(lines),
+      // Lines still to receive and in all: an order of several SKUs has no
+      // quantity totals, so its row says how many lines are open instead.
+      openLines: openLines.length, lineCount: lines.length,
       amount: numeric(po.totalAmount ?? po.amount), currency: text(po.currency), status: text(po.status), isOpen, dataIncomplete,
     }
   })
@@ -94,8 +99,15 @@ export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {},
   const totals = currencies.map(currency => ({ currency, amount: sumKnown(rows.filter(row => row.currency === currency).map(row => row.amount)) }))
   const supplierCounts = new Map()
   for (const row of rows.filter(row => row.isOpen && row.overdueDays > 0)) supplierCounts.set(row.supplier, (supplierCounts.get(row.supplier) || 0) + 1)
+  // The five suppliers with the most overdue orders, and what the five leave
+  // out: how many more suppliers have overdue orders and how many orders they
+  // hold, so the chart's bars and the overdue count add up.
+  const overdueRanking = [...supplierCounts].map(([supplier, count]) => ({ supplier, count })).sort((a, b) => b.count - a.count || a.supplier.localeCompare(b.supplier))
+  const overdueSuppliers = overdueRanking.slice(0, OVERDUE_SUPPLIERS_SHOWN)
   return {
-    overdueSuppliers: [...supplierCounts].map(([supplier, count]) => ({ supplier, count })).sort((a, b) => b.count - a.count || a.supplier.localeCompare(b.supplier)).slice(0, 5),
+    overdueSuppliers,
+    overdueSupplierTotal: overdueRanking.length,
+    overdueOrdersNotShown: overdueRanking.slice(OVERDUE_SUPPLIERS_SHOWN).reduce((total, row) => total + row.count, 0),
     asOf, timezone, generatedAt: now.toISOString(), query, total, page, pageSize, pages,
     summary: { open: rows.filter(row => row.isOpen).length, overdue: rows.filter(row => row.isOpen && row.overdueDays > 0).length, incomplete: rows.filter(row => row.dataIncomplete).length, totals },
     suppliers: [...new Set(source.map(row => row.supplier).filter(Boolean))].sort(), currencies: [...new Set(source.map(row => row.currency).filter(Boolean))].sort(),

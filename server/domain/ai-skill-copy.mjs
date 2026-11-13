@@ -62,6 +62,14 @@ export function aiSkillQuestionLanguageSignal(message) {
     return ENGLISH_OPENER.has(word) && /(^|[.!?;:,，。？！；：])\s*$/u.test(stripped.slice(0, match.index))
   }).map((match) => match.index)
   const chinese = [...stripped.matchAll(CHINESE_QUESTION)].map((match) => match.index)
+  // A short English opener before Chinese words ("show me 85123A 的库存",
+  // "Show me 华东电子的订单") says no language: the conversation's, else the
+  // interface's, decides (the owner, 2026-11-12: in the Chinese interface
+  // such a question is answered in Chinese; it was answered in English).
+  // An English question word ("What is 茶杯 stock?") still makes it English.
+  const latin = words.filter((match) => shouting || !acronym(match[0])).length
+  const openersOnly = words.filter((match) => english.includes(match.index)).every((match) => !ENGLISH_QUESTION.has(match[0].toLowerCase()))
+  if (english.length && !chinese.length && openersOnly && latin <= 3 && /[㐀-鿿]{2,}/u.test(stripped)) return null
   if (english.length && !chinese.length) return strong('en-US')
   if (chinese.length && !english.length) return strong('zh-CN')
   if (english.length) {
@@ -69,7 +77,11 @@ export function aiSkillQuestionLanguageSignal(message) {
     if (english.length !== chinese.length) return strong(english.length > chinese.length ? 'en-US' : 'zh-CN')
     return strong(Math.min(...english) < Math.min(...chinese) ? 'en-US' : 'zh-CN')
   }
-  // No question words: "overdue POs" or "逾期订单".
+  // No question words: "overdue POs" or "逾期订单". Chinese in two or more
+  // places is Chinese wrapped around names the records write in English
+  // (2026-11-07: "确认：从 Supplier of 22xxx codes (assumed) 订 60 个 Regency
+  // Cakestand" was answered in English).
+  if ((stripped.match(/[㐀-鿿]+/gu) || []).length >= 2) return strong('zh-CN')
   const cjkWords = (stripped.match(CJK_CHAR) || []).length / 2
   const latinWords = words.filter((match) => !acronym(match[0])).length
   if (latinWords >= 2 && latinWords > cjkWords) return strong('en-US')

@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { A } from "../../components/ui";
-import { StatusChip as ToneChip, statusToneOf } from "../../components/ui/listLayout";
+import { FieldError, RequiredMark, invalidProps } from "../../components/ui/formLayout";
+import { StatusChip as ToneChip, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
@@ -36,6 +37,23 @@ const STATUS_KEYS: Record<string, TranslationKey> = {
   settled: "finance.status.settled",
   recorded: "finance.status.recorded",
   voided: "finance.status.voided",
+  variance_approved: "finance.status.variance_approved",
+  to_pay: "finance.status.to_pay",
+};
+// Finance statuses the shared tones do not know: an approved variance is
+// done; an approved invoice still to pay is in progress.
+const STATUS_TONES: Record<string, StatusTone> = { variance_approved: "success", to_pay: "info" };
+export const financeStatusTone = (status: string): StatusTone => STATUS_TONES[status] || statusToneOf(status);
+
+// The status a supplier invoice shows. Once approved, where its payment
+// stands (to_pay, partially_settled, settled: the server's paymentStatus);
+// in exception with every difference approved, "Variance approved". The
+// stored status does not change.
+export const shownBillStatus = (row: { status?: unknown; matchStatus?: unknown; paymentStatus?: unknown }) => {
+  const status = String(row.status || "");
+  if (status === "approved" && row.paymentStatus) return String(row.paymentStatus);
+  if (status === "exception" && row.matchStatus === "variance_approved") return "variance_approved";
+  return status;
 };
 
 export function Notice({ children, tone = "warning" }: { children: ReactNode; tone?: "warning" | "success" }) {
@@ -58,7 +76,7 @@ export function useFinanceStatusLabel() {
 // Coloured by the shared status tones: red overdue or disputed, teal settled.
 export function StatusChip({ status }: { status: string }) {
   const label = useFinanceStatusLabel();
-  return <ToneChip label={label(status)} tone={statusToneOf(status)} />;
+  return <ToneChip label={label(status)} tone={financeStatusTone(status)} />;
 }
 
 // One operation: an optional reason, a preview of the server's plan, then a
@@ -70,23 +88,43 @@ export function StatusChip({ status }: { status: string }) {
 // (submit, approve, issue) runs on one click. The server still previews it
 // first; when the preview blocks it, the panel opens with the reason, as a
 // two-step action shows it. Posting and payments keep preview and confirm.
-export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, reasonMaxLength, onDone, tone = "primary", issueText, issueDetail, oneStep = false }: {
+// Confirm works without Preview: it previews first and runs only what the
+// server allows; it is disabled only after a preview the server refused, until
+// something changes. reasonRequired (the form standard): the reason is starred,
+// and Preview or Confirm with it empty puts that message under the field
+// without asking the server. note: one line on what confirming also does.
+// afterRun: a follow-up after the operation succeeded, given the same body.
+export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, reasonMaxLength, reasonRequired, note, afterRun, onDone, tone = "primary", issueText, issueDetail, oneStep = false }: {
   label: string; testId: string; previewUrl: string; runUrl: string; payload: () => Record<string, unknown>;
-  reasonLabel?: string; reasonMaxLength?: number; onDone: () => void; tone?: "primary" | "secondary";
+  reasonLabel?: string; reasonMaxLength?: number; reasonRequired?: string; note?: ReactNode;
+  afterRun?: (body: Record<string, unknown>) => Promise<void>;
+  onDone: () => void; tone?: "primary" | "secondary";
   issueText?: (code: string | undefined) => string | undefined;
   issueDetail?: (issue: Issue) => ReactNode;
   oneStep?: boolean;
 }) {
   const { t } = useI18n();
+  const reasonId = useId();
+  const reasonRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
+  const [reasonError, setReasonError] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const describe = (issue: Issue) => issueText?.(issue.code) || issue.message;
   const body = () => ({ ...payload(), ...(reasonLabel ? { reason, resolution: reason } : {}) });
+  // The required reason, checked here before the server is asked.
+  const reasonGiven = () => {
+    if (!reasonLabel || !reasonRequired || reason.trim()) return true;
+    setReasonError(reasonRequired);
+    setPlan(null);
+    requestAnimationFrame(() => reasonRef.current?.focus());
+    return false;
+  };
   const preview = async () => {
     setError("");
+    if (!reasonGiven()) return null;
     try {
       const next = await apiJson<Plan>(previewUrl, { method: "POST", body: JSON.stringify(body()) });
       setPlan(next);
@@ -103,13 +141,24 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
     setBusy(true);
     const next = await preview();
     setBusy(false);
-    if (!next?.allowed || !(await confirm())) setOpen(true);
+    if (!next?.allowed || !(await confirm(next))) setOpen(true);
   };
-  const confirm = async () => {
+  // `known`: the plan just previewed, before React has stored it.
+  const confirm = async (known?: Plan) => {
     setError("");
+    if (!reasonGiven()) return false;
+    let current = known || plan;
+    if (!current) {
+      setBusy(true);
+      current = await preview();
+      setBusy(false);
+    }
+    if (!current?.allowed) return false;
     setBusy(true);
     try {
-      await apiJson(runUrl, { method: "POST", body: JSON.stringify({ ...body(), idempotencyKey: createSecureClientMutationId("p2p") }) });
+      const sent = body();
+      await apiJson(runUrl, { method: "POST", body: JSON.stringify({ ...sent, idempotencyKey: createSecureClientMutationId("p2p") }) });
+      if (afterRun) await afterRun(sent).catch(() => undefined);
       setOpen(false);
       setPlan(null);
       setReason("");
@@ -125,18 +174,35 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
     }
   };
   if (!open) return <button type="button" data-testid={testId} data-one-step={oneStep && !reasonLabel ? "true" : undefined} disabled={busy} className={`${button} ${tone === "primary" ? "text-white" : "border border-slate-200"} disabled:opacity-50`} style={tone === "primary" ? { background: A.blue } : undefined} onClick={() => (oneStep && !reasonLabel ? void runAtOnce() : setOpen(true))}>{busy ? t("finance.working") : label}</button>;
+  const reasonErrorId = `${reasonId}-error`;
   return (
     <div className="w-full space-y-2 rounded-xl border border-slate-200 p-3" data-testid={`${testId}-panel`}>
       <div className="text-sm font-semibold">{label}</div>
+      {note && <div className="text-xs text-slate-600" data-testid={`${testId}-note`}>{note}</div>}
       {reasonLabel && (
-        <label className="block text-xs">{reasonLabel}
-          <input data-testid={`${testId}-reason`} className={`${field} mt-1 w-full`} maxLength={reasonMaxLength} value={reason} onChange={(event) => { setReason(event.target.value); setPlan(null); }} />
-        </label>
+        <div className="space-y-1">
+          <div className="flex items-baseline gap-0.5">
+            <label htmlFor={reasonId} className="block text-xs">{reasonLabel}</label>
+            {reasonRequired && <RequiredMark />}
+          </div>
+          <input
+            ref={reasonRef}
+            id={reasonId}
+            data-testid={`${testId}-reason`}
+            className={`${field} w-full`}
+            maxLength={reasonMaxLength}
+            value={reason}
+            {...(reasonRequired ? { "aria-required": true } : {})}
+            {...invalidProps(reasonErrorId, reasonError)}
+            onChange={(event) => { setReason(event.target.value); setReasonError(""); setPlan(null); }}
+          />
+          {reasonError && <FieldError id={reasonErrorId} testId={`${testId}-reason-error`}>{reasonError}</FieldError>}
+        </div>
       )}
       <div className="flex flex-wrap gap-2">
         <button type="button" data-testid={`${testId}-preview`} className={`${button} border border-slate-200`} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
-        <button type="button" data-testid={`${testId}-confirm`} className={`${button} text-white`} style={{ background: A.blue }} disabled={!plan?.allowed || busy} onClick={() => void confirm()}>{t("finance.confirm")}</button>
-        <button type="button" className={`${button} text-slate-600`} onClick={() => { setOpen(false); setPlan(null); setError(""); }}>{t("finance.close")}</button>
+        <button type="button" data-testid={`${testId}-confirm`} className={`${button} text-white`} style={{ background: A.blue }} disabled={busy || Boolean(plan && !plan.allowed)} onClick={() => void confirm()}>{busy ? t("finance.working") : t("finance.confirm")}</button>
+        <button type="button" className={`${button} text-slate-600`} onClick={() => { setOpen(false); setPlan(null); setError(""); setReasonError(""); }}>{t("finance.close")}</button>
       </div>
       {plan && (plan.allowed ? <Notice tone="success">{t("finance.previewAllowed")}</Notice> : <Notice>{(plan.blockingIssues || []).map(describe).join(" · ")}</Notice>)}
       {plan && !plan.allowed && issueDetail && (plan.blockingIssues || []).map((issue, index) => <div key={`${issue.code}-${index}`}>{issueDetail(issue)}</div>)}

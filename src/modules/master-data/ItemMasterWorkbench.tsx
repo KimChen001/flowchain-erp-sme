@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useLocation, useSearchParams } from "react-router";
+import { useDetailBack } from "../../components/navigation/useDetailBack";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
+
+const ITEM_PAGE_SIZE = 50;
 import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
@@ -163,7 +168,9 @@ export default function ItemMasterWorkbench({
   onNavigate?: (routeId: string, focus?: unknown) => void;
 }) {
   const { copy, language, locale } = useMasterDataCopy();
-  const { formatDateTime } = useI18n();
+  const { formatDateTime, formatNumber } = useI18n();
+  // Records written by an import or a seed name "system" as their author.
+  const actorName = (value?: string | null) => (!value || value === "system" ? (language === "en-US" ? "System" : "系统") : value);
   const warehouseName = useWarehouseNames();
   // Creating and editing items needs master_data.item.manage.
   const canEdit = useMasterDataWriteAccess().items;
@@ -178,6 +185,7 @@ export default function ItemMasterWorkbench({
   // title (H1); opened in place from the list it sits under the list's H1.
   const onDetailRoute = /^\/app\/master-data\/items\/[^/]+$/.test(useLocation().pathname);
   const ItemTitle = onDetailRoute ? "h1" : "h2";
+  const detailBack = useDetailBack("/app/master-data/items", ["Back to items", "返回 SKU 列表"], () => setSelected(null));
   // A failed request in the interface language, never the server's own words.
   const loadFailed = (cause: unknown) => apiErrorText(cause, language, ["Could not load items. Try again.", copy("Could not load items. Try again.")]);
   const [editing, setEditing] = useState<Partial<MasterItem> | null>(null);
@@ -231,6 +239,9 @@ export default function ItemMasterWorkbench({
       ),
     [items, query, status, type, category, gap],
   );
+  // One page of the list is drawn, as on the other long lists; the search and
+  // filters run over every item, and a new search starts at page 1.
+  const paged = usePagedRows(shown, ITEM_PAGE_SIZE, [query, status, type, category, gap].join("|"));
   const distinct = (values: string[]) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, locale));
   const types = useMemo(() => distinct(items.map((item) => item.itemType)), [items, locale]);
   const categories = useMemo(() => distinct(items.map((item) => item.category)), [items, locale]);
@@ -277,6 +288,7 @@ export default function ItemMasterWorkbench({
   if (editing)
     return (
       <Card className="p-5">
+        <FocusFirstField />
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold">
@@ -376,9 +388,9 @@ export default function ItemMasterWorkbench({
           <div>
             <button
               className="text-xs text-blue-600"
-              onClick={() => setSelected(null)}
+              onClick={detailBack.back}
             >
-              {copy("← 返回 SKU 列表")}
+              ← {detailBack.label}
             </button>
             <ItemTitle className={onDetailRoute ? "fc-page-title mt-2" : "mt-2 text-base font-semibold"} style={{ color: A.label }} data-testid="item-detail-title">
               {selected.sku} · {selected.itemName}
@@ -409,9 +421,9 @@ export default function ItemMasterWorkbench({
           ))}
         </div>
         <div className="mt-4 text-xs text-slate-500">
-          {copy("Created: {by} · {at}", { by: selected.createdBy, at: auditTime(selected.createdAt) })}
+          {copy("Created: {by} · {at}", { by: actorName(selected.createdBy), at: auditTime(selected.createdAt) })}
           <br />
-          {copy("Updated: {by} · {at}", { by: selected.updatedBy, at: auditTime(selected.updatedAt) })}
+          {copy("Updated: {by} · {at}", { by: actorName(selected.updatedBy), at: auditTime(selected.updatedAt) })}
         </div>
       </Card>
     );
@@ -490,7 +502,7 @@ export default function ItemMasterWorkbench({
         <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div>
             <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("Item list")}</div>
-            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: items.length, shown: shown.length })}</div>
+            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: formatNumber(items.length), shown: formatNumber(paged.pageRows.length) })}</div>
           </div>
         </div>
         {error && <p className="px-5 pt-3 text-xs text-red-600">{error}</p>}
@@ -522,8 +534,8 @@ export default function ItemMasterWorkbench({
                   </td>
                 </tr>
               )}
-              {shown.map((item, index) => (
-                <tr key={item.itemId} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < shown.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
+              {paged.pageRows.map((item, index) => (
+                <tr key={item.itemId} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < paged.pageRows.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
                   <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                     <EntityLink kind="item" id={item.itemId} className={tableLinkClass}>
                       {item.sku}
@@ -574,6 +586,7 @@ export default function ItemMasterWorkbench({
             </tbody>
           </table>
         </div>
+        <ListPager page={paged.page} pageSize={ITEM_PAGE_SIZE} total={shown.length} onPage={paged.setPage} testId="item-list-pager" />
       </Card>
     </div>
   );

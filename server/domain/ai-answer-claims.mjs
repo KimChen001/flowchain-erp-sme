@@ -6,8 +6,10 @@
 // (状态：已过账, 过账状态：已过账, 当前状态是已取消, 状态为已批准) is that status too
 // (the owner's decision of 2026-10-30); the same word anywhere else reads as
 // an action ("收货单已过账", "我已付款").
+// "What we paid: £2.95 per pcs" and "we paid £2.95 a piece" give a price,
+// not an act (2026-11-11 on Flash: the line was left out as a claim).
 const SELF_CLAIMS = [
-  /\b(I|we)\s+(have\s+|had\s+|just\s+|already\s+)?(sent|emailed|approved|paid|issued|placed|posted|cancelled|canceled|deleted|removed)\b/i,
+  /(?<!\b(?:what|price|prices|amount|cost|costs)\s+)\b(I|we)\s+(have\s+|had\s+|just\s+|already\s+)?(sent|emailed|approved|paid(?!\s+(?:about\s+|around\s+|roughly\s+|only\s+|just\s+|on\s+average\s+|an\s+average\s+of\s+)?(?:[$€£¥]|\d|per\b|for\s+(?:it|each|them|one|a)\b))|issued|placed|posted|cancelled|canceled|deleted|removed)\b/i,
 ]
 const EN_STATE_CLAIM = /\b(was|were|has been|have been)\s+(sent|emailed|approved|paid|issued|placed|posted|cancelled|canceled|deleted|removed)\b/i
 const STATE_CLAIMS = [

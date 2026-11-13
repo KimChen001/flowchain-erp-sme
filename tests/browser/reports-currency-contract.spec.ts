@@ -33,7 +33,10 @@ test('reports overview presents a business-safe empty amount state', async ({ pa
   const errors = collectRuntimeErrors(page)
   await page.goto('/app/reports/overview')
   await expect(page.getByTestId('bi-dashboard')).toHaveAttribute('data-view', 'overview')
-  await expect(page.getByRole('button', { name: /Committed PO amount/ })).toContainText('No monetary data')
+  // No figure: a dash in the figure's place and the reason under it, never a sentence in the figure's font.
+  const amount = page.getByTestId('report-kpi-purchase_order_amount')
+  await expect(amount.getByTestId('report-kpi-value')).toHaveText('—')
+  await expect(amount).toContainText('No monetary records in this range')
   await expect(page.getByTestId('reports-multi-currency-status')).toHaveCount(0)
   await expect(page.getByText('Select a currency')).toHaveCount(0)
   await expect(page.getByTestId('reports-data-scope-limitations')).toContainText('Data scope notes')

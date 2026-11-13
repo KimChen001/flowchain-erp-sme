@@ -32,6 +32,27 @@ const monthOf = day => day ? day.slice(0, 7) : 'Undated'
 const inRange = (day, query) => (!query.from || Boolean(day && day >= query.from)) && (!query.to || Boolean(day && day <= query.to))
 const sumKnown = values => values.some(value => value === null) ? null : money(values.reduce((total, value) => total + value, 0))
 const byValue = (a, b) => b.value - a.value || String(a.name).localeCompare(String(b.name))
+// A group of sales orders (the database's totals) counts its orders; any other
+// row is one record.
+const weight = row => Number.isFinite(row?.count) ? row.count : 1
+const totalWeight = rows => rows.reduce((total, row) => total + weight(row), 0)
+const DAY = /^\d{4}-\d{2}-\d{2}$/
+const lastDayOfMonth = month => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10)
+
+// The months a monthly visual holds only part of: the month of today, which
+// is still running ('to_date'), and a month the date range starts after its
+// first day or ends before its last ('range'). A partial month is drawn as
+// such and left out of sparklines and month-on-month findings, where it would
+// read as a fall.
+export function partialMonths({ today = '', from = '', to = '' } = {}) {
+  const months = new Map()
+  if (DAY.test(from) && !from.endsWith('-01')) months.set(from.slice(0, 7), 'range')
+  if (DAY.test(to) && to < lastDayOfMonth(to.slice(0, 7))) months.set(to.slice(0, 7), 'range')
+  if (DAY.test(today) && (!DAY.test(to) || to >= today) && (!DAY.test(from) || from <= today)) months.set(today.slice(0, 7), 'to_date')
+  return months
+}
+// The partial months among a visual's month names, in their order.
+export const partialPeriodsOf = (names, partial = new Map()) => names.filter(name => partial.has(name)).map(period => ({ period, reason: partial.get(period) }))
 const submittedInvoiceStatuses = new Set(RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES)
 const inactiveSalesStatuses = new Set(['draft', 'cancelled', 'canceled'])
 const voidReceiptStatuses = new Set(['draft', 'cancelled', 'canceled', 'void', 'voided'])
@@ -57,7 +78,9 @@ const MATCH_OUTCOME_LABELS = { matched: 'Matched', exception: 'Match exception',
 // A reader who cannot see the amounts gets counts, as for mixed currencies.
 const RESTRICTED_SCOPE = Object.freeze({ ok: false, currencyCode: null, limitation: 'amount_restricted' })
 const RESTRICTED_EMPTY = 'Your role cannot view amounts.'
-const noAmountsState = scope => scope.limitation === 'amount_restricted' ? RESTRICTED_EMPTY : 'Select a currency to compare amounts.'
+// With no records there is nothing to compare, whatever the currencies.
+const NO_RECORDS = 'No records in the selected range.'
+const noAmountsState = (scope, rows = null) => scope.limitation === 'amount_restricted' ? RESTRICTED_EMPTY : Array.isArray(rows) && !rows.length ? NO_RECORDS : 'Select a currency to compare amounts.'
 
 // Amounts can be totalled within one currency only.
 function moneyScope(rows, query) {
@@ -84,15 +107,18 @@ function monthly(rows, scope, { countKey, amountKey }) {
     const key = monthOf(row.date)
     if (!months.has(key)) months.set(key, { name: key, ...(scope.ok ? { [amountKey]: 0 } : {}), [countKey]: 0 })
     const entry = months.get(key)
-    entry[countKey] += 1
+    entry[countKey] += weight(row)
     if (scope.ok && row.amount !== null) entry[amountKey] = money(entry[amountKey] + row.amount)
   }
   return [...months.values()].sort((a, b) => (a.name === 'Undated') - (b.name === 'Undated') || a.name.localeCompare(b.name))
 }
 
-function trendVisual(id, title, rows, scope, { countKey, amountKey, drilldownPath, description }) {
+// partialPeriods names the months the range or today cuts short; the chart
+// draws them lighter and labels them, and findings skip them.
+function trendVisual(id, title, rows, scope, { countKey, amountKey, drilldownPath, description, partial }) {
   const measures = [...(scope.ok ? [{ key: amountKey, kind: 'bar', unit: 'currency', axis: 0 }] : []), { key: countKey, kind: scope.ok ? 'line' : 'bar', unit: 'number', axis: scope.ok ? 1 : 0 }]
-  return visual(id, title, 'combo', monthly(rows, scope, { countKey, amountKey }), { measures, seriesKeys: measures.map(item => item.key), unit: scope.ok ? 'currency' : 'number', currencyCode: scope.currencyCode, drilldownPath, crossFilter: 'period', description, limitations: moneyLimitations(scope, rows) })
+  const data = monthly(rows, scope, { countKey, amountKey })
+  return visual(id, title, 'combo', data, { measures, seriesKeys: measures.map(item => item.key), unit: scope.ok ? 'currency' : 'number', currencyCode: scope.currencyCode, drilldownPath, crossFilter: 'period', description, limitations: moneyLimitations(scope, rows), partialPeriods: partialPeriodsOf(data.map(row => row.name), partial) })
 }
 
 function grouped(rows, keyOf, valueOf) {
@@ -121,13 +147,13 @@ function paretoRows(groups, otherLabel) {
   })
 }
 
-function paretoVisual(id, title, rows, scope, keyOf, { otherLabel, drilldownPath, crossFilter, countLabel }) {
-  const values = scope.ok ? grouped(rows, keyOf, row => row.amount) : grouped(rows, keyOf, () => 1)
-  return visual(id, title, 'pareto', paretoRows(values, otherLabel), { unit: scope.ok ? 'currency' : 'number', currencyCode: scope.currencyCode, measures: [{ key: 'value', kind: 'bar', unit: scope.ok ? 'currency' : 'number', axis: 0, label: scope.ok ? 'Committed amount' : countLabel }, { key: 'Cumulative share', kind: 'line', unit: 'percentage', axis: 1 }], drilldownPath, crossFilter, description: scope.ok ? 'Sorted by amount. The line is the running share of the total; A, B and C classes split at 80% and 95%.' : 'Amounts need one currency, so documents are counted. The line is the running share of the total.', limitations: moneyLimitations(scope, rows) })
+function paretoVisual(id, title, rows, scope, keyOf, { otherLabel, drilldownPath, crossFilter, countLabel, amountLabel = 'Committed amount' }) {
+  const values = scope.ok ? grouped(rows, keyOf, row => row.amount) : grouped(rows, keyOf, weight)
+  return visual(id, title, 'pareto', paretoRows(values, otherLabel), { unit: scope.ok ? 'currency' : 'number', currencyCode: scope.currencyCode, measures: [{ key: 'value', kind: 'bar', unit: scope.ok ? 'currency' : 'number', axis: 0, label: scope.ok ? amountLabel : countLabel }, { key: 'Cumulative share', kind: 'line', unit: 'percentage', axis: 1 }], drilldownPath, crossFilter, description: scope.ok ? 'Sorted by amount. The line is the running share of the total; A, B and C classes split at 80% and 95%.' : 'Amounts need one currency, so documents are counted. The line is the running share of the total.', limitations: moneyLimitations(scope, rows) })
 }
 
 function statusVisual(id, title, rows, drilldownPath, description) {
-  const counts = grouped(rows, row => row.status, () => 1)
+  const counts = grouped(rows, row => row.status, weight)
   return visual(id, title, 'donut', counts, { drilldownPath, crossFilter: 'status', ...(description ? { description } : {}) })
 }
 
@@ -162,25 +188,22 @@ function purchaseOrderFacts(context, all, receiptsByPo, invoicesByPo, timeZone) 
   })
 }
 
-// Each stage counts the orders that reached it and every stage before it, so
-// the stages narrow like a funnel. A partly received order is billed for what
-// arrived, so invoicing and matching come before full receipt: a bill on a
-// partly received order counts as invoiced, and the last stage is the order
-// that is fully received, invoiced and matched.
+// Each stage counts the committed orders that reached it, whatever happened
+// at the other stages, so every stage reads as its name says: "Fully
+// received" is every order fully received, as on the status chart beside it.
+// An order can be invoiced before it is fully received, or fully received
+// with no invoice yet, so the stages do not narrow like a funnel
+// (nested: false).
 function lifecycleVisual(id, pos) {
   const stages = [
     ['Committed', () => true],
     ['Receiving started', po => po.receivingStarted],
+    ['Fully received', po => po.fullyReceived],
     ['Invoiced', po => po.invoiced],
     ['Invoice matched', po => po.matched],
-    ['Fully received', po => po.fullyReceived],
   ]
-  let reached = pos
-  const data = stages.map(([name, test]) => {
-    reached = reached.filter(test)
-    return { name, value: reached.length }
-  })
-  return visual(id, 'Purchase order lifecycle', 'funnel', pos.length ? data : [], { drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders in range. Each stage counts the orders that reached it and every stage before it; an order with a supplier invoice counts as invoiced while it is still partly received.' })
+  const data = stages.map(([name, test]) => ({ name, value: pos.filter(test).length }))
+  return visual(id, 'Purchase order lifecycle', 'funnel', pos.length ? data : [], { nested: false, drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders in range. Each bar counts the orders that reached that step, whatever happened at the others: an order can be invoiced before it is fully received.' })
 }
 
 // Ordered value, then what is still to be received, then what is received but
@@ -188,7 +211,7 @@ function lifecycleVisual(id, pos) {
 // the order's unit price, and the invoice lines linked to the order.
 function valueBridgeVisual(id, pos, scope) {
   const base = { unit: 'currency', currencyCode: scope.currencyCode, totals: ['Ordered', 'Received', 'Invoiced'], drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders in range, net of tax: ordered and received quantities at the order price, and the invoice lines linked to each order.' }
-  if (!scope.ok) return visual(id, 'Ordered, received and invoiced value', 'waterfall', [], { ...base, emptyState: noAmountsState(scope), limitations: moneyLimitations(scope, pos) })
+  if (!scope.ok) return visual(id, 'Ordered, received and invoiced value', 'waterfall', [], { ...base, emptyState: noAmountsState(scope, pos), limitations: moneyLimitations(scope, pos) })
   const ordered = sumKnown(pos.map(po => po.orderedValue))
   const received = sumKnown(pos.map(po => po.receivedValue))
   const invoiced = sumKnown(pos.map(po => po.invoicedValue))
@@ -358,17 +381,19 @@ function scorecardVisual(id, performance, scope) {
   return visual(id, 'Supplier scorecard', 'radar', used.length >= 3 ? rows : [], { unit: 'percentage', seriesKeys: used.map(([label]) => label), drilldownPath: '/app/master-data/suppliers', description: 'The largest suppliers by spend, on measures each of them has data for.', emptyState: 'Not enough receipt and invoice history to compare suppliers.' })
 }
 
+// total is the number of rows before the first `limit` are kept, so a reader
+// of the chart knows whether its last bar is the lowest of all.
 function rankingVisual(id, title, rows, { unit = 'number', currencyCode = null, drilldownPath, crossFilter = null, description, emptyState, limit = 10, ascending = false }) {
   const sorted = [...rows].sort((a, b) => (ascending ? a.value - b.value : b.value - a.value) || String(a.name).localeCompare(String(b.name))).slice(0, limit)
-  return visual(id, title, 'horizontal_bar', sorted, { unit, currencyCode, drilldownPath, crossFilter, description, ...(emptyState ? { emptyState } : {}) })
+  return visual(id, title, 'horizontal_bar', sorted, { unit, currencyCode, drilldownPath, crossFilter, description, total: rows.length, ...(emptyState ? { emptyState } : {}) })
 }
 
 // Purchase orders per supplier and month, for the ten busiest suppliers.
-function activityHeatmapVisual(id, pos) {
+function activityHeatmapVisual(id, pos, partial) {
   const months = [...new Set(pos.map(po => monthOf(po.date)))].sort((a, b) => (a === 'Undated') - (b === 'Undated') || a.localeCompare(b))
   const top = grouped(pos, po => po.supplier, () => 1).slice(0, 10).map(row => row.name)
   const rows = top.map(name => ({ name, ...Object.fromEntries(months.map(key => [key, pos.filter(po => (po.supplier || 'Unspecified') === name && monthOf(po.date) === key).length])), filterValue: name === 'Unspecified' ? '' : name }))
-  return visual(id, 'Purchase orders by supplier and month', 'heatmap', rows, { seriesKeys: months, drilldownPath: '/app/procurement/orders', crossFilter: 'supplier', description: 'Committed purchase orders, by order date.' })
+  return visual(id, 'Purchase orders by supplier and month', 'heatmap', rows, { seriesKeys: months, partialPeriods: partialPeriodsOf(months, partial), drilldownPath: '/app/procurement/orders', crossFilter: 'supplier', description: 'Committed purchase orders, by order date.' })
 }
 
 function invoiceFacts(context, all, timeZone) {
@@ -421,19 +446,29 @@ function salesFacts(context, all, salesDemand = []) {
   })
 }
 
+// The sales orders the figures count: the groups of orders the read model
+// built (all.sales_order_groups, over every order when the database's totals
+// were read), else one row per order read. Each group carries its number of
+// orders (count), so every count below adds the groups' weights.
+function salesOrderRows(context, all, salesDemand = []) {
+  if (Array.isArray(all.sales_order_groups)) return all.sales_order_groups.map(row => ({ ...row, active: !inactiveSalesStatuses.has(row.status) }))
+  return salesFacts(context, all, salesDemand)
+}
+
 // Active orders that are reserved or shipped, then shipped, then shipped in full.
 function fulfillmentFunnelVisual(id, orders) {
   const active = orders.filter(row => row.active)
   const stages = [['Active orders', () => true], ['Reserved or shipped', row => row.reserved > 0 || row.shipped], ['Shipped', row => row.shipped], ['Shipped in full', row => row.shippedInFull]]
   let reached = active
-  const data = stages.map(([name, test]) => { reached = reached.filter(test); return { name, value: reached.length } })
+  const data = stages.map(([name, test]) => { reached = reached.filter(test); return { name, value: totalWeight(reached) } })
   return visual(id, 'Sales order fulfillment', 'funnel', active.length ? data : [], { drilldownPath: '/app/sales/orders', description: 'Confirmed sales orders in range, without drafts and cancellations. Each stage counts the orders that reached it.' })
 }
 
 function fulfillmentGaugeVisual(id, orders) {
   const active = orders.filter(row => row.active)
-  const full = active.filter(row => row.shippedInFull).length
-  return visual(id, 'Orders shipped in full', 'gauge', active.length ? [{ name: 'Orders shipped in full', value: share(full, active.length) }] : [], { unit: 'percentage', detail: { count: full, total: active.length }, drilldownPath: '/app/sales/orders', description: 'Share of confirmed sales orders whose every line has shipped its ordered quantity.' })
+  const full = totalWeight(active.filter(row => row.shippedInFull))
+  const total = totalWeight(active)
+  return visual(id, 'Orders shipped in full', 'gauge', active.length ? [{ name: 'Orders shipped in full', value: share(full, total) }] : [], { unit: 'percentage', detail: { count: full, total }, drilldownPath: '/app/sales/orders', description: 'Share of confirmed sales orders whose every line has shipped its ordered quantity.' })
 }
 
 // Stock position per SKU. Quantities are never added across SKUs. "Short now"
@@ -465,7 +500,8 @@ function riskMatrixVisual(id, balances) {
 // the date range, so receipts can follow their order's filters.
 // onTimeWithheld ('restricted', 'truncated' or 'period_too_long') leaves the on-time measures
 // out; promiseOptions carries the grace days and the reader's warehouses.
-export function buildDashboardVisuals({ subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts = {}, today = '', timeZone, salesDemand = [], onTimeWithheld = null, promiseOptions = {} }) {
+// partial: the months the range or today cuts short (partialMonths).
+export function buildDashboardVisuals({ subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts = {}, today = '', timeZone, salesDemand = [], onTimeWithheld = null, promiseOptions = {}, partial = partialMonths({ today, from: query?.from, to: query?.to }) }) {
   const poById = new Map(array(context.purchaseOrders).map(row => [text(row.id || row.po), row]))
   const receiptsByPo = new Map()
   for (const receipt of array(context.receipts)) if (text(receipt.poId)) receiptsByPo.set(text(receipt.poId), true)
@@ -484,12 +520,12 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
   const performance = lazy(() => supplierPerformance(pos(), receipts(), invoices().map(row => row.raw), poScope(), promiseLines()))
 
   if (subject === 'overview') return [
-    trendVisual('overview_spend_trend', 'Committed spend by month', pos(), poScope(), { countKey: 'Purchase orders', amountKey: 'Committed amount', drilldownPath: '/app/reports/procurement?view=analytics', description: 'Committed purchase orders by order date. Bars are amounts, the line is the number of orders.' }),
+    trendVisual('overview_spend_trend', 'Committed spend by month', pos(), poScope(), { countKey: 'Purchase orders', amountKey: 'Committed amount', drilldownPath: '/app/reports/procurement?view=analytics', description: 'Committed purchase orders by order date. Bars are amounts, the line is the number of orders.', partial }),
     lifecycleVisual('overview_lifecycle', pos()),
   ]
 
   if (subject === 'procurement') return [
-    trendVisual('procurement_spend_trend', 'Committed spend by month', pos(), poScope(), { countKey: 'Purchase orders', amountKey: 'Committed amount', drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders by order date. Bars are amounts, the line is the number of orders.' }),
+    trendVisual('procurement_spend_trend', 'Committed spend by month', pos(), poScope(), { countKey: 'Purchase orders', amountKey: 'Committed amount', drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders by order date. Bars are amounts, the line is the number of orders.', partial }),
     lifecycleVisual('procurement_lifecycle', pos()),
     paretoVisual('procurement_supplier_pareto', 'Spend concentration by supplier', pos(), poScope(), po => po.supplier, { otherLabel: OTHER_SUPPLIERS, drilldownPath: '/app/procurement/orders', crossFilter: 'supplier', countLabel: 'Purchase orders' }),
     valueBridgeVisual('procurement_value_bridge', pos(), poScope()),
@@ -502,17 +538,17 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
     const scope = restrictedAmounts.supplier_invoices ? RESTRICTED_SCOPE : moneyScope(invoices(), query)
     const variance = scope.ok ? grouped(invoices(), row => row.supplier, row => row.variance === null ? null : Math.abs(row.variance)).filter(row => row.value > 0) : []
     return [
-      trendVisual('finance_invoice_trend', 'Submitted invoices by month', invoices(), scope, { countKey: 'Invoices', amountKey: 'Invoice amount', drilldownPath: '/app/finance/invoices', description: 'Submitted supplier invoices by invoice date. Bars are amounts, the line is the number of invoices.' }),
+      trendVisual('finance_invoice_trend', 'Submitted invoices by month', invoices(), scope, { countKey: 'Invoices', amountKey: 'Invoice amount', drilldownPath: '/app/finance/invoices', description: 'Submitted supplier invoices by invoice date. Bars are amounts, the line is the number of invoices.', partial }),
       matchGaugeVisual('finance_match_rate', invoices()),
       matchOutcomeVisual('finance_match_outcome', invoices()),
       invoiceFlowVisual('finance_invoice_flow', invoices()),
-      rankingVisual('finance_variance_by_supplier', 'Invoice variance by supplier', variance, { unit: 'currency', currencyCode: scope.currencyCode, drilldownPath: '/app/finance/invoices', crossFilter: 'supplier', description: 'Absolute variance between invoices and their orders and receipts.', emptyState: scope.ok ? 'No invoice variance in the selected range.' : noAmountsState(scope) }),
+      rankingVisual('finance_variance_by_supplier', 'Invoice variance by supplier', variance, { unit: 'currency', currencyCode: scope.currencyCode, drilldownPath: '/app/finance/invoices', crossFilter: 'supplier', description: 'Absolute variance between invoices and their orders and receipts.', emptyState: scope.ok ? 'No invoice variance in the selected range.' : noAmountsState(scope, invoices()) }),
       statusVisual('finance_invoice_status', 'Invoice status', all.supplier_invoices, '/app/finance/invoices'),
     ]
   }
 
   if (subject === 'sales') {
-    const orders = salesFacts(context, all, salesDemand)
+    const orders = salesOrderRows(context, all, salesDemand)
     const active = orders.filter(row => row.active)
     const scope = restrictedAmounts.sales_orders ? RESTRICTED_SCOPE : moneyScope(active, query)
     // Open demand per SKU and unit, from the order lines: an SKU sold in two
@@ -525,12 +561,12 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
     }
     const demandUnits = [...new Set([...demand.values()].map(row => row.unit))].sort()
     return [
-      trendVisual('sales_order_trend', 'Sales orders by month', active, scope, { countKey: 'Sales orders', amountKey: 'Order amount', drilldownPath: '/app/sales/orders', description: 'Confirmed sales orders by order date. Bars are amounts, the line is the number of orders.' }),
+      trendVisual('sales_order_trend', 'Sales orders by month', active, scope, { countKey: 'Sales orders', amountKey: 'Order amount', drilldownPath: '/app/sales/orders', description: 'Confirmed sales orders by order date. Bars are amounts, the line is the number of orders.', partial }),
       fulfillmentFunnelVisual('sales_fulfillment', orders),
-      paretoVisual('sales_customer_pareto', 'Sales concentration by customer', active, scope, row => row.customer, { otherLabel: OTHER_CUSTOMERS, drilldownPath: '/app/sales/orders', crossFilter: 'customer', countLabel: 'Sales orders' }),
+      paretoVisual('sales_customer_pareto', 'Sales concentration by customer', active, scope, row => row.customer, { otherLabel: OTHER_CUSTOMERS, drilldownPath: '/app/sales/orders', crossFilter: 'customer', countLabel: 'Sales orders', amountLabel: 'Order amount' }),
       fulfillmentGaugeVisual('sales_shipped_in_full', orders),
       { ...rankingVisual('sales_open_demand', 'Open demand by SKU', [...demand.values()].map(({ name, value }) => ({ name, value })), { drilldownPath: '/app/sales/orders', description: demandUnits.length > 1 ? 'Ordered less shipped quantity, in each SKU\'s unit. Bars in different units are not comparable.' : 'Ordered less shipped quantity, in each SKU\'s unit.', limit: 12 }), units: demandUnits },
-      statusVisual('sales_order_status', 'Sales order status', all.sales_orders, '/app/sales/orders'),
+      statusVisual('sales_order_status', 'Sales order status', orders, '/app/sales/orders'),
     ]
   }
 
@@ -554,7 +590,7 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
       scorecardVisual('supplier_scorecard', performance(), scope),
       rankingVisual('supplier_on_time', 'On-time deliveries by supplier', onTime, { unit: 'percentage', drilldownPath: '/app/procurement/receiving', crossFilter: 'supplier', description: 'Deliveries (the lines of one PO with one date) first promised in range whose every line had a posted receipt by the date on the PO. Orders approved but not sent to the supplier are left out. Each supplier needs at least 5 deliveries.', emptyState: onTimeEmpty }),
       spendTreemapVisual('supplier_spend_treemap', pos(), scope),
-      activityHeatmapVisual('supplier_activity_heatmap', pos()),
+      activityHeatmapVisual('supplier_activity_heatmap', pos(), partial),
     ]
   }
 
@@ -567,7 +603,7 @@ export function buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDa
   const poById = new Map(array(context.purchaseOrders).map(row => [text(row.id || row.po), row]))
   const onTime = onTimeOf(onTimeWithheld ? [] : promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone, promiseOptions))
   const invoices = invoiceFacts(context, all, timeZone)
-  const orders = salesFacts(context, all, salesDemand).filter(row => row.active)
+  const orders = salesOrderRows(context, all, salesDemand).filter(row => row.active)
   const openPurchaseOrders = all.purchase_orders.filter(row => row.isOpen)
   // The open purchase orders report's rule: due on the earliest promised day of
   // the lines still to receive, overdue once that day is before today.
@@ -584,7 +620,7 @@ export function buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDa
     invoicesAwaitingMatch: invoices.filter(row => row.outcome === 'pending').length,
     invoicesWithException: invoices.filter(row => row.outcome === 'exception').length,
     submittedInvoices: invoices.length,
-    orderFulfillmentRate: share(orders.filter(row => row.shippedInFull).length, orders.length),
+    orderFulfillmentRate: share(totalWeight(orders.filter(row => row.shippedInFull)), totalWeight(orders)),
     activeSuppliers: new Set(all.purchase_orders.filter(row => isCommittedPurchaseOrder(poById.get(row.id) || row)).map(row => row.supplier).filter(Boolean)).size,
   }
 }

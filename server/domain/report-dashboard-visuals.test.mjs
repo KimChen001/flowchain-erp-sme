@@ -34,15 +34,29 @@ const procurementContext = () => context({
   ],
 })
 
-test('the purchase order lifecycle narrows stage by stage over committed orders only', () => {
+test('each purchase order lifecycle stage counts the committed orders that reached it', () => {
   const report = buildRuntimeGovernedReport(procurementContext(), { subject: 'procurement' })
   assert.deepEqual(chart(report, 'procurement_lifecycle').data, [
     { name: 'Committed', value: 3 },
     { name: 'Receiving started', value: 2 },
+    { name: 'Fully received', value: 1 },
     { name: 'Invoiced', value: 1 },
     { name: 'Invoice matched', value: 1 },
-    { name: 'Fully received', value: 1 },
   ])
+  assert.equal(chart(report, 'procurement_lifecycle').nested, false)
+})
+
+test('"Fully received" counts every fully received order, invoiced or not, as the status chart does', () => {
+  // The walkthrough read "Fully received 0" beside "Fully received 350" on the
+  // status chart: the stage only counted orders also invoiced and matched.
+  const base = procurementContext()
+  const report = buildRuntimeGovernedReport({ ...base, supplierInvoices: [] }, { subject: 'procurement' })
+  const stages = Object.fromEntries(chart(report, 'procurement_lifecycle').data.map(row => [row.name, row.value]))
+  const statuses = Object.fromEntries(chart(report, 'procurement_po_status').data.map(row => [row.name, row.value]))
+  assert.equal(stages['Fully received'], 1)
+  assert.equal(stages['Fully received'], statuses.fully_received)
+  assert.equal(stages.Invoiced, 0)
+  assert.equal(stages['Invoice matched'], 0)
 })
 
 test('a bill on a partly received purchase order counts it as invoiced in the lifecycle', () => {
@@ -53,9 +67,9 @@ test('a bill on a partly received purchase order counts it as invoiced in the li
   assert.deepEqual(chart(report, 'procurement_lifecycle').data, [
     { name: 'Committed', value: 3 },
     { name: 'Receiving started', value: 2 },
+    { name: 'Fully received', value: 1 },
     { name: 'Invoiced', value: 2 },
     { name: 'Invoice matched', value: 1 },
-    { name: 'Fully received', value: 1 },
   ])
 })
 

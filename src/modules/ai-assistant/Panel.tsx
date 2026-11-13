@@ -1,4 +1,6 @@
 import { KnowledgeLibrary } from "./KnowledgeLibrary";
+import { TodayDecisionCards } from "../overview/DecisionCards";
+import { useDialogFocus } from "../../components/ui/useDialogFocus";
 import { translate, useI18n } from "../../i18n/I18n";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BookOpen, Clock3, FilePlus2, ListChecks, Maximize2, MessageSquareText, Minimize2, MoreHorizontal, Send, Square, SquarePen, Sparkles, Truck, Upload, X, type LucideIcon } from "lucide-react";
@@ -241,6 +243,10 @@ export default function FloatingAiAssistant({
   useEffect(() => {
     if (open && docked) inputRef.current?.focus();
   }, [open, docked]);
+  // Narrower than the docked layout the panel covers the page, so it is a
+  // modal dialog: focus moves into it (to its first control, so a phone's
+  // keyboard does not pop up) and Tab stays inside. Escape is handled above.
+  useDialogFocus(open && !docked, panelRef, minimizeAssistant, { escape: false });
 
   // A new answer is shown from its first line, where it says what matters
   // most, not scrolled to its end. Anything else (a question, an answer still
@@ -433,8 +439,11 @@ export default function FloatingAiAssistant({
           ref={panelRef}
           data-testid="ai-assistant-panel"
           data-docked={docked ? "true" : "false"}
+          role={docked ? undefined : "dialog"}
+          aria-modal={docked ? undefined : true}
+          tabIndex={-1}
           aria-label={zh ? "FlowChain 助手" : "FlowChain assistant"}
-          className={`fixed inset-0 z-50 flex flex-col bg-white sm:left-auto sm:w-[440px] sm:shadow-2xl lg:static lg:z-auto lg:h-screen lg:shrink-0 lg:shadow-none ${expanded ? "lg:w-[min(760px,55vw)]" : "lg:w-[440px]"}`}
+          className={`fixed inset-0 z-50 flex flex-col bg-white outline-none sm:left-auto sm:w-[440px] sm:shadow-2xl lg:static lg:z-auto lg:h-screen lg:shrink-0 lg:shadow-none ${expanded ? "lg:w-[min(760px,55vw)]" : "lg:w-[440px]"}`}
           style={{ borderLeft: `1px solid ${A.gray4}` }}
         >
           <header className="flex min-h-14 shrink-0 items-center gap-1.5 py-1.5 pl-4 pr-2" style={{ borderBottom: `1px solid ${A.gray4}` }}>
@@ -483,6 +492,8 @@ export default function FloatingAiAssistant({
                     {translate(language, `ai.v2.notice.${notice}` as const)}
                   </p>
                 ) : null}
+                {/* The decisions waiting on Today, with their buttons (docs/drafted-decisions-design.md §4.8). */}
+                <div className="mt-5"><TodayDecisionCards /></div>
                 {emptyPrompts.length ? (
                   <div className="mt-5 grid grid-cols-2 gap-2.5">
                     {emptyPrompts.slice(0, 4).map((prompt, index) => {
@@ -583,18 +594,21 @@ export default function FloatingAiAssistant({
         </aside>
       )}
 
-      {/* The launcher only while the assistant is closed: open, it covers nothing. */}
+      {/* The launcher only while the assistant is closed: open, it covers nothing.
+          On a phone it is a 48 px round icon, so it hides less of the page;
+          its name is still read out. The main area's bottom padding (pb-20,
+          FlowChainApp) keeps the end of every page clear of it. */}
       {!open && (
         <button
           ref={restoreButtonRef}
           onClick={restoreAssistant}
           data-testid="ai-assistant-toggle"
-          className="fixed bottom-3 right-3 z-40 flex h-12 items-center gap-2 rounded-full pl-4 pr-5 text-sm font-semibold text-white shadow-xl transition-shadow hover:shadow-2xl sm:bottom-5 sm:right-5"
+          className="fixed bottom-3 right-3 z-40 flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold text-white shadow-xl transition-shadow hover:shadow-2xl sm:bottom-5 sm:right-5 sm:w-auto sm:justify-start sm:gap-2 sm:pl-4 sm:pr-5"
           style={{ background: A.blue }}
           aria-label={language === "zh-CN" ? "展开 AI 助手" : "Open AI assistant"}
         >
-          <Sparkles size={17} aria-hidden />
-          {language === "zh-CN" ? "AI 助手" : "AI assistant"}
+          <Sparkles size={20} aria-hidden className="sm:h-[17px] sm:w-[17px]" />
+          <span className="sr-only sm:not-sr-only">{language === "zh-CN" ? "AI 助手" : "AI assistant"}</span>
         </button>
       )}
     </div>

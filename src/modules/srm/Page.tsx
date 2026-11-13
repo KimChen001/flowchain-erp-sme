@@ -1,4 +1,5 @@
 import { SupplierForm, type PaymentTermOption } from "./SupplierForm";
+import { useDetailBack } from "../../components/navigation/useDetailBack";
 import { supplierCopy } from "./supplierCopy";
 import { SupplierPerformancePanel, supplierPerformanceTabLabel } from "./supplierPerformance";
 import { SupplierActivityCards } from "./supplierActivity";
@@ -17,6 +18,7 @@ import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { PriceHistoryFacts, priceHistoryKey, usePoPrice, usePriceHistory } from "../procurement/PriceHistoryFacts";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { ON_TIME_HEADER_TIP } from "./supplierMetrics";
@@ -116,6 +118,9 @@ const statusLabel = { draft: "草稿", active: "启用", inactive: "停用" };
 // sideways with the code and actions columns kept in view, as on purchase orders.
 const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
 const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
+// A supplier's supplied items drawn at a time; the pager under the table
+// gives the true total.
+const SUPPLIED_ITEM_PAGE_SIZE = 25;
 
 function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): Supplier {
   const text = (candidate: unknown, fallback = "") => String(candidate ?? "").trim() || fallback;
@@ -346,7 +351,8 @@ export default function SupplierMasterPage({
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) issues.push({ field: 'email', message: 'Enter a valid email address.' });
     if (form.deliveryCycleDays && (!Number.isInteger(Number(form.deliveryCycleDays)) || Number(form.deliveryCycleDays) < 0)) issues.push({ field: 'deliveryCycleDays', message: 'Lead time must be a whole number of days, zero or greater.' });
     setFieldErrors(issues);
-    if (issues.length) { document.getElementById('supplier-' + issues[0].field)?.focus(); return; }
+    // The form focuses the first field with a message.
+    if (issues.length) return;
     savingRef.current = true; setSaving(true);
     try {
       const body: any = {
@@ -471,9 +477,12 @@ export default function SupplierMasterPage({
   // link currency and the item's unit, in one request. Display only.
   // The item being linked gets the same facts under its reference price, in
   // the currency the link will be saved in. Never fills the price.
+  const detailBack = useDetailBack("/app/master-data/suppliers", ["Back to suppliers", "返回供应商列表"], () => { setSelected(null); onActiveContextChange?.(null); });
   const relationshipHistoryKey = (r: Relationship) => (selected ? priceHistoryKey({ itemId: r.itemId, currency: r.currency, supplierId: selected.id }) : "");
   const relationFormHistoryKey = selected && writes.items ? priceHistoryKey({ itemId: relationForm.itemId, currency: relationForm.currency || selected.defaultCurrency, supplierId: selected.id }) : "";
   const relationshipHistory = usePriceHistory([...relationships.map(relationshipHistoryKey), relationFormHistoryKey]);
+  // One page of supplied items; another supplier starts again at page 1.
+  const suppliedItems = usePagedRows(relationships, SUPPLIED_ITEM_PAGE_SIZE, selected?.id || "");
   if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} paymentTerms={paymentTerms} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
   if (selected)
     return (
@@ -482,13 +491,10 @@ export default function SupplierMasterPage({
           <button
             type="button"
             className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
-            onClick={() => {
-              setSelected(null);
-              onActiveContextChange?.(null);
-            }}
+            onClick={detailBack.back}
           >
             <ArrowLeft size={13} />
-            {copy("返回供应商列表")}</button>
+            {detailBack.label}</button>
           {writes.suppliers && (
             <div className="flex flex-wrap gap-2">
               <button
@@ -643,7 +649,8 @@ export default function SupplierMasterPage({
             <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
               {copy("暂无可供应物料")}</div>
           ) : (
-            <div className={`mt-3 ${tableScrollClass}`}>
+            <div className="mt-3">
+            <div className={tableScrollClass}>
             <table className={`w-full ${tableBodyTextClass}`}>
               <thead>
                 <tr style={listHeadRowStyle}>
@@ -665,8 +672,8 @@ export default function SupplierMasterPage({
                 </tr>
               </thead>
               <tbody>
-                {relationships.map((r, index) => (
-                  <tr key={r.relationshipId} className={listRowClass} style={listRowStyle(index, relationships.length)}>
+                {suppliedItems.pageRows.map((r, index) => (
+                  <tr key={r.relationshipId} className={listRowClass} style={listRowStyle(index, suppliedItems.pageRows.length)}>
                     <td className={`${tdClass} min-w-[160px]`}>
                       <EntityLink kind="item" id={r.itemId} className={tableLinkClass}>
                         {r.item?.sku || r.itemId} · {r.item?.itemName || ""}
@@ -710,6 +717,10 @@ export default function SupplierMasterPage({
                 ))}
               </tbody>
             </table>
+            </div>
+            <div className="-mx-5 -mb-5">
+              <ListPager page={suppliedItems.page} pageSize={SUPPLIED_ITEM_PAGE_SIZE} total={relationships.length} onPage={suppliedItems.setPage} testId="supplied-item-pager" />
+            </div>
             </div>
           )}
         </Card>

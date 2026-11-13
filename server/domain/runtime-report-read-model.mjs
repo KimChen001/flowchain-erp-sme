@@ -3,7 +3,7 @@ import { buildBusinessOverview } from './business-overview.mjs'
 import { isCommittedPurchaseOrder, isOpenPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
-import { buildDashboardFacts, buildDashboardVisuals } from './report-dashboard-visuals.mjs'
+import { buildDashboardFacts, buildDashboardVisuals, partialMonths } from './report-dashboard-visuals.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
 import { SUPPLIER_SCORECARD_RULES, addDays, daysBetween } from './supplier-scorecard.mjs'
 import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from './tenant-calendar-day.mjs'
@@ -65,6 +65,21 @@ function salesDemandTotal(demandLines) {
   return { total: total ?? 0, unit: unit || null, limitation: null }
 }
 
+// How far an order has shipped, decided per line as the sales visuals decide
+// it: shipped when any line has shipped, shipped in full when every line has
+// shipped its ordered quantity; reserved when any quantity is reserved.
+function salesShipping(order) {
+  const lines = salesOrderLines(order)
+  return {
+    reserved: (amountOf(order?.reservedQty) || 0) > 0,
+    shipped: lines.some(line => line.fulfilled > 0),
+    shippedInFull: lines.length > 0 && lines.every(line => line.ordered > 0 && line.fulfilled !== null && line.fulfilled >= line.ordered),
+  }
+}
+// A group of orders counts its orders; any other row is one record.
+const weight = row => Number.isFinite(row?.count) ? row.count : 1
+const totalWeight = rows => rows.reduce((total, row) => total + weight(row), 0)
+
 // On hand over the inventory rows: a total only while they are one SKU in one
 // unit, else null with the reason, as for open sales demand. The "On hand by
 // SKU" chart shows each SKU in its own unit. No rows is an empty inventory, 0.
@@ -87,7 +102,10 @@ const committed = {
   purchase_orders: row => isCommittedPurchaseOrder(row),
   supplier_invoices: row => committedInvoiceStatuses.has(row.status.toLowerCase()),
   sales_orders: row => !inactiveSalesStatuses.includes(row.status),
+  sales_order_groups: row => !inactiveSalesStatuses.includes(row.status),
 }
+// Money figures over sales orders read the groups, which cover every order.
+const moneySubject = subject => subject === 'sales_orders' ? 'sales_order_groups' : subject
 const currencyNames = { CNY: '人民币', USD: '美元', EUR: '欧元' }
 const currencyCode = reportCurrencyCode
 const currencyLabel = code => code ? (currencyNames[code] ? `${currencyNames[code]}（${code}）` : code) : '全部币种'
@@ -139,11 +157,19 @@ function runtimeRows(context, inventory, timeZone) {
     const ordered = oneItemTotal(lines, 'ordered')
     return { sku: lines.length === 1 ? lines[0].sku : '', quantity: ordered.total, unit: ordered.unit, fulfilled: oneItemTotal(lines, 'fulfilled').total }
   }
+  const sales = array(context.salesOrders).map(row => ({ id: text(row.salesOrderId || row.id), number: text(row.orderNumber), date: salesOrderDate(row, timeZone), customer: text(row.customerName || row.customerId), ...salesQuantity(row), status: text(inactiveSalesStatuses.includes(row.workflowStatus) ? row.workflowStatus : row.status || row.statusLabel), amount: amountOf(row.totalAmount ?? row.amount), currency: currencyCode(row.currency) }))
   return {
     // number: what the order shows (PO-202611-0001); before numbering, its id.
     purchase_orders: array(context.purchaseOrders).map(row => ({ id: text(row.id || row.po), number: text(row.number || row.orderNumber), date: purchaseOrderBusinessDate(row, timeZone), supplier: text(row.supplierSnapshot?.supplierName || row.supplierName || row.supplierId), amount: amountOf(row.totalAmount ?? row.amount), ...purchaseQuantity(row), status: text(row.status), isOpen: isOpenPurchaseOrder(row), currency: currencyCode(row.currency || row.lines?.[0]?.currency) })),
     // id opens the record; number is what people call it (SO-1042, AV-5512).
-    sales_orders: array(context.salesOrders).map(row => ({ id: text(row.salesOrderId || row.id), number: text(row.orderNumber), date: salesOrderDate(row, timeZone), customer: text(row.customerName || row.customerId), ...salesQuantity(row), status: text(inactiveSalesStatuses.includes(row.workflowStatus) ? row.workflowStatus : row.status || row.statusLabel), amount: amountOf(row.totalAmount ?? row.amount), currency: currencyCode(row.currency) })),
+    sales_orders: sales,
+    // The sales figures (counts, amounts, months, customers, status and
+    // shipping) read these groups of orders, each with its number of orders
+    // (count). From the database's totals over every order when the context
+    // carries them (salesOrderGroups), else one group per order read.
+    sales_order_groups: Array.isArray(context.salesOrderGroups)
+      ? context.salesOrderGroups.map(row => ({ date: reportCalendarDay(row.date), customer: text(row.customer), currency: currencyCode(row.currency), status: text(row.status), count: Math.max(0, Math.floor(number(row.count))), amount: amountOf(row.amount), reserved: Boolean(row.reserved), shipped: Boolean(row.shipped), shippedInFull: Boolean(row.shippedInFull) })).filter(row => row.count > 0)
+      : array(context.salesOrders).map((order, index) => ({ date: sales[index].date, customer: sales[index].customer, currency: sales[index].currency, status: sales[index].status, count: 1, amount: sales[index].amount, ...salesShipping(order) })),
     inventory_balances: inventory.availability.map(row => ({ id: row.sku, itemName: row.itemName === row.sku ? '' : row.itemName, unit: inventoryUnit(row.sku), quantity: row.onHand, reserved: row.reserved, available: row.available, shortage: row.shortage, availableToPromise: row.availableToPromise, stockStatus: row.stockStatus, status: row.riskLevel })),
     supplier_invoices: array(context.supplierInvoices).map(row => ({ id: text(row.id || row.invoiceNumber), number: text(row.invoiceNumber), date: invoiceDate(row, timeZone), supplier: text(row.supplierName || row.supplierId), amount: amountOf(row.totalAmount ?? row.amount), status: text(row.status), currency: currencyCode(row.currency) })),
     // number: the supplier code the lists show; id stays for the link.
@@ -170,7 +196,9 @@ const subjectFilters = {
   supplier_invoices: ['from', 'to', 'supplier', 'currency'], inventory_balances: [], suppliers: ['supplier'],
   receipts: ['from', 'to', 'supplier', 'currency'],
 }
-const applicableFilters = (subject, primaryKey) => [...subjectFilters[subject], ...(subject === primaryKey ? ['status'] : [])]
+// Groups of sales orders take the sales order filters.
+const filterSubject = subject => subject === 'sales_order_groups' ? 'sales_orders' : subject
+const applicableFilters = (subject, primaryKey) => [...subjectFilters[filterSubject(subject)], ...(filterSubject(subject) === primaryKey ? ['status'] : [])]
 
 function filtered(rows, query, filters) {
   const applies = key => query[key] && filters.includes(key)
@@ -178,7 +206,7 @@ function filtered(rows, query, filters) {
 }
 
 function value(id, all, inventory, facts) {
-  if (id === 'sales_order_count') return all.sales_orders.length
+  if (id === 'sales_order_count') return totalWeight(all.sales_order_groups)
   if (id === 'open_sales_demand') return facts.salesDemandTotal.total
   if (id === 'open_po_count') return all.purchase_orders.filter(row => row.isOpen).length
   if (id === 'inventory_on_hand') return facts.inventoryOnHand.total
@@ -197,18 +225,19 @@ function value(id, all, inventory, facts) {
 }
 
 // The monthly series behind a KPI's sparkline: committed amounts while they
-// total in one currency, or counts. Undated records are left out, and a series
-// needs two months to show a direction.
-const trendSubjects = { purchase_order_amount: 'purchase_orders', invoice_amount: 'supplier_invoices', sales_order_amount: 'sales_orders', sales_order_count: 'sales_orders' }
-function metricTrend(id, all, money) {
+// total in one currency, or counts. Undated records are left out, and so is a
+// month the range or today cuts short (partial), which would read as a fall;
+// a series needs two months to show a direction.
+const trendSubjects = { purchase_order_amount: 'purchase_orders', invoice_amount: 'supplier_invoices', sales_order_amount: 'sales_order_groups', sales_order_count: 'sales_order_groups' }
+function metricTrend(id, all, money, partial = new Map()) {
   const subject = trendSubjects[id]
   const counting = id === 'sales_order_count'
   if (!subject || (!counting && money?.total === null)) return null
   const months = new Map()
   for (const row of counting ? all[subject] : all[subject].filter(committed[subject])) {
-    if (!row.date) continue
+    if (!row.date || partial.has(row.date.slice(0, 7))) continue
     const period = row.date.slice(0, 7)
-    months.set(period, Math.round(((months.get(period) || 0) + (counting ? 1 : row.amount)) * 10000) / 10000)
+    months.set(period, Math.round(((months.get(period) || 0) + (counting ? weight(row) : row.amount)) * 10000) / 10000)
   }
   const trend = [...months].sort(([a], [b]) => a.localeCompare(b)).map(([period, value]) => ({ period, value }))
   return trend.length > 1 ? trend : null
@@ -232,7 +261,7 @@ function currencySummary(rows, query) {
     currencyLabel: status === 'multi_currency_unconverted' ? '多币种，未折算' : status === 'no_currency_data' ? '无币种数据' : status === 'currency_unknown' ? unknownCurrencyLabel : currencyLabel(code),
     currencies: query.currency ? [query.currency] : known,
     currencyAggregationStatus: status,
-    currencyAmounts: codes.map(group => ({ currencyCode: group || null, currencyLabel: group ? currencyLabel(group) : unknownCurrencyLabel, amount: knownTotal(groups.get(group) || []), recordCount: (groups.get(group) || []).length })),
+    currencyAmounts: codes.map(group => ({ currencyCode: group || null, currencyLabel: group ? currencyLabel(group) : unknownCurrencyLabel, amount: knownTotal(groups.get(group) || []), recordCount: totalWeight(groups.get(group) || []) })),
     total: ['single_currency', 'filtered_currency', 'no_currency_data'].includes(status) ? knownTotal(rows) : null,
     limitations: [...(status === 'multi_currency_unconverted' ? ['multi_currency_unconverted'] : []), ...(unknown ? ['currency_missing_or_invalid'] : []), ...(rows.some(row => row.amount === null) ? ['amount_missing'] : [])],
   }
@@ -246,17 +275,17 @@ function restrictedMetric(base, reason) {
   return { ...base, ...currency, value: null, currentValue: null, dataStatus: 'restricted', limitations: [reason], comparisonLabel: 'Restricted', trend: null }
 }
 
-function metric(id, all, inventory, query, primaryKey, facts, restriction = {}) {
-  const built = unrestrictedMetric(id, all, inventory, query, primaryKey, facts)
+function metric(id, all, inventory, query, primaryKey, facts, restriction = {}, partial) {
+  const built = unrestrictedMetric(id, all, inventory, query, primaryKey, facts, partial)
   const subjects = [built.subject, ...(RESTRICTED_FIGURE_SUBJECTS[id] || [])]
   if (subjects.some(subject => restriction.subjects?.has(subject))) return restrictedMetric(built, 'subject_restricted')
   if (built.unit === 'currency' && restriction.amounts?.[built.subject]) return restrictedMetric(built, 'amount_restricted')
   return built
 }
 
-function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
+function unrestrictedMetric(id, all, inventory, query, primaryKey, facts, partial) {
   const [label, subject, unit, description, drilldownPath] = metricDefinitions[id]
-  const money = unit === 'currency' ? currencySummary(all[subject].filter(committed[subject]), query) : null
+  const money = unit === 'currency' ? currencySummary(all[moneySubject(subject)].filter(committed[moneySubject(subject)]), query) : null
   const currentValue = money ? money.total : value(id, all, inventory, facts)
   const unconverted = money?.currencyAggregationStatus === 'multi_currency_unconverted'
   // A quantity KPI totals one SKU in one unit and names that unit.
@@ -271,7 +300,34 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
   const dataStatus = incomplete ? 'incomplete' : id === 'inventory_on_hand' && !inventory.availability.length ? 'empty' : unit === 'percentage' && currentValue === null ? 'no_records' : 'complete'
   const limitations = money ? money.limitations : demand ? (demand.limitation ? [demand.limitation] : []) : receiptsCut ? ['receipts_truncated'] : periodTooLong ? ['period_too_long'] : smallSample ? ['insufficient_sample'] : []
   const currency = money ? { currencyCode: money.currencyCode, currencyLabel: money.currencyLabel, currencies: money.currencies, currencyAggregationStatus: money.currencyAggregationStatus, currencyAmounts: money.currencyAmounts } : {}
-  return { id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, ...(demand ? { quantityUnit: demand.unit } : {}), comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, trend: metricTrend(id, all, money), generatedAt: new Date().toISOString() }
+  return { id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, ...(demand ? { quantityUnit: demand.unit } : {}), comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, trend: metricTrend(id, all, money, partial), generatedAt: new Date().toISOString() }
+}
+
+// Period comparison (docs/report-collaboration-design.md §5.1): a figure over
+// the range beside the same figure over the period of the same length just
+// before it, both computed by buildRuntimeGovernedReport, so both sides count
+// alike. Only flow figures are compared. A state as of today (open, overdue,
+// in stock, awaiting match, shipped in full) would read today's state for the
+// earlier period too, and master record counts have no period.
+export const COMPARABLE_METRICS = new Set(['purchase_order_amount', 'sales_order_amount', 'sales_order_count', 'invoice_amount', 'on_time_receipt_rate', 'active_supplier_count'])
+const isCalendarDay = value => /^\d{4}-\d{2}-\d{2}$/.test(value)
+export function previousPeriod(from, to) {
+  if (!isCalendarDay(from) || !isCalendarDay(to) || from > to) return null
+  const before = addDays(from, -1)
+  return { from: addDays(before, -daysBetween(from, to)), to: before }
+}
+// No comparison when the earlier period has no records for the figure or no
+// figure (a rate under its minimum sample), or when the two amounts are not
+// in one currency.
+function compareKpi(current, earlier, range) {
+  if (!COMPARABLE_METRICS.has(current.id)) return current
+  const none = { ...current, comparisonLabel: 'No figure for the previous period', comparisonRange: range }
+  if (!earlier || current.dataStatus !== 'complete' || earlier.dataStatus !== 'complete' || current.currentValue === null || earlier.currentValue === null) return none
+  if (current.unit === 'currency' && (!current.currencyCode || current.currencyCode !== earlier.currencyCode || !(earlier.currencyAmounts || []).some(group => group.recordCount > 0))) return none
+  if (current.unit === 'number' && earlier.currentValue === 0) return none
+  const points = current.unit === 'percentage'
+  const delta = round4(current.currentValue - earlier.currentValue)
+  return { ...current, comparisonValue: earlier.currentValue, comparisonDelta: delta, comparisonRate: points ? null : round4(delta / Math.abs(earlier.currentValue) * 100), comparisonDirection: delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat', comparisonLabel: '上期', comparisonUnit: points ? 'percentage_points' : current.unit, comparisonRange: range }
 }
 
 // Notes about inventory data belong on the dashboards that show inventory
@@ -279,7 +335,49 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
 // the inventory dashboard, the one that would show stock by location.
 const INVENTORY_DASHBOARD_NOTES = new Set(['warehouse_runtime_not_connected', 'bin_runtime_not_connected'])
 const inventoryNote = code => /^(inventory_|on_hand_|reserved_|sales_reservation_|sales_demand_quantity_missing|open_po_remaining_|po_line_unit_)/.test(code)
-const noteApplies = (code, subject) => INVENTORY_DASHBOARD_NOTES.has(code) ? subject === 'inventory' : inventoryNote(code) ? ['inventory', 'overview'].includes(subject) : true
+// "No invoices" belongs on the invoice dashboard and "no receipts" on the
+// dashboards that measure receiving; elsewhere they said nothing about the
+// figures shown.
+const SUBJECT_NOTES = { invoice_runtime_has_no_records: ['finance'], receipt_runtime_has_no_records: ['procurement', 'suppliers'] }
+const noteApplies = (code, subject) => SUBJECT_NOTES[code] ? SUBJECT_NOTES[code].includes(subject) : INVENTORY_DASHBOARD_NOTES.has(code) ? subject === 'inventory' : inventoryNote(code) ? ['inventory', 'overview'].includes(subject) : true
+
+// The subjects each dashboard's figures read. A subject cut off at the read
+// limit is named only on the dashboards it changes: customers and the other
+// document lists change none (filter lists also take the names on orders).
+const DASHBOARD_TRUNCATION_SUBJECTS = {
+  overview: ['purchase_orders', 'receipts', 'supplier_invoices', 'sales_orders', 'inventory_items', 'items'],
+  procurement: ['purchase_orders', 'receipts', 'supplier_invoices'],
+  sales: ['sales_orders'],
+  inventory: ['inventory_items', 'items', 'purchase_orders', 'sales_orders'],
+  finance: ['supplier_invoices'],
+  suppliers: ['suppliers', 'purchase_orders', 'receipts', 'supplier_invoices'],
+}
+// Sales orders are read newest first, up to a limit. Their figures are still
+// whole when the context carries the database's totals over every order
+// (salesOrderGroups) and every order with open demand was read
+// (openDemandComplete): the overview and inventory then need no note, and the
+// sales dashboard says only that its table and download list the latest
+// orders (figuresComplete, with the number of orders, total).
+function dashboardTruncation(context, subject, allOrders) {
+  const groupsComplete = Array.isArray(context.salesOrderGroups)
+  return array(context.truncatedSubjects)
+    .filter(entry => text(entry?.subject) && Number.isFinite(Number(entry?.limit)) && DASHBOARD_TRUNCATION_SUBJECTS[subject].includes(text(entry.subject)))
+    .flatMap(entry => {
+      const base = { subject: text(entry.subject), limit: Number(entry.limit) }
+      if (base.subject !== 'sales_orders') return [base]
+      const openDemandComplete = entry.openDemandComplete === true
+      if (subject === 'inventory') return openDemandComplete ? [] : [base]
+      if (subject === 'overview') return groupsComplete && openDemandComplete ? [] : [base]
+      return groupsComplete ? [{ ...base, figuresComplete: true, openDemandComplete, total: allOrders }] : [base]
+    })
+}
+
+// The rows a detail table lists: dated documents newest first by their
+// business date (undated last), so the first page shows the latest orders
+// whatever was edited last. Documents of one day keep the order they were
+// read in (the sort is stable).
+const DATED_SUBJECTS = new Set(['purchase_orders', 'sales_orders', 'supplier_invoices'])
+const byBusinessDate = (a, b) => Number(Boolean(b.date)) - Number(Boolean(a.date)) || String(b.date || '').localeCompare(String(a.date || ''))
 
 // options.now and options.timeZone set the workspace's "today" for overdue
 // counts; the route passes the tenant timezone.
@@ -307,11 +405,14 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const primaryKey = query.subject === 'sales' ? 'sales_orders' : query.subject === 'inventory' ? 'inventory_balances' : query.subject === 'finance' ? 'supplier_invoices' : query.subject === 'suppliers' ? 'suppliers' : 'purchase_orders'
   const all = Object.fromEntries(Object.entries(source).map(([key, value]) => [key, filtered(value, query, applicableFilters(key, primaryKey))]))
   const metricIds = array(input.measures).filter(id => metricDefinitions[id]).length ? input.measures.filter(id => metricDefinitions[id]) : dashboardMetrics[query.subject]
-  const currencySubject = query.subject === 'sales' ? 'sales_orders' : query.subject === 'finance' ? 'supplier_invoices' : ['overview', 'procurement', 'suppliers'].includes(query.subject) ? 'purchase_orders' : null
+  const currencySubject = query.subject === 'sales' ? 'sales_order_groups' : query.subject === 'finance' ? 'supplier_invoices' : ['overview', 'procurement', 'suppliers'].includes(query.subject) ? 'purchase_orders' : null
   const unscopedMoney = currencySummary(currencySubject ? all[currencySubject].filter(committed[currencySubject]) : [], query)
-  const scopeMoney = currencySubject && restriction.amounts[currencySubject] ? { ...unscopedMoney, total: null, currencyAmounts: unscopedMoney.currencyAmounts.map(group => ({ ...group, amount: null })), limitations: ['amount_restricted'] } : unscopedMoney
+  const scopeMoney = currencySubject && restriction.amounts[filterSubject(currencySubject)] ? { ...unscopedMoney, total: null, currencyAmounts: unscopedMoney.currencyAmounts.map(group => ({ ...group, amount: null })), limitations: ['amount_restricted'] } : unscopedMoney
   const aggregationStatus = scopeMoney.currencyAggregationStatus
-  const details = all[primaryKey].slice(0, query.limit)
+  const listed = DATED_SUBJECTS.has(primaryKey) ? [...all[primaryKey]].sort(byBusinessDate) : all[primaryKey]
+  const details = listed.slice(0, query.limit)
+  // Months the range or today cuts short: drawn as such, left out of sparklines.
+  const partial = partialMonths({ today, from: query.from, to: query.to })
   // Receipts follow their purchase order's filters other than the date range.
   const purchaseOrderIdsAnyDate = new Set(filtered(source.purchase_orders, { ...query, from: '', to: '' }, applicableFilters('purchase_orders', primaryKey)).map(row => row.id))
   // Sales demand per order line in scope, on the line's own SKU and unit.
@@ -334,19 +435,27 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const promisePurchaseOrderIds = query.subject === 'suppliers' && query.currency ? new Set(filtered(source.purchase_orders, { ...query, from: '', to: '', currency: '' }, applicableFilters('purchase_orders', primaryKey)).map(row => row.id)) : null
   const promiseOptions = { graceDays: query.graceDays, warehouseIds: Array.isArray(options.warehouseIds) ? options.warehouseIds : null, purchaseOrderIds: promisePurchaseOrderIds }
   const facts = { ...buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand, onTimeWithheld, promiseOptions }), salesDemandTotal: salesDemandTotal(salesDemand), inventoryOnHand: inventoryOnHandTotal(source.inventory_balances, inventory.units) }
-  const visuals = buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts, today, timeZone, salesDemand, onTimeWithheld, promiseOptions })
+  const visuals = options.kpisOnly ? [] : buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts, today, timeZone, salesDemand, onTimeWithheld, promiseOptions, partial })
   const inventoryLabels = primaryKey === 'inventory_balances' ? { id: 'SKU', itemName: '物料名称', status: 'Risk' } : primaryKey === 'suppliers' ? { number: '供应商编号' } : {}
   const repeatsId = key => key === 'number' && details.every(row => !text(row.number) || text(row.number) === text(row.id))
   const columns = [...new Set(details.flatMap(row => Object.keys(row)))].filter(key => !repeatsId(key)).map(key => ({ key, label: inventoryLabels[key] || ({ id: '业务编号', number: '单据号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', unit: '单位', fulfilled: '已履约', reserved: 'Reserved quantity', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: 'Short now', availableToPromise: 'Available to promise', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'fulfilled', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
-  const kpis = metricIds.map(id => metric(id, all, inventory, query, primaryKey, facts, restriction))
+  // input.comparison 'previous_period' sets the comparison; options.kpisOnly
+  // marks the inner run for the earlier period, which needs only its KPIs.
+  const comparisonRange = input.comparison === 'previous_period' && !options.kpisOnly ? previousPeriod(query.from, query.to) : null
+  const earlier = comparisonRange ? buildRuntimeGovernedReport(context, { ...input, comparison: 'none', measures: metricIds, filters: { ...(input.filters || {}), from: comparisonRange.from, to: comparisonRange.to } }, { ...options, kpisOnly: true }).kpis : []
+  const kpis = metricIds.map(id => metric(id, all, inventory, query, primaryKey, facts, restriction, partial)).map(item => comparisonRange ? compareKpi(item, earlier.find(entry => entry.id === item.id), comparisonRange) : item)
   const moneyLimitations = ['multi_currency_unconverted', 'currency_missing_or_invalid', 'amount_missing', 'amount_restricted', 'subject_restricted']
   const limitations = [...new Set([...array(context.dataLimitations), ...inventory.dataLimitations, ...(inventory.availability.length && inventory.availability.some(row => row.onHand === null) ? ['inventory_on_hand_incomplete'] : []), ...scopeMoney.limitations, ...kpis.flatMap(item => item.limitations.filter(code => moneyLimitations.includes(code)))])].filter(code => noteApplies(code, query.subject))
   const distinct = values => [...new Set(values.map(text).filter(Boolean))]
-  const dataScope = { label: '当前工作区数据', company: null, currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from, to: query.to, activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => ['from', 'to'].includes(key) ? text(input.filters?.[key]) : query[key]).length, sourceLabel: '业务记录', completenessLabel: details.length ? `已读取 ${details.length} 条真实记录` : '当前范围无真实业务记录', filterOptions: { companies: [], suppliers: distinct(array(context.suppliers).map(row => row.supplierName || row.name)), customers: distinct(array(context.customers).map(row => row.name || row.customerName)), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_orders, ...source.supplier_invoices].map(row => row.currency)) } }
-  const overview = query.subject === 'overview' ? buildBusinessOverview(all, { salesDemand, reorder: options.reorder || null }) : null
-  // Subjects the read context could not load in full; totals over them may be low.
-  const truncatedSubjects = array(context.truncatedSubjects).filter(entry => text(entry?.subject) && Number.isFinite(Number(entry?.limit))).map(entry => ({ subject: text(entry.subject), limit: Number(entry.limit) }))
-  return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, restrictedSubjects: [...restriction.subjects], restrictedAmounts: Object.keys(restriction.amounts).filter(key => restriction.amounts[key]), kpis, charts: overview ? [...overview.charts, ...visuals] : visuals, attention: overview?.attention || [], totalRecords: all[primaryKey].length, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: metricDefinitions[id][4] })), exportRows: all[primaryKey], metricDefinitions: kpis }
+  // A sales dashboard counts every order its groups cover, not only the
+  // orders read for the table.
+  const totalRecords = primaryKey === 'sales_orders' ? totalWeight(all.sales_order_groups) : all[primaryKey].length
+  const dataScope = { label: '当前工作区数据', company: null, currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from, to: query.to, activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => ['from', 'to'].includes(key) ? text(input.filters?.[key]) : query[key]).length, sourceLabel: '业务记录', completenessLabel: totalRecords ? `已读取 ${totalRecords} 条真实记录` : '当前范围无真实业务记录', filterOptions: { companies: [], suppliers: distinct([...array(context.suppliers).map(row => row.supplierName || row.name), ...source.purchase_orders.map(row => row.supplier)]), customers: distinct([...array(context.customers).map(row => row.name || row.customerName), ...source.sales_order_groups.map(row => row.customer)]), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_order_groups, ...source.supplier_invoices].map(row => row.currency)) } }
+  const overview = query.subject === 'overview' && !options.kpisOnly ? buildBusinessOverview(all, { salesDemand, reorder: options.reorder || null, salesActivity: all.sales_order_groups, partial }) : null
+  // Subjects the read context could not load in full whose cut changes this
+  // dashboard's figures; totals over them may be low.
+  const truncatedSubjects = dashboardTruncation(context, query.subject, totalWeight(source.sales_order_groups))
+  return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, restrictedSubjects: [...restriction.subjects], restrictedAmounts: Object.keys(restriction.amounts).filter(key => restriction.amounts[key]), kpis, charts: overview ? [...overview.charts, ...visuals] : visuals, attention: overview?.attention || [], totalRecords, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: metricDefinitions[id][4] })), exportRows: listed, metricDefinitions: kpis }
 }
 
 export function getRuntimeReportCatalog() {

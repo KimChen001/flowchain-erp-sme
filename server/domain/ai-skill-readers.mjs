@@ -46,6 +46,8 @@ const isRecent = (day, asOf) => {
 }
 const UNCOMMITTED_INVOICE_STATUSES = new Set(['draft', 'cancelled', 'canceled', 'void', 'voided'])
 const RAW_LIMIT = 500
+// How many of an item's latest receipts the facts keep.
+const LATEST_RECEIPTS = 3
 const committedInvoiceStatuses = new Set(RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES)
 const SUBJECT_SOURCE = { purchase_orders: 'purchase_orders', purchase_requests: 'purchase_requests', rfqs: 'rfqs', receipts: 'receipts', supplier_invoices: 'supplier_invoices', inventory_balances: 'inventory', items: 'inventory', suppliers: 'suppliers' }
 
@@ -194,6 +196,129 @@ function recordsNeedingData({ reportRows, openReport, business, raw, visible, vi
   return { records, checked }
 }
 
+// The open purchase orders report's source rows, without prices for a reader
+// who may not read them, as its route serves them.
+const reportRowsFor = (source, access) => access.prices ? source : scopeBusinessContext({ purchaseOrders: source }, { ...access, collections: {} }).purchaseOrders
+
+// Per purchase order of the report rows: its first line, its SKUs, and the
+// lines still to receive, by the report's line rules, each with its own
+// remaining quantity, unit and promised day. The order's sku is its first
+// line, which may be fully received, and its remaining quantity is the order
+// total, which the report gives only for one SKU in one unit: a follow-up, and
+// an answer about an order of several SKUs, names these lines instead. The
+// unit price only for a reader who may see prices, so an answer reads it
+// instead of dividing the order's amount (2026-11-07).
+function purchaseOrderLines(reportRows, visibility) {
+  return {
+    firstById: new Map(reportRows.map((po) => [text(po.id), array(po.lines)[0] || null])),
+    skusById: new Map(reportRows.map((po) => [text(po.id), [...new Set(array(po.lines).map((line) => text(line.sku)).filter(Boolean))]])),
+    openById: new Map(reportRows.map((po) => [text(po.id), array(po.lines).flatMap((line) => {
+      const read = purchaseOrderReportLine(line, po)
+      return read.open ? [{
+        lineId: text(line.id) || null, sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName || line.itemNameSnapshot) || null,
+        ordered: read.ordered, received: read.received, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
+        unitPrice: visibility.amounts.purchase_order_amounts && line.unitPrice !== null && line.unitPrice !== undefined && line.unitPrice !== '' && Number.isFinite(Number(line.unitPrice)) ? Number(line.unitPrice) : null,
+      }] : []
+    })])),
+  }
+}
+
+// The open purchase orders report's rows as facts (facts.purchaseOrders.rows).
+function openPurchaseOrderRows(openReport, lines, visibility) {
+  return array(openReport.exportRows).map((row) => ({
+    id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: row.status,
+    dueDate: row.dueDate, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received, remaining: row.remaining, unit: row.unit,
+    amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency, dataIncomplete: row.dataIncomplete,
+    sku: text(lines.firstById.get(row.id)?.sku) || null, itemId: text(lines.firstById.get(row.id)?.itemId) || null, skus: lines.skusById.get(row.id) || [],
+    openLines: lines.openById.get(row.id) || [],
+  }))
+}
+
+const committedInvoicesOf = (invoices) => array(invoices).filter((row) => committedInvoiceStatuses.has(text(row.status).toLowerCase()))
+
+// Committed supplier invoices with a difference from the order or receipt
+// (facts.invoices.variances); the supplier only with the partner snapshot.
+function invoiceVariances(committed, visibility) {
+  return committed
+    .filter((row) => (amount(row.varianceAmount) ?? 0) !== 0 || text(row.matchStatus) === 'variance')
+    .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: visibility.partner ? text(row.supplierId) : '', supplier: visibility.partner ? text(row.supplierName || row.supplierId) : null, poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null, invoiceDate: dayOf(row.invoiceDate || row.createdAt) }))
+}
+
+// Receipts with rejected quantities on an open purchase order, receipts not
+// yet posted, and receipts of the last AI_SKILL_RECENT_DAYS days (facts.receipts).
+function receiptFacts(receiptRows, reportRows, asOf) {
+  const openPoIds = new Set(reportRows.filter(isOpenPurchaseOrder).map((po) => text(po.id)))
+  const receipts = array(receiptRows).map((row) => ({
+    id: text(row.id), documentNumber: text(row.documentNumber || row.id), poId: text(row.poId) || null, supplierId: text(row.supplierId) || null, supplier: text(row.supplierName || row.supplierId),
+    postingStatus: text(row.postingStatus) || null, arrivedDay: dayOf(row.arrivedAt),
+    rejected: array(row.lines).reduce((sum, line) => sum + (amount(line.rejectedQty) ?? 0), 0),
+    unit: [...new Set(array(row.lines).map((line) => text(line.unit)).filter(Boolean))].join('/') || null,
+    poOpen: openPoIds.has(text(row.poId)),
+  }))
+  return {
+    // A rejection is still actionable while its purchase order is open.
+    rejected: receipts.filter((row) => row.rejected > 0 && row.poOpen),
+    unposted: receipts.filter((row) => row.postingStatus === 'unposted'),
+    // Arrived in the last AI_SKILL_RECENT_DAYS days, for recent supplier activity.
+    recent: receipts.filter((row) => isRecent(row.arrivedDay, asOf)).map(({ id, documentNumber, supplierId, supplier, arrivedDay }) => ({ id, documentNumber, supplierId, supplier, arrivedDay })),
+  }
+}
+
+// Each item's latest receipts, newest first: what it last received and when,
+// from the receipts read (2026-11-09 on Flash: "When did we last receive
+// 85123A?" had no receipt lines to read). Reversed ones are left out. read is
+// how many receipts that is.
+function latestReceiptFacts(receiptRows) {
+  const bySku = {}
+  for (const row of array(receiptRows)) {
+    if (row.reversedAt || text(row.postingStatus) === 'reversed') continue
+    for (const line of array(row.lines)) {
+      const sku = text(line.sku)
+      const accepted = amount(line.acceptedQty) ?? 0
+      if (!sku || accepted <= 0) continue
+      ;(bySku[sku] ||= []).push({ id: text(row.id), documentNumber: text(row.documentNumber || row.id), poId: text(row.poId) || null, supplier: text(row.supplierName || row.supplierId) || null, arrivedDay: dayOf(row.arrivedAt), accepted, rejected: amount(line.rejectedQty) ?? 0, unit: text(line.unit) || null, postingStatus: text(row.postingStatus) || null })
+    }
+  }
+  for (const sku of Object.keys(bySku)) bySku[sku] = bySku[sku].sort((a, b) => text(b.arrivedDay).localeCompare(text(a.arrivedDay)) || b.documentNumber.localeCompare(a.documentNumber)).slice(0, LATEST_RECEIPTS)
+  return { latestBySku: bySku, read: array(receiptRows).length }
+}
+
+// Only the facts the supplier issue signals read (supplier-insights.mjs), built
+// by the same helpers, from the same sources and with the same access as
+// readAiSkillFacts, so buildAiSkillSignals gives the same po_overdue,
+// grn_rejected_qty, grn_received_unposted and invoice_variance signals: the
+// open purchase orders, the receipts and the supplier invoices. It reads no
+// sales orders, stock or items, where the full read spends most of its time
+// (the M5 public data walkthrough has 54,927 sales order lines). Signals of
+// other types may be missing. purchaseOrders: the report's source rows when
+// the caller has already read them with listForReport. The receipts and
+// invoices are the business read context's, read alone; a context without
+// that read (route tests) reads the business read context itself.
+export async function readAiSkillSupplierIssueFacts(skillContext, { purchaseOrders } = {}) {
+  const { actor, tenantId, tenant, now, today, routeContext = {} } = skillContext
+  const visibility = aiSkillVisibility(actor)
+  const visible = visibility.sources
+  const access = routeContext.reportReadAccess || reportReadAccessFor(actor)
+  const procurementRuntime = routeContext.repositories?.procurementRuntime
+  const ordersVisible = Boolean(visible.purchase_orders && access.collections.purchaseOrders)
+  const narrow = !routeContext.aiSkillBusinessContext && typeof procurementRuntime?.listForReport === 'function' && typeof procurementRuntime?.listReceiptsAndInvoices === 'function'
+  const readCtx = { ...routeContext, identity: { ...routeContext.identity, tenantId } }
+  const [source, listed] = await Promise.all([
+    narrow
+      ? (visible.receipts || visible.supplier_invoices ? procurementRuntime.listReceiptsAndInvoices({ tenantId }) : {})
+      : routeContext.aiSkillBusinessContext || readBusinessContext(readCtx, { warehouseIds: access.warehouseIds }),
+    ordersVisible && purchaseOrders === undefined && typeof procurementRuntime?.listForReport === 'function' ? procurementRuntime.listForReport({ tenantId }) : null,
+  ])
+  const business = scopeBusinessContext({ receipts: array(source.receipts), supplierInvoices: array(source.supplierInvoices) }, access)
+  const reportRows = reportRowsFor(ordersVisible ? purchaseOrders ?? listed ?? array(source.purchaseOrders) : [], access)
+  const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now, { timeZone: tenant.timezone })
+  const facts = { tenantId, timezone: tenant.timezone, today, asOf: openReport.asOf, visibility, purchaseOrders: null, invoices: null, receipts: null }
+  if (visible.purchase_orders) facts.purchaseOrders = { rows: openPurchaseOrderRows(openReport, purchaseOrderLines(reportRows, visibility), visibility) }
+  if (visible.supplier_invoices) facts.invoices = { variances: invoiceVariances(committedInvoicesOf(business.supplierInvoices), visibility) }
+  if (visible.receipts) facts.receipts = receiptFacts(business.receipts, reportRows, facts.asOf)
+  return facts
+}
+
 // openPurchaseRequests (assistant v2 only): also every open purchase request,
 // draft, submitted or approved, with all its lines, as facts.purchaseRequests
 // .open. A request the assistant created as a draft then counts as cover, so
@@ -222,12 +347,11 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
     if (source && (visible[source] || (source === 'suppliers' && (visible.purchase_orders || visible.supplier_invoices)))) limitations.push({ code: 'truncated', source, limit: entry.limit })
   }
   const procurementRuntime = routeContext.repositories?.procurementRuntime
-  // The open purchase orders report's rows, without prices for a reader who
-  // may not read them, as its route serves them.
+  // The open purchase orders report's rows (reportRowsFor).
   const reportSource = visible.purchase_orders && access.collections.purchaseOrders
     ? (typeof procurementRuntime?.listForReport === 'function' ? await procurementRuntime.listForReport({ tenantId }) : array(business.purchaseOrders))
     : []
-  const reportRows = access.prices ? reportSource : scopeBusinessContext({ purchaseOrders: reportSource }, { ...access, collections: {} }).purchaseOrders
+  const reportRows = reportRowsFor(reportSource, access)
   const raw = await rawRecordColumns(prisma, tenantId, visible, limitations, access.warehouseIds)
 
   const facts = {
@@ -276,41 +400,28 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
     // The contact a draft is addressed to, from master data, only for readers
     // who may prepare drafts.
     const tierOf = (value) => ([1, 2, 3].includes(Number(value)) ? Number(value) : null)
+    // A tier keeps the reason the person who set it wrote, and when and by
+    // whom, as the supplier page shows them (2026-11-09 on Flash: "Acme 是几级
+    // 供应商？为什么？" was answered "the records do not say why").
+    const tierBasis = (row) => (tierOf(row.tier) && text(row.tierReason)
+      ? { tierReason: text(row.tierReason), tierSetOn: row.tierSetAt ? new Date(row.tierSetAt).toISOString().slice(0, 10) : null, tierSetBy: text(row.tierSetBy?.name) || null }
+      : {})
     facts.suppliers = array(business.suppliers).map((row) => ({
-      id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName), tier: tierOf(row.tier),
+      id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName), tier: tierOf(row.tier), ...tierBasis(row),
       ...(visibility.canDraft ? { email: text(row.email) || null, contactName: text(row.contactName) || null } : {}),
     })).filter((row) => row.id && row.name)
   }
 
   if (visible.purchase_orders) {
-    const lineById = new Map(reportRows.map((po) => [text(po.id), array(po.lines)[0] || null]))
-    const skusById = new Map(reportRows.map((po) => [text(po.id), [...new Set(array(po.lines).map((line) => text(line.sku)).filter(Boolean))]]))
-    // The lines still to receive, by the report's line rules, each with its
-    // own remaining quantity, unit and promised day. The order's sku is its
-    // first line, which may be fully received, and its remaining quantity is
-    // the order total, which the report gives only for one SKU in one unit: a
-    // follow-up, and an answer about an order of several SKUs, names these
-    // lines instead. Quantities and dates only, no prices.
-    const openLinesById = new Map(reportRows.map((po) => [text(po.id), array(po.lines).flatMap((line) => {
-      const read = purchaseOrderReportLine(line, po)
-      return read.open ? [{
-        lineId: text(line.id) || null, sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName || line.itemNameSnapshot) || null,
-        ordered: read.ordered, received: read.received, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
-      }] : []
-    })]))
+    const lines = purchaseOrderLines(reportRows, visibility)
+    const { skusById, openById: openLinesById } = lines
     const rawStatusById = new Map(reportRows.map((po) => [text(po.id), text(po.status)]))
     facts.purchaseOrders = {
       open: openReport.summary.open,
       overdue: openReport.summary.overdue,
       incomplete: openReport.summary.incomplete,
       committedSpend: visibility.amounts.purchase_order_amounts ? kpiMoney(kpi(overview, 'purchase_order_amount')) : null,
-      rows: array(openReport.exportRows).map((row) => ({
-        id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: row.status,
-        dueDate: row.dueDate, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received, remaining: row.remaining, unit: row.unit,
-        amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency, dataIncomplete: row.dataIncomplete,
-        sku: text(lineById.get(row.id)?.sku) || null, itemId: text(lineById.get(row.id)?.itemId) || null, skus: skusById.get(row.id) || [],
-        openLines: openLinesById.get(row.id) || [],
-      })),
+      rows: openPurchaseOrderRows(openReport, lines, visibility),
     }
     // Every purchase order, whatever its status, by the open purchase orders
     // report's line rules (scope all), for questions about one order. Open
@@ -376,14 +487,12 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
 
   if (visible.supplier_invoices) {
     const finance = buildRuntimeGovernedReport(business, { subject: 'finance' }, { now, timeZone: tenant.timezone })
-    const committed = array(business.supplierInvoices).filter((row) => committedInvoiceStatuses.has(text(row.status).toLowerCase()))
+    const committed = committedInvoicesOf(business.supplierInvoices)
     facts.invoices = {
       committed: visibility.amounts.invoice_amounts ? kpiMoney(kpi(finance, 'invoice_amount')) : null,
       committedCount: committed.length,
       matchCounts: committed.reduce((counts, row) => { counts[aiSkillInvoiceMatch(row)] += 1; return counts }, { matched: 0, exception: 0, pending: 0 }),
-      variances: committed
-        .filter((row) => (amount(row.varianceAmount) ?? 0) !== 0 || text(row.matchStatus) === 'variance')
-        .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: visibility.partner ? text(row.supplierId) : '', supplier: visibility.partner ? text(row.supplierName || row.supplierId) : null, poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null, invoiceDate: dayOf(row.invoiceDate || row.createdAt) })),
+      variances: invoiceVariances(committed, visibility),
       // Invoices dated in the last AI_SKILL_RECENT_DAYS days, for recent
       // supplier activity. Without the partner snapshot they name no supplier.
       recent: array(business.supplierInvoices)
@@ -420,23 +529,7 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
     }
   }
 
-  if (visible.receipts) {
-    const openPoIds = new Set(reportRows.filter(isOpenPurchaseOrder).map((po) => text(po.id)))
-    const receipts = array(business.receipts).map((row) => ({
-      id: text(row.id), documentNumber: text(row.documentNumber || row.id), poId: text(row.poId) || null, supplierId: text(row.supplierId) || null, supplier: text(row.supplierName || row.supplierId),
-      postingStatus: text(row.postingStatus) || null, arrivedDay: dayOf(row.arrivedAt),
-      rejected: array(row.lines).reduce((sum, line) => sum + (amount(line.rejectedQty) ?? 0), 0),
-      unit: [...new Set(array(row.lines).map((line) => text(line.unit)).filter(Boolean))].join('/') || null,
-      poOpen: openPoIds.has(text(row.poId)),
-    }))
-    facts.receipts = {
-      // A rejection is still actionable while its purchase order is open.
-      rejected: receipts.filter((row) => row.rejected > 0 && row.poOpen),
-      unposted: receipts.filter((row) => row.postingStatus === 'unposted'),
-      // Arrived in the last AI_SKILL_RECENT_DAYS days, for recent supplier activity.
-      recent: receipts.filter((row) => isRecent(row.arrivedDay, facts.asOf)).map(({ id, documentNumber, supplierId, supplier, arrivedDay }) => ({ id, documentNumber, supplierId, supplier, arrivedDay })),
-    }
-  }
+  if (visible.receipts) facts.receipts = { ...receiptFacts(business.receipts, reportRows, facts.asOf), ...latestReceiptFacts(business.receipts) }
 
   const { records, checked } = recordsNeedingData({ reportRows, openReport, business, raw, visible, visibility, tenantId })
   facts.records = records

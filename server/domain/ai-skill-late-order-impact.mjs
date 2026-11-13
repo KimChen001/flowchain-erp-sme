@@ -55,13 +55,29 @@ export function runLateOrderImpact(facts, { route = null } = {}) {
     ? array(route.entities.purchaseOrders).map((row) => find(row.id) || row)
     : route?.focus?.entityType === 'purchase_order' ? [find(route.focus.entityId)].filter(Boolean) : []
   const salesVisible = Array.isArray(facts.salesOrders)
-  if (named.length) {
-    // Each named order on its own.
-    return { ...base, mode: 'named', salesVisible, groups: named.flatMap((po) => skusOf([po]).map((sku) => skuImpact(sku, [po], facts))), pos: named }
-  }
   const late = index.filter((row) => row.isOpen && (row.overdueDays || 0) > 0).sort((a, b) => b.overdueDays - a.overdueDays || a.orderNumber.localeCompare(b.orderNumber))
+  // Whether a group leaves out every late line of its SKU, so its figure is
+  // the one for "without the late lines".
+  const everyLate = (group) => {
+    const lateForSku = late.filter((po) => skusOf([po]).includes(group.sku))
+    return { ...group, coversEveryLateLine: lateForSku.length > 0 && lateForSku.every((po) => group.pos.some((row) => row.id === po.id)) }
+  }
+  if (named.length) {
+    // Each named order on its own, and a SKU on more than one named order for
+    // them together too (2026-11-09 on Flash: two named late orders for
+    // 85123A gave two rows, 288 and 168, with nothing to say which order each
+    // left out, and the answer called one "without the late lines"; without
+    // both it was 48).
+    const each = named.flatMap((po) => skusOf([po]).map((sku) => skuImpact(sku, [po], facts)))
+    const together = skusOf(named)
+      .map((sku) => ({ sku, pos: named.filter((po) => skusOf([po]).includes(sku)) }))
+      .filter(({ pos }) => pos.length > 1)
+      .map(({ sku, pos }) => ({ ...skuImpact(sku, pos, facts), together: true }))
+    return { ...base, mode: 'named', salesVisible, groups: [...each, ...together].map(everyLate), pos: named }
+  }
   // The overdue orders together, per SKU.
   const groups = skusOf(late).map((sku) => skuImpact(sku, late.filter((po) => skusOf([po]).includes(sku)), facts))
     .sort((a, b) => (b.added || 0) - (a.added || 0) || a.sku.localeCompare(b.sku))
+    .map(everyLate)
   return { ...base, mode: 'late', salesVisible, groups, pos: late, more: Math.max(0, groups.length - LATE_LISTED) }
 }

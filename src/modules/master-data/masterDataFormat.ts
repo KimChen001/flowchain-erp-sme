@@ -6,7 +6,7 @@ import { workspaceCopy } from "../../i18n/workspaceCopy";
 // (启用, 冻结, 正常, ...), so those are listed too and either form renders in
 // the active language.
 const zh: Record<string, string> = {
-  "Customer code": "客户编号", "Customer name": "客户名称", "Contact": "联系人", "Phone": "电话", "Address": "地址",
+  "Back to items": "返回 SKU 列表", "Customer code": "客户编号", "Customer name": "客户名称", "Contact": "联系人", "Phone": "电话", "Address": "地址",
   "Credit status": "信用状态", "Payment terms": "付款条款", "Status": "状态", "Actions": "操作", "View details": "查看详情",
   "Details": "详情", "Yes": "是", "No": "否",
   "No customers yet. Create or import customers to continue.": "暂无客户。请新建或导入客户后继续。",
@@ -20,10 +20,10 @@ const zh: Record<string, string> = {
   "Standard delivery note": "标准发货单", "Sales shipment / delivery note": "销售出库单 / 发货单",
   "Standard proof of delivery": "标准签收单", "Proof of delivery": "签收单",
   "Warehouse code": "仓库编码", "Warehouse name": "仓库名称", "Zone": "库区", "Bin": "库位", "Capacity": "容量",
-  "Utilization": "利用率", "Temperature requirement": "温控要求", "QA status": "QA 状态", "Available": "可用", "Owner": "负责人",
+  "Utilization": "利用率", "Temperature requirement": "温控要求", "QA status": "质检状态", "Available": "可用", "Owner": "负责人",
   "Tax code": "税码", "Tax code name": "税码名称", "Tax rate": "税率", "Tax type": "税种", "Region": "区域", "Description": "描述",
   "Term code": "条款编码", "Term name": "条款名称", "Net days": "净账期天数", "Discount rule": "折扣规则", "Due date rule": "到期规则",
-  "Due on receipt": "收到发票即到期", "Due {days} days after the invoice date": "发票日期后 {days} 天到期",
+  "Due on receipt": "收到发票即到期", "Due {days} days after the invoice date": "发票日期后 {days} 天到期", "Net {days} days": "{days} 天账期",
   "Sales tax": "销售税", "Use tax": "使用税", "VAT": "增值税", "Input VAT": "进项税", "Output VAT": "销项税",
   "Exempt": "免税", "Zero-rated": "零税率",
   "Active": "启用", "Inactive": "停用", "Incomplete": "待完善", "Needs review": "待复核", "Frozen": "冻结",
@@ -58,10 +58,10 @@ const zh: Record<string, string> = {
   "Created: {by} · {at}": "创建：{by} · {at}", "Updated: {by} · {at}": "更新：{by} · {at}",
   "Safety stock / reorder point": "安全库存 / 再订货点", "Lead time": "提前期", "{count} days": "{count} 天",
   // The reference lists (customers, warehouses, tax codes, payment terms, print templates).
-  "All statuses": "全部状态", "All QA statuses": "全部 QA 状态", "All document types": "全部单据类型",
+  "All statuses": "全部状态", "All QA statuses": "全部质检状态", "All document types": "全部单据类型",
   "{total} records, {shown} shown": "共 {total} 条，当前显示 {shown} 条", "1 record, {shown} shown": "共 1 条，当前显示 {shown} 条",
   "1 item, {shown} shown": "共 1 个物料，当前显示 {shown} 个", "No records match these filters": "没有符合筛选条件的记录",
-  "Customer search": "客户查询", "Search customers by code, name, contact, phone, address or payment terms.": "按编号、名称、联系人、电话、地址或付款条款查询客户。",
+  "Customer search": "客户查询", "Code, name, contact or phone": "编号、名称、联系人或电话", "Code, name, zone or owner": "编号、名称、区域或负责人", "Code, name, type or region": "编号、名称、类型或地区", "Code, name or description": "编号、名称或说明", "Template name or document type": "模板名称或单据类型", "Search customers by code, name, contact, phone, address or payment terms.": "按编号、名称、联系人、电话、地址或付款条款查询客户。",
   "Customer list": "客户列表", "Warehouse search": "仓库查询", "Search warehouses by code, name, zone, bin or owner.": "按编码、名称、库区、库位或负责人查询仓库。",
   "Warehouse list": "仓库列表", "No warehouses yet.": "暂无仓库。", "Tax code search": "税码查询",
   "Search tax codes by code, name, type, region or description.": "按编码、名称、税种、区域或描述查询税码。", "Tax code list": "税码列表",
@@ -127,6 +127,14 @@ export function dueDateRule(netDays: number, language: string) {
   return netDays === 0
     ? masterDataCopy("Due on receipt", language)
     : masterDataCopy("Due {days} days after the invoice date", language, { days: netDays });
+}
+
+// A payment term recorded only as its code ("NET30") reads as its rule; any
+// other code is shown as it is. The stored value is never changed.
+export function paymentTermLabel(value: string | null | undefined, language: string) {
+  const text = String(value ?? "").trim();
+  const net = /^NET\s?(\d+)$/i.exec(text);
+  return net ? `${masterDataCopy("Net {days} days", language, { days: Number(net[1]) })} (${text})` : text;
 }
 
 export function orNotProvided(value: string | null | undefined) {

@@ -40,7 +40,10 @@ test('a result gets display strings beside its dates, amounts and large quantiti
 
 test('the text tidier rewrites dates, amounts, quantities and shortened record numbers', () => {
   const { tidy } = aiV2TextTidier({ language: 'en-US', formats, records, units: () => ['ft'] })
-  assert.equal(tidy('Due 2026-11-01; Amount: 5,000 USD; $79,692.50 USD in all; USD 2,500 more.'), 'Due Nov 1, 2026; Amount: $5,000.00; $79,692.50 in all; $2,500.00 more.')
+  assert.equal(tidy('Due 2026-11-01; Amount: 5,000 USD; $79,692.50 USD in all; USD 2,500 more.'), 'Due Nov 1, 2026; Amount: $5,000; $79,692.50 in all; $2,500 more.')
+  // A figure keeps the decimals it was written with: a rounded one gets no
+  // false cents (2026-11-07: 约 7,300 美元 read as $7,300.00 for $7,320).
+  assert.equal(tidy('about 7,300 USD, 17.05 USD'), 'about $7,300, $17.05')
   assert.equal(tidy('7000 pcs and 1200 ft, 2026 deliveries, 1.9万美元, 5k USD'), '7,000 pcs and 1,200 ft, 2026 deliveries, 1.9万美元, 5k USD')
   // A short form that one record ends with is written whole; a full number,
   // a SKU and a form two records end with stay as written.
@@ -56,7 +59,7 @@ test('Chinese text gets full-width punctuation next to Chinese words, never betw
   assert.equal(tidy('不客气!'), '不客气！')
   assert.equal(tidy('影响哪些销售订单?'), '影响哪些销售订单？')
   assert.equal(tidy('时间 10:30,数量 1,000 件'), '时间 10:30，数量 1,000 件')
-  assert.equal(tidy('累计 19,120 美元,差异 200 USD。'), '累计 $19,120.00，差异 $200.00。')
+  assert.equal(tidy('累计 19,120 美元,差异 200 USD。'), '累计 $19,120，差异 $200。')
   assert.equal(tidy('见 [指南](https://example.com/a) 和 ![图](a.png)'), '见 [指南](https://example.com/a) 和 ![图](a.png)')
   assert.equal(tidy('1) 第一步\n2) 第二步'), '1) 第一步\n2) 第二步')
   // A piece continues what was already sent: a closing parenthesis follows its opening one.
@@ -145,4 +148,13 @@ test('in a Chinese answer, quoted lines and English lines keep English punctuati
   // A line is judged whole: the Chinese after a piece counts.
   assert.equal(tidy('LOCAL-DEMO-PO-020 (Precision Fastener Works) ', '', '逾期 15 天'), 'LOCAL-DEMO-PO-020（Precision Fastener Works） ')
   assert.equal(tidy('LOCAL-DEMO-PO-020 (Precision Fastener Works) ', '', 'is late'), 'LOCAL-DEMO-PO-020 (Precision Fastener Works) ')
+})
+
+// 2026-11-08 on DeepSeek: a Chinese answer wrote "10 月 1, 2026" for Oct 1, 2026.
+test('a date half in Chinese and half in the app\'s format is written in the workspace\'s format', () => {
+  const { tidy } = aiV2TextTidier({ language: 'zh-CN', formats })
+  assert.equal(tidy('上个月（10 月 1, 2026 至 10 月 31, 2026）的销售额是 £75,552.67。'), '上个月（Oct 1, 2026 至 Oct 31, 2026）的销售额是 £75,552.67。')
+  assert.equal(tidy('承诺交期 11月4，2026，已逾期。'), '承诺交期 Nov 4, 2026，已逾期。')
+  // Not a date: a decimal before 月, or no year.
+  assert.equal(tidy('3.5 月 2, 2026 不是日期'), '3.5 月 2, 2026 不是日期')
 })

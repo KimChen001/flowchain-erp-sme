@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { Link } from "react-router";
 import { A, Card } from "../ui";
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
+import { useI18n } from "../../i18n/I18n";
 
 export function ActionableMetricCard({
   label,
@@ -22,6 +23,10 @@ export function ActionableMetricCard({
   state?: Record<string, unknown>;
 }) {
   const copy = useWorkspaceCopy();
+  const { formatNumber } = useI18n();
+  // A bare count reads with the workspace's digit grouping: 5760 → 5,760.
+  // Amounts and labels arrive formatted and pass through.
+  value = /^-?\d{4,}$/.test(value) ? formatNumber(Number(value)) : value;
   return (
     <Link
       to={to}
@@ -36,8 +41,11 @@ export function ActionableMetricCard({
           </span>
           <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" style={{ color }} />
         </div>
-        <div>
-          <div className="fc-kpi-value" style={{ color: A.label }}>{value}</div>
+        {/* A long value (a currency total) steps down a size when its card is
+            narrow (two cards to a row on a phone) and wraps rather than run
+            past the card; short values keep the KPI size. */}
+        <div className="@container min-w-0">
+          <div className={`fc-kpi-value [overflow-wrap:anywhere] ${value.length > 9 ? "@max-[200px]:text-[18px] @max-[200px]:leading-6 @max-[135px]:text-[16px] @max-[135px]:leading-5" : ""}`} style={{ color: A.label }}>{value}</div>
           <div className="fc-label mt-0.5" style={{ color: A.sub }}>{copy(label)}</div>
           <div className="fc-caption mt-1" style={{ color: A.gray2 }}>{copy(description)}</div>
         </div>

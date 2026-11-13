@@ -29,12 +29,22 @@ const order = (id: string, status: string, currency = 'USD') => ({
   lines: [{ poLineId: `${id}-L1`, sku: 'SKU-1', itemName: 'Control module', quantityOrdered: 200, quantityReceived: 0, unit: 'pcs', unitPrice: 12, currency, status: 'pending_receipt' }],
 });
 
+// The workbench mock: the list and Order lines read every order; the PO
+// detail reads one order from /api/purchase-orders-workbench/:id.
+async function routeWorkbench(page: Page, purchaseOrders: ReturnType<typeof order>[]) {
+  await page.route('**/api/purchase-orders-workbench**', route => {
+    const id = new URL(route.request().url()).pathname.match(/\/api\/purchase-orders-workbench\/([^/]+)$/)?.[1];
+    if (!id) return route.fulfill({ json: { purchaseOrders, receivingDocs: [], supplierInvoices: [] } });
+    const found = purchaseOrders.find((row) => row.po === decodeURIComponent(id));
+    return found
+      ? route.fulfill({ json: { purchaseOrder: found, receivingDocs: [], supplierInvoices: [], documentLinks: [], procurementFollowups: [] } })
+      : route.fulfill({ status: 404, json: { code: 'PURCHASE_ORDER_NOT_FOUND', message: 'Purchase order not found.' } });
+  });
+}
+
 test('PO currency follows the document; cancelled orders are excluded from open fulfillment', async ({ page }) => {
   await signIn(page);
-  await page.route('**/api/purchase-orders-workbench', route => route.fulfill({ json: {
-    purchaseOrders: [order('PO-CANCELLED', 'cancelled'), order('PO-OPEN', 'issued'), order('PO-EUR', 'issued', 'EUR')],
-    receivingDocs: [], supplierInvoices: [],
-  } }));
+  await routeWorkbench(page, [order('PO-CANCELLED', 'cancelled'), order('PO-OPEN', 'issued'), order('PO-EUR', 'issued', 'EUR')]);
   await page.goto('/app/procurement/orders/PO-CANCELLED');
   await expect(page.getByTestId('po-line-cards')).toContainText('$2,400.00');
   await expect(page.getByTestId('po-line-cards')).toContainText('$12.00');
@@ -58,13 +68,37 @@ for (const language of ['en-US', 'zh-CN']) {
   test(`matching states and empty results use ${language}`, async ({ page }) => {
     await signIn(page, language);
     let records = true;
+    // As the read model returns a match: ids for links, the supplier's invoice
+    // number and the GRN number to show and search (UI review 7).
+    const invoiceUuid = '3576e9ac-9f58-43f0-83f3-abddab051515';
+    const grnUuid = 'd2f6aeb0-bb04-4135-b428-5842c3faf474';
     await page.route('**/api/procurement/documents?*', route => route.fulfill({ json: { documents: records ? [{
-      id: 'INV-TEST', supplierName: 'Acme Components', relatedPo: 'PO-TEST', currency: 'USD',
+      id: `MATCH-${invoiceUuid}`, invoiceId: invoiceUuid, invoiceNumber: 'INV-TEST', grnId: grnUuid, grnNumber: 'GRN-202611-0009',
+      supplierName: 'Acme Components', relatedPo: 'PO-TEST', poNumber: 'PO-TEST', currency: 'USD',
       amount: 2400, poAmount: 2000, invoiceAmount: 2400, varianceAmount: 400,
       matchStatus: '差异待处理', blockingReason: 'PO 金额与发票金额存在差异，需复核后处理。',
+    }, {
+      id: 'MATCH-INV-OTHER', invoiceId: 'INV-OTHER', supplierName: 'Acme Components', relatedPo: 'PO-TEST', poNumber: 'PO-TEST', currency: 'USD',
+      invoiceAmount: 100, varianceAmount: 0, matchStatus: 'matched',
     }] : [] } }));
     await page.goto('/app/procurement/three-way-match');
-    await expect(page.getByTestId('three-way-match-record-list')).toContainText('INV-TEST');
+    const list = page.getByTestId('three-way-match-record-list');
+    await expect(list).toContainText('INV-TEST');
+    await expect(list).toContainText('GRN-202611-0009');
+    await expect(list).not.toContainText(invoiceUuid);
+    await expect(list).not.toContainText(grnUuid);
+    // The search finds a match by the numbers it shows.
+    const search = page.getByPlaceholder(language === 'en-US' ? 'Invoice, PO or receipt number' : '发票、采购订单或收货单号');
+    for (const needle of ['GRN-202611-0009', 'inv-test']) {
+      await search.fill(needle);
+      await expect(page.getByTestId('three-way-match-row')).toHaveCount(1);
+      await expect(page.getByTestId('three-way-match-row')).toContainText('INV-TEST');
+    }
+    await search.fill('');
+    await expect(page.getByTestId('three-way-match-row')).toHaveCount(2);
+    // The table fits the card: Status is not cut off.
+    const table = page.getByTestId('three-way-match-table');
+    expect(await table.evaluate((node) => node.scrollWidth <= node.parentElement!.clientWidth + 1)).toBe(true);
     if (language === 'en-US') await expectEnglish(page);
     else await expect(page.getByTestId('three-way-match-record-list')).toContainText('需复核后处理');
     records = false;
@@ -95,12 +129,21 @@ test('purchase request labels and defaults are English without changing selected
 test('sales risk and evidence views translate system reasons and preserve customer names', async ({ page }) => {
   await signIn(page);
   let customerName = 'Acme Retail';
-  await page.route('**/api/sales-demand/orders', route => route.fulfill({ json: { orders: [{
+  // The risk and evidence lists read a page at a time (?risk=…&offset=…&limit=…).
+  await page.route('**/api/sales-demand/orders*', route => route.fulfill({ json: { orders: [{
     salesOrderId: 'SO-TEST', customerName, customerTier: 'Standard', itemId: 'ITEM-1', sku: 'SKU-1', itemName: 'Control module',
     orderedQty: 10, reservedQty: 0, fulfilledQty: 0, shortageQty: 10, promisedDate: '2026-09-23',
     statusLabel: '缺货风险', priority: '高', deliveryRiskLevel: 'high', deliveryRiskLabel: '高风险',
     deliveryRiskReason: '订单数量尚未被库存预留或履约记录覆盖，存在交付缺口。',
     dataLimitations: ['inventory_availability_not_joined', 'purchase_supply_not_joined'],
+    linkedPurchaseOrders: [], linkedSuppliers: [], linkedReceivingDocs: [], linkedExceptionCases: [],
+  }, {
+    // A shipped order: the read API labels it 已完成; the page shows its code's
+    // label, "Fulfilled", the word the sales order list and detail use.
+    salesOrderId: 'SO-SHIPPED', customerName, customerTier: 'Standard', itemId: 'ITEM-1', sku: 'SKU-1', itemName: 'Control module',
+    orderedQty: 4, reservedQty: 0, fulfilledQty: 4, shortageQty: 0, promisedDate: '2026-09-20',
+    status: 'fulfilled', statusLabel: '已完成', priority: '低', deliveryRiskLevel: 'low', deliveryRiskLabel: '正常',
+    deliveryRiskReason: '当前库存与采购证据未显示明显交付风险。', dataLimitations: [],
     linkedPurchaseOrders: [], linkedSuppliers: [], linkedReceivingDocs: [], linkedExceptionCases: [],
   }] } }));
   await page.goto('/app/sales/risks');
@@ -109,6 +152,8 @@ test('sales risk and evidence views translate system reasons and preserve custom
   await expectEnglish(page);
   await page.goto('/app/sales/evidence');
   await expect(page.locator('tbody')).toContainText('Shortage risk');
+  await expect(page.getByRole('row', { name: /SO-SHIPPED/ })).toContainText('Fulfilled');
+  await expect(page.locator('tbody')).not.toContainText('Completed');
   await expectEnglish(page);
   customerName = '示例客户';
   await page.reload();
@@ -131,7 +176,7 @@ for (const financeEnabled of [false, true]) {
       await route.fulfill({ response, json: { capabilities: (data.capabilities || []).map((capability: { id: string }) =>
         ['finance', 'supplier-invoice', 'three-way-match'].includes(capability.id) ? { ...capability, enabled: financeEnabled } : capability) } });
     });
-    await page.route('**/api/purchase-orders-workbench', route => route.fulfill({ json: {
+    await page.route('**/api/purchase-orders-workbench*', route => route.fulfill({ json: {
       purchaseOrders: [order('PO-OPEN', 'issued')], receivingDocs: [],
       supplierInvoices: [{ invoiceNumber: 'INV-OPEN', relatedPo: 'PO-OPEN', supplier: 'Acme Components', currency: 'USD', amount: 2400, status: 'submitted' }],
     } }));

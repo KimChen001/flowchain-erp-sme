@@ -1,6 +1,7 @@
 import { DEFAULT_TENANT_TIMEZONE } from '../domain/tenant-calendar-day.mjs'
 import { orderHasOpenDemand } from '../repositories/db-sales-order-read-repository.mjs'
 import { buildFirstRunChecklist, buildTodayWork, countDocumentsUpdatedToday } from '../domain/today-work.mjs'
+import { billPaymentStatus } from '../domain/operational-finance-read-service.mjs'
 
 const clone = value => structuredClone(value)
 const array = value => Array.isArray(value) ? value : []
@@ -105,17 +106,33 @@ const route = (path, id) => `${path}/${encodeURIComponent(id)}`
 // "未命名客户"; that placeholder is not a recorded name, so the row shows none.
 const UNNAMED_CUSTOMER = '未命名客户'
 const recordedCustomer = name => name && name !== UNNAMED_CUSTOMER ? name : null
-function homeDocuments(context, customerInvoices = []) {
+// An approved supplier invoice shows where its payment stands (to_pay,
+// partially_settled, settled), as the supplier invoice list shows it, when
+// its payable's status was read (payableStatuses: invoice id to status).
+const billStatus = (row, payableStatuses) => billPaymentStatus(row.status, payableStatuses?.[row.id]) || row.status
+function homeDocuments(context, customerInvoices = [], payableStatuses = {}) {
   const rows = value => Array.isArray(value) ? value : []
   return [
     ...rows(context.purchaseRequests).map(row => ({ type: 'purchase_request', id: row.id, number: row.number || row.id, status: row.status, partner: row.lines?.[0]?.supplierSnapshot?.supplierName || null, amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/requests', row.id) })),
     ...rows(context.rfqs).map(row => ({ type: 'rfq', id: row.id, number: row.number || row.id, status: row.status, partner: null, amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/rfq', row.id) })),
     ...rows(context.purchaseOrders).map(row => ({ type: 'purchase_order', id: row.id, number: row.number || row.orderNumber || row.id, status: row.status, partner: row.supplierSnapshot?.supplierName || row.supplierName || null, amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/orders', row.id) })),
     ...rows(context.receipts).map(row => ({ type: 'receipt', id: row.id, number: row.documentNumber || row.id, status: row.postingStatus || row.status, partner: row.supplierName || null, amount: null, currency: '', updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/receiving', row.id) })),
-    ...rows(context.supplierInvoices).map(row => ({ type: 'supplier_invoice', id: row.id, number: row.invoiceNumber || row.id, status: row.status, partner: row.supplierName || null, amount: amountOf(row.totalAmount ?? row.amount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/bills', row.id) })),
-    ...rows(context.salesOrders).map(row => ({ type: 'sales_order', id: row.id || row.salesOrderId, number: row.orderNumber || row.id, status: row.workflowStatus || row.status, partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/orders', row.id || row.salesOrderId) })),
+    ...rows(context.supplierInvoices).map(row => ({ type: 'supplier_invoice', id: row.id, number: row.invoiceNumber || row.id, status: billStatus(row, payableStatuses), partner: row.supplierName || null, amount: amountOf(row.totalAmount ?? row.amount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/bills', row.id) })),
+    ...rows(context.salesOrders).map(row => ({ type: 'sales_order', id: row.id || row.salesOrderId, number: row.orderNumber || row.id, status: salesOrderHomeStatus(row), partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/orders', row.id || row.salesOrderId) })),
     ...rows(customerInvoices).map(row => ({ type: 'customer_invoice', id: row.id, number: row.invoiceNumber || row.id, status: row.status, partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/invoices', row.id) })),
   ].filter(row => row.id)
+}
+
+// A sales order shows the status the sales report shows once it has shipped:
+// fulfilled or partially fulfilled (as fulfillment status codes, which Today
+// labels "Fulfilled" and "Partially fulfilled"). Before it ships, and when it
+// is a draft or cancelled, it shows its workflow status.
+function salesOrderHomeStatus(row) {
+  const workflow = String(row.workflowStatus || '').trim()
+  if (['draft', 'cancelled', 'canceled'].includes(workflow)) return workflow
+  if (row.status === 'fulfilled' || row.fulfillmentStatus === 'fully_fulfilled') return 'fully_fulfilled'
+  if (row.status === 'partially_fulfilled' || row.fulfillmentStatus === 'partially_fulfilled') return 'partially_fulfilled'
+  return workflow || row.status
 }
 
 const instant = value => { const parsed = Date.parse(value); return Number.isFinite(parsed) ? parsed : 0 }
@@ -132,9 +149,13 @@ export const RECENT_DOCUMENTS = 10
 //                    countDocumentsUpdatedToday);
 //   recentDocuments  the latest changed documents of every type, with the
 //                    instant of the change;
-//   firstRun         the first-day checklist while any step is open.
-export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, sources = {}, setup = null, setupOptions = {}, hidden = [], limitations = [] } = {}) {
-  const work = buildTodayWork({
+//   firstRun         the first-day checklist while any step is open;
+//   decisions        the rows the system prepared a next step for and the
+//                    rows set aside (server/services/decision-item-service.mjs),
+//                    or { available: false } without a database. workItems
+//                    still lists every row; the page splits them.
+export function todayWorkOf(context, sources = {}, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
+  return buildTodayWork({
     purchaseOrders: context.purchaseOrders,
     reportPurchaseOrders: sources.reportPurchaseOrders,
     purchaseRequests: context.purchaseRequests,
@@ -146,7 +167,11 @@ export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAUL
     receivables: sources.receivables,
     contracts: sources.contracts,
   }, { now, timeZone })
-  const documents = homeDocuments(context, sources.recentCustomerInvoices)
+}
+
+export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, sources = {}, setup = null, setupOptions = {}, hidden = [], limitations = [], work: computed = null, decisions = { available: false } } = {}) {
+  const work = computed || todayWorkOf(context, sources, { now, timeZone })
+  const documents = homeDocuments(context, sources.recentCustomerInvoices, sources.billPayableStatuses)
   const todayChanges = countDocumentsUpdatedToday(documents, { now, timeZone })
   const recentDocuments = [...documents]
     .sort((a, b) => instant(b.updatedAt) - instant(a.updatedAt) || a.type.localeCompare(b.type) || String(a.id).localeCompare(String(b.id)))
@@ -163,6 +188,7 @@ export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAUL
     todayChanges,
     recentDocuments,
     firstRun: buildFirstRunChecklist(setup, setupOptions),
+    decisions,
     hidden: [...new Set(hidden)],
     counts: { workItems: work.total, overdue: work.overdue, todayChanges, recentDocuments: recentDocuments.length },
     limitations: [...new Set([...(context.dataLimitations || []), ...limitations, ...(reorderScoped ? ['reorder_not_checked_for_warehouse_scope'] : [])])],

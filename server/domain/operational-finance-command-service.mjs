@@ -35,6 +35,26 @@ const fail = (code, message, status = 400, details) => {
   throw new OperationalFinanceError(code, message, status, details);
 };
 const text = (value) => String(value ?? "").trim();
+
+// A match whose every line exception was approved: the variance is accepted
+// and no longer open. Stored on the match run (ThreeWayMatch.status) and on
+// the invoice (SupplierInvoice.matchStatus); the invoice's own status stays
+// as it was until the invoice is approved.
+export const MATCH_VARIANCE_APPROVED = "variance_approved";
+const MATCH_EXCEPTION_RESOLUTION_REQUIRED = "MATCH_EXCEPTION_RESOLUTION_REQUIRED";
+const MATCH_EXCEPTION_RESOLUTION_MESSAGE =
+  "Enter why you accept or reject this difference.";
+
+// The match status after a review, from the statuses of all of the match's
+// exceptions: "variance_approved" when there is at least one and all are
+// approved, otherwise null (the match keeps its status).
+export function matchStatusAfterReview(statuses) {
+  const list = Array.isArray(statuses) ? statuses : [];
+  return list.length && list.every((status) => status === "approved")
+    ? MATCH_VARIANCE_APPROVED
+    : null;
+}
+
 const commandPermission = (commandType) => ({
   create_supplier_invoice: "finance.supplier_invoice.create",
   revise_supplier_invoice: "finance.supplier_invoice.revise",
@@ -1412,11 +1432,17 @@ export function createOperationalFinanceCommandService({
   }
 
   async function reviewMatchException(exceptionId, input, context) {
+    if (!text(input.resolution))
+      fail(
+        MATCH_EXCEPTION_RESOLUTION_REQUIRED,
+        MATCH_EXCEPTION_RESOLUTION_MESSAGE,
+        422,
+      );
     const payload = {
       exceptionId: required(exceptionId, "exceptionId"),
       expectedVersion: expectedVersion(input.expectedVersion),
       decision: required(input.decision, "decision"),
-      resolution: required(input.resolution, "resolution"),
+      resolution: text(input.resolution),
     };
     return execute(
       "review_match_exception",
@@ -1452,6 +1478,15 @@ export function createOperationalFinanceCommandService({
             "Decision must be approved or rejected.",
             422,
           );
+        // The match row is locked first, so two reviews of the same match
+        // run one after the other and the second sees the first's decision.
+        await lockTenantRow(
+          tx,
+          "ThreeWayMatch",
+          actor.tenantId,
+          current.matchId,
+          "THREE_WAY_MATCH_NOT_FOUND",
+        );
         const exception = await tx.financeMatchException.update({
           where: { id: current.id },
           data: {
@@ -1462,6 +1497,33 @@ export function createOperationalFinanceCommandService({
             version: { increment: 1 },
           },
         });
+        // Once every exception of the match is approved, the match is no
+        // longer an open variance: the match run and the invoice's match
+        // status say "variance_approved". The invoice keeps its own status
+        // and version; approving it is still its own step.
+        const siblings = await tx.financeMatchException.findMany({
+          where: { matchId: current.matchId },
+          select: { status: true },
+        });
+        const resolvedStatus = matchStatusAfterReview(
+          siblings.map((row) => row.status),
+        );
+        let matchAfter = null;
+        if (resolvedStatus) {
+          const match = await tx.threeWayMatch.update({
+            where: { id: current.matchId },
+            data: { status: resolvedStatus, version: { increment: 1 } },
+          });
+          matchAfter = { id: match.id, status: match.status };
+          await tx.supplierInvoice.updateMany({
+            where: {
+              id: current.supplierInvoiceId,
+              tenantId: actor.tenantId,
+              matchStatus: "exception",
+            },
+            data: { matchStatus: resolvedStatus },
+          });
+        }
         const result = {
           entityType: "FinanceMatchException",
           entityId: exception.id,
@@ -1472,6 +1534,7 @@ export function createOperationalFinanceCommandService({
             resolution: exception.resolution,
             version: exception.version,
           },
+          ...(matchAfter ? { match: matchAfter } : {}),
         };
         await tx.auditLog.create({
           data: audit({
@@ -1492,6 +1555,7 @@ export function createOperationalFinanceCommandService({
               matchId: current.matchId,
               matchLineId: current.matchLineId,
               supplierInvoiceId: current.supplierInvoiceId,
+              ...(matchAfter ? { matchStatus: matchAfter.status } : {}),
             },
           }),
         });
@@ -1532,10 +1596,21 @@ export function createOperationalFinanceCommandService({
       });
     if (!text(input.resolution))
       blockingIssues.push({
-        code: "FINANCE_VALIDATION_FAILED",
-        message: "resolution is required.",
+        code: MATCH_EXCEPTION_RESOLUTION_REQUIRED,
+        message: MATCH_EXCEPTION_RESOLUTION_MESSAGE,
         status: 422,
       });
+    // What the match's status would become: resolved when this decision
+    // approves its last open exception.
+    const siblings = await prisma.financeMatchException.findMany({
+      where: { matchId: exception.matchId },
+      select: { id: true, status: true },
+    });
+    const matchStatus = blockingIssues.length
+      ? null
+      : matchStatusAfterReview(
+          siblings.map((row) => (row.id === exception.id ? decision : row.status)),
+        );
     return {
       operation: "review_match_exception",
       allowed: blockingIssues.length === 0,
@@ -1545,7 +1620,11 @@ export function createOperationalFinanceCommandService({
         status: exception.status,
         version: exception.version,
       },
-      after: { status: decision, version: exception.version + 1 },
+      after: {
+        status: decision,
+        version: exception.version + 1,
+        ...(matchStatus ? { matchStatus } : {}),
+      },
       paymentExecution: false,
       ledgerMutation: false,
     };

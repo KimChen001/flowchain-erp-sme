@@ -47,6 +47,21 @@ const mapPo = (row = {}) => ({
   metadata: row.metadata || {},
 });
 
+const iso = value => value?.toISOString?.() || value || null;
+
+// A receipt and a supplier invoice as snapshot() serves them. poNumberOf adds
+// the purchase order number when the caller has the order.
+const mapReceipt = (row, poNumberOf = () => ({})) => ({ id: row.id, documentNumber: row.documentNumber, poId: row.poId, ...poNumberOf(row.poId), supplierId: row.supplierId, supplierName: row.supplierName, status: row.status, workflowStatus: row.workflowStatus, postingStatus: row.postingStatus, warehouseId: row.warehouseId, currency: row.currency, arrivedAt: iso(row.arrivedAt), postedAt: iso(row.postedAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, acceptedQty: decimal(line.acceptedQty), rejectedQty: decimal(line.rejectedQty), unit: line.unit })) });
+const mapSupplierInvoice = (row, poNumberOf = () => ({})) => ({ id: row.id, invoiceNumber: row.invoiceNumber, supplierId: row.supplierId, supplierName: row.supplierName, poId: row.relatedPoId, ...poNumberOf(row.relatedPoId), receiptId: row.relatedGrnId, relatedPo: row.relatedPoId, relatedGrn: row.relatedGrnId, amount: decimal(row.amount), totalAmount: decimal(row.totalAmount), currency: row.currency, status: row.status, matchStatus: row.matchStatus, varianceAmount: decimal(row.varianceAmount), invoiceDate: iso(row.invoiceDate), dueDate: iso(row.dueDate), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, quantity: decimal(line.quantity), unitPrice: decimal(line.unitPrice), amount: decimal(line.amount), unit: line.unit })) });
+
+// snapshot()'s reads: every procurement document, newest change first, at most
+// `limit` (500) of each kind, each kind that had more reported to onTruncated.
+const snapshotQuery = (tenantId) => ({ where: { tenantId }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }] });
+const snapshotBounds = (filters) => {
+  const limit = Math.min(500, Math.max(1, Number(filters.limit || 500)));
+  return (subject) => ({ limit, subject, onTruncated: filters.onTruncated });
+};
+
 export function createDbProcurementRuntimeRepository({ prisma, env = process.env } = {}) {
   const client = async () => prisma || getPrismaClient(env);
   const authority = createDbProcurementCommandService({ prisma, env });
@@ -75,9 +90,8 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
     async snapshot(filters = {}) {
       const tenantId = requireTenantId(filters);
       const dbClient = await client();
-      const query = { where: { tenantId }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }] };
-      const limit = Math.min(500, Math.max(1, Number(filters.limit || 500)));
-      const bounded = (subject) => ({ limit, subject, onTruncated: filters.onTruncated });
+      const query = snapshotQuery(tenantId);
+      const bounded = snapshotBounds(filters);
       const [requestRows, rfqRows, rows, receivingRows, invoiceRows] = await Promise.all([
         findManyWithinLimit(dbClient.purchaseRequest, query, bounded("purchase_requests")),
         findManyWithinLimit(dbClient.rfq, query, bounded("rfqs")),
@@ -85,19 +99,33 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
         findManyWithinLimit(dbClient.receivingDocument, query, bounded("receipts")),
         findManyWithinLimit(dbClient.supplierInvoice, query, bounded("supplier_invoices")),
       ]);
-      const iso = value => value?.toISOString?.() || value || null;
       // A receipt's or bill's purchase order number, when the order is among
       // the loaded rows.
       const poNumbers = new Map(rows.map(row => [row.id, procurementDocumentNumber(row)]));
       const poNumberOf = id => (poNumbers.get(id) ? { poNumber: poNumbers.get(id) } : {});
-      const receipts = receivingRows.map(row => ({ id: row.id, documentNumber: row.documentNumber, poId: row.poId, ...poNumberOf(row.poId), supplierId: row.supplierId, supplierName: row.supplierName, status: row.status, workflowStatus: row.workflowStatus, postingStatus: row.postingStatus, warehouseId: row.warehouseId, currency: row.currency, arrivedAt: iso(row.arrivedAt), postedAt: iso(row.postedAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, acceptedQty: decimal(line.acceptedQty), rejectedQty: decimal(line.rejectedQty), unit: line.unit })) }));
-      const supplierInvoices = invoiceRows.map(row => ({ id: row.id, invoiceNumber: row.invoiceNumber, supplierId: row.supplierId, supplierName: row.supplierName, poId: row.relatedPoId, ...poNumberOf(row.relatedPoId), receiptId: row.relatedGrnId, relatedPo: row.relatedPoId, relatedGrn: row.relatedGrnId, amount: decimal(row.amount), totalAmount: decimal(row.totalAmount), currency: row.currency, status: row.status, matchStatus: row.matchStatus, varianceAmount: decimal(row.varianceAmount), invoiceDate: iso(row.invoiceDate), dueDate: iso(row.dueDate), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, quantity: decimal(line.quantity), unitPrice: decimal(line.unitPrice), amount: decimal(line.amount), unit: line.unit })) }));
+      const receipts = receivingRows.map(row => mapReceipt(row, poNumberOf));
+      const supplierInvoices = invoiceRows.map(row => mapSupplierInvoice(row, poNumberOf));
       // Quotation counts back the RFQ response figures when the RFQ row has none.
       const quotations = rfqRows.length ? await dbClient.supplierQuotation.findMany({ where: { tenantId, rfqId: { in: rfqRows.map(row => row.id) } }, select: { rfqId: true } }) : [];
       // Purchase requests and RFQs carry their update day; the instant is kept
       // beside it, so the home page orders and dates them like other documents.
       const withInstant = (mapped, row) => ({ ...mapped, updatedAtInstant: iso(row.updatedAt) });
       return { purchaseRequests: requestRows.map(row => withInstant(mapPurchaseRequest(row), row)), rfqs: rfqRows.map(row => withInstant(mapRfq(row, quotations), row)), supplierQuotations: [], purchaseOrders: rows.map(mapPo), receipts, receivingDocs: receipts, supplierInvoices, documentLinks: [], procurementFollowups: [] };
+    },
+    // snapshot()'s receipts and supplier invoices alone, read and bounded the
+    // same way, for the supplier issue signals (ai-skill-readers.mjs
+    // readAiSkillSupplierIssueFacts), which need no other document. Without
+    // the purchase orders read beside them, they carry no poNumber.
+    async listReceiptsAndInvoices(filters = {}) {
+      const tenantId = requireTenantId(filters);
+      const dbClient = await client();
+      const query = snapshotQuery(tenantId);
+      const bounded = snapshotBounds(filters);
+      const [receivingRows, invoiceRows] = await Promise.all([
+        findManyWithinLimit(dbClient.receivingDocument, query, bounded("receipts")),
+        findManyWithinLimit(dbClient.supplierInvoice, query, bounded("supplier_invoices")),
+      ]);
+      return { receipts: receivingRows.map(row => mapReceipt(row)), supplierInvoices: invoiceRows.map(row => mapSupplierInvoice(row)) };
     },
     async transact() {
       throw Object.assign(new Error("Database Mode procurementRuntime is read-only; use the PostgreSQL command service."), { code: "PROCUREMENT_DATABASE_COMMAND_REQUIRED", status: 409 });

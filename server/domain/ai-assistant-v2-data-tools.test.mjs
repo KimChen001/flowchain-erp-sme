@@ -1,10 +1,11 @@
 import test from 'node:test'
+import { ASSISTANT_V2_SYSTEM } from './ai-assistant-v2.mjs'
 import assert from 'node:assert/strict'
 import { AI_SKILL_OTHER_TENANT, AI_SKILL_TENANT, aiSkillActor, aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_READ_TOOLS } from './ai-read-tools.mjs'
-import { AI_ASSISTANT_V2_TOOLS } from './ai-assistant-v2-data-tools.mjs'
+import { AI_ASSISTANT_V2_TOOLS, namesCoverPeriod } from './ai-assistant-v2-data-tools.mjs'
 import { AI_READ_TOOL_COLUMNS, aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { buildReorderList } from './reorder-list.mjs'
@@ -20,7 +21,7 @@ import { join } from 'node:path'
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
 // order of 100 and a reference price of 95 USD.
 const link = (extra = {}) => ({ id: 'ITEM-001::SUP-001', payload: { itemId: 'ITEM-001', supplierId: 'SUP-001', preferred: true, active: true, approved: true, leadTimeDays: 12, minimumOrderQuantity: 100, referencePrice: 95, currency: 'USD', ...extra } })
-const V2_ONLY = AI_ASSISTANT_V2_TOOLS.map((tool) => tool.name).filter((name) => name !== 'list_purchase_requests')
+const V2_ONLY = AI_ASSISTANT_V2_TOOLS.map((tool) => tool.name).filter((name) => !['list_purchase_requests', 'stock_projection'].includes(name))
 
 // The fixture workspace read as assistant v2 reads it: with the open purchase
 // requests. `change` edits the fixture records before they are read.
@@ -106,6 +107,15 @@ test('attention_list wraps today\'s priorities and the open problems, ranked by 
     details: { sku: 'LDM-001', remaining: 30, unit: 'pcs', notSent: false }, ref: { type: 'purchase_order', id: 'PO-001', label: 'PO-001' },
   })
   assert.ok(JSON.stringify(today).indexOf('score') === -1)
+  // byType counts the whole list by type, rows past the limit too, and a row
+  // under each also.
+  const expected = {}
+  for (const item of engine.items) for (const type of new Set([item.type, ...item.also || []])) expected[type] = (expected[type] || 0) + 1
+  assert.deepEqual(today.byType, expected)
+  assert.equal(today.byType.po_partially_received >= 1, true)
+  assert.ok(engine.items.slice(5).some((item) => item.type.startsWith('stock_')), 'the fixture has stock rows past the first five')
+  assert.ok(Object.keys(today.byType).some((type) => type.startsWith('stock_')))
+  assert.equal(today.dueSoonDays, 7)
   // Up to 10 rows, all of them when fewer.
   assert.equal((await run('attention_list', { limit: 10 })).result.rows.length, engine.total)
   assert.equal((await run('attention_list', { limit: 11 })).error, 'invalid_arguments')
@@ -182,6 +192,8 @@ test('suggest_purchase_lines raises the gap to the minimum order and fills suppl
   assert.deepEqual(row.supplier, { id: 'SUP-001', name: 'Acme Components', source: 'preferred_supplier' })
   assert.deepEqual(row.needByDate, { value: '2026-10-11', source: 'lead_time', leadTimeDays: 12, warning: null })
   assert.deepEqual(row.estimatedUnitPrice, { value: 95, currency: 'USD', source: 'reference_price' })
+  // The line's value, read instead of multiplied: 100 × 95.
+  assert.deepEqual(row.estimatedValue, { value: 9500, currency: 'USD' })
   assert.equal(row.covered, null)
   assert.deepEqual(row.ref, { type: 'item', id: 'ITEM-001', label: 'LDM-001' })
   // Without the submitted request the gap is above the minimum.
@@ -225,6 +237,114 @@ test('suggest_purchase_lines with coverDays sizes a line from recorded demand an
   assert.equal(before.suggestedQuantity.source, 'covered_by_open_orders')
 })
 
+// 2026-11-09 on Flash: "这周需要补什么货" became coverDays 7, and the form held 72
+// cakestands where the reorder list says its minimum order of 60.
+test('coverDays stands only when the questions name a period to cover; "this week" says when', async () => {
+  const { facts, context } = await v2({ change: shipping, actor: everyWarehouse })
+  const lines = async (question) => (await runAiReadTool('suggest_purchase_lines', { skus: ['LDM-001'], coverDays: 7 }, { facts, context: { ...context, question } })).result
+  const thisWeek = await lines('这周需要补什么货？')
+  assert.equal(thisWeek.coverDays, undefined)
+  assert.match(thisWeek.coverDaysLeftOut, /no period to cover/)
+  assert.equal(thisWeek.rows[0].cover, undefined)
+  assert.notEqual(thisWeek.rows[0].suggestedQuantity.source, 'cover_days')
+  assert.equal((await lines('What should I reorder this week?')).coverDays, undefined)
+  const period = await lines('What do we need for the next 2 weeks?')
+  assert.equal(period.coverDays, 7)
+  assert.equal(period.coverDaysLeftOut, undefined)
+  for (const question of ['Order a month\'s worth of LDM-001', 'enough for the next two weeks', '两周的量', '下个月的量', '备一个月的货', '够卖到月底', '30 days of stock']) assert.ok(namesCoverPeriod(question), question)
+  for (const question of ['这周需要补什么货？', '本周要下哪些单', 'What should I reorder this week?', 'What needs ordering today?', 'Reorder LDM-001']) assert.ok(!namesCoverPeriod(question), question)
+})
+
+// 2026-11-07 (public data): every sales order had shipped, so the projection
+// showed no demand for an item shipping 17 a day.
+test('stock_projection also runs the weeks at the recorded shipping rate, apart from the open sales orders', async () => {
+  const { run } = await v2({ change: shipping, actor: everyWarehouse })
+  const result = (await run('stock_projection', { sku: 'LDM-001', weeks: 3 })).result
+  assert.deepEqual(result.recordedDemand, { averageDailyDemand: 10, windowDays: 90, shipmentDays: 18 })
+  let balance = result.availableToday
+  for (const [index, week] of result.atRecordedRate.entries()) {
+    balance += week.incoming - 70
+    assert.deepEqual([week.from, week.incoming, week.demand, week.endAvailable, week.short], [result.weeks[index].from, result.weeks[index].incoming, 70, balance, balance < 0])
+  }
+  assert.equal(result.firstWeekShortAtRecordedRate, result.atRecordedRate.find((week) => week.short)?.from || null)
+  const late = result.notPlacedInAWeek.incomingPastPromisedDate.reduce((sum, entry) => sum + entry.quantity, 0)
+  assert.equal(result.availableIfLateLinesArrive, late ? result.availableToday + late : undefined)
+  assert.equal(result.availableIfNoLateLinesArrive, late ? result.availableToday : undefined)
+  assert.equal(result.lateLinesQuantity, late || undefined)
+  const lines = result.notPlacedInAWeek.incomingPastPromisedDate
+  for (const entry of lines) {
+    assert.equal(entry.availableIfOnlyThisArrives, lines.length > 1 ? result.availableToday + entry.quantity : undefined)
+    assert.equal(entry.availableWithoutThisLine, lines.length > 1 ? result.availableToday + late - entry.quantity : undefined)
+  }
+  // The open sales order weeks are as the read tool gives them.
+  assert.ok(Array.isArray(result.weeks) && result.weeks.length === 3)
+})
+
+// 2026-11-08: "the other 195 are due Nov 10 to Nov 16" came from the first 20
+// rows, and "the details of the 195" could not be read (50 rows were too large).
+test('reorder_list counts and dates every row, narrows to a window and pages with offset', async () => {
+  const scenario = aiSkillScenario()
+  const loaded = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(loaded)
+  const today = facts.today
+  // One to order now, then one a day from tomorrow: 30 rows over a month.
+  const rows = Array.from({ length: 30 }, (_, index) => ({ sku: `SKU-${String(index).padStart(3, '0')}`, itemName: `Item ${index}`, orderNow: index === 0, orderByDate: index === 0 ? today : addCalendarDays(today, index), supplier: { id: 'SUP-1', name: 'Supplier One' } }))
+  const reorderList = { read: async () => ({ rows }) }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  const run = async (args) => (await runAiReadTool('reorder_list', args, { facts: await readAiSkillFacts(context), context })).result
+  const first = await run({ limit: 10 })
+  assert.deepEqual(first.counts, { orderNow: 1, dueWithin7Days: 8, dueWithin30Days: 30, noOrderByDate: 0, raisedToMinimum: 0 })
+  assert.deepEqual(first.orderByRange, { earliest: today, latest: addCalendarDays(today, 29) })
+  assert.deepEqual([first.total, first.shownFrom, first.shownTo, first.more], [30, 1, 10, 20])
+  // The next page.
+  const second = await run({ limit: 10, offset: 10 })
+  assert.deepEqual([second.rows[0].sku, second.shownFrom, second.shownTo, second.more], ['SKU-010', 11, 20, 10])
+  // A window, and past the end.
+  const week = await run({ due: 'within_7_days' })
+  assert.deepEqual([week.total, week.rows.at(-1).sku], [8, 'SKU-007'])
+  assert.deepEqual((await run({ due: 'now' })).rows.map((row) => row.sku), ['SKU-000'])
+  const beyond = await run({ offset: 99 })
+  assert.deepEqual([beyond.rows.length, beyond.shownFrom, beyond.more], [0, 0, 0])
+  // An item by its name; the counts stay the whole list's.
+  const named = await run({ sku: 'item 7' })
+  assert.deepEqual([named.rows.map((row) => row.sku), named.counts.orderNow, named.counts.dueWithin30Days], [['SKU-007'], 1, 30])
+  // 2026-11-08: a SKU filter that matched nothing gave "0 to order now".
+  const missing = await runAiReadTool('reorder_list', { sku: '蛋糕架' }, { facts: await readAiSkillFacts(context), context })
+  assert.equal(missing.error, 'not_found')
+  assert.match(missing.details.join(' '), /another language than the question/)
+})
+
+test('the prompt keeps an answer to the rows it read, pages for more, and explains a questioned figure', () => {
+  assert.match(ASSISTANT_V2_SYSTEM, /Say only what the rows you read show\. For the rest of a list, use the counts, totals and ranges the tool gives/)
+  assert.match(ASSISTANT_V2_SYSTEM, /read the next page with offset/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Call a figure a mistake only when a result shows it is wrong/)
+})
+
+// 2026-11-08 (rehearsal): asked to add "our stock is already below safety
+// stock" to a draft, the answer "corrected" it from the position (408, above
+// the reorder point), though 48 on hand was below the safety stock of 119.
+test('an item below safety stock on its available stock reads so in every stock tool, though open orders cover its reorder point', async () => {
+  const { facts, run } = await v2({ change: shipping, actor: everyWarehouse })
+  const stock = facts.inventory.rows.find((entry) => entry.sku === 'LDM-001')
+  assert.ok(stock.available < stock.safetyStock, 'the fixture item is below safety stock now')
+  const position = (await run('stock_position', { sku: 'LDM-001' })).result
+  assert.deepEqual([position.rows[0].belowSafetyStock, position.rows[0].status], [true, 'below_safety_stock'])
+  assert.match(position.basis, /Safety stock is judged on the stock available now/)
+  const projection = (await run('stock_projection', { sku: 'LDM-001' })).result
+  assert.equal(projection.belowSafetyStockNow, true)
+  // Once the late lines arrive it is above the reorder point: a figure for later.
+  assert.ok(projection.availableIfLateLinesArrive > projection.reorderPoint, JSON.stringify([projection.availableIfLateLinesArrive, projection.reorderPoint]))
+  // 10 a day from what is available now, if nothing arrives.
+  const days = projection.availableToday / 10
+  assert.deepEqual(projection.runsOutIfNothingArrives, { days: Math.round(days * 10) / 10, date: addCalendarDays(facts.asOf || facts.today, Math.floor(days)) })
+})
+
+test('the prompt keeps the safety stock and the reorder point on their own bases, and never corrects a user on another basis', () => {
+  assert.match(ASSISTANT_V2_SYSTEM, /safety stock on the stock available now \(on hand less reserved; belowSafetyStock in the stock tools\), the reorder point on the stock position/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Never correct what the user says unless a tool result contradicts it on the same basis/)
+  assert.match(ASSISTANT_V2_SYSTEM, /name a supplier by its name as the tools give it, never by its id or code/)
+})
+
 // 2026-11-05: "order 100 instead of 50, is it cheaper?" got the price and the
 // cash tied up, never the trade between ordering less often and holding more.
 // LDM-001: 10 a day (3,650 a year), reference price 95, minimum order 100.
@@ -243,14 +363,15 @@ test('order_quantity_costs weighs orders a year against holding cost, with the a
     [200, false, 19000, 20, 18.3, 100, 2375, null, null],
   ])
   // 100 → 200 saves 18.25 orders for 1,187.50 more holding: worth it above 23.75 × 100 × 200 / (2 × 3,650) = 65.07 an order.
-  assert.deepEqual(result.comparisons[1], { smaller: 100, larger: 200, ordersSavedPerYear: 18.3, extraHoldingCostPerYear: 1187.5, breakEvenCostPerOrder: 65.07, cheaperAtUserCostPerOrder: null })
+  assert.deepEqual(result.comparisons[1], { smaller: 100, larger: 200, ordersSavedPerYear: 18.3, extraHoldingCostPerYear: 1187.5, breakEvenCostPerOrder: 65.07, cheaperAtUserCostPerOrder: null, largerSavesPerYear: null })
   // EOQ = √(2 × 3,650 × cost / 23.75), never below the minimum order.
   assert.deepEqual(result.economicOrderQuantity, { atUserCostPerOrder: null, examples: [{ costPerOrder: 25, quantity: 100, daysOfDemand: 10, ordersPerYear: 36.5 }, { costPerOrder: 50, quantity: 124, daysOfDemand: 12.4, ordersPerYear: 29.4 }, { costPerOrder: 100, quantity: 175, daysOfDemand: 17.5, ordersPerYear: 20.9 }], raisedToSupplierMinimum: true })
   // With the user's own figures: 20% a year and 80 an order make 200 the cheaper.
   const own = (await run('order_quantity_costs', { sku: 'LDM-001', quantities: [100, 200], holdingRatePercent: 20, costPerOrder: 80 })).result
   assert.deepEqual([own.assumptions.holdingRateSource, own.assumptions.costPerOrderSource, own.assumptions.holdingCostPerUnitPerYear], ['user', 'user', 19])
   assert.deepEqual(own.options.map((row) => [row.holdingCostPerYear, row.orderingCostPerYear, row.totalCostPerYear]), [[950, 2920, 3870], [1900, 1460, 3360]])
-  assert.deepEqual([own.comparisons[0].breakEvenCostPerOrder, own.comparisons[0].cheaperAtUserCostPerOrder], [52.05, 200])
+  // 3,870 − 3,360: the larger saves 510 a year, read from the tool, not subtracted in the answer.
+  assert.deepEqual([own.comparisons[0].breakEvenCostPerOrder, own.comparisons[0].cheaperAtUserCostPerOrder, own.comparisons[0].largerSavesPerYear], [52.05, 200, 510])
   assert.deepEqual(own.economicOrderQuantity, { atUserCostPerOrder: { quantity: 175, daysOfDemand: 17.5, ordersPerYear: 20.9 }, examples: [], raisedToSupplierMinimum: true })
   // An approved supplier by name, and one that is not approved for the item.
   assert.equal((await run('order_quantity_costs', { sku: 'LDM-001', quantities: [100], supplier: 'acme' })).result.supplier.name, 'Acme Components')
@@ -475,7 +596,7 @@ test('suggest_purchase_lines reads only the asking user\'s workspace', async () 
   assert.deepEqual((await runAiReadTool('suggest_purchase_lines', {}, { facts, context })).result.rows, [])
 })
 
-test('reorder_list returns the preferred supplier\'s lead time, id and minimum order, and filters by SKU and supplier', async () => {
+test('reorder_list returns the preferred supplier\'s name, lead time and minimum order, and filters by SKU and supplier', async () => {
   const scenario = aiSkillScenario()
   // The reorder list over the fixture items, LDM-001 at a reorder point of
   // 200 so it is listed (no shipment history), linked to Acme with a lead
@@ -488,9 +609,16 @@ test('reorder_list returns the preferred supplier\'s lead time, id and minimum o
   const list = (await runAiReadTool('reorder_list', {}, { facts, context })).result
   const row = list.rows.find((entry) => entry.sku === 'LDM-001')
   assert.equal(row.leadTimeDays, 12)
-  assert.deepEqual([row.supplier, row.supplierId, row.minimumOrderQuantity, row.moqUnit], ['Acme Components', 'SUP-001', 150, 'pcs'])
+  // The supplier by name only (2026-11-08: an answer named it by its id).
+  assert.deepEqual([row.supplier, row.supplierId, row.minimumOrderQuantity, row.moqUnit], ['Acme Components', undefined, 150, 'pcs'])
+  // Safety stock judged on the stock available now, beside the position.
+  const stock = facts.inventory.rows.find((entry) => entry.sku === 'LDM-001')
+  assert.deepEqual([row.safetyStock, row.belowSafetyStock], [stock.safetyStock, row.onHand - row.reserved < stock.safetyStock])
+  assert.equal(row.availableToday, row.onHand - row.reserved)
   assert.equal(row.shortfall, 102)
   assert.deepEqual([row.requestQuantity, row.raisedToMinimum], [150, true])
+  // Counts over every row, for the answer to read instead of counting.
+  assert.deepEqual([list.counts.orderNow, list.counts.raisedToMinimum], [list.rows.filter((entry) => entry.orderNow === true).length, 1])
   assert.ok(Array.isArray(row.flags) && row.flags.every((flag) => typeof flag.code === 'string'))
   // Every open line counts in the position, late or not, and says whether it is late.
   assert.ok(row.incomingLines.length && row.incomingLines.every((line) => typeof line.late === 'boolean'))
@@ -560,7 +688,16 @@ test('every data tool declares its columns, and each declared column is in its r
   const items = scenario.data.items.map((row) => ({ ...row, status: 'active', reorderPoint: row.sku === 'LDM-001' ? 200 : row.reorderPoint }))
   const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
   const reorderList = { read: async (input) => buildReorderList({ allocationRows: input.allocationRows, items, supplierLinks: [link()], suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }) }
-  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList } } })
+  const invoiced = (data) => { data.customerInvoices = [{ id: 'CI-1', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-09-10T00:00:00Z'), subtotalAmount: '950.0000', currency: 'USD', lines: [{ itemId: 'ITEM-001', sku: 'LDM-001', itemName: 'Flow Controller', quantity: '10', unit: 'pcs', lineAmount: '950.0000' }] }] }
+  // Today's decision items and a record's decision history, as Today would read them.
+  const todayRow = (kind, recordId, label) => ({ id: `${kind}:${recordId}`, kind, entityType: kind === 'reorder_now' ? 'item' : 'purchase_order', recordId, label, name: 'Acme Components', date: '2026-09-20', dateKind: 'due', overdueDays: 3, detail: {} })
+  const todayDecisions = async () => ({
+    available: true, canDecide: true, supplierEmail: { enabled: false, canSend: false, outbox: true },
+    waiting: [{ key: 'purchase_order_overdue:PO-001', row: todayRow('purchase_order_overdue', 'PO-001', 'PO-001'), raisedAt: null, returned: true, draft: null }],
+    setAside: [{ key: 'reorder_now:ITEM-001', row: todayRow('reorder_now', 'ITEM-001', 'LDM-001'), decision: 'not_needed', reasonCode: 'seasonal', note: null, returnOn: null, decidedAt: null, decidedOn: '2026-09-18', decidedBy: { name: 'Sam' }, documentType: null, documentIds: [], documentNumber: null }],
+  })
+  const decisionHistory = { read: async () => ({ items: [{ kind: 'purchase_order_overdue', state: 'decided', raisedAt: new Date('2026-09-17T12:00:00Z'), decidedAt: new Date('2026-09-18T12:00:00Z'), resolvedAt: new Date('2026-09-19T12:00:00Z'), decision: 'chased', reasonCode: null, note: null, returnOn: '2026-09-22', snapshot: { raisedOn: '2026-09-17', decidedOn: '2026-09-18' }, decidedBy: { name: 'Sam' } }], emails: [] }) }
+  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data); invoiced(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList, todayDecisions, decisionHistory } } })
   // The calls that fill each table; a tool not named here is called once
   // without arguments.
   const calls = {
@@ -572,16 +709,19 @@ test('every data tool declares its columns, and each declared column is in its r
     late_order_impact: [{ orders: ['PO-001'] }],
     calculate: [{ operation: 'percent', values: [1, 2] }],
     search_records: [{ query: 'LDM' }],
-    list_receivables: [{}, { view: 'aging' }],
+    list_receivables: [{}, { view: 'aging' }, { view: 'by_customer' }],
+    sales_summary: [{ from: '2026-01-01', to: '2026-12-31' }, { by: 'item', from: '2026-01-01', to: '2026-12-31' }, { by: 'month', from: '2026-01-01', to: '2026-12-31' }],
     price_history: [{ sku: 'LDM-001' }],
     search_documents: [{ query: 'supplier past the promised date escalate' }],
     // A row's details depend on its signal: today's list and the problems
     // between them hold every detail column.
     attention_list: [{ limit: 10 }, { kind: 'problems', limit: 10 }],
-    item_suppliers: [{ sku: 'LDM-001' }],
+    item_suppliers: [{ sku: 'LDM-001' }, { supplier: 'Acme Components' }],
     rfq_quotes: [{}],
     order_quantity_costs: [{ sku: 'LDM-001', quantities: [50, 100] }],
     optimize_order_plan: [{ plan: [{ sku: 'LDM-001', quantity: 100 }] }],
+    decision_items: [{ include: 'all' }],
+    decision_history: [{ record: 'PO-001' }],
   }
   // A nested column under a null value (a rate with too few deliveries) is
   // there, and null. Each column must be in a row of one of the tool's calls.
@@ -663,6 +803,17 @@ test('item_suppliers gives an item\'s approved suppliers with lead time, minimum
   assert.equal(typeof first.referencePrice, 'number')
   assert.deepEqual(first.ref, { type: 'supplier', id: 'SUP-001', label: 'Acme Components' })
   assert.equal((await run('item_suppliers', { sku: 'NOPE-9' })).error, 'not_found')
+  // One supplier's items with their terms (2026-11-12 on Flash: "What is the
+  // lead time from Globex Party Supplies?" found no item list to read).
+  const acme = await run('item_suppliers', { supplier: 'Acme Components' })
+  assert.ok(acme.ok, acme.error)
+  assert.equal(acme.result.supplier, 'Acme Components')
+  const ldm = acme.result.rows.find((row) => row.sku === 'LDM-001')
+  assert.deepEqual([ldm.preferred, ldm.leadTimeDays, ldm.ref.type], [true, 12, 'item'])
+  assert.ok(acme.result.leadTimeDays.shortest <= 12 && acme.result.leadTimeDays.longest >= 12)
+  assert.equal(acme.result.total, acme.result.rows.length)
+  assert.equal((await run('item_suppliers', { supplier: 'Nobody Ltd' })).result?.error ?? (await run('item_suppliers', { supplier: 'Nobody Ltd' })).error, 'supplier_not_found')
+  assert.equal((await run('item_suppliers', {})).error ?? (await run('item_suppliers', {})).result?.error, 'invalid_arguments')
 })
 
 test('rfq_quotes reads each open RFQ\'s latest quotes through the RFQ comparison, only for a user who may see prices', async () => {
@@ -674,4 +825,49 @@ test('rfq_quotes reads each open RFQ\'s latest quotes through the RFQ comparison
   const tool = AI_ASSISTANT_V2_TOOLS.find((entry) => entry.name === 'rfq_quotes')
   assert.equal(tool.available(facts, context), true)
   assert.equal(tool.available(facts, { ...context, actor: { ...context.actor, permissionCodes: new Set() } }), false)
+})
+
+// 2026-11-08: today's priorities read "21166 · 21166", a SKU with no name.
+test('attention_list names the item of an item row', async () => {
+  const { facts, run } = await v2({ change: shipping, actor: everyWarehouse })
+  const rows = (await run('attention_list', { limit: 10 })).result.rows.filter((row) => row.ref.type === 'item')
+  assert.ok(rows.length > 0)
+  for (const row of rows) {
+    const stock = [...facts.inventory.rows, ...facts.inventory.masterOnly].find((entry) => entry.sku === row.label)
+    assert.equal(row.itemName, stock.itemName, row.label)
+  }
+})
+
+// 2026-11-08: "check the line" beside a form whose line was already ticked.
+test('the prompt words a ticked form as reviewing it, an unticked one as ticking', () => {
+  assert.match(ASSISTANT_V2_SYSTEM, /review the lines, then click Create draft request/)
+  assert.match(ASSISTANT_V2_SYSTEM, /tick the items you want, then click Create draft request/)
+  assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /"check the lines, then click Create draft request"/)
+})
+
+// 2026-11-09 on Flash, today's priorities: "a call with Acme covers both of
+// its late orders, 360 pcs of 85123A in all" (120 + 240) was flagged, as no
+// tool gave the total.
+test('attention_list gives the late lines\' total for a SKU on more than one late order, following its focus', async () => {
+  const { facts, run } = await v2()
+  // What the purchase orders say, worked out here.
+  const late = facts.purchaseOrders.rows.filter((po) => po.overdueDays > 0)
+  const bySku = new Map()
+  for (const po of late) for (const line of po.openLines) if (line.remaining > 0) bySku.set(line.sku, [...(bySku.get(line.sku) || []), { order: po.orderNumber, remaining: line.remaining, supplierId: po.supplierId }])
+  const shared = [...bySku.entries()].filter(([, lines]) => new Set(lines.map((line) => line.order)).size > 1)
+  assert.ok(shared.length > 0, 'the scenario has a SKU on two late orders')
+  const [sku, lines] = shared[0]
+  const today = (await run('attention_list')).result
+  const row = today.lateLinesBySku.find((entry) => entry.sku === sku)
+  assert.equal(row.lateQuantity, lines.reduce((sum, line) => sum + line.remaining, 0))
+  assert.deepEqual(row.orders.sort(), [...new Set(lines.map((line) => line.order))].sort())
+  assert.ok(today.lateLinesBySku.every((entry) => entry.orders.length > 1))
+  // Focused on the SKU, on one of its orders, or on its supplier, it stays.
+  assert.deepEqual((await run('attention_list', { focus: sku })).result.lateLinesBySku.map((entry) => entry.sku), [sku])
+  assert.ok((await run('attention_list', { focus: lines[0].order })).result.lateLinesBySku.some((entry) => entry.sku === sku))
+  const supplier = facts.suppliers.find((entry) => entry.id === lines[0].supplierId)
+  if (supplier && lines.every((line) => line.supplierId === supplier.id)) assert.ok((await run('attention_list', { focus: supplier.name })).result.lateLinesBySku.some((entry) => entry.sku === sku))
+  // A role that cannot read purchase orders gets none.
+  const noOrders = { ...facts, purchaseOrders: undefined }
+  assert.equal((await runAiReadTool('attention_list', {}, { facts: noOrders })).result.lateLinesBySku, undefined)
 })

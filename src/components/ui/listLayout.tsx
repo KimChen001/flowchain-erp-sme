@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from "react";
+import React, { useLayoutEffect, useRef, useState, useId } from "react";
 import { FileSpreadsheet, Plus, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { A, Card } from "./index";
 import { typography } from "./typography";
@@ -17,6 +17,7 @@ const COPY = {
   retry: ["Retry", "重试"],
   shown: ["{total} total, {shown} shown", "共 {total} 条，当前显示 {shown} 条"],
   filters: ["Filters ({count})", "筛选（{count}）"],
+  filtersNone: ["Filters", "筛选"],
   hideFilters: ["Hide filters", "收起筛选"],
 } as const;
 
@@ -24,9 +25,10 @@ const COPY = {
 export const metricGridClass = "grid grid-cols-2 gap-3 lg:grid-cols-4";
 
 export function useListCopy() {
-  const { language } = useI18n();
+  const { language, formatNumber } = useI18n();
+  // Counts read with the workspace's digit grouping ("5,760 total").
   return (key: keyof typeof COPY, values: Record<string, string | number> = {}) =>
-    COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
+    COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => typeof values[name] === "number" ? formatNumber(values[name] as number) : String(values[name] ?? ""));
 }
 
 export const listButtonClass = {
@@ -35,11 +37,14 @@ export const listButtonClass = {
   primary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 ${typography.denseButton} text-white hover:bg-blue-700 disabled:opacity-60`,
 };
 
-// Buttons inside a table row: the main one tinted, the others neutral.
+// Buttons inside a table row: the main one tinted, the others neutral. On a
+// phone the row is a card and these are thumb targets: at least 36 px tall,
+// with room between them (theme.css spaces the card's action row).
+const rowActionSize = "inline-flex items-center justify-center rounded-md px-2 py-1 text-[11px] font-medium max-sm:min-h-9 max-sm:px-3 max-sm:text-xs";
 export const rowActionClass = {
-  primary: "rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600 hover:bg-blue-100",
-  neutral: "rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-200",
-  danger: "rounded-md bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-100",
+  primary: `${rowActionSize} bg-blue-50 text-blue-600 hover:bg-blue-100`,
+  neutral: `${rowActionSize} bg-slate-100 text-slate-700 hover:bg-slate-200`,
+  danger: `${rowActionSize} bg-red-50 text-red-700 hover:bg-red-100`,
 };
 
 export function ResetButton({ onClick }: { onClick: () => void }) {
@@ -62,15 +67,19 @@ export function PrimaryButton({ onClick, children, testId }: { onClick: () => vo
 }
 
 // Below 768 px only the first field (the search) shows; the other filters
-// open from a Filters button.
-export function ListSearchCard({ title, subtitle, actions, children }: {
+// open from a Filters button. The button counts the filters in use
+// (`activeFilters`), never the fields it hides, so "Filters (2)" means two
+// filters narrow the list.
+export function ListSearchCard({ title, subtitle, actions, children, activeFilters = 0 }: {
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
+  activeFilters?: number;
 }) {
   const say = useListCopy();
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const moreFiltersId = useId();
   const [first, ...rest] = React.Children.toArray(children);
   return (
     <Card className="p-4 sm:p-5">
@@ -83,18 +92,19 @@ export function ListSearchCard({ title, subtitle, actions, children }: {
       </div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4" data-testid="list-search-fields">
         {first}
-        {rest.length > 0 && <div className={filtersOpen ? "contents" : "hidden md:contents"} data-testid="list-search-more-filters">{rest}</div>}
+        {rest.length > 0 && <div id={moreFiltersId} className={filtersOpen ? "contents" : "hidden md:contents"} data-testid="list-search-more-filters">{rest}</div>}
       </div>
       {rest.length > 0 && (
         <button
           type="button"
           aria-expanded={filtersOpen}
+          aria-controls={moreFiltersId}
           onClick={() => setFiltersOpen((open) => !open)}
           className={`mt-3 md:hidden ${listButtonClass.secondary}`}
           data-testid="list-search-filters-toggle"
         >
           <SlidersHorizontal size={13} />
-          {filtersOpen ? say("hideFilters") : say("filters", { count: rest.length })}
+          {filtersOpen ? say("hideFilters") : activeFilters > 0 ? say("filters", { count: activeFilters }) : say("filtersNone")}
         </button>
       )}
     </Card>
@@ -134,6 +144,15 @@ export { listTableCardsRef };
 // closes on a choice, a click elsewhere or Escape, and follows the row while
 // the page scrolls.
 export function RowMenu({ label, children, testId }: { label: string; children: React.ReactNode; testId?: string }) {
+  return (
+    <RowPopover summary={label} summaryClassName={rowActionClass.neutral} panelClassName="flex w-max min-w-40 max-w-64 flex-col p-1" closeOnClick testId={testId}>
+      {children}
+    </RowPopover>
+  );
+}
+
+// A small panel opened from a row (a menu, a preview), placed like RowMenu.
+export function RowPopover({ summary, summaryClassName, panelClassName, closeOnClick = false, children, testId }: { summary: React.ReactNode; summaryClassName: string; panelClassName: string; closeOnClick?: boolean; children: React.ReactNode; testId?: string }) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -161,10 +180,13 @@ export function RowMenu({ label, children, testId }: { label: string; children: 
       }
     };
     place();
-    // Rows below a sticky cell would otherwise paint over the open menu.
+    // A sticky cell holds the menu in its own stacking context, so the cell
+    // itself is raised: above the rows below it, and above the floating AI
+    // assistant button (z-40, later in the page), which would otherwise cover
+    // the menu's last items when the row is near the bottom of the window.
     const cell = details.closest("td, th") as HTMLElement | null;
     const zIndex = cell?.style.zIndex ?? "";
-    if (cell) cell.style.zIndex = "40";
+    if (cell) cell.style.zIndex = "50";
     const outside = (event: Event) => {
       if (!details.contains(event.target as Node)) close();
     };
@@ -187,12 +209,12 @@ export function RowMenu({ label, children, testId }: { label: string; children: 
   }, [open]);
   return (
     <details ref={detailsRef} className="relative" onToggle={(event) => setOpen(event.currentTarget.open)} data-testid={testId}>
-      <summary className={`cursor-pointer list-none ${rowActionClass.neutral}`}>{label}</summary>
+      <summary className={`cursor-pointer list-none ${summaryClassName}`}>{summary}</summary>
       <div
         ref={menuRef}
-        className="fixed z-50 flex w-max min-w-40 max-w-64 flex-col whitespace-normal rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+        className={`fixed z-50 whitespace-normal rounded-lg border border-slate-200 bg-white shadow-lg ${panelClassName}`}
         style={{ visibility: open ? "visible" : "hidden" }}
-        onClick={close}
+        onClick={closeOnClick ? close : undefined}
       >
         {children}
       </div>
@@ -238,7 +260,7 @@ export type StatusTone = "success" | "warning" | "danger" | "info" | "neutral";
 // gray for drafts and cancelled records. Codes and the server's Chinese
 // labels are both recognised; anything unknown is neutral.
 const TONES: Record<StatusTone, string[]> = {
-  success: ["approved", "matched", "recorded", "auto_matched", "converted", "completed", "fully_received", "fully_reserved", "fully_fulfilled", "closed", "awarded", "settled", "resolved", "posted", "已批准", "已审批", "已匹配", "自动匹配", "已完成", "已转换", "已解决", "已入库"],
+  success: ["approved", "matched", "variance_approved", "recorded", "auto_matched", "converted", "completed", "fully_received", "fully_reserved", "fully_fulfilled", "closed", "awarded", "settled", "resolved", "posted", "已批准", "已审批", "已匹配", "自动匹配", "已完成", "已转换", "已解决", "已入库"],
   warning: ["submitted", "pending", "pending_approval", "pending_match", "held", "on_hold", "awaiting_receipt", "unposted", "partially_reserved", "待审批", "待匹配", "待处理", "人工复核", "缺少收货"],
   danger: ["rejected", "exception", "variance", "mismatch", "disputed", "overdue", "已驳回", "已拒绝", "存在差异", "差异待处理", "异常处理", "重复发票", "缺货风险"],
   info: ["open", "confirmed", "issued", "sent", "issued_outside_flowchain", "collecting_quotes", "partially_received", "partially_fulfilled", "received", "ready_for_receiving", "export_ready", "partially_settled", "reviewed", "已发出", "部分到货", "已收货", "已签收", "质检中", "已确认", "部分分配", "可发货", "部分发货"],

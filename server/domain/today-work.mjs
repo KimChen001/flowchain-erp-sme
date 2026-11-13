@@ -67,6 +67,10 @@ export const TODAY_WORK_KINDS = Object.freeze([
 const KIND_RANK = new Map(TODAY_WORK_KINDS.map((kind, index) => [kind, index]))
 // How many rows the response carries; the total is always reported.
 export const TODAY_WORK_LIMIT = 100
+// The earliest rows of every kind the response keeps past that limit, so a
+// long run of one kind (sixty overdue receivables) never pushes another kind
+// (the items to reorder) out of the response.
+export const TODAY_WORK_PER_KIND = 10
 
 const array = (value) => (Array.isArray(value) ? value : [])
 const text = (value) => String(value ?? '').trim()
@@ -170,6 +174,10 @@ function stockSignalBySku(signals) {
   return bySku
 }
 
+// Each row also carries what the reorder list's "Create purchase request"
+// opens the form with for that item (reorder-list.mjs purchaseRequest: the
+// item, its supplier and the shortfall in the request's unit), so the page
+// links to the same prefilled request rather than to the whole list.
 function reorderWork(reorder, stockSignals) {
   return array(reorder?.rows)
     .filter((entry) => entry.orderNow)
@@ -186,6 +194,12 @@ function reorderWork(reorder, stockSignals) {
         shortfall: quantity(entry.shortfall),
         unit: text(entry.unit) || null,
         stockSignal: stockSignals.get(text(entry.sku)) || null,
+        purchaseRequest: entry.purchaseRequest?.itemId ? {
+          itemId: text(entry.purchaseRequest.itemId),
+          supplierId: text(entry.purchaseRequest.supplierId) || null,
+          quantity: quantity(entry.purchaseRequest.quantity),
+          raisedToMinimum: Boolean(entry.purchaseRequest.raisedToMinimum),
+        } : null,
       },
     }))
 }
@@ -360,6 +374,21 @@ export function compareTodayWork(a, b) {
     || a.recordId.localeCompare(b.recordId, 'en')
 }
 
+// The rows the response carries, still earliest date first: the first
+// TODAY_WORK_PER_KIND of each kind, then the earliest of the rest up to
+// TODAY_WORK_LIMIT.
+export function todayWorkResponseRows(items, { limit = TODAY_WORK_LIMIT, perKind = TODAY_WORK_PER_KIND } = {}) {
+  if (items.length <= limit) return items
+  const kept = new Set()
+  const byKind = new Map()
+  items.forEach((item, index) => {
+    const count = byKind.get(item.kind) || 0
+    if (count < perKind) { kept.add(index); byKind.set(item.kind, count + 1) }
+  })
+  for (let index = 0; index < items.length && kept.size < limit; index += 1) kept.add(index)
+  return items.filter((_, index) => kept.has(index))
+}
+
 // sources: what the reader may read, already scoped (see buildHomeOverview).
 export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
   const today = tenantCalendarDay(now, timeZone)
@@ -380,9 +409,12 @@ export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFA
   ].sort(compareTodayWork)
   return {
     today,
-    items: items.slice(0, TODAY_WORK_LIMIT),
+    items: todayWorkResponseRows(items),
     total: items.length,
     overdue: items.filter((item) => item.overdueDays > 0).length,
+    // Every row, for the decision items (server/services/decision-item-service.mjs);
+    // the response carries only items.
+    all: items,
   }
 }
 

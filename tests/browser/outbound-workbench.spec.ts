@@ -33,13 +33,16 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.goto("/app/sales/orders");
   await expect(page.getByTestId("outbound-order-list")).toBeVisible();
   await page.getByRole("link", { name: "新建销售订单" }).click();
-  await expect(page.getByTestId("create-sales-order")).toBeDisabled();
+  await page.getByTestId("create-sales-order").click();
+  await expect(page.getByLabel("客户", { exact: true })).toHaveAccessibleDescription("请选择客户。");
+  await expect(page.getByTestId("sales-order-entry-errors")).toHaveText("请检查标出的字段。");
   await page.getByLabel("客户").selectOption({ label: "Playwright Customer · CUST-PW" });
   await expect(page.getByTestId("sales-order-customer-terms")).toHaveText("付款条款：Net 30");
   await page.getByLabel("物料（第 1 行）").selectOption({ index: 1 });
   await page.getByLabel("数量（第 1 行）").fill("4.0000");
   // Without a price the draft cannot be saved, because it could never be invoiced.
-  await expect(page.getByTestId("create-sales-order")).toBeDisabled();
+  await page.getByTestId("create-sales-order").click();
+  await expect(page.getByLabel("单价（第 1 行）")).toHaveAccessibleDescription("请输入单价，赠品填 0。");
   await page.getByLabel("单价（第 1 行）").fill("12.5000");
   await page.getByTestId("create-sales-order").click();
   await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();
@@ -425,4 +428,39 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
   await expect(page.getByTestId("shipment-movement")).toContainText("华东成品仓 / A-01 · In 0 / Out 2");
   await expect(page.getByTestId("outbound-timeline")).toContainText("Stock shipped out");
   await expect(page.getByTestId("outbound-timeline")).not.toContainText("发货出库流水已创建");
+
+  // The order's timeline reads in the order things happened, on one clock.
+  await page.goto(`/app/sales/orders/${encodeURIComponent(order.id)}`);
+  const timeline = await page.getByTestId("outbound-timeline").innerText();
+  const at = (title: string) => timeline.indexOf(title);
+  expect(at("Stock reserved")).toBeGreaterThanOrEqual(0);
+  expect(at("Stock reserved")).toBeLessThan(at("Shipment created"));
+  expect(at("Shipment created")).toBeLessThan(at("Stock shipped out"));
+  expect(at("Stock shipped out")).toBeLessThan(at("Shipment posted"));
+  // Shipped in full: no "Not reserved" chip beside "Fulfilled".
+  await expect(page.getByTestId("sales-order-statuses")).toContainText("Fulfilled");
+  await expect(page.getByTestId("sales-order-statuses")).not.toContainText("Not reserved");
+
+  // The list shows the order's one status, its amount and its promised date.
+  await page.goto("/app/sales/orders");
+  const status = page.getByTestId(`sales-order-status-${order.id}`);
+  await expect(status).toHaveText("Fulfilled");
+  const row = page.getByRole("row").filter({ has: status });
+  await expect(row).toContainText("$10.00");
+  await expect(row).not.toContainText("Not reserved");
+  // On a phone each order is a card whose status is that one status, and the
+  // order's lines, reservations and movements are cards too.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(status).toHaveAttribute("data-card-role", "status");
+  await expect(status).toBeVisible();
+  await page.goto(`/app/sales/orders/${encodeURIComponent(order.id)}`);
+  const lines = page.getByTestId("sales-order-lines-table");
+  await expect(lines.locator("table")).toHaveAttribute("data-list-cards", "");
+  await expect(lines.locator('td[data-card-role="title"]')).toContainText("OUT-BROWSER-SKU");
+  await expect(lines.locator('td[data-label="Ordered"]')).toHaveText("2");
+  await expect(lines.locator('td[data-label="Fulfilled"]')).toBeVisible();
+  await expect(page.locator('#reservations td[data-card-role="status"]')).toBeVisible();
+  await expect(page.locator('#movements td[data-card-role="title"]').first()).toHaveText(deliveryNumber);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(2);
 });

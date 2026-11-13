@@ -66,8 +66,63 @@ async function loadAggregate(prisma, tenantId, receivingDocumentId) {
   return { receivingDocument, purchaseOrder, warehouses: new Map(warehouses.map((row) => [row.id, row])), supplier }
 }
 
+// The other receipts of the same order that are posted, with their lines, for
+// what was received before this one. Read only for a posted receipt.
+async function loadOtherPostedReceipts(prisma, tenantId, grn) {
+  if (grn.postingStatus !== 'posted' || !grn.poId) return []
+  return prisma.receivingDocument.findMany({
+    where: { tenantId, poId: grn.poId, postingStatus: 'posted', id: { not: grn.id } },
+    select: { id: true, poId: true, postingStatus: true, postedAt: true, createdAt: true, lines: { select: { purchaseOrderLineId: true, acceptedQty: true } } },
+  })
+}
+
+// Which receipts were posted before this one: by posting time, then creation
+// time, then id, so two receipts never both count as before the other.
+const instant = (value) => { const time = value ? new Date(value).getTime() : NaN; return Number.isFinite(time) ? time : null }
+const postedOrder = (doc) => [instant(doc.postedAt), instant(doc.createdAt), text(doc.id)]
+function postedBefore(other, grn) {
+  const [a, b] = [postedOrder(other), postedOrder(grn)]
+  for (let index = 0; index < 2; index += 1) {
+    if (a[index] !== null && b[index] !== null && a[index] !== b[index]) return a[index] < b[index]
+  }
+  return a[2] < b[2]
+}
+
+// The accepted quantity on each PO line, in units, of the order's other
+// posted (not reversed) receipts: those posted before this one (before) and
+// those posted after it (after). A receipt posted later had not arrived when
+// this one was posted, so it is not "received before" (UI review 7b,
+// finding 5); after lets a received quantity no receipt accounts for (an
+// older record) be told apart.
+export function acceptedAroundByPoLine(grn = {}, receipts = []) {
+  const before = new Map()
+  const after = new Map()
+  for (const other of receipts) {
+    if (!other || other.id === grn.id || other.postingStatus !== 'posted' || other.poId !== grn.poId) continue
+    const target = postedBefore(other, grn) ? before : after
+    for (const line of other.lines || []) {
+      if (!line.purchaseOrderLineId) continue
+      target.set(line.purchaseOrderLineId, (target.get(line.purchaseOrderLineId) || ZERO) + receivingDecimalUnits(line.acceptedQty ?? '0'))
+    }
+  }
+  return { before, after }
+}
+
+// One receipt line's PO quantities, in units. A posted receipt shows what was
+// received on the line before it (acceptedBefore, from earlier receipts only,
+// plus any received quantity no receipt accounts for) and what was still open
+// just after it. A receipt not posted, or reversed, counts nothing itself, so
+// it shows everything posted so far and what is open now.
+export function receiptLineProgress({ posted, ordered, currentReceived, acceptedBefore = ZERO, acceptedAfter = ZERO, documentAccepted = ZERO }) {
+  if (!posted) return { previous: currentReceived, remaining: ordered - currentReceived }
+  const unaccounted = currentReceived - acceptedBefore - acceptedAfter - documentAccepted
+  const previous = acceptedBefore + (unaccounted > ZERO ? unaccounted : ZERO)
+  return { previous, remaining: ordered - previous - documentAccepted }
+}
+
 function detailModel(aggregate, capabilities = {}, availableActions = {}) {
-  const { receivingDocument: grn, purchaseOrder: po, warehouses, supplier } = aggregate
+  const { receivingDocument: grn, purchaseOrder: po, warehouses, supplier, otherReceipts = [] } = aggregate
+  const accepted = acceptedAroundByPoLine(grn, otherReceipts)
   const poLines = new Map(po.lines.map((line) => [line.id, line]))
   const posted = grn.postingStatus === 'posted'
   const documentAcceptedByPoLine = grn.lines.reduce((result, line) => {
@@ -76,12 +131,15 @@ function detailModel(aggregate, capabilities = {}, availableActions = {}) {
   }, new Map())
   const lines = grn.lines.map((line) => {
     const poLine = poLines.get(line.purchaseOrderLineId) || {}
-    const accepted = receivingDecimalUnits(line.acceptedQty)
-    const currentReceived = receivingDecimalUnits(poLine.receivedQuantity)
-    const currentlyApplied = posted ? accepted : ZERO
-    const documentCurrentlyApplied = posted ? (documentAcceptedByPoLine.get(line.purchaseOrderLineId) || ZERO) : ZERO
-    const previous = currentReceived - documentCurrentlyApplied
-    const remaining = receivingDecimalUnits(poLine.orderedQuantity) - currentReceived
+    const currentlyApplied = posted ? receivingDecimalUnits(line.acceptedQty) : ZERO
+    const { previous, remaining } = receiptLineProgress({
+      posted,
+      ordered: receivingDecimalUnits(poLine.orderedQuantity),
+      currentReceived: receivingDecimalUnits(poLine.receivedQuantity),
+      acceptedBefore: accepted.before.get(line.purchaseOrderLineId) || ZERO,
+      acceptedAfter: accepted.after.get(line.purchaseOrderLineId) || ZERO,
+      documentAccepted: documentAcceptedByPoLine.get(line.purchaseOrderLineId) || ZERO,
+    })
     const warehouse = warehouses.get(line.warehouseId || grn.warehouseId)
     return {
       id: line.id,
@@ -161,7 +219,8 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
     // A receipt that was never posted can be cancelled, as a draft or ready.
     const canCancel = grn.postingStatus === 'unposted' && ['draft', 'ready_for_receiving'].includes(grn.workflowStatus)
       && Boolean(capabilities.posting?.enabled) && can({ actor, permission: 'receiving.prepare', tenantId: actor.tenantId }) && warehouseAllowed
-    return detailModel(aggregate, capabilities, {
+    const otherReceipts = await loadOtherPostedReceipts(prisma, scope.tenantId, grn)
+    return detailModel({ ...aggregate, otherReceipts }, capabilities, {
       canEditDraft: draftOpen,
       canSubmit: draftOpen,
       canCancel,
@@ -236,7 +295,9 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
       prisma.auditLog.count({ where: { tenantId: scope.tenantId, entityType: 'ReceivingDocument', entityId: receivingDocumentId } }),
     ])
     const reversals = movements.filter((movement) => movement.movementType === 'receipt_reversal')
-    const link = (value) => ({ unavailableReason: value.enabled ? null : 'No authoritative records are available.', ...value })
+    // A link with nothing behind it says why: the English sentence, and a code
+    // the page shows in the interface language.
+    const link = (value) => ({ unavailableReason: value.enabled ? null : 'No authoritative records are available.', unavailableReasonCode: value.enabled ? null : 'NO_RECORDS', ...value })
     return { links: [
       link({ label: 'Purchase Order', count: 1, targetRouteId: 'procurement:order-detail', targetType: 'purchase_order', targetId: aggregate.purchaseOrder.id, targetNumber: procurementDocumentNumber(aggregate.purchaseOrder), filter: {}, enabled: true }),
       link({ label: 'Movements', count: movements.length, targetRouteId: 'inventory:movements', targetType: 'inventory_movement', targetId: receivingDocumentId, filter: { relatedGrnId: receivingDocumentId }, enabled: movements.length > 0 }),
