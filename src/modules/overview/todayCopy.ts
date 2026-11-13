@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
+import { nameSaysRole } from "./partnerName";
 
 // Display copy for Today (/app/overview/risks). English is the source; zh-CN
 // is chosen by the interface language. The server sends codes, ids, dates and
@@ -341,10 +342,18 @@ export function todayStatusLabel(code: string, language: string) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+// "Supplier {name}" or "Customer {name}", unless the stored name already
+// says what it is (nameSaysRole). The name stays as recorded.
+export function todayPartner(language: string, role: "supplier" | "customer", name: string) {
+  const value = String(name || "").trim();
+  return nameSaysRole(role, value) ? value : todayText(language, role, { name: value });
+}
+
 export function useTodayCopy() {
   const { language } = useI18n();
   const t = useCallback((key: TodayCopyKey, params?: Record<string, string | number>) => todayText(language, key, params), [language]);
   const count = useCallback((key: TodayCopyKey, n: number, params?: Record<string, string | number>) => todayCount(language, key, n, params), [language]);
   const status = useCallback((code: string) => todayStatusLabel(code, language), [language]);
-  return Object.assign(t, { count, status, language });
+  const partner = useCallback((role: "supplier" | "customer", name: string) => todayPartner(language, role, name), [language]);
+  return Object.assign(t, { count, status, partner, language });
 }

@@ -4,6 +4,7 @@ import { apiJson } from "../../lib/api-client";
 import { A, Card, useConfirm } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { ROLE_NAMES } from "../../../shared/roles.mjs";
+import { listTableCardsRef } from "../../components/ui/workbenchTable";
 
 // Workspace members: invite a teammate with a role, revoke a pending
 // invitation, and enable or disable a member. Role assignments and warehouse
@@ -127,7 +128,9 @@ export default function WorkspaceMembers() {
       <div className="mt-2 flex flex-wrap items-center gap-2"><code className="break-all text-xs">{link}</code><button type="button" className="inline-flex items-center gap-1 text-blue-700" onClick={() => void navigator.clipboard?.writeText(link)}><Copy size={14} />{tr("Copy link", "复制链接")}</button></div>
     </div>}
 
-    <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[640px] text-sm" data-testid="member-table"><thead className="bg-slate-50 text-left text-xs text-slate-500"><tr><th className="p-2">{tr("Name", "姓名")}</th><th className="p-2">{tr("Email", "邮箱")}</th><th className="p-2">{tr("Status", "状态")}</th><th className="p-2" /></tr></thead>
+    {/* On a phone each member is a card: name and status on top, the email
+        under it and the Disable or Enable button at the bottom. */}
+    <div className="mt-4 overflow-x-auto" ref={listTableCardsRef}><table className="w-full min-w-[640px] text-sm" data-testid="member-table"><thead className="bg-slate-50 text-left text-xs text-slate-500"><tr><th className="p-2">{tr("Name", "姓名")}</th><th className="p-2">{tr("Email", "邮箱")}</th><th className="p-2">{tr("Status", "状态")}</th><th className="p-2" /></tr></thead>
       <tbody>{members.map((member) => <tr key={member.id} className="border-t" data-testid={`member-${member.email}`}>
         <td className="p-2 font-medium">{member.name}</td><td className="p-2">{member.email}</td>
         <td className="p-2"><span className={`rounded-full px-2 py-0.5 text-xs ${member.status === "active" ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-600"}`}>{statusName(member.status)}</span></td>

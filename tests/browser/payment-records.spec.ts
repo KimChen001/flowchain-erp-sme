@@ -89,8 +89,7 @@ test("a customer payment settles the receivable of an issued invoice", async ({ 
   await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("finance-browser-shipment-USD");
   // No number to type: the server assigns CI-YYYYMM-NNNN when the draft is saved.
   await page.getByTestId("customer-invoice-due").fill("2026-11-15");
-  await page.getByTestId("customer-invoice-preview").click();
-  await expect(page.getByTestId("customer-invoice-create")).toBeEnabled();
+  // Create draft checks the form, previews the invoice and creates it in one click.
   await page.getByTestId("customer-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/sales\/invoices\/[0-9a-f-]{36}$/);
   const numberHeading = page.getByTestId("customer-invoice-detail").getByRole("heading", { name: /^CI-\d{6}-\d{4,}$/ });

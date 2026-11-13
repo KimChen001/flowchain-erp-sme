@@ -113,6 +113,14 @@ test('sales risk and evidence views translate system reasons and preserve custom
     deliveryRiskReason: '订单数量尚未被库存预留或履约记录覆盖，存在交付缺口。',
     dataLimitations: ['inventory_availability_not_joined', 'purchase_supply_not_joined'],
     linkedPurchaseOrders: [], linkedSuppliers: [], linkedReceivingDocs: [], linkedExceptionCases: [],
+  }, {
+    // A shipped order: the read API labels it 已完成; the page shows its code's
+    // label, "Fulfilled", the word the sales order list and detail use.
+    salesOrderId: 'SO-SHIPPED', customerName, customerTier: 'Standard', itemId: 'ITEM-1', sku: 'SKU-1', itemName: 'Control module',
+    orderedQty: 4, reservedQty: 0, fulfilledQty: 4, shortageQty: 0, promisedDate: '2026-09-20',
+    status: 'fulfilled', statusLabel: '已完成', priority: '低', deliveryRiskLevel: 'low', deliveryRiskLabel: '正常',
+    deliveryRiskReason: '当前库存与采购证据未显示明显交付风险。', dataLimitations: [],
+    linkedPurchaseOrders: [], linkedSuppliers: [], linkedReceivingDocs: [], linkedExceptionCases: [],
   }] } }));
   await page.goto('/app/sales/risks');
   await expect(page.locator('tbody')).toContainText('SO-TEST');
@@ -120,6 +128,8 @@ test('sales risk and evidence views translate system reasons and preserve custom
   await expectEnglish(page);
   await page.goto('/app/sales/evidence');
   await expect(page.locator('tbody')).toContainText('Shortage risk');
+  await expect(page.getByRole('row', { name: /SO-SHIPPED/ })).toContainText('Fulfilled');
+  await expect(page.locator('tbody')).not.toContainText('Completed');
   await expectEnglish(page);
   customerName = '示例客户';
   await page.reload();

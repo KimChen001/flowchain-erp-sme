@@ -322,7 +322,9 @@ button, input, select, textarea { font-family: var(--fc-font-family); font-size:
   table[data-list-cards] tr[data-card-row="full"] > [data-card-role="full"] { display: block; }
   table[data-list-cards] tr[data-card-row="record"] {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    /* The title (a document number) keeps at least 45% of the card, so a
+       wide status cell beside it can never squeeze it to one character. */
+    grid-template-columns: auto minmax(45%, 1fr) auto;
     align-items: center;
     row-gap: 6px;
     padding: 12px 16px;

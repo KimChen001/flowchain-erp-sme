@@ -85,6 +85,9 @@ export const outboundEnglish: Record<string, string> = {
   "预留量": "Reserved",
   // The reserve dialog picks one stock balance.
   "仓库 / 库位": "Warehouse / location",
+  // An order on hold: "On hold", as the order list, its card and order
+  // evidence say (the workspace dictionary has "Paused").
+  "暂停": "On hold",
   // Shipment, reservation and allocation statuses.
   "待过账": "Ready to post",
   "有效": "Active",

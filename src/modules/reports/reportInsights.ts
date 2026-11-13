@@ -33,18 +33,41 @@ function concentration(chart: ReportChart, zh: boolean, format: Format, subject:
     : `${name} accounts for ${format(share, "percentage")} of committed spend; ${leaders} of ${rows.length} ${plural(rows.length, "supplier", "suppliers")} make up about 80% of it.` };
 }
 
-// The lifecycle's stages are cumulative (each counts the orders that reached it
-// and every stage before it), so they are read by name: "Fully received" there
-// also needs a matched invoice and is not the share of orders fully received.
+// Each lifecycle stage counts the committed orders that reached it, whatever
+// happened at the others, so every stage is read by its name.
 function lifecycle(chart: ReportChart, zh: boolean, format: Format): Insight | null {
   const stage = (name: string) => num((chart.data || []).find(row => row.name === name)?.value) ?? 0;
   const committed = stage("Committed");
   if (!committed) return null;
-  const started = stage("Receiving started"), invoiced = stage("Invoiced"), matched = stage("Invoice matched");
+  const started = stage("Receiving started"), full = stage("Fully received"), invoiced = stage("Invoiced"), matched = stage("Invoice matched");
   const share = format(started / committed * 100, "percentage");
   return { id: chart.id, tone: "neutral", figure: share, path: chart.drilldownPath, text: zh
-    ? `已承诺采购订单中 ${share} 已开始收货；其中 ${invoiced} 张已有采购发票，${matched} 张发票已匹配。`
-    : `Receiving has started on ${share} of committed purchase orders; ${invoiced} of them ${plural(invoiced, "has", "have")} a supplier invoice and ${matched} a matched invoice.` };
+    ? `已承诺采购订单中 ${share} 已开始收货，${full} 张已全部收货；${invoiced} 张已有采购发票，${matched} 张发票已匹配。`
+    : `Receiving has started on ${share} of committed purchase orders and ${full} ${plural(full, "is", "are")} fully received; ${invoiced} ${plural(invoiced, "has", "have")} a supplier invoice and ${matched} a matched invoice.` };
+}
+
+// The highest and lowest on-time share among suppliers, saying when several
+// tie. The ranking keeps its first rows only; when it left some out (total),
+// its last bar is not the lowest, so only the highest is named.
+function onTimeSpread(chart: ReportChart, zh: boolean, format: Format): Insight | null {
+  const ranking = chart.data || [];
+  if (ranking.length < 2) return null;
+  const top = num(ranking[0].value), bottom = num(ranking[ranking.length - 1].value);
+  // When every supplier has the same share there is no highest or lowest.
+  if (top === null || bottom === null || top === bottom) return null;
+  const whole = !chart.total || chart.total <= ranking.length;
+  const atTop = ranking.filter(row => num(row.value) === top);
+  const atBottom = ranking.filter(row => num(row.value) === bottom);
+  // Every bar shown ties at the top and more were left out: the count is unknown.
+  if (!whole && atTop.length === ranking.length) return null;
+  const high = format(top, "percentage"), low = format(bottom, "percentage");
+  const highest = atTop.length === 1
+    ? zh ? `${atTop[0].name} 的准时交付占比最高（${high}）` : `${atTop[0].name} has the highest share of deliveries on time (${high})`
+    : zh ? `${atTop.length} 家供应商并列准时交付占比最高（${high}）` : `${atTop.length} suppliers tie for the highest share of deliveries on time (${high})`;
+  const lowest = !whole ? "" : atBottom.length === 1
+    ? zh ? `${atBottom[0].name} 最低（${low}）` : `${atBottom[0].name} the lowest (${low})`
+    : zh ? `${atBottom.length} 家并列最低（${low}）` : `${atBottom.length} suppliers tie for the lowest (${low})`;
+  return { id: "spread", tone: "neutral", figure: high, path: chart.drilldownPath, text: zh ? `${highest}${lowest ? `，${lowest}` : ""}。` : `${highest}${lowest ? `; ${lowest}` : ""}.` };
 }
 
 // What changed: the first compared KPI, in the words of its change badge.
@@ -67,15 +90,22 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
   const insights: Array<Insight | null> = [];
   const overdue = kpiById(report, "overdue_open_po_count");
   const onTime = kpiById(report, "on_time_receipt_rate");
+  // Sales figures over only the latest orders read (the server could not read
+  // its totals over every order) are no ground for a finding about shares or
+  // changes: the orders left out could change them.
+  const salesCut = (report.truncatedSubjects || []).some(entry => entry.subject === "sales_orders" && !entry.figuresComplete);
   // The largest change against the previous period leads; an unchanged figure
   // is no finding.
   const size = (item: MetricDefinition) => Math.abs(item.comparisonUnit === "percentage_points" ? item.comparisonDelta ?? 0 : item.comparisonRate ?? 0);
-  const compared = report.kpis.filter(item => item.comparisonDelta !== null && item.comparisonValue !== null && item.comparisonDelta !== 0).sort((a, b) => size(b) - size(a))[0];
+  const compared = report.kpis.filter(item => item.comparisonDelta !== null && item.comparisonValue !== null && item.comparisonDelta !== 0 && !(salesCut && item.subject === "sales_orders")).sort((a, b) => size(b) - size(a))[0];
   if (compared) insights.push(change(compared, zh, format, label, report.dataScope.currencyCode));
 
   if (view === "overview") {
     const trend = chartById(report, "overview_spend_trend");
-    const last = trend?.data?.filter(row => row.name !== "Undated").at(-1);
+    // The last whole month: the month to date, or a month the range cuts,
+    // would read as a fall.
+    const partial = new Set((trend?.partialPeriods || []).map(item => item.period));
+    const last = trend?.data?.filter(row => row.name !== "Undated" && !partial.has(String(row.name))).at(-1);
     if (trend && last && trend.unit === "currency") {
       const amount = num(last["Committed amount"]);
       const count = num(last["Purchase orders"]) ?? 0;
@@ -119,7 +149,7 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
 
   if (view === "sales") {
     const pareto = chartById(report, "sales_customer_pareto");
-    if (pareto) insights.push(concentration(pareto, zh, format, "customer"));
+    if (pareto && !salesCut) insights.push(concentration(pareto, zh, format, "customer"));
     const shipped = kpiById(report, "order_fulfillment_rate");
     if (shipped) insights.push({ id: "shipped", tone: "neutral", figure: format(shipped.currentValue, "percentage"), path: shipped.drilldownPath, text: zh ? `${format(shipped.currentValue, "percentage")} 的已确认销售订单已全部发货。` : `${format(shipped.currentValue, "percentage")} of confirmed sales orders have shipped in full.` });
     // Demand in different units cannot be compared, so "most" needs one unit.
@@ -142,13 +172,7 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
 
   if (view === "suppliers") {
     const onTimeChart = chartById(report, "supplier_on_time");
-    const ranking = onTimeChart?.data || [];
-    const best = ranking[0];
-    const worst = ranking[ranking.length - 1];
-    // When every supplier has the same share there is no highest or lowest.
-    if (onTimeChart && ranking.length > 1 && num(best.value) !== num(worst.value)) {
-      insights.push({ id: "spread", tone: "neutral", figure: format(num(best.value), "percentage"), path: onTimeChart.drilldownPath, text: zh ? `${best.name} 的准时交付占比最高（${format(num(best.value), "percentage")}），${worst.name} 最低（${format(num(worst.value), "percentage")}）。` : `${best.name} has the highest share of deliveries on time (${format(num(best.value), "percentage")}); ${worst.name} the lowest (${format(num(worst.value), "percentage")}).` });
-    }
+    if (onTimeChart) insights.push(onTimeSpread(onTimeChart, zh, format));
     const matrix = chartById(report, "supplier_performance_matrix");
     if (matrix?.guides && matrix.guides.x !== null && matrix.guides.y !== null) {
       const xKey = matrix.measures?.find(item => item.axis === "x")?.key || "";

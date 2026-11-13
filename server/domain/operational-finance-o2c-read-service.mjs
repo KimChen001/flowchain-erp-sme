@@ -1,7 +1,7 @@
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { can } from "../auth/authorization-service.mjs";
 import { escapeLikePattern } from "../persistence/like-pattern.mjs";
-import { OperationalFinanceReadError } from "./operational-finance-read-service.mjs";
+import { NEWEST_DUE_FIRST, OperationalFinanceReadError, allOf, outstandingPayableWhere, pagedInGroups, whereAll } from "./operational-finance-read-service.mjs";
 import { financeFixed as fixed, financeUnits as units } from "./operational-finance-policy.mjs";
 import { paymentRecordsView } from "./payment-record-command-service.mjs";
 import { CUSTOMER_NAMESPACE } from "./master-data-commands.mjs";
@@ -30,10 +30,11 @@ const fail = (code, message, status = 400, details) => {
   throw new OperationalFinanceReadError(code, message, status, details);
 };
 const page = (query = {}) => {
-  const number = Math.max(1, Number(query.page) || 1);
-  const size = Math.min(100, Math.max(1, Number(query.pageSize) || 25));
+  const number = Math.max(1, Math.floor(Number(query.page)) || 1);
+  const size = Math.min(100, Math.max(1, Math.floor(Number(query.pageSize)) || 25));
   return { page: number, pageSize: size, skip: (number - 1) * size };
 };
+const containsText = (value) => ({ contains: value, mode: "insensitive" });
 const validCurrency = (value) => /^[A-Z]{3}$/.test(text(value).toUpperCase());
 const CLOSED_DOCUMENT_STATUSES = ["cancelled", "void", "voided", "rejected"];
 
@@ -77,7 +78,10 @@ function invoiceActions(actor, capability, row) {
 
 function receivableActions(actor, capability, row) {
   if (!capability?.enabled) return [];
-  const result = can({ actor, permission: "finance.receivable.record_external_reference", tenantId: actor.tenantId }) ? ["record_external_reference"] : [];
+  // An external settlement reference is for money still owed; a paid
+  // receivable does not offer it.
+  const owed = !["settled", "cancelled", "voided"].includes(row.status) && Number(row.outstandingAmount) > 0;
+  const result = owed && can({ actor, permission: "finance.receivable.record_external_reference", tenantId: actor.tenantId }) ? ["record_external_reference"] : [];
   // A payment can be recorded until nothing is outstanding, but not while
   // the customer disputes the invoice.
   if (["open", "overdue", "partially_settled"].includes(row.status) && row.disputeStatus !== "open" && Number(row.outstandingAmount) > 0 && can({ actor, permission: "finance.receivable.record_payment", tenantId: actor.tenantId })) result.unshift("record_payment");
@@ -246,6 +250,23 @@ export function overdueReceivableWhere(asOf, timezone) {
   };
 }
 
+// A receivable not yet paid in full, disputed or not: what aging counts. The
+// "Open receivables" card and the list's "outstanding" filter both use it.
+export function outstandingReceivableWhere() {
+  return {
+    outstandingAmount: { gt: 0 },
+    status: { in: ["open", "partially_settled", "overdue", "disputed"] },
+  };
+}
+
+// The receivables list's status filter: "overdue" and "outstanding" are
+// derived; any other value is the stored status.
+function receivableStatusWhere(status, asOf, timezone) {
+  if (status === "overdue") return overdueReceivableWhere(asOf, timezone);
+  if (status === "outstanding") return outstandingReceivableWhere();
+  return status ? { status } : {};
+}
+
 export function createOperationalFinanceO2cReadService({
   prisma,
   capabilities = {},
@@ -289,7 +310,12 @@ export function createOperationalFinanceO2cReadService({
           }
         : {}),
     };
-    const [total, rows] = await Promise.all([
+    // The metric cards count every invoice in the workspace, not one page.
+    // Past due is an issued invoice whose receivable is overdue (the rule the
+    // receivables list's overdue filter uses), so a paid invoice is not.
+    const timezone = await workspaceTimezone(current.tenantId);
+    const count = (extra) => prisma.customerInvoice.count({ where: { tenantId: current.tenantId, ...extra } });
+    const [total, rows, toApprove, toIssue, issued, pastDue, currencies] = await Promise.all([
       prisma.customerInvoice.count({ where }),
       prisma.customerInvoice.findMany({
         where,
@@ -298,11 +324,20 @@ export function createOperationalFinanceO2cReadService({
         skip: paging.skip,
         take: paging.pageSize,
       }),
+      count({ status: { in: ["draft", "submitted"] } }),
+      count({ status: "approved" }),
+      count({ status: "issued" }),
+      count({ status: "issued", receivableObligation: { is: overdueReceivableWhere(now(), timezone) } }),
+      // Every currency, for the currency filter: one page shows only some.
+      prisma.customerInvoice.findMany({ where: { tenantId: current.tenantId }, distinct: ["currency"], select: { currency: true } }),
     ]);
     return {
       dataSource: "Authoritative PostgreSQL",
       ...paging,
       total,
+      counts: { toApprove, toIssue, issued, pastDue },
+      currencies: currencies.map((row) => row.currency).filter(validCurrency).sort(),
+      timezone,
       items: rows.map((row) => invoiceSummary(row, current, capabilities)),
       capabilities,
     };
@@ -386,35 +421,72 @@ export function createOperationalFinanceO2cReadService({
     const current = await actor(context);
     assertRead(current, "finance.receivable.read");
     const paging = page(query);
-    const status = text(query.status);
+    const asOf = now();
+    const timezone = await workspaceTimezone(current.tenantId);
+    const search = escapeLikePattern(text(query.search));
+    const partnerVisible = can({ actor: current, permission: "finance.partner_snapshot.read", tenantId: current.tenantId });
     const where = {
       tenantId: current.tenantId,
-      ...(status === "overdue"
-        ? overdueReceivableWhere(now(), await workspaceTimezone(current.tenantId))
-        : status
-          ? { status }
-          : {}),
-      ...(text(query.disputeStatus)
-        ? { disputeStatus: text(query.disputeStatus) }
-        : {}),
-      ...(validCurrency(query.currency)
-        ? { currency: text(query.currency).toUpperCase() }
-        : {}),
+      ...whereAll(
+        receivableStatusWhere(text(query.status), asOf, timezone),
+        text(query.disputeStatus) ? { disputeStatus: text(query.disputeStatus) } : {},
+        validCurrency(query.currency) ? { currency: text(query.currency).toUpperCase() } : {},
+        // The invoice or receivable number, or the customer: the customer's
+        // name only for a role that may see it.
+        search
+          ? {
+              OR: [
+                { obligationNumber: containsText(search) },
+                { customerInvoice: { is: { invoiceNumber: containsText(search) } } },
+                ...(partnerVisible ? [{ customerInvoice: { is: { customerNameSnapshot: containsText(search) } } }] : []),
+              ],
+            }
+          : {},
+      ),
     };
-    const [total, rows] = await Promise.all([
-      prisma.receivableObligation.count({ where }),
-      prisma.receivableObligation.findMany({
-        where,
-        include: { customerInvoice: true },
-        orderBy: [{ dueDate: "asc" }, { id: "asc" }],
-        skip: paging.skip,
-        take: paging.pageSize,
-      }),
+    // sort=attention (the receivables page): overdue first, then the rest
+    // still owed, then paid; each newest first. Without it the list keeps
+    // the soonest due first, as the assistant's receivables tool reads it.
+    const listed = text(query.sort) === "attention"
+      ? pagedInGroups(prisma.receivableObligation, {
+          where,
+          groups: [
+            overdueReceivableWhere(asOf, timezone),
+            { AND: [outstandingReceivableWhere(), { NOT: allOf(overdueReceivableWhere(asOf, timezone)) }] },
+            { NOT: allOf(outstandingReceivableWhere()) },
+          ],
+          orderBy: NEWEST_DUE_FIRST,
+          include: { customerInvoice: true },
+          skip: paging.skip,
+          take: paging.pageSize,
+        })
+      : Promise.all([
+          prisma.receivableObligation.count({ where }),
+          prisma.receivableObligation.findMany({
+            where,
+            include: { customerInvoice: true },
+            orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+            skip: paging.skip,
+            take: paging.pageSize,
+          }),
+        ]).then(([total, rows]) => ({ total, rows }));
+    // The metric cards count every receivable in the workspace, not one page.
+    const count = (extra) => prisma.receivableObligation.count({ where: { tenantId: current.tenantId, ...extra } });
+    const [{ total, rows }, outstanding, overdue, disputed, settled, currencies] = await Promise.all([
+      listed,
+      count(outstandingReceivableWhere()),
+      count(overdueReceivableWhere(asOf, timezone)),
+      count({ disputeStatus: "open" }),
+      count({ status: "settled" }),
+      prisma.receivableObligation.findMany({ where: { tenantId: current.tenantId }, distinct: ["currency"], select: { currency: true } }),
     ]);
     return {
       dataSource: "Authoritative PostgreSQL",
       ...paging,
       total,
+      counts: { outstanding, overdue, disputed, settled },
+      currencies: currencies.map((row) => row.currency).filter(validCurrency).sort(),
+      timezone,
       items: rows.map((row) => receivableSummary(row, current, capabilities)),
       capabilities,
     };
@@ -498,12 +570,24 @@ export function createOperationalFinanceO2cReadService({
     const current = await actor(context);
     assertRead(current, "finance.customer_credit.read");
     const paging = page(query);
+    const search = escapeLikePattern(text(query.search));
+    const partnerVisible = can({ actor: current, permission: "finance.partner_snapshot.read", tenantId: current.tenantId });
     const where = {
       tenantId: current.tenantId,
-      ...(text(query.status) ? { status: text(query.status) } : {}),
-      ...(validCurrency(query.currency)
-        ? { currency: text(query.currency).toUpperCase() }
-        : {}),
+      ...whereAll(
+        text(query.status) ? { status: text(query.status) } : {},
+        validCurrency(query.currency) ? { currency: text(query.currency).toUpperCase() } : {},
+        search
+          ? {
+              OR: [
+                { creditNoteNumber: containsText(search) },
+                { customerInvoice: { is: { invoiceNumber: containsText(search) } } },
+                { returnPosting: { is: { postingNumber: containsText(search) } } },
+                ...(partnerVisible ? [{ customerNameSnapshot: containsText(search) }] : []),
+              ],
+            }
+          : {},
+      ),
     };
     const [total, rows] = await Promise.all([
       prisma.customerCreditNote.count({ where }),
@@ -644,11 +728,9 @@ export function createOperationalFinanceO2cReadService({
           status: { in: ["open", "reviewed"] },
         },
       }),
+      // The payables list's "outstanding" filter, which this card opens.
       prisma.payableObligation.count({
-        where: {
-          tenantId: current.tenantId,
-          status: { in: ["approved", "export_ready", "held", "partially_settled"] },
-        },
+        where: { tenantId: current.tenantId, ...outstandingPayableWhere() },
       }),
       prisma.customerInvoice.count({
         where: { tenantId: current.tenantId, status: "approved" },
