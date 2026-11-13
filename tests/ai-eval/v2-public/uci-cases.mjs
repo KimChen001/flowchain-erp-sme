@@ -6,10 +6,11 @@
 //
 // A case: { id, kind, language, turns, expect } (score.mjs reads expect).
 // Kinds: today, stock, scenario, reorder, purchasing, supplier, sales,
-// finance, cost, conversation, boundary.
+// finance, payables, cost, conversation, boundary.
 import { uciEconomics } from './uci-facts.mjs'
 import { buildUciConversationCases } from './uci-conversation-cases.mjs'
 import { buildUciConstraintCases } from './uci-constraint-cases.mjs'
+import { buildUciMoneyCases } from './uci-money-cases.mjs'
 
 const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places
 const EN_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -209,7 +210,10 @@ export function buildUciCases(facts) {
     expect: { matches: [{ label: '说修改承诺交期', pattern: String.raw`修改承诺交期|Change promised date` }] } })
   later({ id: 'chase-today-en', language: 'en-US', turns: [`How do I chase ${acme} about the late orders?`],
     expect: { matches: [{ label: 'says the card on Today', pattern: String.raw`Copy and mark chased|Review and send|\bToday\b` }] } })
-  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts), ...actions]
+  // Then the money cases (2026-11-12) and last the app's-own-button cases:
+  // the money cases keep the places they were checked at, so each is still
+  // asked by the same user.
+  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts), ...buildUciMoneyCases(facts, { last }), ...actions]
     .map((row) => (UCI_LOOKUPS.has(row.id) ? { ...row, expect: { ...row.expect, brief: true } } : row))
     .map((row) => (UCI_REQUIRED_TOOLS[row.id] ? { ...row, expect: { ...row.expect, calls: UCI_REQUIRED_TOOLS[row.id] } } : row))
 }

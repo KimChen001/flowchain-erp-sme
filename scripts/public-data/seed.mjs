@@ -10,13 +10,16 @@
 //      workspace lacks it), items with their [assumed] thresholds and empty
 //      stock records;
 //   2. the [public data] sales orders, confirmed; the [assumed] purchase
-//      orders, issued, and for every one that has arrived an unposted receipt;
+//      orders, issued, at the assumed purchase price (a share of the selling
+//      price), and for every one that has arrived an unposted receipt;
 //   3. opening stock the day before the window (inventory adjustment commands);
 //   4. receipts (receiving posting) and shipments (outbound commands) in time
 //      order, each as of its own time;
 //   5. the [assumed] supplier terms (item supplier command);
 //   6. UCI only: a customer invoice for each shipment, issued on its day, due
 //      30 days later and paid then [assumed], and its receivable;
+//   6b. UCI only: the [assumed] supplier invoices, their three-way matches,
+//      payables and payments, through the finance commands (seed-payables.mjs);
 //   7. the walkthrough scene's supplier tier, set by its buyer (scene.mjs);
 //   8. the workspace note: what is public, what is assumed, the date shift.
 import { assertLocalDevelopment } from '../../server/domain/local-development-contract.mjs'
@@ -29,6 +32,7 @@ import { findPaymentTerm } from '../../server/domain/standard-payment-terms.mjs'
 import { backfillTenantAuthorization } from '../../server/auth/authorization-backfill.mjs'
 import { HISTORY_PERMISSIONS, scenarioActor, scenarioCalendar, shipHistoryOrder } from '../seed-history.mjs'
 import { publicDataPlanCounts } from './plan.mjs'
+import { PAYABLES_PERMISSIONS, seedSupplierInvoices } from './seed-payables.mjs'
 
 export const PUBLIC_DATA_NOTE_NAMESPACE = 'workspace.public-data'
 export const PUBLIC_DATA_NOTE_KEY = 'note'
@@ -190,13 +194,19 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
         let amount = 0
         const poLines = order.lines.map((line, lineIndex) => {
           const item = items.get(line.itemKey)
-          const unitPrice = plan.dataset === 'm5' ? item.prices[order.created] : item.price
+          // The assumed purchase price: a share of the selling price (M5: of
+          // the day the order is placed), labelled on the line.
+          const sellingPrice = plan.dataset === 'm5' ? item.prices[order.created] : item.price
+          const unitPrice = plan.purchasePriceOf(item, order.created)
           const lineAmount = money(line.quantity * unitPrice)
           amount += lineAmount
           return {
             id: `${order.id}-L${String(lineIndex + 1).padStart(3, '0')}`, purchaseOrderId: order.id, itemId: item.id, sku: item.sku, itemName: item.name, orderedQuantity: line.quantity, receivedQuantity: 0,
             unit: 'pcs', unitPrice, amount: lineAmount, originalPromisedDate: issued ? new Date(`${promised}T12:00:00Z`) : null,
-            metadata: { ...metadata, assumed: true, targetWarehouseId: warehouse.id, requestedDate: promised, promisedDate: promised, ...(line.raisedBy ? { raisedForDemandSpike: line.raisedBy } : {}) },
+            metadata: {
+              ...metadata, assumed: true, targetWarehouseId: warehouse.id, requestedDate: promised, promisedDate: promised, ...(line.raisedBy ? { raisedForDemandSpike: line.raisedBy } : {}),
+              purchasePriceAssumed: { percentOfSellingPrice: assumptions.purchasePricePercent, sellingPrice },
+            },
           }
         })
         orders.push({
@@ -205,6 +215,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
           metadata: {
             ...metadata, assumed: true, targetWarehouseId: warehouse.id, transmissionStatus: issued ? 'sent' : 'not_sent', ...(issuedAt ? { issuedAt: issuedAt.toISOString() } : {}),
             purchasingRule: order.scene ? 'walkthrough_scene' : 'weekly_review_base_stock', ...(order.scene ? { walkthroughScene: order.scene } : {}),
+            purchasePricePercentAssumed: assumptions.purchasePricePercent,
           },
         })
         lines.push(...poLines)
@@ -266,10 +277,10 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   }
   lap('postings', since)
 
-  // 5. Supplier terms [assumed].
+  // 5. Supplier terms [assumed], at the purchase price of the last day.
   since = Date.now()
   for (const item of items.values()) {
-    await retrying(() => saveItemSupplier(prisma, item.id, null, { supplierId: supplierId(item.supplierKey), preferred: true, leadTimeDays: assumptions.leadTimeDays, minimumOrderQuantity: item.minimumOrderQuantity, referencePrice: item.price, currency: profile.currency }, actor.userId, { tenantId }))
+    await retrying(() => saveItemSupplier(prisma, item.id, null, { supplierId: supplierId(item.supplierKey), preferred: true, leadTimeDays: assumptions.leadTimeDays, minimumOrderQuantity: item.minimumOrderQuantity, referencePrice: plan.purchasePriceOf(item, plan.days - 1), currency: profile.currency }, actor.userId, { tenantId }))
   }
   lap('supplierTerms', since)
 
@@ -325,6 +336,19 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   }
   lap('customerInvoices', since)
 
+  // 6b. UCI: supplier invoices, matches, payables and payments [assumed],
+  // through the finance commands (seed-payables.mjs).
+  since = Date.now()
+  let payables = null
+  if (plan.payables) {
+    const financeEnv = { ...historyEnv, FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: 'true' }
+    const financeActor = await scenarioActor(prisma, tenantId, PAYABLES_PERMISSIONS, 'supplier invoices and payments')
+    payables = await seedSupplierInvoices(prisma, {
+      plan, env: financeEnv, identity: financeActor, tenantId, calendar, purchaseOrderIds: purchaseOrders.map((order) => order.id), supplierIdOf: supplierId, metadata, retrying, log,
+    })
+  }
+  lap('supplierInvoices', since)
+
   // 7. The scene's supplier tier, set by its buyer with a written reason from
   // the purchase orders: the supplier's share of purchase spend over the
   // last 12 months.
@@ -353,7 +377,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   }
 
   // 8. The workspace note.
-  const counts = { ...publicDataPlanCounts(plan), postedReceipts: posted, shippedOrders: shipped, customerInvoices: invoices }
+  const counts = { ...publicDataPlanCounts(plan), postedReceipts: posted, shippedOrders: shipped, customerInvoices: invoices, ...(payables ? { supplierInvoices: payables.invoices, supplierPayments: payables.paid } : {}) }
   const note = {
     dataset: plan.dataset,
     sourceWindow: plan.sourceWindow,

@@ -51,8 +51,9 @@ M5, store CA_1:
 | Sales order | one per invoice, at its time | one per day, every item sold that day at that week's price |
 | Shipment | posted one hour after the invoice | posted at 21:00 that day |
 | Customer invoice and receivable | one per shipment, issued on the day | none (point of sale) |
+| Supplier invoice, three-way match, payable, payment | one per posted receipt [assumed], see below | none |
 
-Shipments, receipts and opening stock go through FlowChain's own posting commands in date order, so stock, inventory movements, order status and the reorder list agree. Each record keeps its original date and source number in its metadata.
+Shipments, receipts and opening stock go through FlowChain's own posting commands in date order, so stock, inventory movements, order status and the reorder list agree. UCI supplier invoices go through the supplier invoice, three-way match, approval and payment commands the same way, so match results, match exceptions and payables come from the app's own rules. Each record keeps its original date and source number in its metadata.
 
 ## Dates
 
@@ -66,9 +67,18 @@ Both datasets have demand only. Everything a buyer also needs is assumed, by the
 - **Lead time** 14 days; **review** every 7 days, on Mondays.
 - **Minimum order** a week of average daily demand, rounded up to 10.
 - **Safety stock** a week of average demand; **reorder point** 21 days (lead time plus review) of average demand. The average is over the last 90 days of the window, the window the reorder list reads and the research instances use.
-- **Purchase price** the public selling price (a proxy: neither dataset has costs), so holding cost h = 25 %/yr × price × (L + 7)/365 and shortage cost π = 5h in the order plan match the research rule. Gross margin is not meaningful in these workspaces.
+- **Purchase price** (since 2026-11-12) a share of the public selling price, because neither dataset has costs: **50 %** for UCI (of the item's median price) and **75 %** for M5 (of the store's price on the day the purchase order is placed), worked in whole pence or cents. The item's supplier terms (reference price) carry the same price, at the last day's price for M5. Every purchase order line records it in its metadata (`purchasePriceAssumed: { percentOfSellingPrice, sellingPrice }`), and the workspace note states it. So stock value, holding cost and the order plan's costs are at this price, and gross profit (sales less units sold at this price) can be read, as an assumption. Before 2026-11-12 the purchase price was the selling price, which left gross profit near zero. The research instances (`scripts/public-data-instance.mjs`) keep the selling price as their proxy, so h = 25 %/yr × price × (L + 7)/365 and π = 5h there still match the research rule.
 - **Purchasing history:** a weekly-review base-stock policy. The base stock level is the reorder point plus the safety stock (average demand over lead time and review, plus the buffer). Opening stock, the day before the window, is that level plus the minimum order. At each Monday review an item whose position (on hand plus on order) is at or below its base stock level is ordered up to that level plus its minimum order; the purchase order arrives 14 days later, at 07:00, and is received in full. Public demand is never cut: when a day's demand is more than the stock on hand, the item's order at the latest review that arrives by then is raised by the shortfall plus its safety stock (or such an order is added, at least the minimum), and before the first such review the opening stock is raised. Purchase orders placed in the last 14 days are still open.
 - **UCI payment terms:** customer invoices are due 30 days after the invoice and paid on the due date; receivables before the seed day are settled.
+- **UCI supplier invoices and payments** (since 2026-11-12; `PUBLIC_DATA_SUPPLIER_INVOICE_RULES` and `planSupplierInvoices` in `scripts/public-data/plan.mjs`, recorded by `scripts/public-data/seed-payables.mjs`). Each difference is one stated rule, and the invoices a rule picks are chosen by a fixed hash of their order, so the same seed day always gives the same invoices:
+  - **One invoice per posted receipt**, dated 0 to 5 days after it, due 30 days after the invoice (NET30, labelled `paymentTermsAssumed` like the customer invoices). Numbered `INV-<supplier code>-0001` upwards per supplier. A receipt whose invoice day falls on or after the seed day is received and not invoiced yet.
+  - **Price above the order** (about 5 % of invoices): one line priced 2 to 5 % above the purchase order price, rounded up to the penny. The three-way match records a price and an amount exception on that line.
+  - **Billed more than received** (about 3 %): one line was delivered 5 % short (at least one unit). The purchase order line was for the full quantity; the receipt has what arrived, so stock is as before. The supplier bills the full ordered quantity: the invoice is recorded against the purchase order, submitted, then linked to the short receipt, and the match records a quantity exception. The buyer closes the rest of the order the same day with FlowChain's close command (the order then reads closed, not open or late). FlowChain refuses an invoice entered from a receipt for more than the receipt holds, so this is the app's own path to such a difference.
+  - **Dated before the receipt** (about 2 %): the invoice is dated 1 to 3 days before the goods arrived, recorded against the purchase order on its own day, and linked to the receipt on the day it is posted; it then matches.
+  - **Held:** an invoice with a difference stays at the three-way match with its exceptions open: not approved, so it has no payable and is not paid.
+  - **Paid:** a matched invoice is approved the day it matches, which records its payable. One due before the seed day is paid on its due date (a payment record, method Other, reference "Bank transfer <invoice>"), except 10 % of those due in the 60 days before the seed day, which are left unpaid and so are overdue. One due on or after the seed day is open.
+  - Each record is labelled assumed in its metadata (`invoiceRule`, and for a difference the line, the order and invoice prices or the ordered and received quantities) and dated by the plan; the commands' own audit rows are moved to the same business times.
+  - The weekly orders carry the differences; the walkthrough scene's orders do not, so the scene is unchanged.
 
 ## The walkthrough scene (UCI workspace)
 
@@ -95,11 +105,12 @@ Seeded as of 2026-11-10 (the data's last day moved to 2026-11-09), on a Windows 
 | Sales order lines | 54,927 | 24,092 |
 | Units sold | 503,462 | 437,167 |
 | Suppliers [assumed] | 7 | 7 (Acme and Globex named) |
-| Purchase orders [assumed] | 370 (5,819 lines), 14 open | 356 (3,825 lines), 17 open |
-| Receipts posted | 356 | 339 |
-| Seed time | about 15 minutes | about 9 minutes |
+| Purchase orders [assumed] | 370 (5,819 lines), 14 open | 356 (3,825 lines), 17 open, 10 closed short |
+| Receipts posted | 356 | 339 (4 not invoiced yet) |
+| Supplier invoices [assumed] | none | 335: 308 matched and approved (276 paid, 5 overdue, 27 open), 27 held at the match (17 priced above the order, 10 billing more than received); 7 dated before their receipt |
+| Seed time | about 14 minutes | about 14 minutes (the supplier invoices about 35 seconds) |
 
-The extract takes about 50 seconds. The workspaces are seeded one after the other (side by side, their serializable postings abort each other), so a first start takes about 25 minutes.
+Gross profit over the window, at the assumed purchase prices: UCI £276,236 on £588,460 of sales (46.9 %), M5 $275,200 on $1,105,462 (24.9 %). The extract takes about 50 seconds. The workspaces are seeded one after the other (side by side, their serializable postings abort each other), so a first start takes about 28 minutes.
 
 ## Run it
 
@@ -116,7 +127,9 @@ npm run walkthrough:local -- --reset --as-of=2026-11-10   # seed as of a given d
 
 - UCI cancellations are not yet posted as customer returns: the returns module is outside the trial capability set the walkthrough runs, and a credit note needs a posted return. They stay in the extract.
 - One in four UCI customers, and 200 of about 3,900 products sold in the window; 196 of CA_1's 3,049 items. The business read context also lists at most 200 customers and the 500 most recent sales orders; the reorder list and Today warn about the sales orders only when an order that can still need stock was left out.
-- Suppliers deliver exactly on time; purchase prices equal selling prices.
+- Suppliers deliver on time and in full apart from the walkthrough scene and the supplier invoice rules above; purchase prices are a fixed share of selling prices, so every UCI item has the same 50 % cost ratio on its median price.
+- M5 has no supplier invoices or payments: it carries the purchase price ratio only.
+- Supplier invoices carry no tax lines, and supplier credit notes and returns are not seeded.
 
 ## Tests
 
