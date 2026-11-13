@@ -120,9 +120,16 @@ export function tidyProblems(text, parts = []) {
   return problems
 }
 
+// Record numbers, SKUs and Title Case names ("Acme Home Goods", "White
+// Hanging Heart T-Light Holder", "PO-202610-0022") are names, not the
+// answer's language (2026-11-13: a Chinese answer naming each order's item
+// and supplier in English was scored as English).
+const NAMES = /\b[A-Z0-9][\w.&'’-]*(?:\s+(?:[A-Z0-9][\w.&'’-]*|of|and|the|for|with|in|on|de))*/g
 export function answerLanguage(text) {
-  const cjk = (String(text).match(CJK) || []).length
-  const latin = (String(text).match(LATIN) || []).length
+  const value = String(text)
+  const cjk = (value.match(CJK) || []).length
+  if (!cjk) return 'en-US'
+  const latin = (value.replace(NAMES, ' ').match(LATIN) || []).length
   // About two Latin letters a word against one character a word.
   return cjk * 2 >= latin ? 'zh-CN' : 'en-US'
 }
