@@ -131,3 +131,17 @@ test('decisions are checked before they are stored', () => {
   assert.throws(() => parse({ option: 'accepted', documentType: 'invoice', documentIds: ['X'] }), { code: 'DECISION_DOCUMENT_INVALID' })
   assert.throws(() => parse({ option: 'accepted', documentType: 'purchase_order', documentIds: [] }), { code: 'DECISION_DOCUMENT_INVALID' })
 })
+
+test('waiting decisions show the earliest of each kind first, so many of one kind hide none of the others', () => {
+  const day = (n) => `2026-11-${String(n).padStart(2, '0')}`
+  const rows = [
+    row('bill_exception', 'INV-1', { date: day(1) }),
+    row('bill_exception', 'INV-2', { date: day(2) }),
+    row('bill_exception', 'INV-3', { date: day(3) }),
+    row('purchase_order_overdue', 'PO-1', { date: day(4) }),
+    row('bill_exception', 'INV-4', { date: day(5) }),
+    row('reorder_now', 'ITEM-1', { date: day(6) }),
+  ]
+  const { waiting } = arrangeToday(rows, [])
+  assert.deepEqual(waiting.map((entry) => entry.key), ['bill_exception:INV-1', 'purchase_order_overdue:PO-1', 'reorder_now:ITEM-1', 'bill_exception:INV-2', 'bill_exception:INV-3', 'bill_exception:INV-4'])
+})

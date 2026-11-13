@@ -199,8 +199,23 @@ export function planDecisionSync(items = [], rows = [], { today, areas = new Set
   return { create, reopen, close }
 }
 
+// The earliest of each kind first, then the rest by date, so one kind with
+// many rows does not hide the others behind "Show more" (2026-11-13: 27 held
+// invoices from last December filled the five cards Today shows).
+function eachKindFirst(entries) {
+  const seen = new Set()
+  const first = []
+  const rest = []
+  for (const entry of entries) {
+    if (seen.has(entry.row.kind)) rest.push(entry)
+    else { seen.add(entry.row.kind); first.push(entry) }
+  }
+  return [...first, ...rest]
+}
+
 // Today's rows in three parts, earliest date first in each: the drafted kinds
-// nobody has decided on (waiting), the rows set aside, and the rest (work).
+// nobody has decided on (waiting, the earliest of each kind first), the rows
+// set aside, and the rest (work).
 export function arrangeToday(rows = [], items = []) {
   const byKey = new Map(items.map((item) => [item.activeKey, item]))
   const waiting = []
@@ -213,7 +228,7 @@ export function arrangeToday(rows = [], items = []) {
     if (item?.state === 'decided') setAside.push({ key, row, item })
     else waiting.push({ key, row, item: item || null })
   }
-  return { waiting, setAside, work }
+  return { waiting: eachKindFirst(waiting), setAside, work }
 }
 
 const fail = (code, message, field) => Object.assign(new Error(message), { status: 422, code, details: field ? [{ field, message }] : [] })
