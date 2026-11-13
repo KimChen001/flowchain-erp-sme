@@ -173,6 +173,45 @@ test('the list view keeps what the list reads and leaves out the lines it does n
   assert.deepEqual([denied.status, denied.payload.code], [403, 'PERMISSION_DENIED'])
 })
 
+// UI review round 7: the detail tells the order's story to the end, so its
+// read carries each invoice's own status, how its match exceptions were
+// decided and what is paid on it, masked as the invoice amounts are.
+test('each invoice comes with its own status, its exception decisions and its payment', async () => {
+  rows.supplierInvoice.push({
+    id: 'INV-0004', tenantId: TENANT, invoiceNumber: 'S21-7781', relatedPoId: 'PO-0001', supplierId: 'SUP-1', supplierName: 'Harbor Supply', amount: '90.00', varianceAmount: '6.00', currency: 'USD', status: 'approved', matchStatus: 'exception', createdAt: at, updatedAt: at,
+    lines: [{ id: 'INV-0004-L1', purchaseOrderLineId: 'PO-0001-L1', receivingLineId: 'GRN-0001-L1', quantity: '4', unitPrice: '22.50', amount: '90.00' }],
+    matchExceptions: [{ status: 'approved' }, { status: 'approved' }],
+    payableObligation: { status: 'partially_settled', originalAmount: '90.0000', approvedCreditAmount: '0.0000', outstandingAmount: '30.0000', currency: 'USD' },
+  })
+  try {
+    const { payload } = await call('/api/purchase-orders-workbench/PO-0001')
+    const invoice = payload.supplierInvoices.find((row) => row.id === 'INV-0004')
+    // The shared status reads 存在差异 while the invoice has a variance; its own status is approved.
+    assert.equal(invoice.status, '存在差异')
+    assert.equal(invoice.workflowStatus, 'approved')
+    assert.deepEqual(invoice.matchExceptions, { count: 2, open: 0, approved: 2, rejected: 0 })
+    assert.deepEqual(invoice.payment, { status: 'partially_settled', amount: 90, openAmount: 30, currency: 'USD' })
+    // An invoice without a payable or exceptions says so.
+    const submitted = payload.supplierInvoices.find((row) => row.id === 'INV-0001')
+    assert.deepEqual([submitted.workflowStatus, submitted.payment, submitted.matchExceptions.count], ['submitted', null, 0])
+    // The read-only viewer reads invoices without finance.amounts.read: it
+    // sees the payment's state and the exception decisions, not the money.
+    const viewer = await call('/api/purchase-orders-workbench/PO-0001', 'read-only-viewer')
+    const masked = viewer.payload.supplierInvoices.find((row) => row.id === 'INV-0004')
+    assert.ok(masked.restrictedFields.includes('amounts'))
+    assert.deepEqual([masked.payment.status, masked.payment.amount, masked.payment.openAmount], ['partially_settled', null, null])
+    assert.deepEqual(masked.matchExceptions, { count: 2, open: 0, approved: 2, rejected: 0 })
+    // The list reads the invoice's own status too, to tell an approved invoice
+    // from an open variance, and what it bills on each PO line, as its read
+    // has no invoice lines.
+    const list = await call('/api/purchase-orders-workbench?view=list')
+    const listed = list.payload.supplierInvoices.find((row) => row.id === 'INV-0004')
+    assert.deepEqual([listed.workflowStatus, listed.poLineQuantities, listed.lines], ['approved', { 'PO-0001-L1': 4 }, undefined])
+  } finally {
+    rows.supplierInvoice.pop()
+  }
+})
+
 test('a malformed id is a 400, not a server error', async () => {
   const { status, payload } = await call('/api/purchase-orders-workbench/%E0%A4%A')
   assert.deepEqual([status, payload.code], [400, 'INVALID_PURCHASE_ORDER_ID'])

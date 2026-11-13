@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { buildHomeOverview, createBusinessReadContextService } from '../services/business-read-context-service.mjs'
 
 function repositories() {
@@ -84,6 +85,27 @@ test('changes today count documents updated on the tenant day, not the UTC day',
   assert.equal(buildHomeOverview(context, { now: new Date('2026-07-14T03:30:00Z'), timeZone: 'America/New_York' }).todayChanges, 2)
   assert.equal(buildHomeOverview(context, { now: new Date('2026-07-14T05:00:00Z'), timeZone: 'America/New_York' }).todayChanges, 0)
   assert.equal(buildHomeOverview(context, { now: new Date('2026-07-14T05:00:00Z'), timeZone: 'UTC' }).todayChanges, 2)
+})
+
+// 2026-11-11 walk: Recent documents showed "S21-7790 已批准" for an invoice
+// paid in full. An approved supplier invoice now shows where its payment
+// stands, from its payable, as the supplier invoice list does.
+test('a recent approved supplier invoice shows Paid, Partly paid or To pay from its payable', () => {
+  const invoice = (id, status) => ({ id, invoiceNumber: id, status, supplierName: 'Foods 3 vendor', totalAmount: '55.0000', currency: 'USD', updatedAt: '2026-11-11T08:35:00.000Z' })
+  const context = { purchaseRequests: [], purchaseOrders: [], rfqs: [], dataLimitations: [], supplierInvoices: [invoice('S21-7790', 'approved'), invoice('S21-7781', 'approved'), invoice('INV-C003', 'approved'), invoice('INV-D004', 'approved'), invoice('INV-E005', 'exception')] }
+  const billPayableStatuses = { 'S21-7790': 'settled', 'S21-7781': 'partially_settled', 'INV-C003': 'export_ready', 'INV-E005': 'settled' }
+  const status = (overview) => Object.fromEntries(overview.recentDocuments.map(row => [row.id, row.status]))
+  assert.deepEqual(status(buildHomeOverview(context, { now: new Date('2026-11-11T12:00:00Z'), sources: { billPayableStatuses } })), {
+    'S21-7790': 'settled', 'S21-7781': 'partially_settled', 'INV-C003': 'to_pay',
+    // No payable read: as stored. Only an approved invoice has a payment state.
+    'INV-D004': 'approved', 'INV-E005': 'exception',
+  })
+  // Without the payables read, every invoice shows its stored status.
+  assert.deepEqual(Object.values(status(buildHomeOverview(context, { now: new Date('2026-11-11T12:00:00Z') }))).sort(), ['approved', 'approved', 'approved', 'approved', 'exception'])
+  // Today reads the payables of approved invoices only, for a reader of supplier invoices.
+  const service = readFileSync(new URL('./today-work-read-service.mjs', import.meta.url), 'utf8')
+  assert.match(service, /access\.collections\.supplierInvoices\s*\?[\s\S]*?row\?\.status === 'approved'/)
+  assert.match(service, /prisma\.payableObligation\.findMany\(\{ where: \{ tenantId, supplierInvoiceId: \{ in: approvedBills \} \}, select: \{ supplierInvoiceId: true, status: true \} \}\)/)
 })
 
 test('recent RFQs link to the RFQ detail route, which is /app/procurement/rfq/:id', () => {

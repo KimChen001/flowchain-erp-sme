@@ -67,12 +67,14 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     group: "主导航",
     order: 10,
   }),
+  // Named as the sidebar names it (今日, "Today"); /app/today opens it too
+  // (FlowChainApp's redirect).
   page({
     id: "overview:risks",
     path: "/app/overview/risks",
     moduleId: "overview",
     moduleLabel: "首页",
-    label: "首页概览",
+    label: "今日",
     description: "查看真实待办与最近单据。",
     parentId: "overview",
     pageType: "analysis",
@@ -1466,7 +1468,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     panelId: "inventory-reorder",
     moduleLabel: "库存管理",
     label: "补货清单",
-    description: "按库存头寸预计降到再订货点的日期排列需要补货的物料。",
+    description: "按库存位置（含在途）预计降到再订货点的日期排列需要补货的物料。",
     parentId: "inventory",
     pageType: "list",
     currentActiveMenuId: "inventory:reorder",
@@ -2690,10 +2692,18 @@ export function breadcrumbRoutes(route: AppRouteDefinition) {
     surfaceIndex >= 0 ? ancestors.slice(surfaceIndex) : ancestors;
   const result =
     route.moduleId === "overview" ? visibleAncestors : [home, ...visibleAncestors];
-  return result.filter(
+  // A crumb is named as AppBreadcrumb names it: a sidebar entry by its
+  // sidebar label. A parent named like the page below it ("Today", then
+  // "Today") is left out, so the trail does not say it twice.
+  const crumbName = (item: AppRouteDefinition) =>
+    item.navigationVisibility === "PRIMARY" && item.navigationLabel ? item.navigationLabel : item.label;
+  const shown = result.filter(
     (item, index) =>
       item.showInBreadcrumb !== false &&
       result.findIndex((candidate) => candidate.id === item.id) === index,
+  );
+  return shown.filter(
+    (item, index) => index === shown.length - 1 || crumbName(item) !== crumbName(shown[index + 1]),
   );
 }
 

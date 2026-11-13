@@ -42,6 +42,25 @@ const PAYABLE_PAYMENT_STATUSES = ["approved", "export_ready", "partially_settled
 // both use this rule, so the count and the list it opens agree.
 const PAYABLE_OPEN_STATUSES = ["approved", "export_ready", "held", "partially_settled"];
 
+// Where an approved supplier invoice stands with its payment, from its
+// payable: to pay (nothing paid yet, held or not), partly paid, or paid. The
+// supplier invoice list and Today show it in place of "Approved"; the stored
+// invoice status stays "approved". An invoice that is not approved, or has
+// no payable (a seeded or imported one), or whose payable was cancelled has
+// none. Each payment state lists the payable statuses it covers, so the list
+// filter and its card count the same invoices.
+export const BILL_PAYMENT_STATUSES = Object.freeze({
+  to_pay: Object.freeze(["approved", "export_ready", "held"]),
+  partially_settled: Object.freeze(["partially_settled"]),
+  settled: Object.freeze(["settled"]),
+});
+export function billPaymentStatus(invoiceStatus, payableStatus) {
+  if (text(invoiceStatus) !== "approved" || !payableStatus) return null;
+  return Object.keys(BILL_PAYMENT_STATUSES).find((state) => BILL_PAYMENT_STATUSES[state].includes(text(payableStatus))) || null;
+}
+// The invoices in one payment state, for the list's status filter and cards.
+const billPaymentWhere = (state) => ({ status: "approved", payableObligation: { is: { status: { in: [...BILL_PAYMENT_STATUSES[state]] } } } });
+
 export function outstandingPayableWhere() {
   return { status: { in: PAYABLE_OPEN_STATUSES }, outstandingAmount: { gt: 0 } };
 }
@@ -177,6 +196,8 @@ function invoiceSummary(row, actor, capabilities) {
     totalAmount: decimal(row.totalAmount ?? row.amount),
     currency: row.currency,
     status: row.status,
+    // Once approved: to_pay, partially_settled or settled (billPaymentStatus).
+    paymentStatus: billPaymentStatus(row.status, row.payableObligation?.status),
     matchStatus: row.matchStatus,
     varianceAmount: decimal(row.varianceAmount),
     awaitingReceipt: awaitingReceipt(row),
@@ -264,10 +285,13 @@ export function createOperationalFinanceReadService({
     const withVariance = { OR: [{ AND: [{ varianceAmount: { not: null } }, { varianceAmount: { not: 0 } }] }, { matchStatus: "variance" }] };
     const noVariance = { AND: [{ OR: [{ varianceAmount: null }, { varianceAmount: 0 }] }, { OR: [{ matchStatus: null }, { matchStatus: { not: "variance" } }] }] };
     const variance = text(query.variance);
+    // to_pay, partially_settled and settled are payment states of approved
+    // invoices (billPaymentStatus); any other status is the stored one.
+    const status = text(query.status);
     const where = {
       tenantId: current.tenantId,
       ...whereAll(
-        text(query.status) ? { status: text(query.status) } : {},
+        BILL_PAYMENT_STATUSES[status] ? billPaymentWhere(status) : status ? { status } : {},
         text(query.currency) ? { currency: text(query.currency).toUpperCase() } : {},
         // The supplier filter names a supplier the list showed, so only a
         // role that sees supplier names filters by one.
@@ -285,11 +309,14 @@ export function createOperationalFinanceReadService({
       ),
     };
     // The metric cards count every invoice in the workspace, not one page.
-    const countStatus = (status) => prisma.supplierInvoice.count({ where: { tenantId: current.tenantId, status } });
-    const [total, rows, submitted, exception, matched, approved, supplierNames] = await Promise.all([
+    const countWhere = (extra) => prisma.supplierInvoice.count({ where: { tenantId: current.tenantId, ...extra } });
+    const countStatus = (status) => countWhere({ status });
+    const [total, rows, submitted, exception, matched, approved, toPay, partlyPaid, paid, supplierNames] = await Promise.all([
       prisma.supplierInvoice.count({ where }),
       prisma.supplierInvoice.findMany({
         where,
+        // The payable's status alone, for the payment state.
+        include: { payableObligation: { select: { status: true } } },
         orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         skip,
         take: pageSize,
@@ -298,6 +325,9 @@ export function createOperationalFinanceReadService({
       countStatus("exception"),
       countStatus("matched"),
       countStatus("approved"),
+      countWhere(billPaymentWhere("to_pay")),
+      countWhere(billPaymentWhere("partially_settled")),
+      countWhere(billPaymentWhere("settled")),
       partnerVisible
         ? prisma.supplierInvoice.findMany({ where: { tenantId: current.tenantId, supplierName: { not: null } }, distinct: ["supplierName"], select: { supplierName: true }, orderBy: { supplierName: "asc" }, take: 500 })
         : [],
@@ -316,7 +346,9 @@ export function createOperationalFinanceReadService({
       page,
       pageSize,
       total,
-      counts: { submitted, exception, matched, approved },
+      // approved counts every approved invoice; to_pay, partially_settled and
+      // settled split those with a payable by where its payment stands.
+      counts: { submitted, exception, matched, approved, to_pay: toPay, partially_settled: partlyPaid, settled: paid },
       suppliers: supplierNames.map((row) => row.supplierName).filter(Boolean),
       capabilities,
     };

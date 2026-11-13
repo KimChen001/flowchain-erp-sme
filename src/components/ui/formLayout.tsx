@@ -23,8 +23,9 @@ import { useI18n } from "../../i18n/I18n";
 //    names the control. Header fields use formGridClass: one column on
 //    phones, two from 768 px, four from 1024 px. A document line is a
 //    FormLineCard holding its own grid, which is also one column on phones.
-//    A table of lines (a receipt against an order) keeps its table and
-//    scrolls sideways on phones.
+//    A table of lines (a receipt against an order) keeps its table on wide
+//    screens; below 768 px each line becomes a FormLineCard with its fields
+//    stacked, so nothing a person must fill in sits off-screen.
 // 3. Required fields. A field the save is refused without gets Field's
 //    `required`: a "*" after the label (hidden from screen readers) and
 //    aria-required on the control. FormHeader shows "* Required" once.

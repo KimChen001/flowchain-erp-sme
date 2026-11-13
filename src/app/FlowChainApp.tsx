@@ -129,6 +129,7 @@ import {
   AcceptInvitationScreen,
   SignInConfirmScreen,
   SIGNED_OUT_REASON_KEY,
+  LOCAL_SIGNED_OUT_KEY,
   type LocalDevelopmentStatus,
 } from "./SignInScreens";
 import { PublicDataNoteBanner } from "./PublicDataNote";
@@ -569,6 +570,9 @@ export default function FlowChainApp() {
   useEffect(() => {
     if (location.pathname === "/" || location.pathname === "/app") {
       routerNavigate("/app/overview", { replace: true });
+    } else if (/^\/app\/today\/?$/.test(location.pathname)) {
+      // The sidebar calls the home page "Today"; its address opens it too.
+      routerNavigate(`/app/overview/risks${location.search}${location.hash}`, { replace: true });
     } else {
       const route = routeByPath(location.pathname);
       if (
@@ -1415,6 +1419,9 @@ export default function FlowChainApp() {
   function logout() {
     // End the server session too; the local sign-out happens either way.
     apiJson("/api/auth/logout", { method: "POST" }).catch(() => {});
+    // A local walkthrough signs in by itself; after a deliberate sign-out the
+    // sign-in page stays, so another local account can be chosen.
+    try { sessionStorage.setItem(LOCAL_SIGNED_OUT_KEY, "true"); } catch { /* optional */ }
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(CURRENT_USER_KEY);
     setAuthToken("");
@@ -1440,7 +1447,7 @@ export default function FlowChainApp() {
   }
 
   if (!authToken || !user) {
-    return <LoginScreen localStatus={localStatus} />;
+    return <LoginScreen localStatus={localStatus} onSignedIn={handleLogin} />;
   }
 
   return (

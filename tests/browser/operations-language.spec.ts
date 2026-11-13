@@ -68,13 +68,37 @@ for (const language of ['en-US', 'zh-CN']) {
   test(`matching states and empty results use ${language}`, async ({ page }) => {
     await signIn(page, language);
     let records = true;
+    // As the read model returns a match: ids for links, the supplier's invoice
+    // number and the GRN number to show and search (UI review 7).
+    const invoiceUuid = '3576e9ac-9f58-43f0-83f3-abddab051515';
+    const grnUuid = 'd2f6aeb0-bb04-4135-b428-5842c3faf474';
     await page.route('**/api/procurement/documents?*', route => route.fulfill({ json: { documents: records ? [{
-      id: 'INV-TEST', supplierName: 'Acme Components', relatedPo: 'PO-TEST', currency: 'USD',
+      id: `MATCH-${invoiceUuid}`, invoiceId: invoiceUuid, invoiceNumber: 'INV-TEST', grnId: grnUuid, grnNumber: 'GRN-202611-0009',
+      supplierName: 'Acme Components', relatedPo: 'PO-TEST', poNumber: 'PO-TEST', currency: 'USD',
       amount: 2400, poAmount: 2000, invoiceAmount: 2400, varianceAmount: 400,
       matchStatus: '差异待处理', blockingReason: 'PO 金额与发票金额存在差异，需复核后处理。',
+    }, {
+      id: 'MATCH-INV-OTHER', invoiceId: 'INV-OTHER', supplierName: 'Acme Components', relatedPo: 'PO-TEST', poNumber: 'PO-TEST', currency: 'USD',
+      invoiceAmount: 100, varianceAmount: 0, matchStatus: 'matched',
     }] : [] } }));
     await page.goto('/app/procurement/three-way-match');
-    await expect(page.getByTestId('three-way-match-record-list')).toContainText('INV-TEST');
+    const list = page.getByTestId('three-way-match-record-list');
+    await expect(list).toContainText('INV-TEST');
+    await expect(list).toContainText('GRN-202611-0009');
+    await expect(list).not.toContainText(invoiceUuid);
+    await expect(list).not.toContainText(grnUuid);
+    // The search finds a match by the numbers it shows.
+    const search = page.getByPlaceholder(language === 'en-US' ? 'Invoice, PO or receipt number' : '发票、采购订单或收货单号');
+    for (const needle of ['GRN-202611-0009', 'inv-test']) {
+      await search.fill(needle);
+      await expect(page.getByTestId('three-way-match-row')).toHaveCount(1);
+      await expect(page.getByTestId('three-way-match-row')).toContainText('INV-TEST');
+    }
+    await search.fill('');
+    await expect(page.getByTestId('three-way-match-row')).toHaveCount(2);
+    // The table fits the card: Status is not cut off.
+    const table = page.getByTestId('three-way-match-table');
+    expect(await table.evaluate((node) => node.scrollWidth <= node.parentElement!.clientWidth + 1)).toBe(true);
     if (language === 'en-US') await expectEnglish(page);
     else await expect(page.getByTestId('three-way-match-record-list')).toContainText('需复核后处理');
     records = false;

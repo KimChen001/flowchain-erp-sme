@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ArrowRight, CheckCircle2, Circle, RefreshCw } from "lucide-react";
 import { A, Card } from "../../components/ui";
@@ -11,15 +11,18 @@ import { apiJson } from "../../lib/api-client";
 import { useDocumentNumbers } from "../../lib/documentNumbers";
 import { formatDateTimeInTimeZone, formatLocaleAmount, formatQuantity, instantDayInTimeZone } from "../../lib/format";
 import { unitLabel } from "../../i18n/unitLabels";
+import { reorderListText } from "../inventory/reorderListCopy";
 import { useTodayCopy, type TodayCopyKey } from "./todayCopy";
+import { firstRowsByKind, reorderRequestHref, rowsPerKind, type ReorderRequest } from "./todayRows";
 import { DecisionSection, type TodayDecisions } from "./DecisionCards";
 import { useDecisionCopy } from "./decisionCopy";
 import { useTodayRowFormat } from "./todayRowFormat";
 
 // Today: the work that needs doing, from the rules the rest of the app uses
-// (GET /api/home/overview, server/domain/today-work.mjs), earliest date first;
-// the first-day checklist while any setup step is open; and the documents
-// changed most recently. Every row links to its record.
+// (GET /api/home/overview, server/domain/today-work.mjs), earliest date first,
+// with the earliest row of every kind among the first rows; the first-day
+// checklist while any setup step is open; and the documents changed most
+// recently. Every row links to its record.
 
 type Navigate = (moduleId: string, focus?: { entityType: string; entityId: string } | null, options?: any) => void;
 type WorkKind =
@@ -60,8 +63,19 @@ type HomeOverview = {
   generatedAt: string;
 };
 
-// Today shows its five earliest rows; "Show all" opens the rest.
+// Today shows five rows, the earliest of every kind among them (more when
+// there are more kinds); "Show all" opens the rest.
 const COLLAPSED = 5;
+
+// One request for the overview at a time. Opening Today from the menu
+// (/app/overview) draws the page, then the redirect to /app/overview/risks
+// draws it again: the second waits for the answer the first asked for
+// instead of asking again (two at once made each take twice as long).
+let overviewRequest: Promise<HomeOverview> | null = null;
+function requestOverview() {
+  if (!overviewRequest) overviewRequest = apiJson<HomeOverview>("/api/home/overview").finally(() => { overviewRequest = null; });
+  return overviewRequest;
+}
 const HIDDEN_KEYS: Record<string, TodayCopyKey> = {
   purchasing: "hiddenPurchasing",
   inventory: "hiddenInventory",
@@ -81,6 +95,11 @@ const SOURCE_KEYS: Record<string, TodayCopyKey> = {
   contracts: "sourceContracts",
 };
 const LINK = "fc-entity-link font-semibold text-blue-600 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
+// A text link or button at least 36 px tall on a phone, for a finger.
+const PHONE_TAP = "max-sm:inline-flex max-sm:min-h-9 max-sm:items-center";
+// An approved supplier invoice still to pay is in progress (blue); the
+// shared tones do not know the code.
+const documentTone = (status: string) => (status === "to_pay" ? "info" : statusToneOf(status));
 
 export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi, onReviewActionDraft }: { initialView?: string; onNavigate: Navigate; onOpenAi: () => void; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void }) {
   if (initialView === "ai") return <AiSuggestionsPage onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} onOpenAi={onOpenAi} />;
@@ -94,19 +113,29 @@ function RuntimeHomepage() {
   const [overview, setOverview] = useState<HomeOverview | null>(null);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   const [filter, setFilter] = useState<"all" | "overdue">("all");
+  // One kind of work only, chosen from a row's "{n} in all".
+  const [kindFilter, setKindFilter] = useState<WorkKind | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const mounted = useRef(true);
   // After a decision Today reloads quietly, so the cards do not flash.
   const load = async (quiet = false) => {
     if (!quiet) setState("loading");
     try {
-      setOverview(await apiJson<HomeOverview>("/api/home/overview"));
+      const next = await requestOverview();
+      if (!mounted.current) return;
+      setOverview(next);
       setState("loaded");
     } catch {
+      if (!mounted.current) return;
       setOverview(null);
       setState("error");
     }
   };
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    mounted.current = true;
+    void load();
+    return () => { mounted.current = false; };
+  }, []);
   const decisions = overview?.decisions?.available ? overview.decisions : null;
   const waiting = decisions?.waiting || [];
   const setAside = decisions?.setAside || [];
@@ -132,13 +161,30 @@ function RuntimeHomepage() {
   const items = (overview?.workItems || []).filter((item) => !decisionKeys.has(`${item.kind}:${item.recordId}`));
   const workTotal = Math.max(0, (overview?.workTotal ?? 0) - decisionKeys.size);
   const overdueTotal = Math.max(0, (overview?.overdue ?? 0) - setAside.filter((entry) => entry.row.overdueDays > 0).length);
-  const shown = filter === "overdue" ? items.filter((item) => item.overdueDays > 0) : items;
-  const visible = expanded ? shown : shown.slice(0, COLLAPSED);
+  const byTile = filter === "overdue" ? items.filter((item) => item.overdueDays > 0) : items;
+  const shown = kindFilter ? byTile.filter((item) => item.kind === kindFilter) : byTile;
+  // Collapsed: the earliest row of every kind, then the next earliest.
+  const firstRows = kindFilter ? shown.slice(0, COLLAPSED) : firstRowsByKind(shown, COLLAPSED);
+  const visible = expanded ? shown : firstRows;
+  // A kind's count shows once, on its first row in the list.
+  const leadRows = new Set(visible.filter((item, index) => visible.findIndex((other) => other.kind === item.kind) === index).map((item) => item.id));
+  const perKind = rowsPerKind(byTile);
+  // The response holds every row, so a kind's count is its true total.
+  const complete = !overview || overview.workTotal <= (overview.workItems || []).length;
   const recent = overview?.recentDocuments || [];
   // A unit reads in the interface language (unitLabel): "35 pcs" in English.
   const quantity = (value: unknown, unit?: string | null) => `${formatQuantity(value as number)}${unit ? ` ${unitLabel(unit, t.language, Number(value))}` : ""}`;
   // Amounts use the document currency; a hidden amount (null) is never shown as 0.
   const money = (value: unknown, currency?: string | null) => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "—" : formatLocaleAmount(Number(value), currency, locale, { maximumFractionDigits: 2 });
+  // A reorder row opens the purchase request the reorder list's "Create
+  // purchase request" opens for the item, with the same reason.
+  const reorderHref = (item: WorkItem) => {
+    const request = item.detail?.purchaseRequest as ReorderRequest | null | undefined;
+    if (!request?.itemId) return null;
+    const reason = reorderListText(t.language, "reason", { position: quantity(item.detail.position, item.detail.unit), reorderPoint: quantity(item.detail.reorderPoint, item.detail.unit), date: item.date || "" });
+    return reorderRequestHref(request, reason, item.detail.shortfall);
+  };
+  const showKind = (kind: WorkKind) => { setKindFilter(kind); setExpanded(true); };
 
   const reasons = (item: WorkItem): string[] => {
     const d = item.detail || {};
@@ -209,8 +255,10 @@ function RuntimeHomepage() {
         : t("changesNone");
 
   // The tiles read like the cards on top of every list page, white and
-  // full-width; the two counts filter the list below.
-  const tileClass = "flex flex-col items-start justify-start rounded-xl border bg-white p-4 text-left";
+  // full-width; the two counts filter the list below. On a phone the three
+  // sit in one short row without their notes, so the first task shows on the
+  // first screen.
+  const tileClass = "flex min-w-0 flex-col items-start justify-start rounded-xl border bg-white p-3 text-left sm:p-4";
   const tileStyle = { borderColor: A.border, boxShadow: "0 1px 2px rgba(15,23,42,0.04)" };
 
   return (
@@ -234,33 +282,33 @@ function RuntimeHomepage() {
         </Card>
       ) : null}
 
-      <div className={`grid gap-4 ${decisions ? "sm:grid-cols-2 lg:grid-cols-4" : "md:grid-cols-3"}`} data-testid="today-tiles">
+      <div className={`grid gap-2 sm:gap-4 ${decisions ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-3"}`} data-testid="today-tiles">
         {decisions ? (
           <a href="#today-decisions" className={`${tileClass} outline-none transition hover:bg-slate-50 focus:ring-2 focus:ring-blue-500 !no-underline`} style={{ ...tileStyle, borderColor: waiting.length ? "#bfdbfe" : A.border }} data-testid="today-tile-decisions">
             <div className="text-xs" style={{ color: A.sub }}>{d("tile")}</div>
-            <div className="mt-1 text-2xl font-semibold" style={{ color: waiting.length ? "#1d4ed8" : undefined }}>{waiting.length}</div>
-            <div className="mt-1 text-xs" style={{ color: A.gray2 }}>{d("tileNote")}</div>
+            <div className="mt-1 text-xl font-semibold sm:text-2xl" style={{ color: waiting.length ? "#1d4ed8" : undefined }}>{waiting.length}</div>
+            <div className="mt-1 hidden text-xs sm:block" style={{ color: A.gray2 }}>{d("tileNote")}</div>
           </a>
         ) : null}
         {tiles.map((tile) => (
           <button
             key={tile.id}
             type="button"
-            aria-pressed={filter === tile.id}
-            onClick={() => { setFilter(tile.id); setExpanded(false); }}
+            aria-pressed={filter === tile.id && !kindFilter}
+            onClick={() => { setFilter(tile.id); setKindFilter(null); setExpanded(false); }}
             className={`${tileClass} outline-none transition hover:bg-slate-50 focus:ring-2 focus:ring-blue-500`}
-            style={{ ...tileStyle, background: filter === tile.id ? "#f0f6ff" : A.white, borderColor: filter === tile.id ? "#bfdbfe" : A.border }}
+            style={{ ...tileStyle, background: filter === tile.id && !kindFilter ? "#f0f6ff" : A.white, borderColor: filter === tile.id && !kindFilter ? "#bfdbfe" : A.border }}
             data-testid={`today-tile-${tile.id}`}
           >
             <div className="text-xs" style={{ color: A.sub }}>{tile.label}</div>
-            <div className="mt-1 text-2xl font-semibold">{tile.value}</div>
-            <div className="mt-1 text-xs" style={{ color: A.gray2 }}>{tile.note}</div>
+            <div className="mt-1 text-xl font-semibold sm:text-2xl">{tile.value}</div>
+            <div className="mt-1 hidden text-xs sm:block" style={{ color: A.gray2 }}>{tile.note}</div>
           </button>
         ))}
         <div className={tileClass} style={tileStyle} data-testid="today-tile-changes" title={today ? t("changesNote", { date: day(today) }) : undefined}>
           <div className="text-xs" style={{ color: A.sub }}>{t("tileChanges")}</div>
-          <div className="mt-1 text-2xl font-semibold">{overview?.todayChanges ?? 0}</div>
-          {changesSub ? <div className="mt-1 text-xs" style={{ color: A.gray2 }} data-testid="today-tile-changes-note">{changesSub}</div> : null}
+          <div className="mt-1 text-xl font-semibold sm:text-2xl">{overview?.todayChanges ?? 0}</div>
+          {changesSub ? <div className="mt-1 hidden text-xs sm:block" style={{ color: A.gray2 }} data-testid="today-tile-changes-note">{changesSub}</div> : null}
         </div>
       </div>
 
@@ -288,6 +336,12 @@ function RuntimeHomepage() {
           </div>
           <button onClick={() => load()} aria-label={t("refresh")} title={t("refresh")} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100"><RefreshCw size={15} /></button>
         </div>
+        {state === "loaded" && kindFilter ? (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-3 py-2 text-xs" style={{ background: "#f0f6ff", color: A.label }} data-testid="today-kind-filter">
+            <span>{t("kindShowing", { kind: t(`kind_${kindFilter}` as TodayCopyKey) })}</span>
+            <button type="button" className="font-semibold text-blue-600 hover:underline" onClick={() => { setKindFilter(null); setExpanded(false); }}>{t("kindShowEvery")}</button>
+          </div>
+        ) : null}
         {state === "loading" ? (
           <div className="py-10 text-center text-xs">{t("loading")}</div>
         ) : shown.length === 0 ? (
@@ -306,17 +360,31 @@ function RuntimeHomepage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <span className="mb-1 inline-block rounded px-2 py-0.5 text-xs font-medium sm:hidden" style={tone(item)}>{dateText(item)}</span>
-                  <div className="text-sm font-medium">{t(`kind_${item.kind}` as TodayCopyKey)}</div>
+                  <div className="flex flex-wrap items-baseline gap-x-2 text-sm font-medium">
+                    <span>{t(`kind_${item.kind}` as TodayCopyKey)}</span>
+                    {/* How many rows of this kind there are, on the kind's first row; it lists only those. */}
+                    {!kindFilter && leadRows.has(item.id) && (perKind.get(item.kind) || 0) > 1 ? (
+                      <button type="button" onClick={() => showKind(item.kind)} className={`text-xs font-medium text-blue-600 hover:underline ${PHONE_TAP} max-sm:px-1`} data-testid="today-kind-all">
+                        {complete ? t("kindAll", { n: perKind.get(item.kind) || 0 }) : t("kindOnly")}
+                      </button>
+                    ) : null}
+                  </div>
                   <Link to={item.href} className={`mt-0.5 inline-block text-xs ${LINK}`}>{labelOf(item)}</Link>
                   <div className="text-xs" style={{ color: A.sub }}>{reasons(item).join(" · ")}</div>
-                  {item.actionHref ? <Link to={item.actionHref} className={`text-xs ${LINK}`}>{t("openReorderList")}</Link> : null}
+                  {item.kind === "reorder_now" || item.actionHref ? (
+                    // Each link 36 px tall on a phone, with room between them.
+                    <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs max-sm:gap-x-6">
+                      {item.kind === "reorder_now" && reorderHref(item) ? <Link to={reorderHref(item)!} className={`${LINK} ${PHONE_TAP}`} data-testid="today-reorder-request">{t("createRequest")}</Link> : null}
+                      {item.actionHref ? <Link to={item.actionHref} className={`${LINK} ${PHONE_TAP}`} data-testid="today-reorder-list">{t("openReorderList")}</Link> : null}
+                    </div>
+                  ) : null}
                 </div>
                 <Link to={item.href} className="p-1" aria-label={labelOf(item)}><ArrowRight size={16} /></Link>
               </li>
             ))}
           </ul>
         )}
-        {state === "loaded" && shown.length > COLLAPSED ? (
+        {state === "loaded" && shown.length > firstRows.length ? (
           <button className="mt-2 text-xs text-blue-600" onClick={() => setExpanded((value) => !value)}>{expanded ? t("showFewer") : t("showAll", { n: shown.length })}</button>
         ) : null}
         {state === "loaded" && filter === "all" && overview && workTotal > items.length ? (
@@ -351,7 +419,7 @@ function RuntimeHomepage() {
                   <tr key={`${row.type}-${row.id}`} className={listRowClass} style={listRowStyle(index, recent.length)}>
                     <td className={tdNameClass} style={{ color: A.sub }}>{t(`type_${row.type}` as TodayCopyKey) || row.type}</td>
                     <td className={tdIdClass}><Link to={row.canonicalRoute} className={LINK}>{row.number}</Link></td>
-                    <td className={tdNowrapClass}><StatusChip label={t.status(row.status)} tone={statusToneOf(row.status)} /></td>
+                    <td className={tdNowrapClass}><StatusChip label={t.status(row.status)} tone={documentTone(row.status)} /></td>
                     <td className={`${tdNameClass} max-w-[240px] truncate`} title={row.partner || undefined}>{row.partner || "—"}</td>
                     <td className={tdNumericRightClass}>{money(row.amount, row.currency)}</td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{formatDateTimeInTimeZone(row.updatedAt, locale, timezone)}</td>
