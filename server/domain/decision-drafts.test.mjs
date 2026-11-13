@@ -66,3 +66,28 @@ test('only the drafted kinds get drafts, and only open requests count', () => {
   assert.deepEqual([...open.keys()], ['I-1'])
   assert.equal(open.get('I-1').length, 1)
 })
+
+test('a held supplier invoice gets its differences, their causes and the supplier contact from Today\'s source', () => {
+  const sources = {
+    invoiceExceptions: {
+      amountsVisible: true,
+      invoices: [{ id: 'INV-1', invoiceNumber: 'BILL-7', supplierId: 'SUP-1', supplierName: 'Acme Home Goods', orderId: 'PO-A', orderNumber: 'PO-202610-0022', currency: 'GBP' }],
+      exceptions: [
+        { id: 'EX-1', matchLineId: 'L1', supplierInvoiceId: 'INV-1', exceptionType: 'price', status: 'open', expectedValue: '1.27', actualValue: '1.32' },
+        // Another invoice's difference is not this card's.
+        { id: 'EX-9', matchLineId: 'L9', supplierInvoiceId: 'INV-9', exceptionType: 'quantity', status: 'open' },
+      ],
+      lines: { L1: { sku: '85123A', unit: 'pcs', orderedQuantity: '240', receivedQuantity: '240', previouslyInvoicedQuantity: '0', invoiceQuantity: '240', poUnitPrice: '1.27', invoiceUnitPrice: '1.32' } },
+      orderPrices: [{ sku: '85123A', unitPrice: '1.32', orderId: 'PO-B', orderNumber: 'PO-202611-0003', supplierId: 'SUP-1' }, { sku: '85123A', unitPrice: '1.32', orderId: 'PO-X', orderNumber: 'PO-OTHER', supplierId: 'SUP-2' }],
+    },
+  }
+  const context = { suppliers: [{ id: 'SUP-1', name: 'Acme Home Goods', contactName: 'Order desk', email: 'orders@acme.example' }] }
+  const drafts = buildDecisionDrafts([{ kind: 'bill_exception', recordId: 'INV-1' }, { kind: 'bill_exception', recordId: 'INV-404' }], { context, sources, now, timeZone })
+  const draft = drafts['bill_exception:INV-1']
+  assert.equal(draft.type, 'invoice_exception')
+  assert.equal(draft.step, 'review_price')
+  assert.deepEqual(draft.differences.map((row) => [row.exceptionId, row.cause, row.evidenceOrder]), [['EX-1', 'price_changed', 'PO-202611-0003']])
+  assert.equal(draft.supplier.email, 'orders@acme.example')
+  // An invoice the source did not read has no draft; its card shows without one.
+  assert.equal(drafts['bill_exception:INV-404'], undefined)
+})

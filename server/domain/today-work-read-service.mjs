@@ -5,6 +5,7 @@ import { overdueReceivableWhere } from './operational-finance-o2c-read-service.m
 import { createReorderListReadService, stockTruncatedSubjects } from './reorder-list-read-service.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
+import { procurementDocumentNumber } from '../../shared/document-numbering.mjs'
 
 // The records Today needs beyond the business read context, each read as its
 // own page reads it and only for a reader who may open that page:
@@ -168,6 +169,50 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
         sources.billPayableStatuses = Object.fromEntries(rows.map((row) => [row.supplierInvoiceId, row.status]))
       } catch { /* shown as approved */ }
     })())
+  }
+  // Invoices the three-way match held: their blocking differences, the match
+  // lines, the order each bills and this supplier's order prices for the same
+  // SKUs, for the step Today drafts for each (invoice-exception-draft.mjs).
+  // Prices only for a reader who may see amounts.
+  const heldBills = access.collections.supplierInvoices
+    ? [...new Set((rawContext?.supplierInvoices || []).filter((row) => row?.status === 'exception' && row.id).map((row) => String(row.id)))].slice(0, FINANCE_LIMIT)
+    : []
+  if (heldBills.length) {
+    reads.push(attempt('invoice_exceptions', async () => {
+      const [invoices, exceptions] = await Promise.all([
+        prisma.supplierInvoice.findMany({ where: { tenantId, id: { in: heldBills } }, select: { id: true, invoiceNumber: true, supplierId: true, supplierName: true, relatedPoId: true, currency: true } }),
+        prisma.financeMatchException.findMany({
+          where: { tenantId, supplierInvoiceId: { in: heldBills }, status: { in: ['open', 'rejected'] } },
+          select: { id: true, matchLineId: true, supplierInvoiceId: true, exceptionType: true, status: true, expectedValue: true, actualValue: true, varianceValue: true },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        }),
+      ])
+      const lineIds = [...new Set(exceptions.map((row) => row.matchLineId).filter(Boolean))]
+      const orderIds = [...new Set(invoices.map((row) => row.relatedPoId).filter(Boolean))]
+      const supplierIds = [...new Set(invoices.map((row) => row.supplierId).filter(Boolean))]
+      const [lines, orders] = await Promise.all([
+        lineIds.length ? prisma.threeWayMatchLine.findMany({ where: { id: { in: lineIds } }, select: { id: true, sku: true, unit: true, orderedQuantity: true, receivedQuantity: true, previouslyInvoicedQuantity: true, invoiceQuantity: true, poUnitPrice: true, invoiceUnitPrice: true } }) : [],
+        orderIds.length ? prisma.purchaseOrder.findMany({ where: { tenantId, id: { in: orderIds } }, select: { id: true, number: true, metadata: true } }) : [],
+      ])
+      const skus = [...new Set(lines.map((row) => row.sku).filter(Boolean))]
+      const orderLines = access.amounts && skus.length && supplierIds.length
+        ? await prisma.purchaseOrderLine.findMany({
+          where: { sku: { in: skus }, purchaseOrder: { tenantId, supplierId: { in: supplierIds } } },
+          select: { sku: true, unitPrice: true, purchaseOrder: { select: { id: true, number: true, metadata: true, supplierId: true } } },
+          take: 2000,
+        })
+        : []
+      const numberOf = (order) => (order ? procurementDocumentNumber(order) : null)
+      const ordersById = new Map(orders.map((order) => [order.id, order]))
+      const hidden = (value) => (access.amounts ? decimal(value) : null)
+      sources.invoiceExceptions = {
+        amountsVisible: Boolean(access.amounts),
+        invoices: invoices.map((row) => ({ id: row.id, invoiceNumber: row.invoiceNumber || row.id, supplierId: row.supplierId, supplierName: row.supplierName, orderId: row.relatedPoId, orderNumber: numberOf(ordersById.get(row.relatedPoId)) || row.relatedPoId || null, currency: row.currency })),
+        exceptions: exceptions.map((row) => ({ ...row, expectedValue: row.exceptionType === 'quantity' ? decimal(row.expectedValue) : hidden(row.expectedValue), actualValue: row.exceptionType === 'quantity' ? decimal(row.actualValue) : hidden(row.actualValue), varianceValue: row.exceptionType === 'quantity' ? decimal(row.varianceValue) : hidden(row.varianceValue) })),
+        lines: Object.fromEntries(lines.map((row) => [row.id, { sku: row.sku, unit: row.unit, orderedQuantity: decimal(row.orderedQuantity), receivedQuantity: decimal(row.receivedQuantity), previouslyInvoicedQuantity: decimal(row.previouslyInvoicedQuantity), invoiceQuantity: decimal(row.invoiceQuantity), poUnitPrice: hidden(row.poUnitPrice), invoiceUnitPrice: hidden(row.invoiceUnitPrice) }])),
+        orderPrices: orderLines.map((row) => ({ sku: row.sku, unitPrice: decimal(row.unitPrice), orderId: row.purchaseOrder?.id || null, orderNumber: numberOf(row.purchaseOrder), supplierId: row.purchaseOrder?.supplierId || null })),
+      }
+    }))
   }
   // The same counts and options the assistant's setup_status reads (first-run-setup.mjs).
   let setup = null

@@ -16,7 +16,11 @@ import { aiSkillDaysBetween } from './ai-skill-signals.mjs'
 // materially (comesBack). Everything here is pure: the repository stores the
 // items and the routes call these functions.
 
-export const DRAFTED_DECISION_KINDS = Object.freeze(['reorder_now', 'purchase_order_overdue', 'purchase_request_to_convert'])
+// bill_exception: a supplier invoice the three-way match held (2026-11-13).
+export const DRAFTED_DECISION_KINDS = Object.freeze(['reorder_now', 'purchase_order_overdue', 'purchase_request_to_convert', 'bill_exception'])
+// The kinds whose card prepares a message to the supplier, so a person may
+// record that it was sent or copied ("chased").
+export const SUPPLIER_MESSAGE_KINDS = Object.freeze(['purchase_order_overdue', 'bill_exception'])
 // Who may decide: every drafted action (a purchase request, a promised date,
 // orders from a request) needs this permission, so deciding needs it too.
 export const DECISION_PERMISSION = 'procurement.purchase_order.revise'
@@ -233,7 +237,7 @@ export function parseDecision(input = {}, { kind, today } = {}) {
     return { decision: option, returnOn: null, reasonCode, note: note || null }
   }
   if (option === 'chased') {
-    if (kind !== 'purchase_order_overdue') throw fail('DECISION_OPTION_INVALID', 'Only an overdue purchase order can be marked chased.', 'option')
+    if (!SUPPLIER_MESSAGE_KINDS.includes(kind)) throw fail('DECISION_OPTION_INVALID', 'Only an overdue purchase order or a held supplier invoice can be marked chased.', 'option')
     return { decision: option, returnOn: null, reasonCode: null, note: note || null }
   }
   // accepted: the documents the person created from the draft.

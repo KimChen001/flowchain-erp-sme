@@ -18,6 +18,7 @@ import { createCustomerInvoiceDocumentReadService } from "../domain/customer-inv
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { notifyApprovalWaiting } from "../notifications/approval-notifier.mjs";
+import { raiseInvoiceExceptionDecision } from "../services/invoice-exception-decision.mjs";
 
 const capabilityIds = [
   "supplier-invoice",
@@ -482,6 +483,8 @@ export async function handleOperationalFinanceRoute(ctx) {
           documentType: "supplier_invoice",
           documentId: result?.entityId,
         });
+        // A match that holds the bill raises its decision on Today at once.
+        void raiseInvoiceExceptionDecision(ctx, result?.entityId || invoiceId);
         return true;
       }
       if (ctx.req.method === "POST" && action === "approve-preview") {

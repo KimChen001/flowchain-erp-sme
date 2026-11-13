@@ -105,6 +105,29 @@ const EN = {
   reorderShortNoQuantity: "Request; enter the quantity",
   moreDecisions: "Show {n} more",
   fewerDecisions: "Show fewer",
+  // A held supplier invoice (invoice-exception-draft.mjs).
+  invoiceShortPrice: "{sku}: invoiced at {invoice}, ordered at {order}{percent}",
+  invoiceShortPriceHidden: "{sku}: the unit price differs from the order",
+  invoiceShortQuantity: "{sku}: {invoiced} invoiced, {received} received",
+  invoiceShortAmount: "{sku}: line amount off by {variance}",
+  invoiceShortMore: " and {n} more",
+  invoiceForOrder: "Invoice {invoice} for {order}",
+  invoiceStep_ask_supplier: "A message asking the supplier for a corrected invoice or a credit note",
+  invoiceStep_review_price: "The supplier's price likely changed: check it, then approve the difference on the invoice or ask the supplier",
+  invoiceStep_wait_receipt: "The invoice bills goods not yet received: check the receipt, then match again",
+  cause_price_changed: "{order} already orders at {price}, so the price likely changed and this order kept the old one",
+  cause_invoice_price: "no order has this price, so the invoice is likely priced wrong",
+  cause_over_ordered: "more is invoiced than the {ordered} ordered",
+  cause_already_invoiced: "{previous} of what was received was invoiced before, so this may bill it again",
+  cause_not_yet_received: "{missing} not received yet, or not posted as received",
+  cause_line_amount: "the line amount is not the quantity times the order price",
+  cause_hidden: "your role cannot see prices",
+  showInvoiceMessage: "Show the message to the supplier",
+  copyAndContacted: "Copy and mark contacted",
+  invoiceCopied: "Copied. Marked contacted; it comes back in 3 workdays if the invoice is still held.",
+  openInvoice: "Open the invoice",
+  checkReceipt: "Check the receipt",
+  aside_contacted: "Supplier contacted on {date}",
 } as const;
 
 export type DecisionCopyKey = keyof typeof EN;
@@ -203,6 +226,28 @@ const ZH: Record<DecisionCopyKey, string> = {
   reorderShortNoQuantity: "建议申请，数量待填",
   moreDecisions: "再显示 {n} 项",
   fewerDecisions: "收起",
+  invoiceShortPrice: "{sku} 发票单价 {invoice}，订单单价 {order}{percent}",
+  invoiceShortPriceHidden: "{sku} 单价与订单不一致",
+  invoiceShortQuantity: "{sku} 开票 {invoiced}，已收货 {received}",
+  invoiceShortAmount: "{sku} 行金额差 {variance}",
+  invoiceShortMore: " 等 {n} 处",
+  invoiceForOrder: "发票 {invoice}，对应 {order}",
+  invoiceStep_ask_supplier: "给供应商的信息：请对方开更正发票或红字发票",
+  invoiceStep_review_price: "供应商可能已调价：核对后在发票页批准差异，或联系供应商",
+  invoiceStep_wait_receipt: "发票开了还没收到的货：先核对收货，收货后重新匹配",
+  cause_price_changed: "{order} 已按 {price} 下单，可能已调价，本单仍是旧价",
+  cause_invoice_price: "没有订单是这个价，发票可能开错了价",
+  cause_over_ordered: "开票合计超过订货数 {ordered}",
+  cause_already_invoiced: "已收的货中有 {previous} 此前开过票，可能重复开票",
+  cause_not_yet_received: "还有 {missing} 未收货，或未登记收货",
+  cause_line_amount: "行金额不等于数量乘订单单价",
+  cause_hidden: "你的角色看不到价格",
+  showInvoiceMessage: "查看给供应商的信息",
+  copyAndContacted: "复制并记为已联系",
+  invoiceCopied: "已复制，并记为已联系。3 个工作日后发票仍被挂起会再次提醒。",
+  openInvoice: "打开发票",
+  checkReceipt: "核对收货",
+  aside_contacted: "{date} 已联系供应商",
 };
 
 const COPY: Record<"en-US" | "zh-CN", Record<DecisionCopyKey, string>> = { "en-US": EN, "zh-CN": ZH };
@@ -220,6 +265,60 @@ export function useDecisionCopy() {
     return decisionText(language, n === 1 && one in EN ? one : key, { n, ...params });
   }, [language]);
   return Object.assign(t, { count, language });
+}
+
+// The message about a held invoice, in the language picked on the card:
+// what differs, then a request for a corrected invoice or a credit note.
+// Amounts and quantities arrive formatted.
+export type InvoiceCorrectionFacts = {
+  invoiceNumber: string;
+  orderNumber: string | null;
+  contactName: string | null;
+  differences: Array<{ kind: "price" | "quantity" | "amount"; sku: string; expected: string; actual: string; received: string; previouslyInvoiced: string | null }>;
+  moreDifferences: number;
+};
+
+export function invoiceCorrectionMessage(language: "en-US" | "zh-CN", facts: InvoiceCorrectionFacts) {
+  if (language === "zh-CN") {
+    const lines = facts.differences.map((entry) => entry.kind === "price"
+      ? `- ${entry.sku}：发票单价 ${entry.actual}，订单单价 ${entry.expected}`
+      : entry.kind === "quantity"
+        ? `- ${entry.sku}：发票数量 ${entry.actual}，我方已收货 ${entry.received}${entry.previouslyInvoiced ? `，此前已开票 ${entry.previouslyInvoiced}` : ""}`
+        : `- ${entry.sku}：发票行金额 ${entry.actual}，按订单应为 ${entry.expected}`);
+    if (facts.moreDifferences > 0) lines.push(`- 另有 ${facts.moreDifferences} 处`);
+    return {
+      subject: `发票 ${facts.invoiceNumber}${facts.orderNumber ? ` 与采购订单 ${facts.orderNumber}` : ""} 不一致`,
+      body: [
+        `${facts.contactName ? `${facts.contactName}，` : ""}您好：`,
+        "",
+        `贵司发票 ${facts.invoiceNumber}${facts.orderNumber ? `（对应我方采购订单 ${facts.orderNumber}）` : ""}在核对时有以下差异：`,
+        ...lines,
+        "",
+        "请核对后开具更正发票或红字发票。如价格已调整，请告知调整依据和生效日期。",
+        "",
+        "谢谢！",
+      ].join("\n"),
+    };
+  }
+  const lines = facts.differences.map((entry) => entry.kind === "price"
+    ? `- ${entry.sku}: invoiced at ${entry.actual}, our order price is ${entry.expected}`
+    : entry.kind === "quantity"
+      ? `- ${entry.sku}: ${entry.actual} invoiced, ${entry.received} received${entry.previouslyInvoiced ? `, ${entry.previouslyInvoiced} invoiced before` : ""}`
+      : `- ${entry.sku}: line amount ${entry.actual}, ${entry.expected} by our order`);
+  if (facts.moreDifferences > 0) lines.push(`- and ${facts.moreDifferences} more`);
+  return {
+    subject: `Invoice ${facts.invoiceNumber}${facts.orderNumber ? ` and purchase order ${facts.orderNumber}` : ""}: differences`,
+    body: [
+      `Dear ${facts.contactName || "Sir or Madam"},`,
+      "",
+      `Checking your invoice ${facts.invoiceNumber}${facts.orderNumber ? ` against our purchase order ${facts.orderNumber}` : ""}, we found these differences:`,
+      ...lines,
+      "",
+      "Please send a corrected invoice or a credit note. If your price has changed, please tell us why and from when.",
+      "",
+      "Thank you,",
+    ].join("\n"),
+  };
 }
 
 // The follow-up to a supplier, in the language picked on the card. Dates and

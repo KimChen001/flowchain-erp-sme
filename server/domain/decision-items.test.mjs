@@ -103,7 +103,8 @@ test('Today splits into what waits for a decision, what is set aside, and the re
   assert.deepEqual(waiting.map((entry) => entry.key), ['purchase_order_overdue:PO-1', 'purchase_request_to_convert:PR-1'])
   assert.deepEqual(setAside.map((entry) => entry.key), ['reorder_now:ITEM-1'])
   assert.deepEqual(work.map(decisionKey), ['sales_order_to_ship:SO-1'])
-  assert.deepEqual(DRAFTED_DECISION_KINDS, ['reorder_now', 'purchase_order_overdue', 'purchase_request_to_convert'])
+  // A held supplier invoice has a card too (2026-11-13).
+  assert.deepEqual(DRAFTED_DECISION_KINDS, ['reorder_now', 'purchase_order_overdue', 'purchase_request_to_convert', 'bill_exception'])
 })
 
 test('a decision keeps the condition it was taken on', () => {
@@ -123,6 +124,8 @@ test('decisions are checked before they are stored', () => {
   assert.throws(() => parse({ option: 'not_needed', reasonCode: 'seasonal', note: 'x'.repeat(201) }), { code: 'DECISION_NOTE_TOO_LONG' })
   assert.throws(() => parse({ option: 'chased' }), { code: 'DECISION_OPTION_INVALID' })
   assert.equal(parse({ option: 'chased' }, 'purchase_order_overdue').decision, 'chased')
+  // The supplier was asked about a held invoice.
+  assert.equal(parse({ option: 'chased' }, 'bill_exception').decision, 'chased')
   assert.throws(() => parse({ option: 'covered' }), { code: 'DECISION_OPTION_INVALID' }, 'only the system records coverage')
   assert.deepEqual(parse({ option: 'accepted', documentType: 'purchase_order', documentIds: ['PO-9', 'PO-9', 'PO-10'] }, 'purchase_request_to_convert').documentIds, ['PO-9', 'PO-10'])
   assert.throws(() => parse({ option: 'accepted', documentType: 'invoice', documentIds: ['X'] }), { code: 'DECISION_DOCUMENT_INVALID' })

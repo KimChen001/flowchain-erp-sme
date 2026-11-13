@@ -90,3 +90,19 @@ test('the decisions part carries keys of the drafted kinds only', () => {
   assert.equal(safeParsePartProps('decisions', { keys: [] }).success, false)
   assert.equal(safeParsePartProps('decisions', { keys: Array.from({ length: 6 }, (_, i) => `reorder_now:I-${i}`) }).success, false)
 })
+
+test('a held invoice reads as its differences and causes, never the supplier\'s address', () => {
+  const draft = {
+    type: 'invoice_exception', invoiceNumber: 'BILL-7', orderNumber: 'PO-202610-0022', currency: 'GBP', step: 'review_price', moreDifferences: 0,
+    supplier: { name: 'Acme Home Goods', contactName: 'Order desk', email: 'orders@acme.example' },
+    differences: [{ exceptionId: 'EX-1', kind: 'price', cause: 'price_changed', sku: '85123A', unit: 'pcs', expected: 1.27, actual: 1.32, percent: 3.9, evidenceOrder: 'PO-202611-0003' }],
+  }
+  const result = decisionItemsResult({ available: true, waiting: [{ key: 'bill_exception:INV-1', row: { kind: 'bill_exception', entityType: 'supplier_invoice', recordId: 'INV-1', label: 'BILL-7' }, draft }] })
+  const prepared = result.waiting[0].prepared
+  assert.equal(prepared.type, 'invoice_exception')
+  assert.equal(prepared.step, 'review_price')
+  assert.deepEqual([prepared.differences[0].cause, prepared.differences[0].orderPrice, prepared.differences[0].invoicePrice, prepared.differences[0].orderWithInvoicePrice], ['price_changed', 1.27, 1.32, 'PO-202611-0003'])
+  assert.equal(prepared.emailOnRecord, true)
+  const written = JSON.stringify(result)
+  assert.ok(!written.includes('orders@acme.example') && !written.includes('Order desk'))
+})
