@@ -88,5 +88,6 @@ test("detail page titles are one H1 in the shared page-title style", () => {
   // The item is the H1 on its own page, an H2 when opened in place under the list's H1.
   const item = read("src/modules/master-data/ItemMasterWorkbench.tsx");
   assert.match(item, /const ItemTitle = onDetailRoute \? "h1" : "h2"/);
-  assert.match(item, /<ItemTitle className=\{onDetailRoute \? "fc-page-title mt-2"/);
+  // "Back to items" sits above the card since UI review 9, so the title starts the card.
+  assert.match(item, /<ItemTitle className=\{onDetailRoute \? "fc-page-title"/);
 });
