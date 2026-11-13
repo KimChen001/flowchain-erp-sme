@@ -94,6 +94,23 @@ export function labelListTable(table: HTMLTableElement) {
   }
 }
 
+// A cell cut short with an ellipsis ("Supplier of 20xxx codes ...") shows
+// its whole text on hover. A title the page set itself is kept; one set here
+// follows the text when the row changes.
+export function titleTruncatedText(element: HTMLElement) {
+  const nodes = [element, ...Array.from(element.querySelectorAll<HTMLElement>(".truncate"))].filter((node) => node.classList.contains("truncate"));
+  for (const node of nodes) {
+    if (node.title && node.dataset.autoTitle !== "true") continue;
+    const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+    if (!text) {
+      if (node.dataset.autoTitle === "true") { node.removeAttribute("title"); delete node.dataset.autoTitle; }
+      continue;
+    }
+    if (node.title !== text) node.title = text;
+    node.dataset.autoTitle = "true";
+  }
+}
+
 const watchedLists = new WeakSet<HTMLElement>();
 
 // Ref for a list's table container (ListCard sets it on its body): labels the
@@ -107,6 +124,7 @@ export function listTableCardsRef(element: HTMLElement | null) {
     frame = 0;
     const tables = element instanceof HTMLTableElement ? [element] : Array.from(element.querySelectorAll("table"));
     tables.forEach(labelListTable);
+    titleTruncatedText(element);
   };
   label();
   new MutationObserver(() => {

@@ -5,8 +5,10 @@
 // app's own commands leave them; everything that moves stock goes through the
 // commands, in date order, so stock, movements, order status and the reorder
 // list agree:
-//   1. the workspace profile (name, currency, timezone), suppliers, customers,
-//      items with their [assumed] thresholds and empty stock records;
+//   1. the workspace profile (name, currency, timezone), suppliers, customers
+//      (UCI: on NET30 [assumed], with that payment term added when the
+//      workspace lacks it), items with their [assumed] thresholds and empty
+//      stock records;
 //   2. the [public data] sales orders, confirmed; the [assumed] purchase
 //      orders, issued, and for every one that has arrived an unposted receipt;
 //   3. opening stock the day before the window (inventory adjustment commands);
@@ -23,6 +25,7 @@ import { createInventoryOperationsCommandService } from '../../server/domain/inv
 import { createReceivingPostingCommandService } from '../../server/domain/receiving-posting-command-service.mjs'
 import { saveItemSupplier } from '../../server/domain/master-data-commands.mjs'
 import { applySupplierTierChange } from '../../server/domain/supplier-tier-command.mjs'
+import { findPaymentTerm } from '../../server/domain/standard-payment-terms.mjs'
 import { backfillTenantAuthorization } from '../../server/auth/authorization-backfill.mjs'
 import { HISTORY_PERMISSIONS, scenarioActor, scenarioCalendar, shipHistoryOrder } from '../seed-history.mjs'
 import { publicDataPlanCounts } from './plan.mjs'
@@ -100,6 +103,17 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
         payload: { id: customer.id, code: customer.code, name: customer.name, status: 'active', currency: profile.currency, address: customer.country, ...(plan.dataset === 'uci' ? { paymentTerms: `NET${assumptions.paymentTermsDays}` } : {}), ...metadata, source: customer.source },
       })),
     })
+  }
+  // UCI customers are recorded on NET30 [assumed], and the invoice form fills
+  // the due date only from a payment term of the workspace. A workspace made
+  // by setup-pilot-workspace has none, so the term the customers name is added
+  // here when it is missing; terms already in the workspace stay as they are.
+  if (plan.dataset === 'uci') {
+    const code = `NET${assumptions.paymentTermsDays}`
+    const terms = await prisma.paymentTerm.findMany({ where: { tenantId }, select: { code: true, name: true } })
+    if (!findPaymentTerm(terms, code)) {
+      await prisma.paymentTerm.create({ data: { id: `${P}-PT-${code}`, tenantId, code, name: `Net ${assumptions.paymentTermsDays}`, days: assumptions.paymentTermsDays, metadata: { ...metadata, assumed: true } } })
+    }
   }
   const items = new Map(plan.items.map((item) => [item.key, { ...item, id: `${P}-ITEM-${safeId(item.sku)}`, balanceId: `${P}-BAL-${safeId(item.sku)}` }]))
   await prisma.item.createMany({

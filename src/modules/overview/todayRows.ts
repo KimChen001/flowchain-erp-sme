@@ -18,6 +18,19 @@ export function firstRowsByKind<T extends { kind: string }>(rows: T[], count: nu
   return rows.filter((_, index) => picked.has(index));
 }
 
+// Today's work as one group per kind (owner 11/13: sixty rows of three lines
+// were too much): the groups in the order of their earliest row, each with
+// its rows in the list's order (earliest date first).
+export function groupsByKind<T extends { kind: string }>(rows: T[]): Array<{ kind: T["kind"]; rows: T[] }> {
+  const groups = new Map<string, { kind: T["kind"]; rows: T[] }>();
+  for (const row of rows) {
+    const group = groups.get(row.kind);
+    if (group) group.rows.push(row);
+    else groups.set(row.kind, { kind: row.kind, rows: [row] });
+  }
+  return [...groups.values()];
+}
+
 // How many rows of each kind the list holds.
 export function rowsPerKind(rows: Array<{ kind: string }>): Map<string, number> {
   const counts = new Map<string, number>();

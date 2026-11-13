@@ -86,7 +86,8 @@ test("SME navigation, direct access and browser history follow the route manifes
       exact: true,
     }),
   ).toHaveAttribute("aria-current", "page");
-  await expect(page.getByTestId("app-breadcrumb")).toHaveText("今日");
+  // A one-step trail would only repeat the tab and title, so Today has none.
+  await expect(page.getByTestId("app-breadcrumb")).toHaveCount(0);
   // /app/today opens the same page.
   await page.goto("/app/today");
   await expect(page).toHaveURL(/\/app\/overview\/risks$/);
@@ -103,10 +104,12 @@ test("SME navigation, direct access and browser history follow the route manifes
     "供应商",
     "物料",
     "报表",
-    "AI 助手",
   ]) {
     await expect(sidebar.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
+  // The assistant opens from its floating button, not a second sidebar entry.
+  await expect(sidebar.getByRole("button", { name: "AI 助手", exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("ai-assistant-toggle")).toBeVisible();
   for (const hidden of [
     "应付与应收",
     "系统参数",

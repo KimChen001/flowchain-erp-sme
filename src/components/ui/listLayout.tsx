@@ -32,9 +32,10 @@ export function useListCopy() {
 }
 
 export const listButtonClass = {
-  secondary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-50 px-3 ${typography.denseButton} text-slate-900 hover:bg-slate-100`,
-  export: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-50 px-3 ${typography.denseButton} text-blue-600 hover:bg-blue-100`,
-  primary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 ${typography.denseButton} text-white hover:bg-blue-700 disabled:opacity-60`,
+  // 32 px on a desk, 36 px on a phone, for a finger.
+  secondary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-50 px-3 max-sm:h-9 ${typography.denseButton} text-slate-900 hover:bg-slate-100`,
+  export: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-50 px-3 max-sm:h-9 ${typography.denseButton} text-blue-600 hover:bg-blue-100`,
+  primary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 max-sm:h-9 ${typography.denseButton} text-white hover:bg-blue-700 disabled:opacity-60`,
 };
 
 // Buttons inside a table row: the main one tinted, the others neutral. On a

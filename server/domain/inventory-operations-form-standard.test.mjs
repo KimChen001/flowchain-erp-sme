@@ -42,12 +42,17 @@ test('the inventory create forms use the header, sections and one action bar of 
 
 test('each form marks what the server refuses a save without and says it under the field', () => {
   const transfer = FORMS.TransferCreate.body
-  assert.match(transfer, /<Field label=\{copy\("物料"\)\} required error=\{shown\[`\$\{at\}\.itemId`\]\}>/)
-  assert.match(transfer, /<Field label=\{copy\("数量"\)\} required error=\{shown\[`\$\{at\}\.quantity`\]\}>/)
-  // A route that does not move the stock is refused; the message sits under the target.
-  assert.match(transfer, /<Field label=\{copy\("目标仓库"\)\} error=\{shown\[`\$\{at\}\.destinationWarehouseId`\]\}>/)
-  // The server saves a draft without either warehouse, so neither is starred.
-  assert.match(transfer, /<Field label=\{copy\("来源仓库"\)\}>/)
+  assert.match(transfer, /<Field\s+label=\{copy\("物料"\)\} required error=\{shown\[`\$\{at\}\.itemId`\]\}/)
+  assert.match(transfer, /<Field\s+label=\{copy\("数量"\)\} required error=\{shown\[`\$\{at\}\.quantity`\]\}/)
+  // The server saves a draft without either warehouse, but posting takes the
+  // stock from a stock record of the source warehouse and puts it in the
+  // target warehouse (UI review 8, finding 32), so both warehouses and the
+  // source location are starred and checked when Save is clicked.
+  assert.match(transfer, /<Field label=\{copy\("来源仓库"\)\} required error=\{shown\[`\$\{at\}\.sourceWarehouseId`\]\}>/)
+  assert.match(transfer, /<Field label=\{copy\("来源库位"\)\} required error=\{shown\[`\$\{at\}\.sourceBalanceId`\]\}>/)
+  assert.match(transfer, /<Field label=\{copy\("目标仓库"\)\} required error=\{shown\[`\$\{at\}\.destinationWarehouseId`\]\}>/)
+  // A route that does not move the stock is refused; the message sits under the target location.
+  assert.match(transfer, /<Field label=\{copy\("目标库位"\)\} error=\{shown\[`\$\{at\}\.destinationLocation`\]\}>/)
   // "Add line" sits in the lines section, under the lines, not in the bar.
   const add = transfer.indexOf('{copy("添加行")}')
   assert.ok(add > transfer.indexOf('<FormSection') && add < transfer.lastIndexOf('</FormSection>'), 'Add line is in the lines section')
@@ -59,9 +64,11 @@ test('each form marks what the server refuses a save without and says it under t
   assert.match(count, /formMessage\(Object\.keys\(shown\)\.length > 0, checked \? formIssues : \[\], error/)
 
   const adjustment = FORMS.AdjustmentCreate.body
-  assert.match(adjustment, /<Field label=\{copy\("原因"\)\} required>/)
+  // The reason starts unchosen, so the server's "a supported reason is
+  // required" is said under it.
+  assert.match(adjustment, /<Field label=\{copy\("原因"\)\} required error=\{shown\.reasonCode\}>/)
   for (const [label, field] of [['库存余额', 'inventoryBalanceId'], ['物料', 'itemId'], ['仓库', 'warehouseId'], ['调整数量', 'adjustmentQuantity']]) {
-    assert.match(adjustment, new RegExp(`<Field label=\\{copy\\("${label}"\\)\\} required error=\\{shown\\[\`\\$\\{at\\}\\.${field}\`\\]\\}>`), field)
+    assert.match(adjustment, new RegExp(`<Field label=\\{copy\\("${label}"\\)\\} required error=\\{shown\\[\`\\$\\{at\\}\\.${field}\`\\]\\}`), field)
   }
   // Notes are needed only for the reason Other: not starred, aria-required then.
   assert.match(adjustment, /<Field label=\{copy\("备注"\)\} error=\{shown\.notes\}>/)
@@ -73,6 +80,37 @@ test('each form marks what the server refuses a save without and says it under t
   const note = adjustment.slice(adjustment.indexOf('{line.mode === "existing" && ('))
   assert.match(note.slice(0, 400), /helpTextClass[\s\S]*color: A\.gray2[\s\S]*减少库存不会影响已预留数量/)
   assert.doesNotMatch(note.slice(0, 400), /amber/)
+})
+
+test('a transfer picks its locations and items from what the warehouses hold (UI review 8, finding 32)', () => {
+  const transfer = FORMS.TransferCreate.body
+  // The source location is one of the item's stock records in the source
+  // warehouse, each with what is available there; its location is sent.
+  assert.match(transfer, /const sources = sourceBalancesFor\(entry, line\.sourceWarehouseId, line\.itemId\);/)
+  assert.match(transfer, /location: entry\.balances\.find\(\(row\) => row\.id === line\.sourceBalanceId\)\?\.location \|\| ""/)
+  assert.match(source, /unitsOf\(row\.availableQuantity\) > 0n,/)
+  // The target location is a menu of the warehouse's bins and stocked
+  // locations; a new one is typed only after choosing "New location…".
+  assert.match(transfer, /\/api\/master-data\/warehouses\/\$\{encodeURIComponent\(warehouseId\)\}\/bins/)
+  assert.match(transfer, /<option value=\{NEW_LOCATION\}>\{say\("New location…", "新库位…"\)\}<\/option>/)
+  assert.match(transfer, /\{line\.destinationLocation === NEW_LOCATION && \(/)
+  assert.match(transfer, /location: targetLocationOf\(line\)\.trim\(\)/)
+  // The item menu lists the items with stock in the source warehouse, each
+  // with what is available.
+  assert.match(transfer, /const items = itemOptions\(line\.sourceWarehouseId\);/)
+  assert.match(transfer, /\$\{quantityText\(available\.units, available\.unit\)\} available/)
+  // No free-text location box is left on the source side.
+  assert.doesNotMatch(transfer, /sourceLocation/)
+})
+
+test('quantities are typed left-aligned and an adjustment starts neutral (UI review 8, findings 23 and 32)', () => {
+  for (const [name, { body }] of Object.entries(FORMS)) assert.doesNotMatch(body, /text-right/, name)
+  // No reason and no quantity until the person chooses them: nothing is
+  // recorded as damage or as a decrease by default.
+  assert.match(source, /\[reasonCode, setReasonCode\] = useState\(""\)/)
+  assert.match(source, /adjustmentQuantity: "",\n\}\);/)
+  assert.doesNotMatch(source, /useState\("damage"\)|blankAdjustmentLine\("damage"\)/)
+  assert.match(FORMS.AdjustmentCreate.body, /<option value="">\{copy\("请选择"\)\}<\/option>\s*\{ADJUSTMENT_REASONS\.map/)
 })
 
 test('the forms check the same rules as the server', () => {

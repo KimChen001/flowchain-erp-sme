@@ -1,7 +1,7 @@
 // English display copy for the sales order and shipment workbench. Display
 // labels only: never apply this mapping to stored business values.
 export const outboundEnglish: Record<string, string> = {
-  "可用量 = 在库量 - 预留量": "Available = on hand − reserved",
+  "可用量 = 在手量 - 预留量": "Available = on hand − reserved",
   "预留量 + 已履约量不超过订购量": "Reserved + shipped does not exceed ordered",
   "预留的消耗、释放与分配不超过预留量": "Used, released and allocated stay within the reservation",
   "发货过账数量与库存流水一致": "Posted shipment quantities match the stock movements",
@@ -73,7 +73,7 @@ export const outboundEnglish: Record<string, string> = {
   "当前订单的库存、预留与履约事实一致。": "Inventory, reservations, and fulfillment for this order are consistent.",
   "当前订单存在需要人工复核的对账差异。": "This order has reconciliation differences to review.",
   "默认库位": "Default location",
-  "现有 {n}": "On hand {n}",
+  "在手 {n}": "On hand {n}",
   "预留 {n}": "Reserved {n}",
   "可用 {n}": "Available {n}",
   "参考号：{id}": "Reference: {id}",

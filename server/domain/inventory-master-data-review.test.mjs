@@ -52,8 +52,8 @@ test('an inventory document page has a title, its facts once, and pages its line
   // Many movements of one posting read as a line per kind until opened.
   assert.match(detail, /const MOVEMENT_FOLD_AFTER = 20;/)
   assert.match(detail, /data-testid="operation-movements-summary"/)
-  // The reason box shows only when an action can use it.
-  assert.match(detail, /\{\(anyAction \|\| preview \|\| error\) && \(/)
+  // The actions card shows only when there is an action or a refusal to say.
+  assert.match(detail, /\{\(anyAction \|\| error\) && \(/)
   // One status per document: the posting once posted or reversed.
   assert.match(workbench, /row\.postingStatus === "posted" \|\| row\.postingStatus === "reversed" \? row\.postingStatus : row\.workflowStatus/)
   assert.match(workbench, /<Status value=\{documentStatus\(row\)\} \/>/)

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ElementType, ReactNode } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
-import { AlertCircle, AlertTriangle, CheckCircle2, Coins, FileMinus, FileText, Inbox, MessageSquareWarning, PauseCircle, Plus, Send, ShieldCheck, Wallet } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Coins, FileMinus, FileText, Inbox, Info, MessageSquareWarning, PauseCircle, Plus, Send, ShieldCheck, Wallet } from "lucide-react";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
@@ -14,10 +14,30 @@ import { apiErrorView, type ApiErrorView } from "../../lib/apiErrorText";
 import { formatCalendarDay, todayInTimeZone } from "../../lib/format";
 import { financeStatusTone, shownBillStatus } from "./FinanceControls";
 import { matchExceptionLabel } from "../../domain/procurement/variance-types";
+import { PALETTE } from "../reports/charts/chartOptions";
+import { formatMetric } from "../reports/currencyFormatting.mjs";
 
+// The landing's money, per currency (never added across currencies). A
+// reader who may not read the records gets readable: false and no rows; one
+// who may read them but not their amounts gets the counts with null amounts.
+type LandingMoney = {
+  readable: boolean;
+  amountsVisible: boolean;
+  byCurrency: Array<{ currency: string; count: number; amount: string | null; dueSoonCount?: number; dueSoonAmount?: string | null }>;
+};
+type AgingGroup = {
+  currency: string;
+  count: number;
+  amount: string | null;
+  buckets: Array<{ bucket: "current" | "1_30" | "31_60" | "61_90" | "90_plus"; count: number; amount: string | null }>;
+};
+type AgingView = { readable: boolean; amountsVisible: boolean; groups: AgingGroup[] };
 type Landing = {
   dataSource: string;
+  timezone?: string;
   cards: Record<string, number>;
+  money?: { dueSoonDays: number; payables: LandingMoney; receivables: LandingMoney; overdueReceivables: LandingMoney };
+  aging?: { asOf: string; receivables: AgingView; payables: AgingView };
   currencyLimitations: {
     currencies: string[];
     aggregationStatus: string;
@@ -105,21 +125,192 @@ function Warning({ children, title, testId }: { children: ReactNode; title?: str
 // code stays in the notice's tooltip.
 const LOAD_FAILED = ["Could not load this finance page. Try again.", "财务页面加载失败，请重试。"] as const;
 
-// What each overview card counts, under its number.
+// What each overview card counts. Amount tiles read "{n invoices} …" under
+// the amount, or the plain note under the count when the amount is hidden.
 const LANDING_COPY = {
+  toPay: ["To pay", "待付款"],
+  owedToUs: ["Owed to us", "应收未收"],
+  invoiceOne: ["1 invoice", "1 张发票"],
+  invoiceMany: ["{n} invoices", "{n} 张发票"],
+  toPayCounted: ["{invoices} approved, not paid in full", "{invoices}已批准，未全额付款"],
+  toPayNote: ["Approved, not yet paid in full", "已批准，尚未全额付款"],
+  dueSoon: ["{amount} due within {days} days", "{days} 天内到期 {amount}"],
+  nothingDueSoon: ["nothing due within {days} days", "{days} 天内没有到期"],
+  owedCounted: ["{invoices} issued, not paid in full", "{invoices}已开具，未全额收款"],
+  owedNote: ["Issued, not yet paid in full", "已开具，尚未全额收款"],
+  overdueCounted: ["{invoices} past the due date", "{invoices}已过到期日"],
+  overdueNote: ["Past the due date and not paid in full", "已过到期日且未全额收款"],
+  amountHidden: ["amount hidden for your role", "当前角色无权查看金额"],
   awaitingMatch: ["Submitted, waiting for the three-way match", "已提交，等待三单匹配"],
-  matchExceptions: ["Price or quantity differs from the PO or receipt", "价格或数量与采购订单、收货不一致"],
-  approvedPayables: ["Approved, not yet paid in full", "已批准，尚未全额付款"],
+  matchExceptions: ["To review: price or quantity differs from the PO or receipt", "待复核：价格或数量与采购订单、收货不一致"],
   awaitingIssue: ["Approved, not yet sent to the customer", "已批准，尚未开具给客户"],
-  overdueReceivables: ["Past the due date and not paid in full", "已过到期日且未全额收款"],
   disputedReceivables: ["The customer has raised a dispute", "客户提出了争议"],
   supplierCredits: ["Raised from posted supplier returns", "由已过账的供应商退货生成"],
   customerCredits: ["Raised from posted customer returns", "由已过账的客户退货生成"],
+  otherItems: ["Other items", "其他事项"],
+  // One line for the currency, in place of the old currency card.
+  currencySingle: ["Amounts in {currency} · no currency conversion", "金额币种 {currency} · 未进行汇率折算"],
+  currencyMulti: ["Amounts per currency ({currencies}) · never added together or converted", "金额按币种分别列示（{currencies}）· 不跨币种合计，不折算"],
+  currencyNone: ["No amounts recorded yet · no currency conversion", "暂无金额记录 · 未进行汇率折算"],
+  // The aging strips: the aging page's buckets, by days past the due date.
+  agingTitle: ["Aging by days past due", "按逾期天数的账龄"],
+  agingCaption: ["Still owed, by days past the due date, as of {day} ({timezone})", "按到期日后天数统计的未结金额，截至 {day}（{timezone}）"],
+  receivablesAging: ["Receivables: owed to us", "应收：客户欠我们"],
+  payablesAging: ["Payables: we owe", "应付：我们欠供应商"],
+  openAging: ["Open receivables aging", "查看应收账龄"],
+  openPayables: ["Open payables", "查看应付款"],
+  current: ["Current", "未到期"],
+  days1: ["1–30 days", "1–30 天"],
+  days31: ["31–60 days", "31–60 天"],
+  days61: ["61–90 days", "61–90 天"],
+  days90: ["Over 90 days", "90 天以上"],
+  nothingOwed: ["Nothing is owed to us.", "暂无未收的应收款。"],
+  nothingToPay: ["Nothing to pay.", "暂无待付的应付款。"],
+  agingHidden: ["Not available to your role.", "当前角色无权查看。"],
+  agingCounts: ["Amounts hidden for your role; the bar shows the number of invoices.", "当前角色无权查看金额，条形按发票张数显示。"],
 } as const;
+type LandingCopyKey = keyof typeof LANDING_COPY;
+
+type AgingBucketKey = "current" | "1_30" | "31_60" | "61_90" | "90_plus";
+// The aging page's buckets in order, each with its label and palette colour:
+// teal while not yet due, then amber, orange, pink and red as it ages.
+const AGING_BUCKETS: ReadonlyArray<readonly [AgingBucketKey, LandingCopyKey, string]> = [
+  ["current", "current", PALETTE[1]],
+  ["1_30", "days1", PALETTE[2]],
+  ["31_60", "days31", PALETTE[7]],
+  ["61_90", "days61", PALETTE[4]],
+  ["90_plus", "days90", PALETTE[9]],
+];
+
+// One amount per currency, never added across currencies: "£1,200.00 ·
+// $300.00", in the app's money format. With nothing owed it reads zero in the
+// workspace's one currency, or a bare 0 when there is no single currency.
+export function amountsByCurrency(
+  rows: Array<{ currency: string; amount: string | null | undefined }>,
+  { locale, language, currencies = [] }: { locale: string; language: string; currencies?: string[] },
+) {
+  const shown = rows.filter((row) => row.amount !== null && row.amount !== undefined && Number.isFinite(Number(row.amount)));
+  if (!shown.length) return currencies.length === 1 ? formatMetric(0, "currency", currencies[0], { locale, language }) : "0";
+  return shown.map((row) => formatMetric(Number(row.amount), "currency", row.currency, { locale, language })).join(" · ");
+}
+
+// How wide each bucket is on an aging bar: its amount, or its invoice count
+// when amounts are hidden.
+export function agingWeights(group: AgingGroup, amountsVisible: boolean): Record<AgingBucketKey, number> {
+  const weights = { current: 0, "1_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0 } as Record<AgingBucketKey, number>;
+  for (const row of group.buckets) {
+    const weight = amountsVisible ? Number(row.amount) : row.count;
+    weights[row.bucket] = Number.isFinite(weight) && weight > 0 ? weight : 0;
+  }
+  return weights;
+}
+
+// A low-traffic count, smaller than a metric card, shown even at 0 so the
+// page does not jump. It opens the list it counts.
+function QuietTile({ label, value, description, to, icon: Icon, color }: { label: string; value: number | undefined; description: string; to: string; icon: ElementType; color: string }) {
+  const { formatNumber } = useI18n();
+  const shown = value === undefined ? "—" : formatNumber(value);
+  return (
+    <Link
+      to={to}
+      title={description}
+      aria-label={`${label}: ${shown}, ${description}`}
+      className="group flex min-h-11 items-center gap-2 rounded-lg border bg-white px-3 py-2 outline-none transition-colors hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500"
+      style={{ borderColor: A.border }}
+    >
+      <Icon size={14} strokeWidth={1.8} className="shrink-0" style={{ color }} />
+      <span className="min-w-0 flex-1 text-[12px] leading-4" style={{ color: A.sub }}>{label}</span>
+      <span className="shrink-0 text-[15px] font-semibold tabular-nums" style={{ color: A.label }}>{shown}</span>
+    </Link>
+  );
+}
+
+// One aging strip: a bar per currency split into the aging buckets, and each
+// bucket's amount (or count) under it, linking where that bucket is listed.
+function AgingStrip({
+  title,
+  view,
+  empty,
+  linkFor,
+  testId,
+}: {
+  title: string;
+  view: AgingView;
+  empty: string;
+  linkFor: (bucket: AgingBucketKey, currency: string, single: boolean) => string;
+  testId: string;
+}) {
+  const { locale, language, formatNumber } = useI18n();
+  const say = (key: LandingCopyKey, values: Record<string, string> = {}) =>
+    LANDING_COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => values[name] ?? "");
+  const invoices = (n: number) => say(n === 1 ? "invoiceOne" : "invoiceMany", { n: formatNumber(n) });
+  const single = view.groups.length === 1;
+  const amountText = (amount: string | null, currency: string) => amountsByCurrency([{ currency, amount }], { locale, language });
+  return (
+    <section className="space-y-2" data-testid={testId}>
+      <div className="text-[13px] font-semibold" style={{ color: A.label }}>{title}</div>
+      {!view.readable ? (
+        <div className="text-[13px]" style={{ color: A.sub }}>{say("agingHidden")}</div>
+      ) : !view.groups.length ? (
+        <div className="text-[13px]" style={{ color: A.sub }}>{empty}</div>
+      ) : (
+        view.groups.map((group) => {
+          const weights = agingWeights(group, view.amountsVisible);
+          const total = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
+          return (
+            <div key={group.currency} className="space-y-2" data-testid={`${testId}-${group.currency}`}>
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-[12px]" style={{ color: A.sub }}>
+                <span className="font-semibold" style={{ color: A.label }}>{group.currency}</span>
+                <span>{view.amountsVisible ? `${amountText(group.amount, group.currency)} · ${invoices(group.count)}` : invoices(group.count)}</span>
+              </div>
+              <div className="flex h-2.5 w-full gap-0.5 overflow-hidden rounded-full" aria-hidden="true">
+                {total > 0
+                  ? AGING_BUCKETS.map(([bucket, , color]) => weights[bucket] > 0 && (
+                      <span key={bucket} className="h-full" style={{ flexGrow: weights[bucket], flexBasis: 0, minWidth: 4, background: color }} />
+                    ))
+                  : <span className="h-full w-full" style={{ background: A.gray5 }} />}
+              </div>
+              <ul className="grid grid-cols-1 gap-x-3 sm:grid-cols-5">
+                {AGING_BUCKETS.map(([bucket, labelKey, color]) => {
+                  const row = group.buckets.find((entry) => entry.bucket === bucket);
+                  const count = row?.count || 0;
+                  return (
+                    <li key={bucket}>
+                      <Link
+                        to={linkFor(bucket, group.currency, single)}
+                        className="flex min-h-9 items-center justify-between gap-2 rounded-md px-1.5 py-1 outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500 sm:block sm:min-h-0"
+                        data-testid={`${testId}-${group.currency}-${bucket}`}
+                      >
+                        <span className="flex items-center gap-1.5 text-[12px]" style={{ color: A.sub }}>
+                          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
+                          {say(labelKey)}
+                        </span>
+                        <span className="text-right sm:mt-0.5 sm:block sm:text-left">
+                          <span className="block text-[14px] font-semibold tabular-nums [overflow-wrap:anywhere]" style={{ color: count ? A.label : A.gray2 }}>
+                            {view.amountsVisible ? amountText(row?.amount ?? "0", group.currency) : formatNumber(count)}
+                          </span>
+                          {view.amountsVisible && <span className="block text-[11px]" style={{ color: A.gray2 }}>{invoices(count)}</span>}
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })
+      )}
+      {view.readable && view.groups.length > 0 && !view.amountsVisible && (
+        <div className="text-[11px]" style={{ color: A.gray2 }}>{say("agingCounts")}</div>
+      )}
+    </section>
+  );
+}
 
 export function FinanceLanding() {
-  const { t, language } = useI18n();
-  const say = (key: keyof typeof LANDING_COPY) => LANDING_COPY[key][language === "en-US" ? 0 : 1];
+  const { t, language, locale, formatNumber } = useI18n();
+  const say = (key: LandingCopyKey, values: Record<string, string> = {}) =>
+    LANDING_COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => values[name] ?? "");
   const [data, setData] = useState<Landing | null>(null);
   const [error, setError] = useState<ApiErrorView | null>(null);
   useEffect(() => {
@@ -129,40 +320,99 @@ export function FinanceLanding() {
   }, []);
   if (error) return <Warning title={error.code}>{error.message}</Warning>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
+  const currencies = data.currencyLimitations.currencies;
+  const invoices = (n: number) => say(n === 1 ? "invoiceOne" : "invoiceMany", { n: formatNumber(n) });
+  const amounts = (rows: Array<{ currency: string; amount: string | null | undefined }>) => amountsByCurrency(rows, { locale, language, currencies });
+  const days = String(data.money?.dueSoonDays ?? 7);
+  // An amount tile: the amount per currency over "{n invoices} …"; for a
+  // reader who may not see the amount, the count over the plain note. A
+  // server without the amounts (an older API) shows the count alone.
+  const amountTile = (
+    totals: LandingMoney | undefined,
+    count: number | undefined,
+    counted: LandingCopyKey,
+    plain: LandingCopyKey,
+    extra?: string,
+  ) => {
+    if (totals?.amountsVisible)
+      return { value: amounts(totals.byCurrency), description: [say(counted, { invoices: invoices(count ?? 0) }), extra].filter(Boolean).join(" · ") };
+    const value = count === undefined ? "—" : String(count);
+    return totals ? { value, description: `${say(plain)} · ${say("amountHidden")}` } : { value, description: say(plain) };
+  };
+  const payables = data.money?.payables;
+  const dueSoonRows = (payables?.byCurrency || []).filter((row) => (row.dueSoonCount || 0) > 0);
+  const toPayCount = data.cards.approvedPayableObligations;
+  const dueSoonText = !payables?.amountsVisible || !toPayCount
+    ? undefined
+    : dueSoonRows.length
+      ? say("dueSoon", { amount: amounts(dueSoonRows.map((row) => ({ currency: row.currency, amount: row.dueSoonAmount }))), days })
+      : say("nothingDueSoon", { days });
+  const toPay = amountTile(payables, toPayCount, "toPayCounted", "toPayNote", dueSoonText);
+  const owed = amountTile(data.money?.receivables, data.cards.openReceivables, "owedCounted", "owedNote");
+  const overdue = amountTile(data.money?.overdueReceivables, data.cards.overdueReceivables, "overdueCounted", "overdueNote");
   // Each card opens the list it counts, with the same filter.
-  const cards = [
+  const quiet = [
     ["supplierInvoicesAwaitingMatch", t("finance.awaitingMatch"), say("awaitingMatch"), "/app/procurement/bills?status=submitted", Inbox, A.orange],
-    ["matchExceptions", t("finance.matchExceptions"), say("matchExceptions"), "/app/procurement/bills?status=exception", AlertCircle, A.red],
-    ["approvedPayableObligations", t("finance.approvedPayables"), say("approvedPayables"), "/app/finance/payables?status=outstanding", Wallet, A.blue],
     ["customerInvoicesAwaitingIssue", t("finance.awaitingIssue"), say("awaitingIssue"), "/app/sales/invoices?status=approved", Send, A.blue],
-    ["overdueReceivables", t("finance.overdueReceivables"), say("overdueReceivables"), "/app/finance/receivables?status=overdue", AlertTriangle, A.red],
     ["disputedReceivables", t("finance.disputedReceivables"), say("disputedReceivables"), "/app/finance/receivables?disputeStatus=open", MessageSquareWarning, A.orange],
     ["supplierCreditMemos", t("finance.supplierCredits"), say("supplierCredits"), "/app/finance/credits", FileMinus, A.purple],
     ["customerCreditNotes", t("finance.customerCredits"), say("customerCredits"), "/app/finance/customer-credit-notes", FileText, A.purple],
   ] as const;
+  const currencyLine = currencies.length > 1
+    ? say("currencyMulti", { currencies: currencies.join(language === "en-US" ? ", " : "、") })
+    : currencies.length === 1
+      ? say("currencySingle", { currency: currencies[0] })
+      : say("currencyNone");
+  const timezone = data.timezone || "";
+  const asOfDay = data.aging ? formatCalendarDay(todayInTimeZone(timezone || undefined, new Date(data.aging.asOf)), locale) : "";
+  // A receivables bucket opens the aging page, for its currency when there
+  // are several; the aging page takes no bucket filter. A payables bucket
+  // opens the payables still owed, or those overdue once past due.
+  const receivableLink = (_bucket: AgingBucketKey, currency: string, single: boolean) =>
+    single ? "/app/finance/aging" : `/app/finance/aging?currency=${encodeURIComponent(currency)}`;
+  const payableLink = (bucket: AgingBucketKey) =>
+    bucket === "current" ? "/app/finance/payables?status=outstanding" : "/app/finance/payables?status=overdue";
   return (
     <div className="space-y-4" data-testid="operational-finance-landing">
-      <div className={metricGridClass} data-testid="finance-overview-cards">
-        {cards.map(([key, label, description, to, icon, color]) => (
-          <ActionableMetricCard key={key} label={label} value={String(data.cards[key] || 0)} description={description} to={to} icon={icon} color={color} />
-        ))}
+      <div className="flex items-center gap-1.5 text-[12px]" style={{ color: A.sub }} data-testid="finance-currency-limitation">
+        <Coins size={13} className="shrink-0" />
+        <span>{currencyLine}</span>
       </div>
-      {/* The page's one notice: nothing here pays or collects money. */}
-      <Warning testId="finance-overview-notice">{t("finance.noMoneyMoved")}</Warning>
-      <Card className="p-4" data-testid="finance-currency-limitation">
-        <div className="font-semibold">{t("finance.currency")}</div>
-        <div className="mt-1 text-sm text-slate-600">
-          {data.currencyLimitations.aggregationStatus ===
-          "multi_currency_unconverted"
-            ? t("finance.unconverted")
-            : data.currencyLimitations.aggregationStatus === "single_currency"
-              ? t("finance.singleCurrency")
-              : t("finance.noCurrencyData")}
+      <div className={metricGridClass} data-testid="finance-overview-cards">
+        <ActionableMetricCard label={say("toPay")} value={toPay.value} description={toPay.description} to="/app/finance/payables?status=outstanding" icon={Wallet} color={A.blue} />
+        <ActionableMetricCard label={say("owedToUs")} value={owed.value} description={owed.description} to="/app/finance/receivables?status=outstanding" icon={Coins} color={PALETTE[1]} />
+        <ActionableMetricCard label={t("finance.overdueReceivables")} value={overdue.value} description={overdue.description} to="/app/finance/receivables?status=overdue" icon={AlertTriangle} color={A.red} />
+        <ActionableMetricCard label={t("finance.matchExceptions")} value={String(data.cards.matchExceptions || 0)} description={say("matchExceptions")} to="/app/procurement/bills?status=exception" icon={AlertCircle} color={A.orange} />
+      </div>
+      {data.aging && (
+        <Card className="space-y-4 p-4" data-testid="finance-aging">
+          <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+            <div>
+              <div className="text-[14px] font-semibold" style={{ color: A.label }}>{say("agingTitle")}</div>
+              <div className="text-[12px]" style={{ color: A.sub }}>{say("agingCaption", { day: asOfDay, timezone })}</div>
+            </div>
+            <div className="flex flex-wrap gap-x-3 text-[12px] font-medium">
+              <Link to="/app/finance/aging" className="text-blue-600 hover:underline">{say("openAging")}</Link>
+              <Link to="/app/finance/payables?status=outstanding" className="text-blue-600 hover:underline">{say("openPayables")}</Link>
+            </div>
+          </div>
+          <AgingStrip title={say("receivablesAging")} view={data.aging.receivables} empty={say("nothingOwed")} linkFor={receivableLink} testId="finance-aging-receivables" />
+          <AgingStrip title={say("payablesAging")} view={data.aging.payables} empty={say("nothingToPay")} linkFor={payableLink} testId="finance-aging-payables" />
+        </Card>
+      )}
+      <div className="space-y-2">
+        <div className="text-[12px] font-medium" style={{ color: A.sub }}>{say("otherItems")}</div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5" data-testid="finance-overview-secondary">
+          {quiet.map(([key, label, description, to, icon, color]) => (
+            <QuietTile key={key} label={label} value={data.cards[key] ?? 0} description={description} to={to} icon={icon} color={color} />
+          ))}
         </div>
-        <div className="mt-2 text-xs text-slate-500">
-          {data.currencyLimitations.currencies.join(" · ") || "—"} · {t("finance.fxNotConverted")}
-        </div>
-      </Card>
+      </div>
+      {/* The page's one notice, as a caption: nothing here pays or collects money. */}
+      <div className="flex items-start gap-1.5 text-[12px]" style={{ color: A.sub }} data-testid="finance-overview-notice">
+        <Info size={13} className="mt-0.5 shrink-0" />
+        <span>{t("finance.noMoneyMoved")}</span>
+      </div>
     </div>
   );
 }
