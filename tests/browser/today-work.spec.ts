@@ -124,15 +124,20 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
     if (listRow.purchaseRequest.quantity !== null) expect(url.searchParams.get("quantity")).toBe(String(listRow.purchaseRequest.quantity));
     await expect(reorderRow.getByRole("link", { name: "Open reorder list" })).toHaveAttribute("href", "/app/inventory/reorder");
   }
-  // A reorder card says why and opens the prefilled request form.
+  // A card is one line with its main button; Details says why. A reorder
+  // card opens the prefilled request form.
   const decisions = root.getByTestId("today-decisions");
   const reorderCard = decisions.locator('[data-testid="today-decision"][data-kind="reorder_now"]').first();
   if (await reorderCard.count()) {
-    await expect(reorderCard).toContainText(/Stock position .+ against reorder point /);
     await expect(reorderCard.getByTestId("decision-primary")).toHaveAttribute("href", /^\/app\/procurement\/requests\?itemId=.+origin=reorder_list/);
+    await expect(reorderCard).not.toContainText(/Stock position/);
+    await reorderCard.getByTestId("decision-details").click();
+    await expect(reorderCard).toContainText(/Stock position .+ against reorder point /);
   }
   // An overdue order's card holds the follow-up to copy; FlowChain sends nothing.
   const followUp = decisions.locator('[data-testid="today-decision"][data-kind="purchase_order_overdue"]').first();
+  await expect(followUp).toContainText(/still to receive/);
+  await followUp.getByTestId("decision-details").click();
   await expect(followUp).toContainText(/still to receive, due /);
   await followUp.getByTestId("decision-follow-up-toggle").click();
   await expect(followUp.getByTestId("decision-follow-up-text")).toHaveValue(/^Purchase order .+: delivery overdue/);
@@ -143,7 +148,8 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
   const overdueWork = parts.work.filter((item) => item.overdueDays > 0);
   const overdueKinds = new Set(overdueWork.map((item) => item.kind)).size;
   if (overdueWork.length) await expect(list.getByTestId("today-work-item")).toHaveCount(Math.min(overdueWork.length, Math.max(5, overdueKinds)));
-  await expect(decisions.getByTestId("today-decision")).toHaveCount(parts.waiting.filter((entry) => entry.row.overdueDays > 0).length);
+  // Five cards show before "Show {n} more".
+  await expect(decisions.getByTestId("today-decision")).toHaveCount(Math.min(5, parts.waiting.filter((entry) => entry.row.overdueDays > 0).length));
   await expect(list.locator('[data-kind="purchase_order_due"]')).toHaveCount(0);
   await root.getByTestId("today-tile-all").click();
   // A kind's "{n} in all" lists only that kind.
@@ -216,6 +222,8 @@ test("Not now sets a card aside until its day, and Reopen brings it back", async
   await page.goto("/app/overview/risks");
   const decisions = page.getByTestId("today-decisions");
   const card = decisions.locator(`[data-testid="today-decision"][data-key="${target!.key}"]`);
+  // "Not now" and "Not needed" are under the card's Details.
+  await card.getByTestId("decision-details").click();
   await card.getByTestId("decision-not-now").click();
   await card.getByRole("button", { name: "Tomorrow" }).click();
   await expect(card).toHaveCount(0);
