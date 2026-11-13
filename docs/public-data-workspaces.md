@@ -105,11 +105,12 @@ Seeded as of 2026-11-10 (the data's last day moved to 2026-11-09), on a Windows 
 | Sales order lines | 54,927 | 24,092 |
 | Units sold | 503,462 | 437,167 |
 | Suppliers [assumed] | 7 | 7 (Acme and Globex named) |
-| Purchase orders [assumed] | 370 (5,819 lines), 14 open | 356 (3,825 lines), 17 open |
-| Receipts posted | 356 | 339 |
-| Seed time | about 15 minutes | about 9 minutes |
+| Purchase orders [assumed] | 370 (5,819 lines), 14 open | 356 (3,825 lines), 17 open, 10 closed short |
+| Receipts posted | 356 | 339 (4 not invoiced yet) |
+| Supplier invoices [assumed] | none | 335: 308 matched and approved (276 paid, 5 overdue, 27 open), 27 held at the match (17 priced above the order, 10 billing more than received); 7 dated before their receipt |
+| Seed time | about 14 minutes | about 14 minutes (the supplier invoices about 35 seconds) |
 
-The extract takes about 50 seconds. The workspaces are seeded one after the other (side by side, their serializable postings abort each other), so a first start takes about 25 minutes.
+Gross profit over the window, at the assumed purchase prices: UCI £276,236 on £588,460 of sales (46.9 %), M5 $275,200 on $1,105,462 (24.9 %). The extract takes about 50 seconds. The workspaces are seeded one after the other (side by side, their serializable postings abort each other), so a first start takes about 28 minutes.
 
 ## Run it
 
