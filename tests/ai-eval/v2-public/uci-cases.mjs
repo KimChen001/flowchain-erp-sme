@@ -31,6 +31,23 @@ export function lastWholeMonths(seedDay) {
 // An item named by its SKU or its name, as an answer may do either.
 const named = (row) => ({ label: row.sku, any: [row.sku, row.name] })
 
+// The questions a figure, a record, a name or a date answers.
+export const UCI_LOOKUPS = new Set([
+  'hero-on-hand-en', 'hero-available-zh', 'second-position-en', 'below-safety-count-zh', 'hero-thresholds-zh', 'second-thresholds-en', 'hero-days-en', 'cake-demand-en', 'hero-name-en',
+  'approval-en', 'approval-zh', 'hero-on-order-zh', 'hero-last-receipt-en',
+  'who-supplies-en', 'acme-tier-zh', 'acme-on-time-en', 'globex-on-time-zh', 'supplier-count-en', 'cake-terms-zh',
+  'hero-month-units-en', 'second-month-units-zh', 'month-revenue-en', 'top-customer-zh', 'top-item-units-en', 'top-item-revenue-en', 'month-orders-en', 'receivables-en',
+  'customer-name-en', 'supplier-phone-en', 'contact-phone-zh', 'price-2024-zh', 'missing-item-en',
+  'conv-and-second-en', 'correction-en', 'and-september-en', 'minimum-multiple-en',
+])
+
+// The tools a case must call: the solver for an order under a budget, the
+// cost tool for one item's order size (2026-11-12).
+export const UCI_REQUIRED_TOOLS = Object.freeze({
+  'budget-500-en': ['optimize_order_plan'], 'budget-300-zh': ['optimize_order_plan'], 'budget-quantity-en': ['optimize_order_plan'],
+  'hero-eoq-en': ['order_quantity_costs'], 'hero-tradeoff-zh': ['order_quantity_costs'],
+})
+
 export function buildUciCases(facts) {
   const hero = facts.item(facts.scene.hero.sku)
   const second = facts.item(facts.scene.second.sku)
@@ -175,5 +192,24 @@ export function buildUciCases(facts) {
   add({ id: 'chase-email-en', kind: 'boundary', language: 'en-US', turns: [`Draft an email to ${acme} chasing the late ${hero.sku} orders.`],
     expect: { mentions: [named(hero)], numbers: [{ label: 'still to receive', anyOf: [hero.onOrder, partly.outstanding] }] } })
   // The conversation cases: cards, documents, language, invented data, follow-ups.
-  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts)]
+  // Lookups (one figure, one record, who, when, yes or no) are held to the
+  // brief length (score.mjs concise, 2026-11-12).
+  // New cases go at the end: the runner picks the asking user by a case's
+  // place in this list, so a case inserted earlier would hand every later case
+  // to the other user (2026-11-12: 33 of 94 answers changed user, and
+  // margin-en went to a role that cannot see margins).
+  const actions = []
+  const later = (row) => actions.push({ kind: 'actions', ...row })
+  // The app's own buttons (2026-11-12): an issued order is closed, not
+  // cancelled; its promised date is changed on its page; an overdue order is
+  // chased from its card on Today. A button the app lacks is flagged.
+  later({ id: 'close-not-cancel-en', language: 'en-US', turns: ['Cancel the late Globex purchase order'],
+    expect: { matches: [{ label: 'says Close PO', pattern: String.raw`Close PO` }] } })
+  later({ id: 'promised-date-zh', language: 'zh-CN', turns: ['把 Globex 那张逾期订单的交期推迟一周'],
+    expect: { matches: [{ label: '说修改承诺交期', pattern: String.raw`修改承诺交期|Change promised date` }] } })
+  later({ id: 'chase-today-en', language: 'en-US', turns: [`How do I chase ${acme} about the late orders?`],
+    expect: { matches: [{ label: 'says the card on Today', pattern: String.raw`Copy and mark chased|Review and send|\bToday\b` }] } })
+  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts), ...actions]
+    .map((row) => (UCI_LOOKUPS.has(row.id) ? { ...row, expect: { ...row.expect, brief: true } } : row))
+    .map((row) => (UCI_REQUIRED_TOOLS[row.id] ? { ...row, expect: { ...row.expect, calls: UCI_REQUIRED_TOOLS[row.id] } } : row))
 }

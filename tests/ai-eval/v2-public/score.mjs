@@ -33,10 +33,19 @@
 //   matches / notMatches  wording it must have, or must not (in the text);
 //   and when the text says it filled in a form: that form is shown;
 //   languages   each turn's language, for a switch the user asked for;
+//   calls       the tools it must call (2026-11-12): the solver for an order
+//               under a budget, the cost tool for one item's order size, so
+//               the model's own arithmetic fails the case;
 //   and always: the chips in the answer's language, and no English sentence
 //   (eight words or more) in a Chinese answer.
 //
 // A number may list anyOf: values, any one of which passes.
+//
+// concise (2026-11-12, the owner: "一次性对话出来就是太多了"): the text within
+// LENGTH_BUDGET, brief for a lookup (expect.brief), other for the rest, where
+// a Chinese character counts twice. It is soft: it is reported with each
+// answer and in the summary, and does not fail the case, so the pass rate
+// stays comparable across length changes.
 
 const CJK = /[㐀-鿿]/g
 const LATIN = /[A-Za-z]/g
@@ -144,6 +153,16 @@ const formRows = (answer) => (answer.ui || []).filter((part) => part.component =
 const patternOf = ({ pattern, flags = 'i' }) => new RegExp(pattern, flags)
 const FORM_CLAIM = /\bI(?:'ve| have)\s+(?:just\s+|also\s+)?(?:filled in|filled out|put together|prepared|drafted|set up)\b[^.\n]{0,60}\bform\b|(?:填好|填了|已填写?)[^。\n]{0,20}(?:申请单|表单)/i
 
+// Sentences: a figure counts beside its SKU anywhere in the same sentence, a
+// clause after ； or ; included (2026-11-12: "22423 …，缺口 20 件；但最小起订量为
+// 60 件，所以建议按 60 件下单。" missed its 60). A full stop inside a figure
+// (£12.75) does not end one.
+const SENTENCE = /\n|(?<=[。！？])|(?<=[.!?])\s+/
+export const LENGTH_BUDGET = Object.freeze({ brief: 350, other: 900 })
+const WIDE = /[\u3000-\u303f\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/g
+// The text's length in English-letter terms: a Chinese character counts twice.
+export const answerLength = (text) => { const value = String(text || ''); return value.length + (value.match(WIDE) || []).length }
+
 export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers = [answer] } = {}) {
   const checks = []
   const add = (name, ok, detail = '') => checks.push({ name, ok: Boolean(ok), detail })
@@ -240,7 +259,7 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     const text = answer.text || ''
     for (const { sku, quantity } of expect.quantities.filter((row) => row.quantity > 0)) {
       const inRow = rows.some((row) => JSON.stringify(row).includes(sku) && numbersIn(JSON.stringify(row)).includes(quantity))
-      const inText = text.split(/\n|(?<=[.;。；])/).some((line) => line.includes(sku) && numbersIn(line).includes(quantity))
+      const inText = text.split(SENTENCE).some((line) => line.includes(sku) && numbersIn(line).includes(quantity))
       add(`quantity: ${sku}`, inRow || inText, `expected ${quantity}`)
     }
   }
@@ -252,13 +271,19 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     const form = (answer.ui || []).find((part) => part.component === 'pr_form')
     const row = formRows(answer).find((entry) => entry.item?.sku === expect.form.sku)
     const value = Number(row?.suggestedQuantity?.value ?? row?.quantity)
-    const said = Boolean(expect.form.orSaidEarlier && row) && answers.slice(0, -1).some((earlier) => String(earlier?.text || '').split(/\n|(?<=[.;。；])/).some((line) => line.includes(expect.form.sku) && numbersIn(line).includes(value)))
+    const said = Boolean(expect.form.orSaidEarlier && row) && answers.slice(0, -1).some((earlier) => String(earlier?.text || '').split(SENTENCE).some((line) => line.includes(expect.form.sku) && numbersIn(line).includes(value)))
     add('form', Boolean(row) && (value === expect.form.quantity || said), !form ? 'no form' : !row ? `${expect.form.sku} not on the form` : `${expect.form.sku} at ${value}${said ? ', as said earlier' : ''}`)
   }
+  for (const tool of expect.calls || []) add(`calls ${tool}`, (answer.tools || []).includes(tool), (answer.tools || []).join(', ') || 'no tools')
   if (expect.tidy !== false) {
     const problems = tidyProblems(answer.text, answer.textParts)
     add('tidy', !problems.length, problems.join('; '))
   }
   add('no flagged figure', !(answer.flags || []).length, (answer.flags || []).join(' | '))
-  return { pass: checks.every((check) => check.ok), checks }
+  if (expect.length !== false) {
+    const limit = expect.brief ? LENGTH_BUDGET.brief : LENGTH_BUDGET.other
+    const length = answerLength(answer.text)
+    checks.push({ name: 'concise', ok: length <= limit, detail: `${length} of ${limit}${expect.brief ? ' (lookup)' : ''}`, soft: true })
+  }
+  return { pass: checks.every((check) => check.ok || check.soft), checks }
 }
