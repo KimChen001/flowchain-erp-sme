@@ -15,7 +15,7 @@ import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdName
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useReorderListCopy } from "./reorderListCopy";
 import { useRouteAvailability } from "../../app/routeAvailability";
-import { ListPager } from "../procurement/listPaging";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
 
 type Item = {
   id?: string;
@@ -95,9 +95,12 @@ type Focus = {
 const BALANCE_PAGE_SIZE = 200;
 const BALANCE_PAGE_LIMIT = 50;
 // Movements are paged on the server (there can be tens of thousands): one
-// page of 200 (the most the server sends at once) at a time, with the type,
-// warehouse and search applied there.
-const MOVEMENT_PAGE_SIZE = 200;
+// page of 50 at a time, as on the other long lists, with the type, warehouse
+// and search applied there.
+const MOVEMENT_PAGE_SIZE = 50;
+// The other lists (balances, warnings, lots, serials) hold every row in the
+// browser, so search and the cards count them all, and draw 50 at a time.
+const LIST_PAGE_SIZE = 50;
 // Every type and warehouse in the list, from the server, for the menus.
 type MovementFacets = { movementTypes: Array<{ code: string; count: number }>; warehouseIds: string[] };
 
@@ -422,6 +425,9 @@ export default function InventoryPage({
     return contains(query, row.lotId, row.lot, row.serialId, row.sn, row.id, row.sku, row.itemName)
       && (!status || row.status === status);
   });
+  // One page of rows is drawn; movements arrive a page at a time already.
+  const paged = usePagedRows(visible, LIST_PAGE_SIZE, [view, queryString, query, warehouse, stockStatus, status].join("|"));
+  const drawn: any[] = view === "movements" ? visible : paged.pageRows;
   const selected =
     view === "overview" || view === "warnings"
       ? items.find(
@@ -658,21 +664,21 @@ export default function InventoryPage({
       )}
 
       {listTitle && (
-        <ListCard title={tr(listTitle)} total={state === "ready" ? (view === "movements" && serverTotal !== null ? serverTotal : view === "overview" && serverTotal !== null ? Math.max(serverTotal, base.length) : base.length) : undefined} shown={visible.length} testId={`inventory-${view}-list`}>
+        <ListCard title={tr(listTitle)} total={state === "ready" ? (view === "movements" && serverTotal !== null ? serverTotal : view === "overview" && serverTotal !== null ? Math.max(serverTotal, base.length) : base.length) : undefined} shown={drawn.length} testId={`inventory-${view}-list`}>
           <div className={tableScrollClass}>
             {balances && (
               <table className={`w-full min-w-[1000px] text-left ${tableBodyTextClass}`}>
                 {head([[tr("skuItem"), "left"], [tr("warehouseLocation"), "left"], [tr("onHand"), "right"], [tr("reservedQty"), "right"], [tr("available"), "right"], [tr("safetyReorder"), "right"], [tr("status"), "left"], [tr("actions"), "left"]])}
                 <tbody>
                   {stateRow(8)}
-                  {state === "ready" && (visible as Item[]).map((item, index) => {
+                  {state === "ready" && (drawn as Item[]).map((item, index) => {
                     const stock = stockStateOf(item);
                     return (
                       <tr
                         key={item.id || `${item.sku}-${item.warehouseId}-${item.locationKey}`}
                         data-testid={`inventory-item-${item.sku}`}
                         className={listRowClass}
-                        style={listRowStyle(index, visible.length)}
+                        style={listRowStyle(index, drawn.length)}
                       >
                         <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                           <EntityLink kind="item" id={item.itemId || item.sku} className={tableLinkClass}>{item.sku}</EntityLink>
@@ -710,8 +716,8 @@ export default function InventoryPage({
                 {head([[tr("type"), "left"], [tr("source"), "left"], [tr("skuItem"), "left"], [tr("warehouseLocation"), "left"], [tr("quantityIn"), "right"], [tr("quantityOut"), "right"], [tr("date"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(8)}
-                  {state === "ready" && (visible as Movement[]).map((row, index) => (
-                    <tr key={row.movementId || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as Movement[]).map((row, index) => (
+                    <tr key={row.movementId || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       {/* The movement's own id is an internal UUID; show what moved it instead. */}
                       <td className={`${tdNowrapClass} sticky left-0 z-10 bg-white font-medium`} style={{ color: A.label }}>{movementTypeLabel(row.movementType || "", language, row.reason)}</td>
                       <td className={tdNowrapClass}>{sourceDocument(row)}</td>
@@ -737,8 +743,8 @@ export default function InventoryPage({
                 {head([[tr("lot"), "left"], [tr("skuItem"), "left"], [tr("warehouse"), "left"], [tr("quantity"), "right"], [tr("expiry"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(6)}
-                  {state === "ready" && (visible as Lot[]).map((row, index) => (
-                    <tr key={row.lotId || row.lot || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as Lot[]).map((row, index) => (
+                    <tr key={row.lotId || row.lot || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.lotId || row.lot || "—"}</td>
                       <td className={tdNameClass}>
                         <EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink>
@@ -758,8 +764,8 @@ export default function InventoryPage({
                 {head([[tr("serial"), "left"], [tr("skuItem"), "left"], [tr("warehouse"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(4)}
-                  {state === "ready" && (visible as Serial[]).map((row, index) => (
-                    <tr key={row.serialId || row.sn || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as Serial[]).map((row, index) => (
+                    <tr key={row.serialId || row.sn || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.serialId || row.sn || "—"}</td>
                       <td className={tdNameClass}><EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink></td>
                       <td className={tdNowrapClass}>{warehouseName(row.warehouseId) || "—"}</td>
@@ -774,8 +780,8 @@ export default function InventoryPage({
                 {head([[tr("exception"), "left"], [tr("skuItem"), "left"], [tr("impact"), "right"], [tr("reason"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(5)}
-                  {state === "ready" && (visible as InventoryException[]).map((row, index) => (
-                    <tr key={row.id || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as InventoryException[]).map((row, index) => (
+                    <tr key={row.id || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.id}</td>
                       <td className={tdNameClass}>
                         <EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink>
@@ -792,6 +798,9 @@ export default function InventoryPage({
           </div>
           {view === "movements" && state === "ready" && serverTotal !== null && (
             <ListPager page={movementPage} pageSize={MOVEMENT_PAGE_SIZE} total={serverTotal} onPage={setMovementPage} testId="inventory-movement-pager" />
+          )}
+          {view !== "movements" && state === "ready" && (
+            <ListPager page={paged.page} pageSize={LIST_PAGE_SIZE} total={visible.length} onPage={paged.setPage} testId={`inventory-${view}-pager`} />
           )}
         </ListCard>
       )}

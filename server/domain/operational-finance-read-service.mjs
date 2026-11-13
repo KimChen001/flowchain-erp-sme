@@ -6,6 +6,7 @@ import { awaitingReceipt, financeFixed, financeUnits } from "./operational-finan
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
 import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 import { invoiceDayKey, isDuplicateReviewClosed, loadDuplicateChecks, workspaceTimezone } from "./supplier-invoice-duplicates.mjs";
+import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from "./tenant-calendar-day.mjs";
 
 export class OperationalFinanceReadError extends Error {
   constructor(code, message, status = 400, details) {
@@ -36,12 +37,90 @@ function assertRead(actor, permission) {
 }
 
 const PAYABLE_PAYMENT_STATUSES = ["approved", "export_ready", "partially_settled"];
+// A payable still owed: approved and not paid in full, held or not. The
+// landing's "to pay" count and the payables list's "outstanding" filter
+// both use this rule, so the count and the list it opens agree.
+const PAYABLE_OPEN_STATUSES = ["approved", "export_ready", "held", "partially_settled"];
+
+// Where an approved supplier invoice stands with its payment, from its
+// payable: to pay (nothing paid yet, held or not), partly paid, or paid. The
+// supplier invoice list and Today show it in place of "Approved"; the stored
+// invoice status stays "approved". An invoice that is not approved, or has
+// no payable (a seeded or imported one), or whose payable was cancelled has
+// none. Each payment state lists the payable statuses it covers, so the list
+// filter and its card count the same invoices.
+export const BILL_PAYMENT_STATUSES = Object.freeze({
+  to_pay: Object.freeze(["approved", "export_ready", "held"]),
+  partially_settled: Object.freeze(["partially_settled"]),
+  settled: Object.freeze(["settled"]),
+});
+export function billPaymentStatus(invoiceStatus, payableStatus) {
+  if (text(invoiceStatus) !== "approved" || !payableStatus) return null;
+  return Object.keys(BILL_PAYMENT_STATUSES).find((state) => BILL_PAYMENT_STATUSES[state].includes(text(payableStatus))) || null;
+}
+// The invoices in one payment state, for the list's status filter and cards.
+const billPaymentWhere = (state) => ({ status: "approved", payableObligation: { is: { status: { in: [...BILL_PAYMENT_STATUSES[state]] } } } });
+
+export function outstandingPayableWhere() {
+  return { status: { in: PAYABLE_OPEN_STATUSES }, outstandingAmount: { gt: 0 } };
+}
+
+// A due date is a calendar day stored at 00:00 UTC; a payable is overdue
+// once the workspace's own calendar day is past it (see overdueBefore in the
+// customer side's read service).
+export function overduePayableWhere(asOf, timezone = DEFAULT_TENANT_TIMEZONE) {
+  return {
+    ...outstandingPayableWhere(),
+    dueDate: { lt: new Date(`${tenantCalendarDay(asOf, timezone)}T00:00:00.000Z`) },
+  };
+}
 
 function pageQuery(query = {}) {
-  const page = Math.max(1, Number(query.page || 1));
-  const pageSize = Math.min(100, Math.max(1, Number(query.pageSize || 25)));
+  const page = Math.max(1, Math.floor(Number(query.page)) || 1);
+  const pageSize = Math.min(100, Math.max(1, Math.floor(Number(query.pageSize)) || 25));
   return { page, pageSize, skip: (page - 1) * pageSize };
 }
+
+// A where clause as one condition per field, so it can be negated as a whole:
+// NOT { AND: [...] } is "not all of these".
+export const allOf = (where) => ({ AND: Object.entries(where).map(([key, value]) => ({ [key]: value })) });
+// The non-empty conditions, to AND together.
+export const financeConditions = (...wheres) => wheres.filter((where) => where && Object.keys(where).length);
+const conditions = financeConditions;
+// Every given condition: { AND: [...] }, or nothing when none is set.
+export const whereAll = (...wheres) => {
+  const list = conditions(...wheres);
+  return list.length ? { AND: list } : {};
+};
+
+// A finance list in the order that needs attention first: the rows of
+// `groups` (disjoint, together every row of `where`) one group after the
+// other, each in `orderBy`, paged across the groups. Overdue and open rows
+// come before paid ones however many there are.
+export async function pagedInGroups(model, { where, groups, orderBy, include, skip, take }) {
+  const scoped = groups.map((group) => ({ AND: conditions(where, group) }));
+  const counts = await Promise.all(scoped.map((groupWhere) => model.count({ where: groupWhere })));
+  const rows = [];
+  let offset = skip;
+  for (let index = 0; index < scoped.length && rows.length < take; index += 1) {
+    if (offset >= counts[index]) {
+      offset -= counts[index];
+      continue;
+    }
+    rows.push(...(await model.findMany({ where: scoped[index], ...(include ? { include } : {}), orderBy, skip: offset, take: take - rows.length })));
+    offset = 0;
+  }
+  return { total: counts.reduce((sum, count) => sum + count, 0), rows };
+}
+
+// Newest first, with the id as the last tie-break so pages never overlap.
+export const NEWEST_DUE_FIRST = [{ dueDate: "desc" }, { createdAt: "desc" }, { id: "desc" }];
+
+const workspaceZone = async (prisma, tenantId) =>
+  (await prisma.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }))?.timezone || DEFAULT_TENANT_TIMEZONE;
+
+// A search box's text as a contains filter; LIKE wildcards are matched as typed.
+const containsText = (value) => ({ contains: value, mode: "insensitive" });
 
 function actions(actor, capability, row, type) {
   if (!capability?.enabled) return [];
@@ -117,6 +196,8 @@ function invoiceSummary(row, actor, capabilities) {
     totalAmount: decimal(row.totalAmount ?? row.amount),
     currency: row.currency,
     status: row.status,
+    // Once approved: to_pay, partially_settled or settled (billPaymentStatus).
+    paymentStatus: billPaymentStatus(row.status, row.payableObligation?.status),
     matchStatus: row.matchStatus,
     varianceAmount: decimal(row.varianceAmount),
     awaitingReceipt: awaitingReceipt(row),
@@ -184,6 +265,7 @@ function creditMemoSummary(row, actor, capabilities) {
 export function createOperationalFinanceReadService({
   prisma,
   capabilities = {},
+  now = () => new Date(),
 } = {}) {
   if (!prisma) throw new Error("prisma is required");
 
@@ -196,29 +278,59 @@ export function createOperationalFinanceReadService({
     assertRead(current, "finance.supplier_invoice.read");
     const { page, pageSize, skip } = pageQuery(query);
     const search = escapeLikePattern(text(query.search));
+    const partnerVisible = can({ actor: current, permission: "finance.partner_snapshot.read", tenantId: current.tenantId });
+    // A variance is a non-zero variance amount or the match status "variance";
+    // a missing amount or status is no variance. Nulls are named on both
+    // sides, so neither filter loses a row to SQL's unknown.
+    const withVariance = { OR: [{ AND: [{ varianceAmount: { not: null } }, { varianceAmount: { not: 0 } }] }, { matchStatus: "variance" }] };
+    const noVariance = { AND: [{ OR: [{ varianceAmount: null }, { varianceAmount: 0 }] }, { OR: [{ matchStatus: null }, { matchStatus: { not: "variance" } }] }] };
+    const variance = text(query.variance);
+    // to_pay, partially_settled and settled are payment states of approved
+    // invoices (billPaymentStatus); any other status is the stored one.
+    const status = text(query.status);
     const where = {
       tenantId: current.tenantId,
-      ...(text(query.status) ? { status: text(query.status) } : {}),
-      ...(text(query.currency)
-        ? { currency: text(query.currency).toUpperCase() }
-        : {}),
-      ...(search
-        ? {
-            OR: [
-              { invoiceNumber: { contains: search, mode: "insensitive" } },
-              { supplierName: { contains: search, mode: "insensitive" } },
-            ],
-          }
-        : {}),
+      ...whereAll(
+        BILL_PAYMENT_STATUSES[status] ? billPaymentWhere(status) : status ? { status } : {},
+        text(query.currency) ? { currency: text(query.currency).toUpperCase() } : {},
+        // The supplier filter names a supplier the list showed, so only a
+        // role that sees supplier names filters by one.
+        partnerVisible && text(query.supplier) ? { supplierName: text(query.supplier) } : {},
+        variance === "with" ? withVariance : variance === "none" ? noVariance : {},
+        search
+          ? {
+              OR: [
+                { invoiceNumber: containsText(search) },
+                { supplierName: containsText(search) },
+                { relatedPoId: containsText(search) },
+              ],
+            }
+          : {},
+      ),
     };
-    const [total, rows] = await Promise.all([
+    // The metric cards count every invoice in the workspace, not one page.
+    const countWhere = (extra) => prisma.supplierInvoice.count({ where: { tenantId: current.tenantId, ...extra } });
+    const countStatus = (status) => countWhere({ status });
+    const [total, rows, submitted, exception, matched, approved, toPay, partlyPaid, paid, supplierNames] = await Promise.all([
       prisma.supplierInvoice.count({ where }),
       prisma.supplierInvoice.findMany({
         where,
+        // The payable's status alone, for the payment state.
+        include: { payableObligation: { select: { status: true } } },
         orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         skip,
         take: pageSize,
       }),
+      countStatus("submitted"),
+      countStatus("exception"),
+      countStatus("matched"),
+      countStatus("approved"),
+      countWhere(billPaymentWhere("to_pay")),
+      countWhere(billPaymentWhere("partially_settled")),
+      countWhere(billPaymentWhere("settled")),
+      partnerVisible
+        ? prisma.supplierInvoice.findMany({ where: { tenantId: current.tenantId, supplierName: { not: null } }, distinct: ["supplierName"], select: { supplierName: true }, orderBy: { supplierName: "asc" }, take: 500 })
+        : [],
     ]);
     // Open or rejected match exceptions per invoice, which block approval.
     const exceptionRows = rows.some((row) => row.status === "exception")
@@ -234,6 +346,10 @@ export function createOperationalFinanceReadService({
       page,
       pageSize,
       total,
+      // approved counts every approved invoice; to_pay, partially_settled and
+      // settled split those with a payable by where its payment stands.
+      counts: { submitted, exception, matched, approved, to_pay: toPay, partially_settled: partlyPaid, settled: paid },
+      suppliers: supplierNames.map((row) => row.supplierName).filter(Boolean),
       capabilities,
     };
   }
@@ -492,9 +608,22 @@ export function createOperationalFinanceReadService({
     const current = await actor(context);
     assertRead(current, "finance.three_way_match.read");
     const { page, pageSize, skip } = pageQuery(query);
+    const search = escapeLikePattern(text(query.search));
+    const partnerVisible = can({ actor: current, permission: "finance.partner_snapshot.read", tenantId: current.tenantId });
     const where = {
       tenantId: current.tenantId,
-      ...(text(query.status) ? { status: text(query.status) } : {}),
+      ...whereAll(
+        text(query.status) ? { status: text(query.status) } : {},
+        search
+          ? {
+              OR: [
+                { supplierInvoice: { is: { invoiceNumber: containsText(search) } } },
+                { match: { is: { matchNumber: containsText(search) } } },
+                ...(partnerVisible ? [{ supplierInvoice: { is: { supplierName: containsText(search) } } }] : []),
+              ],
+            }
+          : {},
+      ),
     };
     const [total, rows] = await Promise.all([
       prisma.financeMatchException.count({ where }),
@@ -539,28 +668,73 @@ export function createOperationalFinanceReadService({
     const current = await actor(context);
     assertRead(current, "finance.payable.read");
     const { page, pageSize, skip } = pageQuery(query);
+    const status = text(query.status);
+    const asOf = now();
+    const timezone = await workspaceZone(prisma, current.tenantId);
+    const search = escapeLikePattern(text(query.search));
+    const partnerVisible = can({ actor: current, permission: "finance.partner_snapshot.read", tenantId: current.tenantId });
+    // "outstanding" and "overdue" are derived (see outstandingPayableWhere);
+    // any other status is the stored one.
+    const statusWhere = status === "overdue"
+      ? overduePayableWhere(asOf, timezone)
+      : status === "outstanding"
+        ? outstandingPayableWhere()
+        : status ? { status } : {};
     const where = {
       tenantId: current.tenantId,
-      ...(text(query.status) ? { status: text(query.status) } : {}),
-      ...(text(query.currency)
-        ? { currency: text(query.currency).toUpperCase() }
-        : {}),
+      ...whereAll(
+        statusWhere,
+        text(query.currency) ? { currency: text(query.currency).toUpperCase() } : {},
+        // The supplier's name is searched only by a role that may see it.
+        search
+          ? {
+              OR: [
+                { obligationNumber: containsText(search) },
+                { supplierInvoice: { is: { invoiceNumber: containsText(search) } } },
+                ...(partnerVisible ? [{ supplierInvoice: { is: { supplierName: containsText(search) } } }] : []),
+              ],
+            }
+          : {},
+      ),
     };
-    const [total, rows] = await Promise.all([
-      prisma.payableObligation.count({ where }),
-      prisma.payableObligation.findMany({
-        where,
-        include: { supplierInvoice: true },
-        orderBy: [{ dueDate: "asc" }, { id: "asc" }],
-        skip,
-        take: pageSize,
-      }),
+    // sort=attention (the payables page): overdue first, then the rest still
+    // owed, then paid or cancelled; each newest first. Without it the list
+    // keeps the soonest due first.
+    const listed = text(query.sort) === "attention"
+      ? pagedInGroups(prisma.payableObligation, {
+          where,
+          groups: [overduePayableWhere(asOf, timezone), { AND: [outstandingPayableWhere(), { NOT: allOf(overduePayableWhere(asOf, timezone)) }] }, { NOT: allOf(outstandingPayableWhere()) }],
+          orderBy: NEWEST_DUE_FIRST,
+          include: { supplierInvoice: true },
+          skip,
+          take: pageSize,
+        })
+      : Promise.all([
+          prisma.payableObligation.count({ where }),
+          prisma.payableObligation.findMany({
+            where,
+            include: { supplierInvoice: true },
+            orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+            skip,
+            take: pageSize,
+          }),
+        ]).then(([total, rows]) => ({ total, rows }));
+    // The metric cards count every payable in the workspace, not one page.
+    const count = (extra) => prisma.payableObligation.count({ where: { tenantId: current.tenantId, ...extra } });
+    const [{ total, rows }, outstanding, overdue, held, settled] = await Promise.all([
+      listed,
+      count(outstandingPayableWhere()),
+      count(overduePayableWhere(asOf, timezone)),
+      count({ status: "held" }),
+      count({ status: "settled" }),
     ]);
     return {
       items: rows.map((row) => payableSummary(row, current, capabilities)),
       page,
       pageSize,
       total,
+      counts: { outstanding, overdue, held, settled },
+      timezone,
       currencyAggregationStatus:
         new Set(rows.map((row) => row.currency)).size > 1
           ? "multi_currency_unconverted"
@@ -574,9 +748,23 @@ export function createOperationalFinanceReadService({
     const current = await actor(context);
     assertRead(current, "finance.supplier_credit.read");
     const { page, pageSize, skip } = pageQuery(query);
+    const search = escapeLikePattern(text(query.search));
+    const partnerVisible = can({ actor: current, permission: "finance.partner_snapshot.read", tenantId: current.tenantId });
     const where = {
       tenantId: current.tenantId,
-      ...(text(query.status) ? { status: text(query.status) } : {}),
+      ...whereAll(
+        text(query.status) ? { status: text(query.status) } : {},
+        search
+          ? {
+              OR: [
+                { creditMemoNumber: containsText(search) },
+                { supplierInvoice: { is: { invoiceNumber: containsText(search) } } },
+                { returnPosting: { is: { postingNumber: containsText(search) } } },
+                ...(partnerVisible ? [{ supplierNameSnapshot: containsText(search) }] : []),
+              ],
+            }
+          : {},
+      ),
     };
     const [total, rows] = await Promise.all([
       prisma.supplierCreditMemo.count({ where }),

@@ -6,7 +6,7 @@ const overview = (supplier: string) => ({
   today: '2026-10-07', timeZone: 'America/New_York',
   workItems: [
     { id: 'purchase_order_overdue:PO-1', kind: 'purchase_order_overdue', entityType: 'purchase_order', recordId: 'PO-1', label: 'PO-0001', name: supplier, href: '/app/procurement/orders/PO-1', actionHref: null, date: '2026-10-04', dateKind: 'due', overdueDays: 3, detail: { remaining: 20, unit: 'EA', openLines: 1, received: 30, ordered: 50, notIssued: false, dueInDays: null } },
-    { id: 'reorder_now:ITEM-1', kind: 'reorder_now', entityType: 'item', recordId: 'ITEM-1', label: 'VALVE-150', name: 'Ball valve', href: '/app/master-data/items/ITEM-1', actionHref: '/app/inventory/reorder', date: '2026-10-07', dateKind: 'order_by', overdueDays: 0, detail: { position: 20, reorderPoint: 20, shortfall: 0, unit: 'EA', stockSignal: 'stock_below_safety' } },
+    { id: 'reorder_now:ITEM-1', kind: 'reorder_now', entityType: 'item', recordId: 'ITEM-1', label: 'VALVE-150', name: 'Ball valve', href: '/app/master-data/items/ITEM-1', actionHref: '/app/inventory/reorder', date: '2026-10-07', dateKind: 'order_by', overdueDays: 0, detail: { position: 20, reorderPoint: 20, shortfall: 0, unit: 'EA', stockSignal: 'stock_below_safety', purchaseRequest: { itemId: 'ITEM-1', supplierId: 'SUP-1', quantity: 30, raisedToMinimum: false } } },
     { id: 'purchase_request_to_approve:PR-1', kind: 'purchase_request_to_approve', entityType: 'purchase_request', recordId: 'PR-1', label: 'PR-1', name: null, href: '/app/procurement/requests/PR-1', actionHref: null, date: '2026-10-09', dateKind: 'required', overdueDays: 0, detail: { amount: 1200, currency: 'USD' } },
     { id: 'draft_purchase_order:PO-2', kind: 'draft_purchase_order', entityType: 'purchase_order', recordId: 'PO-2', label: 'PO-0002', name: supplier, href: '/app/procurement/orders/PO-2', actionHref: null, date: null, dateKind: 'due', overdueDays: 0, detail: {} },
   ],
@@ -47,6 +47,11 @@ for (const language of ['en-US', 'zh-CN']) {
       await expect(rows.nth(0)).toContainText('20 ea still to receive · 30 of 50 ea received · Supplier Acme Components');
       await expect(rows.nth(1)).toContainText('Order today');
       await expect(rows.nth(1)).toContainText('Ball valve · Stock position 20 ea, reorder point 20 ea · Below safety stock');
+      // The row opens the purchase request the reorder list prefills for the item.
+      const request = new URL(await rows.nth(1).getByRole('link', { name: 'Create purchase request' }).getAttribute('href') || '', 'http://local');
+      expect(request.pathname).toBe('/app/procurement/requests');
+      expect(Object.fromEntries(request.searchParams)).toMatchObject({ itemId: 'ITEM-1', origin: 'reorder_list', quantity: '30', suppliers: 'SUP-1' });
+      expect(request.searchParams.get('reason')).toContain('20 ea');
       await expect(rows.nth(2)).toContainText('Needed by Oct 9, 2026');
       await expect(rows.nth(2)).toContainText('Request amount $1,200.00');
       await expect(rows.nth(3)).toContainText('No date');
@@ -78,6 +83,8 @@ for (const language of ['en-US', 'zh-CN']) {
     } else {
       await expect(rows.nth(0)).toContainText('逾期 3 天');
       await expect(rows.nth(0)).toContainText('仍待收货 20 个');
+      await expect(rows.nth(1)).toContainText('库存位置（含在途）20 个，再订货点 20 个');
+      await expect(rows.nth(1).getByRole('link', { name: '创建采购申请' })).toHaveAttribute('href', /itemId=ITEM-1&origin=reorder_list/);
       await expect(root.getByText('全部收货', { exact: true })).toBeVisible();
       await expect(root.getByText('待审批', { exact: true })).toBeVisible();
       await expect(root.getByText('已确认', { exact: true })).toBeVisible();

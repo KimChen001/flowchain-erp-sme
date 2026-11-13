@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { ClipboardList, RefreshCw } from "lucide-react";
+import { ChevronDown, ClipboardList, RefreshCw } from "lucide-react";
 import { A, Card, Chip, Modal, inputStyle } from "../../components/ui";
 import { rowActionClass } from "../../components/ui/listLayout";
 import { apiJson } from "../../lib/api-client";
@@ -129,7 +129,7 @@ function formatShortDay(day: string, today: string, locale: string) {
 const oneDecimal = (value: number | null | undefined) => (value === null || value === undefined ? value : Math.round(value * 10) / 10);
 // A quantity with its unit. Given the interface language, the unit shows as
 // its label in that language ("28 pcs", "28 件"); without one it stays as
-// stored, as in the purchase request reason the list prefills.
+// stored.
 const withUnit = (value: number | null | undefined, unit: string | null, language?: string) => (value === null || value === undefined ? "—" : `${formatQuantity(value)}${unit ? ` ${language ? unitLabel(unit, language, value) : unit}` : ""}`);
 
 function flagText(flag: Flag, t: ReturnType<typeof useReorderListCopy>, locale: string, today: string) {
@@ -148,10 +148,16 @@ function flagText(flag: Flag, t: ReturnType<typeof useReorderListCopy>, locale: 
 
 // The purchase request form, prefilled from the row (shared/purchase-request-prefill.mjs).
 // Without a shortfall in the request line's unit the quantity is left for the
-// person to enter.
+// person to enter. A shortfall raised to the supplier's minimum order says so
+// (quantityFrom=supplier_minimum) and hands over the shortfall too, so the
+// form labels the quantity as the supplier's minimum, not as the shortfall.
 function purchaseRequestHref(row: ReorderRow, reason: string) {
   const params = new URLSearchParams({ itemId: row.purchaseRequest.itemId, origin: "reorder_list", reason });
   if (row.purchaseRequest.quantity !== null) params.set("quantity", String(row.purchaseRequest.quantity));
+  if (row.purchaseRequest.quantity !== null && row.purchaseRequest.raisedToMinimum) {
+    params.set("quantityFrom", "supplier_minimum");
+    params.set("shortfall", String(row.shortfall));
+  }
   if (row.purchaseRequest.supplierId) params.set("suppliers", row.purchaseRequest.supplierId);
   return `/app/procurement/requests?${params.toString()}`;
 }
@@ -265,6 +271,10 @@ export default function ReorderListPage() {
   const [saved, setSaved] = useState("");
   const canSetReorderPoint = useMasterDataWriteAccess().items;
   const phone = useMediaQuery("(max-width: 639.98px)");
+  // On a phone the method text folds behind "How this is worked out", so the
+  // first item shows on the first screen; wider screens always show it.
+  const [methodOpen, setMethodOpen] = useState(false);
+  const showMethod = !phone || methodOpen;
   const supplierFilter = searchParams.get("supplier") || "";
 
   const load = () => {
@@ -327,12 +337,30 @@ export default function ReorderListPage() {
           <Card className="space-y-2 p-4 text-xs leading-5" data-testid="reorder-list-rules">
             <div className="flex flex-wrap items-center gap-2">
               <span data-testid="reorder-list-scope"><Chip label={scopeLabel} color={A.blue} bg="#eef5ff" /></span>
+              {phone && (
+                <button
+                  type="button"
+                  onClick={() => setMethodOpen((open) => !open)}
+                  aria-expanded={methodOpen}
+                  aria-controls="reorder-list-method"
+                  data-testid="reorder-list-method-toggle"
+                  className="inline-flex items-center gap-1 py-1 font-semibold"
+                  style={{ color: A.blue }}
+                >
+                  {t("methodToggle")}
+                  <ChevronDown size={14} aria-hidden className={methodOpen ? "rotate-180" : undefined} />
+                </button>
+              )}
             </div>
-            <p style={{ color: A.sub }}>{t("rule", { window: list.rule.windowDays, min: list.rule.minShipmentDays })}</p>
-            <p style={{ color: A.sub }} data-testid="reorder-list-horizon">{t("horizon")}</p>
-            <p style={{ color: A.sub }}>{t("units")}</p>
-            {list.rows.some((row) => row.reorderPointSuggestion) && (
-              <p style={{ color: A.sub }} data-testid="reorder-list-suggestion-rule">{t("suggestionRule", { review: ruleReviewDays, window: list.rule.windowDays })}</p>
+            {showMethod && (
+              <div id="reorder-list-method" className="space-y-2" data-testid="reorder-list-method">
+                <p style={{ color: A.sub }}>{t("rule", { window: list.rule.windowDays, min: list.rule.minShipmentDays })}</p>
+                <p style={{ color: A.sub }} data-testid="reorder-list-horizon">{t("horizon")}</p>
+                <p style={{ color: A.sub }}>{t("units")}</p>
+                {list.rows.some((row) => row.reorderPointSuggestion) && (
+                  <p style={{ color: A.sub }} data-testid="reorder-list-suggestion-rule">{t("suggestionRule", { review: ruleReviewDays, window: list.rule.windowDays })}</p>
+                )}
+              </div>
             )}
             {saved && <p data-testid="reorder-list-saved" style={{ color: A.green }}>{saved}</p>}
             {truncated.length > 0 && (
@@ -403,7 +431,8 @@ export default function ReorderListPage() {
                     </thead>
                     <tbody>
                       {pageRows.map((row) => {
-                        const reason = t("reason", { position: withUnit(row.position, row.unit), reorderPoint: withUnit(row.reorderPoint, row.unit), date: row.orderByDate });
+                        // The request's reason, in the interface language with its unit labels ("23 pcs", "23 件").
+                        const reason = t("reason", { position: withUnit(row.position, row.unit, t.language), reorderPoint: withUnit(row.reorderPoint, row.unit, t.language), date: row.orderByDate });
                         const stock: [ReorderListCopyKey, number][] = [["colOnHand", row.onHand], ["colReserved", row.reserved], ["colIncoming", row.incoming], ["colPosition", row.position]];
                         const supplier = row.supplier;
                         const leadTime = supplier && (supplier.leadTimeDays === null ? t("leadTimeNotRecorded") : t.count("leadTimeShort", supplier.leadTimeDays));

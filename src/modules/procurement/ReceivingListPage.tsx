@@ -171,7 +171,7 @@ export function ReceivingListPage() {
                     {/* A posted receipt says Posted; one not posted also says where it stands (draft, ready, cancelled). */}
                     <div className="flex flex-col items-start gap-1">
                       <StatusChip label={statusLabel(row.postingStatus || "—")} tone={statusToneOf(row.postingStatus)} testId="receipt-posting-status" />
-                      {row.postingStatus !== "posted" && row.workflowStatus && (
+                      {row.postingStatus !== "posted" && row.postingStatus !== "reversed" && row.workflowStatus && (
                         <StatusChip label={statusLabel(row.workflowStatus)} tone={statusToneOf(row.workflowStatus)} testId="receipt-workflow-status" />
                       )}
                     </div>

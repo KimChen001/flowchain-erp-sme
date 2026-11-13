@@ -36,6 +36,9 @@ const REF_LABELS: Record<string, readonly [string, string]> = {
   "reorder_list:supplier": ["Preferred supplier from the reorder list", "来自补货清单的首选供应商"],
   "reorder_list:item": ["Item from the reorder list", "来自补货清单的物料"],
   "reorder_list:enter_quantity": ["Enter the quantity: the reorder list has no shortfall in this unit", "请填写数量：补货清单在此单位下没有缺口"],
+  // The reorder list raised its shortfall to the supplier's minimum order;
+  // with the shortfall at hand the label names it (REF_DETAIL_LABELS).
+  "reorder_list:supplier_minimum": ["Supplier minimum", "按供应商最小起订量"],
   "item_supplier:moq": ["Raised to the minimum order quantity", "已提高到最小起订量"],
   "item_supplier:lead_time": ["Today plus the supplier lead time", "今天加供应商提前期"],
   "item_supplier:preferred": ["Preferred supplier", "首选供应商"],
@@ -55,6 +58,13 @@ const REF_LABELS: Record<string, readonly [string, string]> = {
   "rfq:required_date": ["Required date from the RFQ", "询价单的需求日期"],
 };
 
+// Labels that name a number the handoff gave beside the value; each
+// {placeholder} is filled from the chip's params. Without them the plain
+// label above is shown.
+const REF_DETAIL_LABELS: Record<string, readonly [string, string]> = {
+  "reorder_list:supplier_minimum": ["Supplier minimum (shortfall {shortfall})", "按供应商最小起订量（缺口 {shortfall}）"],
+};
+
 const ORIGIN_LABELS: Record<PrefillOrigin, readonly [string, string]> = {
   ai_assistant: ["the assistant", "助手"],
   today_cockpit: ["Today", "今日概览"],
@@ -64,24 +74,31 @@ const ORIGIN_LABELS: Record<PrefillOrigin, readonly [string, string]> = {
 
 const pick = (pair: readonly [string, string], language: string) => (language === "zh-CN" ? pair[1] : pair[0]);
 
-export function prefillSourceLabel(entry: Pick<PrefillEntry, "source" | "ref">, language: string) {
+export function prefillSourceLabel(entry: Pick<PrefillEntry, "source" | "ref">, language: string, params: Record<string, string> = {}) {
+  const detail = entry.ref ? REF_DETAIL_LABELS[entry.ref] : undefined;
+  if (detail) {
+    const filled = Object.entries(params).reduce((text, [name, value]) => (value ? text.split(`{${name}}`).join(value) : text), pick(detail, language));
+    if (!/\{\w+\}/.test(filled)) return filled;
+  }
   const byRef = entry.ref ? REF_LABELS[entry.ref] : undefined;
   return pick(byRef || SOURCE_LABELS[entry.source] || SOURCE_LABELS.default, language);
 }
 
-// Shown under a field while it still holds the suggested value.
-export function PrefillSourceChip({ entry, current, testId }: { entry?: PrefillEntry | null; current?: string | number | null; testId?: string }) {
+// Shown under a field while it still holds the suggested value. params fill
+// a label that names a number from the handoff ({ shortfall: "19 pcs" }).
+export function PrefillSourceChip({ entry, current, testId, params }: { entry?: PrefillEntry | null; current?: string | number | null; testId?: string; params?: Record<string, string> }) {
   const { language } = useI18n();
   if (!entry || String(current ?? "").trim() !== String(entry.value ?? "").trim()) return null;
   return (
     <span
       data-testid={testId || "prefill-source"}
       data-prefill-source={entry.source}
+      data-prefill-ref={entry.ref || undefined}
       className="mt-1 inline-flex w-fit max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-4"
       style={{ background: "#eef4ff", color: A.blue }}
     >
       <Sparkles size={11} className="shrink-0" aria-hidden />
-      <span>{prefillSourceLabel(entry, language)}</span>
+      <span>{prefillSourceLabel(entry, language, params)}</span>
     </span>
   );
 }
@@ -90,12 +107,14 @@ const BANNER = {
   "en-US": {
     title: "Prefilled from {origin}",
     body: "Each suggested field says where its value came from. Check every field before you save; nothing is saved or submitted until you do.",
-    rfq: "An RFQ starts from an approved purchase request. Save and submit this request; once it is approved, create the RFQ from it.",
+    // The request pages have no RFQ step; the assistant's record card does
+    // ("Request quotes (RFQ)" on an approved request).
+    rfq: "An RFQ starts from an approved purchase request. Save and submit this request; once it is approved, ask the assistant to request quotes for it.",
   },
   "zh-CN": {
     title: "已根据{origin}预填",
     body: "每个预填字段都标明了来源。保存前请逐项核对；在你保存之前，不会保存或提交任何内容。",
-    rfq: "询价单从已批准的采购申请发起。请先保存并提交这张申请，批准后再从申请创建询价单。",
+    rfq: "询价单从已批准的采购申请发起。请先保存并提交这张申请；批准后，可让助手为它发起询价。",
   },
 } as const;
 

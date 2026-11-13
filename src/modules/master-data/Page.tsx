@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { FileSpreadsheet, Search } from "lucide-react";
+import { FileSpreadsheet } from "lucide-react";
 import { A, Card, Field, inputStyle } from "../../components/ui";
+import { ListCard, ListSearchCard, ResetButton, listButtonClass } from "../../components/ui/listLayout";
 import type { ActiveContext } from "../ai-assistant/Panel";
 import MasterDataTables from "./MasterDataTables";
 import { fetchMasterDataSnapshot, masterDataErrorStatus, type AsyncDataStatus, type MasterDataSnapshot } from "./api";
@@ -11,6 +12,11 @@ import ItemMasterWorkbench from "./ItemMasterWorkbench";
 import { useMasterDataCopy } from "./masterDataCopy";
 import { DataImportLink } from "./DataImportLink";
 import { useMasterDataWriteAccess } from "./writeAccess";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
+import { useI18n } from "../../i18n/I18n";
+
+// A workspace can hold a thousand customers or more: the list draws 50 at a time.
+const CUSTOMER_PAGE_SIZE = 50;
 
 export type MasterDataTab = "overview" | "items" | "suppliers" | "customers" | "warehouses" | "tax-codes" | "payment-terms" | "print-templates";
 export type MasterDataTableTab = Exclude<MasterDataTab, "overview" | "customers" | "print-templates">;
@@ -32,12 +38,12 @@ const LOAD_ERRORS: Record<string, string> = {
 
 type ListTab = ReferenceTableTab | "customers" | "print-templates";
 // The search and list card copy of each reference list.
-const VIEWS: Record<ListTab, { search: string; hint: string; list: string; statusLabel: string; allStatuses: string; empty: string }> = {
-  customers: { search: "Customer search", hint: "Search customers by code, name, contact, phone, address or payment terms.", list: "Customer list", statusLabel: "Status", allStatuses: "All statuses", empty: "No customers yet. Create or import customers to continue." },
-  warehouses: { search: "Warehouse search", hint: "Search warehouses by code, name, zone, bin or owner.", list: "Warehouse list", statusLabel: "QA status", allStatuses: "All QA statuses", empty: "No warehouses yet." },
-  "tax-codes": { search: "Tax code search", hint: "Search tax codes by code, name, type, region or description.", list: "Tax code list", statusLabel: "Status", allStatuses: "All statuses", empty: "No tax codes yet." },
-  "payment-terms": { search: "Payment term search", hint: "Search payment terms by code, name or description.", list: "Payment term list", statusLabel: "Status", allStatuses: "All statuses", empty: "No payment terms yet." },
-  "print-templates": { search: "Print template search", hint: "Search templates by name or document type.", list: "Print template list", statusLabel: "Document type", allStatuses: "All document types", empty: "No print templates yet." },
+const VIEWS: Record<ListTab, { search: string; hint: string; placeholder: string; list: string; statusLabel: string; allStatuses: string; empty: string }> = {
+  customers: { search: "Customer search", hint: "Search customers by code, name, contact, phone, address or payment terms.", placeholder: "Code, name, contact or phone", list: "Customer list", statusLabel: "Status", allStatuses: "All statuses", empty: "No customers yet. Create or import customers to continue." },
+  warehouses: { search: "Warehouse search", hint: "Search warehouses by code, name, zone, bin or owner.", placeholder: "Code, name, zone or owner", list: "Warehouse list", statusLabel: "QA status", allStatuses: "All QA statuses", empty: "No warehouses yet." },
+  "tax-codes": { search: "Tax code search", hint: "Search tax codes by code, name, type, region or description.", placeholder: "Code, name, type or region", list: "Tax code list", statusLabel: "Status", allStatuses: "All statuses", empty: "No tax codes yet." },
+  "payment-terms": { search: "Payment term search", hint: "Search payment terms by code, name or description.", placeholder: "Code, name or description", list: "Payment term list", statusLabel: "Status", allStatuses: "All statuses", empty: "No payment terms yet." },
+  "print-templates": { search: "Print template search", hint: "Search templates by name or document type.", placeholder: "Template name or document type", list: "Print template list", statusLabel: "Document type", allStatuses: "All document types", empty: "No print templates yet." },
 };
 
 export default function MasterDataPage({
@@ -52,6 +58,7 @@ export default function MasterDataPage({
   onActiveContextChange?: (context: ActiveContext | null) => void;
 }) {
   const { copy } = useMasterDataCopy();
+  const { formatNumber } = useI18n();
   const [tab, setTab] = useState<MasterDataTab>(initialView);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -103,6 +110,7 @@ export default function MasterDataPage({
   const filteredTaxCodes = useMemo(() => masterData.taxCodes.filter((item) => matches([item.code, item.name, item.type, item.region, item.description]) && matchesStatus(item.status)), [masterData.taxCodes, query, statusFilter]);
   const filteredPaymentTerms = useMemo(() => masterData.paymentTerms.filter((item) => matches([item.code, item.name, item.description]) && matchesStatus(item.status)), [masterData.paymentTerms, query, statusFilter]);
   const filteredCustomers = useMemo(() => masterData.customers.filter((item) => matches([item.code, item.name, item.contact, item.phone, item.address, item.paymentTerms]) && matchesStatus(item.status)), [masterData.customers, query, statusFilter]);
+  const customerPage = usePagedRows(filteredCustomers, CUSTOMER_PAGE_SIZE, [query, statusFilter].join("|"));
   const filteredTemplates = useMemo(() => templateCatalog.filter((item) => matches([item.name, copy(item.name), item.documentType, copy(item.documentType)]) && matchesStatus(item.documentType)), [query, statusFilter, templateCatalog, copy]);
 
   function exportCurrent() {
@@ -133,63 +141,50 @@ export default function MasterDataPage({
   const filtered = Boolean(query || statusFilter);
   const resetFilters = () => { setSearch(""); setStatusFilter(""); };
 
-  // Laid out like the other list pages (purchase orders, items): a search
-  // card with labelled filters, then the list card.
+  // Laid out like the other list pages (purchase orders, items): the shared
+  // search card (its filters fold away on a phone), then the list card with
+  // "N total, M shown".
   return (
     <div className="space-y-5">
-      <Card className="p-5">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="fc-section-title" style={{ color: A.label }}>{copy(view.search)}</h2>
-            <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy(view.hint)}</div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={resetFilters} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>
-              {copy("Reset")}
-            </button>
-            {canExport && <button type="button" onClick={exportCurrent}
-              className="flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium"
-              style={{ background: "#f0f6ff", color: A.blue }}>
-              <FileSpreadsheet size={13} /> {copy("导出当前结果")}
-            </button>}
-            {tab === "customers" && <>
-              <DataImportLink type="customers" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700" />
-              {canEditCustomers && !creatingCustomer && <button type="button" data-testid="customer-new" onClick={() => setCreatingCustomer(true)} className="h-8 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white">{copy("New customer")}</button>}
-            </>}
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
-          <Field label={copy("Search")}>
-            <label className="flex items-center gap-2" style={{ ...inputStyle, paddingTop: 0, paddingBottom: 0 }}>
-              <Search size={14} style={{ color: A.gray2 }} />
-              <input value={search} onChange={(event) => setSearch(event.target.value)}
-                aria-label={copy(view.search)}
-                placeholder={copy("搜索基础资料")}
-                className="h-9 min-w-0 flex-1 bg-transparent outline-none" />
-            </label>
-          </Field>
-          <Field label={copy(view.statusLabel)}>
-            <select aria-label={copy(view.statusLabel)} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} style={inputStyle}>
-              <option value="">{copy(view.allStatuses)}</option>
-              {statusOptions.map((value) => <option key={value} value={value}>{copy(value)}</option>)}
-            </select>
-          </Field>
-        </div>
-      </Card>
+      <ListSearchCard
+        title={copy(view.search)}
+        subtitle={copy(view.hint)}
+        activeFilters={statusFilter ? 1 : 0}
+        actions={<>
+          <ResetButton onClick={resetFilters} />
+          {canExport && <button type="button" onClick={exportCurrent} className={listButtonClass.export}>
+            <FileSpreadsheet size={13} /> {copy("导出当前结果")}
+          </button>}
+          {tab === "customers" && <>
+            <DataImportLink type="customers" className={listButtonClass.secondary} />
+            {canEditCustomers && !creatingCustomer && <button type="button" data-testid="customer-new" onClick={() => setCreatingCustomer(true)} className={listButtonClass.primary}>{copy("New customer")}</button>}
+          </>}
+        </>}
+      >
+        <Field label={copy("Search")}>
+          <input value={search} onChange={(event) => setSearch(event.target.value)}
+            aria-label={copy(view.search)}
+            placeholder={copy(view.placeholder)}
+            style={inputStyle} />
+        </Field>
+        <Field label={copy(view.statusLabel)}>
+          <select aria-label={copy(view.statusLabel)} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} style={inputStyle}>
+            <option value="">{copy(view.allStatuses)}</option>
+            {statusOptions.map((value) => <option key={value} value={value}>{copy(value)}</option>)}
+          </select>
+        </Field>
+      </ListSearchCard>
 
-      <Card>
-        <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
-          <div>
-            <div className="text-sm font-semibold" style={{ color: A.label }}>{copy(view.list)}</div>
-            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{copy(all === 1 ? "1 record, {shown} shown" : "{total} records, {shown} shown", { total: all, shown })}</div>
-          </div>
-        </div>
+      <ListCard title={copy(view.list)} total={all} shown={tab === "customers" ? customerPage.pageRows.length : shown} testId={`master-data-${tab}-list`}>
         {shown === 0 && !creatingCustomer ? (
           <div className="px-6 py-12 text-center text-sm" style={{ color: A.sub }}>
             {filtered ? copy("No records match these filters") : copy(view.empty)}
           </div>
         ) : tab === "customers" ? (
-          <CustomerTable customers={filteredCustomers} creating={creatingCustomer} onCreatingDone={() => setCreatingCustomer(false)} onChanged={() => setReloadKey((key) => key + 1)} />
+          <>
+            <CustomerTable customers={customerPage.pageRows} creating={creatingCustomer} onCreatingDone={() => setCreatingCustomer(false)} onChanged={() => setReloadKey((key) => key + 1)} />
+            <ListPager page={customerPage.page} pageSize={CUSTOMER_PAGE_SIZE} total={filteredCustomers.length} onPage={customerPage.setPage} testId="customer-pager" />
+          </>
         ) : tab === "print-templates" ? (
           <PrintTemplateTable templates={filteredTemplates} onCopy={(item) => setTemplateCatalog((current) => [...current, { ...item, id: `${item.id}-copy-${Date.now()}`, copyOf: item.copyOf || item.name, isDefault: false, updatedAt: new Date().toISOString() }])} />
         ) : (
@@ -200,7 +195,7 @@ export default function MasterDataPage({
             paymentTerms={filteredPaymentTerms}
           />
         )}
-      </Card>
+      </ListCard>
     </div>
   );
 }

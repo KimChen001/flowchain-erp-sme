@@ -70,19 +70,22 @@ const COPY: Record<string, [string, string]> = {
   graceInvalid: ["Grace days must be a whole number from 0 to {n}.", "宽限天数必须是 0 到 {n} 之间的整数。"],
   supplier: ["Supplier", "供应商"], lines: ["Deliveries", "交付次数"], delivery: ["Delivery", "交付"],
   onTime: ["On time", "准时率"], onTimeOriginal: ["On time vs the date on the PO", "按采购订单日期准时率"], onTimeCurrent: ["vs current date", "按当前日期"], onTimeCurrentFull: ["On time vs current date", "按当前日期准时率"],
-  overdueCount: ["{n} overdue with a line not received", "{n} 次交付逾期，有行未到货"],
+  overdueCount: ["{n} overdue with a line not received", "{n} 次交付逾期，有行未到货"], overdueCountOne: ["1 overdue with a line not received", "1 次交付逾期，有行未到货"],
   inFull: ["In full", "足量率"], otif: ["OTIF", "OTIF"], otifOriginal: ["OTIF vs the date on the PO", "按采购订单日期 OTIF"], otifCurrentFull: ["OTIF vs current date", "按当前日期 OTIF"], pendingCount: ["{n} not in full yet", "{n} 次交付尚未足量"], pendingLines: ["Not in full yet", "尚未足量"], early: ["Early", "过早到货"], rejection: ["Rejection rate", "拒收率"],
   averageDelay: ["Average delay", "平均延迟"], priceVariances: ["Price variances", "价格差异"],
   insufficient: ["Fewer than 5 deliveries", "交付少于 5 次"], noDeliveries: ["No deliveries due in this period with a date on the PO", "本期没有按采购订单日期应交付的记录"],
   // Enough deliveries, but fewer than 5 of them settled for this figure.
   fewerSettled: ["Fewer than 5 settled deliveries", "已判定的交付少于 5 次"],
   waiting: ["No deliveries judged yet; {n} waiting for lines not yet due", "暂无已判定的交付；{n} 次交付仍有行未到期"],
-  linesCount: ["{n} deliveries", "{n} 次交付"], days: ["{n} days", "{n} 天"], lateLines: ["{n} late", "迟到 {n} 次"],
+  linesCount: ["{n} deliveries", "{n} 次交付"], linesCountOne: ["1 delivery", "1 次交付"], days: ["{n} days", "{n} 天"], daysOne: ["1 day", "1 天"], lateLines: ["{n} late", "迟到 {n} 次"],
   interval: ["95% range {low}–{high}", "95% 区间 {low}–{high}"],
   hidden: ["Hidden", "无权查看"], mixedUnits: ["Mixed units", "单位不同"], multipleSkus: ["Multiple SKUs", "多个 SKU"],
   notRecorded: ["{n} received lines have no original promise recorded and are not counted.", "有 {n} 个已收货订单行没有记录原始承诺交期，未计入统计。"],
+  notRecordedOne: ["1 received line has no original promise recorded and is not counted.", "有 1 个已收货订单行没有记录原始承诺交期，未计入统计。"],
   pending: ["{n} deliveries still have a line open with a shortfall: not in full yet, and left out of the in-full rate until every line is fully received or closed.", "有 {n} 次交付仍有订单行未收齐且未关闭：尚未足量，在各行收齐或关闭前不计入足量率。"],
+  pendingOne: ["1 delivery still has a line open with a shortfall: not in full yet, and left out of the in-full rate until every line is fully received or closed.", "有 1 次交付仍有订单行未收齐且未关闭：尚未足量，在各行收齐或关闭前不计入足量率。"],
   revisedNote: ["{n} lines had their promised date revised after the PO was issued.", "有 {n} 个订单行在下达后修改过承诺交期。"],
+  revisedNoteOne: ["1 line had its promised date revised after the PO was issued.", "有 1 个订单行在下达后修改过承诺交期。"],
   hiddenInvoices: ["Price variances are hidden: you cannot view supplier invoices.", "价格差异已隐藏：你没有查看采购发票的权限。"],
   warehouseScoped: ["Only receipts in your warehouses are counted.", "仅统计你有权限的仓库的收货。"],
   definitionTitle: ["How these figures are calculated", "指标口径"],
@@ -91,7 +94,7 @@ const COPY: Record<string, [string, string]> = {
     "统计单位是交付：同一采购订单中原始承诺交期相同的各行。原始承诺交期是采购订单审批时的日期，可能是采购方的需求日期，而非供应商确认的日期；只统计供应商实际收到的采购订单：已下达，或已有过账收货；已批准但未下达且没有收货的采购订单不计入任何指标，单独列为未下达。原始承诺交期在统计期内、且每一行都已过账收货或已超过该日期加宽限天数的交付计入统计；仍有行未到期且未收货的交付暂不判定。订购数量为 0 的行，以及到期前关闭且未收货的行不计入。超过原始承诺交期加宽限天数仍有行未收货的交付为逾期：记为迟到、非 OTIF，并列为尚未足量。准时：每一行第一次收货都在原始承诺交期加宽限天数之内到货，部分到货也算；最后一行的第一次收货提前超过 3 天记为过早到货，不算违约。足量：每一行累计合格收货最终达到订购数量；仍有行未收齐且未关闭的交付记为尚未足量，列为待定，在各行收齐或关闭前不计入足量率。OTIF：截至原始承诺交期加宽限天数，每一行累计合格收货都已达到订购数量；仍在该期限内且尚未收齐的交付暂不判定，不计入 OTIF。拒收率：这些交付各行的拒收数量 ÷ 收货数量；各行涉及多个 SKU 或单位不同时不显示。平均延迟：迟到交付从原始承诺交期到最后一行第一次收货的平均天数；有行未收货的算到今天，已关闭的算到关闭当天。价格差异：统计期内开具且存在价格差异的采购发票张数。“按当前日期”用每一行的当前预计交期和相同宽限天数重复准时和 OTIF 判断；按当前日期尚未到期的行视为准时，未收货即关闭的行视为迟到。供应商改期时当前日期会随之变化，两者的差距就是改期掩盖的延迟。少于 5 次交付为样本不足；某项指标自身已判定的交付少于 5 次时也不显示比率。区间为按交付计算的 Wilson 95% 置信区间。",
   ],
   drilldown: ["Deliveries behind {metric}", "{metric} 对应的交付"], allLines: ["All deliveries", "全部交付"], close: ["Close", "关闭"],
-  deliveryLines: ["{n} lines", "{n} 行"],
+  deliveryLines: ["{n} lines", "{n} 行"], deliveryLinesOne: ["1 line", "1 行"],
   po: ["PO", "采购订单"], sku: ["SKU", "SKU"], original: ["Date on the PO", "采购订单日期"], current: ["Current date", "当前交期"],
   arrived: ["First receipt", "首次到货"], fullOn: ["In full on", "足量日期"], otifShort: ["OTIF", "OTIF"], received: ["Received", "收货"], rejected: ["Rejected", "拒收"], lateBy: ["Days late", "迟到天数"],
   result: ["Result", "结果"], resultOnTime: ["On time", "准时"], resultLate: ["Late", "迟到"], resultEarly: ["Early", "过早"],
@@ -105,10 +108,13 @@ const COPY: Record<string, [string, string]> = {
   view: ["View lines", "查看订单行"],
 };
 
+// A message with a count n of 1 takes its "One" form when it has one ("1 day",
+// not "1 days").
 function useCopy() {
   const { language } = useI18n();
   return (key: string, values: Record<string, string | number> = {}) => {
-    const entry = COPY[key];
+    const one = `${key}One`;
+    const entry = String(values.n) === "1" && COPY[one] ? COPY[one] : COPY[key];
     const template = entry ? entry[language === "en-US" ? 0 : 1] : key;
     return Object.entries(values).reduce((result, [name, value]) => result.replace(`{${name}}`, String(value)), template);
   };

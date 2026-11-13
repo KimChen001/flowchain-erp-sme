@@ -18,7 +18,7 @@ const statusCodes: Record<string, [string, string]> = {
   open: ["Open", "未结"],
   closed: ["Closed", "已关闭"],
   completed: ["Completed", "已完成"],
-  converted: ["Converted", "已转换"],
+  converted: ["Converted to PO", "已转采购订单"],
   collecting_quotes: ["Collecting quotes", "报价收集中"],
   awarded: ["Awarded", "已授标"],
   not_received: ["Not received", "未收货"],
@@ -33,6 +33,8 @@ const statusCodes: Record<string, [string, string]> = {
   passed: ["Passed", "已通过"],
   failed: ["Failed", "未通过"],
   matched: ["Matched", "已匹配"],
+  // Every difference on the match was approved; the variance stays on record.
+  variance_approved: ["Variance approved", "差异已批准"],
   mismatch: ["Mismatch", "不一致"],
   not_matched: ["Not matched", "未匹配"],
   variance: ["Variance", "有差异"],

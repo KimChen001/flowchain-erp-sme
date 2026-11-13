@@ -168,7 +168,9 @@ export default function ItemMasterWorkbench({
   onNavigate?: (routeId: string, focus?: unknown) => void;
 }) {
   const { copy, language, locale } = useMasterDataCopy();
-  const { formatDateTime } = useI18n();
+  const { formatDateTime, formatNumber } = useI18n();
+  // Records written by an import or a seed name "system" as their author.
+  const actorName = (value?: string | null) => (!value || value === "system" ? (language === "en-US" ? "System" : "系统") : value);
   const warehouseName = useWarehouseNames();
   // Creating and editing items needs master_data.item.manage.
   const canEdit = useMasterDataWriteAccess().items;
@@ -419,9 +421,9 @@ export default function ItemMasterWorkbench({
           ))}
         </div>
         <div className="mt-4 text-xs text-slate-500">
-          {copy("Created: {by} · {at}", { by: selected.createdBy, at: auditTime(selected.createdAt) })}
+          {copy("Created: {by} · {at}", { by: actorName(selected.createdBy), at: auditTime(selected.createdAt) })}
           <br />
-          {copy("Updated: {by} · {at}", { by: selected.updatedBy, at: auditTime(selected.updatedAt) })}
+          {copy("Updated: {by} · {at}", { by: actorName(selected.updatedBy), at: auditTime(selected.updatedAt) })}
         </div>
       </Card>
     );
@@ -500,7 +502,7 @@ export default function ItemMasterWorkbench({
         <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div>
             <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("Item list")}</div>
-            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: items.length, shown: shown.length })}</div>
+            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: formatNumber(items.length), shown: formatNumber(paged.pageRows.length) })}</div>
           </div>
         </div>
         {error && <p className="px-5 pt-3 text-xs text-red-600">{error}</p>}

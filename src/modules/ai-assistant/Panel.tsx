@@ -594,18 +594,21 @@ export default function FloatingAiAssistant({
         </aside>
       )}
 
-      {/* The launcher only while the assistant is closed: open, it covers nothing. */}
+      {/* The launcher only while the assistant is closed: open, it covers nothing.
+          On a phone it is a 48 px round icon, so it hides less of the page;
+          its name is still read out. The main area's bottom padding (pb-20,
+          FlowChainApp) keeps the end of every page clear of it. */}
       {!open && (
         <button
           ref={restoreButtonRef}
           onClick={restoreAssistant}
           data-testid="ai-assistant-toggle"
-          className="fixed bottom-3 right-3 z-40 flex h-12 items-center gap-2 rounded-full pl-4 pr-5 text-sm font-semibold text-white shadow-xl transition-shadow hover:shadow-2xl sm:bottom-5 sm:right-5"
+          className="fixed bottom-3 right-3 z-40 flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold text-white shadow-xl transition-shadow hover:shadow-2xl sm:bottom-5 sm:right-5 sm:w-auto sm:justify-start sm:gap-2 sm:pl-4 sm:pr-5"
           style={{ background: A.blue }}
           aria-label={language === "zh-CN" ? "展开 AI 助手" : "Open AI assistant"}
         >
-          <Sparkles size={17} aria-hidden />
-          {language === "zh-CN" ? "AI 助手" : "AI assistant"}
+          <Sparkles size={20} aria-hidden className="sm:h-[17px] sm:w-[17px]" />
+          <span className="sr-only sm:not-sr-only">{language === "zh-CN" ? "AI 助手" : "AI assistant"}</span>
         </button>
       )}
     </div>

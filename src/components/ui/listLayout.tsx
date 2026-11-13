@@ -17,6 +17,7 @@ const COPY = {
   retry: ["Retry", "重试"],
   shown: ["{total} total, {shown} shown", "共 {total} 条，当前显示 {shown} 条"],
   filters: ["Filters ({count})", "筛选（{count}）"],
+  filtersNone: ["Filters", "筛选"],
   hideFilters: ["Hide filters", "收起筛选"],
 } as const;
 
@@ -36,11 +37,14 @@ export const listButtonClass = {
   primary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 ${typography.denseButton} text-white hover:bg-blue-700 disabled:opacity-60`,
 };
 
-// Buttons inside a table row: the main one tinted, the others neutral.
+// Buttons inside a table row: the main one tinted, the others neutral. On a
+// phone the row is a card and these are thumb targets: at least 36 px tall,
+// with room between them (theme.css spaces the card's action row).
+const rowActionSize = "inline-flex items-center justify-center rounded-md px-2 py-1 text-[11px] font-medium max-sm:min-h-9 max-sm:px-3 max-sm:text-xs";
 export const rowActionClass = {
-  primary: "rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600 hover:bg-blue-100",
-  neutral: "rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-200",
-  danger: "rounded-md bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-100",
+  primary: `${rowActionSize} bg-blue-50 text-blue-600 hover:bg-blue-100`,
+  neutral: `${rowActionSize} bg-slate-100 text-slate-700 hover:bg-slate-200`,
+  danger: `${rowActionSize} bg-red-50 text-red-700 hover:bg-red-100`,
 };
 
 export function ResetButton({ onClick }: { onClick: () => void }) {
@@ -63,12 +67,15 @@ export function PrimaryButton({ onClick, children, testId }: { onClick: () => vo
 }
 
 // Below 768 px only the first field (the search) shows; the other filters
-// open from a Filters button.
-export function ListSearchCard({ title, subtitle, actions, children }: {
+// open from a Filters button. The button counts the filters in use
+// (`activeFilters`), never the fields it hides, so "Filters (2)" means two
+// filters narrow the list.
+export function ListSearchCard({ title, subtitle, actions, children, activeFilters = 0 }: {
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
+  activeFilters?: number;
 }) {
   const say = useListCopy();
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -97,7 +104,7 @@ export function ListSearchCard({ title, subtitle, actions, children }: {
           data-testid="list-search-filters-toggle"
         >
           <SlidersHorizontal size={13} />
-          {filtersOpen ? say("hideFilters") : say("filters", { count: rest.length })}
+          {filtersOpen ? say("hideFilters") : activeFilters > 0 ? say("filters", { count: activeFilters }) : say("filtersNone")}
         </button>
       )}
     </Card>
@@ -253,7 +260,7 @@ export type StatusTone = "success" | "warning" | "danger" | "info" | "neutral";
 // gray for drafts and cancelled records. Codes and the server's Chinese
 // labels are both recognised; anything unknown is neutral.
 const TONES: Record<StatusTone, string[]> = {
-  success: ["approved", "matched", "recorded", "auto_matched", "converted", "completed", "fully_received", "fully_reserved", "fully_fulfilled", "closed", "awarded", "settled", "resolved", "posted", "已批准", "已审批", "已匹配", "自动匹配", "已完成", "已转换", "已解决", "已入库"],
+  success: ["approved", "matched", "variance_approved", "recorded", "auto_matched", "converted", "completed", "fully_received", "fully_reserved", "fully_fulfilled", "closed", "awarded", "settled", "resolved", "posted", "已批准", "已审批", "已匹配", "自动匹配", "已完成", "已转换", "已解决", "已入库"],
   warning: ["submitted", "pending", "pending_approval", "pending_match", "held", "on_hold", "awaiting_receipt", "unposted", "partially_reserved", "待审批", "待匹配", "待处理", "人工复核", "缺少收货"],
   danger: ["rejected", "exception", "variance", "mismatch", "disputed", "overdue", "已驳回", "已拒绝", "存在差异", "差异待处理", "异常处理", "重复发票", "缺货风险"],
   info: ["open", "confirmed", "issued", "sent", "issued_outside_flowchain", "collecting_quotes", "partially_received", "partially_fulfilled", "received", "ready_for_receiving", "export_ready", "partially_settled", "reviewed", "已发出", "部分到货", "已收货", "已签收", "质检中", "已确认", "部分分配", "可发货", "部分发货"],

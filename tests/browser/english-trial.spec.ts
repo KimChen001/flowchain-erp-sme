@@ -159,6 +159,8 @@ test.describe("sales delivery risks with the trial orders", () => {
     await expect(onHold).toContainText("Unnamed customer");
     await expect(onHold).toContainText("Blocked");
     await expect(onHold).toContainText("The order is on hold. Review delivery conditions and next steps.");
+    // The first card counts every order in the list's own term: "Sales orders".
+    await expect(page.getByRole("link", { name: /^Sales orders: [\d,]+,/ })).toBeVisible();
     await expectEnglish(page);
 
     await page.goto("/app/sales/evidence");
@@ -168,6 +170,22 @@ test.describe("sales delivery risks with the trial orders", () => {
     await expect(evidenceRow).toContainText("Shortage risk");
     await expect(evidenceRow).toContainText("Blocked");
     await expect(page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ })).toContainText("Flow Controller and 2 more");
+    await expectEnglish(page);
+    // A shipped order reads "Fulfilled", as on the sales order list and detail.
+    await page.getByLabel("Status filter").selectOption("fulfilled");
+    await settle(page);
+    await expect(page.locator("tbody").getByText("Fulfilled", { exact: true }).first()).toBeVisible();
+    await expect(page.locator("tbody")).not.toContainText("Completed");
+
+    // The sales order list: one status per order, with its amount and promised date.
+    await page.goto("/app/sales/orders?search=LOCAL-TRIAL-SO-10");
+    await settle(page);
+    await expect(page.getByTestId("sales-order-status-LOCAL-TRIAL-SO-102")).toHaveText("On hold");
+    await expect(page.getByTestId("sales-order-status-LOCAL-TRIAL-SO-101")).toHaveText("Confirmed");
+    const listed = page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ });
+    await expect(listed).toContainText("Not priced");
+    await expect(listed).not.toContainText("Not set");
+    await expect(page.getByRole("columnheader")).toHaveText(["Order number", "Customer", "Status", "Order amount", "Promised date", "Ordered / reserved / fulfilled", "Actions"]);
     await expectEnglish(page);
   });
 
@@ -189,5 +207,15 @@ test.describe("sales delivery risks with the trial orders", () => {
     await page.goto("/app/sales/evidence");
     await settle(page);
     await expect(page.getByRole("row", { name: /LOCAL-TRIAL-SO-102/ })).toContainText("缺货风险");
+    await page.getByLabel("状态筛选").selectOption("fulfilled");
+    await settle(page);
+    await expect(page.locator("tbody").getByText("已履约", { exact: true }).first()).toBeVisible();
+    await expect(page.locator("tbody")).not.toContainText("已完成");
+
+    await page.goto("/app/sales/orders?search=LOCAL-TRIAL-SO-10");
+    await settle(page);
+    await expect(page.getByTestId("sales-order-status-LOCAL-TRIAL-SO-102")).toHaveText("暂停");
+    await expect(page.getByTestId("sales-order-status-LOCAL-TRIAL-SO-101")).toHaveText("已确认");
+    await expect(page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ })).toContainText("未定价");
   });
 });

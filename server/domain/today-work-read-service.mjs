@@ -32,6 +32,11 @@ import { getPrismaClient } from '../persistence/prisma-client.mjs'
 //   setup counts      items, suppliers, customers, items with stock on hand,
 //                     active users and pending invitations, for the first-day
 //                     checklist.
+//   bill payments     the payable status of each approved supplier invoice in
+//                     the business read context, so Recent documents shows a
+//                     paid invoice as Paid, as the supplier invoice list does
+//                     (billPaymentStatus); with finance.supplier_invoice.read,
+//                     the permission that lists the invoice at all.
 //
 // Amounts need finance.amounts.read and customer names
 // finance.partner_snapshot.read, as on the finance pages; a hidden value is
@@ -150,6 +155,19 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
       sources.contracts = work.contracts
       if (work.truncated) limitations.push('truncated:contracts')
     }))
+  }
+  // Only for display: when it cannot be read, an approved invoice reads
+  // "Approved" as before, and nothing is said about it.
+  const approvedBills = access.collections.supplierInvoices
+    ? [...new Set((rawContext?.supplierInvoices || []).filter((row) => row?.status === 'approved' && row.id).map((row) => String(row.id)))]
+    : []
+  if (approvedBills.length) {
+    reads.push((async () => {
+      try {
+        const rows = await prisma.payableObligation.findMany({ where: { tenantId, supplierInvoiceId: { in: approvedBills } }, select: { supplierInvoiceId: true, status: true } })
+        sources.billPayableStatuses = Object.fromEntries(rows.map((row) => [row.supplierInvoiceId, row.status]))
+      } catch { /* shown as approved */ }
+    })())
   }
   // The same counts and options the assistant's setup_status reads (first-run-setup.mjs).
   let setup = null

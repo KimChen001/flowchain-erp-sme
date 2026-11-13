@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
+import { useNavigate } from "react-router";
+import { toast } from "sonner";
 import { AlertTriangle, ArrowRight, Link2, Loader2, Printer, ShieldCheck } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { usePermissionSet } from "../../lib/usePermissionSet";
+import { useRouteAvailability } from "../../app/routeAvailability";
 import { A, useConfirm } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, statusToneOf } from "../../components/ui/listLayout";
-import { tableMinSmClass, tableScrollClass, tdClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableMinSmClass, tableScrollClass, tdClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { useI18n } from "../../i18n/I18n";
@@ -24,7 +28,7 @@ type Detail = {
   receivingDocument: { id: string; documentNumber: string; workflowStatus: string; postingStatus: string; qualityStatus: string; version: number; arrivedAt?: string | null; postedAt?: string | null; postedById?: string | null; reversedAt?: string | null; reversedById?: string | null; reversalReason?: string | null; receiver?: string | null; supplier?: { name?: string }; warehouse?: { id?: string; name?: string; code?: string } | null };
   // number: the order's document number (shown); id: its internal id (links).
   purchaseOrder: { id: string; number?: string; workflowStatus: string; fulfillmentStatus: string };
-  lines: Array<{ id: string; poLineId: string; sku: string; itemName: string; orderedQuantity: string; previouslyReceivedQuantity: string; documentAcceptedQuantity: string; currentlyAppliedQuantity: string; acceptedQuantity: string; rejectedQuantity: string; remainingReceivableQuantity: string; unit?: string; warehouse?: { id?: string; name?: string; code?: string } | null; location?: string; lotSerialCapability: { postingAvailable: boolean; message: string } }>;
+  lines: Array<{ id: string; poLineId: string; sku: string; itemName: string; orderedQuantity: string; previouslyReceivedQuantity: string; documentAcceptedQuantity: string; currentlyAppliedQuantity: string; acceptedQuantity: string; rejectedQuantity: string; rejectionReason?: string | null; remainingReceivableQuantity: string; unit?: string; warehouse?: { id?: string; name?: string; code?: string } | null; location?: string; lotSerialCapability: { postingAvailable: boolean; message: string } }>;
   postingSummary: { acceptedQuantity: string; rejectedQuantity: string; lineCount: number };
   capabilities: { posting?: Capability; reversal?: Capability };
   availableActions: { canEditDraft?: boolean; canSubmit?: boolean; canCancel?: boolean; canPost: boolean; canReverse: boolean; canViewReversal: boolean; primaryAction: "post" | "reverse" | "view_reversal" | null; blockingReasonCodes: string[] };
@@ -45,12 +49,21 @@ const DRAFT_COPY: Record<string, Pair> = {
   submitting: ["Submitting…", "正在提交…"],
   submitFailed: ["The receipt could not be submitted.", "收货单提交失败。"],
   draftNote: ["This receipt is a draft. Submit it to post it to inventory.", "该收货单为草稿，提交后方可过账入库。"],
+  // Submitted, not yet posted: the next step is Post receipt, first among the actions.
+  readyNote: ["Submitted, not posted yet. Post the receipt to add the accepted quantity to stock.", "已提交，尚未过账。过账后，合格数量才会计入库存。"],
   cancelReceipt: ["Cancel receipt", "取消收货单"],
   cancelTitle: ["Cancel this receipt?", "取消该收货单？"],
   cancelBody: ["Nothing from it will be posted to inventory.", "其中的内容不会过账入库。"],
   cancelReason: ["Why is it cancelled?", "取消原因"],
   keepReceipt: ["Keep receipt", "保留收货单"],
   cancelFailed: ["The receipt could not be cancelled.", "收货单取消失败。"],
+  // After an action, with the receipt's number ({doc}).
+  posted: ["Posted {doc}", "已过账 {doc}"],
+  reversed: ["Reversed {doc}", "已冲销 {doc}"],
+  submitted: ["Submitted {doc}", "已提交 {doc}"],
+  cancelled: ["Cancelled {doc}", "已取消 {doc}"],
+  // A posted receipt that left part of the order open: the receipt form for the rest.
+  receiveRest: ["Receive the rest", "收货剩余"],
 };
 
 // The command errors by their stable code, in English with the Chinese translation.
@@ -112,7 +125,8 @@ const MOVEMENT_COPY: Record<string, Pair> = {
 const AUDIT_COPY: Record<string, Pair> = {
   receiving_draft_created: ["Receipt draft {doc} created", "收货草稿 {doc} 已创建"],
   receiving_draft_revised: ["Receipt draft {doc} revised", "收货草稿 {doc} 已修改"],
-  receiving_submitted: ["Receipt {doc} submitted for posting", "收货单 {doc} 已提交过账"],
+  // "Submitted", as the form's Save and submit button says: posting is its own step.
+  receiving_submitted: ["Receipt {doc} submitted", "收货单 {doc} 已提交"],
   receiving_cancelled: ["Receipt {doc} cancelled", "收货单 {doc} 已取消"],
   receiving_posted: ["Receipt {doc} posted to inventory", "收货单 {doc} 已过账入库"],
   receiving_reversed: ["Receipt {doc} reversed", "收货单 {doc} 已冲销"],
@@ -145,6 +159,11 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const draftCopy = (key: string) => sayPair(DRAFT_COPY[key]);
   const confirmDialog = useConfirm();
   const warehouseName = useWarehouseNames();
+  const navigate = useNavigate();
+  const permissions = usePermissionSet();
+  const canOpenRoute = useRouteAvailability();
+  // The receipt form for the order, by the PO page's rule for its Receive button.
+  const canStartReceipt = Boolean(permissions?.has("receiving.prepare")) && canOpenRoute("procurement:receiving:new");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [links, setLinks] = useState<Link[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
@@ -163,8 +182,9 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   // The reconciliation table, when every balance matches, opens on request.
   const [showReconciliation, setShowReconciliation] = useState(false);
 
-  const refresh = useCallback(async () => {
-    if (!receivingDocumentId) return;
+  // Reads the receipt again; returns it, or null when it could not be read.
+  const refresh = useCallback(async (): Promise<Detail | null> => {
+    if (!receivingDocumentId) return null;
     setLoading(true); setError(""); setErrorCode(undefined);
     try {
       const encoded = encodeURIComponent(receivingDocumentId);
@@ -175,9 +195,19 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
         apiJson<Reconciliation>(`/api/procurement/receiving/${encoded}/reconciliation`),
       ]);
       setDetail(nextDetail); setLinks(nextLinks.links); setEvents(nextEvidence.events); setReconciliation(nextReconciliation);
-    } catch (nextError) { setError(errorMessage(nextError, languageRef.current)); setErrorCode(procurementErrorCode(nextError)); setDetail(null); }
+      return nextDetail;
+    } catch (nextError) { setError(errorMessage(nextError, languageRef.current)); setErrorCode(procurementErrorCode(nextError)); setDetail(null); return null; }
     finally { setLoading(false); }
   }, [receivingDocumentId]);
+
+  // The order still has quantity to receive after this posted receipt: the
+  // way to the receipt form for the rest. Closed or cancelled orders take no
+  // more receipts.
+  const restToReceive = (next: Detail | null) => Boolean(next && canStartReceipt
+    && next.receivingDocument.postingStatus === "posted"
+    && next.purchaseOrder.fulfillmentStatus === "partially_received"
+    && !["closed", "cancelled"].includes(next.purchaseOrder.workflowStatus));
+  const receiveRestPath = (next: Detail) => `/app/procurement/receiving/new?po=${encodeURIComponent(next.purchaseOrder.id)}`;
 
   useEffect(() => { void refresh(); }, [refresh]);
   useDetailCrumb(detail?.receivingDocument.documentNumber);
@@ -192,6 +222,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     setSaving(true); setError("");
     try {
       await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/submit`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version }) });
+      toast.success(draftCopy("submitted").replace("{doc}", detail.receivingDocument.documentNumber || receivingDocumentId));
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof ApiError ? `${draftCopy("submitFailed")} ${errorMessage(nextError, language, RETRY)}` : draftCopy("submitFailed"));
@@ -214,6 +245,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     setSaving(true); setError("");
     try {
       await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/cancel`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version, reason }) });
+      toast.success(draftCopy("cancelled").replace("{doc}", detail.receivingDocument.documentNumber || receivingDocumentId));
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof ApiError ? `${draftCopy("cancelFailed")} ${errorMessage(nextError, language, RETRY)}` : draftCopy("cancelFailed"));
@@ -235,7 +267,14 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/${preview.operation}`, {
         method: "POST", body: JSON.stringify(preview.operation === "post" ? { idempotencyKey: actionKey, expectedVersion: detail.receivingDocument.version } : { idempotencyKey: actionKey, reason: reason.trim() }),
       });
-      setPreview(null); await refresh();
+      const done = preview.operation;
+      setPreview(null);
+      const next = await refresh();
+      // "Posted GRN-…", with the way to receive what the order still expects.
+      const doc = next?.receivingDocument.documentNumber || detail.receivingDocument.documentNumber || receivingDocumentId;
+      const message = draftCopy(done === "post" ? "posted" : "reversed").replace("{doc}", doc);
+      if (done === "post" && next && restToReceive(next)) toast.success(message, { action: { label: draftCopy("receiveRest"), onClick: () => navigate(receiveRestPath(next)) } });
+      else toast.success(message);
     } catch (nextError) {
       setError(errorMessage(nextError, language, ["The receiving action could not be completed.", "收货操作未完成。"]));
       setErrorCode(procurementErrorCode(nextError));
@@ -264,8 +303,10 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   // The timeline says what happened and who did it. Command bookkeeping
   // repeats the change log, and notes are shown once below, so both stay out.
   const shownEvents = events.filter((event) => event.type !== "human_activity" && event.type !== "limitation");
+  // The receipt's creation is a recorded fact, not a posting: it reads
+  // "Recorded" even though the server counts it among the facts.
   const eventKind = (event: TimelineEvent) =>
-    event.type === "audit" ? say("Change", "变更") : event.postedFact ? say("Posted", "已过账") : say("Recorded", "已记录");
+    event.type === "audit" ? say("Change", "变更") : event.postedFact && event.event !== "receiving_created" ? say("Posted", "已过账") : say("Recorded", "已记录");
   // Lot and serial numbers are the one limitation a user can act on.
   const notes = detail.limitations.some((item) => /lot\/serial/i.test(item))
     ? [say("Lot and serial numbers are not recorded on receipts yet.", "收货暂不记录批次号和序列号。")]
@@ -347,9 +388,16 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const reconciliationReason = reconciliation?.status === "unavailable" && !reconciliation.entries.length
     ? say("Nothing from this receipt has been posted to inventory yet.", "该收货单尚未过账入库，暂无可核对的库存。")
     : reconciliation?.reason || say("Reconciliation is unavailable.", "暂无库存核对结果。");
+  // Before posting, the workflow (draft, ready to post, cancelled) and the
+  // posting status both count. Once posted or reversed, the posting status
+  // is the receipt's one status, as on the receipt list: the workflow still
+  // reads "ready to post" there and would contradict it.
+  const settled = grn.postingStatus === "posted" || grn.postingStatus === "reversed";
+  const statusFacts: Array<[string, React.ReactNode]> = settled
+    ? [[say("Status", "状态"), chip(grn.postingStatus)]]
+    : [[say("Workflow", "流程状态"), chip(grn.workflowStatus)], [say("Posting", "过账状态"), chip(grn.postingStatus)]];
   const facts: Array<[string, React.ReactNode]> = [
-    [say("Workflow", "流程状态"), chip(grn.workflowStatus)],
-    [say("Posting", "过账状态"), chip(grn.postingStatus)],
+    ...statusFacts,
     [say("PO fulfillment", "订单履约"), chip(detail.purchaseOrder.fulfillmentStatus)],
     [say("Warehouse", "仓库"), grn.warehouse?.name || unavailable],
     [say("Receiver", "收货人"), grn.receiver || "—"],
@@ -369,10 +417,15 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   // other than the receipt's warehouse, which the header already names.
   const warehouseKey = (warehouse?: { id?: string; name?: string; code?: string } | null) => warehouse ? warehouse.id || warehouse.code || warehouse.name || "" : "";
   const showLineWarehouse = detail.lines.some((line) => warehouseKey(line.warehouse) !== warehouseKey(grn.warehouse));
+  // On a phone each line is a card (listTableCardsRef) titled by its item.
+  const itemColumn = say("Item", "物料");
+  // A posted receipt counts only the receipts posted before it, and what was
+  // still open right after it; one not posted (or reversed) shows everything
+  // posted so far and what is open now (receiptLineProgress on the server).
   const lineColumns: Array<[string, boolean]> = [
-    ["SKU", false], [say("Item", "物料"), false], [say("Ordered", "订购"), true], [say("Received before", "此前已收"), true],
+    ["SKU", false], [itemColumn, false], [say("Ordered", "订购"), true], [say("Received before", "此前已收"), true],
     [say("Accepted", "本单合格"), true], [say("Posted qty", "已过账数量"), true], [say("Rejected", "拒收"), true],
-    [say("Open", "未收"), true], ...(showLineWarehouse ? [[say("Warehouse", "仓库"), false] as [string, boolean]] : []), [say("Location", "库位"), false], [say("Unit", "单位"), false],
+    [grn.postingStatus === "posted" ? say("Open after this receipt", "本单后未收") : say("Open", "未收"), true], ...(showLineWarehouse ? [[say("Warehouse", "仓库"), false] as [string, boolean]] : []), [say("Location", "库位"), false], [say("Unit", "单位"), false],
   ];
   // Every balance matching its movements is said in one line; the table
   // opens on request. Any difference shows the table at once.
@@ -393,19 +446,23 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><h1 className="fc-page-title">{grn.documentNumber}</h1><p className="mt-1 text-sm text-gray-500">{grn.supplier?.name || say("Unknown supplier", "未知供应商")} · {say("Purchase order", "采购订单")} <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}><DocumentNumber type="purchase_order" id={detail.purchaseOrder.id} number={detail.purchaseOrder.number} /></a></p></div>
-        {/* Non-destructive actions first; cancelling or reversing the receipt comes last, tinted red. */}
+        {/* The next step first (Submit for a draft, Post once submitted), then
+            the other non-destructive actions; cancelling or reversing the
+            receipt comes last, tinted red. */}
         <div className="flex flex-wrap items-center gap-2">
-          <button data-testid="receiving-print-sheet" aria-label={say(`Print receive sheet ${grn.documentNumber}`, `打印入库单 ${grn.documentNumber}`)} onClick={() => setPrinting(true)} className={BUTTON.secondary}><Printer size={14} />{say("Print receive sheet", "打印入库单")}</button>
-          {detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className={BUTTON.secondary}>{draftCopy("editDraft")}</a>}
           {detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className={BUTTON.primary}>{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}
           {operation === "post" && actionButton}
+          <button data-testid="receiving-print-sheet" aria-label={say(`Print receive sheet ${grn.documentNumber}`, `打印入库单 ${grn.documentNumber}`)} onClick={() => setPrinting(true)} className={BUTTON.secondary}><Printer size={14} />{say("Print receive sheet", "打印入库单")}</button>
+          {detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className={BUTTON.secondary}>{draftCopy("editDraft")}</a>}
           {detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className={BUTTON.secondary}>{say("View reversal", "查看冲销")}</button>}
+          {restToReceive(detail) && <button type="button" data-testid="receiving-receive-rest" onClick={() => navigate(receiveRestPath(detail))} className={BUTTON.secondary}>{draftCopy("receiveRest")}</button>}
           {grn.postingStatus === 'posted' && <RecordBillAction receiptId={grn.id} />}
           {detail.availableActions.canCancel && <button data-testid="receiving-cancel" disabled={saving} onClick={() => void cancelReceipt()} className={BUTTON.danger}>{draftCopy("cancelReceipt")}</button>}
           {operation === "reverse" && actionButton}
         </div>
       </div>
       {detail.availableActions.canSubmit && <div className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{draftCopy("draftNote")}</div>}
+      {operation === "post" && canOfferAction && capability?.enabled && !detail.availableActions.canSubmit && <div className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800" data-testid="receiving-ready-note">{draftCopy("readyNote")}</div>}
       {!capability?.enabled && <div className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{say("Read-only. Receipt posting is turned off for this workspace; an administrator can turn it on.", "只读。当前工作区未开启收货过账，可由管理员开启。")}</div>}
       <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
         {facts.map(([name, value]) => <div key={name} className="rounded-xl bg-gray-50 p-3"><div className="text-xs" style={{ color: A.sub }}>{name}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>)}
@@ -417,16 +474,20 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
 
     <section className="overflow-hidden rounded-2xl border bg-white">
       <div className="border-b px-4 py-3 text-sm font-semibold">{say("Receiving lines", "收货明细")}</div>
-      <div className={tableScrollClass}><table className={tableMinSmClass}>
-        <thead><tr style={listHeadRowStyle}>{lineColumns.map(([label, numeric]) => <th key={label} className={numeric ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
+      <div className={tableScrollClass} ref={listTableCardsRef} data-testid="receiving-lines"><table className={tableMinSmClass}>
+        <thead><tr style={listHeadRowStyle}>{lineColumns.map(([label, numeric]) => <th key={label} className={numeric ? thRightClass : thClass} style={{ color: A.gray1 }} data-card-title={label === itemColumn ? "" : undefined}>{label}</th>)}</tr></thead>
         <tbody>{detail.lines.map((line) => <tr key={line.id} className="border-t">
           <td className={tdIdClass}>{line.sku}</td>
-          <td className={tdNowrapClass}><div className="max-w-[320px] truncate" title={line.itemName}>{line.itemName}</div></td>
+          <td className={tdNowrapClass}><div className="max-w-[320px] truncate max-sm:max-w-none max-sm:whitespace-normal max-sm:font-semibold" title={line.itemName}>{line.itemName}</div></td>
           <td className={tdNumericRightClass}>{qty(line.orderedQuantity)}</td>
           <td className={tdNumericRightClass}>{qty(line.previouslyReceivedQuantity)}</td>
           <td className={`${tdNumericRightClass} font-semibold text-teal-700`}>{qty(line.documentAcceptedQuantity)}</td>
           <td className={tdNumericRightClass}>{qty(line.currentlyAppliedQuantity)}</td>
-          <td className={tdNumericRightClass}>{qty(line.rejectedQuantity)}</td>
+          {/* The reason recorded for a rejected quantity sits under it, as recorded. */}
+          <td className={tdNumericRightClass}>
+            {qty(line.rejectedQuantity)}
+            {line.rejectionReason && /[1-9]/.test(line.rejectedQuantity || "") ? <div className="ml-auto mt-0.5 max-w-[240px] whitespace-normal text-xs font-normal max-sm:ml-0" style={{ color: A.sub }} data-testid="receiving-line-rejection-reason">{say("Reason: ", "原因：")}{line.rejectionReason}</div> : null}
+          </td>
           <td className={tdNumericRightClass}>{qty(line.remainingReceivableQuantity)}</td>
           {showLineWarehouse && <td className={`${tdClass} min-w-[140px]`}>{line.warehouse?.name || line.warehouse?.code || unavailable}</td>}
           <td className={tdNowrapClass}>{line.location || "—"}</td>

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
+import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { A, Card, Field, inputStyle } from "../../components/ui";
-import { FieldError, FormActionBar, FormHeader, FormSection, RequiredMark, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
+import { FieldError, FormActionBar, FormHeader, FormLineCard, FormSection, RequiredMark, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -14,6 +15,8 @@ import { buildSuggestionTrail, type PrefillEntry } from "../../lib/prefill";
 import { ReceivablePurchaseOrderChooser } from "./ReceivablePurchaseOrderChooser";
 import { DocumentNumber } from "../../lib/documentNumbers";
 import { procurementErrorCode, procurementErrorText } from "./procurementErrors";
+import { useMediaQuery } from "./listPaging";
+import { unitLabel } from "../../i18n/unitLabels";
 
 // English source copy with its Chinese translation.
 const COPY: Record<string, [string, string]> = {
@@ -50,7 +53,12 @@ const COPY: Record<string, [string, string]> = {
   locationStocked: ["Where this item is stocked", "该物料现有库位"],
   locationNew: ["New location in this warehouse", "此仓库的新库位"],
   saveDraft: ["Save draft", "保存草稿"],
-  saveSubmit: ["Save and submit for posting", "保存并提交过账"],
+  // Submitting does not post: the receipt page then offers Post receipt.
+  saveSubmit: ["Save and submit", "保存并提交"],
+  // After saving, with the receipt's number ({doc}).
+  doneSubmit: ["Submitted {doc}", "已提交 {doc}"],
+  doneDraft: ["Saved draft {doc}", "已保存草稿 {doc}"],
+  lineLabel: ["Line {n}", "第 {n} 行"],
   lineRequired: ["Select at least one line to receive.", "请至少选择一行收货。"],
   acceptedPositive: ["Accepted quantity must be greater than zero.", "合格数量必须大于零。"],
   overReceipt: ["Accepted quantity is more than the open quantity on the purchase order.", "合格数量超过采购订单未收数量。"],
@@ -121,6 +129,9 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
   // What a new receipt was prefilled with, and from where (docs/ai-prefill-autocomplete-design.md, J4).
   const [prefill, setPrefill] = useState<{ warehouseId?: PrefillEntry; arrivedAt?: PrefillEntry; accepted: Record<string, string> } | null>(null);
   const [createdId, setCreatedId] = useState("");
+  // Below 768 px each line is a card with its fields stacked; wider screens
+  // keep the table. Only one is drawn, so every field keeps one name.
+  const phone = useMediaQuery("(max-width: 767.98px)");
 
   const load = useCallback(async () => {
     setState("loading");
@@ -269,6 +280,8 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
       setCreatedId(saved.entityId);
       setDraft({ ...(draft || { warehouse: null, arrivedAt: null }), ...saved.receivingDocument });
       if (submit) await receivingApi.submit(saved.entityId, saved.receivingDocument.version, createSecureClientMutationId("receipt-submit"));
+      // "Submitted GRN-…" / "Saved draft GRN-…": the number the receipt now has.
+      toast.success(tr(submit ? "doneSubmit" : "doneDraft").replace("{doc}", saved.receivingDocument.documentNumber || saved.entityId));
       navigate(`/app/procurement/receiving/${encodeURIComponent(saved.entityId)}`);
     } catch (error) {
       setServerError(serverMessage(error));
@@ -287,10 +300,57 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
   );
 
   // The lines table's inputs keep a fixed width each, so the text columns
-  // (SKU, quantities) get the room and never wrap.
+  // (SKU, quantities) get the room and never wrap; on a card they take the
+  // card's width.
   const cellInputClass = "rounded-lg border px-2 py-1.5 text-sm";
   // A message under a table input wraps instead of widening its column.
   const cellErrorClass = "max-w-40";
+  // Each line's controls, drawn in the table or on a card. The names stay
+  // "Accepted SKU" and so on, whichever is drawn.
+  const lineViews = po.lines.map((line, index) => {
+    const value = lines[line.id];
+    const open = units(line.remainingQuantity) > 0n;
+    const quantity = (text: string) => `${formatNumber(Number(text))}${line.unit ? ` ${unitLabel(line.unit, language, Number(text))}` : ""}`;
+    const issue = shown.byLine[line.id] || {};
+    const errorId = (field: keyof LineIssues) => `${idBase}-${field}-${index}`;
+    const fieldId = (field: string) => `${idBase}-${field}-input-${index}`;
+    const rejected = value?.rejected.trim() || "0";
+    const rejectsSome = Boolean(value?.include) && QUANTITY.test(rejected) && units(rejected) > 0n;
+    const error = (field: keyof LineIssues, className: string) => issue[field] ? <FieldError id={errorId(field)} className={className}>{tr(issue[field]!)}</FieldError> : null;
+    return {
+      line, index, quantity, fieldId,
+      includeBox: (size: string) => <input type="checkbox" aria-label={`${tr("include")} ${line.sku}`} checked={Boolean(value?.include)} disabled={!open} onChange={(event) => update(line.id, { include: event.target.checked })} className={`${size} cursor-pointer`} />,
+      acceptedInput: (width: string, errorClass = "") => <>
+        <input id={fieldId("accepted")} aria-label={`${tr("accepted")} ${line.sku}`} aria-required={Boolean(value?.include)} {...invalidProps(errorId("accepted"), issue.accepted)} inputMode="decimal" value={value?.accepted || ""} disabled={!value?.include} onChange={(event) => update(line.id, { accepted: event.target.value })} className={`${cellInputClass} ${width}`} />
+        {error("accepted", errorClass)}
+      </>,
+      rejectedInput: (width: string, errorClass = "") => <>
+        <input id={fieldId("rejected")} aria-label={`${tr("rejected")} ${line.sku}`} {...invalidProps(errorId("rejected"), issue.rejected)} inputMode="decimal" value={value?.rejected || ""} disabled={!value?.include} onChange={(event) => update(line.id, { rejected: event.target.value })} className={`${cellInputClass} ${width}`} />
+        {error("rejected", errorClass)}
+      </>,
+      reasonInput: (width: string, errorClass = "") => <>
+        <input id={fieldId("reason")} aria-label={`${tr("rejectionReason")} ${line.sku}`} aria-required={rejectsSome} {...invalidProps(errorId("reason"), issue.reason)} value={value?.reason || ""} disabled={!value?.include} onChange={(event) => update(line.id, { reason: event.target.value })} className={`${cellInputClass} ${width}`} />
+        {error("reason", errorClass)}
+      </>,
+      locationInput: (width: string) => <>
+        <input id={fieldId("location")} aria-label={`${tr("location")} ${line.sku}`} list="receiving-locations" value={value?.location || ""} disabled={!value?.include} onChange={(event) => update(line.id, { location: event.target.value })} className={`${cellInputClass} ${width}`} />
+        {value?.include && value.location.trim() ? (
+          value.location.trim().toLowerCase() === stockedLocation(line, warehouseId).toLowerCase()
+            ? <span data-testid="receiving-location-stocked" className="mt-1 block text-[11px]" style={{ color: A.blue }}>{tr("locationStocked")}</span>
+            : !knownLocations.some((known) => known.toLowerCase() === value.location.trim().toLowerCase())
+              ? <span data-testid="receiving-location-new" className="mt-1 block text-[11px]" style={{ color: A.sub }}>{tr("locationNew")}</span>
+              : null
+        ) : null}
+      </>,
+    };
+  });
+  // A card's field: its label above the control.
+  const cardField = (id: string, label: ReactNode, control: ReactNode) => (
+    <div className="space-y-1">
+      <label htmlFor={id} className="block text-[13px] font-semibold leading-5" style={{ color: A.sub }}>{label}</label>
+      {control}
+    </div>
+  );
   const fieldIssues = Object.keys(shown.header).length + Object.keys(shown.byLine).length > 0;
   const message = shown.form.length || fieldIssues || serverError ? (
     <>
@@ -336,56 +396,60 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
       </FormSection>
 
       <FormSection title={tr("linesTitle")} description={tr("linesIntro")}>
-        <div className="overflow-x-auto rounded-lg border" style={{ borderColor: A.border }}>
-          <table className="w-full min-w-[960px] text-left text-sm">
-            <thead className="bg-gray-50 text-xs" style={{ color: A.sub }}>
-              <tr>{["include", "sku", "item", "ordered", "received", "remaining", "accepted", "rejected", "rejectionReason", "location"].map((key) => <th key={key} className={`whitespace-nowrap px-3 py-2 font-medium${key === "accepted" ? " min-w-32" : key === "item" ? " min-w-28" : ""}`}>{tr(key)}{key === "accepted" ? <> <RequiredMark /></> : null}{key === "accepted" && prefill ? <span data-testid="receiving-prefill-accepted" className="block max-w-32 whitespace-normal text-[11px] font-normal" style={{ color: A.blue }}>{tr("acceptedHint")}</span> : null}</th>)}</tr>
-            </thead>
-            <tbody>
-              {po.lines.map((line, index) => {
-                const value = lines[line.id];
-                const open = units(line.remainingQuantity) > 0n;
-                const quantity = (text: string) => `${formatNumber(Number(text))}${line.unit ? ` ${line.unit}` : ""}`;
-                const issue = shown.byLine[line.id] || {};
-                const errorId = (field: keyof LineIssues) => `${idBase}-${field}-${index}`;
-                const rejected = value?.rejected.trim() || "0";
-                const rejectsSome = Boolean(value?.include) && QUANTITY.test(rejected) && units(rejected) > 0n;
-                return (
-                  <tr key={line.id} className="border-t align-top" data-testid="receiving-form-line">
-                    <td className="whitespace-nowrap px-3 py-2"><input type="checkbox" aria-label={`${tr("include")} ${line.sku}`} checked={Boolean(value?.include)} disabled={!open} onChange={(event) => update(line.id, { include: event.target.checked })} /></td>
-                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{line.sku}</td>
-                    <td className="px-3 py-2">{line.itemName}</td>
-                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{quantity(line.orderedQuantity)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{quantity(line.receivedQuantity)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 tabular-nums font-semibold">{quantity(line.remainingQuantity)}</td>
-                    <td className="px-3 py-2">
-                      <input aria-label={`${tr("accepted")} ${line.sku}`} aria-required={Boolean(value?.include)} {...invalidProps(errorId("accepted"), issue.accepted)} inputMode="decimal" value={value?.accepted || ""} disabled={!value?.include} onChange={(event) => update(line.id, { accepted: event.target.value })} className={`${cellInputClass} w-24`} />
-                      {issue.accepted && <FieldError id={errorId("accepted")} className={cellErrorClass}>{tr(issue.accepted)}</FieldError>}
-                    </td>
-                    <td className="px-3 py-2">
-                      <input aria-label={`${tr("rejected")} ${line.sku}`} {...invalidProps(errorId("rejected"), issue.rejected)} inputMode="decimal" value={value?.rejected || ""} disabled={!value?.include} onChange={(event) => update(line.id, { rejected: event.target.value })} className={`${cellInputClass} w-24`} />
-                      {issue.rejected && <FieldError id={errorId("rejected")} className={cellErrorClass}>{tr(issue.rejected)}</FieldError>}
-                    </td>
-                    <td className="px-3 py-2">
-                      <input aria-label={`${tr("rejectionReason")} ${line.sku}`} aria-required={rejectsSome} {...invalidProps(errorId("reason"), issue.reason)} value={value?.reason || ""} disabled={!value?.include} onChange={(event) => update(line.id, { reason: event.target.value })} className={`${cellInputClass} w-40`} />
-                      {issue.reason && <FieldError id={errorId("reason")} className={cellErrorClass}>{tr(issue.reason)}</FieldError>}
-                    </td>
-                    <td className="px-3 py-2">
-                      <input aria-label={`${tr("location")} ${line.sku}`} list="receiving-locations" value={value?.location || ""} disabled={!value?.include} onChange={(event) => update(line.id, { location: event.target.value })} className={`${cellInputClass} w-28`} />
-                      {value?.include && value.location.trim() ? (
-                        value.location.trim().toLowerCase() === stockedLocation(line, warehouseId).toLowerCase()
-                          ? <span data-testid="receiving-location-stocked" className="mt-1 block text-[11px]" style={{ color: A.blue }}>{tr("locationStocked")}</span>
-                          : !knownLocations.some((known) => known.toLowerCase() === value.location.trim().toLowerCase())
-                            ? <span data-testid="receiving-location-new" className="mt-1 block text-[11px]" style={{ color: A.sub }}>{tr("locationNew")}</span>
-                            : null
-                      ) : null}
-                    </td>
+        {phone ? (
+          // A phone: one card per line. The item, then ordered / received /
+          // open, then the Receive box, then Accepted and Rejected, then the
+          // reason and the location, each with its label above it.
+          <div className="space-y-3" data-testid="receiving-form-cards">
+            {prefill ? <p data-testid="receiving-prefill-accepted" className="text-[12px] leading-[18px]" style={{ color: A.blue }}>{tr("acceptedHint")}</p> : null}
+            {lineViews.map((view) => (
+              <FormLineCard key={view.line.id} label={tr("lineLabel").replace("{n}", String(view.index + 1))} testId="receiving-form-line">
+                <div className="text-sm font-semibold" style={{ color: A.label }}>{view.line.itemName}</div>
+                <div className="font-mono text-xs" style={{ color: A.sub }}>{view.line.sku}</div>
+                <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                  {([["ordered", view.line.orderedQuantity], ["received", view.line.receivedQuantity], ["remaining", view.line.remainingQuantity]] as const).map(([key, amount]) => (
+                    <div key={key}><dt style={{ color: A.sub }}>{tr(key)}</dt><dd className={`mt-0.5 tabular-nums${key === "remaining" ? " font-semibold" : ""}`} style={{ color: A.label }}>{view.quantity(amount)}</dd></div>
+                  ))}
+                </dl>
+                <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-3 text-sm font-medium" style={{ color: A.label }}>
+                  {view.includeBox("h-5 w-5")}
+                  <span>{tr("include")}</span>
+                </label>
+                <div className="mt-2 space-y-3">
+                  {cardField(view.fieldId("accepted"), <>{tr("accepted")} <RequiredMark /></>, view.acceptedInput("w-full"))}
+                  {cardField(view.fieldId("rejected"), tr("rejected"), view.rejectedInput("w-full"))}
+                  {cardField(view.fieldId("reason"), tr("rejectionReason"), view.reasonInput("w-full"))}
+                  {cardField(view.fieldId("location"), tr("location"), view.locationInput("w-full"))}
+                </div>
+              </FormLineCard>
+            ))}
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border" style={{ borderColor: A.border }}>
+            <table className="w-full min-w-[960px] text-left text-sm">
+              <thead className="bg-gray-50 text-xs" style={{ color: A.sub }}>
+                <tr>{["include", "sku", "item", "ordered", "received", "remaining", "accepted", "rejected", "rejectionReason", "location"].map((key) => <th key={key} className={`whitespace-nowrap px-3 py-2 font-medium${key === "accepted" ? " min-w-32" : key === "item" ? " min-w-28" : ""}`}>{tr(key)}{key === "accepted" ? <> <RequiredMark /></> : null}{key === "accepted" && prefill ? <span data-testid="receiving-prefill-accepted" className="block max-w-32 whitespace-normal text-[11px] font-normal" style={{ color: A.blue }}>{tr("acceptedHint")}</span> : null}</th>)}</tr>
+              </thead>
+              <tbody>
+                {lineViews.map((view) => (
+                  <tr key={view.line.id} className="border-t align-top" data-testid="receiving-form-line">
+                    {/* The box sits in a 24 px target. */}
+                    <td className="whitespace-nowrap px-2 py-1"><label className="inline-flex h-7 w-7 cursor-pointer items-center justify-center">{view.includeBox("h-4 w-4")}</label></td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{view.line.sku}</td>
+                    <td className="px-3 py-2">{view.line.itemName}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{view.quantity(view.line.orderedQuantity)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{view.quantity(view.line.receivedQuantity)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums font-semibold">{view.quantity(view.line.remainingQuantity)}</td>
+                    <td className="px-3 py-2">{view.acceptedInput("w-24", cellErrorClass)}</td>
+                    <td className="px-3 py-2">{view.rejectedInput("w-24", cellErrorClass)}</td>
+                    <td className="px-3 py-2">{view.reasonInput("w-40", cellErrorClass)}</td>
+                    <td className="px-3 py-2">{view.locationInput("w-28")}</td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         <datalist id="receiving-locations">{knownLocations.map((location) => <option key={location} value={location} />)}</datalist>
       </FormSection>
 

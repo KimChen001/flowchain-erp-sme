@@ -1,10 +1,13 @@
-import { Building2, Check, ChevronDown } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { ChevronDown } from 'lucide-react';
+import { A, Card, Field, inputStyle } from '../../components/ui';
+import { FormActionBar, FormHeader, FormSection, focusFirstInvalid, formGridClass, useFormCopy } from '../../components/ui/formLayout';
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useI18n } from '../../i18n/I18n';
 import { supplierCopy } from './supplierCopy';
 import { orderedCurrencyCodes } from '../../lib/currencyOptions';
 
-// A workspace payment term: its code is what the supplier stores.
+// The supplier form follows the form standard (components/ui/formLayout.tsx).
 // A workspace payment term: its code is what the form stores. A supplier
 // imported from a file may hold the term's row id (recordId) instead.
 export type PaymentTermOption = { id: string; label: string; recordId?: string | null };
@@ -13,42 +16,76 @@ const basic = [['supplierCode', 'Supplier code'], ['supplierName', 'Supplier nam
 const contact = [['contactName', 'Contact name'], ['telephone', 'Phone'], ['email', 'Email'], ['address', 'Address'], ['postalCode', 'Postal / ZIP code']];
 const commercial = [['defaultCurrency', 'Default currency'], ['paymentTermsId', 'Payment terms'], ['deliveryCycleDays', 'Delivery lead time (days)'], ['settlementMethod', 'Settlement method']];
 const tax = [['creditCode', 'Business registration ID'], ['taxIdentificationNumber', 'Tax ID'], ['bankName', 'Bank name'], ['bankAccountName', 'Account holder'], ['bankAccountNumber', 'Account number']];
-const control = 'mt-1.5 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50';
+const REQUIRED = ['supplierCode', 'supplierName', 'defaultCurrency'];
+const WIDE = ['address', 'categories'];
 
 export function SupplierForm({ form, editing, saving, errors, currencyWarning, workspaceCurrency, paymentTerms, onChange, onSave, onCancel }: Props) {
   const { language } = useI18n();
   const t = (value: string) => supplierCopy(value, language);
+  const formCopy = useFormCopy();
+  const formRef = useRef<HTMLFormElement>(null);
+  // Focus moves to the first field with a message after a save, not while
+  // the person types (typing clears that field's message).
+  const saveTried = useRef(false);
+  useEffect(() => {
+    if (!saveTried.current || !errors.length) return;
+    saveTried.current = false;
+    if (errors.some(error => error.field)) focusFirstInvalid(formRef.current);
+  }, [errors]);
+  const save = () => { saveTried.current = true; onSave(); };
   // The empty choice means "not recorded"; a stored term that is not among
   // the workspace's terms (or the terms could not load) stays selectable.
   const stored = String(form.paymentTermsId ?? '');
   const termOptions = (paymentTerms || []).map(term => (stored && term.recordId === stored ? { ...term, id: stored } : term));
   if (stored && !termOptions.some(term => term.id === stored)) termOptions.push({ id: stored, label: stored });
+  const hints: Record<string, string> = {
+    supplierCode: 'Use a unique code, such as SUP-001.',
+    categories: 'Separate categories with commas.',
+    paymentTermsId: paymentTerms === null ? 'Could not load the workspace payment terms. The stored term is kept.' : 'Leave empty when the term is not agreed yet.',
+  };
   function field([key, label]: string[]) {
-    const required = ['supplierCode', 'supplierName', 'defaultCurrency'].includes(key);
     const error = errors.find(item => item.field === key);
-    const props = { id: `supplier-${key}`, 'aria-label': t(label), 'aria-invalid': !!error, 'aria-describedby': error ? `supplier-error-${key}` : undefined, required, value: form[key] ?? '', onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => onChange(key, event.target.value), className: control };
-    return <div key={key} className={key === 'address' || key === 'categories' ? 'md:col-span-2' : ''}>
-      <label htmlFor={props.id} className="text-sm font-medium text-slate-600">{t(label)}{required && <span className="ml-1 text-blue-600">*</span>}</label>
-      {key === 'defaultCurrency' ? <select {...props}><option value="">{t('Choose currency')}</option>{orderedCurrencyCodes(workspaceCurrency, null, form.defaultCurrency).map(code => <option key={code} value={code}>{code}</option>)}</select> : key === 'paymentTermsId' ? <select {...props}><option value="">{t('Not recorded')}</option>{termOptions.map(term => <option key={term.id} value={term.id}>{term.label === term.id ? term.id : `${term.label} (${term.id})`}</option>)}</select> : <input {...props} type={key === 'email' ? 'email' : key === 'telephone' ? 'tel' : key === 'deliveryCycleDays' ? 'number' : 'text'} min={key === 'deliveryCycleDays' ? 0 : undefined} step={key === 'deliveryCycleDays' ? 1 : undefined} maxLength={key === 'internalComment' ? 4000 : 500} />}
-      {error && <p id={`supplier-error-${key}`} className="mt-1 text-xs text-red-600">{t(error.message || 'Check the highlighted fields.')}</p>}
-      {key === 'supplierCode' && <p className="mt-1 text-xs text-slate-500">{t('Use a unique code, such as SUP-001.')}</p>}
-      {key === 'categories' && <p className="mt-1 text-xs text-slate-500">{t('Separate categories with commas.')}</p>}
-      {key === 'paymentTermsId' && <p className="mt-1 text-xs text-slate-500">{t(paymentTerms === null ? 'Could not load the workspace payment terms. The stored term is kept.' : 'Leave empty when the term is not agreed yet.')}</p>}
+    const props = { id: `supplier-${key}`, value: form[key] ?? '', onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => onChange(key, event.target.value), style: inputStyle };
+    const control = key === 'defaultCurrency'
+      ? <select {...props}><option value="">{t('Choose currency')}</option>{orderedCurrencyCodes(workspaceCurrency, null, form.defaultCurrency).map(code => <option key={code} value={code}>{code}</option>)}</select>
+      : key === 'paymentTermsId'
+        ? <select {...props}><option value="">{t('Not recorded')}</option>{termOptions.map(term => <option key={term.id} value={term.id}>{term.label === term.id ? term.id : `${term.label} (${term.id})`}</option>)}</select>
+        : <input {...props} type={key === 'email' ? 'email' : key === 'telephone' ? 'tel' : key === 'deliveryCycleDays' ? 'number' : 'text'} min={key === 'deliveryCycleDays' ? 0 : undefined} step={key === 'deliveryCycleDays' ? 1 : undefined} maxLength={500} />;
+    return <div key={key} className={WIDE.includes(key) ? 'md:col-span-2' : ''}>
+      <Field label={t(label)} required={REQUIRED.includes(key)} error={error ? t(error.message || 'Check the highlighted fields.') : null} hint={hints[key] ? t(hints[key]) : undefined}>{control}</Field>
     </div>;
   }
-  const section = (title: string, fields: string[][]) => <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="text-base font-semibold text-slate-900">{t(title)}</h2><div className="mt-4 grid gap-x-5 gap-y-4 md:grid-cols-2">{fields.map(field)}{title === 'Basic information' && <div><label htmlFor="supplier-status" className="text-sm font-medium text-slate-600">{t('Status')}</label><select id="supplier-status" aria-label={t('Status')} className={control} value={form.status} onChange={event => onChange('status', event.target.value)}>{[['active', 'Active'], ['draft', 'Draft'], ['inactive', 'Inactive']].map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select></div>}</div></section>;
-  return <form noValidate data-testid="supplier-form" onSubmit={event => { event.preventDefault(); onSave(); }} className="mx-auto max-w-5xl space-y-4">
+  const status = <Field key="status" label={t('Status')}>
+    <select id="supplier-status" style={inputStyle} value={form.status} onChange={event => onChange('status', event.target.value)}>{[['active', 'Active'], ['draft', 'Draft'], ['inactive', 'Inactive']].map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select>
+  </Field>;
+  // Messages with no field of their own (a lost connection, a refusal) sit in
+  // the action bar.
+  const formErrors = errors.filter(error => !error.field);
+  const fieldErrors = errors.some(error => error.field);
+  const message = formErrors.length || fieldErrors ? <>
+    {fieldErrors && <div>{formCopy('checkFields')}</div>}
+    {formErrors.map((error, index) => <div key={index}>{t(error.message || 'Could not save supplier. Please try again.')}</div>)}
+  </> : null;
+  return <form ref={formRef} noValidate data-testid="supplier-form" onSubmit={event => { event.preventDefault(); save(); }} className="space-y-5">
     <FocusFirstField />
-    <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50/60 p-5"><Building2 className="mt-1 text-blue-600" size={24} /><div><h1 className="text-xl font-semibold text-slate-900">{t(editing ? 'Edit supplier' : 'New supplier')}</h1><p className="mt-1 text-sm text-slate-600">{t('Start with the essentials. Add contact and commercial details when available.')}</p><p className="mt-2 text-xs text-slate-500">* {t('Required fields')}</p></div></div>
-    {errors.length > 0 && <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{t('Check the highlighted fields.')}{errors.filter(error => !error.field).map((error, index) => <p key={index}>{t(error.message || 'Could not save supplier. Please try again.')}</p>)}</div>}
-    {currencyWarning && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{t('Could not load workspace currency. Choose a currency before saving.')}</p>}
-    <fieldset disabled={saving} className="space-y-4">
-      {section('Basic information', basic)}
-      {section('Contact and address', contact)}
-      {section('Commercial terms', commercial)}
-      <details className="rounded-xl border border-slate-200 bg-white p-5"><summary className="flex cursor-pointer items-center gap-2 text-base font-semibold text-slate-900"><ChevronDown size={16} />{t('Tax and bank details')}<span className="ml-auto text-xs font-normal text-slate-500">{t('Optional')}</span></summary><p className="mt-3 text-sm text-slate-500">{t('Tax identifiers depend on the supplier’s country.')}</p><div className="mt-4 grid gap-4 md:grid-cols-2">{tax.map(field)}</div></details>
-      <section className="rounded-xl border border-slate-200 bg-white p-5"><label htmlFor="supplier-notes" className="text-sm font-medium text-slate-600">{t('Internal notes')}</label><textarea id="supplier-notes" className={control} rows={3} maxLength={4000} value={form.internalComment || ''} onChange={event => onChange('internalComment', event.target.value)} /></section>
+    <FormHeader title={t(editing ? 'Edit supplier' : 'New supplier')} intro={t('Start with the essentials. Add contact and commercial details when available.')}>
+      {currencyWarning && <p role="status" className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{t('Could not load workspace currency. Choose a currency before saving.')}</p>}
+    </FormHeader>
+    <fieldset disabled={saving} className="space-y-5">
+      <FormSection title={t('Basic information')}><div className={formGridClass}>{basic.map(field)}{status}</div></FormSection>
+      <FormSection title={t('Contact and address')}><div className={formGridClass}>{contact.map(field)}</div></FormSection>
+      <FormSection title={t('Commercial terms')}><div className={formGridClass}>{commercial.map(field)}</div></FormSection>
+      <Card className="p-4 sm:p-5">
+        <details>
+          <summary className="flex cursor-pointer list-none items-center gap-2"><ChevronDown size={16} style={{ color: A.sub }} /><h2 className="fc-section-title" style={{ color: A.label }}>{t('Tax and bank details')}</h2></summary>
+          <p className="mt-1 text-xs" style={{ color: A.sub }}>{t('Tax identifiers depend on the supplier’s country.')}</p>
+          <div className={`mt-4 ${formGridClass}`}>{tax.map(field)}</div>
+        </details>
+      </Card>
+      <FormSection title={t('Internal notes')}>
+        <textarea id="supplier-notes" aria-label={t('Internal notes')} style={{ ...inputStyle, resize: 'vertical' }} rows={3} maxLength={4000} value={form.internalComment || ''} onChange={event => onChange('internalComment', event.target.value)} />
+      </FormSection>
     </fieldset>
-    <div className="sticky bottom-20 z-10 flex items-center justify-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><button type="button" disabled={saving} onClick={onCancel} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600">{t('Cancel')}</button><button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"><Check size={16} />{t(saving ? 'Saving…' : 'Save supplier')}</button></div>
+    <FormActionBar onCancel={onCancel} submit={{ label: t('Save supplier'), onClick: save, busy: saving, testId: 'supplier-save' }} message={message} messageTestId="supplier-form-errors" />
   </form>;
 }

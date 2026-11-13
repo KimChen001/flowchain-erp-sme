@@ -322,7 +322,9 @@ button, input, select, textarea { font-family: var(--fc-font-family); font-size:
   table[data-list-cards] tr[data-card-row="full"] > [data-card-role="full"] { display: block; }
   table[data-list-cards] tr[data-card-row="record"] {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    /* The title (a document number) keeps at least 45% of the card, so a
+       wide status cell beside it can never squeeze it to one character. */
+    grid-template-columns: auto minmax(45%, 1fr) auto;
     align-items: center;
     row-gap: 6px;
     padding: 12px 16px;
@@ -347,6 +349,8 @@ button, input, select, textarea { font-family: var(--fc-font-family); font-size:
   table[data-list-cards] tr[data-card-row="record"] > [data-card-role="title"] { grid-column: 2; order: -2; }
   table[data-list-cards] tr[data-card-row="record"] > [data-card-role="status"] { grid-column: 3; order: -1; justify-self: end; margin-left: 12px; }
   table[data-list-cards] tr[data-card-row="record"] > [data-card-role="actions"] { order: 1; padding-top: 4px !important; }
+  /* Thumb targets on a card: keep 8 px between row buttons (Approve beside Reject). */
+  table[data-list-cards] tr[data-card-row="record"] > [data-card-role="actions"] .flex { gap: 8px; }
   table[data-list-cards] tr[data-card-row="record"] > [data-card-role="actions"]:empty { display: none; }
   table[data-list-cards] tr[data-card-row="record"] > [data-card-role][data-label] { padding-left: 124px !important; min-height: 20px; }
   table[data-list-cards] tr[data-card-row="record"] > [data-label]::before {

@@ -91,7 +91,7 @@ test('read-only users cannot create suppliers', async ({ page }) => {
   await page.waitForLoadState('networkidle');
   await expect(page.getByRole('button', { name: 'New SKU', exact: true })).toHaveCount(0);
   await page.goto('/app/master-data/customers');
-  await expect(page.getByPlaceholder('Search master data')).toBeVisible();
+  await expect(page.getByPlaceholder('Code, name, contact or phone')).toBeVisible();
   await page.waitForLoadState('networkidle');
   await expect(page.getByTestId('customer-new')).toHaveCount(0);
 });

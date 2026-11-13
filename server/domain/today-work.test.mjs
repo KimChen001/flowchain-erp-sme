@@ -127,6 +127,33 @@ test('items at or below their reorder point are listed from the reorder list, la
   assert.equal(reorder.find((item) => item.label === 'FIT-300').detail.stockSignal, 'stock_below_reorder')
   // GASKET-500 is well above its reorder point.
   assert.equal(work.items.some((item) => item.label === 'GASKET-500'), false)
+  // Each row carries the reorder list's prefilled request for its item, so
+  // Today links to that request, not just to the whole list.
+  const list = reorderFor([po()]).reorder
+  for (const item of reorder) {
+    const row = list.rows.find((entry) => entry.sku === item.label)
+    assert.deepEqual(item.detail.purchaseRequest, { itemId: row.purchaseRequest.itemId, supplierId: row.purchaseRequest.supplierId, quantity: row.purchaseRequest.quantity, raisedToMinimum: row.purchaseRequest.raisedToMinimum })
+  }
+  assert.equal(reorder.find((item) => item.label === 'FIT-300').detail.purchaseRequest.itemId, 'ITEM-F')
+})
+
+test('past the row limit, every kind keeps its earliest rows and the list stays in date order', async () => {
+  const { todayWorkResponseRows, TODAY_WORK_LIMIT, TODAY_WORK_PER_KIND } = await import('./today-work.mjs')
+  const day = (n) => `2026-10-${String(n).padStart(2, '0')}`
+  const row = (kind, n, date) => ({ id: `${kind}:${n}`, kind, recordId: String(n), label: String(n), date })
+  // 120 overdue receivables dated before 30 items to reorder.
+  const rows = [
+    ...Array.from({ length: 120 }, (_, n) => row('receivable_overdue', n, day(1 + (n % 20)))),
+    ...Array.from({ length: 30 }, (_, n) => row('reorder_now', n, day(25))),
+  ].sort(compareTodayWork)
+  const kept = todayWorkResponseRows(rows)
+  assert.equal(kept.length, TODAY_WORK_LIMIT)
+  assert.equal(kept.filter((item) => item.kind === 'reorder_now').length, TODAY_WORK_PER_KIND)
+  assert.equal(kept.filter((item) => item.kind === 'receivable_overdue').length, TODAY_WORK_LIMIT - TODAY_WORK_PER_KIND)
+  const dates = kept.map((item) => item.date)
+  assert.deepEqual(dates, [...dates].sort())
+  // Under the limit every row stays.
+  assert.equal(todayWorkResponseRows(rows.slice(0, 50)).length, 50)
 })
 
 test('an overdue receivable is listed with what is owed; one due next month is not', () => {

@@ -135,6 +135,10 @@ const sharedEnv = {
   FLOWCHAIN_LOCAL_SESSION_SECRET: secrets.session,
   FLOWCHAIN_SYNC_CURSOR_SECRET: secrets.syncCursor,
   FLOWCHAIN_MAIL_PROVIDER: "outbox",
+  // Local only: the sign-in page signs the local administrator in by itself
+  // (owner 11/11: signing in each time was a chore). --no-auto-sign-in turns
+  // it off to see the sign-in page.
+  FLOWCHAIN_LOCAL_AUTO_SIGN_IN: process.argv.includes("--no-auto-sign-in") ? "false" : "true",
   // The US trial capability set (deploy/README.md).
   FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: "true",
   FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: "true",

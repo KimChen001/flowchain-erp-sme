@@ -79,12 +79,18 @@ test("SME navigation, direct access and browser history follow the route manifes
 
   await page.goto("/app/overview");
   await expect(page).toHaveURL(/\/app\/overview\/risks$/);
+  // The home page is named as the sidebar names it, once in the trail.
   await expect(
     page.getByTestId("module-subnav").getByRole("link", {
-      name: "首页概览",
+      name: "今日",
       exact: true,
     }),
   ).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("app-breadcrumb")).toHaveText("今日");
+  // /app/today opens the same page.
+  await page.goto("/app/today");
+  await expect(page).toHaveURL(/\/app\/overview\/risks$/);
+  await expect(page.getByTestId("not-found-recovery")).toHaveCount(0);
   // The badge's details follow the interface language (Chinese here).
   await expect(page.getByTitle(/通用录入已关闭/)).toBeVisible();
   const sidebar = page.locator("aside");
@@ -264,9 +270,12 @@ test("SME navigation, direct access and browser history follow the route manifes
 
   await page.goto("/app/procurement/three-way-match");
   await expect(page.getByTestId("procurement-three-way-match-list")).toBeVisible();
+  // A match is shown by its supplier invoice number; the MATCH- id stays in
+  // the link's address (UI review 7).
   await expect(
-    page.getByText("MATCH-LOCAL-DEMO-INV-001", { exact: true }),
+    page.getByTestId("three-way-match-record-list").getByText("LOCAL-DEMO-INV-001", { exact: true }),
   ).toBeVisible();
+  await expect(page.getByText("MATCH-LOCAL-DEMO-INV-001", { exact: true })).toHaveCount(0);
   await expect(page.getByText("三单匹配列表尚未接入")).toHaveCount(0);
   await expect(
     page.getByTestId("module-subnav").getByRole("link", {

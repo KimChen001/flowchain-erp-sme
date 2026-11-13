@@ -167,6 +167,39 @@ test("on a phone each row is a short card: the four stock quantities in one bloc
   expect(Math.abs((await recorded.boundingBox())!.y - (await suggested.boundingBox())!.y)).toBeLessThan(6);
   expect((await a.boundingBox())!.height).toBeLessThan(420);
   await expect(a.getByTestId("reorder-create-request-RL-A")).toBeVisible();
+  // The method text folds behind a toggle, so the first item shows on the
+  // first screen (UI review 7); the toggle opens it.
+  await expect(page.getByTestId("reorder-list-method")).toHaveCount(0);
+  const toggle = page.getByTestId("reorder-list-method-toggle");
+  await expect(toggle).toHaveText("How this is worked out");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  expect((await page.locator("tbody tr").first().boundingBox())!.y).toBeLessThan(844);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("reorder-list-horizon")).toContainText("Every open purchase order line counts as incoming");
+});
+
+test("a shortfall raised to the supplier's minimum hands over the minimum and the shortfall, so the form labels it as the minimum", async ({ page }) => {
+  // RL-C is 15 short; its supplier sells at least 20.
+  const raised = attachReorderPointSuggestions(buildReorderList({
+    ...listInput,
+    items: listInput.items.map((item) => (item.sku === "RL-C" ? { ...item, preferredSupplierId: "SUP-1" } : item)),
+    supplierLinks: [...listInput.supplierLinks, { id: "r3", payload: { itemId: "ITEM-C", supplierId: "SUP-1", preferred: true, leadTimeDays: 3, minimumOrderQuantity: 20 } }],
+  }), shipmentLines);
+  await open(page, "en-US", raised);
+  const href = new URL((await page.getByTestId("reorder-create-request-RL-C").getAttribute("href"))!, "http://local");
+  expect(href.searchParams.get("quantity")).toBe("20");
+  expect(href.searchParams.get("quantityFrom")).toBe("supplier_minimum");
+  expect(href.searchParams.get("shortfall")).toBe("15");
+  // The reason words units in the interface language.
+  expect(href.searchParams.get("reason")).toBe("Reorder list: stock position 5 pcs against reorder point 20 pcs; order by 2026-10-05.");
+  // A plain shortfall hands over no such note.
+  await page.unrouteAll();
+  await open(page);
+  const plain = new URL((await page.getByTestId("reorder-create-request-RL-C").getAttribute("href"))!, "http://local");
+  expect(plain.searchParams.get("quantityFrom")).toBeNull();
+  expect(plain.searchParams.get("shortfall")).toBeNull();
 });
 
 test("Create purchase request opens the prefilled form; nothing is submitted", async ({ page }) => {
@@ -242,6 +275,11 @@ test("the reorder list is available in Chinese and says when nothing needs order
   await expect(page.getByRole("heading", { level: 1, name: "补货清单" })).toBeVisible();
   await expect(page.getByTestId("reorder-row-RL-C")).toContainText("立即下单");
   await expect(page.getByTestId("reorder-list-horizon")).toContainText("所有未到货的采购订单行都计入在途");
+  // "库存位置（含在途）", never 头寸 (UI review 7).
+  await expect(page.getByTestId("reorder-list-page")).toContainText("库存位置（含在途）= 在手 − 预留 + 在途");
+  await expect(page.getByTestId("reorder-list-page")).not.toContainText("头寸");
+  const reason = new URL((await page.getByTestId("reorder-create-request-RL-A").getAttribute("href"))!, "http://local").searchParams.get("reason");
+  expect(reason).toContain("库存位置（含在途）130 件");
   // The workspace locale here is zh-CN, so the day reads in Chinese; units
   // show their Chinese label.
   await expect(page.getByTestId("reorder-row-RL-D").getByTestId("reorder-flags")).toContainText("PO-0038 应于 10月1日 到货，已逾期，已计入；请与供应商确认");
