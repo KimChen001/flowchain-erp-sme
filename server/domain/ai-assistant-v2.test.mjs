@@ -129,6 +129,15 @@ test('text streams as deltas in order, the start comes first and the answer last
   assert.deepEqual(request.tools.find((tool) => tool.name === 'show_records').input_schema, showRecords.inputSchema)
 })
 
+test('the open record reaches the model with its number, so an answer never names it by its id', async () => {
+  const { client } = await ask([[...say('Two orders are overdue.'), end()]], { body: { activeContext: { moduleId: 'purchase-orders', entityType: 'purchase_order', entityId: 'UCI-PO-00356', entityLabel: 'PO-202611-0015' } } })
+  const context = JSON.parse(client.requests[0].messages[0].content[0].text.replace(/^[^{]*/, ''))
+  assert.deepEqual(context.openRecord, { moduleId: 'purchase-orders', entityType: 'purchase_order', entityId: 'UCI-PO-00356', label: 'PO-202611-0015' })
+  // Without a label the record goes as before.
+  const plain = await ask([[...say('Two orders are overdue.'), end()]], { body: { activeContext: { moduleId: 'purchase-orders', entityType: 'purchase_order', entityId: 'UCI-PO-00356' } } })
+  assert.equal(JSON.parse(plain.client.requests[0].messages[0].content[0].text.replace(/^[^{]*/, '')).openRecord.label, undefined)
+})
+
 test('a data tool, then a UI tool on its result: the part shows where the model called it', async () => {
   const { events, body, audit, client, thread } = await ask([
     OVERDUE,
@@ -381,11 +390,15 @@ test('a call the provider reports no usage for is metered by estimate, so the ce
 })
 
 test('a long thread is sent its latest turns only, as many as leave room for two calls', async () => {
-  // Ten earlier turns, each with a list result of 24,000 characters.
+  // A hundred earlier turns, each with a list result of 2,400 characters:
+  // small enough that some always fit, many enough that not all do, however
+  // the prompt and the tools grow (2026-11-13: ten turns of 24,000 characters
+  // stopped fitting at all once the open assistant PRs were combined).
+  const TURNS = 100
   const rows = Array.from({ length: 160 }, (_, at) => ({ orderNumber: `PO-${String(at).padStart(4, '0')}`, supplier: 'Acme Components Limited', status: 'issued', expectedDate: '2026-10-01' }))
-  const big = JSON.stringify({ source: 'list_purchase_orders#1', rows }).slice(0, 24000)
+  const big = JSON.stringify({ source: 'list_purchase_orders#1', rows }).slice(0, 2400)
   const messages = []
-  for (let turn = 0; turn < 10; turn += 1) {
+  for (let turn = 0; turn < TURNS; turn += 1) {
     messages.push(
       { role: 'user', content: [{ type: 'text', text: 'Which orders are open?' }] },
       { role: 'assistant', content: [{ type: 'tool_use', id: `tu_${turn}`, name: 'list_purchase_orders', input: {} }] },
@@ -399,12 +412,12 @@ test('a long thread is sent its latest turns only, as many as leave room for two
   assert.equal(ofType(events, 'notice').length, 0)
   assert.equal(body.conclusion.summary, 'PO-001 is overdue.')
   const sent = client.requests[0].messages
-  assert.ok(audit.turnsLeftOut > 0 && audit.turnsLeftOut < 10, String(audit.turnsLeftOut))
-  assert.equal(sent.length, (10 - audit.turnsLeftOut) * 4 + 2)
+  assert.ok(audit.turnsLeftOut > 0 && audit.turnsLeftOut < TURNS, String(audit.turnsLeftOut))
+  assert.equal(sent.length, (TURNS - audit.turnsLeftOut) * 4 + 2)
   assert.deepEqual(sent[0].content, [{ type: 'text', text: 'Which orders are open?' }], 'the transcript starts at a turn')
   assert.equal(sent.at(-1).content[0].text, 'Which purchase orders are overdue?')
   // The thread keeps every turn; only what is sent is shorter.
-  assert.equal(thread.messages.length, 40 + 3)
+  assert.equal(thread.messages.length, TURNS * 4 + 3)
   // A short thread is sent whole.
   const short = await ask([[...say('PO-001 is overdue.'), end()]], { thread: { messages: messages.slice(0, 4), results: new Map() } })
   assert.equal(short.audit.turnsLeftOut, 0)
@@ -548,10 +561,25 @@ test('the records a text names come with its flag, from this conversation\'s res
   assert.ok(order.indexOf('flag:p1', order.indexOf('tool:get_purchase_order')) < order.indexOf('text_delta:p2'), 'the late flag comes before the next text')
 })
 
+test('the answer says what it read, as of which day, and how many of its facts were checked or flagged', async () => {
+  // PO-001 is in the results; PO-002 is not, so it is flagged.
+  const { body } = await ask([OVERDUE, [...say('PO-001 and PO-002 are overdue.'), end()]])
+  assert.deepEqual(body.basis.sources, ['purchase orders'])
+  assert.equal(body.basis.asOf, body.skill.asOf)
+  assert.equal(body.basis.figures, 2)
+  assert.equal(body.basis.flagged, 1)
+  assert.deepEqual(body.basis.tools, ['list_purchase_orders'])
+  // An answer that read nothing names no source and checked nothing.
+  const general = await ask([[...say('A three-way match compares the order, the receipt and the invoice.'), end()]], { question: 'What is a three-way match?' })
+  assert.deepEqual(general.body.basis, { sources: [], asOf: general.body.skill.asOf, figures: 0, flagged: 0, tools: [] })
+})
+
 test('the system prompt asks for the source handle, status words, one set of chips and no talk of tools', () => {
   assert.match(ASSISTANT_V2_SYSTEM, /starts with its source, such as "list_purchase_orders#1": pass that as source/)
   assert.match(ASSISTANT_V2_SYSTEM, /Never mention tools, displays, sources, ids, errors or retries to the user/)
   assert.match(ASSISTANT_V2_SYSTEM, /never as its code: where a result gives a label beside the code \(statusLabel/)
+  // One assistant on every page: the open record is used only when the question points to it.
+  assert.match(ASSISTANT_V2_SYSTEM, /openRecord only says where the user is: use it when the question points to it .*, and name it by its label, never its entityId\. Any other question is about the whole workspace, whichever page is open, and its answer leaves the open record out\./)
   assert.match(ASSISTANT_V2_SYSTEM, /suggest_followups, called once/)
   // Chips only when there is a next step (2026-11-04), never beside a question to the user.
   assert.match(ASSISTANT_V2_SYSTEM, /When the answer has a clear next step, end it with suggest_followups/)
@@ -1572,4 +1600,18 @@ test('the prompt offers the record card for the steps it takes, and keeps every 
   assert.match(ASSISTANT_V2_SYSTEM, /Paying, sending or emailing, cancelling, withdrawing, deleting and every other step: explain that the user does it themselves in the app/)
   assert.match(ASSISTANT_V2_SYSTEM, /Never say a step is done before such a note; a card you just showed is not done/)
   assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /When the user asks you to approve, pay, send, issue, cancel or delete something/)
+})
+
+// 2026-11-12: answers sent users to the "cancel action" of an issued order,
+// and to 催货 and 改期 buttons. The prompt lists the app's buttons, and a
+// button the app does not have is marked like a figure no result holds.
+test('the prompt lists the app\'s buttons, and a button the app does not have is flagged', async () => {
+  assert.match(ASSISTANT_V2_SYSTEM, /Close PO \/ 关闭采购订单/)
+  assert.match(ASSISTANT_V2_SYSTEM, /Copy and mark chased \/ 复制并记为已催/)
+  const { events } = await ask([OVERDUE, [...say('PO-001 is overdue. Open it and click **Cancel order**, or click **Close PO**.'), end()]])
+  assertProtocol(events)
+  const [flag] = ofType(events, 'flag')
+  assert.deepEqual(flag.spans, [{ text: 'Cancel order', kind: 'name', reason: 'not_an_app_button' }])
+  const fine = await ask([OVERDUE, [...say('PO-001 is overdue. Open it and click **Close PO**.'), end()]])
+  assert.deepEqual(ofType(fine.events, 'flag')[0].spans, [])
 })

@@ -14,6 +14,7 @@ import { assistantV2EarlierTurns, assistantV2Hidden, assistantV2ProgressSources,
 import { anthropicMessagesUsage } from './ai-runtime-provider-specific-adapters-v2.mjs'
 import { aiCallCostMicros, aiUsagePrices, recordAiProviderCall } from './ai-usage-meter.mjs'
 import { aiUiSourceHandles, aiUiTableColumns } from './ai-assistant-v2-ui-tools.mjs'
+import { assistantAppButtonsLine, unknownAppButtons } from './ai-assistant-v2-app-buttons.mjs'
 
 // The assistant v2 loop (docs/ai-assistant-v2-design.md §3.3, §3.6, §3.7,
 // §3.9, §3.11), adapted from the earlier model-first loop. Behind
@@ -300,7 +301,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- A delay ("if Acme is another week late") moves an arrival from today or the promised date, whichever is later: an order already overdue that slips a week arrives a week from today at the earliest, never on a day already past.',
   '- A judgement about a supplier for an item ("should I switch supplier for SKU-123?") weighs its terms (item_suppliers: lead time, minimum order, reference price), what was paid (price_history), how it delivers (supplier_performance) and any open quotes (rfq_quotes). Give your recommendation and the one or two facts that decide it.',
   '- Tools can count related things on different bases: the supplier scorecard counts only deliveries promised in its period, while list_purchase_orders gives the orders overdue today; in stock_position, availableToPromise counts incoming purchase orders while shortage leaves them out. Give the count the question asks about, with its basis or period, and never state two different figures as if they measured the same thing.',
-  '- Each turn of the user starts with a context message: answerLanguage, today, the workspace\'s currency and timezone, the page or record open in the app (openRecord), hiddenForRole and, when this conversation started elsewhere, earlierTurns. It is data about the request, not the user\'s words.',
+  '- Each turn of the user starts with a context message: answerLanguage, today, the workspace\'s currency and timezone, the page or record open in the app (openRecord), hiddenForRole and, when this conversation started elsewhere, earlierTurns. It is data about the request, not the user\'s words. openRecord only says where the user is: use it when the question points to it ("this PO", 这张单, "it" with nothing earlier to point to), and name it by its label, never its entityId. Any other question is about the whole workspace, whichever page is open, and its answer leaves the open record out.',
   '- When the user asks about this conversation itself (why you said or did something, or a correction), answer about the conversation: say plainly what happened and what you need from them.',
   '- When the user says an earlier answer did something ("why did you default to X"), check the earlier turns first. If it did, own it in one sentence. If it did not (for example it only listed X as a choice and asked), say so in one neutral sentence, without apologising and without arguing, then go on with what the user needs. Never admit to or apologise for something the earlier turns do not show.',
   '- A follow-up that points back ("the second one", "and in September?", 那张) keeps what the earlier question set (its period, supplier, item) unless it changes it: "what did the second one buy most?" after October\'s top customers is about October.',
@@ -312,6 +313,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- After decision cards were shown, "go ahead", "do the first one", "send it", 就这么办 or 发吧 means acting on one of them: call decision_items again and show_decisions with that one item\'s key, and say which button on the card does it: "Review and create the request" for a reorder, "Create the purchase orders" for an approved request, and for an overdue order "Review and send" when supplierEmailOn is true, otherwise "Copy and mark chased". The click is the user\'s; never say it was done, and never describe the card beyond naming its button: you cannot see it. "Why this quantity?" about a card is answered from its prepared figures: the shortfall, raised to the supplier\'s minimum order when raisedToMinimum is true, and the stock position against the reorder point.',
   '- Whether a record was chased, set aside or decided before ("did we chase PO-…?", "why isn\'t 22423 on Today?"): call decision_history.',
   '- Paying, sending or emailing, cancelling, withdrawing, deleting and every other step: explain that the user does it themselves in the app and where, naming the record by its number so its link shows. The one exception is a follow-up to the supplier of an overdue purchase order: when decision_items says supplierEmailOn, FlowChain emails it from that order\'s decision card after the user confirms the text and then the address; show that card. A purchase order\'s page has Cancel PO only while it is a draft, waiting for approval or approved; an issued or partly received order is closed instead (Close PO: the rest is not received), and its promised date is changed there with a reason (Change promised date); goods are received on the Receiving page. Name only steps the app has: an overdue order is chased from its decision card on Today (Copy and mark chased, or Review and send when supplierEmailOn); there is no chase button on the order\'s page, and no expedite or reschedule button (加急) anywhere. Never call it a system limit. Say what you cannot do only then, when the user asks for such a step: never add "I can\'t send messages", "I can only advise" or 我只能给建议 to an answer that did not ask for one.',
+  assistantAppButtonsLine(),
   '- The exception: a "Note from the server" in the conversation says what the user did with their own click in a form or card of this chat: created or submitted a purchase request, approved or rejected one, created a purchase order or RFQ from one, approved a purchase order or marked it issued. Only then may you say that they did it ("You approved PR-0231; status: approved"), naming the records and statuses the note gives. Never say a step is done before such a note; a card you just showed is not done.',
   '- When the user wants to order or reorder, call suggest_purchase_lines, then suggest_purchase_request with that result as source. It opens a purchase request form in the answer: the user reviews the lines, creates a draft request and submits it for approval with their own clicks. Pass from user_named with the SKUs of the items the user named in this question, by SKU or by the item\'s name (a supplier or date only when the user typed it; a quantity when the user typed it or optimize_order_plan decided it). When the user agrees to items you proposed or that came up earlier in this conversation ("yes, all of them", "go ahead", "order those two", 好的，就按你说的来), pass from agreed: list those SKUs in lines, or no lines for every item of your latest form; they arrive ticked, with any quantity, supplier or date the user gave or changed. Otherwise pass from suggestions, which leaves every line unticked: when the user has not said which items, do not choose for them. Say what the form is for ("I\'ve filled in a request form for you to review"), then what to click, in the button\'s own words: with the lines ticked, as when the user named them or agreed, "review the lines, then click Create draft request" (中文："核对这些行，再点击‘创建草稿申请’"), never "check" or "tick" them; with nothing ticked, "tick the items you want, then click Create draft request" (中文：“勾选要采购的物料，再点击‘创建草稿申请’”). Never say that a request exists. When the user confirms an order with its quantity ("Confirm: order 50 from Acme", 确认：从 Acme 订 50 个), in any language, open the form with that quantity and supplier for the item it means (from the records, as above). Such a confirmation is the user\'s decision: when the item is clear, do not ask again which way to go, even when the quantity looks short; say that in one sentence beside the form. When open orders or requests already cover the item, say which first, as for any order. To add to or change a form shown earlier in this conversation ("add 150 of SKU-456 too", "make it 120"), show one form that keeps its other lines: suggest_purchase_lines with every SKU, then all of them in lines. The user\'s click on Create is how it is saved: never present that as something you cannot do. If suggest_purchase_request is not offered, the user\'s role cannot create purchase requests; say so and that a buyer can.',
   '- A supplier the user names for an item need not be an approved supplier of it yet: pass it in the line as named. When it is an active supplier of the workspace and the user may add approved suppliers, the form puts it on the line, and when the user clicks Create the form adds it as an approved supplier of the item, then creates the request. Say that in plain words ("Northwind Supply isn\'t an approved supplier for SKU-123 yet; clicking Create adds it"), never that it was added. Pass a price, currency or lead time for it only when the user typed them; otherwise say that they can enter the price in the form. If the tool says the user\'s role cannot add it, say that a colleague with master data access can add the supplier to the item.',
@@ -331,7 +333,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- Never say a supplier or item was created, added or saved, and never speak of one as a record of the workspace, until a "Note from the server" says the user created it. Then say that they created it ("You created supplier Acme Packaging (SUP-001)"), with the names and codes the note gives.',
   '',
   'The answer:',
-  '- Answer in answerLanguage (the language of the question), plainly, as a helpful colleague, to the user as "you" (你). Lead with the answer: write its one-sentence answer as text before any show_* or suggest_purchase_request call, so it stands above the table, chart or form; then the facts behind it. The first sentence gives the decision or the figure the user asked for, never what the records lack. Give the facts that change the decision, not every fact you read. Fit the length to the question: a simple question gets a few sentences; a plan, a comparison, a walk-through or an explanation for someone new gets the room it needs, in short numbered steps or bullets with bold lead-ins. A long answer with separate parts may start each part with a short "## " heading. Explain a term in plain words the first time a new user meets it. Do not pad: no repeated facts and no closing summary of what you just said.',
+  '- Answer in answerLanguage (the language of the question), plainly, as a helpful colleague, to the user as "you" (你). Lead with the answer: write its one-sentence answer as text before any show_* or suggest_purchase_request call, so it stands above the table, chart or form; then the facts behind it. The first sentence gives the decision or the figure the user asked for, never what the records lack. Give the facts that change the decision, not every fact you read. Keep it short: the user can always ask for more. A lookup (one figure, one record, who, when, yes or no) is one or two sentences, the figure with its basis, with no list and no second paragraph. Any other answer is the answer, then at most three points that change the decision, about 150 words (300 字) in all: leave the other facts for a follow-up question, and never repeat in the text what a table, cards or a form show. Shorten by leaving facts out, never by leaving out what names them: a purchase order you write about keeps its item (SKU or name) beside its number. Only a plan, a walk-through, a draft or an explanation the user asked for gets more room, in short numbered steps or bullets with bold lead-ins; such an answer with separate parts may start each part with a short "## " heading. Explain a term in plain words the first time a new user meets it. Do not pad: no repeated facts and no closing summary of what you just said.',
   '- A broad question ("what\'s going on with Acme?", "anything I should worry about this week?", 这周有什么要注意的) asks for your judgement, not a list of everything: lead with the one to three things that matter most, each with why (what it puts at risk, by when), ranked, and what to do first. Then say in one sentence what else there is and offer it ("2 receipts with rejections and 4 approvals are also open; want those?"). A table of the rest is fine; do not walk through it in the text.',
   '- Show lists and figures with the display tools instead of typing them: show_table for rows (four records or more always go in a table), show_records for one to three records, show_chart for figures across months or suppliers, show_kpis for the workspace summary. Every data result starts with its source, such as "list_purchase_orders#1": pass that as source, with the column codes (the ones that answer the question, at most four besides the record), refs or keys to show; never type the values into the tool or repeat the whole list in prose, and never type a table of them into the text. If a display fails, fix the call once as its error says, or answer in prose.',
   '- A table and a chart of the same rows say the same thing: show one of them. When a table, cards or a form show the rows, do not repeat them in the text or describe the display ("the table lists all 15", "I\'ve listed the six most overdue as buttons"); say what matters about them. The app places tables, charts and forms itself: never say where one is ("above", "below", "the table above", 上表, 下表, 下面列出).',
@@ -721,7 +723,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       thread.lastFormSkus = skus
     }
     const active = body.activeContext && typeof body.activeContext === 'object' ? body.activeContext : null
-    const openRecord = active && (text(active.moduleId) || text(active.entityType)) ? { moduleId: clip(active.moduleId, 80) || null, entityType: clip(active.entityType, 40) || null, entityId: clip(active.entityId, 120) || null } : null
+    const openRecord = active && (text(active.moduleId) || text(active.entityType)) ? { moduleId: clip(active.moduleId, 80) || null, entityType: clip(active.entityType, 40) || null, entityId: clip(active.entityId, 120) || null, ...(text(active.entityLabel) ? { label: clip(active.entityLabel, 80) } : {}) } : null
     thread.messages.push(
       { role: 'user', content: [{ type: 'text', text: `${CONTEXT_PREFIX}${JSON.stringify({ answerLanguage: language, today: context.today, workspace: { currency: context.tenant?.currency || null, timezone: context.tenant?.timezone || null }, ...(hidden ? { hiddenForRole: hidden } : {}), ...(openRecord ? { openRecord } : {}), ...(restartTurns.length ? { earlierTurns: restartTurns } : {}) })}` }] },
       { role: 'user', content: [{ type: 'text', text: question }] },
@@ -1003,6 +1005,10 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       }
     }
 
+    // How many figures each text part's check read (records, names, dates,
+    // numbers) and how many it flagged, for the answer's sources line
+    // (owner 2026-11-13: show that the figures were checked).
+    const figureChecks = new Map()
     // A text part is complete: check it against this answer's results. A
     // hard finding replaces it; otherwise its held rest is sent, then flags
     // and the records it names.
@@ -1024,6 +1030,8 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: 'record_label' })
       }
       const check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today })
+      const read = check.checked || {}
+      const figures = (read.record || 0) + (read.name || 0) + (read.date || 0) + (read.number || 0)
       // A sentence that claims an action no record backs is left out; the
       // rest of the part stays (2026-11-04: the whole part went for one
       // sentence), and the panel says under it that a sentence was left out.
@@ -1078,6 +1086,13 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
           spans.push({ text: (span ? part.text.slice(...span) : row.value).slice(0, 200), kind: row.kind, reason: 'not_in_results' })
         }
       }
+      // A button the app does not have, named in quotes or bold after "click"
+      // or before "button" (2026-11-12: the "cancel action" of an issued
+      // order, 催货 and 改期), marked like a figure no result holds.
+      for (const label of unknownAppButtons(part.text)) {
+        const [span] = spansOf(part.text, label)
+        spans.push({ text: (span ? part.text.slice(...span) : label).slice(0, 200), kind: 'name', reason: 'not_an_app_button' })
+      }
       const before = part.text
       if (withheld.length) part.text = withhold(part.text, withheld.map((row) => row.value), aiSkillText('assistant_v2.replace.withheld', language))
       if (part.text !== before) {
@@ -1085,6 +1100,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: withheld.some((row) => row.code === 'foreign_record') ? 'foreign_record' : 'hidden_value' })
       } else release(part, part.text.length)
       stats.flags += spans.length
+      figureChecks.set(part.id, { figures, flagged: spans.length })
       send(flagEvent(part, spans.slice(0, 50)))
     }
 
@@ -1566,6 +1582,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       records: cited.map((ref) => ({ type: ref.type, id: ref.id })),
       refs: [...refs, ...shownRefs.filter((ref) => !refs.some((row) => row.type === ref.type && row.id === ref.id))],
       calls: stats.calls, facts, language, query: question, results,
+      figures: [...figureChecks.entries()].filter(([id]) => parts.some((part) => part.id === id && part.type === 'text' && !part.dropped)).map(([, value]) => value),
     })
     const answer = {
       ...response,

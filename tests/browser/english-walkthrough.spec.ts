@@ -234,13 +234,13 @@ test("purchase request amounts use the document currency", async ({ page }) => {
   await page.goto("/app/procurement/requests/LOCAL-DEMO-PR-001");
   await expect(page.getByText("$5,000.00").first()).toBeVisible();
   await page.goto("/app/overview/risks");
-  // Today lists the request among the day's work, earliest date first. The
-  // list and its Show all button render together once the work has loaded,
-  // so wait for the list before deciding whether to expand it.
-  await expect(page.getByTestId("today-work-item").first()).toBeVisible();
-  const showAll = page.getByRole("button", { name: /^Show all \d+$/ });
+  // Today lists the request among the day's work, one line per kind (owner
+  // 11/13): open the requests' line, and all its rows.
+  const requests = page.locator('[data-testid="today-work-group"][data-kind="purchase_request_to_approve"]');
+  await requests.getByTestId("today-work-group-toggle").click();
+  const showAll = requests.getByTestId("today-work-group-all");
   if (await showAll.count()) await showAll.click();
-  await expect(page.getByText("Request amount $5,000.00")).toBeVisible();
+  await expect(requests.getByText("Request amount $5,000.00")).toBeVisible();
   // Recent documents of every type show the amount in the document's
   // currency; on the walkthrough the bills written last lead the list.
   await expect(page.getByTestId("recent-documents").locator("tbody tr").first()).toContainText(/\$\d{1,3}(,\d{3})*\.\d{2}/);

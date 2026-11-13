@@ -10,6 +10,7 @@ import { useI18n } from "../../i18n/I18n";
 
 const COPY = {
   page: ["Page {page} of {pages} · {total} results", "第 {page} / {pages} 页 · 共 {total} 条"],
+  pageOne: ["Page 1 of 1 · 1 result", "第 1 / 1 页 · 共 1 条"],
   previous: ["Previous", "上一页"],
   next: ["Next", "下一页"],
 } as const;
@@ -35,7 +36,7 @@ export function ListPager({ page, pageSize, total, onPage, testId = "list-pager"
   };
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs sm:px-5" style={{ borderTop: "0.5px solid rgba(0,0,0,0.06)", color: A.sub }} data-testid={testId} ref={ref}>
-      <span>{say("page", { page: formatNumber(page), pages: formatNumber(pages), total: formatNumber(total) })}</span>
+      <span>{total === 1 ? say("pageOne") : say("page", { page: formatNumber(page), pages: formatNumber(pages), total: formatNumber(total) })}</span>
       <div className="flex gap-2">
         <button type="button" className={`${listButtonClass.secondary} disabled:opacity-50`} disabled={page <= 1} onClick={() => go(page - 1)}>{say("previous")}</button>
         <button type="button" className={`${listButtonClass.secondary} disabled:opacity-50`} disabled={page >= pages} onClick={() => go(page + 1)}>{say("next")}</button>

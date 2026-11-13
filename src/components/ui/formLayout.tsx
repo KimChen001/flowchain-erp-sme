@@ -124,7 +124,7 @@ export function FormHeader({ title, intro, back, aside, children, testId }: {
   return (
     <Card className="p-4 sm:p-5" data-testid={testId}>
       {back && (
-        <button type="button" onClick={back.onClick} className="mb-3 inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline">
+        <button type="button" onClick={back.onClick} className="mb-3 inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9">
           <ArrowLeft size={13} />{back.label}
         </button>
       )}
@@ -182,7 +182,7 @@ export function FormLineCard({ label, aside, remove, children, testId }: {
             title={remove.label}
             onClick={remove.onClick}
             disabled={remove.disabled}
-            className={`${aside ? "" : "ml-auto "}rounded-md p-1 text-red-600 hover:bg-red-50 disabled:opacity-40`}
+            className={`${aside ? "" : "ml-auto "}rounded-md p-1 text-red-600 hover:bg-red-50 disabled:opacity-40 max-sm:flex max-sm:h-9 max-sm:w-9 max-sm:items-center max-sm:justify-center`}
           >
             <Trash2 size={15} />
           </button>

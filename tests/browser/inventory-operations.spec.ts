@@ -30,40 +30,61 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await expect(page.getByTestId("transfer-number-on-save")).toHaveText(
     "调拨单号：保存时自动生成",
   );
-  // Save checks the server's rules first: the missing item is said under its
-  // field, which gets the focus, and nothing is sent.
+  // Save checks the rules first: the missing source warehouse and item are
+  // said under their fields, the first gets the focus, and nothing is sent.
   await page.getByTestId("create-transfer").click();
+  await expect(page.getByText("请选择调出仓库。")).toBeVisible();
   await expect(page.getByText("请选择物料。")).toBeVisible();
-  await expect(page.getByLabel("调拨物料 1")).toBeFocused();
+  await expect(page.getByLabel("来源仓库 1")).toBeFocused();
   await expect(page.getByTestId("transfer-create-errors")).toContainText(
     "请检查标出的字段。",
   );
   await expect(page).toHaveURL(/\/app\/inventory\/transfers\/new$/);
-  await page.getByLabel("调拨物料 1").selectOption("inventory-browser-item");
-  await page.getByLabel("调拨数量 1").fill("3.0000");
+  // Quantities are typed left-aligned, as on every entry form.
+  await expect(page.getByLabel("调拨数量 1")).not.toHaveClass(/text-right/);
   await page.getByLabel("来源仓库 1").selectOption("inventory-browser-a");
-  await page.getByLabel("来源库位 1").fill("A-01");
+  // The item menu lists what warehouse A holds, with what is available.
+  await expect(
+    page.getByLabel("调拨物料 1").locator("option", { hasText: "INV-BROWSER-SKU" }),
+  ).toHaveText(/可用 8/);
+  await page.getByLabel("调拨物料 1").selectOption("inventory-browser-item");
+  // The item has one stock record there, so its location is chosen.
+  await expect(page.getByLabel("来源库位 1")).toHaveValue("inventory-browser-balance-a");
+  await page.getByLabel("调拨数量 1").fill("3.0000");
   await page.getByLabel("目标仓库 1").selectOption("inventory-browser-b");
-  await page.getByLabel("目标库位 1").fill("B-01");
+  // Target locations are the warehouse's known ones; a new one is typed only
+  // after choosing "New location…".
+  await expect(page.getByLabel("新库位 1")).toHaveCount(0);
+  await page.getByLabel("目标库位 1").selectOption("__new_location__");
+  await expect(page.getByLabel("新库位 1")).toBeVisible();
+  await page.getByLabel("目标库位 1").selectOption("B-01");
+  await expect(page.getByLabel("新库位 1")).toHaveCount(0);
   await page.getByRole("button", { name: "添加行" }).click();
+  await page.getByLabel("来源仓库 2").selectOption("inventory-browser-a");
   await page.getByLabel("调拨物料 2").selectOption("inventory-browser-item");
   await page.getByLabel("调拨数量 2").fill("1.0000");
-  await page.getByLabel("来源仓库 2").selectOption("inventory-browser-a");
-  await page.getByLabel("来源库位 2").fill("A-01");
   await page.getByLabel("目标仓库 2").selectOption("inventory-browser-b");
-  await page.getByLabel("目标库位 2").fill("B-01");
+  await page.getByLabel("目标库位 2").selectOption("B-01");
   await page.getByTestId("create-transfer").click();
   await expect(page.getByTestId("inventory-transfer-workbench")).toBeVisible();
   await expect(
     page.getByTestId("inventory-transfer-workbench").locator("h1"),
   ).toHaveText(/^TR-\d{6}-\d{4,}$/);
   const transferUrl = page.url();
+  // Nothing has moved yet, so there is nothing to reconcile.
+  await expect(page.getByTestId("inventory-reconciliation")).toHaveCount(0);
   await page.getByTestId("operation-ready").click();
-  await page.getByTestId("operation-preview-post").click();
-  await expect(page.getByTestId("inventory-operation-preview")).toContainText(
-    "预览允许执行",
-  );
-  await page.getByTestId("confirm-inventory-operation").click();
+  // Posting is one step: the dialog shows each stock record before → after.
+  await page.getByTestId("operation-post").click();
+  const postDialog = page.getByTestId("inventory-operation-confirm");
+  await expect(postDialog.getByTestId("inventory-operation-stock-change-row")).toHaveCount(2);
+  await expect(
+    postDialog.getByTestId("inventory-operation-stock-change-row").filter({ hasText: "A-01" }),
+  ).toContainText(/10\s*个\s*6\s*个/);
+  await expect(
+    postDialog.getByTestId("inventory-operation-stock-change-row").filter({ hasText: "B-01" }),
+  ).toContainText(/5\s*个\s*9\s*个/);
+  await page.getByTestId("inventory-operation-confirm-confirm").click();
   await expect(
     page
       .getByTestId("operation-movement-stock_transfer_out")
@@ -93,8 +114,11 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
       (row: any) => row.id === "inventory-browser-balance-b",
     ).onHandQuantity,
   ).toBe("9.0000");
-  await page.getByTestId("operation-preview-reverse").click();
-  await page.getByTestId("confirm-inventory-operation").click();
+  // A reversal asks for its reason in the dialog; nothing is prefilled.
+  await page.getByTestId("operation-reverse").click();
+  await expect(page.getByTestId("inventory-operation-confirm-field")).toHaveValue("");
+  await page.getByTestId("inventory-operation-confirm-field").fill("浏览器测试冲销");
+  await page.getByTestId("inventory-operation-confirm-confirm").click();
   // The posting and its reversal make eight movements: few enough to stay
   // listed, not folded.
   await expect(page.getByTestId("operation-movements-summary")).toHaveCount(0);
@@ -141,40 +165,56 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await page.goto(countUrl);
   await expect(page.getByTestId("count-recorded")).toContainText("10.0000");
   await page.getByTestId("count-review").click();
-  await page.getByTestId("operation-preview-post").click();
-  await page.getByTestId("confirm-inventory-operation").click();
+  await page.getByTestId("operation-post").click();
+  await page.getByTestId("inventory-operation-confirm-confirm").click();
   await expect(
     page.getByTestId("operation-movement-cycle_count_adjustment"),
   ).toContainText("入 1");
 
+  // A new adjustment starts neutral: no reason, no quantity. Save says what
+  // is missing, the reason first.
   await page.goto("/app/inventory/adjustments/new");
+  await expect(page.getByLabel("调整原因")).toHaveValue("");
+  await expect(page.getByLabel("调整数量 1")).toHaveValue("");
+  await expect(page.getByLabel("调整数量 1")).not.toHaveClass(/text-right/);
   await page.getByTestId("create-adjustment").click();
+  await expect(page.getByText("请选择调整原因。")).toBeVisible();
   await expect(page.getByText("请选择库存余额。")).toBeVisible();
-  await expect(page.getByLabel("调整余额 1")).toBeFocused();
+  await expect(page.getByLabel("调整原因")).toBeFocused();
+  await page.getByLabel("调整原因").selectOption({ label: "损坏" });
   await page
     .getByLabel("调整余额 1")
     .selectOption("inventory-browser-balance-b");
   await page.getByLabel("调整数量 1").fill("-1.0000");
+  // The line says the stock change it makes before it is saved.
+  await expect(page.getByTestId("adjustment-line-change-1")).toContainText(/5\s*个\s*4\s*个/);
   await page.getByTestId("create-adjustment").click();
+  await expect(page.getByTestId("inventory-adjustment-workbench")).toBeVisible();
+  // No reason box on the document: only cancel and reverse ask for one.
+  await expect(page.getByLabel("操作原因")).toHaveCount(0);
+  await expect(page.getByTestId("inventory-reconciliation")).toHaveCount(0);
   await page.getByTestId("operation-ready").click();
-  await page.getByTestId("operation-preview-post").click();
-  await page.getByTestId("confirm-inventory-operation").click();
+  await page.getByTestId("operation-post").click();
+  await expect(
+    page.getByTestId("inventory-operation-confirm").getByTestId("inventory-operation-stock-change-row"),
+  ).toContainText(/5\s*个\s*4\s*个/);
+  await page.getByTestId("inventory-operation-confirm-confirm").click();
   await expect(
     page.getByTestId("operation-movement-inventory_adjustment"),
   ).toContainText("出 1");
-  await page.getByTestId("operation-preview-reverse").click();
-  await page.getByTestId("confirm-inventory-operation").click();
+  await expect(page.getByTestId("inventory-reconciliation")).toBeVisible();
+  await page.getByTestId("operation-reverse").click();
+  await page.getByTestId("inventory-operation-confirm-field").fill("浏览器测试冲销");
+  await page.getByTestId("inventory-operation-confirm-confirm").click();
   await expect(
     page.getByTestId("operation-movement-inventory_adjustment_reversal"),
   ).toBeVisible();
 
-  // Found stock: the default quantity adds, a key that already has a stock
-  // record points to it, and switching back to Damage restores the picker
-  // and a decrease.
+  // Found stock: a key that already has a stock record points to it, and
+  // switching to Damage restores the picker; the quantity stays as typed.
   await page.goto("/app/inventory/adjustments/new");
-  await expect(page.getByLabel("调整数量 1")).toHaveValue("-1");
   await page.getByLabel("调整原因").selectOption({ label: "盘盈" });
-  await expect(page.getByLabel("调整数量 1")).toHaveValue("1");
+  await expect(page.getByLabel("调整数量 1")).toHaveValue("");
   await page.getByTestId("adjustment-line-mode-1").selectOption("new");
   await page.getByLabel("调整物料 1").selectOption("inventory-browser-item");
   await page.getByLabel("调整仓库 1").selectOption("inventory-browser-b");
@@ -182,7 +222,7 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await expect(page.getByTestId("adjustment-line-existing-1")).toBeVisible();
   await page.getByLabel("调整原因").selectOption({ label: "损坏" });
   await expect(page.getByLabel("调整余额 1")).toBeVisible();
-  await expect(page.getByLabel("调整数量 1")).toHaveValue("-1");
+  await expect(page.getByLabel("调整数量 1")).toHaveValue("");
 
   // Opening stock for a location with no stock record: posting creates it.
   // A key that already has a stock record is flagged before saving.
@@ -200,8 +240,12 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await page.getByTestId("create-adjustment").click();
   await expect(page.getByTestId("adjustment-line-new-record")).toBeVisible();
   await page.getByTestId("operation-ready").click();
-  await page.getByTestId("operation-preview-post").click();
-  await page.getByTestId("confirm-inventory-operation").click();
+  await page.getByTestId("operation-post").click();
+  // A location with no stock record starts from 0 and is marked as new.
+  await expect(
+    page.getByTestId("inventory-operation-confirm").getByTestId("inventory-operation-stock-change-row"),
+  ).toContainText(/OPEN-01[\s\S]*0\s*个\s*5\s*个/);
+  await page.getByTestId("inventory-operation-confirm-confirm").click();
   await expect(
     page.getByTestId("operation-movement-inventory_adjustment"),
   ).toContainText("入 5");

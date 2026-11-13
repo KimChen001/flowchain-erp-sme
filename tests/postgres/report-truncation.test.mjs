@@ -99,7 +99,8 @@ test('reports say which subjects were cut off at the read limit', async () => {
       // database's totals; only its table and download are cut.
       const salesCut = { subject: 'sales_orders', limit: 500 }
       const named = {
-        overview: [{ subject: 'purchase_orders', limit: 500 }, { subject: 'receipts', limit: 500 }, { subject: 'supplier_invoices', limit: 500 }, salesCut, { subject: 'items', limit: 200 }],
+        // The overview reads no receipts since round 8 (one figure per area).
+        overview: [{ subject: 'purchase_orders', limit: 500 }, { subject: 'supplier_invoices', limit: 500 }, salesCut, { subject: 'items', limit: 200 }],
         procurement: [{ subject: 'purchase_orders', limit: 500 }, { subject: 'receipts', limit: 500 }, { subject: 'supplier_invoices', limit: 500 }],
         sales: [{ ...salesCut, figuresComplete: true, openDemandComplete: false, total: 501 }],
         finance: [{ subject: 'supplier_invoices', limit: 500 }],
@@ -123,7 +124,8 @@ test('reports say which subjects were cut off at the read limit', async () => {
       assert.equal(sales.payload.charts.find((item) => item.id === 'sales_order_status').data.reduce((total, row) => total + row.value, 0), 501)
       assert.equal(sales.payload.exportRows.length, 500)
       const overview = await asTenant(overTenant, 'POST', '/api/reports/query', { subject: 'overview', filters: {} })
-      assert.equal(overview.payload.kpis.find((item) => item.id === 'sales_order_count').currentValue, 501)
+      assert.equal(overview.payload.charts.find((item) => item.id === 'overview_activity').data.reduce((total, row) => total + row['Sales orders'], 0), 501)
+      assert.equal(overview.payload.kpis.find((item) => item.id === 'sales_order_amount').currencyAmounts.reduce((total, row) => total + row.recordCount, 0), 501)
 
       const exactContext = await asTenant(exactTenant, 'GET', '/api/business/read-context')
       assert.deepEqual(exactContext.payload.truncatedSubjects, [])

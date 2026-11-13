@@ -37,8 +37,13 @@ export function AppBreadcrumb({ route }: { route: AppRouteDefinition }) {
       return null;
     }
   };
+  // A one-step trail (Today on Today) only repeats the page's tab and title
+  // below it, so a top-level page shows none.
+  if (items.length < 2) return null;
   return (
-    <nav aria-label={t("breadcrumb")} className="fc-breadcrumb" data-testid="app-breadcrumb">
+    // On a phone a list page's trail repeats its tab and title, so only a
+    // record's page, where it leads back to the list, keeps it there.
+    <nav aria-label={t("breadcrumb")} className={`fc-breadcrumb ${route.pageType === "detail" ? "" : "max-sm:hidden"}`} data-testid="app-breadcrumb">
       {items.map((item, index) => {
         const current = index === items.length - 1;
         const href = current ? null : crumbHref(item);
@@ -47,7 +52,8 @@ export function AppBreadcrumb({ route }: { route: AppRouteDefinition }) {
           {current ? (
             <span aria-current="page" className="fc-caption min-w-0 truncate font-semibold" style={{ color: A.label }}>{index === 0 && <Home size={12} className="mr-1 inline" />}{item.pageType === "detail" ? detailName(item) : crumbLabel(item)}</span>
           ) : href ? (
-            <Link className="fc-caption inline-flex items-center gap-1 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 rounded" style={{ color: A.blue }} to={href}>
+            // 36 px tall on a phone, where a record's trail is the way back.
+            <Link className="fc-caption inline-flex items-center gap-1 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 rounded max-sm:min-h-9" style={{ color: A.blue }} to={href}>
               {index === 0 && <Home size={12} />}{crumbLabel(item)}
             </Link>
           ) : (

@@ -2,6 +2,7 @@ import { DEFAULT_TENANT_TIMEZONE } from '../domain/tenant-calendar-day.mjs'
 import { orderHasOpenDemand } from '../repositories/db-sales-order-read-repository.mjs'
 import { buildFirstRunChecklist, buildTodayWork, countDocumentsUpdatedToday } from '../domain/today-work.mjs'
 import { billPaymentStatus } from '../domain/operational-finance-read-service.mjs'
+import { customerInvoicePaymentStatus } from '../domain/operational-finance-o2c-read-service.mjs'
 
 const clone = value => structuredClone(value)
 const array = value => Array.isArray(value) ? value : []
@@ -110,7 +111,13 @@ const recordedCustomer = name => name && name !== UNNAMED_CUSTOMER ? name : null
 // partially_settled, settled), as the supplier invoice list shows it, when
 // its payable's status was read (payableStatuses: invoice id to status).
 const billStatus = (row, payableStatuses) => billPaymentStatus(row.status, payableStatuses?.[row.id]) || row.status
-function homeDocuments(context, customerInvoices = [], payableStatuses = {}) {
+// An issued customer invoice shows where its payment stands (to_be_paid,
+// partially_settled, settled), as the customer invoice list shows it, when its
+// receivable's status was read: on the row (receivableStatus) or in
+// receivableStatuses (invoice id to status).
+const customerInvoiceStatus = (row, receivableStatuses) =>
+  customerInvoicePaymentStatus(row.status, row.receivableStatus ?? receivableStatuses?.[row.id]) || row.status
+function homeDocuments(context, customerInvoices = [], payableStatuses = {}, receivableStatuses = {}) {
   const rows = value => Array.isArray(value) ? value : []
   return [
     ...rows(context.purchaseRequests).map(row => ({ type: 'purchase_request', id: row.id, number: row.number || row.id, status: row.status, partner: row.lines?.[0]?.supplierSnapshot?.supplierName || null, amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/requests', row.id) })),
@@ -119,7 +126,7 @@ function homeDocuments(context, customerInvoices = [], payableStatuses = {}) {
     ...rows(context.receipts).map(row => ({ type: 'receipt', id: row.id, number: row.documentNumber || row.id, status: row.postingStatus || row.status, partner: row.supplierName || null, amount: null, currency: '', updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/receiving', row.id) })),
     ...rows(context.supplierInvoices).map(row => ({ type: 'supplier_invoice', id: row.id, number: row.invoiceNumber || row.id, status: billStatus(row, payableStatuses), partner: row.supplierName || null, amount: amountOf(row.totalAmount ?? row.amount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/bills', row.id) })),
     ...rows(context.salesOrders).map(row => ({ type: 'sales_order', id: row.id || row.salesOrderId, number: row.orderNumber || row.id, status: salesOrderHomeStatus(row), partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/orders', row.id || row.salesOrderId) })),
-    ...rows(customerInvoices).map(row => ({ type: 'customer_invoice', id: row.id, number: row.invoiceNumber || row.id, status: row.status, partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/invoices', row.id) })),
+    ...rows(customerInvoices).map(row => ({ type: 'customer_invoice', id: row.id, number: row.invoiceNumber || row.id, status: customerInvoiceStatus(row, receivableStatuses), partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/invoices', row.id) })),
   ].filter(row => row.id)
 }
 
@@ -136,7 +143,28 @@ function salesOrderHomeStatus(row) {
 }
 
 const instant = value => { const parsed = Date.parse(value); return Number.isFinite(parsed) ? parsed : 0 }
-export const RECENT_DOCUMENTS = 10
+export const RECENT_DOCUMENTS = 8
+// At most this many rows of one document type while other types have recent
+// documents too, so a day of seeded invoices does not fill the whole list.
+export const RECENT_DOCUMENTS_PER_TYPE = 3
+
+// The latest changed documents, newest first, with no type taking more than
+// RECENT_DOCUMENTS_PER_TYPE rows while another type has rows to show; rows of
+// a type are always its newest. Fewer types than that fill up from the rest.
+export function pickRecentDocuments(documents, { limit = RECENT_DOCUMENTS, perType = RECENT_DOCUMENTS_PER_TYPE } = {}) {
+  const order = (a, b) => instant(b.updatedAt) - instant(a.updatedAt) || a.type.localeCompare(b.type) || String(a.id).localeCompare(String(b.id))
+  const sorted = [...documents].sort(order)
+  const picked = []
+  const skipped = []
+  const perTypeCount = new Map()
+  for (const row of sorted) {
+    if (picked.length >= limit) break
+    const count = perTypeCount.get(row.type) || 0
+    if (count < perType) { picked.push(row); perTypeCount.set(row.type, count + 1) } else skipped.push(row)
+  }
+  for (const row of skipped) { if (picked.length >= limit) break; picked.push(row) }
+  return picked.sort(order)
+}
 
 // The home page (GET /api/home/overview) from the reader's scoped context and
 // the sources the route reads for it (server/domain/today-work-read-service.mjs):
@@ -147,7 +175,8 @@ export const RECENT_DOCUMENTS = 10
 //   todayChanges     how many documents the reader can open were last changed
 //                    on the workspace day; the audit log is not counted (see
 //                    countDocumentsUpdatedToday);
-//   recentDocuments  the latest changed documents of every type, with the
+//   recentDocuments  the latest changed documents of every type (no more than
+//                    three of one type while others have some), with the
 //                    instant of the change;
 //   firstRun         the first-day checklist while any step is open;
 //   decisions        the rows the system prepared a next step for and the
@@ -171,11 +200,9 @@ export function todayWorkOf(context, sources = {}, { now = new Date(), timeZone 
 
 export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, sources = {}, setup = null, setupOptions = {}, hidden = [], limitations = [], work: computed = null, decisions = { available: false } } = {}) {
   const work = computed || todayWorkOf(context, sources, { now, timeZone })
-  const documents = homeDocuments(context, sources.recentCustomerInvoices, sources.billPayableStatuses)
+  const documents = homeDocuments(context, sources.recentCustomerInvoices, sources.billPayableStatuses, sources.customerInvoiceReceivableStatuses)
   const todayChanges = countDocumentsUpdatedToday(documents, { now, timeZone })
-  const recentDocuments = [...documents]
-    .sort((a, b) => instant(b.updatedAt) - instant(a.updatedAt) || a.type.localeCompare(b.type) || String(a.id).localeCompare(String(b.id)))
-    .slice(0, RECENT_DOCUMENTS)
+  const recentDocuments = pickRecentDocuments(documents)
   // A reader of only some warehouses gets the reorder list's items as not
   // checked, so Today names that instead of showing no stock to reorder.
   const reorderScoped = sources.reorder?.scope?.kind === 'reader_warehouses'

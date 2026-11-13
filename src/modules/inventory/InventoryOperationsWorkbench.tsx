@@ -1,12 +1,14 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { Plus } from "lucide-react";
+import { ArrowRight, Plus } from "lucide-react";
+import { toast } from "sonner";
 import { apiJson } from "../../lib/api-client";
-import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
+import { A, Card, Chip, Field, inputStyle, useConfirm } from "../../components/ui";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { FormActionBar, FormHeader, FormLineCard, FormSection, focusFirstInvalid, formGridClass, useFormCopy } from "../../components/ui/formLayout";
 import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle } from "../../components/ui/listLayout";
-import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, thClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, thClass } from "../../components/ui/workbenchTable";
 import { createSecureClientMutationId } from "../../lib/client-id";
 
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
@@ -46,13 +48,23 @@ type Entry = {
     canOperate: boolean;
   }>;
 };
+type Balance = Entry["balances"][number];
+// A location of a warehouse kept in Warehouses (GET /api/master-data/warehouses/:id/bins).
+type Bin = { id: string; code: string; name?: string; status?: string };
+// The target location menu's "New location…": the location is typed in.
+const NEW_LOCATION = "__new_location__";
 type TransferLine = {
   itemId: string;
   quantity: string;
   sourceWarehouseId: string;
-  sourceLocation: string;
+  // The stock record the stock leaves: the item at one location of the
+  // source warehouse. Its location is what the server is sent.
+  sourceBalanceId: string;
   destinationWarehouseId: string;
+  // A known location of the target warehouse, "" for no location, or
+  // NEW_LOCATION for the one typed in newLocation.
   destinationLocation: string;
+  newLocation: string;
 };
 type AdjustmentLine = {
   mode: "existing" | "new";
@@ -67,8 +79,6 @@ const field =
   "h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-400";
 const button =
   "rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40";
-const secondary =
-  "rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40";
 const key = (prefix: string) => createSecureClientMutationId(prefix);
 const enabled = (entry: Entry | null) =>
   Boolean(
@@ -388,6 +398,14 @@ function quantityUnits(value: string): bigint | null {
 const quantityFormatIssue = (say: Say) =>
   say("Enter a number with up to four decimal places.", "请输入最多四位小数的数量。");
 
+// 1/10000 units as the server's fixed four-place decimal ("44.0000").
+function unitsText(value: bigint) {
+  const sign = value < 0n ? "-" : "";
+  const size = value < 0n ? -value : value;
+  return `${sign}${size / 10000n}.${String(size % 10000n).padStart(4, "0")}`;
+}
+const unitsOf = (value: string | null | undefined) => quantityUnits(String(value ?? "")) ?? 0n;
+
 // The action bar's message: what has no field of its own, "Check the
 // highlighted fields." after field messages, and a refusal from the server.
 function formMessage(fieldIssues: boolean, formIssues: string[], error: string, checkFields: string) {
@@ -404,33 +422,71 @@ function formMessage(fieldIssues: boolean, formIssues: string[], error: string, 
 // Help text under a field or a line, in the Field hint's grey.
 const helpTextClass = "text-[12px] leading-[18px]";
 
-const blankTransferLine = (): TransferLine => ({
+// A new line starts from the operator's one warehouse when there is only one;
+// with several, both warehouses are left to choose.
+const blankTransferLine = (warehouseId = ""): TransferLine => ({
   itemId: "",
   quantity: "1",
-  sourceWarehouseId: "",
-  sourceLocation: "",
-  destinationWarehouseId: "",
+  sourceWarehouseId: warehouseId,
+  sourceBalanceId: "",
+  destinationWarehouseId: warehouseId,
   destinationLocation: "",
+  newLocation: "",
 });
 
-// What the server refuses a transfer line without: an item, a quantity
-// above 0, and a target other than the source (the same warehouse and
-// location, the location compared without case or outer spaces). The server
-// does not require either warehouse when the draft is saved.
-function transferIssues(lines: TransferLine[], say: Say): Issues {
+// The stock records a line can take the item from: the item at a location of
+// the source warehouse with stock available to move.
+function sourceBalancesFor(entry: Entry, warehouseId: string, itemId: string) {
+  const item = entry.items.find((row) => row.id === itemId);
+  if (!warehouseId || !item) return [];
+  return entry.balances.filter(
+    (row) =>
+      row.canOperate &&
+      row.warehouseId === warehouseId &&
+      (row.itemId ? row.itemId === item.id : row.sku === item.sku) &&
+      unitsOf(row.availableQuantity) > 0n,
+  );
+}
+
+// The location a line sends the stock to, as typed or chosen.
+const targetLocationOf = (line: TransferLine) =>
+  line.destinationLocation === NEW_LOCATION ? line.newLocation : line.destinationLocation;
+
+// What the server refuses a transfer line without: an item, a quantity above
+// 0, and a target other than the source (the same warehouse and location,
+// the location compared without case or outer spaces). The server saves a
+// draft without either warehouse, but posting takes the stock from a stock
+// record of the source warehouse and puts it in the target warehouse, so the
+// form asks for both warehouses and the source location before saving.
+function transferIssues(entry: Entry, lines: TransferLine[], say: Say): Issues {
   const issues: Issues = {};
   const place = (warehouseId: string, location: string) =>
     `${warehouseId.trim()}|${location.trim().toLowerCase()}`;
   lines.forEach((line, index) => {
     const at = `lines.${index}`;
+    if (!line.sourceWarehouseId)
+      issues[`${at}.sourceWarehouseId`] = say("Choose the warehouse the stock leaves.", "请选择调出仓库。");
     if (!line.itemId.trim()) issues[`${at}.itemId`] = say("Choose an item.", "请选择物料。");
+    const source = entry.balances.find((row) => row.id === line.sourceBalanceId);
+    if (line.sourceWarehouseId && line.itemId && !source)
+      issues[`${at}.sourceBalanceId`] = sourceBalancesFor(entry, line.sourceWarehouseId, line.itemId).length
+        ? say("Choose the location the stock leaves.", "请选择调出库位。")
+        : say("This item has no stock available in this warehouse.", "此物料在该仓库没有可用库存。");
     const units = quantityUnits(line.quantity);
     if (units === null) issues[`${at}.quantity`] = quantityFormatIssue(say);
     else if (units <= 0n) issues[`${at}.quantity`] = say("Enter a quantity above 0.", "请输入大于 0 的数量。");
-    if (place(line.sourceWarehouseId, line.sourceLocation) === place(line.destinationWarehouseId, line.destinationLocation))
-      issues[`${at}.destinationWarehouseId`] = say(
-        "Choose a target warehouse or location that differs from the source.",
-        "请选择与来源不同的目标仓库或库位。",
+    if (!line.destinationWarehouseId)
+      issues[`${at}.destinationWarehouseId`] = say("Choose the warehouse the stock goes to.", "请选择调入仓库。");
+    if (line.destinationLocation === NEW_LOCATION && !line.newLocation.trim())
+      issues[`${at}.newLocation`] = say("Enter the new location.", "请输入新库位。");
+    else if (
+      source &&
+      line.destinationWarehouseId &&
+      place(line.sourceWarehouseId, source.location) === place(line.destinationWarehouseId, targetLocationOf(line))
+    )
+      issues[`${at}.destinationLocation`] = say(
+        "Choose a target location that differs from the source.",
+        "请选择与调出库位不同的调入库位。",
       );
   });
   return issues;
@@ -438,23 +494,97 @@ function transferIssues(lines: TransferLine[], say: Say): Issues {
 
 function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
   const { copy, errorText } = useInventoryOperationsCopy();
+  const { language } = useI18n();
   const say = useSay();
   const formCopy = useFormCopy();
+  const warehouseName = useWarehouseNames();
+  const operateWarehouses = entry.warehouses.filter((row) => row.canOperate);
+  const onlyWarehouse = operateWarehouses.length === 1 ? operateWarehouses[0].id : "";
   const navigate = useNavigate(),
     formRef = useRef<HTMLDivElement>(null),
-    [lines, setLines] = useState<TransferLine[]>([blankTransferLine()]),
+    [lines, setLines] = useState<TransferLine[]>([blankTransferLine(onlyWarehouse)]),
     // A save was refused: the messages show, and go as each field is fixed.
     [checked, setChecked] = useState(false),
     [saving, setSaving] = useState(false),
-    [error, setError] = useState("");
-  const issues = transferIssues(lines, say);
+    [error, setError] = useState(""),
+    // The kept locations of each target warehouse, read once it is chosen.
+    [bins, setBins] = useState<Record<string, Bin[]>>({}),
+    binsAsked = useRef(new Set<string>());
+  const targetWarehouses = [...new Set(lines.map((line) => line.destinationWarehouseId).filter(Boolean))].join("|");
+  useEffect(() => {
+    for (const warehouseId of targetWarehouses.split("|").filter(Boolean)) {
+      if (binsAsked.current.has(warehouseId)) continue;
+      binsAsked.current.add(warehouseId);
+      apiJson<{ bins?: Bin[] }>(`/api/master-data/warehouses/${encodeURIComponent(warehouseId)}/bins`)
+        .then((result) => setBins((current) => ({ ...current, [warehouseId]: result.bins || [] })))
+        // Without the bins, the menu still offers the locations that hold stock.
+        .catch(() => setBins((current) => ({ ...current, [warehouseId]: [] })));
+    }
+  }, [targetWarehouses]);
+  const issues = transferIssues(entry, lines, say);
   const shown: Issues = checked ? issues : {};
+  const quantityText = (value: bigint | string, unit?: string) => {
+    const text = typeof value === "bigint" ? unitsText(value) : value;
+    return `${formatQuantity(text)}${unit ? ` ${unitLabel(unit, language, Number(text))}` : ""}`;
+  };
+  // A changed source warehouse keeps the item only when it has stock there;
+  // a source location is chosen for the person when the item has only one.
+  const settle = (line: TransferLine, patch: Partial<TransferLine>): TransferLine => {
+    let next = { ...line, ...patch };
+    if ("sourceWarehouseId" in patch && next.itemId && !sourceBalancesFor(entry, next.sourceWarehouseId, next.itemId).length)
+      next = { ...next, itemId: "" };
+    if ("sourceWarehouseId" in patch || "itemId" in patch) {
+      const options = sourceBalancesFor(entry, next.sourceWarehouseId, next.itemId);
+      next = {
+        ...next,
+        sourceBalanceId: options.length === 1 ? options[0].id : options.some((row) => row.id === next.sourceBalanceId) ? next.sourceBalanceId : "",
+      };
+    }
+    if ("destinationWarehouseId" in patch && patch.destinationWarehouseId !== line.destinationWarehouseId)
+      next = { ...next, destinationLocation: "", newLocation: "" };
+    return next;
+  };
   const update = (index: number, patch: Partial<TransferLine>) =>
     setLines((rows) =>
       rows.map((row, rowIndex) =>
-        rowIndex === index ? { ...row, ...patch } : row,
+        rowIndex === index ? settle(row, patch) : row,
       ),
     );
+  // The items a line can move: those with stock available in its source
+  // warehouse (or, before one is chosen, in any warehouse the person
+  // operates), each with what is available.
+  const itemOptions = (warehouseId: string) => {
+    const totals = new Map<string, { units: bigint; unit?: string }>();
+    for (const row of entry.balances) {
+      if (!row.canOperate || (warehouseId && row.warehouseId !== warehouseId)) continue;
+      const available = unitsOf(row.availableQuantity);
+      if (available <= 0n) continue;
+      const item = entry.items.find((candidate) => (row.itemId ? candidate.id === row.itemId : candidate.sku === row.sku));
+      if (!item) continue;
+      const total = totals.get(item.id) || { units: 0n, unit: row.unit || item.unit };
+      total.units += available;
+      totals.set(item.id, total);
+    }
+    return entry.items
+      .filter((item) => totals.has(item.id))
+      .map((item) => ({ item, available: totals.get(item.id)! }));
+  };
+  // The target warehouse's locations: those kept in Warehouses and those
+  // that already hold stock, each once.
+  const targetLocations = (warehouseId: string) => {
+    const known = new Map<string, { value: string; label: string }>();
+    for (const bin of bins[warehouseId] || []) {
+      const code = String(bin.code || "").trim();
+      if (!code || bin.status === "inactive") continue;
+      known.set(code.toLowerCase(), { value: code, label: bin.name && bin.name.trim() !== code ? `${code} · ${bin.name.trim()}` : code });
+    }
+    for (const row of entry.balances) {
+      const location = row.location.trim();
+      if (row.warehouseId !== warehouseId || !location || known.has(location.toLowerCase())) continue;
+      known.set(location.toLowerCase(), { value: location, label: location });
+    }
+    return [...known.values()].sort((a, b) => a.value.localeCompare(b.value));
+  };
   const submit = async () => {
     if (saving) return;
     setChecked(true);
@@ -474,15 +604,16 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
             quantity: line.quantity,
             source: {
               warehouseId: line.sourceWarehouseId,
-              location: line.sourceLocation,
+              location: entry.balances.find((row) => row.id === line.sourceBalanceId)?.location || "",
             },
             destination: {
               warehouseId: line.destinationWarehouseId,
-              location: line.destinationLocation,
+              location: targetLocationOf(line).trim(),
             },
           })),
         }),
       });
+      toast.success(say(`Transfer ${data.transfer.transferNumber} saved as a draft.`, `调拨单 ${data.transfer.transferNumber} 已保存为草稿。`));
       navigate(
         `/app/inventory/transfers/${encodeURIComponent(data.transfer.id)}`,
       );
@@ -492,13 +623,11 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
       setSaving(false);
     }
   };
-  const warehouseOptions = entry.warehouses
-    .filter((row) => row.canOperate)
-    .map((row) => (
-      <option key={row.id} value={row.id}>
-        {row.code} · {row.name}
-      </option>
-    ));
+  const warehouseOptions = operateWarehouses.map((row) => (
+    <option key={row.id} value={row.id}>
+      {row.code} · {row.name}
+    </option>
+  ));
   // The page's h1 (from the module shell) names the form, so the header has
   // no title.
   return (
@@ -519,6 +648,11 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
           {lines.map((line, index) => {
             const n = index + 1,
               at = `lines.${index}`;
+            const items = itemOptions(line.sourceWarehouseId);
+            const sources = sourceBalancesFor(entry, line.sourceWarehouseId, line.itemId);
+            const source = entry.balances.find((row) => row.id === line.sourceBalanceId);
+            const targets = line.destinationWarehouseId ? targetLocations(line.destinationWarehouseId) : [];
+            const quantity = quantityUnits(line.quantity);
             return (
               <FormLineCard
                 key={index}
@@ -534,8 +668,24 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
                 testId={`transfer-line-${n}`}
               >
                 <div className={formGridClass}>
+                  <Field label={copy("来源仓库")} required error={shown[`${at}.sourceWarehouseId`]}>
+                    <select
+                      aria-label={copy("来源仓库 {n}", { n })}
+                      style={inputStyle}
+                      value={line.sourceWarehouseId}
+                      onChange={(event) =>
+                        update(index, { sourceWarehouseId: event.target.value })
+                      }
+                    >
+                      <option value="">{copy("请选择")}</option>
+                      {warehouseOptions}
+                    </select>
+                  </Field>
                   <div className="md:col-span-2">
-                    <Field label={copy("物料")} required error={shown[`${at}.itemId`]}>
+                    <Field
+                      label={copy("物料")} required error={shown[`${at}.itemId`]}
+                      hint={line.sourceWarehouseId ? undefined : say("Items with stock in any of your warehouses. Choose the source warehouse to see its own.", "列出你所有仓库中有库存的物料；选择调出仓库后只列该仓库的物料。")}
+                    >
                       <select
                         aria-label={copy("调拨物料 {n}", { n })}
                         style={inputStyle}
@@ -544,19 +694,25 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
                           update(index, { itemId: event.target.value })
                         }
                       >
-                        <option value="">{copy("请选择")}</option>
-                        {entry.items.map((item) => (
+                        <option value="">
+                          {items.length ? copy("请选择") : say("No stock to move in this warehouse", "此仓库没有可调拨的库存")}
+                        </option>
+                        {items.map(({ item, available }) => (
                           <option key={item.id} value={item.id}>
-                            {item.sku} · {item.name}
+                            {item.sku} · {item.name} · {say(`${quantityText(available.units, available.unit)} available`, `可用 ${quantityText(available.units, available.unit)}`)}
                           </option>
                         ))}
                       </select>
                     </Field>
                   </div>
-                  <Field label={copy("数量")} required error={shown[`${at}.quantity`]}>
+                  <Field
+                    label={copy("数量")} required error={shown[`${at}.quantity`]}
+                    hint={source ? say(`${quantityText(source.availableQuantity, source.unit)} available here`, `此库位可用 ${quantityText(source.availableQuantity, source.unit)}`) : undefined}
+                  >
+                    {/* Quantities are typed left-aligned, as on every entry form. */}
                     <input
                       aria-label={copy("调拨数量 {n}", { n })}
-                      className="text-right tabular-nums"
+                      className="tabular-nums"
                       style={inputStyle}
                       inputMode="decimal"
                       value={line.quantity}
@@ -565,32 +721,26 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
                       }
                     />
                   </Field>
-                  <div className="md:col-start-1">
-                    <Field label={copy("来源仓库")}>
-                      <select
-                        aria-label={copy("来源仓库 {n}", { n })}
-                        style={inputStyle}
-                        value={line.sourceWarehouseId}
-                        onChange={(event) =>
-                          update(index, { sourceWarehouseId: event.target.value })
-                        }
-                      >
-                        <option value="">{copy("请选择")}</option>
-                        {warehouseOptions}
-                      </select>
-                    </Field>
-                  </div>
-                  <Field label={copy("来源库位")}>
-                    <input
+                  <Field label={copy("来源库位")} required error={shown[`${at}.sourceBalanceId`]}>
+                    <select
                       aria-label={copy("来源库位 {n}", { n })}
                       style={inputStyle}
-                      value={line.sourceLocation}
+                      value={line.sourceBalanceId}
                       onChange={(event) =>
-                        update(index, { sourceLocation: event.target.value })
+                        update(index, { sourceBalanceId: event.target.value })
                       }
-                    />
+                    >
+                      <option value="">
+                        {!line.sourceWarehouseId || !line.itemId ? say("Choose the warehouse and item first", "请先选择仓库和物料") : copy("请选择")}
+                      </option>
+                      {sources.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {row.location || say("No location", "无库位")} · {say(`${quantityText(row.availableQuantity, row.unit)} available`, `可用 ${quantityText(row.availableQuantity, row.unit)}`)}
+                        </option>
+                      ))}
+                    </select>
                   </Field>
-                  <Field label={copy("目标仓库")} error={shown[`${at}.destinationWarehouseId`]}>
+                  <Field label={copy("目标仓库")} required error={shown[`${at}.destinationWarehouseId`]}>
                     <select
                       aria-label={copy("目标仓库 {n}", { n })}
                       style={inputStyle}
@@ -603,17 +753,46 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
                       {warehouseOptions}
                     </select>
                   </Field>
-                  <Field label={copy("目标库位")}>
-                    <input
+                  <Field label={copy("目标库位")} error={shown[`${at}.destinationLocation`]}>
+                    <select
                       aria-label={copy("目标库位 {n}", { n })}
                       style={inputStyle}
                       value={line.destinationLocation}
                       onChange={(event) =>
                         update(index, { destinationLocation: event.target.value })
                       }
-                    />
+                    >
+                      <option value="">{say("No location", "不指定库位")}</option>
+                      {targets.map((row) => (
+                        <option key={row.value} value={row.value}>{row.label}</option>
+                      ))}
+                      <option value={NEW_LOCATION}>{say("New location…", "新库位…")}</option>
+                    </select>
                   </Field>
+                  {line.destinationLocation === NEW_LOCATION && (
+                    <Field
+                      label={say("New location", "新库位")} required error={shown[`${at}.newLocation`]}
+                      hint={line.destinationWarehouseId ? say(`A location ${warehouseName(line.destinationWarehouseId)} does not have yet. Posting creates its stock record.`, `${warehouseName(line.destinationWarehouseId)} 还没有的库位；过账时创建库存记录。`) : undefined}
+                    >
+                      <input
+                        aria-label={say(`New location ${n}`, `新库位 ${n}`)}
+                        style={inputStyle}
+                        value={line.newLocation}
+                        onChange={(event) =>
+                          update(index, { newLocation: event.target.value })
+                        }
+                      />
+                    </Field>
+                  )}
                 </div>
+                {source && quantity !== null && quantity > unitsOf(source.availableQuantity) && (
+                  <p className="mt-3 text-xs text-amber-700" data-testid={`transfer-line-above-available-${n}`}>
+                    {say(
+                      `More than the ${quantityText(source.availableQuantity, source.unit)} available at this location. Posting is refused until the stock is there.`,
+                      `超过此库位可用的 ${quantityText(source.availableQuantity, source.unit)}；库存不足时无法过账。`,
+                    )}
+                  </p>
+                )}
               </FormLineCard>
             );
           })}
@@ -621,7 +800,7 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
             type="button"
             className={listButtonClass.secondary}
             data-testid="transfer-add-line"
-            onClick={() => setLines((rows) => [...rows, blankTransferLine()])}
+            onClick={() => setLines((rows) => [...rows, blankTransferLine(onlyWarehouse)])}
           >
             <Plus size={13} />
             {copy("添加行")}
@@ -686,6 +865,7 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
           idempotencyKey: key("count-create"),
         }),
       });
+      toast.success(say(`Count ${data.session.countNumber} started.`, `盘点 ${data.session.countNumber} 已建立。`));
       navigate(`/app/inventory/counts/${encodeURIComponent(data.session.id)}`);
     } catch (reason) {
       setError(errorText(reason, "创建失败"));
@@ -793,24 +973,35 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
 // that has no stock record yet; posting creates the record. Every other
 // reason adjusts an existing stock record.
 const newRecordReasons = new Set(["opening_balance", "found_stock"]);
+// A new adjustment starts neutral: no reason and no quantity, so nothing is
+// recorded as damage or as a decrease that the person did not choose.
+const ADJUSTMENT_REASONS = ["damage", "shrinkage", "found_stock", "data_correction", "quality_disposition", "opening_balance", "other"];
 const blankAdjustmentLine = (reasonCode: string): AdjustmentLine => ({
   mode: reasonCode === "opening_balance" ? "new" : "existing",
   inventoryBalanceId: "",
   itemId: "",
   warehouseId: "",
   location: "",
-  adjustmentQuantity:
-    reasonCode === "opening_balance" || reasonCode === "found_stock"
-      ? "1"
-      : "-1",
+  adjustmentQuantity: "",
 });
 
-// What the server refuses an adjustment without: a note when the reason is
-// Other; on each line a stock record, or for a location with no stock
-// record an item and a warehouse; and a quantity that is not 0, above 0
-// for opening stock and for a location with no stock record.
+// Which way each reason usually moves stock, said under the quantity. The
+// server takes either sign for these reasons (opening stock and a new stock
+// record excepted), so this is help, not a rule.
+const quantityHint = (reasonCode: string, say: Say) =>
+  ["damage", "shrinkage", "quality_disposition"].includes(reasonCode)
+    ? say("Stock removed: enter a negative number, such as -2.", "减少库存：请填负数，例如 -2。")
+    : ["found_stock", "opening_balance"].includes(reasonCode)
+      ? say("Stock added: enter a positive number.", "增加库存：请填正数。")
+      : say("A positive number adds stock, a negative number removes it.", "正数增加库存，负数减少库存。");
+
+// What the server refuses an adjustment without: a reason, and a note when
+// the reason is Other; on each line a stock record, or for a location with
+// no stock record an item and a warehouse; and a quantity that is not 0,
+// above 0 for opening stock and for a location with no stock record.
 function adjustmentIssues(reasonCode: string, notes: string, lines: AdjustmentLine[], say: Say): Issues {
   const issues: Issues = {};
+  if (!reasonCode) issues.reasonCode = say("Choose a reason.", "请选择调整原因。");
   if (reasonCode === "other" && !notes.trim())
     issues.notes = say('Enter a note. The reason "Other" needs one.', "原因为“其他”时请填写备注。");
   lines.forEach((line, index) => {
@@ -822,7 +1013,9 @@ function adjustmentIssues(reasonCode: string, notes: string, lines: AdjustmentLi
       if (!line.warehouseId.trim()) issues[`${at}.warehouseId`] = say("Choose a warehouse.", "请选择仓库。");
     }
     const units = quantityUnits(line.adjustmentQuantity);
-    if (units === null) issues[`${at}.adjustmentQuantity`] = quantityFormatIssue(say);
+    if (!line.adjustmentQuantity.trim())
+      issues[`${at}.adjustmentQuantity`] = say("Enter the change in stock: a positive number adds, a negative number removes.", "请输入库存变化：正数增加，负数减少。");
+    else if (units === null) issues[`${at}.adjustmentQuantity`] = quantityFormatIssue(say);
     else if (units === 0n)
       issues[`${at}.adjustmentQuantity`] = say("Enter a quantity other than 0. A decrease is negative, such as -1.", "调整数量不能为 0；减少库存请填负数，例如 -1。");
     else if (units < 0n && reasonCode === "opening_balance")
@@ -844,10 +1037,10 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
   const quantityText = (value: string, unit?: string) => `${formatQuantity(value)}${unit ? ` ${unitLabel(unit, language, Number(value))}` : ""}`;
   const navigate = useNavigate(),
     formRef = useRef<HTMLDivElement>(null),
-    [reasonCode, setReasonCode] = useState("damage"),
+    [reasonCode, setReasonCode] = useState(""),
     [notes, setNotes] = useState(""),
     [lines, setLines] = useState<AdjustmentLine[]>([
-      blankAdjustmentLine("damage"),
+      blankAdjustmentLine(""),
     ]),
     // A save was refused: the messages show, and go as each field is fixed.
     [checked, setChecked] = useState(false),
@@ -884,18 +1077,9 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
             : newRecordReasons.has(value)
               ? row.mode
               : "existing";
-        // An untouched default quantity follows the reason: opening and found
-        // stock add, every other reason starts as a decrease.
-        const untouched =
-          row.adjustmentQuantity === "1" ||
-          row.adjustmentQuantity === "-1";
-        return {
-          ...row,
-          mode,
-          adjustmentQuantity: untouched
-            ? blankAdjustmentLine(value).adjustmentQuantity
-            : row.adjustmentQuantity,
-        };
+        // The quantity stays as typed; the hint under it says which way the
+        // reason usually moves stock.
+        return { ...row, mode };
       }),
     );
   };
@@ -953,6 +1137,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
           ),
         }),
       });
+      toast.success(say(`Adjustment ${data.adjustment.adjustmentNumber} saved as a draft.`, `调整单 ${data.adjustment.adjustmentNumber} 已保存为草稿。`));
       navigate(
         `/app/inventory/adjustments/${encodeURIComponent(data.adjustment.id)}`,
       );
@@ -982,22 +1167,15 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
       </FormHeader>
       <FormSection title={say("Adjustment details", "调整信息")}>
         <div className={formGridClass}>
-          <Field label={copy("原因")} required>
+          <Field label={copy("原因")} required error={shown.reasonCode}>
             <select
               aria-label={copy("调整原因")}
               style={inputStyle}
               value={reasonCode}
               onChange={(event) => setReason(event.target.value)}
             >
-              {[
-                "damage",
-                "shrinkage",
-                "found_stock",
-                "data_correction",
-                "quality_disposition",
-                "opening_balance",
-                "other",
-              ].map((value) => (
+              <option value="">{copy("请选择")}</option>
+              {ADJUSTMENT_REASONS.map((value) => (
                 <option key={value} value={value}>{inventoryCodeLabel(value)}</option>
               ))}
             </select>
@@ -1032,6 +1210,9 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
             const n = index + 1,
               at = `lines.${index}`,
               match = line.mode === "new" ? existingRecord(line) : undefined,
+              // The stock record this line changes, when it names one.
+              chosen = line.mode === "existing" ? entry.balances.find((row) => row.id === line.inventoryBalanceId) : match,
+              change = quantityUnits(line.adjustmentQuantity),
               locations = [
                 ...new Set(
                   entry.balances
@@ -1147,11 +1328,12 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                       </Field>
                     </>
                   )}
-                  <Field label={copy("调整数量")} required error={shown[`${at}.adjustmentQuantity`]}>
+                  <Field label={copy("调整数量")} required error={shown[`${at}.adjustmentQuantity`]} hint={quantityHint(reasonCode, say)}>
+                    {/* Quantities are typed left-aligned, as on every entry form. */}
                     <input
                       aria-label={copy("调整数量 {n}", { n })}
                       inputMode="decimal"
-                      className="text-right tabular-nums"
+                      className="tabular-nums"
                       style={inputStyle}
                       value={line.adjustmentQuantity}
                       onChange={(event) =>
@@ -1160,6 +1342,15 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                     />
                   </Field>
                 </div>
+                {/* The stock change this line makes, before it is saved. */}
+                {chosen && change !== null && change !== 0n && (
+                  <p className="mt-3 flex flex-wrap items-center gap-1.5 text-xs tabular-nums" style={{ color: A.label }} data-testid={`adjustment-line-change-${n}`}>
+                    <span style={{ color: A.sub }}>{say("On hand", "在库")}</span>
+                    {quantityText(chosen.onHandQuantity, chosen.unit)}
+                    <ArrowRight size={12} aria-label={say("after posting", "过账后")} />
+                    <strong>{quantityText(unitsText(unitsOf(chosen.onHandQuantity) + change), chosen.unit)}</strong>
+                  </p>
+                )}
                 {match && reasonCode === "found_stock" && (
                   <p
                     className="mt-3 text-xs text-amber-700"
@@ -1209,6 +1400,38 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
   );
 }
 
+// A refusal a posting, reversal or cancellation preview gives, in the page's
+// own words. Any other code reads as the general message, never the code.
+const PLAN_ISSUES: Record<string, [string, string]> = {
+  ADJUSTMENT_BELOW_RESERVED_NOT_SAFE: ["This would take a stock record below what is available or reserved.", "调整后库存会低于可用量或已预留数量。"],
+  ADJUSTMENT_NET_ZERO_NOT_ALLOWED: ["The lines for one stock record add up to no change.", "同一库存记录的调整行合计为零。"],
+  ADJUSTMENT_NEGATIVE_INVENTORY: ["Opening stock and stock at a new location must be above 0.", "期初库存和新库位的库存必须大于 0。"],
+  ADJUSTMENT_INVALID_STATE: ["Only an adjustment marked ready can be posted. Refresh the page.", "只有已就绪的调整单可以过账，请刷新页面。"],
+  ADJUSTMENT_REVERSAL_NOT_SAFE: ["Reversing would take a stock record below what is available or reserved.", "冲销后库存会低于可用量或已预留数量。"],
+  ADJUSTMENT_ALREADY_REVERSED: ["This adjustment is already reversed.", "此调整单已冲销。"],
+  TRANSFER_SOURCE_BALANCE_NOT_FOUND: ["The source location holds no stock of this item.", "调出库位没有此物料的库存。"],
+  TRANSFER_INSUFFICIENT_AVAILABLE: ["The source location does not have enough stock available.", "调出库位的可用库存不足。"],
+  TRANSFER_INVALID_ROUTE: ["Each line needs a target that differs from its source and a quantity above 0.", "每行的调入位置须与调出位置不同，数量须大于 0。"],
+  TRANSFER_REVERSAL_NOT_SAFE: ["Reversing would take a stock record below what is available or reserved.", "冲销后库存会低于可用量或已预留数量。"],
+  TRANSFER_ALREADY_REVERSED: ["This transfer is already reversed.", "此调拨单已冲销。"],
+  COUNT_BALANCE_CHANGED: ["Stock changed after the snapshot was taken. Start a new count.", "快照后库存已变化，请重新建立盘点。"],
+  COUNT_BELOW_RESERVED_NOT_SAFE: ["The counted quantity is below what is reserved.", "实盘数量低于已预留数量。"],
+  COUNT_REVIEW_REQUIRED: ["Review the count before posting it.", "过账前请先复核盘点。"],
+  COUNT_LINE_INCOMPLETE: ["Enter a counted quantity on every line.", "请为每一行录入实盘数量。"],
+  COUNT_REVERSAL_UNSUPPORTED: ["A posted count cannot be reversed. Post an adjustment instead.", "已过账的盘点不能冲销，请改用库存调整。"],
+};
+
+type PlanImpact = {
+  balanceId: string | null;
+  createsBalance?: boolean;
+  onHandBefore: string;
+  onHandAfter: string;
+  lineIds?: string[];
+  legIds?: string[];
+};
+type PlanFact = { lineId?: string; legId?: string; balanceId?: string | null; sku?: string; warehouseId?: string; location?: string; unit?: string };
+type Plan = { allowed: boolean; blockingIssues?: Array<{ code?: string }>; balanceImpacts?: PlanImpact[]; movementFacts?: PlanFact[] };
+
 function OperationDetail({
   kind,
   id,
@@ -1225,6 +1448,7 @@ function OperationDetail({
   const { language, locale, timezone, formatNumber } = useI18n();
   const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
   const warehouseName = useWarehouseNames();
+  const dialog = useConfirm();
   const config = {
     transfer: {
       url: `/api/inventory/transfers/${encodeURIComponent(id)}/workbench`,
@@ -1239,10 +1463,16 @@ function OperationDetail({
       doc: "adjustment",
     },
   }[kind];
+  // The document's name in a sentence: "adjustment ADJ-…", "调整单 ADJ-…".
+  const noun = {
+    transfer: say("transfer", "调拨单"),
+    count: say("count", "盘点"),
+    adjustment: say("adjustment", "调整单"),
+  }[kind];
   const [data, setData] = useState<any>(null),
     [error, setError] = useState(""),
-    [preview, setPreview] = useState<any>(null),
-    [reason, setReason] = useState("Correction"),
+    // The action under way, so its button waits and the others too.
+    [busy, setBusy] = useState(""),
     [counts, setCounts] = useState<Record<string, string>>({});
   const load = () =>
     apiJson<any>(config.url)
@@ -1267,49 +1497,165 @@ function OperationDetail({
   }, [config.url]);
   const document = data?.[config.doc],
     version = document?.version;
-  const actionBody = (action: string) =>
-    kind === "transfer"
-      ? {
-          expectedTransferVersion: version,
-          idempotencyKey: key(`transfer-${action}`),
-          reason,
-        }
+  const title: string =
+    document?.transferNumber ||
+    document?.countNumber ||
+    document?.adjustmentNumber ||
+    "";
+  // The breadcrumb names the document by its number, not "…workbench".
+  useDetailCrumb(title || null);
+  // Only a cancellation and a reversal carry a reason; the server asks for
+  // one there and nowhere else.
+  const actionBody = (action: string, reason?: string) => ({
+    ...(kind === "transfer"
+      ? { expectedTransferVersion: version }
       : kind === "count"
-        ? {
-            expectedSessionVersion: version,
-            idempotencyKey: key(`count-${action}`),
-            reason,
-          }
-        : {
-            expectedAdjustmentVersion: version,
-            idempotencyKey: key(`adjustment-${action}`),
-            reason,
-          };
-  const run = async (action: string) => {
+        ? { expectedSessionVersion: version }
+        : { expectedAdjustmentVersion: version }),
+    idempotencyKey: key(`${kind}-${action}`),
+    ...(reason ? { reason } : {}),
+  });
+  const done = (action: string) =>
+    ({
+      ready: say(`${title} is ready to post.`, `${title} 已就绪，可以过账。`),
+      submit: say(`${title} submitted for review.`, `${title} 已提交复核。`),
+      review: say(`${title} reviewed.`, `${title} 已复核。`),
+      post: say(`${title} posted. Stock is updated.`, `${title} 已过账，库存已更新。`),
+      reverse: say(`${title} reversed. Stock is back as before.`, `${title} 已冲销，库存已恢复。`),
+      cancel: say(`${title} cancelled.`, `${title} 已取消。`),
+    })[action] || say("Done.", "已完成。");
+  const run = async (action: string, reason?: string) => {
+    setBusy(action);
+    setError("");
     try {
       await apiJson<any>(config.url.replace("/workbench", `/${action}`), {
         method: "POST",
-        body: JSON.stringify(actionBody(action)),
+        body: JSON.stringify(actionBody(action, reason)),
       });
-      setPreview(null);
+      toast.success(done(action));
       await load();
       refresh();
     } catch (reasonValue) {
       setError(errorText(reasonValue, "操作失败"));
+    } finally {
+      setBusy("");
     }
   };
-  // The preview remembers which button opened it; confirming runs exactly
-  // that operation.
-  const runPreview = async (action: string) => {
+  // The stock records an action changes, each before → after, from the
+  // server's own plan for it.
+  const planText = (plan: Plan) =>
+    (plan.blockingIssues || [])
+      .map((item) => issueText(item.code) || (item.code && PLAN_ISSUES[item.code] ? say(...PLAN_ISSUES[item.code]) : ""))
+      .filter((text, index, all) => text && all.indexOf(text) === index)
+      .join(" ") || say("This can't be done now. Refresh the page and try again.", "目前无法执行，请刷新页面后重试。");
+  const stockChange = (plan: Plan) => {
+    const facts = plan.movementFacts || [];
+    const rows = (plan.balanceImpacts || []).map((impact, index) => {
+      const fact =
+        facts.find((row) => impact.balanceId && row.balanceId === impact.balanceId) ||
+        facts.find((row) => (impact.legIds?.length ? impact.legIds.includes(row.legId || "") : impact.lineIds?.includes(row.lineId || "")));
+      const balance = entry.balances.find((row) => row.id === impact.balanceId);
+      const sku = fact?.sku || balance?.sku || "—";
+      const unit = fact?.unit || balance?.unit;
+      return {
+        key: `${impact.balanceId || "new"}-${index}`,
+        sku,
+        place: placeOf(fact?.warehouseId || balance?.warehouseId, fact?.location ?? balance?.location),
+        before: quantityText(impact.onHandBefore, unit),
+        after: quantityText(impact.onHandAfter, unit),
+        creates: Boolean(impact.createsBalance),
+      };
+    });
+    if (!rows.length) return null;
+    return (
+      <ul className="mt-3 space-y-2" data-testid="inventory-operation-stock-change">
+        {rows.map((row) => (
+          <li key={row.key} className="rounded-lg px-3 py-2" style={{ background: A.gray6 }} data-testid="inventory-operation-stock-change-row">
+            <div className="text-xs" style={{ color: A.sub }}>
+              <span className="font-semibold" style={{ color: A.label }}>{row.sku}</span> · {row.place}
+              {row.creates && <> · {say("new stock record", "新库存记录")}</>}
+            </div>
+            <div className="mt-0.5 flex items-center gap-1.5 text-sm tabular-nums" style={{ color: A.label }}>
+              <span style={{ color: A.sub }}>{say("On hand", "在库")}</span>
+              {row.before}
+              <ArrowRight size={13} aria-label={say("becomes", "变为")} />
+              <strong>{row.after}</strong>
+            </div>
+          </li>
+        ))}
+      </ul>
+    );
+  };
+  const readPlan = async (action: string) => {
     try {
-      const plan = await apiJson<any>(
-        config.url.replace("/workbench", `/${action}-preview`),
-        { method: "POST", body: JSON.stringify({ reason }) },
-      );
-      setPreview({ ...plan, action });
+      return await apiJson<Plan>(config.url.replace("/workbench", `/${action}-preview`), { method: "POST", body: JSON.stringify({}) });
     } catch (reasonValue) {
       setError(errorText(reasonValue, "预览失败"));
+      return null;
     }
+  };
+  // Posting is one step: the button reads the server's plan, the dialog shows
+  // the stock each line changes, and Post confirms it.
+  const post = async () => {
+    setBusy("post");
+    setError("");
+    const plan = await readPlan("post");
+    setBusy("");
+    if (!plan) return;
+    if (!plan.allowed) {
+      setError(planText(plan));
+      return;
+    }
+    const confirmed = await dialog.confirm({
+      title: say(`Post ${noun} ${title}?`, `过账${noun} ${title}？`),
+      description: (
+        <>
+          <p>{say("The stock changes now. You can reverse the posting later.", "过账后库存立即变化，之后可以冲销。")}</p>
+          {stockChange(plan)}
+        </>
+      ),
+      confirmLabel: say("Post", "过账"),
+      testId: "inventory-operation-confirm",
+    });
+    if (confirmed) await run("post");
+  };
+  const reverse = async () => {
+    setBusy("reverse");
+    setError("");
+    const plan = await readPlan("reverse");
+    setBusy("");
+    if (!plan) return;
+    if (!plan.allowed) {
+      setError(planText(plan));
+      return;
+    }
+    const reason = await dialog.prompt({
+      title: say(`Reverse ${noun} ${title}?`, `冲销${noun} ${title}？`),
+      description: (
+        <>
+          <p>{say("The stock goes back to what it was before the posting.", "库存将恢复到过账前的数量。")}</p>
+          {stockChange(plan)}
+        </>
+      ),
+      confirmLabel: say("Reverse", "冲销"),
+      cancelLabel: say("Back", "返回"),
+      tone: "danger",
+      field: { label: say("Reason for the reversal", "冲销原因") },
+      testId: "inventory-operation-confirm",
+    });
+    if (reason !== null) await run("reverse", reason);
+  };
+  const cancel = async () => {
+    const reason = await dialog.prompt({
+      title: say(`Cancel ${noun} ${title}?`, `取消${noun} ${title}？`),
+      description: say("It is kept, marked cancelled, and can't be posted. Stock does not change.", "单据保留并标记为已取消，不能再过账；库存不变。"),
+      confirmLabel: say(`Cancel ${noun}`, `取消${noun}`),
+      cancelLabel: say("Back", "返回"),
+      tone: "danger",
+      field: { label: say("Reason for cancelling", "取消原因") },
+      testId: "inventory-operation-confirm",
+    });
+    if (reason !== null) await run("cancel", reason);
   };
   const saveCounts = async () => {
     try {
@@ -1325,6 +1671,7 @@ function OperationDetail({
           })),
         }),
       });
+      toast.success(say("Counted quantities saved.", "实盘数量已保存。"));
       await load();
     } catch (reasonValue) {
       setError(
@@ -1337,25 +1684,22 @@ function OperationDetail({
   const linePage = usePagedRows<any>(data?.lines || [], DETAIL_PAGE_SIZE, id);
   const movementPage = usePagedRows<any>(data?.movements || [], DETAIL_PAGE_SIZE, id);
   const [movementsOpen, setMovementsOpen] = useState(false);
-  if (!data)
-    return (
-      <Card className="p-8 text-sm text-slate-500">
-        {copy("正在读取库存操作工作台…")}
-      </Card>
-    );
-  const actions = data.availableActions || {},
-    title =
-      document.transferNumber ||
-      document.countNumber ||
-      document.adjustmentNumber;
-  const lines: any[] = data.lines || [];
-  const movements: any[] = data.movements || [];
   const quantityText = (value: unknown, unit?: string | null) =>
     value === null || value === undefined || value === ""
       ? "—"
       : `${formatQuantity(String(value))}${unit ? ` ${unitLabel(unit, language, Number(value))}` : ""}`;
-  const placeOf = (warehouseId?: string | null, location?: string | null) =>
-    [warehouseName(warehouseId || "") || "", location || ""].filter(Boolean).join(" / ") || "—";
+  function placeOf(warehouseId?: string | null, location?: string | null) {
+    return [warehouseName(warehouseId || "") || "", location || ""].filter(Boolean).join(" / ") || "—";
+  }
+  if (!data)
+    return (
+      <Card className="p-8 text-sm text-slate-500">
+        {error || copy("正在读取库存操作工作台…")}
+      </Card>
+    );
+  const actions = data.availableActions || {};
+  const lines: any[] = data.lines || [];
+  const movements: any[] = data.movements || [];
   // Adjustment and count lines each name one place; when every line names the
   // same one, it is said once in the facts instead of on every row.
   const places = new Set(lines.map((line) => placeOf(line.warehouseId, line.location)));
@@ -1384,6 +1728,9 @@ function OperationDetail({
       ? [say("SKU / item", "物料"), ...(samePlace ? [] : [say("Location", "库位")]), say("Counted", "实盘数量"), say("Variance", "差异")]
       : [say("SKU / item", "物料"), say("Quantity", "数量"), ...(samePlace ? [] : [say("Warehouse / location", "仓库 / 库位")])];
   const anyAction = ["canReady", "canSubmit", "canReview", "canPost", "canReverse", "canCancel"].some((name) => actions[name]);
+  // Stock moves only when the document is posted: before that it has no
+  // movements and nothing to reconcile, so that card is left out.
+  const posted = document.postingStatus === "posted" || document.postingStatus === "reversed";
   // A posting of many lines (opening stock: hundreds) reads as one line per
   // kind of movement, with the list folded behind "Show movements". A small
   // document, even posted and reversed, keeps its list open.
@@ -1396,8 +1743,20 @@ function OperationDetail({
     group.out += Number(movement.quantityOut || 0);
     return groups.set(movement.movementType, group);
   }, new Map()).entries()];
+  const actionButton = (name: string, label: string, onClick: () => void, testId: string, primary = true) => (
+    <button
+      type="button"
+      data-testid={testId}
+      className={primary ? listButtonClass.primary : listButtonClass.secondary}
+      disabled={Boolean(busy)}
+      onClick={onClick}
+    >
+      {busy === name ? say("Working…", "处理中…") : label}
+    </button>
+  );
   return (
     <div className="space-y-4" data-testid={`inventory-${kind}-workbench`}>
+      {dialog.element}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="fc-page-title" style={{ color: A.label }}>{title}</h1>
@@ -1406,7 +1765,7 @@ function OperationDetail({
           </div>
         </div>
         <Link
-          className={secondary}
+          className={listButtonClass.secondary}
           to={`/app/inventory/${kind === "transfer" ? "transfers" : kind === "count" ? "counts" : "adjustments"}`}
         >
           {copy("返回列表")}
@@ -1471,7 +1830,8 @@ function OperationDetail({
       )}
       <Card className="p-0" data-testid="inventory-operation-lines">
         <h2 className="fc-section-title px-5 pt-5 pb-3" style={{ color: A.label }}>{copy("业务行与库存影响")}</h2>
-        <div className="overflow-x-auto px-2 pb-2">
+        {/* On a phone each line is a card (listTableCardsRef), not a cut-off table. */}
+        <div className="overflow-x-auto px-2 pb-2" ref={listTableCardsRef}>
           <table className="w-full min-w-[560px] text-xs">
             <thead>
               <tr className="border-b">
@@ -1526,148 +1886,74 @@ function OperationDetail({
         </div>
         {lines.length > DETAIL_PAGE_SIZE && <ListPager page={linePage.page} pageSize={DETAIL_PAGE_SIZE} total={lines.length} onPage={linePage.setPage} testId="inventory-operation-line-pager" />}
       </Card>
-      {(anyAction || preview || error) && (
-        <Card className="space-y-3 p-5">
+      {(anyAction || error) && (
+        <Card className="space-y-3 p-5" data-testid="inventory-operation-actions">
           <h2 className="fc-section-title" style={{ color: A.label }}>{copy("可执行动作")}</h2>
+          {actions.canPost && (
+            <p className="text-xs" style={{ color: A.sub }}>
+              {say("Post shows the stock each line changes, before and after, for you to confirm.", "过账前会列出每行库存的变化（之前 → 之后），确认后才过账。")}
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
-            {actions.canReady && (
-              <button
-                data-testid="operation-ready"
-                className={button}
-                onClick={() => void run("ready")}
-              >
-                {copy("Mark ready")}
-              </button>
-            )}
-            {actions.canSubmit && (
-              <button
-                data-testid="count-submit"
-                className={button}
-                onClick={() => void run("submit")}
-              >
-                {copy("Submit")}
-              </button>
-            )}
-            {actions.canReview && (
-              <button
-                data-testid="count-review"
-                className={button}
-                onClick={() => void run("review")}
-              >
-                {copy("Review")}
-              </button>
-            )}
-            {actions.canPost && (
-              <button
-                data-testid="operation-preview-post"
-                className={button}
-                onClick={() => void runPreview("post")}
-              >
-                {copy("Preview posting")}
-              </button>
-            )}
-            {actions.canReverse && (
-              <button
-                data-testid="operation-preview-reverse"
-                className={button}
-                onClick={() => void runPreview("reverse")}
-              >
-                {copy("Preview reversal")}
-              </button>
-            )}
-            {actions.canCancel && (
-              <button
-                data-testid="operation-preview-cancel"
-                className={secondary}
-                onClick={() => void runPreview("cancel")}
-              >
-                {copy("Cancel")}
-              </button>
-            )}
+            {actions.canReady && actionButton("ready", copy("Mark ready"), () => void run("ready"), "operation-ready")}
+            {actions.canSubmit && actionButton("submit", copy("Submit"), () => void run("submit"), "count-submit")}
+            {actions.canReview && actionButton("review", copy("Review"), () => void run("review"), "count-review")}
+            {actions.canPost && actionButton("post", say(`Post ${noun}`, `过账${noun}`), () => void post(), "operation-post")}
+            {actions.canReverse && actionButton("reverse", say(`Reverse ${noun}`, `冲销${noun}`), () => void reverse(), "operation-reverse", false)}
+            {actions.canCancel && actionButton("cancel", say(`Cancel ${noun}`, `取消${noun}`), () => void cancel(), "operation-cancel", false)}
           </div>
-          {anyAction && (
-            <label className="grid max-w-lg gap-1 text-xs">
-              {copy("操作原因")}
-              <input
-                aria-label={copy("操作原因")}
-                className={field}
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-              />
-            </label>
-          )}
-          {preview && (
-            <div
-              data-testid="inventory-operation-preview"
-              className={`rounded-lg p-4 text-sm ${preview.allowed ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}
-            >
-              <div>
-                {preview.allowed ? copy("预览允许执行") : copy("预览阻止执行")}
-              </div>
-              <div className="mt-2 text-xs">
-                {preview.blockingIssues
-                  ?.map((item: any) => issueText(item.code) || item.code)
-                  .join(", ")}
-              </div>
-              {preview.allowed && (
-                <button
-                  data-testid="confirm-inventory-operation"
-                  className={`${button} mt-3`}
-                  onClick={() => void run(preview.action)}
-                >
-                  {copy("确认执行")}
-                </button>
-              )}
-            </div>
-          )}
           {error && (
-            <p role="alert" className="text-sm text-red-600">
+            <p role="alert" className="text-sm text-red-600" data-testid="inventory-operation-error">
               {error}
             </p>
           )}
         </Card>
       )}
-      <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="fc-section-title" style={{ color: A.label }}>{copy("Movement evidence")}</h2>
-          {movements.length > MOVEMENT_FOLD_AFTER && (
-            <button type="button" className="text-xs font-medium text-blue-600" aria-expanded={!movementsFolded} data-testid="operation-movements-toggle" onClick={() => setMovementsOpen((open) => !open)}>
-              {movementsFolded ? say(`Show ${formatNumber(movements.length)} movements`, `显示 ${formatNumber(movements.length)} 条流水`) : say("Hide movements", "收起流水")}
-            </button>
-          )}
-        </div>
-        {movementsFolded ? (
-          <ul className="mt-3 space-y-1 text-xs" data-testid="operation-movements-summary">
-            {movementKinds.map(([type, group]) => (
-              <li key={type}>
-                <span className="font-semibold">{movementTypeLabel(type, language)}</span>
-                <span className="ml-3" style={{ color: A.sub }}>
-                  {say(`${formatNumber(group.count)} movements`, `${formatNumber(group.count)} 条`)} · {copy("入 {in} · 出 {out}", { in: formatQuantity(String(group.in)), out: formatQuantity(String(group.out)) })}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <div className="mt-3 space-y-2">
-            {(movements.length > MOVEMENT_FOLD_AFTER ? movementPage.pageRows : movements).map((movement: any) => (
-              <div
-                key={movement.id}
-                className="rounded-lg border p-3 text-xs"
-                data-testid={`operation-movement-${movement.movementType}`}
-              >
-                <span className="font-semibold">{movementTypeLabel(movement.movementType, language)}</span>
-                <span className="ml-3">
-                  {movement.sku ? `${movement.sku} · ` : ""}{warehouseName(movement.warehouseId)} · {copy("入 {in} · 出 {out}", { in: formatQuantity(movement.quantityIn), out: formatQuantity(movement.quantityOut) })}
-                </span>
-              </div>
-            ))}
+      {(posted || movements.length > 0) && (
+        <Card className="p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="fc-section-title" style={{ color: A.label }}>{copy("Movement evidence")}</h2>
+            {movements.length > MOVEMENT_FOLD_AFTER && (
+              <button type="button" className="text-xs font-medium text-blue-600" aria-expanded={!movementsFolded} data-testid="operation-movements-toggle" onClick={() => setMovementsOpen((open) => !open)}>
+                {movementsFolded ? say(`Show ${formatNumber(movements.length)} movements`, `显示 ${formatNumber(movements.length)} 条流水`) : say("Hide movements", "收起流水")}
+              </button>
+            )}
           </div>
-        )}
-        {!movementsFolded && movements.length > DETAIL_PAGE_SIZE && <ListPager page={movementPage.page} pageSize={DETAIL_PAGE_SIZE} total={movements.length} onPage={movementPage.setPage} testId="inventory-operation-movement-pager" />}
-        <div className="mt-4 text-sm" data-testid="inventory-reconciliation">
-          {copy("Reconciliation：")}<strong>{data.reconciliation?.status ? inventoryCodeLabel(data.reconciliation.status) : "—"}</strong>
-        </div>
-      </Card>
+          {movementsFolded ? (
+            <ul className="mt-3 space-y-1 text-xs" data-testid="operation-movements-summary">
+              {movementKinds.map(([type, group]) => (
+                <li key={type}>
+                  <span className="font-semibold">{movementTypeLabel(type, language)}</span>
+                  <span className="ml-3" style={{ color: A.sub }}>
+                    {say(`${formatNumber(group.count)} movements`, `${formatNumber(group.count)} 条`)} · {copy("入 {in} · 出 {out}", { in: formatQuantity(String(group.in)), out: formatQuantity(String(group.out)) })}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {(movements.length > MOVEMENT_FOLD_AFTER ? movementPage.pageRows : movements).map((movement: any) => (
+                <div
+                  key={movement.id}
+                  className="rounded-lg border p-3 text-xs"
+                  data-testid={`operation-movement-${movement.movementType}`}
+                >
+                  <span className="font-semibold">{movementTypeLabel(movement.movementType, language)}</span>
+                  <span className="ml-3">
+                    {movement.sku ? `${movement.sku} · ` : ""}{warehouseName(movement.warehouseId)} · {copy("入 {in} · 出 {out}", { in: formatQuantity(movement.quantityIn), out: formatQuantity(movement.quantityOut) })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {!movementsFolded && movements.length > DETAIL_PAGE_SIZE && <ListPager page={movementPage.page} pageSize={DETAIL_PAGE_SIZE} total={movements.length} onPage={movementPage.setPage} testId="inventory-operation-movement-pager" />}
+          {posted && (
+            <div className="mt-4 text-sm" data-testid="inventory-reconciliation">
+              {copy("Reconciliation：")}<strong>{data.reconciliation?.status ? inventoryCodeLabel(data.reconciliation.status) : "—"}</strong>
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

@@ -39,10 +39,12 @@ const STATUS_KEYS: Record<string, TranslationKey> = {
   voided: "finance.status.voided",
   variance_approved: "finance.status.variance_approved",
   to_pay: "finance.status.to_pay",
+  to_be_paid: "finance.status.to_be_paid",
 };
 // Finance statuses the shared tones do not know: an approved variance is
-// done; an approved invoice still to pay is in progress.
-const STATUS_TONES: Record<string, StatusTone> = { variance_approved: "success", to_pay: "info" };
+// done; an approved invoice still to pay, or an issued one still to be paid,
+// is in progress.
+const STATUS_TONES: Record<string, StatusTone> = { variance_approved: "success", to_pay: "info", to_be_paid: "info" };
 export const financeStatusTone = (status: string): StatusTone => STATUS_TONES[status] || statusToneOf(status);
 
 // The status a supplier invoice shows. Once approved, where its payment
@@ -54,6 +56,18 @@ export const shownBillStatus = (row: { status?: unknown; matchStatus?: unknown; 
   if (status === "approved" && row.paymentStatus) return String(row.paymentStatus);
   if (status === "exception" && row.matchStatus === "variance_approved") return "variance_approved";
   return status;
+};
+
+// The status a customer invoice shows. Once issued, where its payment stands
+// (to_be_paid, partially_settled, settled): the server's paymentStatus, else
+// read from the receivable shown with it (the invoice page); a disputed
+// receivable reads "disputed". The stored status does not change.
+const RECEIVABLE_PAYMENT_STATES: Record<string, string> = { open: "to_be_paid", overdue: "to_be_paid", partially_settled: "partially_settled", settled: "settled", disputed: "disputed" };
+export const shownCustomerInvoiceStatus = (row: { status?: unknown; paymentStatus?: unknown }, receivableStatus?: unknown) => {
+  const status = String(row.status || "");
+  if (status !== "issued") return status;
+  if (row.paymentStatus) return String(row.paymentStatus);
+  return RECEIVABLE_PAYMENT_STATES[String(receivableStatus || "")] || status;
 };
 
 export function Notice({ children, tone = "warning" }: { children: ReactNode; tone?: "warning" | "success" }) {

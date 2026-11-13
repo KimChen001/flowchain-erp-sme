@@ -217,8 +217,17 @@
   .fc-kpi-value { font-size: 24px; line-height: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .fc-nav-primary { font-size: 13px; line-height: 20px; font-weight: 500; }
   .fc-nav-secondary { font-size: 12px; line-height: 18px; font-weight: 500; }
-  .fc-module-subnav { @apply flex flex-wrap items-center gap-1 rounded-xl bg-white p-1.5; border: 1px solid rgba(0,0,0,.08); }
-  .fc-module-subnav a { @apply relative rounded-lg px-3 py-2; font-size: 13px; line-height: 20px; color: #6e6e73; transition: color 150ms ease; }
+  .fc-module-subnav { @apply rounded-xl bg-white p-1.5; border: 1px solid rgba(0,0,0,.08); }
+  /* One row of tabs; when they do not fit it scrolls sideways (no bar), and
+     the side with more tabs fades out (ModuleShell sets data-more-*). */
+  .fc-subnav-track { position: relative; display: flex; flex-wrap: nowrap; align-items: center; gap: 0.25rem; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+  .fc-subnav-track::-webkit-scrollbar { display: none; }
+  .fc-subnav-track[data-more-end] { mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); }
+  .fc-subnav-track[data-more-start] { mask-image: linear-gradient(to left, #000 calc(100% - 40px), transparent); }
+  .fc-subnav-track[data-more-start][data-more-end] { mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent); }
+  .fc-subnav-arrow { @apply absolute top-1/2 z-10 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-white sm:flex; color: #1d1d1f; border: 1px solid rgba(0,0,0,.08); box-shadow: 0 1px 4px rgba(15,23,42,.12); }
+  .fc-subnav-arrow:hover { background: #f0f6ff; color: #0071e3; }
+  .fc-module-subnav a { @apply relative shrink-0 whitespace-nowrap rounded-lg px-3 py-2; font-size: 13px; line-height: 20px; color: #6e6e73; transition: color 150ms ease; }
   .fc-module-subnav a:hover { color: #1d1d1f; }
   /* The active background is the sliding .fc-subnav-pill behind the label. */
   .fc-module-subnav a.is-active, .fc-module-subnav a[aria-current="page"] { color: #0071e3; font-weight: 600; }
@@ -279,6 +288,30 @@ button, input, select, textarea { font-family: var(--fc-font-family); font-size:
 /* Keyboard focus that scrolls the page keeps clear of the floating AI
    assistant button in the bottom right corner. */
 [data-testid="app-main"] { scroll-padding-bottom: 96px; }
+
+/* Long list tables from a tablet up: the table's scroll box is at most a
+   window tall and its header row stays in view while the rows scroll, so a
+   column's name is never off screen. A short table is shorter than the box
+   and nothing changes. The header sits above the sticky first and Actions
+   cells (z 5, 10, 20); an open row menu raises its cell to 50. Phones show
+   cards instead (below). */
+@media screen and (min-width: 640px) {
+  .fc-module-content .overflow-x-auto:has(> table[data-list-cards]) {
+    max-height: calc(100dvh - 120px);
+    overflow-y: auto;
+  }
+  .fc-module-content .overflow-x-auto > table[data-list-cards] > thead > tr > th {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background-color: #fff;
+    box-shadow: inset 0 -1px 0 rgba(15, 23, 42, 0.08);
+  }
+  .fc-module-content .overflow-x-auto > table[data-list-cards] > thead > tr > th:first-child,
+  .fc-module-content .overflow-x-auto > table[data-list-cards] > thead > tr > th.sticky.right-0 {
+    z-index: 31;
+  }
+}
 
 /* Tables with a sticky Actions column on the right: the column is marked off
    from the cells scrolling under it, and keeps room for its buttons. */

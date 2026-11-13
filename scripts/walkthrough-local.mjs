@@ -167,6 +167,9 @@ const envFor = (workspace) => ({
   FLOWCHAIN_ARTIFACT_STORAGE_ROOT: join(dataRoot, workspace.dataset, "artifacts"),
   FLOWCHAIN_UPLOAD_STORAGE_DIR: join(dataRoot, workspace.dataset, "uploads"),
   FLOWCHAIN_MAIL_OUTBOX_PATH: join(dataRoot, workspace.dataset, "mail-outbox.json"),
+  // Thumbs on assistant answers, with the question and answer, for the
+  // question set (scripts/assistant-feedback-cases.mjs).
+  FLOWCHAIN_ASSISTANT_FEEDBACK_LOG: join(dataRoot, workspace.dataset, "assistant-feedback.jsonl"),
   FLOWCHAIN_VITE_CACHE_DIR: join(dataRoot, workspace.dataset, "vite-cache"),
   // The Vite dev server proxies /api to the workspace's API.
   PLAYWRIGHT_APP_PORT: String(workspace.appPort),

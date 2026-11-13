@@ -13,21 +13,24 @@ test('R134 AI assistant empty state exposes business prompt chips', () => {
   assert.match(panelSource, /今天先处理什么？/)
 })
 
-test('R135 the placeholder offers the page record next to the whole workspace, and the context can be cleared', () => {
+test('R135 one assistant on every page: the placeholder offers the page record, the header names none', () => {
   assert.match(panelSource, /export function getAiInputPlaceholder/)
   assert.doesNotMatch(panelSource, /moduleId === "overview"/)
   for (const phrase of ['这个 PO', '这个 SKU', '这个询价单', '这个供应商']) assert.match(panelSource, new RegExp(phrase))
   assert.match(panelSource, /Ask about \$\{phrase\} or anything else, or tell me what to do…/)
   assert.match(panelSource, /"Ask a question, or tell me what to do…"/)
   assert.match(panelSource, /"问点什么，或让我帮你做…"/)
-  // The record's chips are added to the workspace chips, never replace them.
-  assert.match(panelSource, /\[\.\.\.recordPrompts\.slice\(0, 2\), \.\.\.workspacePrompts\.slice\(0, 2\)\]/)
-  assert.match(panelSource, /data-testid="ai-context-chip"/)
-  assert.match(panelSource, /data-testid="ai-context-clear"/)
-  // The scope is the whole workspace on every page; a record's page only adds
-  // the record, as a chip. The header shows no "Scope:" line (panel design, 2026-11-01).
+  // Owner, 2026-11-12: the assistant is one assistant for the whole ERP, not a
+  // page's or a "workspace" of its own. The workspace cards stay on a record's
+  // page, with one question about the record in the last place.
+  assert.match(panelSource, /\[\.\.\.workspacePrompts\.slice\(0, 3\), recordPrompt\]/)
+  assert.doesNotMatch(panelSource, /data-testid="ai-context-chip"|data-testid="ai-context-clear"|dismissedContextKey/)
+  assert.doesNotMatch(panelSource, /AI 工作区|AI workspace|整个工作区|Whole workspace/)
+  assert.match(panelSource, /"展开助手"/)
+  assert.match(panelSource, /采购、销售、库存、财务都可以问/)
+  assert.match(panelSource, /Ask about purchasing, sales, inventory or finance\./)
+  // The header shows no "Scope:" line (panel design, 2026-11-01).
   assert.doesNotMatch(panelSource, /范围：|"Scope: "/)
-  assert.match(panelSource, /Whole workspace/)
   assert.doesNotMatch(panelSource, /routeById\(moduleId\)\?\.moduleLabel/)
 })
 
