@@ -148,7 +148,8 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
   const overdueWork = parts.work.filter((item) => item.overdueDays > 0);
   const overdueKinds = new Set(overdueWork.map((item) => item.kind)).size;
   if (overdueWork.length) await expect(list.getByTestId("today-work-item")).toHaveCount(Math.min(overdueWork.length, Math.max(5, overdueKinds)));
-  await expect(decisions.getByTestId("today-decision")).toHaveCount(parts.waiting.filter((entry) => entry.row.overdueDays > 0).length);
+  // Five cards show before "Show {n} more" (CI's walkthrough has eight overdue).
+  await expect(decisions.getByTestId("today-decision")).toHaveCount(Math.min(5, parts.waiting.filter((entry) => entry.row.overdueDays > 0).length));
   await expect(list.locator('[data-kind="purchase_order_due"]')).toHaveCount(0);
   await root.getByTestId("today-tile-all").click();
   // A kind's "{n} in all" lists only that kind.
