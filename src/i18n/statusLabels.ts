@@ -46,7 +46,29 @@ const statusCodes: Record<string, [string, string]> = {
   available: ["Available", "可用"],
   quarantined: ["Quarantined", "隔离中"],
   on_hold: ["On hold", "已暂停"],
+  // An issued customer invoice nothing has been received on yet (the
+  // server's customerInvoicePaymentStatus; partly paid and paid are
+  // partially_settled and settled).
+  to_be_paid: ["To be paid", "待收款"],
 };
+
+// Where one document type words a shared code differently. "Issued" is 已下达
+// for a purchase order (owner's terminology, 2026-11-05) but 已开具 for a
+// customer invoice, as the finance pages say it. Every other type keeps the
+// shared label.
+const documentStatusCodes: Record<string, Record<string, [string, string]>> = {
+  customer_invoice: {
+    issued: ["Issued", "已开具"],
+  },
+};
+
+// The label of a status on one type of document (the type codes Today's
+// recent documents use, such as "customer_invoice"), or undefined when that
+// type words the code as every other page does.
+export function documentStatusLabel(documentType: string, code: string, language: string): string | undefined {
+  const pair = documentStatusCodes[String(documentType || "").trim()]?.[String(code || "").trim()];
+  return pair ? pair[language === "en-US" ? 0 : 1] : undefined;
+}
 
 // Inventory movement types, as the ledger records them.
 const movementTypes: Record<string, [string, string]> = {

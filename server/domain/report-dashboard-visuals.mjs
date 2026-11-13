@@ -1,6 +1,6 @@
 import { isCommittedPurchaseOrder, isOpenPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { purchaseOrderDueDay } from './open-purchase-orders-report.mjs'
-import { ALL_PURCHASE_ORDERS } from './business-overview.mjs'
+import { ALL_PURCHASE_ORDERS, OVERVIEW_TABS, WITHHELD_RECORDS, WITHHELD_SUBJECT } from './business-overview.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
 import { SUPPLIER_SCORECARD_RULES, evaluatePromiseLine, scorecardPurchaseOrderStanding, summarizeScorecardLines } from './supplier-scorecard.mjs'
@@ -155,6 +155,44 @@ function paretoVisual(id, title, rows, scope, keyOf, { otherLabel, drilldownPath
 function statusVisual(id, title, rows, drilldownPath, description) {
   const counts = grouped(rows, row => row.status, weight)
   return visual(id, title, 'donut', counts, { drilldownPath, crossFilter: 'status', ...(description ? { description } : {}) })
+}
+
+// SKUs per stock status. Inventory takes no filter, so the chart does not
+// filter the dashboard.
+function stockStatusVisual(id, title, balances, drilldownPath, description) {
+  return visual(id, title, 'donut', grouped(balances, row => row.stockStatus, () => 1), { drilldownPath, statusLabels: true, ...(description ? { description } : {}) })
+}
+
+// A chart over records the reader may not read: no figures, and the reason.
+const withheldVisual = (id, title, type, emptyState, extra = {}) => visual(id, title, type, [], { ...extra, emptyState })
+
+// Committed purchases and confirmed sales per business month, side by side,
+// never added. Each series is a subject the reader may read with amounts the
+// reader may see; the rest are left out, as a KPI over them is restricted.
+// Both series are drawn in one currency only: amounts in different currencies,
+// or a series that does not total in one, leave the chart empty with a request
+// to choose a currency.
+function purchasesAndSalesVisual(id, series, { restrictedSubjects, partial, drilldownPath, description }) {
+  const title = 'Purchases and sales by month'
+  const base = { unit: 'currency', drilldownPath, crossFilter: 'period', description }
+  const readable = series.filter(item => !restrictedSubjects.has(item.subject))
+  if (!readable.length) return withheldVisual(id, title, 'bar', WITHHELD_RECORDS, base)
+  const shown = readable.filter(item => item.scope.limitation !== 'amount_restricted')
+  if (!shown.length) return withheldVisual(id, title, 'bar', RESTRICTED_EMPTY, base)
+  const withRows = shown.filter(item => item.rows.length)
+  if (!withRows.length) return visual(id, title, 'bar', [], { ...base, seriesKeys: shown.map(item => item.key) })
+  const codes = new Set(withRows.map(item => item.scope.currencyCode))
+  if (withRows.some(item => !item.scope.ok) || codes.size > 1) return visual(id, title, 'bar', [], { ...base, emptyState: 'Select a currency to compare amounts.' })
+  const months = new Map()
+  for (const item of shown) {
+    for (const row of item.rows) {
+      const key = monthOf(row.date)
+      if (!months.has(key)) months.set(key, { name: key, ...Object.fromEntries(shown.map(entry => [entry.key, 0])) })
+      if (row.amount !== null) months.get(key)[item.key] = money(months.get(key)[item.key] + row.amount)
+    }
+  }
+  const data = [...months.values()].sort((a, b) => (a.name === 'Undated') - (b.name === 'Undated') || a.name.localeCompare(b.name))
+  return visual(id, title, 'bar', data, { ...base, seriesKeys: shown.map(item => item.key), colors: shown.map(item => item.color), currencyCode: [...codes][0], limitations: withRows.some(item => item.rows.some(row => row.amount === null)) ? ['amount_missing'] : [], partialPeriods: partialPeriodsOf(data.map(row => row.name), partial) })
 }
 
 // Committed purchase orders in scope, with their receipt and invoice progress.
@@ -501,7 +539,10 @@ function riskMatrixVisual(id, balances) {
 // onTimeWithheld ('restricted', 'truncated' or 'period_too_long') leaves the on-time measures
 // out; promiseOptions carries the grace days and the reader's warehouses.
 // partial: the months the range or today cuts short (partialMonths).
-export function buildDashboardVisuals({ subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts = {}, today = '', timeZone, salesDemand = [], onTimeWithheld = null, promiseOptions = {}, partial = partialMonths({ today, from: query?.from, to: query?.to }) }) {
+// restrictedSubjects: the subjects the reader may not read (the overview
+// leaves their series out and says its charts over them are withheld).
+export function buildDashboardVisuals({ subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts = {}, restrictedSubjects = new Set(), today = '', timeZone, salesDemand = [], onTimeWithheld = null, promiseOptions = {}, partial = partialMonths({ today, from: query?.from, to: query?.to }) }) {
+  const hidden = restrictedSubjects instanceof Set ? restrictedSubjects : new Set(array(restrictedSubjects))
   const poById = new Map(array(context.purchaseOrders).map(row => [text(row.id || row.po), row]))
   const receiptsByPo = new Map()
   for (const receipt of array(context.receipts)) if (text(receipt.poId)) receiptsByPo.set(text(receipt.poId), true)
@@ -519,10 +560,24 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
   const promiseLines = lazy(() => onTimeWithheld ? [] : promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone, promiseOptions))
   const performance = lazy(() => supplierPerformance(pos(), receipts(), invoices().map(row => row.raw), poScope(), promiseLines()))
 
-  if (subject === 'overview') return [
-    trendVisual('overview_spend_trend', 'Committed spend by month', pos(), poScope(), { countKey: 'Purchase orders', amountKey: 'Committed amount', drilldownPath: '/app/reports/procurement?view=analytics', description: 'Committed purchase orders by order date. Bars are amounts, the line is the number of orders.', partial }),
-    lifecycleVisual('overview_lifecycle', pos()),
-  ]
+  // The overview shows each area once (owner review, round 8): purchases and
+  // sales side by side by month here, stock status, and from
+  // business-overview.mjs the record activity and the suppliers. Each chart
+  // opens its area's analytics tab. Only the stock status repeats a chart of
+  // another tab (Inventory analytics); the rest are the overview's own.
+  if (subject === 'overview') {
+    const salesOrders = salesOrderRows(context, all, salesDemand).filter(row => row.active)
+    const salesScope = restrictedAmounts.sales_orders ? RESTRICTED_SCOPE : moneyScope(salesOrders, query)
+    return [
+      purchasesAndSalesVisual('overview_purchases_and_sales', [
+        { key: 'Committed PO amount', subject: 'purchase_orders', rows: hidden.has('purchase_orders') ? [] : pos(), scope: hidden.has('purchase_orders') ? RESTRICTED_SCOPE : poScope(), color: '#2563eb' },
+        { key: 'Sales order amount', subject: 'sales_orders', rows: salesOrders, scope: salesScope, color: '#14b8a6' },
+      ], { restrictedSubjects: hidden, partial, drilldownPath: OVERVIEW_TABS.sales, description: 'Committed purchase orders and confirmed sales orders in range, by order date. The two are shown side by side, never added.' }),
+      hidden.has('inventory_balances')
+        ? withheldVisual('overview_stock_status', 'SKUs by stock status', 'donut', WITHHELD_SUBJECT.inventory_balances, { drilldownPath: OVERVIEW_TABS.inventory, statusLabels: true })
+        : stockStatusVisual('overview_stock_status', 'SKUs by stock status', all.inventory_balances, OVERVIEW_TABS.inventory, 'Every SKU with stock, open demand or incoming orders, by its stock status today.'),
+    ]
+  }
 
   if (subject === 'procurement') return [
     trendVisual('procurement_spend_trend', 'Committed spend by month', pos(), poScope(), { countKey: 'Purchase orders', amountKey: 'Committed amount', drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders by order date. Bars are amounts, the line is the number of orders.', partial }),
@@ -576,7 +631,7 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
       rankingVisual('inventory_on_hand_by_sku', 'On hand by SKU', balances.filter(row => row.quantity !== null).map(row => ({ name: row.id, value: row.quantity })), { drilldownPath: '/app/inventory', description: 'Recorded on-hand quantity, in each SKU\'s unit.', limit: 15 }),
       stockPositionVisual('inventory_stock_position', balances),
       atpVisual('inventory_available_to_promise', balances),
-      visual('inventory_stock_status', 'Stock status', 'donut', grouped(balances, row => row.stockStatus, () => 1), { drilldownPath: '/app/inventory', statusLabels: true }),
+      stockStatusVisual('inventory_stock_status', 'Stock status', balances, '/app/inventory'),
       riskMatrixVisual('inventory_risk_matrix', balances),
     ]
   }

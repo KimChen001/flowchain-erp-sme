@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
-import { assertAuthorized } from '../auth/authorization-service.mjs'
+import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { outboundRequestHash } from './outbound-posting-command-service.mjs'
-import { outboundDecimalString as fixed, outboundDecimalUnits as units } from './outbound-transaction-policy.mjs'
+import { outboundDecimalString as fixed, outboundDecimalUnits as units, SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES } from './outbound-transaction-policy.mjs'
 import { CUSTOMER_NAMESPACE } from './master-data-commands.mjs'
 import { allocateDocumentNumber } from './document-numbering.mjs'
 import { SALES_ORDER_DEMAND_FILTERS, salesOrderRiskWhere } from '../repositories/db-sales-order-read-repository.mjs'
@@ -214,7 +214,27 @@ export function createSalesOrderReadService({ prisma, lifecycleCapability = { en
       prisma.salesOrder.findMany({ where: { tenantId: actor.tenantId }, distinct: ['currency'], select: { currency: true }, orderBy: { currency: 'asc' } }),
     ])
     const currencies = [...new Set((currencyRows || []).map((row) => text(row.currency).toUpperCase()).filter(Boolean))]
-    return { dataSource: 'Authoritative PostgreSQL', page, pageSize, total, currencies, capabilities: { salesOrderLifecycle: lifecycleCapability }, orders: rows.map((row) => { const order = publicOrder(row); return { ...order, totalLines: row.lines.length, orderedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.orderedQuantity), 0n)), reservedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.reservedQuantity), 0n)), fulfilledQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.fulfilledQuantity), 0n)) } }) }
+    const invoiced = await invoicedQuantities(actor, rows)
+    return { dataSource: 'Authoritative PostgreSQL', page, pageSize, total, currencies, capabilities: { salesOrderLifecycle: lifecycleCapability }, orders: rows.map((row) => { const order = publicOrder(row); return { ...order, totalLines: row.lines.length, orderedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.orderedQuantity), 0n)), reservedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.reservedQuantity), 0n)), fulfilledQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.fulfilledQuantity), 0n)), invoicedQuantity: invoiced ? fixed(invoiced.get(row.id) || 0n) : null } }) }
+  }
+  // How much of each listed order's shipped goods is invoiced, for the list's
+  // invoicing column: the quantities on customer invoices that hold their
+  // shipment (submitted, approved, issued or disputed; a draft does not), as
+  // operational finance counts them. Read only, and only for a reader who may
+  // read customer invoices; null for anyone else.
+  async function invoicedQuantities(actor, rows) {
+    if (!can({ actor, permission: 'finance.customer_invoice.read', tenantId: actor.tenantId })) return null
+    const byOrder = new Map()
+    if (!rows.length) return byOrder
+    const lines = await prisma.customerInvoiceLine.findMany({
+      where: { customerInvoice: { tenantId: actor.tenantId, salesOrderId: { in: rows.map((row) => row.id) }, status: { in: [...SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES] } } },
+      select: { quantity: true, customerInvoice: { select: { salesOrderId: true } } },
+    })
+    for (const line of lines) {
+      const orderId = line.customerInvoice?.salesOrderId
+      if (orderId) byOrder.set(orderId, (byOrder.get(orderId) || 0n) + units(line.quantity))
+    }
+    return byOrder
   }
   async function entryData(context) {
     const actor = await actorFor(prisma, context)
@@ -223,8 +243,9 @@ export function createSalesOrderReadService({ prisma, lifecycleCapability = { en
       prisma.item.findMany({ where: { tenantId: actor.tenantId, status: 'active' }, select: { id: true, sku: true, name: true, unit: true }, orderBy: { sku: 'asc' }, take: 200 }),
       prisma.runtimeRecord.findMany({ where: { tenantId: actor.tenantId, namespace: CUSTOMER_NAMESPACE }, orderBy: { recordKey: 'asc' }, take: 2000 }),
     ])
-    // The active customers an order can be placed for, by name.
-    const customers = customerRecords.map(customerOf).filter((customer) => customer.name && customer.status === 'active').sort((a, b) => a.name.localeCompare(b.name)).map(({ status, ...customer }) => customer)
+    // The active customers an order can be placed for, by name, with the
+    // country and address Customers records, so the order form can search them.
+    const customers = customerRecords.map((record) => ({ ...customerOf(record), country: text(record?.payload?.country) || null, address: text(record?.payload?.address) || null })).filter((customer) => customer.name && customer.status === 'active').sort((a, b) => a.name.localeCompare(b.name)).map(({ status, ...customer }) => customer)
     return { dataSource: 'Authoritative PostgreSQL', capabilities: { salesOrderLifecycle: lifecycleCapability }, items: lifecycleCapability.enabled ? items : [], customers: lifecycleCapability.enabled ? customers : [] }
   }
   return { listOrders, entryData }

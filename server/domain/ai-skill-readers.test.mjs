@@ -26,7 +26,9 @@ test('skill facts are the report numbers for the same rows', async () => {
   assert.equal(facts.purchaseOrders.open, openReport.summary.open)
   assert.equal(facts.purchaseOrders.overdue, openReport.summary.overdue)
   assert.deepEqual([facts.purchaseOrders.open, facts.purchaseOrders.overdue], [4, 2])
-  assert.equal(facts.purchaseOrders.open, kpi(overview, 'open_po_count').currentValue)
+  // Open POs and SKUs at risk are figures of the procurement and inventory
+  // dashboards; the overview shows them as Needs attention cards (round 8).
+  assert.equal(facts.purchaseOrders.open, kpi(buildRuntimeGovernedReport(business, { subject: 'procurement' }), 'open_po_count').currentValue)
   assert.deepEqual(facts.purchaseOrders.rows.map((row) => row.id).sort(), ['PO-001', 'PO-002', 'PO-008', 'PO-009'])
   // Committed spend per currency, never added across currencies.
   assert.deepEqual(facts.purchaseOrders.committedSpend.amounts.map(({ currency, amount }) => ({ currency, amount })), kpi(overview, 'purchase_order_amount').currencyAmounts.map(({ currencyCode, amount }) => ({ currency: currencyCode, amount })))
@@ -37,7 +39,7 @@ test('skill facts are the report numbers for the same rows', async () => {
   assert.deepEqual(facts.invoices.committed.amounts.map(({ currency, amount }) => [currency, amount]), [['USD', 7381.5]])
   // At-risk SKUs: the inventory risk KPI's definition, and the inventory report's rows.
   assert.deepEqual(facts.inventory.atRisk, ['LDM-001'])
-  assert.equal(facts.inventory.atRiskCount, kpi(overview, 'inventory_risk_sku').currentValue)
+  assert.equal(facts.inventory.atRiskCount, kpi(inventoryReport, 'inventory_risk_sku').currentValue)
   assert.deepEqual(facts.inventory.atRisk, inventoryReport.details.filter((row) => row.shortage > 0).map((row) => row.id))
   const ldm1 = facts.inventory.rows.find((row) => row.sku === 'LDM-001')
   assert.deepEqual([ldm1.available, ldm1.openSalesDemand, ldm1.shortage, ldm1.incomingApprovedPo, ldm1.stockStatus], [28, 35, 7, 70, 'below_safety_stock'])

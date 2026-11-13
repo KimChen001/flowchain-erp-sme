@@ -44,7 +44,7 @@ test('received and rejected POs are not open; draft and cancelled sales do not i
     inventoryItems: [{ sku: 'SKU', onHandQuantity: 5, reservedQuantity: 0 }], items: [], suppliers: [], supplierInvoices: [],
   };
   const overview = buildRuntimeGovernedReport(context, { subject: 'overview' });
-  assert.equal(overview.kpis.find(row => row.id === 'open_po_count').value, 2);
+  assert.equal(buildRuntimeGovernedReport(context, { subject: 'procurement' }).kpis.find(row => row.id === 'open_po_count').value, 2);
   assert.equal(overview.attention.find(row => row.id === 'open_orders').count, 2);
   assert.equal(overview.attention.find(row => row.id === 'unfulfilled_sales').count, 1);
   const sales = buildRuntimeGovernedReport(context, { subject: 'sales' });

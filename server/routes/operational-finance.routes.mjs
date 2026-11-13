@@ -135,7 +135,8 @@ export async function handleOperationalFinanceRoute(ctx) {
     if (ctx.req.method === "GET" && path === "/api/finance/entry-data") {
       const [p2p, o2c, settlement] = await Promise.all([
         read.entryData(ctx),
-        o2cRead.entryData(ctx),
+        // ?salesOrder= or ?shipment=: the customer invoice form opened from one.
+        o2cRead.entryData(ctx, query(ctx.url)),
         settlementRead.entryData(ctx),
       ]);
       ctx.send(ctx.res, 200, { ...p2p, ...o2c, ...settlement, capabilities: capabilities(ctx.env || process.env) });
@@ -621,7 +622,7 @@ export async function handleOperationalFinanceRoute(ctx) {
     }
 
     const customerInvoiceMatch = path.match(
-      /^\/api\/finance\/customer-invoices\/([^/]+)(?:\/(submit-preview|submit|approve-preview|approve|issue-preview|issue))?$/,
+      /^\/api\/finance\/customer-invoices\/([^/]+)(?:\/(submit-preview|submit|approve-preview|approve|issue-preview|issue|cancel-preview|cancel))?$/,
     );
     if (customerInvoiceMatch) {
       const invoiceId = decodeURIComponent(customerInvoiceMatch[1]);
@@ -647,6 +648,9 @@ export async function handleOperationalFinanceRoute(ctx) {
           approve: "approveCustomerInvoice",
           "issue-preview": "previewIssueCustomerInvoice",
           issue: "issueCustomerInvoice",
+          // A draft or submitted invoice that was never issued, with a reason.
+          "cancel-preview": "previewCancelCustomerInvoice",
+          cancel: "cancelCustomerInvoice",
         };
         ctx.send(
           ctx.res,

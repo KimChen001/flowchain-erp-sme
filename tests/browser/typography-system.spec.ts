@@ -17,7 +17,11 @@ test("primary module and page typography uses one computed semantic scale", asyn
   await authenticate(page);
   // A module shows either its own title or, when the module header is hidden,
   // the page title as its visible heading. (The reports center has no h1.)
-  for (const path of ["overview", "master-data", "procurement", "sales", "inventory", "settings"]) {
+  // Today's tab row is its header; its title is read out, not drawn (owner 11/13).
+  await page.goto("/app/overview");
+  await expect(page.getByTestId("page-title")).toHaveClass(/sr-only/);
+  await expect(page.getByTestId("module-subnav")).toBeVisible();
+  for (const path of ["master-data", "procurement", "sales", "inventory", "settings"]) {
     await page.goto(`/app/${path}`);
     const heading = page.locator("h1.fc-module-title, h1.fc-page-title").first();
     await expect(heading).toBeVisible();

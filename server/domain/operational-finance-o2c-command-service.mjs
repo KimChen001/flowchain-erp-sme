@@ -10,7 +10,11 @@ import {
   financeFixed as fixed,
   financeUnits as units,
 } from "./operational-finance-policy.mjs";
-import { overdueBefore } from "./operational-finance-o2c-read-service.mjs";
+import {
+  CANCEL_CUSTOMER_INVOICE_PERMISSION,
+  canCancelCustomerInvoice,
+  overdueBefore,
+} from "./operational-finance-o2c-read-service.mjs";
 import { DEFAULT_TENANT_TIMEZONE } from "./tenant-calendar-day.mjs";
 import { allocateDocumentNumber } from "./document-numbering.mjs";
 
@@ -20,8 +24,11 @@ const workspaceTimezone = async (client, tenantId) =>
 const fail = (code, message, status = 400, details) => {
   throw new OperationalFinanceError(code, message, status, details);
 };
+// Who may cancel a customer invoice, and which ones: see the read service,
+// which offers the action by the same rule.
 const commandPermission = (commandType) => ({
   create_customer_invoice: "finance.customer_invoice.create",
+  cancel_customer_invoice: CANCEL_CUSTOMER_INVOICE_PERMISSION,
   submit_customer_invoice: "finance.customer_invoice.submit",
   approve_customer_invoice: "finance.customer_invoice.approve",
   issue_customer_invoice: "finance.customer_invoice.issue",
@@ -679,6 +686,118 @@ export function createOperationalFinanceO2cCommandService({
     );
   }
 
+  // Cancelling takes a customer invoice that was never issued out of the
+  // flow, as cancel_supplier_invoice does a bill: it is kept on record with
+  // its reason and who cancelled it, and the shipped quantity it named is free
+  // to invoice again (a cancelled invoice does not hold its shipment). No
+  // receivable, payment or journal entry exists for it or is created.
+  function cancelIssues(invoice, expected, reason) {
+    const issues = [];
+    if (!canCancelCustomerInvoice(invoice))
+      issues.push({
+        code: "CUSTOMER_INVOICE_STATUS_INVALID",
+        message: "Only a draft or submitted customer invoice that was never issued can be cancelled.",
+        status: 409,
+      });
+    if (invoice.version !== expected)
+      issues.push({
+        code: "FINANCE_VERSION_CONFLICT",
+        message: "Customer invoice changed concurrently.",
+        status: 409,
+      });
+    if (!text(reason))
+      issues.push({
+        code: "CUSTOMER_INVOICE_CANCEL_REASON_REQUIRED",
+        message: "Enter why the invoice is cancelled.",
+        status: 422,
+      });
+    return issues;
+  }
+
+  async function previewCancelCustomerInvoice(invoiceId, input, context) {
+    enabled(env);
+    const actor = await resolveProvisionedActor(prisma, identity(context));
+    assertAuthorized({ actor, permission: CANCEL_CUSTOMER_INVOICE_PERMISSION, tenantId: actor.tenantId });
+    const invoice = await prisma.customerInvoice.findFirst({
+      where: { id: invoiceId, tenantId: actor.tenantId },
+    });
+    if (!invoice)
+      fail("CUSTOMER_INVOICE_NOT_FOUND", "Customer invoice was not found.", 404);
+    const expected = version(input.expectedVersion);
+    const blockingIssues = cancelIssues(invoice, expected, input.reason);
+    return {
+      operation: "cancel_customer_invoice",
+      allowed: blockingIssues.length === 0,
+      blockingIssues,
+      expectedVersion: expected,
+      currentStatus: invoice.status,
+      nextStatus: "cancelled",
+      before: invoiceResult(invoice).invoice,
+      after: { ...invoiceResult(invoice).invoice, status: "cancelled", version: invoice.version + 1 },
+      factsToCreate: { receivableObligations: 0, payments: 0, journalEntries: 0 },
+      paymentExecution: false,
+      ledgerMutation: false,
+    };
+  }
+
+  async function cancelCustomerInvoice(invoiceId, input, context) {
+    const payload = {
+      invoiceId: required(invoiceId, "invoiceId"),
+      expectedVersion: version(input.expectedVersion),
+      reason: text(input.reason),
+    };
+    return execute(
+      "cancel_customer_invoice",
+      input,
+      context,
+      payload,
+      async (tx, actor, normalized, command) => {
+        await lockTenant(
+          tx,
+          "CustomerInvoice",
+          actor.tenantId,
+          normalized.invoiceId,
+          "CUSTOMER_INVOICE_NOT_FOUND",
+        );
+        const current = await tx.customerInvoice.findUnique({
+          where: { id: normalized.invoiceId },
+        });
+        const issues = cancelIssues(current, normalized.expectedVersion, normalized.reason);
+        if (issues.length) fail(issues[0].code, issues[0].message, issues[0].status);
+        const row = await tx.customerInvoice.update({
+          where: { id: current.id },
+          data: {
+            status: "cancelled",
+            cancelledAt: now(),
+            cancelledById: actor.user.id,
+            cancellationReason: normalized.reason,
+            version: { increment: 1 },
+          },
+        });
+        const result = invoiceResult(row);
+        await tx.auditLog.create({
+          data: audit({
+            idFactory,
+            actor,
+            action: "customer_invoice_cancelled",
+            entityType: result.entityType,
+            entityId: result.entityId,
+            summary: "Customer invoice cancelled before it was issued; its shipped quantity can be invoiced again.",
+            ...command,
+            before: invoiceResult(current).invoice,
+            after: result.invoice,
+            evidence: {
+              reason: normalized.reason,
+              salesOrderId: current.salesOrderId,
+              shipmentId: current.shipmentId,
+            },
+          }),
+        });
+        return result;
+      },
+    );
+  }
+
   async function previewReceivableAction(action, id, input, context) {
     enabled(env);
     const actor = await resolveProvisionedActor(prisma, identity(context));
@@ -1011,6 +1130,8 @@ export function createOperationalFinanceO2cCommandService({
       invoiceStatePreview(id, input, context, "issue"),
     issueCustomerInvoice: (id, input, context) =>
       transitionInvoice("issue", id, input, context),
+    previewCancelCustomerInvoice,
+    cancelCustomerInvoice,
     previewReceivableAction,
     disputeReceivable: (id, input, context) =>
       receivableAction("dispute", id, input, context),

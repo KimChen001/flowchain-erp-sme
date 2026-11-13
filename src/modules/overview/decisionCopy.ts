@@ -95,6 +95,16 @@ const EN = {
   chatGone: "This is no longer on Today.",
   chatMore: "{n} more waiting on Today",
   welcomeTitle: "Waiting for your decision · {n}",
+  // One line per card (owner, 2026-11-13: Today was too full): what it is,
+  // the fact that decides it, the main button; the rest under Details.
+  details: "Details",
+  hideDetails: "Hide details",
+  followUpShort: "{n} lines still to receive",
+  followUpShortOne: "{sku}: {qty} still to receive",
+  reorderShort: "Request {qty}",
+  reorderShortNoQuantity: "Request; enter the quantity",
+  moreDecisions: "Show {n} more",
+  fewerDecisions: "Show fewer",
 } as const;
 
 export type DecisionCopyKey = keyof typeof EN;
@@ -185,6 +195,14 @@ const ZH: Record<DecisionCopyKey, string> = {
   chatGone: "这件事已不在今日页上。",
   chatMore: "今日页上还有 {n} 件等你决定",
   welcomeTitle: "等你决定 · {n}",
+  details: "详情",
+  hideDetails: "收起详情",
+  followUpShort: "还有 {n} 行未到货",
+  followUpShortOne: "{sku} 还差 {qty}",
+  reorderShort: "建议申请 {qty}",
+  reorderShortNoQuantity: "建议申请，数量待填",
+  moreDecisions: "再显示 {n} 项",
+  fewerDecisions: "收起",
 };
 
 const COPY: Record<"en-US" | "zh-CN", Record<DecisionCopyKey, string>> = { "en-US": EN, "zh-CN": ZH };

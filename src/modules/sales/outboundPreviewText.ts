@@ -1,9 +1,11 @@
 // Plain sentences that say what a reserve, release, delivery draft, post or
 // reverse preview will do, built from the server's preview. English is the
-// source; zh-CN is chosen by the interface language. SKUs, units, warehouse
-// names and locations are shown as stored; quantities use the
-// shared quantity format. Display only: nothing here is sent to the server.
+// source; zh-CN is chosen by the interface language. SKUs, warehouse names and
+// locations are shown as stored; a unit is shown by its label in the interface
+// language ("pcs" / "件", unitLabels.ts); quantities use the shared quantity
+// format. Display only: nothing here is sent to the server.
 import { formatQuantity } from "../../lib/format.ts";
+import { unitLabel } from "../../i18n/unitLabels.ts";
 
 type Row = Record<string, unknown>;
 
@@ -40,8 +42,8 @@ const COPY = {
     release: "释放 {place} 的预留 {amount}。该库位可用量增加 {q}。",
     draft: "创建发货单：从 {place} 发出 {amount}。发货过账前库存不变。",
     cancelDraft: "取消该发货草稿。{place} 的 {amount} 仍为该订单预留。",
-    post: "从 {place} 发出 {amount}。在库量和预留量各减少 {q}。",
-    reverse: "将 {amount} 退回 {place}。在库量和预留量各增加 {q}。",
+    post: "从 {place} 发出 {amount}。在手量和预留量各减少 {q}。",
+    reverse: "将 {amount} 退回 {place}。在手量和预留量各增加 {q}。",
     amount: "{sku} {q} {unit}",
     amountNoUnit: "{sku} {q}",
     unknownPlace: "原预留库位",
@@ -74,7 +76,8 @@ export function decimalDifference(minuend: unknown, subtrahend: unknown) {
 
 function amount(language: string, quantity: string, sku: string, unit?: string) {
   const q = formatQuantity(quantity);
-  return text(language, unit ? "amount" : "amountNoUnit", { q, sku: sku || "—", unit: unit || "" });
+  const label = unitLabel(unit, language, Number(quantity));
+  return text(language, label ? "amount" : "amountNoUnit", { q, sku: sku || "—", unit: label });
 }
 
 /**

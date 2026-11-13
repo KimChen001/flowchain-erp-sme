@@ -63,7 +63,7 @@ export function validateAssistantV2Question(body = {}) {
 
 // The open record's fields go into the model's context as they are sent.
 const activeContextInjected = (active) => Boolean(active && typeof active === 'object')
-  && ['moduleId', 'entityType', 'entityId'].some((key) => aiInjectionDetected(active[key]))
+  && ['moduleId', 'entityType', 'entityId', 'entityLabel'].some((key) => aiInjectionDetected(active[key]))
 
 // Earlier turns from the client reach the model only when the server has no
 // thread for the conversation (new, expired, or busy), as plain context. A

@@ -243,7 +243,7 @@ P1 and P2 keep today's rules cascade as the fallback for opt-in off, over cap, n
 
 ## 4 Generative UI components
 
-All components live in `src/modules/ai-assistant/v2/parts/` and are rendered by `AnswerParts.tsx` inside the PR #237 aside. Layout and testids stay (`ai-assistant-panel`, `ai-assistant-toggle`, `ai-context-chip`, `ai-record-chip`).
+All components live in `src/modules/ai-assistant/v2/parts/` and are rendered by `AnswerParts.tsx` inside the PR #237 aside. Layout and testids stay (`ai-assistant-panel`, `ai-assistant-toggle`, `ai-record-chip`). Since 2026-11-12 the header names no page record (the `ai-context-chip` is gone): the assistant is one assistant for the whole workspace on every page, the placeholder offers the page's record ("this PO"), and the model uses it only when a question points to it.
 
 - **Styling.** White cards on `#F5F7FA` with `#E2E8F0` borders; primary `#2563EB`; teal `#0D9488`, text `#0F766E`; red for overdue, orange for pending. The panel root overrides the shadcn CSS variables, because `src/styles/theme.css:11` still sets `--primary #0071e3`.
 - **Copy.** All copy uses `useI18n().t('ai.v2.*')` in en-US and zh-CN; there are 0 `ai.*` keys today.

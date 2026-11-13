@@ -2,8 +2,10 @@ import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import {
   outboundDecimalString as fixed,
   outboundDecimalUnits as units,
+  SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES,
 } from "./outbound-transaction-policy.mjs";
 import { SalesWorkbenchError } from "./sales-order-workbench-service.mjs";
+import { customerInvoicePaymentStatus } from "./operational-finance-o2c-read-service.mjs";
 import { assertAuthorized, can } from "../auth/authorization-service.mjs";
 
 const fail = (code, message, status = 400) => {
@@ -553,6 +555,63 @@ async function evidence(
   };
 }
 
+// How far an order's shipped goods are invoiced, for display on the order and
+// shipment pages. Read only: what may be invoiced stays with operational
+// finance. A line counts as invoiced once an invoice holding its shipment
+// bills it (SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES: submitted, approved,
+// issued, disputed), the statuses that rule counts too; a draft does not.
+// Only a reader who may read customer invoices gets it, and only for the
+// shipments that reader can see; anyone else gets null.
+async function orderInvoicing(prisma, actor, order, visibleShipments) {
+  if (!permission(actor, "finance.customer_invoice.read")) return null;
+  const shipmentIds = new Set(visibleShipments.map((row) => row.id));
+  const rows = shipmentIds.size
+    ? await prisma.customerInvoiceLine.findMany({
+        where: {
+          customerInvoice: {
+            tenantId: actor.tenantId,
+            salesOrderId: order.id,
+            shipmentId: { in: [...shipmentIds] },
+          },
+        },
+        select: {
+          salesOrderLineId: true,
+          shipmentLineId: true,
+          quantity: true,
+          customerInvoice: {
+            select: { id: true, invoiceNumber: true, status: true, shipmentId: true, receivableObligation: { select: { status: true } } },
+          },
+        },
+      })
+    : [];
+  const holding = new Set(SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES);
+  const byOrderLine = new Map(),
+    byShipmentLine = new Map(),
+    invoices = new Map();
+  for (const row of rows) {
+    const invoice = row.customerInvoice;
+    if (!invoice) continue;
+    if (!invoices.has(invoice.id))
+      invoices.set(invoice.id, {
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        status: invoice.status,
+        // Once issued, where its payment stands (to_be_paid,
+        // partially_settled, settled), as the invoice pages show it.
+        paymentStatus: customerInvoicePaymentStatus(invoice.status, invoice.receivableObligation?.status),
+        shipmentId: invoice.shipmentId,
+      });
+    if (!holding.has(invoice.status)) continue;
+    byOrderLine.set(row.salesOrderLineId, (byOrderLine.get(row.salesOrderLineId) || 0n) + units(row.quantity));
+    byShipmentLine.set(row.shipmentLineId, (byShipmentLine.get(row.shipmentLineId) || 0n) + units(row.quantity));
+  }
+  return {
+    invoicedByOrderLine: (lineId) => fixed(byOrderLine.get(lineId) || 0n),
+    invoicedByShipmentLine: (lineId) => fixed(byShipmentLine.get(lineId) || 0n),
+    invoices: [...invoices.values()].sort((a, b) => text(a.invoiceNumber).localeCompare(text(b.invoiceNumber))),
+  };
+}
+
 export function createOutboundWorkbenchReadService({
   prisma,
   capabilities = {},
@@ -601,13 +660,10 @@ export function createOutboundWorkbenchReadService({
         .flatMap((line) => line.allocations)
         .every((allocation) => canRead(actor, allocation.warehouseId)),
     );
-    const ev = await evidence(
-      prisma,
-      actor,
-      order,
-      visibleShipments,
-      reservations,
-    );
+    const [ev, invoicing] = await Promise.all([
+      evidence(prisma, actor, order, visibleShipments, reservations),
+      orderInvoicing(prisma, actor, order, visibleShipments),
+    ]);
     const hiddenWarehouseFacts =
       balances.length !== allBalances.length ||
       reservations.length !== order.reservations.length ||
@@ -765,9 +821,13 @@ export function createOutboundWorkbenchReadService({
     return {
       dataSource: "Authoritative PostgreSQL",
       order: orderHeader(order),
-      lines: order.lines.map((line) =>
-        lineModel(line, reservations, hiddenWarehouseFacts),
-      ),
+      // invoicedQuantity is null for a reader who may not read customer invoices.
+      lines: order.lines.map((line) => ({
+        ...lineModel(line, reservations, hiddenWarehouseFacts),
+        invoicedQuantity: invoicing ? invoicing.invoicedByOrderLine(line.id) : null,
+      })),
+      // The order's customer invoices (null without customer invoice access).
+      invoices: invoicing ? invoicing.invoices : null,
       availability,
       reservations: reservations.map(reservationModel),
       shipments: visibleShipments.map(shipmentModel),
@@ -889,6 +949,22 @@ export function createOutboundWorkbenchReadService({
     const movements = orderData.movements.filter(
       (row) => row.sourceDocumentId === shipment.id,
     );
+    // An invoice that holds this posted shipment: reversing it is then
+    // refused (the reversal policy's own check), so the page offers the
+    // invoice instead of a reversal. Display only; the rule is unchanged.
+    const [invoicing, holdingInvoice] = await Promise.all([
+      orderInvoicing(prisma, actor, shipment.salesOrder, [shipment]),
+      shipment.postingStatus === "posted"
+        ? prisma.customerInvoice.findFirst({
+            where: {
+              tenantId: actor.tenantId,
+              shipmentId: shipment.id,
+              status: { in: [...SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES] },
+            },
+            select: { id: true },
+          })
+        : null,
+    ]);
     return {
       dataSource: "Authoritative PostgreSQL",
       shipment: shipmentModel(shipment),
@@ -900,9 +976,13 @@ export function createOutboundWorkbenchReadService({
         itemName: line.salesOrderLine.itemName,
         requestedQuantity: q(line.requestedQuantity),
         postedQuantity: q(line.postedQuantity),
+        // Null for a reader who may not read customer invoices.
+        invoicedQuantity: invoicing ? invoicing.invoicedByShipmentLine(line.id) : null,
         unit: line.unit,
         version: line.version,
       })),
+      invoices: invoicing ? invoicing.invoices : null,
+      reversalBlockedByInvoice: Boolean(holdingInvoice),
       allocations: allocations.map((row) => ({
         id: row.id,
         reservationId: row.reservationId,
@@ -928,11 +1008,12 @@ export function createOutboundWorkbenchReadService({
       })),
       scopeCoverage: orderData.scopeCoverage,
       availableActions,
+      // This shipment's own events and stock movements; the order's other
+      // shipments are on their own pages.
       evidence: orderData.evidence.filter(
         (row) =>
           row.entityId === shipment.id ||
-          row.summary.includes(shipment.shipmentNumber) ||
-          row.eventType.includes("shipment"),
+          movements.some((movement) => movement.id === row.entityId),
       ),
       smartLinks: [
         {

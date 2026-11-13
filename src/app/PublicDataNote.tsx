@@ -78,10 +78,13 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
       data-testid="public-data-note"
       className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-slate-700 sm:px-4"
     >
-      <div className="flex items-start gap-2.5">
-        <Database aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-sky-700" />
+      {/* One line until opened, on every screen (owner 11/13: pages carried
+          too much above their own content); the header's "Public data" label
+          and "What is assumed" open the rest. */}
+      <div className={`flex gap-2.5 ${open ? "items-start" : "items-center"}`}>
+        <Database aria-hidden="true" size={16} className="shrink-0 text-sky-700" />
         <div className="min-w-0 flex-1">
-          <p>
+          <p className={open ? undefined : "truncate"} title={open ? undefined : `${t("publicData.title")} · ${summary}`} data-testid="public-data-note-summary">
             <span className="font-semibold text-slate-900">{t("publicData.title")}</span>
             <span className="mx-1.5 text-slate-400" aria-hidden="true">·</span>
             {summary}
@@ -112,18 +115,18 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
               )}
             </div>
           )}
-          <button
-            type="button"
-            className="mt-1 text-xs font-semibold text-sky-800 underline-offset-2 hover:underline"
-            aria-expanded={open}
-            onClick={() => setOpen((value) => !value)}
-          >
-            {open ? t("publicData.less") : t("publicData.more")}
-          </button>
         </div>
         <button
           type="button"
-          className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-sky-100 hover:text-slate-800"
+          className="shrink-0 whitespace-nowrap text-xs font-semibold text-sky-800 underline-offset-2 hover:underline max-sm:min-h-9"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? t("publicData.less") : t("publicData.more")}
+        </button>
+        <button
+          type="button"
+          className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-sky-100 hover:text-slate-800 max-sm:flex max-sm:h-9 max-sm:w-9 max-sm:items-center max-sm:justify-center"
           aria-label={t("publicData.dismiss")}
           title={t("publicData.dismiss")}
           onClick={() => {

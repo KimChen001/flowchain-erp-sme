@@ -183,7 +183,7 @@ export function ConfirmDialog({ open, title, description, confirmLabel, cancelLa
               <h2 id={titleId} className="text-base font-semibold leading-6" style={{ color: A.label }}>{title}</h2>
               {description && <div id={descriptionId} className="mt-1 text-sm leading-6" style={{ color: A.sub }}>{description}</div>}
             </div>
-            <button type="button" aria-label={say("close")} onClick={onCancel} className="-mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }}>
+            <button type="button" aria-label={say("close")} onClick={onCancel} className="-mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg hover:bg-slate-100 max-sm:h-9 max-sm:w-9" style={{ color: A.gray1 }}>
               <X size={15} />
             </button>
           </div>

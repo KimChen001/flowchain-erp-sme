@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
-import { CheckCircle2, Info, RefreshCw } from "lucide-react";
+import { CheckCircle2, Info } from "lucide-react";
 import { toast } from "sonner";
 import { A, Field } from "../../components/ui";
-import { focusFirstInvalid } from "../../components/ui/formLayout";
+import { FormActionBar, focusFirstInvalid } from "../../components/ui/formLayout";
 import { listTableCardsRef } from "../../components/ui/workbenchTable";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -46,7 +46,13 @@ type Plan = {
   after?: { outstandingAmount: string; status: string };
 };
 
+// Every method the server records (buildPaymentPlan). The form offers them in
+// the order the document's currency makes likely: a bank transfer first
+// everywhere; ACH, a US payment network, only for US dollars; a cheque after
+// card and cash outside the US.
 const METHODS = ["check", "ach", "wire", "card", "cash", "other"] as const;
+export const paymentMethodsFor = (currency: string): string[] =>
+  currency === "USD" ? ["wire", "ach", "check", "card", "cash", "other"] : ["wire", "card", "cash", "check", "other"];
 const METHOD_KEYS: Record<string, TranslationKey> = {
   check: "finance.method.check",
   ach: "finance.method.ach",
@@ -93,7 +99,29 @@ const PAYMENT_COPY = {
   checkFields: ["Check the highlighted fields.", "请检查标出的字段。"],
   recordedPaid: ["Payment of {amount} recorded", "已登记付款 {amount}"],
   recordedReceived: ["Customer payment of {amount} recorded", "已登记收款 {amount}"],
+  // British spelling outside US dollars; the stored method is "check" either way.
+  cheque: ["Cheque", "支票"],
 } as const;
+// A typed amount in 1/10000 units, as the server reads it; null when it is
+// not a number with at most 4 decimals.
+const amountUnits = (value: string | null | undefined): bigint | null => {
+  const raw = String(value ?? "").trim();
+  if (!/^\d+(\.\d+)?$/.test(raw)) return null;
+  const [whole, fraction = ""] = raw.split(".");
+  if (/[1-9]/.test(fraction.slice(4))) return null;
+  return BigInt(whole) * 10000n + BigInt((fraction.slice(0, 4) + "0000").slice(0, 4));
+};
+const unitsText = (value: bigint) => `${value / 10000n}.${String(value % 10000n).padStart(4, "0")}`;
+// What would be outstanding after this payment, and the status that leaves,
+// while the amount typed is one the server could accept; null otherwise. The
+// server works it out again when the payment is recorded.
+export function paymentAfter(outstanding: string | null | undefined, typed: string): { outstandingAmount: string; status: "settled" | "partially_settled" } | null {
+  const owed = amountUnits(outstanding);
+  const paid = amountUnits(typed);
+  if (owed === null || paid === null || paid <= 0n || paid > owed) return null;
+  const left = owed - paid;
+  return { outstandingAmount: unitsText(left), status: left === 0n ? "settled" : "partially_settled" };
+}
 type PaymentField = "date" | "amount" | "method" | "reference" | "note";
 type PaymentProblems = { fields: Partial<Record<PaymentField, string>>; form: string[] };
 const DECIMAL = /^\d+(\.\d{1,4})?$/;
@@ -170,7 +198,8 @@ function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
   };
   const hasProblems = (found: PaymentProblems) => found.form.length + Object.keys(found.fields).length > 0;
   const focusFirst = () => focusFirstInvalid(formRef.current);
-  // Preview asks the server what the payment would do; the form is checked first.
+  // The server's preview, asked inside Record payment: the form is checked
+  // first, and a refusal goes under the field it names.
   const preview = async () => {
     setError("");
     const found = check();
@@ -186,8 +215,8 @@ function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
       return null;
     }
   };
-  // Confirm works without Preview: it checks the form, previews, and records
-  // the payment only when the server allows it.
+  // One step (the form standard): Record payment checks the form, asks the
+  // server's preview, and records the payment only when the server allows it.
   const confirm = async () => {
     setError("");
     setBusy(true);
@@ -207,6 +236,20 @@ function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
     }
   };
   const fieldIssues = Object.keys(problems.fields).length > 0;
+  // What the payment leaves outstanding, said while typing; the server works
+  // it out again when the payment is recorded.
+  const after = paymentAfter(obligation.outstandingAmount, amount);
+  const methods = paymentMethodsFor(obligation.currency);
+  const methodLabel = (value: string) => (value === "check" && obligation.currency !== "USD" ? say("cheque") : t(METHOD_KEYS[value]));
+  // A message about the whole payment goes in the action bar, beside the
+  // buttons (the form standard).
+  const message = problems.form.length > 0 || fieldIssues || error ? (
+    <>
+      {problems.form.map((text) => <div key={text}>{text}</div>)}
+      {fieldIssues && <div>{say("checkFields")}</div>}
+      {error && <div>{error}</div>}
+    </>
+  ) : null;
   return (
     <div ref={formRef} className="space-y-3 rounded-xl border border-slate-200 p-3" data-testid="payment-record-panel">
       <div className="text-sm font-semibold">{t(kind === "payable" ? "finance.action.record_payment" : "finance.action.record_receivable_payment")}</div>
@@ -219,7 +262,7 @@ function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
         </Field>
         <Field label={t("finance.paymentMethod")} required error={problems.fields.method}>
           <select data-testid="payment-method" className={`${field} w-full`} value={method} onChange={(event) => edit(setMethod)(event.target.value)}>
-            {METHODS.map((value) => <option key={value} value={value}>{t(METHOD_KEYS[value])}</option>)}
+            {methods.map((value) => <option key={value} value={value}>{methodLabel(value)}</option>)}
           </select>
         </Field>
         <Field label={t("finance.paymentReference")} error={problems.fields.reference}>
@@ -231,25 +274,20 @@ function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
           </Field>
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" data-testid="payment-preview" className={`${button} border border-slate-200`} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
-        <button type="button" data-testid="payment-confirm" className={`${button} text-white`} style={{ background: A.blue }} disabled={busy || Boolean(plan && !plan.allowed)} onClick={() => void confirm()}>{busy ? t("finance.working") : t("finance.confirm")}</button>
-        <button type="button" className={`${button} text-slate-600`} onClick={onClose}>{t("finance.close")}</button>
-      </div>
-      {plan?.allowed && (
-        <div role="status" data-testid="payment-preview-result" className="flex gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-          <CheckCircle2 className="mt-0.5 shrink-0" size={16} />
+      {after && (
+        <div role="status" data-testid="payment-preview-result" className="flex gap-2 text-sm" style={{ color: A.sub }}>
+          <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-600" size={16} />
           {/* "Status: Paid"; in Chinese "状态：" takes no space before the chip. */}
-          <span>{t("finance.paymentAfter", { outstanding: money(plan.after?.outstandingAmount, obligation.currency, locale) })}{language === "en-US" ? " " : ""}<StatusChip status={plan.after?.status || ""} /></span>
+          <span>{t("finance.paymentAfter", { outstanding: money(after.outstandingAmount, obligation.currency, locale) })}{language === "en-US" ? " " : ""}<StatusChip status={after.status} /></span>
         </div>
       )}
-      {(problems.form.length > 0 || fieldIssues) && (
-        <div role="alert" data-testid="payment-errors" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          {problems.form.map((text) => <div key={text}>{text}</div>)}
-          {fieldIssues && <div>{say("checkFields")}</div>}
-        </div>
-      )}
-      {error && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{error}</div>}
+      {/* Cancel · Record payment, on the right; Record payment checks the form and asks the server first. */}
+      <FormActionBar
+        onCancel={onClose}
+        submit={{ label: t(kind === "payable" ? "finance.action.record_payment" : "finance.action.record_receivable_payment"), onClick: () => void confirm(), busy, testId: "payment-confirm" }}
+        message={message}
+        messageTestId="payment-errors"
+      />
     </div>
   );
 }

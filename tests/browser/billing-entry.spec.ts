@@ -160,6 +160,15 @@ test("an invoice opened from its shipment is submitted, approved and issued on s
   // Issuing opens the receivable; nothing here collects money.
   await expect(page.getByTestId("customer-invoice-receivable")).toContainText(`AR-${invoiceNumber}`);
   await expect(page.getByTestId("customer-invoice-actions").getByRole("button")).toHaveCount(0);
+  // Each step said so in a toast.
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: new RegExp(`Issued ${invoiceNumber}|已开具 ${invoiceNumber}`) })).toBeVisible();
+
+  // Everything shipped on SHIP-FIN-BROWSER-USD is now on that invoice: the
+  // shipment is no longer offered, and opened from it the form says so.
+  await page.goto("/app/sales/invoices/new?shipment=finance-browser-shipment-USD");
+  await expect(page.getByTestId("customer-invoice-already-invoiced")).toContainText(invoiceNumber);
+  await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("");
+  await expect(page.getByTestId("customer-invoice-shipment").locator('option[value="finance-browser-shipment-USD"]')).toHaveCount(0);
 });
 
 // The form standard (formLayout.tsx): Create draft is always clickable; it
@@ -181,16 +190,20 @@ test("the new customer invoice form says what is missing under each field", asyn
   await expect(page.getByTestId("customer-invoice-form-errors")).toContainText(/Check the highlighted fields\.|请检查标出的字段。/);
   await expect(page).toHaveURL(/\/app\/sales\/invoices\/new$/);
 
-  // More than was shipped is refused under the quantity, before anything is sent.
-  await page.getByTestId("customer-invoice-shipment").selectOption("finance-browser-shipment-USD");
+  // More than is left to invoice is refused under the quantity, before
+  // anything is sent. (The USD shipment was invoiced in full above, so the
+  // CNY one is used; each line says what is shipped, invoiced and left.)
+  await page.getByTestId("customer-invoice-shipment").selectOption("finance-browser-shipment-CNY");
+  await expect(page.getByTestId("customer-invoice-line-progress").first()).toContainText(/Shipped 10 .* · already invoiced 0 .* · left to invoice 10|已发货 10 .* · 已开票 0 .* · 可开票 10/);
   await page.getByTestId("customer-invoice-due").fill("2026-11-15");
   const quantity = page.getByTestId("customer-invoice-line").first().locator("input").first();
+  await expect(quantity).toHaveValue("10");
   await quantity.fill("999");
   let created = false;
   page.on("request", (request) => { if (request.method() === "POST" && /\/api\/finance\/customer-invoices$/.test(request.url())) created = true; });
   await page.getByTestId("customer-invoice-create").click();
   await expect(quantity).toHaveAttribute("aria-invalid", "true");
-  await expect(quantity).toHaveAccessibleDescription(/More than the 10 .*shipped|超过已发货数量 10/);
+  await expect(quantity).toHaveAccessibleDescription(/More than the 10 .*left to invoice|超过可开票数量 10/);
   await expect(quantity).toBeFocused();
 
   // A refusal from the server's preview goes under the line it names.
@@ -211,7 +224,54 @@ test("the new customer invoice form says what is missing under each field", asyn
 test("an invoice opened from a sales order lists only that order's shipments", async ({ page }) => {
   await signIn(page, "manager@example.com");
   await page.goto("/app/sales/invoices/new?salesOrder=finance-browser-sales-order-CNY");
-  await expect(page.getByTestId("customer-invoice-order-filter")).toContainText("finance-browser-sales-order-CNY");
+  // The order by its number, linked to it; never its id.
+  const filter = page.getByTestId("customer-invoice-order-filter");
+  await expect(filter.getByRole("link", { name: "SO-FIN-BROWSER-CNY", exact: true })).toHaveAttribute("href", "/app/sales/orders/finance-browser-sales-order-CNY");
+  await expect(filter).not.toContainText("finance-browser-sales-order-CNY");
   await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("finance-browser-shipment-CNY");
   await expect(page.getByTestId("customer-invoice-shipment").locator("option")).toHaveCount(2);
+});
+
+// A draft that cannot go on (raised twice, or against the wrong shipment) is
+// cancelled with a reason; it stays on record and its goods can be invoiced
+// again.
+test("a draft customer invoice is cancelled with a reason and its shipment is free again", async ({ page }) => {
+  await signIn(page, "manager@example.com");
+  await page.goto("/app/sales/invoices/new?shipment=finance-browser-shipment-CNY");
+  await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("finance-browser-shipment-CNY");
+  await page.getByTestId("customer-invoice-due").fill("2026-11-15");
+  await page.getByTestId("customer-invoice-create").click();
+  await expect(page).toHaveURL(/\/app\/sales\/invoices\/[0-9a-f-]{36}$/);
+  const numberHeading = page.getByTestId("customer-invoice-detail").getByRole("heading", { name: /^CI-\d{6}-\d{4,}$/ });
+  const invoiceNumber = (await numberHeading.innerText()).trim();
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: new RegExp(`Draft ${invoiceNumber} created|已创建草稿 ${invoiceNumber}`) })).toBeVisible();
+  // The page's facts: the invoice date, the totals, the customer.
+  await expect(page.getByTestId("customer-invoice-date")).not.toHaveText("—");
+  await expect(page.getByTestId("customer-invoice-totals")).toContainText(/Subtotal|小计/);
+  await expect(page.getByTestId("customer-invoice-total")).toContainText("125");
+
+  // While it is a draft, its goods are not offered for a second draft.
+  // (Checked through the form's data, so the draft page stays open.)
+  const entry = await (await page.request.get("/api/finance/entry-data?shipment=finance-browser-shipment-CNY", { headers: { authorization: `Bearer ${await page.evaluate(() => localStorage.getItem("flowchain:auth-token"))}` } })).json();
+  expect(entry.postedShipments[0].invoiceable).toBe(false);
+
+  // Cancel draft asks why; the reason is required (Confirm waits for it).
+  await page.getByTestId("customer-invoice-cancel").click();
+  const dialog = page.getByTestId("customer-invoice-cancel-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId("customer-invoice-cancel-dialog-field")).toHaveAttribute("aria-required", "true");
+  await expect(dialog.getByTestId("customer-invoice-cancel-dialog-confirm")).toHaveAttribute("aria-disabled", "true");
+  await dialog.getByTestId("customer-invoice-cancel-dialog-field").fill("Raised against the wrong shipment");
+  await dialog.getByTestId("customer-invoice-cancel-dialog-confirm").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: new RegExp(`Cancelled ${invoiceNumber}|已取消 ${invoiceNumber}`) })).toBeVisible();
+  await expect(page.getByTestId("customer-invoice-status")).toContainText(/Cancelled|已取消/);
+  await expect(page.getByTestId("customer-invoice-cancel")).toHaveCount(0);
+  await expect(page.getByTestId("customer-invoice-submit")).toHaveCount(0);
+  await expect(page.getByTestId("customer-invoice-history-cancelled")).toContainText("Raised against the wrong shipment");
+
+  // The shipment is offered again, at its full quantity.
+  await page.goto("/app/sales/invoices/new?shipment=finance-browser-shipment-CNY");
+  await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("finance-browser-shipment-CNY");
+  await expect(page.getByTestId("customer-invoice-line").first().locator("input").first()).toHaveValue("10");
 });
