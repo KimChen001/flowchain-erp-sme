@@ -28,7 +28,7 @@ test('the prompt lists every button with both labels, and the labels are the app
   const line = assistantAppButtonsLine()
   for (const group of ASSISTANT_APP_BUTTONS) for (const [en, zh] of group.buttons) assert.ok(line.includes(`${en} / ${zh}`), en)
   // Each label is in the app's copy, so a renamed button fails here first.
-  const copy = ['src/i18n/I18n.tsx', 'src/modules/purchasing/components/PurchaseOrderWorkflowActions.tsx', 'src/modules/purchasing/components/PurchaseOrderPromiseDates.tsx', 'src/modules/procurement/ReceivingForm.tsx', 'src/modules/overview/decisionCopy.ts']
+  const copy = ['src/i18n/I18n.tsx', 'src/modules/purchasing/components/PurchaseOrderWorkflowActions.tsx', 'src/modules/purchasing/components/PurchaseOrderPromiseDates.tsx', 'src/modules/procurement/ReceivingForm.tsx', 'src/modules/overview/decisionCopy.ts', 'src/modules/finance/SupplierInvoiceScreens.tsx']
     .map((file) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')).join('\n')
   for (const group of ASSISTANT_APP_BUTTONS) for (const label of group.buttons.flat()) assert.ok(copy.includes(`"${label}`), `${label} is not in the app's copy`)
 })
