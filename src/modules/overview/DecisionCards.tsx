@@ -94,27 +94,37 @@ type Shared = {
   onChanged: () => void;
 };
 
+// Today shows this many cards before "Show {n} more".
+const SHOWN = 5;
+
 export function DecisionSection({ decisions, overdueOnly, ...rest }: Omit<Shared, "canDecide"> & { decisions: TodayDecisions; overdueOnly: boolean }) {
   const t = useDecisionCopy();
+  const [all, setAll] = useState(false);
   const shared: Shared = { ...rest, canDecide: decisions.canDecide === true };
   const waiting = (decisions.waiting || []).filter((entry) => !overdueOnly || entry.row.overdueDays > 0);
+  const shown = all ? waiting : waiting.slice(0, SHOWN);
   const setAside = decisions.setAside || [];
   return (
     <Card className="p-5" data-testid="today-decisions">
       <div className="flex items-start gap-2">
         <Sparkles size={16} className="mt-0.5 shrink-0" style={{ color: "#2563eb" }} aria-hidden />
         <div>
-          <h2 className="text-sm font-semibold">{t("title")}</h2>
+          <h2 className="text-sm font-semibold">{waiting.length ? t("welcomeTitle", { n: waiting.length }) : t("title")}</h2>
           <p className="mt-0.5 text-xs" style={{ color: A.sub }}>{shared.canDecide ? t("note") : t("readOnly")}</p>
         </div>
       </div>
       {waiting.length === 0 ? (
         <p className="py-6 text-center text-sm" style={{ color: A.sub }} data-testid="today-decisions-empty">{t("none")}</p>
       ) : (
-        <ul className="mt-3 space-y-3" data-testid="today-decision-list">
-          {waiting.map((entry) => <DecisionCard key={entry.key} entry={entry} email={decisions.supplierEmail?.canSend ? decisions.supplierEmail : null} {...shared} />)}
+        <ul className="mt-3 space-y-2" data-testid="today-decision-list">
+          {shown.map((entry) => <DecisionCard key={entry.key} entry={entry} email={decisions.supplierEmail?.canSend ? decisions.supplierEmail : null} {...shared} />)}
         </ul>
       )}
+      {waiting.length > SHOWN ? (
+        <button type="button" className="mt-2 text-xs font-medium text-blue-600" onClick={() => setAll((value) => !value)} data-testid="today-decisions-more">
+          {all ? t("fewerDecisions") : t("moreDecisions", { n: waiting.length - SHOWN })}
+        </button>
+      ) : null}
       {setAside.length ? <SetAsideList entries={setAside} {...shared} /> : null}
     </Card>
   );
@@ -126,12 +136,14 @@ type Overview = { today: string; decisions?: TodayDecisions };
 // assistant v2, show_decisions): the items the answer named, read from Today
 // itself (GET /api/home/overview), each with the same card and buttons as on
 // Today. After a click the cards read Today again; an item no longer waiting
-// says how it was settled. Without keys (the assistant's welcome) it shows the
-// first `limit` items waiting, under a heading, and nothing when none waits.
+// says how it was settled. Without keys (the assistant's welcome) it is one
+// line, "Waiting for your decision · 4", that opens the first `limit` items;
+// nothing when none waits.
 export function TodayDecisionCards({ keys: named, more: namedMore = 0, limit = 3 }: { keys?: string[]; more?: number; limit?: number }) {
   const t = useDecisionCopy();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [failed, setFailed] = useState(false);
+  const [welcomeOpen, setWelcomeOpen] = useState(false);
   const load = async () => {
     try {
       setOverview(await apiJson<Overview>("/api/home/overview"));
@@ -157,9 +169,17 @@ export function TodayDecisionCards({ keys: named, more: namedMore = 0, limit = 3
   if (failed || (overview && !decisions?.available)) return <p className="text-xs" style={{ color: A.sub }} data-testid="ai-decisions-unavailable">{t("chatUnavailable")}</p>;
   if (!overview) return <p className="text-xs" style={{ color: A.sub }}>{t("chatLoading")}</p>;
   const shared: Shared = { canDecide: decisions?.canDecide === true, today, day, dateText, tone, kindLabel, labelOf, onChanged: () => { void load(); } };
+  const heading = welcome ? (
+    <button type="button" className="flex w-full items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-[13px] font-semibold hover:bg-slate-50" style={{ color: A.label, borderColor: A.gray4 }} aria-expanded={welcomeOpen} onClick={() => setWelcomeOpen((value) => !value)} data-testid="ai-welcome-decisions-toggle">
+      <Sparkles size={14} style={{ color: "#2563eb" }} aria-hidden />
+      <span className="flex-1">{t("welcomeTitle", { n: waiting.size })}</span>
+      {welcomeOpen ? <ChevronDown size={14} style={{ color: A.gray1 }} aria-hidden /> : <ChevronRight size={14} style={{ color: A.gray1 }} aria-hidden />}
+    </button>
+  ) : null;
+  if (welcome && !welcomeOpen) return <div data-testid="ai-welcome-decisions">{heading}</div>;
   return (
     <div className="space-y-2" data-testid={welcome ? "ai-welcome-decisions" : "ai-decisions"}>
-      {welcome ? <h4 className="flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: A.label }}><Sparkles size={14} style={{ color: "#2563eb" }} aria-hidden />{t("welcomeTitle", { n: waiting.size })}</h4> : null}
+      {heading}
       <ul className="space-y-2">
         {keys.map((key) => {
           const entry = waiting.get(key);
@@ -198,6 +218,17 @@ function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kin
       setBusy(false);
     }
   };
+  // One line until Details opens it: the card's short fact and main button
+  // stay on the line; why, the message, "Not now" and "Not needed" are under
+  // Details. The body stays mounted, so an edited message survives closing it.
+  const [open, setOpen] = useState(false);
+  const toggle = (
+    <button type="button" className="flex shrink-0 items-center gap-0.5 text-xs font-medium text-blue-600" aria-expanded={open} onClick={() => setOpen((value) => !value)} data-testid="decision-details">
+      {open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+      {open ? t("hideDetails") : t("details")}
+    </button>
+  );
+  const view: View = { open, toggle, onOpen: () => setOpen(true) };
   // "Not now" and "Not needed", at the end of the card's row of actions.
   const aside = canDecide ? (
     <>
@@ -207,16 +238,15 @@ function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kin
   ) : null;
 
   return (
-    <li className="rounded-lg border p-4" style={{ borderColor: A.gray4 }} data-testid="today-decision" data-kind={row.kind} data-key={entry.key}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="inline-block rounded px-2 py-0.5 text-xs font-medium" style={tone(row)}>{dateText(row)}</span>
-        <span className="text-sm font-medium">{kindLabel(row)}</span>
-        <Link to={row.href} className={`text-xs ${LINK}`}>{labelOf(row)}</Link>
-        {row.name ? <span className="text-xs" style={{ color: A.sub }}>{row.name}</span> : null}
-        {entry.returned ? <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">{t("returned")}</span> : null}
-      </div>
-      {draft?.type === "purchase_request" ? <ReorderBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} aside={aside} />
-        : draft?.type === "supplier_follow_up" ? <FollowUpBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} aside={aside} email={email} onChased={(text) => run(async () => {
+    <li className="rounded-lg border px-3 py-2.5" style={{ borderColor: A.gray4 }} data-testid="today-decision" data-kind={row.kind} data-key={entry.key}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <span className="inline-block shrink-0 rounded px-2 py-0.5 text-xs font-medium" style={tone(row)}>{dateText(row)}</span>
+        <span className="shrink-0 text-sm font-medium">{kindLabel(row)}</span>
+        <Link to={row.href} className={`shrink-0 text-xs ${LINK}`}>{labelOf(row)}</Link>
+        {row.name ? <span className="max-w-[14rem] truncate text-xs" style={{ color: A.sub }} title={row.name}>{row.name}</span> : null}
+        {entry.returned ? <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">{t("returned")}</span> : null}
+      {draft?.type === "purchase_request" ? <ReorderBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} aside={aside} {...view} />
+        : draft?.type === "supplier_follow_up" ? <FollowUpBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} aside={aside} email={email} {...view} onChased={(text) => run(async () => {
           try { await navigator.clipboard.writeText(text); } catch { throw new Error(t("copyFailed")); }
           await decide(entry.key, { option: "chased" });
           return t("copied");
@@ -225,7 +255,7 @@ function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kin
           const result = await apiJson<{ outbox?: boolean }>("/api/decision-items/send-follow-up", { method: "POST", body: JSON.stringify({ key: entry.key, to: mail.to, confirmedTo: mail.to, subject: mail.subject, body: mail.body }) });
           return result?.outbox ? t("sentOutbox") : t("sentEmail", { to: mail.to });
         })} />
-          : draft?.type === "purchase_orders_from_request" ? <ConversionBody draft={draft} row={row} busy={busy} canDecide={canDecide} aside={aside} onCreate={() => run(async () => {
+          : draft?.type === "purchase_orders_from_request" ? <ConversionBody draft={draft} row={row} busy={busy} canDecide={canDecide} aside={aside} {...view} onCreate={() => run(async () => {
             const result = await apiJson<any>(`/api/procurement/requests/${encodeURIComponent(draft.purchaseRequestId)}/generate-purchase-orders`, {
               method: "POST",
               body: JSON.stringify({ expectedVersion: draft.version, idempotencyKey: `today-decision:${entry.key}:v${draft.version}` }),
@@ -237,17 +267,38 @@ function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kin
             if (ids.length) await decide(entry.key, { option: "accepted", documentType: "purchase_order", documentIds: ids }).catch(() => null);
             return t("created", { numbers: orders.map((order) => order.orderNumber || order.number || order.id).join(", ") });
           })} />
-            : <Actions aside={aside} />}
-      {mode === "not_now" ? <NotNowForm today={today} busy={busy} onCancel={() => setMode(null)} onSave={(returnOn) => run(async () => { await decide(entry.key, { option: "not_now", returnOn }); setMode(null); })} /> : null}
-      {mode === "not_needed" ? <NotNeededForm busy={busy} onCancel={() => setMode(null)} onSave={(reasonCode, note) => run(async () => { await decide(entry.key, { option: "not_needed", reasonCode, note }); setMode(null); })} /> : null}
+            : <GenericBody aside={aside} {...view} />}
+      </div>
+      {open && mode === "not_now" ? <NotNowForm today={today} busy={busy} onCancel={() => setMode(null)} onSave={(returnOn) => run(async () => { await decide(entry.key, { option: "not_now", returnOn }); setMode(null); })} /> : null}
+      {open && mode === "not_needed" ? <NotNeededForm busy={busy} onCancel={() => setMode(null)} onSave={(reasonCode, note) => run(async () => { await decide(entry.key, { option: "not_needed", reasonCode, note }); setMode(null); })} /> : null}
       {message ? <p className="mt-2 text-xs" style={{ color: A.sub }} role="status">{message}</p> : null}
     </li>
   );
 }
 
+// Whether a card is open, its Details button, and a way to open it (a main
+// button that needs the details, Review and send, opens them first).
+type View = { open: boolean; toggle: ReactNode; onOpen: () => void };
+// On the card's one line: the fact that decides it, then its main button and
+// Details on the right. Open, Details stays on the line and the rest drops below.
+function Short({ children }: { children: ReactNode }) {
+  return <span className="min-w-0 truncate text-xs" style={{ color: A.sub }}>· {children}</span>;
+}
+function LineEnd({ children }: { children: ReactNode }) {
+  return <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{children}</div>;
+}
+function Below({ children }: { children: ReactNode }) {
+  return <div className="w-full">{children}</div>;
+}
+function GenericBody({ aside, open, toggle }: View & { aside: ReactNode }) {
+  if (!aside) return null;
+  if (!open) return <LineEnd>{toggle}</LineEnd>;
+  return <><LineEnd>{toggle}</LineEnd><Below><Actions aside={aside} /></Below></>;
+}
+
 function Prepared({ children }: { children: ReactNode }) {
   const t = useDecisionCopy();
-  return <div className="mt-2 text-sm"><span className="mr-1.5 text-xs font-medium text-blue-700">{t("prepared")}</span>{children}</div>;
+  return <div className="mt-1 text-sm"><span className="mr-1.5 text-xs font-medium text-blue-700">{t("prepared")}</span>{children}</div>;
 }
 function Basis({ children }: { children: ReactNode }) {
   const t = useDecisionCopy();
@@ -265,7 +316,7 @@ function Actions({ children, aside }: { children?: ReactNode; aside: ReactNode }
   );
 }
 
-function ReorderBody({ draft, row, day, busy, canDecide, aside }: { draft: ReorderDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode }) {
+function ReorderBody({ draft, row, day, busy, canDecide, aside, open, toggle }: View & { draft: ReorderDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode }) {
   const t = useDecisionCopy();
   const qty = (value: number | null) => (value === null ? "—" : `${formatQuantity(value)}${draft.unit ? ` ${unitLabel(draft.unit, t.language, value)}` : ""}`);
   const supplier = draft.supplier?.name || "";
@@ -281,18 +332,21 @@ function ReorderBody({ draft, row, day, busy, canDecide, aside }: { draft: Reord
   });
   if (draft.quantity !== null) params.set("quantity", String(draft.quantity));
   if (draft.supplier?.id) params.set("suppliers", draft.supplier.id);
+  const primary = canDecide ? <Link to={`/app/procurement/requests?${params.toString()}`} aria-disabled={busy} className={BUTTON.primary} data-testid="decision-primary">{t("reviewRequest")}</Link> : null;
+  if (!open) return <><Short>{draft.quantity === null ? t("reorderShortNoQuantity") : t("reorderShort", { qty: qty(draft.quantity) })}</Short><LineEnd>{primary}{toggle}</LineEnd></>;
   return (
     <>
-      <Prepared>{prepared}{draft.raisedToMinimum && draft.supplier?.minimumOrderQuantity ? <span className="text-xs" style={{ color: A.sub }}> {t("raisedToMinimum", { shortfall: qty(draft.shortfall), minimum: qty(draft.supplier.minimumOrderQuantity) })}</span> : null}</Prepared>
-      <Basis>{t("reorderBasis", { position: qty(draft.position), reorderPoint: qty(draft.reorderPoint) })}{row.actionHref ? <> <Link to={row.actionHref} className={LINK}>↗</Link></> : null}</Basis>
-      <Actions aside={aside}>
-        {canDecide ? <Link to={`/app/procurement/requests?${params.toString()}`} aria-disabled={busy} className={BUTTON.primary} data-testid="decision-primary">{t("reviewRequest")}</Link> : null}
-      </Actions>
+      <LineEnd>{toggle}</LineEnd>
+      <Below>
+        <Prepared>{prepared}{draft.raisedToMinimum && draft.supplier?.minimumOrderQuantity ? <span className="text-xs" style={{ color: A.sub }}> {t("raisedToMinimum", { shortfall: qty(draft.shortfall), minimum: qty(draft.supplier.minimumOrderQuantity) })}</span> : null}</Prepared>
+        <Basis>{t("reorderBasis", { position: qty(draft.position), reorderPoint: qty(draft.reorderPoint) })}{row.actionHref ? <> <Link to={row.actionHref} className={LINK}>↗</Link></> : null}</Basis>
+        <Actions aside={aside}>{primary}</Actions>
+      </Below>
     </>
   );
 }
 
-function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased, onSend }: { draft: FollowUpDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode; email: SupplierEmail | null; onChased: (text: string) => void; onSend: (mail: { to: string; subject: string; body: string }) => void }) {
+function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased, onSend, open, toggle, onOpen }: View & { draft: FollowUpDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode; email: SupplierEmail | null; onChased: (text: string) => void; onSend: (mail: { to: string; subject: string; body: string }) => void }) {
   const t = useDecisionCopy();
   const { language } = useI18n();
   const [mailLanguage, setMailLanguage] = useState<"en-US" | "zh-CN">(language === "zh-CN" ? "zh-CN" : "en-US");
@@ -321,8 +375,18 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased
   const qty = (value: number | null, unit: string | null) => (value === null ? "—" : `${formatQuantity(value)}${unit ? ` ${unitLabel(unit, t.language, value)}` : ""}`);
   const first = draft.lines[0];
   const linesLeft = draft.lines.length + draft.moreLines;
+  if (!open) {
+    const short = linesLeft === 1 && first ? t("followUpShortOne", { sku: first.sku || "—", qty: qty(first.remaining, first.unit) }) : t("followUpShort", { n: linesLeft });
+    // Review and send needs the message, so it opens the card first.
+    const primary = !canDecide ? null : email
+      ? <button type="button" disabled={busy} className={BUTTON.primary} onClick={() => { onOpen(); setShowMessage(true); setStep("text"); }} data-testid="decision-primary">{t("reviewAndSend")}</button>
+      : <button type="button" disabled={busy} className={BUTTON.primary} onClick={() => onChased(text)} data-testid="decision-primary">{t("copyAndChased")}</button>;
+    return <><Short>{short}</Short><LineEnd>{primary}{toggle}</LineEnd></>;
+  }
   return (
     <>
+      <LineEnd>{toggle}</LineEnd>
+      <Below>
       <Prepared>{t("followUpDraft", { supplier: draft.supplier.name || row.name || "—" })}</Prepared>
       <Basis>
         {linesLeft === 1 && first
@@ -382,26 +446,32 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased
           </>
         ) : null}
       </Actions>
+      </Below>
     </>
   );
 }
 
-function ConversionBody({ draft, row, busy, canDecide, aside, onCreate }: { draft: ConversionDraft; row: TodayRow; busy: boolean; canDecide: boolean; aside: ReactNode; onCreate: () => void }) {
+function ConversionBody({ draft, row, busy, canDecide, aside, onCreate, open, toggle }: View & { draft: ConversionDraft; row: TodayRow; busy: boolean; canDecide: boolean; aside: ReactNode; onCreate: () => void }) {
   const t = useDecisionCopy();
   const fields = (codes: string[]) => codes.map((code) => t(`field_${code}` as DecisionCopyKey)).join(t.language === "zh-CN" ? "、" : ", ");
+  const ready = canDecide && draft.missing.length === 0 && draft.orders.length > 0;
+  const create = ready ? <button type="button" disabled={busy} className={BUTTON.primary} onClick={onCreate} data-testid="decision-primary">{busy ? t("creating") : t("createOrders")}</button> : null;
+  const openRequest = <Link to={row.href} className={BUTTON.secondary}>{t("openRequest")}</Link>;
+  if (!open) return <><Short>{t.count("convertDraft", draft.orders.length)}</Short><LineEnd>{create || openRequest}{toggle}</LineEnd></>;
   return (
     <>
-      <Prepared>{t.count("convertDraft", draft.orders.length)}</Prepared>
-      <ul className="mt-1 list-disc pl-5 text-xs" style={{ color: A.sub }}>
-        {draft.orders.map((order) => <li key={`${order.supplierId}:${order.currency}:${order.warehouseId}`}>{t.count("convertOrder", order.lines, { supplier: order.supplierName, currency: order.currency })}</li>)}
-      </ul>
-      {draft.missing.map((line) => <p key={line.line} className="mt-1 text-xs text-amber-700">{t("convertMissing", { line: line.line, sku: line.sku || "—", fields: fields(line.fields) })}</p>)}
-      <Actions aside={aside}>
-        {canDecide && draft.missing.length === 0 && draft.orders.length > 0 ? (
-          <button type="button" disabled={busy} className={BUTTON.primary} onClick={onCreate} data-testid="decision-primary">{busy ? t("creating") : t("createOrders")}</button>
-        ) : null}
-        <Link to={row.href} className={BUTTON.secondary}>{t("openRequest")}</Link>
-      </Actions>
+      <LineEnd>{toggle}</LineEnd>
+      <Below>
+        <Prepared>{t.count("convertDraft", draft.orders.length)}</Prepared>
+        <ul className="mt-1 list-disc pl-5 text-xs" style={{ color: A.sub }}>
+          {draft.orders.map((order) => <li key={`${order.supplierId}:${order.currency}:${order.warehouseId}`}>{t.count("convertOrder", order.lines, { supplier: order.supplierName, currency: order.currency })}</li>)}
+        </ul>
+        {draft.missing.map((line) => <p key={line.line} className="mt-1 text-xs text-amber-700">{t("convertMissing", { line: line.line, sku: line.sku || "—", fields: fields(line.fields) })}</p>)}
+        <Actions aside={aside}>
+          {create}
+          {openRequest}
+        </Actions>
+      </Below>
     </>
   );
 }
