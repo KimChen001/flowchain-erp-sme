@@ -490,7 +490,7 @@ export default function SupplierMasterPage({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
-            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
+            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9"
             onClick={detailBack.back}
           >
             <ArrowLeft size={13} />
@@ -828,7 +828,7 @@ export default function SupplierMasterPage({
           <div className="ml-auto flex flex-wrap items-center gap-2 pb-2">
             <label className="flex items-center gap-1.5 text-xs" style={{ color: A.sub }}>
               {copy("Sort by")}
-              <select aria-label={copy("Sort by")} value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} style={{ ...inputStyle, width: "auto", minWidth: 120, paddingTop: 4, paddingBottom: 4 }}>
+              <select aria-label={copy("Sort by")} className="max-sm:!py-2" value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} style={{ ...inputStyle, width: "auto", minWidth: 120, paddingTop: 4, paddingBottom: 4 }}>
                 <option value="name">{copy("Name")}</option>
                 <option value="spend">{copy("Spend")}</option>
                 <option value="overdue">{copy("Overdue")}</option>

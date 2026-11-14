@@ -865,7 +865,7 @@ function MatchCard({ invoice, onDone }: { invoice: any; onDone: () => void }) {
         : say(`${open} of ${total} line differences still to review.`, `${total} 处行差异中还有 ${open} 处待复核。`)
       : rejected
         ? say(`${rejected} ${differences(rejected)} rejected: this invoice cannot be approved. Cancel it, or ask the supplier for a corrected invoice.`, `${rejected} 处行差异已驳回：该发票不能批准。请取消发票，或请供应商重开发票。`)
-        : say(`${total === 1 ? "The line difference is" : `All ${total} line differences are`} approved.`, `${total} 处行差异均已批准。`)
+        : (total === 1 ? say("The line difference is approved.", "该处行差异已批准。") : say(`${total === 2 ? "Both line differences are" : `All ${total} line differences are`} approved.`, `${total} 处行差异均已批准。`))
     : recordedCount
       ? say(`${recordedCount} ${differences(recordedCount)}.`, `${recordedCount} 处行差异。`)
       : "";

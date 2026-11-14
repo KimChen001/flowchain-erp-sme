@@ -89,7 +89,7 @@ const zh: Record<string, string> = {
   "Load {count} more": "再加载 {count} 条", "No supplier prices yet": "暂无供应商价格",
   "Link items to a supplier under Supplied items on the supplier's page, or import a file of item–supplier links.": "在供应商页的“可供应物料”中关联物料，或导入物料–供应商关系文件。",
   "No supplier prices match these filters": "没有符合筛选条件的供应商价格", "Reset the filters to see every link.": "重置筛选即可查看全部供应关系。",
-  "Could not load supplier prices.": "供应商价格加载失败。", "Loading supplier prices…": "正在加载供应商价格…",
+  "Could not load supplier prices.": "供应商价格加载失败。", "Loading supplier prices…": "正在加载供应商价格…", "Loading item…": "正在加载物料…",
   "Not every link could be read at once. Choose a supplier or an item to see all of its links.": "供应关系过多，未能一次全部读取。选择供应商或物料即可查看其全部供应关系。",
 };
 const en = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [chinese, english]));

@@ -344,7 +344,7 @@ export default function ReorderListPage() {
                   aria-expanded={methodOpen}
                   aria-controls="reorder-list-method"
                   data-testid="reorder-list-method-toggle"
-                  className="inline-flex items-center gap-1 py-1 font-semibold"
+                  className="inline-flex items-center gap-1 py-1 font-semibold max-sm:min-h-9"
                   style={{ color: A.blue }}
                 >
                   {t("methodToggle")}
@@ -372,12 +372,12 @@ export default function ReorderListPage() {
                 <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
                   {list.noReorderPoint.items.map((item) => (
                     <li key={item.itemId}>
-                      <Link to={itemHref(item.itemId)} className="font-semibold" style={{ color: A.blue }}>{item.sku}</Link>
+                      <Link to={itemHref(item.itemId)} className="font-semibold max-sm:inline-flex max-sm:min-h-9 max-sm:items-center" style={{ color: A.blue }}>{item.sku}</Link>
                     </li>
                   ))}
                   {list.noReorderPoint.count > list.noReorderPoint.items.length && (
                     <li>
-                      <Link to={list.noReorderPoint.href} style={{ color: A.blue }}>{t("noReorderPointMore", { n: list.noReorderPoint.count - list.noReorderPoint.items.length })}</Link>
+                      <Link to={list.noReorderPoint.href} className="max-sm:inline-flex max-sm:min-h-9 max-sm:items-center" style={{ color: A.blue }}>{t("noReorderPointMore", { n: list.noReorderPoint.count - list.noReorderPoint.items.length })}</Link>
                     </li>
                   )}
                 </ul>
@@ -395,7 +395,7 @@ export default function ReorderListPage() {
                 data-testid="reorder-list-supplier-filter"
                 value={supplierFilter}
                 onChange={(event) => setSupplierFilter(event.target.value)}
-                className="rounded-md border px-2 py-1"
+                className="rounded-md border px-2 py-1 max-sm:h-9"
                 style={{ borderColor: A.border }}
               >
                 <option value="">{t("allSuppliers")}</option>
@@ -547,7 +547,7 @@ export default function ReorderListPage() {
                 <ul className="mt-2 flex flex-wrap gap-2">
                   {items.map((row) => (
                     <li key={row.itemId} className="rounded-md px-2 py-1" style={{ background: A.gray6 }}>
-                      <Link to={itemHref(row.itemId)} style={{ color: A.blue }}>{row.sku}</Link> · {row.itemName}
+                      <Link to={itemHref(row.itemId)} className="max-sm:inline-flex max-sm:min-h-9 max-sm:items-center" style={{ color: A.blue }}>{row.sku}</Link> · {row.itemName}
                     </li>
                   ))}
                 </ul>

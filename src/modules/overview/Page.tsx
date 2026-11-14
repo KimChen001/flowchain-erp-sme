@@ -388,7 +388,7 @@ function RuntimeHomepage() {
                               </div>
                             ) : null}
                           </div>
-                          <Link to={item.href} className="p-1" aria-label={labelOf(item)}><ArrowRight size={16} /></Link>
+                          <Link to={item.href} className="p-1 max-sm:p-2.5" aria-label={labelOf(item)}><ArrowRight size={16} /></Link>
                         </li>
                       ))}
                       {rows.length > GROUP_ROWS ? (

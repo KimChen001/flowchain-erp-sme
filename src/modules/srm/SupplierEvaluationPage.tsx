@@ -194,7 +194,7 @@ export default function SupplierEvaluationPage() {
           </div>
           <label className="ml-auto flex items-center gap-1.5 text-xs" style={{ color: A.sub }}>
             {t("Sort by")}
-            <select aria-label={t("Sort by")} value={sortBy} onChange={(event) => setSortBy(event.target.value as SupplierSort)} style={{ ...inputStyle, width: "auto", minWidth: 160, paddingTop: 4, paddingBottom: 4 }}>
+            <select aria-label={t("Sort by")} className="max-sm:!py-2" value={sortBy} onChange={(event) => setSortBy(event.target.value as SupplierSort)} style={{ ...inputStyle, width: "auto", minWidth: 160, paddingTop: 4, paddingBottom: 4 }}>
               {SORTS.map((option) => <option key={option.value} value={option.value}>{t(option.label)}</option>)}
             </select>
           </label>

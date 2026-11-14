@@ -1028,11 +1028,12 @@ export default function CanonicalProcurementPanel({
     };
     return (
       <div className="space-y-5 pb-16">
+        {/* Above the card, as on the other purchasing detail pages (BackToListLink). */}
+        <button type="button" onClick={() => onNavigate?.("procurement:requests")} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9">
+          <ArrowLeft size={13} />{copy("返回采购申请列表")}
+        </button>
         <Card className="p-5">
-          <button type="button" onClick={() => onNavigate?.("procurement:requests")} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline">
-            <ArrowLeft size={13} />{copy("返回采购申请列表")}
-          </button>
-          <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="fc-page-title" style={{ color: A.label }}>{numberOf(selected)}</h1>
