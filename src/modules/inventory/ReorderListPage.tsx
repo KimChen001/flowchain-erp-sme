@@ -19,7 +19,9 @@ import { useReorderListCopy, type ReorderListCopyKey } from "./reorderListCopy";
 // ordered from here. Beside the recorded reorder point each row shows a
 // suggested one (server/domain/reorder-point-suggestion.mjs); a person with
 // item rights may set it on the item after confirming, and nothing else
-// changes it.
+// changes it. Where the workspace runs the forecast service
+// (tools/forecast-service), a TimesFM line under it gives the model's figure
+// for the same days, loaded after the list; the confirm dialog offers either.
 
 type Flag = { code: string; orderNumber?: string | null; unit?: string; dueDay?: string; count?: number };
 type Supplier = { id: string; code: string; name: string; leadTimeDays: number | null; minimumOrderQuantity: number | null; moqUnit: string | null };
@@ -36,6 +38,17 @@ type Suggestion = {
   minShipmentDays: number;
   recordedBelow: boolean;
 };
+// The model's suggestion for the same days and target
+// (GET /api/inventory/reorder-list/forecast, server/domain/reorder-point-forecast.mjs).
+type Forecast = {
+  reorderPoint: number | null;
+  reason: "no_history_suggestion" | "not_enough_history" | "forecast_unavailable" | null;
+  model: string;
+  coverDays: number | null;
+  periods: number;
+  historyDays: number;
+};
+type ForecastState = "off" | "loading" | "ready" | "unavailable";
 type ReorderRow = {
   itemId: string;
   sku: string;
@@ -69,7 +82,9 @@ type ReorderList = {
   summary: { listed: number; orderNow: number; notJudged: number; noReorderPoint: number; aboveReorderPointWithoutHistory: number };
   suppliers: { id: string; code: string; name: string }[];
   truncatedSubjects?: { subject: string; limit: number }[];
+  forecastAvailable?: boolean;
 };
+type ForecastReply = { forecast: { status: "ok" | "unavailable" }; rows: { itemId: string; reorderPointForecast: Forecast }[] };
 
 // Rows drawn at a time; the ranking, the supplier filter and the total cover
 // every row.
@@ -171,17 +186,23 @@ const NO_SUGGESTION: Record<string, ReorderListCopyKey> = {
   not_enough_history: "noSuggestionHistory",
 };
 
+// A row's model suggestion, when the service gave one.
+const forecastValue = (forecast?: Forecast) => (forecast && forecast.reorderPoint !== null && forecast.reorderPoint > 0 ? forecast.reorderPoint : null);
+
 // The suggested reorder point under the recorded one, in orange when the
 // recorded value is below it (said in words to screen readers). Why it is that
 // number is in the tooltip; it is printed on the row only when the row does
-// not follow the rule printed above the table. The button only opens the
+// not follow the rule printed above the table. Under it, the TimesFM
+// forecast for the same days when there is one. The button only opens the
 // confirm dialog.
-function SuggestedReorderPoint({ row, t, canSet, followsRule, onSet }: { row: ReorderRow; t: Copy; canSet: boolean; followsRule: boolean; onSet: () => void }) {
+function SuggestedReorderPoint({ row, forecast, t, canSet, followsRule, onSet }: { row: ReorderRow; forecast?: Forecast; t: Copy; canSet: boolean; followsRule: boolean; onSet: () => void }) {
   const suggestion = row.reorderPointSuggestion;
   if (!suggestion) return null;
   if (suggestion.suggestedReorderPoint === null) {
     return <div className={small} style={{ color: A.sub }} data-testid="reorder-suggestion">{t(NO_SUGGESTION[suggestion.reason || ""] || "noSuggestionHistory", { min: suggestion.minShipmentDays })}</div>;
   }
+  const modelValue = forecastValue(forecast);
+  const differs = (value: number | null) => value !== null && value > 0 && value !== row.reorderPoint;
   const why = t("suggestionWhy", { days: suggestion.coverDays ?? 0 });
   const detail = t("suggestionDetail", { lead: suggestion.leadTimeDays ?? 0, review: suggestion.reviewDays, days: suggestion.coverDays ?? 0, windows: suggestion.windowCount, rank: suggestion.rank, history: suggestion.historyDays });
   return (
@@ -196,7 +217,17 @@ function SuggestedReorderPoint({ row, t, canSet, followsRule, onSet }: { row: Re
         {suggestion.recordedBelow && <span className="sr-only" data-testid="reorder-below-suggestion">{` (${t("belowSuggestion")})`}</span>}
       </div>
       {!followsRule && <div className={small} style={{ color: A.sub }}>{why}</div>}
-      {canSet && suggestion.suggestedReorderPoint > 0 && suggestion.suggestedReorderPoint !== row.reorderPoint && (
+      {forecast && modelValue !== null && (
+        <div
+          className="whitespace-nowrap text-[12px] font-medium leading-[18px]"
+          style={{ color: A.sub }}
+          data-testid="reorder-forecast"
+          title={t("forecastTooltip", { days: forecast.coverDays ?? 0, periods: forecast.periods })}
+        >
+          {t("forecastLine", { value: withUnit(modelValue, row.unit, t.language) })}
+        </div>
+      )}
+      {canSet && (differs(suggestion.suggestedReorderPoint) || differs(modelValue)) && (
         <button type="button" onClick={onSet} data-testid={`reorder-set-point-${row.sku}`} className={`${small} whitespace-nowrap font-medium hover:underline max-sm:-my-1.5 max-sm:py-1.5 max-sm:text-[12px]`} style={{ color: A.blue }}>
           {t("setReorderPoint")}
         </button>
@@ -209,9 +240,17 @@ function SuggestedReorderPoint({ row, t, canSet, followsRule, onSet }: { row: Re
 // (PATCH /api/master-data/items/:id: versioned and audited). Only the reorder
 // point changes; the stock unit the list read is sent back as it is, so an
 // item whose unit is recorded only in its metadata keeps it.
-function SetReorderPointDialog({ row, t, onClose, onSaved }: { row: ReorderRow; t: Copy; onClose: () => void; onSaved: (value: number) => void }) {
+function SetReorderPointDialog({ row, forecast, t, onClose, onSaved }: { row: ReorderRow; forecast?: Forecast; t: Copy; onClose: () => void; onSaved: (value: number) => void }) {
   const suggestion = row.reorderPointSuggestion as Suggestion;
+  const modelValue = forecastValue(forecast);
   const [value, setValue] = useState(String(suggestion.suggestedReorderPoint ?? ""));
+  // With a model forecast the person picks which suggestion fills the field (or types another number).
+  const choices = modelValue === null || suggestion.suggestedReorderPoint === null
+    ? []
+    : [
+        { key: "dialogUseSuggested" as const, amount: suggestion.suggestedReorderPoint, testId: "reorder-set-point-use-suggested" },
+        { key: "dialogUseForecast" as const, amount: modelValue, testId: "reorder-set-point-use-forecast" },
+      ];
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const save = async () => {
@@ -250,6 +289,26 @@ function SetReorderPointDialog({ row, t, onClose, onSaved }: { row: ReorderRow; 
       <div className="space-y-3 text-xs leading-5" data-testid="reorder-set-point-dialog">
         <p>{t("dialogCurrent", { value: withUnit(row.reorderPoint, row.unit, t.language) })}</p>
         <p>{t("dialogSuggested", { value: withUnit(suggestion.suggestedReorderPoint, row.unit, t.language), days: suggestion.coverDays ?? 0, lead: suggestion.leadTimeDays ?? 0, review: suggestion.reviewDays, history: suggestion.historyDays })}</p>
+        {forecast && modelValue !== null && (
+          <p data-testid="reorder-set-point-forecast">{t("dialogForecast", { value: withUnit(modelValue, row.unit, t.language), days: forecast.coverDays ?? 0, periods: forecast.periods })}</p>
+        )}
+        {choices.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {choices.map((choice) => (
+              <button
+                key={choice.key}
+                type="button"
+                onClick={() => setValue(String(choice.amount))}
+                aria-pressed={value === String(choice.amount)}
+                data-testid={choice.testId}
+                className="rounded-md border px-2.5 py-1 text-xs font-medium"
+                style={{ borderColor: value === String(choice.amount) ? A.blue : A.border, color: value === String(choice.amount) ? A.blue : undefined }}
+              >
+                {t(choice.key, { value: withUnit(choice.amount, row.unit, t.language) })}
+              </button>
+            ))}
+          </div>
+        )}
         <label className="block">
           <span className="font-semibold">{t("dialogField", { unit: unitLabel(row.unit, t.language) })}</span>
           <input type="number" min="0" step="any" value={value} onChange={(event) => setValue(event.target.value)} className="mt-1" style={inputStyle} data-testid="reorder-set-point-value" />
@@ -269,6 +328,8 @@ export default function ReorderListPage() {
   const [state, setState] = useState<"loading" | "ready" | "error" | "unavailable">("loading");
   const [setting, setSetting] = useState<ReorderRow | null>(null);
   const [saved, setSaved] = useState("");
+  const [forecasts, setForecasts] = useState<Record<string, Forecast>>({});
+  const [forecastState, setForecastState] = useState<ForecastState>("off");
   const canSetReorderPoint = useMasterDataWriteAccess().items;
   const phone = useMediaQuery("(max-width: 639.98px)");
   // On a phone the method text folds behind "How this is worked out", so the
@@ -277,12 +338,25 @@ export default function ReorderListPage() {
   const showMethod = !phone || methodOpen;
   const supplierFilter = searchParams.get("supplier") || "";
 
+  // The list first; then, where the workspace has a forecast service, the
+  // TimesFM line, so the list never waits for the model.
+  const loadForecasts = () => {
+    setForecastState("loading");
+    apiJson<ForecastReply>("/api/inventory/reorder-list/forecast")
+      .then((reply) => {
+        setForecasts(Object.fromEntries(reply.rows.map((row) => [row.itemId, row.reorderPointForecast])));
+        setForecastState(reply.forecast.status === "ok" ? "ready" : "unavailable");
+      })
+      .catch(() => setForecastState("unavailable"));
+  };
   const load = () => {
     setState("loading");
     apiJson<ReorderList>("/api/inventory/reorder-list")
       .then((payload) => {
         setList(payload);
         setState("ready");
+        if (payload.forecastAvailable) loadForecasts();
+        else setForecastState("off");
       })
       .catch((error: any) => setState(error?.status === 409 || error?.code === "REORDER_LIST_NOT_AVAILABLE" ? "unavailable" : "error"));
   };
@@ -359,6 +433,15 @@ export default function ReorderListPage() {
                 <p style={{ color: A.sub }}>{t("units")}</p>
                 {list.rows.some((row) => row.reorderPointSuggestion) && (
                   <p style={{ color: A.sub }} data-testid="reorder-list-suggestion-rule">{t("suggestionRule", { review: ruleReviewDays, window: list.rule.windowDays })}</p>
+                )}
+                {forecastState !== "off" && (
+                  <p style={{ color: forecastState === "unavailable" ? A.orange : A.sub }} data-testid="reorder-list-forecast-rule">
+                    {forecastState === "loading"
+                      ? t("forecastLoading")
+                      : forecastState === "unavailable"
+                        ? t("forecastUnavailable")
+                        : t("forecastRule", { review: ruleReviewDays, window: list.rule.windowDays })}
+                  </p>
                 )}
               </div>
             )}
@@ -483,7 +566,7 @@ export default function ReorderListPage() {
                               {/* Recorded, then suggested: stacked in the table, on one line on a phone. */}
                               <div className="max-sm:flex max-sm:flex-wrap max-sm:items-baseline max-sm:gap-x-1.5">
                                 <div className="whitespace-nowrap">{withUnit(row.reorderPoint, row.unit, t.language)}</div>
-                                <SuggestedReorderPoint row={row} t={t} canSet={canSetReorderPoint} followsRule={followsRule(row)} onSet={() => setSetting(row)} />
+                                <SuggestedReorderPoint row={row} forecast={forecasts[row.itemId]} t={t} canSet={canSetReorderPoint} followsRule={followsRule(row)} onSet={() => setSetting(row)} />
                               </div>
                             </td>
                             <td className={cell} data-testid="reorder-demand">
@@ -560,6 +643,7 @@ export default function ReorderListPage() {
       {setting && (
         <SetReorderPointDialog
           row={setting}
+          forecast={forecasts[setting.itemId]}
           t={t}
           onClose={() => setSetting(null)}
           onSaved={(value) => {

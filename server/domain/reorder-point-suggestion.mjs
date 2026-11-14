@@ -43,20 +43,22 @@ const rows = (value) => (Array.isArray(value) ? value : [])
 const text = (value) => String(value ?? '').trim()
 const quantity = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
 // Whole ten-thousandths, as the reorder list adds quantities.
-const SCALE = 10000
+export const QUANTITY_SCALE = 10000
+const SCALE = QUANTITY_SCALE
 const toUnits = (value) => Math.round(value * SCALE)
 
 // The nearest rank of the in-stock target among n sums, 1-based: 75 of 90.
 // The small tolerance keeps n × 5/6 from rounding up past a whole rank.
 export const suggestionRank = (n, target = SUGGESTION_IN_STOCK_TARGET) => Math.min(n, Math.max(1, Math.ceil(n * target - 1e-9)))
 
-// The quantity shipped on each of the 90 days before today, oldest first, in
-// whole ten-thousandths of the stock unit. A line in another unit is never
-// added; a line with no unit counts in the stock unit (as in dailyDemand).
-export function shippedUnitsPerDay({ lines = [], stockUnit, today, timeZone = DEFAULT_TENANT_TIMEZONE }) {
-  const firstDay = addCalendarDays(today, -DEMAND_WINDOW_DAYS)
-  const indexOf = new Map(Array.from({ length: DEMAND_WINDOW_DAYS }, (_, index) => [addCalendarDays(firstDay, index), index]))
-  const perDay = new Array(DEMAND_WINDOW_DAYS).fill(0)
+// The quantity shipped on each of the 90 days before today (or `days` days:
+// the model forecast reads a longer history), oldest first, in whole
+// ten-thousandths of the stock unit. A line in another unit is never added; a
+// line with no unit counts in the stock unit (as in dailyDemand).
+export function shippedUnitsPerDay({ lines = [], stockUnit, today, timeZone = DEFAULT_TENANT_TIMEZONE, days = DEMAND_WINDOW_DAYS }) {
+  const firstDay = addCalendarDays(today, -days)
+  const indexOf = new Map(Array.from({ length: days }, (_, index) => [addCalendarDays(firstDay, index), index]))
+  const perDay = new Array(days).fill(0)
   for (const line of rows(lines)) {
     const index = indexOf.get(instantCalendarDay(line.postedAt, timeZone))
     const shipped = quantity(line.quantity)

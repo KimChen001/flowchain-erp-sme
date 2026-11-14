@@ -2,6 +2,7 @@ import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
 import { findManyWithinLimit, requireTenantId } from '../repositories/repository-read-scope.mjs'
 import { listItemSupplierRecords } from './master-data-commands.mjs'
 import { DEMAND_WINDOW_DAYS, buildReorderList } from './reorder-list.mjs'
+import { FORECAST_HISTORY_DAYS, attachReorderPointForecasts } from './reorder-point-forecast.mjs'
 import { attachReorderPointSuggestions } from './reorder-point-suggestion.mjs'
 
 // Reads what the reorder list needs from the workspace's records, scoped to
@@ -19,6 +20,10 @@ import { attachReorderPointSuggestions } from './reorder-point-suggestion.mjs'
 // lines and the preferred supplier's lead time (reorder-point-suggestion.mjs),
 // with its inputs. It never changes the row: the list is dated by the
 // recorded reorder point until a person changes it on the item.
+//
+// Given a forecast client (reorder-point-forecast.mjs), the shipments are read
+// over FORECAST_HISTORY_DAYS instead, the list itself still uses the last 90
+// days of them, and each row also carries the model's suggestion.
 
 // The business context's truncated reads that can change a stock position:
 // stock balances, sales orders (open demand and reservations) and purchase
@@ -32,10 +37,12 @@ export function stockTruncatedSubjects(entries = []) {
 
 const ITEM_LIMIT = 2000
 const SHIPMENT_LINE_LIMIT = 20000
+// Two years of shipments for the model forecast: more lines, fewer fields.
+const FORECAST_SHIPMENT_LINE_LIMIT = 200000
 
 export function createReorderListReadService({ prisma }) {
   return {
-    async read({ tenantId, warehouseIds = null, today, timeZone, allocationRows = [], showPurchaseOrders = true, truncatedSubjects = [] }) {
+    async read({ tenantId, warehouseIds = null, today, timeZone, allocationRows = [], showPurchaseOrders = true, truncatedSubjects = [], forecastClient = null }) {
       const scopedTenantId = requireTenantId({ tenantId })
       const truncated = new Map(truncatedSubjects.map((entry) => [entry.subject, entry]))
       const onTruncated = (entry) => truncated.set(entry.subject, entry)
@@ -44,7 +51,8 @@ export function createReorderListReadService({ prisma }) {
       const scopeIds = Array.isArray(warehouseIds) && !(warehouses.length && warehouses.every((row) => warehouseIds.includes(row.id))) ? warehouseIds : null
       // Posting instants a day either side of the window; the rules keep the
       // ones on a window day in the workspace timezone.
-      const from = new Date(`${addCalendarDays(today, -DEMAND_WINDOW_DAYS - 1)}T00:00:00Z`)
+      const forecasting = Boolean(forecastClient) && !scopeIds
+      const from = new Date(`${addCalendarDays(today, -(forecasting ? FORECAST_HISTORY_DAYS : DEMAND_WINDOW_DAYS) - 1)}T00:00:00Z`)
       const to = new Date(`${addCalendarDays(today, 1)}T12:00:00Z`)
       const [items, shipmentRows, supplierLinks, suppliers] = await Promise.all([
         findManyWithinLimit(prisma.item, {
@@ -57,17 +65,21 @@ export function createReorderListReadService({ prisma }) {
           where: { shipment: { tenantId: scopedTenantId, postingStatus: 'posted', postedAt: { gte: from, lt: to } } },
           select: { id: true, itemId: true, unit: true, postedQuantity: true, shipment: { select: { postedAt: true } } },
           orderBy: [{ id: 'asc' }],
-        }, { limit: SHIPMENT_LINE_LIMIT, subject: 'shipment_lines', onTruncated }),
+        }, { limit: forecasting ? FORECAST_SHIPMENT_LINE_LIMIT : SHIPMENT_LINE_LIMIT, subject: 'shipment_lines', onTruncated }),
         scopeIds ? [] : listItemSupplierRecords(prisma, scopedTenantId),
         scopeIds ? [] : prisma.supplier.findMany({ where: { tenantId: scopedTenantId }, select: { id: true, code: true, name: true, status: true } }),
       ])
-      const shipmentLines = shipmentRows.map((line) => ({
+      const longLines = shipmentRows.map((line) => ({
         itemId: line.itemId,
         unit: line.unit,
         postedAt: line.shipment?.postedAt?.toISOString?.() || null,
         quantity: Number(line.postedQuantity),
       }))
-      const list = attachReorderPointSuggestions(buildReorderList({
+      // The list and the history suggestion read the demand window only; the
+      // rules drop lines outside it anyway, this keeps them from being walked.
+      const windowFrom = new Date(`${addCalendarDays(today, -DEMAND_WINDOW_DAYS - 1)}T00:00:00Z`).getTime()
+      const shipmentLines = forecasting ? longLines.filter((line) => line.postedAt && Date.parse(line.postedAt) >= windowFrom) : longLines
+      const withSuggestions = attachReorderPointSuggestions(buildReorderList({
         allocationRows: scopeIds ? [] : allocationRows,
         items,
         shipmentLines,
@@ -78,6 +90,13 @@ export function createReorderListReadService({ prisma }) {
         scope: { warehouseIds: scopeIds, totalWarehouses: warehouses.length },
         showPurchaseOrders,
       }), shipmentLines)
+      // A truncated long read would show a seasonal item as quieter than it
+      // is, so the model is not asked then.
+      const list = !forecasting
+        ? withSuggestions
+        : truncated.has('shipment_lines')
+          ? { ...withSuggestions, forecast: { status: 'unavailable', error: 'history truncated' } }
+          : await attachReorderPointForecasts(withSuggestions, longLines, { client: forecastClient })
       return {
         ...list,
         dataLimitations: ['transfers_not_considered', ...[...truncated.values()].map((entry) => `truncated:${entry.subject}`)],
