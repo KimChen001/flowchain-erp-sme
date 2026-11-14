@@ -17,7 +17,8 @@
 //      order, each as of its own time;
 //   5. the [assumed] supplier terms (item supplier command);
 //   6. UCI only: a customer invoice for each shipment, issued on its day, due
-//      30 days later and paid then [assumed], and its receivable;
+//      30 days later and paid then [assumed], its receivable and, once paid,
+//      its payment record;
 //   6b. UCI only: the [assumed] supplier invoices, their three-way matches,
 //      payables and payments, through the finance commands (seed-payables.mjs);
 //   7. the walkthrough scene's supplier tier, set by its buyer (scene.mjs);
@@ -287,6 +288,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   // 6. UCI: customer invoices, issued on the shipment day, and receivables.
   since = Date.now()
   let invoices = 0
+  let customerPayments = 0
   if (plan.dataset === 'uci') {
     const shipmentRows = await prisma.shipmentDocument.findMany({ where: { tenantId, postingStatus: 'posted' }, select: { id: true, salesOrderId: true, postedAt: true, lines: { select: { id: true, salesOrderLineId: true, itemId: true, sku: true, postedQuantity: true, unit: true } } } })
     const shipmentOf = new Map(shipmentRows.map((row) => [row.salesOrderId, row]))
@@ -297,6 +299,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
         const headers = []
         const lines = []
         const receivables = []
+        const payments = []
         for (const order of part) {
           const shipment = shipmentOf.get(order.id)
           if (!shipment) throw new Error(`Sales order ${order.id} has no posted shipment to invoice.`)
@@ -326,11 +329,23 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
             id: `${id}-AR`, tenantId, customerInvoiceId: id, obligationNumber: `AR-${invoiceNumber}`, originalAmount: subtotal, outstandingAmount: paid ? 0 : subtotal, currency: profile.currency, dueDate,
             status: paid ? 'settled' : 'open', metadata: { ...metadata, ...(paid ? { assumedPaidOn: dueDate.toISOString().slice(0, 10) } : {}) },
           })
+          // A settled receivable has its payment, recorded as the app records
+          // one (payment-record-command-service.mjs): on the due date, in full.
+          if (paid) {
+            const paidOn = dueDate.toISOString().slice(0, 10)
+            payments.push({
+              id: `${id}-PAY`, tenantId, obligationType: 'receivable', receivableObligationId: `${id}-AR`, paymentDate: new Date(`${paidOn}T00:00:00.000Z`), amount: subtotal, currency: profile.currency,
+              method: 'other', reference: `Customer payment ${invoiceNumber}`, note: 'Paid on the due date [assumed].', status: 'recorded', recordedById: actor.userId, createdAt: dueDate,
+              metadata: { ...metadata, assumed: true, assumedPaidOn: paidOn },
+            })
+          }
         }
         await tx.customerInvoice.createMany({ data: headers })
         for (const lineChunk of chunks(lines)) await tx.customerInvoiceLine.createMany({ data: lineChunk })
         await tx.receivableObligation.createMany({ data: receivables })
+        if (payments.length) await tx.paymentRecord.createMany({ data: payments })
         invoices += headers.length
+        customerPayments += payments.length
       }, { timeout: 600000 })
     }
   }
@@ -377,7 +392,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   }
 
   // 8. The workspace note.
-  const counts = { ...publicDataPlanCounts(plan), postedReceipts: posted, shippedOrders: shipped, customerInvoices: invoices, ...(payables ? { supplierInvoices: payables.invoices, supplierPayments: payables.paid } : {}) }
+  const counts = { ...publicDataPlanCounts(plan), postedReceipts: posted, shippedOrders: shipped, customerInvoices: invoices, customerPayments, ...(payables ? { supplierInvoices: payables.invoices, supplierPayments: payables.paid } : {}) }
   const note = {
     dataset: plan.dataset,
     sourceWindow: plan.sourceWindow,

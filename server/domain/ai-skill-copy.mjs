@@ -125,6 +125,9 @@ const entries = {
   // The answer's sources line only.
   'source.receivables': ['receivables', '应收账款'],
   'source.overview': ['the business overview', '业务概况'],
+  'source.payables': ['payables', '应付账款'],
+  'source.payments': ['recorded payments', '收付款记录'],
+  'source.gross_profit': ['customer invoices and reference prices', '客户发票和参考价'],
   // Status labels the model reads beside the codes (statusLabel).
   'po_status.draft': ['Draft', '草稿'],
   'po_status.pending_approval': ['Waiting for approval', '待审批'],
