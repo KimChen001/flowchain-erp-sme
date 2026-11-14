@@ -16,7 +16,11 @@ import { aiSkillDaysBetween } from './ai-skill-signals.mjs'
 // materially (comesBack). Everything here is pure: the repository stores the
 // items and the routes call these functions.
 
-export const DRAFTED_DECISION_KINDS = Object.freeze(['reorder_now', 'purchase_order_overdue', 'purchase_request_to_convert'])
+// bill_exception: a supplier invoice the three-way match held (2026-11-13).
+export const DRAFTED_DECISION_KINDS = Object.freeze(['reorder_now', 'purchase_order_overdue', 'purchase_request_to_convert', 'bill_exception'])
+// The kinds whose card prepares a message to the supplier, so a person may
+// record that it was sent or copied ("chased").
+export const SUPPLIER_MESSAGE_KINDS = Object.freeze(['purchase_order_overdue', 'bill_exception'])
 // Who may decide: every drafted action (a purchase request, a promised date,
 // orders from a request) needs this permission, so deciding needs it too.
 export const DECISION_PERMISSION = 'procurement.purchase_order.revise'
@@ -195,8 +199,23 @@ export function planDecisionSync(items = [], rows = [], { today, areas = new Set
   return { create, reopen, close }
 }
 
+// The earliest of each kind first, then the rest by date, so one kind with
+// many rows does not hide the others behind "Show more" (2026-11-13: 27 held
+// invoices from last December filled the five cards Today shows).
+function eachKindFirst(entries) {
+  const seen = new Set()
+  const first = []
+  const rest = []
+  for (const entry of entries) {
+    if (seen.has(entry.row.kind)) rest.push(entry)
+    else { seen.add(entry.row.kind); first.push(entry) }
+  }
+  return [...first, ...rest]
+}
+
 // Today's rows in three parts, earliest date first in each: the drafted kinds
-// nobody has decided on (waiting), the rows set aside, and the rest (work).
+// nobody has decided on (waiting, the earliest of each kind first), the rows
+// set aside, and the rest (work).
 export function arrangeToday(rows = [], items = []) {
   const byKey = new Map(items.map((item) => [item.activeKey, item]))
   const waiting = []
@@ -209,7 +228,7 @@ export function arrangeToday(rows = [], items = []) {
     if (item?.state === 'decided') setAside.push({ key, row, item })
     else waiting.push({ key, row, item: item || null })
   }
-  return { waiting, setAside, work }
+  return { waiting: eachKindFirst(waiting), setAside, work }
 }
 
 const fail = (code, message, field) => Object.assign(new Error(message), { status: 422, code, details: field ? [{ field, message }] : [] })
@@ -233,7 +252,7 @@ export function parseDecision(input = {}, { kind, today } = {}) {
     return { decision: option, returnOn: null, reasonCode, note: note || null }
   }
   if (option === 'chased') {
-    if (kind !== 'purchase_order_overdue') throw fail('DECISION_OPTION_INVALID', 'Only an overdue purchase order can be marked chased.', 'option')
+    if (!SUPPLIER_MESSAGE_KINDS.includes(kind)) throw fail('DECISION_OPTION_INVALID', 'Only an overdue purchase order or a held supplier invoice can be marked chased.', 'option')
     return { decision: option, returnOn: null, reasonCode: null, note: note || null }
   }
   // accepted: the documents the person created from the draft.

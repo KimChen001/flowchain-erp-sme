@@ -13,7 +13,7 @@ const array = (value) => (Array.isArray(value) ? value : [])
 const number = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
 const fold = (value) => text(value).toLowerCase()
 
-const ENTITY_TYPES = Object.freeze({ reorder_now: 'item', purchase_order_overdue: 'purchase_order', purchase_request_to_convert: 'purchase_request' })
+const ENTITY_TYPES = Object.freeze({ reorder_now: 'item', purchase_order_overdue: 'purchase_order', purchase_request_to_convert: 'purchase_request', bill_exception: 'supplier_invoice' })
 
 // What a draft prepares, in figures the answer may state.
 function preparedOf(draft, today) {
@@ -48,6 +48,24 @@ function preparedOf(draft, today) {
       linesMissingData: array(draft.missing).length,
     }
   }
+  if (draft.type === 'invoice_exception') {
+    // What the match found different and the likely cause the records show;
+    // prices only for a reader who may see amounts (the draft leaves them null).
+    return {
+      type: 'invoice_exception',
+      invoiceNumber: draft.invoiceNumber, orderNumber: draft.orderNumber || null, supplier: draft.supplier?.name || null, currency: draft.currency || null,
+      step: draft.step,
+      differences: array(draft.differences).slice(0, 5).map((row) => ({
+        kind: row.kind, cause: row.cause || null, sku: row.sku || null, unit: row.unit || null,
+        orderPrice: row.kind === 'price' ? number(row.expected) : null, invoicePrice: row.kind === 'price' ? number(row.actual) : null, percent: number(row.percent),
+        ordered: number(row.ordered), received: number(row.received), previouslyInvoiced: number(row.previouslyInvoiced), invoiced: number(row.invoiced), missing: number(row.missing),
+        expectedAmount: row.kind === 'amount' ? number(row.expected) : null, invoicedAmount: row.kind === 'amount' ? number(row.actual) : null,
+        orderWithInvoicePrice: row.evidenceOrder || null,
+      })),
+      moreDifferences: Number(draft.moreDifferences) || 0,
+      emailOnRecord: Boolean(text(draft.supplier?.email)),
+    }
+  }
   return null
 }
 
@@ -67,6 +85,27 @@ const addDays = (day, days) => {
   return date.toISOString().slice(0, 10)
 }
 
+// Counts over every waiting item, not only the rows listed (2026-11-13: with
+// 27 held invoices and 10 rows listed, "how many charge more than the order"
+// was answered 10): per kind, and for held invoices how many have each kind
+// of difference, each likely cause, and a price above the order's.
+function waitingCounts(waiting) {
+  const byKind = {}
+  for (const entry of waiting) byKind[entry.row?.kind] = (byKind[entry.row?.kind] || 0) + 1
+  const held = waiting.filter((entry) => entry.draft?.type === 'invoice_exception')
+  if (!held.length) return { waitingByKind: byKind }
+  const withDifference = {}
+  const byCause = {}
+  let priceAboveOrder = 0
+  for (const entry of held) {
+    const differences = array(entry.draft.differences)
+    for (const kind of new Set(differences.map((row) => row.kind))) withDifference[kind] = (withDifference[kind] || 0) + 1
+    for (const cause of new Set(differences.map((row) => row.cause).filter(Boolean))) byCause[cause] = (byCause[cause] || 0) + 1
+    if (differences.some((row) => row.kind === 'price' && number(row.actual) !== null && number(row.expected) !== null && number(row.actual) > number(row.expected))) priceAboveOrder += 1
+  }
+  return { waitingByKind: byKind, heldInvoices: { total: held.length, withDifference, byCause, priceAboveOrder } }
+}
+
 export function decisionItemsResult(decisions, { include = 'waiting', limit = 10 } = {}, { today = null } = {}) {
   const waiting = array(decisions.waiting)
   const setAside = array(decisions.setAside)
@@ -77,6 +116,7 @@ export function decisionItemsResult(decisions, { include = 'waiting', limit = 10
     supplierEmailOn: decisions.supplierEmail?.canSend === true,
     waitingTotal: waiting.length,
     setAsideTotal: setAside.length,
+    ...waitingCounts(waiting),
     ...(include !== 'set_aside' ? {
       waiting: waiting.slice(0, take).map((entry) => ({ ...rowOf(entry), returned: entry.returned === true, prepared: preparedOf(entry.draft, today) })),
     } : {}),
@@ -111,7 +151,7 @@ async function readDecisions(context) {
 
 export const decisionItemsTool = defineAiTool({
   name: 'decision_items',
-  description: 'The decisions waiting for this user on Today, each with the next step FlowChain prepared, and the ones set aside: the same items the Today page shows. Kinds: reorder_now (prepared: a purchase request with its supplier and quantity, the shortfall raised to the supplier\'s minimum order), purchase_order_overdue (prepared: a follow-up to the supplier with the lines still to receive) and purchase_request_to_convert (prepared: the purchase orders the approved request would make). waiting rows are ordered by date like Today; returned marks one that came back after being set aside. setAside rows say what was decided (not_now until returnOn, not_needed with a reasonCode, chased, accepted, covered by an open request), by whom and when. canDecide: whether this user may act on them; supplierEmailOn: whether a follow-up can be emailed from the card. Use it for "what should I handle first?" and what is waiting for a decision, then show_decisions to show the cards.',
+  description: 'The decisions waiting for this user on Today, each with the next step FlowChain prepared, and the ones set aside: the same items the Today page shows. Kinds: reorder_now (prepared: a purchase request with its supplier and quantity, the shortfall raised to the supplier\'s minimum order), purchase_order_overdue (prepared: a follow-up to the supplier with the lines still to receive), purchase_request_to_convert (prepared: the purchase orders the approved request would make) and bill_exception (a supplier invoice the three-way match held; prepared: each difference with its kind (price, quantity, amount) and likely cause: price_changed (another order already carries the invoice price), invoice_price, over_ordered, already_invoiced, not_yet_received, line_amount; and the step: ask_supplier, review_price or wait_receipt). waiting rows are in Today\'s order: the earliest of each kind first, then the rest by date; returned marks one that came back after being set aside. setAside rows say what was decided (not_now until returnOn, not_needed with a reasonCode, chased, accepted, covered by an open request), by whom and when. waitingTotal and waitingByKind count every waiting item, though only limit rows are listed; heldInvoices counts every held invoice by kind of difference (withDifference), by likely cause (byCause) and those priced above the order (priceAboveOrder): answer "how many" from these counts, never by counting the rows. canDecide: whether this user may act on them; supplierEmailOn: whether a follow-up can be emailed from the card. Use it for "what should I handle first?" and what is waiting for a decision, then show_decisions to show the cards.',
   parameters: {
     include: { type: 'string', enum: ['waiting', 'set_aside', 'all'], description: 'waiting by default.' },
     limit: { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: '10 by default.' },

@@ -1505,6 +1505,14 @@ const offerRecordActions = defineUiTool({
 })
 
 const FOLLOWUP_LENGTH = 90
+const CJK_CHAR = /[㐀-鿿豈-﫿]/
+// More Chinese than English by weight: a Chinese character against about two
+// Latin letters, as the question set's scorer counts.
+const mostlyChinese = (value) => {
+  const cjk = (String(value).match(/[㐀-鿿豈-﫿]/g) || []).length
+  const latin = (String(value).match(/[A-Za-z]/g) || []).length
+  return cjk > 0 && cjk * 2 >= latin
+}
 
 const suggestFollowups = defineUiTool({
   name: 'suggest_followups',
@@ -1515,11 +1523,17 @@ const suggestFollowups = defineUiTool({
     required: ['questions'],
     additionalProperties: false,
   },
-  build(input) {
+  build(input, ctx) {
     const questions = [...new Set(input.questions.map((question) => question.replace(/\s+/g, ' ').trim()))]
     if (questions.some((question) => !question)) return fail('invalid_input', 'A question is empty.')
     const long = questions.find((question) => question.length > FOLLOWUP_LENGTH)
     if (long) return fail('too_long', `Each question is at most ${FOLLOWUP_LENGTH} characters; "${long.slice(0, 40)}..." has ${long.length}.`)
+    // In the answer's language (2026-11-13: a Chinese answer offered "Give me
+    // a follow-up message for PO-202610-0024"). A Chinese chip may name
+    // records in English but has Chinese words; an English chip is not mostly
+    // Chinese.
+    const foreign = questions.find((question) => (ctx?.language === 'zh-CN' ? !CJK_CHAR.test(question) : ctx?.language === 'en-US' && mostlyChinese(question)))
+    if (foreign) return fail('wrong_language', `Write each question in ${ctx.language === 'zh-CN' ? 'Chinese' : 'English'}, the answer's language; "${foreign.slice(0, 40)}" is not.`)
     return part('followups', { questions }, [])
   },
 })

@@ -5,14 +5,15 @@
 // computes wrongly fails its case.
 //
 // Plan shape (buildPublicDataPlan): days, seedDay, items [{ key, sku, name,
-// price, supplierKey, daily, meanDaily, safetyStock, reorderPoint,
-// minimumOrderQuantity }], suppliers [{ key, name, tier }], customers [{ key,
-// name }], salesOrders [{ index, customerKey, lines: [{ itemKey, quantity,
-// unitPrice }] }], purchasing { closing: { itemKey: onHand }, orders: [{
-// created, promised, supplierKey, status, scene, lines: [{ itemKey, quantity
-// }], receipts: [{ index, lines: [{ itemKey, quantity }] }] }] }. Day index i
-// is the seed day plus (i - days); the last day of the data is the day before
-// the seed day.
+// price (selling), purchasePrice, supplierKey, daily, meanDaily, safetyStock,
+// reorderPoint, minimumOrderQuantity }], suppliers [{ key, name, tier }],
+// customers [{ key, name }], salesOrders [{ index, customerKey, lines: [{
+// itemKey, quantity, unitPrice }] }], purchasing { closing: { itemKey: onHand
+// }, orders: [{ created, promised, supplierKey, status, scene, closed, lines:
+// [{ itemKey, quantity }], receipts: [{ index, lines: [{ itemKey, quantity }]
+// }] }] }, payables { invoices, notYetInvoiced } (planSupplierInvoices in
+// plan.mjs). Day index i is the seed day plus (i - days); the last day of the
+// data is the day before the seed day.
 const DAY_MS = 86400000
 const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places
 const sum = (rows, pick) => rows.reduce((total, row) => total + pick(row), 0)
@@ -39,9 +40,15 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
   const ordered = (order, key) => sum(order.lines.filter((line) => line.itemKey === key), (line) => line.quantity)
   const outstanding = (order) => sum(order.lines, (line) => line.quantity - received(order, line.itemKey))
   // Open: issued and not fully received. An order waiting for approval is
-  // not with the supplier yet.
-  const open = orders.filter((order) => order.status === 'issued' && outstanding(order) > 0)
+  // not with the supplier yet; one closed short (the supplier will not send
+  // the rest) is done.
+  const open = orders.filter((order) => order.status === 'issued' && !order.closed && outstanding(order) > 0)
   const onOrder = (key) => sum(open, (order) => ordered(order, key) - received(order, key))
+  // What the business pays for an item [assumed]: the plan's purchase price,
+  // a share of the selling price (the item's supplier terms carry it, so the
+  // order form, stock value and holding cost use it). A plan without one
+  // prices purchases at the selling price.
+  const costOf = (row) => row.purchasePrice ?? row.price
 
   const item = (sku) => {
     const row = bySku.get(sku)
@@ -51,7 +58,9 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     return {
       sku: row.sku,
       name: row.name,
-      price: row.price,
+      // The purchase price; the public selling price beside it.
+      price: costOf(row),
+      sellingPrice: row.price,
       supplier: suppliers.get(row.supplierKey)?.name,
       onHand,
       onOrder: incoming,
@@ -94,15 +103,18 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
 
   // Sales by calendar month (YYYY-MM): every line shipped in full on its
   // order's day, at its own price; line amounts in pence as the invoices hold
-  // them.
+  // them. The cost of what was sold is the units at the purchase price, so
+  // gross profit is the sales less that cost.
   const lineAmount = (line) => round(line.quantity * line.unitPrice)
   const inMonth = (month) => plan.salesOrders.filter((order) => dateOf(order.index).startsWith(month))
   const month = (value) => {
     const rows = inMonth(value)
     const byItem = new Map()
     const byCustomer = new Map()
+    let cost = 0
     for (const order of rows) {
       for (const line of order.lines) {
+        cost += line.quantity * costOf(items.get(line.itemKey))
         const entry = byItem.get(line.itemKey) || { sku: items.get(line.itemKey).sku, units: 0, revenue: 0 }
         entry.units += line.quantity
         entry.revenue += lineAmount(line)
@@ -118,10 +130,14 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
       const [topKey, topUnits] = [...row.items].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0]
       return { id: row.id, name: row.name, revenue: round(row.revenue), topItem: { sku: items.get(topKey).sku, units: topUnits } }
     })
+    const revenue = round(sum(itemRows, (row) => row.revenue))
     return {
       orders: rows.length,
       units: sum(itemRows, (row) => row.units),
-      revenue: round(sum(itemRows, (row) => row.revenue)),
+      revenue,
+      cost: round(cost),
+      grossProfit: round(revenue - cost),
+      grossMarginPercent: revenue ? round((100 * (revenue - cost)) / revenue, 1) : null,
       unitsOf: (sku) => byItem.get(bySku.get(sku)?.key)?.units || 0,
       byUnits: [...itemRows].sort((a, b) => b.units - a.units || a.sku.localeCompare(b.sku)),
       byRevenue: [...itemRows].sort((a, b) => b.revenue - a.revenue || a.sku.localeCompare(b.sku)),
@@ -140,10 +156,24 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     largest: [...owedBy].map(([id, amount]) => ({ id, name: customers.get(id)?.name, amount: round(amount) })).sort((a, b) => b.amount - a.amount || String(a.id).localeCompare(String(b.id)))[0],
   }
 
-  // Stock at the purchase price (the public selling price, assumed), and a
-  // year of holding it at 25%.
-  const stockValue = round(sum(plan.items, (row) => plan.purchasing.closing[row.key] * row.price))
+  // Stock at the purchase price (assumed), and a year of holding it at 25%.
+  const stockValue = round(sum(plan.items, (row) => plan.purchasing.closing[row.key] * costOf(row)))
   const inventory = { value: stockValue, holdingPerYear: round(stockValue * UCI_HOLDING_RATE) }
+
+  // Supplier invoices [assumed] (plan.payables): the three-way match result,
+  // what is owed and what was paid. As of today: a matched invoice not paid
+  // by the seed day is overdue once its due day has passed.
+  const supplierInvoices = plan.payables ? payablesFacts(plan, { dateOf, todayIndex, items, suppliers }) : null
+
+  // Cash by calendar month: customer invoices are paid on their due date (30
+  // days after shipping) when that is before the seed day; supplier invoices
+  // on the day the plan pays them.
+  const cash = (value) => {
+    const paidIn = plan.salesOrders.filter((order) => order.index + 30 < plan.days && dateOf(order.index + 30).startsWith(value))
+    const received = round(sum(paidIn, (order) => sum(order.lines, lineAmount)))
+    const paidOut = supplierInvoices ? supplierInvoices.paidIn(value) : 0
+    return { received, paid: paidOut, net: round(received - paidOut) }
+  }
 
   // On-time deliveries (the supplier scorecard's rule): a delivery is an
   // issued order's lines with one promised date in the last 90 days up to
@@ -182,7 +212,7 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
   }
   const waitingForApproval = orders.filter((order) => order.status === 'pending_approval').map((order) => ({
     supplier: suppliers.get(order.supplierKey)?.name,
-    lines: order.lines.map((line) => ({ sku: items.get(line.itemKey).sku, quantity: line.quantity, amount: round(line.quantity * items.get(line.itemKey).price) })),
+    lines: order.lines.map((line) => ({ sku: items.get(line.itemKey).sku, quantity: line.quantity, amount: round(line.quantity * costOf(items.get(line.itemKey))) })),
   }))
 
   return {
@@ -195,6 +225,8 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     month,
     receivables,
     inventory,
+    supplierInvoices,
+    cash,
     onTime,
     suppliedBy,
     lastReceipt,
@@ -204,15 +236,60 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     // order by SKU, for the constraint cases' form checks (an object lists
     // integer-like keys such as 16014 first, so pick from skus).
     skus: plan.items.map((row) => row.sku),
-    prices: Object.fromEntries(plan.items.map((row) => [row.sku, row.price])),
+    prices: Object.fromEntries(plan.items.map((row) => [row.sku, costOf(row)])),
     minimums: Object.fromEntries(plan.items.map((row) => [row.sku, row.minimumOrderQuantity])),
     scene: plan.scene,
     holdingRate: UCI_HOLDING_RATE,
   }
 }
 
+// The supplier invoices of a plan with payables, as of todayIndex. Each one
+// is paid by the seed day, held at the match (a difference), or owed: open
+// until its due day, overdue after it (nothing is paid after the seed day).
+function payablesFacts(plan, { dateOf, todayIndex, items, suppliers }) {
+  const invoices = plan.payables.invoices
+  const money = (pence) => round(pence / 100)
+  const state = (row) => (row.payment === 'paid' || row.payment === 'held' ? row.payment : row.due < todayIndex ? 'overdue' : 'open')
+  const view = (row) => ({ number: row.number, supplier: suppliers.get(row.supplierKey)?.name, date: dateOf(row.day), due: dateOf(row.due), total: row.total, rule: row.rule, match: row.match, state: state(row) })
+  const inState = (name) => invoices.filter((row) => state(row) === name)
+  const tally = (rows) => ({ count: rows.length, total: money(sum(rows, (row) => row.totalPence)) })
+  // A difference names its line: the order price and the invoice price, what
+  // was received and what was billed, and what the invoice charges beyond the
+  // order and the receipt (over).
+  const difference = (row) => {
+    const line = row.lines[row.changedLine]
+    const price = row.rule === 'price_above_order'
+    return {
+      ...view(row), kind: price ? 'price' : 'quantity', sku: items.get(line.itemKey).sku,
+      orderPrice: line.orderPricePence / 100, invoicePrice: line.unitPricePence / 100, received: line.received, billed: line.quantity,
+      over: price ? money((line.unitPricePence - line.orderPricePence) * line.quantity) : money((line.quantity - line.received) * line.orderPricePence),
+    }
+  }
+  const differences = invoices.filter((row) => row.match === 'exception').map(difference).sort((a, b) => b.over - a.over || a.number.localeCompare(b.number))
+  const open = inState('open')
+  const overdue = inState('overdue')
+  return {
+    count: invoices.length,
+    match: { matched: invoices.filter((row) => row.match === 'matched').length, exception: differences.length },
+    differences,
+    priceDifferences: differences.filter((row) => row.kind === 'price'),
+    quantityDifferences: differences.filter((row) => row.kind === 'quantity'),
+    datedBeforeReceipt: invoices.filter((row) => row.rule === 'dated_before_receipt').map(view),
+    // Approved and not paid: what the business owes its suppliers.
+    owed: tally([...open, ...overdue]),
+    open: tally(open),
+    overdue: { ...tally(overdue), invoices: overdue.map(view).sort((a, b) => a.due.localeCompare(b.due) || a.number.localeCompare(b.number)) },
+    // Not approved: waiting at the three-way match.
+    held: tally(inState('held')),
+    paid: tally(inState('paid')),
+    paidIn: (month) => money(sum(invoices.filter((row) => row.payment === 'paid' && dateOf(row.paidDay).startsWith(month)), (row) => row.totalPence)),
+    // Received and not invoiced yet, at the order price.
+    notInvoiced: { count: plan.payables.notYetInvoiced.length, total: money(sum(plan.payables.notYetInvoiced, (row) => row.totalPence)) },
+  }
+}
+
 // The textbook figures for one item (yearly demand from the 90-day average,
-// holding cost a unit a year at 25% of the price): the economic order
+// holding cost a unit a year at 25% of its purchase price): the economic order
 // quantity at a cost per order (never below the minimum order), and the cost
 // per order at which two order sizes cost the same a year.
 export function uciEconomics(row, holdingRate = UCI_HOLDING_RATE) {

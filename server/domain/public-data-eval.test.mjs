@@ -226,6 +226,66 @@ test('the UCI figures: stock and position, late orders, the reorder rule, months
   assert.equal(uciFacts(shipped, { today: '2026-11-01' }).item('H1').averageDailyDemand, (90 + 60 * 9) / 90)
 })
 
+// smallPlan with purchases at half the selling price and five supplier
+// invoices in the shape planSupplierInvoices returns.
+function smallPlanWithPayables() {
+  const plan = smallPlan()
+  plan.items = plan.items.map((row) => ({ ...row, purchasePrice: row.price / 2 }))
+  const line = (itemKey, quantity, orderPricePence, unitPricePence = orderPricePence, received = quantity) => ({ itemKey, orderLine: 0, receiptLine: 0, quantity, received, orderPricePence, unitPricePence, amountPence: quantity * unitPricePence })
+  const invoice = (number, supplierKey, day, rule, lines, payment) => {
+    const totalPence = lines.reduce((total, row) => total + row.amountPence, 0)
+    const differs = rule === 'price_above_order' || rule === 'short_delivery'
+    return { number, supplierKey, day, due: day + 30, rule, match: differs ? 'exception' : 'matched', changedLine: differs ? 0 : null, lines, totalPence, total: totalPence / 100, payment, paidDay: payment === 'paid' ? day + 30 : null }
+  }
+  plan.payables = {
+    invoices: [
+      invoice('INV-A-0001', 'A', 36, 'as_ordered', [line('H1', 100, 100)], 'paid'),
+      invoice('INV-A-0002', 'A', 30, 'as_ordered', [line('H1', 100, 100)], 'overdue'),
+      invoice('INV-G-0001', 'G', 44, 'price_above_order', [line('S1', 50, 50, 52)], 'held'),
+      invoice('INV-A-0003', 'A', 64, 'short_delivery', [line('H1', 74, 100, 100, 70)], 'held'),
+      invoice('INV-A-0004', 'A', 45, 'dated_before_receipt', [line('P1', 10, 150)], 'open'),
+    ],
+    notYetInvoiced: [{ totalPence: 2500 }],
+  }
+  return plan
+}
+
+test('the UCI money figures: purchase price, gross profit, cash, supplier invoices and what is owed', () => {
+  const facts = uciFacts(smallPlanWithPayables())
+  // Stock, the order form and holding cost at the purchase price; the selling price beside it.
+  assert.deepEqual([facts.item('C1').price, facts.item('C1').sellingPrice, facts.prices.C1], [5, 10, 5])
+  assert.deepEqual(facts.inventory, { value: 262.5, holdingPerYear: 65.63 })
+  assert.equal(facts.waitingForApproval[0].lines[0].amount, 15)
+  // October: 86 of sales; 20 H1 at 1 and 3 C1 at 5 cost 35.
+  const october = facts.month('2026-10')
+  assert.deepEqual([october.revenue, october.cost, october.grossProfit, october.grossMarginPercent], [86, 35, 51, 59.3])
+  // Customers paid October's due invoices (the 2026-09-06 order, 29.80); suppliers nothing until November.
+  assert.deepEqual(facts.cash('2026-10'), { received: 29.8, paid: 0, net: 29.8 })
+  const invoices = facts.supplierInvoices
+  assert.deepEqual(invoices.match, { matched: 3, exception: 2 })
+  // The short delivery bills 4 units more than received (4.00); the price difference 2p on 50 (1.00).
+  assert.deepEqual(invoices.differences.map((row) => [row.number, row.kind, row.over]), [['INV-A-0003', 'quantity', 4], ['INV-G-0001', 'price', 1]])
+  assert.deepEqual([invoices.owed, invoices.open, invoices.held], [{ count: 2, total: 115 }, { count: 1, total: 15 }, { count: 2, total: 100 }])
+  assert.deepEqual([invoices.overdue.count, invoices.overdue.total, invoices.overdue.invoices[0].due], [1, 100, '2026-10-31'])
+  assert.equal(invoices.paidIn('2026-11'), 100)
+  assert.deepEqual(invoices.notInvoiced, { count: 1, total: 25 })
+  assert.deepEqual(invoices.datedBeforeReceipt.map((row) => row.number), ['INV-A-0004'])
+  // Asked after its due day, an invoice still unpaid is overdue.
+  assert.equal(uciFacts(smallPlanWithPayables(), { today: '2026-11-20' }).supplierInvoices.overdue.count, 2)
+  // The cases carry the figures.
+  const cases = buildUciCases(facts)
+  const expect = (id) => cases.find((row) => row.id === id).expect
+  assert.deepEqual(expect('invoice-match-en').numbers.map((entry) => entry.value), [3, 2])
+  assert.equal(expect('payables-owed-en').numbers[0].value, 115)
+  assert.deepEqual(expect('invoice-quantity-en').mentions, [{ label: 'INV-A-0003', any: ['INV-A-0003'] }])
+  assert.deepEqual(expect('payables-overdue-zh').mentions.map((entry) => entry.label), ['INV-A-0002'])
+  assert.equal(expect('gross-profit-en').numbers[0].value, 51)
+  assert.deepEqual(expect('cash-month-en').numbers.map((entry) => entry.value), [29.8, 0])
+  assert.equal(cases.filter((row) => row.kind === 'payables').length, 8)
+  // Without payables in the plan there are no payables cases.
+  assert.equal(buildUciCases(uciFacts(smallPlan())).filter((row) => row.kind === 'payables').length, 0)
+})
+
 // 2026-11-11, the owner's "先测再改" on hard limits.
 test('scoring constraints: the form within the budget, at or above each minimum, only the items allowed, and a form it claims is shown', () => {
   const form = (lines) => ({ component: 'pr_form', props: { lines, suggested: [] } })
