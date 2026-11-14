@@ -592,6 +592,21 @@ test('suggest_followups keeps 1 to 3 questions of at most 90 characters', async 
   assertError(build('suggest_followups', { questions: ['a', 'b', 'c', 'd'] }), 'invalid_input')
 })
 
+test('suggest_followups asks again for a chip that is not in the answer\'s language', async () => {
+  const { ctx, build } = await workspace()
+  // An English answer: an English chip, even naming a Chinese supplier, is fine.
+  assertPart(build('suggest_followups', { questions: ['Show the late orders from 华东电子'] }), 'followups')
+  const chinese = build('suggest_followups', { questions: ['Which orders are late?', '哪些订单逾期了？'] })
+  assertError(chinese, 'wrong_language')
+  assert.match(chinese.error.message, /English/)
+  // A Chinese answer: a chip may name records in English, but has Chinese words.
+  ctx.language = 'zh-CN'
+  assertPart(build('suggest_followups', { questions: ['PO-202610-0024 的催货信息', '给 Acme Home Goods 写催货邮件'] }), 'followups')
+  const english = build('suggest_followups', { questions: ['Give me a follow-up message for PO-202610-0024'] })
+  assertError(english, 'wrong_language')
+  assert.match(english.error.message, /Chinese/)
+})
+
 test('every value a part shows is in its source result', async () => {
   const { ctx, call, build } = await workspace()
   await call('toolu_stock', 'stock_position')
