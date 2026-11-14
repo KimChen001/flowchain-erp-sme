@@ -125,6 +125,20 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     // workspace's warehouses for a reader's scope; none unless a test adds them.
     shipmentLine: { findMany: ({ where }) => where.shipment?.tenantId !== AI_SKILL_TENANT ? [] : array(data.shipmentLines).filter((line) => !where.itemId?.in || where.itemId.in.includes(line.itemId)) },
     warehouse: { findMany: ({ where }) => where.tenantId === AI_SKILL_TENANT ? array(data.warehouses) : [] },
+    // Stock movements, for the order plan's stockout days: none unless a test adds them.
+    inventoryMovement: {
+      findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.inventoryMovements).filter((row) => (!where.itemId?.in || where.itemId.in.includes(row.itemId))),
+      groupBy: ({ where }) => {
+        if (where.tenantId !== AI_SKILL_TENANT) return []
+        const firsts = new Map()
+        for (const row of array(data.inventoryMovements).filter((entry) => !where.itemId?.in || where.itemId.in.includes(entry.itemId))) {
+          const first = firsts.get(row.itemId)
+          const at = row.movementDate || row.occurredAt
+          if (!first || at < first._min.movementDate) firsts.set(row.itemId, { itemId: row.itemId, _min: { movementDate: at, occurredAt: at } })
+        }
+        return [...firsts.values()]
+      },
+    },
     // The supplier scorecard's reads (supplier-scorecard.mjs), by supplier and
     // status as it asks; the fixture lines record no original promise.
     purchaseOrder: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.purchaseOrders.filter((row) => !where.status?.notIn?.includes(row.status) && (typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : Boolean(row.supplierId))) },

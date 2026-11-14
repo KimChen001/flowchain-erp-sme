@@ -313,6 +313,39 @@ export function evaluateReplenishmentPlan(instance, quantities, { budget = insta
   }
 }
 
+// A plan's total cost in each sample: holding plus shortage over all items.
+// The same sample index draws the same blocks for every item, so two plans'
+// costs pair sample by sample.
+export function sampleCosts(instance, quantities, samples = instance.heldOut || instance.D) {
+  const n = samples[0]?.length || 0
+  const out = new Float64Array(n)
+  instance.items.forEach((_, index) => {
+    const level = instance.positions[index] + Number(quantities[index] ?? 0)
+    const h = instance.h[index]
+    const pi = instance.pi[index]
+    const row = samples[index]
+    for (let k = 0; k < n; k += 1) out[k] += level >= row[k] ? h * (level - row[k]) : pi * (row[k] - level)
+  })
+  return out
+}
+
+// How a plan's cost compares with another's beyond the cost estimate's own
+// sampling error: the paired difference per sample, its standard error, and
+// withinSamplingError when the mean difference is within 1.96 standard errors
+// of zero (2026-11-08: on the fresh samples a plan could come out a few
+// dollars "cheaper" than the optimum, which is noise, not a saving).
+export function comparePlanCosts(costs, reference) {
+  const n = costs.length
+  if (!n || n !== reference.length) return { difference: null, standardError: null, withinSamplingError: null }
+  let mean = 0
+  for (let k = 0; k < n; k += 1) mean += costs[k] - reference[k]
+  mean /= n
+  let squares = 0
+  for (let k = 0; k < n; k += 1) squares += (costs[k] - reference[k] - mean) ** 2
+  const standardError = n > 1 ? Math.sqrt(squares / (n - 1) / n) : 0
+  return { difference: mean, standardError, withinSamplingError: Math.abs(mean) <= 1.96 * standardError + EPSILON }
+}
+
 // Each item's unconstrained optimum on the N scenarios: the newsvendor
 // quantity (no minimum, no budget), and the best order with the minimum but no
 // budget. The SAA cost is convex in q, minimised where the share of scenarios
@@ -572,14 +605,32 @@ export async function planReplenishment(input, options = {}) {
     plans.push({ id, ...(candidate?.label ? { label: text(candidate.label) } : {}), ...evaluate(quantitiesFrom(instance, candidate?.quantities)) })
   }
   const reference = optimal ? (optimal.heldOut || optimal.inSample).total : null
+  // Sample by sample on the samples the costs come from, so a difference
+  // within the estimate's sampling error is marked as such. The optimum is
+  // proven on the N scenarios only, so another plan can also be clearly
+  // cheaper on the fresh samples; that shows as a negative costAboveOptimal
+  // outside the sampling error.
+  const optimalCosts = optimal ? sampleCosts(instance, optimal.quantities) : null
+  const compared = (quantities) => (optimalCosts ? comparePlanCosts(sampleCosts(instance, quantities), optimalCosts) : null)
   for (const plan of plans) {
     const cost = (plan.heldOut || plan.inSample).total
     plan.costAboveOptimal = reference === null ? null : cost - reference
     plan.regretInSample = optimal ? plan.inSample.total - optimal.inSample.total : null
+    const comparison = compared(plan.quantities)
+    plan.costAboveOptimalStandardError = comparison ? comparison.standardError : null
+    plan.withinSamplingErrorOfOptimal = comparison ? comparison.withinSamplingError : null
+  }
+  const freePlan = binding?.budget?.withoutBudget
+  if (freePlan) {
+    const comparison = compared(freePlan.quantities)
+    Object.assign(freePlan, { costAboveOptimal: comparison.difference, costAboveOptimalStandardError: comparison.standardError, withinSamplingErrorOfOptimal: comparison.withinSamplingError })
   }
   return {
     schema: REPLENISHMENT_PLAN_SCHEMA,
     status: solved.status,
+    // An optimum proven by HiGHS, or the best plan it found before its time
+    // limit (status not_proven_optimal, with solver.mipGap the gap left).
+    optimalityProven: solved.status === 'optimal',
     ...(solved.reason ? { reason: solved.reason } : {}),
     ...(solved.items ? { reasonItems: solved.items } : {}),
     solver: solved.solver || null,

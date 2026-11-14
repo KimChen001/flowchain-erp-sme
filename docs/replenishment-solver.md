@@ -10,7 +10,7 @@ The research prototype's single-cycle sample average approximation (research not
 
 | Symbol | Meaning | From |
 |---|---|---|
-| I_i | stock position: on hand − reserved + every open purchase order line (late or not) + open purchase requests | allocation read model (the inventory position of a reorder-point policy); requests as `suggest_purchase_lines` counts them |
+| I_i | stock position: on hand − reserved + open purchase order lines + open purchase requests. The library default (`positionRule: 'all_open_lines'`) counts every open line, late or not, as the reorder list does. The assistant tool uses `due_within_cycle`: a line due after L_i + R days cannot cover the cycle the cost is taken over, so it is listed and not counted (late lines still count) | allocation read model (the inventory position of a reorder-point policy); requests as `suggest_purchase_lines` counts them |
 | c_i, m_i, L_i | unit price, minimum order quantity, lead time | the preferred approved supplier: reference price, MOQ, lead time |
 | R | review period, days to the next chance to order | 7 (assumed; the user can change it) |
 | h_i | holding cost per unit left at the end of the cycle = rate × c_i × (L_i + R) / 365 | rate 25% a year (assumed, as in #269) |
@@ -27,6 +27,12 @@ s.t. m_i z_i ≤ q_i ≤ M_i z_i, z_i ∈ {0, 1}, q_i integer, Σ_i c_i q_i ≤ 
   200 scenarios exactly, and seed 1007 its 20,000 held-out samples.
 - Every plan is costed on the 200 scenarios (where the optimum is proven, gap 0) and on the 20,000 held-out samples.
   The assistant reports the held-out cost, which carries no optimiser bias.
+- Each plan's held-out cost is also compared with the optimum's sample by sample: `costAboveOptimalStandardError` and
+  `withinSamplingErrorOfOptimal` (the mean difference within 1.96 standard errors of zero). A plan within that error
+  costs the same as the optimum as far as the estimate can tell; a plan clearly below it is possible too, since the
+  optimum is proven on the 200 scenarios only.
+- `optimalityProven` is false when HiGHS stops at its time limit (status `not_proven_optimal`); the plan is then the
+  best found, with `solver.mipGap` the gap left.
 - HiGHS solves the epigraph form of the same objective: each item's cost is convex and piecewise linear in q, so it is
   the largest of its pieces. That needs one cost variable per item instead of two per scenario. The prototype's u/v
   form is kept (`formulation: 'scenarios'`), and the tests check that both forms give the same plan and objective.
@@ -41,7 +47,13 @@ s.t. m_i z_i ≤ q_i ≤ M_i z_i, z_i ∈ {0, 1}, q_i integer, Σ_i c_i q_i ≤ 
 returns it:
 
 - `decision`: the lines to order, their spend, the expected cost, and the saving against no order, the reorder
-  list and the user's plan.
+  list and the user's plan; `provenOptimal`; `aboutTheSame`, the plans whose cost is the decision's within the
+  sampling error; and `cheaperOnFreshSamples`, the plans clearly cheaper on the held-out samples.
+- `cautions`: `not_proven_optimal` (the 10-second limit stopped the solve: the answer calls the decision the best
+  plan found and gives the gap); `demand_may_be_understated` (an item had days that ended with no stock, worked back
+  from its stock movements in `stockout-days.mjs`: nothing ships on such a day, so its shipped history is too low;
+  the item row gives `stockoutDays`); `lines_due_after_cycle` (open lines due after the cycle, listed per item and
+  not counted).
 - `budget`: whether the budget binds, and what lifting it would buy.
 - `minimumOrders`: which items were raised to their minimum, and which were skipped because the minimum costs more
   than it saves.

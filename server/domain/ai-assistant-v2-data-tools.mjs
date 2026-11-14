@@ -14,6 +14,7 @@ import { DEMAND_WINDOW_DAYS, boughtInStockUnit, dailyDemand, isActiveItem, itemS
 import { scopedBusiness } from './ai-read-service-tools.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
 import { REPLENISHMENT_SOLVER_DEFAULTS, ReplenishmentInputError, logReplenishmentCall, planReplenishment } from './replenishment-solver.mjs'
+import { movementDay, stockoutDays } from './stockout-days.mjs'
 import { addCalendarDays, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
 import { OPEN_PURCHASE_REQUEST_STATUSES, PURCHASE_SUGGESTION_SOURCES, openRequestQuantity, requestLineCountsFor, suggestNeedByDate, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
 
@@ -350,6 +351,37 @@ async function recordedDemand(context, facts, items) {
       return [text(item.id), { ...dailyDemand({ lines: itemLines, stockUnit: itemStockUnit(item), today: facts.today, timeZone: facts.timezone }), daily: days.map((day) => byDay.get(day)) }]
     })),
   }
+}
+
+// The items' inventory movements over the demand window (and since), and each
+// item's first movement day ever, for stockoutDays (stockout-days.mjs): the
+// days an item ended with no stock, when its shipped quantities understate
+// demand. The whole workspace, as the demand; a reader of only some
+// warehouses gets no plan (warehouse_scope).
+async function stockMovements(context, facts, items) {
+  const { prisma, tenantId } = context
+  const ids = items.map((item) => text(item.id)).filter(Boolean)
+  if (!ids.length) return new Map()
+  const from = new Date(`${addCalendarDays(facts.today, -DEMAND_WINDOW_DAYS - 1)}T00:00:00Z`)
+  const [rows, firsts] = await Promise.all([
+    prisma.inventoryMovement.findMany({
+      where: { tenantId, itemId: { in: ids }, OR: [{ movementDate: { gte: from } }, { movementDate: null, occurredAt: { gte: from } }] },
+      select: { itemId: true, movementDate: true, occurredAt: true, quantityIn: true, quantityOut: true },
+    }),
+    prisma.inventoryMovement.groupBy({ by: ['itemId'], where: { tenantId, itemId: { in: ids } }, _min: { movementDate: true, occurredAt: true } }),
+  ])
+  const byItem = new Map(ids.map((id) => [id, { movements: [], firstDay: null }]))
+  for (const row of array(rows)) {
+    const entry = byItem.get(text(row.itemId))
+    const day = movementDay(row, facts.timezone)
+    if (entry && day) entry.movements.push({ day, quantityIn: Number(row.quantityIn) || 0, quantityOut: Number(row.quantityOut) || 0 })
+  }
+  for (const row of array(firsts)) {
+    const entry = byItem.get(text(row.itemId))
+    const candidates = [movementDay({ movementDate: row._min?.movementDate }, facts.timezone), movementDay({ occurredAt: row._min?.occurredAt }, facts.timezone)].filter(Boolean).sort()
+    if (entry && candidates.length) entry.firstDay = candidates[0]
+  }
+  return byItem
 }
 
 // What an item needs to cover a period: recorded daily demand over the
@@ -916,8 +948,9 @@ async function orderPlanRecords(args, { facts, context }) {
   }
   const stored = await storedItems(context, [...new Set(rows.map((row) => text(row.itemId)).filter(Boolean))])
   const items = [...stored.values()]
-  const [demand, { byItem, prices }, business] = await Promise.all([recordedDemand(context, facts, items), itemSources(context, items), scopedBusiness(context)])
+  const [demand, { byItem, prices }, business, movements] = await Promise.all([recordedDemand(context, facts, items), itemSources(context, items), scopedBusiness(context), stockMovements(context, facts, items)])
   if (demand.scoped) return { error: 'warehouse_scope' }
+  const windowDays = Array.from({ length: DEMAND_WINDOW_DAYS }, (_, index) => addCalendarDays(facts.today, index - DEMAND_WINDOW_DAYS))
   if (!prices) return { error: 'prices_hidden' }
   const allocation = buildRuntimeInventoryAllocation(business.access.collections.inventoryItems ? business.allocationContext : business.business)
   const stockBySku = new Map(array(allocation.availability).map((row) => [fold(row.sku), row]))
@@ -944,8 +977,10 @@ async function orderPlanRecords(args, { facts, context }) {
                     : history?.averageDailyDemand === null || history?.averageDailyDemand === undefined ? 'not_enough_shipment_history' : null
     if (args.supplier && (!source || (!fold(source.name).includes(fold(args.supplier)) && fold(source.id) !== fold(args.supplier)))) continue
     if (reason) { left.push({ sku: row.sku, reason }); continue }
+    const stockHistory = movements.get(text(item.id)) || { movements: [], firstDay: null }
     planned.push({
       row, item, source,
+      stockout: stockoutDays({ onHandNow: Number(stock.onHand) || 0, movements: stockHistory.movements, days: windowDays, firstDay: stockHistory.firstDay }),
       input: {
         sku: row.sku, name: row.itemName || item.name || null, unit: itemStockUnit(item), supplier: suppliersVisible ? source.name : null,
         unitPrice, moq: requestMinimumOf(item, source, itemStockUnit(item)), leadTimeDays: source.leadTimeDays,
@@ -968,7 +1003,7 @@ async function orderPlanRecords(args, { facts, context }) {
 
 const optimizeOrderPlan = defineAiTool({
   name: 'optimize_order_plan',
-  description: 'The cheapest order to place now across items, solved exactly (a mixed-integer program, HiGHS) from the records: each item\'s stock position (on hand - reserved + every open purchase order line and open purchase request), the preferred supplier\'s lead time, minimum order and reference price, and the last 90 days of shipments as 200 demand scenarios. It weighs the cost of holding stock against running short over each item\'s lead time plus the review days, within the budget and the minimum orders, and costs the plan beside ordering nothing, the reorder list\'s quantities and a plan the user proposes. Use it for what to order now (with or without a budget), for what-ifs, and to judge an order someone proposes. Read-only.',
+  description: 'The cheapest order to place now across items, solved exactly (a mixed-integer program, HiGHS) from the records: each item\'s stock position (on hand - reserved + the open purchase order lines due within its lead time plus review days, late ones included, + open purchase requests), the preferred supplier\'s lead time, minimum order and reference price, and the last 90 days of shipments as 200 demand scenarios. It weighs the cost of holding stock against running short over each item\'s lead time plus the review days, within the budget and the minimum orders, and costs the plan beside ordering nothing, the reorder list\'s quantities and a plan the user proposes. Use it for what to order now (with or without a budget), for what-ifs, and to judge an order someone proposes. Read-only. Say what cautions lists: not_proven_optimal (the solver hit its time limit: call the decision the best plan found, not the optimal one, and give gapPercent); demand_may_be_understated (items with stockoutDays: on a day with no stock nothing ships, so their history understates demand and the plan may order too little for them); lines_due_after_cycle (openLinesDueAfterCycle: arrive too late to cover the cycle, so they are not counted in the position). A plan in decision.aboutTheSame costs the same as the decision within the cost estimate\'s sampling error: say they cost about the same, not that one saves money. A plan in decision.cheaperOnFreshSamples costs clearly less on the fresh samples: say so, since the decision is proven best on the 200 scenarios only.',
   parameters: {
     budget: { type: 'number', minimum: 0, maximum: 100000000, description: 'The most to spend on this order, in the workspace currency, when the user gives one.' },
     plan: { type: 'array', items: planLine, maxItems: AI_TOOL_LIMITS.items, description: 'An order the user proposes or asks about, to cost beside the best one (e.g. [{ sku: "SKU-123", quantity: 50 }]).' },
@@ -995,6 +1030,11 @@ const optimizeOrderPlan = defineAiTool({
       fixed: linesOf(args.fixedLines), exclude: array(args.exclude).filter((sku) => items.some((item) => fold(item.sku) === fold(sku))).map(skuOf),
       candidates: array(args.plan).length ? [{ id: 'your_plan', quantities: linesOf(args.plan) }] : [],
       timeLimitSeconds: PLAN_TIME_LIMIT_SECONDS,
+      // The cost covers each item's lead time plus review days, so an open
+      // line due after that cannot cover it: it is listed, not counted
+      // (2026-11-08). Late lines, due in the past, still count, as on the
+      // reorder list.
+      positionRule: 'due_within_cycle',
     }
     const input = { today: facts.today, currency: records.currency, items: items.map(({ cover, ...item }) => item) }
     let result
@@ -1028,7 +1068,9 @@ function orderPlanResult(result, { facts, records, items, args }) {
     holdingCost: round(cost(entry).holding),
     shortageCost: round(cost(entry).shortage),
     expectedCost: round(cost(entry).total),
-    costAboveOptimal: entry.costAboveOptimal === null ? null : round(entry.costAboveOptimal),
+    costAboveOptimal: entry.costAboveOptimal === null || entry.costAboveOptimal === undefined ? null : round(entry.costAboveOptimal),
+    // Whether that difference is within the cost estimate's sampling error.
+    ...(id !== 'optimal' && typeof entry.withinSamplingErrorOfOptimal === 'boolean' ? { withinSamplingError: entry.withinSamplingErrorOfOptimal } : {}),
     withinBudget: entry.withinBudget,
     // So "over budget by" is a figure the result gives (2026-11-06: an
     // answer worked it out itself).
@@ -1039,7 +1081,7 @@ function orderPlanResult(result, { facts, records, items, args }) {
   })
   const rows = [
     planRow('optimal', optimal),
-    ...(free ? [planRow('without_budget_limit', { ...free, withinBudget: false, issues: [], costAboveOptimal: free.heldOut && optimal ? free.heldOut.total - optimal.heldOut.total : null })] : []),
+    ...(free ? [planRow('without_budget_limit', { ...free, withinBudget: false, issues: [] })] : []),
     planRow('no_order', noOrder),
     planRow('reorder_list', reorder),
     planRow('your_plan', yours),
@@ -1059,10 +1101,13 @@ function orderPlanResult(result, { facts, records, items, args }) {
       ...(yours ? { chanceShortWithPlanPercent: percent(outcome(yours, index).chanceShort) } : {}),
       reason: item.reason,
       ...(item.openLinesDueAfterCycle.length ? { openLinesDueAfterCycle: item.openLinesDueAfterCycle.map((line) => ({ orderNumber: line.reference || null, remaining: line.remaining, dueInDays: line.dueInDays })) } : {}),
+      // Days of the 90 that ended with no stock (from the stock movements);
+      // shipments stop on those days, so the demand history is too low.
+      ...(entry.stockout?.stockoutDays > 0 ? { stockoutDays: entry.stockout.stockoutDays, stockTrackedDays: entry.stockout.trackedDays, demandMayBeUnderstated: true } : {}),
       ref: aiToolRef('item', entry.row.itemId || item.sku, item.sku),
     }
   })
-  const interesting = (row) => row.optimalQuantity > 0 || row.reorderListQuantity > 0 || row.planQuantity > 0
+  const interesting = (row) => row.optimalQuantity > 0 || row.reorderListQuantity > 0 || row.planQuantity > 0 || Boolean(row.demandMayBeUnderstated)
   itemRows.sort((a, b) => Number(interesting(b)) - Number(interesting(a)) || b.chanceShortNoOrderPercent - a.chanceShortNoOrderPercent)
   const p = result.parameters
   const budget = result.binding?.budget
@@ -1082,7 +1127,18 @@ function orderPlanResult(result, { facts, records, items, args }) {
       savingVsNoOrder: round(cost(noOrder).total - cost(optimal).total),
       ...(reorder ? { savingVsReorderList: round(cost(reorder).total - cost(optimal).total) } : {}),
       ...(yours ? { savingVsYourPlan: round(cost(yours).total - cost(optimal).total) } : {}),
+      // Proven optimal by HiGHS, or the best plan found in the time limit.
+      provenOptimal: result.optimalityProven === true,
+      // Plans whose cost is the decision's within the estimate's sampling
+      // error, and plans clearly cheaper on the fresh samples.
+      aboutTheSame: [['no_order', noOrder], ['reorder_list', reorder], ['your_plan', yours]].filter(([, entry]) => entry?.withinSamplingErrorOfOptimal === true).map(([id]) => id),
+      cheaperOnFreshSamples: [['no_order', noOrder], ['reorder_list', reorder], ['your_plan', yours]].filter(([, entry]) => entry && entry.withinSamplingErrorOfOptimal === false && entry.costAboveOptimal < 0).map(([id]) => id),
     } : null,
+    cautions: [
+      ...(optimal && result.optimalityProven !== true ? ['not_proven_optimal'] : []),
+      ...(itemRows.some((row) => row.demandMayBeUnderstated) ? ['demand_may_be_understated'] : []),
+      ...(itemRows.some((row) => row.openLinesDueAfterCycle) ? ['lines_due_after_cycle'] : []),
+    ],
     budget: budget ? { amount: round(budget.amount), spend: round(budget.spend), left: round(budget.left), binds: budget.binds, ...(free ? { spendWithoutLimit: round(free.spend), costWithoutLimit: round(cost(free).total), costSavedWithoutLimit: round(cost(optimal).total - cost(free).total) } : {}) } : null,
     minimumOrders: result.binding ? { raised: result.binding.raisedToMinimumOrder, skippedAsTooCostly: result.binding.skippedForMinimumOrder } : null,
     plans: rows,
