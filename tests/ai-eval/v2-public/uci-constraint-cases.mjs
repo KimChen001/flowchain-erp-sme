@@ -4,8 +4,9 @@
 //   minimum   a supplier's minimum order quantity (an order below it is
 //             raised, or the minimum is said)
 //   budget    the user's spending limit, at each item's price, together with
-//             the minimums (the cakestand's minimum order alone costs more
-//             than the smaller budgets)
+//             the minimums; when the cakestand's minimum order alone costs
+//             more than a budget, the answer must say so (at #319's purchase
+//             prices it fits £500 but not £300)
 //   supplier  only one supplier's items
 //   exclude   an item the user leaves out
 //   arithmetic  a figure worked out from the minimum and the price
@@ -30,6 +31,10 @@ export function buildUciConstraintCases(facts) {
   const minimumCost = cost(cake.minimumOrderQuantity, cake.price)
   // What a budget buys of the cakestand when the minimum is ignored.
   const ignoring = (budget) => Math.floor(budget / cake.price)
+  // The checks that the minimum order does not fit a budget, only when it does
+  // not (2026-11-14: at #319's prices the £500 case still asked for "does not
+  // fit", and would have counted a valid order of 78 as one below the minimum).
+  const unfit = (budget, checks) => (minimumCost > budget ? checks : {})
   const cases = []
   const add = (row) => cases.push({ kind: 'constraints', ...row })
 
@@ -39,25 +44,29 @@ export function buildUciConstraintCases(facts) {
   add({ id: 'minimum-below-zh', language: 'zh-CN', turns: [`帮我订 20 个 ${jumbo.sku}`],
     expect: { ui: { has: ['pr_form'] }, formRules: rules(), matches: [{ label: `说起订量是 ${jumbo.minimumOrderQuantity}`, pattern: minimumSaid(jumbo.minimumOrderQuantity, MINIMUM_ZH) }] } })
 
-  // Budget: the minimum order costs more than the budget.
+  // Budget: the form within it; the minimum order said when it costs more.
   add({ id: 'budget-500-en', language: 'en-US', turns: ['I have £500 to spend on stock this week. What should I order?'],
     expect: {
       formRules: rules({ budget: 500 }),
-      matches: [{ label: `says the minimum order (${minimumCost}) does not fit`, pattern: String.raw`${minimumCost.toLocaleString('en-GB')}|${minimumCost}|${minimumSaid(cake.minimumOrderQuantity, MINIMUM_EN)}|over (?:your |the )?(?:£?500 )?budget|exceeds?|more than (?:your |the )?(?:£?500|budget)` }],
-      notMatches: [{ label: `${ignoring(500)} cakestands, below the minimum`, pattern: String.raw`\b${ignoring(500)}\s*(?:cakestands?|units?|pcs|of\b)` }],
+      ...unfit(500, {
+        matches: [{ label: `says the minimum order (${minimumCost}) does not fit`, pattern: String.raw`${minimumCost.toLocaleString('en-GB')}|${minimumCost}|${minimumSaid(cake.minimumOrderQuantity, MINIMUM_EN)}|over (?:your |the )?(?:£?500 )?budget|exceeds?|more than (?:your |the )?(?:£?500|budget)` }],
+        notMatches: [{ label: `${ignoring(500)} cakestands, below the minimum`, pattern: String.raw`\b${ignoring(500)}\s*(?:cakestands?|units?|pcs|of\b)` }],
+      }),
     } })
   add({ id: 'budget-300-zh', language: 'zh-CN', turns: ['预算只有 300 英镑，这周该补什么货？'],
     expect: {
       formRules: rules({ budget: 300 }),
-      matches: [{ label: `说起订量的金额（${minimumCost}）超出预算`, pattern: String.raw`${minimumCost}|${minimumSaid(cake.minimumOrderQuantity, MINIMUM_ZH)}|超出|超过|不够|不足` }],
-      notMatches: [{ label: `${ignoring(300)} 个蛋糕架，低于起订量`, pattern: String.raw`\b${ignoring(300)}\s*(?:个|件|pcs)` }],
+      ...unfit(300, {
+        matches: [{ label: `说起订量的金额（${minimumCost}）超出预算`, pattern: String.raw`${minimumCost}|${minimumSaid(cake.minimumOrderQuantity, MINIMUM_ZH)}|超出|超过|不够|不足` }],
+        notMatches: [{ label: `${ignoring(300)} 个蛋糕架，低于起订量`, pattern: String.raw`\b${ignoring(300)}\s*(?:个|件|pcs)` }],
+      }),
     } })
-  // Budget below the quantity asked for: the most the budget buys (above the
-  // minimum), on the form as the user's item.
+  // A quantity and a budget: the 100 asked for, or the most the budget buys
+  // when it buys fewer (above the minimum), on the form as the user's item.
   add({ id: 'budget-quantity-en', language: 'en-US', turns: ['I want 100 cakestands but I can only spend £1,000'],
     expect: {
       formRules: rules({ budget: 1000 }),
-      formLines: [{ sku: cake.sku, quantity: ignoring(1000), checked: true }],
+      formLines: [{ sku: cake.sku, quantity: Math.min(100, ignoring(1000)), checked: true }],
       numbers: [{ label: 'cost of 100', value: cost(100, cake.price) }],
     } })
 

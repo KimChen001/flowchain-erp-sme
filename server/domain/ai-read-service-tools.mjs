@@ -275,14 +275,14 @@ const listReceivables = defineAiTool({
 // top customers and best-selling items had no tool, on two years of invoices).
 // Invoices dated in the period, not drafts or cancelled, before tax; credit
 // notes are not subtracted. Amounts are never added across currencies.
-const SALES_PERIODS = ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'this_year', 'last_year', 'last_30_days', 'last_90_days', 'last_12_months']
+export const SALES_PERIODS = ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'this_year', 'last_year', 'last_30_days', 'last_90_days', 'last_12_months']
 const SALES_DAYS = Object.freeze({ last_30_days: 30, last_90_days: 90, last_12_months: 365 })
 const SALES_INVOICES_MAX = 20000
-const SALES_BASIS = 'Customer invoices dated in the period, not drafts or cancelled, before tax. Credit notes are not subtracted.'
+export const SALES_BASIS = 'Customer invoices dated in the period, not drafts or cancelled, before tax. Credit notes are not subtracted.'
 const money2 = (value) => Math.round(value * 100) / 100
 const share = (part, whole) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null)
-const salesDay = (value) => (value instanceof Date ? value.toISOString() : text(value)).slice(0, 10)
-function salesRange(args, today) {
+export const salesDay = (value) => (value instanceof Date ? value.toISOString() : text(value)).slice(0, 10)
+export function salesRange(args, today) {
   if (args.from || args.to) return args.from && args.to && args.from <= args.to ? { from: args.from, to: args.to } : null
   const period = args.period || 'last_12_months'
   return aiSkillSpendPeriod(SALES_DAYS[period] ? { kind: 'last_days', days: SALES_DAYS[period] } : { kind: period }, today)
@@ -291,7 +291,7 @@ function salesRange(args, today) {
 // SKU no item holds any more is counted as asked (2026-11-12 on Flash:
 // "84879 在 2026 年 10 月卖了多少件" came back as 0 invoices and 0 units, where
 // the invoices hold 611: the lines were matched on the exact SKU only).
-function salesItem(facts, value) {
+export function salesItem(facts, value) {
   const items = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)]
   const byId = items.find((row) => row.itemId && fold(row.itemId) === fold(value))
   if (byId) return { sku: text(byId.sku), itemId: text(byId.itemId) }

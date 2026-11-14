@@ -310,7 +310,11 @@ test('scoring constraints: the form within the budget, at or above each minimum,
   assert.equal(cases.length, 8)
   const expect = (id) => cases.find((entry) => entry.id === id).expect
   assert.deepEqual(expect('minimum-multiple-en').numbers.map((entry) => entry.value), [3 * facts.item('C1').minimumOrderQuantity, 3 * facts.item('C1').minimumOrderQuantity * facts.item('C1').price])
-  assert.deepEqual(expect('budget-quantity-en').formLines, [{ sku: 'C1', quantity: Math.floor(1000 / facts.item('C1').price), checked: true }])
+  assert.deepEqual(expect('budget-quantity-en').formLines, [{ sku: 'C1', quantity: Math.min(100, Math.floor(1000 / facts.item('C1').price)), checked: true }])
+  // "The minimum does not fit" is asked only of a budget the minimum order
+  // costs more than.
+  const minimumCost = facts.item('C1').minimumOrderQuantity * facts.item('C1').price
+  for (const [id, budget] of [['budget-500-en', 500], ['budget-300-zh', 300]]) assert.equal(Boolean(expect(id).matches), minimumCost > budget, id)
   assert.deepEqual(expect('supplier-only-en').formRules.onlySkus, ['H1', 'P1'])
 })
 

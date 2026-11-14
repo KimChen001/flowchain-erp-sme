@@ -689,6 +689,20 @@ test('every data tool declares its columns, and each declared column is in its r
   const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
   const reorderList = { read: async (input) => buildReorderList({ allocationRows: input.allocationRows, items, supplierLinks: [link()], suppliers, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }) }
   const invoiced = (data) => { data.customerInvoices = [{ id: 'CI-1', customerNameSnapshot: 'Harbor Supply Co', invoiceDate: new Date('2026-09-10T00:00:00Z'), subtotalAmount: '950.0000', currency: 'USD', lines: [{ itemId: 'ITEM-001', sku: 'LDM-001', itemName: 'Flow Controller', quantity: '10', unit: 'pcs', lineAmount: '950.0000' }] }] }
+  // A payable overdue and one not yet due, payments both ways, and GRN-001
+  // received at PO-001's price with no supplier invoice (the money tools).
+  const owing = (data) => {
+    const invoice = (id, supplierName) => ({ id, invoiceNumber: id, supplierName, invoiceDate: new Date('2026-08-20T00:00:00Z') })
+    data.payables = [
+      { id: 'AP-1', supplierInvoiceId: 'INV-002', obligationNumber: 'AP-1', outstandingAmount: '5000', currency: 'USD', dueDate: new Date('2026-09-20T00:00:00Z'), status: 'approved', supplierInvoice: invoice('INV-002', 'Acme Components') },
+      { id: 'AP-2', supplierInvoiceId: 'INV-010', obligationNumber: 'AP-2', outstandingAmount: '1200', currency: 'USD', dueDate: new Date('2026-10-03T00:00:00Z'), status: 'held', supplierInvoice: invoice('INV-010', 'Acme Components') },
+    ]
+    data.payments = [
+      { obligationType: 'receivable', paymentDate: new Date('2026-09-05T00:00:00Z'), amount: '950', currency: 'USD', status: 'recorded' },
+      { obligationType: 'payable', paymentDate: new Date('2026-09-10T00:00:00Z'), amount: '600', currency: 'USD', status: 'recorded' },
+    ]
+    data.receipts[0].lines[0].purchaseOrderLineId = 'PO-001-L1'
+  }
   // Today's decision items and a record's decision history, as Today would read them.
   const todayRow = (kind, recordId, label) => ({ id: `${kind}:${recordId}`, kind, entityType: kind === 'reorder_now' ? 'item' : 'purchase_order', recordId, label, name: 'Acme Components', date: '2026-09-20', dateKind: 'due', overdueDays: 3, detail: {} })
   const todayDecisions = async () => ({
@@ -697,7 +711,7 @@ test('every data tool declares its columns, and each declared column is in its r
     setAside: [{ key: 'reorder_now:ITEM-001', row: todayRow('reorder_now', 'ITEM-001', 'LDM-001'), decision: 'not_needed', reasonCode: 'seasonal', note: null, returnOn: null, decidedAt: null, decidedOn: '2026-09-18', decidedBy: { name: 'Sam' }, documentType: null, documentIds: [], documentNumber: null }],
   })
   const decisionHistory = { read: async () => ({ items: [{ kind: 'purchase_order_overdue', state: 'decided', raisedAt: new Date('2026-09-17T12:00:00Z'), decidedAt: new Date('2026-09-18T12:00:00Z'), resolvedAt: new Date('2026-09-19T12:00:00Z'), decision: 'chased', reasonCode: null, note: null, returnOn: '2026-09-22', snapshot: { raisedOn: '2026-09-17', decidedOn: '2026-09-18' }, decidedBy: { name: 'Sam' } }], emails: [] }) }
-  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data); invoiced(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList, todayDecisions, decisionHistory } } })
+  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data); invoiced(data); owing(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList, todayDecisions, decisionHistory } } })
   // The calls that fill each table; a tool not named here is called once
   // without arguments.
   const calls = {
@@ -722,6 +736,9 @@ test('every data tool declares its columns, and each declared column is in its r
     optimize_order_plan: [{ plan: [{ sku: 'LDM-001', quantity: 100 }] }],
     decision_items: [{ include: 'all' }],
     decision_history: [{ record: 'PO-001' }],
+    supplier_payables: [{}, { view: 'overdue' }, { view: 'by_supplier' }, { view: 'not_invoiced' }],
+    cash_movements: [{ period: 'last_12_months' }],
+    gross_profit: [{ from: '2026-01-01', to: '2026-12-31' }, { by: 'month', from: '2026-01-01', to: '2026-12-31' }, { by: 'item', from: '2026-01-01', to: '2026-12-31' }, { by: 'customer', from: '2026-01-01', to: '2026-12-31' }],
   }
   // A nested column under a null value (a rate with too few deliveries) is
   // there, and null. Each column must be in a row of one of the tool's calls.
