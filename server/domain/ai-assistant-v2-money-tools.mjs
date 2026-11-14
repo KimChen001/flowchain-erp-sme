@@ -231,6 +231,8 @@ const supplierPayables = defineAiTool({
       ...base,
       basis: PAYABLES_BASIS.owed,
       totals,
+      // "Due within 7 days" is a figure the result gives.
+      dueSoonDays: DUE_SOON_DAYS,
       heldAtMatch: held === null ? null : totalsOf(held, amountsVisible),
       receiptsNotInvoiced: notInvoiced === null ? null : totalsOf(notInvoiced, amountsVisible).map(({ invoices, ...entry }) => ({ ...entry, receipts: invoices })),
       oldestOverdue: overdue.slice(0, 5).map(withoutAmount),
