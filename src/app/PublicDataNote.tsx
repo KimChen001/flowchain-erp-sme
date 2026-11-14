@@ -95,6 +95,7 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
                 {t("publicData.assumed", { leadTimeDays, reviewDays, cover: leadTimeDays + reviewDays })}{" "}
                 {purchasePricePercent === 100 ? t("publicData.purchasePriceSame") : t("publicData.purchasePriceShare", { percent: purchasePricePercent })}
               </p>
+              {note.dataset === "m5" && <p data-testid="public-data-note-m5-no-invoices">{t("publicData.m5NoInvoices")}</p>}
               {note.dataset === "uci" && <p>{t("publicData.uciAssumed", { paymentTermsDays: note.assumptions.paymentTermsDays ?? 30 })}</p>}
               {note.dataset === "uci" && supplierInvoices && (
                 <p data-testid="public-data-note-supplier-invoices">{t("publicData.uciSupplierInvoices", { ...supplierInvoices, paymentTermsDays: note.assumptions.paymentTermsDays ?? 30 })}</p>

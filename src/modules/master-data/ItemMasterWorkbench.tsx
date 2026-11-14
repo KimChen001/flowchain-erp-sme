@@ -446,7 +446,7 @@ export default function ItemMasterWorkbench({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <ActionableMetricCard label={copy("Items")} value={loaded ? String(items.length) : "—"} description={copy("{count} active", { count: activeCount })} to="/app/master-data/items" icon={Package} color={A.blue} />
+        <ActionableMetricCard label={copy("Items")} value={loaded ? String(items.length) : "—"} description={loaded ? copy("{count} active", { count: activeCount }) : NOT_PROVIDED} to="/app/master-data/items" icon={Package} color={A.blue} />
         <ActionableMetricCard label={copy("Inactive items")} value={loaded ? String(items.length - activeCount) : "—"} description={copy("Kept for history, not offered on new documents")} to="/app/master-data/items?status=inactive" icon={CheckCircle2} color={A.gray1} />
         <ActionableMetricCard label={copy("No reorder point")} value={loaded ? String(items.filter((item) => item.status === "active" && !hasReorderPoint(item)).length) : "—"} description={copy("Active items the reorder list cannot check")} to="/app/master-data/items?gap=reorder" icon={AlertCircle} color={A.orange} />
         <ActionableMetricCard label={copy("No preferred supplier")} value={loaded ? String(items.filter((item) => item.status === "active" && !item.defaultSupplierId).length) : "—"} description={copy("Active items without a supplier to order from")} to="/app/master-data/items?gap=supplier" icon={Truck} color={A.purple} />
@@ -516,7 +516,7 @@ export default function ItemMasterWorkbench({
         <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div>
             <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("Item list")}</div>
-            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: formatNumber(items.length), shown: formatNumber(paged.pageRows.length) })}</div>
+            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{loaded ? copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: formatNumber(items.length), shown: formatNumber(paged.pageRows.length) }) : NOT_PROVIDED}</div>
           </div>
         </div>
         {error && <p className="px-5 pt-3 text-xs text-red-600">{error}</p>}
