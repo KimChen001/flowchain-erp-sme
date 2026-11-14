@@ -451,3 +451,15 @@ test('figures in a tier reason count as the words of the person who wrote it', (
   assert.deepEqual(numbers(answer, [{ rows: [{ name: 'Acme Home Goods', tier: 1, tierReason: reason }] }]), [])
   assert.deepEqual(numbers(answer, [{ rows: [{ name: 'Acme Home Goods', tier: 1, note: reason }] }]).sort(), ['12', '2', '200', '4', '7%'].sort())
 })
+
+// 2026-11-14 on DeepSeek: the money tools' figures were right and flagged.
+test('the money tools\' sales, profit, cash and payables figures are amounts; days overdue stay days', () => {
+  const profit = { currency: 'GBP', revenue: 75552.67, cost: 38062.97, grossProfit: 37489.7, grossMarginPercent: 49.6, invoices: 564 }
+  const cash = { totals: [{ currency: 'GBP', receivedFromCustomers: 60795.22, customerPayments: 384, paidToSuppliers: 33717.22, supplierPayments: 30, net: 27078 }] }
+  const owed = { totals: [{ currency: 'GBP', owedInvoices: 32, owed: 38739.86, overdueInvoices: 8, overdue: 11676.29, dueIn7DaysInvoices: 8, dueIn7Days: 10810.89 }], dueSoonDays: 7, oldestOverdue: [{ invoiceNumber: 'INV-SUP-20-0037', overdueDays: 56, outstanding: 158.28, currency: 'GBP' }] }
+  assert.deepEqual(kinds(check('Gross profit was £37,489.70 in October 2026, a 49.6% margin on £75,552.67 of sales; cost £38,062.97.', [profit])), [])
+  assert.deepEqual(kinds(check('£60,795.22 came in from customers and £33,717.22 went out to suppliers, a net inflow of £27,078.00.', [cash])), [])
+  assert.deepEqual(kinds(check('You owe £38,739.86; £11,676.29 is overdue and £10,810.89 falls due within 7 days.', [owed])), [])
+  // A day count is not an amount.
+  assert.deepEqual(kinds(check('INV-SUP-20-0037 is £56 overdue.', [owed])), ['number:£56'])
+})

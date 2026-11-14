@@ -73,6 +73,18 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
     items: ['sku', 'itemName', 'unit', 'supplier', 'position', 'openRequests', 'cycleDays', 'expectedDemand', 'minimumOrderQuantity', 'minimumOrderValue', 'unitPrice', 'optimalQuantity', 'reorderListQuantity', 'planQuantity', 'chanceShortNoOrderPercent', 'chanceShortWithOptimalPercent', 'chanceShortWithPlanPercent', 'reason'],
     'decision.lines': ['sku', 'itemName', 'quantity', 'unit', 'supplier', 'unitPrice', 'orderValue'],
   },
+  supplier_payables: {
+    rows: ['invoiceNumber', 'supplier', 'invoiceDate', 'dueDate', 'overdueDays', 'outstanding', 'currency', 'paymentHeld', 'invoices', 'owed', 'overdueInvoices', 'overdue', 'oldestDueDate', 'receipt', 'arrived', 'purchaseOrder', 'value'],
+    totals: ['currency', 'invoices', 'amount', 'receipts', 'owedInvoices', 'owed', 'overdueInvoices', 'overdue', 'dueIn7DaysInvoices', 'dueIn7Days', 'paymentHeldInvoices'],
+  },
+  cash_movements: {
+    totals: ['currency', 'receivedFromCustomers', 'customerPayments', 'paidToSuppliers', 'supplierPayments', 'net'],
+    months: ['month', 'currency', 'receivedFromCustomers', 'customerPayments', 'paidToSuppliers', 'supplierPayments', 'net'],
+  },
+  gross_profit: {
+    '': ['currency', 'invoices', 'revenue', 'cost', 'grossProfit', 'grossMarginPercent'],
+    rows: ['month', 'sku', 'itemName', 'quantity', 'unit', 'customer', 'revenue', 'cost', 'grossProfit', 'grossMarginPercent'],
+  },
 })
 
 export function aiReadToolsFor(facts, context = null) {

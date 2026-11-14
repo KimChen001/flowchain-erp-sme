@@ -182,6 +182,9 @@ const MONEY_COLUMNS = Object.freeze({
   optimize_order_plan: ['spend', 'holdingCost', 'shortageCost', 'expectedCost', 'costAboveOptimal', 'orderValue', 'minimumOrderValue', 'overBudgetAmount'],
   attention_list: ['details.variance'],
   item_suppliers: ['referencePrice'],
+  supplier_payables: ['outstanding', 'owed', 'overdue', 'dueIn7Days', 'value'],
+  cash_movements: ['receivedFromCustomers', 'paidToSuppliers', 'net'],
+  gross_profit: ['revenue', 'cost', 'grossProfit'],
 })
 const QUANTITY_COLUMNS = new Set([
   'ordered', 'received', 'remaining', 'onHand', 'reserved', 'available', 'openSalesDemand', 'incomingOnPurchaseOrders', 'availableToPromise', 'shortage',

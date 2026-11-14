@@ -50,13 +50,14 @@ const TOOL_SOURCES = Object.freeze({
   list_supplier_invoices: 'supplier_invoices', list_purchase_requests: 'purchase_requests', list_rfqs: 'rfqs', list_suppliers: 'suppliers', search_documents: 'documents',
   list_contracts: 'contracts', supplier_risks: 'supplier_risks',
 })
-const PROGRESS_SOURCES = Object.freeze({ search_records: 'records', calculate: 'calculation', list_receivables: 'receivables', workspace_summary: 'workspace' })
+const PROGRESS_SOURCES = Object.freeze({ search_records: 'records', calculate: 'calculation', list_receivables: 'receivables', workspace_summary: 'workspace', supplier_payables: 'payables', cash_movements: 'payments', gross_profit: 'gross_profit' })
 // The sources line names every tool that read business data; a calculation
 // or the clock reads none.
 const BASIS_SOURCES = Object.freeze({
   ...TOOL_SOURCES,
   inventory_value: 'inventory', stock_on_hand: 'inventory', optimize_order_plan: 'inventory', order_quantity_costs: 'inventory', suggest_purchase_lines: 'inventory', suggest_purchase_request: 'inventory',
   item_suppliers: 'suppliers', rfq_quotes: 'rfqs', sales_summary: 'sales_orders', list_receivables: 'receivables',
+  supplier_payables: 'payables', cash_movements: 'payments', gross_profit: 'gross_profit',
   records_missing_data: 'items', setup_status: 'items', suggest_setup_records: 'items',
   workspace_summary: 'overview', attention_list: 'overview', decision_items: 'overview', decision_history: 'overview', search_records: 'overview',
 })

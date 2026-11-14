@@ -97,7 +97,11 @@ const PERIOD_WORDS = Object.freeze([
 // Receivables aging buckets are amounts too: current, 1_30 … 90_plus
 // (2026-11-11 on Flash: "未到期 £74,505.50，逾期 1–30 天 £4,478.51" was right
 // and flagged).
-const MONEY_KEY = /amount|value|total|spend|committed|difference|variance|price|cost|balance|outstanding|budget|result|^current$|^\d+_(?:\d+|plus)$/i
+// The money tools' figures are amounts too: sales, gross profit, cash in and
+// out and their net, what is owed and overdue (2026-11-14 on DeepSeek: "Gross
+// profit was £37,489.70" was right and flagged). Named whole, so overdueDays
+// stays a count of days.
+const MONEY_KEY = /amount|value|total|spend|committed|difference|variance|price|cost|balance|outstanding|budget|result|revenue|profit|^current$|^\d+_(?:\d+|plus)$|^(?:receivedFromCustomers|paidToSuppliers|net|owed|overdue|dueIn7Days)$/i
 const PERCENT_KEY = /percent|share|rate|result/i
 const DAYS_KEY = /day|delay|overdue|result|between|lead/i
 // A figure written as available or available to promise comes from such a
