@@ -440,7 +440,7 @@ export default function ReorderListPage() {
                       ? t("forecastLoading")
                       : forecastState === "unavailable"
                         ? t("forecastUnavailable")
-                        : t("forecastRule", { review: ruleReviewDays, window: list.rule.windowDays, history: Object.values(forecasts)[0]?.historyDays ?? 728 })}
+                        : t("forecastRule", { review: ruleReviewDays, window: list.rule.windowDays })}
                   </p>
                 )}
               </div>
