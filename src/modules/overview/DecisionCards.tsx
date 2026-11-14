@@ -8,7 +8,8 @@ import { unitLabel } from "../../i18n/unitLabels";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { useDocumentNumbers } from "../../lib/documentNumbers";
 import { formatQuantity } from "../../lib/format";
-import { followUpMessage, useDecisionCopy, type DecisionCopyKey } from "./decisionCopy";
+import { followUpMessage, invoiceCorrectionMessage, useDecisionCopy, type DecisionCopyKey } from "./decisionCopy";
+import { formatLocaleAmount } from "../../lib/format";
 import { useTodayRowFormat } from "./todayRowFormat";
 
 // The decision cards on Today (docs/drafted-decisions-design.md): for each row
@@ -49,7 +50,18 @@ type ConversionDraft = {
   orders: Array<{ supplierId: string; supplierName: string; currency: string; warehouseId: string; lines: number }>;
   missing: Array<{ line: number; sku: string | null; fields: string[] }>;
 };
-type Draft = ReorderDraft | FollowUpDraft | ConversionDraft;
+// A supplier invoice the three-way match held (server/domain/invoice-exception-draft.mjs).
+type InvoiceDifference = {
+  exceptionId: string; kind: "price" | "quantity" | "amount"; cause: string | null; sku: string | null; unit: string | null;
+  expected: number | null; actual: number | null; variance: number | null; percent?: number | null; evidenceOrder?: string | null;
+  ordered?: number | null; received?: number | null; previouslyInvoiced?: number | null; invoiced?: number | null; missing?: number | null;
+};
+type InvoiceExceptionDraft = {
+  type: "invoice_exception"; invoiceId: string; invoiceNumber: string; orderId: string | null; orderNumber: string | null; currency: string | null; amountsVisible: boolean;
+  supplier: { id: string | null; name: string | null; contactName: string | null; email: string | null };
+  step: "ask_supplier" | "review_price" | "wait_receipt"; differences: InvoiceDifference[]; moreDifferences: number;
+};
+type Draft = ReorderDraft | FollowUpDraft | ConversionDraft | InvoiceExceptionDraft;
 export type WaitingEntry = { key: string; row: TodayRow; raisedAt: string | null; returned: boolean; draft: Draft | null };
 export type SetAsideEntry = {
   key: string; row: TodayRow; decision: "not_now" | "not_needed" | "chased" | "accepted" | "covered"; reasonCode: string | null; note: string | null;
@@ -255,6 +267,11 @@ function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kin
           const result = await apiJson<{ outbox?: boolean }>("/api/decision-items/send-follow-up", { method: "POST", body: JSON.stringify({ key: entry.key, to: mail.to, confirmedTo: mail.to, subject: mail.subject, body: mail.body }) });
           return result?.outbox ? t("sentOutbox") : t("sentEmail", { to: mail.to });
         })} />
+          : draft?.type === "invoice_exception" ? <InvoiceExceptionBody draft={draft} row={row} busy={busy} canDecide={canDecide} aside={aside} {...view} onContacted={(text) => run(async () => {
+            try { await navigator.clipboard.writeText(text); } catch { throw new Error(t("copyFailed")); }
+            await decide(entry.key, { option: "chased" });
+            return t("invoiceCopied");
+          })} />
           : draft?.type === "purchase_orders_from_request" ? <ConversionBody draft={draft} row={row} busy={busy} canDecide={canDecide} aside={aside} {...view} onCreate={() => run(async () => {
             const result = await apiJson<any>(`/api/procurement/requests/${encodeURIComponent(draft.purchaseRequestId)}/generate-purchase-orders`, {
               method: "POST",
@@ -451,6 +468,100 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased
   );
 }
 
+// A held supplier invoice: on the line, its first difference and the step's
+// button; under Details, each difference with its likely cause, the message
+// to the supplier (copy it, then it is marked contacted), and the invoice.
+function InvoiceExceptionBody({ draft, row, busy, canDecide, aside, onContacted, open, toggle }: View & { draft: InvoiceExceptionDraft; row: TodayRow; busy: boolean; canDecide: boolean; aside: ReactNode; onContacted: (text: string) => void }) {
+  const t = useDecisionCopy();
+  const { language, locale } = useI18n();
+  const [mailLanguage, setMailLanguage] = useState<"en-US" | "zh-CN">(language === "zh-CN" ? "zh-CN" : "en-US");
+  const [showMessage, setShowMessage] = useState(false);
+  const [edited, setEdited] = useState<{ language: string; text: string } | null>(null);
+  const money = (value: number | null | undefined) => (value === null || value === undefined ? "—" : formatLocaleAmount(value, draft.currency, locale, { maximumFractionDigits: 4 }));
+  const qty = (value: number | null | undefined, unit: string | null, lang: string = t.language) => (value === null || value === undefined ? "—" : `${formatQuantity(value)}${unit ? ` ${unitLabel(unit, lang, value)}` : ""}`);
+  const generated = useMemo(() => invoiceCorrectionMessage(mailLanguage, {
+    invoiceNumber: draft.invoiceNumber,
+    orderNumber: draft.orderNumber,
+    contactName: draft.supplier.contactName,
+    differences: draft.differences.map((entry) => ({
+      kind: entry.kind,
+      sku: entry.sku || "—",
+      expected: entry.kind === "quantity" ? qty(entry.expected, entry.unit, mailLanguage) : money(entry.expected),
+      actual: entry.kind === "quantity" ? qty(entry.invoiced ?? entry.actual, entry.unit, mailLanguage) : money(entry.actual),
+      received: qty(entry.received, entry.unit, mailLanguage),
+      previouslyInvoiced: entry.previouslyInvoiced ? qty(entry.previouslyInvoiced, entry.unit, mailLanguage) : null,
+    })),
+    moreDifferences: draft.moreDifferences,
+  }), [draft, mailLanguage, locale]);
+  const text = edited && edited.language === mailLanguage ? edited.text : `${generated.subject}\n\n${generated.body}`;
+  // The first difference, in figures, for the card's one line.
+  const first = draft.differences[0];
+  const shortOf = (entry: InvoiceDifference) => entry.kind === "price"
+    ? (entry.actual === null ? t("invoiceShortPriceHidden", { sku: entry.sku || "—" }) : t("invoiceShortPrice", { sku: entry.sku || "—", invoice: money(entry.actual), order: money(entry.expected), percent: entry.percent === null || entry.percent === undefined ? "" : ` (${entry.percent > 0 ? "+" : ""}${entry.percent}%)` }))
+    : entry.kind === "quantity"
+      ? t("invoiceShortQuantity", { sku: entry.sku || "—", invoiced: qty(entry.invoiced, entry.unit), received: qty(entry.received, entry.unit) })
+      : t("invoiceShortAmount", { sku: entry.sku || "—", variance: money(entry.variance) });
+  const extra = draft.differences.length - 1 + draft.moreDifferences;
+  const short = first ? `${shortOf(first)}${extra > 0 ? t("invoiceShortMore", { n: extra }) : ""}` : "";
+  const causeOf = (entry: InvoiceDifference) => {
+    switch (entry.cause) {
+      case "price_changed": return t("cause_price_changed", { order: entry.evidenceOrder || "—", price: money(entry.actual) });
+      case "invoice_price": return t("cause_invoice_price");
+      case "over_ordered": return t("cause_over_ordered", { ordered: qty(entry.ordered, entry.unit) });
+      case "already_invoiced": return t("cause_already_invoiced", { previous: qty(entry.previouslyInvoiced, entry.unit) });
+      case "not_yet_received": return t("cause_not_yet_received", { missing: qty(entry.missing, entry.unit) });
+      case "line_amount": return t("cause_line_amount");
+      default: return t("cause_hidden");
+    }
+  };
+  const invoiceLeads = draft.step === "review_price" || (draft.step === "wait_receipt" && !draft.orderId);
+  const openInvoice = <Link to={row.href} className={invoiceLeads ? BUTTON.primary : BUTTON.secondary} data-testid={invoiceLeads ? "decision-primary" : undefined}>{t("openInvoice")}</Link>;
+  const openOrder = draft.orderId ? <Link to={`/app/procurement/orders/${encodeURIComponent(draft.orderId)}`} className={draft.step === "wait_receipt" ? BUTTON.primary : BUTTON.secondary} data-testid={draft.step === "wait_receipt" ? "decision-primary" : undefined}>{t("checkReceipt")}</Link> : null;
+  const contact = <button type="button" disabled={busy} className={draft.step === "ask_supplier" ? BUTTON.primary : BUTTON.secondary} onClick={() => onContacted(text)} data-testid={draft.step === "ask_supplier" ? "decision-primary" : "decision-copy"}>{t("copyAndContacted")}</button>;
+  const primary = !canDecide ? null : draft.step === "review_price" ? openInvoice : draft.step === "wait_receipt" ? openOrder || openInvoice : contact;
+  if (!open) return <><Short>{short}</Short><LineEnd>{primary}{toggle}</LineEnd></>;
+  return (
+    <>
+      <LineEnd>{toggle}</LineEnd>
+      <Below>
+        <Prepared>{t(`invoiceStep_${draft.step}` as DecisionCopyKey)}</Prepared>
+        <ul className="mt-1 space-y-1 text-xs" data-testid="decision-invoice-differences">
+          {draft.differences.map((entry) => (
+            <li key={entry.exceptionId} data-cause={entry.cause || ""}>
+              <span style={{ color: A.label }}>{shortOf(entry)}</span>
+              <span style={{ color: A.sub }}> · {causeOf(entry)}</span>
+            </li>
+          ))}
+          {draft.moreDifferences ? <li style={{ color: A.sub }}>{t("invoiceShortMore", { n: draft.moreDifferences })}</li> : null}
+        </ul>
+        <div className="mt-1 text-xs" style={{ color: A.sub }}>{draft.orderNumber ? t("invoiceForOrder", { invoice: draft.invoiceNumber, order: draft.orderNumber }) : draft.invoiceNumber}</div>
+        <button type="button" className="mt-2 flex items-center gap-1 text-xs font-medium text-blue-600" aria-expanded={showMessage} onClick={() => setShowMessage((value) => !value)} data-testid="decision-invoice-message-toggle">
+          {showMessage ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+          {showMessage ? t("hideMessage") : t("showInvoiceMessage")}
+        </button>
+        {showMessage ? (
+          <>
+            <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: A.sub }}>
+              <span>{t("followUpLanguage")}</span>
+              {(["en-US", "zh-CN"] as const).map((code) => (
+                <button key={code} type="button" aria-pressed={mailLanguage === code} onClick={() => setMailLanguage(code)} className={mailLanguage === code ? rowActionClass.primary : rowActionClass.neutral}>{code === "en-US" ? "English" : "中文"}</button>
+              ))}
+            </div>
+            <textarea className="mt-2 w-full rounded-md border p-2 font-mono text-xs leading-5" style={{ borderColor: A.gray4 }} rows={Math.min(14, text.split("\n").length + 1)} value={text} onChange={(event) => setEdited({ language: mailLanguage, text: event.target.value })} data-testid="decision-invoice-message" />
+            <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{t("followUpNotSent")}</p>
+          </>
+        ) : null}
+        <Actions aside={aside}>
+          {!canDecide ? openInvoice
+            : draft.step === "ask_supplier" ? <>{contact}{openInvoice}</>
+              : draft.step === "review_price" ? <>{openInvoice}{contact}</>
+                : openOrder ? <>{openOrder}{contact}{openInvoice}</> : <>{openInvoice}{contact}</>}
+        </Actions>
+      </Below>
+    </>
+  );
+}
+
 function ConversionBody({ draft, row, busy, canDecide, aside, onCreate, open, toggle }: View & { draft: ConversionDraft; row: TodayRow; busy: boolean; canDecide: boolean; aside: ReactNode; onCreate: () => void }) {
   const t = useDecisionCopy();
   const fields = (codes: string[]) => codes.map((code) => t(`field_${code}` as DecisionCopyKey)).join(t.language === "zh-CN" ? "、" : ", ");
@@ -523,7 +634,7 @@ function useAsideStatus(entries: SetAsideEntry[], day: (value: string) => string
     switch (entry.decision) {
       case "not_now": return t("aside_not_now", { date: entry.returnOn ? day(entry.returnOn) : "—" });
       case "not_needed": return t("aside_not_needed", { reason: entry.reasonCode ? t(`reason_${entry.reasonCode}` as DecisionCopyKey) : "—" }) + (entry.note ? ` (${entry.note})` : "");
-      case "chased": return t(entry.note === "email" ? "aside_emailed" : "aside_chased", { date: entry.decidedOn ? day(entry.decidedOn) : "—" });
+      case "chased": return t(entry.row.kind === "bill_exception" ? "aside_contacted" : entry.note === "email" ? "aside_emailed" : "aside_chased", { date: entry.decidedOn ? day(entry.decidedOn) : "—" });
       case "accepted": return t("aside_accepted", { document: documents(entry) });
       default: return t("aside_covered", { document: documents(entry) });
     }

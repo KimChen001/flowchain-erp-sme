@@ -1,4 +1,5 @@
 import { purchaseOrderSignalRows } from './today-work.mjs'
+import { invoiceExceptionDraft } from './invoice-exception-draft.mjs'
 
 // The prepared next step for each drafted Today row
 // (docs/drafted-decisions-design.md §4.3). Every value comes from rules and
@@ -16,7 +17,11 @@ import { purchaseOrderSignalRows } from './today-work.mjs'
 //   purchase_request_to_convert  the draft purchase orders the request would
 //                                make, one per supplier, currency and
 //                                delivery warehouse, and the lines that lack
-//                                one of the three.
+//                                one of the three;
+//   bill_exception               what the three-way match found different on
+//                                a held supplier invoice, the likely cause of
+//                                each difference and the step for the invoice
+//                                (invoice-exception-draft.mjs).
 
 const array = (value) => (Array.isArray(value) ? value : [])
 const text = (value) => String(value ?? '').trim()
@@ -115,6 +120,20 @@ function conversionDraft(row, { requestsById, suppliersById }) {
   }
 }
 
+function billExceptionDraft(row, { held, suppliersById }) {
+  if (!held) return null
+  const invoice = array(held.invoices).find((entry) => text(entry.id) === text(row.recordId))
+  if (!invoice) return null
+  return invoiceExceptionDraft({
+    invoice,
+    exceptions: array(held.exceptions).filter((entry) => text(entry.supplierInvoiceId) === text(invoice.id)),
+    lines: held.lines || {},
+    orderPrices: array(held.orderPrices).filter((entry) => text(entry.supplierId) === text(invoice.supplierId)),
+    supplier: suppliersById.get(text(invoice.supplierId)) || null,
+    amountsVisible: held.amountsVisible !== false,
+  })
+}
+
 // drafts keyed like the rows (kind:recordId) for the rows given.
 // context: the reader's scoped business context; sources: Today's sources.
 export function buildDecisionDrafts(rows = [], { context = {}, sources = {}, now = new Date(), timeZone } = {}) {
@@ -133,7 +152,8 @@ export function buildDecisionDrafts(rows = [], { context = {}, sources = {}, now
     const draft = row.kind === 'reorder_now' ? reorderDraft(row, { reorderRows, openRequests })
       : row.kind === 'purchase_order_overdue' ? followUpDraft(row, { orderRows, suppliersById })
         : row.kind === 'purchase_request_to_convert' ? conversionDraft(row, { requestsById, suppliersById })
-          : null
+          : row.kind === 'bill_exception' ? billExceptionDraft(row, { held: sources.invoiceExceptions, suppliersById })
+            : null
     if (draft) drafts[key] = draft
   }
   return drafts
