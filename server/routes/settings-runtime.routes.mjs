@@ -83,7 +83,7 @@ export async function handleSettingsRuntimeRoute(ctx) {
     return true
   }
 
-  // The workspace's AI status for Settings › AI: switched on or not, whether a
+  // The workspace's AI status for AI governance: switched on or not, whether a
   // model is configured and required to be opted into, and this month's spend
   // against the cap.
   if (req.method === 'GET' && url.pathname === '/api/settings-runtime/ai-status') {

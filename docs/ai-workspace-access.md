@@ -8,7 +8,7 @@ stays model-free"). On 2026-11-04 the owner chose MIT Parley with Claude Sonnet
 
 ## What it does
 
-- **A switch per workspace, off by default.** Settings › AI › "AI features",
+- **A switch per workspace, off by default.** System administration › AI governance › "AI features",
   saved by a workspace administrator (`settings.workspace.manage`) and audited as
   `ai_settings_updated`. It is stored in `Tenant.operationalSettings.ai.modelAssistEnabled`.
 - **One decision per assistant request.** Every `/api/ai-runtime/` request
@@ -137,15 +137,15 @@ check withheld those answers.
 - **The cap.** `FLOWCHAIN_AI_MONTHLY_CAP_USD` is per workspace and counted at the
   model's list prices, not by Parley. Keep the total over all switched-on
   workspaces below the Parley budget, and watch the Parley usage page as well
-  as Settings > AI.
+  as System administration › AI governance.
 
 ## Turning it on for a trial workspace
 
 1. Set the provider variables and `FLOWCHAIN_AI_WORKSPACE_OPT_IN=required` on the
    server. On Render they are in the Blueprint; enter the Parley key on each
    service's **Environment** page.
-2. Sign in as the workspace's administrator, open Settings › AI and switch
-   on "AI features".
+2. Sign in as the workspace's administrator, open System administration ›
+   AI governance and switch on "Use an AI model in this workspace".
 3. Ask the assistant "What should I reorder this week?". The answer is
-   streamed and labelled "Written by AI from your records". Settings › AI then
-   shows this month's spend.
+   streamed, with its records as chips. AI governance then shows this
+   month's spend.

@@ -105,8 +105,8 @@ const entries = {
   'assistant_v2.notice.injection_refused': ['This question asks the assistant to ignore its rules, so it was not answered.', '该问题要求助手忽略它的规则，因此没有回答。'],
   'assistant_v2.notice.rate_limited': ['You have asked many questions in a short time. Wait a few minutes, then ask again.', '短时间内提问较多，请几分钟后再问。'],
   'assistant_v2.notice.unavailable': ['The assistant is not available right now. Try again in a few minutes. Nothing was changed.', '助手暂时不可用，请几分钟后再试。未修改任何数据。'],
-  'assistant_v2.notice.over_cap': ['This workspace has used this month\'s assistant allowance. An administrator can see the spend in Settings > AI.', '本工作区本月的助手额度已用完。管理员可以在 设置 > AI 中查看用量。'],
-  'assistant_v2.notice.ai_off': ['AI is off for this workspace. A workspace administrator can switch it on in Settings > AI.', '此工作区未开启 AI。工作区管理员可以在 设置 > AI 中开启。'],
+  'assistant_v2.notice.over_cap': ['This workspace has used this month\'s assistant allowance. An administrator can see the spend in System administration › AI governance.', '本工作区本月的助手额度已用完。管理员可以在 系统管理 › AI 治理 中查看用量。'],
+  'assistant_v2.notice.ai_off': ['AI is off for this workspace. A workspace administrator can switch it on in System administration › AI governance.', '此工作区未开启 AI。工作区管理员可以在 系统管理 › AI 治理 中开启。'],
   'assistant_v2.notice.no_provider': ['The assistant is not set up on this server yet.', '此服务器尚未配置 AI 助手。'],
   // What each source is called in a "Checked:" line.
   'source.purchase_orders': ['purchase orders', '采购订单'],
