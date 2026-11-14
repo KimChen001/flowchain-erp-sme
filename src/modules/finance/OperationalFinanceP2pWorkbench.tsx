@@ -142,7 +142,7 @@ const LANDING_COPY = {
   overdueNote: ["Past the due date and not paid in full", "已过到期日且未全额收款"],
   amountHidden: ["amount hidden for your role", "当前角色无权查看金额"],
   awaitingMatch: ["Submitted, waiting for the three-way match", "已提交，等待三单匹配"],
-  matchExceptions: ["To review: price or quantity differs from the PO or receipt", "待复核：价格或数量与采购订单、收货不一致"],
+  matchExceptions: ["Supplier invoices to review: a price or quantity differs from the PO or receipt", "待复核的采购发票：价格或数量与采购订单、收货不一致"],
   awaitingIssue: ["Approved, not yet sent to the customer", "已批准，尚未开具给客户"],
   disputedReceivables: ["The customer has raised a dispute", "客户提出了争议"],
   supplierCredits: ["Raised from posted supplier returns", "由已过账的供应商退货生成"],

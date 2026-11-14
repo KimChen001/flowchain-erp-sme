@@ -487,14 +487,26 @@ export default function SupplierMasterPage({
   if (selected)
     return (
       <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9"
-            onClick={detailBack.back}
-          >
-            <ArrowLeft size={13} />
-            {detailBack.label}</button>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9"
+          onClick={detailBack.back}
+        >
+          <ArrowLeft size={13} />
+          {detailBack.label}</button>
+        {/* The header card sits above the tabs, so every tab keeps the supplier's name (UI review 11). */}
+        <Card className="p-5" data-testid="supplier-detail-header">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="fc-page-title">{selected.supplierName}</h1>
+                <TierChip tier={selected.tier} />
+                <StatusChip label={copy(statusLabel[selected.status])} tone={selected.status === "active" ? "success" : "neutral"} />
+              </div>
+              <div className="mt-1 text-xs" style={{ color: A.sub }}>
+                {selected.supplierCode}
+              </div>
+            </div>
           {writes.suppliers && (
             <div className="flex flex-wrap gap-2">
               <button
@@ -513,7 +525,8 @@ export default function SupplierMasterPage({
               </button>
             </div>
           )}
-        </div>
+          </div>
+        </Card>
         <div role="tablist" aria-label={selected.supplierName} className="flex gap-1 border-b" style={{ borderColor: A.border }}>
           {(canReadContracts ? (["details", "performance", "contracts"] as const) : (["details", "performance"] as const)).map((tab) => (
             <button key={tab} type="button" role="tab" aria-selected={detailTab === tab} data-testid={`supplier-tab-${tab}`} onClick={() => setDetailTab(tab)}
@@ -524,15 +537,7 @@ export default function SupplierMasterPage({
         </div>
         {detailTab === "performance" ? <SupplierPerformancePanel supplierId={selected.id} /> : detailTab === "contracts" && canReadContracts ? <SupplierContractsPanel supplierId={selected.id} /> : <>
         <Card className="p-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="fc-page-title">{selected.supplierName}</h1>
-            <TierChip tier={selected.tier} />
-            <StatusChip label={copy(statusLabel[selected.status])} tone={selected.status === "active" ? "success" : "neutral"} />
-          </div>
-          <div className="mt-1 text-xs" style={{ color: A.sub }}>
-            {selected.supplierCode}
-          </div>
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {([
               ["基本信息", [
                 ["Short name", selected.shortName],
@@ -587,14 +592,14 @@ export default function SupplierMasterPage({
           {relationshipLimitation && <p role="alert" className="mt-2 text-xs text-amber-700">{copy("Supplied-item links are currently unavailable.")}</p>}
           {writes.items && <div className="mt-3 grid items-start gap-2 md:grid-cols-[minmax(0,2fr)_auto_minmax(0,1fr)_auto]">
             <select
-              aria-label={copy("选择 SKU")}
+              aria-label={copy("Select item")}
               value={relationForm.itemId}
               onChange={(e) =>
                 setRelationForm({ ...relationForm, itemId: e.target.value })
               }
               style={inputStyle}
             >
-              <option value="">{copy("选择 SKU")}</option>
+              <option value="">{copy("Select item")}</option>
               {items
                 .filter(
                   (i) => !relationships.some((r) => r.itemId === i.itemId),

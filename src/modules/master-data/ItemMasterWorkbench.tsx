@@ -9,7 +9,7 @@ import { AlertCircle, ArrowLeft, CheckCircle2, FileSpreadsheet, Package, Pencil,
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { RefreshButton, ResetButton, listButtonClass } from "../../components/ui/listLayout";
+import { RefreshButton, ResetButton, StatusChip, listButtonClass } from "../../components/ui/listLayout";
 import {
   listTableCardsRef,
   tableBodyTextClass,
@@ -294,7 +294,7 @@ export default function ItemMasterWorkbench({
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold">
-              {selected ? `${copy("编辑")} ${selected.sku}` : copy("新建 SKU")}
+              {selected ? `${copy("编辑")} ${selected.sku}` : copy("New item")}
             </h2>
             <p className="text-xs" style={{ color: A.sub }}>
               {copy("基础信息、采购库存属性与追踪属性")}
@@ -402,22 +402,25 @@ export default function ItemMasterWorkbench({
       </button>
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <ItemTitle className={onDetailRoute ? "fc-page-title" : "text-base font-semibold"} style={{ color: A.label }} data-testid="item-detail-title">
-              {selected.sku} · {selected.itemName}
-            </ItemTitle>
-            <p className="text-xs" style={{ color: A.sub }}>
-              {statusLabel(selected.status)} · v{selected.version}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <ItemTitle className={onDetailRoute ? "fc-page-title" : "text-base font-semibold"} style={{ color: A.label }} data-testid="item-detail-title">
+                {selected.sku} · {selected.itemName}
+              </ItemTitle>
+              <StatusChip label={statusLabel(selected.status)} tone={selected.status === "active" ? "success" : "neutral"} />
+            </div>
+            <p className="mt-1 text-xs" style={{ color: A.sub }} data-testid="item-detail-version">
+              v{selected.version}
             </p>
           </div>
           {canEdit && (
             <button
               type="button"
               onClick={() => setEditing(selected)}
-              className={listButtonClass.primary}
+              className={listButtonClass.secondary}
             >
               <Pencil size={13} />
-              {copy("编辑 SKU")}
+              {copy("Edit item")}
             </button>
           )}
         </div>
@@ -474,14 +477,14 @@ export default function ItemMasterWorkbench({
                   setEditing({ ...empty });
                 }}
               >
-                <Plus size={13} />{copy("新建 SKU")}
+                <Plus size={13} />{copy("New item")}
               </button>
             )}
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
           <Field label={copy("Search")}>
-            <input aria-label={copy("搜索 SKU")} placeholder={copy("搜索 SKU 编码或物料名称")} value={query} onChange={(e) => setQuery(e.target.value)} style={inputStyle} />
+            <input aria-label={copy("Search items")} placeholder={copy("搜索 SKU 编码或物料名称")} value={query} onChange={(e) => setQuery(e.target.value)} style={inputStyle} />
           </Field>
           <Field label={copy("Status")}>
             <select aria-label={copy("状态筛选")} value={status} onChange={(e) => setStatus(e.target.value)} style={inputStyle}>

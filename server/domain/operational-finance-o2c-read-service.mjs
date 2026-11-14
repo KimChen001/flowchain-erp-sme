@@ -897,10 +897,12 @@ export function createOperationalFinanceO2cReadService({
       prisma.supplierInvoice.count({
         where: { tenantId: current.tenantId, status: "submitted", relatedGrnId: { not: null } },
       }),
-      prisma.financeMatchException.count({
+      // Supplier invoices with a difference still to decide, as the list this
+      // card opens and Today count them; not the difference lines (UI review 11).
+      prisma.supplierInvoice.count({
         where: {
           tenantId: current.tenantId,
-          status: { in: ["open", "reviewed"] },
+          matchExceptions: { some: { status: { in: ["open", "reviewed"] } } },
         },
       }),
       // The payables list's "outstanding" filter, which this card opens.

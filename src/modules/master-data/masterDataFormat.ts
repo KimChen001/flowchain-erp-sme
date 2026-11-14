@@ -42,6 +42,7 @@ const zh: Record<string, string> = {
   "Lead time (days)": "采购提前期（天）", "Batch managed": "批次管理", "Serial managed": "序列号管理", "QA required": "质检要求",
   "Default supplier": "默认供应商", "Default tax code": "默认税码",
   // The items list page.
+  "New item": "新建物料", "Edit item": "编辑物料", "Search items": "搜索物料",
   "Items": "物料总数", "{count} active": "{count} 个启用", "Inactive items": "停用物料",
   "Kept for history, not offered on new documents": "保留历史记录，新单据中不再提供",
   "No reorder point": "未设再订货点", "Active items the reorder list cannot check": "补货清单无法检查的启用物料",
