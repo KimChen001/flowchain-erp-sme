@@ -409,8 +409,36 @@ message points to a return plus a credit note.
     to cancel that authorization first, instead of a "refresh and retry"
     conflict (L8-27).
 
-Still open for later batches before switching on: the return quantity ledger
-(batch A10: L8-05, L8-07, L8-08, L8-09, L8-18) and the credit kernel (batch A8).
+The return quantity ledger (design audit batch A10, regression walk
+`server/domain/return-quantity-ledger.test.mjs`, also run by
+`npm run test:db:returns-quarantine`):
+
+12. A return counts once against its shipment or receipt line: only the
+    customer receipt and the supplier dispatch count as returned, and a
+    request in progress counts only what it has not executed or closed. Ship
+    10, return 4 and release them: 6 can still be returned (L8-05).
+13. A shipment or receipt that a return names (any request not cancelled or
+    rejected) cannot be reversed; the return is cancelled first, its posting
+    reversed if it was posted. A return posting rechecks that its source is
+    still posted (L8-07).
+14. A customer invoice cannot bill goods the customer returned, unless an
+    approved credit note already took them off an invoice (L8-08). A supplier
+    bill is matched against what was received less what went back and is not
+    yet credited: after 20 of 100 went back, a bill for 100 is a quantity
+    exception (L2-06).
+15. A quarantine release takes the return's own receipt layers, and a supplier
+    return taken from quarantine lowers what that return can still release
+    (L8-09). A supplier return from quarantine still takes the oldest layer;
+    choosing which customer return it comes from waits for the step 7 screens.
+16. The receipt reversal replay and the receiving reconciliation leave out
+    quarantine movements at the same stock key (L8-18).
+17. A supplier return asks for a credit (default) or replacement goods. A
+    replacement takes the returned quantity off the purchase order line's
+    received quantity, so the replacement is on order again; it cannot also be
+    credited, and its dispatch cannot be reversed once the replacement was
+    received (L3-23). Customer returns stay credit only (L8-12 is step 7+).
+
+Still open for later batches before switching on: the credit kernel (batch A8).
 
 Scrap from quarantine waits (decision RV6). Writing stock off needs a value, and
 FlowChain has no cost layer.

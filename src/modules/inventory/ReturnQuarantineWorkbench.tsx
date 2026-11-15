@@ -432,6 +432,8 @@ function RequestCreate() {
   const [requestNumber, setRequestNumber] = useState("");
   const [reasonCode, setReasonCode] = useState("damaged");
   const [reasonDetail, setReasonDetail] = useState("");
+  // What the supplier owes for the goods (L3-23); customer returns are credited.
+  const [resolution, setResolution] = useState<"credit" | "replacement">("credit");
   const [preview, setPreview] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -448,6 +450,7 @@ function RequestCreate() {
     contextDocumentId: source?.contextDocumentId || source?.id,
     reasonCode,
     reasonDetail,
+    resolution: returnType === "supplier_return" ? resolution : "credit",
     lines: selectedLines.map((id) => ({
       sourceDocumentLineId: id,
       requestedQuantity: quantities[id] || "",
@@ -456,6 +459,7 @@ function RequestCreate() {
   });
   const changeType = (value: "customer_return" | "supplier_return") => {
     setReturnType(value);
+    setResolution("credit");
     setSourceId("");
     setSelectedLines([]);
     setQuantities({});
@@ -527,6 +531,16 @@ function RequestCreate() {
             <span>{copy("Reason details")}</span>
             <input aria-label={copy("Reason details")} className={`${field} w-full`} value={reasonDetail} onChange={(event) => { setReasonDetail(event.target.value); setPreview(null); }} />
           </label>
+          {returnType === "supplier_return" ? (
+            <label className="space-y-1 text-sm md:col-span-2">
+              <span>{copy("What the supplier owes")}</span>
+              <select aria-label={copy("What the supplier owes")} className={`${field} w-full`} value={resolution} onChange={(event) => { setResolution(event.target.value === "replacement" ? "replacement" : "credit"); setPreview(null); }} data-testid="return-resolution">
+                <option value="credit">{codeLabel("credit")}</option>
+                <option value="replacement">{codeLabel("replacement")}</option>
+              </select>
+              <span className="block text-xs text-slate-500">{copy("A replacement takes the returned quantity off the purchase order's received quantity, so the replacement is expected on that order. A credit leaves the order as it is.")}</span>
+            </label>
+          ) : null}
         </div>
         <div>
           <h3 className="mb-2 font-semibold">{copy("Source lines (choose each line)")}</h3>
@@ -623,6 +637,7 @@ function RequestDetail({ id }: { id: string }) {
     contextDocumentId: request.contextDocumentId || request.sourceDocumentId,
     reasonCode: draft.reasonCode,
     reasonDetail: draft.reasonDetail,
+    resolution: request.resolution || "credit",
     lines: data.lines.map((line: any) => ({
       sourceDocumentLineId: line.sourceDocumentLineId,
       requestedQuantity: draft.quantities[line.id] ?? line.requestedQuantity,
@@ -717,6 +732,9 @@ function RequestDetail({ id }: { id: string }) {
           <Link to="/app/inventory/returns/requests" className="text-sm font-semibold text-blue-600">{copy("← Back to return requests")}</Link>
           <h2 className="mt-3 text-lg font-semibold">{request.requestNumber}</h2>
           <div className="mt-2 flex gap-2"><Status value={request.returnType} /><Status value={request.workflowStatus} /></div>
+          {request.returnType === "supplier_return" ? (
+            <p className="mt-2 text-xs text-slate-600" data-testid="return-resolution-shown">{copy("What the supplier owes: {resolution}", { resolution: codeLabel(request.resolution || "credit") })}</p>
+          ) : null}
         </div>
         <div className="flex gap-2">
           <button className={secondary} disabled={!data.availableActions.revise || editing} onClick={startEditing} data-testid="edit-return-draft">{copy("Edit draft")}</button>

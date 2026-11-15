@@ -36,6 +36,7 @@ const serverFiles = [
   "server/domain/return-governance-command-service.mjs",
   "server/domain/return-governance-policy.mjs",
   "server/domain/return-governance-read-service.mjs",
+  "server/domain/return-source-holds.mjs",
   "server/domain/supplier-return-command-service.mjs",
   "server/domain/supplier-return-read-service.mjs",
   "server/domain/supplier-return-transaction-policy.mjs",

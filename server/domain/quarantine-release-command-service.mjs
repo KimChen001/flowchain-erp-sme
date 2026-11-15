@@ -967,6 +967,7 @@ export function createQuarantineReleaseCommandService({
             consumerMovement: out,
             quantity: line.quantity,
             idFactory,
+            sourceMovementIds: line.sourceMovementIds,
           });
           sourceState.units -= decimalUnits(line.quantity);
           movementByLine.set(line.id, { out });

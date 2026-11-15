@@ -75,6 +75,10 @@ export const returnsChinese: Record<string, string> = {
   "Unnamed partner": "未命名伙伴",
   "Reason code": "原因代码",
   "Reason details": "原因说明",
+  "What the supplier owes": "供应商应给予",
+  "What the supplier owes: {resolution}": "供应商应给予：{resolution}",
+  "A replacement takes the returned quantity off the purchase order's received quantity, so the replacement is expected on that order. A credit leaves the order as it is.":
+    "选择补发时，退回数量会从采购订单的已收数量中扣除，补发货物按该订单待收；选择贷项时，订单保持不变。",
   "Source lines (choose each line)": "来源行（必须逐行明确选择）",
   "Select source line {sku}": "选择来源行 {sku}",
   "Source quantity {quantity} {unit} · warehouse {warehouses}": "来源数量 {quantity} {unit} · 仓库 {warehouses}",
@@ -288,6 +292,9 @@ export const returnsCodeLabels: Record<string, [string, string]> = {
   customer_return_receipt: ["Customer return receipt", "客户退货收货"],
   supplier_return_dispatch: ["Supplier return dispatch", "供应商退货出库"],
   quarantine_release: ["Quarantine release", "隔离库存释放"],
+  // What the supplier owes for returned goods
+  credit: ["A credit for the goods", "货款贷项"],
+  replacement: ["Replacement goods", "补发货物"],
   // Disposition routes
   receive_to_quarantine: ["Receive to quarantine", "收货至隔离库存"],
   return_from_available: ["Return from available stock", "从可用库存退回"],
@@ -456,7 +463,12 @@ export const returnsErrorLabels: Record<string, [string, string]> = {
   RETURN_AUTHORIZATION_NO_REMAINDER: ["Only a partly executed authorization has a remaining quantity to close.", "只有部分执行的授权才有可关闭的剩余数量。"],
   RETURN_DISPOSITION_NOT_ALLOWED: ["This disposition route is not allowed for this return at this stage.", "该处置路径不适用于当前退货类型或阶段。"],
   RETURN_DISPOSITION_ROUTE_NOT_EXECUTABLE: ["This disposition route cannot be executed here.", "该处置路径无法在此执行。"],
-  RETURN_RELEASE_EXCEEDS_RECEIVED_QUARANTINE: ["The release quantity is more than the received quantity still in quarantine.", "释放数量超过已收货且仍在隔离中的数量。"],
+  RETURN_RELEASE_EXCEEDS_RECEIVED_QUARANTINE: ["The release quantity is more than this return still has in quarantine (received, not released or sent back to a supplier).", "释放数量超过本退货仍在隔离中的数量（已收货、未释放、未退回供应商）。"],
+  RETURN_RELEASE_EXCEEDS_RETURN_QUARANTINE: ["The release quantity is more than this return still has in the chosen quarantine stock.", "释放数量超过本退货在所选隔离库存中尚存的数量。"],
+  RETURN_SOURCE_NOT_POSTED: ["The shipment or receipt this return is based on is no longer posted.", "本退货所依据的发货单或收货单已不是过账状态。"],
+  RETURN_RESOLUTION_INVALID: ["Choose a credit or, for a supplier return, replacement goods.", "请选择贷项；供应商退货也可选择补发货物。"],
+  RETURN_REPLACEMENT_PO_NOT_OPEN: ["A replacement needs the purchase order to be approved or still receiving. Ask for a credit instead.", "补发要求采购订单为已批准或收货中状态，否则请改为贷项。"],
+  RETURN_REVERSAL_REPLACEMENT_RECEIVED: ["The replacement was already received against the purchase order, so this return can no longer be reversed.", "补发货物已按采购订单收货，此退货不能再冲销。"],
   // Postings
   RETURN_POSTING_NOT_FOUND: ["Return posting not found.", "未找到退货执行单。"],
   RETURN_POSTING_VERSION_CONFLICT: ["The return posting changed. Refresh and try again.", "退货执行单已变更，请刷新后重试。"],

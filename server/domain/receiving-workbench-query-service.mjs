@@ -1,6 +1,7 @@
 import { ReceivingCommandError } from './receiving-posting-command-service.mjs'
 import { procurementDocumentNumber } from '../../shared/document-numbering.mjs'
 import {
+  availableRecordLedger,
   buildReceivingPostingPlan,
   buildReceivingReversalPlan,
   receivingDecimalString,
@@ -319,7 +320,7 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
     if (!keys.length) return { receivingDocumentId, status: 'unavailable', entries: [], reason: 'No inventory movements exist for this receiving document.' }
     const entries = await Promise.all(keys.map(async (key) => {
       const [movements, balance] = await Promise.all([
-        prisma.inventoryMovement.findMany({ where: { tenantId: scope.tenantId, sku: key.sku, warehouseId: key.warehouseId, locationKey: key.locationKey, status: 'posted' }, select: { id: true, quantityIn: true, quantityOut: true, adjustmentQty: true } }),
+        prisma.inventoryMovement.findMany({ where: { tenantId: scope.tenantId, sku: key.sku, warehouseId: key.warehouseId, locationKey: key.locationKey, status: 'posted' }, select: { id: true, quantityIn: true, quantityOut: true, adjustmentQty: true, movementType: true, metadata: true } }).then(availableRecordLedger),
         prisma.inventoryBalance.findUnique({ where: { tenantId_sku_warehouseKey_locationKey: { tenantId: scope.tenantId, sku: key.sku, warehouseKey: key.warehouseKey, locationKey: key.locationKey } } }),
       ])
       const calculated = movements.reduce((sum, movement) => sum + receivingMovementNetUnits(movement), ZERO)

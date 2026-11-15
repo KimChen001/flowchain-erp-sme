@@ -352,6 +352,7 @@ const FORM_COPY = {
   lineRequired: ["Enter an invoice quantity on at least one line.", "请至少为一行填写开票数量。"],
   quantityInvalid: ["Enter a quantity above 0, with up to 4 decimal places.", "请填写大于 0 的数量，最多 4 位小数。"],
   quantityOver: ["More than the {left} left to invoice.", "超过可开票数量 {left}。"],
+  quantityOverReturned: ["More than the {left} left to invoice once the customer's returns are taken off.", "超过扣除客户退货后的可开票数量 {left}。"],
   taxInvalid: ["Enter a tax amount of 0 or more, with up to 4 decimal places.", "请填写不小于 0 的税额，最多 4 位小数。"],
   shipmentNotPosted: ["This shipment is no longer posted (it was reversed), so it cannot be invoiced. Choose another.", "这张发货单已不是过账状态（已冲销），不能开票。请选择其他发货单。"],
   noPrice: ["This line has no sales order price, so it cannot be invoiced. Set the price on the sales order first.", "这一行没有销售订单单价，不能开票。请先在销售订单上填写单价。"],
@@ -841,7 +842,14 @@ const decimalUnits = (value: string): bigint | null => {
 type FormCopyKey = keyof typeof FORM_COPY;
 // An error's details when the server sent one object (a refused preview's issue).
 const objectDetails = (value: unknown) => (value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined);
-type LineIssue = { quantity?: string; tax?: string; line?: string };
+// `left`: what the server says is left to invoice on the line when that
+// differs from the list's figure (goods the customer returned, L8-08).
+type LineIssue = { quantity?: string; tax?: string; line?: string; left?: string };
+const unitsText = (units: bigint) => {
+  const negative = units < 0n;
+  const absolute = negative ? -units : units;
+  return `${negative ? "-" : ""}${absolute / 10000n}.${String(absolute % 10000n).padStart(4, "0")}`;
+};
 type InvoiceIssues = { form: string[]; shipment?: string; due?: string; lines: Record<string, LineIssue> };
 const noIssues = (): InvoiceIssues => ({ form: [], lines: {} });
 const issueCount = (issues: InvoiceIssues) => issues.form.length + (issues.shipment ? 1 : 0) + (issues.due ? 1 : 0) + Object.keys(issues.lines).length;
@@ -1004,6 +1012,10 @@ function NewInvoice() {
       const line = shipment?.lines.find((row) => row.id === lineId);
       return say("quantityOver", { left: line ? quantityText(line.remainingQuantity ?? line.postedQuantity, line.unit) : "" });
     }
+    if (key === "quantityOverReturned") {
+      const line = shipment?.lines.find((row) => row.id === lineId);
+      return say("quantityOverReturned", { left: quantityText(serverIssues.lines[lineId]?.left, line?.unit) });
+    }
     return key in FORM_COPY ? say(key as FormCopyKey) : key;
   };
   // The preview's refusals placed where they belong. An issue names its line
@@ -1034,9 +1046,19 @@ function NewInvoice() {
         case "CUSTOMER_INVOICE_LINES_REQUIRED":
           placed.form.push("lineRequired");
           break;
-        case "CUSTOMER_INVOICE_QUANTITY_EXCEEDS_SHIPPED":
-          if (!onLine(lineId, "quantity", "quantityOver")) placed.form.push(issue.message);
+        case "CUSTOMER_INVOICE_QUANTITY_EXCEEDS_SHIPPED": {
+          // With goods returned and not yet credited, what is left is the
+          // server's figure: shipped - invoiced - returned.
+          const returned = decimalUnits(String(issue.details?.returnedNotCreditedQuantity ?? ""));
+          const shipped = decimalUnits(String(issue.details?.shippedQuantity ?? ""));
+          const invoiced = decimalUnits(String(issue.details?.previouslyInvoicedQuantity ?? ""));
+          if (returned !== null && shipped !== null && invoiced !== null && lineId) {
+            const left = shipped - invoiced - returned;
+            onLine(lineId, "quantity", "quantityOverReturned");
+            placed.lines[lineId] = { ...placed.lines[lineId], left: unitsText(left > 0n ? left : 0n) };
+          } else if (!onLine(lineId, "quantity", "quantityOver")) placed.form.push(issue.message);
           break;
+        }
         case "FINANCE_DECIMAL_INVALID":
           if (!onLine(lineId, /entered tax/i.test(issue.message) ? "tax" : "quantity", /entered tax/i.test(issue.message) ? "taxInvalid" : "quantityInvalid")) placed.form.push(issue.message);
           break;

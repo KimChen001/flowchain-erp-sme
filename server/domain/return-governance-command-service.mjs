@@ -121,6 +121,7 @@ function normalize(commandType, input = {}) {
       ),
       reasonCode: text(input.reasonCode),
       reasonDetail: text(input.reasonDetail),
+      resolution: text(input.resolution) || "credit",
       lines: normalizedLines(input.lines),
     };
   else if (commandType === "revise_return_request")
@@ -137,6 +138,7 @@ function normalize(commandType, input = {}) {
       ),
       reasonCode: text(input.reasonCode),
       reasonDetail: text(input.reasonDetail),
+      resolution: text(input.resolution) || "credit",
       lines: normalizedLines(input.lines),
     };
   else if (
@@ -265,6 +267,7 @@ function requestInput(request) {
     contextDocumentId: request.contextDocumentId || request.sourceDocumentId,
     reasonCode: request.reasonCode,
     reasonDetail: request.reasonDetail,
+    resolution: request.resolution || "credit",
     lines: request.lines.map((line) => ({
       sourceDocumentLineId: line.sourceDocumentLineId,
       requestedQuantity: String(line.requestedQuantity),
@@ -473,6 +476,7 @@ export function createReturnGovernanceCommandService({
             contextDocumentId: plan.request.contextDocumentId,
             reasonCode: plan.request.reasonCode,
             reasonDetail: plan.request.reasonDetail,
+            resolution: plan.request.resolution,
             workflowStatus: "draft",
             requestedById: actor.user.id,
             lines: {
@@ -570,6 +574,7 @@ export function createReturnGovernanceCommandService({
             contextDocumentId: plan.request.contextDocumentId,
             reasonCode: plan.request.reasonCode,
             reasonDetail: plan.request.reasonDetail,
+            resolution: plan.request.resolution,
             version: { increment: 1 },
             lines: {
               create: plan.lines.map((line) => ({

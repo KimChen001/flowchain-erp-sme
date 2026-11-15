@@ -8,6 +8,7 @@ import {
   creditedQuantities,
   proportionalTaxCap,
 } from "./return-credit-rules.mjs";
+import { uncreditedReturnedQuantities } from "./return-quantity-ledger.mjs";
 
 // A customer credit note may name an invoice that was approved, issued or is
 // disputed: one approved before it is issued is taken off the receivable when
@@ -163,6 +164,15 @@ export async function buildCustomerInvoicePlan({
   const shipmentById = new Map(
     shipment.lines.map((line) => [line.id, line]),
   );
+  // Goods the customer already sent back are not invoiced, unless an
+  // approved credit note already took them off an invoice (L8-08). Posted
+  // returns are facts, so they count for drafts too.
+  const returnsByLine = await uncreditedReturnedQuantities({
+    prisma,
+    tenantId,
+    sourceDocumentType: "ShipmentDocument",
+    sourceLineIds: lineIds,
+  });
   let subtotal = ZERO;
   let tax = ZERO;
   const lines = [];
@@ -206,19 +216,26 @@ export async function buildCustomerInvoicePlan({
     );
     const posted = units(shipmentLine.postedQuantity);
     const previouslyInvoiced = previousByLine.get(shipmentLine.id) || ZERO;
+    const returnedNotCredited =
+      returnsByLine.get(shipmentLine.id)?.uncredited || ZERO;
     if (
       quantity !== null &&
-      quantity + previouslyInvoiced > posted
+      quantity + previouslyInvoiced + returnedNotCredited > posted
     )
       blockingIssues.push(
         issue(
           "CUSTOMER_INVOICE_QUANTITY_EXCEEDS_SHIPPED",
-          `Line ${index + 1} exceeds shipped not-yet-invoiced quantity.`,
+          returnedNotCredited > ZERO
+            ? `Line ${index + 1} exceeds shipped quantity less what was invoiced and what the customer returned.`
+            : `Line ${index + 1} exceeds shipped not-yet-invoiced quantity.`,
           409,
           {
             shipmentLineId: shipmentLine.id,
             shippedQuantity: fixed(posted),
             previouslyInvoicedQuantity: fixed(previouslyInvoiced),
+            ...(returnedNotCredited > ZERO
+              ? { returnedNotCreditedQuantity: fixed(returnedNotCredited) }
+              : {}),
           },
         ),
       );

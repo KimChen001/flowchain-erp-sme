@@ -3123,6 +3123,9 @@ model ReturnRequest {
   tenantId             String
   requestNumber        String
   returnType           String
+  // credit (default) or replacement; a replacement reopens the received
+  // quantity on the purchase order line. Supplier returns only.
+  resolution           String    @default("credit")
   partnerId            String?
   partnerNameSnapshot  String?
   sourceDocumentType   String

@@ -5,6 +5,7 @@ import {
 import { activeTrackedConsumption } from "./quarantine-disposition-lineage.mjs";
 import { executableAuthorizedUnits } from "./return-authorization-closure-policy.mjs";
 import { returnPostingCreditIssues } from "./return-credit-rules.mjs";
+import { returnSourceStillPostedIssues } from "./return-source-holds.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const fixed = (value) =>
@@ -407,6 +408,16 @@ export async function buildCustomerReturnPostingPlan({
     now,
   });
   const issues = [...draft.blockingIssues];
+  // The shipment the return names must still be posted (L8-07).
+  issues.push(
+    ...(await returnSourceStillPostedIssues({
+      prisma,
+      tenantId,
+      requestLines: posting.returnAuthorization.lines.map(
+        (line) => line.returnRequestLine,
+      ),
+    })),
+  );
   if (
     posting.postingType !== "customer_return_receipt" ||
     !allowedWorkflowStatuses.includes(posting.workflowStatus) ||

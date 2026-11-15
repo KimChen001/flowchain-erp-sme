@@ -180,6 +180,89 @@ async function createAuthorization(
       },
     },
   });
+  // A release takes the return's own received goods (design audit L8-09), so
+  // each request has a posted receipt into the quarantine balance: an
+  // executed receipt authorization, its posting and one quarantine-in
+  // movement per line. The balance's on-hand is seeded separately.
+  const receiptAuthorizationId = `receipt-authorization-release-b4-${suffix}`;
+  const receiptPostingId = `receipt-posting-release-b4-${suffix}`;
+  await prisma.returnAuthorization.create({
+    data: {
+      id: receiptAuthorizationId,
+      tenantId,
+      authorizationNumber: `AUTH-RCV-B4-${suffix}`,
+      returnRequestId: requestId,
+      workflowStatus: "executed",
+      authorizedAt: new Date("2026-07-01T00:00:00Z"),
+      authorizedById: managerId,
+      lines: {
+        create: quantities.map((quantity, index) => ({
+          id: `receipt-authorization-line-release-b4-${suffix}-${index + 1}`,
+          returnRequestLineId: `request-line-release-b4-${suffix}-${index + 1}`,
+          authorizedQuantity: quantity,
+          dispositionRoute: "receive_to_quarantine",
+        })),
+      },
+    },
+  });
+  await prisma.returnPostingDocument.create({
+    data: {
+      id: receiptPostingId,
+      tenantId,
+      postingNumber: `CRR-REL-B4-${suffix}`,
+      returnAuthorizationId: receiptAuthorizationId,
+      postingType: "customer_return_receipt",
+      workflowStatus: "ready",
+      postingStatus: "posted",
+      warehouseId,
+      readyAt: new Date("2026-07-01T00:00:00Z"),
+      readyById: managerId,
+      postedAt: new Date("2026-07-01T00:00:00Z"),
+      postedById: managerId,
+      metadata: { postingBatchId: `receipt-batch-release-b4-${suffix}` },
+      lines: {
+        create: quantities.map((quantity, index) => ({
+          id: `receipt-posting-line-release-b4-${suffix}-${index + 1}`,
+          returnAuthorizationLineId: `receipt-authorization-line-release-b4-${suffix}-${index + 1}`,
+          itemId,
+          sku,
+          itemName: "Quarantine Release Item",
+          quantity,
+          unit: "EA",
+          warehouseId,
+          location: "A-01",
+          locationKey: "a-01",
+          quarantineBalanceId: quarantineId,
+        })),
+      },
+    },
+  });
+  await prisma.inventoryMovement.createMany({
+    data: quantities.map((quantity, index) => ({
+      id: `receipt-movement-release-b4-${suffix}-${index + 1}`,
+      tenantId,
+      itemId,
+      sku,
+      itemName: "Quarantine Release Item",
+      warehouseId,
+      location: "A-01",
+      locationKey: "a-01",
+      movementType: "customer_return_quarantine_in",
+      occurredAt: new Date("2026-07-01T00:00:00Z"),
+      sourceDocument: `CRR-REL-B4-${suffix}`,
+      sourceDocumentType: "ReturnPostingDocument",
+      sourceDocumentId: receiptPostingId,
+      sourceDocumentLineId: `receipt-posting-line-release-b4-${suffix}-${index + 1}`,
+      quantityIn: quantity,
+      quantityOut: "0",
+      adjustmentQty: "0",
+      status: "posted",
+      unit: "EA",
+      relatedReturnId: requestId,
+      postingBatchId: `receipt-batch-release-b4-${suffix}`,
+      metadata: { balanceType: "quarantine", balanceId: quarantineId },
+    })),
+  });
   return prisma.returnAuthorization.create({
     data: {
       id: authorizationId,

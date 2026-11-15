@@ -82,6 +82,7 @@ function requestModel(request) {
     sourceDocumentNumber: request.sourceDocumentNumber,
     reasonCode: request.reasonCode,
     reasonDetail: request.reasonDetail,
+    resolution: request.resolution || "credit",
     requestedAt: iso(request.requestedAt),
     submittedAt: iso(request.submittedAt),
     rejectedAt: iso(request.rejectedAt),
@@ -285,6 +286,7 @@ function requestInput(request) {
     contextDocumentId: request.contextDocumentId || request.sourceDocumentId,
     reasonCode: request.reasonCode,
     reasonDetail: request.reasonDetail,
+    resolution: request.resolution || "credit",
     lines: request.lines.map((line) => ({
       sourceDocumentLineId: line.sourceDocumentLineId,
       requestedQuantity: String(line.requestedQuantity),

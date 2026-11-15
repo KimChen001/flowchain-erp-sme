@@ -4,6 +4,9 @@ import {
 } from "./outbound-transaction-policy.mjs";
 import { executableAuthorizedUnits } from "./return-authorization-closure-policy.mjs";
 import { returnPostingCreditIssues } from "./return-credit-rules.mjs";
+import { returnSourceStillPostedIssues } from "./return-source-holds.mjs";
+import { REPLACEMENT_PURCHASE_ORDER_STATUSES } from "./return-governance-policy.mjs";
+import { purchaseOrderReceiptStatus } from "./receiving-transaction-policy.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const fixed = (value) =>
@@ -151,6 +154,141 @@ function validateSupplierAuthorization(authorization, blockingIssues, now) {
         409,
       ),
     );
+}
+
+// A supplier return for a replacement (L3-23) reopens what it sends back on
+// the purchase order line: the dispatch takes it off the line's received
+// quantity, so the replacement is on order and can be received against the
+// order; reversing the dispatch puts it back, which is refused once the
+// replacement was received. A credit return leaves the order as it is.
+async function replacementPurchaseOrderImpact({
+  prisma,
+  tenantId,
+  request,
+  lines,
+  direction,
+}) {
+  if (request?.resolution !== "replacement")
+    return { impact: null, issues: [] };
+  const issues = [];
+  const requestLines = await prisma.returnRequestLine.findMany({
+    where: { returnRequestId: request.id },
+    select: { id: true, sourceDocumentLineId: true },
+  });
+  const receivingLineByRequestLine = new Map(
+    requestLines.map((row) => [row.id, row.sourceDocumentLineId]),
+  );
+  const receivingLines = await prisma.receivingLine.findMany({
+    where: { id: { in: [...new Set(receivingLineByRequestLine.values())] } },
+    select: {
+      id: true,
+      purchaseOrderLineId: true,
+      receivingDocument: { select: { tenantId: true, poId: true } },
+    },
+  });
+  const receivingById = new Map(receivingLines.map((row) => [row.id, row]));
+  const deltaByPoLine = new Map();
+  const poIds = new Set();
+  for (const line of lines) {
+    const receiving = receivingById.get(
+      receivingLineByRequestLine.get(line.returnRequestLineId),
+    );
+    if (!receiving || receiving.receivingDocument?.tenantId !== tenantId) {
+      issues.push(
+        issue(
+          "RETURN_REPLACEMENT_PO_NOT_OPEN",
+          "The receipt line this replacement return is based on was not found.",
+          409,
+        ),
+      );
+      continue;
+    }
+    poIds.add(receiving.receivingDocument.poId);
+    deltaByPoLine.set(
+      receiving.purchaseOrderLineId,
+      (deltaByPoLine.get(receiving.purchaseOrderLineId) || 0n) +
+        line.quantityUnits,
+    );
+  }
+  if (issues.length || poIds.size !== 1) return { impact: null, issues };
+  const purchaseOrder = await prisma.purchaseOrder.findFirst({
+    where: { id: [...poIds][0], tenantId },
+    include: { lines: true },
+  });
+  if (
+    !purchaseOrder ||
+    (direction < 0 &&
+      !REPLACEMENT_PURCHASE_ORDER_STATUSES.includes(text(purchaseOrder.status)))
+  ) {
+    issues.push(
+      issue(
+        "RETURN_REPLACEMENT_PO_NOT_OPEN",
+        "A replacement reopens the purchase order line, so the purchase order must still be approved or receiving.",
+        409,
+        { purchaseOrderStatus: purchaseOrder?.status || null },
+      ),
+    );
+    return { impact: null, issues };
+  }
+  const lineChanges = [];
+  const linesAfter = purchaseOrder.lines.map((poLine) => {
+    const delta = deltaByPoLine.get(poLine.id);
+    if (!delta) return poLine;
+    const before = decimalUnits(poLine.receivedQuantity || 0);
+    const after = before + BigInt(direction) * delta;
+    if (after < 0n)
+      issues.push(
+        issue(
+          "RETURN_REPLACEMENT_PO_NOT_OPEN",
+          "The purchase order line has less received than this return sends back.",
+          409,
+          { purchaseOrderLineId: poLine.id },
+        ),
+      );
+    if (direction > 0 && after > decimalUnits(poLine.orderedQuantity || 0))
+      issues.push(
+        issue(
+          "RETURN_REVERSAL_REPLACEMENT_RECEIVED",
+          "The replacement was already received against the purchase order, so this return can no longer be reversed.",
+          409,
+          { purchaseOrderLineId: poLine.id },
+        ),
+      );
+    lineChanges.push({
+      purchaseOrderLineId: poLine.id,
+      version: poLine.version,
+      receivedBefore: fixed(before),
+      receivedAfter: fixed(after),
+    });
+    return { ...poLine, receivedQuantity: fixed(after) };
+  });
+  if (lineChanges.length !== deltaByPoLine.size)
+    issues.push(
+      issue(
+        "RETURN_REPLACEMENT_PO_NOT_OPEN",
+        "The receipt lines of this return do not belong to its purchase order.",
+        409,
+      ),
+    );
+  // A purchase order the buyer closed stays closed, as with a receipt reversal.
+  const statusAfter =
+    purchaseOrder.status === "closed"
+      ? "closed"
+      : purchaseOrderReceiptStatus(
+          linesAfter,
+          purchaseOrder.status,
+          purchaseOrder.receivingBaseStatus,
+        );
+  return {
+    impact: {
+      purchaseOrderId: purchaseOrder.id,
+      version: purchaseOrder.version,
+      statusBefore: purchaseOrder.status,
+      statusAfter,
+      lines: lineChanges,
+    },
+    issues,
+  };
 }
 
 function balanceIdentityIssue(lineId, balanceType) {
@@ -556,6 +694,16 @@ export async function buildSupplierReturnPostingPlan({
     now,
   });
   const blockingIssues = [...draftPlan.blockingIssues];
+  // The receipt the return names must still be posted (L8-07).
+  blockingIssues.push(
+    ...(await returnSourceStillPostedIssues({
+      prisma,
+      tenantId,
+      requestLines: posting.returnAuthorization.lines.map(
+        (line) => line.returnRequestLine,
+      ),
+    })),
+  );
   if (posting.postingType !== "supplier_return_dispatch")
     blockingIssues.push(
       issue(
@@ -632,6 +780,14 @@ export async function buildSupplierReturnPostingPlan({
     blockingIssues,
   );
   const authorization = posting.returnAuthorization;
+  const replacement = await replacementPurchaseOrderImpact({
+    prisma,
+    tenantId,
+    request: authorization.returnRequest,
+    lines: quantityPlans,
+    direction: -1,
+  });
+  blockingIssues.push(...replacement.issues);
   const postedBefore = totalPostedUnits(authorization, posting.id);
   const postingQuantity = quantityPlans.reduce(
     (sum, line) => sum + line.quantityUnits,
@@ -705,6 +861,7 @@ export async function buildSupplierReturnPostingPlan({
       totalAuthorizedQuantity: fixed(totalAuthorized),
       executedQuantityBefore: fixed(postedBefore),
       executedQuantityAfter: fixed(postedBefore + postingQuantity),
+      purchaseOrderImpact: replacement.impact,
     },
   );
 }
@@ -948,6 +1105,22 @@ export async function buildSupplierReturnReversalPlan({
     });
 
   const authorization = posting.returnAuthorization;
+  const requestLineByAuthorizationLine = new Map(
+    authorization.lines.map((line) => [line.id, line.returnRequestLineId]),
+  );
+  const replacement = await replacementPurchaseOrderImpact({
+    prisma,
+    tenantId,
+    request: authorization.returnRequest,
+    lines: quantityPlans.map((line) => ({
+      returnRequestLineId: requestLineByAuthorizationLine.get(
+        line.returnAuthorizationLineId,
+      ),
+      quantityUnits: line.quantityUnits,
+    })),
+    direction: 1,
+  });
+  blockingIssues.push(...replacement.issues);
   const totalAuthorized = totalAuthorizedUnits(authorization);
   const executedAfter = totalPostedUnits(authorization, posting.id);
   const statuses = executionStatuses(totalAuthorized, executedAfter);
@@ -989,6 +1162,7 @@ export async function buildSupplierReturnReversalPlan({
       requestStatusAfter: statuses.requestStatus,
       totalAuthorizedQuantity: fixed(totalAuthorized),
       executedQuantityAfter: fixed(executedAfter),
+      purchaseOrderImpact: replacement.impact,
       documentImpacts: [
         {
           entityType: "ReturnPostingDocument",

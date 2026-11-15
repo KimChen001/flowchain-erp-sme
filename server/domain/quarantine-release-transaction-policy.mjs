@@ -3,6 +3,7 @@ import {
   outboundDecimalUnits as decimalUnits,
 } from "./outbound-transaction-policy.mjs";
 import { executableAuthorizedUnits } from "./return-authorization-closure-policy.mjs";
+import { returnLineQuarantineLayers } from "./quarantine-disposition-lineage.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const fixed = (value) =>
@@ -402,6 +403,31 @@ export async function buildQuarantineReleaseDraftPlan({
           409,
         ),
       );
+    // A release takes this return's own goods: the receipt layers of this
+    // return line in the chosen quarantine stock record that no release or
+    // supplier return has used yet (L8-09).
+    const ownLayers = source
+      ? (
+          await returnLineQuarantineLayers({
+            prisma,
+            tenantId,
+            returnRequestLineIds: [requestLine.id],
+            quarantineBalanceId: source.id,
+          })
+        ).get(requestLine.id)
+      : null;
+    if (source && quantityUnits > (ownLayers?.remainingUnits || 0n))
+      issues.push(
+        issue(
+          "RETURN_RELEASE_EXCEEDS_RETURN_QUARANTINE",
+          "Release quantity exceeds what this return still has in the chosen quarantine stock.",
+          409,
+          {
+            returnAuthorizationLineId: authorizationLine.id,
+            remainingQuantity: fixed(ownLayers?.remainingUnits || 0n),
+          },
+        ),
+      );
     normalized.push({
       returnAuthorizationLineId: authorizationLine.id,
       returnRequestLineId: requestLine.id,
@@ -427,6 +453,8 @@ export async function buildQuarantineReleaseDraftPlan({
       // Set when the draft command has to create the available stock record.
       createsDestinationBalance:
         !destination && target.create ? target.create : null,
+      // The receipt layers the release posting consumes (L8-09).
+      sourceMovementIds: ownLayers?.sourceMovementIds || [],
       source,
       destination,
     });

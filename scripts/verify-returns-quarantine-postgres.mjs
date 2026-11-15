@@ -771,6 +771,12 @@ async function verifyFresh(pg, database, url, secrets) {
     ["--test", "server/domain/return-state-machine.test.mjs"],
     { env: databaseEnv(url), secrets },
   );
+  console.log("[fresh] Running the returns quantity ledger walk (A10)");
+  await run(
+    node,
+    ["--test", "server/domain/return-quantity-ledger.test.mjs"],
+    { env: databaseEnv(url), secrets },
+  );
 }
 
 async function verifyUpgrade(pg, database, url, secrets) {
