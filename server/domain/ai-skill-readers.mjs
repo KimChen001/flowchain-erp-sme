@@ -236,11 +236,29 @@ function openPurchaseOrderRows(openReport, lines, visibility) {
 
 const committedInvoicesOf = (invoices) => array(invoices).filter((row) => committedInvoiceStatuses.has(text(row.status).toLowerCase()))
 
-// Committed supplier invoices with a difference from the order or receipt
-// (facts.invoices.variances); the supplier only with the partner snapshot.
+// Invoice statuses at or past approval among the committed ones: approving an
+// invoice accepted its differences (each exception is approved first).
+const DIFFERENCE_ACCEPTED_INVOICE_STATUSES = new Set(['approved', 'held'])
+
+// A difference from the order or receipt still to decide: the match held the
+// invoice (an exception or variance result, or a variance amount with no
+// result that says it matched), and neither every exception was approved
+// (matchStatus variance_approved) nor the invoice approved. An accepted
+// difference keeps its amount on record but is no longer open, so it is no
+// open issue of the supplier's (design audit L9-01).
+function openInvoiceDifference(row) {
+  if (text(row.matchStatus).toLowerCase() === 'variance_approved') return false
+  if (DIFFERENCE_ACCEPTED_INVOICE_STATUSES.has(text(row.status).toLowerCase())) return false
+  const match = aiSkillInvoiceMatch(row)
+  return match === 'exception' || (match === 'pending' && (amount(row.varianceAmount) ?? 0) !== 0)
+}
+
+// Committed supplier invoices with an open difference from the order or
+// receipt (facts.invoices.variances); the supplier only with the partner
+// snapshot.
 function invoiceVariances(committed, visibility) {
   return committed
-    .filter((row) => (amount(row.varianceAmount) ?? 0) !== 0 || text(row.matchStatus) === 'variance')
+    .filter(openInvoiceDifference)
     .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: visibility.partner ? text(row.supplierId) : '', supplier: visibility.partner ? text(row.supplierName || row.supplierId) : null, poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null, invoiceDate: dayOf(row.invoiceDate || row.createdAt) }))
 }
 

@@ -4,6 +4,7 @@ import { firstRunSetupOptions, readFirstRunSetupCounts } from './first-run-setup
 import { overdueReceivableWhere } from './operational-finance-o2c-read-service.mjs'
 import { createReorderListReadService, stockTruncatedSubjects } from './reorder-list-read-service.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
+import { billNextStep } from './today-work.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { procurementDocumentNumber } from '../../shared/document-numbering.mjs'
 
@@ -130,8 +131,12 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
   }
   if (home.receivables) {
     reads.push(attempt('receivables', async () => {
+      // The finance landing's own call: the instant and the workspace
+      // timezone. A workspace day turned into 00:00 UTC and read in the
+      // default New York timezone fell a day early, so Today left out what
+      // fell due yesterday (design audit L6-01).
       const rows = await prisma.receivableObligation.findMany({
-        where: { tenantId, ...overdueReceivableWhere(new Date(`${today}T00:00:00.000Z`)) },
+        where: { tenantId, ...overdueReceivableWhere(now, timeZone) },
         include: { customerInvoice: { select: { id: true, invoiceNumber: true, customerNameSnapshot: true } } },
         orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
         take: FINANCE_LIMIT + 1,
@@ -178,8 +183,10 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
   // lines, the order each bills and this supplier's order prices for the same
   // SKUs, for the step Today drafts for each (invoice-exception-draft.mjs).
   // Prices only for a reader who may see amounts.
+  // An exception invoice whose every difference was approved waits for its
+  // own approval instead (billNextStep), and needs no draft.
   const heldBills = access.collections.supplierInvoices
-    ? [...new Set((rawContext?.supplierInvoices || []).filter((row) => row?.status === 'exception' && row.id).map((row) => String(row.id)))].slice(0, FINANCE_LIMIT)
+    ? [...new Set((rawContext?.supplierInvoices || []).filter((row) => row?.id && billNextStep(row) === 'bill_exception').map((row) => String(row.id)))].slice(0, FINANCE_LIMIT)
     : []
   if (heldBills.length) {
     reads.push(attempt('invoice_exceptions', async () => {

@@ -177,6 +177,11 @@ test('bills, invoices and sales orders follow their pages\' next step', () => {
   assert.equal(billNextStep({ status: 'submitted', poId: 'PO-1', receiptId: 'GRN-1' }), 'bill_to_match')
   assert.equal(billNextStep({ status: 'matched' }), 'bill_to_approve')
   assert.equal(billNextStep({ status: 'exception' }), 'bill_exception')
+  assert.equal(billNextStep({ status: 'exception', matchStatus: 'exception' }), 'bill_exception')
+  // Design audit L11-07: every difference approved, the bill keeps the
+  // exception status until it is approved itself. It waits for approval (the
+  // approval email already says so), not for a review with nothing left in it.
+  assert.equal(billNextStep({ status: 'exception', matchStatus: 'variance_approved' }), 'bill_to_approve')
   assert.equal(billNextStep({ status: 'approved' }), null)
   assert.equal(billNextStep({ status: 'draft' }), null)
   const work = firstDay()
