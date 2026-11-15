@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { ITEM_SUPPLIER_LINK_READ_CAP } from './item-supplier-links.mjs'
+import { itemStockUnit, sameUnit } from './item-stock-unit.mjs'
 
 // Writes for the item, customer and item-supplier master data, in the shape
 // of saveSupplierMaster: tenant-scoped, one serializable transaction,
@@ -92,6 +93,26 @@ export function itemInputIssues(input = {}, old = null) {
   return { issues, values: { sku, name, status, unit, category, safetyStock, reorderPoint, minimumOrderQuantity, leadTimeDays } }
 }
 
+// What holds an item's stock unit, or null. The unit gives every stock
+// quantity, movement and open order line of the item its meaning, and no
+// conversion between units is recorded (item-stock-unit.mjs), so once any of
+// them exist the unit is locked like the SKU. Closed, cancelled and rejected
+// orders hold nothing; one that received or shipped left movements.
+const UNIT_FREE_PURCHASE_ORDER_STATUSES = ['cancelled', 'rejected', 'closed']
+const UNIT_HOLDING_PURCHASE_REQUEST_STATUSES = ['submitted', 'approved']
+async function itemUnitHolder(tx, tenantId, item) {
+  const ofItem = { OR: [{ itemId: item.id }, { sku: item.sku }] }
+  const holders = [
+    ['stock_balance', () => tx.inventoryBalance.findFirst({ where: { tenantId, ...ofItem }, select: { id: true } })],
+    ['stock_movement', () => tx.inventoryMovement.findFirst({ where: { tenantId, ...ofItem }, select: { id: true } })],
+    ['purchase_order_line', () => tx.purchaseOrderLine.findFirst({ where: { ...ofItem, purchaseOrder: { tenantId, status: { notIn: UNIT_FREE_PURCHASE_ORDER_STATUSES } } }, select: { id: true } })],
+    ['sales_order_line', () => tx.salesOrderLine.findFirst({ where: { itemId: item.id, salesOrder: { tenantId, workflowStatus: { not: 'cancelled' } } }, select: { id: true } })],
+    ['purchase_request_line', () => tx.purchaseRequestLine.findFirst({ where: { ...ofItem, purchaseRequest: { tenantId, status: { in: UNIT_HOLDING_PURCHASE_REQUEST_STATUSES } } }, select: { id: true } })],
+  ]
+  for (const [holder, find] of holders) if (await find()) return holder
+  return null
+}
+
 export async function saveItemMaster(prisma, id, input = {}, actorId, scope) {
   requireScope(actorId, scope)
   return runSerializable(prisma, async (tx) => {
@@ -128,6 +149,14 @@ export async function saveItemMaster(prisma, id, input = {}, actorId, scope) {
       else next.defaultWarehouseId = warehouseId
     }
     validationError(issues)
+    const previousUnit = itemStockUnit(old)
+    if (old && previousUnit && !sameUnit(unit, previousUnit)) {
+      const holder = await itemUnitHolder(tx, scope.tenantId, old)
+      if (holder) {
+        const message = `The unit cannot be changed from ${previousUnit}: this item already has stock, stock movements or open order lines in ${previousUnit}.`
+        throw fail(409, 'UNIT_LOCKED', message, [{ field: 'baseUnit', code: 'UNIT_LOCKED', message, holder }])
+      }
+    }
 
     next.version = old ? currentVersion + 1 : 1
     next.updatedBy = actorId

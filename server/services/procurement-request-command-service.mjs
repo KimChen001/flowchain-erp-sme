@@ -13,6 +13,7 @@ import {
   tenantScopedProcurementMasterData,
 } from "../domain/procurement-workflow.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "../domain/receiving-transaction-policy.mjs";
+import { itemStockUnit, unitOtherThanStock } from "../domain/item-stock-unit.mjs";
 import { applyPromisedDateChanges, recordOriginalPromises } from "../domain/purchase-order-promise-dates.mjs";
 import { mergeOperationalSettings } from "../domain/workspace-settings-contract.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
@@ -88,8 +89,26 @@ function dateOnly(value, field) {
   return raw;
 }
 
+// A PO line must be in its item's stock unit, since no conversion between
+// units is recorded (item-stock-unit.mjs). A request saved before that rule,
+// or whose item's unit changed since, is refused here rather than turned into
+// a PO whose receipt would book boxes as pieces.
+async function assertLinesInStockUnit(tx, tenantId, lines) {
+  const itemIds = [...new Set(lines.map((line) => text(line.itemId)).filter(Boolean))];
+  if (!itemIds.length) return;
+  const items = new Map((await tx.item.findMany({ where: { tenantId, id: { in: itemIds } }, select: { id: true, sku: true, unit: true, metadata: true } })).map((item) => [item.id, item]));
+  const details = [];
+  lines.forEach((line, index) => {
+    const item = items.get(text(line.itemId));
+    const stockUnit = itemStockUnit(item);
+    const unit = unitOtherThanStock(stockUnit, [line.unit]);
+    if (unit) details.push({ field: `lines.${index}.unit`, code: "PURCHASE_UNIT_CONVERSION_MISSING", sku: item.sku, unit, stockUnit, message: `${item.sku} is requested in ${unit} but stocked in ${stockUnit}, and no conversion between the two is recorded.` });
+  });
+  if (details.length) fail("PURCHASE_UNIT_CONVERSION_MISSING", `${details[0].message} Cancel this request and request the item in ${details[0].stockUnit}.`, 422, details);
+}
+
 const versionOf = (row) => Number(row?.metadata?.version ?? 0);
-const decimalText = (value) => value === null || value === undefined ? null : receivingDecimalString(receivingDecimalUnits(String(value)));
+const decimalText =(value) => value === null || value === undefined ? null : receivingDecimalString(receivingDecimalUnits(String(value)));
 function expected(value) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 0) fail("VERSION_INVALID", "expectedVersion must be a non-negative integer.", 422, [{ field: "expectedVersion" }]);
@@ -506,6 +525,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         await assertNoActiveDownstream(tx, actor.tenantId, row.id);
         const missing = row.lines.flatMap((line, index) => ["supplierId", "currency", "targetWarehouseId"].filter((field) => !text(line.metadata?.[field])).map((field) => ({ field: `lines.${index}.${field}` })));
         if (!row.lines.length || missing.length) fail("DIRECT_PO_NOT_ALLOWED", "Every line needs a supplier, a currency and a delivery warehouse before a PO can be created.", 422, missing.length ? missing : [{ field: "lines" }]);
+        await assertLinesInStockUnit(tx, actor.tenantId, row.lines);
         const groups = new Map();
         for (const line of row.lines) {
           const meta = line.metadata || {};

@@ -31,6 +31,8 @@ const CODES: Record<string, Pair> = {
   FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE: NOT_ON,
   OUTBOUND_CAPABILITY_NOT_AVAILABLE: NOT_ON,
   AUTHORITATIVE_INVENTORY_READ_NOT_AVAILABLE: NOT_ON,
+  // Saving an item whose stock unit is held by stock or open orders (the item form and any other item editor).
+  UNIT_LOCKED: ["This item's unit cannot be changed: it already has stock, stock movements or open order lines in that unit.", "该物料已有库存、库存流水或未完成的订单行，不能修改单位。"],
 };
 
 const IN_USE: Pair = ["This code or number is already in use. Choose another.", "该编号已被使用，请换一个。"];
