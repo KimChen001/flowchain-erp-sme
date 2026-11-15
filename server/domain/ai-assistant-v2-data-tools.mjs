@@ -6,6 +6,7 @@ import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { AI_SKILL_SIGNAL_TYPES, DUE_SOON_DAYS, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { readFirstRunSetup } from './first-run-setup.mjs'
 import { decisionHistoryTool, decisionItemsTool } from './ai-assistant-v2-decision-tools.mjs'
+import { asideFor, decisionsSetAside } from './ai-decision-aside.mjs'
 import { createRfqSupplierComparisonService } from './rfq-supplier-comparison-service.mjs'
 import { listItemSupplierRecords } from './master-data-commands.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
@@ -123,23 +124,15 @@ function attentionRow(facts, item, rank) {
 }
 
 // What the user decided on Today about the records the attention list names
-// (docs/drafted-decisions-design.md §4.5): an overdue order chased or set
-// aside, an item's reorder set aside or covered. Keyed by entity type and id;
-// empty without the decision items table (no database).
-const ASIDE_ENTITY = Object.freeze({ purchase_order_overdue: 'purchase_order', reorder_now: 'item' })
-const ASIDE_SIGNALS = Object.freeze({ purchase_order: ['po_overdue', 'po_due_7d'], item: ['stock_shortage', 'stock_below_safety', 'stock_below_reorder'] })
-async function setAsideOnToday(context) {
-  const model = context?.prisma?.decisionItem
-  if (!model || typeof model.findMany !== 'function' || !context.tenantId) return new Map()
-  try {
-    const items = await model.findMany({ where: { tenantId: context.tenantId, state: 'decided', activeKey: { not: null } }, select: { kind: true, recordId: true, decision: true, note: true, returnOn: true, snapshot: true } })
-    return new Map(items.filter((item) => ASIDE_ENTITY[item.kind]).map((item) => [`${ASIDE_ENTITY[item.kind]}:${item.recordId}`, {
-      decision: item.decision, decidedOn: item.snapshot?.decidedOn || null, ...(item.returnOn ? { returnOn: item.returnOn } : {}), ...(item.decision === 'chased' && item.note === 'email' ? { emailed: true } : {}),
-    }]))
-  } catch {
-    return new Map()
-  }
-}
+// (ai-decision-aside.mjs): each kind of decision marks the signals of its
+// record. A held supplier invoice set aside marks its invoice difference
+// (design audit 2026-11-15, L5-09: only orders and items were marked).
+const ASIDE_SIGNALS = Object.freeze({
+  purchase_order: ['po_overdue', 'po_due_7d'],
+  item: ['stock_shortage', 'stock_below_safety', 'stock_below_reorder'],
+  supplier_invoice: ['invoice_variance'],
+})
+const setAsideOnToday = decisionsSetAside
 const asideOf = (aside, item) => {
   const found = aside.get(`${item.entityType}:${item.entityId}`)
   if (!found) return null
@@ -225,7 +218,7 @@ const recordsMissingData = defineAiTool({
 
 const listOpenPurchaseRequests = defineAiTool({
   name: 'list_purchase_requests',
-  description: 'Open purchase requests: drafts, those submitted for approval and those approved but not yet ordered, with status, priority, required date and each line\'s SKU, quantity and unit. Filter by status or SKU. Soonest required first.',
+  description: 'Open purchase requests: drafts, those submitted for approval and those approved but not yet ordered, with status, priority, required date and each line\'s SKU, quantity and unit. An approved request the user set aside on Today carries setAside (decision, decidedOn, returnOn); never present it as one to convert now. Filter by status or SKU. Soonest required first.',
   parameters: {
     status: { type: 'string', enum: ['draft', 'submitted', 'approved', 'all'], description: 'all open requests by default.' },
     sku: { type: 'string', description: 'Only requests with a line for this SKU.' },
@@ -233,19 +226,25 @@ const listOpenPurchaseRequests = defineAiTool({
   },
   available: openRequestsRead,
   assistantV2Only: true,
-  run(args, { facts }) {
+  async run(args, { facts, context }) {
     const status = args.status || 'all'
     let rows = facts.purchaseRequests.open.filter((row) => status === 'all' || row.status === status)
     if (args.sku) rows = rows.filter((row) => row.lines.some((line) => fold(line.sku) === fold(args.sku)))
     rows = [...rows].sort((a, b) => (a.requiredDate || '9999').localeCompare(b.requiredDate || '9999') || a.id.localeCompare(b.id))
+    // An approved request set aside on Today (purchase_request_to_convert).
+    const aside = await decisionsSetAside(context)
+    const asideOfRequest = (row) => (row.status === 'approved' ? asideFor(aside, 'purchase_request', row.id) : null)
     return {
       asOf: facts.asOf,
+      ...(aside.size ? { setAsideCount: rows.filter(asideOfRequest).length } : {}),
       ...aiToolList(rows.map((row) => {
         const lines = row.lines.map((line) => ({ sku: line.sku, quantity: line.quantity, unit: line.unit }))
         const [only] = lines.length === 1 ? lines : []
+        const setAside = asideOfRequest(row)
         return {
           request: row.number || row.id, status: row.status, priority: row.priority, requiredDate: row.requiredDate,
           skus: [...new Set(lines.map((line) => line.sku).filter(Boolean))], lineCount: lines.length, quantity: only?.quantity ?? null, unit: only?.unit ?? null, lines,
+          ...(setAside ? { setAside } : {}),
           ref: aiToolRef('purchase_request', row.id, row.number || row.id),
         }
       }), args.limit),
@@ -347,7 +346,7 @@ function coverRecords(facts, row) {
 
 const suggestPurchaseLines = defineAiTool({
   name: 'suggest_purchase_lines',
-  description: 'Purchase request lines worked out by the server, for the in-chat purchase request form: per item its on-hand stock, safety stock and reorder point, the suggested quantity (the gap between the highest of the reorder point, safety stock and open sales demand and what is available, incoming on purchase orders and on open purchase requests, raised to the supplier\'s minimum order; with coverDays, the cover target takes the reorder point\'s place), the supplier (the preferred, or the only approved one), the need-by date (today plus the supplier\'s lead time, with a warning when stock runs short sooner) and the reference price. Items already covered by open requests or orders come back as covered. An item that is not active, or has no stock row, gets no quantity (source item_inactive or no_stock_position). Name SKUs for those items; with none, the items below their stock levels, up to 8. The user chooses which lines to request.',
+  description: 'Purchase request lines worked out by the server, for the in-chat purchase request form: per item its on-hand stock, safety stock and reorder point, the suggested quantity (the gap between the highest of the reorder point, safety stock and open sales demand and what is available, incoming on purchase orders and on open purchase requests, raised to the supplier\'s minimum order; with coverDays, the cover target takes the reorder point\'s place), the supplier (the preferred, or the only approved one), the need-by date (today plus the supplier\'s lead time, with a warning when stock runs short sooner) and the reference price. Items already covered by open requests or orders come back as covered. An item that is not active, or has no stock row, gets no quantity (source item_inactive or no_stock_position). Name SKUs for those items; with none, the items below their stock levels, up to 8, less those whose reorder the user set aside on Today (setAsideLeftOut; a named one carries setAside). The user chooses which lines to request.',
   parameters: {
     skus: { type: 'array', items: { type: 'string' }, maxItems: AI_TOOL_LIMITS.items, description: 'The SKUs the user named.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_SUGGESTED, description: `How many items to suggest when none is named, ${MAX_SUGGESTED} by default.` },
@@ -406,11 +405,19 @@ const suggestPurchaseLines = defineAiTool({
     // them. The supplier's minimum only raises a positive gap, so this is
     // known before any supplier is read. A named item is always returned, so
     // the answer can say why nothing is suggested.
-    const listed = named ? rows : rows.filter((row) => {
+    let listed = named ? rows : rows.filter((row) => {
       const lead = candidateSources ? preferredLead(candidateSources.byItem.get(text(row.itemId)) || []) : null
       const quantity = sizeOf(facts, row, 0, coverTargetOf(row, rateOf(row), lead, coverDays))
       return isActiveItem(itemOf(row)) && (quantity.quantity.value !== null || quantity.covered)
     })
+    // An item whose reorder the user set aside on Today (not now, not needed,
+    // covered) is left out of the suggestions and named apart; an item the
+    // user names is kept, marked (design audit 2026-11-15, L11-11: an item set
+    // aside as discontinued was still suggested).
+    const aside = await decisionsSetAside(context)
+    const asideOfItem = (row) => asideFor(aside, 'item', row.itemId)
+    const leftOut = named ? [] : listed.filter(asideOfItem)
+    if (leftOut.length) listed = listed.filter((row) => !asideOfItem(row))
     const limit = named ? listed.length : args.limit || MAX_SUGGESTED
     const shown = listed.slice(0, limit)
     const { byItem, prices } = candidateSources || await itemSources(context, [...new Set(shown.map(itemOf).filter(Boolean))])
@@ -465,6 +472,7 @@ const suggestPurchaseLines = defineAiTool({
           leadTimeDays: chosen?.leadTimeDays ?? null,
           target: coverTarget,
         } } : {}),
+        ...(asideOfItem(row) ? { setAside: asideOfItem(row) } : {}),
         ref: aiToolRef('item', row.itemId || row.sku, row.sku),
       }
     })
@@ -477,6 +485,7 @@ const suggestPurchaseLines = defineAiTool({
       pricesHidden: !prices,
       suppliersHidden: !suppliersVisible,
       purchaseRequestsRead: openRequestsRead(facts),
+      ...(leftOut.length ? { setAsideLeftOut: leftOut.map((row) => ({ sku: row.sku, ...asideOfItem(row) })) } : {}),
       rows: suggestions,
       total: listed.length,
       more: Math.max(0, listed.length - limit),
