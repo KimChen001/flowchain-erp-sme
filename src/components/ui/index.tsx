@@ -10,6 +10,7 @@ import type { AuditEntry } from "../../types/scm";
 import { A } from "./tokens";
 import { typography } from "./typography";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { statusCodeLabel } from "../../i18n/statusLabels";
 
 export { A } from "./tokens";
 export { ConfirmDialog, useConfirm, type ConfirmField, type ConfirmOptions, type ConfirmTone } from "./ConfirmDialog";
@@ -75,56 +76,88 @@ export function RecoveryActions({
   );
 }
 
-function auditActionLabel(action: string) {
-  const labels: Record<string, string> = {
-    purchaseRequest_created: "创建采购申请",
-    purchase_request_approved: "批准申请",
-    purchase_request_rejected: "驳回申请",
-    purchase_request_status_changed: "更新申请状态",
-    purchase_request_converted_to_po: "转采购订单",
-    purchaseOrder_created: "创建采购订单",
-    purchase_order_created_from_pr: "由 PR 生成 PO",
-    purchase_order_created_from_rfq: "由询价单生成 PO",
-    purchase_order_approved: "批准订单",
-    purchase_order_rejected: "驳回订单",
-    purchase_order_issued: "下达给供应商",
-    purchase_order_cancelled: "取消订单",
-    purchase_order_receiving_started: "开始收货",
-    purchase_order_receiving_status: "收货更新订单状态",
-    purchase_order_status_changed: "更新订单状态",
-    rfq_created: "创建询价单",
-    rfq_awarded: "授标",
-    rfq_converted_to_po: "转采购订单",
-    rfq_status_changed: "更新询价单状态",
-    receivingDoc_created: "创建收货单",
-    receiving_posted: "收货过账",
-    receiving_status_changed: "更新收货状态",
-    inventory_posted: "库存已更新",
-    system_validation_blocked: "系统阻止了无效操作",
-  };
-  return labels[action] || action.replaceAll("_", " ");
+// What a document history row did, in the reader's language (design audit
+// U-02 with L16: the panel had been empty, and its labels were Chinese only).
+// The PO commands record purchase_order_<step>; the older JSON store recorded
+// the past-tense codes, kept here.
+const AUDIT_ACTION_LABELS: Record<string, [string, string]> = {
+  purchase_order_submit: ["Submitted for approval", "已提交审批"],
+  purchase_order_approve: ["Approved", "已批准"],
+  purchase_order_reject: ["Rejected", "已驳回"],
+  purchase_order_return_for_revision: ["Returned for revision", "已退回修改"],
+  purchase_order_issue: ["Issued to the supplier", "已下达给供应商"],
+  purchase_order_cancel: ["Cancelled", "已取消"],
+  purchase_order_close: ["Closed", "已关闭"],
+  purchase_order_promised_dates_revised: ["Promised dates revised", "已修改承诺交期"],
+  purchaseRequest_created: ["Purchase request created", "创建采购申请"],
+  purchase_request_approved: ["Request approved", "批准申请"],
+  purchase_request_rejected: ["Request rejected", "驳回申请"],
+  purchase_request_status_changed: ["Request status updated", "更新申请状态"],
+  purchase_request_converted_to_po: ["Turned into a purchase order", "转采购订单"],
+  purchaseOrder_created: ["Purchase order created", "创建采购订单"],
+  purchase_order_created_from_pr: ["Created from a purchase request", "由 PR 生成 PO"],
+  purchase_order_created_from_rfq: ["Created from an RFQ", "由询价单生成 PO"],
+  purchase_order_approved: ["Approved", "批准订单"],
+  purchase_order_rejected: ["Rejected", "驳回订单"],
+  purchase_order_issued: ["Issued to the supplier", "下达给供应商"],
+  purchase_order_cancelled: ["Cancelled", "取消订单"],
+  purchase_order_receiving_started: ["Receiving started", "开始收货"],
+  purchase_order_receiving_status: ["Receiving updated the order", "收货更新订单状态"],
+  purchase_order_status_changed: ["Order status updated", "更新订单状态"],
+  rfq_created: ["RFQ created", "创建询价单"],
+  rfq_awarded: ["Awarded", "授标"],
+  rfq_converted_to_po: ["Turned into a purchase order", "转采购订单"],
+  rfq_status_changed: ["RFQ status updated", "更新询价单状态"],
+  receivingDoc_created: ["Receipt created", "创建收货单"],
+  receiving_posted: ["Receipt posted", "收货过账"],
+  receiving_status_changed: ["Receipt status updated", "更新收货状态"],
+  inventory_posted: ["Inventory updated", "库存已更新"],
+  system_validation_blocked: ["Blocked an invalid step", "系统阻止了无效操作"],
+};
+const pairText = (pair: [string, string], language: string) => pair[language === "en-US" ? 0 : 1];
+
+export function auditActionLabel(action: string, language: string) {
+  const pair = AUDIT_ACTION_LABELS[action];
+  if (pair) return pairText(pair, language);
+  const words = action.replace(/^(purchase_order|purchase_request|purchaseOrder|purchaseRequest|receivingDoc|receiving|rfq)_/, "").replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-function auditMetadataSummary(metadata?: Record<string, unknown>) {
+// The metadata a reader can use; command bookkeeping (idempotency keys,
+// versions, devices) stays out of the panel.
+const AUDIT_METADATA_LABELS: Array<[string, [string, string]]> = [
+  ["poId", ["PO", "PO"]],
+  ["grnId", ["Receipt", "收货单"]],
+  ["rfqId", ["RFQ", "询价单"]],
+  ["sourceRequest", ["Source request", "来源申请"]],
+  ["lineCount", ["Lines", "明细行"]],
+  ["acceptedQty", ["Accepted", "合格数"]],
+  ["rejectedQty", ["Rejected", "拒收数"]],
+  ["movementIds", ["Inventory movements", "库存移动"]],
+  ["bestSupplier", ["Supplier", "供应商"]],
+];
+const AUDIT_TECHNICAL_KEYS = new Set(["commandType", "idempotencyKey", "expectedVersion", "sourceDeviceId", "requestHash", "actor", "from", "to", "reason"]);
+
+export function auditMetadataSummary(metadata: Record<string, unknown> | undefined, language: string) {
   if (!metadata) return "";
-  const pairs = [
-    ["poId", "PO"],
-    ["grnId", "收货单"],
-    ["rfqId", "询价单"],
-    ["sourceRequest", "来源申请"],
-    ["lineCount", "明细行"],
-    ["acceptedQty", "合格数"],
-    ["rejectedQty", "拒收数"],
-    ["movementIds", "库存移动"],
-    ["bestSupplier", "供应商"],
-  ] as const;
-  const parts = pairs.flatMap(([key, label]) => {
+  const parts = AUDIT_METADATA_LABELS.flatMap(([key, pair]) => {
     const value = metadata[key];
     if (value === undefined || value === null || value === "") return [];
-    if (Array.isArray(value)) return [`${label} ${value.length ? value.join(", ") : "无"}`];
+    const label = pairText(pair, language);
+    if (Array.isArray(value)) return [`${label} ${value.length ? value.join(", ") : pairText(["none", "无"], language)}`];
     return [`${label} ${String(value)}`];
   });
   return parts.slice(0, 3).join(" · ");
+}
+
+// Who took the step: a name when the row has one, never an id or an object.
+export function auditActorName(actor: unknown) {
+  if (typeof actor === "string") return actor;
+  if (actor && typeof actor === "object") {
+    const person = actor as Record<string, unknown>;
+    for (const key of ["name", "displayName", "email"]) if (typeof person[key] === "string" && person[key]) return String(person[key]);
+  }
+  return "";
 }
 
 export function DocumentHistoryPanel({
@@ -141,7 +174,7 @@ export function DocumentHistoryPanel({
   // The text when there are no entries, for a page that says what the panel tracks.
   emptyText?: string;
 }) {
-  const { formatDateTime } = useI18n();
+  const { formatDateTime, language } = useI18n();
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [openDetailId, setOpenDetailId] = useState<string | null>(null);
@@ -161,8 +194,10 @@ export function DocumentHistoryPanel({
     return () => { alive = false; };
   }, [entityType, entityId, refreshKey]);
 
+  const statusText = (code: unknown) => (typeof code === "string" && code ? statusCodeLabel(code, language) || code : "");
+
   return (
-    <div className="rounded-xl p-3 mb-4" style={{ background: A.gray6, border: "1px solid rgba(0,0,0,0.05)" }}>
+    <div className="rounded-xl p-3 mb-4" style={{ background: A.gray6, border: "1px solid rgba(0,0,0,0.05)" }} data-testid="document-history">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: A.label }}>
           <History size={12} /> {copy(title)}
@@ -177,41 +212,45 @@ export function DocumentHistoryPanel({
         <div className="space-y-2">
           {entries.slice(0, 5).map((entry) => {
             const id = entry.auditId || entry.id || `${entry.timestamp}-${entry.action}`;
-            const metadataSummary = auditMetadataSummary(entry.metadata);
-            const statusChange = entry.fromStatus || entry.toStatus
-              ? `${entry.fromStatus || "新建"} → ${entry.toStatus || "—"}`
-              : "状态未变化";
+            const metadata = (entry.metadata || {}) as Record<string, unknown>;
+            const metadataSummary = auditMetadataSummary(metadata, language);
+            const reason = entry.reason || (typeof metadata.reason === "string" ? metadata.reason : "");
+            const from = statusText(entry.fromStatus ?? metadata.from);
+            const to = statusText(entry.toStatus ?? metadata.to);
+            const statusChange = from || to ? `${from || pairText(["New", "新建"], language)} → ${to || "—"}` : "";
+            const actor = auditActorName(entry.actor);
+            const details = Object.entries(metadata).filter(([key, value]) => !AUDIT_TECHNICAL_KEYS.has(key) && value !== null && value !== undefined && value !== "");
             return (
-              <div key={id} className="rounded-lg px-2.5 py-2" style={{ background: A.white }}>
+              <div key={id} className="rounded-lg px-2.5 py-2" style={{ background: A.white }} data-testid="document-history-entry">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-[11px] font-semibold" style={{ color: entry.action === "system_validation_blocked" ? A.red : A.label }}>
-                      {auditActionLabel(entry.action)}
+                      {auditActionLabel(entry.action, language)}
                     </div>
                     <div className="fc-caption mt-0.5" style={{ color: A.gray2 }}>
-                      {entry.timestamp && !Number.isNaN(new Date(entry.timestamp).getTime()) ? formatDateTime(entry.timestamp) : entry.timestamp || "—"} · {entry.actor || "system"}
+                      {entry.timestamp && !Number.isNaN(new Date(entry.timestamp).getTime()) ? formatDateTime(entry.timestamp) : entry.timestamp || "—"}{actor ? ` · ${actor}` : ""}
                     </div>
                   </div>
-                  <span className="fc-caption shrink-0" style={{ color: A.blue }}>{statusChange}</span>
+                  {statusChange ? <span className="fc-caption shrink-0" style={{ color: A.blue }}>{statusChange}</span> : null}
                 </div>
-                {(entry.reason || metadataSummary) && (
+                {(reason || metadataSummary) && (
                   <div className="fc-caption leading-4 mt-1" style={{ color: A.sub }}>
-                    {entry.reason || metadataSummary}
-                    {entry.reason && metadataSummary ? ` · ${metadataSummary}` : ""}
+                    {reason || metadataSummary}
+                    {reason && metadataSummary ? ` · ${metadataSummary}` : ""}
                   </div>
                 )}
-                {entry.metadata && Object.keys(entry.metadata).length > 0 && (
+                {details.length > 0 && (
                   <>
                     <button onClick={() => setOpenDetailId(openDetailId === id ? null : id)}
                       className="mt-1 inline-flex items-center gap-1 fc-caption font-medium"
                       style={{ color: A.gray1 }}>
                       <ChevronDown size={10} className={openDetailId === id ? "rotate-180 transition-transform" : "transition-transform"} />
-                      查看细节
+                      {pairText(["Details", "查看细节"], language)}
                     </button>
                     {openDetailId === id && (
                       <div className="mt-1 rounded-md px-2 py-1.5 fc-caption leading-4 break-words"
                         style={{ background: A.gray6, color: A.sub }}>
-                        {Object.entries(entry.metadata).slice(0, 6).map(([key, value]) => (
+                        {details.slice(0, 6).map(([key, value]) => (
                           <div key={key}>
                             <span className="font-medium" style={{ color: A.gray1 }}>{key}: </span>
                             {Array.isArray(value) ? value.join(", ") : String(value)}

@@ -108,10 +108,13 @@ function mapAuditRecord(record = {}) {
   }
 }
 
+// The entity type matches whatever its case: pages ask for purchaseOrder, the
+// PO commands record PurchaseOrder (design audit L16: the PO's history panel
+// was always empty).
 function whereFromFilters(filters = {}) {
   return {
     tenantId: requireTenantId(filters),
-    ...(text(filters.entityType) ? { entityType: text(filters.entityType) } : {}),
+    ...(text(filters.entityType) ? { entityType: { equals: text(filters.entityType), mode: 'insensitive' } } : {}),
     ...(text(filters.entityId) ? { entityId: text(filters.entityId) } : {}),
     ...(text(filters.action) ? { action: text(filters.action) } : {}),
     ...(text(filters.source) ? { source: text(filters.source) } : {}),

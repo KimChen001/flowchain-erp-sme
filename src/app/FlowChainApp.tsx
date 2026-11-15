@@ -6,7 +6,6 @@ import { useLocation, useNavigate } from "react-router";
 import { Toaster, toast } from "sonner";
 import {
   AlertTriangle,
-  Bell,
   LogOut,
   Search,
   Settings,
@@ -1792,16 +1791,7 @@ export default function FlowChainApp() {
                 </div>
               )}
             </form>
-            <button
-              type="button"
-              disabled
-              aria-label={language === 'en-US' ? 'Notifications unavailable' : '通知中心尚未接入'}
-              title={language === 'en-US' ? 'Notifications unavailable' : '通知中心尚未接入'}
-              className="relative hidden p-2 rounded-md opacity-45 sm:block"
-              style={{ color: A.gray1 }}
-            >
-              <Bell size={15} strokeWidth={1.8} />
-            </button>
+            {/* No notification bell: one that is always disabled only distracts (design audit L6-15); Today lists what needs attention. */}
             <div className="relative">
               <button
                 onClick={() => setProfileOpen((value) => !value)}

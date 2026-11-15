@@ -206,7 +206,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={() => void load()} />
-          <PrimaryButton onClick={() => navigate("/app/procurement/requests?new=1")} testId="workbench-new-request">{tr("newRequest")}</PrimaryButton>
+          <PrimaryButton onClick={() => navigate("/app/procurement/requests?mode=create")} testId="workbench-new-request">{tr("newRequest")}</PrimaryButton>
         </>}
       >
         <Field label={tr("search")}>

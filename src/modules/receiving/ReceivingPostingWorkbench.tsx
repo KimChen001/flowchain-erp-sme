@@ -89,7 +89,7 @@ const ERROR_COPY: Record<string, Pair> = {
 // translation, or the server's message when the code is not listed here.
 const ISSUE_COPY: Record<string, Pair> = {
   REVERSAL_REASON_REQUIRED_ON_CONFIRM: ["A reversal reason is required when confirming.", "确认冲销前请填写冲销原因。"],
-  RECEIVING_REVERSAL_BLOCKED_BY_INVOICE: ["A supplier invoice already claims this receipt, so it can no longer be reversed. To send these goods back, use a supplier return.", "已有采购发票关联此收货单，无法冲销。如需退回货物，请发起供应商退货。"],
+  RECEIVING_REVERSAL_BLOCKED_BY_INVOICE: ["A supplier invoice already claims this receipt, so it can no longer be reversed. To correct what was received, resolve it on that supplier invoice first; returning goods to a supplier is not available in FlowChain yet.", "已有采购发票关联此收货单，无法冲销。如需更正收货数量，请先在该采购发票上处理；FlowChain 暂不支持向供应商退货。"],
   RECEIVING_ALREADY_POSTED: ["This receipt has already been posted.", "该收货单已过账。"],
   RECEIVING_ALREADY_REVERSED: ["This receipt has already been reversed.", "该收货单已冲销。"],
   RECEIVING_OVER_RECEIPT: ["Accepted quantity exceeds the remaining purchase order quantity.", "合格数量超过采购订单的剩余数量。"],
@@ -165,6 +165,8 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   // The receipt form for the order, by the PO page's rule for its Receive button.
   const canStartReceipt = Boolean(permissions?.has("receiving.prepare")) && canOpenRoute("procurement:receiving:new");
   const [detail, setDetail] = useState<Detail | null>(null);
+  // Commands use the loaded receipt's id, so a receipt opened by its number (GRN-…) works too (design audit L1-24).
+  const docId = detail?.receivingDocument.id || receivingDocumentId;
   const [links, setLinks] = useState<Link[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   // Timeline groups a person opened to read line by line.
@@ -221,7 +223,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     if (!detail) return;
     setSaving(true); setError("");
     try {
-      await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/submit`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version }) });
+      await apiJson(`/api/procurement/receiving/${encodeURIComponent(docId)}/submit`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version }) });
       toast.success(draftCopy("submitted").replace("{doc}", detail.receivingDocument.documentNumber || receivingDocumentId));
       await refresh();
     } catch (nextError) {
@@ -244,7 +246,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     if (!reason) return;
     setSaving(true); setError("");
     try {
-      await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/cancel`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version, reason }) });
+      await apiJson(`/api/procurement/receiving/${encodeURIComponent(docId)}/cancel`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version, reason }) });
       toast.success(draftCopy("cancelled").replace("{doc}", detail.receivingDocument.documentNumber || receivingDocumentId));
       await refresh();
     } catch (nextError) {
@@ -256,7 +258,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
 
   async function openPreview(nextOperation: "post" | "reverse") {
     setError(""); setReason(""); setActionKey(newKey());
-    try { setPreview(await apiJson<Preview>(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/impact-preview?operation=${nextOperation}`)); }
+    try { setPreview(await apiJson<Preview>(`/api/procurement/receiving/${encodeURIComponent(docId)}/impact-preview?operation=${nextOperation}`)); }
     catch (nextError) { setError(errorMessage(nextError, language, ["The posting review could not be opened.", "无法打开过账复核。"])); setErrorCode(procurementErrorCode(nextError)); }
   }
 
@@ -264,7 +266,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     if (!detail || !preview || !actionKey || (preview.operation === "reverse" && !reason.trim())) return;
     setSaving(true); setError("");
     try {
-      await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/${preview.operation}`, {
+      await apiJson(`/api/procurement/receiving/${encodeURIComponent(docId)}/${preview.operation}`, {
         method: "POST", body: JSON.stringify(preview.operation === "post" ? { idempotencyKey: actionKey, expectedVersion: detail.receivingDocument.version } : { idempotencyKey: actionKey, reason: reason.trim() }),
       });
       const done = preview.operation;
@@ -453,7 +455,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
           {detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className={BUTTON.primary}>{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}
           {operation === "post" && actionButton}
           <button data-testid="receiving-print-sheet" aria-label={say(`Print receive sheet ${grn.documentNumber}`, `打印入库单 ${grn.documentNumber}`)} onClick={() => setPrinting(true)} className={BUTTON.secondary}><Printer size={14} />{say("Print receive sheet", "打印入库单")}</button>
-          {detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className={BUTTON.secondary}>{draftCopy("editDraft")}</a>}
+          {detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(docId)}/edit`} className={BUTTON.secondary}>{draftCopy("editDraft")}</a>}
           {detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className={BUTTON.secondary}>{say("View reversal", "查看冲销")}</button>}
           {restToReceive(detail) && <button type="button" data-testid="receiving-receive-rest" onClick={() => navigate(receiveRestPath(detail))} className={BUTTON.secondary}>{draftCopy("receiveRest")}</button>}
           {grn.postingStatus === 'posted' && <RecordBillAction receiptId={grn.id} />}

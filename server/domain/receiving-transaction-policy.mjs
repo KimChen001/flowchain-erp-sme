@@ -193,7 +193,7 @@ export async function buildReceivingReversalPlan({ prisma, tenantId, receivingDo
       })
     : null
   if (holdingInvoiceLine) {
-    blockingIssues.push(issue('RECEIVING_REVERSAL_BLOCKED_BY_INVOICE', 'A supplier invoice already claims this receipt, so it can no longer be reversed. To send these goods back, use a supplier return.', 409, {
+    blockingIssues.push(issue('RECEIVING_REVERSAL_BLOCKED_BY_INVOICE', 'A supplier invoice already claims this receipt, so it can no longer be reversed. To correct what was received, resolve it on that supplier invoice first; returning goods to a supplier is not available in FlowChain yet.', 409, {
       supplierInvoiceId: holdingInvoiceLine.supplierInvoiceId,
       invoiceNumber: holdingInvoiceLine.supplierInvoice?.invoiceNumber || null,
       invoiceStatus: holdingInvoiceLine.supplierInvoice?.status || null,

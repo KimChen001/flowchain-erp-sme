@@ -10,7 +10,8 @@ const signInSource = fs.readFileSync(path.resolve(import.meta.dirname, '..', '..
 test('application shell has no fixed notification count or fixture notification center', () => {
   assert.doesNotMatch(appSource, /unreadCount/)
   assert.doesNotMatch(appSource, /notification(?:s|Items)\s*=\s*\[/i)
-  assert.match(appSource, /disabled\s+aria-label=\{language === 'en-US' \? 'Notifications unavailable' : '通知中心尚未接入'\}/)
+  // No disabled bell either: a control that never works only distracts (design audit L6-15).
+  assert.doesNotMatch(appSource, /Notifications unavailable|<Bell/)
 })
 
 test('login product claims match current finance capability boundary', () => {

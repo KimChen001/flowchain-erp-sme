@@ -26,7 +26,8 @@ const statusCodes: Record<string, [string, string]> = {
   fully_received: ["Fully received", "全部收货"],
   received: ["Received", "已收货"],
   ready_for_receiving: ["Ready to post", "待过账"],
-  unposted: ["Unposted", "未过账"],
+  // "Not posted", as the receiving cards and filters say (design audit U-21).
+  unposted: ["Not posted", "未过账"],
   posted: ["Posted", "已过账"],
   reversed: ["Reversed", "已冲销"],
   partial: ["Partial", "部分"],

@@ -40,7 +40,9 @@ test('BusinessReadContext aggregates only runtime repositories and reports unava
   assert.equal(context.purchaseRequests[0].id, 'PR-1')
   assert.equal(context.itemSupplierRelationships[0].relationshipId, 'REL-1')
   assert.equal(context.warehouses.length, 0)
-  assert.ok(context.dataLimitations.includes('warehouse_runtime_not_connected'))
+  // No standing warehouse / bin notes on every report (design audit L6-16).
+  assert.ok(!context.dataLimitations.includes('warehouse_runtime_not_connected'))
+  assert.ok(!context.dataLimitations.includes('bin_runtime_not_connected'))
   assert.equal(context.runtimeAdapters.procurement, 'durable-procurement-runtime-v2')
 })
 

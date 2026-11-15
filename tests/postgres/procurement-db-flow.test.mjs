@@ -550,6 +550,11 @@ test('step 4a: a buyer submits a draft PO and a manager approves it on the deskt
   assert.equal(row.receivingBaseStatus, 'approved')
   assert.equal(row.version, 2)
   assert.equal(await audits('PurchaseOrder', id), 2, 'one audit row each for submit and approve')
+  // The PO page asks for its history as "purchaseOrder" and the commands record
+  // "PurchaseOrder"; the history now finds both steps (design audit L16).
+  const history = await api(tokens.managerA, 'GET', `/api/audit-log?entityType=purchaseOrder&entityId=${id}&limit=20`)
+  assert.equal(history.status, 200, describe(history))
+  assert.deepEqual(history.body.map((entry) => entry.action).sort(), ['purchase_order_approve', 'purchase_order_submit'])
   const detail = await api(tokens.managerA, 'GET', `/api/procurement/orders/${id}`)
   assert.equal(detail.status, 200, describe(detail))
   assert.equal(detail.body.status, 'approved')
@@ -738,6 +743,12 @@ test('step 5a: a desktop user receives an issued PO and posts it with mobile ope
 
     const detail = await api(tokens.managerA, 'GET', `/api/procurement/receiving/${grnId}`)
     assert.equal(detail.body.availableActions.canPost, true, JSON.stringify(detail.body.availableActions))
+    // A receipt also opens by the number it shows, as requests and orders do (design audit L1-24).
+    const { documentNumber } = await prisma.receivingDocument.findUnique({ where: { id: grnId }, select: { documentNumber: true } })
+    assert.match(documentNumber, /^GRN-/)
+    const byNumber = await api(tokens.managerA, 'GET', `/api/procurement/receiving/${encodeURIComponent(documentNumber.toLowerCase())}`)
+    assert.equal(byNumber.status, 200, describe(byNumber))
+    assert.equal(byNumber.body.receivingDocument.id, grnId)
     const postKey = key('desk-post')
     const stalePost = await api(tokens.managerA, 'POST', `/api/procurement/receiving/${grnId}/post`, { idempotencyKey: key('desk-post-stale'), expectedVersion: 1 })
     assert.equal(stalePost.status, 409, describe(stalePost))

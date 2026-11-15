@@ -52,7 +52,8 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
       if (!repositories.procurementRuntime) dataLimitations.push('procurement_runtime_unavailable')
       if (!repositories.inventoryRuntime) dataLimitations.push('inventory_runtime_unavailable')
       if (!repositories.salesOrders) dataLimitations.push('sales_runtime_unavailable')
-      dataLimitations.push('warehouse_runtime_not_connected', 'bin_runtime_not_connected')
+      // No standing "warehouses / bins not connected" notes: the warehouses exist, and a
+      // note on every report reads as noise (design audit L6-16).
       if (warehouseScoped) dataLimitations.push('inventory_scoped_to_reader_warehouses')
       if (array(procurement.receipts).length === 0) dataLimitations.push('receipt_runtime_has_no_records')
       if (array(procurement.supplierInvoices).length === 0) dataLimitations.push('invoice_runtime_has_no_records')

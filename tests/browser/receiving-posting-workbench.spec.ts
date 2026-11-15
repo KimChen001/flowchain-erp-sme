@@ -16,7 +16,8 @@ test('receiving workbench posts and reverses through real PostgreSQL APIs', asyn
   await expect(page.getByText('Workflow').first()).toBeVisible()
   await expect(page.getByText('Approved', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Posting', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('Unposted', { exact: true }).first()).toBeVisible()
+  // "Not posted", as the receiving cards and filters say (design audit U-21).
+  await expect(page.getByText('Not posted', { exact: true }).first()).toBeVisible()
 
   // The receive sheet prints from the receipt: its number, the line and the
   // receiver as recorded. The print rules apply only while the editor is open.
