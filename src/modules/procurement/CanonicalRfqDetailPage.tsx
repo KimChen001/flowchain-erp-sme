@@ -16,6 +16,7 @@ import { useDocumentNumber } from "../../lib/documentNumbers";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { DocumentNumber } from "../../lib/documentNumbers";
 import { BackToListLink } from "./BackToListLink";
+import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { rfqMoney, rfqQuantity } from "./rfqFormat";
 import { RfqNoOrderNote } from "./RfqNoOrderNote";
 import type { ProcurementQuotationRevision, ProcurementRfqDocument, ProcurementRfqQuotation } from "./procurementTypes";
@@ -285,13 +286,14 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
             [tr("询价单编号", "RFQ number"), rfqNumber],
             [tr("截止日期", "Due date"), day(record.dueDate)],
             [tr("币种", "Currency"), record.currency || "—"],
-            [tr("来源 PR", "Source purchase request"), requestNumber || "—"],
+            // The request and order open from here (design audit U-18).
+            [tr("来源 PR", "Source purchase request"), record.linkedPr ? <BusinessEntityLink entityType="purchase_request" entityId={record.linkedPr} number={requestNumber || undefined} /> : "—"],
             [tr("创建时间", "Created at"), when(record.createdAt)],
             [tr("更新时间", "Updated at"), when(record.updatedAt)],
             [tr("已记录响应", "Responses recorded"), `${record.suppliers.responseRecordedCount} / ${record.suppliers.participantCount}`],
-            [tr("关联 PO", "Linked purchase order"), orderNumber || "—"],
+            [tr("关联 PO", "Linked purchase order"), record.linkedPo ? <BusinessEntityLink entityType="purchase_order" entityId={record.linkedPo} number={orderNumber || undefined} /> : "—"],
           ].map(([label, value]) => (
-            <div key={label} className="rounded-lg bg-slate-50 p-3">
+            <div key={String(label)} className="rounded-lg bg-slate-50 p-3">
               <dt className="text-xs" style={{ color: A.sub }}>{label}</dt>
               <dd className="mt-1 text-sm font-medium break-words">{value}</dd>
             </div>
@@ -325,7 +327,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
             const disabledByStatus = !responseWorkflowOpen || ["declined", "withdrawn", "closed"].includes(supplier.status || "");
             const actionLabel = quotation ? tr("新增报价修订", "Add quote revision") : tr("录入报价", "Record quotation");
             const allowed = quotation ? canRevise : canCreate;
-            return <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="flex items-start justify-between gap-2"><div><div className="font-medium">{supplier.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{supplier.supplierId} · {statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS, language)}</div></div>{!disabledByStatus && allowed && <button type="button" data-testid={`rfq-response-action-${supplier.supplierId}`} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-blue-200 px-2 py-1 font-semibold text-blue-700" onClick={() => openEditor(supplier)}><FilePlus2 size={13} />{actionLabel}</button>}</div><div className="mt-1 font-medium">{statusLabel(supplier.responseState, RESPONSE_STATE_LABELS, language)}</div>{quotation && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("当前报价修订", "Current quote revision")}: {quotation.latestRevision?.revisionNumber || quotation.revisionNumber || "—"} · {tr("历史报价修订只读", "Earlier quote revisions are read-only")}</div>}</div>;
+            return <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="flex items-start justify-between gap-2"><div><div className="font-medium">{supplier.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS, language)}</div></div>{!disabledByStatus && allowed && <button type="button" data-testid={`rfq-response-action-${supplier.supplierId}`} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-blue-200 px-2 py-1 font-semibold text-blue-700" onClick={() => openEditor(supplier)}><FilePlus2 size={13} />{actionLabel}</button>}</div><div className="mt-1 font-medium">{statusLabel(supplier.responseState, RESPONSE_STATE_LABELS, language)}</div>{quotation && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("当前报价修订", "Current quote revision")}: {quotation.latestRevision?.revisionNumber || quotation.revisionNumber || "—"} · {tr("历史报价修订只读", "Earlier quote revisions are read-only")}</div>}</div>;
           })}
           {record.suppliers.knownParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>{tr("当前询价单没有供应商参与记录。", "This RFQ has no supplier participation records.")}</div>}
         </div>
