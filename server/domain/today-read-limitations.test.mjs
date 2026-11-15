@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PROCUREMENT_SNAPSHOT_ROWS, todayReadLimitations } from './today-read-service.mjs'
+import { PROCUREMENT_SNAPSHOT_ROWS, todayReadLimitations } from '../services/today-read-service.mjs'
 
 // Design audit 2026-11-15 (L11-04): the truncations the business context and
 // the reorder list reported, and the procurement snapshot lists that filled

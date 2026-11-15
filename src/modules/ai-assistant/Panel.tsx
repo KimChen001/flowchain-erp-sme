@@ -13,6 +13,7 @@ import { emptyAssistantV2Message, finishAssistantV2Message, foldAssistantV2Event
 import type { PrReceipt, RecordActionReceipt, SetupReceipt } from "./v2/parts/types";
 import { setupCreatedRecords } from "./v2/parts/SetupRecordsPart";
 import { assistantV2Failure, newThreadId, streamAssistantV2, type AssistantV2FormResult } from "./v2/streamClient";
+import { previousTurnsOf } from "./v2/previousTurns";
 
 export type ActiveContext = {
   module?: string;
@@ -355,6 +356,8 @@ export default function FloatingAiAssistant({
     const controller = new AbortController();
     const answerId = `answer-${requestId}`;
     const formResults = pendingFormResultsRef.current;
+    // The conversation so far, for a server that lost its thread (L5-07).
+    const previousTurns = previousTurnsOf(messages);
     let answer = emptyAssistantV2Message();
     let received = false;
     requestSeqRef.current = requestId;
@@ -378,6 +381,7 @@ export default function FloatingAiAssistant({
         activeContext: { moduleId, entityType: context?.entityType ?? null, entityId: context?.entityId ?? null, entityLabel: context?.entityLabel ? context.entityLabel.split(" · ")[0].trim() || null : null },
         answerLanguage: language,
         ...(formResults.length ? { formResults } : {}),
+        ...(previousTurns.length ? { conversationContext: { previousTurns } } : {}),
       }, { signal: controller.signal });
       for await (const event of events) {
         received = true;
