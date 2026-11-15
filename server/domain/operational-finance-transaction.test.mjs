@@ -6,6 +6,7 @@ import {
   OperationalFinanceError,
 } from "./operational-finance-command-service.mjs";
 import { createOperationalFinanceReadService } from "./operational-finance-read-service.mjs";
+import { buildSupplierReturnReversalPlan } from "./supplier-return-transaction-policy.mjs";
 import { createPrismaClient } from "../persistence/prisma-client.mjs";
 
 const databaseUrl =
@@ -1118,6 +1119,324 @@ test(
         (await approve(guarded, "approve-payable-D-guarded")).payable.obligationNumber,
         "AP-SUP-PAY-D-1001",
       );
+    } finally {
+      await prisma.$disconnect();
+    }
+  },
+);
+
+// Design audit 2026-11-15, batch A8 (credit core): a draft credit memo can be
+// cancelled and gives its quantity back; a credit is capped per return line
+// across bills; one approved before its bill is taken off the payable when
+// the bill is approved; approval checks the return and the payable again;
+// and a bill or return a credit names is not cancelled or reversed.
+test(
+  "supplier credit memos follow their return and their bill (design audit A8)",
+  { skip: !enabled },
+  async () => {
+    const prisma = await createPrismaClient(env);
+    try {
+      const tenant = "tenant-operational-finance-credit-core";
+      const clerkId = "clerk-credit-core";
+      const approverId = "manager-credit-core";
+      const supplierId = "supplier-credit-core";
+      const clerk = { identity: identity(clerkId, "business-specialist", tenant) };
+      const approver = { identity: identity(approverId, "manager", tenant) };
+      await prisma.tenant.create({ data: { id: tenant, name: "Credit Core" } });
+      await prisma.user.createMany({
+        data: [
+          { id: clerkId, tenantId: tenant, email: `${clerkId}@flowchain.invalid`, name: "Credit Clerk", role: "business-specialist" },
+          { id: approverId, tenantId: tenant, email: `${approverId}@flowchain.invalid`, name: "Credit Approver", role: "manager" },
+        ],
+      });
+      await prisma.supplier.create({
+        data: { id: supplierId, tenantId: tenant, code: "SUP-CREDIT-CORE", name: "Credit Core Supplier" },
+      });
+      const command = createOperationalFinanceCommandService({ prisma, env });
+      const codes = (plan) => plan.blockingIssues.map((entry) => entry.code);
+      const rejectsWith = (code) => (error) =>
+        error instanceof OperationalFinanceError && error.code === code;
+      const from = (suffix) =>
+        source(prisma, suffix, { tenant, supplierId, supplierName: "Credit Core Supplier" });
+      const bill = async (facts, suffix, options = {}) => {
+        const created = await command.createSupplierInvoice(
+          { ...invoicePayload(facts, suffix, options), idempotencyKey: `create-${suffix}` },
+          clerk,
+        );
+        return created.entityId;
+      };
+      const submit = (id, suffix) =>
+        command.submitSupplierInvoice(id, { expectedVersion: 0, idempotencyKey: `submit-${suffix}` }, clerk);
+      const approveBill = async (id, suffix) => {
+        await command.matchSupplierInvoice(
+          id,
+          { expectedVersion: 1, matchNumber: `MATCH-${suffix}`, idempotencyKey: `match-${suffix}` },
+          clerk,
+        );
+        return command.approveSupplierInvoice(
+          id,
+          { expectedVersion: 2, idempotencyKey: `approve-${suffix}` },
+          approver,
+        );
+      };
+      // A posted supplier return of `quantity` from the receipt line.
+      const returned = async (facts, suffix, quantity) => {
+        await prisma.returnRequest.create({
+          data: {
+            id: `RR-${suffix}`,
+            tenantId: tenant,
+            requestNumber: `RR-${suffix}`,
+            returnType: "supplier_return",
+            partnerId: supplierId,
+            partnerNameSnapshot: "Credit Core Supplier",
+            sourceDocumentType: "ReceivingDocument",
+            sourceDocumentId: facts.grnId,
+            reasonCode: "damaged",
+            workflowStatus: "executed",
+            requestedById: clerkId,
+            lines: {
+              create: {
+                id: `RRL-${suffix}`,
+                sourceDocumentType: "ReceivingDocument",
+                sourceDocumentId: facts.grnId,
+                sourceDocumentLineId: facts.receivingLineId,
+                sourceQuantity: facts.quantity,
+                itemId: "item-finance-p2p",
+                sku: "FIN-P2P",
+                itemName: "Finance Item",
+                requestedQuantity: quantity,
+                unit: "EA",
+                reasonCode: "damaged",
+              },
+            },
+          },
+        });
+        await prisma.returnAuthorization.create({
+          data: {
+            id: `RA-${suffix}`,
+            tenantId: tenant,
+            authorizationNumber: `RA-${suffix}`,
+            returnRequestId: `RR-${suffix}`,
+            workflowStatus: "executed",
+            lines: {
+              create: {
+                id: `RAL-${suffix}`,
+                returnRequestLineId: `RRL-${suffix}`,
+                authorizedQuantity: quantity,
+                dispositionRoute: "return_from_available",
+              },
+            },
+          },
+        });
+        await prisma.returnPostingDocument.create({
+          data: {
+            id: `RP-${suffix}`,
+            tenantId: tenant,
+            postingNumber: `RP-${suffix}`,
+            returnAuthorizationId: `RA-${suffix}`,
+            postingType: "supplier_return_dispatch",
+            workflowStatus: "ready",
+            postingStatus: "posted",
+            warehouseId: "warehouse-finance-p2p",
+            readyAt: new Date(),
+            readyById: approverId,
+            postedAt: new Date(),
+            postedById: approverId,
+            lines: {
+              create: {
+                id: `RPL-${suffix}`,
+                returnAuthorizationLineId: `RAL-${suffix}`,
+                itemId: "item-finance-p2p",
+                sku: "FIN-P2P",
+                itemName: "Finance Item",
+                quantity,
+                unit: "EA",
+                warehouseId: "warehouse-finance-p2p",
+                location: "A-01",
+                locationKey: "a-01",
+                inventoryBalanceId: "balance-finance-p2p",
+              },
+            },
+          },
+        });
+        return { postingId: `RP-${suffix}`, postingLineId: `RPL-${suffix}` };
+      };
+      const creditInput = async (invoiceId, ret, number, quantity, tax = "0.0000") => {
+        const invoice = await prisma.supplierInvoice.findUnique({ where: { id: invoiceId }, include: { lines: true } });
+        return {
+          creditMemoNumber: number,
+          supplierInvoiceId: invoiceId,
+          returnPostingId: ret.postingId,
+          currency: "CNY",
+          lines: [
+            {
+              supplierInvoiceLineId: invoice.lines[0].id,
+              returnPostingLineId: ret.postingLineId,
+              quantity,
+              pricingSource: "original_invoice",
+              enteredTaxAmount: tax,
+            },
+          ],
+        };
+      };
+      const createCredit = async (input) =>
+        command.createSupplierCreditMemo({ ...input, idempotencyKey: `create-${input.creditMemoNumber}` }, clerk);
+      const reversalCodes = async (postingId) =>
+        codes(await buildSupplierReturnReversalPlan({ prisma, tenantId: tenant, postingId }));
+
+      // 1. A credit approved before its bill: the payable opens net of it.
+      const netSource = await from("CC-NET");
+      const netBill = await bill(netSource, "CC-NET");
+      const netReturn = await returned(netSource, "CC-NET", "2.0000");
+      // A draft bill can still change its lines, so it carries no credit.
+      assert.deepEqual(
+        codes(await command.previewSupplierCreditMemo(await creditInput(netBill, netReturn, "SCM-CC-DRAFT", "2.0000"), clerk)),
+        ["SUPPLIER_CREDIT_INVOICE_STATUS_INVALID"],
+      );
+      await submit(netBill, "CC-NET");
+      // Bill line: 4 units with 2.0000 tax, so 2 units carry at most 1.0000.
+      assert.deepEqual(
+        codes(await command.previewSupplierCreditMemo(await creditInput(netBill, netReturn, "SCM-CC-NET", "2.0000", "1.0001"), clerk)),
+        ["SUPPLIER_CREDIT_TAX_EXCEEDS_INVOICE"],
+      );
+      const netCredit = await createCredit(await creditInput(netBill, netReturn, "SCM-CC-NET", "2.0000", "1.0000"));
+      assert.equal(netCredit.creditMemo.totalAmount, "21");
+      const earlyPreview = await command.previewApproveSupplierCreditMemo(netCredit.entityId, { expectedVersion: 0 }, approver);
+      assert.equal(earlyPreview.allowed, true);
+      assert.equal(earlyPreview.payableImpact, null);
+      assert.equal(earlyPreview.deductedAtBillApproval, true);
+      await command.approveSupplierCreditMemo(netCredit.entityId, { expectedVersion: 0, idempotencyKey: "approve-SCM-CC-NET" }, approver);
+      await command.matchSupplierInvoice(netBill, { expectedVersion: 1, matchNumber: "MATCH-CC-NET", idempotencyKey: "match-CC-NET" }, clerk);
+      const billPreview = await command.previewApproveSupplierInvoice(netBill, { expectedVersion: 2 }, approver);
+      assert.equal(billPreview.allowed, true);
+      assert.equal(billPreview.after.approvedCreditAmount, "21.0000");
+      assert.equal(billPreview.after.outstandingAmount, "21.0000");
+      const netApproved = await command.approveSupplierInvoice(netBill, { expectedVersion: 2, idempotencyKey: "approve-CC-NET" }, approver);
+      const netPayable = await prisma.payableObligation.findUnique({ where: { id: netApproved.payable.id } });
+      assert.equal(String(netPayable.originalAmount), "42");
+      assert.equal(String(netPayable.approvedCreditAmount), "21");
+      assert.equal(String(netPayable.outstandingAmount), "21");
+      assert.equal(netPayable.status, "approved");
+      // An approved credit holds its return and its bill.
+      assert.ok((await reversalCodes(netReturn.postingId)).includes("RETURN_REVERSAL_BLOCKED_BY_CREDIT"));
+
+      // 2. Cancelling a draft gives its quantity back (the way out for the
+      //    checks below), and until then the bill and return are held.
+      const cancelSource = await from("CC-CANCEL");
+      const cancelBill = await bill(cancelSource, "CC-CANCEL");
+      await submit(cancelBill, "CC-CANCEL");
+      const cancelReturn = await returned(cancelSource, "CC-CANCEL", "2.0000");
+      const wrong = await createCredit(await creditInput(cancelBill, cancelReturn, "SCM-CC-WRONG", "2.0000"));
+      assert.deepEqual(
+        codes(await command.previewSupplierCreditMemo(await creditInput(cancelBill, cancelReturn, "SCM-CC-RIGHT", "1.0000"), clerk)),
+        ["SUPPLIER_CREDIT_QUANTITY_EXCEEDED"],
+      );
+      assert.ok((await reversalCodes(cancelReturn.postingId)).includes("RETURN_REVERSAL_BLOCKED_BY_CREDIT"));
+      const billCancelPreview = await command.previewCancelSupplierInvoice(cancelBill, { expectedVersion: 1, reason: "Wrong bill" }, clerk);
+      assert.deepEqual(codes(billCancelPreview), ["SUPPLIER_INVOICE_HAS_CREDITS"]);
+      await assert.rejects(
+        command.cancelSupplierInvoice(cancelBill, { expectedVersion: 1, reason: "Wrong bill", idempotencyKey: "cancel-bill-CC-CANCEL" }, clerk),
+        rejectsWith("SUPPLIER_INVOICE_HAS_CREDITS"),
+      );
+      assert.deepEqual(
+        codes(await command.previewCancelSupplierCreditMemo(wrong.entityId, { expectedVersion: 0, reason: " " }, clerk)),
+        ["SUPPLIER_CREDIT_CANCEL_REASON_REQUIRED"],
+      );
+      const cancelled = await command.cancelSupplierCreditMemo(
+        wrong.entityId,
+        { expectedVersion: 0, reason: "Entered against the wrong quantity", idempotencyKey: "cancel-SCM-CC-WRONG" },
+        clerk,
+      );
+      assert.equal(cancelled.creditMemo.status, "cancelled");
+      const stored = await prisma.supplierCreditMemo.findUnique({ where: { id: wrong.entityId } });
+      assert.equal(stored.cancellationReason, "Entered against the wrong quantity");
+      assert.equal(stored.cancelledById, clerkId);
+      assert.equal(
+        await prisma.auditLog.count({ where: { tenantId: tenant, action: "supplier_credit_memo_cancelled", entityId: wrong.entityId } }),
+        1,
+      );
+      await assert.rejects(
+        command.cancelSupplierCreditMemo(wrong.entityId, { expectedVersion: 1, reason: "Again", idempotencyKey: "cancel-SCM-CC-WRONG-again" }, clerk),
+        rejectsWith("SUPPLIER_CREDIT_STATUS_INVALID"),
+      );
+      await assert.rejects(
+        command.approveSupplierCreditMemo(wrong.entityId, { expectedVersion: 1, idempotencyKey: "approve-SCM-CC-WRONG" }, approver),
+        rejectsWith("SUPPLIER_CREDIT_STATUS_INVALID"),
+      );
+      // The capacity is back, and the return and the bill are free again.
+      assert.equal(
+        (await command.previewSupplierCreditMemo(await creditInput(cancelBill, cancelReturn, "SCM-CC-RIGHT", "2.0000"), clerk)).allowed,
+        true,
+      );
+      assert.ok(!(await reversalCodes(cancelReturn.postingId)).includes("RETURN_REVERSAL_BLOCKED_BY_CREDIT"));
+      assert.equal((await command.previewCancelSupplierInvoice(cancelBill, { expectedVersion: 1, reason: "Wrong bill" }, clerk)).allowed, true);
+
+      // 3. Approval checks the return again: one reversed after the draft
+      //    was made (here written directly, as a reversal from before this
+      //    guard would have left it) is refused, and the draft is cancelled.
+      const stale = await createCredit(await creditInput(cancelBill, cancelReturn, "SCM-CC-STALE", "2.0000"));
+      await prisma.returnPostingDocument.update({
+        where: { id: cancelReturn.postingId },
+        data: { postingStatus: "reversed", reversedAt: new Date() },
+      });
+      assert.deepEqual(
+        codes(await command.previewApproveSupplierCreditMemo(stale.entityId, { expectedVersion: 0 }, approver)),
+        ["SUPPLIER_RETURN_POSTING_REQUIRED"],
+      );
+      await assert.rejects(
+        command.approveSupplierCreditMemo(stale.entityId, { expectedVersion: 0, idempotencyKey: "approve-SCM-CC-STALE" }, approver),
+        rejectsWith("SUPPLIER_RETURN_POSTING_REQUIRED"),
+      );
+      await command.cancelSupplierCreditMemo(stale.entityId, { expectedVersion: 0, reason: "Return reversed", idempotencyKey: "cancel-SCM-CC-STALE" }, clerk);
+
+      // 4. One return billed on two bills is credited once (L8-01).
+      const splitSource = await from("CC-SPLIT");
+      const billA = await bill(splitSource, "CC-SPLIT-A", { quantity: "6.0000", lineAmount: "60.0000", tax: "0.0000", total: "60.0000" });
+      const billB = await bill(splitSource, "CC-SPLIT-B", { quantity: "4.0000", lineAmount: "40.0000", tax: "0.0000", total: "40.0000" });
+      await submit(billA, "CC-SPLIT-A");
+      await submit(billB, "CC-SPLIT-B");
+      const splitReturn = await returned(splitSource, "CC-SPLIT", "5.0000");
+      await createCredit(await creditInput(billA, splitReturn, "SCM-CC-SPLIT-A", "5.0000"));
+      await assert.rejects(
+        createCredit(await creditInput(billB, splitReturn, "SCM-CC-SPLIT-B", "1.0000")),
+        rejectsWith("SUPPLIER_CREDIT_QUANTITY_EXCEEDED"),
+      );
+
+      // 5. A held payable takes no credit until released; a credit that
+      //    clears the bill settles its payable (L8-26, L2-13).
+      // Its own amount and date, so it is not flagged as a duplicate bill.
+      const heldSource = await from("CC-HELD");
+      const heldBill = await bill(heldSource, "CC-HELD", {
+        quantity: "3.0000",
+        lineAmount: "30.0000",
+        tax: "1.5000",
+        total: "31.5000",
+        invoiceDate: "2026-03-02T00:00:00.000Z",
+      });
+      await submit(heldBill, "CC-HELD");
+      const heldApproved = await approveBill(heldBill, "CC-HELD");
+      const payableId = heldApproved.payable.id;
+      const heldReturn = await returned(heldSource, "CC-HELD", "3.0000");
+      const full = await createCredit(await creditInput(heldBill, heldReturn, "SCM-CC-HELD", "3.0000", "1.5000"));
+      assert.equal(full.creditMemo.totalAmount, "31.5");
+      await command.holdPayable(payableId, { expectedVersion: 0, reason: "Supplier dispute", idempotencyKey: "hold-CC-HELD" }, approver);
+      assert.deepEqual(
+        codes(await command.previewApproveSupplierCreditMemo(full.entityId, { expectedVersion: 0 }, approver)),
+        ["SUPPLIER_CREDIT_PAYABLE_HELD"],
+      );
+      await assert.rejects(
+        command.approveSupplierCreditMemo(full.entityId, { expectedVersion: 0, idempotencyKey: "approve-SCM-CC-HELD-held" }, approver),
+        rejectsWith("SUPPLIER_CREDIT_PAYABLE_HELD"),
+      );
+      await command.releasePayable(payableId, { expectedVersion: 1, idempotencyKey: "release-CC-HELD" }, approver);
+      const fullPreview = await command.previewApproveSupplierCreditMemo(full.entityId, { expectedVersion: 0 }, approver);
+      assert.equal(fullPreview.allowed, true);
+      assert.equal(fullPreview.payableImpact.statusAfter, "settled");
+      await command.approveSupplierCreditMemo(full.entityId, { expectedVersion: 0, idempotencyKey: "approve-SCM-CC-HELD" }, approver);
+      const cleared = await prisma.payableObligation.findUnique({ where: { id: payableId } });
+      assert.equal(String(cleared.outstandingAmount), "0");
+      assert.equal(String(cleared.approvedCreditAmount), "31.5");
+      assert.equal(cleared.status, "settled");
     } finally {
       await prisma.$disconnect();
     }

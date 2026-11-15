@@ -3,6 +3,7 @@ import {
   outboundDecimalUnits as decimalUnits,
 } from "./outbound-transaction-policy.mjs";
 import { executableAuthorizedUnits } from "./return-authorization-closure-policy.mjs";
+import { returnPostingCreditIssues } from "./return-credit-rules.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const fixed = (value) =>
@@ -787,6 +788,10 @@ export async function buildSupplierReturnReversalPlan({
         409,
       ),
     );
+  // A draft or approved credit memo based on this return holds it.
+  blockingIssues.push(
+    ...(await returnPostingCreditIssues({ prisma, tenantId, postingId: posting.id, postingType: "supplier_return_dispatch" })),
+  );
 
   const movements = await prisma.inventoryMovement.findMany({
     where: {

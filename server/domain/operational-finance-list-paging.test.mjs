@@ -227,7 +227,8 @@ test('the supplier invoice list shows and counts approved invoices by where thei
     bill('INV-A001', 'approved', 'settled', '2026-11-01'),
     bill('INV-B002', 'approved', 'partially_settled', '2026-11-02'),
     bill('INV-C003', 'approved', 'approved', '2026-11-03'),
-    bill('INV-D004', 'approved', 'held', '2026-11-04'),
+    // Holding a payable stores "held" on its bill too (L2-13).
+    bill('INV-D004', 'held', 'held', '2026-11-04'),
     bill('INV-E005', 'approved', null, '2026-11-05'),
     bill('INV-F006', 'exception', null, '2026-11-06'),
     bill('INV-G007', 'approved', 'cancelled', '2026-11-07'),
@@ -246,21 +247,22 @@ test('the supplier invoice list shows and counts approved invoices by where thei
     'INV-A001': ['approved', 'settled'],
     'INV-B002': ['approved', 'partially_settled'],
     'INV-C003': ['approved', 'to_pay'],
-    // Held from payment: still to pay.
-    'INV-D004': ['approved', 'to_pay'],
+    // Held from payment: shown as held, still counted to pay.
+    'INV-D004': ['held', 'to_pay'],
     // No payable (seeded or imported) or a cancelled one: no payment state.
     'INV-E005': ['approved', null],
     'INV-F006': ['exception', null],
     'INV-G007': ['approved', null],
   })
-  assert.deepEqual(result.counts, { submitted: 0, exception: 1, matched: 0, approved: 6, to_pay: 2, partially_settled: 1, settled: 1 })
+  assert.deepEqual(result.counts, { submitted: 0, exception: 1, matched: 0, approved: 5, to_pay: 2, partially_settled: 1, settled: 1 })
   // Each card's filter lists what it counts; "approved" is still every approved invoice.
   for (const [status, numbers] of [['to_pay', ['INV-D004', 'INV-C003']], ['partially_settled', ['INV-B002']], ['settled', ['INV-A001']]]) {
     const filtered = await read.listSupplierInvoices({ status }, { identity })
     assert.deepEqual(filtered.items.map((row) => row.invoiceNumber), numbers, status)
     assert.equal(filtered.total, numbers.length, status)
   }
-  assert.equal((await read.listSupplierInvoices({ status: 'approved' }, { identity })).total, 6)
+  assert.equal((await read.listSupplierInvoices({ status: 'approved' }, { identity })).total, 5)
+  assert.deepEqual((await read.listSupplierInvoices({ status: 'held' }, { identity })).items.map((row) => row.invoiceNumber), ['INV-D004'])
 })
 
 test('billPaymentStatus reads an approved invoice\'s payable, and nothing else', () => {
@@ -269,7 +271,9 @@ test('billPaymentStatus reads an approved invoice\'s payable, and nothing else',
   for (const payable of ['approved', 'export_ready', 'held']) assert.equal(billPaymentStatus('approved', payable), 'to_pay', payable)
   assert.equal(billPaymentStatus('approved', 'cancelled'), null)
   assert.equal(billPaymentStatus('approved', undefined), null)
-  // Only an approved invoice has a payment state.
+  // A held payable stores "held" on its bill: still to pay (L2-13).
+  assert.equal(billPaymentStatus('held', 'held'), 'to_pay')
+  // Only an approved (or held) invoice has a payment state.
   assert.equal(billPaymentStatus('exception', 'settled'), null)
   assert.equal(billPaymentStatus('cancelled', 'settled'), null)
 })

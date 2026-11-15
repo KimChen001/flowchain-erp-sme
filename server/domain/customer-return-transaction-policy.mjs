@@ -4,6 +4,7 @@ import {
 } from "./outbound-transaction-policy.mjs";
 import { activeTrackedConsumption } from "./quarantine-disposition-lineage.mjs";
 import { executableAuthorizedUnits } from "./return-authorization-closure-policy.mjs";
+import { returnPostingCreditIssues } from "./return-credit-rules.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const fixed = (value) =>
@@ -564,6 +565,10 @@ export async function buildCustomerReturnReversalPlan({
         409,
       ),
     );
+  // A draft or approved credit note based on this return receipt holds it.
+  issues.push(
+    ...(await returnPostingCreditIssues({ prisma, tenantId, postingId: posting.id, postingType: "customer_return_receipt" })),
+  );
   const movements = await prisma.inventoryMovement.findMany({
     where: {
       tenantId,
