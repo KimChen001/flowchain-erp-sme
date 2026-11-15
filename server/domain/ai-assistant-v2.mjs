@@ -596,7 +596,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     try { emit?.(event) } catch { /* the answer goes on */ }
   }
 
-  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null, providerFailed: null, displayFailures: 0, lastRoundForCost: false, lastRoundForUsage: false, usageEstimated: 0, turnsLeftOut: 0 }
+  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null, providerFailed: null, displayFailures: 0, checkFailures: 0, lastRoundForCost: false, lastRoundForUsage: false, usageEstimated: 0, turnsLeftOut: 0 }
   // The tokens an answer has used toward its cap: input read from the cache
   // weighs a tenth, as it is priced (the cost ceiling bounds the spend).
   const tokensUsed = () => weightedTokens(stats.usage.input, stats.usage.cacheRead, stats.usage.output)
@@ -1030,7 +1030,18 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         stats.replaces.push('record_label')
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: 'record_label' })
       }
-      const check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today })
+      // A check that throws leaves the part unflagged rather than failing the
+      // whole answer (audit 2026-11-15, L5-01: one SKU with a regex character
+      // made every answer a 503, after the model calls were spent). The audit
+      // counts it, and the sources line does not count the part as checked.
+      // The action-claim scan below still runs.
+      let check
+      try {
+        check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today })
+      } catch {
+        stats.checkFailures += 1
+        check = { problems: [], checked: {}, failed: true }
+      }
       const read = check.checked || {}
       const figures = (read.record || 0) + (read.name || 0) + (read.date || 0) + (read.number || 0)
       // A sentence that claims an action no record backs is left out; the
@@ -1101,7 +1112,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: withheld.some((row) => row.code === 'foreign_record') ? 'foreign_record' : 'hidden_value' })
       } else release(part, part.text.length)
       stats.flags += spans.length
-      figureChecks.set(part.id, { figures, flagged: spans.length })
+      if (!check.failed) figureChecks.set(part.id, { figures, flagged: spans.length })
       send(flagEvent(part, spans.slice(0, 50)))
     }
 
@@ -1618,6 +1629,7 @@ function auditBlock({ stats, model, aborted, started }) {
     uiTools: stats.ui.map((call) => ({ tool: asCode(call.tool, 'unknown_tool'), status: asCode(call.status, 'error'), ...(call.component ? { component: call.component } : {}) })),
     flags: stats.flags,
     displayFailures: stats.displayFailures,
+    checkFailures: stats.checkFailures,
     lastRoundForCost: stats.lastRoundForCost,
     lastRoundForUsage: stats.lastRoundForUsage,
     usageEstimated: stats.usageEstimated,

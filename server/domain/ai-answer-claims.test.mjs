@@ -63,3 +63,52 @@ test('assistant v2 counts a Chinese claim only when the assistant is the one who
   // The shared list the rules and the evaluation use is unchanged.
   assert.equal(aiAnswerClaimsAction('已批准的采购订单还有 2 张。'), true)
 })
+
+// Audit 2026-11-15 (L5-02): forms that went through, one test each, and the
+// answer's own wording that must stay (verify-p1-b §2: updated, changed and
+// marked are never claim verbs).
+test('a contracted subject, a chase or notice, 催/通知/联系/改期 and "is now issued" are claims', () => {
+  const claims = (value, states) => aiAnswerAssistantActionClaims(value, states)
+  // I've / we'd before a record act.
+  assert.deepEqual(claims("I've approved PR-202611-0003."), ["I've approved"])
+  assert.deepEqual(claims("I've sent the email to Acme."), ["I've sent"])
+  assert.deepEqual(claims("I've emailed Acme about PO-202610-0022."), ["I've emailed"])
+  assert.deepEqual(claims("I've cancelled the draft request PR-202611-0003."), ["I've cancelled"])
+  assert.deepEqual(claims("We'd already approved it."), ["We'd already approved"])
+  // Acts toward a supplier or on a delivery.
+  assert.deepEqual(claims('I chased Acme for you this morning.'), ['I chased'])
+  assert.deepEqual(claims("I've notified the supplier."), ["I've notified"])
+  assert.deepEqual(claims('We contacted Globex yesterday.'), ['We contacted'])
+  assert.deepEqual(claims("I've rescheduled the delivery to Friday."), ["I've rescheduled"])
+  // The assistant as the one who chased, notified, contacted or rescheduled.
+  assert.deepEqual(claims('我已经帮你催了供应商。'), ['我已经帮你催'])
+  assert.deepEqual(claims('已帮你通知 Acme。'), ['已帮你通知'])
+  assert.deepEqual(claims('我已为你联系了 Globex。'), ['我已为你联系'])
+  assert.deepEqual(claims('我已经帮你把交期改期到周五。'), ['我已经帮你把交期改期'])
+  // "is now" a state, of a record no result shows in it.
+  assert.deepEqual(claims('PO-202610-0022 is now issued.'), ['is now issued'])
+  const issued = aiAnswerRecordStates([{ type: 'purchase_order', numbers: ['PO-202610-0022'], states: ['issued'] }])
+  assert.deepEqual(claims('PO-202610-0022 is now issued.', issued), [])
+})
+
+test('the answer\'s own wording is no claim: its table, a form, rows left out, and payments the records hold', () => {
+  for (const value of [
+    "I've updated the table with October's figures.",
+    "I've marked the late orders in bold.",
+    "I've changed the view to by supplier.",
+    "I've placed the 3 lines in a form for you to review.",
+    "I've removed the cancelled orders from the list.",
+    "We've paid suppliers £33,717.22 in October.",
+    'We paid Acme Home Goods £1,200.50 last month.',
+    'What we paid: £2.95 per pcs.',
+    'PO-202610-0022 is now overdue by 3 days.',
+    '你可以联系 Acme 催货。',
+    '需要我帮你起草一封催货邮件吗？',
+    '我已为你起草了一封催货邮件，你确认后再发送。',
+    '我已经帮你把需要联系的供应商列出来了。',
+    '我已帮你把要催的订单列在下面。',
+  ]) assert.deepEqual(aiAnswerAssistantActionClaims(value), [], value)
+  // An act with no amount after it, or paying a bill, is still a claim.
+  assert.deepEqual(aiAnswerAssistantActionClaims('I paid Acme for you.'), ['I paid'])
+  assert.deepEqual(aiAnswerAssistantActionClaims('We paid the invoice of £2.95 yesterday.'), ['We paid'])
+})

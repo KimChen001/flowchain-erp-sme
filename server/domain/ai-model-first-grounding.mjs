@@ -548,7 +548,10 @@ export function aiGroundingItemNamePairs(body, facts, results) {
   const bySku = itemNamesBySku(facts, results)
   for (const [sku, names] of bySku) {
     if (sku.length < 3) continue
-    const pattern = new RegExp(`(?<![\\p{L}\\p{N}-])${sku.replace(/[.*+?^${}()|[\]\\]/g, '\\// Checks one answer. `answer` is { title, answer, records }; `results` the')}(?![\\p{L}\\p{N}-])`, 'giu')
+    // escape(), not a replace written here: on 2026-11-08 a slip turned that
+    // replacement into a comment's words, so a SKU such as A.B12, X+Y1 or
+    // P(1) threw here and every answer failed (audit 2026-11-15, L5-01).
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}-])${escape(sku)}(?![\\p{L}\\p{N}-])`, 'giu')
     for (const match of value.matchAll(pattern)) {
       const after = value.slice(match.index + match[0].length, match.index + match[0].length + 110)
       const before = value.slice(Math.max(0, match.index - 110), match.index)
