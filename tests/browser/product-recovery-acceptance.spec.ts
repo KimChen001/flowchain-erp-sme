@@ -241,10 +241,12 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   // recent receipts are checked: TST-001's and the two TST-004 receipts of the
   // last two days.
   await page.goto("/app/inventory/movements");
-  // The movement names its receipt and shows the quantity without the stored scale.
+  // The movement names its receipt and shows the quantity without the stored
+  // scale, with the unit it was recorded in (design audit L3-28): pcs is 件
+  // on this Chinese page.
   const receipt = page.getByRole("row").filter({ hasText: "LOCAL-DEMO-GRN-001" });
   await expect(receipt).toContainText("TST-001");
-  await expect(receipt.getByRole("cell", { name: "20", exact: true })).toBeVisible();
+  await expect(receipt.getByRole("cell", { name: "20 件", exact: true })).toBeVisible();
   for (const recent of ["LOCAL-DEMO-GRN-012", "LOCAL-DEMO-GRN-013"]) await expect(page.getByRole("row").filter({ hasText: recent })).toContainText("TST-004");
   await expect(page.getByRole("row").filter({ hasText: "TST-004" }).first()).toBeVisible();
   await expect(page.getByText(/STATIC-|SKU-01100/)).toHaveCount(0);
