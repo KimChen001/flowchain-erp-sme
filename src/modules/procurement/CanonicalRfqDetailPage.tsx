@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, FilePlus2, RefreshCw, Scale, TriangleAlert } from "lucide-react";
+import { Ban, ExternalLink, FilePlus2, Play, RefreshCw, Scale, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
-import { A, Card } from "../../components/ui";
+import { A, Card, useConfirm } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, statusToneOf } from "../../components/ui/listLayout";
 import { thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ApiError } from "../../lib/api-client";
+import { apiErrorText } from "../../lib/apiErrorText";
+import { listButtonClass } from "../../components/ui/listLayout";
 import { procurementApi } from "./procurementApi";
 import { RfqSupplierResponseDialog } from "./RfqSupplierResponseDialog";
 import { useI18n } from "../../i18n/I18n";
@@ -15,6 +17,7 @@ import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { DocumentNumber } from "../../lib/documentNumbers";
 import { BackToListLink } from "./BackToListLink";
 import { rfqMoney, rfqQuantity } from "./rfqFormat";
+import { RfqNoOrderNote } from "./RfqNoOrderNote";
 import type { ProcurementQuotationRevision, ProcurementRfqDocument, ProcurementRfqQuotation } from "./procurementTypes";
 
 type ReadState = "loading" | "loaded" | "notFound" | "unauthenticated" | "forbidden" | "error" | "network" | "malformed";
@@ -197,9 +200,37 @@ function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotat
   );
 }
 
-function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload, onSuccessReload }: { record: ProcurementRfqDocument; canCompare: boolean; canCreate: boolean; canRevise: boolean; notice: string | null; onReload: () => Promise<void>; onSuccessReload: () => Promise<void> }) {
+const CANCELLABLE_RFQ = ["draft", "open", "collecting_quotes"];
+
+function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, notice, onReload, onSuccessReload, onTransitioned }: { record: ProcurementRfqDocument; canCompare: boolean; canCreate: boolean; canRevise: boolean; canTransition: boolean; notice: string | null; onReload: () => Promise<void>; onSuccessReload: () => Promise<void>; onTransitioned: (action: "open" | "cancel") => Promise<void> }) {
   const { language, locale } = useI18n();
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
+  // Open a draft RFQ, or cancel one that is not closed (design audit L1-01,
+  // A7): before this the desktop had no way to move an RFQ, so a request with
+  // an RFQ could never be ordered.
+  const confirmDialog = useConfirm();
+  const [busy, setBusy] = useState<"open" | "cancel" | null>(null);
+  const [transitionError, setTransitionError] = useState("");
+  const canOpen = canTransition && record.status === "draft";
+  const canCancel = canTransition && CANCELLABLE_RFQ.includes(record.status || "");
+  const transition = async (action: "open" | "cancel") => {
+    const number = record.number || record.id || "";
+    const sure = action === "open"
+      ? await confirmDialog.confirm({ title: tr(`开启询价单 ${number}？`, `Open RFQ ${number}?`), description: tr("受邀供应商会在 FlowChain 中标记为已邀请，之后可以录入报价。系统不会向供应商发送任何内容。", "Its invited suppliers are marked invited in FlowChain, and their quotes can then be recorded. Nothing is sent to the suppliers."), confirmLabel: tr("开启询价", "Open RFQ") })
+      : await confirmDialog.confirm({ title: tr(`取消询价单 ${number}？`, `Cancel RFQ ${number}?`), description: tr("已录入的报价会保留在记录中。取消后，对应的采购申请可以生成采购订单。", "Its recorded quotes stay on record. Its purchase request can then be turned into a purchase order."), confirmLabel: tr("取消询价单", "Cancel RFQ"), cancelLabel: tr("保留询价单", "Keep RFQ"), tone: "danger" });
+    if (!sure) return;
+    setBusy(action);
+    setTransitionError("");
+    try {
+      const version = Number(record.version ?? 0);
+      await procurementApi.transitionRfq(record.id || "", action, { expectedVersion: version, idempotencyKey: `desktop.rfq.${action}:${record.id}:v${version}` });
+      await onTransitioned(action);
+    } catch (error) {
+      setTransitionError(apiErrorText(error, language, ["The RFQ could not be updated. Reload it and try again.", "询价单更新失败，请重新加载后再试。"]));
+    } finally {
+      setBusy(null);
+    }
+  };
   const { day, when } = useRfqDates();
   const warehouseName = useWarehouseNames();
   // Document numbers are shown; the ids stay in links and calls.
@@ -223,8 +254,11 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
   };
   return (
     <div className="space-y-4" data-testid="canonical-rfq-detail">
+      {confirmDialog.element}
       <BackToListLink list="rfq" />
-      {notice && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800" data-testid="rfq-response-notice">{notice}</div>}
+      {notice && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800" data-testid="rfq-response-notice">{notice}{record.status === "cancelled" && record.linkedPr ? <> <Link to={`/app/procurement/requests/${encodeURIComponent(record.linkedPr)}`} className="font-semibold underline" data-testid="rfq-request-link">{tr("打开采购申请", "Open the purchase request")}</Link></> : null}</div>}
+      {transitionError && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700" role="alert" data-testid="rfq-transition-error">{transitionError}</div>}
+      <RfqNoOrderNote />
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -234,6 +268,8 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <StatusChip label={statusLabel(record.status, RFQ_STATUS_LABELS, language)} tone={statusToneOf(record.status)} />
+            {canOpen && <button type="button" disabled={busy !== null} onClick={() => void transition("open")} className={listButtonClass.primary} data-testid="rfq-open-button"><Play size={14} />{tr("开启询价", "Open RFQ")}</button>}
+            {canCancel && <button type="button" disabled={busy !== null} onClick={() => void transition("cancel")} className={listButtonClass.secondary} data-testid="rfq-cancel-button"><Ban size={14} />{tr("取消询价单", "Cancel RFQ")}</button>}
             {canCompare && <Link
               className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700"
               data-testid="rfq-comparison-link"
@@ -337,7 +373,15 @@ export function CanonicalRfqDetailPage({ documentId, effectivePermissionCodes, a
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { setSuccessNotice(null); }, [documentId]);
 
-  if (state === "loaded" && record) return <LoadedRfq record={record} canCompare={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.prices.read")} canCreate={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.create")} canRevise={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.revise")} notice={successNotice} onReload={async () => { setSuccessNotice(null); await load(); }} onSuccessReload={async () => { setSuccessNotice(tr("报价已保存，已显示最新结果。", "Quotation saved. The latest result is shown.")); await load(); }} />;
+  // Opening and cancelling need the RFQ commands' permission (procurement.purchase_order.revise).
+  const canTransition = authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.purchase_order.revise");
+  const transitioned = async (action: "open" | "cancel") => {
+    setSuccessNotice(action === "open"
+      ? tr("询价单已开启。受邀供应商在 FlowChain 中标记为已邀请，系统不会向他们发送任何内容。", "RFQ opened. Its invited suppliers are marked invited in FlowChain; nothing is sent to them.")
+      : tr("询价单已取消，对应的采购申请现在可以生成采购订单。", "RFQ cancelled. Its purchase request can now be turned into a purchase order."));
+    await load();
+  };
+  if (state === "loaded" && record) return <LoadedRfq record={record} canCompare={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.prices.read")} canCreate={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.create")} canRevise={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.revise")} canTransition={canTransition} notice={successNotice} onReload={async () => { setSuccessNotice(null); await load(); }} onSuccessReload={async () => { setSuccessNotice(tr("报价已保存，已显示最新结果。", "Quotation saved. The latest result is shown.")); await load(); }} onTransitioned={transitioned} />;
 
   const messages: Record<Exclude<ReadState, "loading" | "loaded">, string> = {
     malformed: tr("询价单链接缺少有效编号。", "The RFQ link has no valid ID."),
