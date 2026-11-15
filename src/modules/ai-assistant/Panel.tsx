@@ -17,7 +17,7 @@ import { previousTurnsOf } from "./v2/previousTurns";
 
 export type ActiveContext = {
   module?: string;
-  entityType?: "supplier" | "item" | "rfq" | "purchase_request" | "purchase_order" | "sales_order";
+  entityType?: "supplier" | "item" | "rfq" | "purchase_request" | "purchase_order" | "sales_order" | "supplier_invoice" | "receiving_doc";
   entityId?: string;
   entityLabel?: string;
   view?: string;
@@ -64,9 +64,25 @@ const SETUP_STARTER_ICONS: LucideIcon[] = [ListChecks, Truck, FilePlus2, Upload]
 // it answers about everything in the workspace whichever page it opens on. On a
 // PO or SKU page the welcome adds one question about the record, in the last
 // place, after the workspace cards.
+// Every record page the app opens gives one (design audit 2026-11-15, L5-08:
+// only the PO and supplier pages did).
 const RECORD_EMPTY_PROMPT: Record<string, { "en-US": string; "zh-CN": string }> = {
   purchase_order: { "en-US": "Why does this PO need attention?", "zh-CN": "这个 PO 为什么需要关注？" },
   item: { "en-US": "Does this SKU need replenishment?", "zh-CN": "这个 SKU 需要补货吗？" },
+  supplier: { "en-US": "How is this supplier performing?", "zh-CN": "这个供应商表现怎么样？" },
+  purchase_request: { "en-US": "What happens next with this purchase request?", "zh-CN": "这张采购申请下一步是什么？" },
+  rfq: { "en-US": "Which quote on this RFQ is best?", "zh-CN": "这个询价单哪个报价最好？" },
+  supplier_invoice: { "en-US": "Why is this supplier invoice held?", "zh-CN": "这张供应商发票为什么卡住？" },
+  receiving_doc: { "en-US": "Is anything wrong with this receipt?", "zh-CN": "这张收货单有什么问题吗？" },
+  sales_order: { "en-US": "Can this sales order ship on time?", "zh-CN": "这个销售订单能按时发货吗？" },
+};
+// On a page with no record, a question about what that page shows (design
+// audit 2026-11-15, L7-29: the report page offered the same four as Today).
+const MODULE_EMPTY_PROMPT: Record<string, { "en-US": string; "zh-CN": string }> = {
+  reports: { "en-US": "What stands out in our numbers this month?", "zh-CN": "这个月的数据里有什么值得注意的？" },
+  finance: { "en-US": "How much do we owe suppliers right now?", "zh-CN": "现在欠供应商多少钱？" },
+  inventory: { "en-US": "What needs reordering this week?", "zh-CN": "这周需要补什么货？" },
+  sales: { "en-US": "What was our gross profit last month?", "zh-CN": "上个月的毛利是多少？" },
 };
 
 // How the placeholder names the page's record. The assistant answers about the
@@ -78,6 +94,8 @@ const CONTEXT_ENTITY_PHRASES: Record<string, { "en-US": string; "zh-CN": string 
   supplier: { "en-US": "this supplier", "zh-CN": "这个供应商" },
   sales_order: { "en-US": "this sales order", "zh-CN": "这个销售订单" },
   purchase_request: { "en-US": "this purchase request", "zh-CN": "这个采购申请" },
+  supplier_invoice: { "en-US": "this supplier invoice", "zh-CN": "这张供应商发票" },
+  receiving_doc: { "en-US": "this receipt", "zh-CN": "这张收货单" },
 };
 
 // The same on every page; a record's page only offers the record as well.
@@ -275,7 +293,7 @@ export default function FloatingAiAssistant({
   // The workspace cards on every page; on a PO or SKU page one question about
   // the record takes the last place, so the assistant never reads as a record bot.
   const workspacePrompts = AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => language === "zh-CN" ? item.zhPrompt : item.prompt);
-  const recordPrompt = RECORD_EMPTY_PROMPT[currentContext?.entityType || ""]?.[language] || null;
+  const recordPrompt = RECORD_EMPTY_PROMPT[currentContext?.entityType || ""]?.[language] || (currentContext ? null : MODULE_EMPTY_PROMPT[moduleId]?.[language]) || null;
   const setupStarters = !recordPrompt && readiness?.assistantV2 === true && Boolean(readiness.setup?.open && readiness.setup.firstStepsOpen);
   const emptyPrompts = notice ? [] : setupStarters ? SETUP_STARTERS.map((key) => translate(language, key))
     : recordPrompt ? [...workspacePrompts.slice(0, 3), recordPrompt] : workspacePrompts;
