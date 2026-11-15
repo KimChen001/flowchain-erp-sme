@@ -56,6 +56,7 @@ function createRouteContext(body, db = createEmptyDataset({ mode: 'user' }), rea
       req: { method: 'POST', body, headers: {} },
       res: {},
       url: new URL('/api/user-data/import/dry-run', 'http://localhost'),
+      identity: { authenticated: true, tenantId: 'tenant-r163', userId: 'user-r163' },
       db,
       readBody: readBodyOverride || (async (req) => req.body),
       send(_res, status, payload) {
