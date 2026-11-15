@@ -101,7 +101,7 @@ test("the reorder list ranks by order-by date and prints every input, in English
   // interface language (CASE: "cases", 箱); one day is singular.
   const d = page.getByTestId("reorder-row-RL-D");
   await expect(d.getByTestId("reorder-supplier")).toContainText("1 d lead · MOQ 2 cases");
-  await expect(d.getByTestId("reorder-flags")).toContainText("Purchase unit differs (CASE); set it to the stock unit to order");
+  await expect(d.getByTestId("reorder-flags")).toContainText("Purchase unit differs (CASE); enter the quantity in the stock unit");
   // A late line in the list's own year reads without the year.
   await expect(d.getByTestId("reorder-flags")).toContainText("PO-0038 due Oct 1 is late — counted; confirm with the supplier");
   await expect(d).toContainText("405 pcs");

@@ -920,3 +920,35 @@ test('the PO, PR and RFQ list endpoints answer once instead of falling through t
     assert.deepEqual(serverErrors.slice(before), [], `${path} logged a server error`)
   }
 })
+
+// Design audit L1-02: no conversion between units is recorded, so a request
+// line is in the item's stock unit whatever its purchase unit says. The
+// purchase request forms read the purchasable item list, which gives that
+// unit; a line that names another unit is refused, never relabelled.
+test('an item stocked in box with purchase unit pcs is requested, and its line is saved in box', async () => {
+  const boxItem = { id: 'flow-item-box', sku: 'FLOW-SKU-BOX', name: 'Walkthrough Carton' }
+  await prisma.item.create({ data: { ...boxItem, tenantId: tenantA, unit: 'box', preferredSupplierId: supplierA, metadata: { defaultWarehouseId: warehouseA, purchasable: true, purchaseUnit: 'pcs' } } })
+  const catalog = await api(tokens.managerA, 'GET', '/api/master-data/items?purchasable=true')
+  assert.equal(catalog.status, 200, describe(catalog))
+  const listed = catalog.body.items.find((row) => row.sku === boxItem.sku)
+  assert.deepEqual([listed.purchaseUnit, listed.recordedPurchaseUnit, listed.baseUnit], ['box', 'pcs', 'box'])
+  // The item master's own list keeps the recorded purchase unit.
+  const managed = await api(tokens.managerA, 'GET', '/api/master-data/items?managed=true')
+  assert.equal(managed.body.items.find((row) => row.sku === boxItem.sku).purchaseUnit, 'pcs')
+
+  // The form puts the list's purchase unit on a new line, as the PR panel and the assistant's form do.
+  const boxLine = (overrides = {}) => uiPrLine({ itemId: boxItem.id, sku: boxItem.sku, itemNameSnapshot: boxItem.name, unitSnapshot: listed.purchaseUnit || listed.baseUnit, ...overrides })
+  const body = (line) => ({ idempotencyKey: key('pr-box'), departmentId: 'operations', defaultCurrency: 'USD', defaultNeedByDate: needBy, lines: [line] })
+  const created = await api(tokens.managerA, 'POST', '/api/procurement/requests', body(boxLine()))
+  assert.equal(created.status, 201, describe(created))
+  // A line without a unit is built in box as well.
+  const bare = await api(tokens.managerA, 'POST', '/api/procurement/requests', body(boxLine({ unitSnapshot: undefined })))
+  assert.equal(bare.status, 201, describe(bare))
+  const lines = await prisma.purchaseRequestLine.findMany({ where: { purchaseRequestId: { in: [created.body.id, bare.body.id] } } })
+  assert.deepEqual(lines.map((line) => [line.sku, line.unit, dec(line.quantity)]), [[boxItem.sku, 'box', '10'], [boxItem.sku, 'box', '10']])
+
+  // Naming pcs on the line is refused: 10 pcs is never saved as 10 boxes.
+  const refused = await api(tokens.managerA, 'POST', '/api/procurement/requests', body(boxLine({ unitSnapshot: 'pcs' })))
+  assert.equal(refused.status, 400, describe(refused))
+  assert.equal(refused.body.code, 'PURCHASE_UNIT_CONVERSION_MISSING')
+})

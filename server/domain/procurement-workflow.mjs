@@ -5,7 +5,7 @@ import {
   RFQ_STATUS,
 } from './procurement-status-authority.mjs'
 import { overrideNeeded, validateSupplierOverride } from '../../shared/supplier-override-reasons.mjs'
-import { unitOtherThanStock } from './item-stock-unit.mjs'
+import { itemRequestUnit, unitOtherThanStock } from './item-stock-unit.mjs'
 
 export const PR_TRANSITIONS = PROCUREMENT_STATUS_TRANSITIONS.purchaseRequest
 export const PO_TRANSITIONS = PROCUREMENT_STATUS_TRANSITIONS.purchaseOrderWorkflow
@@ -233,17 +233,18 @@ export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) 
         throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "所选供应商不是该 SKU 的已批准供应商", [{ field: `lines.${index}.supplierId` }], 400);
       }
       // No conversion between units is recorded (item-stock-unit.mjs), so a
-      // catalog line is requested in the item's stock unit only: an item
-      // bought in another unit, or a line sent in one, is refused rather than
-      // booked as that many stock units on receipt. No field detail: a
-      // catalog line's unit is not a field the form lets a person change, so
-      // the page shows the code's own sentence (procurementErrors.ts).
-      const stockUnit = String((Object.hasOwn(item, "recordedUnit") ? item.recordedUnit : item.baseUnit) ?? "").trim();
-      const otherUnit = unitOtherThanStock(stockUnit, [item.purchaseUnit, line.unitSnapshot || line.unit]);
+      // catalog line is built in the item's stock unit, whatever its purchase
+      // unit says. A line that names another unit is refused, never
+      // relabelled: "10 CASE" is not saved as 10 of the stock unit. No field
+      // detail: a catalog line's unit is not a field the form lets a person
+      // change, so the page shows the code's own sentence
+      // (procurementErrors.ts).
+      const { stockUnit, unit: requestUnit } = itemRequestUnit(item);
+      const otherUnit = unitOtherThanStock(stockUnit, [line.unitSnapshot || line.unit]);
       if (otherUnit)
         throw procurementError(
           "PURCHASE_UNIT_CONVERSION_MISSING",
-          `Line ${index + 1}: ${item.sku} is stocked in ${stockUnit} and no conversion from ${otherUnit} is recorded, so it can only be requested in ${stockUnit}. Set the item's purchase unit to ${stockUnit} first.`,
+          `Line ${index + 1}: ${item.sku} is stocked in ${stockUnit} and no conversion from ${otherUnit} is recorded, so it can only be requested in ${stockUnit}.`,
           [],
           400,
         );
@@ -255,7 +256,7 @@ export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) 
         itemId: item.itemId,
         sku: item.sku,
         itemNameSnapshot: item.itemName,
-        unitSnapshot: stockUnit || item.purchaseUnit || item.baseUnit,
+        unitSnapshot: requestUnit,
         specificationSnapshot: item.specification || "",
         warehouseId: line.warehouseId || item.defaultWarehouseId || "",
         supplierOverride,

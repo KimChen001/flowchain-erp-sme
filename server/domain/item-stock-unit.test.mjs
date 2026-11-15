@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { itemStockUnit, sameUnit, unitOtherThanStock } from './item-stock-unit.mjs'
+import { itemRequestUnit, itemStockUnit, sameUnit, unitOtherThanStock } from './item-stock-unit.mjs'
 import { buildReceivingPostingPlan } from './receiving-transaction-policy.mjs'
 import { canonicalPurchaseRequestLines } from './procurement-workflow.mjs'
 import { saveItemMaster } from './master-data-commands.mjs'
@@ -70,24 +70,27 @@ const catalog = (item) => ({
 })
 const prLine = (overrides = {}) => ({ lineId: 'l-1', sourceType: 'catalog_item', lineBasis: 'quantity', itemId: 'item-1', supplierId: 'sup-a', quantity: 10, estimatedUnitPrice: 2, currency: 'USD', needByDate: '2026-12-01', ...overrides })
 
-test('a purchase request line is in the stock unit, and another purchase unit is refused', async () => {
-  const [line] = await canonicalPurchaseRequestLines([prLine({ unitSnapshot: 'pcs' })], catalog({ recordedUnit: 'pcs', baseUnit: 'pcs', purchaseUnit: 'pcs' }))
-  assert.equal(line.unitSnapshot, 'pcs')
-  // The stock unit's own spelling is saved, whatever case the form sent.
-  const [upper] = await canonicalPurchaseRequestLines([prLine({ unitSnapshot: 'PCS' })], catalog({ recordedUnit: 'pcs', baseUnit: 'pcs', purchaseUnit: 'PCS' }))
-  assert.equal(upper.unitSnapshot, 'pcs')
+test('a purchase request line is built in the stock unit, whatever the purchase unit says', async () => {
+  // Stocked in box, purchase unit pcs: the line is requested and saved in box.
+  const boxItem = catalog({ recordedUnit: 'box', baseUnit: 'box', purchaseUnit: 'pcs' })
+  for (const sent of ['box', 'BOX', undefined]) {
+    const [line] = await canonicalPurchaseRequestLines([prLine({ unitSnapshot: sent })], boxItem)
+    assert.equal(line.unitSnapshot, 'box', String(sent))
+  }
+  assert.deepEqual(itemRequestUnit({ recordedUnit: 'box', baseUnit: 'box', purchaseUnit: 'pcs' }), { stockUnit: 'box', unit: 'box' })
+})
 
-  for (const [item, sent] of [[{ recordedUnit: 'pcs', baseUnit: 'pcs', purchaseUnit: 'CASE' }, 'CASE'], [{ recordedUnit: 'pcs', baseUnit: 'pcs', purchaseUnit: 'pcs' }, 'box']]) {
+test('a purchase request line that names another unit than the stock unit is refused, not relabelled', async () => {
+  for (const [item, sent] of [[{ recordedUnit: 'pcs', baseUnit: 'pcs', purchaseUnit: 'pcs' }, 'CASE'], [{ recordedUnit: 'box', baseUnit: 'box', purchaseUnit: 'pcs' }, 'pcs']]) {
     await assert.rejects(canonicalPurchaseRequestLines([prLine({ unitSnapshot: sent })], catalog(item)), (error) => {
       assert.equal(error.code, 'PURCHASE_UNIT_CONVERSION_MISSING')
       assert.equal(error.status, 400)
-      assert.match(error.message, new RegExp(`^Line 1: CAP-1 is stocked in pcs and no conversion from ${sent} is recorded`))
+      assert.match(error.message, new RegExp(`^Line 1: CAP-1 is stocked in ${item.recordedUnit} and no conversion from ${sent} is recorded`))
       return true
     })
   }
-
   // An item without a recorded unit is not judged, as before.
-  const [unrecorded] = await canonicalPurchaseRequestLines([prLine()], catalog({ recordedUnit: '', baseUnit: 'pcs', purchaseUnit: 'box' }))
+  const [unrecorded] = await canonicalPurchaseRequestLines([prLine({ unitSnapshot: 'box' })], catalog({ recordedUnit: '', baseUnit: 'pcs', purchaseUnit: 'box' }))
   assert.equal(unrecorded.unitSnapshot, 'box')
 })
 
