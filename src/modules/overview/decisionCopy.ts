@@ -50,6 +50,11 @@ const EN = {
   copied: "Copied. Marked chased; it comes back in 3 workdays if nothing arrives.",
   copyFailed: "Could not copy. Select the text and copy it yourself.",
   recordNewDate: "Record a new promised date",
+  // An overdue order approved but never sent (design audit L11-01): send it.
+  sendOrderDraft: "Send the order to {supplier}",
+  sendOrderShort: "Not sent to the supplier yet",
+  sendOrderBasis: "Approved but not sent to the supplier yet, so there is nothing to chase. It was due {date}.",
+  openOrder: "Open the order",
   // Conversion
   convertDraft: "{n} purchase orders from this request",
   convertDraftOne: "1 purchase order from this request",
@@ -175,6 +180,10 @@ const ZH: Record<DecisionCopyKey, string> = {
   copied: "已复制，并记为已催。3 个工作日内仍未到货会再次提醒。",
   copyFailed: "复制失败，请手动选中文字复制。",
   recordNewDate: "记录新的承诺日期",
+  sendOrderDraft: "把订单发给{supplier}",
+  sendOrderShort: "尚未发给供应商",
+  sendOrderBasis: "已批准，但还没有发给供应商，所以无需催货。交货日期 {date}。",
+  openOrder: "打开订单",
   convertDraft: "由此申请生成 {n} 张采购订单",
   convertDraftOne: "由此申请生成 1 张采购订单",
   convertOrder: "{supplier}：{n} 行，{currency}",
@@ -321,48 +330,6 @@ export function invoiceCorrectionMessage(language: "en-US" | "zh-CN", facts: Inv
   };
 }
 
-// The follow-up to a supplier, in the language picked on the card. Dates and
-// quantities arrive formatted in the workspace locale.
-export type FollowUpFacts = {
-  orderNumber: string;
-  contactName: string | null;
-  due: string | null;
-  overdueDays: number;
-  lines: Array<{ sku: string; quantity: string; promised: string | null }>;
-  moreLines: number;
-};
-
-export function followUpMessage(language: "en-US" | "zh-CN", facts: FollowUpFacts) {
-  if (language === "zh-CN") {
-    const lines = facts.lines.map((line) => `- ${line.sku}：${line.quantity}${line.promised ? `（承诺日期 ${line.promised}）` : ""}`);
-    if (facts.moreLines > 0) lines.push(`- 另有 ${facts.moreLines} 行`);
-    return {
-      subject: `采购订单 ${facts.orderNumber} 交货逾期`,
-      body: [
-        `${facts.contactName ? `${facts.contactName}，` : ""}您好：`,
-        "",
-        `我方采购订单 ${facts.orderNumber}${facts.due ? ` 的交货日期为 ${facts.due}，` : "，"}目前已逾期 ${facts.overdueDays} 天。以下行尚未到货：`,
-        ...lines,
-        "",
-        "请确认发货时间，或告知新的交货日期。",
-        "",
-        "谢谢！",
-      ].join("\n"),
-    };
-  }
-  const lines = facts.lines.map((line) => `- ${line.sku}: ${line.quantity}${line.promised ? ` (promised ${line.promised})` : ""}`);
-  if (facts.moreLines > 0) lines.push(`- and ${facts.moreLines} more ${facts.moreLines === 1 ? "line" : "lines"}`);
-  return {
-    subject: `Purchase order ${facts.orderNumber}: delivery overdue`,
-    body: [
-      `Dear ${facts.contactName || "Sir or Madam"},`,
-      "",
-      `Our purchase order ${facts.orderNumber}${facts.due ? ` was due on ${facts.due} and` : ""} is now ${facts.overdueDays} ${facts.overdueDays === 1 ? "day" : "days"} overdue. These lines are still to be delivered:`,
-      ...lines,
-      "",
-      "Please confirm when they will ship, or send us a new delivery date.",
-      "",
-      "Thank you,",
-    ].join("\n"),
-  };
-}
+// The follow-up to a supplier, in the language picked on the card: its own
+// module (followUpMessage.ts) so tests can load it without React.
+export { followUpMessage, type FollowUpFacts } from "./followUpMessage";

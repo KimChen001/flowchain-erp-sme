@@ -43,7 +43,13 @@ type ReorderDraft = {
 type FollowUpDraft = {
   type: "supplier_follow_up"; purchaseOrderId: string; orderNumber: string; dueDate: string | null; overdueDays: number;
   supplier: { id: string | null; name: string | null; contactName: string | null; email: string | null };
-  lines: Array<{ sku: string | null; remaining: number | null; unit: string | null; promisedDate: string | null }>; moreLines: number;
+  lines: Array<{ sku: string | null; itemName?: string | null; supplierSku?: string | null; remaining: number | null; unit: string | null; promisedDate: string | null }>; moreLines: number;
+};
+// An overdue order approved but never sent to the supplier: the step is to
+// send it from its page, never to chase it (server/domain/decision-drafts.mjs).
+type SendOrderDraft = {
+  type: "send_purchase_order"; purchaseOrderId: string; orderNumber: string; dueDate: string | null; overdueDays: number;
+  supplier: { id: string | null; name: string | null };
 };
 type ConversionDraft = {
   type: "purchase_orders_from_request"; purchaseRequestId: string; number: string; version: number;
@@ -61,7 +67,7 @@ type InvoiceExceptionDraft = {
   supplier: { id: string | null; name: string | null; contactName: string | null; email: string | null };
   step: "ask_supplier" | "review_price" | "wait_receipt"; differences: InvoiceDifference[]; moreDifferences: number;
 };
-type Draft = ReorderDraft | FollowUpDraft | ConversionDraft | InvoiceExceptionDraft;
+type Draft = ReorderDraft | FollowUpDraft | SendOrderDraft | ConversionDraft | InvoiceExceptionDraft;
 export type WaitingEntry = { key: string; row: TodayRow; raisedAt: string | null; returned: boolean; draft: Draft | null };
 export type SetAsideEntry = {
   key: string; row: TodayRow; decision: "not_now" | "not_needed" | "chased" | "accepted" | "covered"; reasonCode: string | null; note: string | null;
@@ -250,7 +256,7 @@ function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kin
   ) : null;
 
   return (
-    <li className="rounded-lg border px-3 py-2.5" style={{ borderColor: A.gray4 }} data-testid="today-decision" data-kind={row.kind} data-key={entry.key}>
+    <li className="rounded-lg border px-3 py-2.5" style={{ borderColor: A.gray4 }} data-testid="today-decision" data-kind={row.kind} data-draft={draft?.type || ""} data-key={entry.key}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <span className="inline-block shrink-0 rounded px-2 py-0.5 text-xs font-medium" style={tone(row)}>{dateText(row)}</span>
         <span className="shrink-0 text-sm font-medium">{kindLabel(row)}</span>
@@ -267,6 +273,7 @@ function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kin
           const result = await apiJson<{ outbox?: boolean }>("/api/decision-items/send-follow-up", { method: "POST", body: JSON.stringify({ key: entry.key, to: mail.to, confirmedTo: mail.to, subject: mail.subject, body: mail.body }) });
           return result?.outbox ? t("sentOutbox") : t("sentEmail", { to: mail.to });
         })} />
+          : draft?.type === "send_purchase_order" ? <SendOrderBody draft={draft} row={row} day={day} aside={aside} {...view} />
           : draft?.type === "invoice_exception" ? <InvoiceExceptionBody draft={draft} row={row} busy={busy} canDecide={canDecide} aside={aside} {...view} onContacted={(text) => run(async () => {
             try { await navigator.clipboard.writeText(text); } catch { throw new Error(t("copyFailed")); }
             await decide(entry.key, { option: "chased" });
@@ -374,6 +381,8 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased
     overdueDays: draft.overdueDays,
     lines: draft.lines.map((line) => ({
       sku: line.sku || "—",
+      itemName: line.itemName || null,
+      supplierSku: line.supplierSku || null,
       quantity: line.remaining === null ? "—" : `${formatQuantity(line.remaining)}${line.unit ? ` ${unitLabel(line.unit, mailLanguage, line.remaining)}` : ""}`,
       promised: line.promisedDate ? day(line.promisedDate) : null,
     })),
@@ -471,6 +480,26 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased
 // A held supplier invoice: on the line, its first difference and the step's
 // button; under Details, each difference with its likely cause, the message
 // to the supplier (copy it, then it is marked contacted), and the invoice.
+// The order was approved but never sent, so the supplier does not have it:
+// the card opens the order to send it (print or save the PO, then mark it
+// issued there). Opening a page decides nothing, so anyone who sees the card
+// gets the button, as with "Open the request".
+function SendOrderBody({ draft, row, day, aside, open, toggle }: View & { draft: SendOrderDraft; row: TodayRow; day: (value: string) => string; aside: ReactNode }) {
+  const t = useDecisionCopy();
+  const primary = <Link to={`/app/procurement/orders/${encodeURIComponent(draft.purchaseOrderId)}`} className={BUTTON.primary} data-testid="decision-primary">{t("openOrder")}</Link>;
+  if (!open) return <><Short>{t("sendOrderShort")}</Short><LineEnd>{primary}{toggle}</LineEnd></>;
+  return (
+    <>
+      <LineEnd>{toggle}</LineEnd>
+      <Below>
+        <Prepared>{t("sendOrderDraft", { supplier: draft.supplier.name || row.name || "—" })}</Prepared>
+        <Basis>{t("sendOrderBasis", { date: draft.dueDate ? day(draft.dueDate) : "—" })}</Basis>
+        <Actions aside={aside}>{primary}</Actions>
+      </Below>
+    </>
+  );
+}
+
 function InvoiceExceptionBody({ draft, row, busy, canDecide, aside, onContacted, open, toggle }: View & { draft: InvoiceExceptionDraft; row: TodayRow; busy: boolean; canDecide: boolean; aside: ReactNode; onContacted: (text: string) => void }) {
   const t = useDecisionCopy();
   const { language, locale } = useI18n();
