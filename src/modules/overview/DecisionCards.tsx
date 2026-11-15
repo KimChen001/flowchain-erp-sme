@@ -595,7 +595,19 @@ function ConversionBody({ draft, row, busy, canDecide, aside, onCreate, open, to
   const t = useDecisionCopy();
   const fields = (codes: string[]) => codes.map((code) => t(`field_${code}` as DecisionCopyKey)).join(t.language === "zh-CN" ? "、" : ", ");
   const ready = canDecide && draft.missing.length === 0 && draft.orders.length > 0;
-  const create = ready ? <button type="button" disabled={busy} className={BUTTON.primary} onClick={onCreate} data-testid="decision-primary">{busy ? t("creating") : t("createOrders")}</button> : null;
+  // A second, inline click, as the assistant's record card asks before it
+  // turns a request into orders (design audit 2026-11-15, L5-13: here one
+  // click made them).
+  const [confirming, setConfirming] = useState(false);
+  const create = !ready ? null : confirming
+    ? (
+      <span className="inline-flex flex-wrap items-center gap-2" data-testid="decision-confirm-orders">
+        <span className="text-xs" style={{ color: A.sub }}>{t.count("confirmCreateOrders", draft.orders.length)}</span>
+        <button type="button" disabled={busy} className={BUTTON.primary} onClick={onCreate} data-testid="decision-primary">{busy ? t("creating") : t("confirmCreate")}</button>
+        <button type="button" disabled={busy} className={BUTTON.secondary} onClick={() => setConfirming(false)}>{t("cancel")}</button>
+      </span>
+    )
+    : <button type="button" disabled={busy} className={BUTTON.primary} onClick={() => setConfirming(true)} data-testid="decision-create-orders">{t("createOrders")}</button>;
   const openRequest = <Link to={row.href} className={BUTTON.secondary}>{t("openRequest")}</Link>;
   if (!open) return <><Short>{t.count("convertDraft", draft.orders.length)}</Short><LineEnd>{create || openRequest}{toggle}</LineEnd></>;
   return (
