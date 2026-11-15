@@ -234,11 +234,14 @@ test("an invoice opened from a sales order lists only that order's shipments", a
 
 // A draft that cannot go on (raised twice, or against the wrong shipment) is
 // cancelled with a reason; it stays on record and its goods can be invoiced
-// again.
+// again. 2 of the 10 shipped came back on the seeded customer return
+// RR-FIN-BROWSER-CUST, with no credit note yet, so 8 are left to invoice
+// (design audit L8-08: returned goods are not invoiced).
 test("a draft customer invoice is cancelled with a reason and its shipment is free again", async ({ page }) => {
   await signIn(page, "manager@example.com");
   await page.goto("/app/sales/invoices/new?shipment=finance-browser-shipment-CNY");
   await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("finance-browser-shipment-CNY");
+  await expect(page.getByTestId("customer-invoice-line").first().locator("input").first()).toHaveValue("8");
   await page.getByTestId("customer-invoice-due").fill("2026-11-15");
   await page.getByTestId("customer-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/sales\/invoices\/[0-9a-f-]{36}$/);
@@ -248,7 +251,7 @@ test("a draft customer invoice is cancelled with a reason and its shipment is fr
   // The page's facts: the invoice date, the totals, the customer.
   await expect(page.getByTestId("customer-invoice-date")).not.toHaveText("—");
   await expect(page.getByTestId("customer-invoice-totals")).toContainText(/Subtotal|小计/);
-  await expect(page.getByTestId("customer-invoice-total")).toContainText("125");
+  await expect(page.getByTestId("customer-invoice-total")).toContainText("100");
 
   // While it is a draft, its goods are not offered for a second draft.
   // (Checked through the form's data, so the draft page stays open.)
@@ -270,8 +273,8 @@ test("a draft customer invoice is cancelled with a reason and its shipment is fr
   await expect(page.getByTestId("customer-invoice-submit")).toHaveCount(0);
   await expect(page.getByTestId("customer-invoice-history-cancelled")).toContainText("Raised against the wrong shipment");
 
-  // The shipment is offered again, at its full quantity.
+  // The shipment is offered again, at all it has left to invoice.
   await page.goto("/app/sales/invoices/new?shipment=finance-browser-shipment-CNY");
   await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("finance-browser-shipment-CNY");
-  await expect(page.getByTestId("customer-invoice-line").first().locator("input").first()).toHaveValue("10");
+  await expect(page.getByTestId("customer-invoice-line").first().locator("input").first()).toHaveValue("8");
 });
