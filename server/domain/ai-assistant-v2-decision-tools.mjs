@@ -210,7 +210,7 @@ export const decisionHistoryTool = defineAiTool({
   name: 'decision_history',
   description: 'What was decided on one record on Today, newest first: each time it came up (raisedOn), what was decided (not_now, not_needed with a reasonCode, chased, accepted, covered), by whom and when, and how it ended (resolved when the record no longer needed it, expired when that happened before anyone decided). emailedOn lists the days a follow-up was emailed to the supplier. Use it for "did we chase PO-…?", "why isn\'t 22423 on Today?" or "who set this aside?".',
   parameters: {
-    record: { type: 'string', description: 'A purchase order number, a SKU, a purchase request number, or a supplier invoice number.' },
+    record: { type: 'string', description: 'A purchase order, purchase request or supplier invoice number, or a SKU.' },
   },
   required: ['record'],
   available: (_facts, context) => Boolean(context?.prisma && context.tenantId),

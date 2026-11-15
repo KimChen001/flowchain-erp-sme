@@ -289,13 +289,19 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
       attempts: 5,
       execute: async (tx, commandActor) => {
         const number = await nextNumber(tx, commandActor.tenantId, "purchase_request");
+        // No department given: the requester's own, from their profile, then
+        // operations, the form's default. A request the assistant's form made
+        // is recorded as the assistant's (design audit 2026-11-15, L5-24: every
+        // chat request was "operations" and "manual").
+        const departmentId = text(input.departmentId) || text(commandActor.user?.department) || "operations";
+        const source = suggestions?.origin === "ai_assistant" ? "ai_assistant" : "manual";
         const created = await tx.purchaseRequest.create({
           data: {
             id, number, tenantId: commandActor.tenantId, status: PURCHASE_REQUEST_STATUS.DRAFT,
             requester: commandActor.user.id, supplierId: persisted.supplierId, supplierName: persisted.supplierName,
             requiredDate: needBy ? new Date(`${needBy}T00:00:00Z`) : null, amount: persisted.amount, currency,
-            reason: text(input.reason) || null, source: "manual",
-            metadata: { version: 1, requesterId: commandActor.user.id, departmentId: text(input.departmentId), procurementPath: "undecided", emergencyPurchase: Boolean(input.emergencyPurchase), singleSource: Boolean(input.singleSource), timeline: [timelineEntry("create", commandActor)] },
+            reason: text(input.reason) || null, source,
+            metadata: { version: 1, requesterId: commandActor.user.id, departmentId, procurementPath: "undecided", emergencyPurchase: Boolean(input.emergencyPurchase), singleSource: Boolean(input.singleSource), timeline: [timelineEntry("create", commandActor)] },
             lines: { create: persisted.rows },
           },
         });

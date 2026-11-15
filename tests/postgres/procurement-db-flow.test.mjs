@@ -281,6 +281,16 @@ test('step 1b: a signed-in buyer saves, submits and withdraws a PR but cannot ap
   assert.equal(created.status, 201, describe(created))
   const row = await prisma.purchaseRequest.findUnique({ where: { id: created.body.id } })
   assert.equal(row.requester, buyerA.id)
+  // Design audit 2026-11-15 (L5-24): a request the assistant's form made is
+  // recorded as the assistant's, and one sent without a department takes the
+  // requester's own, then operations.
+  assert.equal(row.source, 'ai_assistant')
+  const plain = await api(tokens.buyerA, 'POST', '/api/procurement/requests', { departmentId: '', defaultNeedByDate: needBy, lines: [uiPrLine({ currency: undefined })] })
+  assert.equal(plain.status, 201, describe(plain))
+  const plainRow = await prisma.purchaseRequest.findUnique({ where: { id: plain.body.id } })
+  assert.equal(plainRow.source, 'manual')
+  const profile = await prisma.user.findUnique({ where: { id: buyerA.id }, select: { department: true } })
+  assert.equal(plainRow.metadata.departmentId, profile.department || 'operations')
   const createdAudit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityType: 'PurchaseRequest', entityId: row.id, action: 'purchase_request_created' } })
   assert.deepEqual(createdAudit.metadata.suggestions, {
     origin: 'ai_assistant',

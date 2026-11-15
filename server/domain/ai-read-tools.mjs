@@ -261,7 +261,7 @@ const listReceipts = defineAiTool({
 
 const listSupplierInvoices = defineAiTool({
   name: 'list_supplier_invoices',
-  description: 'Supplier invoices: the committed total and how many are matched, in exception or pending three-way match; the invoices with a price or quantity difference; or those dated in the last 7 days. An invoice the user set aside on Today carries setAside (decision, decidedOn); never present it as new.',
+  description: 'Supplier invoices: the committed total and how many are matched, in exception or pending three-way match; the invoices with a price or quantity difference; or those dated in the last 7 days.',
   parameters: { kind: { type: 'string', enum: ['summary', 'differences', 'recent'], description: 'summary by default.' }, limit: limitParam },
   available: (facts) => Boolean(facts.invoices),
   async run(args, { facts, context }) {
