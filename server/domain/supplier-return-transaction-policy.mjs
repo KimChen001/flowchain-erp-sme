@@ -2,6 +2,7 @@ import {
   outboundDecimalString as decimalString,
   outboundDecimalUnits as decimalUnits,
 } from "./outbound-transaction-policy.mjs";
+import { executableAuthorizedUnits } from "./return-authorization-closure-policy.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const fixed = (value) =>
@@ -82,7 +83,7 @@ function postedQuantities(authorization, excludedPostingId = "") {
 
 function totalAuthorizedUnits(authorization) {
   return (authorization.lines || []).reduce(
-    (sum, line) => sum + decimalUnits(line.authorizedQuantity),
+    (sum, line) => sum + executableAuthorizedUnits(line),
     0n,
   );
 }
@@ -253,7 +254,7 @@ export async function buildSupplierReturnDraftPlan({
     }
     const requestLine = authorizationLine.returnRequestLine;
     const remaining =
-      decimalUnits(authorizationLine.authorizedQuantity) -
+      executableAuthorizedUnits(authorizationLine) -
       (used.get(authorizationLine.id) || 0n);
     if (quantityUnits > remaining)
       blockingIssues.push(

@@ -765,6 +765,12 @@ async function verifyFresh(pg, database, url, secrets) {
     ["--test", "server/domain/quarantine-release-transaction.test.mjs"],
     { env: databaseEnv(url), secrets },
   );
+  console.log("[fresh] Running the return state machine walk (no seeded quarantine balance)");
+  await run(
+    node,
+    ["--test", "server/domain/return-state-machine.test.mjs"],
+    { env: databaseEnv(url), secrets },
+  );
 }
 
 async function verifyUpgrade(pg, database, url, secrets) {

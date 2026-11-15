@@ -97,7 +97,60 @@ const normalizeLines = (rows = []) =>
       row.destinationInventoryBalanceId,
     ),
     inventoryBalanceId: text(row.inventoryBalanceId),
+    // Without a destination balance: the location of the quarantine stock's
+    // warehouse to release into ("" = no location). Absent stays null.
+    destinationLocation:
+      row.destinationLocation == null ? null : text(row.destinationLocation),
   }));
+
+// Creates the available stock records a release draft needs, once per
+// (SKU, warehouse, location), the key receiving uses. A concurrent create of
+// the same key fails the unique index and the command returns its
+// refresh-and-retry conflict.
+async function ensureDestinationBalances(tx, tenantId, idFactory, planLines) {
+  const created = new Map();
+  for (const line of planLines) {
+    const spec = line.createsDestinationBalance;
+    if (!spec) continue;
+    const key = `${spec.sku}|${spec.warehouseId}|${spec.locationKey}`;
+    let balance = created.get(key);
+    if (!balance) {
+      balance =
+        (await tx.inventoryBalance.findUnique({
+          where: {
+            tenantId_sku_warehouseKey_locationKey: {
+              tenantId,
+              sku: spec.sku,
+              warehouseKey: spec.warehouseId,
+              locationKey: spec.locationKey,
+            },
+          },
+        })) ||
+        (await tx.inventoryBalance.create({
+          data: {
+            id: idFactory(),
+            tenantId,
+            itemId: spec.itemId,
+            sku: spec.sku,
+            itemName: spec.itemName,
+            warehouseId: spec.warehouseId,
+            warehouseKey: spec.warehouseId,
+            location: spec.location,
+            locationKey: spec.locationKey,
+            onHandQuantity: "0",
+            reservedQuantity: "0",
+            availableQuantity: "0",
+            unit: spec.unit,
+            status: "available",
+            version: 0,
+          },
+        }));
+      created.set(key, balance);
+    }
+    line.destinationInventoryBalanceId = balance.id;
+  }
+  return [...created.values()].map((balance) => balance.id);
+}
 
 function normalize(type, input = {}) {
   const idempotencyKey = required(
@@ -514,6 +567,12 @@ export function createQuarantineReleaseCommandService({
           }),
         );
         assertWarehouseAccess(actor, plan.warehouseIds, "operate");
+        await ensureDestinationBalances(
+          tx,
+          actor.tenantId,
+          idFactory,
+          plan.normalizedPlan.lines,
+        );
         const posting = await tx.returnPostingDocument.create({
           data: {
             id: idFactory(),
@@ -544,6 +603,8 @@ export function createQuarantineReleaseCommandService({
               quarantineBalanceId: line.quarantineBalanceId,
               destinationInventoryBalanceId:
                 line.destinationInventoryBalanceId,
+              destinationLocation: line.destinationLocation,
+              destinationLocationKey: line.destinationLocationKey,
               metadata: {
                 dispositionRoute: "release_quarantine_to_available",
                 balanceType: "quarantine_to_available",
@@ -607,6 +668,12 @@ export function createQuarantineReleaseCommandService({
           }),
         );
         assertWarehouseAccess(actor, plan.warehouseIds, "operate");
+        await ensureDestinationBalances(
+          tx,
+          actor.tenantId,
+          idFactory,
+          plan.normalizedPlan.lines,
+        );
         const before = postingModel(posting);
         await tx.returnPostingLine.deleteMany({
           where: { returnPostingId: posting.id },
@@ -629,6 +696,8 @@ export function createQuarantineReleaseCommandService({
               quarantineBalanceId: line.quarantineBalanceId,
               destinationInventoryBalanceId:
                 line.destinationInventoryBalanceId,
+              destinationLocation: line.destinationLocation,
+              destinationLocationKey: line.destinationLocationKey,
               metadata: {
                 dispositionRoute: "release_quarantine_to_available",
                 balanceType: "quarantine_to_available",
@@ -962,8 +1031,8 @@ export function createQuarantineReleaseCommandService({
               sku: line.sku,
               itemName: line.itemName,
               warehouseId: line.warehouseId,
-              location: line.location,
-              locationKey: line.locationKey,
+              location: line.destinationLocation,
+              locationKey: line.destinationLocationKey,
               movementType: "quarantine_release_available_in",
               movementLabel: "Quarantine release added to available inventory",
               movementDate: occurredAt,

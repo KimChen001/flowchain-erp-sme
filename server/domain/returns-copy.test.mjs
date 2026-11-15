@@ -32,6 +32,7 @@ const serverFiles = [
   "server/domain/quarantine-release-command-service.mjs",
   "server/domain/quarantine-release-read-service.mjs",
   "server/domain/quarantine-release-transaction-policy.mjs",
+  "server/domain/return-authorization-closure-policy.mjs",
   "server/domain/return-governance-command-service.mjs",
   "server/domain/return-governance-policy.mjs",
   "server/domain/return-governance-read-service.mjs",

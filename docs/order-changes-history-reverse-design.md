@@ -43,7 +43,7 @@ On 2026-11-01 the owner asked for this design.
     - 红字单只能基于已过账的退货开，界面上也没有入口；
     - 已批准的供应商发票不能撤回，已开出的客户发票不能作废，也没有不退货的价格更正。
   - **建议：**
-    - 补上几处缺口后打开退货：两个占位页面、冲销退货前检查红字单、用户指南；
+    - 补上几处缺口后打开退货：两个占位页面、冲销退货前检查红字单、用户指南；另外退货状态机的内核问题（新工作区收不了客户退货、部分退回后关不掉授权、界面取消不了）须先修好，清单见 §4.2 第 5–11 条；
     - 红字单可以基于退货开，也可以不退货直接开（价格错误、多开、折扣）；
     - 客户发票开出后不作废，只用红字单冲销，全额冲销后这批发货可以重新开票；
     - 供应商发票批准后，在未付款、未标记导出之前可以撤回审批。
@@ -377,6 +377,41 @@ message points to a return plus a credit note.
 3. Add the returns section to `docs/trial-user-guide.md`.
 4. Set the flag in `render.yaml` and the env examples, and update `us-trial-capabilities.test.mjs` and `deploy/README.md`.
 
+**Before step 4, the return state machine must hold these** (design audit
+2026-11-15, batch A9; fixed with the regression walk
+`server/domain/return-state-machine.test.mjs`, which CI runs in
+`npm run test:db:returns-quarantine`). Re-check them if the kernel changes:
+
+5. A fresh workspace can receive a customer return: the receipt names a
+   warehouse and location and creates the quarantine stock record when none
+   exists (V-C-01, L4-09). No product code created one before.
+6. An authorization that was partly executed can close its remainder ("Close
+   remaining", `closedQuantity` per line). Authorize 5, receive 3, close: the
+   authorization and the request become executed and the 3 can be released
+   (L8-03).
+7. Cancelling or expiring an authorization puts the request back by what was
+   really executed: an executed customer return stays executed when its release
+   authorization is cancelled, so it cannot be received twice, cancelled or
+   rejected (L8-04). A new receive or dispatch authorization covers only what is
+   not yet executed.
+8. Expiry is optional when authorizing. The authorization page has cancel,
+   expire and close-remaining buttons, and the posting page can cancel a draft
+   or ready posting (L8-06, V-C-06). Cancelled drafts and reversed postings no
+   longer keep an authorization open; open drafts must be cancelled or posted
+   before a close.
+9. A quarantine release can go to any location of the same warehouse and
+   creates the available stock record there when needed; the posting line keeps
+   the destination location so reversal and reconciliation match (L8-14).
+10. Request buttons use their own permissions (revise, submit, cancel); the
+    request page can edit a draft and reject; the list filters include
+    "partially executed" and "rejected" (L8-20).
+11. Reversing a customer receipt while its release authorization is open says
+    to cancel that authorization first, instead of a "refresh and retry"
+    conflict (L8-27).
+
+Still open for later batches before switching on: the return quantity ledger
+(batch A10: L8-05, L8-07, L8-08, L8-09, L8-18) and the credit kernel (batch A8).
+
 Scrap from quarantine waits (decision RV6). Writing stock off needs a value, and
 FlowChain has no cost layer.
 
@@ -494,4 +529,4 @@ Each step is its own PR with green CI. Sizes are rough, in working days.
 | History floods live lists or pushes live records out of reports | Final statuses only; source filter; date-bounded report reads before history ships |
 | A bad file pollutes the workspace | Preview with row errors; batch removal within 30 days |
 | Credits drift from the accounting system | Credits are documents with numbers and reasons; the accounting export (handoff step 3) carries them |
-| Returns switched on with gaps | The four fixes of §4.2 come first, and the existing returns tests keep running in CI |
+| Returns switched on with gaps | The fixes and checks of §4.2 come first, and the existing returns tests keep running in CI |

@@ -563,6 +563,7 @@ export async function buildReturnAuthorizationPlan({
   const requestLines = new Map(request.lines.map((row) => [row.id, row]));
   const releasedByRequestLine = new Map();
   const receivedByRequestLine = new Map();
+  const dispatchedByRequestLine = new Map();
   for (const historicalAuthorization of request.authorizations) {
     const requestLineByAuthorizationLine = new Map(
       historicalAuthorization.lines.map((line) => [
@@ -577,7 +578,9 @@ export async function buildReturnAuthorizationPlan({
           ? receivedByRequestLine
           : posting.postingType === "quarantine_release"
             ? releasedByRequestLine
-            : null;
+            : posting.postingType === "supplier_return_dispatch"
+              ? dispatchedByRequestLine
+              : null;
       if (!target) continue;
       for (const line of posting.lines) {
         const requestLineId = requestLineByAuthorizationLine.get(
@@ -608,18 +611,28 @@ export async function buildReturnAuthorizationPlan({
       blockingIssues,
       `Authorization line ${requestLine.id}`,
     );
+    const dispositionRoute = text(entry.dispositionRoute);
+    // A new receive or dispatch authorization covers only what earlier
+    // authorizations of this request have not already executed (L8-04).
+    const alreadyExecuted =
+      dispositionRoute === "release_quarantine_to_available"
+        ? ZERO
+        : (receivedByRequestLine.get(requestLine.id) || ZERO) +
+          (dispatchedByRequestLine.get(requestLine.id) || ZERO);
     if (
       authorized !== null &&
-      authorized > units(requestLine.requestedQuantity)
+      authorized > units(requestLine.requestedQuantity) - alreadyExecuted
     )
       blockingIssues.push(
         issue(
           "RETURN_AUTHORIZATION_EXCEEDS_REQUEST",
           `Authorized quantity exceeds requested quantity for line ${requestLine.id}.`,
           409,
+          alreadyExecuted > ZERO
+            ? { alreadyExecutedQuantity: fixed(alreadyExecuted) }
+            : undefined,
         ),
       );
-    const dispositionRoute = text(entry.dispositionRoute);
     const allowedRoutes =
       request.returnType === "customer_return"
         ? releaseOnly
