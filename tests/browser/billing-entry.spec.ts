@@ -192,18 +192,20 @@ test("the new customer invoice form says what is missing under each field", asyn
 
   // More than is left to invoice is refused under the quantity, before
   // anything is sent. (The USD shipment was invoiced in full above, so the
-  // CNY one is used; each line says what is shipped, invoiced and left.)
+  // CNY one is used; each line says what is shipped, invoiced and left. 2 of
+  // its 10 came back on the seeded customer return RR-FIN-BROWSER-CUST, not
+  // yet credited, so 8 are left: design audit L8-08.)
   await page.getByTestId("customer-invoice-shipment").selectOption("finance-browser-shipment-CNY");
-  await expect(page.getByTestId("customer-invoice-line-progress").first()).toContainText(/Shipped 10 .* · already invoiced 0 .* · left to invoice 10|已发货 10 .* · 已开票 0 .* · 可开票 10/);
+  await expect(page.getByTestId("customer-invoice-line-progress").first()).toContainText(/Shipped 10 .* · already invoiced 0 .* · returned, not credited 2 .* · left to invoice 8|已发货 10 .* · 已开票 0 .* · 已退回未贷记 2 .* · 可开票 8/);
   await page.getByTestId("customer-invoice-due").fill("2026-11-15");
   const quantity = page.getByTestId("customer-invoice-line").first().locator("input").first();
-  await expect(quantity).toHaveValue("10");
+  await expect(quantity).toHaveValue("8");
   await quantity.fill("999");
   let created = false;
   page.on("request", (request) => { if (request.method() === "POST" && /\/api\/finance\/customer-invoices$/.test(request.url())) created = true; });
   await page.getByTestId("customer-invoice-create").click();
   await expect(quantity).toHaveAttribute("aria-invalid", "true");
-  await expect(quantity).toHaveAccessibleDescription(/More than the 10 .*left to invoice|超过可开票数量 10/);
+  await expect(quantity).toHaveAccessibleDescription(/More than the 8 .*left to invoice|超过可开票数量 8/);
   await expect(quantity).toBeFocused();
 
   // A refusal from the server's preview goes under the line it names.

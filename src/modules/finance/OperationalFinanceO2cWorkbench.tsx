@@ -121,6 +121,8 @@ type EntryData = {
       postedQuantity: string;
       // On a draft or an invoice that holds the shipment, and what is left.
       invoicedQuantity?: string;
+      // Sent back by the customer and not yet credited: not left to invoice.
+      returnedQuantity?: string;
       remainingQuantity?: string;
       unit?: string | null;
       unitPrice: string | null;
@@ -335,6 +337,7 @@ const FORM_COPY = {
   // Each line: what was shipped, what is already on an invoice (drafts
   // included) and what is left, which the quantity starts at.
   lineProgress: ["Shipped {shipped} · already invoiced {invoiced} · left to invoice {left}", "已发货 {shipped} · 已开票 {invoiced} · 可开票 {left}"],
+  lineProgressReturned: ["Shipped {shipped} · already invoiced {invoiced} · returned, not credited {returned} · left to invoice {left}", "已发货 {shipped} · 已开票 {invoiced} · 已退回未贷记 {returned} · 可开票 {left}"],
   shipmentInvoiced: ["Everything shipped on {shipment} is already on an invoice:", "{shipment} 的发货数量已全部开票："],
   orderInvoiced: ["Everything shipped on {order} is already on an invoice:", "{order} 的发货数量已全部开票："],
   draftHolds: ["A draft keeps its quantity until it is submitted or cancelled.", "草稿在提交或取消前会占用其数量。"],
@@ -1218,7 +1221,7 @@ function NewInvoice() {
                   <div className="font-medium" style={{ color: A.label }}>{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</div>
                   {/* Shipped, already on an invoice (drafts included) and left: the quantity starts at what is left. */}
                   <div className="text-xs" style={{ color: A.sub }} data-testid="customer-invoice-line-progress">
-                    {say("lineProgress", { shipped: quantityText(line.postedQuantity, line.unit), invoiced: quantityText(line.invoicedQuantity ?? "0", line.unit), left: quantityText(line.remainingQuantity ?? line.postedQuantity, line.unit) })}
+                    {decimalUnits(line.returnedQuantity ?? "0") ? say("lineProgressReturned", { shipped: quantityText(line.postedQuantity, line.unit), invoiced: quantityText(line.invoicedQuantity ?? "0", line.unit), returned: quantityText(line.returnedQuantity, line.unit), left: quantityText(line.remainingQuantity ?? line.postedQuantity, line.unit) }) : say("lineProgress", { shipped: quantityText(line.postedQuantity, line.unit), invoiced: quantityText(line.invoicedQuantity ?? "0", line.unit), left: quantityText(line.remainingQuantity ?? line.postedQuantity, line.unit) })}
                   </div>
                   <div className="text-xs" style={{ color: A.sub }}>{t("finance.soPrice")} {line.unitPrice === null ? t("finance.priceUnavailable") : money(line.unitPrice, shipment.currency, locale)}</div>
                   {whole && <p className="mt-1 text-[12px] leading-[18px] text-red-600" role="alert">{whole}</p>}

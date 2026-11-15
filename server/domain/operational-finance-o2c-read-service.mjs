@@ -811,6 +811,8 @@ export function createOperationalFinanceO2cReadService({
           postedQuantity: decimal(line.postedQuantity),
           // On a draft or on an invoice that holds the shipment.
           invoicedQuantity: fixed(invoiced),
+          // Sent back by the customer and not yet credited (L8-08).
+          returnedQuantity: fixed(returned),
           remainingQuantity: fixed(left),
           unit: line.unit,
           unitPrice: amountsVisible ? decimal(line.salesOrderLine.unitPrice) : null,
