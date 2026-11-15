@@ -34,7 +34,7 @@ function toolsFor(facts, context) {
 export const AI_READ_TOOL_COLUMNS = Object.freeze({
   workspace_summary: { '': ['purchaseOrders.open', 'purchaseOrders.overdue', 'purchaseOrders.waitingForApproval', 'purchaseRequestsWaitingForApproval', 'inventory.skus', 'inventory.atRisk', 'supplierInvoices.committedCount', 'rfqs.open', 'rfqs.readyToAward', 'receipts.rejected', 'receipts.unposted', 'recordsMissingData'] },
   list_purchase_orders: { rows: ['orderNumber', 'supplier', 'status', 'skus', 'itemNames', 'dueDate', 'overdueDays', 'ordered', 'received', 'remaining', 'unit', 'amount', 'currency', 'open'], bySupplier: ['supplier', 'orders'] },
-  get_purchase_order: { openLines: ['sku', 'itemName', 'ordered', 'received', 'remaining', 'unit', 'unitPrice', 'promisedDate', 'originalPromisedDate'], receipts: ['documentNumber', 'arrived', 'postingStatus', 'rejected', 'unit'], invoiceDifferences: ['invoiceNumber', 'matchStatus', 'variance', 'currency'] },
+  get_purchase_order: { openLines: ['sku', 'itemName', 'ordered', 'received', 'remaining', 'unit', 'unitPrice', 'promisedDate', 'originalPromisedDate'], closedLines: ['sku', 'itemName', 'ordered', 'received', 'remaining', 'unit', 'unitPrice', 'promisedDate'], receipts: ['documentNumber', 'arrived', 'postingStatus', 'accepted', 'rejected', 'unit'], invoiceDifferences: ['invoiceNumber', 'matchStatus', 'variance', 'currency'] },
   stock_position: { rows: ['sku', 'itemName', 'unit', 'onHand', 'reserved', 'available', 'openSalesDemand', 'incomingOnPurchaseOrders', 'availableToPromise', 'shortage', 'safetyStock', 'reorderPoint', 'status'] },
   stock_projection: { weeks: ['from', 'to', 'incoming', 'demand', 'endAvailable', 'belowSafetyStock', 'short'], atRecordedRate: ['from', 'to', 'incoming', 'demand', 'endAvailable', 'belowSafetyStock', 'short'] },
   list_sales_orders: { rows: ['orderNumber', 'customer', 'promisedDate'] },
@@ -81,6 +81,8 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
     totals: ['currency', 'receivedFromCustomers', 'customerPayments', 'paidToSuppliers', 'supplierPayments', 'net'],
     months: ['month', 'currency', 'receivedFromCustomers', 'customerPayments', 'paidToSuppliers', 'supplierPayments', 'net'],
   },
+  stock_movements: { rows: ['date', 'quantity', 'unit', 'documentNumber'] },
+  list_shipments: { rows: ['shipment', 'shipped', 'salesOrder', 'customer'] },
   gross_profit: {
     '': ['currency', 'invoices', 'revenue', 'cost', 'grossProfit', 'grossMarginPercent'],
     rows: ['month', 'sku', 'itemName', 'quantity', 'unit', 'customer', 'revenue', 'cost', 'grossProfit', 'grossMarginPercent'],

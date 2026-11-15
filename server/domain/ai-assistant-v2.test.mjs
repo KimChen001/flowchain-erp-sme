@@ -1615,3 +1615,12 @@ test('the prompt lists the app\'s buttons, and a button the app does not have is
   const fine = await ask([OVERDUE, [...say('PO-001 is overdue. Open it and click **Close PO**.'), end()]])
   assert.deepEqual(ofType(fine.events, 'flag')[0].spans, [])
 })
+
+// Design audit 2026-11-15 (L5-15): an answer read the whole business context
+// for its facts, then again for the record search (and the reorder list, the
+// order plan and Today's decisions). The loop now hands its read to the tools.
+test('an answer reads the business context once, for its facts and its tools', async () => {
+  const { scenario, events } = await ask([[...call('tu_find', 'search_records', { query: 'PO-001' }), end()], [...say('PO-001 is open.'), end()]], { question: 'Find PO-001' })
+  assert.equal(ofType(events, 'tool').filter((event) => event.name === 'search_records' && event.state === 'done').length, 1)
+  assert.equal(scenario.calls.repositories.filter(([name]) => name === 'procurementRuntime.snapshot').length, 1)
+})

@@ -152,6 +152,7 @@ function sourceOf(ctx, reference) {
 // otherwise the result key in snake case ("inFull.percent" -> in_full_percent).
 const CODE_ALIASES = Object.freeze({
   orderNumber: 'order', overdueDays: 'days_overdue', remaining: 'remaining_quantity', itemName: 'item', request: 'purchase_request',
+  accepted: 'received', shipment: 'document_number', shipped: 'date',
   incomingOnPurchaseOrders: 'incoming', availableToPromise: 'atp', withoutTheseLines: 'atp_without_late', sharePercent: 'share', spendClass: 'abc_class',
   'onTime.percent': 'on_time_rate', 'item.sku': 'sku', 'item.name': 'item', 'item.unit': 'unit', 'suggestedQuantity.value': 'suggested_quantity',
   'suggestedQuantity.source': 'suggested_quantity_source', 'supplier.name': 'supplier', 'needByDate.value': 'need_by_date', 'estimatedUnitPrice.value': 'unit_price',
