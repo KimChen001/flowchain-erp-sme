@@ -10,6 +10,7 @@ import {
   overdueReceivableWhere,
 } from "./operational-finance-o2c-read-service.mjs";
 import { buildShipmentReversalPlan } from "./outbound-transaction-policy.mjs";
+import { buildCustomerReturnReversalPlan } from "./customer-return-transaction-policy.mjs";
 
 const databaseUrl =
   process.env.DATABASE_URL_TEST || process.env.DATABASE_URL || "";
@@ -658,3 +659,159 @@ test("aging reads the due date as its calendar day and today in the workspace", 
   assert.equal(agingBucket(31), "31_60");
   assert.equal(agingBucket(91), "90_plus");
 });
+
+// Design audit 2026-11-15, batch A8 (credit core), customer side: a draft
+// credit note can be cancelled and gives its quantity back; one approved
+// before its invoice is issued is taken off the receivable at issue; approval
+// checks the return receipt again (V-C-07); a return receipt a credit names is
+// not reversed; and the receivable's status follows its amounts. Runs after
+// the lifecycle test above, in the workspace it seeded.
+test(
+  "customer credit notes follow their return receipt and their invoice (design audit A8)",
+  { skip: !enabled },
+  async () => {
+    const prisma = await createPrismaClient(env);
+    try {
+      const command = createOperationalFinanceO2cCommandService({
+        prisma,
+        env,
+        now: () => new Date("2026-07-17T16:00:00.000Z"),
+      });
+      const codes = (plan) => plan.blockingIssues.map((entry) => entry.code);
+      const rejectsWith = (code) => (error) => error.code === code;
+      const approvedInvoice = async (input, suffix) => {
+        const created = await command.createCustomerInvoice({ ...input, idempotencyKey: `create-${suffix}` }, specialist);
+        await command.submitCustomerInvoice(created.invoice.id, { expectedVersion: 0, idempotencyKey: `submit-${suffix}` }, specialist);
+        await command.approveCustomerInvoice(created.invoice.id, { expectedVersion: 1, idempotencyKey: `approve-${suffix}` }, manager);
+        return created.invoice.id;
+      };
+      const creditInput = async (invoiceId, ret, number, quantity, tax = "0.0000") => {
+        const [line] = await prisma.customerInvoiceLine.findMany({ where: { customerInvoiceId: invoiceId } });
+        return {
+          creditNoteNumber: number,
+          customerInvoiceId: invoiceId,
+          returnPostingId: ret.postingId,
+          currency: "CNY",
+          lines: [
+            {
+              customerInvoiceLineId: line.id,
+              returnPostingLineId: ret.postingLineId,
+              quantity,
+              pricingSource: "original_invoice",
+              enteredTaxAmount: tax,
+            },
+          ],
+        };
+      };
+      const createCredit = (input) =>
+        command.createCustomerCreditNote({ ...input, idempotencyKey: `create-${input.creditNoteNumber}` }, specialist);
+      const reversalCodes = async (postingId) =>
+        codes(await buildCustomerReturnReversalPlan({ prisma, tenantId, postingId }));
+
+      // 1. A credit approved while the invoice is approved but not issued:
+      //    the receivable opens net of it.
+      const net = await shipment(prisma, "CC-NET", "CNY");
+      const netInvoice = await approvedInvoice(invoiceInput(net, "CC-NET"), "CC-NET");
+      const netReturn = await postedCustomerReturn(prisma, net, "CC-NET");
+      // Invoice line: 4 units with 2.0000 tax, so 2 units carry at most 1.0000.
+      const netCredit = await createCredit(await creditInput(netInvoice, netReturn, "CN-CC-NET", "2.0000", "1.0000"));
+      assert.equal(netCredit.creditNote.totalAmount, "26");
+      const earlyPreview = await command.previewApproveCustomerCreditNote(netCredit.creditNote.id, { expectedVersion: 0 }, manager);
+      assert.equal(earlyPreview.allowed, true);
+      assert.equal(earlyPreview.deductedAtIssue, true);
+      await command.approveCustomerCreditNote(netCredit.creditNote.id, { expectedVersion: 0, idempotencyKey: "approve-CN-CC-NET" }, manager);
+      const issued = await command.issueCustomerInvoice(
+        netInvoice,
+        { expectedVersion: 2, obligationNumber: "AR-CC-NET", idempotencyKey: "issue-CC-NET" },
+        manager,
+      );
+      const netReceivable = await prisma.receivableObligation.findUnique({ where: { id: issued.receivable.id } });
+      assert.equal(String(netReceivable.originalAmount), "52");
+      assert.equal(String(netReceivable.approvedCreditAmount), "26");
+      assert.equal(String(netReceivable.outstandingAmount), "26");
+      assert.equal(netReceivable.status, "open");
+      assert.ok((await reversalCodes(netReturn.postingId)).includes("RETURN_REVERSAL_BLOCKED_BY_CREDIT"));
+
+      // 2. Cancelling a draft gives its quantity back and frees the return.
+      const cancel = await shipment(prisma, "CC-CANCEL", "CNY");
+      const cancelInvoice = (await issueInvoice(command, invoiceInput(cancel, "CC-CANCEL"), "CC-CANCEL")).invoice.id;
+      const cancelReturn = await postedCustomerReturn(prisma, cancel, "CC-CANCEL");
+      const wrong = await createCredit(await creditInput(cancelInvoice, cancelReturn, "CN-CC-WRONG", "2.0000"));
+      assert.deepEqual(
+        codes(await command.previewCustomerCreditNote(await creditInput(cancelInvoice, cancelReturn, "CN-CC-RIGHT", "1.0000"), specialist)),
+        ["CUSTOMER_CREDIT_QUANTITY_EXCEEDED"],
+      );
+      assert.ok((await reversalCodes(cancelReturn.postingId)).includes("RETURN_REVERSAL_BLOCKED_BY_CREDIT"));
+      assert.deepEqual(
+        codes(await command.previewCancelCustomerCreditNote(wrong.creditNote.id, { expectedVersion: 0, reason: "" }, specialist)),
+        ["CUSTOMER_CREDIT_CANCEL_REASON_REQUIRED"],
+      );
+      await assert.rejects(
+        command.cancelCustomerCreditNote(wrong.creditNote.id, { expectedVersion: 0, reason: "Wrong", idempotencyKey: "cancel-CN-CC-WRONG-viewer" }, viewer),
+        rejectsWith("AUTHORIZATION_PERMISSION_DENIED"),
+      );
+      const cancelled = await command.cancelCustomerCreditNote(
+        wrong.creditNote.id,
+        { expectedVersion: 0, reason: "Entered twice", idempotencyKey: "cancel-CN-CC-WRONG" },
+        specialist,
+      );
+      assert.equal(cancelled.creditNote.status, "cancelled");
+      assert.equal(
+        await prisma.auditLog.count({ where: { tenantId, action: "customer_credit_note_cancelled", entityId: wrong.creditNote.id } }),
+        1,
+      );
+      assert.equal(
+        (await command.previewCustomerCreditNote(await creditInput(cancelInvoice, cancelReturn, "CN-CC-RIGHT", "2.0000"), specialist)).allowed,
+        true,
+      );
+      assert.ok(!(await reversalCodes(cancelReturn.postingId)).includes("RETURN_REVERSAL_BLOCKED_BY_CREDIT"));
+
+      // 3. Approval checks the return receipt again (V-C-07).
+      const stale = await createCredit(await creditInput(cancelInvoice, cancelReturn, "CN-CC-STALE", "2.0000"));
+      await prisma.returnPostingDocument.update({
+        where: { id: cancelReturn.postingId },
+        data: { postingStatus: "reversed", reversedAt: new Date() },
+      });
+      assert.deepEqual(
+        codes(await command.previewApproveCustomerCreditNote(stale.creditNote.id, { expectedVersion: 0 }, manager)),
+        ["CUSTOMER_RETURN_RECEIPT_REQUIRED"],
+      );
+      await assert.rejects(
+        command.approveCustomerCreditNote(stale.creditNote.id, { expectedVersion: 0, idempotencyKey: "approve-CN-CC-STALE" }, manager),
+        rejectsWith("CUSTOMER_RETURN_RECEIPT_REQUIRED"),
+      );
+      await command.cancelCustomerCreditNote(stale.creditNote.id, { expectedVersion: 0, reason: "Return reversed", idempotencyKey: "cancel-CN-CC-STALE" }, specialist);
+
+      // 4. A credit that clears a receivable settles it (L2-13); a disputed
+      //    one stays disputed until resolved, then reads settled.
+      const full = await shipment(prisma, "CC-FULL", "CNY");
+      const fullIssued = await issueInvoice(command, invoiceInput(full, "CC-FULL", "2.0000"), "CC-FULL");
+      const fullReturn = await postedCustomerReturn(prisma, full, "CC-FULL");
+      const fullCredit = await createCredit(await creditInput(fullIssued.invoice.id, fullReturn, "CN-CC-FULL", "2.0000", "2.0000"));
+      assert.equal(fullCredit.creditNote.totalAmount, "27");
+      await command.approveCustomerCreditNote(fullCredit.creditNote.id, { expectedVersion: 0, idempotencyKey: "approve-CN-CC-FULL" }, manager);
+      const settled = await prisma.receivableObligation.findUnique({ where: { id: fullIssued.receivable.id } });
+      assert.equal(String(settled.outstandingAmount), "0");
+      assert.equal(settled.status, "settled");
+
+      const disputed = await shipment(prisma, "CC-DISPUTE", "CNY");
+      const disputedIssued = await issueInvoice(command, invoiceInput(disputed, "CC-DISPUTE", "2.0000"), "CC-DISPUTE");
+      const receivableId = disputedIssued.receivable.id;
+      await command.disputeReceivable(receivableId, { expectedVersion: 0, reason: "Goods damaged", idempotencyKey: "dispute-CC-DISPUTE" }, manager);
+      const disputedReturn = await postedCustomerReturn(prisma, disputed, "CC-DISPUTE");
+      const disputedCredit = await createCredit(await creditInput(disputedIssued.invoice.id, disputedReturn, "CN-CC-DISPUTE", "2.0000", "2.0000"));
+      await command.approveCustomerCreditNote(disputedCredit.creditNote.id, { expectedVersion: 0, idempotencyKey: "approve-CN-CC-DISPUTE" }, manager);
+      const stillDisputed = await prisma.receivableObligation.findUnique({ where: { id: receivableId } });
+      assert.equal(String(stillDisputed.outstandingAmount), "0");
+      assert.equal(stillDisputed.status, "disputed");
+      const resolved = await command.resolveReceivableDispute(
+        receivableId,
+        { expectedVersion: 2, reason: "Credited in full", idempotencyKey: "resolve-CC-DISPUTE" },
+        manager,
+      );
+      assert.equal(resolved.receivable.status, "settled");
+    } finally {
+      await prisma.$disconnect();
+    }
+  },
+);

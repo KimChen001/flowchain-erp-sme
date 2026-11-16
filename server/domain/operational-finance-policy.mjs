@@ -7,6 +7,11 @@ import {
   PURCHASE_ORDER_STATUS,
   RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES,
 } from "./procurement-status-authority.mjs";
+import {
+  CREDIT_HOLDING_STATUSES,
+  creditedQuantities,
+  proportionalTaxCap,
+} from "./return-credit-rules.mjs";
 
 const SCALE = 10_000n;
 const ZERO = 0n;
@@ -780,6 +785,18 @@ export async function buildSupplierCreditMemoPlan({
     blockingIssues.push(
       issue("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404),
     );
+  // A credit follows its bill: the bill was submitted and is not cancelled
+  // (the statuses in which a bill holds its receipt). A draft bill can still
+  // change its lines, and a cancelled one is not owed.
+  else if (!RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES.includes(invoice.status))
+    blockingIssues.push(
+      issue(
+        "SUPPLIER_CREDIT_INVOICE_STATUS_INVALID",
+        "A supplier credit memo needs a bill that was submitted and is not cancelled.",
+        409,
+        { invoiceStatus: invoice.status },
+      ),
+    );
   if (
     !posting ||
     posting.postingType !== "supplier_return_dispatch" ||
@@ -802,12 +819,15 @@ export async function buildSupplierCreditMemoPlan({
     return basePlan("supplier_credit_memo", blockingIssues, { lines: [] });
   const invoiceById = new Map(invoice.lines.map((line) => [line.id, line]));
   const postingById = new Map(posting.lines.map((line) => [line.id, line]));
+  // Earlier draft and approved credits on these bill lines or these return
+  // lines, on any bill: one receipt line can be billed on several bills.
   const priorCredits = await prisma.supplierCreditMemoLine.findMany({
     where: {
-      supplierCreditMemo: { tenantId, status: { in: ["draft", "approved"] } },
-      supplierInvoiceLineId: {
-        in: requestedLines.map((line) => text(line.supplierInvoiceLineId)),
-      },
+      supplierCreditMemo: { tenantId, status: { in: [...CREDIT_HOLDING_STATUSES] } },
+      OR: [
+        { supplierInvoiceLineId: { in: unique(requestedLines.map((line) => line.supplierInvoiceLineId)) } },
+        { returnPostingLineId: { in: unique(requestedLines.map((line) => line.returnPostingLineId)) } },
+      ],
     },
     select: {
       supplierInvoiceLineId: true,
@@ -815,11 +835,8 @@ export async function buildSupplierCreditMemoPlan({
       quantity: true,
     },
   });
-  const priorByPair = new Map();
-  for (const row of priorCredits) {
-    const key = `${row.supplierInvoiceLineId}|${row.returnPostingLineId}`;
-    priorByPair.set(key, (priorByPair.get(key) || ZERO) + decimalUnits(row.quantity));
-  }
+  // Lines of this credit count against each other as well.
+  const credited = creditedQuantities(priorCredits, "supplierInvoiceLineId", decimalUnits);
   let subtotal = ZERO;
   let tax = ZERO;
   const lines = [];
@@ -859,31 +876,52 @@ export async function buildSupplierCreditMemoPlan({
       `Credit memo line ${index + 1} quantity`,
       { positive: true },
     );
-    const pair = `${invoiceLine.id}|${postingLine.id}`;
-    const alreadyCredited = priorByPair.get(pair) || ZERO;
+    // At most what was returned on the return line, across every bill, and
+    // at most what was billed on the bill line, across every return.
+    const onReturnLine = credited.byReturnLine.get(postingLine.id) || ZERO;
+    const onInvoiceLine = credited.byInvoiceLine.get(invoiceLine.id) || ZERO;
     if (
       quantity !== null &&
-      (quantity + alreadyCredited > decimalUnits(postingLine.quantity) ||
-        quantity + alreadyCredited > decimalUnits(invoiceLine.quantity || 0))
+      (quantity + onReturnLine > decimalUnits(postingLine.quantity) ||
+        quantity + onInvoiceLine > decimalUnits(invoiceLine.quantity || 0))
     )
       blockingIssues.push(
         issue(
           "SUPPLIER_CREDIT_QUANTITY_EXCEEDED",
           `Credit memo line ${index + 1} exceeds returned or originally invoiced quantity.`,
           409,
+          {
+            returnedQuantity: decimalString(decimalUnits(postingLine.quantity)),
+            creditedOnReturnLine: decimalString(onReturnLine),
+            invoicedQuantity: decimalString(decimalUnits(invoiceLine.quantity || 0)),
+            creditedOnInvoiceLine: decimalString(onInvoiceLine),
+          },
         ),
       );
+    if (quantity !== null && quantity > ZERO) {
+      credited.byReturnLine.set(postingLine.id, onReturnLine + quantity);
+      credited.byInvoiceLine.set(invoiceLine.id, onInvoiceLine + quantity);
+    }
     const originalPrice = decimalUnits(invoiceLine.unitPrice || 0);
     const pricingSource = text(requested.pricingSource) || "original_invoice";
     let unitPrice = originalPrice;
-    if (pricingSource === "manual_reviewed")
+    if (pricingSource === "manual_reviewed") {
       unitPrice = units(
         requested.unitPrice,
         blockingIssues,
         `Credit memo line ${index + 1} reviewed unit price`,
         { nonNegative: true },
       );
-    else if (pricingSource !== "original_invoice")
+      // A reviewed price may credit less than the bill charged, never more.
+      if (unitPrice !== null && unitPrice > originalPrice)
+        blockingIssues.push(
+          issue(
+            "SUPPLIER_CREDIT_PRICE_EXCEEDS_INVOICE",
+            `Credit memo line ${index + 1} reviewed unit price is above the bill's price of ${decimalString(originalPrice)}.`,
+            409,
+          ),
+        );
+    } else if (pricingSource !== "original_invoice")
       blockingIssues.push(
         issue(
           "SUPPLIER_CREDIT_PRICING_SOURCE_INVALID",
@@ -896,6 +934,23 @@ export async function buildSupplierCreditMemoPlan({
       `Credit memo line ${index + 1} entered tax`,
       { nonNegative: true },
     );
+    // Tax follows the bill line's tax in proportion to the quantity credited.
+    const taxCap =
+      quantity === null
+        ? null
+        : proportionalTaxCap(
+            decimalUnits(invoiceLine.enteredTaxAmount || 0),
+            quantity,
+            decimalUnits(invoiceLine.quantity || 0),
+          );
+    if (enteredTax !== null && taxCap !== null && enteredTax > taxCap)
+      blockingIssues.push(
+        issue(
+          "SUPPLIER_CREDIT_TAX_EXCEEDS_INVOICE",
+          `Credit memo line ${index + 1} tax is above the bill's tax for that quantity, ${decimalString(taxCap)}.`,
+          409,
+        ),
+      );
     const lineAmount =
       quantity === null || unitPrice === null ? ZERO : multiply(quantity, unitPrice);
     subtotal += lineAmount;
