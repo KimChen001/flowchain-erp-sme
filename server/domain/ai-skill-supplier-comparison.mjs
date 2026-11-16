@@ -8,11 +8,16 @@ import { aiSkillSpendPeriod, aiSkillSpendReport } from './ai-skill-spend-analysi
 // the supplier page and Reports › Supplier analytics show, for the same
 // period: each delivery (the lines of one purchase order with one original
 // promised date) judged against that original promise. On time, in full,
-// OTIF and the rejection rate need 5 deliveries; below that the supplier is
+// OTIF and the rejection rates need 5 deliveries; below that the supplier is
 // named with its count and no rate, as the scorecard shows it. The period is
 // the question's, else the scorecard's default: the 90 days to today.
+// Without named suppliers they are ranked by OTIF, the measure the supplier
+// list and Supplier evaluation show beside on time (design audit L9-03): on
+// time alone passes a partial first receipt.
 // Committed spend for the same period comes from the procurement dashboard's
-// report (aiSkillSpendReport), in one currency, as the spend analysis states it.
+// report (aiSkillSpendReport), in one currency, as the spend analysis states
+// it: orders dated in the period, where deliveries are those promised in it
+// (design audit L9-18).
 //
 // The runtime reads the scorecard before the skill answers
 // (aiSkillPrepareRoute): route.scorecard, or route.scorecardError.
@@ -41,8 +46,10 @@ function supplierRow(row) {
   return {
     id: row.supplierId, name: row.supplierName || row.supplierId, deliveries: row.sampleSize, status: row.sampleStatus,
     onTime: metrics.onTime || null, inFull: metrics.inFull || null, otif: metrics.otif || null,
-    rejection: metrics.rejection || null, delay: metrics.averageDelayDays || null, variances: metrics.priceVariances || null,
+    rejection: metrics.rejection || null, rejectedLines: metrics.rejectedLines || null, delay: metrics.averageDelayDays || null, variances: metrics.priceVariances || null,
     overdue: row.overdueUndeliveredCount || 0,
+    // Deliveries received in a warehouse the reader cannot see: left out.
+    withheld: row.withheldCount || 0,
   }
 }
 
@@ -68,14 +75,15 @@ export function runSupplierComparison(facts, { route = null } = {}) {
   const withSpend = (row) => ({ ...row, spend: spendOf(row.name) })
   const common = { ...base, period: scorecard.period, currency: spend?.currency || null, invoicesVisible: Boolean(scorecard.fieldVisibility?.invoices), limitations: array(scorecard.limitations) }
   if (named.length) {
-    const rows = named.map((supplier) => withSpend(all.find((row) => row.id === supplier.id) || { id: supplier.id, name: supplier.name, deliveries: 0, status: 'no_obligations', onTime: null, inFull: null, otif: null, rejection: null, delay: null, variances: null, overdue: 0 }))
+    const rows = named.map((supplier) => withSpend(all.find((row) => row.id === supplier.id) || { id: supplier.id, name: supplier.name, deliveries: 0, status: 'no_obligations', onTime: null, inFull: null, otif: null, rejection: null, rejectedLines: null, delay: null, variances: null, overdue: 0, withheld: 0 }))
     return { ...common, mode: rows.length > 1 ? 'compare' : 'one', suppliers: rows }
   }
-  // No supplier named: the suppliers with enough deliveries, best (or worst)
-  // on time first, then the larger sample, then the name.
-  const judged = all.filter((row) => rateOf(row.onTime) !== null)
+  // No supplier named: the suppliers with enough settled deliveries for an
+  // OTIF rate, best (or worst) OTIF first, then the larger sample, then the
+  // name. The others with deliveries are named with their count.
+  const judged = all.filter((row) => rateOf(row.otif) !== null)
   const order = mode === 'worst' ? 1 : -1
-  judged.sort((a, b) => order * (rateOf(a.onTime) - rateOf(b.onTime)) || b.deliveries - a.deliveries || a.name.localeCompare(b.name))
-  const few = all.filter((row) => rateOf(row.onTime) === null && row.deliveries > 0)
+  judged.sort((a, b) => order * (rateOf(a.otif) - rateOf(b.otif)) || b.deliveries - a.deliveries || a.name.localeCompare(b.name))
+  const few = all.filter((row) => rateOf(row.otif) === null && row.deliveries > 0)
   return { ...common, mode, suppliers: judged.slice(0, LISTED).map(withSpend), more: Math.max(0, judged.length - LISTED), judgedCount: judged.length, few: few.map((row) => ({ name: row.name, deliveries: row.deliveries })) }
 }

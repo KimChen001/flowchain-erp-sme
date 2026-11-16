@@ -392,7 +392,7 @@ const supplierPerformance = defineAiTool({
   description: 'Delivery performance from the supplier scorecard: on-time, in-full and on-time-in-full rates with their counts, rejection rate and average delay. Every figure counts only deliveries promised in the period and judges them against the original promised date, so its count of deliveries still undelivered past that date can differ from the orders overdue today; for those, use list_purchase_orders. A rate needs at least 5 deliveries in the period. The period is the last 90 days unless another is given. Name up to 5 suppliers to compare them, or none for the best or worst.',
   parameters: {
     suppliers: { type: 'array', items: { type: 'string' }, maxItems: 5, description: 'Supplier names or codes.' },
-    order: { type: 'string', enum: ['best', 'worst'], description: 'Without suppliers: best (default) or worst on time first.' },
+    order: { type: 'string', enum: ['best', 'worst'], description: 'Without suppliers: best (default) or worst on-time-in-full first.' },
     // The scorecard's own window is the last 90 days (2026-11-09 on Flash: told
     // the period was "all", the model said the scorecard had no 90-day view
     // and gave a quarter instead).
@@ -416,12 +416,19 @@ const supplierPerformance = defineAiTool({
       minimumDeliveriesForARate: 5,
       suppliers: array(result.suppliers).map((row) => ({
         name: row.name, deliveries: row.deliveries, onTime: rate(row.onTime), inFull: rate(row.inFull), onTimeInFull: rate(row.otif), rejection: rate(row.rejection),
+        // Receipt lines with a rejection: the scorecard's measure when the
+        // quantities are of several SKUs or units and cannot be added.
+        rejectedReceiptLines: rate(row.rejectedLines),
+        ...(row.withheld ? { withheldDeliveries: row.withheld } : {}),
         averageDelayDays: row.delay?.value ?? null, lateDeliveries: row.delay?.lateCount ?? null,
         // The scorecard's count, in its own terms (see the description).
         undeliveredPastOriginalPromiseInPeriod: row.overdue,
         spend: row.spend ? { amount: row.spend.amount, sharePercent: round1(row.spend.share) } : null, ref: aiToolRef('supplier', row.id, row.name),
       })),
       currency: result.currency,
+      // Spend counts the orders dated in the period; the delivery figures,
+      // the deliveries promised in it (design audit L9-18).
+      ...(result.currency ? { spendOf: 'orders dated in the period' } : {}),
       ...(result.few ? { tooFewDeliveries: result.few } : {}),
       ...(result.more ? { more: result.more } : {}),
     }

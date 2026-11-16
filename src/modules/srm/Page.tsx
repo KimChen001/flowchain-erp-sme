@@ -21,7 +21,7 @@ import { PriceHistoryFacts, priceHistoryKey, usePoPrice, usePriceHistory } from 
 import { ListPager, usePagedRows } from "../procurement/listPaging";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { apiErrorText } from "../../lib/apiErrorText";
-import { ON_TIME_HEADER_TIP } from "./supplierMetrics";
+import { METRIC_HEADER_TIPS } from "./supplierMetrics";
 import { DataImportLink } from "../master-data/DataImportLink";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { SupplierContractsPanel } from "../contracts/SupplierContractsPanel";
@@ -116,8 +116,8 @@ const empty = (currency = "") => ({
 const statusLabel = { draft: "草稿", active: "启用", inactive: "停用" };
 // The list's long metric headers wrap to two lines; the list scrolls
 // sideways with the code and actions columns kept in view, as on purchase orders.
-const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
-const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
+const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "OTIF, 90 days", "Open issues"]);
+const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "OTIF, 90 days", "Open issues"]);
 // A supplier's supplied items drawn at a time; the pager under the table
 // gives the true total.
 const SUPPLIED_ITEM_PAGE_SIZE = 25;
@@ -172,7 +172,7 @@ export default function SupplierMasterPage({
   onActiveContextChange?: (context: any) => void;
 }) {
   const { language, formatNumber } = useI18n();
-  const { count, spendCell, onTimeCell } = useSupplierMetricCells();
+  const { count, spendCell, onTimeCell, otifCell, workspaceCurrency: spendCurrency } = useSupplierMetricCells();
   const poPrice = usePoPrice();
   // A failed request in the interface language, never the server's own words.
   const failure = (reason: unknown) => apiErrorText(reason, language, ["Could not save the change. Try again.", "修改保存失败，请重试。"]);
@@ -472,7 +472,7 @@ export default function SupplierMasterPage({
     }
   };
   const insightOf = (id: string): SupplierInsight | undefined => insights?.suppliers[id];
-  const sortedRows = sortSuppliersBy(rows, sortBy, insightOf);
+  const sortedRows = sortSuppliersBy(rows, sortBy, insightOf, spendCurrency);
   // Earlier PO prices of each supplied item from this supplier only, in the
   // link currency and the item's unit, in one request. Display only.
   // The item being linked gets the same facts under its reference price, in
@@ -865,7 +865,7 @@ export default function SupplierMasterPage({
           </div>
         ) : (
           <div className={tableScrollClass} ref={listTableCardsRef}>
-            <table className={`w-full min-w-[1060px] text-left ${tableBodyTextClass}`}>
+            <table className={`w-full min-w-[1140px] text-left ${tableBodyTextClass}`}>
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
                   {[
@@ -876,11 +876,12 @@ export default function SupplierMasterPage({
                     "Open POs",
                     "Overdue POs",
                     "On time, 90 days",
+                    "OTIF, 90 days",
                     "Open issues",
                     "状态",
                     ...(writes.suppliers ? ["操作"] : []),
                   ].map((h) => (
-                    <th key={copy(h)} title={h === "On time, 90 days" ? copy(ON_TIME_HEADER_TIP) : undefined} className={`${thClass} align-bottom${WRAPPED_HEADERS.has(h) ? " !whitespace-normal min-w-[84px] max-w-[120px]" : ""}${NUMERIC_HEADERS.has(h) ? " text-right" : ""}${h === "供应商" ? " sticky left-0 z-20 bg-white" : h === "操作" ? " sticky right-0 z-20 bg-white" : ""}`} style={{ color: A.gray1 }}>
+                    <th key={copy(h)} title={METRIC_HEADER_TIPS[h] ? copy(METRIC_HEADER_TIPS[h]) : undefined} className={`${thClass} align-bottom${WRAPPED_HEADERS.has(h) ? " !whitespace-normal min-w-[84px] max-w-[120px]" : ""}${NUMERIC_HEADERS.has(h) ? " text-right" : ""}${h === "供应商" ? " sticky left-0 z-20 bg-white" : h === "操作" ? " sticky right-0 z-20 bg-white" : ""}`} style={{ color: A.gray1 }}>
                       {/* One supplier per row: the singular, not the Suppliers module name. */}
                       {h === "供应商" ? (language === "en-US" ? "Supplier" : "供应商") : copy(h)}
                     </th>
@@ -904,6 +905,7 @@ export default function SupplierMasterPage({
                     <td className={tdNumericRightClass}>{count(insightOf(row.id)?.openPos)}</td>
                     <td className={tdNumericRightClass}>{count(insightOf(row.id)?.overduePos)}</td>
                     <td className={tdNumericRightClass}>{onTimeCell(insightOf(row.id))}</td>
+                    <td className={tdNumericRightClass}>{otifCell(insightOf(row.id))}</td>
                     <td className={tdNumericRightClass}>{count(insightOf(row.id)?.openIssues)}</td>
                     <td className={tdNowrapClass}>
                       {row.status === "active"
