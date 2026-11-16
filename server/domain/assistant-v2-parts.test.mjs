@@ -379,6 +379,21 @@ test('an item added from the search reads the reference price the item suppliers
   assert.deepEqual([body.lines[0].estimatedUnitPrice, body.lines[0].estimatedAmount, body.lines[0].currency], [0.42, 4.2, 'USD'])
 })
 
+// Design audit A5 follow-up: the item list gives the recorded purchase unit
+// and the stock unit; an item added from the search is requested in the stock
+// unit, which the server accepts (no conversion between units is recorded).
+test('an item added from the search is requested in its stock unit, not its purchase unit', async () => {
+  const client = await loadClient()
+  const sources = [{ id: 'sup_3', name: 'Acme Packaging', preferred: true, referencePrice: '0.42', currency: 'USD', leadTimeDays: 14 }]
+  const boxed = client.addedFormRow({ itemId: 'itm_60', sku: 'BOX-1', itemName: 'Carton', purchaseUnit: 'pcs', baseUnit: 'box', stockUnit: 'box' }, sources, '2026-11-02')
+  assert.equal(boxed.item.unit, 'box')
+  const props = formProps({ suggested: [], lines: [boxed] })
+  const body = client.draftRequestBody([{ ...client.initialFormLines(props, 'p3')[0], quantity: '10' }], props, { threadId: 'thr_7f2c', messageId: 'msg_20', partId: 'p3' })
+  assert.equal(body.lines[0].unitSnapshot, 'box')
+  // No stock unit recorded: the purchase unit, as the server keeps it.
+  assert.equal(client.addedFormRow({ itemId: 'itm_61', sku: 'WRAP-1', purchaseUnit: 'roll', baseUnit: 'pcs', stockUnit: '' }, sources, '2026-11-02').item.unit, 'roll')
+})
+
 test('the receipt has Submit as its one primary button, and submitting says when approvers get an email', async () => {
   const client = await loadClient()
   const draft = client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 1, status: 'draft' } })

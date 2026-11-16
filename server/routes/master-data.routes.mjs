@@ -177,15 +177,14 @@ export async function handleMasterDataRoute(ctx) {
       : repository.listItems)(everyRecord({
       purchasableOnly: purchasable,
     }))
-    // The purchasable list feeds the purchase request forms, which put
-    // purchaseUnit on a new line. A request line is in the stock unit, since
-    // no conversion from another purchase unit is recorded
-    // (item-stock-unit.mjs), so that is the purchase unit this list gives;
-    // the item's recorded one stays in recordedPurchaseUnit. The item master
-    // reads the managed list and keeps the recorded one.
+    // The purchasable list feeds the purchase request forms. purchaseUnit is
+    // the item's recorded purchase unit. A request line is built in the stock
+    // unit, since no conversion from another unit is recorded
+    // (item-stock-unit.mjs), so this list also gives stockUnit: the recorded
+    // stock unit, '' when none is (such a line keeps the purchase unit).
     send(res, 200, {
       items: purchasable
-        ? items.map((item) => ({ ...item, recordedPurchaseUnit: item.purchaseUnit, purchaseUnit: itemRequestUnit(item).unit }))
+        ? items.map((item) => ({ ...item, stockUnit: itemRequestUnit(item).stockUnit }))
         : items,
     })
     return true
