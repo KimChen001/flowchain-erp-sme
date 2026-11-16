@@ -169,3 +169,21 @@ test('the prompt sends money questions to the money tools, and no longer calls p
   assert.match(ASSISTANT_V2_SYSTEM, /gross_profit/)
   assert.doesNotMatch(ASSISTANT_V2_SYSTEM, /does not record it \(profit or margins, cash/)
 })
+
+// Design audit 2026-11-15 (L2-25): the money tools summed floats and rounded
+// to 2 places, where the finance overview sums ten-thousandths; amounts with
+// 3 or 4 decimals came out a few pence apart.
+test('money is summed in the finance pages\' fixed point, to ten-thousandths', () => {
+  const cash = cashByMonth([
+    { obligationType: 'receivable', paymentDate: new Date('2026-10-02T00:00:00Z'), amount: '0.1005', currency: 'GBP' },
+    { obligationType: 'receivable', paymentDate: new Date('2026-10-03T00:00:00Z'), amount: '0.1005', currency: 'GBP' },
+    { obligationType: 'payable', paymentDate: new Date('2026-10-04T00:00:00Z'), amount: '0.0333', currency: 'GBP' },
+  ])
+  assert.deepEqual([cash.totals[0].receivedFromCustomers, cash.totals[0].paidToSuppliers, cash.totals[0].net], [0.201, 0.0333, 0.1677])
+  // 3 units at 0.3333 each cost 0.9999, not 1.00.
+  const profit = grossProfitOf([{ day: '2026-10-01', sku: 'A', quantity: '3', lineAmount: '1.5005' }], { unitCost: () => '0.3333', by: 'total' })
+  assert.deepEqual([profit.revenue, profit.cost, profit.grossProfit], [1.5005, 0.9999, 0.5006])
+  const receipts = receiptsNotInvoiced([{ id: 'R1', documentNumber: 'GRN-1', poId: 'PO-1', arrivedAt: new Date('2026-10-01T00:00:00Z'), lines: [{ id: 'L1', purchaseOrderLineId: 'POL-1', acceptedQty: '7' }] }],
+    { linkedReceipts: new Set(), linkedLines: new Set(), orderLines: new Map([['POL-1', '0.1429']]), orders: new Map([['PO-1', { number: 'PO-1', currency: 'GBP' }]]) })
+  assert.equal(receipts[0].value, 1.0003)
+})

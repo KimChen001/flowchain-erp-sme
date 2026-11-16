@@ -97,6 +97,18 @@ export function aiToolList(rows, limit) {
   return { rows: all.slice(0, size), total: all.length, more: Math.max(0, all.length - size) }
 }
 
+// The sources a result rests on whose read stopped at the repository's limit
+// (facts.limitations: truncated), so the result says its rows and counts
+// cover only the latest ones (design audit 2026-11-15, L5-05: a count over a
+// cut read was answered as complete). Spread into a result: { partial } or {}.
+export const PARTIAL_NOTE = 'Only the latest records were read: say a count from this covers those.'
+export function aiToolPartial(facts, sources) {
+  const cut = array(facts?.limitations).filter((row) => row?.code === 'truncated' && sources.includes(row.source))
+  if (!cut.length) return {}
+  const limits = cut.map((row) => Number(row.limit)).filter((value) => Number.isFinite(value) && value > 0)
+  return { partial: { sources: [...new Set(cut.map((row) => row.source))], ...(limits.length ? { limit: Math.min(...limits) } : {}), note: PARTIAL_NOTE } }
+}
+
 // The record a row names: its type, id and label, for links and grounding.
 export const aiToolRef = (type, id, label) => ({ type, id: text(id), label: text(label) || text(id) })
 

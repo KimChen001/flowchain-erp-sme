@@ -41,6 +41,14 @@ export function assistantV2Hidden(facts) {
   return sources.length || amountsOn.length ? { sources, amountsOn } : null
 }
 
+// The sources whose read stopped at the repository's limit, each with that
+// limit (design audit 2026-11-15, L5-05): the model reads them as partialSources
+// and says a count over one covers only the latest records. null when none.
+export function assistantV2Partial(facts) {
+  const cut = array(facts?.limitations).filter((row) => row?.code === 'truncated' && text(row.source))
+  return cut.length ? { sources: cut.map((row) => ({ source: text(row.source), ...(Number(row.limit) > 0 ? { limit: Number(row.limit) } : {}) })), note: 'Only the latest records of these were read: say a count from one covers those.' } : null
+}
+
 // What each data tool reads, for the progress line and the answer's checked
 // sources. A tool not listed reads "records".
 const TOOL_SOURCES = Object.freeze({
@@ -57,7 +65,7 @@ const BASIS_SOURCES = Object.freeze({
   ...TOOL_SOURCES,
   inventory_value: 'inventory', stock_on_hand: 'inventory', optimize_order_plan: 'inventory', order_quantity_costs: 'inventory', suggest_purchase_lines: 'inventory', suggest_purchase_request: 'inventory',
   item_suppliers: 'suppliers', rfq_quotes: 'rfqs', sales_summary: 'sales_orders', list_receivables: 'receivables',
-  supplier_payables: 'payables', cash_movements: 'payments', gross_profit: 'gross_profit',
+  supplier_payables: 'payables', cash_movements: 'payments', gross_profit: 'gross_profit', stock_movements: 'inventory', list_shipments: 'sales_orders',
   records_missing_data: 'items', setup_status: 'items', suggest_setup_records: 'items',
   workspace_summary: 'overview', attention_list: 'overview', decision_items: 'overview', decision_history: 'overview', search_records: 'overview',
 })

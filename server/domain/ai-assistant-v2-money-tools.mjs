@@ -1,6 +1,7 @@
 import { AI_TOOL_LIMITS, aiToolList, aiToolRef, defineAiTool } from './ai-read-tool-contract.mjs'
 import { SALES_BASIS, SALES_PERIODS, salesDay, salesItem, salesRange } from './ai-read-service-tools.mjs'
 import { outstandingPayableWhere } from './operational-finance-read-service.mjs'
+import { financeFixed, financeUnits } from './operational-finance-policy.mjs'
 import { itemSources, preferredSource, storedItems, unitPriceOf } from './ai-item-prices.mjs'
 import { itemStockUnit } from './reorder-list.mjs'
 import { procurementDocumentNumber } from '../../shared/document-numbering.mjs'
@@ -31,8 +32,16 @@ import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
 const fold = (value) => text(value).toLowerCase()
-const money = (value) => Math.round((Number(value) || 0) * 100) / 100
-const percent = (part, whole) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null)
+// Money is summed in the finance pages' fixed point, ten-thousandths as bigint
+// (financeUnits), and given as a number, as the finance overview sums it
+// (design audit 2026-11-15, L2-25: float sums rounded to 2 places could differ
+// from the overview by a few pence).
+const units = (value) => { try { return typeof value === 'bigint' ? value : financeUnits(value ?? 0) } catch { return 0n } }
+const money = (value) => Number(financeFixed(units(value)))
+// A quantity times a price, rounded half away from zero to ten-thousandths.
+const times = (quantity, price) => { const product = units(quantity) * units(price); return (product + (product < 0n ? -5000n : 5000n)) / 10000n }
+const byAmount = (a, b) => (b > a ? 1 : b < a ? -1 : 0)
+const percent = (part, whole) => (Number(whole) > 0 ? Math.round((Number(part) / Number(whole)) * 1000) / 10 : null)
 // The parameters stay short: every request carries them (2026-11-14: the
 // fixed part of a request had little room left at Sonnet 5.5 prices).
 const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows }
@@ -55,9 +64,9 @@ function tally(rows, keyOf = (row) => row.currency) {
   const totals = new Map()
   for (const row of rows) {
     const key = keyOf(row)
-    const entry = totals.get(key) || { currency: row.currency, count: 0, amount: 0 }
+    const entry = totals.get(key) || { currency: row.currency, count: 0, amount: 0n }
     entry.count += 1
-    entry.amount += Number(row.amount) || 0
+    entry.amount += units(row.amount)
     totals.set(key, entry)
   }
   return totals
@@ -88,7 +97,7 @@ export function payablesView(rows, { today, amountsVisible = true, namesVisible 
       currency: text(row.currency) || null,
       paymentHeld: text(row.status) === 'held',
       ref: aiToolRef('supplier_invoice', invoice.id || row.supplierInvoiceId, text(invoice.invoiceNumber) || text(row.obligationNumber)),
-      amount: Number(row.outstandingAmount) || 0,
+      amount: units(row.outstandingAmount),
     }
   })
 }
@@ -105,12 +114,12 @@ export function receiptsNotInvoiced(receipts, { linkedReceipts, linkedLines, ord
     if (linkedReceipts.has(text(receipt.id))) continue
     const lines = array(receipt.lines)
     if (lines.some((line) => linkedLines.has(text(line.id)))) continue
-    let value = 0
+    let value = 0n
     let unpriced = 0
     for (const line of lines) {
       const price = orderLines.get(text(line.purchaseOrderLineId))
       if (price === undefined || price === null) unpriced += 1
-      else value += (Number(line.acceptedQty) || 0) * Number(price)
+      else value += times(line.acceptedQty, price)
     }
     const order = orders.get(text(receipt.poId))
     rows.push({
@@ -152,13 +161,13 @@ async function readNotInvoiced(context, { amountsVisible, namesVisible }) {
   return receiptsNotInvoiced(open, {
     linkedReceipts, linkedLines, amountsVisible, namesVisible,
     orders: new Map(array(orders).map((row) => [text(row.id), row])),
-    orderLines: new Map(array(lines).map((row) => [text(row.id), row.unitPrice === null || row.unitPrice === undefined ? null : Number(row.unitPrice)])),
+    orderLines: new Map(array(lines).map((row) => [text(row.id), row.unitPrice === null || row.unitPrice === undefined ? null : String(row.unitPrice)])),
   })
 }
 
 const supplierPayables = defineAiTool({
   name: 'supplier_payables',
-  description: 'Accounts payable: approved supplier invoices not fully paid. view summary (default: owed, overdue, due in 7 days, held at the match, receipts not invoiced), owed or overdue (the invoices), by_supplier, or not_invoiced (posted receipts no invoice covers).',
+  description: 'Accounts payable: approved supplier invoices not fully paid. view summary (default), owed, overdue, by_supplier, or not_invoiced (receipts no invoice covers).',
   parameters: {
     view: { type: 'string', enum: ['summary', 'overdue', 'owed', 'by_supplier', 'not_invoiced'] },
     supplier: { type: 'string' },
@@ -197,14 +206,14 @@ const supplierPayables = defineAiTool({
       const groups = new Map()
       for (const row of owed) {
         const key = `${row.supplier}\u0000${row.currency}`
-        const entry = groups.get(key) || { supplier: row.supplier, currency: row.currency, invoices: 0, amount: 0, overdueInvoices: 0, overdueAmount: 0, oldestDueDate: null }
+        const entry = groups.get(key) || { supplier: row.supplier, currency: row.currency, invoices: 0, amount: 0n, overdueInvoices: 0, overdueAmount: 0n, oldestDueDate: null }
         entry.invoices += 1
         entry.amount += row.amount
         if (row.overdueDays > 0) { entry.overdueInvoices += 1; entry.overdueAmount += row.amount }
         if (row.dueDate && (!entry.oldestDueDate || row.dueDate < entry.oldestDueDate)) entry.oldestDueDate = row.dueDate
         groups.set(key, entry)
       }
-      const rows = [...groups.values()].sort((a, b) => b.amount - a.amount || text(a.supplier).localeCompare(text(b.supplier)))
+      const rows = [...groups.values()].sort((a, b) => byAmount(a.amount, b.amount) || text(a.supplier).localeCompare(text(b.supplier)))
         .map(({ amount, overdueAmount, ...entry }) => ({ ...entry, owed: amountsVisible ? money(amount) : null, overdue: amountsVisible ? money(overdueAmount) : null }))
       return { ...base, basis: PAYABLES_BASIS.owed, totals: totalsOf(owed, amountsVisible), ...aiToolList(rows, args.limit) }
     }
@@ -223,7 +232,7 @@ const supplierPayables = defineAiTool({
     }))
     const held = can(context, 'finance.supplier_invoice.read')
       ? array(await context.prisma.supplierInvoice.findMany({ where: { tenantId: context.tenantId, status: 'exception' }, select: { supplierName: true, totalAmount: true, amount: true, currency: true } }))
-        .map((row) => ({ supplier: row.supplierName, currency: text(row.currency) || null, amount: Number(row.totalAmount ?? row.amount) || 0 }))
+        .map((row) => ({ supplier: row.supplierName, currency: text(row.currency) || null, amount: units(row.totalAmount ?? row.amount) }))
         .filter((row) => !args.supplier || fold(row.supplier).includes(fold(args.supplier)))
       : null
     const notInvoiced = can(context, 'receiving.read') ? (await readNotInvoiced(context, { amountsVisible, namesVisible })).filter(bySupplier) : null
@@ -250,11 +259,11 @@ export function cashByMonth(payments) {
   const months = new Map()
   const totals = new Map()
   for (const row of array(payments)) {
-    const amount = Number(row.amount) || 0
+    const amount = units(row.amount)
     const currency = text(row.currency) || null
     const side = row.obligationType === 'receivable' ? 'in' : 'out'
     for (const [map, key, base] of [[months, `${day(row.paymentDate).slice(0, 7)}\u0000${currency}`, { month: day(row.paymentDate).slice(0, 7) }], [totals, currency, {}]]) {
-      const entry = map.get(key) || { ...base, currency, in: 0, inCount: 0, out: 0, outCount: 0 }
+      const entry = map.get(key) || { ...base, currency, in: 0n, inCount: 0, out: 0n, outCount: 0 }
       entry[side] += amount
       entry[`${side}Count`] += 1
       map.set(key, entry)
@@ -272,7 +281,7 @@ export function cashByMonth(payments) {
 
 const cashMovements = defineAiTool({
   name: 'cash_movements',
-  description: 'Cash received from customers and paid to suppliers, per currency and month, from recorded payments (not a bank balance). period, or from and to (a month is its first and last day); the last 12 months by default.',
+  description: 'Cash in from customers and out to suppliers by month, from recorded payments. period, or from and to; last 12 months by default.',
   parameters: periodParams,
   available: (_facts, context) => Boolean(context?.actor && context.prisma) && (can(context, 'finance.payable.read') || can(context, 'finance.receivable.read')),
   assistantV2Only: true,
@@ -305,19 +314,19 @@ const PROFIT_BASIS = `Sales: ${SALES_BASIS} Cost: each invoiced unit at its item
 // Sales lines less their cost: unitCost(line) is the price per unit of the
 // line, or null when it has none. Grouped by month, item or customer.
 export function grossProfitOf(lines, { unitCost, by = 'total' }) {
-  const total = { revenue: 0, costedRevenue: 0, cost: 0, lines: 0, uncosted: 0, uncostedRevenue: 0, uncostedSkus: new Set() }
+  const total = { revenue: 0n, costedRevenue: 0n, cost: 0n, lines: 0, uncosted: 0, uncostedRevenue: 0n, uncostedSkus: new Set() }
   const groups = new Map()
   for (const line of array(lines)) {
-    const amount = Number(line.lineAmount) || 0
+    const amount = units(line.lineAmount)
     const quantity = Number(line.quantity) || 0
     const price = unitCost(line)
     const key = by === 'month' ? line.day.slice(0, 7) : by === 'item' ? fold(line.sku) : by === 'customer' ? text(line.customer) : ''
-    const entry = groups.get(key) || { key, line, revenue: 0, costedRevenue: 0, cost: 0, quantity: 0, uncosted: 0 }
+    const entry = groups.get(key) || { key, line, revenue: 0n, costedRevenue: 0n, cost: 0n, quantity: 0, uncosted: 0 }
     for (const sum of [total, entry]) {
       sum.revenue += amount
       if (price === null) { sum.uncosted += 1; if (sum === total) { total.uncostedRevenue += amount; total.uncostedSkus.add(text(line.sku)) } continue }
       sum.costedRevenue += amount
-      sum.cost += quantity * price
+      sum.cost += times(line.quantity, price)
     }
     entry.quantity += quantity
     total.lines += 1
@@ -325,7 +334,7 @@ export function grossProfitOf(lines, { unitCost, by = 'total' }) {
   }
   const figures = (sum) => ({ revenue: money(sum.revenue), cost: money(sum.cost), grossProfit: money(sum.costedRevenue - sum.cost), grossMarginPercent: percent(sum.costedRevenue - sum.cost, sum.costedRevenue) })
   const rows = by === 'total' ? [] : [...groups.values()]
-    .sort(by === 'month' ? (a, b) => a.key.localeCompare(b.key) : (a, b) => (b.costedRevenue - b.cost) - (a.costedRevenue - a.cost) || a.key.localeCompare(b.key))
+    .sort(by === 'month' ? (a, b) => a.key.localeCompare(b.key) : (a, b) => byAmount(a.costedRevenue - a.cost, b.costedRevenue - b.cost) || a.key.localeCompare(b.key))
     .map((entry) => ({
       ...(by === 'month' ? { month: entry.key } : by === 'item' ? { sku: text(entry.line.sku), itemName: text(entry.line.itemName) || null, quantity: Math.round(entry.quantity * 10000) / 10000, unit: text(entry.line.unit) || null, ref: aiToolRef('item', entry.line.itemId || entry.line.sku, entry.line.sku) } : { customer: entry.key || null }),
       ...figures(entry),
@@ -340,7 +349,7 @@ export function grossProfitOf(lines, { unitCost, by = 'total' }) {
 
 const grossProfit = defineAiTool({
   name: 'gross_profit',
-  description: 'Gross profit and margin: customer invoice sales less the units at the preferred supplier\'s reference price (an estimate; not net profit). by total (default), month, item or customer; period, or from and to as for cash_movements.',
+  description: 'Gross profit and margin: sales less units at the preferred supplier\'s reference price (an estimate). by total, month, item or customer; period as cash_movements.',
   parameters: {
     by: { type: 'string', enum: ['total', 'month', 'item', 'customer'] },
     ...periodParams,
