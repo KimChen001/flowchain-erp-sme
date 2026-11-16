@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
+import { aiGroundingItemNamePairs, checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
 
 // The grounding check against fictional records, one case per kind of failure
 // the model-on lane found (2026-10-29/30): a checker false positive it now
@@ -462,4 +462,15 @@ test('the money tools\' sales, profit, cash and payables figures are amounts; da
   assert.deepEqual(kinds(check('You owe £38,739.86; £11,676.29 is overdue and £10,810.89 falls due within 7 days.', [owed])), [])
   // A day count is not an amount.
   assert.deepEqual(kinds(check('INV-SUP-20-0037 is £56 overdue.', [owed])), ['number:£56'])
+})
+
+// Audit 2026-11-15 (L5-01, f13): a SKU with a regex character threw a
+// SyntaxError here, and every answer of the workspace failed with a 503.
+test('a SKU with a regex character (A.B12, X+Y1, P(1)) is checked, not thrown on', () => {
+  for (const sku of ['A.B12', 'X+Y1', 'P(1)']) {
+    const facts = { inventory: { rows: [{ sku, itemName: 'Paper Box Large' }] } }
+    assert.doesNotThrow(() => checkAiModelFirstGrounding({ answer: { title: '', answer: `Order 40 ${sku} this week.`, records: [] }, results: [], facts, today: '2026-11-15' }), sku)
+    // Its name is still checked: exactly one pair, the name the answer gave.
+    assert.deepEqual(aiGroundingItemNamePairs(`${sku} 'Wrong Name Here' is low.`, facts, []).map((pair) => [pair.sku, pair.value, pair.expected]), [[sku.toLowerCase(), 'Wrong Name Here', 'Paper Box Large']], sku)
+  }
 })
