@@ -100,14 +100,44 @@ test("the supplier list's 90-day on-time column says it counts deliveries agains
   const { supplier } = await loadModules()
   const tooltip = "{count} of {of} deliveries on time against the date on the PO, which may be the buyer's need date"
   // The list and Supplier evaluation share the cell (supplierMetrics.tsx).
-  assert.ok(source('src/modules/srm/supplierMetrics.tsx').includes(`t("${tooltip}")`))
+  assert.ok(source('src/modules/srm/supplierMetrics.tsx').includes(`"${tooltip}"`))
   assert.ok(source('src/modules/srm/Page.tsx').includes('useSupplierMetricCells()'))
   assert.equal(supplier.supplierCopy(tooltip, 'zh-CN'), '{of} 次交付中 {count} 次按采购订单日期准时（该日期可能是采购方的需求日期）')
   // The header is short; its tooltip says the date is the one on the PO.
   assert.equal(supplier.supplierCopy('On time, 90 days', 'zh-CN'), '90 天准时率')
   const headerTip = "Share of deliveries received by the date on the PO, over the last 90 days. That date may be the buyer's need date."
   assert.ok(source('src/modules/srm/supplierMetrics.tsx').includes(`ON_TIME_HEADER_TIP = "${headerTip}"`))
-  assert.ok(source('src/modules/srm/Page.tsx').includes('copy(ON_TIME_HEADER_TIP)'))
-  assert.ok(source('src/modules/srm/SupplierEvaluationPage.tsx').includes('t(ON_TIME_HEADER_TIP)'))
+  // Each metric header's tip comes from one table both pages read.
+  assert.ok(source('src/modules/srm/supplierMetrics.tsx').includes('"On time, 90 days": ON_TIME_HEADER_TIP'))
+  assert.ok(source('src/modules/srm/Page.tsx').includes('copy(METRIC_HEADER_TIPS[h])'))
+  assert.ok(source('src/modules/srm/SupplierEvaluationPage.tsx').includes('t(METRIC_HEADER_TIPS[label])'))
   assert.equal(supplier.supplierCopy(headerTip, 'zh-CN'), '最近 90 天内按采购订单上的日期收货的交付占比；该日期可能是采购方的需求日期。')
+})
+
+// Design audit C7: OTIF beside on time (L9-03), the counts below the
+// minimum sample (L9-13), the deliveries withheld for warehouses the reader
+// cannot see (L9-06), incomplete spend (L9-17), and what "Overdue POs" and
+// "Open issues" count (L9-14, L9-18), each in English and Chinese.
+test('the OTIF column, sample counts, withheld deliveries and header tips are in both languages', async () => {
+  const { supplier } = await loadModules()
+  const metrics = source('src/modules/srm/supplierMetrics.tsx')
+  for (const page of ['src/modules/srm/Page.tsx', 'src/modules/srm/SupplierEvaluationPage.tsx']) {
+    assert.ok(source(page).includes('"OTIF, 90 days"'), page)
+    assert.ok(source(page).includes('otifCell('), page)
+  }
+  const pairs = {
+    'OTIF, 90 days': '90 天准时足量率',
+    'OTIF, lowest first': '准时足量率从低到高',
+    "{count} of {of} deliveries on time and in full against the date on the PO, which may be the buyer's need date": '{of} 次交付中 {count} 次按采购订单日期准时且足量（该日期可能是采购方的需求日期）',
+    'A percentage needs 5 deliveries.': '至少 5 次交付才计算百分比。',
+    '{n} deliveries received in warehouses you cannot see are left out.': '有 {n} 次交付在你无权查看的仓库收货，未计入。',
+    'Some orders in the last 12 months have no amount on record, so this total leaves them out.': '近 12 个月有订单没有记录金额，此合计未包含这些订单。',
+    'Open purchase orders sent to the supplier and past their promised date today.': '已发给供应商、截至今天已过承诺交期的未结采购订单。',
+    'Receipts with rejections and invoice variances still open. Overdue orders are counted under Overdue POs.': '仍未结的拒收收货和发票差异。逾期订单计入“逾期 PO”，不在此重复计算。',
+  }
+  for (const [english, chinese] of Object.entries(pairs)) {
+    assert.equal(supplier.supplierCopy(english, 'zh-CN'), chinese)
+    assert.equal(supplier.supplierCopy(chinese, 'en-US'), english)
+  }
+  for (const english of ['A percentage needs 5 deliveries.', '{n} deliveries received in warehouses you cannot see are left out.', 'Open purchase orders sent to the supplier and past their promised date today.']) assert.ok(metrics.includes(english), english)
 })
