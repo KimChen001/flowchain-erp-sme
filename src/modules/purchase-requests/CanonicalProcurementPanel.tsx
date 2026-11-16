@@ -270,7 +270,8 @@ const COPY = {
   submit: ["Submit", "提交"],
   createPurchaseOrder: ["Create purchase order", "生成采购订单"],
   approved: ["Approved {number}", "已批准 {number}"],
-  rejected: ["Rejected {number}", "已拒绝 {number}"],
+  // 驳回, as the PO and the language policy say (design audit U-04).
+  rejected: ["Rejected {number}", "已驳回 {number}"],
   withdrawn: ["Withdrew {number}; it is a draft again", "已撤回 {number}，已退回草稿"],
   submittedNumber: ["Submitted {number} for approval", "已提交 {number} 审批"],
   createdOrder: ["Created {po} from {number}", "已从 {number} 生成采购订单 {po}"],
@@ -307,10 +308,10 @@ const COPY = {
   edit: ["Edit", "编辑"],
   submitForApproval: ["Submit for approval", "提交审批"],
   backToRequest: ["Back to the purchase request", "返回采购申请"],
-  rejectTitle: ["Reject this purchase request?", "拒绝该采购申请？"],
+  rejectTitle: ["Reject this purchase request?", "驳回该采购申请？"],
   rejectBody: ["It will not be approved or turned into a purchase order.", "该申请将不会被批准，也不会生成采购订单。"],
-  rejectReason: ["Why is it rejected?", "拒绝原因"],
-  reject: ["Reject", "拒绝"],
+  rejectReason: ["Why is it rejected?", "驳回原因"],
+  reject: ["Reject", "驳回"],
   goBack: ["Go back", "返回"],
   deleteLineTitle: ["Delete purchase line {line}?", "删除采购行 {line}？"],
   deleteLineBody: ["The line is removed from this form. Nothing is saved until you save the request.", "该行将从表单中移除；保存申请前不会保存任何更改。"],
@@ -386,7 +387,9 @@ export default function CanonicalProcurementPanel({
   const [submitting, setSubmitting] = useState(false);
   // A converted request reads "Converted to PO" here, on its chip, tile and
   // filter alike.
-  const statusLabel = (status: string) => (status === "converted" ? tr("converted") : statusCodeLabel(status, language) || copy(status));
+  // A submitted request waits for approval and reads as a PO in that state does:
+  // "Pending approval / 待审批"; the stored code stays submitted (design audit U-11).
+  const statusLabel = (status: string) => (status === "converted" ? tr("converted") : status === "submitted" ? statusCodeLabel("pending_approval", language) || copy(status) : statusCodeLabel(status, language) || copy(status));
   // What this person may do to a request in its status; nothing while the
   // permissions load or when they cannot be read.
   const actionsFor = (pr: PR) => (REQUEST_ACTIONS_BY_STATUS[pr.status] || []).filter((action) => Boolean(permissions?.has(REQUEST_ACTION_PERMISSION[action])));

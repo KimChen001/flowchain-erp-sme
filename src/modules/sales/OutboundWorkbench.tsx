@@ -39,6 +39,7 @@ import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { outboundEnglish } from "./outboundCopy";
 import { outboundPreviewSentences, type OutboundPreviewLookup } from "./outboundPreviewText";
 import { formatCalendarDay, formatLocaleAmount, formatQuantity } from "../../lib/format";
+import { formatInstantDay } from "../business-documents/documentFormat";
 import { ItemPicker, type PickerItem } from "./ItemPicker";
 import { movementTypeLabel } from "../../i18n/statusLabels";
 import { unitLabel } from "../../i18n/unitLabels";
@@ -93,6 +94,8 @@ type Order = {
   customerId?: string | null;
   customerName: string;
   promisedDate?: string | null;
+  // When the order was placed (the seed keeps the source's order time).
+  createdAt?: string | null;
   currency: string;
   workflowStatus: string;
   reservationStatus: string;
@@ -1494,7 +1497,7 @@ function OrderDetail({ id }: { id: string }) {
   const warehouseName = useWarehouseNames();
   const place = usePlace();
   const stamp = useStamp();
-  const { locale, language } = useI18n();
+  const { locale, language, timezone } = useI18n();
   const dialog = useConfirm();
   const [data, setData] = useState<Workbench | null>(null),
     [error, setError] = useState(""),
@@ -2407,6 +2410,8 @@ function OrderDetail({ id }: { id: string }) {
           >
             {say(`${data.lines.length} ${data.lines.length === 1 ? "line" : "lines"}`, `${data.lines.length} 行`)}
           </HeaderFact>
+          {/* The order date, as the PO page shows its created date (design audit L7-43). */}
+          <HeaderFact label={say("Order date", "下单日期")}>{data.order.createdAt ? formatInstantDay(data.order.createdAt, locale, timezone) : "—"}</HeaderFact>
           <HeaderFact label={say("Promised date", "承诺交期")} tone={data.order.promisedDate ? "default" : "muted"}>
             {data.order.promisedDate ? formatCalendarDay(data.order.promisedDate, locale) : say("Not set", "未设置")}
           </HeaderFact>
@@ -2646,7 +2651,10 @@ function OrderDetail({ id }: { id: string }) {
           </section>
         ) : null,
       )}
-      <Section id="reconciliation" title={copy("履约一致性检查")}>
+      {/* The consistency check shows only when there is something to act on: a
+          mismatch, or a scope too narrow to confirm the whole order. A matched
+          order needs no "all checks match" panel (design audit L7-44). */}
+      {(data.reconciliation.status === "mismatch" || data.reconciliation.reasonCode === "PARTIAL_WAREHOUSE_SCOPE") && <Section id="reconciliation" title={copy("履约一致性检查")}>
         <div className="mb-2 flex items-center gap-2">
           {data.reconciliation.status === "mismatch" ? <AlertTriangle size={17} className="text-red-600" /> : <CheckCircle2 size={17} className="text-teal-600" />}
           <Badge value={data.reconciliation.status} />
@@ -2657,7 +2665,7 @@ function OrderDetail({ id }: { id: string }) {
           </p>
         )}
         <ReconciliationRules checks={data.reconciliation.checks} subject={checkSubject} />
-      </Section>
+      </Section>}
       {intent && (
         <ActionDialog
           title={

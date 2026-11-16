@@ -688,7 +688,7 @@ function Receivables() {
                       {invoicePath
                         ? <Link className={`${tableLinkClass} text-blue-600`} to={invoicePath}>{row.customerInvoiceNumber || row.obligationNumber}</Link>
                         : row.customerInvoiceNumber || row.obligationNumber}
-                      {row.customerInvoiceNumber && row.obligationNumber && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{row.obligationNumber}</div>}
+                      {/* The receivable reads as its invoice number; its own AR- number stays on its detail (design audit L7-38). */}
                     </td>
                     <td className={`${tdNameClass} max-w-[220px] truncate`} title={row.customerName}>{row.customerName || "—"}</td>
                     <td className={tdNowrapClass} style={{ color: pastDue ? PAST_DUE_COLOR : A.sub }}>{formatCalendarDay(row.dueDate, locale)}</td>
