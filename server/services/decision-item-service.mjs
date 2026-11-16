@@ -1,5 +1,6 @@
-import { buildDecisionDrafts, openRequestsByItem } from '../domain/decision-drafts.mjs'
+import { buildDecisionDrafts, followUpSupplierLinkKeys, openRequestsByItem } from '../domain/decision-drafts.mjs'
 import { arrangeToday, closableAreas, planDecisionSync } from '../domain/decision-items.mjs'
+import { ITEM_SUPPLIER_NAMESPACE, mapItemSupplierRecord } from '../domain/master-data-commands.mjs'
 import { createDecisionItemRepository } from '../repositories/decision-item-repository.mjs'
 
 // Today's decision items for one reader (docs/drafted-decisions-design.md §4.7):
@@ -9,6 +10,19 @@ import { createDecisionItemRepository } from '../repositories/decision-item-repo
 // { available: false } and Today shows its rows as before.
 
 const iso = (value) => (value instanceof Date ? value.toISOString() : value || null)
+
+// The supplier's own part number per "itemId::supplierId", from the active
+// item-supplier links with these record keys, for the follow-up drafts. Only
+// for the wording: when they cannot be read, the drafts name the SKU alone.
+async function readSupplierSkus(prisma, tenantId, keys) {
+  if (!keys.length || typeof prisma?.runtimeRecord?.findMany !== 'function') return new Map()
+  try {
+    const records = await prisma.runtimeRecord.findMany({ where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE, recordKey: { in: keys } }, select: { id: true, payload: true } })
+    return new Map(records.map((record) => mapItemSupplierRecord(record)).filter((link) => link.active && link.supplierSku).map((link) => [`${link.itemId}::${link.supplierId}`, link.supplierSku]))
+  } catch {
+    return new Map()
+  }
+}
 
 function setAsideEntry({ key, row, item }) {
   const snapshot = item.snapshot && typeof item.snapshot === 'object' ? item.snapshot : {}
@@ -55,7 +69,9 @@ export async function syncTodayDecisions({ prisma, tenantId, rows, today, now = 
     items = await repository.listLive(tenantId)
   }
   const arranged = arrangeToday(rows, items)
-  const drafts = buildDecisionDrafts(arranged.waiting.map((entry) => entry.row), { context, sources, now, timeZone })
+  const waitingRows = arranged.waiting.map((entry) => entry.row)
+  const supplierSkus = await readSupplierSkus(prisma, tenantId, followUpSupplierLinkKeys(waitingRows, { context, sources }))
+  const drafts = buildDecisionDrafts(waitingRows, { context, sources, now, timeZone, supplierSkus })
   return {
     available: true,
     canDecide: Boolean(canDecide),

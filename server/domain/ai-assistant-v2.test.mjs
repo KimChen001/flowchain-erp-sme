@@ -1615,3 +1615,27 @@ test('the prompt lists the app\'s buttons, and a button the app does not have is
   const fine = await ask([OVERDUE, [...say('PO-001 is overdue. Open it and click **Close PO**.'), end()]])
   assert.deepEqual(ofType(fine.events, 'flag')[0].spans, [])
 })
+
+// Audit 2026-11-15 (L5-01): one SKU with a regex character made the
+// grounding check throw, and every answer failed with a 503 after its model
+// calls. A check that throws now leaves the part unflagged: the answer is
+// sent, the audit counts the failure, and the part is not counted as checked.
+test('a grounding check that throws leaves the answer unflagged, counted in the audit, instead of failing it', async () => {
+  // An earlier result whose SKU throws when the check reads it.
+  const broken = {}
+  Object.defineProperty(broken, 'sku', { enumerable: false, get() { throw new Error('check failed') } })
+  const thread = { messages: [], results: new Map([['tu_old', { tool: 'stock_position', output: { rows: [broken] } }]]) }
+  const { events, audit } = await ask([[...say('PO-001 and PO-008 are overdue.'), end()]], { thread })
+  assertProtocol(events)
+  assert.equal(ofType(events, 'error').length, 0)
+  assert.match(ofType(events, 'text_delta').map((event) => event.text).join(''), /PO-001 and PO-008 are overdue\./)
+  assert.equal(ofType(events, 'answer').length, 1)
+  assert.ok(audit.checkFailures >= 1)
+  // The part's figures are not counted as checked; the same answer with a
+  // check that runs counts its two order numbers.
+  const checkedFigures = (answerEvents) => ofType(answerEvents, 'answer')[0].body?.basis?.figures
+  assert.equal(checkedFigures(events), 0)
+  const normal = await ask([[...say('PO-001 and PO-008 are overdue.'), end()]])
+  assert.ok(checkedFigures(normal.events) > 0)
+  assert.equal(normal.audit.checkFailures, 0)
+})

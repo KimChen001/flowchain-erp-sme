@@ -5,6 +5,7 @@ import { PilotIdentityError, hasWarehouseAccess, resolveProvisionedActor } from 
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { MASTER_DATA_LIST_LIMIT } from '../repositories/db-master-data-repository.mjs'
 import { createSupplierInsightsReadService } from '../domain/supplier-insights.mjs'
+import { itemRequestUnit } from '../domain/item-stock-unit.mjs'
 
 // Writes are decided by Roles & permissions, never by the legacy User.role, so
 // an administrator who narrows someone's roles narrows what they can change.
@@ -85,6 +86,9 @@ export async function handleMasterDataRoute(ctx) {
   const suppliersFor = async (rows) => { const visible = await readAccess(); return rows.map((row) => maskSupplier(row, visible)) }
   const supplierFor = async (row) => maskSupplier(row, await readAccess())
   const pricesFor = async (rows) => { const visible = await readAccess(); return (rows || []).map((row) => maskReferencePrice(row, visible)) }
+  // A supplier write changes the registration, tax and bank details only when
+  // the writer may read them (supplierInputIssues in supplier-master-command).
+  const supplierWriteScope = async () => tenantScope({ sensitiveFieldsWritable: (await readAccess()).partner === true })
 
   const selectorMatch = url.pathname.match(/^\/api\/master-data\/(departments|currencies|units|commodities|warehouses|payment-terms|tax-codes)\/select$/)
   if (req.method === 'GET' && selectorMatch) {
@@ -164,15 +168,25 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/items') {
+    const purchasable = url.searchParams.get('purchasable') === 'true'
     const managed =
       url.searchParams.get('managed') === 'true' ||
-      url.searchParams.get('purchasable') === 'true'
+      purchasable
+    const items = await (managed && repository.listManagedItems
+      ? repository.listManagedItems
+      : repository.listItems)(everyRecord({
+      purchasableOnly: purchasable,
+    }))
+    // The purchasable list feeds the purchase request forms, which put
+    // purchaseUnit on a new line. A request line is in the stock unit, since
+    // no conversion from another purchase unit is recorded
+    // (item-stock-unit.mjs), so that is the purchase unit this list gives;
+    // the item's recorded one stays in recordedPurchaseUnit. The item master
+    // reads the managed list and keeps the recorded one.
     send(res, 200, {
-      items: await (managed && repository.listManagedItems
-        ? repository.listManagedItems
-        : repository.listItems)(everyRecord({
-        purchasableOnly: url.searchParams.get('purchasable') === 'true',
-      })),
+      items: purchasable
+        ? items.map((item) => ({ ...item, recordedPurchaseUnit: item.purchaseUnit, purchaseUnit: itemRequestUnit(item).unit }))
+        : items,
     })
     return true
   }
@@ -368,7 +382,7 @@ export async function handleMasterDataRoute(ctx) {
   if (req.method === 'POST' && url.pathname === '/api/master-data/suppliers') {
     if (!(await authorizeWrite('supplier-master'))) return true
     if (!repository.createSupplier) { send(res,501,{code:'ADAPTER_WRITE_UNSUPPORTED',message:'Supplier writes are not available in this workspace.'}); return true }
-    try { send(res,201,{supplier:await supplierFor(await repository.createSupplier(await readBody(req),actor(),tenantScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
+    try { send(res,201,{supplier:await supplierFor(await repository.createSupplier(await readBody(req),actor(),await supplierWriteScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
     return true
   }
 
@@ -388,7 +402,7 @@ export async function handleMasterDataRoute(ctx) {
 
   if (req.method === 'PATCH' && supplierMatch) {
     if (!(await authorizeWrite('supplier-master'))) return true
-    try { send(res,200,{supplier:await supplierFor(await repository.updateSupplier(decodeURIComponent(supplierMatch[1]),await readBody(req),actor(),tenantScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
+    try { send(res,200,{supplier:await supplierFor(await repository.updateSupplier(decodeURIComponent(supplierMatch[1]),await readBody(req),actor(),await supplierWriteScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
     return true
   }
 

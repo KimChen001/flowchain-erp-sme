@@ -8,10 +8,25 @@
 // an action ("收货单已过账", "我已付款").
 // "What we paid: £2.95 per pcs" and "we paid £2.95 a piece" give a price,
 // not an act (2026-11-11 on Flash: the line was left out as a claim).
+// Audit 2026-11-15 (L5-02): "I've approved PR-…", "I chased Acme for you",
+// 我已经帮你催了供应商 and "PO-… is now issued" went through. The subject may
+// be contracted (I've, we'd) with just/already/now/also before the verb; the
+// verbs are acts on a record or toward a supplier only (chased, notified,
+// contacted, rescheduled), never updated/changed/marked, which an answer uses
+// of its own table ("I've updated the figures"). Placing rows in a form or a
+// table, and removing rows from a list, describe the answer, not an act. A
+// payment to whom with its amount a few words on ("we've paid suppliers
+// £33,717.22 in October", from cash_movements; "we paid Acme £1,200.50")
+// states records; paying a bill ("we paid the invoice of £2.95") stays an act,
+// so the words between may not be an article, a possessive, invoice, bill or of.
+const SUBJECT = String.raw`\b(I|we)(?:['’]ve|['’]d|\s+have|\s+had)?(?:\s+(?:just|already|now|also))*\s+`
+const PAYEE_WORD = String.raw`(?!(?:the|this|that|these|those|a|an|your|our|its|their|invoices?|bills?|of)\b)[A-Za-z&.'’-]+\s+`
+const PAID_FIGURE = String.raw`paid(?!\s+(?:${PAYEE_WORD}){0,3}?(?:about\s+|around\s+|roughly\s+|only\s+|just\s+|on\s+average\s+|an\s+average\s+of\s+)?(?:[$€£¥]|\d|per\b|for\s+(?:it|each|them|one|a)\b))`
+const IN_THE_ANSWER = String.raw`(?![^.!?\n]{0,60}?\b(?:in|into|on|from)\s+(?:(?:a|an|the|this|that|your|these)\s+)?(?:forms?|cards?|tables?|lists?|answer|results?|charts?|view)\b)`
 const SELF_CLAIMS = [
-  /(?<!\b(?:what|price|prices|amount|cost|costs)\s+)\b(I|we)\s+(have\s+|had\s+|just\s+|already\s+)?(sent|emailed|approved|paid(?!\s+(?:about\s+|around\s+|roughly\s+|only\s+|just\s+|on\s+average\s+|an\s+average\s+of\s+)?(?:[$€£¥]|\d|per\b|for\s+(?:it|each|them|one|a)\b))|issued|placed|posted|cancelled|canceled|deleted|removed)\b/i,
+  new RegExp(String.raw`(?<!\b(?:what|price|prices|amount|cost|costs)\s+)${SUBJECT}(sent|emailed|approved|${PAID_FIGURE}|issued|placed${IN_THE_ANSWER}|posted|cancelled|canceled|deleted${IN_THE_ANSWER}|removed${IN_THE_ANSWER}|chased|notified|contacted|rescheduled)\b`, 'i'),
 ]
-const EN_STATE_CLAIM = /\b(was|were|has been|have been)\s+(sent|emailed|approved|paid|issued|placed|posted|cancelled|canceled|deleted|removed)\b/i
+const EN_STATE_CLAIM = /\b(was|were|has been|have been|(?:is|are)\s+now)\s+(sent|emailed|approved|paid|issued|placed|posted|cancelled|canceled|deleted|removed)\b/i
 const STATE_CLAIMS = [
   EN_STATE_CLAIM,
   /(?<!状态\s*(?:[：:]|是|为)?\s*)(?:已发送|已批准|已付款|已支付|已下单|已下达|已过账|已删除|已取消)/,
@@ -23,7 +38,10 @@ export const AI_ANSWER_ACTION_CLAIMS = Object.freeze([...SELF_CLAIMS, ...STATE_C
 // claims only in this form (2026-11-05): a state word on its own describes a
 // record ("已批准的采购订单", "订单已取消"), and taking those sentences out left
 // answers with holes where facts were.
-const ZH_ACTS = '(?:发送|发出|批准|审批|付款|支付|下单|下达|过账|删除|取消)'
+// 催、通知、联系、改期 too (audit 2026-11-15, L5-02: 我已经帮你催了供应商). An
+// act followed by 的 names a kind of record (我已帮你把要催的订单列出来), not an
+// act taken.
+const ZH_ACTS = '(?:发送|发出|批准|审批|付款|支付|下单|下达|过账|删除|取消|催|通知|联系|改期)(?!的)'
 const ZH_FOR_YOU = '(?:为你|帮你|替你|给你|为您|帮您|替您|给您)'
 const ZH_OBJECT = '(?:把[^。！？；\\n]{0,20}?)?'
 const ZH_SELF_CLAIMS = [

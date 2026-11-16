@@ -241,6 +241,7 @@ function RuntimeHomepage() {
   if (unavailable.length) notes.push(t("notChecked", { sources: [...new Set(unavailable)].map((code) => (SOURCE_KEYS[code] ? t(SOURCE_KEYS[code]) : code)).join(", ") }));
   const truncated = (overview?.limitations || []).filter((code) => /^truncated:(customer_invoices|receivables|contracts)$/.test(code));
   if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("contracts") ? "sourceContracts" : code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
+  if (overview?.limitations?.includes("truncated:invoice_exceptions")) notes.push(t("heldInvoicesTruncated"));
 
   const tiles = [
     { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: workTotal, icon: ListChecks, color: A.blue },
@@ -300,7 +301,8 @@ function RuntimeHomepage() {
             data-testid={`today-tile-${tile.id}`}
           >
             <TileIcon icon={tile.icon} color={tile.color} />
-            <div className={TILE_VALUE}>{tile.value}</div>
+            {/* "—" until Today has loaded, never a 0 that is not true yet. */}
+            <div className={TILE_VALUE}>{overview ? tile.value : "—"}</div>
             <div className="fc-label mt-0.5" style={{ color: A.sub }}>{tile.label}</div>
             <div className="fc-caption mt-1 hidden sm:block" style={{ color: A.gray2 }}>{tile.note}</div>
           </button>
@@ -388,7 +390,7 @@ function RuntimeHomepage() {
                               </div>
                             ) : null}
                           </div>
-                          <Link to={item.href} className="p-1" aria-label={labelOf(item)}><ArrowRight size={16} /></Link>
+                          <Link to={item.href} className="p-1 max-sm:p-2.5" aria-label={labelOf(item)}><ArrowRight size={16} /></Link>
                         </li>
                       ))}
                       {rows.length > GROUP_ROWS ? (
@@ -423,7 +425,7 @@ function RuntimeHomepage() {
           </div>
           {/* How many documents changed today, and when the last change was. */}
           <div className="text-xs sm:text-right" data-testid="today-changes" title={today ? t("changesNote", { date: day(today) }) : undefined}>
-            <div className="font-semibold" style={{ color: A.label }}>{t("changesCount", { n: overview?.todayChanges ?? 0 })}</div>
+            <div className="font-semibold" style={{ color: A.label }}>{overview ? t("changesCount", { n: overview.todayChanges ?? 0 }) : "—"}</div>
             {changesSub ? <div className="mt-0.5" style={{ color: A.sub }} data-testid="today-changes-note">{changesSub}</div> : null}
           </div>
         </div>

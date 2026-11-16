@@ -42,3 +42,20 @@ test('R136 the panel has one path: every question streams to the model, with no 
   assert.match(panelSource, /data-testid="ai-readiness-notice"/)
   assert.match(panelSource, /ai\.v2\.notice\.\$\{notice\}/)
 })
+
+// Design audit 2026-11-15 (L5-08 = L7-29): only the PO and supplier pages gave
+// the assistant their record, and the report page offered the same questions
+// as Today. Every record page now does, through its address when the page
+// sets none, and a page without a record offers a question about what it shows.
+test('R137 every record page gives the assistant its record, and a page without one a question of its own', () => {
+  const appSource = readFileSync(new URL('../../src/app/FlowChainApp.tsx', import.meta.url), 'utf8')
+  assert.match(appSource, /activeContext=\{aiActiveContext \|\| routeRecordContext\}/)
+  assert.match(appSource, /const ASSISTANT_RECORD_TYPES = new Set\(\["supplier", "item", "rfq", "purchase_request", "purchase_order", "sales_order", "supplier_invoice", "receiving_doc"\]\)/)
+  // The address holds the record's id, never a label.
+  assert.doesNotMatch(appSource, /entityLabel: routeRecordId/)
+  for (const type of ['supplier', 'purchase_request', 'rfq', 'supplier_invoice', 'receiving_doc', 'sales_order']) assert.match(panelSource, new RegExp(`\n  ${type}: \{ "en-US": "[^"]+\?", "zh-CN": "[^"]+？" \},`), type)
+  for (const phrase of ['这张供应商发票', '这张收货单']) assert.match(panelSource, new RegExp(phrase))
+  assert.match(panelSource, /const MODULE_EMPTY_PROMPT/)
+  assert.match(panelSource, /reports: \{ "en-US": "What stands out in our numbers this month\?", "zh-CN": "这个月的数据里有什么值得注意的？" \}/)
+  assert.match(panelSource, /\(currentContext \? null : MODULE_EMPTY_PROMPT\[moduleId\]\?\.\[language\]\)/)
+})

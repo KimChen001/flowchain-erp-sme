@@ -54,12 +54,16 @@ export const BILL_PAYMENT_STATUSES = Object.freeze({
   partially_settled: Object.freeze(["partially_settled"]),
   settled: Object.freeze(["settled"]),
 });
+// Holding a payable stores "held" on its bill too, so a held bill is an
+// approved bill whose payable is on hold: still to pay. The list keeps
+// showing it as held (its stored status).
+const APPROVED_BILL_STATUSES = Object.freeze(["approved", "held"]);
 export function billPaymentStatus(invoiceStatus, payableStatus) {
-  if (text(invoiceStatus) !== "approved" || !payableStatus) return null;
+  if (!APPROVED_BILL_STATUSES.includes(text(invoiceStatus)) || !payableStatus) return null;
   return Object.keys(BILL_PAYMENT_STATUSES).find((state) => BILL_PAYMENT_STATUSES[state].includes(text(payableStatus))) || null;
 }
 // The invoices in one payment state, for the list's status filter and cards.
-const billPaymentWhere = (state) => ({ status: "approved", payableObligation: { is: { status: { in: [...BILL_PAYMENT_STATUSES[state]] } } } });
+const billPaymentWhere = (state) => ({ status: { in: [...APPROVED_BILL_STATUSES] }, payableObligation: { is: { status: { in: [...BILL_PAYMENT_STATUSES[state]] } } } });
 
 export function outstandingPayableWhere() {
   return { status: { in: PAYABLE_OPEN_STATUSES }, outstandingAmount: { gt: 0 } };

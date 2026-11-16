@@ -47,7 +47,7 @@ const ENTITY_LABELS: Record<string, Pair> = {
   tenantrole: ["Role", "角色"], role: ["Role", "角色"], user: ["User", "用户"], tenant: ["Workspace", "工作区"], settings: ["Settings", "设置"], settingssection: ["Settings", "设置"],
   workspacesession: ["Sign-in session", "登录会话"], workspacesigninlink: ["Sign-in link", "登录链接"], aiskill: ["Assistant answer", "助手回答"],
   actiondraft: ["Action draft", "行动草稿"], intakebatch: ["Import batch", "导入批次"], dataimport: ["Data import", "数据导入"], dataqualityissue: ["Data quality issue", "数据质量问题"],
-  reportworkspace: ["Report", "报表"],
+  reportworkspace: ["Report", "报表"], approvalemail: ["Approval email", "审批邮件"],
 };
 const entityKey = (type: string | null | undefined) => String(type ?? "").toLowerCase().replace(/[^a-z]/g, "");
 // Types whose id is a session, a link or an assistant skill: never shown.
@@ -83,6 +83,18 @@ const skillTopic = (id: string) => SKILL_TOPICS[id] || (/^business_query_plan(_v
 const SETTINGS_SECTIONS: Record<string, Pair> = {
   company: ["Company & workspace", "公司与工作区"], roles: ["Users & roles", "用户与角色"], numbering: ["Numbering rules", "编号规则"], review: ["Review policies", "复核策略"],
   modules: ["Menus & modules", "菜单与模块"], ai: ["AI governance", "AI 治理"], advanced: ["Advanced settings", "高级设置"], documents: ["Documents", "单据"],
+};
+
+const PR_ACTIONS: Record<string, Pair> = {
+  submit: ["Submitted purchase request {n} for approval.", "已提交采购申请 {n} 审批。"], approve: ["Approved purchase request {n}.", "已批准采购申请 {n}。"],
+  reject: ["Rejected purchase request {n}.", "已驳回采购申请 {n}。"], withdraw: ["Withdrew purchase request {n} to draft.", "已撤回采购申请 {n} 为草稿。"],
+  cancel: ["Cancelled purchase request {n}.", "已取消采购申请 {n}。"],
+};
+
+// Who an approval email went out for, by the document type it records.
+const APPROVAL_EMAIL_DOCUMENTS: Record<string, Pair> = {
+  purchase_request: ["purchase request", "采购申请"], purchase_order: ["purchase order", "采购订单"],
+  supplier_invoice: ["supplier invoice", "采购发票"], inventory_adjustment: ["inventory adjustment", "库存调整单"],
 };
 
 const PO_ACTIONS: Record<string, Pair> = {
@@ -127,9 +139,12 @@ const RULES: Array<[RegExp, string | null, string]> = [
   [/^Created purchase request (\S+)\.$/, null, "已创建采购申请 $1。"],
   [/^Updated purchase request (\S+)\.$/, null, "已更新采购申请 $1。"],
   [/^Created RFQ (\S+) from purchase request (\S+)\.$/, null, "已根据采购申请 $2 创建询价单 $1。"],
-  [/^Created (\d+) approved purchase order\(s\) from purchase request (\S+): (.+)\.$/, null, "已根据采购申请 $2 创建 $1 张已批准的采购订单：$3。"],
-  [/^Created (\d+) purchase order\(s\) from purchase request (\S+): (.+)\.$/, null, "已根据采购申请 $2 创建 $1 张采购订单：$3。"],
-  [/^Revised promised dates on (\d+) line\(s\) of purchase order (\S+)\.$/, null, "已修改采购订单 $2 中 $1 行的承诺交期。"],
+  [/^Created 1 approved purchase order\(s\) from purchase request (\S+): (.+)\.$/, "Created 1 approved purchase order from purchase request $1: $2.", "已根据采购申请 $1 创建 1 张已批准的采购订单：$2。"],
+  [/^Created (\d+) approved purchase order\(s\) from purchase request (\S+): (.+)\.$/, "Created $1 approved purchase orders from purchase request $2: $3.", "已根据采购申请 $2 创建 $1 张已批准的采购订单：$3。"],
+  [/^Created 1 purchase order\(s\) from purchase request (\S+): (.+)\.$/, "Created 1 purchase order from purchase request $1: $2.", "已根据采购申请 $1 创建 1 张采购订单：$2。"],
+  [/^Created (\d+) purchase order\(s\) from purchase request (\S+): (.+)\.$/, "Created $1 purchase orders from purchase request $2: $3.", "已根据采购申请 $2 创建 $1 张采购订单：$3。"],
+  [/^Revised promised dates on 1 line\(s\) of purchase order (\S+)\.$/, "Revised the promised date on 1 line of purchase order $1.", "已修改采购订单 $1 中 1 行的承诺交期。"],
+  [/^Revised promised dates on (\d+) line\(s\) of purchase order (\S+)\.$/, "Revised promised dates on $1 lines of purchase order $2.", "已修改采购订单 $2 中 $1 行的承诺交期。"],
   [/^Recorded reviewed RFQ Award Decision \S+\.$/, "Recorded the reviewed award decision.", "已记录经复核的授标决定。"],
   [/^Created receiving draft (\S+)\.$/, "Created receipt draft $1.", "已创建收货单草稿 $1。"],
   [/^Revised receiving draft (\S+)\.$/, "Revised receipt draft $1.", "已修改收货单草稿 $1。"],
@@ -174,7 +189,11 @@ const RULES: Array<[RegExp, string | null, string]> = [
   [/^Duplicate flag dismissed with a reason; the supplier invoice itself was not changed\.$/, null, "已填写原因排除重复标记；采购发票本身未更改。"],
   [/^Supplier credit memo draft created from posted supplier return evidence\.$/, null, "已根据已过账的供应商退货创建供应商贷项草稿。"],
   [/^Supplier credit memo approved; no payment or ledger entry was created\.$/, null, "供应商贷项已批准；未产生付款或账务分录。"],
-  [/^Customer invoice draft created from posted shipment facts\.$/, null, "已根据已过账的发货创建销售发票草稿。"],
+  [/^Customer invoice draft created from posted shipment facts\.$/, "Customer invoice draft created from the posted shipment.", "已根据已过账的发货创建销售发票草稿。"],
+  [/^Customer invoice submit completed\.$/, "Customer invoice submitted for approval.", "销售发票已提交审批。"],
+  [/^Customer invoice approve completed\.$/, "Customer invoice approved.", "销售发票已批准。"],
+  [/^Customer invoice issue completed\.$/, "Customer invoice issued to the customer.", "销售发票已开具给客户。"],
+  [/^Customer invoice cancelled before it was issued; its shipped quantity can be invoiced again\.$/, null, "销售发票在开具前已取消；其已发货数量可重新开票。"],
   [/^Customer credit note draft created from posted return receipt\.$/, null, "已根据已过账的退货收货创建客户贷项通知单草稿。"],
   [/^Customer credit note approved without refund execution\.$/, null, "客户贷项通知单已批准，未执行退款。"],
   [/^Payment of (\S+) ([A-Z]{3}) recorded on (\S+); no money was moved\.$/, null, "已在 $3 上登记付款 $1 $2；未实际转账。"],
@@ -205,6 +224,23 @@ export function auditSummaryText(entry: AuditSummaryEntry, language: string): st
     const number = isInternalAuditId(po[2]) ? "" : po[2];
     const pair = PO_ACTIONS[po[1]] || (["Purchase order {n}: " + humanizeAuditCode(po[1]).toLowerCase() + ".", "采购订单 {n}：" + humanizeAuditCode(po[1]) + "。"] as Pair);
     return fill(pick(pair, language), { n: number }).replace(/\s{2,}/g, " ").replace(/ ([。：.:])/g, "$1");
+  }
+
+  // "approve purchase request PR-202611-0001."
+  const pr = /^([a-z_]+) purchase request (\S+)\.$/.exec(summary);
+  if (pr) {
+    const number = isInternalAuditId(pr[2]) ? "" : pr[2];
+    const pair = PR_ACTIONS[pr[1]] || (["Purchase request {n}: " + humanizeAuditCode(pr[1]).toLowerCase() + ".", "采购申请 {n}：" + humanizeAuditCode(pr[1]) + "。"] as Pair);
+    return fill(pick(pair, language), { n: number }).replace(/\s{2,}/g, " ").replace(/ ([。：.:])/g, "$1");
+  }
+
+  // "Approval email for supplier_invoice sent to 2 of 2 approvers."
+  const email = /^Approval email for (\w+) sent to (\d+) of (\d+) approvers?\.$/.exec(summary);
+  if (email) {
+    const [, type, sent, of] = email;
+    const doc = APPROVAL_EMAIL_DOCUMENTS[type] || ([humanizeAuditCode(type).toLowerCase(), humanizeAuditCode(type)] as Pair);
+    if (english) return `Approval email for ${/^[aeiou]/.test(doc[0]) ? "an" : "a"} ${doc[0]} sent to ${sent} of ${of} ${of === "1" ? "approver" : "approvers"}.`;
+    return `已向 ${of} 位审批人中的 ${sent} 位发送${doc[1]}审批邮件。`;
   }
 
   // "review settings updated."

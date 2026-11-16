@@ -2,12 +2,12 @@ import { CHART_KINDS, CHOICE_PROMPTS, DECISION_CARDS_MAX, NEW_SUPPLIER_LINK, REC
 import { RECORD_ACTION_RULES, recordActionsNow } from '../../shared/assistant-record-actions.mjs'
 import { PURCHASE_SUGGESTION_SOURCES, suggestNeedByDate } from '../../shared/purchase-suggestion.mjs'
 import { can } from '../auth/authorization-service.mjs'
-import { mapPurchaseRequest } from '../repositories/db-procurement-read-repository.mjs'
 import { PURCHASE_REQUEST_PERMISSIONS } from '../services/procurement-request-command-service.mjs'
 import { PURCHASE_ORDER_COMMANDS } from './procurement-db-command-service.mjs'
-import { PROCUREMENT_PATH_POLICY, PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS, RFQ_STATUS, recommendProcurementPath } from './procurement-workflow.mjs'
+import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS, RFQ_STATUS } from './procurement-workflow.mjs'
 import { AI_READ_TOOL_COLUMNS } from './ai-read-tool-runner.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
+import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
 import { aiSkillUnitLabel } from './ai-skill-copy.mjs'
 import { findPaymentTerm } from './standard-payment-terms.mjs'
 
@@ -1352,7 +1352,6 @@ const RECORD_STEP_PERMISSIONS = Object.freeze({
     submit: PURCHASE_REQUEST_PERMISSIONS.submit,
     approve: PURCHASE_REQUEST_PERMISSIONS.approve,
     reject: PURCHASE_REQUEST_PERMISSIONS.reject,
-    create_rfq: PURCHASE_REQUEST_PERMISSIONS.createRfq,
     create_po: PURCHASE_REQUEST_PERMISSIONS.createPurchaseOrders,
   }),
   purchase_order: Object.freeze({
@@ -1390,26 +1389,14 @@ async function storedActionRecord({ prisma, tenantId }, ref) {
   return { row, downstream: Boolean(order || rfq) }
 }
 
-// The path the recommendation route gives the request once approved
-// (recommendProcurementPath with the route's policy), with its reasons as
-// codes. The amount threshold is left out for a role that cannot see amounts.
-function recordPath(row, amountsVisible) {
-  const { recommendation, policySnapshot: snapshot } = recommendProcurementPath({ ...mapPurchaseRequest(row), status: PURCHASE_REQUEST_STATUS.APPROVED }, PROCUREMENT_PATH_POLICY, {}, {})
-  const reasons = [
-    !snapshot.supplierSelected && 'supplier_not_selected',
-    !snapshot.validPriceAvailable && 'price_missing',
-    snapshot.rfqRequiredByPolicy && amountsVisible && 'amount_over_rfq_threshold',
-    (snapshot.newSupplier || snapshot.newItem || snapshot.highRiskSupplier) && 'new_or_high_risk',
-  ].filter(Boolean)
-  return { recommendation: recommendation === 'rfq' ? 'rfq' : 'direct_po', reasons: recommendation === 'rfq' ? reasons : ['direct_po_ok'] }
-}
+// No RFQ path on the card (design audit L1-01, batch A7): an RFQ cannot yet
+// become a purchase order, so the card neither offers one nor recommends one.
 
 // Who can take the step this user cannot, for the model to say.
 const RECORD_STEP_WHO = Object.freeze({
   submit: 'its requester, with a role that may create purchase requests (a buyer or manager)',
   approve: 'a manager or administrator whose role may approve',
   reject: 'a manager or administrator whose role may approve',
-  create_rfq: 'a buyer or manager whose role may create purchase orders',
   create_po: 'a buyer or manager whose role may create purchase orders',
   issue: 'a buyer or manager whose role may create purchase orders',
 })
@@ -1421,14 +1408,14 @@ function nothingToOffer(type, status, label, { steps, downstream, poBlocked }) {
   const kind = type === 'purchase_request' ? 'purchase request' : 'purchase order'
   if (!waiting.length) return fail('nothing_to_offer', `${label} is ${status.replace(/_/g, ' ')}; no step of this ${kind} can be taken in the chat. Give its status and link it; do not show a card.`)
   if (downstream) return fail('nothing_to_offer', `A purchase order or an open RFQ already comes from ${label}. Say so and link the request; do not show a card.`)
-  if (poBlocked && waiting.every((step) => step === 'create_po' || step === 'create_rfq') && steps.includes('create_po')) return fail('nothing_to_offer', `Every line of ${label} needs a supplier, a currency and a delivery warehouse before a purchase order can be created. Say that the user completes the request on its page first; link it.`)
-  const who = [...new Set(waiting.filter((step) => step !== 'create_rfq').map((step) => RECORD_STEP_WHO[step]))].join(', or ')
+  if (poBlocked && waiting.every((step) => step === 'create_po') && steps.includes('create_po')) return fail('nothing_to_offer', `Every line of ${label} needs a supplier, a currency and a delivery warehouse before a purchase order can be created. Say that the user completes the request on its page first; link it.`)
+  const who = [...new Set(waiting.map((step) => RECORD_STEP_WHO[step]))].join(', or ')
   return fail('not_allowed', `${label} is ${status.replace(/_/g, ' ')}. This user cannot take its next step; it is for ${who}. Say who can, naming ${label} so its link shows; do not show a card.`)
 }
 
 const offerRecordActions = defineUiTool({
   name: 'offer_record_actions',
-  description: 'Show a card for one purchase request or purchase order from a data tool result of this answer (source and its ref), with the steps this user may take on it now: submit a draft request for approval (its requester), approve or reject a submitted request, turn an approved request into a purchase order or request quotes (RFQ) for it, approve a purchase order or mark it issued. The user takes each step with their own click and a confirm in the card; nothing happens until they do. The server reads the record as stored and offers only what the user\'s role and the record\'s status allow; when there is nothing the user may do, the tool says who can.',
+  description: 'Show a card for one purchase request or purchase order from a data tool result of this answer (source and its ref), with the steps this user may take on it now: submit a draft request for approval (its requester), approve or reject a submitted request, turn an approved request into a purchase order, approve a purchase order or mark it issued. The user takes each step with their own click and a confirm in the card; nothing happens until they do. The server reads the record as stored and offers only what the user\'s role and the record\'s status allow; when there is nothing the user may do, the tool says who can.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1466,14 +1453,13 @@ const offerRecordActions = defineUiTool({
     // Every step the user's role permits here, whatever the status: the card
     // offers again from these after each click.
     const steps = Object.entries(RECORD_STEP_PERMISSIONS[type])
-      .filter(([step, permission]) => allowedTo(actor, permission) && (step !== 'submit' || requester) && !(downstream && (step === 'create_po' || step === 'create_rfq')))
+      .filter(([step, permission]) => allowedTo(actor, permission) && (step !== 'submit' || requester) && !(downstream && step === 'create_po'))
       .map(([step]) => step)
     const lines = array(row.lines)
-    const sourcing = type === 'purchase_request' && steps.some((step) => step === 'create_po' || step === 'create_rfq')
-    const path = sourcing ? recordPath(row, amountsVisible) : null
+    const sourcing = type === 'purchase_request' && steps.includes('create_po')
     // What createPurchaseOrdersFromPurchaseRequest refuses (DIRECT_PO_NOT_ALLOWED).
     const poBlocked = sourcing && (!lines.length || lines.some((line) => ['supplierId', 'currency', 'targetWarehouseId'].some((field) => !text(metaOf(line)[field])))) ? 'lines_incomplete' : null
-    const actions = recordActionsNow({ type, status, allowed: steps, path, poBlocked })
+    const actions = recordActionsNow({ type, status, allowed: steps, poBlocked })
     if (!actions.length) return nothingToOffer(type, status, ref.label, { steps: Object.keys(RECORD_STEP_PERMISSIONS[type]).filter((step) => allowedTo(actor, RECORD_STEP_PERMISSIONS[type][step])), downstream, poBlocked })
     const suppliers = [...new Set([text(row.supplierName), ...lines.map((line) => text(metaOf(line).supplierSnapshot?.supplierName))].filter(Boolean))].slice(0, 3).map((name) => name.slice(0, 200))
     const amount = decimalOf(row.amount)
@@ -1500,7 +1486,6 @@ const offerRecordActions = defineUiTool({
       record,
       allowed: steps,
       actions,
-      ...(path ? { path } : {}),
       ...(poBlocked ? { poBlocked } : {}),
     }
     return part('record_actions', props, [ref])
@@ -1537,6 +1522,16 @@ const suggestFollowups = defineUiTool({
     // Chinese.
     const foreign = questions.find((question) => (ctx?.language === 'zh-CN' ? !CJK_CHAR.test(question) : ctx?.language === 'en-US' && mostlyChinese(question)))
     if (foreign) return fail('wrong_language', `Write each question in ${ctx.language === 'zh-CN' ? 'Chinese' : 'English'}, the answer's language; "${foreign.slice(0, 40)}" is not.`)
+    // A chip's figures come from the records too: a chip the user clicks is
+    // sent as their own words, so a quantity in it would reach a form as one
+    // the user typed (design audit 2026-11-15, L5-21).
+    const sources = ctx?.results instanceof Map ? [...ctx.results.values()].map((entry) => entry.output) : []
+    for (const question of questions) {
+      try {
+        const unread = checkAiModelFirstGrounding({ answer: { title: '', answer: question, records: [] }, results: sources, question: ctx?.userText || '', facts: ctx?.facts || null }).problems.filter((row) => row.kind === 'number')
+        if (unread.length) return fail('ungrounded_figure', `A follow-up may use only figures the records or the user gave; "${unread[0].value}" in "${question.slice(0, 40)}" is neither. Leave the figure out.`)
+      } catch { /* a check that fails leaves the chips as they are */ }
+    }
     return part('followups', { questions }, [])
   },
 })

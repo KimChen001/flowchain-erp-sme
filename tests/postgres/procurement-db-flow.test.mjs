@@ -91,12 +91,12 @@ const uiPrLine = (overrides = {}) => ({
   currency: 'USD', targetWarehouseId: warehouseA, needByDate: needBy, ...overrides,
 })
 
-async function seedPurchaseRequest(id, { status, quantity = '10', unitPrice = '12.5', tenantId = tenantA } = {}) {
+async function seedPurchaseRequest(id, { status, quantity = '10', unitPrice = '12.5', tenantId = tenantA, unit = 'EA' } = {}) {
   const amount = (Number(quantity) * Number(unitPrice)).toFixed(4)
   await prisma.purchaseRequest.create({ data: {
     id, tenantId, status, requester: managerA.id, currency: 'USD', amount, requiredDate: new Date(`${needBy}T00:00:00Z`),
     metadata: { version: 1, requesterId: managerA.id, departmentId: 'operations' },
-    lines: { create: [{ id: `${id}-L1`, itemId: itemA.id, sku: itemA.sku, itemName: itemA.name, quantity, unit: 'EA', unitPrice, amount, metadata: { supplierId: supplierA, supplierSnapshot: { id: supplierA, supplierName: 'Walkthrough Packaging Co.' }, targetWarehouseId: warehouseA, currency: 'USD', needByDate: needBy } }] },
+    lines: { create: [{ id: `${id}-L1`, itemId: itemA.id, sku: itemA.sku, itemName: itemA.name, quantity, unit, unitPrice, amount, metadata: { supplierId: supplierA, supplierSnapshot: { id: supplierA, supplierName: 'Walkthrough Packaging Co.' }, targetWarehouseId: warehouseA, currency: 'USD', needByDate: needBy } }] },
   } })
 }
 
@@ -190,6 +190,11 @@ test('PR lines are validated against the suppliers and items of the signed-in wo
   const unapproved = await api(tokens.managerA, 'POST', '/api/procurement/requests', body({ supplierId: 'flow-supplier-a2' }))
   assert.equal(unapproved.status, 400, describe(unapproved))
   assert.equal(unapproved.body.code, 'ITEM_SUPPLIER_RELATIONSHIP_INVALID')
+  // Design audit L1-02: no conversion between units is recorded, so a line
+  // is requested in the item's stock unit (EA) only.
+  const otherUnit = await api(tokens.managerA, 'POST', '/api/procurement/requests', body({ unitSnapshot: 'CASE' }))
+  assert.equal(otherUnit.status, 400, describe(otherUnit))
+  assert.equal(otherUnit.body.code, 'PURCHASE_UNIT_CONVERSION_MISSING')
   assert.equal(await prisma.purchaseRequest.count(), 0)
 })
 
@@ -281,6 +286,16 @@ test('step 1b: a signed-in buyer saves, submits and withdraws a PR but cannot ap
   assert.equal(created.status, 201, describe(created))
   const row = await prisma.purchaseRequest.findUnique({ where: { id: created.body.id } })
   assert.equal(row.requester, buyerA.id)
+  // Design audit 2026-11-15 (L5-24): a request the assistant's form made is
+  // recorded as the assistant's, and one sent without a department takes the
+  // requester's own, then operations.
+  assert.equal(row.source, 'ai_assistant')
+  const plain = await api(tokens.buyerA, 'POST', '/api/procurement/requests', { departmentId: '', defaultNeedByDate: needBy, lines: [uiPrLine({ currency: undefined })] })
+  assert.equal(plain.status, 201, describe(plain))
+  const plainRow = await prisma.purchaseRequest.findUnique({ where: { id: plain.body.id } })
+  assert.equal(plainRow.source, 'manual')
+  const profile = await prisma.user.findUnique({ where: { id: buyerA.id }, select: { department: true } })
+  assert.equal(plainRow.metadata.departmentId, profile.department || 'operations')
   const createdAudit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityType: 'PurchaseRequest', entityId: row.id, action: 'purchase_request_created' } })
   assert.deepEqual(createdAudit.metadata.suggestions, {
     origin: 'ai_assistant',
@@ -400,6 +415,26 @@ test('step 3a: an approved PR above the RFQ threshold opens an RFQ (POST /api/pr
   assert.equal(await audits('Rfq', rfq.id), 2)
 })
 
+// Design audit A7 (L1-01, L1-32): an RFQ cannot become a purchase order yet,
+// so cancelling it is the way back. Only API calls: the list counts the
+// invited supplier from its participation record, the RFQ is cancelled from
+// its page's route, and the request is then ordered (201), where before it
+// stayed blocked by an RFQ that nothing could move.
+test('step 3a2: cancelling the open RFQ lets its PR become a purchase order (POST /api/procurement/rfqs/:id/cancel)', async () => {
+  const id = 'PR-FLOW-RFQ'
+  const rfq = await prisma.rfq.findFirst({ where: { tenantId: tenantA, sourceRequestId: id } })
+  const listed = (await api(tokens.managerA, 'GET', '/api/procurement/rfqs')).body.find((row) => row.id === rfq.id)
+  assert.deepEqual([listed?.suppliers, listed?.quoted], [1, 0])
+  const cancelled = await api(tokens.buyerA, 'POST', `/api/procurement/rfqs/${rfq.id}/cancel`, { expectedVersion: 2, reason: 'Ordering from the request' })
+  assert.equal(cancelled.status, 200, describe(cancelled))
+  assert.equal((await prisma.rfq.findUnique({ where: { id: rfq.id } })).status, 'cancelled')
+  const pr = await prisma.purchaseRequest.findUnique({ where: { id } })
+  const ordered = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: pr.metadata.version })
+  assert.equal(ordered.status, 201, describe(ordered))
+  assert.equal((await prisma.purchaseRequest.findUnique({ where: { id } })).status, 'converted')
+  assert.equal(await prisma.purchaseOrder.count({ where: { tenantId: tenantA, sourceRequestId: id } }), 1)
+})
+
 test('step 3b: an approved PR becomes an approved PO (POST /api/procurement/requests/:id/generate-purchase-orders)', async () => {
   const id = 'PR-FLOW-DIRECT'
   await seedPurchaseRequest(id, { status: 'approved' })
@@ -479,6 +514,24 @@ test('step 3b: an approved PR becomes an approved PO (POST /api/procurement/requ
   assert.equal(search.body.results.find((result) => result.entityType === 'purchase_order')?.entityId, po.id)
   const otherOrders = await api(tokens.managerB, 'GET', '/api/procurement/orders')
   assert.ok(!otherOrders.body.some((row) => row.id === po.id))
+})
+
+// Design audit L1-02: a request saved in another unit than its item's stock
+// unit (before the rule, or since the unit changed) is not turned into a PO,
+// whose receipt would book the cases as EA.
+test('step 3b: an approved PR line in another unit than the stock unit is not turned into a PO', async () => {
+  const id = 'PR-FLOW-CASE'
+  await seedPurchaseRequest(id, { status: 'approved', unit: 'CASE' })
+  try {
+    const refused = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 1 })
+    assert.equal(refused.status, 422, describe(refused))
+    assert.equal(refused.body.code, 'PURCHASE_UNIT_CONVERSION_MISSING')
+    assert.deepEqual(refused.body.details.map((row) => [row.field, row.unit, row.stockUnit]), [['lines.0.unit', 'CASE', 'EA']])
+    assert.equal(await prisma.purchaseOrder.count({ where: { tenantId: tenantA, sourceRequestId: id } }), 0)
+    assert.equal((await prisma.purchaseRequest.findUnique({ where: { id } })).status, 'approved')
+  } finally {
+    await prisma.purchaseRequest.delete({ where: { id } })
+  }
 })
 
 test('step 3c: with the setting off, an approved PR becomes a draft PO for its own approval', async () => {
@@ -907,4 +960,36 @@ test('the PO, PR and RFQ list endpoints answer once instead of falling through t
     await new Promise((resolve) => setTimeout(resolve, 50))
     assert.deepEqual(serverErrors.slice(before), [], `${path} logged a server error`)
   }
+})
+
+// Design audit L1-02: no conversion between units is recorded, so a request
+// line is in the item's stock unit whatever its purchase unit says. The
+// purchase request forms read the purchasable item list, which gives that
+// unit; a line that names another unit is refused, never relabelled.
+test('an item stocked in box with purchase unit pcs is requested, and its line is saved in box', async () => {
+  const boxItem = { id: 'flow-item-box', sku: 'FLOW-SKU-BOX', name: 'Walkthrough Carton' }
+  await prisma.item.create({ data: { ...boxItem, tenantId: tenantA, unit: 'box', preferredSupplierId: supplierA, metadata: { defaultWarehouseId: warehouseA, purchasable: true, purchaseUnit: 'pcs' } } })
+  const catalog = await api(tokens.managerA, 'GET', '/api/master-data/items?purchasable=true')
+  assert.equal(catalog.status, 200, describe(catalog))
+  const listed = catalog.body.items.find((row) => row.sku === boxItem.sku)
+  assert.deepEqual([listed.purchaseUnit, listed.recordedPurchaseUnit, listed.baseUnit], ['box', 'pcs', 'box'])
+  // The item master's own list keeps the recorded purchase unit.
+  const managed = await api(tokens.managerA, 'GET', '/api/master-data/items?managed=true')
+  assert.equal(managed.body.items.find((row) => row.sku === boxItem.sku).purchaseUnit, 'pcs')
+
+  // The form puts the list's purchase unit on a new line, as the PR panel and the assistant's form do.
+  const boxLine = (overrides = {}) => uiPrLine({ itemId: boxItem.id, sku: boxItem.sku, itemNameSnapshot: boxItem.name, unitSnapshot: listed.purchaseUnit || listed.baseUnit, ...overrides })
+  const body = (line) => ({ idempotencyKey: key('pr-box'), departmentId: 'operations', defaultCurrency: 'USD', defaultNeedByDate: needBy, lines: [line] })
+  const created = await api(tokens.managerA, 'POST', '/api/procurement/requests', body(boxLine()))
+  assert.equal(created.status, 201, describe(created))
+  // A line without a unit is built in box as well.
+  const bare = await api(tokens.managerA, 'POST', '/api/procurement/requests', body(boxLine({ unitSnapshot: undefined })))
+  assert.equal(bare.status, 201, describe(bare))
+  const lines = await prisma.purchaseRequestLine.findMany({ where: { purchaseRequestId: { in: [created.body.id, bare.body.id] } } })
+  assert.deepEqual(lines.map((line) => [line.sku, line.unit, dec(line.quantity)]), [[boxItem.sku, 'box', '10'], [boxItem.sku, 'box', '10']])
+
+  // Naming pcs on the line is refused: 10 pcs is never saved as 10 boxes.
+  const refused = await api(tokens.managerA, 'POST', '/api/procurement/requests', body(boxLine({ unitSnapshot: 'pcs' })))
+  assert.equal(refused.status, 400, describe(refused))
+  assert.equal(refused.body.code, 'PURCHASE_UNIT_CONVERSION_MISSING')
 })

@@ -189,6 +189,7 @@ export function todayWorkOf(context, sources = {}, { now = new Date(), timeZone 
     purchaseOrders: context.purchaseOrders,
     reportPurchaseOrders: sources.reportPurchaseOrders,
     purchaseRequests: context.purchaseRequests,
+    rfqs: context.rfqs,
     supplierInvoices: context.supplierInvoices,
     salesOrders: context.salesOrders,
     allocationRows: sources.allocationRows,

@@ -2,7 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { AI_SKILL_TENANT, aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
-import { readAiSkillFacts } from './ai-skill-readers.mjs'
+import { readAiSkillFacts, readAiSkillSupplierIssueFacts } from './ai-skill-readers.mjs'
+import { buildAiSkillSignals } from './ai-skill-signals.mjs'
 import { readBusinessContext } from '../services/runtime-business-read-service.mjs'
 import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
@@ -99,6 +100,31 @@ test('truncated reads become limitations and nulls stay null', async () => {
   const ldm3 = facts.inventory.rows.find((row) => row.sku === 'LDM-003')
   assert.equal(ldm3.available, null)
   assert.equal(ldm3.stockStatus, 'unknown')
+})
+
+// Design audit L9-01: an invoice difference stayed an open issue for good,
+// after every exception was approved and after the invoice was approved, on
+// the supplier list, evaluation, risks and detail pages and in the assistant.
+test('an accepted invoice difference is not an open difference and raises no signal', async () => {
+  const scenario = aiSkillScenario()
+  const base = scenario.data.supplierInvoices[0]
+  scenario.data.supplierInvoices.push(
+    // Approved with its 200 difference: approving it accepted the difference.
+    { ...base, id: 'INV-004', invoiceNumber: 'INV-004', status: 'approved', matchStatus: 'variance', varianceAmount: '200' },
+    // Every exception approved; the invoice waits for its own approval.
+    { ...base, id: 'INV-005', invoiceNumber: 'INV-005', status: 'exception', matchStatus: 'variance_approved', varianceAmount: '15' },
+    // Held after its approval.
+    { ...base, id: 'INV-006', invoiceNumber: 'INV-006', status: 'held', matchStatus: 'variance_approved', varianceAmount: '3' },
+    // Matched within the workspace's tolerance: nothing to decide.
+    { ...base, id: 'INV-007', invoiceNumber: 'INV-007', status: 'matched', matchStatus: 'matched', varianceAmount: '0.40' },
+  )
+  const context = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(context)
+  assert.deepEqual(facts.invoices.variances.map((row) => row.id), ['INV-001'])
+  assert.deepEqual(buildAiSkillSignals(facts).filter((signal) => signal.type === 'invoice_variance').map((signal) => signal.entityId), ['INV-001'])
+  // The supplier pages' narrower read says the same.
+  const issueFacts = await readAiSkillSupplierIssueFacts(context)
+  assert.deepEqual(issueFacts.invoices.variances.map((row) => row.id), ['INV-001'])
 })
 
 test('on a different UTC day the assistant still counts overdue to the tenant day', async () => {

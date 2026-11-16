@@ -65,9 +65,12 @@ test('supplier metrics agree with the reports, per reader', async () => {
     const purchaseOrders = await prisma.purchaseOrder.findMany({ where: { tenantId }, include: { lines: true } })
     const report = buildOpenPurchaseOrdersReport(purchaseOrders, { export: 'true' }, asOfNoon, { timeZone }).exportRows
     for (const [supplierId, row] of Object.entries(admin.suppliers)) {
-      // Open and overdue orders are the open purchase orders report's, by supplier id.
+      // Open and overdue orders are the open purchase orders report's, by
+      // supplier id; an order approved but not sent to the supplier is open,
+      // never overdue against the supplier (design audit V-C-04).
       const open = report.filter((po) => po.supplierId === supplierId && po.isOpen)
-      assert.deepEqual([row.openPos, row.overduePos], [open.length, open.filter((po) => po.overdueDays > 0).length], supplierId)
+      const sent = open.filter((po) => po.status !== 'approved')
+      assert.deepEqual([row.openPos, row.overduePos, row.notSentPos], [open.length, sent.filter((po) => po.overdueDays > 0).length, open.length - sent.length], supplierId)
       // Spend: committed orders of the last 12 months, in USD, never other statuses.
       const usd = purchaseOrders.filter((po) => po.supplierId === supplierId && COMMITTED.has(po.status)).reduce((sum, po) => sum + Number(po.amount), 0)
       assert.deepEqual(row.spend12m, usd ? [{ currency: 'USD', amount: Math.round(usd * 100) / 100 }] : [], supplierId)
@@ -80,6 +83,11 @@ test('supplier metrics agree with the reports, per reader', async () => {
     // reports it: PO-023, approved and due yesterday but never sent to the
     // supplier, is not measured (owner decision 2026-10-06).
     assert.deepEqual(admin.suppliers[SUP(5)].onTime, { rate: 4 / 6, count: 4, of: 6, sampleStatus: 'ok' })
+    // The report counts PO-023 overdue (decision V5); the supplier pages do
+    // not hold it against Northstar, as Today says it was never sent.
+    const po23 = report.find((po) => po.id === 'LOCAL-DEMO-PO-023')
+    assert.deepEqual([po23.status, po23.isOpen, po23.overdueDays > 0], ['approved', true, true])
+    assert.equal(admin.suppliers[SUP(5)].notSentPos, 1)
     assert.equal(admin.suppliers[SUP(1)].onTime.rate, null)
     assert.equal(admin.suppliers[SUP(1)].onTime.sampleStatus, 'insufficient_sample')
 
@@ -112,7 +120,9 @@ test('supplier metrics agree with the reports, per reader', async () => {
     const dates = acme.purchaseOrders.rows.map((row) => row.date)
     assert.deepEqual(dates, [...dates].sort().reverse(), 'newest first')
     for (const row of acme.purchaseOrders.rows) {
-      assert.equal(row.overdueDays, report.find((po) => po.id === row.id)?.overdueDays || 0, row.id)
+      const reported = report.find((po) => po.id === row.id)
+      assert.equal(row.notSent, reported?.status === 'approved', row.id)
+      assert.equal(row.overdueDays, row.notSent ? 0 : reported?.overdueDays || 0, row.id)
       assert.equal(row.amount, Number(acmeOrders.find((po) => po.id === row.id).amount), row.id)
     }
     assert.ok(acme.purchaseOrders.rows.some((row) => row.overdueDays > 0))
@@ -153,6 +163,10 @@ test('supplier metrics agree with the reports, per reader', async () => {
     assert.ok(adminRisks.issues.slice(dated.length).every((issue) => !issue.when.date), 'undated issues last')
     assert.ok(new Set(adminRisks.issues.map((issue) => issue.type)).size > 1)
     assert.ok(adminRisks.issues.every((issue) => issue.supplierName && issue.supplierCode && issue.label && !('severity' in issue) && !('score' in issue)))
+    assert.equal(adminRisks.issues.some((issue) => issue.entityId === 'LOCAL-DEMO-PO-023'), false, 'never sent, so not overdue against the supplier')
+    const northstar = await activity('admin', SUP(5))
+    assert.equal(northstar.issues.some((issue) => issue.entityId === 'LOCAL-DEMO-PO-023'), false)
+    assert.deepEqual(northstar.purchaseOrders.rows.filter((row) => row.id === 'LOCAL-DEMO-PO-023').map((row) => [row.overdueDays, row.notSent]), [[0, true]])
     const overdueRow = adminRisks.issues.find((issue) => issue.type === 'po_overdue')
     assert.equal(overdueRow.when.kind, 'overdue')
     assert.equal(overdueRow.when.days, report.find((po) => po.id === overdueRow.entityId).overdueDays)

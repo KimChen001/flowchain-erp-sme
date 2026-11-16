@@ -1,10 +1,13 @@
 import { ApiError, apiErrorFrom, apiFetch } from "../../../lib/api-client";
 import { safeParseStreamLine } from "../../../../shared/assistant-protocol.mjs";
 import type { AnswerLanguage, FlagSpan, PartRef } from "./parts/types";
+import type { AssistantV2Turn } from "./previousTurns";
 
 // The assistant v2 request and its event stream (docs/ai-assistant-v2-design.md
-// §3.7). The client sends only the question, its thread and the page; the
-// server keeps the thread's tool results and never reads history from here.
+// §3.7). The client sends the question, its thread and the page; the server
+// keeps the thread's tool results. The panel also sends its last 3 turns
+// (previousTurns.ts), which the server reads only when it keeps no thread
+// for the conversation (design audit 2026-11-15, L5-07).
 
 export type AssistantV2ActiveContext = { moduleId: string; entityType: string | null; entityId: string | null; entityLabel?: string | null };
 // A request an in-chat form created, the suppliers and items a setup card
@@ -20,6 +23,7 @@ export type AssistantV2Request = {
   activeContext: AssistantV2ActiveContext;
   answerLanguage: AnswerLanguage;
   formResults?: AssistantV2FormResult[];
+  conversationContext?: { previousTurns: AssistantV2Turn[] };
 };
 
 export type AssistantV2NoticeCode = "over_cap" | "over_cap_during_answer" | "cost_ceiling" | "unavailable" | "rate_limited" | "injection_refused" | "cancelled" | "refused" | "ai_off" | "no_provider";

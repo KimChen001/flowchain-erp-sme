@@ -5,7 +5,8 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_SKILL_COPY, AI_SKILL_LANGUAGES, aiSkillLanguage, aiSkillQuestionLanguageSignal, aiSkillText, aiSkillUnitLabel } from './ai-skill-copy.mjs'
 import { validateAiToolArgs } from './ai-read-tool-contract.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, runAiReadTool } from './ai-read-tool-runner.mjs'
-import { aiGroundingRecordNumbers, aiGroundingSources, checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
+import { aiCalculationGrounded, aiGroundingRecordNumbers, aiGroundingSources, checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
+import { assistantV2PartBrief } from './ai-assistant-v2-feedback.mjs'
 import { aiAnswerAssistantActionClaims, aiAnswerRecordStates } from './ai-answer-claims.mjs'
 import { AI_V2_HAN, aiV2CodeLabels, aiV2DisplayStrings, aiV2Formats, aiV2TextTidier, aiV2UserTypedDate } from './ai-assistant-v2-display.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
@@ -61,6 +62,10 @@ export const ASSISTANT_V2_LIMITS = Object.freeze({
   question: QUESTION_LIMITS.assistantV2, resultChars: 24000, records: 8,
   // How long a short text waits for more before it is shown anyway.
   narrationWaitMs: 1500,
+  // How long after a call of this conversation read the cache the fixed
+  // prompt counts as cached when its earlier turns are measured (a provider
+  // keeps a prompt cache about 5 minutes after its last use).
+  promptCacheMs: 4 * 60 * 1000,
 })
 
 const text = (value) => String(value ?? '').trim()
@@ -321,7 +326,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- A record of a kind in hiddenForRole always gets that hidden reply, whether or not the tools find it; never the not-found reply below.',
   '- A record number the tools cannot find, of a kind the role can see: answer exactly, with {number} as the user wrote it: "I couldn\'t find {number} in the records you can see. Check the number, or tell me the supplier or item." (在你可查看的记录中找不到 {number}。请核对编号，或告诉我供应商或物料。). Add no reason or guess.',
   '- Answer from what the records hold before saying something is not recorded. Sales ("last month\'s sales", 上个月销售额, top customers, best-selling items) are recorded as customer invoices: sales_summary gives them over a period by customer, item or month; open sales orders (list_sales_orders) show what is still to ship. Answer from them and say in a few words which you used and what that leaves out. When the records you read hold nothing for the question, state that as the finding ("No customer invoices are recorded for October." / 10 月没有记录客户发票。), without apologising, then what you can show instead. Only a question no tool can answer at all, because FlowChain does not record it (net profit or operating costs, a bank balance, people\'s sales performance, a sales forecast beyond recorded demand), gets one plain sentence saying so, without apologising, then what you can help with instead, with no figures. The cost of holding stock and of ordering is not such a question: answer it with the cost tools.',
-  '- Money has tools: supplier_payables (owed means approved and unpaid; an invoice held at the match is not owed yet), list_receivables, cash_movements (recorded payments; spend_analysis is what was ordered, not paid) and gross_profit (its cost is an estimate at reference prices: say so).',
+  '- Money: supplier_payables (owed = approved, unpaid; one held at the match is not owed yet), list_receivables, cash_movements (recorded payments; spend_analysis is ordered, not paid), gross_profit (cost estimated at reference prices: say so). A row with setAside was decided on Today: never present it as new.',
   '- Why a supplier invoice is held or has a difference ("why can\'t this bill be paid?", 这张发票为什么卡住, 发票有差异): call decision_items; its bill_exception row for the invoice has each difference with its figures and likely cause. Say the difference with its figures, then the cause in plain words (price_changed: another order already has the invoice\'s price, so the supplier\'s price likely moved and this order kept the old one, naming that order; invoice_price: no order has that price, so the invoice is likely priced wrong; over_ordered: more invoiced than ordered; already_invoiced: part of what was received was invoiced before; not_yet_received: it bills goods not received or not posted as received; line_amount: the line amount is not quantity times the order price), then the step prepared for it, and show its card with show_decisions. An invoice not among them is not held by a difference on Today: say what list_supplier_invoices shows instead.',
   '- If the user asks for a message or a note, write the draft in the answer for them to review and send themselves, as "> " quoted lines, in the language the user asked in unless they name another. Use only the facts the tools gave; leave a bracketed placeholder for anything you do not have. When the user asks to change a draft, keep its records and figures: a record the user names by part of its name ("the bracket") is the one in the draft, so look it up by its number and do not ask which.',
   '- What the workspace\'s own policies or documents say: search them with search_documents and state only what the passages say, naming the document and section. If no passage answers it, say the documents do not cover it.',
@@ -596,7 +601,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     try { emit?.(event) } catch { /* the answer goes on */ }
   }
 
-  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null, providerFailed: null, displayFailures: 0, lastRoundForCost: false, lastRoundForUsage: false, usageEstimated: 0, turnsLeftOut: 0 }
+  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null, providerFailed: null, displayFailures: 0, checkFailures: 0, lastRoundForCost: false, lastRoundForUsage: false, usageEstimated: 0, turnsLeftOut: 0 }
   // The tokens an answer has used toward its cap: input read from the cache
   // weighs a tenth, as it is priced (the cost ceiling bounds the spend).
   const tokensUsed = () => weightedTokens(stats.usage.input, stats.usage.cacheRead, stats.usage.output)
@@ -743,17 +748,24 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     const displayNames = [...ui.values()].filter((tool) => tool.display).map((tool) => tool.name)
 
     // The transcript the model is sent: this turn and the latest earlier
-    // turns, as many as leave the first call, at its full output and with
-    // nothing cached, at most half of what the answer may spend, so a second
-    // call fits beside it. The oldest turns are left out first; the thread
-    // keeps them until its own limits drop them. A turn starts where the
-    // user's messages follow the end of the one before (an answer or tool
-    // results).
+    // turns, as many as leave the first call, at its full output, at most
+    // half of what the answer may spend, so a second call fits beside it.
+    // The oldest turns are left out first; the thread keeps them until its
+    // own limits drop them. A turn starts where the user's messages follow
+    // the end of the one before (an answer or tool results).
+    //
+    // The fixed prompt (the system prompt and the tools) is priced as a cache
+    // read when a call of this conversation read the cache within
+    // promptCacheMs: the provider reads it from the cache again (owner
+    // 2026-11-15, "按缓存价算": at Sonnet 5.5 prices, priced in full it left
+    // the earlier turns about 700 tokens). Otherwise it is priced in full:
+    // after a cold first call of a long thread, a second call would not fit.
     const baseTokens = tokensIn(ASSISTANT_V2_SYSTEM) + tokensIn(JSON.stringify(tools))
     const sizes = thread.messages.map((message) => tokensIn(JSON.stringify(message)))
     const turnStarts = [...thread.messages.keys()].filter((at) => at <= turnStart && (at === 0
       || (thread.messages[at].role === 'user' && !isToolResults(thread.messages[at]) && (thread.messages[at - 1].role === 'assistant' || isToolResults(thread.messages[at - 1])))))
-    const fits = (from) => aiCallCostMicros({ inputTokens: baseTokens + sizes.slice(from).reduce((sum, size) => sum + size, 0), outputTokens: limits.outputTokens }, prices) <= budgetMicros / 2
+    const promptCached = Number.isFinite(thread.promptCachedAt) && Date.now() - thread.promptCachedAt < limits.promptCacheMs
+    const fits = (from) => aiCallCostMicros({ inputTokens: baseTokens + sizes.slice(from).reduce((sum, size) => sum + size, 0), outputTokens: limits.outputTokens, cacheReadTokens: promptCached ? baseTokens : 0 }, prices) <= budgetMicros / 2
     const sendFrom = turnStarts.find(fits) ?? turnStarts.at(-1)
     stats.turnsLeftOut = turnStarts.filter((at) => at < sendFrom).length
     const sent = () => (sendFrom ? thread.messages.slice(sendFrom) : thread.messages)
@@ -1030,7 +1042,18 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         stats.replaces.push('record_label')
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: 'record_label' })
       }
-      const check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today })
+      // A check that throws leaves the part unflagged rather than failing the
+      // whole answer (audit 2026-11-15, L5-01: one SKU with a regex character
+      // made every answer a 503, after the model calls were spent). The audit
+      // counts it, and the sources line does not count the part as checked.
+      // The action-claim scan below still runs.
+      let check
+      try {
+        check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today })
+      } catch {
+        stats.checkFailures += 1
+        check = { problems: [], checked: {}, failed: true }
+      }
       const read = check.checked || {}
       const figures = (read.record || 0) + (read.name || 0) + (read.date || 0) + (read.number || 0)
       // A sentence that claims an action no record backs is left out; the
@@ -1101,7 +1124,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: withheld.some((row) => row.code === 'foreign_record') ? 'foreign_record' : 'hidden_value' })
       } else release(part, part.text.length)
       stats.flags += spans.length
-      figureChecks.set(part.id, { figures, flagged: spans.length })
+      if (!check.failed) figureChecks.set(part.id, { figures, flagged: spans.length })
       send(flagEvent(part, spans.slice(0, 50)))
     }
 
@@ -1249,7 +1272,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       thread.messages.length = turnStart
       for (const id of answerResults.keys()) thread.results.delete(id)
       const error = new AssistantModelError('timeout')
-      error.audit = auditBlock({ stats: { ...stats, stopReason: 'timeout' }, model, aborted: false, started })
+      error.audit = auditBlock({ stats: { ...stats, stopReason: 'timeout' }, model, aborted: false, started, messageId })
       error.emitted = sentStatus
       return error
     }
@@ -1316,7 +1339,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         if (aborted) return
         if (outcome.ok && outcome.event) {
           // A later set of follow-up chips replaces the earlier one in place.
-          if (!parts.some((part) => part.id === outcome.event.partId)) parts.push({ id: outcome.event.partId, type: 'ui', component: outcome.event.component, source: text(outcome.event.props?.source) || null, ...(outcome.event.component === 'decisions' ? { keys: array(outcome.event.props?.keys) } : {}) })
+          if (!parts.some((part) => part.id === outcome.event.partId)) parts.push({ id: outcome.event.partId, type: 'ui', component: outcome.event.component, source: text(outcome.event.props?.source) || null, ...(outcome.event.component === 'decisions' ? { keys: array(outcome.event.props?.keys) } : {}), brief: assistantV2PartBrief(outcome.event.component, outcome.event.props) })
           for (const ref of outcome.event.refs) if (!shownRefs.some((row) => row.type === ref.type && row.id === ref.id)) shownRefs.push(ref)
           send(outcome.event)
         }
@@ -1367,7 +1390,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
           // the unavailable notice.
           if (!sentContent) {
             rollback()
-            error.audit = auditBlock({ stats: { ...stats, stopReason: 'provider_error' }, model, aborted: false, started })
+            error.audit = auditBlock({ stats: { ...stats, stopReason: 'provider_error' }, model, aborted: false, started, messageId })
             error.emitted = sentStatus
             throw error
           }
@@ -1409,6 +1432,9 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       lastCallTokens = weightedTokens(usage.inputTokens, usage.cacheReadTokens, usage.outputTokens)
       stats.costMicros += aiCallCostMicros(usage, prices)
       lastCall = usage.inputTokens > 0 ? { prompt: usage.inputTokens, cached: Math.min(usage.inputTokens, usage.cacheReadTokens + usage.cacheWriteTokens), messages: sentMessages } : null
+      // The provider read this conversation's prompt from its cache: the
+      // next answer's earlier turns are measured with the fixed prompt cached.
+      if (reported && usage.cacheReadTokens > 0) thread.promptCachedAt = Date.now()
       largestOutput = Math.max(largestOutput, usage.outputTokens)
       await recordAiProviderCall({ ok: true, usage })
       // Calls a client reports only in the final content follow the text too.
@@ -1464,8 +1490,13 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       for (const [call, outcome] of ran) {
         outcomes.set(call.id, outcome)
         stats.calls.push({ tool: asCode(call.name, 'unknown_tool'), status: outcome.ok ? 'ok' : asCode(outcome.error, 'error') })
-        if (outcome.ok) {
-          answerResults.set(call.id, { tool: call.name, output: outcome.result })
+        // A calculation whose inputs come from no result or the user's words
+        // is shown to the model but is no source for the answer's figures
+        // (design audit 2026-11-15, L5-03).
+        const source = outcome.ok && (call.name !== 'calculate' || aiCalculationGrounded(call.input, { results: [...results, ...earlierResults], question: userText, conversation }))
+        if (outcome.ok && !source) stats.replaces.push('ungrounded_calculation')
+        if (outcome.ok) answerResults.set(call.id, { tool: call.name, output: outcome.result })
+        if (source) {
           thread.results.set(call.id, { tool: call.name, output: outcome.result })
           known = null
           results.push(outcome.result)
@@ -1597,8 +1628,14 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // failed provider call makes the answer's model access unavailable.
       aiModelAccess: stats.providerFailed ? { status: 'unavailable', ...(stats.providerFailed === 'budget' ? { reason: 'budget' } : {}) } : { status: 'on' },
     }
+    // What this answer said, for feedback on it (L5-23).
+    thread.answers?.set?.(messageId, {
+      question, answer: summary, language,
+      parts: parts.filter((part) => part.type === 'ui' && !part.dropped).map((part) => part.brief || { component: part.component }),
+      tools: [...new Set(stats.calls.filter((call) => call.status === 'ok').map((call) => call.tool))],
+    })
     send({ type: 'answer', status: 200, body: answer })
-    return { body: answer, audit: auditBlock({ stats, model, aborted, started }) }
+    return { body: answer, audit: auditBlock({ stats, model, aborted, started, messageId }) }
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener?.('abort', onAbort)
@@ -1608,9 +1645,11 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
 // The audit block (design §3.11): codes and counts only, never the question,
 // the tool arguments, the results or the model's words. Key names avoid
 // "token": the audit store redacts those as secrets.
-function auditBlock({ stats, model, aborted, started }) {
+function auditBlock({ stats, model, aborted, started, messageId = null }) {
   return {
     version: ASSISTANT_V2_VERSION,
+    // The answer's id, so a cost is read for its own answer (L5-16).
+    messageId,
     model,
     rounds: stats.rounds,
     modelCalls: stats.modelCalls,
@@ -1618,6 +1657,7 @@ function auditBlock({ stats, model, aborted, started }) {
     uiTools: stats.ui.map((call) => ({ tool: asCode(call.tool, 'unknown_tool'), status: asCode(call.status, 'error'), ...(call.component ? { component: call.component } : {}) })),
     flags: stats.flags,
     displayFailures: stats.displayFailures,
+    checkFailures: stats.checkFailures,
     lastRoundForCost: stats.lastRoundForCost,
     lastRoundForUsage: stats.lastRoundForUsage,
     usageEstimated: stats.usageEstimated,

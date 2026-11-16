@@ -237,7 +237,7 @@ test("RFQ list and comparison use English when the user selects English", async 
   await expect(editor).toContainText("Quoted quantity");
   await expect(page.getByRole("button", { name: "Record and submit quotation" })).toBeVisible();
   await expect(editor).not.toContainText(/新增报价|报价数量|记录并提交报价/);
-  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
   await page.goto("/app/procurement/rfq");
   await expect(page.getByTestId("procurement-rfq-list")).toContainText("RFQ list");

@@ -18,7 +18,7 @@ function payload() {
   }
 }
 
-function createRoute({ body, envEnabled = true, db = createEmptyDataset({ mode: 'user' }), repositories } = {}) {
+function createRoute({ body, envEnabled = true, db = createEmptyDataset({ mode: 'user' }), repositories, identity = { authenticated: true, tenantId: 'tenant-r174', userId: 'user-r174' } } = {}) {
   let response = null
   const previous = process.env.FLOWCHAIN_ENABLE_USER_IMPORT_COMMIT
   if (envEnabled) process.env.FLOWCHAIN_ENABLE_USER_IMPORT_COMMIT = 'true'
@@ -32,6 +32,7 @@ function createRoute({ body, envEnabled = true, db = createEmptyDataset({ mode: 
       req: { method: 'POST', body, headers: {} },
       res: {},
       url: new URL('/api/user-data/import/commit', 'http://localhost'),
+      identity,
       db,
       repositories: routeRepositories,
       readBody: async (req) => req.body,
@@ -192,6 +193,35 @@ test('R250 preview stores full snapshot and compact commit succeeds with preview
     assert.equal(commit.response.payload.recordCounts.purchaseOrders, 1)
     const active = await repositories.userDataRuntime.getActiveDataset(compactSnapshot.scope)
     assert.equal(active.records.purchaseOrders[0].po, 'PO-R174-1')
+  } finally {
+    preview.restore()
+  }
+})
+
+// Design audit L4-32: the workspace and user come from the session. A payload
+// naming tenant-r174 is previewed under the signed-in user's own scope, and a
+// snapshot made for tenant-r174 cannot be committed from another workspace.
+test('L4-32 preview and commit use the session scope, never the payload scope', async () => {
+  const db = createEmptyDataset({ mode: 'user' })
+  const repositories = {
+    userDataRuntime: createInMemoryUserDataRuntimeRepository(),
+    auditLog: createAuditLogRepository(db),
+  }
+  const intruder = { authenticated: true, tenantId: 'tenant-other', userId: 'user-other' }
+  const preview = createRoute({ body: { ...payload(), scope: { tenantId: 'tenant-r174', userId: 'user-r174' } }, db, repositories, identity: intruder })
+  preview.ctx.url = new URL('/api/user-data/import/preview', 'http://localhost')
+  try {
+    assert.equal(await handleUserDataRoute(preview.ctx), true)
+    assert.equal(preview.response.status, 200)
+    assert.deepEqual(preview.response.payload.normalizedSnapshot.scope, { tenantId: 'tenant-other', userId: 'user-other' })
+
+    const foreign = createRoute({ body: commitBody(), db, repositories, identity: intruder })
+    assert.equal(await handleUserDataRoute(foreign.ctx), true)
+    assert.equal(foreign.response.status, 403)
+    assert.equal(foreign.response.payload.errors[0].code, 'scope_mismatch')
+    assert.equal(foreign.response.payload.commitAccepted, false)
+    assert.equal(await repositories.userDataRuntime.getActiveDataset({ tenantId: 'tenant-r174', userId: 'user-r174' }), null)
+    assert.equal(await repositories.userDataRuntime.getActiveDataset({ tenantId: 'tenant-other', userId: 'user-other' }), null)
   } finally {
     preview.restore()
   }

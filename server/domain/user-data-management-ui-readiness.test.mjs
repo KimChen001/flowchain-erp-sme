@@ -35,7 +35,7 @@ function commitBody(overrides = {}) {
   }
 }
 
-function createRoute({ method = 'POST', pathname = '/api/user-data/import/commit', body = commitBody(), envEnabled = true, db = createEmptyDataset({ mode: 'user' }), repositories } = {}) {
+function createRoute({ method = 'POST', pathname = '/api/user-data/import/commit', body = commitBody(), envEnabled = true, db = createEmptyDataset({ mode: 'user' }), repositories, identity = { authenticated: true, tenantId: 'tenant-r190', userId: 'user-r190' } } = {}) {
   let response = null
   const previous = process.env.FLOWCHAIN_ENABLE_USER_IMPORT_COMMIT
   if (envEnabled) process.env.FLOWCHAIN_ENABLE_USER_IMPORT_COMMIT = 'true'
@@ -49,6 +49,7 @@ function createRoute({ method = 'POST', pathname = '/api/user-data/import/commit
       req: { method, body, headers: {} },
       res: {},
       url: new URL(pathname, 'http://localhost'),
+      identity,
       db,
       repositories: repoSet,
       readBody: async (req) => req.body,
@@ -84,6 +85,20 @@ test('R181-R190 active dataset route returns scoped metadata only', async () => 
     assert.equal(route.response.payload.writesFiles, false)
     assert.equal(route.response.payload.writesDb, false)
     assert.equal(route.response.payload.overwritesDemoData, false)
+
+    // Design audit L4-32: the query does not choose the workspace or user. A
+    // signed-in user of another workspace naming tenant-r190 gets their own
+    // (empty) dataset, and a session without a workspace gets nothing.
+    route.ctx.identity = { authenticated: true, tenantId: 'tenant-other', userId: 'user-other' }
+    assert.equal(await handleUserDataRoute(route.ctx), true)
+    assert.equal(route.response.status, 200)
+    assert.equal(route.response.payload.active, false)
+    assert.deepEqual(route.response.payload.scope, { tenantId: 'tenant-other', userId: 'user-other' })
+    assert.equal(route.response.payload.dataset, null)
+    route.ctx.identity = { authenticated: false }
+    assert.equal(await handleUserDataRoute(route.ctx), true)
+    assert.equal(route.response.status, 401)
+    assert.equal(route.response.payload.errors[0].code, 'session_scope_required')
   } finally {
     route.restore()
   }

@@ -36,14 +36,30 @@ export async function readTodayForReader(ctx) {
   return { access, raw, context, timeZone, now, today, read, hidden, work }
 }
 
+// The procurement snapshot reads at most this many requests, orders and
+// supplier invoices, newest first, and reports no truncation
+// (db-procurement-read-repository.mjs, safeLimit): a list that fills it may
+// be cut.
+export const PROCUREMENT_SNAPSHOT_ROWS = 500
+const SNAPSHOT_SUBJECTS = Object.freeze({ purchaseRequests: 'purchase_requests', purchaseOrders: 'purchase_orders', supplierInvoices: 'supplier_invoices' })
+
 // The limitations that say some of Today's rows could not be read, so an
-// item whose row is missing is not closed (closableAreas).
+// item whose row is missing is not closed (closableAreas). Design audit
+// 2026-11-15 (L11-04): the truncations the business context and the
+// reorder list reported, and the snapshot lists that filled their limit,
+// were not passed on, so an item whose row was only unread was closed and
+// its decision lost. Sales orders cut where every order with open demand
+// was read are history and do not count.
 export function todayReadLimitations(reader) {
-  return [
+  const raw = reader.raw || {}
+  return [...new Set([
     ...(reader.context.dataLimitations || []),
     ...(reader.read.limitations || []),
+    ...(Array.isArray(raw.truncatedSubjects) ? raw.truncatedSubjects : []).filter((entry) => entry?.subject && !entry.openDemandComplete).map((entry) => `truncated:${entry.subject}`),
+    ...(reader.read.sources?.reorder?.dataLimitations || []).filter((code) => String(code).startsWith('truncated:')),
+    ...Object.entries(SNAPSHOT_SUBJECTS).filter(([key]) => Array.isArray(raw[key]) && raw[key].length >= PROCUREMENT_SNAPSHOT_ROWS).map(([, subject]) => `truncated:${subject}`),
     ...(reader.read.sources?.reorder?.scope?.kind === 'reader_warehouses' ? ['reorder_not_checked_for_warehouse_scope'] : []),
-  ]
+  ])]
 }
 
 // The reader's decision items, raised and closed from this read. A failure

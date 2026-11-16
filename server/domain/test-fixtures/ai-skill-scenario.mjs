@@ -137,6 +137,9 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     supplierInvoiceLine: { findMany: ({ where }) => where.supplierInvoice?.tenantId !== AI_SKILL_TENANT ? [] : data.supplierInvoices.filter((row) => row.status !== 'cancelled').flatMap((row) => array(row.lines)).filter((line) => line.receivingLineId).map((line) => ({ receivingLineId: line.receivingLineId })) },
     payableObligation: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.payables).filter((row) => (!where.status?.in || where.status.in.includes(row.status)) && (where.outstandingAmount?.gt === undefined || Number(row.outstandingAmount) > where.outstandingAmount.gt)) },
     paymentRecord: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.payments).filter((row) => row.status === where.status && where.obligationType.in.includes(row.obligationType) && row.paymentDate >= where.paymentDate.gte && row.paymentDate < where.paymentDate.lt) },
+    // Today's decision items (decision-items.mjs), none unless a test adds
+    // them: by state and record, and only the live ones when asked for.
+    decisionItem: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.decisionItems).filter((row) => (!where.state || row.state === where.state) && (!where.recordId || row.recordId === where.recordId) && (!where.activeKey || Boolean(row.activeKey))) },
     // Suppliers, read by both the minimum order and the scorecard, and one by
     // id for a supplier's detail page (supplier-insights.mjs readActivity).
     supplier: {

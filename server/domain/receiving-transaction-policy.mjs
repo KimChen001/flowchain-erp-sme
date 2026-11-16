@@ -5,6 +5,7 @@ import {
   isPurchaseOrderReceivable,
   isReceivingWorkflowPostable,
 } from './procurement-status-authority.mjs'
+import { itemStockUnit, unitOtherThanStock } from './item-stock-unit.mjs'
 
 const SCALE = 10_000n
 const ZERO = 0n
@@ -97,6 +98,21 @@ const safeUnits = (value, blockingIssues, label) => {
   try { return receivingDecimalUnits(value) } catch (error) { blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `${label}: ${error.message}`)); return null }
 }
 
+// ---- Unit of measure (design audit L1-02 / L3-01) ----
+// A receipt adds its accepted quantity to the stock balance as it is, and no
+// conversion between units is recorded (item-stock-unit.mjs). So a receiving
+// line posts only when its unit and its purchase order line's unit are the
+// item's stock unit, and the receipt is booked in the stock unit. A unit that
+// is not recorded is not judged.
+function receivingUnitPlan({ item, line, poLine }) {
+  const stockUnit = itemStockUnit(item)
+  const other = unitOtherThanStock(stockUnit, [line.unit, poLine.unit])
+  const issueFound = other
+    ? issue('RECEIVING_UNIT_MISMATCH', `Receiving line ${line.id} is in ${other}, but ${receivingText(line.sku)} is stocked in ${stockUnit} and no conversion between the two is recorded. Only a purchase order line in ${stockUnit} can be received.`, 409, { receivingLineId: line.id, purchaseOrderLineId: poLine.id, sku: receivingText(line.sku), unit: other, stockUnit })
+    : null
+  return { unit: stockUnit || receivingText(line.unit || poLine.unit) || null, issue: issueFound }
+}
+
 export async function buildReceivingPostingPlan({ prisma, tenantId, receivingDocument, purchaseOrder }) {
   const blockingIssues = []
   const warnings = []
@@ -121,8 +137,10 @@ export async function buildReceivingPostingPlan({ prisma, tenantId, receivingDoc
     if (!sku || !itemId || sku !== receivingText(poLine.sku) || itemId !== receivingText(poLine.itemId)) {
       blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Receiving line ${line.id} does not match its purchase order item and SKU.`))
     }
-    const item = sku && itemId ? await prisma.item.findFirst({ where: { id: itemId, tenantId, sku }, select: { id: true } }) : null
+    const item = sku && itemId ? await prisma.item.findFirst({ where: { id: itemId, tenantId, sku }, select: { id: true, unit: true, metadata: true } }) : null
     if (!item) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Item ${itemId} / ${sku} is not valid for this tenant.`))
+    const unitPlan = receivingUnitPlan({ item, line, poLine })
+    if (unitPlan.issue) blockingIssues.push(unitPlan.issue)
     const warehouseId = receivingText(line.warehouseId || receivingDocument.warehouseId)
     const warehouse = warehouseId ? await prisma.warehouse.findFirst({ where: { id: warehouseId, tenantId, status: 'active' }, select: { id: true } }) : null
     if (!warehouse) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Warehouse ${warehouseId || '(missing)'} is not active for this tenant.`))
@@ -133,7 +151,7 @@ export async function buildReceivingPostingPlan({ prisma, tenantId, receivingDoc
     acceptedByPoLine.set(poLine.id, acceptedInDocument)
     if (previouslyReceived + acceptedInDocument > ordered) blockingIssues.push(issue('RECEIVING_OVER_RECEIPT', `Receiving line ${line.id} exceeds the purchase order quantity.`))
     const location = receivingText(line.location)
-    quantityPlans.push({ line, poLine, sku, itemId, warehouseId, location, locationKey: receivingLocationKey(location), accepted, rejected })
+    quantityPlans.push({ line, poLine, sku, itemId, warehouseId, location, locationKey: receivingLocationKey(location), accepted, rejected, unit: unitPlan.unit })
   }
 
   const inventoryImpacts = []
