@@ -9,7 +9,9 @@ import { createAdvanceApplicationCommandService } from "./advance-application-co
 import { createAttachmentService } from "./attachment-service.mjs";
 import { createInternalSettlementCommandService } from "./internal-settlement-command-service.mjs";
 import { createInternalTransferCommandService } from "./internal-transfer-command-service.mjs";
+import { loadAuthorizedSyncProjection } from "./mobile-sync-entity-policy.mjs";
 import { createMobileSyncService } from "./mobile-sync-service.mjs";
+import { resolveProvisionedActor } from "./pilot-identity.mjs";
 
 const databaseUrl = process.env.DATABASE_URL_TEST || process.env.DATABASE_URL || "";
 const enabled = Boolean(databaseUrl);
@@ -135,6 +137,77 @@ test("settlement workflow, advance application, internal transfer, and sync feed
     assert.equal((await attachments.cleanupExpiredUploads()).expired, 1);
     assert.equal((await prisma.stagedUpload.findUnique({ where: { id: orphan.uploadId } })).status, "expired");
     await assert.rejects(() => attachments.stageUpload({ fileName: "bad.txt", mimeType: "text/plain", contentBase64: Buffer.from("bad").toString("base64"), sha256: "0".repeat(64) }, finance), (error) => error.code === "UPLOAD_HASH_MISMATCH");
+  } finally {
+    await prisma.$disconnect();
+    await rm(uploadDirectory, { recursive: true, force: true });
+  }
+});
+
+// Design audit L10-02, L10-03 and V-C-02: receiving evidence belongs to every
+// warehouse its receipt touches, the header's and each line's. A clerk who
+// operates only warehouse A cannot download, attach to or delete evidence of a
+// receipt in warehouse B, or of a warehouse A receipt with a line received
+// into B (403), and mobile sync hides those receipts, lines and files.
+test("receiving evidence and receipt sync follow every warehouse of the receipt", { skip: !enabled }, async () => {
+  const uploadDirectory = await mkdtemp(join(tmpdir(), "flowchain-phase52b-receiving-uploads-"));
+  const testEnv = { ...env, FLOWCHAIN_UPLOAD_STORAGE_DIR: uploadDirectory, FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: "true" };
+  const prisma = await createPrismaClient(testEnv);
+  const scopedTenant = "tenant-phase-52b-warehouses";
+  const as = (userId, role) => ({ identity: { authenticated: true, tenantId: scopedTenant, userId, role, source: "test" } });
+  const admin = as("wh52b-admin", "admin"), clerk = as("wh52b-clerk", "manager");
+  try {
+    await prisma.tenant.create({ data: { id: scopedTenant, name: "Phase 5.2B Warehouses" } });
+    await prisma.warehouse.createMany({ data: [{ id: "wh-52b-a", tenantId: scopedTenant, code: "WH-A", name: "Warehouse A" }, { id: "wh-52b-b", tenantId: scopedTenant, code: "WH-B", name: "Warehouse B" }] });
+    await prisma.user.createMany({ data: [{ id: "wh52b-admin", tenantId: scopedTenant, email: "wh52b-admin@example.invalid", name: "Warehouse Admin", role: "admin" }, { id: "wh52b-clerk", tenantId: scopedTenant, email: "wh52b-clerk@example.invalid", name: "Warehouse A Clerk", role: "manager" }] });
+    await backfillTenantAuthorization(prisma, scopedTenant, { actorId: "wh52b-admin" });
+    await prisma.userWarehouseScope.create({ data: { id: "wh52b-clerk-a", tenantId: scopedTenant, userId: "wh52b-clerk", warehouseId: "wh-52b-a", accessLevel: "operate" } });
+    await prisma.receivingDocument.createMany({ data: [
+      { id: "rcv-52b-a", tenantId: scopedTenant, documentNumber: "RCV-52B-A", warehouseId: "wh-52b-a" },
+      { id: "rcv-52b-b", tenantId: scopedTenant, documentNumber: "RCV-52B-B", warehouseId: "wh-52b-b" },
+      { id: "rcv-52b-mixed", tenantId: scopedTenant, documentNumber: "RCV-52B-MIXED", warehouseId: "wh-52b-a" },
+    ] });
+    await prisma.receivingLine.createMany({ data: [
+      { id: "rcv-52b-a-1", receivingDocumentId: "rcv-52b-a", sku: "SKU-A", acceptedQty: "2", warehouseId: "wh-52b-a" },
+      { id: "rcv-52b-mixed-1", receivingDocumentId: "rcv-52b-mixed", sku: "SKU-A", acceptedQty: "1", warehouseId: "wh-52b-a" },
+      { id: "rcv-52b-mixed-2", receivingDocumentId: "rcv-52b-mixed", sku: "SKU-B", acceptedQty: "7", warehouseId: "wh-52b-b" },
+    ] });
+    const attachments = createAttachmentService({ prisma, env: testEnv });
+    const stage = (who, label) => attachments.stageUpload({ fileName: `${label}.txt`, mimeType: "text/plain", contentBase64: Buffer.from(label).toString("base64") }, who);
+    const evidence = async (who, receiptId, label) => attachments.bindReceiving(receiptId, { uploadId: (await stage(who, label)).uploadId }, who);
+    const own = await evidence(clerk, "rcv-52b-a", "own evidence");
+    const other = await evidence(admin, "rcv-52b-b", "other warehouse evidence");
+    const mixed = await evidence(admin, "rcv-52b-mixed", "mixed receipt evidence");
+    const denied = (error) => error.code === "WAREHOUSE_SCOPE_DENIED" && error.status === 403;
+
+    assert.deepEqual((await attachments.download(own.attachmentId, clerk)).bytes, Buffer.from("own evidence"));
+    await assert.rejects(() => attachments.download(other.attachmentId, clerk), denied);
+    await assert.rejects(() => attachments.download(mixed.attachmentId, clerk), denied);
+    assert.deepEqual((await attachments.download(mixed.attachmentId, admin)).bytes, Buffer.from("mixed receipt evidence"));
+    assert.equal(await prisma.auditLog.count({ where: { tenantId: scopedTenant, action: "attachment_downloaded", actorId: "wh52b-clerk" } }), 1);
+
+    const late = await stage(clerk, "late evidence");
+    await assert.rejects(() => attachments.bindReceiving("rcv-52b-b", { uploadId: late.uploadId }, clerk), denied);
+    await assert.rejects(() => attachments.bindReceiving("rcv-52b-mixed", { uploadId: late.uploadId }, clerk), denied);
+    assert.equal((await prisma.stagedUpload.findUnique({ where: { id: late.uploadId } })).status, "staged");
+    await assert.rejects(() => attachments.deleteAttachment(other.attachmentId, clerk), denied);
+    await assert.rejects(() => attachments.deleteAttachment(mixed.attachmentId, clerk), denied);
+    assert.equal(await prisma.receivingAttachment.count({ where: { tenantId: scopedTenant, status: "active" } }), 3);
+    const mixedFeed = await prisma.domainChangeFeed.findFirst({ where: { tenantId: scopedTenant, entityType: "ReceivingDocument", entityId: "rcv-52b-mixed" } });
+    assert.deepEqual([...mixedFeed.scopeWarehouseIds].sort(), ["wh-52b-a", "wh-52b-b"]);
+
+    // The same rule on a device, read through the real Prisma client.
+    const clerkActor = await resolveProvisionedActor(prisma, clerk.identity);
+    const sync = (entityType, entityId) => loadAuthorizedSyncProjection({ prisma, tenant: { operationalSettings: {} }, actor: clerkActor, entityType, entityId, env: testEnv });
+    assert.equal((await sync("ReceivingDocument", "rcv-52b-a")).documentNumber, "RCV-52B-A");
+    assert.equal(await sync("ReceivingDocument", "rcv-52b-mixed"), null);
+    assert.equal(await sync("ReceivingDocument", "rcv-52b-b"), null);
+    assert.equal((await sync("ReceivingLine", "rcv-52b-a-1")).sku, "SKU-A");
+    assert.equal(await sync("ReceivingLine", "rcv-52b-mixed-1"), null);
+    assert.equal((await sync("ReceivingAttachment", own.attachmentId)).fileName, "own evidence.txt");
+    assert.equal(await sync("ReceivingAttachment", other.attachmentId), null);
+    assert.equal(await sync("ReceivingAttachment", mixed.attachmentId), null);
+
+    assert.equal((await attachments.deleteAttachment(own.attachmentId, clerk)).status, "deleted");
   } finally {
     await prisma.$disconnect();
     await rm(uploadDirectory, { recursive: true, force: true });

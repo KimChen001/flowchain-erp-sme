@@ -72,16 +72,24 @@ function snapshotHash(snapshot = {}) {
   return createHash('sha256').update(stableStringify(body)).digest('hex')
 }
 
-function scopeFromCommitBody(body = {}) {
-  return body.scope || body.normalizedSnapshot?.scope || {
-    tenantId: text(body.tenantId),
-    userId: text(body.userId),
-  }
+// The workspace and user a request acts for are the signed-in session's,
+// never a tenantId, userId or scope in the query or body (design audit
+// L4-32): those are not read, a payload is normalized under the session's
+// scope, and a commit whose snapshot names another workspace or user is
+// refused.
+function sessionScope(identity) {
+  return { tenantId: text(identity?.tenantId), userId: text(identity?.userId) }
 }
 
-async function resolveCommitSnapshot(body = {}, repositories = {}) {
+const sameScope = (left = {}, right = {}) => text(left?.tenantId) === right.tenantId && text(left?.userId) === right.userId
+
+function withSessionScope(body, scope) {
+  const root = body && typeof body === 'object' && !Array.isArray(body) ? body : {}
+  return { ...root, tenantId: scope.tenantId, userId: scope.userId, scope }
+}
+
+async function resolveCommitSnapshot(body = {}, repositories = {}, scope) {
   const previewId = text(body.previewId || body.normalizedSnapshot?.previewId)
-  const scope = scopeFromCommitBody(body)
   if (previewId && repositories.userDataRuntime?.getPreviewSnapshot) {
     const preview = await repositories.userDataRuntime.getPreviewSnapshot({ scope, previewId })
     if (preview?.normalizedSnapshot) return preview.normalizedSnapshot
@@ -267,12 +275,14 @@ function boundaryViolation(code) {
 
 export async function handleUserDataRoute(ctx) {
   const { req, res, url, send, readBody, db, repositories = {} } = ctx
+  if (!url.pathname.startsWith('/api/user-data/')) return false
+  const scope = sessionScope(ctx.identity)
+  if (!ctx.identity?.authenticated || !scope.tenantId || !scope.userId) {
+    send(res, 401, { ok: false, errors: [{ code: 'session_scope_required', message: 'Sign in to a workspace to use user data import.', path: 'session', severity: 'error' }], writesFiles: false, writesDb: false, overwritesDemoData: false })
+    return true
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/user-data/active-dataset') {
-    const scope = {
-      tenantId: text(url.searchParams.get('tenantId')),
-      userId: text(url.searchParams.get('userId')),
-    }
     const dataset = await repositories.userDataRuntime?.getActiveDataset?.(scope)
     send(res, 200, compactActiveDatasetPayload(scope, dataset))
     return true
@@ -288,13 +298,8 @@ export async function handleUserDataRoute(ctx) {
     }
 
     const errors = []
-    const scope = {
-      tenantId: text(body?.scope?.tenantId || body?.tenantId),
-      userId: text(body?.scope?.userId || body?.userId),
-    }
     const importBatchId = text(body?.importBatchId)
     if (!commitFeatureEnabled()) addCommitIssue(errors, 'user_import_deactivate_disabled', `Deactivate requires ${ENABLE_USER_IMPORT_COMMIT_FLAG}=true.`, ENABLE_USER_IMPORT_COMMIT_FLAG)
-    if (!scope.tenantId || !scope.userId) addCommitIssue(errors, 'missing_scope', 'Deactivate requires tenantId and userId scope.', 'scope')
     if (!importBatchId) addCommitIssue(errors, 'missing_import_batch_id', 'Deactivate requires importBatchId.', 'importBatchId')
     if (body?.confirmDeactivate !== true) addCommitIssue(errors, 'missing_confirmation', 'Deactivate requires confirmDeactivate=true.', 'confirmDeactivate')
     if (errors.length) {
@@ -363,7 +368,7 @@ export async function handleUserDataRoute(ctx) {
     }
 
     const before = JSON.stringify(db)
-    const snapshot = await resolveCommitSnapshot(body, repositories)
+    const snapshot = await resolveCommitSnapshot(body, repositories, scope)
     const result = snapshot
       ? {
           ok: snapshot.validationSummary?.ok !== false,
@@ -380,7 +385,7 @@ export async function handleUserDataRoute(ctx) {
           normalizedSnapshot: snapshot,
           importPreview: {},
         }
-      : normalizeUserDataImportPayload(body, { importedAt: new Date().toISOString() })
+      : normalizeUserDataImportPayload(withSessionScope(body, scope), { importedAt: new Date().toISOString() })
     if (JSON.stringify(db) !== before) {
       ctx.reportError?.(boundaryViolation('commit_boundary_mutation_detected'))
       send(res, 500, {
@@ -392,6 +397,11 @@ export async function handleUserDataRoute(ctx) {
         writesDb: false,
         overwritesDemoData: false,
       })
+      return true
+    }
+
+    if (snapshot && !sameScope(snapshot.scope, scope)) {
+      send(res, 403, { ok: false, commitAccepted: false, errors: [{ code: 'scope_mismatch', message: 'The preview snapshot belongs to another workspace or user.', path: 'normalizedSnapshot.scope', severity: 'error' }], warnings: [], recordCounts: {}, writesFiles: false, writesDb: false, overwritesDemoData: false })
       return true
     }
 
@@ -502,7 +512,7 @@ export async function handleUserDataRoute(ctx) {
     }
 
     const before = JSON.stringify(db)
-    const result = normalizeUserDataImportPayload(body, { importedAt: new Date().toISOString() })
+    const result = normalizeUserDataImportPayload(withSessionScope(body, scope), { importedAt: new Date().toISOString() })
     if (JSON.stringify(db) !== before) {
       ctx.reportError?.(boundaryViolation('dry_run_mutation_detected'))
       send(res, 500, {

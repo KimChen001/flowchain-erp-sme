@@ -169,3 +169,54 @@ test("PostgreSQL repository registry exposes no legacy procurement runtime", () 
   });
   assert.equal("procurementLegacyRuntime" in registry, false);
 });
+
+// Design audit L10-03 and V-C-02: a receipt, its lines and its evidence reach a
+// device only for a reader of every warehouse the receipt touches, its header's
+// and each line's, as on the web. Evidence and lines are read with their
+// receipt; one whose receipt cannot be read is hidden, not shown by default.
+test("receipts, receipt lines and receipt evidence sync only to readers of every receipt warehouse", async () => {
+  const receipts = {
+    "rcv-a": { id: "rcv-a", tenantId: "tenant-a", documentNumber: "RCV-A", warehouseId: "warehouse-a", lines: [{ id: "line-a", warehouseId: "warehouse-a", sku: "SKU-A", acceptedQty: "2" }] },
+    "rcv-mixed": { id: "rcv-mixed", tenantId: "tenant-a", documentNumber: "RCV-MIXED", warehouseId: "warehouse-a", lines: [{ id: "line-mixed-a", warehouseId: "warehouse-a", sku: "SKU-A", acceptedQty: "1" }, { id: "line-mixed-b", warehouseId: "warehouse-b", sku: "SKU-B", acceptedQty: "7" }] },
+    "rcv-b": { id: "rcv-b", tenantId: "tenant-a", documentNumber: "RCV-B", warehouseId: "warehouse-b", lines: [{ id: "line-b", warehouseId: null, sku: "SKU-B", acceptedQty: "3" }] },
+    "rcv-legacy": { id: "rcv-legacy", tenantId: "tenant-a", documentNumber: "RCV-OLD", warehouseId: null, lines: [{ id: "line-legacy", warehouseId: null, sku: "SKU-OLD", acceptedQty: "1" }] },
+  };
+  const lineReceipt = Object.fromEntries(Object.values(receipts).flatMap((receipt) => receipt.lines.map((line) => [line.id, receipt])));
+  const includes = [];
+  const prisma = {
+    receivingDocument: { findFirst: async ({ where }) => receipts[where.id] || null },
+    receivingLine: { findFirst: async ({ where, include }) => { includes.push(["ReceivingLine", include]); const receipt = lineReceipt[where.id]; const line = receipt?.lines.find((row) => row.id === where.id); return line ? { ...line, receivingDocumentId: receipt.id, ...(include?.receivingDocument ? { receivingDocument: receipt } : {}) } : null; } },
+    receivingAttachment: { findFirst: async ({ where, include }) => { includes.push(["ReceivingAttachment", include]); const receiptId = where.id.replace(/^attachment-/, ""); const known = receiptId in receipts || receiptId === "orphan"; return known ? { id: where.id, tenantId: "tenant-a", receivingDocumentId: receiptId, fileName: `${receiptId}.pdf`, mimeType: "application/pdf", sizeBytes: 10, sha256: "a".repeat(64), status: "active", ...(include?.receivingDocument ? { receivingDocument: receipts[receiptId] || null } : {}) } : null; } },
+  };
+  const readerA = actor(["receiving.read"], { readWarehouseIds: ["warehouse-a"] });
+  const readerAB = actor(["receiving.read"], { readWarehouseIds: ["warehouse-a", "warehouse-b"] });
+  const sync = (who, entityType, entityId) => loadAuthorizedSyncProjection({ prisma, tenant: { operationalSettings: {} }, actor: who, entityType, entityId, env: enabledReceiving });
+
+  // The header is warehouse A, but one line was received into warehouse B.
+  assert.equal(await sync(readerA, "ReceivingDocument", "rcv-mixed"), null);
+  assert.deepEqual((await sync(readerAB, "ReceivingDocument", "rcv-mixed")).lines.map((line) => line.warehouseId), ["warehouse-a", "warehouse-b"]);
+  assert.equal((await sync(readerA, "ReceivingDocument", "rcv-a")).documentNumber, "RCV-A");
+  assert.equal(await sync(readerA, "ReceivingDocument", "rcv-b"), null);
+
+  // A line follows its whole receipt, also when it names no warehouse itself.
+  assert.equal(await sync(readerA, "ReceivingLine", "line-mixed-a"), null);
+  assert.equal(await sync(readerA, "ReceivingLine", "line-b"), null);
+  assert.equal((await sync(readerAB, "ReceivingLine", "line-b")).sku, "SKU-B");
+  assert.equal((await sync(readerA, "ReceivingLine", "line-a")).sku, "SKU-A");
+
+  // Evidence follows its receipt; evidence whose receipt is not read is hidden.
+  assert.equal(await sync(readerA, "ReceivingAttachment", "attachment-rcv-b"), null);
+  assert.equal(await sync(readerA, "ReceivingAttachment", "attachment-rcv-mixed"), null);
+  assert.equal(await sync(readerAB, "ReceivingAttachment", "attachment-orphan"), null);
+  const evidence = await sync(readerA, "ReceivingAttachment", "attachment-rcv-a");
+  assert.deepEqual([evidence.fileName, evidence.warehouseId], ["rcv-a.pdf", "warehouse-a"]);
+  assert.equal((await sync(readerAB, "ReceivingAttachment", "attachment-rcv-mixed")).fileName, "rcv-mixed.pdf");
+
+  // A receipt recorded without any warehouse stays visible to receiving
+  // readers, as the web receiving list shows it.
+  assert.equal((await sync(readerA, "ReceivingDocument", "rcv-legacy")).documentNumber, "RCV-OLD");
+  assert.equal((await sync(readerA, "ReceivingAttachment", "attachment-rcv-legacy")).fileName, "rcv-legacy.pdf");
+
+  // Lines and evidence are read with their receipt's warehouses.
+  for (const [entityType, include] of includes) assert.deepEqual(include, { receivingDocument: { include: { lines: { select: { warehouseId: true } } } } }, entityType);
+});
