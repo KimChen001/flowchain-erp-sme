@@ -101,3 +101,45 @@ test('an unposted receipt reads Not posted', () => {
   assert.equal(statusCodeLabel('unposted', 'en-US'), 'Not posted')
   assert.equal(statusCodeLabel('unposted', 'zh-CN'), '未过账')
 })
+
+// B1, part 2 (after #323): Today's counts, the priorities page, the request's
+// wording and status, and the supplier invoice that is not found.
+test('Needs action is never fewer than Overdue: both count the same rows (L6-03, L7-11, L6-04)', async () => {
+  const { todayTileCounts } = await import('../../src/modules/overview/todayRows.ts')
+  // Fourteen of twenty rows overdue, three of them decision cards; one set aside.
+  const overview = { workTotal: 20, overdue: 14, decisions: { available: true, setAside: [{ key: 'purchase_order_overdue:PO-1', row: { overdueDays: 3 } }] } }
+  assert.deepEqual(todayTileCounts(overview), { work: 19, overdue: 13 })
+  // Any mix of rows and set-aside rows (the set-aside rows are among the rows).
+  let seed = 7
+  const next = () => (seed = (seed * 48271) % 2147483647) / 2147483647
+  for (let run = 0; run < 500; run += 1) {
+    const rows = Array.from({ length: 1 + Math.floor(next() * 40) }, (_, index) => ({ key: `row:${index}`, overdue: next() < 0.6 }))
+    const aside = rows.filter(() => next() < 0.2).map((row) => ({ key: row.key, row: { overdueDays: row.overdue ? 2 : 0 } }))
+    const counts = todayTileCounts({ workTotal: rows.length, overdue: rows.filter((row) => row.overdue).length, decisions: { available: true, setAside: aside } })
+    assert.ok(counts.work >= counts.overdue, JSON.stringify(counts))
+  }
+  for (const page of ['src/modules/overview/Page.tsx', 'src/modules/overview/AiSuggestionsPage.tsx']) assert.match(await read(page), /todayTileCounts\(overview/, page)
+})
+
+test('the priorities tab is named for what it shows, with no AI in its name (L6-04)', async () => {
+  assert.match(await read('src/app/routeRegistry.tsx'), /label: "重点事项"/)
+  assert.match(await read('src/i18n/workspaceCopy.ts'), /'重点事项': 'Priorities'/)
+  assert.doesNotMatch(await read('src/app/routeRegistry.tsx'), /label: "AI 重点"/)
+})
+
+test('a purchase request is 驳回 and reads Pending approval while it waits (U-04, U-11)', async () => {
+  const page = await read('src/modules/purchase-requests/CanonicalProcurementPanel.tsx')
+  assert.doesNotMatch(page, /拒绝/)
+  assert.match(page, /reject: \["Reject", "驳回"\]/)
+  assert.match(page, /status === "submitted" \? statusCodeLabel\("pending_approval", language\)/)
+  assert.equal(statusCodeLabel('pending_approval', 'en-US'), 'Pending approval')
+})
+
+test('a supplier invoice that is not found says why a typed number may not open it (L1-24)', async () => {
+  const page = await read('src/modules/finance/SupplierInvoiceScreens.tsx')
+  assert.match(page, /failure === "notFound" && <>/)
+  assert.match(page, /data-testid="supplier-invoice-not-found-hint">\{t\("finance\.billNotFoundHint"\)\}/)
+  const i18n = await read('src/i18n/I18n.tsx')
+  assert.match(i18n, /"finance\.billNotFoundHint": "An invoice number can repeat between suppliers/)
+  assert.match(i18n, /"finance\.billNotFoundHint": "不同供应商的发票号可能相同/)
+})

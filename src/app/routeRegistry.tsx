@@ -86,7 +86,8 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     path: "/app/overview/ai",
     moduleId: "overview",
     moduleLabel: "首页",
-    label: "AI 重点",
+    // Named for what it shows: no model is involved (design audit L6-04).
+    label: "重点事项",
     description: "查看今天最需要处理的业务重点。",
     parentId: "overview",
     pageType: "analysis",

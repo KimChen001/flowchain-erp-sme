@@ -14,7 +14,7 @@ import { unitLabel } from "../../i18n/unitLabels";
 import { documentStatusLabel } from "../../i18n/statusLabels";
 import { reorderListText } from "../inventory/reorderListCopy";
 import { useTodayCopy, type TodayCopyKey } from "./todayCopy";
-import { groupsByKind, reorderRequestHref, type ReorderRequest } from "./todayRows";
+import { groupsByKind, reorderRequestHref, type ReorderRequest, todayTileCounts } from "./todayRows";
 import { DecisionSection, type TodayDecisions } from "./DecisionCards";
 import { useTodayRowFormat } from "./todayRowFormat";
 
@@ -171,8 +171,10 @@ function RuntimeHomepage() {
   // Rows with a decision card, or set aside, leave Today's work.
   const decisionKeys = new Set([...waiting, ...setAside].map((entry) => entry.key));
   const items = (overview?.workItems || []).filter((item) => !decisionKeys.has(`${item.kind}:${item.recordId}`));
-  const workTotal = Math.max(0, (overview?.workTotal ?? 0) - decisionKeys.size);
-  const overdueTotal = Math.max(0, (overview?.overdue ?? 0) - setAside.filter((entry) => entry.row.overdueDays > 0).length);
+  // Both tiles count the same rows, Today's work and the decisions waiting on
+  // it, less what was set aside (todayTileCounts). The list below and the
+  // decision cards show those rows.
+  const { work: workTotal, overdue: overdueTotal } = todayTileCounts(overview);
   const shown = filter === "overdue" ? items.filter((item) => item.overdueDays > 0) : items;
   // One line per kind, in the order of each kind's earliest row.
   const groups = groupsByKind(shown);

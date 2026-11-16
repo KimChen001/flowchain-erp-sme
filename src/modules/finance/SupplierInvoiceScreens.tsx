@@ -1044,6 +1044,11 @@ export function SupplierInvoiceDetail() {
       <Card className="py-16 text-center" data-testid={testId}>
         <div className="text-sm font-semibold">{text}</div>
         <div className="mt-2 text-xs text-slate-500">{id}</div>
+        {/* Invoice numbers repeat between suppliers, so a typed number may not open one (design audit L1-24). */}
+        {failure === "notFound" && <>
+          <p className="mx-auto mt-3 max-w-md text-xs text-slate-500" data-testid="supplier-invoice-not-found-hint">{t("finance.billNotFoundHint")}</p>
+          <Link to="/app/procurement/bills" className="mt-2 inline-block text-sm font-semibold text-blue-600 hover:underline">{t("finance.billListLink")}</Link>
+        </>}
         {failure === "error" && <button type="button" onClick={load} className="mt-3 text-sm font-semibold text-blue-600">{t("finance.retry")}</button>}
       </Card>
       </div>

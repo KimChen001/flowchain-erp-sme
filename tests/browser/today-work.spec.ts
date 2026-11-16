@@ -38,7 +38,9 @@ function split(overview: Overview) {
   return {
     waiting,
     work,
-    workTotal: overview.workTotal - keys.size,
+    // Needs action and Overdue count the same rows: the work and its decisions,
+    // less those set aside (design audit L6-03).
+    workTotal: overview.workTotal - new Set(aside.map((entry) => entry.key)).size,
     overdue: overview.overdue - aside.filter((entry) => entry.row.overdueDays > 0).length,
   };
 }

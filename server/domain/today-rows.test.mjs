@@ -94,7 +94,7 @@ test('Today groups its work by kind, links a reorder row to its request and asks
 // of work in its first rows; on a phone Today's reorder links were 16 px tall.
 test('AI priorities shows Today\'s first rows with their dates', () => {
   const page = read('src/modules/overview/AiSuggestionsPage.tsx')
-  assert.match(page, /import \{ firstRowsByKind \} from "\.\/todayRows"/)
+  assert.match(page, /import \{ firstRowsByKind, todayTileCounts \} from "\.\/todayRows"/)
   assert.match(page, /const shown = firstRowsByKind\(items, SHOWN\)/)
   assert.doesNotMatch(page, /items\.filter\(\(item\) => item\.overdueDays > 0\)/)
   assert.doesNotMatch(page, /overdue and earliest first/)
