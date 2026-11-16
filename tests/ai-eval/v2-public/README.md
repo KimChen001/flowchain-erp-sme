@@ -66,10 +66,10 @@ What the scoring counts (design audit 2026-11-15, L5-16 and L5-18):
   asked by the manager. The others still take turns by their place in the
   list. A turn can name the open record, report a click (`formResults`) or
   set the panel's language apart from the question's (`uci-path-cases.mjs`).
+- A small count may be written as a word ("Four posted receipts", 两张订单).
 - Rescoring the 2026-11-13 run (105 answers) this way gives 90 instead of 89:
   late-orders-zh now passes on the language fix of #322. The 2026-11-14 money
-  run gives 14 of 17 instead of 15: not-invoiced-en gave its count of 4 on a
-  card only.
+  run stays at 15 of 17.
 
 One run varies: on DeepSeek V4.1 Flash, 11 cases passed in one run and failed
 in the next, and 9 the other way. To judge a change, run it with

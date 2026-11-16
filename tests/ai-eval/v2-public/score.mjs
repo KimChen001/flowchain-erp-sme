@@ -64,6 +64,20 @@ export function numbersIn(value) {
   return numbers
 }
 
+// Small counts written as words: "Four posted receipts", 两张订单. Once figures
+// were matched in the answer's words only, not-invoiced-en's right answer
+// ("Four posted receipts have no supplier invoice") failed on its 4
+// (2026-11-15). Up to twenty in English ("one of" is not a count); a Chinese
+// numeral before a measure word.
+const EN_COUNTS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
+const ZH_COUNTS = Object.freeze({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 })
+export function countWordsIn(value) {
+  const text = String(value ?? '')
+  const english = [...text.matchAll(new RegExp(String.raw`\b(${EN_COUNTS.join('|')})\b(?!\s+of\b)`, 'gi'))].map((match) => EN_COUNTS.indexOf(match[1].toLowerCase()))
+  const chinese = [...text.matchAll(/(?<![一二两三四五六七八九十百千万\d])([一二两三四五六七八九十])(?=\s*(?:张|个|家|件|笔|条|项|次|天|位|份|批|单|种))/g)].map((match) => ZH_COUNTS[match[1]])
+  return [...english, ...chinese]
+}
+
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
 
 // The ways an answer may write a date (YYYY-MM-DD).
@@ -245,7 +259,7 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
   // column of every row (design audit 2026-11-15, L5-16: a lead time of 14
   // was "found" in any supplier table). A figure a table must show is a
   // `quantities` check, on the row that names its SKU.
-  const numbers = numbersIn(answer.text || '')
+  const numbers = [...numbersIn(answer.text || ''), ...countWordsIn(answer.text)]
   for (const { label, value, anyOf, tolerance = 0 } of expect.numbers || []) {
     const wanted = anyOf || [value]
     const near = numbers.find((number) => wanted.some((target) => Math.abs(number - target) <= tolerance + 1e-9))

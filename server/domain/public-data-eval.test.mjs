@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { publicDataItem, readPublicDataInstance, readPublicDataInstances } from '../../scripts/public-data-instance.mjs'
 import { buildCases, inventoryWorth, itemEconomics, readReference } from '../../tests/ai-eval/v2-public/cases.mjs'
-import { answerLanguage, dateForms, englishRun, numbersIn, repeatedPart, scoreAnswer, tidyProblems } from '../../tests/ai-eval/v2-public/score.mjs'
+import { answerLanguage, countWordsIn, dateForms, englishRun, numbersIn, repeatedPart, scoreAnswer, tidyProblems } from '../../tests/ai-eval/v2-public/score.mjs'
 import { uciEconomics, uciFacts } from '../../tests/ai-eval/v2-public/uci-facts.mjs'
 import { buildUciCases, lastWholeMonths } from '../../tests/ai-eval/v2-public/uci-cases.mjs'
 
@@ -389,6 +389,10 @@ test('scoring is on the answer\'s words, on calls that ran, and the UCI cases sa
   const answer = { status: 200, text: '22423 is bought from Acme.', ui: [{ component: 'table', props: { rows: [{ sku: '22423', supplier: 'Acme', leadTimeDays: 14 }] } }], flags: [], errors: [], tools: [] }
   assert.equal(scoreAnswer(answer, { numbers: [{ label: 'lead time', value: 14 }] }).checks.find((check) => check.name === 'number: lead time').ok, false)
   assert.equal(scoreAnswer({ ...answer, text: '22423 takes 14 days from Acme.' }, { numbers: [{ label: 'lead time', value: 14 }] }).checks.find((check) => check.name === 'number: lead time').ok, true)
+  // A count written as a word is the answer's (not-invoiced-en: "Four posted receipts").
+  const receipts = { ...answer, text: 'Four posted receipts have no supplier invoice against them yet.' }
+  assert.equal(scoreAnswer(receipts, { numbers: [{ label: 'receipts', value: 4 }] }).checks.find((check) => check.name === 'number: receipts').ok, true)
+  assert.deepEqual(countWordsIn('One of the orders is late; two suppliers, 两张订单，十二张发票，三家供应商。'), [2, 2, 3])
   // A figure the role may not see fails the case wherever it shows.
   assert.equal(scoreAnswer(answer, { numbersAbsent: [{ label: 'lead time', value: 14 }] }).checks.find((check) => check.name === 'no number: lead time').ok, false)
   // A call that failed is not a call.
