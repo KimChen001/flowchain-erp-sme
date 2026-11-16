@@ -78,6 +78,20 @@ const EITHER_RECORD_MOVEMENT_TYPES = [
   "supplier_return_reversal",
 ];
 
+// True for a movement of the quarantine stock record at a stock key: it never
+// changed the available stock record that shares the key, so ledgers of the
+// available record (the receipt reversal replay and the receiving
+// reconciliation) leave it out (L8-18). A supplier return without a recorded
+// balance type counts as available, as above.
+export function isQuarantineRecordMovement(movement) {
+  const type = text(movement?.movementType);
+  if (QUARANTINE_ONLY_MOVEMENT_TYPES.includes(type)) return true;
+  return (
+    EITHER_RECORD_MOVEMENT_TYPES.includes(type) &&
+    movement?.metadata?.balanceType === "quarantine"
+  );
+}
+
 // Opening stock is for a stock record with no history. A record that receipts,
 // transfers, shipments or other entries have touched may not take an opening
 // entry, even after it has been emptied. Two kinds of movement do not count:

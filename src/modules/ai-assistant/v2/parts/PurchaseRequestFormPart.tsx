@@ -46,7 +46,7 @@ export type FormLine = {
   override: { reasonCode: string; note: string };
 };
 type Block = "quantity" | "supplier" | "override" | "reason" | "terms" | "price";
-type CatalogItem = { itemId?: string; id?: string; sku: string; itemName?: string; name?: string; purchaseUnit?: string; baseUnit?: string; defaultWarehouseId?: string };
+type CatalogItem = { itemId?: string; id?: string; sku: string; itemName?: string; name?: string; purchaseUnit?: string; baseUnit?: string; stockUnit?: string; defaultWarehouseId?: string };
 export type ItemSupplier = { id: string; name?: string; supplierName?: string; preferred?: boolean; referencePrice?: number | string | null; currency?: string | null; leadTimeDays?: number | string | null; restrictedFields?: string[] };
 // A supplier as the Suppliers list sends it (GET /api/master-data/suppliers).
 export type WorkspaceSupplier = { id: string; name?: string; supplierName?: string; status?: string; defaultCurrency?: string | null };
@@ -262,6 +262,12 @@ export async function createFormRequest({ ticked, props, ids, post, linked = {} 
   }
 }
 
+// The new suppliers this form made approved suppliers of their items (on this
+// click or an earlier one), by name, for the message when the request then fails.
+export function supplierNamesLinked(ticked: FormLine[], linked: Record<string, string>) {
+  return [...new Set(ticked.filter((line) => isNewSupplier(line) && linked[line.key] === line.supplierId).map((line) => optionOf(line)?.name || "").filter(Boolean))];
+}
+
 function errorText(error: unknown, copy: PartCopy) {
   // Server messages are not shown: the domain's are Chinese-only. Codes are worded here.
   const key = `ai.v2.error.${error instanceof ApiError ? error.code || "" : ""}`;
@@ -360,7 +366,10 @@ export function addedFormRow(item: CatalogItem, sources: ItemSupplier[], today: 
   const masked = sources.some((source) => source.restrictedFields?.includes("referencePrice"));
   const lead = chosen?.leadTimeDays ?? null;
   return {
-    item: { id: itemId, sku: item.sku, name: item.itemName || item.name || "", unit: item.purchaseUnit || item.baseUnit || null },
+    // In the stock unit, as the classic form builds a line: no conversion between
+    // units is recorded, so the server refuses any other unit. An item without
+    // a recorded stock unit keeps its purchase unit, as the server does.
+    item: { id: itemId, sku: item.sku, name: item.itemName || item.name || "", unit: item.stockUnit || item.purchaseUnit || item.baseUnit || null },
     suggestedQuantity: { value: null, source: "user_named" },
     supplier: chosen ? { id: chosen.id, name: chosen.name, source: chosen.preferred ? "preferred" : "only_approved" } : null,
     suppliers,
@@ -515,7 +524,10 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
         return;
       }
       if (outcome.status === "request_failed") {
-        setError(errorText(outcome.failure, copy));
+        // A supplier this form added stays added: say so, since the request
+        // was not created (design audit L5-24).
+        const names = supplierNamesLinked(ticked, outcome.linked);
+        setError([names.length ? copy.t("ai.v2.form.requestFailedAfterSupplier", { names: names.join(copy.language === "zh-CN" ? "、" : ", ") }) : "", errorText(outcome.failure, copy)].filter(Boolean).join(" "));
         return;
       }
       const { created } = outcome;

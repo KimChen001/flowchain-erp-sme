@@ -7,6 +7,7 @@ import { paymentRecordsView } from "./payment-record-command-service.mjs";
 import { CUSTOMER_NAMESPACE } from "./master-data-commands.mjs";
 import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from "./tenant-calendar-day.mjs";
 import { SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES } from "./outbound-transaction-policy.mjs";
+import { uncreditedReturnedQuantities } from "./return-quantity-ledger.mjs";
 
 // Cancelling a customer invoice (cancel_customer_invoice) is the preparer's
 // step, as revising and cancelling a supplier invoice is
@@ -711,16 +712,10 @@ export function createOperationalFinanceO2cReadService({
     const focused = Boolean(salesOrderFilter || shipmentFilter);
     // No invoice number is suggested: the server assigns it when the draft is
     // created (CI-YYYYMM-NNNN).
-    const [tenant, customerRecords, paymentTerms] = await Promise.all([
+    const [tenant, paymentTerms] = await Promise.all([
       prisma.tenant.findUnique({ where: { id: current.tenantId }, select: { timezone: true } }),
-      prisma.runtimeRecord.findMany({ where: { tenantId: current.tenantId, namespace: CUSTOMER_NAMESPACE }, select: { payload: true }, take: 2000 }),
       prisma.paymentTerm.findMany({ where: { tenantId: current.tenantId }, select: { code: true, name: true, days: true } }),
     ]);
-    const customerTerms = new Map(customerRecords.map((record) => [String(record.payload?.id ?? ""), customerPaymentTerm(record.payload?.paymentTerms, paymentTerms)]));
-    // The terms as recorded on the customer, so the form can say that they
-    // name no payment term of the workspace instead of leaving the due date
-    // blank without a word.
-    const customerTermsText = new Map(customerRecords.map((record) => [String(record.payload?.id ?? ""), text(record.payload?.paymentTerms) || null]));
     const [shipments, invoices, returnPostings, sourceOrder, sourceShipment] = await Promise.all([
       prisma.shipmentDocument.findMany({
         where: {
@@ -767,6 +762,20 @@ export function createOperationalFinanceO2cReadService({
         ? prisma.shipmentDocument.findFirst({ where: { tenantId: current.tenantId, OR: [{ id: shipmentFilter }, { shipmentNumber: shipmentFilter }] }, select: { id: true, shipmentNumber: true, salesOrderId: true } })
         : null,
     ]);
+    // The terms of the customers these shipments are for, read by their ids
+    // (design audit V-B-03: the first 2,000 customer rows, unordered, left a
+    // customer past them with no terms and a blank due date).
+    const customerIds = [...new Set(shipments.map((row) => text(row.salesOrder?.customerId)).filter(Boolean))];
+    const customerRecords = [];
+    for (let start = 0; start < customerIds.length; start += 100) {
+      const ids = customerIds.slice(start, start + 100);
+      customerRecords.push(...await prisma.runtimeRecord.findMany({ where: { tenantId: current.tenantId, namespace: CUSTOMER_NAMESPACE, OR: ids.map((id) => ({ payload: { path: ["id"], equals: id } })) }, select: { payload: true } }));
+    }
+    const customerTerms = new Map(customerRecords.map((record) => [String(record.payload?.id ?? ""), customerPaymentTerm(record.payload?.paymentTerms, paymentTerms)]));
+    // The terms as recorded on the customer, so the form can say that they
+    // name no payment term of the workspace instead of leaving the due date
+    // blank without a word.
+    const customerTermsText = new Map(customerRecords.map((record) => [String(record.payload?.id ?? ""), text(record.payload?.paymentTerms) || null]));
     // What each shipment line is already invoiced for, and on which invoices.
     const lineIds = shipments.flatMap((row) => row.lines.map((line) => line.id));
     const onInvoices = lineIds.length
@@ -787,11 +796,20 @@ export function createOperationalFinanceO2cReadService({
       if (invoice && !listed.some((entry) => entry.id === invoice.id)) listed.push({ id: invoice.id, invoiceNumber: invoice.invoiceNumber, status: invoice.status });
       invoicesByLine.set(row.shipmentLineId, listed);
     }
+    // Goods the customer sent back and no approved credit note covers are not
+    // left to invoice: the same rule the invoice check applies (L8-08).
+    const returnsByLine = await uncreditedReturnedQuantities({
+      prisma,
+      tenantId: current.tenantId,
+      sourceDocumentType: "ShipmentDocument",
+      sourceLineIds: lineIds,
+    });
     const shipmentView = (row) => {
       const lines = row.lines.map((line) => {
         const posted = units(line.postedQuantity);
         const invoiced = invoicedByLine.get(line.id) || 0n;
-        const left = posted > invoiced ? posted - invoiced : 0n;
+        const returned = returnsByLine.get(line.id)?.uncredited || 0n;
+        const left = posted > invoiced + returned ? posted - invoiced - returned : 0n;
         return {
           id: line.id,
           salesOrderLineId: line.salesOrderLineId,
@@ -801,6 +819,8 @@ export function createOperationalFinanceO2cReadService({
           postedQuantity: decimal(line.postedQuantity),
           // On a draft or on an invoice that holds the shipment.
           invoicedQuantity: fixed(invoiced),
+          // Sent back by the customer and not yet credited (L8-08).
+          returnedQuantity: fixed(returned),
           remainingQuantity: fixed(left),
           unit: line.unit,
           unitPrice: amountsVisible ? decimal(line.salesOrderLine.unitPrice) : null,

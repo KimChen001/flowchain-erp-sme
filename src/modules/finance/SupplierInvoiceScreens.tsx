@@ -167,13 +167,33 @@ export function NewSupplierInvoice() {
   const [saveError, setSaveError] = useState("");
   const [saveErrorCode, setSaveErrorCode] = useState<string | undefined>();
   useEffect(() => {
-    void apiJson<EntryData>("/api/finance/entry-data")
+    // Opened from an order or a receipt, the server reads that one whatever
+    // its age (design audit L2-12: only the newest 100 were offered).
+    const opened = new URLSearchParams(window.location.search);
+    const source = new URLSearchParams();
+    for (const key of ["po", "receipt"]) if (opened.get(key)) source.set(key, opened.get(key) || "");
+    void apiJson<EntryData>(`/api/finance/entry-data${source.toString() ? `?${source.toString()}` : ""}`)
       .then((data) => {
         rememberDocumentNumbers("purchase_order", data?.purchaseOrders, (row) => [row.id, row.number]);
         setEntry(data);
       })
       .catch((reason) => setNotice(message(reason, t("finance.loadFailed"))));
   }, []);
+  // A chosen supplier brings its own newest orders and receipts, so an order
+  // older than the newest 100 of the workspace can still be billed (L2-12).
+  const loadSupplierDocuments = (supplier: string) => {
+    if (!supplier) return;
+    void apiJson<EntryData>(`/api/finance/entry-data?${new URLSearchParams({ supplier }).toString()}`)
+      .then((data) => {
+        rememberDocumentNumbers("purchase_order", data?.purchaseOrders, (row) => [row.id, row.number]);
+        setEntry((current) => current ? {
+          ...current,
+          purchaseOrders: [...current.purchaseOrders, ...(data?.purchaseOrders || []).filter((row) => !current.purchaseOrders.some((listed) => listed.id === row.id))],
+          receivingDocuments: [...current.receivingDocuments, ...(data?.receivingDocuments || []).filter((row) => !current.receivingDocuments.some((listed) => listed.id === row.id))],
+        } : current);
+      })
+      .catch(() => {});
+  };
   // Opened from a receipt (?receipt=) or a purchase order (?po=): choose the
   // supplier, order and receipt and offer each received quantity. A purchase
   // order without a posted receipt offers what was ordered instead: the bill
@@ -421,7 +441,7 @@ export function NewSupplierInvoice() {
       <FormSection title={tr("details")}>
         <div className={formGridClass}>
           <Field label={t("finance.supplier")} required error={problems.header.supplier}>
-            <select data-testid="supplier-invoice-supplier" style={inputStyle} value={supplierId} onChange={(event) => { setSupplierId(event.target.value); setPoId(""); setReceiptId(""); setLines({}); changed(); }}>
+            <select data-testid="supplier-invoice-supplier" style={inputStyle} value={supplierId} onChange={(event) => { setSupplierId(event.target.value); setPoId(""); setReceiptId(""); setLines({}); changed(); loadSupplierDocuments(event.target.value); }}>
               <option value="">—</option>
               {entry.suppliers.map((row) => <option key={row.id} value={row.id}>{row.name}{row.code ? ` · ${row.code}` : ""}</option>)}
             </select>

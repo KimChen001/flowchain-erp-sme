@@ -25,7 +25,8 @@ export async function readTodayForReader(ctx) {
   // fallbacks disagree, so one response could mix two tenants.
   // Each collection and amount as the signed-in reader may see it.
   const access = await reportReadAccess(ctx)
-  const raw = await service.read({ tenantId: ctx.identity?.tenantId, warehouseIds: access.warehouseIds })
+  // The assistant's answer already read it, with the same access (L5-15).
+  const raw = ctx.aiSkillBusinessContext || await service.read({ tenantId: ctx.identity?.tenantId, warehouseIds: access.warehouseIds })
   const context = scopeBusinessContext(raw, access)
   const timeZone = await readTenantTimezone(ctx)
   const now = ctx.homeOverviewNow instanceof Date ? ctx.homeOverviewNow : new Date()

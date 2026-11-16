@@ -3123,6 +3123,9 @@ model ReturnRequest {
   tenantId             String
   requestNumber        String
   returnType           String
+  // credit (default) or replacement; a replacement reopens the received
+  // quantity on the purchase order line. Supplier returns only.
+  resolution           String    @default("credit")
   partnerId            String?
   partnerNameSnapshot  String?
   sourceDocumentType   String
@@ -3202,6 +3205,9 @@ model ReturnAuthorization {
   expiresAt           DateTime?
   expiredAt           DateTime?
   expiredById         String?
+  remainderClosedAt   DateTime?
+  remainderClosedById String?
+  remainderReason     String?
   version             Int       @default(0)
   metadata            Json?
   createdAt           DateTime  @default(now())
@@ -3223,6 +3229,8 @@ model ReturnAuthorizationLine {
   returnAuthorizationId String
   returnRequestLineId   String
   authorizedQuantity    Decimal @db.Decimal(18, 4)
+  // The unexecuted remainder closed by close_return_authorization_remainder.
+  closedQuantity        Decimal @default(0) @db.Decimal(18, 4)
   dispositionRoute      String
   version               Int     @default(0)
   metadata              Json?
@@ -3289,6 +3297,10 @@ model ReturnPostingLine {
   inventoryBalanceId            String?
   quarantineBalanceId           String?
   destinationInventoryBalanceId String?
+  // A quarantine release may put stock at another location in the same
+  // warehouse; null means the line's own location.
+  destinationLocation           String?
+  destinationLocationKey        String?
   version                       Int     @default(0)
   metadata                      Json?
 

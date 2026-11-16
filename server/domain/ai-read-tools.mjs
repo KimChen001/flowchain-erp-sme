@@ -1,4 +1,4 @@
-import { AI_TOOL_LIMITS, aiStockSku, aiToolList, aiToolPurchaseOrder, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
+import { AI_TOOL_LIMITS, aiStockSku, aiToolList, aiToolPartial, aiToolPurchaseOrder, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
 // The item lookup lives with the contract, so the service tools can use it too.
 export { aiStockSku }
 import { runLateOrderImpact } from './ai-skill-late-order-impact.mjs'
@@ -20,6 +20,7 @@ import { asideFor, decisionsSetAside } from './ai-decision-aside.mjs'
 
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
+const partialOf = aiToolPartial
 const fold = (value) => text(value).toLowerCase()
 const round1 = (value) => (value === null || value === undefined ? null : Math.round(value * 1000) / 10)
 const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `How many rows to return, ${AI_TOOL_LIMITS.rows} by default.` }
@@ -127,26 +128,33 @@ const listPurchaseOrders = defineAiTool({
       amountTotal: rows.length ? orderAmounts(rows) : null,
       ...aiToolList(rows.map((row) => ({ ...orderRow(row), itemNames: itemNamesOf(facts, row.skus) })), args.limit),
       bySupplier: ordersBySupplier(rows),
+      ...partialOf(facts, ['purchase_orders']),
     }
   },
 })
 
 const getPurchaseOrder = defineAiTool({
   name: 'get_purchase_order',
-  description: 'One purchase order by its number: status, supplier, each open line with ordered, received and remaining quantity, its unit price when your role sees prices, and its current and original promised dates, and the receipts and invoice differences recorded against it.',
+  description: 'One purchase order by its number: status, supplier, its lines to receive (openLines) and done (closedLines) with quantities, unit price when your role sees prices and promised dates, its receipts and invoice differences.',
   parameters: { order: { type: 'string', description: 'The order number, for example PO-202611-0014.' } },
   required: ['order'],
   available: (facts) => Boolean(facts.purchaseOrders),
   run(args, { facts }) {
     const row = aiToolPurchaseOrder(facts, args.order)
     if (!row) return { error: 'not_found' }
-    const receipts = [...array(facts.receipts?.rejected), ...array(facts.receipts?.unposted)].filter((entry) => entry.poId === row.id)
+    // Every receipt read for the order (facts.receipts.byPo); facts read
+    // without them give the rejected and unposted ones, as before.
+    const byPo = facts.receipts?.byPo
+    const receipts = byPo ? array(byPo[row.id]) : [...array(facts.receipts?.rejected), ...array(facts.receipts?.unposted)].filter((entry) => entry.poId === row.id)
     const seen = new Set()
+    const lineOf = (line) => ({ sku: line.sku, itemName: line.itemName, ordered: line.ordered, received: line.received, remaining: line.remaining, unit: line.unit, promisedDate: line.promisedDate, originalPromisedDate: line.originalPromisedDate, ...(line.unitPrice !== null && line.unitPrice !== undefined ? { unitPrice: line.unitPrice, currency: row.currency || null } : {}) })
     return {
       asOf: facts.asOf,
       order: { ...orderRow(row), itemNames: itemNamesOf(facts, row.skus), createdDate: row.createdDate || null },
-      openLines: array(row.openLines).map((line) => ({ sku: line.sku, itemName: line.itemName, ordered: line.ordered, received: line.received, remaining: line.remaining, unit: line.unit, promisedDate: line.promisedDate, originalPromisedDate: line.originalPromisedDate, ...(line.unitPrice !== null && line.unitPrice !== undefined ? { unitPrice: line.unitPrice, currency: row.currency || null } : {}) })),
-      receipts: receipts.filter((entry) => !seen.has(entry.id) && seen.add(entry.id)).map((entry) => ({ documentNumber: entry.documentNumber, arrived: entry.arrivedDay, postingStatus: entry.postingStatus, rejected: entry.rejected, unit: entry.unit, ref: aiToolRef('receiving_doc', entry.id, entry.documentNumber) })),
+      openLines: array(row.openLines).map(lineOf),
+      closedLines: array(row.closedLines).map(lineOf),
+      receipts: receipts.filter((entry) => !seen.has(entry.id) && seen.add(entry.id)).map((entry) => ({ documentNumber: entry.documentNumber, arrived: entry.arrivedDay, postingStatus: entry.postingStatus, ...(entry.accepted !== undefined ? { accepted: entry.accepted } : {}), rejected: entry.rejected, unit: entry.unit, ...(entry.reversed ? { reversed: true } : {}), ref: aiToolRef('receiving_doc', entry.id, entry.documentNumber) })),
+      ...partialOf(facts, ['purchase_orders', 'receipts']),
       invoiceDifferences: array(facts.invoices?.variances).filter((entry) => entry.poId === row.id).map((entry) => ({ invoiceNumber: entry.invoiceNumber, matchStatus: entry.matchStatus, variance: entry.variance, currency: entry.currency, ref: aiToolRef('supplier_invoice', entry.id, entry.invoiceNumber) })),
     }
   },
@@ -258,6 +266,7 @@ const listReceipts = defineAiTool({
         receiptsRead: facts.receipts.read ?? null,
         ...(rows.length ? {} : { note: `No receipt of this item among the ${facts.receipts.read ?? 0} newest receipts read.` }),
         rows: rows.map((row) => ({ documentNumber: row.documentNumber, arrived: row.arrivedDay, accepted: row.accepted, rejected: row.rejected, unit: row.unit, purchaseOrder: row.poId ? orderNumberOf(facts, row.poId) : null, supplier: row.supplier, postingStatus: row.postingStatus, ref: aiToolRef('receiving_doc', row.id, row.documentNumber) })),
+        ...partialOf(facts, ['receipts']),
       }
     }
     const kind = args.kind || 'rejected'
@@ -268,6 +277,7 @@ const listReceipts = defineAiTool({
       // "Recent" is the last 7 days; the answer may say so (it was only in the description).
       recentWindowDays: RECENT_DAYS,
       ...aiToolList(rows.map((row) => ({ documentNumber: row.documentNumber, supplier: row.supplier, arrived: row.arrivedDay, purchaseOrder: orderNumberOf(facts, row.poId), postingStatus: row.postingStatus ?? null, rejected: row.rejected ?? null, unit: row.unit ?? null, ref: aiToolRef('receiving_doc', row.id, row.documentNumber) })), args.limit),
+      ...partialOf(facts, ['receipts']),
     }
   },
 })
@@ -280,7 +290,7 @@ const listSupplierInvoices = defineAiTool({
   async run(args, { facts, context }) {
     const kind = args.kind || 'summary'
     const summary = { committedTotal: facts.invoices.committed ?? null, committedCount: facts.invoices.committedCount, match: facts.invoices.matchCounts, differences: array(facts.invoices.variances).length, recentWindowDays: RECENT_DAYS }
-    if (kind === 'summary') return { asOf: facts.asOf, summary }
+    if (kind === 'summary') return { asOf: facts.asOf, summary, ...partialOf(facts, ['supplier_invoices']) }
     const rows = kind === 'differences' ? array(facts.invoices.variances) : array(facts.invoices.recent)
     // A held invoice set aside on Today (bill_exception; design audit
     // 2026-11-15, L5-09).
@@ -298,6 +308,7 @@ const listSupplierInvoices = defineAiTool({
           ref: aiToolRef('supplier_invoice', row.id, row.invoiceNumber),
         }
       }), args.limit),
+      ...partialOf(facts, ['supplier_invoices']),
     }
   },
 })
@@ -309,7 +320,7 @@ const listPurchaseRequests = defineAiTool({
   available: (facts) => Boolean(facts.purchaseRequests),
   run(args, { facts }) {
     const rows = [...array(facts.purchaseRequests.awaitingApproval)].sort((a, b) => (a.requiredDate || '9999').localeCompare(b.requiredDate || '9999'))
-    return { asOf: facts.asOf, ...aiToolList(rows.map((row) => ({ request: row.number || row.id, skus: row.skus, quantity: row.quantity, unit: row.unit, priority: row.priority, requiredDate: row.requiredDate, ref: aiToolRef('purchase_request', row.id, row.number || row.id) })), args.limit) }
+    return { asOf: facts.asOf, ...aiToolList(rows.map((row) => ({ request: row.number || row.id, skus: row.skus, quantity: row.quantity, unit: row.unit, priority: row.priority, requiredDate: row.requiredDate, ref: aiToolRef('purchase_request', row.id, row.number || row.id) })), args.limit), ...partialOf(facts, ['purchase_requests']) }
   },
 })
 
@@ -322,7 +333,7 @@ const listRfqs = defineAiTool({
     const ready = new Set(array(facts.rfqs.readyToAward).map((row) => row.id))
     const rows = [...array(facts.rfqs.open)].sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'))
     // The RFQ is named by its number, as the app shows it; its title is beside it.
-    return { asOf: facts.asOf, ...aiToolList(rows.map((row) => ({ rfq: row.number || row.id, title: row.title, invited: row.invited ?? null, quotes: row.responses, due: row.due, readyToAward: ready.has(row.id), ref: aiToolRef('rfq', row.id, row.number || row.title || row.id) })), args.limit) }
+    return { asOf: facts.asOf, ...aiToolList(rows.map((row) => ({ rfq: row.number || row.id, title: row.title, invited: row.invited ?? null, quotes: row.responses, due: row.due, readyToAward: ready.has(row.id), ref: aiToolRef('rfq', row.id, row.number || row.title || row.id) })), args.limit), ...partialOf(facts, ['rfqs']) }
   },
 })
 
@@ -466,6 +477,7 @@ const workspaceSummary = defineAiTool({
       receipts: facts.receipts ? { rejected: array(facts.receipts.rejected).length, unposted: array(facts.receipts.unposted).length } : null,
       recordsMissingData: array(facts.records).length,
       notReadable: array(facts.hidden),
+      ...partialOf(facts, ['purchase_orders', 'purchase_requests', 'rfqs', 'receipts', 'supplier_invoices']),
     }
   },
 })

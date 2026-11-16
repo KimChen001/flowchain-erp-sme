@@ -58,11 +58,18 @@ type Item = {
   name?: string;
   purchaseUnit: string;
   baseUnit: string;
+  // The recorded stock unit; "" when none is (GET /api/master-data/items?purchasable=true).
+  stockUnit?: string;
   specification: string;
   category?: string;
   defaultWarehouseId: string;
   defaultSupplierId: string;
 };
+// A catalog line is built in the item's stock unit: no conversion between
+// units is recorded, so the server refuses any other unit
+// (PURCHASE_UNIT_CONVERSION_MISSING) and never relabels it. An item without a
+// recorded stock unit keeps its purchase unit, as the server does.
+const requestLineUnit = (item: Item) => item.stockUnit || item.purchaseUnit || item.baseUnit;
 type Supplier = {
   id: string;
   name: string;
@@ -544,7 +551,7 @@ export default function CanonicalProcurementPanel({
           itemId,
           sku: item.sku,
           itemNameSnapshot: item.itemName || item.name || "",
-          unitSnapshot: item.purchaseUnit || item.baseUnit,
+          unitSnapshot: requestLineUnit(item),
           specificationSnapshot: item.specification || "",
           commodityId: item.category || "",
           targetWarehouseId: plan.values.targetWarehouseId,
@@ -630,7 +637,7 @@ export default function CanonicalProcurementPanel({
       sku: item.sku,
       supplierId: "",
       itemNameSnapshot: item.itemName || item.name || "",
-      unitSnapshot: item.purchaseUnit || item.baseUnit,
+      unitSnapshot: requestLineUnit(item),
       specificationSnapshot: item.specification || "",
       commodityId: item.category || "",
       targetWarehouseId: item.defaultWarehouseId || "",

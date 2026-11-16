@@ -12,6 +12,7 @@ import {
   creditedQuantities,
   proportionalTaxCap,
 } from "./return-credit-rules.mjs";
+import { uncreditedReturnedQuantities } from "./return-quantity-ledger.mjs";
 
 const SCALE = 10_000n;
 const ZERO = 0n;
@@ -605,6 +606,14 @@ export async function buildSupplierMatchPlan({
       (previousByReceiving.get(row.receivingLineId) || ZERO) +
         decimalUnits(row.quantity || 0),
     );
+  // Goods sent back to the supplier are no longer received for billing,
+  // unless an approved credit memo already took them off a bill (L2-06).
+  const returnsByReceiving = await uncreditedReturnedQuantities({
+    prisma,
+    tenantId,
+    sourceDocumentType: "ReceivingDocument",
+    sourceLineIds: receivingIds,
+  });
   const matchLines = [];
   const exceptions = [];
   let invoiceTotal = ZERO;
@@ -649,7 +658,9 @@ export async function buildSupplierMatchPlan({
     const receivedQuantity = decimalUnits(receiving.acceptedQty || 0);
     const previouslyInvoiced =
       previousByReceiving.get(receiving.id) || ZERO;
-    const available = receivedQuantity - previouslyInvoiced;
+    const returns = returnsByReceiving.get(receiving.id);
+    const returnedNotCredited = returns?.uncredited || ZERO;
+    const available = receivedQuantity - previouslyInvoiced - returnedNotCredited;
     const poPrice = decimalUnits(poLine.unitPrice || 0);
     const invoicePrice = decimalUnits(line.unitPrice || 0);
     const invoiceLineAmount = decimalUnits(line.lineAmount ?? line.amount ?? 0);
@@ -709,6 +720,16 @@ export async function buildSupplierMatchPlan({
       amountVariance: decimalString(amountVariance),
       currency: invoice.currency,
       status: lineExceptions.length ? "exception" : "matched",
+      // The receipt's supplier returns, so the expected quantity can be read
+      // back: received - previously invoiced - returned + credited.
+      ...(returns
+        ? {
+            metadata: {
+              returnedQuantity: decimalString(returns.returned),
+              creditedReturnQuantity: decimalString(returns.credited),
+            },
+          }
+        : {}),
     };
     matchLines.push(linePlan);
     exceptions.push(
@@ -779,6 +800,9 @@ export async function buildSupplierCreditMemoPlan({
           },
         },
       },
+      returnAuthorization: {
+        select: { returnRequest: { select: { resolution: true } } },
+      },
     },
   });
   if (!invoice)
@@ -807,6 +831,16 @@ export async function buildSupplierCreditMemoPlan({
       issue(
         "SUPPLIER_RETURN_POSTING_REQUIRED",
         "Supplier credit memo requires a non-reversed posted supplier return.",
+        409,
+      ),
+    );
+  // A return for a replacement is settled by the replacement goods, which
+  // the purchase order expects again (L3-23), not by a credit as well.
+  else if (posting.returnAuthorization?.returnRequest?.resolution === "replacement")
+    blockingIssues.push(
+      issue(
+        "SUPPLIER_CREDIT_REPLACEMENT_RETURN",
+        "This supplier return asks for replacement goods, so it cannot also be credited.",
         409,
       ),
     );

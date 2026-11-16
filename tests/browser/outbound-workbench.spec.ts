@@ -1,4 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
+// The item field searches on the server as it is typed (design audit A4,
+// L4-01); the first suggestion is chosen.
+async function pickFirstItem(page: Page, label: string | RegExp) {
+  await page.getByLabel(label).click();
+  await page.getByRole("listbox", { name: /^(Matching items|匹配的物料)$/ }).getByRole("option").first().click();
+}
+
 
 // The server numbers a delivery draft DN-YYYYMM-NNNN when it is saved; the
 // order page says which number it got.
@@ -47,7 +54,7 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await chooseCustomer(page, "客户", "Playwright", "Playwright Customer · CUST-PW");
   // "Net 30" reads as words.
   await expect(page.getByTestId("sales-order-customer-terms")).toHaveText("付款条款：30 天账期");
-  await page.getByLabel("物料（第 1 行）").selectOption({ index: 1 });
+  await pickFirstItem(page, "物料（第 1 行）");
   await page.getByLabel("数量（第 1 行）").fill("4.0000");
   // Without a price the draft cannot be saved, because it could never be invoiced.
   await page.getByTestId("create-sales-order").click();

@@ -140,6 +140,9 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     // Today's decision items (decision-items.mjs), none unless a test adds
     // them: by state and record, and only the live ones when asked for.
     decisionItem: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.decisionItems).filter((row) => (!where.state || row.state === where.state) && (!where.recordId || row.recordId === where.recordId) && (!where.activeKey || Boolean(row.activeKey))) },
+    // Posted shipments and sales orders by number (list_shipments), none unless a test adds them.
+    shipmentDocument: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.shipments).filter((row) => !where.salesOrderId || row.salesOrder?.id === where.salesOrderId) },
+    salesOrder: { findFirst: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? array(data.salesOrders).map((row) => ({ id: row.id, orderNumber: row.salesOrderId || row.id })).find((row) => row.orderNumber === where.orderNumber) || null : null) },
     // Suppliers, read by both the minimum order and the scorecard, and one by
     // id for a supplier's detail page (supplier-insights.mjs readActivity).
     supplier: {

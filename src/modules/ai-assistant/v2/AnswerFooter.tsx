@@ -8,12 +8,13 @@ import type { PartCopy } from "./parts/partKit";
 
 // Under a finished answer (owner 2026-11-13, after SAP's generative AI
 // principles: cite the data, help people check it, and learn from what they
-// mark): one quiet line with what the answer read, as of which day and how
-// many of its facts the server checked against the records; and a thumbs up
+// mark): one quiet line with what the answer read, as of which day, how many
+// of its facts the server found in the records and how many it worked out
+// from them; and a thumbs up
 // or down. A down asks what was wrong (POST /api/ai-runtime/feedback).
 
 const REASONS = ["wrong_figure", "missed_point", "too_long", "wrong_card", "other"] as const;
-type Basis = { sources: string[]; asOf: string | null; figures: number; flagged: number; tools: string[] };
+type Basis = { sources: string[]; asOf: string | null; figures: number; flagged: number; derived: number; tools: string[] };
 
 function basisOf(body: Record<string, unknown> | null): Basis | null {
   const basis = body?.basis as Partial<Basis> | undefined;
@@ -23,6 +24,7 @@ function basisOf(body: Record<string, unknown> | null): Basis | null {
     asOf: typeof basis.asOf === "string" ? basis.asOf : null,
     figures: Number(basis.figures) || 0,
     flagged: Number(basis.flagged) || 0,
+    derived: Number(basis.derived) || 0,
     tools: Array.isArray(basis.tools) ? basis.tools.filter((value): value is string => typeof value === "string") : [],
   };
 }
@@ -44,6 +46,8 @@ export function AnswerFooter({ message, threadId, messageId, copy }: { message: 
       ? copy.t("ai.v2.basis.flagged", { n: basis.figures, flagged: basis.flagged })
       : copy.t(basis.figures === 1 ? "ai.v2.basis.checkedOne" : "ai.v2.basis.checked", { n: basis.figures }));
   }
+  // Figures worked out from the answer's own figures, apart from those found (design audit L5-03).
+  if (basis && basis.derived > 0) parts.push(copy.t("ai.v2.basis.derived", { n: basis.derived }));
 
   const send = async (value: "up" | "down", chosen: string[] = [], text = "") => {
     setStatus("sending");

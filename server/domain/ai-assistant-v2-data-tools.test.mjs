@@ -702,7 +702,11 @@ test('every data tool declares its columns, and each declared column is in its r
       { obligationType: 'payable', paymentDate: new Date('2026-09-10T00:00:00Z'), amount: '600', currency: 'USD', status: 'recorded' },
     ]
     data.receipts[0].lines[0].purchaseOrderLineId = 'PO-001-L1'
+    // A posted shipment of SO-001 (list_shipments).
+    data.shipments = [{ id: 'SHP-1', shipmentNumber: 'SHP-1', postedAt: new Date('2026-09-27T09:00:00Z'), reversedAt: null, postingStatus: 'posted', salesOrder: { id: 'SO-001', orderNumber: 'SO-001', customerName: 'Redwood Retail' }, lines: [{ sku: 'LDM-001', postedQuantity: '5', unit: 'pcs', allocations: [{ warehouseId: 'WH-1' }] }] }]
   }
+  // One item's movements, as the inventory service gives them (stock_movements).
+  const stockMovements = { listMovements: async () => ({ movements: [{ occurredAt: '2026-09-28T10:00:00.000Z', movementType: 'shipment', quantityIn: 0, quantityOut: 5, adjustmentQty: 0, unit: 'pcs', sourceDocumentNumber: 'SHP-1', reason: 'sale' }] }) }
   // Today's decision items and a record's decision history, as Today would read them.
   const todayRow = (kind, recordId, label) => ({ id: `${kind}:${recordId}`, kind, entityType: kind === 'reorder_now' ? 'item' : 'purchase_order', recordId, label, name: 'Acme Components', date: '2026-09-20', dateKind: 'due', overdueDays: 3, detail: {} })
   const todayDecisions = async () => ({
@@ -711,11 +715,11 @@ test('every data tool declares its columns, and each declared column is in its r
     setAside: [{ key: 'reorder_now:ITEM-001', row: todayRow('reorder_now', 'ITEM-001', 'LDM-001'), decision: 'not_needed', reasonCode: 'seasonal', note: null, returnOn: null, decidedAt: null, decidedOn: '2026-09-18', decidedBy: { name: 'Sam' }, documentType: null, documentIds: [], documentNumber: null }],
   })
   const decisionHistory = { read: async () => ({ items: [{ kind: 'purchase_order_overdue', state: 'decided', raisedAt: new Date('2026-09-17T12:00:00Z'), decidedAt: new Date('2026-09-18T12:00:00Z'), resolvedAt: new Date('2026-09-19T12:00:00Z'), decision: 'chased', reasonCode: null, note: null, returnOn: '2026-09-22', snapshot: { raisedOn: '2026-09-17', decidedOn: '2026-09-18' }, decidedBy: { name: 'Sam' } }], emails: [] }) }
-  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data); invoiced(data); owing(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList, todayDecisions, decisionHistory } } })
+  const { facts, context, run } = await v2({ change: (data) => { highReorderPoint(data); shipping(data); invoiced(data); owing(data) }, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { ...RECORDED_SERVICES, reorderList, todayDecisions, decisionHistory, stockMovements } } })
   // The calls that fill each table; a tool not named here is called once
   // without arguments.
   const calls = {
-    get_purchase_order: [{ order: 'PO-001' }, { order: 'PO-002' }],
+    get_purchase_order: [{ order: 'PO-001' }, { order: 'PO-002' }, { order: 'PO-003' }],
     list_supplier_invoices: [{ kind: 'differences' }],
     spend_analysis: [{}, { view: 'trend' }, { supplier: 'Acme Components' }],
     supplier_performance: [{ suppliers: ['Acme Components'] }],
@@ -738,6 +742,8 @@ test('every data tool declares its columns, and each declared column is in its r
     decision_history: [{ record: 'PO-001' }],
     supplier_payables: [{}, { view: 'overdue' }, { view: 'by_supplier' }, { view: 'not_invoiced' }],
     cash_movements: [{ period: 'last_12_months' }],
+    stock_movements: [{ sku: 'LDM-001' }],
+    list_shipments: [{ order: 'SO-001' }],
     gross_profit: [{ from: '2026-01-01', to: '2026-12-31' }, { by: 'month', from: '2026-01-01', to: '2026-12-31' }, { by: 'item', from: '2026-01-01', to: '2026-12-31' }, { by: 'customer', from: '2026-01-01', to: '2026-12-31' }],
   }
   // A nested column under a null value (a rate with too few deliveries) is

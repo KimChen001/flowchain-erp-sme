@@ -356,7 +356,7 @@ test('notices and errors are worded by code, Retry only on the latest retryable 
   assert.doesNotMatch(unknown, />[^<]*provider_failed/)
   const signedOut = client.render({ message: client.finishAssistantV2Message(client.emptyAssistantV2Message(), { error: { code: 'signed_out', retryable: false } }) })
   assert.doesNotMatch(signedOut, /data-testid="ai-v2-retry"/)
-  for (const code of ['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused', 'ai_off', 'no_provider']) {
+  for (const code of ['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused', 'ai_off', 'no_provider', 'context_restarted']) {
     const notice = client.render({ message: fold([event({ type: 'notice', code })]) })
     assert.match(notice, new RegExp(`data-code="${code}"[^>]*>[A-Z][^<]+\\.<`), code)
     assert.doesNotMatch(notice, CJK, code)
@@ -466,4 +466,31 @@ test('every question the panel asks carries the conversation so far', async () =
   const panel = await readFile(join(root, 'src/modules/ai-assistant/Panel.tsx'), 'utf8')
   assert.match(panel, /const previousTurns = previousTurnsOf\(messages\)/)
   assert.match(panel, /conversationContext: \{ previousTurns \}/)
+})
+
+// The strings that waited for #323 (design audit 2026-11-15): the footer's
+// facts found and worked out (L5-03), the restart notice (L5-07) and the
+// refusal that no longer blames the user (L5-22).
+test('the footer counts facts found and worked out apart; the restart notice informs beside the answer', async () => {
+  const footer = (basis, language = 'en-US') => client.render({ message: fold([
+    event({ type: 'start', threadId: 'thr_7f2c', messageId: 'msg_1', model: 'claude-sonnet-5-5', language }),
+    event({ type: 'text_delta', partId: 'p1', text: 'PO-001 is overdue.' }),
+    event({ type: 'answer', status: 200, body: { answerSource: 'assistant_v2', language, conclusion: { summary: 'PO-001 is overdue.' }, parts: [{ id: 'p1', type: 'text' }], basis: { sources: [], asOf: null, tools: [], ...basis } } }),
+  ]) })
+  const english = footer({ figures: 3, flagged: 0, derived: 1 })
+  assert.match(english, /3 facts found in the records/)
+  assert.match(english, /1 worked out from them/)
+  assert.match(footer({ figures: 3, flagged: 1, derived: 0 }), /3 facts found in the records, 1 not found and marked/)
+  assert.doesNotMatch(footer({ figures: 2, flagged: 0, derived: 0 }), /worked out/)
+  const chinese = footer({ figures: 3, flagged: 0, derived: 2 }, 'zh-CN')
+  assert.match(chinese, /3 处已查到出处/)
+  assert.match(chinese, /2 处为推算/)
+  // The restart notice is shown, and it does not stand in for the answer.
+  const restarted = fold([event({ type: 'notice', code: 'context_restarted' }), event({ type: 'answer', status: 200, body: { parts: [], conclusion: { summary: 'PO-001 is overdue.' } } })])
+  assert.deepEqual(restarted.parts.map((part) => part.text), ['PO-001 is overdue.'])
+  assert.match(client.render({ message: restarted }), /data-code="context_restarted"[^>]*>The earlier conversation was no longer on the server/)
+  // The refusal says what the assistant cannot do, not what the user asked.
+  const refused = client.render({ message: fold([event({ type: 'notice', code: 'injection_refused' })]) })
+  assert.doesNotMatch(refused, /ignore its rules/)
+  assert.match(refused, /can.{0,6}t follow this request/)
 })

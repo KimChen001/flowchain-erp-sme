@@ -405,6 +405,40 @@ const isConcurrency = (error) =>
   error?.code === "P2034" ||
   /serialization|deadlock|write conflict/i.test(text(error?.message));
 
+// A supplier return for a replacement changes the purchase order line's
+// received quantity and the order's status (L3-23), checked against the
+// versions the plan read.
+async function applyPurchaseOrderImpact(tx, tenantId, impact) {
+  if (!impact) return;
+  for (const line of impact.lines) {
+    const updated = await tx.purchaseOrderLine.updateMany({
+      where: {
+        id: line.purchaseOrderLineId,
+        purchaseOrderId: impact.purchaseOrderId,
+        version: line.version,
+        receivedQuantity: line.receivedBefore,
+      },
+      data: { receivedQuantity: line.receivedAfter, version: { increment: 1 } },
+    });
+    if (updated.count !== 1)
+      fail(
+        "RETURN_POSTING_CONCURRENT_CONFLICT",
+        "The purchase order changed during this supplier return.",
+        409,
+      );
+  }
+  const updated = await tx.purchaseOrder.updateMany({
+    where: { id: impact.purchaseOrderId, tenantId, version: impact.version },
+    data: { status: impact.statusAfter, version: { increment: 1 } },
+  });
+  if (updated.count !== 1)
+    fail(
+      "RETURN_POSTING_CONCURRENT_CONFLICT",
+      "The purchase order changed during this supplier return.",
+      409,
+    );
+}
+
 export function createSupplierReturnCommandService({
   prisma,
   env = process.env,
@@ -990,6 +1024,7 @@ export function createSupplierReturnCommandService({
               );
           }
         }
+        await applyPurchaseOrderImpact(tx, actor.tenantId, plan.purchaseOrderImpact);
         await tx.returnAuthorization.update({
           where: { id: authorization.id },
           data: {
@@ -1246,6 +1281,7 @@ export function createSupplierReturnCommandService({
             });
           movements.push(reversal);
         }
+        await applyPurchaseOrderImpact(tx, actor.tenantId, plan.purchaseOrderImpact);
         await tx.returnAuthorization.update({
           where: { id: authorization.id },
           data: {

@@ -89,6 +89,7 @@ const ERROR_COPY: Record<string, Pair> = {
 // translation, or the server's message when the code is not listed here.
 const ISSUE_COPY: Record<string, Pair> = {
   REVERSAL_REASON_REQUIRED_ON_CONFIRM: ["A reversal reason is required when confirming.", "确认冲销前请填写冲销原因。"],
+  RECEIVING_REVERSAL_BLOCKED_BY_RETURN: ["A supplier return is based on this receipt, so it cannot be reversed. Cancel the return first, reversing its dispatch if it was posted.", "已有供应商退货基于此收货单，不能冲销。请先取消该退货；如退货已出库，先冲销其出库。"],
   RECEIVING_REVERSAL_BLOCKED_BY_INVOICE: ["A supplier invoice already claims this receipt, so it can no longer be reversed. To correct what was received, resolve it on that supplier invoice first; returning goods to a supplier is not available in FlowChain yet.", "已有采购发票关联此收货单，无法冲销。如需更正收货数量，请先在该采购发票上处理；FlowChain 暂不支持向供应商退货。"],
   RECEIVING_ALREADY_POSTED: ["This receipt has already been posted.", "该收货单已过账。"],
   RECEIVING_ALREADY_REVERSED: ["This receipt has already been reversed.", "该收货单已冲销。"],

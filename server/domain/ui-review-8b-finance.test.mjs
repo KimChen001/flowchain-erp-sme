@@ -255,6 +255,9 @@ function entryPrisma() {
       findMany: async ({ where }) => invoiceLines.filter((row) => where.shipmentLineId.in.includes(row.shipmentLineId) && where.customerInvoice.status.in.includes(row.customerInvoice.status)),
     },
     returnPostingDocument: { findMany: async () => [] },
+    // Customer returns and their credits (design audit L8-08): none here.
+    returnPostingLine: { findMany: async () => [] },
+    customerCreditNoteLine: { findMany: async () => [] },
   }
   return { prisma, calls }
 }
@@ -286,6 +289,25 @@ test('the invoice form offers only shipments with something left to invoice, sta
   assert.equal(fromShipment.postedShipments[0].invoiceable, false)
   assert.deepEqual(fromShipment.postedShipments[0].invoices.map((row) => row.invoiceNumber), ['CI-202611-0108'])
   assert.equal(fromShipment.customerInvoiceSource.shipment.shipmentNumber, 'DN-202611-0108')
+})
+
+test('goods the customer returned and no credit note covers are not left to invoice (L8-08)', async () => {
+  const { prisma } = entryPrisma()
+  // 2 of the 6 on DN-0111 came back on a posted customer return receipt.
+  prisma.returnPostingLine.findMany = async ({ where }) =>
+    where.returnAuthorizationLine.returnRequestLine.sourceDocumentLineId.in.includes('dn-0111-1')
+      ? [{ quantity: '2.0000', returnAuthorizationLine: { returnRequestLineId: 'rrl-1', returnRequestLine: { sourceDocumentLineId: 'dn-0111-1' } } }]
+      : []
+  const service = createOperationalFinanceO2cReadService({ prisma, capabilities: { 'customer-invoice': { enabled: true } } })
+  const all = await service.entryData({ identity })
+  const dn0111 = all.postedShipments.find((row) => row.shipmentNumber === 'DN-202611-0111')
+  assert.equal(dn0111.lines[0].returnedQuantity, '2.0000')
+  assert.equal(dn0111.lines[0].remainingQuantity, '4.0000')
+  // Once an approved credit note covers them, they can be invoiced again.
+  prisma.customerCreditNoteLine.findMany = async () => [{ quantity: '2.0000', returnPostingLine: { returnAuthorizationLine: { returnRequestLine: { sourceDocumentLineId: 'dn-0111-1' } } } }]
+  const credited = (await service.entryData({ identity })).postedShipments.find((row) => row.shipmentNumber === 'DN-202611-0111')
+  assert.equal(credited.lines[0].returnedQuantity, '0.0000')
+  assert.equal(credited.lines[0].remainingQuantity, '6.0000')
 })
 
 test('the invoice form and page: remaining quantities, the order by number, the terms note, cancel, toasts and the next step', () => {

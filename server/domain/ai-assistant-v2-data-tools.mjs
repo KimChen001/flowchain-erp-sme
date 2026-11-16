@@ -1,5 +1,5 @@
 import { QUESTION_LIMITS, SETUP_FORM_ROWS } from '../../shared/assistant-protocol.mjs'
-import { AI_TOOL_LIMITS, aiToolList, aiToolPurchaseOrder, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
+import { AI_TOOL_LIMITS, aiToolList, aiToolPartial, aiToolPurchaseOrder, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
 import { aiStockProjection } from './ai-read-tools.mjs'
 import { runHighestRisk } from './ai-skill-highest-risk.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
@@ -14,6 +14,7 @@ import { DEMAND_WINDOW_DAYS, boughtInStockUnit, dailyDemand, isActiveItem, itemS
 import { scopedBusiness } from './ai-read-service-tools.mjs'
 import { itemSources, preferredSource, storedItems, unitPriceOf } from './ai-item-prices.mjs'
 import { AI_ASSISTANT_V2_MONEY_TOOLS } from './ai-assistant-v2-money-tools.mjs'
+import { AI_ASSISTANT_V2_HISTORY_TOOLS } from './ai-assistant-v2-history-tools.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
 import { REPLENISHMENT_SOLVER_DEFAULTS, ReplenishmentInputError, logReplenishmentCall, planReplenishment } from './replenishment-solver.mjs'
 import { addCalendarDays, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
@@ -248,6 +249,7 @@ const listOpenPurchaseRequests = defineAiTool({
           ref: aiToolRef('purchase_request', row.id, row.number || row.id),
         }
       }), args.limit),
+      ...aiToolPartial(facts, ['purchase_requests']),
     }
   },
 })
@@ -1121,4 +1123,4 @@ const stockProjection = defineAiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan, stockProjection, decisionItemsTool, decisionHistoryTool, ...AI_ASSISTANT_V2_MONEY_TOOLS])
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan, stockProjection, decisionItemsTool, decisionHistoryTool, ...AI_ASSISTANT_V2_MONEY_TOOLS, ...AI_ASSISTANT_V2_HISTORY_TOOLS])

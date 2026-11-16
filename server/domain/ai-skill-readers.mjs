@@ -208,18 +208,23 @@ const reportRowsFor = (source, access) => access.prices ? source : scopeBusiness
 // an answer about an order of several SKUs, names these lines instead. The
 // unit price only for a reader who may see prices, so an answer reads it
 // instead of dividing the order's amount (2026-11-07).
+// The lines received in full or closed come apart (closedById), so a question
+// about a finished order reads its lines too (design audit 2026-11-15, L5-04).
 function purchaseOrderLines(reportRows, visibility) {
+  const lineOf = (line, read) => ({
+    lineId: text(line.id) || null, sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName || line.itemNameSnapshot) || null,
+    ordered: read.ordered, received: read.received, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
+    unitPrice: visibility.amounts.purchase_order_amounts && line.unitPrice !== null && line.unitPrice !== undefined && line.unitPrice !== '' && Number.isFinite(Number(line.unitPrice)) ? Number(line.unitPrice) : null,
+  })
+  const linesOf = (po, open) => array(po.lines).flatMap((line) => {
+    const read = purchaseOrderReportLine(line, po)
+    return Boolean(read.open) === open ? [lineOf(line, read)] : []
+  })
   return {
     firstById: new Map(reportRows.map((po) => [text(po.id), array(po.lines)[0] || null])),
     skusById: new Map(reportRows.map((po) => [text(po.id), [...new Set(array(po.lines).map((line) => text(line.sku)).filter(Boolean))]])),
-    openById: new Map(reportRows.map((po) => [text(po.id), array(po.lines).flatMap((line) => {
-      const read = purchaseOrderReportLine(line, po)
-      return read.open ? [{
-        lineId: text(line.id) || null, sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName || line.itemNameSnapshot) || null,
-        ordered: read.ordered, received: read.received, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
-        unitPrice: visibility.amounts.purchase_order_amounts && line.unitPrice !== null && line.unitPrice !== undefined && line.unitPrice !== '' && Number.isFinite(Number(line.unitPrice)) ? Number(line.unitPrice) : null,
-      }] : []
-    })])),
+    openById: new Map(reportRows.map((po) => [text(po.id), linesOf(po, true)])),
+    closedById: new Map(reportRows.map((po) => [text(po.id), linesOf(po, false)])),
   }
 }
 
@@ -298,7 +303,27 @@ function latestReceiptFacts(receiptRows) {
     }
   }
   for (const sku of Object.keys(bySku)) bySku[sku] = bySku[sku].sort((a, b) => text(b.arrivedDay).localeCompare(text(a.arrivedDay)) || b.documentNumber.localeCompare(a.documentNumber)).slice(0, LATEST_RECEIPTS)
-  return { latestBySku: bySku, read: array(receiptRows).length }
+  return { latestBySku: bySku, read: array(receiptRows).length, byPo: receiptsByOrder(receiptRows) }
+}
+
+// Every receipt read, by its purchase order, oldest first: what each delivery
+// accepted and rejected (design audit 2026-11-15, L5-04: one order's receipts
+// were only the rejected and the unposted ones).
+function receiptsByOrder(receiptRows) {
+  const byPo = {}
+  for (const row of array(receiptRows)) {
+    const poId = text(row.poId)
+    if (!poId) continue
+    const lines = array(row.lines)
+    ;(byPo[poId] ||= []).push({
+      id: text(row.id), documentNumber: text(row.documentNumber || row.id), arrivedDay: dayOf(row.arrivedAt), postingStatus: text(row.postingStatus) || null,
+      reversed: Boolean(row.reversedAt) || text(row.postingStatus) === 'reversed',
+      accepted: lines.reduce((sum, line) => sum + (amount(line.acceptedQty) ?? 0), 0), rejected: lines.reduce((sum, line) => sum + (amount(line.rejectedQty) ?? 0), 0),
+      unit: [...new Set(lines.map((line) => text(line.unit)).filter(Boolean))].join('/') || null,
+    })
+  }
+  for (const poId of Object.keys(byPo)) byPo[poId].sort((a, b) => text(a.arrivedDay).localeCompare(text(b.arrivedDay)) || a.documentNumber.localeCompare(b.documentNumber))
+  return byPo
 }
 
 // Only the facts the supplier issue signals read (supplier-insights.mjs), built
@@ -432,7 +457,7 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
 
   if (visible.purchase_orders) {
     const lines = purchaseOrderLines(reportRows, visibility)
-    const { skusById, openById: openLinesById } = lines
+    const { skusById, openById: openLinesById, closedById: closedLinesById } = lines
     const rawStatusById = new Map(reportRows.map((po) => [text(po.id), text(po.status)]))
     facts.purchaseOrders = {
       open: openReport.summary.open,
@@ -450,6 +475,7 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
       createdDate: row.createdDate || null, dueDate: row.dueDate || null, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received,
       remaining: row.remaining, unit: row.unit, amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency,
       isOpen: row.isOpen, dataIncomplete: row.dataIncomplete, skus: skusById.get(row.id) || [], openLines: openLinesById.get(row.id) || [],
+      closedLines: closedLinesById.get(row.id) || [],
     }))
     // The stored status after alias normalisation ("待审批" is
     // pending_approval), the way the purchase orders list filters it.
@@ -552,5 +578,9 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
   const { records, checked } = recordsNeedingData({ reportRows, openReport, business, raw, visible, visibility, tenantId })
   facts.records = records
   facts.recordsChecked = checked
+  // The business context this read used, for the rest of the same request
+  // (design audit 2026-11-15, L5-15: an answer read it two or three times).
+  // Not enumerable, so it is never sent or serialised with the facts.
+  Object.defineProperty(facts, 'businessContext', { value: allocationContext, enumerable: false })
   return facts
 }

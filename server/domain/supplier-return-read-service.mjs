@@ -11,6 +11,7 @@ import {
   supplierReturnDecimalUnits as decimalUnits,
 } from "./supplier-return-transaction-policy.mjs";
 import { assertAuthorized, can } from "../auth/authorization-service.mjs";
+import { executableAuthorizedUnits } from "./return-authorization-closure-policy.mjs";
 
 export class SupplierReturnReadError extends Error {
   constructor(code, message, status = 400, details) {
@@ -153,7 +154,10 @@ function postingReconciliation(posting, movements, audit, consumedByAuthorizatio
       const balanceType = releaseAvailable ? "available" : movementType === "supplier_return_out" ? (line.inventoryBalanceId ? "available" : "quarantine") : "quarantine";
       const balanceId = releaseAvailable ? line.destinationInventoryBalanceId : balanceType === "available" ? line.inventoryBalanceId : line.quarantineBalanceId;
       const inbound = ["customer_return_quarantine_in", "quarantine_release_available_in"].includes(movementType);
-      return { movementType, balanceType, balanceId, quantityIn: inbound ? line.quantity : 0, quantityOut: inbound ? 0 : line.quantity, adjustmentQty: 0 };
+      // A release may put stock at another location of the warehouse; lines
+      // stored before that kept no destination location.
+      const destination = releaseAvailable && line.destinationLocationKey != null;
+      return { movementType, balanceType, balanceId, location: destination ? line.destinationLocation : line.location, locationKey: destination ? line.destinationLocationKey : line.locationKey, quantityIn: inbound ? line.quantity : 0, quantityOut: inbound ? 0 : line.quantity, adjustmentQty: 0 };
     };
     const movementChecks = expectedTypes.flatMap((movementType) => {
       const expected = expectedMovement(movementType);
@@ -161,7 +165,7 @@ function postingReconciliation(posting, movements, audit, consumedByAuthorizatio
       const movement = candidates[0];
       return [
         check(`movement_${movementType}_count`, candidates.length === 1, 1, candidates.length),
-        check(`movement_${movementType}_identity`, Boolean(movement && movement.tenantId === posting.tenantId && movement.sourceDocumentType === "ReturnPostingDocument" && movement.sourceDocumentId === posting.id && movement.sourceDocumentLineId === line.id && movement.itemId === line.itemId && movement.sku === line.sku && text(movement.unit) === text(line.unit) && movement.warehouseId === line.warehouseId && text(movement.location) === text(line.location) && text(movement.locationKey) === text(line.locationKey) && movement.postingBatchId === posting.metadata?.postingBatchId && text(movement.metadata?.balanceType) === text(expected.balanceType) && text(movement.metadata?.balanceId) === text(expected.balanceId)), `${posting.tenantId}/${line.id}/${expected.balanceId}`, movement ? `${movement.tenantId}/${movement.sourceDocumentLineId}/${movement.metadata?.balanceId}` : "missing"),
+        check(`movement_${movementType}_identity`, Boolean(movement && movement.tenantId === posting.tenantId && movement.sourceDocumentType === "ReturnPostingDocument" && movement.sourceDocumentId === posting.id && movement.sourceDocumentLineId === line.id && movement.itemId === line.itemId && movement.sku === line.sku && text(movement.unit) === text(line.unit) && movement.warehouseId === line.warehouseId && text(movement.location) === text(expected.location) && text(movement.locationKey) === text(expected.locationKey) && movement.postingBatchId === posting.metadata?.postingBatchId && text(movement.metadata?.balanceType) === text(expected.balanceType) && text(movement.metadata?.balanceId) === text(expected.balanceId)), `${posting.tenantId}/${line.id}/${expected.balanceId}`, movement ? `${movement.tenantId}/${movement.sourceDocumentLineId}/${movement.metadata?.balanceId}` : "missing"),
         check(`movement_${movementType}_quantity_direction`, Boolean(movement && equal(movement.quantityIn, expected.quantityIn) && equal(movement.quantityOut, expected.quantityOut) && equal(movement.adjustmentQty, expected.adjustmentQty)), `${fixed(expected.quantityIn)}/${fixed(expected.quantityOut)}/${fixed(expected.adjustmentQty)}`, movement ? `${fixed(movement.quantityIn)}/${fixed(movement.quantityOut)}/${fixed(movement.adjustmentQty)}` : "missing"),
       ];
     });
@@ -173,7 +177,8 @@ function postingReconciliation(posting, movements, audit, consumedByAuthorizatio
       consumedByAuthorizationLine.get(line.returnAuthorizationLineId) ||
       "0.0000";
     const authorizedQuantity = fixed(line.returnAuthorizationLine?.authorizedQuantity || 0);
-    const remainingUnits = decimalUnits(authorizedQuantity) - decimalUnits(consumedQuantity);
+    // A closed remainder is no longer executable.
+    const remainingUnits = executableAuthorizedUnits(line.returnAuthorizationLine) - decimalUnits(consumedQuantity);
     const expectedAuthorizationStatus = remainingUnits <= 0n ? "executed" : decimalUnits(consumedQuantity) > 0n ? "partially_executed" : "approved";
     const expectedRequestStatus = remainingUnits <= 0n ? "executed" : decimalUnits(consumedQuantity) > 0n ? "partially_executed" : "authorized";
     const expectedBalances = expectedTypes.map(expectedMovement);
@@ -360,9 +365,18 @@ export function createSupplierReturnReadService({
     assertWarehouseAccess(actor, [posting.warehouseId], "read", {
       maskExistence: true,
     });
-    const canOperate =
+    // Each posting button checks the permission its command requires (L8-20).
+    const release = posting.postingType === "quarantine_release";
+    const commandPermission = {
+      revise: release ? "returns.quarantine.release_prepare" : "returns.posting.prepare",
+      ready: release ? "returns.quarantine.release_prepare" : "returns.posting.ready",
+      cancel: release ? "returns.quarantine.release_prepare" : "returns.posting.cancel",
+      post: release ? "returns.quarantine.release_post" : "returns.posting.post",
+      reverse: release ? "returns.quarantine.release_reverse" : "returns.posting.reverse",
+    };
+    const canOperateWith = (action) =>
       currentCapability.enabled &&
-      can({ actor, permission: "returns.posting.post", tenantId: actor.tenantId }) &&
+      can({ actor, permission: commandPermission[action], tenantId: actor.tenantId }) &&
       hasWarehouseAccess(actor, [posting.warehouseId], "operate");
     const [movements, audit, consumedPostings] = await Promise.all([
       prisma.inventoryMovement.findMany({
@@ -456,28 +470,34 @@ export function createSupplierReturnReadService({
           line.inventoryBalanceId || line.quarantineBalanceId,
         destinationBalanceId:
           line.destinationInventoryBalanceId || null,
+        // Set when a release put stock at a location of its own (L8-14).
+        destinationLocation:
+          line.destinationLocationKey == null ||
+          line.destinationLocationKey === line.locationKey
+            ? null
+            : line.destinationLocation || null,
         dispositionRoute:
           line.returnAuthorizationLine.dispositionRoute,
       })),
       availableActions: {
         revise:
-          canOperate &&
+          canOperateWith("revise") &&
           posting.workflowStatus === "draft" &&
           posting.postingStatus === "unposted",
         ready:
-          canOperate &&
+          canOperateWith("ready") &&
           posting.workflowStatus === "draft" &&
           posting.postingStatus === "unposted",
         cancel:
-          canOperate &&
+          canOperateWith("cancel") &&
           ["draft", "ready"].includes(posting.workflowStatus) &&
           posting.postingStatus === "unposted",
         post:
-          canOperate &&
+          canOperateWith("post") &&
           posting.workflowStatus === "ready" &&
           posting.postingStatus === "unposted",
         reverse:
-          canOperate &&
+          canOperateWith("reverse") &&
           posting.postingStatus === "posted" &&
           !posting.reversedAt,
       },

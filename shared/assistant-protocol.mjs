@@ -23,7 +23,7 @@ export const REPLACE_CODES = Object.freeze(['unbacked_action_claim', 'foreign_re
 // ai_off: the workspace has not switched AI on; no_provider: no model is set
 // up on this server. Assistant v2 answers every question; when it cannot, a
 // notice says why (owner direction 2026-11-05: no rules answer behind it).
-export const NOTICE_CODES = Object.freeze(['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused', 'ai_off', 'no_provider'])
+export const NOTICE_CODES = Object.freeze(['over_cap', 'over_cap_during_answer', 'cost_ceiling', 'unavailable', 'rate_limited', 'injection_refused', 'cancelled', 'refused', 'ai_off', 'no_provider', 'context_restarted'])
 // The longest question the assistant reads, in characters: rows pasted from
 // a spreadsheet fit.
 export const QUESTION_LIMITS = Object.freeze({ assistantV2: 8000 })

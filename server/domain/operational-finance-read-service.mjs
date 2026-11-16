@@ -7,6 +7,7 @@ import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-
 import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 import { invoiceDayKey, isDuplicateReviewClosed, loadDuplicateChecks, workspaceTimezone } from "./supplier-invoice-duplicates.mjs";
 import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from "./tenant-calendar-day.mjs";
+import { uncreditedReturnedQuantities } from "./return-quantity-ledger.mjs";
 
 export class OperationalFinanceReadError extends Error {
   constructor(code, message, status = 400, details) {
@@ -805,8 +806,16 @@ export function createOperationalFinanceReadService({
       return { ...supplier, paymentTerm: term ? { code: term.code, name: term.name, days: term.days ?? null } : null };
     });
   }
-  async function entryData(context) {
+  // ?po= or ?receipt=: the form opened from that order or receipt, which is
+  // read by its id or number whatever its age, with its supplier and receipts
+  // (design audit L2-12: the form saw only the newest 100 orders and receipts,
+  // so an older one could not be billed from its page). ?supplier=: the
+  // newest orders and receipts of that supplier, once it is chosen.
+  async function entryData(context, query = {}) {
     const current = await actor(context);
+    const poFilter = text(query.po);
+    const receiptFilter = text(query.receipt);
+    const supplierFilter = text(query.supplier);
     // Entry data serves the supplier invoice and credit memo forms; the endpoint is shared, so a role
     // that cannot create these documents gets empty lists, not a 403.
     if (!["finance.supplier_invoice.create", "finance.supplier_credit.create"].some((permission) => can({ actor: current, permission, tenantId: current.tenantId })))
@@ -821,7 +830,7 @@ export function createOperationalFinanceReadService({
           take: 100,
         }),
         prisma.purchaseOrder.findMany({
-          where: { tenantId: current.tenantId },
+          where: { tenantId: current.tenantId, ...(supplierFilter ? { supplierId: supplierFilter } : {}) },
           include: { lines: true },
           orderBy: { createdAt: "desc" },
           take: 100,
@@ -831,6 +840,7 @@ export function createOperationalFinanceReadService({
             tenantId: current.tenantId,
             postingStatus: "posted",
             reversedAt: null,
+            ...(supplierFilter ? { supplierId: supplierFilter } : {}),
           },
           include: { lines: true },
           orderBy: { postedAt: "desc" },
@@ -848,6 +858,25 @@ export function createOperationalFinanceReadService({
           take: 100,
         }),
       ]);
+    // The order or receipt the form was opened from, and the receipts of that
+    // order, added when the newest 100 leave them out; their supplier too.
+    const receiptAsked = receiptFilter
+      ? await prisma.receivingDocument.findFirst({ where: { tenantId: current.tenantId, postingStatus: "posted", reversedAt: null, OR: [{ id: receiptFilter }, { documentNumber: receiptFilter }] }, include: { lines: true } })
+      : null;
+    const orderAskedId = poFilter || receiptAsked?.poId || "";
+    const orderAsked = orderAskedId && !purchaseOrders.some((row) => row.id === orderAskedId || procurementDocumentNumber(row) === orderAskedId)
+      ? await prisma.purchaseOrder.findFirst({ where: { tenantId: current.tenantId, OR: [{ id: orderAskedId }, { number: orderAskedId }] }, include: { lines: true } })
+      : null;
+    if (orderAsked) purchaseOrders.unshift(orderAsked);
+    const askedOrderId = orderAsked?.id || purchaseOrders.find((row) => row.id === orderAskedId || procurementDocumentNumber(row) === orderAskedId)?.id || "";
+    const receiptsOfAsked = askedOrderId
+      ? await prisma.receivingDocument.findMany({ where: { tenantId: current.tenantId, poId: askedOrderId, postingStatus: "posted", reversedAt: null }, include: { lines: true }, orderBy: { postedAt: "desc" } })
+      : [];
+    for (const row of [...(receiptAsked ? [receiptAsked] : []), ...receiptsOfAsked])
+      if (!receivingDocuments.some((listed) => listed.id === row.id)) receivingDocuments.push(row);
+    const supplierIdsAsked = [...new Set([orderAsked?.supplierId, receiptAsked?.supplierId, supplierFilter].map(text).filter(Boolean))].filter((id) => !suppliers.some((row) => row.id === id));
+    if (supplierIdsAsked.length)
+      suppliers.push(...await prisma.supplier.findMany({ where: { tenantId: current.tenantId, id: { in: supplierIdsAsked } }, select: { id: true, code: true, name: true, metadata: true } }));
     // What other bills already claim on each order line, so a bill recorded
     // before the goods arrive starts at what is left to bill.
     const billedRows = await prisma.supplierInvoiceLine.findMany({
@@ -856,6 +885,15 @@ export function createOperationalFinanceReadService({
         supplierInvoice: { tenantId: current.tenantId, status: { in: [...RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES] } },
       },
       select: { purchaseOrderLineId: true, quantity: true },
+    });
+    // Goods sent back to the supplier and not yet credited are no longer
+    // received for billing: three-way matching expects the receipt less them
+    // (L2-06), so the bill form starts there too.
+    const returnsByReceivingLine = await uncreditedReturnedQuantities({
+      prisma,
+      tenantId: current.tenantId,
+      sourceDocumentType: "ReceivingDocument",
+      sourceLineIds: receivingDocuments.flatMap((row) => row.lines.map((line) => line.id)),
     });
     const poNumbers = new Map(purchaseOrders.map((row) => [row.id, procurementDocumentNumber(row)]));
     const billed = new Map();
@@ -899,7 +937,13 @@ export function createOperationalFinanceReadService({
           itemId: line.itemId,
           sku: line.sku,
           itemName: line.itemName,
-          acceptedQuantity: decimal(line.acceptedQty),
+          // What is still received for billing: accepted on the receipt less
+          // goods returned to the supplier and not yet credited (L2-06).
+          acceptedQuantity: returnsByReceivingLine.get(line.id)?.uncredited
+            ? financeFixed(financeUnits(line.acceptedQty || 0) - returnsByReceivingLine.get(line.id).uncredited)
+            : decimal(line.acceptedQty),
+          acceptedOnReceipt: decimal(line.acceptedQty),
+          returnedQuantity: financeFixed(returnsByReceivingLine.get(line.id)?.uncredited || 0n),
           unit: line.unit,
           warehouseId: line.warehouseId,
         })),

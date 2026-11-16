@@ -110,6 +110,7 @@ jobs:
       - run: npm run test:db:bill-before-receipt
       - run: npm run test:db:supplier-invoice-duplicates
       - run: npm run test:db:sales-read-permissions
+      - run: npm run test:db:entry-picker-reach
       - run: npm run test:db:search-wildcards
       - run: npm run test:db:inventory-warehouse-scope
       - run: npm run test:db:search-graph-read-scope
