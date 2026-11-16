@@ -956,14 +956,19 @@ async function recordCard({ roleKey = 'workspace-administrator', requests = {}, 
 
 test('the record card steps follow the commands\' own status rules', () => {
   const targets = { submit: 'submitted', approve: 'approved', reject: 'rejected', create_po: 'converted' }
-  for (const [step, from] of Object.entries(RECORD_ACTION_RULES.purchase_request)) {
-    if (step === 'create_rfq') assert.equal(from, 'approved')
-    else assert.ok(PR_TRANSITIONS[from].includes(targets[step]), `${step} from ${from}`)
-  }
+  for (const [step, from] of Object.entries(RECORD_ACTION_RULES.purchase_request)) assert.ok(PR_TRANSITIONS[from].includes(targets[step]), `${step} from ${from}`)
   for (const [step, from] of Object.entries(RECORD_ACTION_RULES.purchase_order)) assert.deepEqual(PURCHASE_ORDER_COMMANDS[step].from, [from], step)
-  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po', 'create_rfq'], path: { recommendation: 'rfq' } }), ['create_rfq', 'create_po'])
-  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po', 'create_rfq'], path: { recommendation: 'direct_po' } }), ['create_po'])
-  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po', 'create_rfq'], path: { recommendation: 'direct_po' }, poBlocked: 'lines_incomplete' }), [])
+  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po'] }), ['create_po'])
+  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po'], poBlocked: 'lines_incomplete' }), [])
+})
+
+// Design audit L1-01 (batch A7): an RFQ cannot yet become a purchase order, so
+// the card never offers or recommends one, whatever the request's amount or
+// suppliers, and an older card that still lists it does not draw it.
+test('the record card offers no RFQ', () => {
+  assert.ok(!('create_rfq' in RECORD_ACTION_RULES.purchase_request))
+  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_rfq', 'create_po'], path: { recommendation: 'rfq' } }), ['create_po'])
+  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_rfq'] }), [])
 })
 
 test('the record card offers the steps this user may take now, by status and role, from the record as stored', async () => {
@@ -988,9 +993,9 @@ test('the record card offers the steps this user may take now, by status and rol
   const notMine = await admin.offer('purchase_request', 'PR-0233')
   assertError(notMine, 'not_allowed')
   assert.match(notMine.error.message, /its requester/)
-  // Approved: the path the recommendation route gives; a purchase order directly.
+  // Approved: a purchase order directly; the card recommends no path.
   const approved = assertPart(await admin.offer('purchase_request', 'PR-0234'), 'record_actions')
-  assert.deepEqual([approved.actions, approved.path], [['create_po'], { recommendation: 'direct_po', reasons: ['direct_po_ok'] }])
+  assert.deepEqual([approved.actions, approved.path], [['create_po'], undefined])
   // Orders: approve one waiting for approval, mark an approved one issued.
   assert.deepEqual(assertPart(await admin.offer('purchase_order', 'PO-006'), 'record_actions').actions, ['approve'])
   const issue = assertPart(await admin.offer('purchase_order', 'PO-009'), 'record_actions')
@@ -1010,7 +1015,7 @@ test('the record card offers the steps this user may take now, by status and rol
   assert.deepEqual(assertPart(await buyer.offer('purchase_order', 'PO-009'), 'record_actions').actions, ['issue'])
 })
 
-test('an approved request: quotes first when the route recommends them, no order without complete lines or once one exists', async () => {
+test('an approved request: an order directly whatever its amount, none without complete lines or once one exists', async () => {
   const requests = {
     'PR-0241': storedRequest('PR-0241', 'approved', { amount: '150000' }),
     'PR-0242': storedRequest('PR-0242', 'approved', { lines: [requestLine({ metadata: { supplierId: 'SUP-005', currency: 'USD', supplierSnapshot: { supplierName: 'Northstar Electronics' } } })] }),
@@ -1021,15 +1026,17 @@ test('an approved request: quotes first when the route recommends them, no order
   }
   const orders = { 'PO-7A1B': storedOrder('PO-7A1B', 'approved', { sourceRequestId: 'PR-0244' }) }
   const card = await recordCard({ requests, orders })
-  const quotes = assertPart(await card.offer('purchase_request', 'PR-0241'), 'record_actions')
-  assert.deepEqual([quotes.actions, quotes.path], [['create_rfq', 'create_po'], { recommendation: 'rfq', reasons: ['amount_over_rfq_threshold'] }])
+  // At or above the old quote threshold: still the order, and no RFQ (A7).
+  const large = assertPart(await card.offer('purchase_request', 'PR-0241'), 'record_actions')
+  assert.deepEqual([large.actions, large.path], [['create_po'], undefined])
   // No delivery warehouse on a line: the route would refuse the order.
   const incomplete = await card.offer('purchase_request', 'PR-0242')
   assertError(incomplete, 'nothing_to_offer')
   assert.match(incomplete.error.message, /supplier, a currency and a delivery warehouse/)
-  // No supplier chosen: quotes are recommended, and only they can be requested.
-  const noSupplier = assertPart(await card.offer('purchase_request', 'PR-0243'), 'record_actions')
-  assert.deepEqual([noSupplier.actions, noSupplier.path.reasons, noSupplier.poBlocked], [['create_rfq'], ['supplier_not_selected'], 'lines_incomplete'])
+  // No supplier chosen: nothing the card can do; the request is completed on its page.
+  const noSupplier = await card.offer('purchase_request', 'PR-0243')
+  assertError(noSupplier, 'nothing_to_offer')
+  assert.match(noSupplier.error.message, /supplier, a currency and a delivery warehouse/)
   assertError(await card.offer('purchase_request', 'PR-0244'), 'nothing_to_offer')
   const converted = await card.offer('purchase_request', 'PR-0245')
   assertError(converted, 'nothing_to_offer')
@@ -1038,7 +1045,7 @@ test('an approved request: quotes first when the route recommends them, no order
   const masked = await recordCard({ requests, orders, actor: (actor) => actor.permissionCodes.delete('procurement.prices.read') })
   const hidden = assertPart(await masked.offer('purchase_request', 'PR-0241'), 'record_actions')
   assert.equal(hidden.record.amount, undefined)
-  assert.deepEqual(hidden.path, { recommendation: 'rfq', reasons: [] })
+  assert.equal(hidden.path, undefined)
 })
 
 test('the record card is not offered to a viewer, and takes only a request or order ref of the named result', async () => {

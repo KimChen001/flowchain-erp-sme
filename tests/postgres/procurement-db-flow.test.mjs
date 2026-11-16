@@ -400,6 +400,26 @@ test('step 3a: an approved PR above the RFQ threshold opens an RFQ (POST /api/pr
   assert.equal(await audits('Rfq', rfq.id), 2)
 })
 
+// Design audit A7 (L1-01, L1-32): an RFQ cannot become a purchase order yet,
+// so cancelling it is the way back. Only API calls: the list counts the
+// invited supplier from its participation record, the RFQ is cancelled from
+// its page's route, and the request is then ordered (201), where before it
+// stayed blocked by an RFQ that nothing could move.
+test('step 3a2: cancelling the open RFQ lets its PR become a purchase order (POST /api/procurement/rfqs/:id/cancel)', async () => {
+  const id = 'PR-FLOW-RFQ'
+  const rfq = await prisma.rfq.findFirst({ where: { tenantId: tenantA, sourceRequestId: id } })
+  const listed = (await api(tokens.managerA, 'GET', '/api/procurement/rfqs')).body.find((row) => row.id === rfq.id)
+  assert.deepEqual([listed?.suppliers, listed?.quoted], [1, 0])
+  const cancelled = await api(tokens.buyerA, 'POST', `/api/procurement/rfqs/${rfq.id}/cancel`, { expectedVersion: 2, reason: 'Ordering from the request' })
+  assert.equal(cancelled.status, 200, describe(cancelled))
+  assert.equal((await prisma.rfq.findUnique({ where: { id: rfq.id } })).status, 'cancelled')
+  const pr = await prisma.purchaseRequest.findUnique({ where: { id } })
+  const ordered = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: pr.metadata.version })
+  assert.equal(ordered.status, 201, describe(ordered))
+  assert.equal((await prisma.purchaseRequest.findUnique({ where: { id } })).status, 'converted')
+  assert.equal(await prisma.purchaseOrder.count({ where: { tenantId: tenantA, sourceRequestId: id } }), 1)
+})
+
 test('step 3b: an approved PR becomes an approved PO (POST /api/procurement/requests/:id/generate-purchase-orders)', async () => {
   const id = 'PR-FLOW-DIRECT'
   await seedPurchaseRequest(id, { status: 'approved' })

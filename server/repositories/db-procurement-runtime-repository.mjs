@@ -105,12 +105,15 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
       const poNumberOf = id => (poNumbers.get(id) ? { poNumber: poNumbers.get(id) } : {});
       const receipts = receivingRows.map(row => mapReceipt(row, poNumberOf));
       const supplierInvoices = invoiceRows.map(row => mapSupplierInvoice(row, poNumberOf));
-      // Quotation counts back the RFQ response figures when the RFQ row has none.
-      const quotations = rfqRows.length ? await dbClient.supplierQuotation.findMany({ where: { tenantId, rfqId: { in: rfqRows.map(row => row.id) } }, select: { rfqId: true } }) : [];
+      // Each RFQ's invited suppliers and responses come from its participation
+      // records and quotations (rfqSupplierCounts), not the header's counts.
+      const rfqIds = rfqRows.map(row => row.id);
+      const quotations = rfqRows.length ? await dbClient.supplierQuotation.findMany({ where: { tenantId, rfqId: { in: rfqIds } }, select: { rfqId: true, supplierId: true } }) : [];
+      const participations = rfqRows.length && typeof dbClient.rfqSupplierParticipation?.findMany === "function" ? await dbClient.rfqSupplierParticipation.findMany({ where: { tenantId, rfqId: { in: rfqIds } }, select: { rfqId: true, supplierId: true, status: true } }) : [];
       // Purchase requests and RFQs carry their update day; the instant is kept
       // beside it, so the home page orders and dates them like other documents.
       const withInstant = (mapped, row) => ({ ...mapped, updatedAtInstant: iso(row.updatedAt) });
-      return { purchaseRequests: requestRows.map(row => withInstant(mapPurchaseRequest(row), row)), rfqs: rfqRows.map(row => withInstant(mapRfq(row, quotations), row)), supplierQuotations: [], purchaseOrders: rows.map(mapPo), receipts, receivingDocs: receipts, supplierInvoices, documentLinks: [], procurementFollowups: [] };
+      return { purchaseRequests: requestRows.map(row => withInstant(mapPurchaseRequest(row), row)), rfqs: rfqRows.map(row => withInstant(mapRfq(row, quotations, participations), row)), supplierQuotations: [], purchaseOrders: rows.map(mapPo), receipts, receivingDocs: receipts, supplierInvoices, documentLinks: [], procurementFollowups: [] };
     },
     // snapshot()'s receipts and supplier invoices alone, read and bounded the
     // same way, for the supplier issue signals (ai-skill-readers.mjs
