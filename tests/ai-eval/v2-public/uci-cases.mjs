@@ -11,6 +11,7 @@ import { uciEconomics } from './uci-facts.mjs'
 import { buildUciConversationCases } from './uci-conversation-cases.mjs'
 import { buildUciConstraintCases } from './uci-constraint-cases.mjs'
 import { buildUciMoneyCases } from './uci-money-cases.mjs'
+import { buildUciPathCases } from './uci-path-cases.mjs'
 
 const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places
 const EN_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -49,6 +50,11 @@ export const UCI_REQUIRED_TOOLS = Object.freeze({
   'hero-eoq-en': ['order_quantity_costs'], 'hero-tradeoff-zh': ['order_quantity_costs'],
 })
 
+// The walkthrough's manager (sees amounts, margins and payables) and buyer.
+export const UCI_MANAGER = 'kim@example.com'
+export const UCI_BUYER = 'daniel@example.com'
+const MANAGER_KINDS = new Set(['finance', 'payables', 'sales'])
+
 export function buildUciCases(facts) {
   const hero = facts.item(facts.scene.hero.sku)
   const second = facts.item(facts.scene.second.sku)
@@ -58,7 +64,6 @@ export function buildUciCases(facts) {
   const heroOrders = facts.late.filter((order) => order.lines.some((line) => line.sku === hero.sku)).map((order) => order.lines.find((line) => line.sku === hero.sku))
   const partly = heroOrders.find((line) => line.received > 0)
   const nothing = heroOrders.find((line) => line.received === 0)
-  const lateOutstanding = facts.late.flatMap((order) => order.lines.map((line) => line.outstanding))
   const acme = hero.supplier
   const globex = second.supplier
   const suggestion = facts.reorder.find((row) => row.sku === cake.sku)
@@ -79,7 +84,9 @@ export function buildUciCases(facts) {
   add({ id: 'today-zh', kind: 'today', language: 'zh-CN', turns: ['今天我应该先处理什么？'], expect: firstThings })
   const lateList = {
     mentions: [named(hero), named(second), { label: acme, any: [acme, 'Acme'] }, { label: globex, any: [globex, 'Globex'] }],
-    numbers: lateOutstanding.map((value) => ({ label: 'still to receive', value })),
+    // Each order's quantity by its SKU, in the words or on the table row that
+    // names it (figures are no longer matched in any card's props, L5-16).
+    quantities: facts.late.flatMap((order) => order.lines.map((line) => ({ sku: line.sku, name: facts.item(line.sku).name, quantity: line.outstanding }))),
   }
   add({ id: 'late-orders-en', kind: 'today', language: 'en-US', turns: ['Which purchase orders are late?'], expect: lateList })
   add({ id: 'late-orders-zh', kind: 'today', language: 'zh-CN', turns: ['有哪些采购订单逾期了？'], expect: lateList })
@@ -145,7 +152,7 @@ export function buildUciCases(facts) {
     expect: { numbers: [{ label: '准时交货率 %', value: globexOnTime.percent, tolerance: 0.6 }] } })
   add({ id: 'supplier-count-en', kind: 'supplier', language: 'en-US', turns: ['How many suppliers do we have?'], expect: { numbers: [{ label: 'suppliers', value: facts.supplierCount }] } })
   add({ id: 'cake-terms-zh', kind: 'supplier', language: 'zh-CN', turns: [`${cake.sku} 的采购提前期和最小起订量是多少？`],
-    expect: { numbers: [{ label: '提前期（天）', value: 14 }, { label: '最小起订量', value: cake.minimumOrderQuantity }] } })
+    expect: { numbers: [{ label: '提前期（天）', value: cake.leadTimeDays }, { label: '最小起订量', value: cake.minimumOrderQuantity }] } })
 
   // Sales, on whole calendar months.
   add({ id: 'hero-month-units-en', kind: 'sales', language: 'en-US', turns: [`How many ${hero.sku} did we sell in ${last.en}?`], expect: { numbers: [{ label: 'units sold', value: lastMonth.unitsOf(hero.sku) }] } })
@@ -213,7 +220,12 @@ export function buildUciCases(facts) {
   // Then the money cases (2026-11-12) and last the app's-own-button cases:
   // the money cases keep the places they were checked at, so each is still
   // asked by the same user.
-  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts), ...buildUciMoneyCases(facts, { last }), ...actions]
+  // Design audit 2026-11-15, L5-18: whose role a case needs is written on it,
+  // not left to its place in the list. The money cases and margin-en are
+  // asked by the manager, who sees amounts and margins; the path cases name
+  // their own user.
+  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts), ...buildUciMoneyCases(facts, { last }), ...actions, ...buildUciPathCases(facts, { last })]
+    .map((row) => (row.asUser || !(MANAGER_KINDS.has(row.kind) || row.id === 'margin-en') ? row : { ...row, asUser: UCI_MANAGER }))
     .map((row) => (UCI_LOOKUPS.has(row.id) ? { ...row, expect: { ...row.expect, brief: true } } : row))
     .map((row) => (UCI_REQUIRED_TOOLS[row.id] ? { ...row, expect: { ...row.expect, calls: UCI_REQUIRED_TOOLS[row.id] } } : row))
 }

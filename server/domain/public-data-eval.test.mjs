@@ -380,3 +380,31 @@ test('scoring quantities: a quantity counts anywhere in its SKU\'s sentence, not
   assert.equal(ok('Order 22423 now. The minimum of another item is 60 pcs.'), false)
   assert.equal(ok('22423 需要补货。另一个物料要 60 件。'), false)
 })
+
+// Design audit 2026-11-15, L5-16 and L5-18: figures in any card's props, calls
+// that failed, and the asking user by the case's place in the list.
+test('scoring is on the answer\'s words, on calls that ran, and the UCI cases say who asks', () => {
+  // A figure only in a card's props is not the answer's (a lead time of 14
+  // sat in every supplier table).
+  const answer = { status: 200, text: '22423 is bought from Acme.', ui: [{ component: 'table', props: { rows: [{ sku: '22423', supplier: 'Acme', leadTimeDays: 14 }] } }], flags: [], errors: [], tools: [] }
+  assert.equal(scoreAnswer(answer, { numbers: [{ label: 'lead time', value: 14 }] }).checks.find((check) => check.name === 'number: lead time').ok, false)
+  assert.equal(scoreAnswer({ ...answer, text: '22423 takes 14 days from Acme.' }, { numbers: [{ label: 'lead time', value: 14 }] }).checks.find((check) => check.name === 'number: lead time').ok, true)
+  // A figure the role may not see fails the case wherever it shows.
+  assert.equal(scoreAnswer(answer, { numbersAbsent: [{ label: 'lead time', value: 14 }] }).checks.find((check) => check.name === 'no number: lead time').ok, false)
+  // A call that failed is not a call.
+  const failed = scoreAnswer({ ...answer, tools: [], toolErrors: ['optimize_order_plan'] }, { calls: ['optimize_order_plan'] }).checks.find((check) => check.name === 'calls optimize_order_plan')
+  assert.deepEqual([failed.ok, failed.detail], [false, 'no tools; failed: optimize_order_plan'])
+  // Who asks: the cases that need the manager's view name it, and the path cases name theirs.
+  const facts = uciFacts(smallPlanWithPayables())
+  const cases = buildUciCases(facts)
+  const byId = Object.fromEntries(cases.map((row) => [row.id, row]))
+  for (const row of cases.filter((entry) => ['finance', 'payables', 'sales'].includes(entry.kind))) assert.equal(row.asUser, 'kim@example.com', row.id)
+  assert.equal(byId['margin-en'].asUser, 'kim@example.com')
+  assert.equal(byId['buyer-margin-en'].asUser, 'daniel@example.com')
+  assert.deepEqual(byId['buyer-margin-en'].expect.numbersAbsent.map((row) => row.value), [facts.month(lastWholeMonths(facts.seedDay).last.key).grossMarginPercent])
+  assert.equal(byId['english-panel-zh'].turns[0].interfaceLanguage, 'en-US')
+  assert.equal(byId['open-order-zh'].turns[0].activeContext.entityType, 'purchase_order')
+  assert.equal(byId['unconfirmed-click-en'].turns[1].formResults[0].purchaseRequestId, 'PR-EVAL-NOT-CREATED')
+  // The lead time comes from the seed's terms, not a number written in the case.
+  assert.equal(byId['cake-terms-zh'].expect.numbers[0].value, facts.item(facts.scene.reorder.sku).leadTimeDays)
+})

@@ -166,6 +166,18 @@ const stockCounts = (facts, rows) => {
   const count = (status) => rows.filter((row) => row.stockStatus === status).length
   return { atRisk: rows.filter((row) => short.has(row.sku) || RISK_STATUSES.has(row.stockStatus)).length, shortAgainstSalesOrders: rows.filter((row) => short.has(row.sku)).length, outOfStock: count('out_of_stock'), belowSafetyStock: count('below_safety_stock'), belowReorderPoint: count('below_reorder_point') }
 }
+// Available to promise without what overdue purchase orders still owe: the
+// promise a customer can be given if late lines do not come (design audit
+// 2026-11-15, L5-17: availableToPromise counts them as arriving, 408 for
+// 85123A with 48 on hand). Null when available to promise is unknown.
+function withoutOverdue(facts, row) {
+  if (row.availableToPromise === null || row.availableToPromise === undefined) return null
+  const counted = new Set(array(row.purchaseOrderIds))
+  const late = array(facts.purchaseOrders?.index).filter((po) => counted.has(po.id) && po.isOpen && (po.overdueDays || 0) > 0)
+  const owed = late.reduce((sum, po) => sum + array(po.openLines).filter((line) => line.sku === row.sku).reduce((total, line) => total + (Number(line.remaining) || 0), 0), 0)
+  return row.availableToPromise - owed
+}
+
 const stockPosition = defineAiTool({
   name: 'stock_position',
   description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders (each order\'s promised date and days overdue in purchaseOrderDates), available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status. One SKU, the SKUs at risk, or all; counts gives how many SKUs are at risk, short against open sales orders, out of stock, below safety stock and below the reorder point.',
@@ -193,6 +205,7 @@ const stockPosition = defineAiTool({
       ...aiToolList(rows.map((row) => ({
         sku: row.sku, itemName: row.itemName, unit: row.unit, onHand: row.onHand, reserved: row.reserved, available: row.available,
         openSalesDemand: row.openSalesDemand, incomingOnPurchaseOrders: row.incomingApprovedPo, availableToPromise: row.availableToPromise,
+        availableToPromiseWithoutOverdue: withoutOverdue(facts, row),
         shortage: row.shortage, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint, status: row.stockStatus,
         belowSafetyStock: row.safetyStock !== null && row.safetyStock !== undefined && row.available !== null && row.available !== undefined ? row.available < row.safetyStock : null,
         purchaseOrders: array(row.purchaseOrderIds).map((id) => orderNumberOf(facts, id)).filter(Boolean),

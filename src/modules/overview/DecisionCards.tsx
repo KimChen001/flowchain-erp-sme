@@ -264,7 +264,7 @@ function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kin
           return t("copied");
         })} onSend={(mail) => run(async () => {
           // The address the person confirmed on the second step is the one sent to.
-          const result = await apiJson<{ outbox?: boolean }>("/api/decision-items/send-follow-up", { method: "POST", body: JSON.stringify({ key: entry.key, to: mail.to, confirmedTo: mail.to, subject: mail.subject, body: mail.body }) });
+          const result = await apiJson<{ outbox?: boolean }>("/api/decision-items/send-follow-up", { method: "POST", body: JSON.stringify({ key: entry.key, to: mail.to, confirmedTo: mail.to, subject: mail.subject, body: mail.body, recipientNotOnRecord: mail.recipientNotOnRecord }) });
           return result?.outbox ? t("sentOutbox") : t("sentEmail", { to: mail.to });
         })} />
           : draft?.type === "invoice_exception" ? <InvoiceExceptionBody draft={draft} row={row} busy={busy} canDecide={canDecide} aside={aside} {...view} onContacted={(text) => run(async () => {
@@ -363,7 +363,7 @@ function ReorderBody({ draft, row, day, busy, canDecide, aside, open, toggle }: 
   );
 }
 
-function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased, onSend, open, toggle, onOpen }: View & { draft: FollowUpDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode; email: SupplierEmail | null; onChased: (text: string) => void; onSend: (mail: { to: string; subject: string; body: string }) => void }) {
+function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased, onSend, open, toggle, onOpen }: View & { draft: FollowUpDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode; email: SupplierEmail | null; onChased: (text: string) => void; onSend: (mail: { to: string; subject: string; body: string; recipientNotOnRecord: boolean }) => void }) {
   const t = useDecisionCopy();
   const { language } = useI18n();
   const [mailLanguage, setMailLanguage] = useState<"en-US" | "zh-CN">(language === "zh-CN" ? "zh-CN" : "en-US");
@@ -386,7 +386,9 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased
   const [step, setStep] = useState<"text" | "address" | null>(null);
   const [to, setTo] = useState(draft.supplier.email || "");
   const [subjectLine, ...bodyLines] = text.split("\n");
-  const mail = { to: to.trim(), subject: subjectLine.trim(), body: bodyLines.join("\n").trim() };
+  // An address other than the supplier's on record is sent only as confirmed
+  // for this message (the server checks it, design audit L5-12).
+  const mail = { to: to.trim(), subject: subjectLine.trim(), body: bodyLines.join("\n").trim(), recipientNotOnRecord: to.trim().toLowerCase() !== (draft.supplier.email || "").trim().toLowerCase() };
   const addressOk = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/.test(mail.to);
   const who = [draft.supplier.contactName, draft.supplier.email ? `<${draft.supplier.email}>` : null].filter(Boolean).join(" ");
   const qty = (value: number | null, unit: string | null) => (value === null ? "—" : `${formatQuantity(value)}${unit ? ` ${unitLabel(unit, t.language, value)}` : ""}`);
@@ -447,6 +449,7 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased
             <span className="font-medium">{t("toLabel")}</span>
             <input type="email" className="min-w-64 flex-1 rounded border px-2 py-1" value={to} onChange={(event) => setTo(event.target.value)} data-testid="decision-send-to" />
           </label>
+          {mail.to && mail.recipientNotOnRecord ? <p className="text-amber-700" data-testid="decision-send-not-on-record">{t("notOnRecord")}</p> : null}
           <p style={{ color: A.sub }}>{t("replyToYou")}{email.outbox ? " " + t("outboxNote") : ""}</p>
           <div className="flex flex-wrap gap-2">
             <button type="button" className={BUTTON.primary} disabled={busy || !addressOk} onClick={() => onSend(mail)} data-testid="decision-send-confirm">{t("sendTo", { to: mail.to || "—" })}</button>

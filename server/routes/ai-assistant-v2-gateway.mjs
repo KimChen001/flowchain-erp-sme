@@ -52,6 +52,19 @@ const text = (value) => String(value ?? '').trim()
 
 // The length check of a question assistant v2 answers: 2 to 8,000 characters,
 // so rows pasted from a spreadsheet fit. The rules keep their 1,200.
+// One answer as this user's thread kept it, for feedback on it (L5-23), or
+// null. The thread key is the answer's: the server's actor, never a user id
+// the client sent.
+export async function assistantV2StoredAnswer(ctx, { threadId, messageId } = {}) {
+  try {
+    const context = await loadAiSkillContext(ctx)
+    const userId = text(context.actor?.user?.id || context.actor?.userId || ctx.identity?.userId)
+    return (ctx.aiAssistantV2Threads || THREADS).answer({ tenantId: context.tenantId, userId, threadId, messageId })
+  } catch {
+    return null
+  }
+}
+
 export function validateAssistantV2Question(body = {}) {
   const length = text(body.message || body.question).length
   if (length > QUESTION_LIMITS.assistantV2) return { ok: false, status: 400, tooLong: true }

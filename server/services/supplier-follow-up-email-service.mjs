@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { parseDecision } from '../domain/decision-items.mjs'
-import { SUPPLIER_EMAIL_AUDIT_ACTION, SUPPLIER_EMAIL_LIMITS, parseFollowUpEmail, supplierEmailDelivery } from '../domain/supplier-follow-up-email.mjs'
+import { SUPPLIER_EMAIL_AUDIT_ACTION, SUPPLIER_EMAIL_LIMITS, checkFollowUpContent, parseFollowUpEmail, supplierEmailDelivery } from '../domain/supplier-follow-up-email.mjs'
 import { tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
 import { mergeOperationalSettings } from '../domain/workspace-settings-contract.mjs'
 import { createOutboxMailer, defaultOutboxPath } from '../mail/outbox-mailer.mjs'
@@ -34,12 +34,16 @@ async function sentToday(prisma, tenantId, { now, today, timeZone }) {
   return rows.filter((row) => tenantCalendarDay(row.createdAt, timeZone) === today)
 }
 
-export async function sendSupplierFollowUp({ prisma, tenantId, actor, row, input, env = process.env, mailer = null, now = new Date(), today, timeZone }) {
+// `draft`: the follow-up Today built from the order (decision-drafts.mjs), the
+// figures and the supplier's address the text is checked against.
+export async function sendSupplierFollowUp({ prisma, tenantId, actor, row, draft = null, input, env = process.env, mailer = null, now = new Date(), today, timeZone }) {
   if (row.kind !== 'purchase_order_overdue') throw fail(422, 'SUPPLIER_EMAIL_NOT_OVERDUE', 'Only an overdue purchase order can be followed up by email.')
   if (!(await supplierEmailSettingOn(prisma, tenantId))) throw fail(409, 'SUPPLIER_EMAIL_OFF', 'Supplier email is off in this workspace. An administrator can turn it on in Settings.')
   const email = parseFollowUpEmail(input)
   const repository = createDecisionItemRepository({ prisma })
   const key = `${row.kind}:${row.recordId}`
+  // The order number, the figures, no prices, and the recipient (L5-12).
+  const content = checkFollowUpContent(email, draft, input)
   // A retry of an email already sent today returns that send, before anything
   // else is checked, so a lost answer never sends twice.
   const idempotency = createHash('sha256').update(JSON.stringify([key, email.to, email.subject, email.body])).digest('hex')
@@ -62,7 +66,7 @@ export async function sendSupplierFollowUp({ prisma, tenantId, actor, row, input
   await prisma.auditLog.create({ data: {
     id: randomUUID(), tenantId, source: 'today', module: 'procurement', action: SUPPLIER_EMAIL_AUDIT_ACTION, entityType: 'purchase_order', entityId: String(row.recordId), actorId: actor.user.id,
     summary: provider === 'outbox' ? `Follow-up to ${email.to} saved to the local outbox` : `Follow-up emailed to ${email.to}`,
-    metadata: { to: email.to, replyTo: replyTo || null, subject: email.subject, body: email.body, provider, messageId: result?.messageId || null, idempotency, decisionItemId: live?.id || null },
+    metadata: { to: email.to, recipientOnRecord: content.recipientOnRecord, replyTo: replyTo || null, subject: email.subject, body: email.body, provider, messageId: result?.messageId || null, idempotency, decisionItemId: live?.id || null },
   } })
   // The item is chased now; a decision someone took in the meantime stands.
   await repository.decide(tenantId, actor.user.id, row, { ...parseDecision({ option: 'chased' }, { kind: row.kind, today }), note: 'email' }, { now, today }).catch((error) => {

@@ -241,11 +241,20 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     const found = String(answer.text || '').match(patternOf(entry))
     add(`not: ${entry.label}`, !found, found ? `"${found[0].slice(0, 60)}"` : '')
   }
-  const numbers = numbersIn(flat(answer))
+  // Figures are matched in the answer's words only: a card's props hold every
+  // column of every row (design audit 2026-11-15, L5-16: a lead time of 14
+  // was "found" in any supplier table). A figure a table must show is a
+  // `quantities` check, on the row that names its SKU.
+  const numbers = numbersIn(answer.text || '')
   for (const { label, value, anyOf, tolerance = 0 } of expect.numbers || []) {
     const wanted = anyOf || [value]
     const near = numbers.find((number) => wanted.some((target) => Math.abs(number - target) <= tolerance + 1e-9))
     add(`number: ${label}`, near !== undefined, `expected ${wanted.join(' or ')} ±${tolerance}${near !== undefined ? `, found ${near}` : ''}`)
+  }
+  // Figures the answer must not give: what a role may not see (L5-18).
+  for (const { label, value, tolerance = 0 } of expect.numbersAbsent || []) {
+    const near = numbersIn(flat(answer)).find((number) => Math.abs(number - value) <= tolerance + 1e-9)
+    add(`no number: ${label}`, near === undefined, near === undefined ? '' : `found ${near}`)
   }
   if (expect.mentions) {
     const text = flat(answer).toLowerCase()
@@ -264,9 +273,12 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
   if (expect.quantities) {
     const rows = displayRows(answer)
     const text = answer.text || ''
-    for (const { sku, quantity } of expect.quantities.filter((row) => row.quantity > 0)) {
-      const inRow = rows.some((row) => JSON.stringify(row).includes(sku) && numbersIn(JSON.stringify(row)).includes(quantity))
-      const inText = text.split(SENTENCE).some((line) => line.includes(sku) && numbersIn(line).includes(quantity))
+    // An item is named by its SKU or, when the case gives it, its name (a
+    // table of orders shows item names).
+    for (const { sku, name, quantity } of expect.quantities.filter((row) => row.quantity > 0)) {
+      const names = [sku, name].filter(Boolean)
+      const inRow = rows.some((row) => names.some((value) => JSON.stringify(row).includes(value)) && numbersIn(JSON.stringify(row)).includes(quantity))
+      const inText = text.split(SENTENCE).some((line) => names.some((value) => line.includes(value)) && numbersIn(line).includes(quantity))
       add(`quantity: ${sku}`, inRow || inText, `expected ${quantity}`)
     }
   }
@@ -281,7 +293,8 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     const said = Boolean(expect.form.orSaidEarlier && row) && answers.slice(0, -1).some((earlier) => String(earlier?.text || '').split(SENTENCE).some((line) => line.includes(expect.form.sku) && numbersIn(line).includes(value)))
     add('form', Boolean(row) && (value === expect.form.quantity || said), !form ? 'no form' : !row ? `${expect.form.sku} not on the form` : `${expect.form.sku} at ${value}${said ? ', as said earlier' : ''}`)
   }
-  for (const tool of expect.calls || []) add(`calls ${tool}`, (answer.tools || []).includes(tool), (answer.tools || []).join(', ') || 'no tools')
+  // A call counts when it ran: run.mjs keeps failed calls apart (toolErrors).
+  for (const tool of expect.calls || []) add(`calls ${tool}`, (answer.tools || []).includes(tool), [(answer.tools || []).join(', ') || 'no tools', (answer.toolErrors || []).length ? `failed: ${answer.toolErrors.join(', ')}` : ''].filter(Boolean).join('; '))
   if (expect.tidy !== false) {
     const problems = tidyProblems(answer.text, answer.textParts)
     add('tidy', !problems.length, problems.join('; '))

@@ -5,7 +5,8 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_SKILL_COPY, AI_SKILL_LANGUAGES, aiSkillLanguage, aiSkillQuestionLanguageSignal, aiSkillText, aiSkillUnitLabel } from './ai-skill-copy.mjs'
 import { validateAiToolArgs } from './ai-read-tool-contract.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, runAiReadTool } from './ai-read-tool-runner.mjs'
-import { aiGroundingRecordNumbers, aiGroundingSources, checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
+import { aiCalculationGrounded, aiGroundingRecordNumbers, aiGroundingSources, checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
+import { assistantV2PartBrief } from './ai-assistant-v2-feedback.mjs'
 import { aiAnswerAssistantActionClaims, aiAnswerRecordStates } from './ai-answer-claims.mjs'
 import { AI_V2_HAN, aiV2CodeLabels, aiV2DisplayStrings, aiV2Formats, aiV2TextTidier, aiV2UserTypedDate } from './ai-assistant-v2-display.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
@@ -1260,7 +1261,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       thread.messages.length = turnStart
       for (const id of answerResults.keys()) thread.results.delete(id)
       const error = new AssistantModelError('timeout')
-      error.audit = auditBlock({ stats: { ...stats, stopReason: 'timeout' }, model, aborted: false, started })
+      error.audit = auditBlock({ stats: { ...stats, stopReason: 'timeout' }, model, aborted: false, started, messageId })
       error.emitted = sentStatus
       return error
     }
@@ -1327,7 +1328,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         if (aborted) return
         if (outcome.ok && outcome.event) {
           // A later set of follow-up chips replaces the earlier one in place.
-          if (!parts.some((part) => part.id === outcome.event.partId)) parts.push({ id: outcome.event.partId, type: 'ui', component: outcome.event.component, source: text(outcome.event.props?.source) || null, ...(outcome.event.component === 'decisions' ? { keys: array(outcome.event.props?.keys) } : {}) })
+          if (!parts.some((part) => part.id === outcome.event.partId)) parts.push({ id: outcome.event.partId, type: 'ui', component: outcome.event.component, source: text(outcome.event.props?.source) || null, ...(outcome.event.component === 'decisions' ? { keys: array(outcome.event.props?.keys) } : {}), brief: assistantV2PartBrief(outcome.event.component, outcome.event.props) })
           for (const ref of outcome.event.refs) if (!shownRefs.some((row) => row.type === ref.type && row.id === ref.id)) shownRefs.push(ref)
           send(outcome.event)
         }
@@ -1378,7 +1379,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
           // the unavailable notice.
           if (!sentContent) {
             rollback()
-            error.audit = auditBlock({ stats: { ...stats, stopReason: 'provider_error' }, model, aborted: false, started })
+            error.audit = auditBlock({ stats: { ...stats, stopReason: 'provider_error' }, model, aborted: false, started, messageId })
             error.emitted = sentStatus
             throw error
           }
@@ -1475,8 +1476,13 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       for (const [call, outcome] of ran) {
         outcomes.set(call.id, outcome)
         stats.calls.push({ tool: asCode(call.name, 'unknown_tool'), status: outcome.ok ? 'ok' : asCode(outcome.error, 'error') })
-        if (outcome.ok) {
-          answerResults.set(call.id, { tool: call.name, output: outcome.result })
+        // A calculation whose inputs come from no result or the user's words
+        // is shown to the model but is no source for the answer's figures
+        // (design audit 2026-11-15, L5-03).
+        const source = outcome.ok && (call.name !== 'calculate' || aiCalculationGrounded(call.input, { results: [...results, ...earlierResults], question: userText, conversation }))
+        if (outcome.ok && !source) stats.replaces.push('ungrounded_calculation')
+        if (outcome.ok) answerResults.set(call.id, { tool: call.name, output: outcome.result })
+        if (source) {
           thread.results.set(call.id, { tool: call.name, output: outcome.result })
           known = null
           results.push(outcome.result)
@@ -1608,8 +1614,14 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // failed provider call makes the answer's model access unavailable.
       aiModelAccess: stats.providerFailed ? { status: 'unavailable', ...(stats.providerFailed === 'budget' ? { reason: 'budget' } : {}) } : { status: 'on' },
     }
+    // What this answer said, for feedback on it (L5-23).
+    thread.answers?.set?.(messageId, {
+      question, answer: summary, language,
+      parts: parts.filter((part) => part.type === 'ui' && !part.dropped).map((part) => part.brief || { component: part.component }),
+      tools: [...new Set(stats.calls.filter((call) => call.status === 'ok').map((call) => call.tool))],
+    })
     send({ type: 'answer', status: 200, body: answer })
-    return { body: answer, audit: auditBlock({ stats, model, aborted, started }) }
+    return { body: answer, audit: auditBlock({ stats, model, aborted, started, messageId }) }
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener?.('abort', onAbort)
@@ -1619,9 +1631,11 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
 // The audit block (design §3.11): codes and counts only, never the question,
 // the tool arguments, the results or the model's words. Key names avoid
 // "token": the audit store redacts those as secrets.
-function auditBlock({ stats, model, aborted, started }) {
+function auditBlock({ stats, model, aborted, started, messageId = null }) {
   return {
     version: ASSISTANT_V2_VERSION,
+    // The answer's id, so a cost is read for its own answer (L5-16).
+    messageId,
     model,
     rounds: stats.rounds,
     modelCalls: stats.modelCalls,

@@ -82,6 +82,15 @@ test('a follow-up is emailed only when turned on and confirmed, recorded on the 
     assert.equal(unconfirmed.status, 422)
     assert.equal(unconfirmed.payload.code, 'SUPPLIER_EMAIL_NOT_CONFIRMED')
     assert.deepEqual(await readOutbox(outboxPath), [])
+    // The figures come from the order, prices stay out, and another address
+    // is sent to only when confirmed as not on record (design audit L5-12).
+    const changed = await send({ ...email, body: `${email.body}\n\nPlease send 40 more.` })
+    assert.deepEqual([changed.status, changed.payload.code], [422, 'SUPPLIER_EMAIL_FIGURE_CHANGED'])
+    const priced = await send({ ...email, body: `${email.body}\n\nAt USD 10 each.` })
+    assert.deepEqual([priced.status, priced.payload.code], [422, 'SUPPLIER_EMAIL_PRICE'])
+    const elsewhere = await send({ ...email, to: 'someone@else.example', confirmedTo: 'someone@else.example' })
+    assert.deepEqual([elsewhere.status, elsewhere.payload.code], [422, 'SUPPLIER_EMAIL_RECIPIENT_NOT_ON_RECORD'])
+    assert.deepEqual(await readOutbox(outboxPath), [])
 
     // 4. Sent to the outbox, replies to the sender, recorded on the order.
     const sent = await send()
@@ -97,6 +106,7 @@ test('a follow-up is emailed only when turned on and confirmed, recorded on the 
     assert.equal(audit.length, 1)
     assert.equal(audit[0].metadata.to, 'orders-e@example.com')
     assert.equal(audit[0].metadata.body, email.body)
+    assert.equal(audit[0].metadata.recipientOnRecord, true)
 
     // 5. The card is chased by email.
     home = await today()
