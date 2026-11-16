@@ -17,7 +17,7 @@ const zh: Record<string, string> = {
   'Not recorded': '未记录', 'Choose one of the workspace payment terms.': '请选择工作区中的付款条款。',
   'Could not load the workspace payment terms. The stored term is kept.': '工作区付款条款加载失败，已保留现有条款。',
   'Leave empty when the term is not agreed yet.': '尚未约定付款条款时请留空。',
-  'Back to suppliers': '返回供应商列表', 'Edit': '编辑', 'Supplied items': '可供应物料', 'Select SKU': '选择 SKU', 'Reference price': '参考价格',
+  'Back to suppliers': '返回供应商列表', 'Edit': '编辑', 'Supplied items': '可供应物料', 'Select item': '选择物料', 'Reference price': '参考价格',
   'Add supplied item': '添加可供应物料', 'No supplied items yet': '暂无可供应物料', 'Set as preferred': '设为首选', 'Yes': '是', 'No': '否',
   'Purchase records': '采购记录', 'No purchase records available': '暂无采购交易记录', 'Risks and exceptions': '风险与异常', 'No risks or exceptions available': '暂无风险或异常',
   'Supplied-item links are currently unavailable.': '可供应物料关联暂不可用。',

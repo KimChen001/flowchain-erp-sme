@@ -63,6 +63,8 @@ export default function ItemSupplierPricesPage() {
   const [truncated, setTruncated] = useState(false);
   const [pricesVisible, setPricesVisible] = useState(true);
   const [loading, setLoading] = useState(true);
+  // The count reads "—" until the first page arrives, never "0 links".
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState(false);
   const [query, setQuery] = useState("");
   const [supplierId, setSupplierId] = useState("");
@@ -85,6 +87,7 @@ export default function ItemSupplierPricesPage() {
       if (current !== sequence.current) return;
       setRows(page.rows);
       setTotal(page.total);
+      setReady(true);
       setTruncated(Boolean(page.truncated));
       setPricesVisible(page.visibility?.prices !== false);
       if (page.options) {
@@ -151,7 +154,7 @@ export default function ItemSupplierPricesPage() {
           <div>
             <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("Supplier price list")}</div>
             <div className="mt-0.5 text-[11px]" style={{ color: A.sub }} data-testid="item-supplier-prices-count">
-              {copy(total === 1 ? "1 link, {shown} shown" : "{total} links, {shown} shown", { total: number(total), shown: number(rows.length) })}
+              {ready ? copy(total === 1 ? "1 link, {shown} shown" : "{total} links, {shown} shown", { total: number(total), shown: number(rows.length) }) : NOT_PROVIDED}
             </div>
           </div>
         </div>

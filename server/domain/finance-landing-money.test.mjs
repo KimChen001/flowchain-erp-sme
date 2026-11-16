@@ -35,6 +35,8 @@ function matchesField(value, condition) {
     if (operator === 'not') return operand === null ? value !== null && value !== undefined : comparable(value) !== comparable(operand)
     if (operator === 'gt') return comparable(value) > comparable(operand)
     if (operator === 'lt') return comparable(value) < comparable(operand)
+    // A relation filter: some related row matches (supplier invoices with an open exception).
+    if (operator === 'some') return Array.isArray(value) && value.some((row) => matches(row, operand))
     throw new Error(`operator ${operator} is not modelled`)
   })
 }
@@ -89,7 +91,12 @@ function fakePrisma(permissions = FULL) {
       payable('P5', 'USD', '2026-11-10', 'partially_settled', '60.0000'), // due today
       payable('P6', 'GBP', '2026-09-01', 'settled', '0.0000'),
     ]),
-    supplierInvoice: model([{ tenantId: TENANT, status: 'approved', currency: 'GBP' }]),
+    // One invoice with two open differences (price and amount), one with none:
+    // the card counts the invoice once (UI review 11).
+    supplierInvoice: model([
+      { tenantId: TENANT, status: 'exception', currency: 'GBP', matchExceptions: [{ status: 'open' }, { status: 'open' }] },
+      { tenantId: TENANT, status: 'approved', currency: 'GBP', matchExceptions: [{ status: 'approved' }] },
+    ]),
     customerInvoice: model([{ tenantId: TENANT, status: 'issued', currency: 'GBP' }]),
     financeMatchException: model([{ tenantId: TENANT, status: 'open' }]),
     supplierCreditMemo: model([]),
@@ -107,6 +114,7 @@ test('the overview totals what we owe and are owed per currency, never across cu
   assert.equal(result.cards.openReceivables, 5)
   assert.equal(result.cards.overdueReceivables, 3)
   assert.equal(result.cards.approvedPayableObligations, 5)
+  assert.equal(result.cards.matchExceptions, 1, 'invoices with a difference to decide, not difference lines')
   const owed = byCurrency(result.money.receivables.byCurrency)
   assert.deepEqual(Object.keys(owed), ['GBP', 'USD'])
   assert.deepEqual([owed.GBP.count, owed.GBP.amount], [4, '250.5000'])

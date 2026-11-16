@@ -76,6 +76,8 @@ export default function SupplierEvaluationPage() {
   const [rows, setRows] = useState<EvaluatedSupplier[]>([]);
   const [counts, setCounts] = useState<Counts | null>(null);
   const [loading, setLoading] = useState(true);
+  // The count reads "—" until the first answer arrives, never "0 suppliers".
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState(false);
   const [insights, setInsights] = useState<SupplierInsights | null>(null);
   const [insightsFailed, setInsightsFailed] = useState(false);
@@ -102,6 +104,7 @@ export default function SupplierEvaluationPage() {
       const next = (data.suppliers || []).map(normalize);
       setRows(next);
       setCounts(data.counts || null);
+      setReady(true);
       setKnownOwners((seen) => {
         const byId = new Map(seen.map((person) => [person.id, person]));
         for (const row of next) if (row.businessOwner) byId.set(row.businessOwner.id, row.businessOwner);
@@ -189,12 +192,12 @@ export default function SupplierEvaluationPage() {
           <div className="min-w-0">
             <div className="text-sm font-semibold" style={{ color: A.label }}>{t("Supplier indicators")}</div>
             <div className="mt-0.5 text-[11px]" style={{ color: A.sub }} data-testid="supplier-evaluation-count">
-              {t(total === 1 ? "1 supplier, {shown} shown" : "{total} suppliers, {shown} shown").replace("{total}", String(total)).replace("{shown}", String(shown.length))}
+              {ready ? t(total === 1 ? "1 supplier, {shown} shown" : "{total} suppliers, {shown} shown").replace("{total}", String(total)).replace("{shown}", String(shown.length)) : "—"}
             </div>
           </div>
           <label className="ml-auto flex items-center gap-1.5 text-xs" style={{ color: A.sub }}>
             {t("Sort by")}
-            <select aria-label={t("Sort by")} value={sortBy} onChange={(event) => setSortBy(event.target.value as SupplierSort)} style={{ ...inputStyle, width: "auto", minWidth: 160, paddingTop: 4, paddingBottom: 4 }}>
+            <select aria-label={t("Sort by")} className="max-sm:!py-2" value={sortBy} onChange={(event) => setSortBy(event.target.value as SupplierSort)} style={{ ...inputStyle, width: "auto", minWidth: 160, paddingTop: 4, paddingBottom: 4 }}>
               {SORTS.map((option) => <option key={option.value} value={option.value}>{t(option.label)}</option>)}
             </select>
           </label>

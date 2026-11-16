@@ -19,7 +19,7 @@ export function BackToListLink({ list, className = "" }: { list: PurchasingList;
   const { language } = useI18n();
   const { to, label } = LISTS[list];
   return (
-    <Link to={to} data-testid={`back-to-${list}`} className={`inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline ${className}`}>
+    <Link to={to} data-testid={`back-to-${list}`} className={`inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9 ${className}`}>
       <ArrowLeft size={13} />{label[language === "en-US" ? 0 : 1]}
     </Link>
   );

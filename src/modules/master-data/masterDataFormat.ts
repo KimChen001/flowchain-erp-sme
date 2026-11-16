@@ -42,6 +42,7 @@ const zh: Record<string, string> = {
   "Lead time (days)": "采购提前期（天）", "Batch managed": "批次管理", "Serial managed": "序列号管理", "QA required": "质检要求",
   "Default supplier": "默认供应商", "Default tax code": "默认税码",
   // The items list page.
+  "New item": "新建物料", "Edit item": "编辑物料", "Search items": "搜索物料",
   "Items": "物料总数", "{count} active": "{count} 个启用", "Inactive items": "停用物料",
   "Kept for history, not offered on new documents": "保留历史记录，新单据中不再提供",
   "No reorder point": "未设再订货点", "Active items the reorder list cannot check": "补货清单无法检查的启用物料",
@@ -89,7 +90,7 @@ const zh: Record<string, string> = {
   "Load {count} more": "再加载 {count} 条", "No supplier prices yet": "暂无供应商价格",
   "Link items to a supplier under Supplied items on the supplier's page, or import a file of item–supplier links.": "在供应商页的“可供应物料”中关联物料，或导入物料–供应商关系文件。",
   "No supplier prices match these filters": "没有符合筛选条件的供应商价格", "Reset the filters to see every link.": "重置筛选即可查看全部供应关系。",
-  "Could not load supplier prices.": "供应商价格加载失败。", "Loading supplier prices…": "正在加载供应商价格…",
+  "Could not load supplier prices.": "供应商价格加载失败。", "Loading supplier prices…": "正在加载供应商价格…", "Loading item…": "正在加载物料…",
   "Not every link could be read at once. Choose a supplier or an item to see all of its links.": "供应关系过多，未能一次全部读取。选择供应商或物料即可查看其全部供应关系。",
 };
 const en = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [chinese, english]));
