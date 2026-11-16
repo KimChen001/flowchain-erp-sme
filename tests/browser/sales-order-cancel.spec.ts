@@ -1,4 +1,11 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+// The item field searches on the server as it is typed (design audit A4,
+// L4-01); the first suggestion is chosen.
+async function pickFirstItem(page: Page, label: string | RegExp) {
+  await page.getByLabel(label).click();
+  await page.getByRole("listbox", { name: /^(Matching items|匹配的物料)$/ }).getByRole("option").first().click();
+}
+
 
 // A confirmed, reserved sales order is cancelled from its workbench: the
 // server previews what it releases, the reason is required, and afterwards the
@@ -19,7 +26,7 @@ test("a reserved sales order is cancelled from its workbench", async ({ page, re
   await customer.click();
   await customer.fill("CUST-CANCEL");
   await page.getByRole("option", { name: "Cancelling Customer · CUST-CANCEL" }).click();
-  await page.getByLabel(/^(Item, line 1|物料（第 1 行）)$/).selectOption({ index: 1 });
+  await pickFirstItem(page, /^(Item, line 1|物料（第 1 行）)$/);
   await page.getByLabel(/^(Quantity, line 1|数量（第 1 行）)$/).fill("2.0000");
   await page.getByLabel(/^(Unit price, line 1|单价（第 1 行）)$/).fill("8.0000");
   await page.getByTestId("create-sales-order").click();

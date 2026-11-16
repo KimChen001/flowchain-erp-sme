@@ -39,6 +39,7 @@ import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { outboundEnglish } from "./outboundCopy";
 import { outboundPreviewSentences, type OutboundPreviewLookup } from "./outboundPreviewText";
 import { formatCalendarDay, formatLocaleAmount, formatQuantity } from "../../lib/format";
+import { ItemPicker, type PickerItem } from "./ItemPicker";
 import { movementTypeLabel } from "../../i18n/statusLabels";
 import { unitLabel } from "../../i18n/unitLabels";
 import { createSecureClientMutationId } from "../../lib/client-id";
@@ -1059,8 +1060,13 @@ type EntryCustomer = {
   address?: string | null;
 };
 type EntryData = {
+  // The items the form starts with: the first matches and a draft's own
+  // items. Others are searched as they are typed (ItemPicker).
   items: EntryItem[];
+  itemsMore?: boolean;
   customers?: EntryCustomer[];
+  // More customers than the form loads (10,000); the field says so.
+  customersTruncated?: boolean;
   capabilities: { salesOrderLifecycle: LifecycleCapability };
 };
 type DraftLine = { key: string; itemId: string; quantity: string; unitPrice: string };
@@ -1194,11 +1200,15 @@ function OrderLinesField({
 }) {
   const update = (lineKey: string, change: Partial<DraftLine>) =>
     onChange(lines.map((line) => (line.key === lineKey ? { ...line, ...change } : line)));
+  // The items chosen in the search, so their names and units show beside the
+  // items the form started with.
+  const [picked, setPicked] = useState<PickerItem[]>([]);
+  const known: PickerItem[] = [...items, ...picked];
   const availability = useItemAvailability(lines.map((line) => line.itemId));
   return (
     <div className="space-y-3" data-testid="sales-order-lines">
       {lines.map((line, index) => {
-        const unit = items.find((item) => item.id === line.itemId)?.unit;
+        const unit = known.find((item) => item.id === line.itemId)?.unit || undefined;
         const n = String(index + 1);
         const issue = issues[line.key] || {};
         // The stock the line can draw on now, from the warehouses this user
@@ -1219,21 +1229,18 @@ function OrderLinesField({
             testId={`sales-order-line-${n}`}
           >
             <div className="grid grid-cols-1 gap-3 md:grid-cols-[2fr_1fr_1fr]">
-              <Field label={say("Item", "物料")} required error={issue.itemId}>
-                <select
-                  aria-label={say(`Item, line ${n}`, `物料（第 ${n} 行）`)}
-                  style={inputStyle}
-                  value={line.itemId}
-                  onChange={(e) => update(line.key, { itemId: e.target.value })}
-                >
-                  <option value="">{say("Choose an item", "选择物料")}</option>
-                  {items.map((item) => (
-                    <option value={item.id} key={item.id}>
-                      {item.sku} · {item.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <ItemPicker
+                label={say("Item", "物料")}
+                ariaLabel={say(`Item, line ${n}`, `物料（第 ${n} 行）`)}
+                required
+                error={issue.itemId}
+                value={line.itemId}
+                known={known}
+                onChange={(item) => {
+                  if (item && !known.some((entry) => entry.id === item.id)) setPicked((current) => [...current, item]);
+                  update(line.key, { itemId: item?.id || "" });
+                }}
+              />
               <Field label={unit ? say(`Quantity (${unitLabel(unit, "en-US")})`, `数量（${unitLabel(unit, "zh-CN")}）`) : say("Quantity", "数量")} required error={issue.quantity}>
                 <input
                   aria-label={say(`Quantity, line ${n}`, `数量（第 ${n} 行）`)}
@@ -1556,7 +1563,8 @@ function OrderDetail({ id }: { id: string }) {
       setEditCustomerId(data.order.customerId || "");
       setEditPromised(promisedDay(data.order.promisedDate));
       setEditLines(data.lines.map((line) => draftLine(line.itemId, plainQuantity(line.orderedQuantity), line.unitPrice == null ? "" : plainQuantity(line.unitPrice))));
-      apiJson<EntryData>("/api/sales/order-entry-data")
+      // The draft's own items come with the entry data, whatever their place in the catalogue.
+      apiJson<EntryData>(`/api/sales/order-entry-data?${new URLSearchParams({ itemIds: data.lines.map((line) => line.itemId).filter(Boolean).join(",") }).toString()}`)
         .then(setEditEntry)
         .catch((e) => setError(message(e)));
     }

@@ -1,4 +1,11 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+// The item field searches on the server as it is typed (design audit A4,
+// L4-01); the first suggestion is chosen.
+async function pickFirstItem(page: Page, label: string | RegExp) {
+  await page.getByLabel(label).click();
+  await page.getByRole("listbox", { name: /^(Matching items|匹配的物料)$/ }).getByRole("option").first().click();
+}
+
 
 // A US user places an order for a customer from Customers, not a typed name:
 // the customer's payment terms show, the order takes several lines and a
@@ -58,11 +65,11 @@ test("a sales order is placed for a customer from Customers, with two lines, and
   await expect(page.getByLabel("Currency").locator("option").nth(1)).toHaveText("USD");
   await page.getByLabel("Promised date").fill("2026-10-20");
 
-  await page.getByLabel("Item, line 1").selectOption({ index: 1 });
+  await pickFirstItem(page, "Item, line 1");
   await page.getByLabel("Quantity, line 1").fill("3");
   await page.getByLabel("Unit price, line 1").fill("12.50");
   await page.getByTestId("sales-order-add-line").click();
-  await page.getByLabel("Item, line 2").selectOption({ index: 1 });
+  await pickFirstItem(page, "Item, line 2");
   await page.getByLabel("Quantity, line 2").fill("1");
   // A line without a price could never be invoiced, so the save stops there.
   await create.click();

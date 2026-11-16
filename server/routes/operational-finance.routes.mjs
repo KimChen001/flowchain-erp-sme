@@ -135,7 +135,8 @@ export async function handleOperationalFinanceRoute(ctx) {
     const { read, command, o2cRead, o2cCommand, settlementRead, settlementCommand, transferCommand, advanceCommand, payment, invoiceDocuments } = await services(ctx);
     if (ctx.req.method === "GET" && path === "/api/finance/entry-data") {
       const [p2p, o2c, settlement] = await Promise.all([
-        read.entryData(ctx),
+        // ?po=, ?receipt= or ?supplier=: the supplier invoice form (L2-12).
+        read.entryData(ctx, query(ctx.url)),
         // ?salesOrder= or ?shipment=: the customer invoice form opened from one.
         o2cRead.entryData(ctx, query(ctx.url)),
         settlementRead.entryData(ctx),
