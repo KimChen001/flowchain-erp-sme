@@ -215,9 +215,9 @@ function judgeItem({ item, allocation, demand, reorderPoint, stockUnit, today, s
   ]
   const position = fromUnits(positionUnits)
   const shortfall = fromUnits(Math.max(0, reorderPointUnits - positionUnits))
-  // The purchase request line is in the item's purchase unit; the shortfall is
-  // in its stock unit. When they differ (or either is unknown) the person
-  // enters the quantity.
+  // The purchase request line is in the item's stock unit, but the supplier's
+  // minimum order is in the purchase unit and no conversion is recorded. When
+  // the two units differ (or either is unknown) the person enters the quantity.
   const purchaseUnit = purchaseUnitOf(item, stockUnit)
   const purchaseUnitDiffers = !sameUnit(purchaseUnit, stockUnit)
   if (purchaseUnitDiffers) flags.push({ code: 'purchase_unit_differs', unit: purchaseUnit })

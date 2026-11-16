@@ -73,6 +73,7 @@ export function DocumentShell({
   status,
   statusTone: tone,
   actions,
+  header,
   children,
   onClose,
 }: {
@@ -83,36 +84,46 @@ export function DocumentShell({
   status?: string;
   statusTone?: DocumentTone;
   actions?: React.ReactNode;
+  // More of the header inside its card: the page's next steps and related links.
+  header?: React.ReactNode;
   children: React.ReactNode;
   onClose?: () => void;
 }) {
   const copy = useWorkspaceCopy();
   const style = documentToneStyle(tone || statusTone(status));
+  // The header card every detail page uses (UI review 11): the title (H1) with
+  // its status beside it, then what the record is and with whom, actions on
+  // the right, and the rest of the header in the same card.
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 mb-1">
-            {moduleLabel && <Chip label={String(moduleLabel)} color={A.blue} bg="#f0f6ff" />}
-            {status && <Chip label={copy(status)} color={style.color} bg={style.bg} />}
+      <Card className="p-5" data-testid="document-header">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="fc-page-title" style={{ color: A.label }}>{copy(title)}</h1>
+              {status && <Chip label={copy(status)} color={style.color} bg={style.bg} />}
+            </div>
+            <div className="text-xs mt-1" style={{ color: A.sub }}>
+              {moduleLabel ? <span>{moduleLabel}</span> : null}
+              {moduleLabel && (documentNo || subtitle) ? <span> · </span> : null}
+              {documentNo && <span className="font-semibold tabular-nums" style={{ color: A.blue }}>{documentNo}</span>}
+              {documentNo && subtitle ? <span> · </span> : null}
+              {subtitle}
+            </div>
           </div>
-          {/* The detail page's one title (the PO number): H1 in the shared page-title style. */}
-          <h1 className="fc-page-title" style={{ color: A.label }}>{copy(title)}</h1>
-          <div className="text-xs mt-1" style={{ color: A.sub }}>
-            {documentNo && <span className="font-semibold tabular-nums" style={{ color: A.blue }}>{documentNo}</span>}
-            {documentNo && subtitle ? <span> · </span> : null}
-            {subtitle}
-          </div>
+          {actions || onClose ? (
+            <div className="flex flex-wrap items-center gap-2 shrink-0 sm:justify-end">
+              {actions}
+              {onClose && (
+                <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors" style={{ color: A.gray1 }}>
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+          ) : null}
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
-          {actions}
-          {onClose && (
-            <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors" style={{ color: A.gray1 }}>
-              <X size={15} />
-            </button>
-          )}
-        </div>
-      </div>
+        {header ? <div className="mt-4">{header}</div> : null}
+      </Card>
       {children}
     </div>
   );

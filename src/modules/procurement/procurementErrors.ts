@@ -19,6 +19,9 @@ const PURCHASING_CODES: Record<string, ErrorPair> = {
   PURCHASE_ORDER_PROMISE_CLOSED: ["Promised dates can no longer be changed on this order.", "该订单已不能修改承诺交期。"],
   PURCHASE_ORDER_LINE_ALREADY_RECEIVED: ["This line has been received in full, so its promised date cannot change.", "该行已全部收货，不能修改承诺交期。"],
   PURCHASE_ORDER_HAS_OPEN_RECEIPTS: ["This purchase order has receipts that are not posted yet. Post or cancel them first.", "该采购订单还有未过账的收货单，请先过账或取消。"],
+  // No conversion between units is recorded, so lines and receipts are in the item's stock unit only.
+  PURCHASE_UNIT_CONVERSION_MISSING: ["A line is in a unit other than its item's stock unit, and no conversion between the two is recorded. Request the item again in its stock unit.", "有采购行的单位不是该物料的库存单位，且未记录两者的换算关系。请按库存单位重新请购。"],
+  RECEIVING_UNIT_MISMATCH: ["A line on this receipt is in a unit other than its item's stock unit, and no conversion is recorded, so it cannot be posted.", "该收货单有明细的单位不是物料的库存单位，且未记录换算关系，不能过账。"],
   // The shared rules call this "not turned on"; the purchasing pages have
   // always said "try again" here, so they keep it.
   FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE: ["Purchasing records cannot be read right now. Try again shortly.", "采购记录加载失败，请稍后重试。"],

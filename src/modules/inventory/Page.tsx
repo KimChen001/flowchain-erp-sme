@@ -74,6 +74,8 @@ type Movement = {
   quantityIn?: string | number;
   quantityOut?: string | number;
   adjustmentQty?: string | number;
+  // The unit the movement was recorded in, shown with its quantities.
+  unit?: string | null;
   date?: string;
   sourceDocument?: string;
   status?: string;
@@ -727,8 +729,8 @@ export default function InventoryPage({
                         {warehouseName(row.warehouseId) || "—"}
                         <div className="text-[11px]" style={{ color: A.sub }}>{row.location || "—"}</div>
                       </td>
-                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityIn || 0) ? "#0f766e" : A.gray2 }}>{Number(row.quantityIn || 0) ? formatQuantity(row.quantityIn) : "—"}</td>
-                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityOut || 0) ? A.label : A.gray2 }}>{Number(row.quantityOut || 0) ? formatQuantity(row.quantityOut) : "—"}</td>
+                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityIn || 0) ? "#0f766e" : A.gray2 }}>{Number(row.quantityIn || 0) ? `${formatQuantity(row.quantityIn)}${row.unit ? ` ${unitLabel(row.unit, language, Number(row.quantityIn))}` : ""}` : "—"}</td>
+                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityOut || 0) ? A.label : A.gray2 }}>{Number(row.quantityOut || 0) ? `${formatQuantity(row.quantityOut)}${row.unit ? ` ${unitLabel(row.unit, language, Number(row.quantityOut))}` : ""}` : "—"}</td>
                       <td className={tdNowrapClass} style={{ color: A.sub }}>{formatDateTimeInTimeZone(row.date, locale, timezone)}</td>
                       <td className={tdNowrapClass}><StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} /></td>
                     </tr>

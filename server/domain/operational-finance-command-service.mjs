@@ -12,6 +12,8 @@ import {
   supplierCreditMemoNumberDuplicate,
 } from "./operational-finance-policy.mjs";
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
+import { derivePayableSettlementStatus } from "./obligation-status-policy.mjs";
+import { CREDIT_HOLDING_STATUSES } from "./return-credit-rules.mjs";
 import {
   DUPLICATE_KINDS,
   duplicateFlagView,
@@ -69,6 +71,8 @@ const commandPermission = (commandType) => ({
   release_payable_obligation: "finance.payable.release",
   mark_export_ready_payable_obligation: "finance.payable.mark_export_ready",
   create_supplier_credit_memo: "finance.supplier_credit.create",
+  // Whoever may raise a draft credit memo may withdraw one.
+  cancel_supplier_credit_memo: "finance.supplier_credit.create",
   approve_supplier_credit_memo: "finance.supplier_credit.approve",
 })[commandType];
 const executionWhere = (tenantId, commandType, idempotencyKey) => ({
@@ -446,6 +450,167 @@ const payableNumberDuplicate = (obligationNumber) => ({
 // Credit memo numbers are entered, not derived, and stay unique per workspace.
 const isSupplierCreditMemoNumberConflict = (error) =>
   isUniqueConflictOn(error, "SupplierCreditMemo", "creditMemoNumber");
+
+// Locks a row when it exists and leaves a missing one to the plan, which
+// names it in its own words.
+async function lockTenantRowIfPresent(tx, table, tenantId, id) {
+  if (text(id))
+    await tx.$queryRawUnsafe(
+      `SELECT "id" FROM "${table}" WHERE "tenantId" = $1 AND "id" = $2 FOR UPDATE`,
+      tenantId,
+      text(id),
+    );
+}
+
+// The approved credit memos of a bill, summed. A credit approved before the
+// bill is taken off the payable when the bill is approved.
+async function approvedCreditTotal(db, supplierInvoiceId) {
+  const rows = await db.supplierCreditMemo.findMany({
+    where: { supplierInvoiceId, status: "approved" },
+    select: { totalAmount: true },
+  });
+  return rows.reduce((sum, row) => sum + financeUnits(row.totalAmount), 0n);
+}
+
+// The payable a bill opens with: its total less the credits already
+// approved against it, with the status those amounts give.
+function openingPayable(invoice, credited) {
+  const total = financeUnits(invoice.totalAmount ?? invoice.amount);
+  const amounts = {
+    originalAmount: financeFixed(total),
+    approvedCreditAmount: financeFixed(credited),
+    outstandingAmount: financeFixed(total - credited),
+  };
+  return {
+    ...amounts,
+    status: derivePayableSettlementStatus(amounts),
+    issues:
+      credited > total
+        ? [{
+            code: "SUPPLIER_CREDIT_AMOUNT_EXCEEDED",
+            message: "The credit memos approved against this bill are more than its total.",
+            status: 409,
+          }]
+        : [],
+  };
+}
+
+// A bill a credit memo names is not cancelled. A draft credit is cancelled
+// first; an approved one stays with the bill, which is approved net of it.
+async function billCreditIssues(db, supplierInvoiceId) {
+  const credits = await db.supplierCreditMemo.findMany({
+    where: { supplierInvoiceId, status: { in: [...CREDIT_HOLDING_STATUSES] } },
+    select: { creditMemoNumber: true, status: true },
+  });
+  if (!credits.length) return [];
+  const named = (status) =>
+    credits.filter((row) => row.status === status).map((row) => row.creditMemoNumber).join(", ");
+  const approved = named("approved");
+  return [{
+    code: "SUPPLIER_INVOICE_HAS_CREDITS",
+    message: approved
+      ? `Approved credit memo ${approved} is recorded against this bill, so the bill cannot be cancelled. Approve the bill instead; its payable is the total less the credit.`
+      : `Draft credit memo ${named("draft")} is recorded against this bill. Cancel the draft before cancelling the bill.`,
+    status: 409,
+    details: { credits: credits.map((row) => ({ number: row.creditMemoNumber, status: row.status })) },
+  }];
+}
+
+// A payable a credit may lower: one still owed and not on hold. A credit
+// changes the amount, so a payable marked export-ready goes back to approved
+// (or partly or fully settled) and is marked again, as after a payment.
+const CREDITABLE_PAYABLE_STATUSES = ["approved", "export_ready", "partially_settled"];
+
+// Why a draft credit memo cannot be approved now. Checked again at approval,
+// not only when the draft was made: the return may have been reversed or the
+// bill cancelled since, and the payable may be on hold or paid.
+function supplierCreditApprovalIssues({ memo, invoice, posting, payable }) {
+  const issues = [];
+  if (
+    !posting ||
+    posting.postingType !== "supplier_return_dispatch" ||
+    posting.postingStatus !== "posted" ||
+    posting.reversedAt
+  )
+    issues.push({
+      code: "SUPPLIER_RETURN_POSTING_REQUIRED",
+      message: "The supplier return this credit memo is based on is no longer posted. Cancel the draft credit memo.",
+      status: 409,
+    });
+  if (!invoice || !RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES.includes(invoice.status))
+    issues.push({
+      code: "SUPPLIER_CREDIT_INVOICE_STATUS_INVALID",
+      message: "The bill this credit memo names is cancelled or was never submitted. Cancel the draft credit memo.",
+      status: 409,
+      details: { invoiceStatus: invoice?.status ?? null },
+    });
+  if (!payable) return issues;
+  const total = financeUnits(memo.totalAmount);
+  const outstanding = financeUnits(payable.outstandingAmount);
+  if (payable.status === "held")
+    issues.push({
+      code: "SUPPLIER_CREDIT_PAYABLE_HELD",
+      message: "This bill to pay is on hold. Release the hold before approving a credit memo against it.",
+      status: 409,
+    });
+  else if (payable.status !== "settled" && !CREDITABLE_PAYABLE_STATUSES.includes(payable.status))
+    issues.push({
+      code: "PAYABLE_STATUS_INVALID",
+      message: `A credit memo cannot be approved while the bill to pay is ${payable.status}.`,
+      status: 409,
+      details: { payableStatus: payable.status },
+    });
+  else if (total > outstanding)
+    issues.push({
+      code: "SUPPLIER_CREDIT_AMOUNT_EXCEEDED",
+      message: `This credit of ${financeFixed(total)} ${memo.currency} is more than the ${financeFixed(outstanding)} ${payable.currency} still owed on the bill. Record the refund in your accounting system.`,
+      status: 409,
+      details: { creditAmount: financeFixed(total), outstandingAmount: financeFixed(outstanding) },
+    });
+  return issues;
+}
+
+// The payable after a credit is approved: lower outstanding, more credit,
+// and the status those amounts give (approved, partly or fully settled).
+function payableAfterCredit(payable, memo) {
+  const amounts = {
+    originalAmount: payable.originalAmount,
+    approvedCreditAmount: financeFixed(
+      financeUnits(payable.approvedCreditAmount) + financeUnits(memo.totalAmount),
+    ),
+    outstandingAmount: financeFixed(
+      financeUnits(payable.outstandingAmount) - financeUnits(memo.totalAmount),
+    ),
+  };
+  return {
+    approvedCreditAmount: amounts.approvedCreditAmount,
+    outstandingAmount: amounts.outstandingAmount,
+    status: derivePayableSettlementStatus(amounts),
+  };
+}
+
+function creditCancelIssues(memo, version, reason) {
+  const issues = [];
+  if (memo.status !== "draft")
+    issues.push({
+      code: "SUPPLIER_CREDIT_STATUS_INVALID",
+      message: "Only a draft supplier credit memo can be cancelled.",
+      status: 409,
+    });
+  if (memo.version !== version)
+    issues.push({
+      code: "FINANCE_VERSION_CONFLICT",
+      message: "Supplier credit memo changed concurrently.",
+      status: 409,
+    });
+  if (!text(reason))
+    issues.push({
+      code: "SUPPLIER_CREDIT_CANCEL_REASON_REQUIRED",
+      message: "Enter why the credit memo is cancelled.",
+      status: 422,
+    });
+  return issues;
+}
 
 // Duplicate supplier invoice flags (plan item C1, supplier-invoice-duplicates.mjs).
 // An open flag asks the approver to dismiss it with a reason, or to cancel the
@@ -993,7 +1158,10 @@ export function createOperationalFinanceCommandService({
     if (!invoice)
       fail("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404);
     const version = expectedVersion(input.expectedVersion);
-    const blockingIssues = cancelIssues(invoice, version, input.reason);
+    const blockingIssues = [
+      ...cancelIssues(invoice, version, input.reason),
+      ...(await billCreditIssues(prisma, invoice.id)),
+    ];
     const exceptions = await prisma.financeMatchException.count({
       where: { supplierInvoiceId: invoice.id, status: "open" },
     });
@@ -1034,8 +1202,11 @@ export function createOperationalFinanceCommandService({
         const current = await tx.supplierInvoice.findUnique({
           where: { id: normalized.invoiceId },
         });
-        const issues = cancelIssues(current, normalized.expectedVersion, normalized.reason);
-        if (issues.length) fail(issues[0].code, issues[0].message, issues[0].status);
+        const issues = [
+          ...cancelIssues(current, normalized.expectedVersion, normalized.reason),
+          ...(await billCreditIssues(tx, current.id)),
+        ];
+        if (issues.length) fail(issues[0].code, issues[0].message, issues[0].status, issues[0].details);
         // FinanceMatchException.status allows open, approved, rejected and
         // resolved: an open exception is resolved by the cancellation.
         const closed = await tx.financeMatchException.updateMany({
@@ -1682,6 +1853,8 @@ export function createOperationalFinanceCommandService({
     const typedNumber = text(input.obligationNumber);
     if (typedNumber && (await payableNumberTaken(prisma, actor.tenantId, typedNumber)))
       blockingIssues.push(payableNumberDuplicate(typedNumber));
+    const opening = openingPayable(invoice, await approvedCreditTotal(prisma, invoice.id));
+    blockingIssues.push(...opening.issues);
     return {
       operation: "approve_supplier_invoice",
       allowed: blockingIssues.length === 0,
@@ -1689,11 +1862,12 @@ export function createOperationalFinanceCommandService({
       before: invoiceResult(invoice).invoice,
       after: {
         invoiceStatus: "approved",
-        payableStatus: "approved",
+        payableStatus: opening.status,
         obligationNumber:
           typedNumber || (await nextPayableNumber(prisma, actor.tenantId, invoice)),
         originalAmount: String(invoice.totalAmount ?? invoice.amount),
-        outstandingAmount: String(invoice.totalAmount ?? invoice.amount),
+        approvedCreditAmount: opening.approvedCreditAmount,
+        outstandingAmount: opening.outstandingAmount,
         currency: invoice.currency,
         dueDate: invoice.dueDate?.toISOString(),
       },
@@ -1765,6 +1939,12 @@ export function createOperationalFinanceCommandService({
         }
         const obligationNumber =
           typedNumber || (await nextPayableNumber(tx, actor.tenantId, current));
+        // A credit memo approved before the bill: the payable opens at the
+        // bill's total less that credit (credit approval locks this bill, so
+        // the two cannot pass each other).
+        const opening = openingPayable(current, await approvedCreditTotal(tx, current.id));
+        if (opening.issues.length)
+          fail(opening.issues[0].code, opening.issues[0].message, opening.issues[0].status);
         const invoice = await tx.supplierInvoice.update({
           where: { id: current.id },
           data: {
@@ -1783,10 +1963,11 @@ export function createOperationalFinanceCommandService({
               supplierInvoiceId: current.id,
               obligationNumber,
               originalAmount: current.totalAmount ?? current.amount,
-              outstandingAmount: current.totalAmount ?? current.amount,
+              approvedCreditAmount: opening.approvedCreditAmount,
+              outstandingAmount: opening.outstandingAmount,
               currency: current.currency,
               dueDate: current.dueDate,
-              status: "approved",
+              status: opening.status,
               approvedAt: now(),
               approvedById: actor.user.id,
             },
@@ -1828,6 +2009,7 @@ export function createOperationalFinanceCommandService({
             evidence: {
               payableObligationId: payable.id,
               matchStatus: current.matchStatus,
+              approvedCreditAmount: opening.approvedCreditAmount,
             },
           }),
         });
@@ -2168,6 +2350,11 @@ export function createOperationalFinanceCommandService({
       context,
       payload,
       async (tx, actor, normalized, command) => {
+        // The bill first, as cancelling or approving it does, then the
+        // return, as reversing it does: a credit and those cannot pass
+        // each other.
+        await lockTenantRowIfPresent(tx, "SupplierInvoice", actor.tenantId, normalized.supplierInvoiceId);
+        await lockTenantRowIfPresent(tx, "ReturnPostingDocument", actor.tenantId, normalized.returnPostingId);
         await lockChildRows(
           tx,
           "SupplierInvoiceLine",
@@ -2264,38 +2451,30 @@ export function createOperationalFinanceCommandService({
             "Supplier credit memo changed concurrently.",
             409,
           );
-        const payable = await tx.payableObligation.findUnique({
+        // The payable first (holding a payable locks it, then its bill),
+        // then the bill, so approving the bill cannot pass this credit, then
+        // the return, so reversing it cannot either.
+        const existing = await tx.payableObligation.findUnique({
           where: { supplierInvoiceId: current.supplierInvoiceId },
+          select: { id: true },
         });
-        if (payable) {
-          await lockTenantRow(
-            tx,
-            "PayableObligation",
-            actor.tenantId,
-            payable.id,
-            "PAYABLE_OBLIGATION_NOT_FOUND",
-          );
-          const outstanding =
-            financeUnits(payable.outstandingAmount) -
-            financeUnits(current.totalAmount);
-          if (outstanding < 0n)
-            fail(
-              "SUPPLIER_CREDIT_AMOUNT_EXCEEDED",
-              "Approved supplier credit cannot exceed the outstanding payable obligation.",
-              409,
-            );
+        if (existing)
+          await lockTenantRow(tx, "PayableObligation", actor.tenantId, existing.id, "PAYABLE_OBLIGATION_NOT_FOUND");
+        await lockTenantRowIfPresent(tx, "SupplierInvoice", actor.tenantId, current.supplierInvoiceId);
+        await lockTenantRowIfPresent(tx, "ReturnPostingDocument", actor.tenantId, current.returnPostingId);
+        const [invoice, posting, payable] = await Promise.all([
+          tx.supplierInvoice.findFirst({ where: { id: current.supplierInvoiceId, tenantId: actor.tenantId } }),
+          tx.returnPostingDocument.findFirst({ where: { id: current.returnPostingId, tenantId: actor.tenantId } }),
+          tx.payableObligation.findUnique({ where: { supplierInvoiceId: current.supplierInvoiceId } }),
+        ]);
+        const [issue] = supplierCreditApprovalIssues({ memo: current, invoice, posting, payable });
+        if (issue) fail(issue.code, issue.message, issue.status, issue.details);
+        // Without a payable yet, the bill's approval takes this credit off.
+        if (payable)
           await tx.payableObligation.update({
             where: { id: payable.id },
-            data: {
-              outstandingAmount: financeFixed(outstanding),
-              approvedCreditAmount: financeFixed(
-                financeUnits(payable.approvedCreditAmount) +
-                  financeUnits(current.totalAmount),
-              ),
-              version: { increment: 1 },
-            },
+            data: { ...payableAfterCredit(payable, current), version: { increment: 1 } },
           });
-        }
         const memo = await tx.supplierCreditMemo.update({
           where: { id: current.id },
           data: {
@@ -2329,6 +2508,89 @@ export function createOperationalFinanceCommandService({
     );
   }
 
+  // A draft credit memo entered by mistake is cancelled with a reason. It is
+  // kept on record, and its quantities no longer count against the return
+  // or the bill, so a correct credit can be made and the return reversed.
+  async function previewCancelSupplierCreditMemo(memoId, input, context) {
+    assertEnabled(env);
+    const actor = await resolveProvisionedActor(prisma, assertIdentity(context));
+    assertAuthorized({ actor, permission: "finance.supplier_credit.create", tenantId: actor.tenantId });
+    const memo = await prisma.supplierCreditMemo.findFirst({
+      where: { id: memoId, tenantId: actor.tenantId },
+    });
+    if (!memo)
+      fail("SUPPLIER_CREDIT_MEMO_NOT_FOUND", "Supplier credit memo was not found.", 404);
+    const version = expectedVersion(input.expectedVersion);
+    const blockingIssues = creditCancelIssues(memo, version, input.reason);
+    return {
+      operation: "cancel_supplier_credit_memo",
+      allowed: blockingIssues.length === 0,
+      blockingIssues,
+      before: creditMemoResult(memo).creditMemo,
+      after: { ...creditMemoResult(memo).creditMemo, status: "cancelled", version: memo.version + 1 },
+      paymentExecution: false,
+      ledgerMutation: false,
+    };
+  }
+
+  async function cancelSupplierCreditMemo(memoId, input, context) {
+    const payload = {
+      memoId: required(memoId, "memoId"),
+      expectedVersion: expectedVersion(input.expectedVersion),
+      reason: text(input.reason),
+    };
+    return execute(
+      "cancel_supplier_credit_memo",
+      input,
+      context,
+      payload,
+      async (tx, actor, normalized, command) => {
+        await lockTenantRow(
+          tx,
+          "SupplierCreditMemo",
+          actor.tenantId,
+          normalized.memoId,
+          "SUPPLIER_CREDIT_MEMO_NOT_FOUND",
+        );
+        const current = await tx.supplierCreditMemo.findUnique({
+          where: { id: normalized.memoId },
+        });
+        const [issue] = creditCancelIssues(current, normalized.expectedVersion, normalized.reason);
+        if (issue) fail(issue.code, issue.message, issue.status);
+        const memo = await tx.supplierCreditMemo.update({
+          where: { id: current.id },
+          data: {
+            status: "cancelled",
+            cancelledAt: now(),
+            cancelledById: actor.user.id,
+            cancellationReason: normalized.reason,
+            version: { increment: 1 },
+          },
+        });
+        const result = creditMemoResult(memo);
+        await tx.auditLog.create({
+          data: audit({
+            idFactory,
+            actor,
+            action: "supplier_credit_memo_cancelled",
+            entityType: result.entityType,
+            entityId: result.entityId,
+            summary: "Draft supplier credit memo cancelled; its quantities no longer count against the return or the bill.",
+            ...command,
+            before: creditMemoResult(current).creditMemo,
+            after: result.creditMemo,
+            evidence: {
+              reason: normalized.reason,
+              supplierInvoiceId: current.supplierInvoiceId,
+              returnPostingId: current.returnPostingId,
+            },
+          }),
+        });
+        return result;
+      },
+    );
+  }
+
   async function previewApproveSupplierCreditMemo(memoId, input, context) {
     assertEnabled(env);
     const actor = await resolveProvisionedActor(prisma, assertIdentity(context));
@@ -2342,9 +2604,11 @@ export function createOperationalFinanceCommandService({
         "Supplier credit memo was not found.",
         404,
       );
-    const payable = await prisma.payableObligation.findUnique({
-      where: { supplierInvoiceId: memo.supplierInvoiceId },
-    });
+    const [invoice, posting, payable] = await Promise.all([
+      prisma.supplierInvoice.findFirst({ where: { id: memo.supplierInvoiceId, tenantId: actor.tenantId } }),
+      prisma.returnPostingDocument.findFirst({ where: { id: memo.returnPostingId, tenantId: actor.tenantId } }),
+      prisma.payableObligation.findUnique({ where: { supplierInvoiceId: memo.supplierInvoiceId } }),
+    ]);
     const version = expectedVersion(input.expectedVersion);
     const blockingIssues = [];
     if (memo.version !== version)
@@ -2359,16 +2623,8 @@ export function createOperationalFinanceCommandService({
         message: "Only a draft supplier credit memo can be approved.",
         status: 409,
       });
-    if (
-      payable &&
-      financeUnits(memo.totalAmount) > financeUnits(payable.outstandingAmount)
-    )
-      blockingIssues.push({
-        code: "SUPPLIER_CREDIT_AMOUNT_EXCEEDED",
-        message:
-          "Approved supplier credit cannot exceed the outstanding payable obligation.",
-        status: 409,
-      });
+    blockingIssues.push(...supplierCreditApprovalIssues({ memo, invoice, posting, payable }));
+    const after = payable ? payableAfterCredit(payable, memo) : null;
     return {
       operation: "approve_supplier_credit_memo",
       allowed: blockingIssues.length === 0,
@@ -2379,16 +2635,18 @@ export function createOperationalFinanceCommandService({
         status: "approved",
         version: memo.version + 1,
       },
+      // Without a payable yet, the credit is taken off when the bill is
+      // approved.
       payableImpact: payable
         ? {
             id: payable.id,
             outstandingBefore: String(payable.outstandingAmount),
-            outstandingAfter: financeFixed(
-              financeUnits(payable.outstandingAmount) -
-                financeUnits(memo.totalAmount),
-            ),
+            outstandingAfter: after.outstandingAmount,
+            statusBefore: payable.status,
+            statusAfter: after.status,
           }
         : null,
+      deductedAtBillApproval: !payable,
       paymentExecution: false,
       ledgerMutation: false,
     };
@@ -2423,5 +2681,7 @@ export function createOperationalFinanceCommandService({
     createSupplierCreditMemo,
     previewApproveSupplierCreditMemo,
     approveSupplierCreditMemo,
+    previewCancelSupplierCreditMemo,
+    cancelSupplierCreditMemo,
   };
 }

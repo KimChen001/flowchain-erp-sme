@@ -313,12 +313,22 @@ function salesOrderWork(salesOrders, today) {
   })
 }
 
-function purchasingWork(purchaseRequests, purchaseOrders) {
+// An approved request with an RFQ that is neither cancelled nor closed cannot
+// be turned into a purchase order yet (design audit L11-06): Today leaves it
+// out until the RFQ is cancelled.
+const RFQ_DONE = new Set(['cancelled', 'closed'])
+function requestsWithOpenRfq(rfqs) {
+  return new Set(array(rfqs).filter((rfq) => !RFQ_DONE.has(text(rfq.status))).map((rfq) => text(rfq.linkedPr || rfq.sourceRequest || rfq.sourceRequestId)).filter(Boolean))
+}
+
+function purchasingWork(purchaseRequests, purchaseOrders, rfqs) {
+  const openRfqFor = requestsWithOpenRfq(rfqs)
   const requestRows = array(purchaseRequests).flatMap((request) => {
     const status = text(request.status)
     const kind = status === 'submitted' ? 'purchase_request_to_approve' : status === 'approved' ? 'purchase_request_to_convert' : null
     if (!kind) return []
     const id = text(request.id)
+    if (kind === 'purchase_request_to_convert' && openRfqFor.has(id)) return []
     return [row(kind, 'purchase_request', id, {
       label: text(request.number) || id,
       href: `/app/procurement/requests/${encode(id)}`,
@@ -412,7 +422,7 @@ export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFA
     ...customerInvoiceWork(sources.customerInvoices, timeZone),
     ...receivableWork(sources.receivables, today),
     ...salesOrderWork(sources.salesOrders, today),
-    ...purchasingWork(sources.purchaseRequests, sources.purchaseOrders),
+    ...purchasingWork(sources.purchaseRequests, sources.purchaseOrders, sources.rfqs),
     ...contractWork(sources.contracts, today),
   ].sort(compareTodayWork)
   return {

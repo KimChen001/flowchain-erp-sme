@@ -93,6 +93,7 @@ const ISSUE_COPY: Record<string, Pair> = {
   RECEIVING_ALREADY_POSTED: ["This receipt has already been posted.", "该收货单已过账。"],
   RECEIVING_ALREADY_REVERSED: ["This receipt has already been reversed.", "该收货单已冲销。"],
   RECEIVING_OVER_RECEIPT: ["Accepted quantity exceeds the remaining purchase order quantity.", "合格数量超过采购订单的剩余数量。"],
+  RECEIVING_UNIT_MISMATCH: ["A line is in a unit other than its item's stock unit, and no conversion is recorded, so it cannot be posted.", "有明细的单位不是物料的库存单位，且未记录换算关系，不能过账。"],
   RECEIVING_VALIDATION_FAILED: ["The receipt does not meet the posting rules.", "收货单不符合过账规则，请检查其状态和明细。"],
   RECEIVING_REVERSAL_NOT_SAFE: ["Reversal is blocked: the received stock has already been used or the balance is too low.", "无法冲销：已收库存已被使用或余额不足。"],
 };

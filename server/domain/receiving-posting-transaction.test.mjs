@@ -84,6 +84,45 @@ test('database receiving posting is atomic, idempotent, tenant-scoped, and concu
       }
     })
 
+    // Design audit L1-02 = L3-01: no conversion between units is recorded, so
+    // a CASE line on an item kept in pcs is refused rather than adding 10
+    // cases to the pcs balance as 10 pcs and relabelling the balance CASE.
+    await t.test('a receipt in another unit than the stock unit is refused and leaves the balance and its unit alone', async () => {
+      const scenario = await seedReceivingScenario(prisma, { ordered: ['10'], accepted: ['10'], itemUnit: 'pcs', lineUnit: 'CASE' })
+      try {
+        const balanceId = randomUUID()
+        await prisma.inventoryBalance.create({ data: { id: balanceId, tenantId: scenario.tenantId, itemId: scenario.items[0].itemId, sku: scenario.items[0].sku, warehouseId: scenario.warehouseId, warehouseKey: scenario.warehouseId, location: 'A-01', locationKey: 'a-01', onHandQuantity: '40', availableQuantity: '40', reservedQuantity: '0', unit: 'pcs', version: 1 } })
+        const service = createReceivingPostingCommandService({ prisma })
+        const error = await expectCommandError(service.postReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: 'post-other-unit' }, { identity: scenario.actor }), 'RECEIVING_UNIT_MISMATCH')
+        assert.equal(error.status, 409)
+        assert.deepEqual([error.details.unit, error.details.stockUnit], ['CASE', 'pcs'])
+        const balance = await prisma.inventoryBalance.findUnique({ where: { id: balanceId } })
+        assert.deepEqual([balance.onHandQuantity.toString(), balance.availableQuantity.toString(), balance.unit, balance.version], ['40', '40', 'pcs', 1])
+        assert.equal(await prisma.inventoryMovement.count({ where: { tenantId: scenario.tenantId } }), 0)
+        assert.equal((await prisma.purchaseOrderLine.findUnique({ where: { id: scenario.poLines[0].id } })).receivedQuantity.toString(), '0')
+        assert.equal((await prisma.receivingDocument.findUnique({ where: { id: scenario.receivingDocumentId } })).postingStatus, 'unposted')
+      } finally {
+        await cleanupReceivingScenario(prisma, scenario)
+      }
+    })
+
+    await t.test('a receipt in the stock unit is booked in the stock unit and never relabels the balance', async () => {
+      const scenario = await seedReceivingScenario(prisma, { ordered: ['10'], accepted: ['10'], itemUnit: 'pcs', lineUnit: 'PCS' })
+      try {
+        const balanceId = randomUUID()
+        // The stock record keeps its own spelling of the unit; the receipt does not overwrite it.
+        await prisma.inventoryBalance.create({ data: { id: balanceId, tenantId: scenario.tenantId, itemId: scenario.items[0].itemId, sku: scenario.items[0].sku, warehouseId: scenario.warehouseId, warehouseKey: scenario.warehouseId, location: 'A-01', locationKey: 'a-01', onHandQuantity: '40', availableQuantity: '40', reservedQuantity: '0', unit: 'Pcs', version: 1 } })
+        const result = await createReceivingPostingCommandService({ prisma }).postReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: 'post-stock-unit' }, { identity: scenario.actor })
+        assert.equal(result.affectedBalances[0].onHandQuantity, '50.0000')
+        const balance = await prisma.inventoryBalance.findUnique({ where: { id: balanceId } })
+        assert.equal(balance.unit, 'Pcs')
+        const [movement] = await prisma.inventoryMovement.findMany({ where: { tenantId: scenario.tenantId } })
+        assert.equal(movement.unit, 'pcs')
+      } finally {
+        await cleanupReceivingScenario(prisma, scenario)
+      }
+    })
+
     await t.test('injected failure rolls back the complete transaction', async () => {
       const scenario = await seedReceivingScenario(prisma)
       try {

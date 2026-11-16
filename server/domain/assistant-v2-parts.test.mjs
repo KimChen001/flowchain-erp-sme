@@ -922,13 +922,13 @@ test('the record card shows each step as a button, and a step past submitting as
   assert.match(reject, /Reject PR-0231 for 300 pcs of LDM-002 from Northstar Electronics\? The requester sees your reason\./)
   assert.match(reject, /data-testid="ai-v2-record-reason"/)
   assert.match(reject, /data-testid="ai-v2-record-confirm-button"[^>]*disabled=""/)
-  // An approved request: the route's path recommendation, quotes first when it says so.
+  // An approved request: the order only. A card saved before A7 that still
+  // lists an RFQ step does not draw it (design audit L1-01).
   const approved = cardProps({ record: cardRecord({ status: 'approved', lineCount: 2 }), actions: ['create_rfq', 'create_po'], path: { recommendation: 'rfq', reasons: ['amount_over_rfq_threshold'] } })
   const order = client.recordCard({ props: approved, language: 'en-US' })
-  assert.deepEqual(buttons(order), ['create_rfq:Request quotes (RFQ)', 'create_po:Create purchase order'])
-  assert.match(order, /data-testid="ai-v2-record-path" data-recommendation="rfq"[^>]*>Recommended: request quotes first[^]*the amount is at or above the quote threshold/)
+  assert.deepEqual(buttons(order), ['create_po:Create purchase order'])
+  assert.doesNotMatch(order, /Request quotes/)
   assert.match(client.recordCard({ props: approved, language: 'en-US', initialConfirm: 'create_po' }), /Turn PR-0231 into a purchase order for 2 lines from Northstar Electronics\?/)
-  assert.match(client.recordCard({ props: approved, language: 'en-US', initialConfirm: 'create_rfq' }), /Request quotes for PR-0231 \(2 lines\)\? This creates a draft RFQ; nothing is sent to suppliers until you open it\./)
   // An order: mark it issued says FlowChain sends nothing.
   const issue = cardProps({ record: cardRecord({ ref: ref('purchase_order', 'PO-009'), type: 'purchase_order', status: 'approved', suppliers: ['Summit Packaging'] }), allowed: ['issue'], actions: ['issue'], path: undefined })
   assert.match(client.recordCard({ props: issue, language: 'en-US', initialConfirm: 'issue' }), /Mark PO-009 \(300 pcs of LDM-002 from Summit Packaging\) as issued\? FlowChain records the issue; you send the PO to the supplier\./)
@@ -986,9 +986,9 @@ test('a step posts its route with the record\'s version and the card\'s key; a r
 test('after a step the card offers what the new status allows, and shows what it did when the answer is shown again', async () => {
   const client = await loadClient()
   const props = cardProps()
-  // Approved: the next step is ordering it, by the route's recommendation; once ordered, nothing more.
+  // Approved: the next step is ordering it, never an RFQ (A7), whatever an older card's path says; once ordered, nothing more.
   assert.deepEqual(client.cardActions(props, { status: 'approved', version: 4 }, false), ['create_po'])
-  assert.deepEqual(client.cardActions({ ...props, path: { recommendation: 'rfq', reasons: [] } }, { status: 'approved', version: 4 }, false), ['create_rfq', 'create_po'])
+  assert.deepEqual(client.cardActions({ ...props, path: { recommendation: 'rfq', reasons: [] } }, { status: 'approved', version: 4 }, false), ['create_po'])
   assert.deepEqual(client.cardActions(props, { status: 'approved', version: 5 }, true), [])
   assert.deepEqual(client.cardActions({ ...props, allowed: ['approve', 'reject'] }, { status: 'approved', version: 4 }, false), [])
   const receipt = { type: 'purchase_request', id: 'PR-0231', status: 'converted', version: 5, steps: [

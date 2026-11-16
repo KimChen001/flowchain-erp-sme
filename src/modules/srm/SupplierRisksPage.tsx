@@ -119,7 +119,7 @@ export default function SupplierRisksPage() {
           <div>
             <div className="text-sm font-semibold" style={{ color: A.label }}>{t("Open issues")}</div>
             <div className="mt-0.5 text-[11px]" style={{ color: A.sub }} data-testid="supplier-risks-count">
-              {t(issues.length === 1 ? "1 issue, {shown} shown" : "{total} issues, {shown} shown").replace("{total}", String(issues.length)).replace("{shown}", String(shown.length))}
+              {data ? t(issues.length === 1 ? "1 issue, {shown} shown" : "{total} issues, {shown} shown").replace("{total}", String(issues.length)).replace("{shown}", String(shown.length)) : "—"}
             </div>
           </div>
         </div>

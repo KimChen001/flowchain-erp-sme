@@ -234,10 +234,24 @@ export function mapPurchaseRequest(record = {}) {
   }
 }
 
-export function mapRfq(record = {}, quotations = []) {
+// An RFQ's invited suppliers and how many responded come from its
+// participation records (a response recorded, or a quotation from that
+// supplier), never from the header's supplierCount / respondedSupplierCount,
+// which are written once at creation and not maintained (design audit
+// L1-32 = L12-01). Without participation records: the quoting suppliers.
+export function rfqSupplierCounts(record = {}, quotations = [], participations = []) {
+  // A quotation without a supplier (an older row) counts on its own.
+  const quotedSuppliers = new Set(quotations.filter((quote) => quote.rfqId === record.id).map((quote, index) => text(quote.supplierId) || `quotation:${text(quote.id) || index}`))
+  const invited = participations.filter((participation) => participation.rfqId === record.id)
+  if (!invited.length) return { suppliers: numberFrom(record.supplierCount, quotedSuppliers.size), quoted: quotedSuppliers.size }
+  const responded = invited.filter((participation) => text(participation.status) === 'response_recorded' || quotedSuppliers.has(text(participation.supplierId))).length
+  return { suppliers: invited.length, quoted: responded }
+}
+
+export function mapRfq(record = {}, quotations = [], participations = []) {
   const line = firstLine(record)
   const meta = metadata(record)
-  const quoteCount = quotations.filter((quote) => quote.rfqId === record.id).length
+  const counts = rfqSupplierCounts(record, quotations, participations)
   return {
     id: record.id,
     number: procurementDocumentNumber(record),
@@ -245,8 +259,8 @@ export function mapRfq(record = {}, quotations = []) {
     title: text(record.title, procurementDocumentNumber(record)),
     category: text(record.category),
     status: canonicalStatus('rfq', record.status) || text(record.status, 'active'),
-    suppliers: numberFrom(record.supplierCount, quoteCount),
-    quoted: numberFrom(record.respondedSupplierCount, quoteCount),
+    suppliers: counts.suppliers,
+    quoted: counts.quoted,
     due: isoDate(record.dueDate),
     bestPrice: numberFrom(record.bestPrice, 0),
     bestSupplier: text(record.awardedSupplier),
@@ -266,7 +280,7 @@ export function mapRfq(record = {}, quotations = []) {
 }
 
 function mapRfqDetail(record = {}, quotations = [], participations = []) {
-  const base = buildProcurementRfqs({ rfqs: [mapRfq(record, quotations)] })[0] || null
+  const base = buildProcurementRfqs({ rfqs: [mapRfq(record, quotations, participations)] })[0] || null
   if (!base) return null
 
   const recordMeta = metadata(record)
@@ -825,13 +839,17 @@ async function loadProcurementSnapshot(client, filters = {}) {
   // References to a request, RFQ or order carry its number when it is among
   // the loaded rows (prNumber, rfqNumber, poNumber); otherwise the page looks
   // it up (GET /api/procurement/document-numbers).
+  // Who was invited to each listed RFQ and who responded (rfqSupplierCounts).
+  const rfqParticipations = rfqs.length && typeof client.rfqSupplierParticipation?.findMany === 'function'
+    ? await client.rfqSupplierParticipation.findMany({ where: { ...where, rfqId: { in: rfqs.map((rfq) => rfq.id) } }, select: { rfqId: true, supplierId: true, status: true } })
+    : []
   const prNumbers = numbersById(purchaseRequests)
   const rfqNumbers = numbersById(rfqs)
   const poNumbers = numbersById(purchaseOrders)
   const grnNumbers = await receiptNumbersFor(client, where.tenantId, supplierInvoices, receivingDocuments)
   return {
     purchaseRequests: purchaseRequests.map((record) => ({ ...withRequesterName(mapPurchaseRequest(record), requesters), ...withNumber('rfqNumber', rfqNumbers, record.linkedRfqId), ...withNumber('poNumber', poNumbers, record.linkedPoId) })),
-    rfqs: rfqs.map((rfq) => ({ ...mapRfq(rfq, supplierQuotations), ...withNumber('prNumber', prNumbers, rfq.sourceRequestId), ...withNumber('poNumber', poNumbers, rfq.linkedPoId) })),
+    rfqs: rfqs.map((rfq) => ({ ...mapRfq(rfq, supplierQuotations, rfqParticipations), ...withNumber('prNumber', prNumbers, rfq.sourceRequestId), ...withNumber('poNumber', poNumbers, rfq.linkedPoId) })),
     purchaseOrders: purchaseOrders.map((record) => ({ ...mapPurchaseOrder(record), ...withNumber('prNumber', prNumbers, record.sourceRequestId), ...withNumber('rfqNumber', rfqNumbers, record.sourceRfqId) })),
     receivingDocs: receivingDocuments.map((record) => ({ ...mapReceivingDocument(record), ...withNumber('poNumber', poNumbers, record.poId) })),
     // workflowStatus and poLineQuantities: the invoice's own status and the

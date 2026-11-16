@@ -81,6 +81,8 @@ export type ProcurementRfqParticipant = {
 };
 export type ProcurementRfqDocument = ProcurementDocument & {
   status: string | null;
+  // The RFQ's version, which opening or cancelling it checks.
+  version?: number;
   statusRaw?: string | null;
   description?: string | null;
   lines: ProcurementRfqLine[];

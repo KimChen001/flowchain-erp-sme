@@ -72,7 +72,8 @@ test("Today's tiles are drawn like the cards on the list pages", async () => {
   assert.match(page, /icon: ListChecks, color: A\.blue/)
   assert.match(page, /icon: AlarmClock, color: A\.red/)
   // Count first, then its name, as ActionableMetricCard reads.
-  assert.match(page, /<div className=\{TILE_VALUE\}>\{tile\.value\}<\/div>\s*<div className="fc-label mt-0\.5"/)
+  // The count reads "—" until Today has loaded (UI review 10).
+  assert.match(page, /<div className=\{TILE_VALUE\}>\{overview \? tile\.value : "—"\}<\/div>\s*<div className="fc-label mt-0\.5"/)
 })
 
 test('a page that is not available here always offers a way on', async () => {

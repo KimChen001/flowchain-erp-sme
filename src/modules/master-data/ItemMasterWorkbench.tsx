@@ -5,11 +5,11 @@ import { useDetailBack } from "../../components/navigation/useDetailBack";
 import { ListPager, usePagedRows } from "../procurement/listPaging";
 
 const ITEM_PAGE_SIZE = 50;
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { RefreshButton, ResetButton, listButtonClass } from "../../components/ui/listLayout";
+import { RefreshButton, ResetButton, StatusChip, listButtonClass } from "../../components/ui/listLayout";
 import {
   listTableCardsRef,
   tableBodyTextClass,
@@ -184,7 +184,8 @@ export default function ItemMasterWorkbench({
   useDetailCrumb(selected ? `${selected.sku} · ${selected.itemName}` : null);
   // On the item's own page (/app/master-data/items/:id) the item is the page
   // title (H1); opened in place from the list it sits under the list's H1.
-  const onDetailRoute = /^\/app\/master-data\/items\/[^/]+$/.test(useLocation().pathname);
+  const pathname = useLocation().pathname;
+  const onDetailRoute = /^\/app\/master-data\/items\/[^/]+$/.test(pathname);
   const ItemTitle = onDetailRoute ? "h1" : "h2";
   const detailBack = useDetailBack("/app/master-data/items", ["Back to items", "返回 SKU 列表"], () => setSelected(null));
   // A failed request in the interface language, never the server's own words.
@@ -293,7 +294,7 @@ export default function ItemMasterWorkbench({
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold">
-              {selected ? `${copy("编辑")} ${selected.sku}` : copy("新建 SKU")}
+              {selected ? `${copy("编辑")} ${selected.sku}` : copy("New item")}
             </h2>
             <p className="text-xs" style={{ color: A.sub }}>
               {copy("基础信息、采购库存属性与追踪属性")}
@@ -382,33 +383,44 @@ export default function ItemMasterWorkbench({
     if (!value || Number.isNaN(new Date(value).getTime())) return NOT_PROVIDED;
     return formatDateTime(value);
   };
+  // On an item's own address, wait for the item rather than drawing the list
+  // and its empty counts first; an address that names no item shows the list.
+  const routeKey = onDetailRoute ? decodeURIComponent(pathname.split("/").pop() || "").toLowerCase() : "";
+  const routeNamesItem = !loaded || items.some((row) => [row.itemId, row.sku].some((value) => String(value || "").toLowerCase() === routeKey));
+  if (!selected && onDetailRoute && !error && routeNamesItem)
+    return <Card className="p-5" data-testid="item-detail-loading"><p className="text-sm" style={{ color: A.sub }}>{copy("Loading item…")}</p></Card>;
   if (selected)
     return (
       <div className="space-y-4">
+      {/* Above the card, as on the other detail pages (BackToListLink). */}
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9"
+        onClick={detailBack.back}
+      >
+        <ArrowLeft size={13} />{detailBack.label}
+      </button>
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <button
-              className="text-xs text-blue-600"
-              onClick={detailBack.back}
-            >
-              ← {detailBack.label}
-            </button>
-            <ItemTitle className={onDetailRoute ? "fc-page-title mt-2" : "mt-2 text-base font-semibold"} style={{ color: A.label }} data-testid="item-detail-title">
-              {selected.sku} · {selected.itemName}
-            </ItemTitle>
-            <p className="text-xs" style={{ color: A.sub }}>
-              {statusLabel(selected.status)} · v{selected.version}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <ItemTitle className={onDetailRoute ? "fc-page-title" : "text-base font-semibold"} style={{ color: A.label }} data-testid="item-detail-title">
+                {selected.sku} · {selected.itemName}
+              </ItemTitle>
+              <StatusChip label={statusLabel(selected.status)} tone={selected.status === "active" ? "success" : "neutral"} />
+            </div>
+            <p className="mt-1 text-xs" style={{ color: A.sub }} data-testid="item-detail-version">
+              v{selected.version}
             </p>
           </div>
           {canEdit && (
             <button
               type="button"
               onClick={() => setEditing(selected)}
-              className={listButtonClass.primary}
+              className={listButtonClass.secondary}
             >
               <Pencil size={13} />
-              {copy("编辑 SKU")}
+              {copy("Edit item")}
             </button>
           )}
         </div>
@@ -437,7 +449,7 @@ export default function ItemMasterWorkbench({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <ActionableMetricCard label={copy("Items")} value={loaded ? String(items.length) : "—"} description={copy("{count} active", { count: activeCount })} to="/app/master-data/items" icon={Package} color={A.blue} />
+        <ActionableMetricCard label={copy("Items")} value={loaded ? String(items.length) : "—"} description={loaded ? copy("{count} active", { count: activeCount }) : NOT_PROVIDED} to="/app/master-data/items" icon={Package} color={A.blue} />
         <ActionableMetricCard label={copy("Inactive items")} value={loaded ? String(items.length - activeCount) : "—"} description={copy("Kept for history, not offered on new documents")} to="/app/master-data/items?status=inactive" icon={CheckCircle2} color={A.gray1} />
         <ActionableMetricCard label={copy("No reorder point")} value={loaded ? String(items.filter((item) => item.status === "active" && !hasReorderPoint(item)).length) : "—"} description={copy("Active items the reorder list cannot check")} to="/app/master-data/items?gap=reorder" icon={AlertCircle} color={A.orange} />
         <ActionableMetricCard label={copy("No preferred supplier")} value={loaded ? String(items.filter((item) => item.status === "active" && !item.defaultSupplierId).length) : "—"} description={copy("Active items without a supplier to order from")} to="/app/master-data/items?gap=supplier" icon={Truck} color={A.purple} />
@@ -465,14 +477,14 @@ export default function ItemMasterWorkbench({
                   setEditing({ ...empty });
                 }}
               >
-                <Plus size={13} />{copy("新建 SKU")}
+                <Plus size={13} />{copy("New item")}
               </button>
             )}
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
           <Field label={copy("Search")}>
-            <input aria-label={copy("搜索 SKU")} placeholder={copy("搜索 SKU 编码或物料名称")} value={query} onChange={(e) => setQuery(e.target.value)} style={inputStyle} />
+            <input aria-label={copy("Search items")} placeholder={copy("搜索 SKU 编码或物料名称")} value={query} onChange={(e) => setQuery(e.target.value)} style={inputStyle} />
           </Field>
           <Field label={copy("Status")}>
             <select aria-label={copy("状态筛选")} value={status} onChange={(e) => setStatus(e.target.value)} style={inputStyle}>
@@ -507,7 +519,7 @@ export default function ItemMasterWorkbench({
         <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div>
             <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("Item list")}</div>
-            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: formatNumber(items.length), shown: formatNumber(paged.pageRows.length) })}</div>
+            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{loaded ? copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: formatNumber(items.length), shown: formatNumber(paged.pageRows.length) }) : NOT_PROVIDED}</div>
           </div>
         </div>
         {error && <p className="px-5 pt-3 text-xs text-red-600">{error}</p>}
