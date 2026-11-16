@@ -117,6 +117,9 @@ export function tidyProblems(text, parts = []) {
   if (date) problems.push(`date written as ${date[0]}`)
   const opening = String(text || '').trim().split('\n')[0].replace(/^[#*>\s-]+/, '')
   if (NARRATION.test(opening)) problems.push(`opens with "${opening.slice(0, 40)}"`)
+  // Markup the model put before its words (2026-11-14: "<?xml version="1.0"?>").
+  const declaration = String(text || '').match(/^\s*(<\?[A-Za-z][\w.-]*\b[^>]*\?>)/)
+  if (declaration) problems.push(`opens with ${declaration[1].slice(0, 40)}`)
   return problems
 }
 
