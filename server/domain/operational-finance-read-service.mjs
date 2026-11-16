@@ -7,6 +7,7 @@ import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-
 import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 import { invoiceDayKey, isDuplicateReviewClosed, loadDuplicateChecks, workspaceTimezone } from "./supplier-invoice-duplicates.mjs";
 import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from "./tenant-calendar-day.mjs";
+import { uncreditedReturnedQuantities } from "./return-quantity-ledger.mjs";
 
 export class OperationalFinanceReadError extends Error {
   constructor(code, message, status = 400, details) {
@@ -857,6 +858,15 @@ export function createOperationalFinanceReadService({
       },
       select: { purchaseOrderLineId: true, quantity: true },
     });
+    // Goods sent back to the supplier and not yet credited are no longer
+    // received for billing: three-way matching expects the receipt less them
+    // (L2-06), so the bill form starts there too.
+    const returnsByReceivingLine = await uncreditedReturnedQuantities({
+      prisma,
+      tenantId: current.tenantId,
+      sourceDocumentType: "ReceivingDocument",
+      sourceLineIds: receivingDocuments.flatMap((row) => row.lines.map((line) => line.id)),
+    });
     const poNumbers = new Map(purchaseOrders.map((row) => [row.id, procurementDocumentNumber(row)]));
     const billed = new Map();
     for (const row of billedRows)
@@ -899,7 +909,13 @@ export function createOperationalFinanceReadService({
           itemId: line.itemId,
           sku: line.sku,
           itemName: line.itemName,
-          acceptedQuantity: decimal(line.acceptedQty),
+          // What is still received for billing: accepted on the receipt less
+          // goods returned to the supplier and not yet credited (L2-06).
+          acceptedQuantity: returnsByReceivingLine.get(line.id)?.uncredited
+            ? financeFixed(financeUnits(line.acceptedQty || 0) - returnsByReceivingLine.get(line.id).uncredited)
+            : decimal(line.acceptedQty),
+          acceptedOnReceipt: decimal(line.acceptedQty),
+          returnedQuantity: financeFixed(returnsByReceivingLine.get(line.id)?.uncredited || 0n),
           unit: line.unit,
           warehouseId: line.warehouseId,
         })),

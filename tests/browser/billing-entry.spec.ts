@@ -41,7 +41,10 @@ test("a bill opened from its purchase order starts with the received goods", asy
   await expect(page.getByTestId("supplier-invoice-receipt")).toHaveValue("finance-browser-grn");
   await expect(page.getByTestId("supplier-invoice-po")).toHaveValue("finance-browser-po");
   // The received quantity is offered; the server still checks what is left.
-  await expect(page.getByTestId("supplier-invoice-line").first().locator("input").first()).toHaveValue("10");
+  // 2 of the 10 received went back on the seeded supplier return
+  // RR-FIN-BROWSER-SUP with no credit memo yet, so 8 are offered: what
+  // three-way matching expects (design audit L2-06).
+  await expect(page.getByTestId("supplier-invoice-line").first().locator("input").first()).toHaveValue("8");
   await page.getByTestId("supplier-invoice-number").fill("UI-BILL-FROM-PO");
   await page.getByTestId("supplier-invoice-due").fill("2026-11-01");
   await expect(page.getByTestId("supplier-invoice-create")).toBeEnabled();
