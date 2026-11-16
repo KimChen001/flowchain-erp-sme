@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Database, X } from "lucide-react";
 import { useI18n } from "../i18n/I18n";
 
@@ -31,6 +31,22 @@ const SUPPLIER_INVOICE_RULES: Record<SupplierInvoiceRule, number> = {
   beforeReceiptPercent: 2, beforeReceiptFrom: 1, beforeReceiptTo: 3, unpaidPercent: 10, unpaidWithinDays: 60,
 };
 
+// The days of demand the seed averages for safety stock, reorder points and
+// minimum orders (THRESHOLD_WINDOW_DAYS in scripts/public-data/plan.mjs); the
+// note does not carry it.
+const THRESHOLD_WINDOW_DAYS = 90;
+const SATURDAY = 6;
+
+// One group of the details: a short heading over a list.
+function NoteGroup({ title, testId, children }: { title: string; testId: string; children: ReactNode }) {
+  return (
+    <div data-testid={testId}>
+      <p className="font-semibold text-slate-800">{title}</p>
+      <ul className="mt-0.5 list-disc space-y-0.5 pl-5">{children}</ul>
+    </div>
+  );
+}
+
 const hiddenKey = (note: PublicDataNote) => `flowchain.publicDataNote.hidden.${note.dataset}.${note.window.last}`;
 
 function readHidden(note: PublicDataNote) {
@@ -53,7 +69,7 @@ function writeHidden(note: PublicDataNote, hidden: boolean) {
 // What the workspace's data is and what is assumed, above every page until
 // the reader hides it; the header's "Public data" label brings it back.
 export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; reopen: number }) {
-  const { t, formatNumber } = useI18n();
+  const { t, formatNumber, language } = useI18n();
   const [hidden, setHidden] = useState(() => readHidden(note));
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -69,6 +85,27 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
   // price says nothing of a percent: its purchase prices are the selling prices.
   const purchasePricePercent = note.assumptions.purchasePricePercent ?? 100;
   const supplierInvoices = note.assumptions.supplierInvoices ? { ...SUPPLIER_INVOICE_RULES, ...note.assumptions.supplierInvoices } : null;
+  const paymentTermsDays = note.assumptions.paymentTermsDays ?? 30;
+  const last = note.window.last;
+  // Sentences side by side: a space in English, none after a Chinese full stop.
+  const join = (...parts: string[]) => parts.filter(Boolean).join(language === "en-US" ? " " : "");
+  // The seed's stock rules (itemThresholds and simulatePurchasing in
+  // scripts/public-data/plan.mjs): safety stock = review days, reorder point
+  // = lead time + review days of average demand; history orders at reorder
+  // point + safety stock.
+  const cover = leadTimeDays + reviewDays;
+  const stockRules = {
+    leadTimeDays, reviewDays, cover, last, base: cover + reviewDays, window: THRESHOLD_WINDOW_DAYS,
+    times: reviewDays > 0 ? formatNumber(Math.round((cover / reviewDays) * 10) / 10) : "—",
+  };
+  // Dates move by whole days, so weekdays move by shiftDays mod 7.
+  const weekdayShift = ((note.shiftDays % 7) + 7) % 7;
+  const weekdays = weekdayShift === 0
+    ? t("publicData.weekdaysKept")
+    : t("publicData.weekdays", { weekday: t("publicData.weekdayNames").split("|")[(SATURDAY + weekdayShift) % 7] ?? "" });
+  const purchasePrice = purchasePricePercent === 100
+    ? t("publicData.purchasePriceSame")
+    : t(note.dataset === "m5" ? "publicData.m5PurchasePrice" : "publicData.uciPurchasePrice", { percent: purchasePricePercent });
   const summary = note.dataset === "m5"
     ? t("publicData.m5Summary", { sourceFirst: note.sourceWindow.first, sourceLast: note.sourceWindow.last, shiftDays: formatNumber(note.shiftDays), last: note.window.last, items: formatNumber(note.counts.items ?? 0) })
     : t("publicData.uciSummary", { sourceFirst: note.sourceWindow.first, sourceLast: note.sourceWindow.last, shiftDays: formatNumber(note.shiftDays), last: note.window.last, items: formatNumber(note.counts.items ?? 0), customers: formatNumber(note.counts.customers ?? 0) });
@@ -90,18 +127,35 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
             {summary}
           </p>
           {open && (
-            <div className="mt-2 space-y-1.5 text-slate-600" data-testid="public-data-note-details">
-              <p>
-                {t("publicData.assumed", { leadTimeDays, reviewDays, cover: leadTimeDays + reviewDays })}{" "}
-                {purchasePricePercent === 100 ? t("publicData.purchasePriceSame") : t("publicData.purchasePriceShare", { percent: purchasePricePercent })}
-              </p>
-              {note.dataset === "m5" && <p data-testid="public-data-note-m5-no-invoices">{t("publicData.m5NoInvoices")}</p>}
-              {note.dataset === "uci" && <p>{t("publicData.uciAssumed", { paymentTermsDays: note.assumptions.paymentTermsDays ?? 30 })}</p>}
-              {note.dataset === "uci" && supplierInvoices && (
-                <p data-testid="public-data-note-supplier-invoices">{t("publicData.uciSupplierInvoices", { ...supplierInvoices, paymentTermsDays: note.assumptions.paymentTermsDays ?? 30 })}</p>
-              )}
+            <div className="mt-2 space-y-2 text-slate-600" data-testid="public-data-note-details">
+              {/* Grouped so a reader finds what is assumed without reading
+                  it all (design audit B7: L14, L7-15, L7-23, L3-15, L3-16). */}
+              <NoteGroup title={t("publicData.groupData")} testId="public-data-note-data">
+                <li>{t(note.dataset === "m5" ? "publicData.m5Items" : "publicData.uciItems")}</li>
+                <li data-testid="public-data-note-weekdays">{weekdays}</li>
+                <li>{t("publicData.dates")}</li>
+              </NoteGroup>
+              <NoteGroup title={t("publicData.groupStock")} testId="public-data-note-stock">
+                <li>{t(note.dataset === "m5" ? "publicData.m5Suppliers" : "publicData.uciSuppliers")}</li>
+                <li>{join(t("publicData.deliveries", stockRules), note.dataset === "uci" ? t("publicData.deliveriesExceptions") : "")}</li>
+                <li>{join(t("publicData.thresholds", stockRules), t("publicData.belowSuggestion"))}</li>
+                <li>{t("publicData.lookAhead", stockRules)}</li>
+                <li>{t("publicData.history", stockRules)}</li>
+                <li>{join(t("publicData.reviewDay"), t("publicData.appRule"))}</li>
+              </NoteGroup>
+              <NoteGroup title={t("publicData.groupMoney")} testId="public-data-note-money">
+                <li>{purchasePrice}</li>
+                {note.dataset === "m5" && <li data-testid="public-data-note-m5-no-invoices">{t("publicData.m5NoInvoices")}</li>}
+                {note.dataset === "uci" && <li data-testid="public-data-note-no-tax">{t("publicData.noTax")}</li>}
+                {note.dataset === "uci" && <li>{t("publicData.uciAssumed", { paymentTermsDays, last })}</li>}
+                {note.dataset === "uci" && supplierInvoices && (
+                  <>
+                    <li data-testid="public-data-note-supplier-invoices">{t("publicData.uciSupplierInvoices", { ...supplierInvoices, paymentTermsDays })}</li>
+                    <li>{t("publicData.uciSupplierPayments", { ...supplierInvoices, last })}</li>
+                  </>
+                )}
+              </NoteGroup>
               {note.sceneSuppliers?.length > 0 && <p>{t("publicData.scene", { suppliers: note.sceneSuppliers.join(", ") })}</p>}
-              <p>{t("publicData.dates")}</p>
               {note.citation && (
                 <p className="break-words">
                   {t("publicData.source", { citation: note.citation })}
