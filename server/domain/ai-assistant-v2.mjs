@@ -658,6 +658,10 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
     const hidden = assistantV2Hidden(facts)
     const restartTurns = earlier.length ? [] : assistantV2EarlierTurns(body.conversationContext)
+    // The server kept no thread but the panel holds a conversation (a
+    // restart, an expired or changed thread): the user is told this answer
+    // works from the turns the panel sent (design audit L5-07).
+    if (restartTurns.length) send({ type: 'notice', code: 'context_restarted' })
 
     // Records the user cannot read anywhere in this workspace: shaped like its
     // record numbers (a prefix such as PO- or LDM- that the facts or results
@@ -1124,7 +1128,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: withheld.some((row) => row.code === 'foreign_record') ? 'foreign_record' : 'hidden_value' })
       } else release(part, part.text.length)
       stats.flags += spans.length
-      if (!check.failed) figureChecks.set(part.id, { figures, flagged: spans.length })
+      if (!check.failed) figureChecks.set(part.id, { figures, flagged: spans.length, derived: read.derived || 0 })
       send(flagEvent(part, spans.slice(0, 50)))
     }
 

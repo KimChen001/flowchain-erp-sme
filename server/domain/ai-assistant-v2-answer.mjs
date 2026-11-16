@@ -86,6 +86,8 @@ const firstSentence = (value) => text(value).split(/(?<=[.!?。！？])\s*/u)[0]
 // relied on as evidence and links, built from the refs the tools returned.
 // `summary` is the answer's text; `records` the refs the text cites; `calls`
 // the loop's tool calls; `results` its data results.
+const derivedOf = (figures) => array(figures).reduce((total, row) => total + (Number(row?.derived) || 0), 0)
+
 export function presentAssistantV2Answer({ summary = '', records = [], refs = [], calls = [], facts = null, language, query = '', results = [], figures = [] }) {
   const cited = aiModelFirstCitedRefs(records, refs)
   // A cited document names the sections this answer's searches returned from
@@ -127,6 +129,10 @@ export function presentAssistantV2Answer({ summary = '', records = [], refs = []
       asOf: facts?.asOf || null,
       figures: array(figures).reduce((total, row) => total + (Number(row?.figures) || 0), 0),
       flagged: array(figures).reduce((total, row) => total + (Number(row?.flagged) || 0), 0),
+      // Figures passed only as worked out from the answer's own figures,
+      // counted apart from those found in the records (design audit L5-03);
+      // left out when there are none.
+      ...(derivedOf(figures) ? { derived: derivedOf(figures) } : {}),
       // The tools that answered, for feedback on this answer (not shown).
       tools: [...new Set(array(calls).filter((call) => call.status === 'ok').map((call) => text(call.tool)).filter(Boolean))].slice(0, 20),
     },

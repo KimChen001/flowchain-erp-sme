@@ -262,6 +262,12 @@ export async function createFormRequest({ ticked, props, ids, post, linked = {} 
   }
 }
 
+// The new suppliers this form made approved suppliers of their items (on this
+// click or an earlier one), by name, for the message when the request then fails.
+export function supplierNamesLinked(ticked: FormLine[], linked: Record<string, string>) {
+  return [...new Set(ticked.filter((line) => isNewSupplier(line) && linked[line.key] === line.supplierId).map((line) => optionOf(line)?.name || "").filter(Boolean))];
+}
+
 function errorText(error: unknown, copy: PartCopy) {
   // Server messages are not shown: the domain's are Chinese-only. Codes are worded here.
   const key = `ai.v2.error.${error instanceof ApiError ? error.code || "" : ""}`;
@@ -515,7 +521,10 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
         return;
       }
       if (outcome.status === "request_failed") {
-        setError(errorText(outcome.failure, copy));
+        // A supplier this form added stays added: say so, since the request
+        // was not created (design audit L5-24).
+        const names = supplierNamesLinked(ticked, outcome.linked);
+        setError([names.length ? copy.t("ai.v2.form.requestFailedAfterSupplier", { names: names.join(copy.language === "zh-CN" ? "、" : ", ") }) : "", errorText(outcome.failure, copy)].filter(Boolean).join(" "));
         return;
       }
       const { created } = outcome;
