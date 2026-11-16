@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { itemRequestUnit, itemStockUnit, sameUnit, unitOtherThanStock } from './item-stock-unit.mjs'
 import { buildReceivingPostingPlan } from './receiving-transaction-policy.mjs'
 import { canonicalPurchaseRequestLines } from './procurement-workflow.mjs'
@@ -92,6 +93,19 @@ test('a purchase request line that names another unit than the stock unit is ref
   // An item without a recorded unit is not judged, as before.
   const [unrecorded] = await canonicalPurchaseRequestLines([prLine({ unitSnapshot: 'box' })], catalog({ recordedUnit: '', baseUnit: 'pcs', purchaseUnit: 'box' }))
   assert.equal(unrecorded.unitSnapshot, 'box')
+})
+
+// The purchase request page builds a catalog line in the unit the server
+// keeps: the stock unit the purchasable item list gives (stockUnit), else the
+// purchase unit, as itemRequestUnit does. The list's purchaseUnit is the
+// item's recorded one, never the stock unit in its place.
+test('the purchase request page builds a catalog line in the stock unit', () => {
+  const page = readFileSync(new URL('../../src/modules/purchase-requests/CanonicalProcurementPanel.tsx', import.meta.url), 'utf8')
+  assert.match(page, /const requestLineUnit = \(item: Item\) => item\.stockUnit \|\| item\.purchaseUnit \|\| item\.baseUnit;/)
+  // Both places that put an item on a line: the prefilled request and choosing an item.
+  assert.equal(page.split('unitSnapshot: requestLineUnit(item),').length - 1, 2)
+  assert.doesNotMatch(page, /unitSnapshot: item\.(purchaseUnit|baseUnit)/)
+  assert.doesNotMatch(page, /recordedPurchaseUnit/)
 })
 
 // A transaction client holding one item in pcs, with what else is stored

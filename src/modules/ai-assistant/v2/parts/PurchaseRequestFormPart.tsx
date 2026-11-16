@@ -46,7 +46,7 @@ export type FormLine = {
   override: { reasonCode: string; note: string };
 };
 type Block = "quantity" | "supplier" | "override" | "reason" | "terms" | "price";
-type CatalogItem = { itemId?: string; id?: string; sku: string; itemName?: string; name?: string; purchaseUnit?: string; baseUnit?: string; defaultWarehouseId?: string };
+type CatalogItem = { itemId?: string; id?: string; sku: string; itemName?: string; name?: string; purchaseUnit?: string; baseUnit?: string; stockUnit?: string; defaultWarehouseId?: string };
 export type ItemSupplier = { id: string; name?: string; supplierName?: string; preferred?: boolean; referencePrice?: number | string | null; currency?: string | null; leadTimeDays?: number | string | null; restrictedFields?: string[] };
 // A supplier as the Suppliers list sends it (GET /api/master-data/suppliers).
 export type WorkspaceSupplier = { id: string; name?: string; supplierName?: string; status?: string; defaultCurrency?: string | null };
@@ -360,7 +360,10 @@ export function addedFormRow(item: CatalogItem, sources: ItemSupplier[], today: 
   const masked = sources.some((source) => source.restrictedFields?.includes("referencePrice"));
   const lead = chosen?.leadTimeDays ?? null;
   return {
-    item: { id: itemId, sku: item.sku, name: item.itemName || item.name || "", unit: item.purchaseUnit || item.baseUnit || null },
+    // In the stock unit, as the classic form builds a line: no conversion between
+    // units is recorded, so the server refuses any other unit. An item without
+    // a recorded stock unit keeps its purchase unit, as the server does.
+    item: { id: itemId, sku: item.sku, name: item.itemName || item.name || "", unit: item.stockUnit || item.purchaseUnit || item.baseUnit || null },
     suggestedQuantity: { value: null, source: "user_named" },
     supplier: chosen ? { id: chosen.id, name: chosen.name, source: chosen.preferred ? "preferred" : "only_approved" } : null,
     suppliers,
