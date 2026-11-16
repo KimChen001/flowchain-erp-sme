@@ -61,6 +61,10 @@ export const ASSISTANT_V2_LIMITS = Object.freeze({
   question: QUESTION_LIMITS.assistantV2, resultChars: 24000, records: 8,
   // How long a short text waits for more before it is shown anyway.
   narrationWaitMs: 1500,
+  // How long after a call of this conversation read the cache the fixed
+  // prompt counts as cached when its earlier turns are measured (a provider
+  // keeps a prompt cache about 5 minutes after its last use).
+  promptCacheMs: 4 * 60 * 1000,
 })
 
 const text = (value) => String(value ?? '').trim()
@@ -743,17 +747,24 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     const displayNames = [...ui.values()].filter((tool) => tool.display).map((tool) => tool.name)
 
     // The transcript the model is sent: this turn and the latest earlier
-    // turns, as many as leave the first call, at its full output and with
-    // nothing cached, at most half of what the answer may spend, so a second
-    // call fits beside it. The oldest turns are left out first; the thread
-    // keeps them until its own limits drop them. A turn starts where the
-    // user's messages follow the end of the one before (an answer or tool
-    // results).
+    // turns, as many as leave the first call, at its full output, at most
+    // half of what the answer may spend, so a second call fits beside it.
+    // The oldest turns are left out first; the thread keeps them until its
+    // own limits drop them. A turn starts where the user's messages follow
+    // the end of the one before (an answer or tool results).
+    //
+    // The fixed prompt (the system prompt and the tools) is priced as a cache
+    // read when a call of this conversation read the cache within
+    // promptCacheMs: the provider reads it from the cache again (owner
+    // 2026-11-15, "按缓存价算": at Sonnet 5.5 prices, priced in full it left
+    // the earlier turns about 700 tokens). Otherwise it is priced in full:
+    // after a cold first call of a long thread, a second call would not fit.
     const baseTokens = tokensIn(ASSISTANT_V2_SYSTEM) + tokensIn(JSON.stringify(tools))
     const sizes = thread.messages.map((message) => tokensIn(JSON.stringify(message)))
     const turnStarts = [...thread.messages.keys()].filter((at) => at <= turnStart && (at === 0
       || (thread.messages[at].role === 'user' && !isToolResults(thread.messages[at]) && (thread.messages[at - 1].role === 'assistant' || isToolResults(thread.messages[at - 1])))))
-    const fits = (from) => aiCallCostMicros({ inputTokens: baseTokens + sizes.slice(from).reduce((sum, size) => sum + size, 0), outputTokens: limits.outputTokens }, prices) <= budgetMicros / 2
+    const promptCached = Number.isFinite(thread.promptCachedAt) && Date.now() - thread.promptCachedAt < limits.promptCacheMs
+    const fits = (from) => aiCallCostMicros({ inputTokens: baseTokens + sizes.slice(from).reduce((sum, size) => sum + size, 0), outputTokens: limits.outputTokens, cacheReadTokens: promptCached ? baseTokens : 0 }, prices) <= budgetMicros / 2
     const sendFrom = turnStarts.find(fits) ?? turnStarts.at(-1)
     stats.turnsLeftOut = turnStarts.filter((at) => at < sendFrom).length
     const sent = () => (sendFrom ? thread.messages.slice(sendFrom) : thread.messages)
@@ -1420,6 +1431,9 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       lastCallTokens = weightedTokens(usage.inputTokens, usage.cacheReadTokens, usage.outputTokens)
       stats.costMicros += aiCallCostMicros(usage, prices)
       lastCall = usage.inputTokens > 0 ? { prompt: usage.inputTokens, cached: Math.min(usage.inputTokens, usage.cacheReadTokens + usage.cacheWriteTokens), messages: sentMessages } : null
+      // The provider read this conversation's prompt from its cache: the
+      // next answer's earlier turns are measured with the fixed prompt cached.
+      if (reported && usage.cacheReadTokens > 0) thread.promptCachedAt = Date.now()
       largestOutput = Math.max(largestOutput, usage.outputTokens)
       await recordAiProviderCall({ ok: true, usage })
       // Calls a client reports only in the final content follow the text too.
