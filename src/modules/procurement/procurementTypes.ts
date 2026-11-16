@@ -341,6 +341,8 @@ export type ProcurementDocument = {
   invoiceId?: string;
   invoiceDate?: string;
   invoiceStatus?: string;
+  // A supplier invoice's stored status code (exception, approved...).
+  workflowStatus?: string;
   amount?: number;
   currency?: string;
   poAmount?: number;
@@ -350,20 +352,22 @@ export type ProcurementDocument = {
   relatedDocuments?: ProcurementDocumentReference[];
   evidence?: Array<Record<string, unknown>>;
 };
-// signals are codes ("invoice_variance", "match_exception"), labelled when shown.
+// signals are codes ("overdue", "match_exception", "invoice_to_approve"),
+// labelled when shown. A supplier invoice held by a match exception is in the
+// "issues" bucket (workQueue.ts).
 export type ProcurementWorkItem = {
   id: string;
   number?: string;
   kind: EntityKind;
   status: string;
   transmissionStatus?: string;
-  bucket: "approval" | "tracking";
+  bucket: "approval" | "tracking" | "issues";
   amount: number | null;
   currency?: string;
   item?: string;
   moreLines?: number;
   supplier?: string;
-  // A request's need-by date or an order's expected arrival.
+  // A request's need-by date, an order's expected arrival or an invoice's due date.
   dueDate?: string;
   signals?: string[];
 };

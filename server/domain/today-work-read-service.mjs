@@ -2,6 +2,7 @@ import { contractsEnabled } from './contract-policy.mjs'
 import { readContractWork } from './contract-read-service.mjs'
 import { firstRunSetupOptions, readFirstRunSetupCounts } from './first-run-setup.mjs'
 import { overdueReceivableWhere } from './operational-finance-o2c-read-service.mjs'
+import { overduePayableWhere } from './operational-finance-read-service.mjs'
 import { createReorderListReadService, stockTruncatedSubjects } from './reorder-list-read-service.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
 import { billNextStep } from './today-work.mjs'
@@ -25,6 +26,9 @@ import { procurementDocumentNumber } from '../../shared/document-numbering.mjs'
 //                     (overdueReceivableWhere) at the start of the workspace
 //                     day, so a receivable due today is not overdue;
 //                     finance.receivable.read.
+//   payables          overdue by the payables list's rule
+//                     (overduePayableWhere), the same way; finance.payable.read
+//                     (design audit L7-12 / L7-18).
 //   contracts         with the contracts capability on and
 //                     contracts.contract.read: active contracts whose notice
 //                     deadline or end date is inside their reminder window,
@@ -158,6 +162,30 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
       }))
     }))
   }
+  if (home.payables) {
+    reads.push(attempt('payables', async () => {
+      // The payables list's own overdue rule, on the instant and the
+      // workspace timezone, as the receivables above.
+      const rows = await prisma.payableObligation.findMany({
+        where: { tenantId, ...overduePayableWhere(now, timeZone) },
+        include: { supplierInvoice: { select: { id: true, invoiceNumber: true, supplierName: true } } },
+        orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
+        take: FINANCE_LIMIT + 1,
+      })
+      sources.payables = truncated(rows, 'payables').map((row) => ({
+        id: row.id,
+        obligationNumber: row.obligationNumber,
+        supplierInvoiceId: row.supplierInvoiceId,
+        supplierInvoiceNumber: row.supplierInvoice?.invoiceNumber ?? null,
+        supplierName: access.partner ? row.supplierInvoice?.supplierName ?? null : null,
+        dueDate: iso(row.dueDate),
+        outstandingAmount: access.amounts ? decimal(row.outstandingAmount) : null,
+        amountHidden: !access.amounts,
+        currency: row.currency,
+        status: row.status,
+      }))
+    }))
+  }
   const contracts = home.contracts || {}
   if (contractsEnabled(ctx.env || process.env) && contracts.read && (contracts.manage || contracts.userId)) {
     reads.push(attempt('contracts', async () => {
@@ -254,6 +282,7 @@ export function todayHiddenWork(access, env = process.env) {
     ...(access.collections.salesOrders ? [] : ['sales_orders']),
     ...(home.customerInvoices ? [] : ['customer_invoices']),
     ...(home.receivables ? [] : ['receivables']),
+    ...(home.payables ? [] : ['payables']),
     ...(contractsEnabled(env) && !home.contracts?.read ? ['contracts'] : []),
   ]
 }
