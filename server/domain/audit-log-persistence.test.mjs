@@ -340,9 +340,10 @@ test('database audit adapter backs read and write methods with sanitized records
   assert.equal(await handleAuditLogRoute(route.ctx), true)
   assert.equal(route.response.status, 200)
   assert.equal(route.response.payload[0].id, 'AUD-DB-1')
+  // The entity type matches whatever its case (design audit L16).
   assert.deepEqual(findCalls[0].where, {
     tenantId: 'tenant-flowchain-sme',
-    entityType: 'actionDraft',
+    entityType: { equals: 'actionDraft', mode: 'insensitive' },
     entityId: 'DRAFT-AUDIT-1',
   })
   assert.deepEqual(findCalls[0].orderBy, { createdAt: 'desc' })

@@ -57,3 +57,22 @@ export function reorderRequestHref(request: ReorderRequest, reason: string, shor
   if (request.supplierId) params.set("suppliers", request.supplierId);
   return `/app/procurement/requests?${params.toString()}`;
 }
+
+// The counts Today's two tiles and the priorities summary show: Today's work
+// and the decisions waiting on it, less what was set aside. Both count the
+// same rows, so Overdue is never more than Needs action (design audit L6-03,
+// L6-04, L7-11).
+export type TodayCountSource = {
+  workTotal?: number;
+  overdue?: number;
+  decisions?: { available?: boolean; setAside?: Array<{ key: string; row: { overdueDays: number } }> };
+} | null | undefined;
+
+export function todayTileCounts(overview: TodayCountSource, fallbackTotal = 0) {
+  const setAside = overview?.decisions?.available ? overview.decisions.setAside || [] : [];
+  const keys = new Set(setAside.map((entry) => entry.key));
+  return {
+    work: Math.max(0, (overview?.workTotal ?? fallbackTotal) - keys.size),
+    overdue: Math.max(0, (overview?.overdue ?? 0) - setAside.filter((entry) => entry.row.overdueDays > 0).length),
+  };
+}

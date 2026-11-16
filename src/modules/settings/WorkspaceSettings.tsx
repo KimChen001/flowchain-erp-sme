@@ -12,13 +12,13 @@ import { roleDisplayName } from "../../../shared/roles.mjs";
 // The server states each check's finding in English; the Chinese page says
 // the same with the same counts.
 const DIAGNOSTIC_DETAILS: Array<[RegExp, (match: RegExpMatchArray) => string]> = [
-  [/^(d+) migrations? applied$/, (m) => `已应用 ${m[1]} 个数据库迁移`],
+  [/^(\d+) migrations? applied$/, (m) => `已应用 ${m[1]} 个数据库迁移`],
   [/^Workspace profile complete$/, () => "工作区资料已填写完整"],
   [/^Workspace profile incomplete$/, () => "工作区资料尚未填写完整"],
-  [/^(d+) active warehouses?$/, (m) => `${m[1]} 个启用仓库`],
-  [/^(d+) active users?; (d+) can manage roles$/, (m) => `${m[1]} 个启用用户；${m[2]} 人可管理角色`],
-  [/^(d+) active users? without warehouse scope$/, (m) => `${m[1]} 个启用用户未设置仓库范围`],
-  [/^(d+) pending; (d+) blocked or failed$/, (m) => `${m[1]} 个待处理；${m[2]} 个被阻止或失败`],
+  [/^(\d+) active warehouses?$/, (m) => `${m[1]} 个启用仓库`],
+  [/^(\d+) active users?; (\d+) can manage roles$/, (m) => `${m[1]} 个启用用户；${m[2]} 人可管理角色`],
+  [/^(\d+) active users? without warehouse scope$/, (m) => `${m[1]} 个启用用户未设置仓库范围`],
+  [/^(\d+) pending; (\d+) blocked or failed$/, (m) => `${m[1]} 个待处理；${m[2]} 个被阻止或失败`],
 ];
 export function diagnosticDetail(detail: string, language: string) {
   if (language === "en-US") return detail;

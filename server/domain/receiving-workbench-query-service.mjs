@@ -53,7 +53,10 @@ function lotSerialCapability(line) {
 }
 
 async function loadAggregate(prisma, tenantId, receivingDocumentId) {
+  // A receipt opens by its id or by the number it shows (GRN-202611-0008), as
+  // requests, RFQs and orders do (design audit L1-24); the id is tried first.
   const receivingDocument = await prisma.receivingDocument.findFirst({ where: { id: receivingDocumentId, tenantId }, include: { lines: true } })
+    || (receivingDocumentId ? await prisma.receivingDocument.findFirst({ where: { tenantId, documentNumber: { equals: String(receivingDocumentId), mode: 'insensitive' } }, include: { lines: true } }) : null)
   if (!receivingDocument) fail('RECEIVING_NOT_FOUND', 'Receiving document was not found.', 404)
   const purchaseOrder = receivingDocument.poId
     ? await prisma.purchaseOrder.findFirst({ where: { id: receivingDocument.poId, tenantId }, include: { lines: true } })

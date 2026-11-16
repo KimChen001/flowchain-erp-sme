@@ -7,11 +7,11 @@ import { apiJson } from "../../lib/api-client";
 import { useDocumentNumbers } from "../../lib/documentNumbers";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import { todayDateText, todayDateTone, useTodayCopy, type TodayCopyKey, type TodayDated } from "./todayCopy";
-import { firstRowsByKind } from "./todayRows";
+import { firstRowsByKind, todayTileCounts } from "./todayRows";
 
 type NavigateFn = (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null, options?: unknown) => void;
 type WorkItem = TodayDated & { id: string; entityType: string; recordId: string; label: string; name: string | null; href: string };
-type HomeOverview = { today?: string; workItems: WorkItem[]; workTotal: number; overdue: number; decisions?: { available: boolean; waiting?: Array<{ key: string }>; setAside?: Array<{ key: string }> } };
+type HomeOverview = { today?: string; workItems: WorkItem[]; workTotal: number; overdue: number; decisions?: { available: boolean; waiting?: Array<{ key: string }>; setAside?: Array<{ key: string; row: { overdueDays: number } }> } };
 
 // AI priorities: the first rows of Today's work (GET /api/home/overview, the
 // rules the rest of the app uses), the same rows Today shows before "Show
@@ -81,8 +81,10 @@ export default function AiSuggestionsPage({ onOpenAi }: { onNavigate: NavigateFn
   const shown = firstRowsByKind(items, SHOWN);
   const shownNumber = useDocumentNumbers(shown.filter((item) => item.label === item.recordId).map((item) => [item.entityType, item.recordId] as const));
   const labelOf = (item: WorkItem) => item.label === item.recordId ? shownNumber(item.entityType, item.recordId) || item.label : item.label;
-  const total = overview?.workTotal ?? items.length;
-  const overdue = overview?.overdue ?? 0;
+  // The summary counts what Today's tiles count (Today's work and its
+  // decisions, less what was set aside); the note under the list counts the
+  // rows the list draws from (design audit L6-04).
+  const { work: total, overdue } = todayTileCounts(overview, items.length);
   const reorder = items.some((item) => item.kind === "reorder_now");
   const linkClass = "text-xs font-semibold text-blue-600 hover:underline max-sm:inline-flex max-sm:min-h-9 max-sm:items-center";
 
@@ -110,7 +112,7 @@ export default function AiSuggestionsPage({ onOpenAi }: { onNavigate: NavigateFn
             <Link to={item.href} className="p-1 max-sm:p-2.5" aria-label={labelOf(item)}><ArrowRight size={16} /></Link>
           </li>)}
         </ul>
-        {total > shown.length && <p className="text-[11px]" style={{ color: A.gray2 }}>{fill(copy.shownNote, { shown: count.format(shown.length), total: count.format(total) })}</p>}
+        {items.length > shown.length && <p className="text-[11px]" style={{ color: A.gray2 }}>{fill(copy.shownNote, { shown: count.format(shown.length), total: count.format(items.length) })}</p>}
         <div className="mt-3 flex flex-wrap gap-4"><Link to="/app/overview/risks" className={linkClass}>{copy.openToday} →</Link>{reorder && <Link to="/app/inventory/reorder" className={linkClass}>{copy.openReorder} →</Link>}</div>
       </>}
     </Card>
