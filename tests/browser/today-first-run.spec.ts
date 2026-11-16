@@ -57,6 +57,7 @@ test("a new workspace shows where to start and only the reorder list's work", as
 
   const root = page.getByTestId("runtime-homepage");
   await expect(root.getByText("No recent documents", { exact: true })).toBeVisible();
+  const waiting = overview.decisions?.available ? overview.decisions.waiting || [] : [];
   // Needs action counts Today's work and the decisions waiting on it, as
   // Overdue does (design audit L6-03); nothing is set aside on a first day.
   await expect(root.getByTestId("today-tile-all")).toContainText(`${overview.workTotal}Needs action`);
