@@ -712,16 +712,10 @@ export function createOperationalFinanceO2cReadService({
     const focused = Boolean(salesOrderFilter || shipmentFilter);
     // No invoice number is suggested: the server assigns it when the draft is
     // created (CI-YYYYMM-NNNN).
-    const [tenant, customerRecords, paymentTerms] = await Promise.all([
+    const [tenant, paymentTerms] = await Promise.all([
       prisma.tenant.findUnique({ where: { id: current.tenantId }, select: { timezone: true } }),
-      prisma.runtimeRecord.findMany({ where: { tenantId: current.tenantId, namespace: CUSTOMER_NAMESPACE }, select: { payload: true }, take: 2000 }),
       prisma.paymentTerm.findMany({ where: { tenantId: current.tenantId }, select: { code: true, name: true, days: true } }),
     ]);
-    const customerTerms = new Map(customerRecords.map((record) => [String(record.payload?.id ?? ""), customerPaymentTerm(record.payload?.paymentTerms, paymentTerms)]));
-    // The terms as recorded on the customer, so the form can say that they
-    // name no payment term of the workspace instead of leaving the due date
-    // blank without a word.
-    const customerTermsText = new Map(customerRecords.map((record) => [String(record.payload?.id ?? ""), text(record.payload?.paymentTerms) || null]));
     const [shipments, invoices, returnPostings, sourceOrder, sourceShipment] = await Promise.all([
       prisma.shipmentDocument.findMany({
         where: {
@@ -768,6 +762,20 @@ export function createOperationalFinanceO2cReadService({
         ? prisma.shipmentDocument.findFirst({ where: { tenantId: current.tenantId, OR: [{ id: shipmentFilter }, { shipmentNumber: shipmentFilter }] }, select: { id: true, shipmentNumber: true, salesOrderId: true } })
         : null,
     ]);
+    // The terms of the customers these shipments are for, read by their ids
+    // (design audit V-B-03: the first 2,000 customer rows, unordered, left a
+    // customer past them with no terms and a blank due date).
+    const customerIds = [...new Set(shipments.map((row) => text(row.salesOrder?.customerId)).filter(Boolean))];
+    const customerRecords = [];
+    for (let start = 0; start < customerIds.length; start += 100) {
+      const ids = customerIds.slice(start, start + 100);
+      customerRecords.push(...await prisma.runtimeRecord.findMany({ where: { tenantId: current.tenantId, namespace: CUSTOMER_NAMESPACE, OR: ids.map((id) => ({ payload: { path: ["id"], equals: id } })) }, select: { payload: true } }));
+    }
+    const customerTerms = new Map(customerRecords.map((record) => [String(record.payload?.id ?? ""), customerPaymentTerm(record.payload?.paymentTerms, paymentTerms)]));
+    // The terms as recorded on the customer, so the form can say that they
+    // name no payment term of the workspace instead of leaving the due date
+    // blank without a word.
+    const customerTermsText = new Map(customerRecords.map((record) => [String(record.payload?.id ?? ""), text(record.payload?.paymentTerms) || null]));
     // What each shipment line is already invoiced for, and on which invoices.
     const lineIds = shipments.flatMap((row) => row.lines.map((line) => line.id));
     const onInvoices = lineIds.length

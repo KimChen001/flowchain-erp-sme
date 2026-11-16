@@ -806,8 +806,16 @@ export function createOperationalFinanceReadService({
       return { ...supplier, paymentTerm: term ? { code: term.code, name: term.name, days: term.days ?? null } : null };
     });
   }
-  async function entryData(context) {
+  // ?po= or ?receipt=: the form opened from that order or receipt, which is
+  // read by its id or number whatever its age, with its supplier and receipts
+  // (design audit L2-12: the form saw only the newest 100 orders and receipts,
+  // so an older one could not be billed from its page). ?supplier=: the
+  // newest orders and receipts of that supplier, once it is chosen.
+  async function entryData(context, query = {}) {
     const current = await actor(context);
+    const poFilter = text(query.po);
+    const receiptFilter = text(query.receipt);
+    const supplierFilter = text(query.supplier);
     // Entry data serves the supplier invoice and credit memo forms; the endpoint is shared, so a role
     // that cannot create these documents gets empty lists, not a 403.
     if (!["finance.supplier_invoice.create", "finance.supplier_credit.create"].some((permission) => can({ actor: current, permission, tenantId: current.tenantId })))
@@ -822,7 +830,7 @@ export function createOperationalFinanceReadService({
           take: 100,
         }),
         prisma.purchaseOrder.findMany({
-          where: { tenantId: current.tenantId },
+          where: { tenantId: current.tenantId, ...(supplierFilter ? { supplierId: supplierFilter } : {}) },
           include: { lines: true },
           orderBy: { createdAt: "desc" },
           take: 100,
@@ -832,6 +840,7 @@ export function createOperationalFinanceReadService({
             tenantId: current.tenantId,
             postingStatus: "posted",
             reversedAt: null,
+            ...(supplierFilter ? { supplierId: supplierFilter } : {}),
           },
           include: { lines: true },
           orderBy: { postedAt: "desc" },
@@ -849,6 +858,25 @@ export function createOperationalFinanceReadService({
           take: 100,
         }),
       ]);
+    // The order or receipt the form was opened from, and the receipts of that
+    // order, added when the newest 100 leave them out; their supplier too.
+    const receiptAsked = receiptFilter
+      ? await prisma.receivingDocument.findFirst({ where: { tenantId: current.tenantId, postingStatus: "posted", reversedAt: null, OR: [{ id: receiptFilter }, { documentNumber: receiptFilter }] }, include: { lines: true } })
+      : null;
+    const orderAskedId = poFilter || receiptAsked?.poId || "";
+    const orderAsked = orderAskedId && !purchaseOrders.some((row) => row.id === orderAskedId || procurementDocumentNumber(row) === orderAskedId)
+      ? await prisma.purchaseOrder.findFirst({ where: { tenantId: current.tenantId, OR: [{ id: orderAskedId }, { number: orderAskedId }] }, include: { lines: true } })
+      : null;
+    if (orderAsked) purchaseOrders.unshift(orderAsked);
+    const askedOrderId = orderAsked?.id || purchaseOrders.find((row) => row.id === orderAskedId || procurementDocumentNumber(row) === orderAskedId)?.id || "";
+    const receiptsOfAsked = askedOrderId
+      ? await prisma.receivingDocument.findMany({ where: { tenantId: current.tenantId, poId: askedOrderId, postingStatus: "posted", reversedAt: null }, include: { lines: true }, orderBy: { postedAt: "desc" } })
+      : [];
+    for (const row of [...(receiptAsked ? [receiptAsked] : []), ...receiptsOfAsked])
+      if (!receivingDocuments.some((listed) => listed.id === row.id)) receivingDocuments.push(row);
+    const supplierIdsAsked = [...new Set([orderAsked?.supplierId, receiptAsked?.supplierId, supplierFilter].map(text).filter(Boolean))].filter((id) => !suppliers.some((row) => row.id === id));
+    if (supplierIdsAsked.length)
+      suppliers.push(...await prisma.supplier.findMany({ where: { tenantId: current.tenantId, id: { in: supplierIdsAsked } }, select: { id: true, code: true, name: true, metadata: true } }));
     // What other bills already claim on each order line, so a bill recorded
     // before the goods arrive starts at what is left to bill.
     const billedRows = await prisma.supplierInvoiceLine.findMany({

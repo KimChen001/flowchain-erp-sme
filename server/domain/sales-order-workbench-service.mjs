@@ -45,6 +45,12 @@ const customerOf = (record) => {
   return { id: text(payload.id) || record.id, code: record.recordKey, name: text(payload.name), currency: text(payload.currency) || null, paymentTerms: text(payload.paymentTerms) || null, status: text(payload.status) || 'active' }
 }
 
+// The order form's item search: the matches shown at a time, and how many of a
+// draft's own items are added by id. The customer list's bound.
+const ENTRY_ITEM_OPTIONS = 50
+const ENTRY_ITEM_IDS = 200
+const ENTRY_CUSTOMER_LIMIT = 10000
+
 // An order placed for a chosen customer keeps the customer's id and the name
 // recorded in Customers, so its invoices and receivables follow one customer
 // and a typo cannot split it in two. Orders sent with only a name (older
@@ -236,17 +242,35 @@ export function createSalesOrderReadService({ prisma, lifecycleCapability = { en
     }
     return byOrder
   }
-  async function entryData(context) {
+  // The order form searches items on the server (design audit L4-01): before,
+  // it listed the first 200 active items by SKU and nothing past them could be
+  // ordered. itemQuery matches SKU or name; itemIds adds the items a draft
+  // already has, whatever their status, so its lines keep their names.
+  // view=items answers the item search alone, without customers.
+  async function entryData(context, params = {}) {
     const actor = await actorFor(prisma, context)
     assertAuthorized({ actor, permission: 'sales_order.read', tenantId: actor.tenantId })
-    const [items, customerRecords] = await Promise.all([
-      prisma.item.findMany({ where: { tenantId: actor.tenantId, status: 'active' }, select: { id: true, sku: true, name: true, unit: true }, orderBy: { sku: 'asc' }, take: 200 }),
-      prisma.runtimeRecord.findMany({ where: { tenantId: actor.tenantId, namespace: CUSTOMER_NAMESPACE }, orderBy: { recordKey: 'asc' }, take: 2000 }),
+    const itemQuery = text(params.itemQuery).slice(0, 100)
+    const itemIds = [...new Set(text(params.itemIds).split(',').map(text).filter(Boolean))].slice(0, ENTRY_ITEM_IDS)
+    const itemsOnly = text(params.view) === 'items'
+    const itemSelect = { id: true, sku: true, name: true, unit: true }
+    const itemWhere = { tenantId: actor.tenantId, status: 'active', ...(itemQuery ? { OR: [{ sku: { contains: itemQuery, mode: 'insensitive' } }, { name: { contains: itemQuery, mode: 'insensitive' } }] } : {}) }
+    const [matches, chosen, customerRecords] = await Promise.all([
+      prisma.item.findMany({ where: itemWhere, select: itemSelect, orderBy: { sku: 'asc' }, take: ENTRY_ITEM_OPTIONS + 1 }),
+      itemIds.length ? prisma.item.findMany({ where: { tenantId: actor.tenantId, id: { in: itemIds } }, select: itemSelect }) : [],
+      // Every customer up to a high bound (L4-19: it stopped at 2,000), in
+      // record order; the form says so when the bound cuts the list.
+      itemsOnly ? [] : prisma.runtimeRecord.findMany({ where: { tenantId: actor.tenantId, namespace: CUSTOMER_NAMESPACE }, orderBy: { recordKey: 'asc' }, take: ENTRY_CUSTOMER_LIMIT + 1 }),
     ])
+    const seen = new Set()
+    const items = [...chosen, ...matches.slice(0, ENTRY_ITEM_OPTIONS)].filter((item) => !seen.has(item.id) && seen.add(item.id))
+    const itemsMore = matches.length > ENTRY_ITEM_OPTIONS
+    const customersTruncated = customerRecords.length > ENTRY_CUSTOMER_LIMIT
     // The active customers an order can be placed for, by name, with the
     // country and address Customers records, so the order form can search them.
-    const customers = customerRecords.map((record) => ({ ...customerOf(record), country: text(record?.payload?.country) || null, address: text(record?.payload?.address) || null })).filter((customer) => customer.name && customer.status === 'active').sort((a, b) => a.name.localeCompare(b.name)).map(({ status, ...customer }) => customer)
-    return { dataSource: 'Authoritative PostgreSQL', capabilities: { salesOrderLifecycle: lifecycleCapability }, items: lifecycleCapability.enabled ? items : [], customers: lifecycleCapability.enabled ? customers : [] }
+    const customers = customerRecords.slice(0, ENTRY_CUSTOMER_LIMIT).map((record) => ({ ...customerOf(record), country: text(record?.payload?.country) || null, address: text(record?.payload?.address) || null })).filter((customer) => customer.name && customer.status === 'active').sort((a, b) => a.name.localeCompare(b.name)).map(({ status, ...customer }) => customer)
+    if (itemsOnly) return { dataSource: 'Authoritative PostgreSQL', capabilities: { salesOrderLifecycle: lifecycleCapability }, items: lifecycleCapability.enabled ? items : [], itemsMore }
+    return { dataSource: 'Authoritative PostgreSQL', capabilities: { salesOrderLifecycle: lifecycleCapability }, items: lifecycleCapability.enabled ? items : [], itemsMore, customers: lifecycleCapability.enabled ? customers : [], customersTruncated }
   }
   return { listOrders, entryData }
 }

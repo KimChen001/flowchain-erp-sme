@@ -31,7 +31,7 @@ export async function handleSalesOrderWorkbenchRoute(ctx) {
     const prisma = ctx.outboundPrisma || await getPrismaClient(ctx.env || process.env)
     const context = { identity: ctx.identity }
     if (isRead) {
-      if (entryData) { ctx.send(ctx.res, 200, await createSalesOrderReadService({ prisma, lifecycleCapability }).entryData(context)); return true }
+      if (entryData) { ctx.send(ctx.res, 200, await createSalesOrderReadService({ prisma, lifecycleCapability }).entryData(context, Object.fromEntries(ctx.url.searchParams))); return true }
       if (orderRead || shipmentRead) {
         const capabilities = {
           lifecycle: lifecycleCapability,

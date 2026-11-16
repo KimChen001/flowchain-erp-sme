@@ -183,8 +183,9 @@ async function findCustomerRecord(tx, tenantId, idOrCode) {
   if (!key) return null
   const byCode = await tx.runtimeRecord.findFirst({ where: { tenantId, namespace: CUSTOMER_NAMESPACE, recordKey: key } })
   if (byCode) return byCode
-  const rows = await tx.runtimeRecord.findMany({ where: { tenantId, namespace: CUSTOMER_NAMESPACE }, take: 2000 })
-  return rows.find((row) => text(row.payload?.id) === key || row.id === key) || null
+  // By the customer's id or the row's, looked up directly (design audit L4-19:
+  // a scan of the first 2,000 rows, unordered, missed customers past them).
+  return tx.runtimeRecord.findFirst({ where: { tenantId, namespace: CUSTOMER_NAMESPACE, OR: [{ payload: { path: ['id'], equals: key } }, { id: key }] } })
 }
 
 // The field checks of a customer write; customers need no lookups, so these
