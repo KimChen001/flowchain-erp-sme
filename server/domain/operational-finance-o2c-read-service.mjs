@@ -7,6 +7,7 @@ import { paymentRecordsView } from "./payment-record-command-service.mjs";
 import { CUSTOMER_NAMESPACE } from "./master-data-commands.mjs";
 import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from "./tenant-calendar-day.mjs";
 import { SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES } from "./outbound-transaction-policy.mjs";
+import { uncreditedReturnedQuantities } from "./return-quantity-ledger.mjs";
 
 // Cancelling a customer invoice (cancel_customer_invoice) is the preparer's
 // step, as revising and cancelling a supplier invoice is
@@ -787,11 +788,20 @@ export function createOperationalFinanceO2cReadService({
       if (invoice && !listed.some((entry) => entry.id === invoice.id)) listed.push({ id: invoice.id, invoiceNumber: invoice.invoiceNumber, status: invoice.status });
       invoicesByLine.set(row.shipmentLineId, listed);
     }
+    // Goods the customer sent back and no approved credit note covers are not
+    // left to invoice: the same rule the invoice check applies (L8-08).
+    const returnsByLine = await uncreditedReturnedQuantities({
+      prisma,
+      tenantId: current.tenantId,
+      sourceDocumentType: "ShipmentDocument",
+      sourceLineIds: lineIds,
+    });
     const shipmentView = (row) => {
       const lines = row.lines.map((line) => {
         const posted = units(line.postedQuantity);
         const invoiced = invoicedByLine.get(line.id) || 0n;
-        const left = posted > invoiced ? posted - invoiced : 0n;
+        const returned = returnsByLine.get(line.id)?.uncredited || 0n;
+        const left = posted > invoiced + returned ? posted - invoiced - returned : 0n;
         return {
           id: line.id,
           salesOrderLineId: line.salesOrderLineId,
@@ -801,6 +811,8 @@ export function createOperationalFinanceO2cReadService({
           postedQuantity: decimal(line.postedQuantity),
           // On a draft or on an invoice that holds the shipment.
           invoicedQuantity: fixed(invoiced),
+          // Sent back by the customer and not yet credited (L8-08).
+          returnedQuantity: fixed(returned),
           remainingQuantity: fixed(left),
           unit: line.unit,
           unitPrice: amountsVisible ? decimal(line.salesOrderLine.unitPrice) : null,

@@ -500,6 +500,8 @@ const codeMessages: Record<string, string> = {
   // Shown both as a preview blocking issue and as a command error.
   "SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE":
     "已有销售发票对此发货开票，不能再冲销。如需收回货物，请使用客户退货和贷项通知单。",
+  "SHIPMENT_REVERSAL_BLOCKED_BY_RETURN":
+    "已有客户退货基于此发货单，不能冲销。请先取消该退货；如退货已收货，先冲销其收货。",
   "SALES_ORDER_INVALID_STATE": "当前订单状态不允许此操作。",
   "SALES_ORDER_ITEM_INVALID": "订单物料与当前工作区基础资料不一致。",
 };

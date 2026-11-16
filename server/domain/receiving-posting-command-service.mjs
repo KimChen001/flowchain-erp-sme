@@ -2,8 +2,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { assertAuthorized } from '../auth/authorization-service.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
 import {
+  availableRecordLedger,
   buildReceivingPostingPlan,
   buildReceivingReversalPlan,
+  purchaseOrderReceiptStatus,
   RECEIVABLE_PO_STATUSES,
   RECEIVABLE_WORKFLOW_STATUSES,
   receivingDecimalString as decimalString,
@@ -166,15 +168,9 @@ async function assertOperateWarehouseScope(tx, scope, receivingDocument, { allow
   if (scopeCount !== warehouseIds.length) fail('WAREHOUSE_SCOPE_DENIED', 'The actor lacks operate access to every receiving warehouse.', 403)
 }
 
-function poStatus(lines, currentStatus, baseStatus) {
-  const quantities = lines.map((line) => ({
-    ordered: decimalUnits(line.orderedQuantity),
-    received: decimalUnits(line.receivedQuantity),
-  }))
-  if (quantities.length && quantities.every((line) => line.received >= line.ordered)) return 'fully_received'
-  if (quantities.some((line) => line.received > 0n)) return 'partially_received'
-  return text(baseStatus) || (['partially_received', 'fully_received'].includes(currentStatus) ? 'approved' : currentStatus)
-}
+// One rule for a purchase order's status from its received quantities, shared
+// with the supplier return for a replacement (L3-23).
+const poStatus = purchaseOrderReceiptStatus
 
 async function lockReceivingDocument(tx, tenantId, receivingDocumentId) {
   const rows = await tx.$queryRawUnsafe(
@@ -569,7 +565,9 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
   async function reconcileInventoryBalance({ tenantId, sku, warehouseId, location = '' } = {}) {
     const locationKey = normalizeLocation(location)
     const balance = await prisma.inventoryBalance.findUnique({ where: balanceKey({ tenantId, sku, warehouseId, locationKey }) })
-    const movements = await prisma.inventoryMovement.findMany({ where: { tenantId, sku, warehouseId, locationKey, status: 'posted' } })
+    // The available record's ledger: quarantine stock at the same key has its
+    // own record (L8-18).
+    const movements = availableRecordLedger(await prisma.inventoryMovement.findMany({ where: { tenantId, sku, warehouseId, locationKey, status: 'posted' } }))
     const calculatedOnHandQuantity = calculateMovementBalance(movements)
     return {
       balance: balance ? plainBalance(balance) : null,

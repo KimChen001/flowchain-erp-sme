@@ -1,3 +1,5 @@
+import { sourceDocumentReturnHolds } from './return-source-holds.mjs'
+
 const SCALE = 10_000n
 const ZERO = 0n
 
@@ -412,6 +414,12 @@ export async function buildShipmentReversalPlan({ prisma, tenantId, shipmentId, 
     orderBy: { id: 'asc' },
   })
   if (holdingInvoice) blockingIssues.push(policyError('SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE', 'A customer invoice already bills this shipment, so it can no longer be reversed. To take these goods back, use a customer return and credit note.', 409, { customerInvoiceId: holdingInvoice.id, invoiceNumber: holdingInvoice.invoiceNumber, invoiceStatus: holdingInvoice.status }))
+  // A customer return that names this shipment holds it: reversing the
+  // shipment would put all of it back in stock while the returned part is
+  // also in quarantine. The return can always be cancelled, or its receipt
+  // reversed first (L8-07).
+  const returnHolds = await sourceDocumentReturnHolds({ prisma, tenantId, sourceDocumentType: 'ShipmentDocument', sourceLineIds: shipment.lines.map((line) => line.id) })
+  if (returnHolds.length) blockingIssues.push(policyError('SHIPMENT_REVERSAL_BLOCKED_BY_RETURN', `Customer return ${returnHolds.map((row) => row.requestNumber).join(', ')} is based on this shipment, so the shipment cannot be reversed. Cancel the return first, reversing its receipt if it was posted.`, 409, { returnRequests: returnHolds }))
   const allocations = shipment.lines.flatMap((line) => line.allocations.map((allocation) => ({ ...allocation, shipmentLine: line })))
   const originalMovements = await prisma.inventoryMovement.findMany({ where: { tenantId, sourceDocumentId: shipment.id, movementType: 'shipment_posting' }, orderBy: { sourceDocumentLineId: 'asc' } })
   const movementMap = new Map(originalMovements.map((movement) => [movement.sourceDocumentLineId, movement]))
