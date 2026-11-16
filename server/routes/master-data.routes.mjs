@@ -5,6 +5,7 @@ import { PilotIdentityError, hasWarehouseAccess, resolveProvisionedActor } from 
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { MASTER_DATA_LIST_LIMIT } from '../repositories/db-master-data-repository.mjs'
 import { createSupplierInsightsReadService } from '../domain/supplier-insights.mjs'
+import { itemRequestUnit } from '../domain/item-stock-unit.mjs'
 
 // Writes are decided by Roles & permissions, never by the legacy User.role, so
 // an administrator who narrows someone's roles narrows what they can change.
@@ -167,15 +168,25 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/items') {
+    const purchasable = url.searchParams.get('purchasable') === 'true'
     const managed =
       url.searchParams.get('managed') === 'true' ||
-      url.searchParams.get('purchasable') === 'true'
+      purchasable
+    const items = await (managed && repository.listManagedItems
+      ? repository.listManagedItems
+      : repository.listItems)(everyRecord({
+      purchasableOnly: purchasable,
+    }))
+    // The purchasable list feeds the purchase request forms, which put
+    // purchaseUnit on a new line. A request line is in the stock unit, since
+    // no conversion from another purchase unit is recorded
+    // (item-stock-unit.mjs), so that is the purchase unit this list gives;
+    // the item's recorded one stays in recordedPurchaseUnit. The item master
+    // reads the managed list and keeps the recorded one.
     send(res, 200, {
-      items: await (managed && repository.listManagedItems
-        ? repository.listManagedItems
-        : repository.listItems)(everyRecord({
-        purchasableOnly: url.searchParams.get('purchasable') === 'true',
-      })),
+      items: purchasable
+        ? items.map((item) => ({ ...item, recordedPurchaseUnit: item.purchaseUnit, purchaseUnit: itemRequestUnit(item).unit }))
+        : items,
     })
     return true
   }

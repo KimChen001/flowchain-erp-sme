@@ -36,6 +36,9 @@ export async function seedReceivingScenario(prisma, {
   rejected = ordered.map(() => '0'),
   poStatus = 'issued',
   workflowStatus = 'approved',
+  // The item's stock unit and the unit its PO and receiving lines are in.
+  itemUnit = 'EA',
+  lineUnit = itemUnit,
 } = {}) {
   const suffix = randomUUID()
   const tenantId = `tenant-${suffix}`
@@ -52,9 +55,9 @@ export async function seedReceivingScenario(prisma, {
     const sku = `SKU-${index}-${suffix}`
     const poLineId = `po-line-${index}-${suffix}`
     const receivingLineId = `grn-line-${index}-${suffix}`
-    await prisma.item.create({ data: { id: itemId, tenantId, sku, name: `Item ${index}`, unit: 'EA' } })
+    await prisma.item.create({ data: { id: itemId, tenantId, sku, name: `Item ${index}`, unit: itemUnit } })
     items.push({ itemId, sku })
-    poLines.push({ id: poLineId, itemId, sku, itemName: `Item ${index}`, orderedQuantity: ordered[index], receivedQuantity: '0', unit: 'EA' })
+    poLines.push({ id: poLineId, itemId, sku, itemName: `Item ${index}`, orderedQuantity: ordered[index], receivedQuantity: '0', unit: lineUnit })
     receivingLines.push({
       id: receivingLineId,
       purchaseOrderLineId: poLineId,
@@ -63,7 +66,7 @@ export async function seedReceivingScenario(prisma, {
       itemName: `Item ${index}`,
       acceptedQty: accepted[index],
       rejectedQty: rejected[index] || '0',
-      unit: 'EA',
+      unit: lineUnit,
       warehouseId,
       location: 'A-01',
       locationKey: 'a-01',

@@ -374,7 +374,7 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
               status: 'posted',
               owner: scope.actorId,
               actorId: scope.actorId,
-              unit: plan.line.unit || plan.poLine.unit,
+              unit: plan.unit,
               relatedPoId: purchaseOrder.id,
               relatedGrnId: receivingDocument.id,
               postingBatchId,
@@ -392,12 +392,13 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
               warehouseKey: plan.warehouseId,
               location: plan.location || null, locationKey: plan.locationKey,
               onHandQuantity: quantity, availableQuantity: quantity, reservedQuantity: '0',
-              unit: plan.line.unit || plan.poLine.unit, status: 'available', version: 1,
+              unit: plan.unit, status: 'available', version: 1,
             },
             update: {
               onHandQuantity: { increment: quantity }, availableQuantity: { increment: quantity },
               itemId: plan.itemId, itemName: plan.line.itemName || plan.poLine.itemName,
-              location: plan.location || null, unit: plan.line.unit || plan.poLine.unit, version: { increment: 1 },
+              // The balance keeps its own unit: a receipt never relabels it.
+              location: plan.location || null, version: { increment: 1 },
             },
           })
           balances.push(balance)
