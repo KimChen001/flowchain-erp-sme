@@ -581,9 +581,26 @@ export function aiGroundingItemNamePairs(body, facts, results) {
 // { ok, problems: [{ kind, value }], counts: { kind: n }, checked: { kind: n } }.
 // `limitClaims`: the assistant could propose this answer's action, so a
 // permission or system-limit excuse fails the check.
+// Whether a calculate call's inputs come from this conversation: each value
+// a figure of the results read so far, or of the user's words (design audit
+// 2026-11-15, L5-03: a unit price of 2.95 passed as 2.59 gave 259, and the
+// answer's "about £259" was taken as checked, since the calculation's result
+// was a source). A calculation with an input from nowhere is no source.
+const INPUT_NUMBER = /-?\d[\d,]*(?:\.\d+)?/g
+export function aiCalculationGrounded(input = {}, { results = [], question = '', conversation = '' } = {}) {
+  const values = [...array(input?.values), ...array(input?.calculations).flatMap((entry) => array(entry?.values))].map(Number).filter(Number.isFinite)
+  if (!values.length) return true
+  const known = [
+    ...aiGroundingSources(results).numbers.map((row) => row.value),
+    ...[text(question), text(conversation)].flatMap((value) => [...value.matchAll(INPUT_NUMBER)].map((match) => Number(match[0].replace(/,/g, '')))),
+  ].filter(Number.isFinite)
+  const near = (value) => known.some((candidate) => Math.abs(candidate - value) <= Math.max(0.005, Math.abs(candidate) * 0.0005) || Math.abs(candidate * 100 - value) <= 0.005 || Math.abs(candidate / 100 - value) <= 0.00005)
+  return values.every((value) => value === 0 || value === 1 || near(value))
+}
+
 export function checkAiModelFirstGrounding({ answer, results = [], refs = [], question = '', conversation = '', facts = null, today = null, limitClaims = false }) {
   const problems = []
-  const checked = { record: 0, name: 0, date: 0, number: 0, citation: 0 }
+  const checked = { record: 0, name: 0, date: 0, number: 0, derived: 0, citation: 0 }
   const fail = (kind, value) => { if (!problems.some((row) => row.kind === kind && row.value === value)) problems.push({ kind, value }) }
   const title = text(answer?.title)
   const body = text(answer?.answer)
@@ -744,6 +761,11 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const worked = unread.filter((figure) => workedOut(figure, operands))
     if (!worked.length) break
     for (const figure of worked) { unread.splice(unread.indexOf(figure), 1); operands.push(figure) }
+    // Worked out from the answer's own figures, not read from a record: not
+    // counted as checked, but apart (design audit 2026-11-15, L5-03: "N
+    // figures checked against the records" counted them).
+    checked.number -= worked.length
+    checked.derived += worked.length
   }
   for (const figure of unread) fail('number', figure.label)
   // Cited records: each one a tool returned.

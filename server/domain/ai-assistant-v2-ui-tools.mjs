@@ -7,6 +7,7 @@ import { PURCHASE_ORDER_COMMANDS } from './procurement-db-command-service.mjs'
 import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS, RFQ_STATUS } from './procurement-workflow.mjs'
 import { AI_READ_TOOL_COLUMNS } from './ai-read-tool-runner.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
+import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
 import { aiSkillUnitLabel } from './ai-skill-copy.mjs'
 import { findPaymentTerm } from './standard-payment-terms.mjs'
 
@@ -1521,6 +1522,16 @@ const suggestFollowups = defineUiTool({
     // Chinese.
     const foreign = questions.find((question) => (ctx?.language === 'zh-CN' ? !CJK_CHAR.test(question) : ctx?.language === 'en-US' && mostlyChinese(question)))
     if (foreign) return fail('wrong_language', `Write each question in ${ctx.language === 'zh-CN' ? 'Chinese' : 'English'}, the answer's language; "${foreign.slice(0, 40)}" is not.`)
+    // A chip's figures come from the records too: a chip the user clicks is
+    // sent as their own words, so a quantity in it would reach a form as one
+    // the user typed (design audit 2026-11-15, L5-21).
+    const sources = ctx?.results instanceof Map ? [...ctx.results.values()].map((entry) => entry.output) : []
+    for (const question of questions) {
+      try {
+        const unread = checkAiModelFirstGrounding({ answer: { title: '', answer: question, records: [] }, results: sources, question: ctx?.userText || '', facts: ctx?.facts || null }).problems.filter((row) => row.kind === 'number')
+        if (unread.length) return fail('ungrounded_figure', `A follow-up may use only figures the records or the user gave; "${unread[0].value}" in "${question.slice(0, 40)}" is neither. Leave the figure out.`)
+      } catch { /* a check that fails leaves the chips as they are */ }
+    }
     return part('followups', { questions }, [])
   },
 })

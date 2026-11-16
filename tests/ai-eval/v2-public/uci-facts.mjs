@@ -27,6 +27,8 @@ export const DEMAND_WINDOW_DAYS = 90
 // seed day by default; a server running a day before or after its seed day
 // moves only the figures that count from today (late orders, the last 90
 // days of deliveries).
+import { PUBLIC_DATA_WORKSPACE_ASSUMPTIONS } from '../../../scripts/public-data/plan.mjs'
+
 export function uciFacts(plan, { today = plan.seedDay } = {}) {
   const seed = Date.parse(`${plan.seedDay}T00:00:00Z`)
   const dateOf = (index) => new Date(seed + (index - plan.days) * DAY_MS).toISOString().slice(0, 10)
@@ -68,6 +70,8 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
       safetyStock: row.safetyStock,
       reorderPoint: row.reorderPoint,
       minimumOrderQuantity: row.minimumOrderQuantity,
+      // The supplier terms' lead time, as the seed writes it.
+      leadTimeDays: plan.assumptions?.leadTimeDays ?? PUBLIC_DATA_WORKSPACE_ASSUMPTIONS.leadTimeDays,
       // Shipped a day over the 90 days before today, as the tools read it
       // (the seed's thresholds use the 90 days before the seed day: the same
       // window when the questions are asked on the seed day). 2026-11-11, a

@@ -51,6 +51,26 @@ the language asked in, no figure the answer check flagged, and tidy text (no
 raw decimals such as 7.1556, no "10 月 1, 2026", no opening "Let me check…",
 and no text part after a table that says the answer again).
 
+What the scoring counts (design audit 2026-11-15, L5-16 and L5-18):
+
+- An expected figure is matched in the answer's words. A figure a table must
+  show is a `quantities` check, on the row that names its item by SKU or name;
+  a card's other columns no longer count (a lead time of 14 was "found" in any
+  supplier table).
+- `calls` counts the tools that ran; a call that failed is listed apart.
+- An answer's cost is read from its own audit row, by its message id.
+- "No flagged figure" trusts the server's answer check. `flag-cases.mjs`
+  holds three answers with a wrong figure that the check must flag; `npm test`
+  runs them offline, so a check made looser in tuning fails there.
+- A case that needs a role names its user (`asUser`): the money cases are
+  asked by the manager. The others still take turns by their place in the
+  list. A turn can name the open record, report a click (`formResults`) or
+  set the panel's language apart from the question's (`uci-path-cases.mjs`).
+- A small count may be written as a word ("Four posted receipts", 两张订单).
+- Rescoring the 2026-11-13 run (105 answers) this way gives 90 instead of 89:
+  late-orders-zh now passes on the language fix of #322. The 2026-11-14 money
+  run stays at 15 of 17.
+
 One run varies: on DeepSeek V4.1 Flash, 11 cases passed in one run and failed
 in the next, and 9 the other way. To judge a change, run it with
 `--repeat=2` or more and `--compare=<the earlier report.json>`, which lists

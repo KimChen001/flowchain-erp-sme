@@ -51,10 +51,9 @@ export function AnswerFooter({ message, threadId, messageId, copy }: { message: 
       await apiJson("/api/ai-runtime/feedback", {
         method: "POST",
         body: JSON.stringify({
+          // The server takes the question, the answer and its tools from the
+          // thread it kept (design audit 2026-11-15, L5-23).
           rating: value, threadId, messageId, reasons: chosen, note: text, language: copy.language,
-          question: String(message.body?.query || ""),
-          answer: String((message.body?.conclusion as { summary?: unknown } | undefined)?.summary || ""),
-          tools: basis?.tools || [],
         }),
       });
       setStatus("sent");

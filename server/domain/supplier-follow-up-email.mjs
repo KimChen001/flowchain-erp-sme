@@ -33,6 +33,56 @@ export function parseFollowUpEmail(input = {}) {
   return { to, subject, body }
 }
 
+// The text and the address against the order (design audit 2026-11-15,
+// L5-12; §4.11 "the figures come from the order and cannot be edited; the
+// wording can", "no prices"). The card lets the person edit the whole text,
+// so the server checks it against the draft it built from the order:
+//   - the order number is in the subject or the message;
+//   - every other figure is one of the order's: a quantity still to receive,
+//     the days late, the number of lines, a part of the due or promised date,
+//     or a digit of the order number or a line's item code (a phone number
+//     after "+" or "Tel:" aside);
+//   - no amount with a currency, and no currency code;
+//   - an address other than the supplier's on record was confirmed as such
+//     (`recipientNotOnRecord`), and the record says which it was.
+const CURRENCY = /[£$€¥￥]\s*\d|\d[\d,.]*\s*(?:[£$€¥￥]|元|美元|英镑|欧元|人民币)|\b(?:USD|GBP|EUR|CNY|RMB|JPY|HKD|CAD|AUD|CHF|SGD)\b/i
+const PHONE = /(?:\+|\b(?:tel|phone|mobile|fax)\b\.?[:：]?\s*|(?:电话|手机|传真)[:：]?\s*)\d[\d\s().-]{5,}\d/gi
+const FIGURE = /\d[\d,]*(?:\.\d+)?/g
+const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+function dateParts(value) {
+  const day = value instanceof Date ? value.toISOString().slice(0, 10) : text(value).slice(0, 10)
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day)
+  return match ? [Number(match[1]), Number(match[1]) % 100, Number(match[2]), Number(match[3])] : []
+}
+
+export function checkFollowUpContent(email, draft, input = {}) {
+  if (!draft || draft.type !== 'supplier_follow_up') throw Object.assign(new Error('This order has no follow-up to send. Reload Today.'), { status: 409, code: 'SUPPLIER_EMAIL_DRAFT_MISSING', details: [] })
+  const orderNumber = text(draft.orderNumber)
+  const all = `${email.subject}\n${email.body}`
+  if (orderNumber && !all.toLowerCase().includes(orderNumber.toLowerCase())) throw fail('SUPPLIER_EMAIL_ORDER_MISSING', `Keep the order number ${orderNumber} in the message.`, 'body')
+  if (CURRENCY.test(all)) throw fail('SUPPLIER_EMAIL_PRICE', 'Leave prices and currencies out of a supplier follow-up.', 'body')
+  const lines = Array.isArray(draft.lines) ? draft.lines : []
+  const allowed = new Set([
+    ...lines.map((line) => Number(line.remaining)),
+    Number(draft.overdueDays), Number(draft.moreLines), lines.length, lines.length + (Number(draft.moreLines) || 0),
+    ...[draft.dueDate, ...lines.map((line) => line.promisedDate)].flatMap(dateParts),
+  ].filter(Number.isFinite))
+  // The order number and item codes carry digits of their own.
+  const codes = [orderNumber, ...lines.flatMap((line) => [text(line.sku), text(line.supplierSku), text(line.itemName)])].filter(Boolean).sort((a, b) => b.length - a.length)
+  const words = codes.length ? all.replace(new RegExp(codes.map(escape).join('|'), 'gi'), ' ') : all
+  for (const match of words.replace(PHONE, ' ').matchAll(FIGURE)) {
+    const value = Number(match[0].replace(/,/g, '').replace(/\.$/, ''))
+    if (!allowed.has(value)) throw fail('SUPPLIER_EMAIL_FIGURE_CHANGED', `${match[0]} is not on order ${orderNumber || ''}. The order's figures cannot be changed; edit only the wording.`.replace(/ {2}/g, ' '), 'body')
+  }
+  const onRecord = text(draft.supplier?.email).toLowerCase()
+  const recipientOnRecord = Boolean(onRecord) && onRecord === email.to
+  if (!recipientOnRecord && input.recipientNotOnRecord !== true) {
+    throw fail('SUPPLIER_EMAIL_RECIPIENT_NOT_ON_RECORD', onRecord ? `${email.to} is not the supplier's email on record (${onRecord}). Confirm it to send.` : `The supplier has no email on record. Confirm ${email.to} to send.`, 'to')
+  }
+  return { recipientOnRecord }
+}
+
 // Where an email goes: the configured provider, or the local outbox file. A
 // public-data workspace always uses the outbox, so a research workspace never
 // emails a real company.
