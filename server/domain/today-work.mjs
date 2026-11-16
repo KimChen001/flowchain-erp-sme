@@ -119,7 +119,7 @@ export function purchaseOrderSignalRows(purchaseOrders, now, timeZone) {
     const lines = array(po.lines)
     const openLines = lines.flatMap((line) => {
       const read = purchaseOrderReportLine(line, po)
-      return read.open ? [{ sku: text(line.sku) || null, itemId: text(line.itemId) || null, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null }] : []
+      return read.open ? [{ sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName) || null, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null }] : []
     })
     return {
       id: entry.id, orderNumber: entry.orderNumber, supplierId: entry.supplierId, supplier: entry.supplier, status: entry.status,
@@ -204,15 +204,23 @@ function reorderWork(reorder, stockSignals) {
     }))
 }
 
+// The match status of an invoice whose every match exception was approved
+// (MATCH_VARIANCE_APPROVED in operational-finance-command-service.mjs).
+const MATCH_VARIANCE_APPROVED = 'variance_approved'
+
 // The next step a bill waits for, as the bills page offers it
-// (operational-finance-read-service.mjs actions).
+// (operational-finance-read-service.mjs actions). An exception bill whose
+// every difference was approved (matchStatus variance_approved, written when
+// the last match exception is approved) keeps its status until it is
+// approved itself: it waits for approval, as the bills page and the approval
+// email say, and has nothing left to review (design audit L11-07).
 export function billNextStep(invoice) {
   const status = text(invoice?.status).toLowerCase()
   const links = { status, relatedPoId: invoice?.relatedPoId ?? invoice?.poId ?? invoice?.relatedPo ?? null, relatedGrnId: invoice?.relatedGrnId ?? invoice?.receiptId ?? invoice?.relatedGrn ?? null }
   if (status === 'submitted' && awaitingReceipt(links)) return 'bill_awaiting_receipt'
   if (status === 'submitted' || status === 'matching') return 'bill_to_match'
   if (status === 'matched') return 'bill_to_approve'
-  if (status === 'exception') return 'bill_exception'
+  if (status === 'exception') return text(invoice?.matchStatus).toLowerCase() === MATCH_VARIANCE_APPROVED ? 'bill_to_approve' : 'bill_exception'
   return null
 }
 

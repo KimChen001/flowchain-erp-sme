@@ -1,3 +1,4 @@
+import { aiSkillPurchaseOrderNotSent } from './ai-skill-signals.mjs'
 import { purchaseOrderSignalRows } from './today-work.mjs'
 import { invoiceExceptionDraft } from './invoice-exception-draft.mjs'
 
@@ -10,10 +11,14 @@ import { invoiceExceptionDraft } from './invoice-exception-draft.mjs'
 //                                supplier's minimum), and the open requests
 //                                that already ask for the item;
 //   purchase_order_overdue       the facts of a follow-up to the supplier:
-//                                the order, its lines still to receive and
-//                                their promised dates, and the supplier's
-//                                contact on record. The page writes the words
-//                                in the language the person picks;
+//                                the order, its lines past their promised
+//                                dates (item, supplier part number, quantity
+//                                still to receive) and the supplier's contact
+//                                on record. The page writes the words in the
+//                                language the person picks. An order approved
+//                                but never sent gets send_purchase_order
+//                                instead: the order and its supplier, to send
+//                                from the order's page, and no follow-up;
 //   purchase_request_to_convert  the draft purchase orders the request would
 //                                make, one per supplier, currency and
 //                                delivery warehouse, and the lines that lack
@@ -68,16 +73,46 @@ function reorderDraft(row, { reorderRows, openRequests }) {
   }
 }
 
-function followUpDraft(row, { orderRows, suppliersById }) {
+// The item-supplier links ("itemId::supplierId", the links' record key) of
+// the lines of each overdue order in rows, so the follow-up names the
+// supplier's own part number (supplierSkus of buildDecisionDrafts).
+export function followUpSupplierLinkKeys(rows = [], { context = {}, sources = {} } = {}) {
+  const wanted = new Set(array(rows).filter((row) => row.kind === 'purchase_order_overdue').map((row) => text(row.recordId)))
+  const keys = new Set()
+  if (!wanted.size) return []
+  for (const po of array(sources.reportPurchaseOrders ?? context.purchaseOrders)) {
+    const supplierId = text(po?.supplierId)
+    if (!wanted.has(text(po?.id)) || !supplierId) continue
+    for (const line of array(po.lines)) if (text(line.itemId)) keys.add(`${text(line.itemId)}::${supplierId}`)
+  }
+  return [...keys]
+}
+
+function followUpDraft(row, { orderRows, asOf, suppliersById, supplierSkus }) {
   const order = orderRows.get(text(row.recordId))
   if (!order) return null
   const supplier = suppliersById.get(text(order.supplierId)) || null
-  return {
-    type: 'supplier_follow_up',
+  const facts = {
     purchaseOrderId: text(order.id),
     orderNumber: text(order.orderNumber) || text(order.id),
     dueDate: order.dueDate || null,
     overdueDays: Number(order.overdueDays) || 0,
+  }
+  // Approved and never sent to the supplier (decision V5): the supplier does
+  // not have the order, so there is nothing to chase and nothing to say is
+  // overdue. The step is to send the order, from its page (design audit
+  // L11-01). The same rule marks the row "not issued" (today-work.mjs).
+  if (aiSkillPurchaseOrderNotSent(order)) {
+    return { type: 'send_purchase_order', ...facts, supplier: { id: text(order.supplierId) || null, name: text(order.supplier) || text(supplier?.name) || null } }
+  }
+  // Only the lines past their promised day: a line still within its date is
+  // not late, and the supplier is not chased for it (design audit L11-22).
+  // Each line names the item and the supplier's own part number when the
+  // item-supplier link records one.
+  const late = array(order.openLines).filter((line) => line.promisedDate && asOf && line.promisedDate < asOf)
+  return {
+    type: 'supplier_follow_up',
+    ...facts,
     supplier: {
       id: text(order.supplierId) || null,
       name: text(order.supplier) || text(supplier?.name) || null,
@@ -86,8 +121,15 @@ function followUpDraft(row, { orderRows, suppliersById }) {
       // anything is sent, and nothing is sent from Today yet.
       email: text(supplier?.email) || null,
     },
-    lines: array(order.openLines).slice(0, 20).map((line) => ({ sku: line.sku || null, remaining: quantity(line.remaining), unit: line.unit || null, promisedDate: line.promisedDate || null })),
-    moreLines: Math.max(0, array(order.openLines).length - 20),
+    lines: late.slice(0, 20).map((line) => ({
+      sku: line.sku || null,
+      itemName: line.itemName || null,
+      supplierSku: supplierSkus.get(`${text(line.itemId)}::${text(order.supplierId)}`) || null,
+      remaining: quantity(line.remaining),
+      unit: line.unit || null,
+      promisedDate: line.promisedDate || null,
+    })),
+    moreLines: Math.max(0, late.length - 20),
   }
 }
 
@@ -135,22 +177,23 @@ function billExceptionDraft(row, { held, suppliersById }) {
 }
 
 // drafts keyed like the rows (kind:recordId) for the rows given.
-// context: the reader's scoped business context; sources: Today's sources.
-export function buildDecisionDrafts(rows = [], { context = {}, sources = {}, now = new Date(), timeZone } = {}) {
+// context: the reader's scoped business context; sources: Today's sources;
+// supplierSkus: the supplier's part number per "itemId::supplierId"
+// (followUpSupplierLinkKeys), none when they could not be read.
+export function buildDecisionDrafts(rows = [], { context = {}, sources = {}, now = new Date(), timeZone, supplierSkus = new Map() } = {}) {
   const wanted = array(rows)
   const reorderRows = new Map(array(sources.reorder?.rows).map((entry) => [text(entry.itemId), entry]))
   const openRequests = openRequestsByItem(context.purchaseRequests)
   const suppliersById = new Map(array(context.suppliers).map((supplier) => [text(supplier.id), supplier]))
   const requestsById = new Map(array(context.purchaseRequests).map((request) => [text(request.id), request]))
   const needOrders = wanted.some((row) => row.kind === 'purchase_order_overdue')
-  const orderRows = needOrders
-    ? new Map(purchaseOrderSignalRows(sources.reportPurchaseOrders ?? context.purchaseOrders, now, timeZone).rows.map((entry) => [text(entry.id), entry]))
-    : new Map()
+  const signalRows = needOrders ? purchaseOrderSignalRows(sources.reportPurchaseOrders ?? context.purchaseOrders, now, timeZone) : { asOf: null, rows: [] }
+  const orderRows = new Map(signalRows.rows.map((entry) => [text(entry.id), entry]))
   const drafts = {}
   for (const row of wanted) {
     const key = `${row.kind}:${row.recordId}`
     const draft = row.kind === 'reorder_now' ? reorderDraft(row, { reorderRows, openRequests })
-      : row.kind === 'purchase_order_overdue' ? followUpDraft(row, { orderRows, suppliersById })
+      : row.kind === 'purchase_order_overdue' ? followUpDraft(row, { orderRows, asOf: signalRows.asOf, suppliersById, supplierSkus })
         : row.kind === 'purchase_request_to_convert' ? conversionDraft(row, { requestsById, suppliersById })
           : row.kind === 'bill_exception' ? billExceptionDraft(row, { held: sources.invoiceExceptions, suppliersById })
             : null

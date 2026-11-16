@@ -9,6 +9,7 @@ import { createDecisionItemRepository } from '../repositories/decision-item-repo
 // Sends the follow-up on an overdue purchase order to its supplier, after the
 // person confirmed the text and the address (docs/drafted-decisions-design.md
 // §4.11, DD-9), and records it:
+//   - never for an order approved but not yet sent to the supplier;
 //   - only when the workspace turned supplier email on (review settings);
 //   - at most one email per order and 20 per workspace per workspace day;
 //   - replies go to the sender's own address;
@@ -36,6 +37,10 @@ async function sentToday(prisma, tenantId, { now, today, timeZone }) {
 
 export async function sendSupplierFollowUp({ prisma, tenantId, actor, row, input, env = process.env, mailer = null, now = new Date(), today, timeZone }) {
   if (row.kind !== 'purchase_order_overdue') throw fail(422, 'SUPPLIER_EMAIL_NOT_OVERDUE', 'Only an overdue purchase order can be followed up by email.')
+  // Approved but never sent: the supplier does not have the order, so an
+  // email saying it is overdue would be false. Send the order instead
+  // (design audit L11-01; Today drafts send_purchase_order for it).
+  if (row.detail?.notIssued) throw fail(422, 'SUPPLIER_EMAIL_ORDER_NOT_SENT', 'This order has not been sent to the supplier yet. Send the order from its page; there is nothing to follow up.')
   if (!(await supplierEmailSettingOn(prisma, tenantId))) throw fail(409, 'SUPPLIER_EMAIL_OFF', 'Supplier email is off in this workspace. An administrator can turn it on in Settings.')
   const email = parseFollowUpEmail(input)
   const repository = createDecisionItemRepository({ prisma })
