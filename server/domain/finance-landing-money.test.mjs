@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { AGING_BUCKETS, ageByCurrency, agingBucket, agingDays, createOperationalFinanceO2cReadService } from './operational-finance-o2c-read-service.mjs'
+// The shared in-memory stand-in for the Prisma where clauses the landing uses.
+import { inMemoryModel } from './test-fixtures/in-memory-prisma.mjs'
 
 // UI review round 8 (2026-11-12): the Payables & receivables overview showed
 // eight counts and no money; "52 Overdue receivables" never said how much was
@@ -23,43 +25,6 @@ const userWith = (permissions) => ({
   roleAssignments: [{ status: 'active', role: { id: 'role-1', roleKey: 'finance', name: 'Finance', status: 'active', permissions: permissions.map((permissionCode) => ({ permissionCode })) } }],
 })
 
-// An in-memory stand-in for the Prisma where clauses the landing uses.
-const comparable = (value) => (value instanceof Date ? value.getTime() : typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value) ? Number(value) : value)
-function matchesField(value, condition) {
-  if (condition === null || typeof condition !== 'object' || condition instanceof Date) return comparable(value) === comparable(condition)
-  if ('is' in condition) return value ? matches(value, condition.is) : false
-  return Object.entries(condition).every(([operator, operand]) => {
-    if (operator === 'mode') return true
-    if (operator === 'in') return operand.includes(value)
-    if (operator === 'notIn') return !operand.includes(value)
-    if (operator === 'not') return operand === null ? value !== null && value !== undefined : comparable(value) !== comparable(operand)
-    if (operator === 'gt') return comparable(value) > comparable(operand)
-    if (operator === 'lt') return comparable(value) < comparable(operand)
-    // A relation filter: some related row matches (supplier invoices with an open exception).
-    if (operator === 'some') return Array.isArray(value) && value.some((row) => matches(row, operand))
-    throw new Error(`operator ${operator} is not modelled`)
-  })
-}
-function matches(row, where = {}) {
-  return Object.entries(where).every(([key, condition]) => {
-    if (key === 'AND') return condition.every((part) => matches(row, part))
-    if (key === 'OR') return condition.some((part) => matches(row, part))
-    if (key === 'NOT') return !(Array.isArray(condition) ? condition.some((part) => matches(row, part)) : matches(row, condition))
-    return matchesField(row[key], condition)
-  })
-}
-function model(rows) {
-  const filtered = (where) => rows.filter((row) => matches(row, where))
-  return {
-    count: async ({ where } = {}) => filtered(where).length,
-    findMany: async ({ where, distinct, select } = {}) => {
-      let found = filtered(where)
-      if (distinct) found = found.filter((row, index) => found.findIndex((other) => distinct.every((field) => other[field] === row[field])) === index)
-      return select ? found.map((row) => Object.fromEntries(Object.keys(select).map((key) => [key, row[key]]))) : found
-    },
-  }
-}
-
 // Today in the workspace (Europe/London) is 2026-11-10.
 const NOW = new Date('2026-11-10T12:00:00Z')
 const day = (text) => new Date(`${text}T00:00:00.000Z`)
@@ -75,7 +40,7 @@ function fakePrisma(permissions = FULL) {
   return {
     tenant: { findUnique: async () => ({ timezone: 'Europe/London' }) },
     user: { findFirst: async () => structuredClone(userWith(permissions)) },
-    receivableObligation: model([
+    receivableObligation: inMemoryModel([
       receivable('R1', 'GBP', '2026-11-20', 'open', '100.0000'), // not yet due
       receivable('R2', 'GBP', '2026-11-01', 'open', '50.0000'), // 9 days past due
       receivable('R3', 'GBP', '2026-08-01', 'partially_settled', '25.5000'), // 101 days
@@ -83,7 +48,7 @@ function fakePrisma(permissions = FULL) {
       receivable('R5', 'USD', '2026-09-01', 'open', '40.0000'), // 70 days
       receivable('R6', 'GBP', '2026-01-01', 'settled', '0.0000'), // paid
     ]),
-    payableObligation: model([
+    payableObligation: inMemoryModel([
       payable('P1', 'GBP', '2026-11-12', 'approved', '80.0000'), // due in 2 days
       payable('P2', 'GBP', '2026-11-17', 'held', '20.0000'), // due in 7 days
       payable('P3', 'GBP', '2026-11-18', 'export_ready', '30.0000'), // due in 8 days
@@ -93,14 +58,14 @@ function fakePrisma(permissions = FULL) {
     ]),
     // One invoice with two open differences (price and amount), one with none:
     // the card counts the invoice once (UI review 11).
-    supplierInvoice: model([
+    supplierInvoice: inMemoryModel([
       { tenantId: TENANT, status: 'exception', currency: 'GBP', matchExceptions: [{ status: 'open' }, { status: 'open' }] },
       { tenantId: TENANT, status: 'approved', currency: 'GBP', matchExceptions: [{ status: 'approved' }] },
     ]),
-    customerInvoice: model([{ tenantId: TENANT, status: 'issued', currency: 'GBP' }]),
-    financeMatchException: model([{ tenantId: TENANT, status: 'open' }]),
-    supplierCreditMemo: model([]),
-    customerCreditNote: model([]),
+    customerInvoice: inMemoryModel([{ tenantId: TENANT, status: 'issued', currency: 'GBP' }]),
+    financeMatchException: inMemoryModel([{ tenantId: TENANT, status: 'open' }]),
+    supplierCreditMemo: inMemoryModel([]),
+    customerCreditNote: inMemoryModel([]),
   }
 }
 const capabilities = { 'receivable-obligation': { enabled: true } }
