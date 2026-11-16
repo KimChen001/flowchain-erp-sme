@@ -1,5 +1,6 @@
 import { can } from '../auth/authorization-service.mjs'
 import { DECISION_KIND_AREA, DECISION_PERMISSION, DRAFTED_DECISION_KINDS, decisionKey, parseDecision } from '../domain/decision-items.mjs'
+import { buildDecisionDrafts } from '../domain/decision-drafts.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { sendReadAccessError } from '../domain/report-read-access.mjs'
 import { databaseClient } from '../domain/today-work-read-service.mjs'
@@ -73,7 +74,9 @@ export async function handleDecisionItemsRoute(ctx) {
     if (action === 'send') {
       const row = reader.work.all.find((entry) => entry.kind === 'purchase_order_overdue' && decisionKey(entry) === key)
       if (!row) throw fail(404, 'DECISION_ROW_NOT_FOUND', 'This is no longer on your Today. Reload Today.')
-      const result = await sendSupplierFollowUp({ prisma, tenantId, actor, row, input: body, env: ctx.env || process.env, mailer: ctx.mailer, now: reader.now, today: reader.today, timeZone: reader.timeZone })
+      // The text is checked against the follow-up built from the order now.
+      const draft = buildDecisionDrafts([row], { context: reader.context, sources: reader.read?.sources, now: reader.now, timeZone: reader.timeZone })[`${row.kind}:${row.recordId}`] || null
+      const result = await sendSupplierFollowUp({ prisma, tenantId, actor, row, draft, input: body, env: ctx.env || process.env, mailer: ctx.mailer, now: reader.now, today: reader.today, timeZone: reader.timeZone })
       send(res, 200, { key, ...result })
       return true
     }

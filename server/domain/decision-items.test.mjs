@@ -145,3 +145,24 @@ test('waiting decisions show the earliest of each kind first, so many of one kin
   const { waiting } = arrangeToday(rows, [])
   assert.deepEqual(waiting.map((entry) => entry.key), ['bill_exception:INV-1', 'purchase_order_overdue:PO-1', 'reorder_now:ITEM-1', 'bill_exception:INV-2', 'bill_exception:INV-3', 'bill_exception:INV-4'])
 })
+
+// Design audit 2026-11-15 (L11-04): a truncated read of requests, supplier
+// invoices, items or shipment lines closed the items it could not see, and
+// their decisions were lost.
+test('a truncated read never closes the items it may hide', () => {
+  const decidedItem = (kind, recordId, id) => ({ id, activeKey: `${kind}:${recordId}`, kind, recordId, state: 'decided', decision: 'not_now', snapshot: {} })
+  const items = [
+    decidedItem('bill_exception', 'B-1', 'bill'),
+    decidedItem('purchase_request_to_convert', 'PR-1', 'request'),
+    decidedItem('reorder_now', 'ITEM-1', 'item'),
+  ]
+  const closed = (limitations) => planDecisionSync(items, [], { today, areas: closableAreas({ limitations }) }).close.map(({ item }) => item.id).sort()
+  assert.deepEqual(closed(['truncated:supplier_invoices']), ['item', 'request'])
+  assert.deepEqual(closed(['truncated:purchase_requests']), ['bill', 'item'])
+  assert.deepEqual(closed(['truncated:items']), ['bill', 'request'])
+  assert.deepEqual(closed(['truncated:shipment_lines']), ['bill', 'request'])
+  // Held invoices past the drafting limit still have their rows: nothing is kept for them.
+  assert.deepEqual(closed(['truncated:invoice_exceptions']), ['bill', 'item', 'request'])
+  // Everything read in full: items whose rows went away close.
+  assert.deepEqual(closed([]), ['bill', 'item', 'request'])
+})

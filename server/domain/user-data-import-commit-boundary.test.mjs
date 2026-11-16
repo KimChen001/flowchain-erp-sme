@@ -35,6 +35,7 @@ function createRouteContext({ body = validPayload(), db = createEmptyDataset({ m
       req: { method: 'POST', body, headers: {} },
       res: {},
       url: new URL('/api/user-data/import/commit', 'http://localhost'),
+      identity: { authenticated: true, tenantId: 'tenant-r168', userId: 'user-r168' },
       db,
       readBody: readBody || (async (req) => req.body),
       send(_res, status, payload) {

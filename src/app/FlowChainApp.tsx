@@ -96,6 +96,8 @@ import DataImportPage from "../modules/master-data/DataImportPage";
 import ItemSupplierPricesPage from "../modules/master-data/ItemSupplierPricesPage";
 import ContractsPage from "../modules/contracts/Page";
 import AiPanel, { type ActiveContext } from "../modules/ai-assistant/Panel";
+// The records the assistant's panel can name as the page's record.
+const ASSISTANT_RECORD_TYPES = new Set(["supplier", "item", "rfq", "purchase_request", "purchase_order", "sales_order", "supplier_invoice", "receiving_doc"]);
 import {
   ActionDraftReviewShell,
   type ActionDraftPreview,
@@ -616,6 +618,14 @@ export default function FlowChainApp() {
   const activeRoute = routeByPath(location.pathname);
   const active = activeRoute?.id || "not-found";
   const activeModule = activeRoute?.moduleId || "overview";
+  // The record a detail page's address names, for the assistant when the page
+  // sets no context of its own (design audit 2026-11-15, L5-08: only the PO
+  // and supplier pages gave the assistant their record). No label: the
+  // address holds the record's id, and the assistant names it by its number.
+  const routeRecordId = activeRoute?.entityType && activeRoute.entityIdParam && ASSISTANT_RECORD_TYPES.has(activeRoute.entityType) ? entityIdForRoutePath(activeRoute, location.pathname) : "";
+  const routeRecordContext = useMemo<ActiveContext | null>(() => (routeRecordId && activeRoute?.entityType
+    ? { module: activeModule, entityType: activeRoute.entityType as ActiveContext["entityType"], entityId: routeRecordId, route: location.pathname }
+    : null), [routeRecordId, activeRoute?.entityType, activeModule, location.pathname]);
   const activeView = activeRoute?.viewId;
   const panelModule = activeRoute?.panelId || activeModule;
 
@@ -2051,7 +2061,7 @@ export default function FlowChainApp() {
       <PanelErrorBoundary moduleLabel={language === "en-US" ? "AI assistant" : "AI 助手"} language={language}>
         <AiPanel
           moduleId={activeModule}
-          activeContext={aiActiveContext}
+          activeContext={aiActiveContext || routeRecordContext}
           openSignal={aiOpenSignal}
           userName={user.name}
           onNavigate={navigateTo}

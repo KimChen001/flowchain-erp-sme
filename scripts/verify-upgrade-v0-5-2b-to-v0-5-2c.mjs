@@ -87,6 +87,8 @@ try {
       ('upgrade-grant-po-approve',$1,'upgrade-role','procurement.purchase_order.approve'),
       ('upgrade-grant-receiving-read',$1,'upgrade-role','receiving.read');
     INSERT INTO "UserRoleAssignment" ("id","tenantId","userId","roleId","status") VALUES ('upgrade-assignment',$1,$2,'upgrade-role','active');
+    INSERT INTO "Warehouse" ("id","tenantId","code","name","updatedAt") VALUES ('upgrade-warehouse',$1,'UPGRADE-WH','Upgrade Warehouse',CURRENT_TIMESTAMP);
+    INSERT INTO "UserWarehouseScope" ("id","tenantId","userId","warehouseId","accessLevel","updatedAt") VALUES ('upgrade-warehouse-scope',$1,$2,'upgrade-warehouse','read',CURRENT_TIMESTAMP);
     INSERT INTO "PurchaseOrder" ("id","tenantId","status","supplierId","supplierName","amount","currency","version","updatedAt") VALUES ('upgrade-po',$1,'pending_approval','upgrade-supplier','Upgrade Supplier',123.45,'CNY',3,CURRENT_TIMESTAMP);
     INSERT INTO "PurchaseOrderLine" ("id","purchaseOrderId","sku","itemName","orderedQuantity","receivedQuantity","unit","unitPrice","amount","version") VALUES ('upgrade-po-line','upgrade-po','UPGRADE-SKU','Upgrade Item',2,0,'EA',61.725,123.45,2);
     INSERT INTO "ReceivingDocument" ("id","tenantId","documentNumber","poId","status","workflowStatus","postingStatus","version","warehouseId","currency","updatedAt") VALUES ('upgrade-receiving',$1,'GRN-UPGRADE','upgrade-po','receiving','draft','unposted',5,'upgrade-warehouse','CNY',CURRENT_TIMESTAMP);

@@ -86,6 +86,9 @@ export async function handleMasterDataRoute(ctx) {
   const suppliersFor = async (rows) => { const visible = await readAccess(); return rows.map((row) => maskSupplier(row, visible)) }
   const supplierFor = async (row) => maskSupplier(row, await readAccess())
   const pricesFor = async (rows) => { const visible = await readAccess(); return (rows || []).map((row) => maskReferencePrice(row, visible)) }
+  // A supplier write changes the registration, tax and bank details only when
+  // the writer may read them (supplierInputIssues in supplier-master-command).
+  const supplierWriteScope = async () => tenantScope({ sensitiveFieldsWritable: (await readAccess()).partner === true })
 
   const selectorMatch = url.pathname.match(/^\/api\/master-data\/(departments|currencies|units|commodities|warehouses|payment-terms|tax-codes)\/select$/)
   if (req.method === 'GET' && selectorMatch) {
@@ -379,7 +382,7 @@ export async function handleMasterDataRoute(ctx) {
   if (req.method === 'POST' && url.pathname === '/api/master-data/suppliers') {
     if (!(await authorizeWrite('supplier-master'))) return true
     if (!repository.createSupplier) { send(res,501,{code:'ADAPTER_WRITE_UNSUPPORTED',message:'Supplier writes are not available in this workspace.'}); return true }
-    try { send(res,201,{supplier:await supplierFor(await repository.createSupplier(await readBody(req),actor(),tenantScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
+    try { send(res,201,{supplier:await supplierFor(await repository.createSupplier(await readBody(req),actor(),await supplierWriteScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
     return true
   }
 
@@ -399,7 +402,7 @@ export async function handleMasterDataRoute(ctx) {
 
   if (req.method === 'PATCH' && supplierMatch) {
     if (!(await authorizeWrite('supplier-master'))) return true
-    try { send(res,200,{supplier:await supplierFor(await repository.updateSupplier(decodeURIComponent(supplierMatch[1]),await readBody(req),actor(),tenantScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
+    try { send(res,200,{supplier:await supplierFor(await repository.updateSupplier(decodeURIComponent(supplierMatch[1]),await readBody(req),actor(),await supplierWriteScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
     return true
   }
 

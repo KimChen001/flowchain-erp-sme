@@ -5,7 +5,7 @@ import { scopeBusinessContext } from '../domain/report-read-access.mjs'
 import { aiRuntimeProgressStream } from './ai-runtime-stream.mjs'
 import { assistantV2Enabled, assistantV2ModelClient } from '../domain/ai-assistant-v2-controls.mjs'
 import { QUESTION_LIMITS } from '../../shared/assistant-protocol.mjs'
-import { answerWithAssistantV2, answerWithAssistantV2Notice, assistantV2SetupState, validateAssistantV2Question } from './ai-assistant-v2-gateway.mjs'
+import { answerWithAssistantV2, answerWithAssistantV2Notice, assistantV2SetupState, assistantV2StoredAnswer, validateAssistantV2Question } from './ai-assistant-v2-gateway.mjs'
 import { readAssistantFeedback, recordAssistantFeedback } from '../domain/ai-assistant-v2-feedback.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
@@ -120,7 +120,9 @@ async function handleGatewayRequest(ctx) {
       send(res, 400, { code: 'AI_FEEDBACK_INVALID', error: feedback.error })
       return true
     }
-    await recordAssistantFeedback(ctx, feedback.value, { env: ctx.env || process.env })
+    // The question, the answer and its tools from the thread the server kept.
+    const stored = await assistantV2StoredAnswer(ctx, feedback.value)
+    await recordAssistantFeedback(ctx, feedback.value, { env: ctx.env || process.env, stored })
     send(res, 200, { ok: true })
     return true
   }

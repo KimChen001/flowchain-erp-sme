@@ -193,6 +193,24 @@ test('items, customers and item suppliers can be created and edited in PostgreSQ
     assert.equal(resaved.status, 200, JSON.stringify(resaved.payload))
     const kept = (await prisma.supplier.findUnique({ where: { id: 'SUP-A' } })).metadata
     assert.deepEqual([kept.creditCode, kept.taxIdentificationNumber, kept.bankAccountName, kept.bankAccountNumber, kept.contactName], ['91310000MA1K', '12-3456789', 'Supplier A LLC', '000123456789', 'Dana Lee'])
+    // Design audit V-B-01: what the specialist cannot read it cannot write
+    // either. A new account number or a cleared tax ID is not saved, the rest
+    // of the change is, and the audit row names the fields that were sent.
+    const blind = await asSpecialist('PATCH', '/api/master-data/suppliers/SUP-A', { bankAccountNumber: '999900001111', bankAccountName: 'Someone Else', taxIdentificationNumber: '', telephone: '+1 617 555 0100', expectedVersion: resaved.payload.supplier.version })
+    assert.equal(blind.status, 200, JSON.stringify(blind.payload))
+    assert.equal(blind.payload.supplier.bankAccountNumber, '****6789')
+    const unchanged = (await prisma.supplier.findUnique({ where: { id: 'SUP-A' } })).metadata
+    assert.deepEqual([unchanged.creditCode, unchanged.taxIdentificationNumber, unchanged.bankAccountName, unchanged.bankAccountNumber, unchanged.telephone], ['91310000MA1K', '12-3456789', 'Supplier A LLC', '000123456789', '+1 617 555 0100'])
+    const specialistAudits = await prisma.auditLog.findMany({ where: { tenantId: tenantA, source: 'supplier-master', entityId: 'SUP-A', actorId: `${tenantA}-specialist` } })
+    assert.deepEqual(specialistAudits.map((row) => row.metadata.restrictedFieldsKept).filter(Boolean), [['taxIdentificationNumber', 'bankAccountName', 'bankAccountNumber']])
+    // A new supplier from the specialist gets no bank details.
+    const blindNew = await asSpecialist('POST', '/api/master-data/suppliers', { supplierCode: 'SUP-BLIND', supplierName: 'Blind Supplier', defaultCurrency: 'USD', bankAccountNumber: '999900001111' })
+    assert.equal(blindNew.status, 201, JSON.stringify(blindNew.payload))
+    assert.equal(Object.hasOwn((await prisma.supplier.findFirst({ where: { tenantId: tenantA, code: 'SUP-BLIND' } })).metadata, 'bankAccountNumber'), false)
+    // The manager, who reads them, can change them.
+    const managerEdit = await call('PATCH', '/api/master-data/suppliers/SUP-A', { bankAccountNumber: '555500002222', expectedVersion: blind.payload.supplier.version })
+    assert.equal(managerEdit.status, 200, JSON.stringify(managerEdit.payload))
+    assert.equal((await prisma.supplier.findUnique({ where: { id: 'SUP-A' } })).metadata.bankAccountNumber, '555500002222')
     const hiddenPrices = await asSpecialist('GET', `/api/master-data/items/${item.itemId}/suppliers`)
     assert.ok(hiddenPrices.payload.relationships.length > 0)
     assert.ok(hiddenPrices.payload.relationships.every((row) => row.referencePrice === null && row.restrictedFields.includes('referencePrice')))

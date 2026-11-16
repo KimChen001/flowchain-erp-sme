@@ -99,3 +99,31 @@ test('list titles are plural and the new receipt page is "New receipt"', async (
   assert.match(copy, /'交付风险': 'Shipment risks'/)
   assert.match(copy, /'询价单与报价': 'RFQs & quotations'/)
 })
+
+// Round 9 sweep: these rows showed the server's English in Chinese, and
+// "approve purchase request …" read lowercase in English too.
+test('purchase request, customer invoice and approval email rows read in both languages', () => {
+  const approve = { action: 'purchase_request_approve', summary: 'approve purchase request PR-202611-0002.' }
+  assert.equal(auditSummaryText(approve, 'en-US'), 'Approved purchase request PR-202611-0002.')
+  assert.equal(auditSummaryText(approve, 'zh-CN'), '已批准采购申请 PR-202611-0002。')
+  assert.equal(auditSummaryText({ summary: 'submit purchase request PR-202611-0001.' }, 'en-US'), 'Submitted purchase request PR-202611-0001 for approval.')
+  assert.equal(auditSummaryText({ summary: 'withdraw purchase request PR-202611-0001.' }, 'zh-CN'), '已撤回采购申请 PR-202611-0001 为草稿。')
+  assert.equal(auditSummaryText({ summary: 'Customer invoice issue completed.' }, 'en-US'), 'Customer invoice issued to the customer.')
+  assert.equal(auditSummaryText({ summary: 'Customer invoice approve completed.' }, 'zh-CN'), '销售发票已批准。')
+  assert.equal(auditSummaryText({ summary: 'Customer invoice submit completed.' }, 'zh-CN'), '销售发票已提交审批。')
+  const email = { action: 'approval_email_sent', summary: 'Approval email for supplier_invoice sent to 2 of 2 approvers.', entity: { type: 'ApprovalEmail', id: 'x' } }
+  assert.equal(auditSummaryText(email, 'en-US'), 'Approval email for a supplier invoice sent to 2 of 2 approvers.')
+  assert.equal(auditSummaryText(email, 'zh-CN'), '已向 2 位审批人中的 2 位发送采购发票审批邮件。')
+  assert.equal(auditSummaryText({ summary: 'Approval email for inventory_adjustment sent to 1 of 1 approvers.' }, 'en-US'), 'Approval email for an inventory adjustment sent to 1 of 1 approver.')
+  assert.equal(auditEntityLabel('ApprovalEmail', 'zh-CN'), '审批邮件')
+  for (const row of [approve, email, { summary: 'Customer invoice issue completed.' }]) assert.match(auditSummaryText(row, 'zh-CN'), CJK)
+})
+
+test('counted audit rows read without "(s)" in English', () => {
+  assert.equal(auditSummaryText({ summary: 'Created 1 approved purchase order(s) from purchase request PR-202611-0002: PO-202611-0010.' }, 'en-US'), 'Created 1 approved purchase order from purchase request PR-202611-0002: PO-202611-0010.')
+  assert.equal(auditSummaryText({ summary: 'Created 2 purchase order(s) from purchase request PR-202611-0003: PO-1, PO-2.' }, 'en-US'), 'Created 2 purchase orders from purchase request PR-202611-0003: PO-1, PO-2.')
+  assert.equal(auditSummaryText({ summary: 'Created 1 approved purchase order(s) from purchase request PR-202611-0002: PO-202611-0010.' }, 'zh-CN'), '已根据采购申请 PR-202611-0002 创建 1 张已批准的采购订单：PO-202611-0010。')
+  assert.equal(auditSummaryText({ summary: 'Revised promised dates on 1 line(s) of purchase order PO-202611-0004.' }, 'en-US'), 'Revised the promised date on 1 line of purchase order PO-202611-0004.')
+  assert.equal(auditSummaryText({ summary: 'Revised promised dates on 3 line(s) of purchase order PO-202611-0004.' }, 'zh-CN'), '已修改采购订单 PO-202611-0004 中 3 行的承诺交期。')
+  assert.equal(auditSummaryText({ summary: 'Customer invoice draft created from posted shipment facts.' }, 'en-US'), 'Customer invoice draft created from the posted shipment.')
+})

@@ -222,6 +222,7 @@ export function buildProcurementRfqs(data = {}) {
       title: text(rfq.title, number),
       category: text(rfq.category),
       status: text(rfq.status, '进行中'),
+      version: toNumber(rfq.version, 0),
       supplierCount,
       respondedSupplierCount,
       pendingSupplierCount: Math.max(0, supplierCount - respondedSupplierCount),

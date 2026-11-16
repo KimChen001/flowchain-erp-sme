@@ -13,7 +13,10 @@ export class KnowledgeError extends Error {
 }
 const fail = (code, message, status) => { throw new KnowledgeError(code, message, status) }
 const readable = actor => ({ tenantId: actor.tenantId, status: 'active', OR: [{ requiredPermission: null }, { requiredPermission: { in: [...(actor.permissionCodes || [])] } }] })
-const manageable = actor => Boolean(actor.permissionCodes?.has('settings.workspace.manage'))
+// Adding, importing, reindexing and archiving documents is a workspace
+// administrator's (settings.workspace.manage).
+export const canManageKnowledge = actor => Boolean(actor?.permissionCodes?.has('settings.workspace.manage'))
+const manageable = canManageKnowledge
 const docSelect = { id: true, title: true, language: true, requiredPermission: true, createdAt: true, indexAttemptStatus: true, indexAttemptError: true, indexAttemptStartedAt: true, indexAttemptFinishedAt: true, _count: { select: { chunks: true } } }
 const hash = value => createHash('sha256').update(value).digest('hex')
 const leaseCutoff = () => new Date(Date.now() - 15 * 60 * 1000)

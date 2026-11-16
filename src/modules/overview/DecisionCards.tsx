@@ -43,7 +43,13 @@ type ReorderDraft = {
 type FollowUpDraft = {
   type: "supplier_follow_up"; purchaseOrderId: string; orderNumber: string; dueDate: string | null; overdueDays: number;
   supplier: { id: string | null; name: string | null; contactName: string | null; email: string | null };
-  lines: Array<{ sku: string | null; remaining: number | null; unit: string | null; promisedDate: string | null }>; moreLines: number;
+  lines: Array<{ sku: string | null; itemName?: string | null; supplierSku?: string | null; remaining: number | null; unit: string | null; promisedDate: string | null }>; moreLines: number;
+};
+// An overdue order approved but never sent to the supplier: the step is to
+// send it from its page, never to chase it (server/domain/decision-drafts.mjs).
+type SendOrderDraft = {
+  type: "send_purchase_order"; purchaseOrderId: string; orderNumber: string; dueDate: string | null; overdueDays: number;
+  supplier: { id: string | null; name: string | null };
 };
 type ConversionDraft = {
   type: "purchase_orders_from_request"; purchaseRequestId: string; number: string; version: number;
@@ -61,7 +67,7 @@ type InvoiceExceptionDraft = {
   supplier: { id: string | null; name: string | null; contactName: string | null; email: string | null };
   step: "ask_supplier" | "review_price" | "wait_receipt"; differences: InvoiceDifference[]; moreDifferences: number;
 };
-type Draft = ReorderDraft | FollowUpDraft | ConversionDraft | InvoiceExceptionDraft;
+type Draft = ReorderDraft | FollowUpDraft | SendOrderDraft | ConversionDraft | InvoiceExceptionDraft;
 export type WaitingEntry = { key: string; row: TodayRow; raisedAt: string | null; returned: boolean; draft: Draft | null };
 export type SetAsideEntry = {
   key: string; row: TodayRow; decision: "not_now" | "not_needed" | "chased" | "accepted" | "covered"; reasonCode: string | null; note: string | null;
@@ -250,7 +256,7 @@ function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kin
   ) : null;
 
   return (
-    <li className="rounded-lg border px-3 py-2.5" style={{ borderColor: A.gray4 }} data-testid="today-decision" data-kind={row.kind} data-key={entry.key}>
+    <li className="rounded-lg border px-3 py-2.5" style={{ borderColor: A.gray4 }} data-testid="today-decision" data-kind={row.kind} data-draft={draft?.type || ""} data-key={entry.key}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <span className="inline-block shrink-0 rounded px-2 py-0.5 text-xs font-medium" style={tone(row)}>{dateText(row)}</span>
         <span className="shrink-0 text-sm font-medium">{kindLabel(row)}</span>
@@ -264,9 +270,10 @@ function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kin
           return t("copied");
         })} onSend={(mail) => run(async () => {
           // The address the person confirmed on the second step is the one sent to.
-          const result = await apiJson<{ outbox?: boolean }>("/api/decision-items/send-follow-up", { method: "POST", body: JSON.stringify({ key: entry.key, to: mail.to, confirmedTo: mail.to, subject: mail.subject, body: mail.body }) });
+          const result = await apiJson<{ outbox?: boolean }>("/api/decision-items/send-follow-up", { method: "POST", body: JSON.stringify({ key: entry.key, to: mail.to, confirmedTo: mail.to, subject: mail.subject, body: mail.body, recipientNotOnRecord: mail.recipientNotOnRecord }) });
           return result?.outbox ? t("sentOutbox") : t("sentEmail", { to: mail.to });
         })} />
+          : draft?.type === "send_purchase_order" ? <SendOrderBody draft={draft} row={row} day={day} aside={aside} {...view} />
           : draft?.type === "invoice_exception" ? <InvoiceExceptionBody draft={draft} row={row} busy={busy} canDecide={canDecide} aside={aside} {...view} onContacted={(text) => run(async () => {
             try { await navigator.clipboard.writeText(text); } catch { throw new Error(t("copyFailed")); }
             await decide(entry.key, { option: "chased" });
@@ -363,7 +370,7 @@ function ReorderBody({ draft, row, day, busy, canDecide, aside, open, toggle }: 
   );
 }
 
-function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased, onSend, open, toggle, onOpen }: View & { draft: FollowUpDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode; email: SupplierEmail | null; onChased: (text: string) => void; onSend: (mail: { to: string; subject: string; body: string }) => void }) {
+function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased, onSend, open, toggle, onOpen }: View & { draft: FollowUpDraft; row: TodayRow; day: (value: string) => string; busy: boolean; canDecide: boolean; aside: ReactNode; email: SupplierEmail | null; onChased: (text: string) => void; onSend: (mail: { to: string; subject: string; body: string; recipientNotOnRecord: boolean }) => void }) {
   const t = useDecisionCopy();
   const { language } = useI18n();
   const [mailLanguage, setMailLanguage] = useState<"en-US" | "zh-CN">(language === "zh-CN" ? "zh-CN" : "en-US");
@@ -374,6 +381,8 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased
     overdueDays: draft.overdueDays,
     lines: draft.lines.map((line) => ({
       sku: line.sku || "—",
+      itemName: line.itemName || null,
+      supplierSku: line.supplierSku || null,
       quantity: line.remaining === null ? "—" : `${formatQuantity(line.remaining)}${line.unit ? ` ${unitLabel(line.unit, mailLanguage, line.remaining)}` : ""}`,
       promised: line.promisedDate ? day(line.promisedDate) : null,
     })),
@@ -386,7 +395,9 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased
   const [step, setStep] = useState<"text" | "address" | null>(null);
   const [to, setTo] = useState(draft.supplier.email || "");
   const [subjectLine, ...bodyLines] = text.split("\n");
-  const mail = { to: to.trim(), subject: subjectLine.trim(), body: bodyLines.join("\n").trim() };
+  // An address other than the supplier's on record is sent only as confirmed
+  // for this message (the server checks it, design audit L5-12).
+  const mail = { to: to.trim(), subject: subjectLine.trim(), body: bodyLines.join("\n").trim(), recipientNotOnRecord: to.trim().toLowerCase() !== (draft.supplier.email || "").trim().toLowerCase() };
   const addressOk = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/.test(mail.to);
   const who = [draft.supplier.contactName, draft.supplier.email ? `<${draft.supplier.email}>` : null].filter(Boolean).join(" ");
   const qty = (value: number | null, unit: string | null) => (value === null ? "—" : `${formatQuantity(value)}${unit ? ` ${unitLabel(unit, t.language, value)}` : ""}`);
@@ -447,6 +458,7 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased
             <span className="font-medium">{t("toLabel")}</span>
             <input type="email" className="min-w-64 flex-1 rounded border px-2 py-1" value={to} onChange={(event) => setTo(event.target.value)} data-testid="decision-send-to" />
           </label>
+          {mail.to && mail.recipientNotOnRecord ? <p className="text-amber-700" data-testid="decision-send-not-on-record">{t("notOnRecord")}</p> : null}
           <p style={{ color: A.sub }}>{t("replyToYou")}{email.outbox ? " " + t("outboxNote") : ""}</p>
           <div className="flex flex-wrap gap-2">
             <button type="button" className={BUTTON.primary} disabled={busy || !addressOk} onClick={() => onSend(mail)} data-testid="decision-send-confirm">{t("sendTo", { to: mail.to || "—" })}</button>
@@ -471,6 +483,26 @@ function FollowUpBody({ draft, row, day, busy, canDecide, aside, email, onChased
 // A held supplier invoice: on the line, its first difference and the step's
 // button; under Details, each difference with its likely cause, the message
 // to the supplier (copy it, then it is marked contacted), and the invoice.
+// The order was approved but never sent, so the supplier does not have it:
+// the card opens the order to send it (print or save the PO, then mark it
+// issued there). Opening a page decides nothing, so anyone who sees the card
+// gets the button, as with "Open the request".
+function SendOrderBody({ draft, row, day, aside, open, toggle }: View & { draft: SendOrderDraft; row: TodayRow; day: (value: string) => string; aside: ReactNode }) {
+  const t = useDecisionCopy();
+  const primary = <Link to={`/app/procurement/orders/${encodeURIComponent(draft.purchaseOrderId)}`} className={BUTTON.primary} data-testid="decision-primary">{t("openOrder")}</Link>;
+  if (!open) return <><Short>{t("sendOrderShort")}</Short><LineEnd>{primary}{toggle}</LineEnd></>;
+  return (
+    <>
+      <LineEnd>{toggle}</LineEnd>
+      <Below>
+        <Prepared>{t("sendOrderDraft", { supplier: draft.supplier.name || row.name || "—" })}</Prepared>
+        <Basis>{t("sendOrderBasis", { date: draft.dueDate ? day(draft.dueDate) : "—" })}</Basis>
+        <Actions aside={aside}>{primary}</Actions>
+      </Below>
+    </>
+  );
+}
+
 function InvoiceExceptionBody({ draft, row, busy, canDecide, aside, onContacted, open, toggle }: View & { draft: InvoiceExceptionDraft; row: TodayRow; busy: boolean; canDecide: boolean; aside: ReactNode; onContacted: (text: string) => void }) {
   const t = useDecisionCopy();
   const { language, locale } = useI18n();
@@ -566,7 +598,19 @@ function ConversionBody({ draft, row, busy, canDecide, aside, onCreate, open, to
   const t = useDecisionCopy();
   const fields = (codes: string[]) => codes.map((code) => t(`field_${code}` as DecisionCopyKey)).join(t.language === "zh-CN" ? "、" : ", ");
   const ready = canDecide && draft.missing.length === 0 && draft.orders.length > 0;
-  const create = ready ? <button type="button" disabled={busy} className={BUTTON.primary} onClick={onCreate} data-testid="decision-primary">{busy ? t("creating") : t("createOrders")}</button> : null;
+  // A second, inline click, as the assistant's record card asks before it
+  // turns a request into orders (design audit 2026-11-15, L5-13: here one
+  // click made them).
+  const [confirming, setConfirming] = useState(false);
+  const create = !ready ? null : confirming
+    ? (
+      <span className="inline-flex flex-wrap items-center gap-2" data-testid="decision-confirm-orders">
+        <span className="text-xs" style={{ color: A.sub }}>{t.count("confirmCreateOrders", draft.orders.length)}</span>
+        <button type="button" disabled={busy} className={BUTTON.primary} onClick={onCreate} data-testid="decision-primary">{busy ? t("creating") : t("confirmCreate")}</button>
+        <button type="button" disabled={busy} className={BUTTON.secondary} onClick={() => setConfirming(false)}>{t("cancel")}</button>
+      </span>
+    )
+    : <button type="button" disabled={busy} className={BUTTON.primary} onClick={() => setConfirming(true)} data-testid="decision-create-orders">{t("createOrders")}</button>;
   const openRequest = <Link to={row.href} className={BUTTON.secondary}>{t("openRequest")}</Link>;
   if (!open) return <><Short>{t.count("convertDraft", draft.orders.length)}</Short><LineEnd>{create || openRequest}{toggle}</LineEnd></>;
   return (

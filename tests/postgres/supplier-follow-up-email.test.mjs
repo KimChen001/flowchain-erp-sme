@@ -49,7 +49,16 @@ test('a follow-up is emailed only when turned on and confirmed, recorded on the 
     await prisma.purchaseOrder.create({ data: {
       id: 'PO-E', tenantId, supplierId: 'SUP-E', supplierName: 'Supplier E', status: 'issued', currency: 'USD', amount: '100.0000',
       expectedDate: dayOffset(-10), issuedAt: dayOffset(-20),
-      lines: { create: [{ id: 'PO-E-L1', sku: 'SKU-E', itemName: 'Item E', orderedQuantity: '10.0000', receivedQuantity: '0.0000', unit: 'EA' }] },
+      lines: { create: [{ id: 'PO-E-L1', itemId: 'ITEM-E', sku: 'SKU-E', itemName: 'Item E', orderedQuantity: '10.0000', receivedQuantity: '0.0000', unit: 'EA' }] },
+    } })
+    // The supplier's own part number for the item, on its item-supplier link.
+    await prisma.runtimeRecord.create({ data: { id: 'ISR-E', tenantId, namespace: 'master-data.item-suppliers', recordKey: 'ITEM-E::SUP-E', payload: { itemId: 'ITEM-E', supplierId: 'SUP-E', supplierSku: 'E-PART-7', active: true, approved: true, preferred: true, version: 1 } } })
+    // Approved and past its date, but never sent to the supplier (design
+    // audit L11-01): no follow-up may go out for it.
+    await prisma.purchaseOrder.create({ data: {
+      id: 'PO-E2', tenantId, supplierId: 'SUP-E', supplierName: 'Supplier E', status: 'approved', currency: 'USD', amount: '50.0000',
+      expectedDate: dayOffset(-5),
+      lines: { create: [{ id: 'PO-E2-L1', sku: 'SKU-E', itemName: 'Item E', orderedQuantity: '5.0000', receivedQuantity: '0.0000', unit: 'EA' }] },
     } })
     process.env.FLOWCHAIN_DEFAULT_TENANT_ID = tenantId
     process.env.FLOWCHAIN_MAIL_PROVIDER = 'outbox'
@@ -77,10 +86,38 @@ test('a follow-up is emailed only when turned on and confirmed, recorded on the 
     home = await today()
     assert.deepEqual(home.decisions.supplierEmail, { enabled: true, canSend: true, outbox: true })
 
+    // The order never sent: Today drafts sending it, not a follow-up, and the
+    // route refuses to email the supplier about it.
+    const unsentKey = 'purchase_order_overdue:PO-E2'
+    const unsentCard = home.decisions.waiting.find((entry) => entry.key === unsentKey)
+    assert.equal(unsentCard.row.detail.notIssued, true)
+    assert.equal(unsentCard.draft.type, 'send_purchase_order')
+    assert.equal(unsentCard.draft.orderNumber, 'PO-E2')
+    assert.equal('lines' in unsentCard.draft, false)
+    // The order that was sent gets the follow-up, its late line named by item
+    // and by the supplier's part number (design audit L11-22).
+    const followUp = home.decisions.waiting.find((entry) => entry.key === key).draft
+    assert.equal(followUp.type, 'supplier_follow_up')
+    assert.deepEqual(followUp.lines.map((line) => [line.sku, line.itemName, line.supplierSku, line.remaining]), [['SKU-E', 'Item E', 'E-PART-7', 10]])
+    const unsent = await send({ ...email, key: unsentKey, subject: 'Purchase order PO-E2: delivery overdue' })
+    assert.equal(unsent.status, 422)
+    assert.equal(unsent.payload.code, 'SUPPLIER_EMAIL_ORDER_NOT_SENT')
+    assert.deepEqual(await readOutbox(outboxPath), [])
+    assert.equal(await prisma.auditLog.count({ where: { tenantId, entityId: 'PO-E2', action: 'supplier_follow_up_sent' } }), 0)
+
     // 3. The address must be the one confirmed.
     const unconfirmed = await send({ ...email, confirmedTo: 'someone@else.example' })
     assert.equal(unconfirmed.status, 422)
     assert.equal(unconfirmed.payload.code, 'SUPPLIER_EMAIL_NOT_CONFIRMED')
+    assert.deepEqual(await readOutbox(outboxPath), [])
+    // The figures come from the order, prices stay out, and another address
+    // is sent to only when confirmed as not on record (design audit L5-12).
+    const changed = await send({ ...email, body: `${email.body}\n\nPlease send 40 more.` })
+    assert.deepEqual([changed.status, changed.payload.code], [422, 'SUPPLIER_EMAIL_FIGURE_CHANGED'])
+    const priced = await send({ ...email, body: `${email.body}\n\nAt USD 10 each.` })
+    assert.deepEqual([priced.status, priced.payload.code], [422, 'SUPPLIER_EMAIL_PRICE'])
+    const elsewhere = await send({ ...email, to: 'someone@else.example', confirmedTo: 'someone@else.example' })
+    assert.deepEqual([elsewhere.status, elsewhere.payload.code], [422, 'SUPPLIER_EMAIL_RECIPIENT_NOT_ON_RECORD'])
     assert.deepEqual(await readOutbox(outboxPath), [])
 
     // 4. Sent to the outbox, replies to the sender, recorded on the order.
@@ -97,6 +134,7 @@ test('a follow-up is emailed only when turned on and confirmed, recorded on the 
     assert.equal(audit.length, 1)
     assert.equal(audit[0].metadata.to, 'orders-e@example.com')
     assert.equal(audit[0].metadata.body, email.body)
+    assert.equal(audit[0].metadata.recipientOnRecord, true)
 
     // 5. The card is chased by email.
     home = await today()

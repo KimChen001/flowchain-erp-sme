@@ -1578,8 +1578,8 @@ export default function PurchasingOrdersPage({
     // Nothing received and nothing invoiced: the match reads as one sentence.
     const nothingToMatch = grnRows.length === 0 && invoiceRows.length === 0;
 
-    // The order's number is the heading, under a small "Purchase order" label;
-    // its status is shown once, beside that label.
+    // The order's number is the heading with its status beside it; "Purchase
+    // order · supplier" under it; the next steps sit in the same header card.
     return (
       <div className="space-y-3">
       <BackToListLink list="orders" />
@@ -1589,8 +1589,7 @@ export default function PurchasingOrdersPage({
         status={selectedPO.status}
         statusTone={poStatusToneOf(selectedPO.status)}
         subtitle={selectedPO.supplier}
-      >
-        <div className="space-y-3" data-testid="po-header-actions">
+        header={<div className="space-y-3" data-testid="po-header-actions">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <nav aria-label={say("Related records", "相关单据")} className="flex flex-wrap items-center gap-x-4 gap-y-1">
               {relatedLinks.map((link) => (
@@ -1620,8 +1619,8 @@ export default function PurchasingOrdersPage({
             </div>
           </div>
           {actionNotes.length ? <p className="text-[11px] leading-4" style={{ color: A.sub }} data-testid="po-action-notes">{actionNotes.join(" ")}</p> : null}
-        </div>
-
+        </div>}
+      >
         <div>
           <SectionTitle title={copy("概览")} />
           <OverviewFields fields={overviewFields} />

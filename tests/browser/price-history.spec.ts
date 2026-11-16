@@ -105,7 +105,7 @@ test('linking a new item shows its last PO price under the reference price, and 
     })) } });
   });
   await page.goto(`/app/master-data/suppliers/${supplierId}`);
-  await page.getByRole('combobox', { name: 'Select SKU' }).selectOption(newItemId);
+  await page.getByRole('combobox', { name: 'Select item' }).selectOption(newItemId);
   const facts = page.getByTestId('supplied-item-form-price-history');
   await expect(facts.getByTestId('supplied-item-form-price-history-latest')).toHaveText('Last PO price $4.20 / ea · PO-0031 · Sep 14, 2026 · Acme');
   await expect(facts).toContainText('not invoiced or paid prices');

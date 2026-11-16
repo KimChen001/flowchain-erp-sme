@@ -224,6 +224,14 @@ const ZH_PUNCT = Object.freeze({ ',': '，', ':': '：', ';': '；', '!': '！',
 // units they hold. tidy(piece, before, after) rewrites one piece of a text
 // part, `before` being the part's text already rewritten and sent and `after`
 // the model's text after the piece so far (to know the line it ends in).
+// An XML declaration (or another processing instruction) the model put
+// before its words: taken off the start of a text part only, so code or data
+// the answer quotes is left as written (2026-11-14 on DeepSeek V4.1 Flash,
+// the money questions: "<?xml version="1.0"?>" opened the answer to which
+// deliveries were not invoiced). A part's first piece holds its opening
+// words: a part streams once it is past an opening line (NARRATION_LENGTH).
+const LEADING_DECLARATION = /^\s*(?:<\?[A-Za-z][\w.-]*\b[^>]*\?>\s*)+/
+
 export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), records = () => [], units = () => [], maxLength = Infinity } = {}) {
   const zh = language === 'zh-CN'
   // One stretch of a single line, in the rules of `lineZh`.
@@ -291,7 +299,7 @@ export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), re
   // line with no Chinese in it keeps English punctuation and units
   // (2026-11-05: "30 件are still outstanding （20 of 50 received）").
   const tidy = (piece, before = '', after = '') => {
-    const whole = String(piece ?? '')
+    const whole = before ? String(piece ?? '') : String(piece ?? '').replace(LEADING_DECLARATION, '')
     if (!whole) return whole
     if (!zh) return tidyLine(whole, before, false)
     const segments = whole.split(/(?<=\n)/)

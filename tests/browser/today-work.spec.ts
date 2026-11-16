@@ -156,8 +156,15 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
     await reorderCard.getByTestId("decision-details").click();
     await expect(reorderCard).toContainText(/Stock position .+ against reorder point /);
   }
+  // An overdue order never sent to the supplier is not chased: its card opens
+  // the order to send it (design audit L11-01).
+  const sendOrder = decisions.locator('[data-testid="today-decision"][data-draft="send_purchase_order"]').first();
+  if (await sendOrder.count()) {
+    await expect(sendOrder.getByTestId("decision-primary")).toHaveAttribute("href", /^\/app\/procurement\/orders\/.+/);
+    await expect(sendOrder).not.toContainText(/still to receive/);
+  }
   // An overdue order's card holds the follow-up to copy; FlowChain sends nothing.
-  const followUp = decisions.locator('[data-testid="today-decision"][data-kind="purchase_order_overdue"]').first();
+  const followUp = decisions.locator('[data-testid="today-decision"][data-draft="supplier_follow_up"]').first();
   await expect(followUp).toContainText(/still to receive/);
   await followUp.getByTestId("decision-details").click();
   await expect(followUp).toContainText(/still to receive, due /);

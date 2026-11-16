@@ -75,6 +75,33 @@ test('supplier risks list every supplier issue the earliest date first, never by
   for (const id of ['A', 'B', 'C']) assert.equal(rows.filter((row) => row.supplierId === id).length, insights.supplierIssueSignals(signals, id).length)
 })
 
+// Design audit V-C-04 (the defect behind L9-02): an order approved but never
+// sent to the supplier read "Not issued to the supplier yet" on Today and
+// "N days overdue" on the supplier pages, which dropped the notSent mark. The
+// open purchase orders report still counts it as open and overdue (decision
+// V5); the supplier pages no longer hold it against the supplier.
+test('an order approved but never sent is open, but not overdue or an open issue of the supplier', () => {
+  const openRows = [
+    { id: 'PO-SENT', supplierId: 'A', isOpen: true, status: 'issued', overdueDays: 4 },
+    { id: 'PO-UNSENT', supplierId: 'A', isOpen: true, status: 'approved', overdueDays: 9 },
+    { id: 'PO-UNSENT-LATER', supplierId: 'A', isOpen: true, status: 'approved', overdueDays: 0 },
+  ]
+  const when = (days) => ({ kind: 'overdue', date: '2026-09-20', days })
+  const signals = [
+    { id: 'po_overdue:PO-SENT', type: 'po_overdue', supplierId: 'A', entityType: 'purchase_order', entityId: 'PO-SENT', label: 'PO-SENT', when: when(4), data: { days: 4, notSent: false } },
+    { id: 'po_overdue:PO-UNSENT', type: 'po_overdue', supplierId: 'A', entityType: 'purchase_order', entityId: 'PO-UNSENT', label: 'PO-UNSENT', when: when(9), data: { days: 9, notSent: true } },
+  ]
+  const row = buildSupplierInsights({ suppliers, openRows, signals, visibility: { orders: true, amounts: false, onTime: false, issues: true } }).A
+  assert.deepEqual([row.openPos, row.overduePos, row.notSentPos, row.openIssues], [3, 1, 2, 1])
+  assert.equal(buildSupplierInsights({ suppliers, openRows, signals, visibility: { orders: false, issues: false } }).A.notSentPos, null)
+  // Supplier risks and the detail page's issues leave it out too.
+  assert.deepEqual(insights.supplierRiskRows(signals, [{ id: 'A', code: 'SUP-A', name: 'Acme' }]).map((entry) => entry.entityId), ['PO-SENT'])
+  assert.deepEqual(insights.supplierIssueSignals(signals, 'A').map((entry) => entry.entityId), ['PO-SENT'])
+  // The detail page's purchase records: no days overdue, marked not sent.
+  const records = supplierPurchaseRecords([po('A', 10, { id: 'PO-UNSENT', status: 'approved' }), po('A', 10, { id: 'PO-SENT', createdAt: '2026-08-01' })], 'A', { openRows, timeZone: 'America/New_York' }).rows
+  assert.deepEqual(records.map((entry) => [entry.id, entry.overdueDays, entry.notSent]), [['PO-UNSENT', 0, true], ['PO-SENT', 4, false]])
+})
+
 // The issues as they were read before 2026-11-08: the assistant's signals
 // over its full facts, which read every sales order, stock row and item.
 const fullFactsSignals = (skillContext) => readAiSkillFacts(skillContext).then(buildAiSkillSignals)

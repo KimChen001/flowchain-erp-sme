@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { RefreshCw } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Card } from "../../components/ui";
-import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tableScrollClass, tdClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { unitLabel } from "../../i18n/unitLabels";
 import { formatCalendarDay, formatInstantDay } from "../business-documents/documentFormat";
@@ -361,7 +361,9 @@ export function ProcurementDocumentDetailPage({
   }, [load]);
 
   const isInvoice = kind === "invoice";
-  const title = copy(isInvoice ? "Supplier invoice details" : "Three-way match details");
+  const readOnlyNote = isInvoice
+    ? copy("Read-only view of this workspace's purchasing records. Approval, matching and posting are not available here.")
+    : copy("Read-only: this page compares the purchase order, receipt and supplier invoice. Variances are resolved on the supplier invoice.");
   const status = record?.matchStatus || record?.invoiceStatus || record?.status || "—";
   const poId = record?.relatedPo || record?.poId || record?.po;
   const grnId = record?.relatedGrn || record?.grnId;
@@ -407,21 +409,6 @@ export function ProcurementDocumentDetailPage({
   return (
     <div className="space-y-4" data-testid={`procurement-${kind}-detail`}>
       <BackToListLink list={isInvoice ? "bills" : "match"} />
-      <Card className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
-        <div>
-          <div className="text-sm font-semibold">{title}</div>
-          <div className="mt-1 text-xs" style={{ color: A.sub }}>
-            {isInvoice
-              ? copy("Read-only view of this workspace's purchasing records. Approval, matching and posting are not available here.")
-              : copy("Read-only: this page compares the purchase order, receipt and supplier invoice. Variances are resolved on the supplier invoice.")}
-          </div>
-        </div>
-        <button type="button" onClick={() => void load()} className="inline-flex items-center gap-1 rounded border px-3 py-2 text-xs">
-          <RefreshCw size={14} />
-          {copy("Refresh")}
-        </button>
-      </Card>
-
       <Card className="p-4 sm:p-5">
         {state === "loading" ? (
           <div className="py-16 text-center text-sm" style={{ color: A.sub }}>{copy("Loading…")}</div>
@@ -452,12 +439,21 @@ export function ProcurementDocumentDetailPage({
           </div>
         ) : (
           <>
+            {/* One header card, as on the other detail pages: the heading with its
+                status beside it, the supplier, what this page does, and Refresh. */}
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h1 className="fc-page-title" style={{ color: A.label }} title={record.id || documentId} data-testid="procurement-document-heading">{heading}</h1>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="fc-page-title" style={{ color: A.label }} title={record.id || documentId} data-testid="procurement-document-heading">{heading}</h1>
+                  {statusChip(status === "—" ? undefined : status)}
+                </div>
                 <p className="mt-1 text-sm" style={{ color: A.sub }}>{record.supplierName || copy("No linked supplier")}</p>
+                <p className="mt-1 text-xs" style={{ color: A.sub }} data-testid="procurement-document-note">{readOnlyNote}</p>
               </div>
-              {statusChip(status === "—" ? undefined : status)}
+              <button type="button" onClick={() => void load()} className={listButtonClass.secondary}>
+                <RefreshCw size={14} />
+                {copy("Refresh")}
+              </button>
             </div>
 
             <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

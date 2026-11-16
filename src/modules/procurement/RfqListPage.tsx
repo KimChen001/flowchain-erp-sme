@@ -10,6 +10,7 @@ import { procurementApi } from "./procurementApi";
 import { useI18n } from "../../i18n/I18n";
 import { formatCalendarDay, todayInTimeZone } from "../../lib/format";
 import type { ProcurementDocument } from "./procurementTypes";
+import { RfqNoOrderNote } from "./RfqNoOrderNote";
 
 const RFQ_STATUS_LABELS: Record<string, readonly [string, string]> = {
   draft: ["Draft", "草稿"],
@@ -24,7 +25,7 @@ const COPY = {
   open: ["Open RFQs", "未结询价单"],
   openNote: ["Draft, open or collecting quotes", "草稿、未结或正在收集报价"],
   collecting: ["Collecting quotes", "收集报价"],
-  collectingNote: ["Sent to suppliers, waiting for quotes", "已发给供应商，等待报价"],
+  collectingNote: ["Opened, waiting for supplier quotes", "已开启，等待供应商报价"],
   complete: ["All quotes in", "报价已收齐"],
   completeNote: ["Every invited supplier has responded", "所有受邀供应商均已回复"],
   dueSoon: ["Due in 7 days", "7 天内截止"],
@@ -112,10 +113,13 @@ export function RfqListPage() {
     <div className="space-y-5" data-testid="procurement-rfq-list">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <ActionableMetricCard label={tr("open")} value={value(rows.filter(isOpen).length)} description={tr("openNote")} to="/app/procurement/rfq" icon={FileSearch} color={A.blue} />
-        <ActionableMetricCard label={tr("collecting")} value={value(rows.filter((row) => row.status === "collecting_quotes").length)} description={tr("collectingNote")} to="/app/procurement/rfq?status=collecting_quotes" icon={Inbox} color={A.orange} />
+        {/* Open RFQs take quotes as well; nothing moves an RFQ to collecting_quotes yet (design audit L1-32). */}
+        <ActionableMetricCard label={tr("collecting")} value={value(rows.filter((row) => row.status === "open" || row.status === "collecting_quotes").length)} description={tr("collectingNote")} to="/app/procurement/rfq?status=open" icon={Inbox} color={A.orange} />
         <ActionableMetricCard label={tr("complete")} value={value(rows.filter((row) => isOpen(row) && quotesIn(row)).length)} description={tr("completeNote")} to="/app/procurement/rfq?quotes=complete" icon={MessageSquareQuote} color={A.purple} />
         <ActionableMetricCard label={tr("dueSoon")} value={value(rows.filter(dueSoon).length)} description={tr("dueSoonNote")} to="/app/procurement/rfq?due=7" icon={CalendarClock} color={A.red} />
       </div>
+
+      <RfqNoOrderNote />
 
       <ListSearchCard
         title={tr("searchTitle")}

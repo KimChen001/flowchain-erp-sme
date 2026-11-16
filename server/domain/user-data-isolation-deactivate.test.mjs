@@ -32,13 +32,14 @@ async function persist(repository, result) {
   return batch
 }
 
-function routeContext({ body, repository, db = createEmptyDataset({ mode: 'user' }) }) {
+function routeContext({ body, repository, db = createEmptyDataset({ mode: 'user' }), identity = { authenticated: true, tenantId: 'tenant-r180', userId: 'user-r180' } }) {
   let response = null
   return {
     ctx: {
       req: { method: 'POST', body, headers: {} },
       res: {},
       url: new URL('/api/user-data/import/deactivate', 'http://localhost'),
+      identity,
       db,
       repositories: {
         userDataRuntime: repository,
@@ -81,9 +82,12 @@ test('R180 deactivate requires confirmation and scoped import batch', async () =
     assert.equal(missingConfirmation.response.payload.errors[0].code, 'missing_confirmation')
     assert.equal((await repository.getActiveDataset(result.scope)).active, true)
 
+    // Another user of the workspace naming the owner's scope in the body still
+    // acts as themselves (design audit L4-32), so the batch is not theirs.
     const wrongScope = routeContext({
       repository,
-      body: { scope: { tenantId: 'tenant-r180', userId: 'other-user' }, importBatchId: batch.importBatchId, confirmDeactivate: true },
+      identity: { authenticated: true, tenantId: 'tenant-r180', userId: 'other-user' },
+      body: { scope: result.scope, tenantId: 'tenant-r180', userId: 'user-r180', importBatchId: batch.importBatchId, confirmDeactivate: true },
     })
     assert.equal(await handleUserDataRoute(wrongScope.ctx), true)
     assert.equal(wrongScope.response.status, 404)

@@ -286,6 +286,16 @@ test('step 1b: a signed-in buyer saves, submits and withdraws a PR but cannot ap
   assert.equal(created.status, 201, describe(created))
   const row = await prisma.purchaseRequest.findUnique({ where: { id: created.body.id } })
   assert.equal(row.requester, buyerA.id)
+  // Design audit 2026-11-15 (L5-24): a request the assistant's form made is
+  // recorded as the assistant's, and one sent without a department takes the
+  // requester's own, then operations.
+  assert.equal(row.source, 'ai_assistant')
+  const plain = await api(tokens.buyerA, 'POST', '/api/procurement/requests', { departmentId: '', defaultNeedByDate: needBy, lines: [uiPrLine({ currency: undefined })] })
+  assert.equal(plain.status, 201, describe(plain))
+  const plainRow = await prisma.purchaseRequest.findUnique({ where: { id: plain.body.id } })
+  assert.equal(plainRow.source, 'manual')
+  const profile = await prisma.user.findUnique({ where: { id: buyerA.id }, select: { department: true } })
+  assert.equal(plainRow.metadata.departmentId, profile.department || 'operations')
   const createdAudit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityType: 'PurchaseRequest', entityId: row.id, action: 'purchase_request_created' } })
   assert.deepEqual(createdAudit.metadata.suggestions, {
     origin: 'ai_assistant',
@@ -403,6 +413,26 @@ test('step 3a: an approved PR above the RFQ threshold opens an RFQ (POST /api/pr
   const staleOpen = await api(tokens.buyerA, 'POST', `/api/procurement/rfqs/${rfq.id}/cancel`, { expectedVersion: 1 })
   assert.equal(staleOpen.status, 409, describe(staleOpen))
   assert.equal(await audits('Rfq', rfq.id), 2)
+})
+
+// Design audit A7 (L1-01, L1-32): an RFQ cannot become a purchase order yet,
+// so cancelling it is the way back. Only API calls: the list counts the
+// invited supplier from its participation record, the RFQ is cancelled from
+// its page's route, and the request is then ordered (201), where before it
+// stayed blocked by an RFQ that nothing could move.
+test('step 3a2: cancelling the open RFQ lets its PR become a purchase order (POST /api/procurement/rfqs/:id/cancel)', async () => {
+  const id = 'PR-FLOW-RFQ'
+  const rfq = await prisma.rfq.findFirst({ where: { tenantId: tenantA, sourceRequestId: id } })
+  const listed = (await api(tokens.managerA, 'GET', '/api/procurement/rfqs')).body.find((row) => row.id === rfq.id)
+  assert.deepEqual([listed?.suppliers, listed?.quoted], [1, 0])
+  const cancelled = await api(tokens.buyerA, 'POST', `/api/procurement/rfqs/${rfq.id}/cancel`, { expectedVersion: 2, reason: 'Ordering from the request' })
+  assert.equal(cancelled.status, 200, describe(cancelled))
+  assert.equal((await prisma.rfq.findUnique({ where: { id: rfq.id } })).status, 'cancelled')
+  const pr = await prisma.purchaseRequest.findUnique({ where: { id } })
+  const ordered = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: pr.metadata.version })
+  assert.equal(ordered.status, 201, describe(ordered))
+  assert.equal((await prisma.purchaseRequest.findUnique({ where: { id } })).status, 'converted')
+  assert.equal(await prisma.purchaseOrder.count({ where: { tenantId: tenantA, sourceRequestId: id } }), 1)
 })
 
 test('step 3b: an approved PR becomes an approved PO (POST /api/procurement/requests/:id/generate-purchase-orders)', async () => {

@@ -22,6 +22,7 @@ async function loadClient() {
     import { AssistantV2Answer } from './src/modules/ai-assistant/v2/AssistantV2Answer.tsx'
     export * from './src/modules/ai-assistant/v2/foldEvents.ts'
     export * from './src/modules/ai-assistant/v2/streamClient.ts'
+    export * from './src/modules/ai-assistant/v2/previousTurns.ts'
     export { ApiError } from './src/lib/api-client.ts'
     export const render = (props) => renderToStaticMarkup(createElement(AssistantV2Answer, { threadId: 'thr_7f2c', fallbackMessageId: 'answer-1', latest: true, receipts: {}, onNavigate: () => {}, onFollowUp: () => {}, onRetry: () => {}, onReceipt: () => {}, ...props }))
   `
@@ -428,4 +429,41 @@ test('a record card keeps what its clicks did by card id, and a Chinese answer w
   assert.match(approved, /data-action="create_po"[^>]*>Create purchase order</)
   assert.doesNotMatch(client.render({ message: message('en-US'), actionReceipts: { 'thr_7f2c:msg_22:p2': receipt } }), /ai-v2-record-done/)
   assert.match(client.render({ message: message('zh-CN') }), /采购申请[^]*批准[^]*驳回/)
+})
+
+// Design audit 2026-11-15 (L5-07): the server keeps a conversation in
+// memory, and the panel sent no history, so after a restart a follow-up was
+// answered on an empty thread while the panel still showed the conversation.
+// The panel now sends its last 3 finished turns, which the server reads only
+// when it has no thread (assistantV2EarlierTurns, tested in ai-assistant-v2).
+test('the panel sends its last three finished turns, each question with its answer text', async () => {
+  const { assistantV2EarlierTurns } = await import('./ai-assistant-v2-answer.mjs')
+  const answered = (question, text) => ({ role: 'assistant', content: '', question, v2: fold([event({ type: 'text_delta', partId: 'p1', text }), event({ type: 'answer', status: 200, body: { parts: [] } })]) })
+  const messages = [
+    { role: 'user', content: 'Q1' }, answered('Which orders are late?', 'PO-001 and PO-008.'),
+    { role: 'user', content: 'Q2' }, answered('And PO-001?', 'It is 4 days late.'),
+    { role: 'user', content: 'Q3' }, { role: 'assistant', content: '', question: 'Broken?', v2: fold([event({ type: 'error', code: 'model_failed', retryable: true }), event({ type: 'answer', status: 500, body: {} })]) },
+    { role: 'user', content: 'Q4' }, answered('Who supplies it?', 'Acme Components.'),
+    { role: 'user', content: 'Q5' }, answered('Their lead time?', '12 days.'),
+    // Still streaming: not a turn yet.
+    { role: 'user', content: 'Q6' }, { role: 'assistant', content: '', question: 'Now?', v2: fold([event({ type: 'text_delta', partId: 'p1', text: 'Work' })]) },
+  ]
+  const turns = client.previousTurnsOf(messages)
+  assert.deepEqual(turns, [
+    { question: 'And PO-001?', answer: 'It is 4 days late.' },
+    { question: 'Who supplies it?', answer: 'Acme Components.' },
+    { question: 'Their lead time?', answer: '12 days.' },
+  ])
+  // The server takes them as they are sent.
+  assert.deepEqual(assistantV2EarlierTurns({ previousTurns: turns }), turns)
+  // A long answer is clipped as the server clips it.
+  assert.equal(client.previousTurnsOf([answered('Long?', 'x'.repeat(2000))])[0].answer.length, 800)
+  assert.deepEqual(client.previousTurnsOf([]), [])
+})
+
+test('every question the panel asks carries the conversation so far', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const panel = await readFile(join(root, 'src/modules/ai-assistant/Panel.tsx'), 'utf8')
+  assert.match(panel, /const previousTurns = previousTurnsOf\(messages\)/)
+  assert.match(panel, /conversationContext: \{ previousTurns \}/)
 })
