@@ -102,7 +102,7 @@ const entries = {
   'assistant_v2.replace.action_claim': ['This part of the answer is not shown because it read as if something had been done for you. The assistant changes nothing: open the record to see its status and act there.', '这部分回答读起来像是已替你执行了操作，因此不显示。助手不会修改任何内容：请打开相关记录查看状态，并在那里操作。'],
   'assistant_v2.replace.withheld': ['[not shown]', '[不显示]'],
   'assistant_v2.replace.action_claim_sentence': ['(A sentence is left out here because it read as if something had been done for you. Open the record to see its status.)', '（此处略去一句：它读起来像是已替你执行了操作。请打开记录查看状态。）'],
-  'assistant_v2.notice.injection_refused': ['This question asks the assistant to ignore its rules, so it was not answered.', '该问题要求助手忽略它的规则，因此没有回答。'],
+  'assistant_v2.notice.injection_refused': ["The assistant can't follow this request. Ask about your workspace's records instead.", '助手无法照这个请求去做。可以换个问法，问工作区里的记录。'],
   'assistant_v2.notice.rate_limited': ['You have asked many questions in a short time. Wait a few minutes, then ask again.', '短时间内提问较多，请几分钟后再问。'],
   'assistant_v2.notice.unavailable': ['The assistant is not available right now. Try again in a few minutes. Nothing was changed.', '助手暂时不可用，请几分钟后再试。未修改任何数据。'],
   'assistant_v2.notice.over_cap': ['This workspace has used this month\'s assistant allowance. An administrator can see the spend in Settings > AI.', '本工作区本月的助手额度已用完。管理员可以在 设置 > AI 中查看用量。'],

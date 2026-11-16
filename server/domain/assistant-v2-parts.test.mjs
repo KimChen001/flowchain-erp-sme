@@ -22,7 +22,7 @@ async function loadClient() {
     import { renderToStaticMarkup } from 'react-dom/server'
     import { AnswerParts } from './src/modules/ai-assistant/v2/parts/AnswerParts.tsx'
     import { StreamingText } from './src/modules/ai-assistant/v2/parts/StreamingText.tsx'
-    import { PurchaseRequestFormPart, addedFormRow, createFormRequest, draftRequestBody, initialFormLines, newSupplierLinkBody, newSupplierOption } from './src/modules/ai-assistant/v2/parts/PurchaseRequestFormPart.tsx'
+    import { PurchaseRequestFormPart, addedFormRow, createFormRequest, draftRequestBody, initialFormLines, newSupplierLinkBody, newSupplierOption, supplierNamesLinked } from './src/modules/ai-assistant/v2/parts/PurchaseRequestFormPart.tsx'
     const navigate = () => {}
     export const text = (props) => renderToStaticMarkup(createElement(StreamingText, { onNavigate: navigate, ...props }))
     export const answer = (props) => renderToStaticMarkup(createElement(AnswerParts, { threadId: 'thr_7f2c', messageId: 'msg_19', onNavigate: navigate, onFollowUp: () => {}, onChoose: () => {}, ...props }))
@@ -31,7 +31,7 @@ async function loadClient() {
     import { SetupRecordsPart, createSetupRecords, initialSetupDrafts, itemBody, itemIssues, itemSupplierBody, setupCreatedRecords, supplierBody, supplierIssues } from './src/modules/ai-assistant/v2/parts/SetupRecordsPart.tsx'
     export const steps = (props) => renderToStaticMarkup(createElement(SetupStepsPart, { onNavigate: navigate, ...props }))
     export const setupCard = (props) => renderToStaticMarkup(createElement(SetupRecordsPart, { partId: 'p3', onNavigate: navigate, ...props }))
-    export { addedFormRow, createFormRequest, draftRequestBody, initialFormLines, newSupplierLinkBody, newSupplierOption, createSetupRecords, initialSetupDrafts, itemBody, itemIssues, itemSupplierBody, setupCreatedRecords, supplierBody, supplierIssues }
+    export { addedFormRow, createFormRequest, draftRequestBody, initialFormLines, newSupplierLinkBody, newSupplierOption, supplierNamesLinked, createSetupRecords, initialSetupDrafts, itemBody, itemIssues, itemSupplierBody, setupCreatedRecords, supplierBody, supplierIssues }
     import { RecordActionsPart, cardActions, recordActionErrorText, runRecordAction } from './src/modules/ai-assistant/v2/parts/RecordActionsPart.tsx'
     export const recordCard = (props) => renderToStaticMarkup(createElement(RecordActionsPart, { onNavigate: navigate, ...props }))
     export { cardActions, recordActionErrorText, runRecordAction }
@@ -516,6 +516,12 @@ test('Create adds the new supplier to the item first, then creates the request w
   assert.deepEqual(trail.fields.find((field) => field.field === 'lines.0.needByDate'), { field: 'lines.0.needByDate', source: 'default', ref: 'toolu_01', outcome: 'accepted' })
   // The link it created is reported, so the server can say the click added it.
   assert.deepEqual(outcome, { status: 'created', linked: { [first.key]: 'sup_9' }, created: { id: 'PR-0300', version: 1, status: 'draft' }, added: ['ISR-1'] })
+  // The request fails after the supplier was added: the form names the
+  // supplier it added, since that stays (design audit L5-24).
+  const failed = await client.createFormRequest({ ticked, props, ids: IDS, post: async (url, body) => { if (url === '/api/procurement/requests') throw Object.assign(new Error('no'), { status: 422, code: 'VALIDATION_FAILED' }); return post(url, body) } })
+  assert.equal(failed.status, 'request_failed')
+  assert.deepEqual(client.supplierNamesLinked(ticked, failed.linked), [NORTHSTAR.name])
+  assert.deepEqual(client.supplierNamesLinked(ticked, {}), [])
   // A retry after a failed request does not add the supplier again.
   posts.length = 0
   await client.createFormRequest({ ticked, props, ids: IDS, post, linked: outcome.linked })
