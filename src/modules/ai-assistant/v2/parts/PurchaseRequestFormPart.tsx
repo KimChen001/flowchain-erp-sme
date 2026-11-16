@@ -200,7 +200,8 @@ export function draftRequestBody(ticked: FormLine[], props: PrFormProps, ids: { 
     };
   });
   return {
-    departmentId: props.departmentId || "operations",
+    // Empty: the server takes the requester's own department (L5-24).
+    departmentId: props.departmentId || "",
     defaultCurrency: ticked.map((line) => priceOf(line).currency).find(Boolean) || undefined,
     defaultNeedByDate: ticked.map((line) => line.needByDate).sort()[0],
     lines,

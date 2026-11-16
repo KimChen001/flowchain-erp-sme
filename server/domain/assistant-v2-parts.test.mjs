@@ -413,7 +413,8 @@ test('create posts the classic form body with one key per form and an assistant 
     specificationSnapshot: '', commodityId: '', quantity: 600, estimatedUnitPrice: 0.42, estimatedAmount: 252, currency: 'USD', targetWarehouseId: 'WH-1', needByDate: '2026-11-20',
     serviceStartDate: '', serviceEndDate: '', internalLineComment: '', supplierOverride: null,
   })
-  assert.deepEqual([body.departmentId, body.defaultCurrency, body.defaultNeedByDate], ['operations', 'USD', '2026-11-20'])
+  // No department from the form: the server takes the requester's own (design audit L5-24).
+  assert.deepEqual([body.departmentId, body.defaultCurrency, body.defaultNeedByDate], ['', 'USD', '2026-11-20'])
   const trail = sanitizeSuggestionTrail(body.suggestionTrail)
   assert.equal(trail.origin, 'ai_assistant')
   assert.deepEqual(trail.fields.find((field) => field.field === 'lines.0.quantity'), { field: 'lines.0.quantity', source: 'record', ref: 'toolu_01', outcome: 'accepted' })

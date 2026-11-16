@@ -6,6 +6,7 @@ import { runSpendAnalysis } from './ai-skill-spend-analysis.mjs'
 import { aiSkillPrepareComparison, runSupplierComparison } from './ai-skill-supplier-comparison.mjs'
 import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
 import { AI_SKILL_RECENT_DAYS, aiSkillPurchaseOrderNotSent } from './ai-skill-signals.mjs'
+import { asideFor, decisionsSetAside } from './ai-decision-aside.mjs'
 
 // The read tools of the model-first assistant (docs/ai-model-first-design.md
 // §4). Each reads the asking user's facts (readAiSkillFacts), which hold only
@@ -263,18 +264,27 @@ const listSupplierInvoices = defineAiTool({
   description: 'Supplier invoices: the committed total and how many are matched, in exception or pending three-way match; the invoices with a price or quantity difference; or those dated in the last 7 days.',
   parameters: { kind: { type: 'string', enum: ['summary', 'differences', 'recent'], description: 'summary by default.' }, limit: limitParam },
   available: (facts) => Boolean(facts.invoices),
-  run(args, { facts }) {
+  async run(args, { facts, context }) {
     const kind = args.kind || 'summary'
     const summary = { committedTotal: facts.invoices.committed ?? null, committedCount: facts.invoices.committedCount, match: facts.invoices.matchCounts, differences: array(facts.invoices.variances).length, recentWindowDays: RECENT_DAYS }
     if (kind === 'summary') return { asOf: facts.asOf, summary }
     const rows = kind === 'differences' ? array(facts.invoices.variances) : array(facts.invoices.recent)
+    // A held invoice set aside on Today (bill_exception; design audit
+    // 2026-11-15, L5-09).
+    const aside = await decisionsSetAside(context)
     return {
       asOf: facts.asOf,
       summary,
-      ...aiToolList([...rows].sort((a, b) => text(a.invoiceDate).localeCompare(text(b.invoiceDate))).map((row) => ({
-        invoiceNumber: row.invoiceNumber, supplier: row.supplier ?? null, invoiceDate: row.invoiceDate, purchaseOrder: row.poId ? orderNumberOf(facts, row.poId) : null,
-        matchStatus: row.matchStatus ?? null, difference: row.variance ?? null, currency: row.currency ?? null, ref: aiToolRef('supplier_invoice', row.id, row.invoiceNumber),
-      })), args.limit),
+      ...(aside.size ? { setAsideCount: rows.filter((row) => asideFor(aside, 'supplier_invoice', row.id)).length } : {}),
+      ...aiToolList([...rows].sort((a, b) => text(a.invoiceDate).localeCompare(text(b.invoiceDate))).map((row) => {
+        const setAside = asideFor(aside, 'supplier_invoice', row.id)
+        return {
+          invoiceNumber: row.invoiceNumber, supplier: row.supplier ?? null, invoiceDate: row.invoiceDate, purchaseOrder: row.poId ? orderNumberOf(facts, row.poId) : null,
+          matchStatus: row.matchStatus ?? null, difference: row.variance ?? null, currency: row.currency ?? null,
+          ...(setAside ? { setAside } : {}),
+          ref: aiToolRef('supplier_invoice', row.id, row.invoiceNumber),
+        }
+      }), args.limit),
     }
   },
 })

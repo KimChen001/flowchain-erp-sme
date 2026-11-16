@@ -241,6 +241,7 @@ function RuntimeHomepage() {
   if (unavailable.length) notes.push(t("notChecked", { sources: [...new Set(unavailable)].map((code) => (SOURCE_KEYS[code] ? t(SOURCE_KEYS[code]) : code)).join(", ") }));
   const truncated = (overview?.limitations || []).filter((code) => /^truncated:(customer_invoices|receivables|contracts)$/.test(code));
   if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("contracts") ? "sourceContracts" : code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
+  if (overview?.limitations?.includes("truncated:invoice_exceptions")) notes.push(t("heldInvoicesTruncated"));
 
   const tiles = [
     { id: "all" as const, label: t("tileWork"), note: t("tileWorkNote"), value: workTotal, icon: ListChecks, color: A.blue },

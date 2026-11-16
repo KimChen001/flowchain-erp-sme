@@ -52,3 +52,19 @@ test('Today lists a receivable due yesterday as overdue in a London workspace', 
   assert.equal(today, '2026-11-14')
   assert.deepEqual(ids, ['DUE-1112', 'DUE-1113'])
 })
+
+// Design audit 2026-11-15 (V-C-03): past 100 held invoices the newest were
+// read, so the oldest cards Today shows first had no prepared step, and
+// nothing said so.
+test('past 100 held invoices, the oldest get the prepared step and Today says the rest have none', async () => {
+  const held = Array.from({ length: 103 }, (_, index) => ({ id: `INV-${String(index).padStart(3, '0')}`, status: 'exception', matchStatus: 'variance', invoiceDate: `2026-${String(1 + Math.floor(index / 28)).padStart(2, '0')}-${String(1 + (index % 28)).padStart(2, '0')}` }))
+  // The snapshot lists them newest first.
+  const rawContext = { supplierInvoices: [...held].reverse() }
+  const invoices = held.map((row) => ({ id: row.id, tenantId: TENANT, invoiceNumber: row.id, supplierId: 'SUP-1', supplierName: 'Acme', relatedPoId: null, currency: 'GBP' }))
+  const ctx = { identity: { tenantId: TENANT }, env: {}, homeOverviewPrisma: { supplierInvoice: inMemoryModel(invoices), financeMatchException: inMemoryModel([]) } }
+  const read = await readTodayWorkSources(ctx, { access: { home: {}, collections: { supplierInvoices: true }, amounts: true, partner: true }, rawContext, now: new Date('2026-11-15T12:00:00Z'), today: '2026-11-15', timeZone: 'Europe/London' })
+  const drafted = read.sources.invoiceExceptions.invoices.map((row) => row.id).sort()
+  assert.equal(drafted.length, 100)
+  assert.deepEqual(drafted, held.slice(0, 100).map((row) => row.id))
+  assert.ok(read.limitations.includes('truncated:invoice_exceptions'))
+})

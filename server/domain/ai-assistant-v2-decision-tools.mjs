@@ -166,16 +166,23 @@ export const decisionItemsTool = defineAiTool({
 })
 
 // The record a history question names: a purchase order by its number, an
-// item by its SKU, or a purchase request by its number, among what the user
-// may read.
-function historyRecord(facts, query) {
+// item by its SKU, a purchase request by its number, or a supplier invoice
+// by its number (design audit 2026-11-15, L5-09: invoices could not be asked
+// about), among what the user may read. An invoice outside the facts' lists
+// is looked up by its number for a reader of supplier invoices.
+async function historyRecord(facts, query, context) {
   const po = facts.purchaseOrders ? aiToolPurchaseOrder(facts, query) : null
   if (po) return { entityType: 'purchase_order', recordId: po.id, label: po.orderNumber }
   const item = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)].find((row) => fold(row.sku) === fold(query))
   if (item?.itemId) return { entityType: 'item', recordId: item.itemId, label: item.sku }
   const request = [...array(facts.purchaseRequests?.open), ...array(facts.purchaseRequests?.rows)].find((row) => fold(row.number) === fold(query) || fold(row.id) === fold(query))
   if (request) return { entityType: 'purchase_request', recordId: request.id, label: request.number || request.id }
-  return null
+  if (!facts.invoices) return null
+  const invoice = [...array(facts.invoices.variances), ...array(facts.invoices.recent)].find((row) => fold(row.invoiceNumber) === fold(query) || fold(row.id) === fold(query))
+  if (invoice) return { entityType: 'supplier_invoice', recordId: invoice.id, label: invoice.invoiceNumber || invoice.id }
+  if (!context?.actor?.permissionCodes?.has?.('finance.supplier_invoice.read') || typeof context.prisma?.supplierInvoice?.findFirst !== 'function') return null
+  const stored = await context.prisma.supplierInvoice.findFirst({ where: { tenantId: context.tenantId, invoiceNumber: text(query) }, select: { id: true, invoiceNumber: true } }).catch(() => null)
+  return stored ? { entityType: 'supplier_invoice', recordId: stored.id, label: stored.invoiceNumber || stored.id } : null
 }
 
 // A record's decision items and the follow-up emails sent on it, newest first.
@@ -203,13 +210,13 @@ export const decisionHistoryTool = defineAiTool({
   name: 'decision_history',
   description: 'What was decided on one record on Today, newest first: each time it came up (raisedOn), what was decided (not_now, not_needed with a reasonCode, chased, accepted, covered), by whom and when, and how it ended (resolved when the record no longer needed it, expired when that happened before anyone decided). emailedOn lists the days a follow-up was emailed to the supplier. Use it for "did we chase PO-…?", "why isn\'t 22423 on Today?" or "who set this aside?".',
   parameters: {
-    record: { type: 'string', description: 'A purchase order number, a SKU, or a purchase request number.' },
+    record: { type: 'string', description: 'A purchase order, purchase request or supplier invoice number, or a SKU.' },
   },
   required: ['record'],
   available: (_facts, context) => Boolean(context?.prisma && context.tenantId),
   assistantV2Only: true,
   async run(args, { facts, context }) {
-    const record = historyRecord(facts, args.record)
+    const record = await historyRecord(facts, args.record, context)
     if (!record) return { error: 'not_found' }
     const store = context.routeContext?.aiReadServices?.decisionHistory || prismaHistory(context.prisma)
     if (!store) return { error: 'decisions_unavailable' }

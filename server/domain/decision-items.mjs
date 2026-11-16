@@ -72,9 +72,18 @@ export const DECISION_KIND_AREA = Object.freeze({
 // The areas whose rows could not all be read, from the overview's
 // limitations: an item of such an area is not closed because its row is
 // missing, since the row may only be unread.
+// Design audit 2026-11-15 (L11-04): requests, supplier invoices, items and
+// shipment lines had no area, so their truncation closed nothing it should
+// have kept; each now blocks the areas whose rows it can hide.
 const SOURCE_AREAS = Object.freeze({
   reorder_list: ['inventory'],
   purchase_orders: ['purchasing'],
+  purchase_requests: ['purchasing'],
+  supplier_invoices: ['bills'],
+  items: ['inventory'],
+  inventory_items: ['inventory'],
+  shipment_lines: ['inventory'],
+  sales_orders: ['sales_orders', 'inventory'],
   customer_invoices: ['customer_invoices'],
   receivables: ['receivables'],
   contracts: ['contracts'],
