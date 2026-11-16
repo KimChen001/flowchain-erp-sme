@@ -62,6 +62,7 @@ export const DECISION_KIND_AREA = Object.freeze({
   bill_awaiting_receipt: 'bills',
   customer_invoice_to_issue: 'customer_invoices',
   receivable_overdue: 'receivables',
+  payable_overdue: 'payables',
   sales_order_to_reserve: 'sales_orders',
   sales_order_to_ship: 'sales_orders',
   contract_notice_due: 'contracts',
@@ -86,8 +87,9 @@ const SOURCE_AREAS = Object.freeze({
   sales_orders: ['sales_orders', 'inventory'],
   customer_invoices: ['customer_invoices'],
   receivables: ['receivables'],
+  payables: ['payables'],
   contracts: ['contracts'],
-  database: ['inventory', 'customer_invoices', 'receivables', 'contracts'],
+  database: ['inventory', 'customer_invoices', 'receivables', 'payables', 'contracts'],
 })
 
 const text = (value) => String(value ?? '').trim()

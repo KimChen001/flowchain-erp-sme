@@ -37,7 +37,9 @@ type Landing = {
   timezone?: string;
   cards: Record<string, number>;
   money?: { dueSoonDays: number; payables: LandingMoney; receivables: LandingMoney; overdueReceivables: LandingMoney };
-  aging?: { asOf: string; receivables: AgingView; payables: AgingView };
+  // payables: to pay; heldForMatch: supplier invoices held by a match
+  // exception; payablesWithHeld: the two together, the payables aging's total.
+  aging?: { asOf: string; receivables: AgingView; payables: AgingView; heldForMatch?: AgingView; payablesWithHeld?: AgingView };
   currencyLimitations: {
     currencies: string[];
     aggregationStatus: string;
@@ -142,7 +144,7 @@ const LANDING_COPY = {
   overdueNote: ["Past the due date and not paid in full", "已过到期日且未全额收款"],
   amountHidden: ["amount hidden for your role", "当前角色无权查看金额"],
   awaitingMatch: ["Submitted, waiting for the three-way match", "已提交，等待三单匹配"],
-  matchExceptions: ["Supplier invoices to review: a price or quantity differs from the PO or receipt", "待复核的采购发票：价格或数量与采购订单、收货不一致"],
+  matchExceptions: ["Supplier invoices held by a match exception: a price or quantity differs from the PO or receipt", "因匹配例外被扣住的采购发票：价格或数量与采购订单、收货不一致"],
   awaitingIssue: ["Approved, not yet sent to the customer", "已批准，尚未开具给客户"],
   disputedReceivables: ["The customer has raised a dispute", "客户提出了争议"],
   supplierCredits: ["Raised from posted supplier returns", "由已过账的供应商退货生成"],
@@ -157,6 +159,12 @@ const LANDING_COPY = {
   agingCaption: ["Still owed, by days past the due date, as of {day} ({timezone})", "按到期日后天数统计的未结金额，截至 {day}（{timezone}）"],
   receivablesAging: ["Receivables: owed to us", "应收：客户欠我们"],
   payablesAging: ["Payables: we owe", "应付：我们欠供应商"],
+  // The payables aging's two rows (design audit L2-01): approved payables
+  // ("To pay", as the card above), and supplier invoices the three-way match
+  // held, which are owed but are not payables until approved.
+  toPayRow: ["To pay", "待付款"],
+  heldRow: ["Held (match exception)", "冻结（匹配例外）"],
+  heldNote: ["Held (match exception): supplier invoices received and recorded but held by a price or quantity difference. They are not in To pay until approved, and are aged here by their due date.", "冻结（匹配例外）：已收到并登记、但因价格或数量差异被扣住的采购发票。批准前不计入待付款，这里按到期日计入账龄。"],
   openAging: ["Open receivables aging", "查看应收账龄"],
   openPayables: ["Open payables", "查看应付款"],
   current: ["Current", "未到期"],
@@ -225,43 +233,94 @@ function QuietTile({ label, value, description, to, icon: Icon, color }: { label
   );
 }
 
+// The payables aging's second row: supplier invoices held by a match
+// exception (design audit L2-01), with the two rows' total.
+type HeldAging = { view: AgingView; total: AgingView; link: string };
+
 // One aging strip: a bar per currency split into the aging buckets, and each
 // bucket's amount (or count) under it, linking where that bucket is listed.
+// The payables strip passes `held`: its bar and total then cover what we owe
+// in all, and its buckets show two rows, To pay and Held (match exception),
+// each linking to the list it counts.
 function AgingStrip({
   title,
   view,
   empty,
   linkFor,
   testId,
+  held,
 }: {
   title: string;
   view: AgingView;
   empty: string;
   linkFor: (bucket: AgingBucketKey, currency: string, single: boolean) => string;
   testId: string;
+  held?: HeldAging;
 }) {
   const { locale, language, formatNumber } = useI18n();
   const say = (key: LandingCopyKey, values: Record<string, string> = {}) =>
     LANDING_COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => values[name] ?? "");
   const invoices = (n: number) => say(n === 1 ? "invoiceOne" : "invoiceMany", { n: formatNumber(n) });
-  const single = view.groups.length === 1;
+  // The groups the bar and the total read: what we owe in all when held
+  // invoices are shown, else the view's own.
+  const totalView = held?.total ?? view;
+  const single = totalView.groups.length === 1;
   const amountText = (amount: string | null, currency: string) => amountsByCurrency([{ currency, amount }], { locale, language });
+  const heldGroup = (currency: string) => held?.view.groups.find((entry) => entry.currency === currency && entry.count > 0);
+  const anyHeld = totalView.groups.some((group) => heldGroup(group.currency));
+  // One row of buckets: each bucket's amount (or count), linking to `link`.
+  const buckets = (group: AgingGroup | undefined, currency: string, amountsVisible: boolean, link: (bucket: AgingBucketKey) => string, rowTestId: string) => (
+    <ul className="grid grid-cols-1 gap-x-3 sm:grid-cols-5">
+      {AGING_BUCKETS.map(([bucket, labelKey, color]) => {
+        const row = group?.buckets.find((entry) => entry.bucket === bucket);
+        const count = row?.count || 0;
+        return (
+          <li key={bucket}>
+            <Link
+              to={link(bucket)}
+              className="flex min-h-9 items-center justify-between gap-2 rounded-md px-1.5 py-1 outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500 sm:block sm:min-h-0"
+              data-testid={`${rowTestId}-${bucket}`}
+            >
+              <span className="flex items-center gap-1.5 text-[12px]" style={{ color: A.sub }}>
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
+                {say(labelKey)}
+              </span>
+              <span className="text-right sm:mt-0.5 sm:block sm:text-left">
+                <span className="block text-[14px] font-semibold tabular-nums [overflow-wrap:anywhere]" style={{ color: count ? A.label : A.gray2 }}>
+                  {amountsVisible ? amountText(row?.amount ?? "0", currency) : formatNumber(count)}
+                </span>
+                {amountsVisible && <span className="block text-[11px]" style={{ color: A.gray2 }}>{invoices(count)}</span>}
+              </span>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+  // A row's name over its buckets, with its total: "Held (match exception) · £… · 27 invoices".
+  const rowTitle = (label: string, group: AgingGroup | undefined, currency: string, amountsVisible: boolean, to: string, rowTestId: string) => (
+    <Link to={to} className="inline-flex min-h-9 items-center gap-1 text-[12px] font-medium text-blue-600 hover:underline sm:min-h-0" data-testid={rowTestId}>
+      {label} · {amountsVisible ? `${amountText(group?.amount ?? "0", currency)} · ${invoices(group?.count || 0)}` : invoices(group?.count || 0)}
+    </Link>
+  );
   return (
     <section className="space-y-2" data-testid={testId}>
       <div className="text-[13px] font-semibold" style={{ color: A.label }}>{title}</div>
       {!view.readable ? (
         <div className="text-[13px]" style={{ color: A.sub }}>{say("agingHidden")}</div>
-      ) : !view.groups.length ? (
+      ) : !totalView.groups.length ? (
         <div className="text-[13px]" style={{ color: A.sub }}>{empty}</div>
       ) : (
-        view.groups.map((group) => {
-          const weights = agingWeights(group, view.amountsVisible);
+        totalView.groups.map((group) => {
+          const weights = agingWeights(group, totalView.amountsVisible);
           const total = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
+          const own = held ? view.groups.find((entry) => entry.currency === group.currency) : group;
+          const heldRow = heldGroup(group.currency);
           return (
             <div key={group.currency} className="space-y-2" data-testid={`${testId}-${group.currency}`}>
               <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-[12px]" style={{ color: A.sub }}>
                 <span className="font-semibold" style={{ color: A.label }}>{group.currency}</span>
-                <span>{view.amountsVisible ? `${amountText(group.amount, group.currency)} · ${invoices(group.count)}` : invoices(group.count)}</span>
+                <span>{totalView.amountsVisible ? `${amountText(group.amount, group.currency)} · ${invoices(group.count)}` : invoices(group.count)}</span>
               </div>
               <div className="flex h-2.5 w-full gap-0.5 overflow-hidden rounded-full" aria-hidden="true">
                 {total > 0
@@ -270,39 +329,22 @@ function AgingStrip({
                     ))
                   : <span className="h-full w-full" style={{ background: A.gray5 }} />}
               </div>
-              <ul className="grid grid-cols-1 gap-x-3 sm:grid-cols-5">
-                {AGING_BUCKETS.map(([bucket, labelKey, color]) => {
-                  const row = group.buckets.find((entry) => entry.bucket === bucket);
-                  const count = row?.count || 0;
-                  return (
-                    <li key={bucket}>
-                      <Link
-                        to={linkFor(bucket, group.currency, single)}
-                        className="flex min-h-9 items-center justify-between gap-2 rounded-md px-1.5 py-1 outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500 sm:block sm:min-h-0"
-                        data-testid={`${testId}-${group.currency}-${bucket}`}
-                      >
-                        <span className="flex items-center gap-1.5 text-[12px]" style={{ color: A.sub }}>
-                          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
-                          {say(labelKey)}
-                        </span>
-                        <span className="text-right sm:mt-0.5 sm:block sm:text-left">
-                          <span className="block text-[14px] font-semibold tabular-nums [overflow-wrap:anywhere]" style={{ color: count ? A.label : A.gray2 }}>
-                            {view.amountsVisible ? amountText(row?.amount ?? "0", group.currency) : formatNumber(count)}
-                          </span>
-                          {view.amountsVisible && <span className="block text-[11px]" style={{ color: A.gray2 }}>{invoices(count)}</span>}
-                        </span>
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
+              {heldRow && rowTitle(say("toPayRow"), own, group.currency, view.amountsVisible, linkFor("current", group.currency, single), `${testId}-${group.currency}-to-pay`)}
+              {buckets(own, group.currency, view.amountsVisible, (bucket) => linkFor(bucket, group.currency, single), `${testId}-${group.currency}`)}
+              {held && heldRow && (
+                <>
+                  {rowTitle(say("heldRow"), heldRow, group.currency, held.view.amountsVisible, held.link, `${testId}-held-${group.currency}`)}
+                  {buckets(heldRow, group.currency, held.view.amountsVisible, () => held.link, `${testId}-held-${group.currency}`)}
+                </>
+              )}
             </div>
           );
         })
       )}
-      {view.readable && view.groups.length > 0 && !view.amountsVisible && (
+      {view.readable && totalView.groups.length > 0 && !totalView.amountsVisible && (
         <div className="text-[11px]" style={{ color: A.gray2 }}>{say("agingCounts")}</div>
       )}
+      {anyHeld && <div className="text-[11px]" style={{ color: A.gray2 }} data-testid={`${testId}-held-note`}>{say("heldNote")}</div>}
     </section>
   );
 }
@@ -397,7 +439,16 @@ export function FinanceLanding() {
             </div>
           </div>
           <AgingStrip title={say("receivablesAging")} view={data.aging.receivables} empty={say("nothingOwed")} linkFor={receivableLink} testId="finance-aging-receivables" />
-          <AgingStrip title={say("payablesAging")} view={data.aging.payables} empty={say("nothingToPay")} linkFor={payableLink} testId="finance-aging-payables" />
+          {/* Supplier invoices held by a match exception are owed too: a row of
+              their own, opening the supplier invoices held, and in the total. */}
+          <AgingStrip
+            title={say("payablesAging")}
+            view={data.aging.payables}
+            empty={say("nothingToPay")}
+            linkFor={payableLink}
+            testId="finance-aging-payables"
+            held={data.aging.heldForMatch && data.aging.payablesWithHeld ? { view: data.aging.heldForMatch, total: data.aging.payablesWithHeld, link: "/app/procurement/bills?status=exception" } : undefined}
+          />
         </Card>
       )}
       <div className="space-y-2">
@@ -485,7 +536,10 @@ const LIST_COPY = {
   emptyPayable: ["No payables yet", "暂无应付款"],
   emptyPayableDetail: ["A payable is recorded when a supplier invoice is approved, and stays here until it is paid in full.", "采购发票批准后会生成应付款，并在全额付款前一直显示在这里。"],
   emptyCredit: ["No supplier credit notes yet", "暂无供应商贷项通知单"],
-  emptyCreditDetail: ["A credit note appears here once a supplier return is posted and credited.", "供应商退货过账并生成贷项后，会显示在这里。"],
+  // A credit note cannot be raised from these pages yet (design audit L2-02:
+  // the credit screens are planned), so the empty list does not say it will
+  // fill once a return is credited.
+  emptyCreditDetail: ["Supplier credit notes are recorded against a posted supplier return. They cannot be created from these pages yet.", "供应商贷项通知单需关联已过账的供应商退货，目前还不能在这些页面上新建。"],
   emptyMatch: ["No match exceptions", "暂无匹配异常"],
   emptyMatchDetail: ["Price or quantity differences found when a supplier invoice is matched to its purchase order and receipt appear here.", "采购发票与采购订单、收货核对时发现的价格或数量差异会显示在这里。"],
   // A receipt whose GRN number could not be read: named, never by its id.
@@ -737,6 +791,10 @@ function FinanceList({
                   const rawStatus = shownBillStatus(row);
                   const next = actionsOf(row, ["cancel"]);
                   const varianceAmount = Number(row.varianceAmount || 0);
+                  // The variance amount is the price difference only; a quantity
+                  // difference still to decide is named instead (design audit
+                  // L2-08 / L7-05), never shown as "—".
+                  const quantityDifference = Array.isArray(row.openExceptionTypes) && row.openExceptionTypes.includes("quantity");
                   return (
                     <tr className={listRowClass} style={listRowStyle(index, rows.length)} key={id}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
@@ -752,7 +810,10 @@ function FinanceList({
                         {row.dueDate && <div className="text-[11px]" style={{ color: A.sub }}>{tr("due")} {formatCalendarDay(row.dueDate, locale)}</div>}
                       </td>
                       <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row.totalAmount, row.currency, locale)}</td>
-                      <td className={tdNumericRightClass} style={{ color: varianceAmount ? PAST_DUE_COLOR : A.sub }}>{varianceAmount ? money(row.varianceAmount, row.currency, locale) : "—"}</td>
+                      <td className={tdNumericRightClass} style={{ color: varianceAmount || quantityDifference ? PAST_DUE_COLOR : A.sub }} data-testid="supplier-invoice-variance">
+                        {varianceAmount ? money(row.varianceAmount, row.currency, locale) : quantityDifference ? null : "—"}
+                        {quantityDifference && <div className="text-[11px]">{matchExceptionLabel("quantity", language)}</div>}
+                      </td>
                       <td className={tdNowrapClass}>
                         <div className="flex flex-wrap items-center gap-1">
                           <StatusChip label={statusText(rawStatus)} tone={financeStatusTone(rawStatus)} />

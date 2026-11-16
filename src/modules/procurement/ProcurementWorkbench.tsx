@@ -1,4 +1,3 @@
-import { isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { AlertCircle, ClipboardCheck, ListChecks, PackageSearch, Truck } from "lucide-react";
@@ -12,6 +11,7 @@ import { ListCard, ListSearchCard, ListStateRow, PrimaryButton, RefreshButton, R
 import { tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass, tableBodyTextClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
 import type { ProcurementNavigate, ProcurementWorkItem } from "./procurementTypes";
+import { QUEUES, daysBetween, heldInvoiceRows, inWorkQueue, workQueueCount, type Queue, type WorkRow } from "./workQueue";
 import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { formatCalendarDay, formatLocaleAmount, todayInTimeZone } from "../../lib/format";
@@ -20,13 +20,14 @@ const FINISHED_PURCHASE_ORDER_STATUSES = ["fully_received", "completed", "closed
 
 const COPY = {
   allWork: ["Open work", "全部待办"],
-  allWorkNote: ["Requests and orders still open", "仍在进行的申请和订单"],
+  allWorkNote: ["Requests, orders and held supplier invoices still open", "仍在进行的申请、订单和被扣住的采购发票"],
   approval: ["Awaiting approval", "待审批"],
   approvalNote: ["Submitted requests and orders to approve", "已提交、等待审批的申请和订单"],
   tracking: ["In progress", "跟进中"],
   trackingNote: ["Approved or issued, not finished", "已批准或已下达，尚未完成"],
   issues: ["Invoice or match issues", "发票或匹配问题"],
-  issuesNote: ["Orders with a variance to review", "存在差异、需要复核的订单"],
+  // The supplier invoice list's Match exceptions, also on a closed order.
+  issuesNote: ["Supplier invoices held by a match exception, whatever the order's status", "因匹配例外被扣住的采购发票，不论订单状态"],
   searchTitle: ["Work queue search", "待办查询"],
   searchSubtitle: ["Find purchase requests and purchase orders that still need purchasing work.", "查找仍需采购处理的采购申请和采购订单。"],
   search: ["Search", "搜索"],
@@ -42,22 +43,24 @@ const COPY = {
   document: ["Document", "单据"],
   item: ["Item", "物料"],
   supplier: ["Supplier", "供应商"],
-  due: ["Need by / ETA", "需求日期 / 预计到货"],
+  due: ["Need by / ETA / due", "需求日期 / 预计到货 / 到期日"],
   amount: ["Amount", "金额"],
   attention: ["Needs attention", "需关注"],
   actions: ["Actions", "操作"],
   view: ["View", "查看"],
   request: ["Purchase request", "采购申请"],
   order: ["Purchase order", "采购订单"],
+  invoice: ["Supplier invoice", "采购发票"],
+  billsOrder: ["Bills {order}", "对应 {order}"],
   requests: ["Purchase requests", "采购申请"],
   orders: ["Purchase orders", "采购订单"],
   moreLines: ["+{count} more", "另 {count} 行"],
   loadFailed: ["The purchasing workbench could not be loaded", "采购工作台加载失败"],
   empty: ["No purchasing work is open", "暂无采购待办"],
-  emptyDetail: ["Submitted requests and open purchase orders appear here.", "已提交的采购申请和未结采购订单会显示在这里。"],
+  emptyDetail: ["Submitted requests, open purchase orders and supplier invoices held at the match appear here.", "已提交的采购申请、未结采购订单和在匹配中被扣住的采购发票会显示在这里。"],
   noMatch: ["No work matches these filters", "没有符合筛选条件的待办"],
-  invoice_variance: ["Invoice variance", "发票差异"],
   match_exception: ["Three-way match exception", "三单匹配异常"],
+  invoice_to_approve: ["Differences approved; approve the invoice", "差异已批准，待批准发票"],
   lateOne: ["1 day late", "逾期 1 天"],
   late: ["{n} days late", "逾期 {n} 天"],
   reorder: ["Items to reorder", "待补货物料"],
@@ -65,20 +68,15 @@ const COPY = {
   reorderNote: ["{now} to order now · {n} items checked", "需立即下单 {now} 项 · 已检查 {n} 项"],
 } as const;
 
-type Queue = "all" | "approval" | "tracking" | "issues";
-const QUEUES: Queue[] = ["all", "approval", "tracking", "issues"];
-// The signals of the "Invoice or match issues" queue; a late order needs
-// chasing, not an invoice review, so it is not one of them.
-const ISSUE_SIGNALS = new Set(["invoice_variance", "match_exception"]);
+// The queues and the "Invoice or match issues" rows are in workQueue.ts: the
+// issues are the supplier invoices held by a match exception, counted by the
+// supplier invoice list's own rule and listed whatever their order's status,
+// not orders flagged by matching the server's status text (design audit
+// L1-18 = L7-02, L7-03).
 // Orders the supplier is expected to deliver: approved or issued and not yet
 // received in full (a legacy label older rows carry is read as its code).
 const EXPECTED_ORDER_STATUSES = new Set(["approved", "issued", "partially_received"]);
-// A row with how many days its order is past its expected arrival (0 when it is not).
-type WorkRow = ProcurementWorkItem & { daysLate?: number };
 type ReorderCounts = { orderNow: number; listed: number };
-
-// Whole calendar days from one YYYY-MM-DD day to another.
-const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from.slice(0, 10)}T00:00:00Z`)) / 86_400_000);
 
 export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate }) {
   const { language, locale, timezone } = useI18n();
@@ -133,11 +131,6 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
           // A fully received, closed or cancelled order needs no more purchasing work.
           .filter(row => !FINISHED_PURCHASE_ORDER_STATUSES.includes(row.status))
           .map((row): WorkRow => {
-            // An invoice whose match exceptions were all approved (match status
-            // variance_approved) has no variance left to review.
-            const relatedInvoices = invoices.filter(invoice => invoice.relatedPo === row.id && !/approved/i.test(String(invoice.matchStatus || "")));
-            const hasInvoiceVariance = relatedInvoices.some(invoice => Number(invoice.varianceAmount || 0) !== 0 || (Boolean(invoice.varianceType) && !isNoInvoiceVariance(invoice.varianceType)) || /差异|variance/i.test(String(invoice.status || "")));
-            const hasMatchException = relatedInvoices.some(invoice => /差异|异常|待处理|variance/i.test(String(invoice.matchStatus || "")));
             const late = row.eta && EXPECTED_ORDER_STATUSES.has(purchaseOrderStatusCode(row.status)) ? daysBetween(String(row.eta), today) : 0;
             const daysLate = Number.isFinite(late) && late > 0 ? late : 0;
             return {
@@ -156,11 +149,11 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
               dueDate: row.eta,
               signals: [
                 ...(daysLate ? ["overdue"] : []),
-                ...(hasInvoiceVariance ? ["invoice_variance"] : []),
-                ...(hasMatchException ? ["match_exception"] : []),
               ],
             };
           }),
+        // Each supplier invoice held by a match exception, also on a closed order.
+        ...heldInvoiceRows(invoices, today),
       ]);
       setState("loaded");
     } catch { setState("error"); }
@@ -168,8 +161,6 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
     window.setTimeout(loadReorder, 0);
   };
   useEffect(() => { void load(); }, []);
-  const inQueue = (row: WorkRow, name: Queue) =>
-    name === "all" || (name === "issues" ? Boolean(row.signals?.some(signal => ISSUE_SIGNALS.has(signal))) : row.bucket === name);
   const statuses = useMemo(() => [...new Set(rows.map(row => row.status))], [rows]);
   const needle = query.trim().toLowerCase();
   // Approvals first, then rows that need attention (late, or an invoice or
@@ -177,12 +168,13 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
   // date last.
   const byDate = (left: WorkRow, right: WorkRow) => (left.dueDate ? 0 : 1) - (right.dueDate ? 0 : 1) || String(left.dueDate || "").localeCompare(String(right.dueDate || "")) || String(left.number || left.id).localeCompare(String(right.number || right.id));
   const shown = rows
-    .filter(row => inQueue(row, queue))
+    .filter(row => inWorkQueue(row, queue))
     .filter(row => !type || row.kind === type)
     .filter(row => !status || row.status === status)
     .filter(row => !needle || [row.number, row.id, row.item, row.supplier].some(value => String(value || "").toLowerCase().includes(needle)))
     .sort((left, right) => Number(right.bucket === "approval") - Number(left.bucket === "approval") || Number(Boolean(right.signals?.length)) - Number(Boolean(left.signals?.length)) || byDate(left, right));
-  const count = (name: Queue) => rows.filter(row => inQueue(row, name)).length;
+  // A card's number is the number of rows the queue it opens lists.
+  const count = (name: Queue) => workQueueCount(rows, name);
   const reset = () => { setQuery(""); setType(""); setStatus(""); setQueue("all"); };
   const money = (row: ProcurementWorkItem) => row.amount === null || !Number.isFinite(Number(row.amount)) ? "—" : formatLocaleAmount(Number(row.amount), row.currency, locale, { maximumFractionDigits: 2 });
   const queueLink = (name: Queue) => `/app/procurement/workbench${name === "all" ? "" : `?queue=${name}`}`;
@@ -262,10 +254,13 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
                 <tr key={`${row.kind}:${row.id}`} className={listRowClass} style={listRowStyle(index, shown.length)}>
                   <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                     <EntityLink kind={row.kind} id={row.id} number={row.number} className={tableLinkClass} />
-                    <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr(row.kind === "purchase_request" ? "request" : "order")}</div>
+                    <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr(row.kind === "purchase_request" ? "request" : row.kind === "supplier_invoice" ? "invoice" : "order")}</div>
                   </td>
                   <td className={`${tdNameClass} max-w-[220px]`}>
-                    <div className="truncate font-medium" style={{ color: A.label }} title={row.item}>{row.item || "—"}</div>
+                    {/* A held invoice names the order it bills. */}
+                    {row.kind === "supplier_invoice"
+                      ? <div className="truncate" style={{ color: A.sub }}>{row.orderNumber ? tr("billsOrder").replace("{order}", row.orderNumber) : "—"}</div>
+                      : <div className="truncate font-medium" style={{ color: A.label }} title={row.item}>{row.item || "—"}</div>}
                     {row.moreLines ? <div className="text-[11px]" style={{ color: A.sub }}>{tr("moreLines").replace("{count}", String(row.moreLines))}</div> : null}
                   </td>
                   <td className={`${tdNameClass} max-w-[200px] truncate`} title={row.supplier}>{row.supplier || <span style={{ color: A.gray2 }}>—</span>}</td>
@@ -273,7 +268,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
                     <StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} />
                     {row.transmissionStatus && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{statusLabel(row.transmissionStatus)}</div>}
                   </td>
-                  {/* A late order's expected arrival reads red. */}
+                  {/* A late order's expected arrival, or a held invoice past its due date, reads red. */}
                   <td className={`${tdNowrapClass} ${row.daysLate ? "font-medium" : ""}`} style={{ color: row.daysLate ? A.red : A.sub }}>{row.dueDate ? formatCalendarDay(row.dueDate, locale) : "—"}</td>
                   <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row)}</td>
                   {/* Signals wrap onto lines of their own, so the table fits and the sticky

@@ -27,7 +27,7 @@ import { useTodayRowFormat } from "./todayRowFormat";
 type Navigate = (moduleId: string, focus?: { entityType: string; entityId: string } | null, options?: any) => void;
 type WorkKind =
   | "purchase_order_overdue" | "purchase_order_due" | "reorder_now" | "bill_exception" | "bill_to_approve" | "bill_to_match"
-  | "bill_awaiting_receipt" | "customer_invoice_to_issue" | "receivable_overdue" | "sales_order_to_reserve" | "sales_order_to_ship"
+  | "bill_awaiting_receipt" | "customer_invoice_to_issue" | "receivable_overdue" | "payable_overdue" | "sales_order_to_reserve" | "sales_order_to_ship"
   | "purchase_order_to_approve" | "purchase_request_to_approve" | "purchase_request_to_convert" | "draft_purchase_order"
   | "contract_notice_due" | "contract_ending" | "contract_past_end";
 type WorkItem = {
@@ -82,12 +82,14 @@ const HIDDEN_KEYS: Record<string, TodayCopyKey> = {
   sales_orders: "hiddenSalesOrders",
   customer_invoices: "hiddenCustomerInvoices",
   receivables: "hiddenReceivables",
+  payables: "hiddenPayables",
   contracts: "hiddenContracts",
 };
 const SOURCE_KEYS: Record<string, TodayCopyKey> = {
   reorder_list: "sourceReorder",
   customer_invoices: "sourceCustomerInvoices",
   receivables: "sourceReceivables",
+  payables: "sourcePayables",
   purchase_orders: "sourcePurchaseOrders",
   setup_counts: "sourceSetup",
   database: "sourceDatabase",
@@ -214,10 +216,11 @@ function RuntimeHomepage() {
           ];
         case "bill_awaiting_receipt": return [t("billAwaitingReceipt"), amount, supplier];
         case "bill_to_match": return [t("billToMatch"), amount, supplier];
-        case "bill_to_approve": return [t("billToApprove"), amount, supplier];
-        case "bill_exception": return [t("billException"), amount, supplier];
+        case "bill_to_approve": return [t("billToApprove"), item.overdueDays > 0 ? t.count("pastDue", item.overdueDays) : null, amount, supplier];
+        case "bill_exception": return [t("billException"), item.overdueDays > 0 ? t.count("pastDue", item.overdueDays) : null, amount, supplier];
         case "customer_invoice_to_issue": return [t("issueToCustomer"), amount, customer];
         case "receivable_overdue": return [d.outstanding === null || d.outstanding === undefined ? t("owedHidden") : t("owed", { amount: money(d.outstanding, d.currency) }), d.disputed ? t("disputed") : null, customer];
+        case "payable_overdue": return [d.outstanding === null || d.outstanding === undefined ? t("owedHidden") : t("owed", { amount: money(d.outstanding, d.currency) }), d.held ? t("paymentHeld") : null, supplier];
         case "sales_order_to_reserve": return [d.quantity === null || d.quantity === undefined ? t.count("linesToReserve", Number(d.lines) || 0) : t("toReserve", { qty: quantity(d.quantity, d.unit) }), customer];
         case "sales_order_to_ship": return [d.quantity === null || d.quantity === undefined ? t.count("linesToShip", Number(d.lines) || 0) : t("toShip", { qty: quantity(d.quantity, d.unit) }), customer];
         case "purchase_order_to_approve": return [t("awaitingApproval"), supplier];
@@ -239,8 +242,8 @@ function RuntimeHomepage() {
   const unavailable = (overview?.limitations || []).filter((code) => code.startsWith("today_source_unavailable:")).map((code) => code.slice("today_source_unavailable:".length));
   if (overview?.limitations?.includes("today_database_sources_unavailable")) unavailable.push("database");
   if (unavailable.length) notes.push(t("notChecked", { sources: [...new Set(unavailable)].map((code) => (SOURCE_KEYS[code] ? t(SOURCE_KEYS[code]) : code)).join(", ") }));
-  const truncated = (overview?.limitations || []).filter((code) => /^truncated:(customer_invoices|receivables|contracts)$/.test(code));
-  if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("contracts") ? "sourceContracts" : code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
+  const truncated = (overview?.limitations || []).filter((code) => /^truncated:(customer_invoices|receivables|payables|contracts)$/.test(code));
+  if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("contracts") ? "sourceContracts" : code.endsWith("payables") ? "sourcePayables" : code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
   if (overview?.limitations?.includes("truncated:invoice_exceptions")) notes.push(t("heldInvoicesTruncated"));
 
   const tiles = [

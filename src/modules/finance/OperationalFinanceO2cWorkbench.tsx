@@ -273,7 +273,9 @@ const LIST_COPY = {
   emptyAging: ["Nothing to age yet", "暂无需要统计账龄的应收款"],
   emptyAgingDetail: ["Once customer invoices are issued, open receivables are grouped here by how far past due they are.", "销售发票开具后，未结应收款会按逾期时长在这里分组。"],
   emptyCredits: ["No credit notes yet", "暂无贷项通知单"],
-  emptyCreditsDetail: ["A credit note appears here once a customer return is posted and credited.", "客户退货过账并生成贷项后，会显示在这里。"],
+  // Not yet raised from these pages (design audit L2-02), so the empty list
+  // does not promise one.
+  emptyCreditsDetail: ["Credit notes are recorded against a posted customer return. They cannot be created from these pages yet.", "贷项通知单需关联已过账的客户退货，目前还不能在这些页面上新建。"],
   loadFailed: ["Could not load this finance page. Try again.", "财务页面加载失败，请重试。"],
   invoiceFailed: ["Could not create the invoice. Check the shipment and lines, then try again.", "无法创建发票，请检查发货单和明细后重试。"],
   // The list's open status, in the words the invoice uses for it.

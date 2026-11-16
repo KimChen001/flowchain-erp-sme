@@ -1,7 +1,7 @@
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { can } from "../auth/authorization-service.mjs";
 import { escapeLikePattern } from "../persistence/like-pattern.mjs";
-import { NEWEST_DUE_FIRST, OperationalFinanceReadError, allOf, outstandingPayableWhere, pagedInGroups, whereAll } from "./operational-finance-read-service.mjs";
+import { NEWEST_DUE_FIRST, OperationalFinanceReadError, allOf, matchHeldInvoiceWhere, outstandingPayableWhere, pagedInGroups, whereAll } from "./operational-finance-read-service.mjs";
 import { financeFixed as fixed, financeUnits as units } from "./operational-finance-policy.mjs";
 import { paymentRecordsView } from "./payment-record-command-service.mjs";
 import { CUSTOMER_NAMESPACE } from "./master-data-commands.mjs";
@@ -322,6 +322,18 @@ export function ageByCurrency(rows, asOf, timezone) {
     groups.set(row.currency, group);
   }
   return groups;
+}
+
+// A supplier invoice held by a match exception (matchHeldInvoiceWhere) as a
+// row ageByCurrency reads: its total, by its due date (design audit L2-01).
+// One recorded without a due date ages from its invoice date, and one with
+// neither as due today.
+export function matchHeldOwedRow(row, asOf, timezone = DEFAULT_TENANT_TIMEZONE) {
+  return {
+    currency: row.currency,
+    dueDate: row.dueDate || row.invoiceDate || overdueBefore(asOf, timezone),
+    outstandingAmount: row.totalAmount ?? row.amount ?? 0,
+  };
 }
 
 // An overdue receivable is past its due date with money still owed. The stored
@@ -894,6 +906,9 @@ export function createOperationalFinanceO2cReadService({
     const amountsVisible = amountsVisibleFor(current);
     const payablesReadable = allowed("finance.payable.read");
     const receivablesReadable = allowed("finance.receivable.read");
+    // Invoices held by a match exception are aged with the payables, so they
+    // need the payables' permission and the supplier invoice list's.
+    const heldReadable = payablesReadable && allowed("finance.supplier_invoice.read");
     const noRows = Promise.resolve([]);
     const owedFields = { currency: true, dueDate: true, outstandingAmount: true };
     const [
@@ -913,17 +928,19 @@ export function createOperationalFinanceO2cReadService({
       openPayableRows,
       openReceivableRows,
       overdueReceivableRows,
+      matchHeldRows,
     ] = await Promise.all([
+      // Each card counts what the list it opens shows (design audit L2-14):
+      // every submitted invoice, also one still waiting for its receipt.
       prisma.supplierInvoice.count({
-        where: { tenantId: current.tenantId, status: "submitted", relatedGrnId: { not: null } },
+        where: { tenantId: current.tenantId, status: "submitted" },
       }),
-      // Supplier invoices with a difference still to decide, as the list this
-      // card opens and Today count them; not the difference lines (UI review 11).
+      // Supplier invoices held by a match exception, invoices not difference
+      // lines (UI review 11): the list's "exception" filter, which this card
+      // opens, so a rejected difference or one whose invoice is still to
+      // approve stays counted until the invoice is approved or cancelled.
       prisma.supplierInvoice.count({
-        where: {
-          tenantId: current.tenantId,
-          matchExceptions: { some: { status: { in: ["open", "reviewed"] } } },
-        },
+        where: { tenantId: current.tenantId, ...matchHeldInvoiceWhere() },
       }),
       // The payables list's "outstanding" filter, which this card opens.
       prisma.payableObligation.count({
@@ -941,11 +958,13 @@ export function createOperationalFinanceO2cReadService({
           disputeStatus: "open",
         },
       }),
+      // The credit lists these tiles open show every credit, a cancelled
+      // draft included, so the tiles count every one.
       prisma.supplierCreditMemo.count({
-        where: { tenantId: current.tenantId, status: { not: "cancelled" } },
+        where: { tenantId: current.tenantId },
       }),
       prisma.customerCreditNote.count({
-        where: { tenantId: current.tenantId, status: { not: "cancelled" } },
+        where: { tenantId: current.tenantId },
       }),
       prisma.payableObligation.findMany({
         where: {
@@ -990,7 +1009,18 @@ export function createOperationalFinanceO2cReadService({
       receivablesReadable
         ? prisma.receivableObligation.findMany({ where: { tenantId: current.tenantId, ...overdueReceivableWhere(asOf, timezone) }, select: owedFields })
         : noRows,
+      heldReadable
+        ? prisma.supplierInvoice.findMany({ where: { tenantId: current.tenantId, ...matchHeldInvoiceWhere() }, select: { currency: true, dueDate: true, invoiceDate: true, totalAmount: true, amount: true } })
+        : noRows,
     ]);
+    // Supplier invoices held by a match exception (design audit L2-01): owed
+    // to the supplier but not a payable until approved, so "To pay" leaves
+    // them out and the payables aging shows them as a row of their own and
+    // in its total. No invoice is in both: only an approved invoice has a
+    // payable (matchHeldInvoiceWhere).
+    const heldOwedRows = matchHeldRows.map((row) => matchHeldOwedRow(row, asOf, timezone));
+    const heldAging = ageByCurrency(heldOwedRows, asOf, timezone);
+    const owedAging = ageByCurrency([...openPayableRows, ...heldOwedRows], asOf, timezone);
     const payableAging = ageByCurrency(openPayableRows, asOf, timezone);
     const receivableAging = ageByCurrency(openReceivableRows, asOf, timezone);
     const overdueByCurrency = ageByCurrency(overdueReceivableRows, asOf, timezone);
@@ -1065,7 +1095,13 @@ export function createOperationalFinanceO2cReadService({
       aging: {
         asOf: asOf.toISOString(),
         receivables: agingView(receivableAging, receivablesReadable),
+        // To pay: the payables still owed, as the "To pay" card counts them.
         payables: agingView(payableAging, payablesReadable),
+        // Held (match exception): supplier invoices the match held.
+        heldForMatch: agingView(heldAging, heldReadable),
+        // What we owe in all, the two rows above together: the payables
+        // aging's total and bar.
+        payablesWithHeld: agingView(owedAging, payablesReadable),
       },
       currencyLimitations: financeCurrencyLimitations(
         payableCurrencies,

@@ -116,9 +116,6 @@ const ALLOWED = [
   { file: 'src/modules/sales/OutboundWorkbench.tsx', text: '未指定仓库', line: /part === "未指定仓库"/ },
   // Legacy Chinese stored order statuses, compared to leave finished orders out.
   { file: 'src/modules/procurement/ProcurementWorkbench.tsx', line: /^\["fully_received", "completed", "closed", "cancelled", "已完成", "已关闭", "已取消"\]$/ },
-  // Matchers for the server's invoice and match status text, never shown.
-  { file: 'src/modules/procurement/ProcurementWorkbench.tsx', text: '/差异|variance/i' },
-  { file: 'src/modules/procurement/ProcurementWorkbench.tsx', text: '/差异|异常|待处理|variance/i' },
   // The route registry's group name, compared to pick the translated heading.
   { file: 'src/app/FlowChainApp.tsx', text: '主导航', line: /^group\.label === "主导航"$/ },
 ]

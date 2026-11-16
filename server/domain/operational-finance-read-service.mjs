@@ -70,6 +70,24 @@ export function outstandingPayableWhere() {
   return { status: { in: PAYABLE_OPEN_STATUSES }, outstandingAmount: { gt: 0 } };
 }
 
+// A supplier invoice held by a match exception: received and recorded, but
+// the three-way match found a price or quantity difference, so it keeps the
+// status "exception" until it is approved or cancelled (design audit L2-01).
+// A payable is recorded only when an invoice is approved, so none of these
+// has one: they are never in "to pay" (outstandingPayableWhere) nor a payable
+// put on hold (status "held", which only an approved bill reaches). The
+// finance overview shows them as their own row, "Held (match exception)",
+// and ages them with the payables; the supplier invoice list's "exception"
+// filter and its Match exceptions card count the same invoices.
+export const MATCH_HELD_INVOICE_STATUS = "exception";
+export function matchHeldInvoiceWhere() {
+  return { status: MATCH_HELD_INVOICE_STATUS };
+}
+
+// Match exceptions not yet decided either way: open ones, and rejected ones
+// that still block approval.
+export const UNRESOLVED_MATCH_EXCEPTION_STATUSES = Object.freeze(["open", "rejected"]);
+
 // A due date is a calendar day stored at 00:00 UTC; a payable is overdue
 // once the workspace's own calendar day is past it (see overdueBefore in the
 // customer side's read service).
@@ -284,11 +302,15 @@ export function createOperationalFinanceReadService({
     const { page, pageSize, skip } = pageQuery(query);
     const search = escapeLikePattern(text(query.search));
     const partnerVisible = can({ actor: current, permission: "finance.partner_snapshot.read", tenantId: current.tenantId });
-    // A variance is a non-zero variance amount or the match status "variance";
-    // a missing amount or status is no variance. Nulls are named on both
-    // sides, so neither filter loses a row to SQL's unknown.
-    const withVariance = { OR: [{ AND: [{ varianceAmount: { not: null } }, { varianceAmount: { not: 0 } }] }, { matchStatus: "variance" }] };
-    const noVariance = { AND: [{ OR: [{ varianceAmount: null }, { varianceAmount: 0 }] }, { OR: [{ matchStatus: null }, { matchStatus: { not: "variance" } }] }] };
+    // A variance is a non-zero variance amount, the match status "variance",
+    // or a match exception not yet decided. The variance amount is the price
+    // difference only, so an invoice billing more than was received at the
+    // order price has none: its open quantity exception is what counts
+    // (design audit L2-08). A missing amount or status is no variance. Nulls
+    // are named on both sides, so neither filter loses a row to SQL's unknown.
+    const unresolved = { status: { in: [...UNRESOLVED_MATCH_EXCEPTION_STATUSES] } };
+    const withVariance = { OR: [{ AND: [{ varianceAmount: { not: null } }, { varianceAmount: { not: 0 } }] }, { matchStatus: "variance" }, { matchExceptions: { some: unresolved } }] };
+    const noVariance = { AND: [{ OR: [{ varianceAmount: null }, { varianceAmount: 0 }] }, { OR: [{ matchStatus: null }, { matchStatus: { not: "variance" } }] }, { matchExceptions: { none: unresolved } }] };
     const variance = text(query.variance);
     // to_pay, partially_settled and settled are payment states of approved
     // invoices (billPaymentStatus); any other status is the stored one.
@@ -327,7 +349,9 @@ export function createOperationalFinanceReadService({
         take: pageSize,
       }),
       countStatus("submitted"),
-      countStatus("exception"),
+      // Held by a match exception: the finance overview's Match exceptions
+      // card and its "Held (match exception)" row count the same invoices.
+      countWhere(matchHeldInvoiceWhere()),
       countStatus("matched"),
       countStatus("approved"),
       countWhere(billPaymentWhere("to_pay")),
@@ -337,17 +361,28 @@ export function createOperationalFinanceReadService({
         ? prisma.supplierInvoice.findMany({ where: { tenantId: current.tenantId, supplierName: { not: null } }, distinct: ["supplierName"], select: { supplierName: true }, orderBy: { supplierName: "asc" }, take: 500 })
         : [],
     ]);
-    // Open or rejected match exceptions per invoice, which block approval.
+    // Open or rejected match exceptions per invoice, which block approval, and
+    // their kinds: the Variance column names a quantity difference, which has
+    // no variance amount (design audit L2-08 / L7-05).
     const exceptionRows = rows.some((row) => row.status === "exception")
       ? await prisma.financeMatchException.groupBy({
-          by: ["supplierInvoiceId"],
-          where: { supplierInvoiceId: { in: rows.filter((row) => row.status === "exception").map((row) => row.id) }, status: { in: ["open", "rejected"] } },
+          by: ["supplierInvoiceId", "exceptionType"],
+          where: { supplierInvoiceId: { in: rows.filter((row) => row.status === "exception").map((row) => row.id) }, status: { in: [...UNRESOLVED_MATCH_EXCEPTION_STATUSES] } },
           _count: { _all: true },
         })
       : [];
-    const blocking = new Map(exceptionRows.map((row) => [row.supplierInvoiceId, row._count._all]));
+    const blocking = new Map();
+    const exceptionTypes = new Map();
+    for (const row of exceptionRows) {
+      blocking.set(row.supplierInvoiceId, (blocking.get(row.supplierInvoiceId) || 0) + row._count._all);
+      exceptionTypes.set(row.supplierInvoiceId, [...(exceptionTypes.get(row.supplierInvoiceId) || []), row.exceptionType].sort());
+    }
     return {
-      items: rows.map((row) => invoiceSummary({ ...row, blockingExceptionCount: blocking.get(row.id) || 0 }, current, capabilities)),
+      items: rows.map((row) => ({
+        ...invoiceSummary({ ...row, blockingExceptionCount: blocking.get(row.id) || 0 }, current, capabilities),
+        // The kinds of difference still to decide (price, quantity, amount).
+        openExceptionTypes: exceptionTypes.get(row.id) || [],
+      })),
       page,
       pageSize,
       total,

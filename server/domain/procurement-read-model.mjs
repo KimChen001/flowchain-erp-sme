@@ -446,6 +446,11 @@ export function buildProcurementSupplierInvoices(data = {}) {
       // As stored, except a variance already decided (settledMatchStatus).
       matchStatus: settledMatchStatus({ ...invoice, matchStatus: text(invoice.matchStatus, varianceAmount ? '存在差异' : '待匹配') }, varianceAmount),
       invoiceStatus: text(invoice.status || invoice.invoiceStatus, '待处理'),
+      // The status code the invoice is stored with (exception, approved...),
+      // which invoiceStatus hides behind 存在差异 when there is a variance
+      // amount: the purchasing workbench counts invoices held by a match
+      // exception by it, as the supplier invoice list does (design audit L1-18).
+      ...(text(invoice.workflowStatus) ? { workflowStatus: text(invoice.workflowStatus) } : {}),
       varianceAmount,
       relatedDocuments: compactRelatedDocuments([
         related('po', invoice.relatedPo || invoice.po || invoice.poId, '', poNumber),
