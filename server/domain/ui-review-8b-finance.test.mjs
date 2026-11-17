@@ -215,7 +215,7 @@ test("Today's recent documents show a customer invoice's payment state, and its 
   assert.equal(statusCodeLabel('to_be_paid', 'zh-CN'), '待收款')
   const today = read('src/modules/overview/Page.tsx')
   assert.match(today, /label=\{documentStatusLabel\(row\.type, row\.status, t\.language\) \?\? t\.status\(row\.status\)\}/)
-  assert.match(today, /status === "to_pay" \|\| status === "to_be_paid" \? "info"/)
+  assert.match(today, /const documentTone = \(status: string\) => statusToneOf\(status\);/)
 })
 
 // The new invoice form's data: what is already on an invoice (drafts too),

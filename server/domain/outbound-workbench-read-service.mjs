@@ -116,6 +116,15 @@ function shipmentModel(row) {
   };
 }
 
+// The shipment list's status filters, each a stored status: an unposted
+// draft (still to post), posted, reversed or cancelled.
+const SHIPMENT_LIST_STATUSES = Object.freeze({
+  to_post: { workflowStatus: { in: ["draft", "ready"] }, postingStatus: "unposted" },
+  posted: { postingStatus: "posted" },
+  reversed: { postingStatus: "reversed" },
+  cancelled: { workflowStatus: "cancelled" },
+});
+
 function smartLinks({ order, reservations, shipments, movements, balances }) {
   const oneShipment = shipments.length === 1 ? shipments[0] : null;
   const oneBalance = balances.length === 1 ? balances[0] : null;
@@ -868,6 +877,111 @@ export function createOutboundWorkbenchReadService({
       capabilities,
     };
   }
+  // The workspace's shipments, newest first, a page at a time (design audit
+  // L4-28): with the sales delivery page frozen there was no list of them at
+  // all. Reading needs shipment.read; a reader limited to some warehouses
+  // sees the shipments every allocation of which is in them, as the shipment
+  // page does. The counts above the list are the workspace's, not the page's.
+  async function listShipments(query = {}, context) {
+    const actor = await resolveProvisionedActor(
+      prisma,
+      context?.identity || context,
+    );
+    assertAuthorized({ actor, permission: "shipment.read", tenantId: actor.tenantId });
+    const scope = { tenantId: actor.tenantId };
+    if (!actor.allWarehouses)
+      scope.lines = {
+        every: {
+          allocations: {
+            every: { warehouseId: { in: [...(actor.readWarehouseIds || [])] } },
+          },
+        },
+      };
+    const where = { ...scope };
+    const status = text(query.status);
+    if (SHIPMENT_LIST_STATUSES[status]) Object.assign(where, SHIPMENT_LIST_STATUSES[status]);
+    const salesOrderId = text(query.salesOrderId);
+    if (salesOrderId) where.salesOrderId = salesOrderId;
+    const search = text(query.search);
+    if (search)
+      where.OR = [
+        { shipmentNumber: { contains: search, mode: "insensitive" } },
+        { salesOrder: { orderNumber: { contains: search, mode: "insensitive" } } },
+        { salesOrder: { customerName: { contains: search, mode: "insensitive" } } },
+        { lines: { some: { sku: { contains: search, mode: "insensitive" } } } },
+      ];
+    const pageSize = Math.min(100, Math.max(1, Number.parseInt(query.pageSize, 10) || 50));
+    const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
+    const [total, rows, ...counts] = await Promise.all([
+      prisma.shipmentDocument.count({ where }),
+      prisma.shipmentDocument.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          shipmentNumber: true,
+          salesOrderId: true,
+          workflowStatus: true,
+          postingStatus: true,
+          createdAt: true,
+          postedAt: true,
+          reversedAt: true,
+          salesOrder: { select: { orderNumber: true, customerName: true } },
+          lines: {
+            select: {
+              sku: true,
+              requestedQuantity: true,
+              unit: true,
+              allocations: { select: { warehouseId: true } },
+            },
+            orderBy: { id: "asc" },
+          },
+        },
+      }),
+      prisma.shipmentDocument.count({ where: scope }),
+      ...Object.values(SHIPMENT_LIST_STATUSES).map((filter) =>
+        prisma.shipmentDocument.count({ where: { ...scope, ...filter } }),
+      ),
+    ]);
+    return {
+      dataSource: "Authoritative PostgreSQL",
+      total,
+      page,
+      pageSize,
+      counts: Object.fromEntries(
+        ["all", ...Object.keys(SHIPMENT_LIST_STATUSES)].map((key, index) => [key, counts[index]]),
+      ),
+      shipments: rows.map((row) => {
+        const lineUnits = [...new Set(row.lines.map((line) => text(line.unit)).filter(Boolean))];
+        return {
+          id: row.id,
+          shipmentNumber: row.shipmentNumber,
+          salesOrderId: row.salesOrderId,
+          salesOrderNumber: row.salesOrder?.orderNumber || null,
+          customerName: row.salesOrder?.customerName || null,
+          workflowStatus: row.workflowStatus,
+          postingStatus: row.postingStatus,
+          createdAt: iso(row.createdAt),
+          postedAt: iso(row.postedAt),
+          reversedAt: iso(row.reversedAt),
+          lineCount: row.lines.length,
+          skus: row.lines.map((line) => line.sku),
+          // The quantity the shipment holds, when its lines share one unit;
+          // quantities in different units are not added up.
+          quantity:
+            lineUnits.length === 1
+              ? fixed(row.lines.reduce((sum, line) => sum + units(line.requestedQuantity), 0n))
+              : null,
+          unit: lineUnits.length === 1 ? lineUnits[0] : null,
+          warehouseIds: [
+            ...new Set(row.lines.flatMap((line) => line.allocations.map((allocation) => allocation.warehouseId))),
+          ].sort(),
+        };
+      }),
+    };
+  }
   async function shipmentWorkbench(id, context) {
     const actor = await resolveProvisionedActor(
       prisma,
@@ -1035,5 +1149,5 @@ export function createOutboundWorkbenchReadService({
       capabilities,
     };
   }
-  return { orderWorkbench, shipmentWorkbench };
+  return { orderWorkbench, shipmentWorkbench, listShipments };
 }

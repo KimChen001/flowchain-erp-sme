@@ -1,3 +1,4 @@
+import { STATUS_TONE_COLORS, mostSeriousTone } from "../ui/statusTones";
 import { AlertTriangle, ArrowLeft, GitBranch, Link2, ListTree, RotateCcw } from "lucide-react";
 import { A, Card, Chip, SectionHeader } from "../ui";
 import type { CanonicalFocusTarget } from "../../lib/evidenceLinks";
@@ -150,10 +151,13 @@ function limitationLabel(code = "") {
   return limitationLabels[code] || code || "当前数据范围有限，需人工复核";
 }
 
+// A risk's colour is the most serious tone among its level, label and
+// status codes, from the app's one status table (design audit L6-17): the
+// regex this replaced read variance and overdue as green, and "质检中" as
+// orange for its 中.
 function riskTone(risk = "") {
-  if (/blocked|high|高|阻塞|异常|差异/.test(risk)) return { color: A.red, bg: "#fff1f0" };
-  if (/medium|中|关注|待|缺/.test(risk)) return { color: A.orange, bg: "#fff8f0" };
-  return { color: A.green, bg: "#f0faf4" };
+  const { color, background } = STATUS_TONE_COLORS[mostSeriousTone(risk)];
+  return { color, bg: background };
 }
 
 function targetForNode(node: Partial<EvidenceGraphNode>) {
