@@ -112,6 +112,30 @@ test('walkthrough scenario allocation: per-line demand, partially received POs a
     assert.equal(getRuntimeSkuAvailability(multi, 'TST-001').availableToPromise, 18)
     assert.equal(getRuntimeSkuAvailability(multi, 'TST-001').shortage, 52)
     assert.deepEqual(getRuntimeSkuAvailability(multi, 'TST-001').salesOrderIds.sort(), ['LOCAL-DEMO-SO-001', 'WALKTHROUGH-SO-MULTI'])
+
+    // The model reads stock, demand and incoming added up in the database
+    // (allocationInputs, design audit L15). While every record fits in the
+    // read context's lists, those lists give the same model. Orders whose last
+    // change ties may be listed either way round, so the lists built from
+    // purchase orders, and the order of the SKUs, are compared as sets.
+    const context = await readBusinessContext({ repositories: createDatabaseRepositoryRegistry({ env: process.env, prisma }), identity: { tenantId } })
+    assert.ok(context.allocationInputs)
+    assert.deepEqual(context.allocationInputs.truncatedSubjects, [])
+    const byText = (a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))
+    const canonical = (model) => ({
+      summary: model.summary,
+      dataLimitations: [...model.dataLimitations].sort(),
+      availability: [...model.availability].sort((a, b) => a.sku.localeCompare(b.sku)).map(row => ({
+        ...row,
+        incomingLines: [...row.incomingLines].sort(byText),
+        incomingExcluded: [...row.incomingExcluded].sort(byText),
+        purchaseOrderIds: [...row.purchaseOrderIds].sort(),
+        evidence: [...row.evidence].sort(byText),
+      })),
+    })
+    const totals = buildRuntimeInventoryAllocation(context)
+    assert.deepEqual(canonical(totals), canonical(buildRuntimeInventoryAllocation({ ...context, allocationInputs: null })))
+    assert.equal(getRuntimeSkuAvailability(totals, 'TST-001').availableToPromise, 18)
   } finally {
     await prisma.$disconnect()
   }

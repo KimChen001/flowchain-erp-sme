@@ -5,7 +5,7 @@ import { readTenantTimezone } from '../domain/tenant-timezone.mjs'
 import { createSupplierScorecardReadService } from '../domain/supplier-scorecard.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { reportReadAccess, scopeBusinessContext, sendReadAccessError } from '../domain/report-read-access.mjs'
-import { createReorderListReadService } from '../domain/reorder-list-read-service.mjs'
+import { allocationTruncatedSubjects, createReorderListReadService } from '../domain/reorder-list-read-service.mjs'
 import { buildRuntimeInventoryAllocation } from '../domain/runtime-inventory-allocation-read-model.mjs'
 import { tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
 
@@ -108,7 +108,7 @@ async function routeReports(ctx) {
         timeZone,
         allocationRows: buildRuntimeInventoryAllocation(allocationContext).availability,
         showPurchaseOrders: Boolean(access.collections.purchaseOrders),
-        truncatedSubjects: (allocationContext.truncatedSubjects || []).filter((entry) => ['inventory_items', 'sales_orders', 'purchase_orders'].includes(entry?.subject)),
+        truncatedSubjects: allocationTruncatedSubjects(allocationContext),
       })
       return list.scope?.kind === 'all_warehouses' ? { orderNow: list.summary.orderNow } : null
     } catch {
