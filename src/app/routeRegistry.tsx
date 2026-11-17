@@ -1667,7 +1667,10 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     viewId: "customer-credit-notes",
     order: 62.4,
   }),
-  page({
+  // Supplier credit notes come only from posted supplier returns, which are
+  // off until December; the page keeps its address but has no tab or card
+  // until then (design audit W-07).
+  {
     id: "finance:credits",
     path: "/app/finance/credits",
     moduleId: "finance",
@@ -1677,8 +1680,11 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     parentId: "finance",
     pageType: "list",
     viewId: "credits",
+    showInSidebar: false,
+    showInModuleNav: false,
+    showInBreadcrumb: true,
     order: 63,
-  }),
+  },
   page({
     id: "finance:reconciliation",
     path: "/app/finance/reconciliation",

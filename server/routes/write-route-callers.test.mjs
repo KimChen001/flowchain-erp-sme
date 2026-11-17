@@ -45,7 +45,8 @@ const CREDIT_DOCUMENTS = 'No screen creates, approves or cancels credit memos or
 const FROZEN_SETTLEMENT = 'Internal settlement, cashbook and the settlement workflow are frozen (shared/unavailable-product-routes.mjs); no screen sends this step.'
 const BANK_STEP = 'The bank reconciliation workbench imports, parses, validates, commits, matches and reverses; it has no control for this step.'
 const RECEIVABLE_STEP = 'The receivable screens offer only Record payment; dispute, resolve and external reference have no control yet.'
-const INTAKE_STEP = 'The intake page pastes or uploads, maps, normalizes, validates, reviews and excludes records; it has no control for this step yet.'
+const EXPORT_HIDDEN = 'FlowChain has no export yet, so the supplier invoice page hides Mark export ready (audit L2-15); the command stays for the export work.'
+const INTAKE_STEP ='The intake page pastes or uploads, maps, normalizes, validates, reviews and excludes records; it has no control for this step yet.'
 const MOBILE_SYNC = 'Offline mobile sync protocol; its client is not in this repository, and the route and Postgres tests drive it.'
 
 // Write routes with no caller in the app, each with the reason.
@@ -98,7 +99,9 @@ const NO_APP_CALLER = {
   'POST /api/finance/receivables/:id/resolve-dispute-preview': RECEIVABLE_STEP,
   'POST /api/finance/receivables/:id/record-external-reference': RECEIVABLE_STEP,
   'POST /api/finance/receivables/:id/record-external-reference-preview': RECEIVABLE_STEP,
-  'PATCH /api/finance/supplier-invoices/:id': 'The supplier invoice page leaves out the revise step, so no screen edits a saved invoice.',
+  'POST /api/finance/payables/:id/mark-export-ready': EXPORT_HIDDEN,
+  'POST /api/finance/payables/:id/mark-export-ready-preview': EXPORT_HIDDEN,
+  'PATCH /api/finance/supplier-invoices/:id':'The supplier invoice page leaves out the revise step, so no screen edits a saved invoice.',
   'POST /api/intake/batches': INTAKE_STEP,
   'POST /api/intake/batches/:id/cancel': INTAKE_STEP,
   'POST /api/intake/batches/:id/commit': INTAKE_STEP,
