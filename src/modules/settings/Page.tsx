@@ -19,7 +19,7 @@ type TranslationKey = Parameters<Translate>[0];
 
 // Seeded labels are stored per tenant in Chinese, so known ids are shown
 // through the dictionary and anything a tenant added keeps its own label.
-function labelFor(t: Translate, prefix: 'settings.module' | 'settings.capability' | 'settings.policy', id: string, stored: string) {
+function labelFor(t: Translate, prefix: 'settings.capability' | 'settings.policy', id: string, stored: string) {
   const key = `${prefix}.${id}`;
   return isTranslationKey(key) ? t(key) : stored;
 }
