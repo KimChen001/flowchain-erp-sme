@@ -178,13 +178,13 @@ test('rule 4: no supplier rate is shown below the minimum sample of 5', () => {
   const report = buildRuntimeGovernedReport(thin, { subject: 'suppliers', filters: { from: '2026-09-01', to: '2026-09-30' } }, asOf)
   const chart = (id) => report.charts.find((item) => item.id === id)
   assert.deepEqual(chart('supplier_on_time').data.map((row) => row.name), ['Acme'])
-  assert.ok(!chart('supplier_scorecard').seriesKeys.includes('Lines accepted in full'))
+  assert.ok(!chart('supplier_scorecard').seriesKeys.includes('Receipt lines without rejection'))
   assert.ok(!chart('supplier_scorecard').seriesKeys.includes('Invoices matched'))
   assert.ok(chart('supplier_performance_matrix').data.every((row) => row.name !== 'Bolt'))
   // With a fifth received line, Acme's accepted rate is shown.
   const enough = { ...thin, receipts: received(5) }
   const shown = buildRuntimeGovernedReport(enough, { subject: 'suppliers', filters: { from: '2026-09-01', to: '2026-09-30' } }, asOf)
-  assert.ok(shown.charts.find((item) => item.id === 'supplier_scorecard').seriesKeys.includes('Lines accepted in full'))
+  assert.ok(shown.charts.find((item) => item.id === 'supplier_scorecard').seriesKeys.includes('Receipt lines without rejection'))
 })
 
 // English to Chinese maps: every entry has Chinese, and no two English

@@ -246,7 +246,7 @@ test('the supplier dashboard and the scorecard measure the same deliveries for t
   // Approved, given its original promise at approval, then cancelled before
   // issue: the buyer called it off, so its lines are not late on either side.
   data.purchaseOrders.push(po('PO-CANCELLED', 'Acme', 'cancelled', ['C1', 'C2', 'C3', 'C4', 'C5'].map(id => promiseLine(id, { originalPromisedDate: '2026-09-10' })), { supplierId: 'SUP-ACME' }))
-  const scorecardFor = (query, receipts = data.receipts) => buildSupplierScorecard({ purchaseOrders: data.purchaseOrders, receipts: receipts.filter(row => row.postingStatus === 'posted'), ...scorecardParameters(query, '2026-10-05'), asOfDay: '2026-10-05', timeZone: 'America/New_York' })
+  const scorecardFor = (query, receipts = data.receipts, extra = {}) => buildSupplierScorecard({ purchaseOrders: data.purchaseOrders, receipts: receipts.filter(row => row.postingStatus === 'posted'), ...scorecardParameters(query, '2026-10-05'), asOfDay: '2026-10-05', timeZone: 'America/New_York', ...extra })
   const rateOf = (scorecard, supplierId) => Math.round(scorecard.suppliers.find(row => row.supplierId === supplierId).metrics.onTime.rate * 1000) / 10
   const overall = scorecard => onTimeShare(scorecard.suppliers.flatMap(row => row.obligations))
 
@@ -263,11 +263,13 @@ test('the supplier dashboard and the scorecard measure the same deliveries for t
   assert.equal(chart(grace, 'supplier_on_time').data[0].value, rateOf(scorecardFor({ graceDays: '3' }), 'SUP-ACME'))
   assert.equal(chart(grace, 'supplier_on_time').data[0].value, 83.3)
 
-  // A reader limited to one warehouse counts the receipts there, as the scorecard does.
+  // A reader limited to one warehouse counts the receipts there, and leaves
+  // out the delivery WH-2 received rather than reading it as late, as the
+  // scorecard does (design audit V-C-05, L9-06).
   data.receipts = data.receipts.map(row => ({ ...row, warehouseId: row.id === 'GRN-A4' ? 'WH-2' : 'WH-1' }))
   const scoped = buildRuntimeGovernedReport(data, { subject: 'suppliers' }, { ...asOf, warehouseIds: ['WH-1'] })
-  assert.equal(chart(scoped, 'supplier_on_time').data[0].value, rateOf(scorecardFor({}, data.receipts.filter(row => row.warehouseId === 'WH-1')), 'SUP-ACME'))
-  assert.equal(chart(scoped, 'supplier_on_time').data[0].value, 50)
+  assert.equal(chart(scoped, 'supplier_on_time').data[0].value, rateOf(scorecardFor({}, data.receipts.filter(row => row.warehouseId === 'WH-1'), { withheldPurchaseOrderIds: ['PO-A4'] }), 'SUP-ACME'))
+  assert.equal(chart(scoped, 'supplier_on_time').data[0].value, 60)
 
   // The scorecard has no currency filter, so a currency picked on the page
   // leaves the on-time figures alone: one more Acme delivery of five lines, in EUR, late.
@@ -308,15 +310,17 @@ test('the dashboards leave out an approved order never sent to the supplier, as 
 // A posted receipt in a warehouse the reader cannot see still means the
 // supplier got the order, even when every unit was rejected: the order is a
 // delivery for every reader, judged on the receipts each may see.
-test('an approved order with a fully rejected receipt in another warehouse is measured for every reader', () => {
+test('an approved order with a fully rejected receipt in another warehouse is measured, and withheld from a reader without that warehouse', () => {
   const data = deliveriesContext()
   data.purchaseOrders.push(po('PO-X', 'Acme', 'approved', [promiseLine('X1')], { supplierId: 'SUP-ACME', metadata: { transmissionStatus: 'not_sent' } }))
   data.receipts.push({ ...postedReceipt('GRN-X', 'PO-X', 'Acme', '2026-09-28T15:00:00.000Z', []), warehouseId: 'WH-2', lines: [{ purchaseOrderLineId: 'X1', acceptedQty: 0, rejectedQty: 10 }] })
-  for (const options of [asOf, { ...asOf, warehouseIds: ['WH-1'] }]) {
-    const report = buildRuntimeGovernedReport(data, { subject: 'suppliers' }, options)
-    assert.equal(kpi(report, 'on_time_receipt_rate').currentValue, 62.5, JSON.stringify(options.warehouseIds))
-    assert.equal(chart(report, 'supplier_on_time').data[0].value, 57.1, JSON.stringify(options.warehouseIds))
-  }
+  // Every warehouse: the order was delivered (the supplier got it) and was late.
+  const all = buildRuntimeGovernedReport(data, { subject: 'suppliers' }, asOf)
+  assert.deepEqual([kpi(all, 'on_time_receipt_rate').currentValue, chart(all, 'supplier_on_time').data[0].value], [62.5, 57.1])
+  // A reader of WH-1 only: the delivery WH-2 received is left out, never read
+  // as late or shown with WH-2's date (design audit V-C-05), as before the order came.
+  const scoped = buildRuntimeGovernedReport(data, { subject: 'suppliers' }, { ...asOf, warehouseIds: ['WH-1'] })
+  assert.deepEqual([kpi(scoped, 'on_time_receipt_rate').currentValue, chart(scoped, 'supplier_on_time').data[0].value], [71.4, 66.7])
 })
 
 test('on time is not measured from receipts the reader cannot see or that were not all loaded', () => {
@@ -445,8 +449,9 @@ test('the supplier matrix and scorecard use only suppliers with enough deliverie
   assert.deepEqual(chart(report, 'supplier_on_time').data, [{ name: 'Acme', value: 66.7, filterValue: 'Acme' }])
   assert.equal(kpi(report, 'active_supplier_count').currentValue, 2)
   const scorecard = chart(report, 'supplier_scorecard')
-  assert.deepEqual(scorecard.seriesKeys, ['On-time deliveries', 'Lines accepted in full', 'Share of spend'])
-  assert.deepEqual(scorecard.data, [{ name: 'Acme', 'On-time deliveries': 66.7, 'Lines accepted in full': 100, 'Share of spend': 81.8 }])
+  // The scorecard's own measures by its names, with no share of spend (design audit L9-05).
+  assert.deepEqual(scorecard.seriesKeys, ['On-time deliveries', 'OTIF', 'Receipt lines without rejection'])
+  assert.deepEqual(scorecard.data, [{ name: 'Acme', 'On-time deliveries': 66.7, OTIF: 66.7, 'Receipt lines without rejection': 100 }])
   // On one PO the six Acme lines are one delivery: no supplier has enough.
   const few = buildRuntimeGovernedReport(scorecardContext(), { subject: 'suppliers' }, asOf)
   assert.deepEqual(chart(few, 'supplier_performance_matrix').data, [])
