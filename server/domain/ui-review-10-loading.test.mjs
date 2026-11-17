@@ -32,7 +32,8 @@ test('counts read "—" until their first answer arrives, never a 0 that is not 
 // because the note never said M5 has none of them.
 test('the M5 note says it has no invoices, payables or payments, in both languages', async () => {
   const note = await read('src/app/PublicDataNote.tsx')
-  assert.match(note, /note\.dataset === "m5" && <p data-testid="public-data-note-m5-no-invoices">\{t\("publicData\.m5NoInvoices"\)\}<\/p>/)
+  // A list item of the note's prices and money group since design audit B7.
+  assert.match(note, /note\.dataset === "m5" && <li data-testid="public-data-note-m5-no-invoices">\{t\("publicData\.m5NoInvoices"\)\}<\/li>/)
   const i18n = await read('src/i18n/I18n.tsx')
   assert.match(i18n, /"publicData\.m5NoInvoices": "M5 sales are point of sale, so there are no customer invoices or receivables\./)
   assert.match(i18n, /"publicData\.m5NoInvoices": "M5 是门店零售：/)
