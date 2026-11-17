@@ -241,10 +241,13 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
         // metadata keeps the same instant.
         const issuedAt = action === "issue" ? row.issuedAt || now() : null;
         const issued = action === "issue" ? { transmissionStatus: "issued_outside_flowchain", issuedAt: serial(issuedAt), issuedById: actor.user.id } : {};
-        // Approval fixes each dated line's original promise, which supplier
-        // scorecards and the on-time KPI measure against. Issuing records it
-        // for a line dated since; a line that has one keeps it.
-        const recordsPromises = action === "approve" || action === "issue";
+        // Issuing fixes each dated line's original promise, which supplier
+        // scorecards and the on-time KPI measure against: the supplier has the
+        // PO from then on. Approval does not, so the buyer can still set the
+        // date the supplier confirms (design audit L1-05). A PO received
+        // without being issued gets its original promise at the first receipt
+        // (receiving-posting-command-service.mjs). A line that has one keeps it.
+        const recordsPromises = action === "issue";
         const originalPromisesRecorded = recordsPromises ? await recordOriginalPromises(tx, { purchaseOrder: row }) : [];
         await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus, version: { increment: 1 }, ...(action === "issue" && !row.issuedAt ? { issuedAt } : {}), metadata: { ...(row.metadata || {}), ...issued, ...closed, approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } } });
         return { action: `purchase_order_${action}`, summary: `${action} purchase order ${row.id}.`, metadata: { reason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null, ...(recordsPromises ? { originalPromisesRecorded } : {}), ...(action === "close" ? { closedOpenQuantities } : {}) } };
@@ -271,10 +274,14 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
       context,
       payload: { id: text(id), expectedVersion, lines: changes, reason: text(input.reason) },
       execute: async (tx, actor, row) => {
-        if (!isIssuedPurchaseOrder(row)) fail("PURCHASE_ORDER_NOT_ISSUED", "Promised dates are revised on issued purchase orders.", 409, { entityId: row.id, currentStatus: row.status });
+        // An approved PO not issued yet takes the date the supplier confirms
+        // as a plain change: its original promise is recorded at issue or at
+        // the first receipt, so nothing is a revision yet (design audit L1-05).
+        // Once issued, every change is a revision.
+        if (!isIssuedPurchaseOrder(row) && row.status !== APPROVED) fail("PURCHASE_ORDER_NOT_ISSUED", "Promised dates are revised on approved or issued purchase orders.", 409, { entityId: row.id, currentStatus: row.status });
         const outcome = await applyPromisedDateChanges(tx, { tenantId: actor.tenantId, purchaseOrder: row, changes, reason: input.reason, actorId: actor.user.id, source: "procurement_db_command_service", at: now(), idFactory });
-        if (!outcome.revisions.length) fail("PROMISED_DATE_UNCHANGED", "The lines already have these promised dates.", 422, [{ field: "lines" }]);
-        return { action: "purchase_order_promised_dates_revised", summary: `Revised promised dates on ${outcome.revisions.length} line(s) of purchase order ${row.id}.`, metadata: { reason: text(input.reason), revisionIds: outcome.revisions.map((revision) => revision.id), originalPromisesRecorded: outcome.originalPromisesRecorded } };
+        if (!outcome.changedLineIds.length) fail("PROMISED_DATE_UNCHANGED", "The lines already have these promised dates.", 422, [{ field: "lines" }]);
+        return { action: "purchase_order_promised_dates_revised", summary: `${outcome.revisions.length ? "Revised" : "Set"} promised dates on ${outcome.changedLineIds.length} line(s) of purchase order ${row.id}.`, metadata: { reason: text(input.reason), revisionIds: outcome.revisions.map((revision) => revision.id), changedLineIds: outcome.changedLineIds, originalPromisesRecorded: outcome.originalPromisesRecorded } };
       },
     });
   }

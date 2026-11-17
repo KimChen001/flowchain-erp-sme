@@ -56,6 +56,8 @@ type Supplier = {
   tierReason: string | null;
   tierSetAt: string | null;
   tierSetBy: { id: string; name: string | null } | null;
+  tierReviewedAt?: string | null;
+  tierNextReviewOn?: string | null;
   businessOwner: { id: string; name: string | null } | null;
   tierHistory?: TierHistoryRow[];
 };
@@ -156,6 +158,8 @@ function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): 
     tierReason: text(value.tierReason) || null,
     tierSetAt: text(value.tierSetAt) || null,
     tierSetBy: (value.tierSetBy as Supplier["tierSetBy"]) || null,
+    tierReviewedAt: text(value.tierReviewedAt) || null,
+    tierNextReviewOn: text(value.tierNextReviewOn) || null,
     businessOwner: (value.businessOwner as Supplier["businessOwner"]) || null,
     tierHistory: Array.isArray(value.tierHistory) ? (value.tierHistory as TierHistoryRow[]) : [],
   };

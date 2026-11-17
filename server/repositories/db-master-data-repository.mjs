@@ -2,7 +2,7 @@ import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
-import { changeSupplierOwner, changeSupplierTier } from '../domain/supplier-tier-command.mjs'
+import { changeSupplierOwner, changeSupplierTier, reviewSupplierTier } from '../domain/supplier-tier-command.mjs'
 import { CUSTOMER_NAMESPACE, listItemSupplierRecords, mapItemSupplierRecord, saveCustomerMaster, saveItemMaster, saveItemSupplier } from '../domain/master-data-commands.mjs'
 import { ITEM_SUPPLIER_LINK_READ_CAP, itemSupplierLinkOptions, itemSupplierLinkPage, joinItemSupplierLinks, preferredSupplierLink } from '../domain/item-supplier-links.mjs'
 import { saveWarehouse, saveWarehouseBin, setWarehouseBinStatus, setWarehouseStatus, warehouseVersion } from '../domain/warehouse-master-commands.mjs'
@@ -166,6 +166,10 @@ function mapSupplier(record = {}) {
     tierReason: text(record.tierReason) || null,
     tierSetAt: record.tierSetAt || null,
     tierSetBy: record.tierSetBy ? { id: record.tierSetBy.id, name: record.tierSetBy.name } : null,
+    // When the tier was last set or reviewed, and the next review day the
+    // person chose (design audit L9-12).
+    tierReviewedAt: text(meta.tierReview?.reviewedAt) || null,
+    tierNextReviewOn: text(meta.tierReview?.nextReviewOn) || null,
     businessOwner: record.businessOwner ? { id: record.businessOwner.id, name: record.businessOwner.name } : null,
   }
 }
@@ -282,7 +286,8 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
     adapter: 'db-master-data-v1',
     createSupplier: async (input, actorId, scope) => mapSupplier(await withPeople(await saveSupplierMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope))),
     updateSupplier: async (id, input, actorId, scope) => mapSupplier(await withPeople(await saveSupplierMaster(await resolvePrisma({ env, prisma }), id, input, actorId, scope))),
-    setSupplierTier: async (id, input, actorId, scope) => mapSupplier(await withPeople(await changeSupplierTier(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope))),
+    setSupplierTier: async (id, input, actorId, scope, options = {}) => mapSupplier(await withPeople(await changeSupplierTier(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope, options))),
+    reviewSupplierTier: async (id, input, actorId, scope, options = {}) => mapSupplier(await withPeople(await reviewSupplierTier(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope, options))),
     setSupplierOwner: async (id, input, actorId, scope) => mapSupplier(await withPeople(await changeSupplierOwner(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope))),
     // The people a supplier can be assigned to: active users of the workspace.
     listSupplierOwners: async (options = {}) => {
@@ -303,11 +308,13 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const count = (tier) => groups.find((row) => (row.tier ?? null) === tier)?._count._all || 0
       return { all: groups.reduce((sum, row) => sum + row._count._all, 0), mine, tier1: count(1), tier2: count(2), tier3: count(3), untiered: count(null) }
     },
-    // The supplier's tier and owner changes, newest first, from the audit log.
+    // The supplier's tier changes and reviews and its owner changes, newest
+    // first, from the audit log. A row's indicators stay in the audit log:
+    // the history is read by people who may not see them.
     supplierTierHistory: async (id = '', options = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const rows = await client.auditLog.findMany({
-        where: { ...tenantWhere(options), entityType: 'supplier', entityId: text(decodeURIComponent(String(id || ''))), action: { in: ['tier_change', 'owner_change'] } },
+        where: { ...tenantWhere(options), entityType: 'supplier', entityId: text(decodeURIComponent(String(id || ''))), action: { in: ['tier_change', 'tier_reviewed', 'owner_change'] } },
         orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
         take: 20,
         include: { actor: { select: { id: true, name: true } } },
@@ -316,12 +323,14 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const owners = ownerIds.length ? await client.user.findMany({ where: { ...tenantWhere(options), id: { in: ownerIds } }, select: { id: true, name: true } }) : []
       const person = (userId) => (userId ? owners.find((user) => user.id === userId) || { id: userId, name: null } : null)
       return rows.map((row) => ({
-        kind: row.action === 'tier_change' ? 'tier' : 'owner',
+        kind: row.action === 'tier_change' ? 'tier' : row.action === 'tier_reviewed' ? 'review' : 'owner',
         at: row.createdAt,
         by: row.actor ? { id: row.actor.id, name: row.actor.name } : null,
         ...(row.action === 'tier_change'
-          ? { fromTier: row.metadata?.fromTier ?? null, toTier: row.metadata?.toTier ?? null, reason: row.metadata?.reason || null, acceptedSuggestion: Boolean(row.metadata?.acceptedSuggestion) }
-          : { fromOwner: person(row.metadata?.fromOwnerId), toOwner: person(row.metadata?.toOwnerId) }),
+          ? { fromTier: row.metadata?.fromTier ?? null, toTier: row.metadata?.toTier ?? null, reason: row.metadata?.reason || null, acceptedSuggestion: Boolean(row.metadata?.acceptedSuggestion), nextReviewOn: row.metadata?.nextReviewOn || null }
+          : row.action === 'tier_reviewed'
+            ? { tier: row.metadata?.tier ?? null, reason: row.metadata?.reason || null, nextReviewOn: row.metadata?.nextReviewOn || null }
+            : { fromOwner: person(row.metadata?.fromOwnerId), toOwner: person(row.metadata?.toOwnerId) }),
       }))
     },
     createItem: async (input, actorId, scope) => mapItem(await saveItemMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope)),
