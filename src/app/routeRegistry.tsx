@@ -25,6 +25,7 @@ import {
   Upload,
   Users,
   Wallet,
+  Contact,
 } from "lucide-react";
 
 export type { AppRouteDefinition } from "./routes/index.ts";
@@ -104,7 +105,10 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     description:
       "统一维护商品、客户、供应商、仓库库位、税码、付款条款与打印模板。",
     icon: Database,
-    defaultChildId: "master-data:items",
+    // The sidebar's Master data entry opens Customers, with warehouses,
+    // locations, payment terms, tax codes, imports and print templates as its
+    // tabs; Items and Suppliers keep their own entries (design audit L6-07).
+    defaultChildId: "master-data:customers",
     entryBehavior: "redirect-to-default-child",
     group: "主导航",
     order: 20,
@@ -858,6 +862,21 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     viewId: "orders",
     order: 41,
   }),
+  // Every shipment, newest first: the list the frozen delivery page never
+  // was (design audit L4-28). Read-only; shipments are drafted from the order.
+  page({
+    id: "sales:shipments",
+    path: "/app/sales/shipments",
+    moduleId: "sales",
+    panelId: "outbound-workbench",
+    moduleLabel: "销售管理",
+    label: "发货单",
+    description: "查看全部发货单：待过账、已过账、已冲销和已取消。",
+    parentId: "sales",
+    pageType: "list",
+    viewId: "shipments",
+    order: 41.2,
+  }),
   page({
     id: "sales:invoices",
     path: "/app/sales/invoices",
@@ -1097,13 +1116,15 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     panelId: "outbound-workbench",
     moduleLabel: "销售管理",
     label: "发货工作台",
-    parentId: "sales:orders",
+    parentId: "sales:shipments",
     pageType: "detail",
-    currentActiveMenuId: "sales:orders",
-    capabilityId: "sales-shipment-draft",
+    currentActiveMenuId: "sales:shipments",
+    // Reading a shipment needs the sales capability and shipment.read, not
+    // the outbound write switch: with writes off, posted shipments stay
+    // readable (route-manifest.ts). Its actions are checked by the API.
     entityType: "shipment",
     entityIdParam: "id",
-    returnListRouteId: "sales:orders",
+    returnListRouteId: "sales:shipments",
     showInSidebar: false,
     showInModuleNav: false,
     showInBreadcrumb: true,
@@ -2726,6 +2747,7 @@ const primaryNavIcons: Record<string, React.ElementType> = {
   "master-data:suppliers": Users,
   contracts: FileSignature,
   "master-data:items": Database,
+  "master-data": Contact,
   finance: Wallet,
   reports: FileSpreadsheet,
   "universal-intake": FileSpreadsheet,

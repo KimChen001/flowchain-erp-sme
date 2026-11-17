@@ -66,9 +66,10 @@ import { FormActionBar, FormHeader, FormLineCard, FormSection, focusFirstInvalid
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useConfirm } from "../../components/ui/ConfirmDialog";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { ListCard, ListSearchCard, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ListCard, ListSearchCard, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import { ListPager, usePagedRows } from "../procurement/listPaging";
 import { SALES_ORDER_STAGES, salesOrderStage, salesOrderStageHint } from "./salesOrderStatus";
+import { reserveAllPlan, salesOrderProgress, shipAllPlan, type ReserveAllPlan, type SalesProgressStep, type ShipAllLine } from "./outboundPlans";
 
 // The interface language for this render. OutboundWorkbench, the root of every
 // page here, sets it from the i18n context before its children render. The
@@ -671,6 +672,7 @@ export default function OutboundWorkbench() {
   );
   const order = location.pathname.match(/^\/app\/sales\/orders\/([^/]+)$/);
   if (location.pathname === "/app/sales/orders/new") return <OrderEntry />;
+  if (location.pathname === "/app/sales/shipments") return <ShipmentList />;
   if (shipment) return <ShipmentDetail id={decodeURIComponent(shipment[1])} />;
   if (order) return <OrderDetail id={decodeURIComponent(order[1])} />;
   return <OrderList />;
@@ -1522,6 +1524,8 @@ function OrderDetail({ id }: { id: string }) {
     [cancelPreview, setCancelPreview] = useState<CancellationPreview | null>(null),
     // The number the server gave the shipment draft just saved.
     [createdShipmentNumber, setCreatedShipmentNumber] = useState(""),
+    // Reserving or shipping the whole order: the plan the dialog shows and sends.
+    [bulk, setBulk] = useState<{ reserve?: ReserveAllPlan; ship?: ShipAllLine[] } | null>(null),
     [saving, setSaving] = useState(false);
   const lifecycleIntents = useRef<Record<string, string>>({}),
     inFlight = useRef(false);
@@ -1563,6 +1567,20 @@ function OrderDetail({ id }: { id: string }) {
     setError("");
     setFieldIssue({});
     setReason("");
+    setBulk(null);
+    // The whole order (design audit L4-08): every open line reserved in one
+    // request, or one shipment for everything reserved. The server's preview
+    // is read as the dialog opens.
+    if (next === "reserve_all" && data) {
+      const plan = reserveAllPlan(data.lines, data.availability);
+      setBulk({ reserve: plan });
+      void previewBulk("reservations/preview", { allocations: plan.allocations });
+    }
+    if (next === "ship_all" && data) {
+      const plan = shipAllPlan(data.lines, data.reservations);
+      setBulk({ ship: plan });
+      void previewBulk("shipments/preview", { lines: plan });
+    }
     if (next === "edit" && data) {
       setSelectedLineId(data.lines[0]?.id || "");
       setEditCustomerId(data.order.customerId || "");
@@ -1639,6 +1657,18 @@ function OrderDetail({ id }: { id: string }) {
     const reservation = data?.reservations.find((row) => row.id === reservationId);
     if (reservation && hasQuantity(reservation.allocatableQuantity))
       setQuantity(plainQuantity(reservation.allocatableQuantity));
+  }
+  async function previewBulk(path: string, body: unknown) {
+    try {
+      setPreview(
+        await apiJson(`/api/sales/orders/${encodeURIComponent(id)}/${path}`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+    } catch (e) {
+      setError(message(e));
+    }
   }
   // Cancelling: the server's plan first, then the command with the same reason.
   async function previewCancellation() {
@@ -1888,6 +1918,13 @@ function OrderDetail({ id }: { id: string }) {
             allocations: [{ reservationId: releasable.id, quantity }],
           },
         ];
+      } else if (intent === "reserve_all" && bulk?.reserve?.allocations.length) {
+        path = "reservations/reserve";
+        body.allocations = bulk.reserve.allocations;
+      } else if (intent === "ship_all" && bulk?.ship?.length) {
+        // One shipment, one number, for every line with stock reserved.
+        path = "shipments";
+        body.lines = bulk.ship;
       } else return;
       const result = await apiJson<{ shipment?: { shipmentNumber?: string } }>(
         `/api/sales/orders/${encodeURIComponent(id)}/${path}`,
@@ -1899,8 +1936,13 @@ function OrderDetail({ id }: { id: string }) {
       const shipmentNumber = path === "shipments" ? result?.shipment?.shipmentNumber || "" : "";
       setCreatedShipmentNumber(shipmentNumber);
       const sku = dialogLine()?.sku || "";
+      const bulkLines = intent === "ship_all" ? bulk?.ship?.length || 0 : new Set((bulk?.reserve?.allocations || []).map((row) => row.salesOrderLineId)).size;
       toast.success(
-        intent === "reserve"
+        intent === "reserve_all"
+          ? say(`Stock reserved on ${bulkLines} ${bulkLines === 1 ? "line" : "lines"}`, `已为 ${bulkLines} 行预留库存`)
+          : intent === "ship_all"
+            ? say(`Shipment ${shipmentNumber} created with ${bulkLines} lines`, `已创建发货单 ${shipmentNumber}，共 ${bulkLines} 行`)
+            : intent === "reserve"
           ? say(`Reserved ${inUnit(quantity, "en-US")} of ${sku}`, `已预留 ${sku} ${inUnit(quantity, "zh-CN")}`)
           : intent === "release"
             ? say(`Released ${inUnit(quantity, "en-US")} of ${sku}`, `已释放 ${sku} ${inUnit(quantity, "zh-CN")}`)
@@ -2038,6 +2080,7 @@ function OrderDetail({ id }: { id: string }) {
     setPreview(null);
     setCancelPreview(null);
     setFieldIssue({});
+    setBulk(null);
   };
   // A refusal about quantities says how much there is (the server's
   // message names no figure).
@@ -2053,15 +2096,21 @@ function OrderDetail({ id }: { id: string }) {
       return say(`Free on this reservation: ${inUnit(releasable.allocatableQuantity, "en-US")}.`, `该预留可用：${inUnit(releasable.allocatableQuantity, "zh-CN")}。`);
     return "";
   };
+  // Reserving and shipping the whole order, offered when more than one line
+  // would use it (design audit L4-08); the one-line dialogs stay beside them.
+  const reserveAll = reserveAllPlan(data.lines, data.availability),
+    shipAll = shipAllPlan(data.lines, data.reservations),
+    canReserveAll = Boolean(a.canReserve) && new Set(reserveAll.allocations.map((row) => row.salesOrderLineId)).size > 1,
+    canShipAll = Boolean(a.canCreateShipment) && shipAll.length > 1;
   // One primary action in the header: the next step for the order.
   const primaryAction = a.canConfirm
     ? "confirm"
     : a.canResume
       ? "resume"
       : a.canCreateShipment
-        ? "shipment"
+        ? canShipAll ? "ship_all" : "shipment"
         : a.canReserve
-          ? "reserve"
+          ? canReserveAll ? "reserve_all" : "reserve"
           : "";
   const toneFor = (action: string) => (action === primaryAction ? "primary" : "secondary");
   // The order total and quantities for the header, from the lines as read.
@@ -2136,6 +2185,65 @@ function OrderDetail({ id }: { id: string }) {
     }
     const shipmentId = check.evidenceLinks?.find((link) => link.type === "shipment")?.id;
     return (shipmentId && shipmentNumbers.get(shipmentId)) || say("Shipment line", "发货行");
+  };
+  // What the whole-order dialog lists: each reservation or allocation by SKU,
+  // place and quantity.
+  const bulkRows =
+    intent === "ship_all"
+      ? (bulk?.ship || []).flatMap((line) =>
+          line.allocations.map((allocation) => {
+            const reservation = reservationFacts(allocation.reservationId);
+            return {
+              key: allocation.reservationId,
+              sku: reservation?.sku || lineSku(line.salesOrderLineId),
+              where: reservation ? place(reservation.warehouseId, reservation.location) : "—",
+              quantity: allocation.quantity,
+              lineId: line.salesOrderLineId,
+            };
+          }),
+        )
+      : (bulk?.reserve?.allocations || []).map((row, index) => ({
+          key: `${row.salesOrderLineId}-${index}`,
+          sku: lineSku(row.salesOrderLineId),
+          where: place(row.warehouseId, row.location),
+          quantity: row.quantity,
+          lineId: row.salesOrderLineId,
+        }));
+  const linesLeftUnshipped = data.lines.filter(
+    (line) => hasQuantity(line.remainingToFulfill) && !(bulk?.ship || []).some((row) => row.salesOrderLineId === line.id),
+  ).length;
+  const stage = salesOrderStage(data.order),
+    stageHint = salesOrderStageHint(data.order, stage);
+  // The order's steps (design audit L7-42), each with a short note.
+  const billing = (invoices || []).filter((invoice) => !["draft", "cancelled", "void", "voided"].includes(invoice.status)),
+    unpaid = billing.filter((invoice) => invoice.paymentStatus !== "settled").length,
+    postedShipments = data.shipments.filter((shipment) => shipment.postingStatus === "posted").length;
+  const progress = salesOrderProgress({ workflowStatus: data.order.workflowStatus, lines: data.lines, invoicing, invoices });
+  const stepDone = (key: SalesProgressStep["key"]) => progress.find((step) => step.key === key)?.status === "done";
+  const progressNotes: Record<string, string> = {
+    ordered:
+      data.order.workflowStatus === "draft"
+        ? say("Draft", "草稿")
+        : data.order.workflowStatus === "cancelled"
+          ? say("Cancelled", "已取消")
+          : data.order.workflowStatus === "on_hold"
+            ? say("On hold", "已暂停")
+            : data.order.createdAt
+              ? formatInstantDay(data.order.createdAt, locale, timezone)
+              : "",
+    reserved: stepDone("reserved") ? say("Reserved", "已预留") : status(data.order.reservationStatus),
+    shipped: postedShipments
+      ? say(`${postedShipments} ${postedShipments === 1 ? "shipment" : "shipments"} posted`, `已过账 ${postedShipments} 张发货单`)
+      : status(data.order.fulfillmentStatus),
+    invoiced: invoicing === null ? "—" : say(...INVOICING_STATES[invoicing].label),
+    paid:
+      invoices === null
+        ? "—"
+        : stepDone("paid")
+          ? say("Paid", "已收款")
+          : unpaid
+            ? say(`${unpaid} ${unpaid === 1 ? "invoice" : "invoices"} to be paid`, `${unpaid} 张发票待收款`)
+            : "",
   };
   const sectionBody: Record<string, () => React.ReactNode> = {
     reservations: () => (
@@ -2270,23 +2378,12 @@ function OrderDetail({ id }: { id: string }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="fc-page-title">{data.order.orderNumber}</h1>
-            <div className="mt-2 flex flex-wrap gap-2" data-testid="sales-order-statuses">
-              <Badge value={data.order.workflowStatus} />
-              {/* Shipping uses up the reservations, so a fully shipped order
-                  reads "Not reserved"; its reservation status is left out.
-                  A partly shipped one with nothing held for the rest says so. */}
-              {!shippedInFull &&
-                (data.order.reservationStatus === "not_reserved" && data.lines.some((line) => hasQuantity(line.fulfilledQuantity)) ? (
-                  <StatusChip label={say("Rest not reserved", "剩余未预留")} tone="warning" />
-                ) : (
-                  <Badge value={data.order.reservationStatus} />
-                ))}
-              <Badge value={data.order.fulfillmentStatus} />
-              {invoicing && invoicing !== "nothing_shipped" && (
-                <span data-testid="sales-order-invoicing-chip">
-                  <StatusChip label={say(...INVOICING_STATES[invoicing].label)} tone={INVOICING_STATES[invoicing].tone} />
-                </span>
-              )}
+            {/* One status, as the order list shows it; the steps below say how
+                far reserving, shipping, invoicing and payment have got (design
+                audit L7-42: three statuses side by side). */}
+            <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="sales-order-statuses">
+              <StatusChip label={say(...SALES_ORDER_STAGES[stage].label)} tone={SALES_ORDER_STAGES[stage].tone} />
+              {stageHint && <span className="text-xs text-slate-500">{say(...stageHint)}</span>}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -2338,6 +2435,11 @@ function OrderDetail({ id }: { id: string }) {
                 {say("Cancel order", "取消订单")}
               </Button>
             )}
+            {canReserveAll && (
+              <Button dense tone={toneFor("reserve_all")} testId="open-reserve-all" onClick={() => start("reserve_all")}>
+                {say("Reserve all lines", "预留全部订单行")}
+              </Button>
+            )}
             {a.canReserve && (
               <Button dense tone={toneFor("reserve")} testId="open-reserve" onClick={() => start("reserve")}>
                 {copy("预留库存")}
@@ -2346,6 +2448,11 @@ function OrderDetail({ id }: { id: string }) {
             {a.canRelease && (
               <Button dense tone="secondary" onClick={() => start("release")}>
                 {copy("释放预留")}
+              </Button>
+            )}
+            {canShipAll && (
+              <Button dense tone={toneFor("ship_all")} testId="open-ship-all" onClick={() => start("ship_all")}>
+                {say("Ship all reserved", "发货全部已预留")}
               </Button>
             )}
             {a.canCreateShipment && (
@@ -2432,6 +2539,7 @@ function OrderDetail({ id }: { id: string }) {
           )}
         </dl>
       </section>
+      <SalesOrderProgress steps={progress} notes={progressNotes} />
       {shortLines.length > 0 && (
         <div role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800" data-testid="sales-order-shortage">
           <p className="font-semibold">
@@ -2673,6 +2781,10 @@ function OrderDetail({ id }: { id: string }) {
               ? say("Cancel sales order", "取消销售订单")
               : intent === "edit"
               ? copy("编辑销售订单草稿")
+              : intent === "reserve_all"
+                ? say("Reserve all lines", "预留全部订单行")
+              : intent === "ship_all"
+                ? say("Ship all reserved stock", "发货全部已预留库存")
               : intent === "reserve"
                 ? say("Reserve inventory", "预留库存")
                 : intent === "release"
@@ -2719,6 +2831,66 @@ function OrderDetail({ id }: { id: string }) {
                 </Button>
                 <Button testId="confirm-cancel-order" disabled={!cancelPreview?.allowed || !cancelReason.trim() || saving} onClick={() => void cancelOrder()}>
                   {saving ? say("Cancelling…", "正在取消…") : say("Cancel order", "取消订单")}
+                </Button>
+              </div>
+            </div>
+          ) : intent === "reserve_all" || intent === "ship_all" ? (
+            <div data-testid={intent === "ship_all" ? "ship-all-panel" : "reserve-all-panel"}>
+              <p className="text-sm text-slate-600">
+                {intent === "ship_all"
+                  ? say(
+                      `One shipment for everything reserved and not yet on a shipment: ${bulk?.ship?.length || 0} lines. Its number is assigned when you save.`,
+                      `为已预留且尚未发货的库存创建一张发货单，共 ${bulk?.ship?.length || 0} 行。保存时自动生成单号。`,
+                    )
+                  : say(
+                      "Each open line is reserved from the stock you may use, from the largest balance first.",
+                      "每个待预留的订单行从你可操作的库存中预留，优先使用数量最多的库位。",
+                    )}
+              </p>
+              <ul className="mt-3 space-y-1 text-sm" data-testid="bulk-plan">
+                {bulkRows.map((row) => (
+                  <li key={row.key} className="flex flex-wrap items-center justify-between gap-x-3 rounded-lg bg-slate-50 px-3 py-1.5">
+                    <span className="font-medium text-slate-700">{row.sku}</span>
+                    <span className="text-slate-500">{row.where}</span>
+                    <span className="tabular-nums">{qtyIn(row.quantity, row.lineId)}</span>
+                  </li>
+                ))}
+              </ul>
+              {intent === "reserve_all" && (bulk?.reserve?.short.length || 0) > 0 && (
+                <p className="mt-2 text-xs text-amber-700" data-testid="reserve-all-short">
+                  {(bulk?.reserve?.short || [])
+                    .map((row) =>
+                      say(
+                        `${lineSku(row.salesOrderLineId)}: ${qtyIn(row.quantity, row.salesOrderLineId)} more than the stock you may use.`,
+                        `${lineSku(row.salesOrderLineId)}：比你可操作的库存多 ${qtyIn(row.quantity, row.salesOrderLineId)}。`,
+                      ),
+                    )
+                    .join(" ")}
+                </p>
+              )}
+              {intent === "ship_all" && linesLeftUnshipped > 0 && (
+                <p className="mt-2 text-xs text-slate-500">
+                  {say(
+                    `${linesLeftUnshipped} ${linesLeftUnshipped === 1 ? "line has" : "lines have"} nothing reserved to ship and ${linesLeftUnshipped === 1 ? "is" : "are"} left for a later shipment.`,
+                    `${linesLeftUnshipped} 行没有可发货的预留，留待之后发货。`,
+                  )}
+                </p>
+              )}
+              {preview ? (
+                <PreviewView preview={preview} lookup={previewLookup} explain={availabilityIssue} />
+              ) : (
+                <p className="mt-3 text-xs text-slate-500">{say("Checking with the server…", "正在由服务器核对…")}</p>
+              )}
+              <div className="mt-4 flex flex-wrap justify-end gap-2">
+                <Button tone="secondary" testId="outbound-dialog-cancel" disabled={saving} onClick={closeDialog}>
+                  {say("Cancel", "取消")}
+                </Button>
+                <Button
+                  testId={intent === "ship_all" ? "confirm-ship-all" : "confirm-reserve-all"}
+                  disabled={!preview?.allowed || saving}
+                  onClick={() => void execute()}
+                >
+                  {saving ? copy("处理中…") : intent === "ship_all" ? say("Create shipment", "创建发货单") : say("Reserve", "确认预留")}
                 </Button>
               </div>
             </div>
@@ -2936,6 +3108,258 @@ function OrderDetail({ id }: { id: string }) {
         </ActionDialog>
       )}
       {dialog.element}
+    </div>
+  );
+}
+
+// The order's steps, as the purchase order page shows its own (design audit
+// L7-42): a dot on a line for each, its label and a note below.
+const PROGRESS_LABELS: Record<SalesProgressStep["key"], [string, string]> = {
+  ordered: ["Ordered", "下单"],
+  reserved: ["Reserved", "预留"],
+  shipped: ["Shipped", "发货"],
+  invoiced: ["Invoiced", "开票"],
+  paid: ["Paid", "收款"],
+};
+const PROGRESS_COLORS: Record<SalesProgressStep["status"], string> = { done: A.green, current: A.blue, warning: A.orange, pending: A.gray3 };
+function SalesOrderProgress({ steps, notes }: { steps: SalesProgressStep[]; notes: Record<string, string> }) {
+  return (
+    <section className="rounded-xl border bg-white p-4" data-testid="sales-order-progress">
+      {/* Five steps fit a phone: no sideways scroll, the notes wrap. */}
+      <ol className="grid" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
+        {steps.map((step, index) => {
+          const color = PROGRESS_COLORS[step.status],
+            next = steps[index + 1];
+          return (
+            <li
+              key={step.key}
+              className="relative px-1 text-center sm:px-2"
+              aria-current={step.status === "current" ? "step" : undefined}
+              data-testid={`sales-order-step-${step.key}`}
+              data-status={step.status}
+            >
+              {next ? <span aria-hidden className="absolute left-1/2 top-[7px] h-0.5 w-full" style={{ background: next.status === "pending" ? A.gray4 : color }} /> : null}
+              <span aria-hidden className="relative mx-auto block h-4 w-4 rounded-full" style={{ background: color, boxShadow: `0 0 0 3px ${color}22` }} />
+              <div className="mt-2 text-xs font-semibold leading-4" style={{ color: step.status === "pending" ? A.gray1 : A.label }}>
+                {say(...PROGRESS_LABELS[step.key])}
+              </div>
+              {notes[step.key] ? <div className="mt-0.5 break-words text-[11px] leading-4" style={{ color: A.gray2 }}>{notes[step.key]}</div> : null}
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}
+
+// One row of the shipment list (outbound-workbench-read-service.mjs).
+type ShipmentRow = {
+  id: string;
+  shipmentNumber: string;
+  salesOrderId: string;
+  salesOrderNumber: string | null;
+  customerName: string | null;
+  workflowStatus: string;
+  postingStatus: string;
+  createdAt: string | null;
+  postedAt: string | null;
+  reversedAt: string | null;
+  lineCount: number;
+  skus: string[];
+  // Null when the lines are in different units.
+  quantity: string | null;
+  unit: string | null;
+  warehouseIds: string[];
+};
+const SHIPMENT_LIST_PAGE_SIZE = 50;
+// The four counts above the list, each a status filter of it.
+const SHIPMENT_CARDS: Record<string, { label: [string, string]; note: [string, string]; icon: React.ElementType; color: string }> = {
+  all: { label: ["Shipments", "发货单"], note: ["Every shipment you can see", "你可查看的全部发货单"], icon: Truck, color: A.blue },
+  to_post: { label: ["To post", "待过账"], note: ["Drafts: stock has not left yet", "草稿：库存尚未出库"], icon: PackageOpen, color: A.orange },
+  posted: { label: ["Posted", "已过账"], note: ["Stock has left the warehouse", "库存已出库"], icon: CheckCircle2, color: A.green },
+  reversed: { label: ["Reversed", "已冲销"], note: ["Posted, then reversed", "过账后已冲销"], icon: AlertTriangle, color: A.red },
+};
+const SHIPMENT_TONE: Record<string, StatusTone> = { posted: "success", ready: "info", draft: "neutral", reversed: "warning", cancelled: "neutral" };
+
+// Every shipment, newest first, a page at a time (design audit L4-28, L7-25):
+// the sales delivery page was frozen, so there was no list of them. Shipments
+// are drafted from the sales order; this list only reads.
+function ShipmentList() {
+  const { locale, timezone, language } = useI18n();
+  const warehouseName = useWarehouseNames();
+  const [params, setParams] = useSearchParams(),
+    [data, setData] = useState<{ shipments: ShipmentRow[]; total: number; page: number; pageSize: number; counts?: Record<string, number> } | null>(null),
+    [error, setError] = useState("");
+  const value = (name: string) => params.get(name) || "";
+  const page = Math.max(1, Number(value("page") || "1") || 1);
+  const update = (changes: Record<string, string | number>) => {
+    const next = new URLSearchParams(params);
+    for (const [name, raw] of Object.entries(changes)) {
+      const v = String(raw);
+      if (!v || v === "all") next.delete(name);
+      else next.set(name, v);
+    }
+    setParams(next);
+  };
+  const load = useCallback(async () => {
+    setError("");
+    try {
+      const query = new URLSearchParams();
+      for (const name of ["search", "status", "salesOrderId"]) if (params.get(name)) query.set(name, params.get(name) || "");
+      query.set("page", String(page));
+      query.set("pageSize", String(SHIPMENT_LIST_PAGE_SIZE));
+      const result = await apiJson<{ shipments: ShipmentRow[]; total: number; page: number; pageSize: number; counts?: Record<string, number> }>(`/api/sales/shipments?${query}`);
+      const pages = Math.max(1, Math.ceil(result.total / result.pageSize));
+      if (page > pages) {
+        update({ page: pages });
+        return;
+      }
+      setData(result);
+    } catch (e) {
+      setData(null);
+      setError(message(e));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.toString(), page]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const filtered = ["search", "status", "salesOrderId"].some((name) => params.get(name));
+  const day = (value?: string | null) => (value ? formatInstantDay(value, locale, timezone) : "—");
+  const count = (key: string) => (data?.counts && typeof data.counts[key] === "number" ? String(data.counts[key]) : "—");
+  return (
+    <div className="space-y-5" data-testid="shipment-list">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Object.entries(SHIPMENT_CARDS).map(([key, card]) => (
+          <ActionableMetricCard
+            key={key}
+            label={say(...card.label)}
+            value={count(key)}
+            description={say(...card.note)}
+            to={`/app/sales/shipments${key === "all" ? "" : `?status=${key}`}`}
+            icon={card.icon}
+            color={card.color}
+          />
+        ))}
+      </div>
+      {error && (
+        <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          {copy(error)}
+        </div>
+      )}
+      <ListSearchCard
+        title={say("Find shipments", "发货单查询")}
+        subtitle={say("By shipment, sales order, customer or SKU. Shipments are drafted from the sales order.", "按发货单号、销售订单、客户或 SKU 查询。发货单从销售订单创建。")}
+        activeFilters={value("status") ? 1 : 0}
+        actions={<>
+          <ResetButton onClick={() => setParams({})} />
+          <RefreshButton onClick={() => void load()} />
+        </>}
+      >
+        <Field label={say("Search", "搜索")}>
+          <input
+            aria-label={say("Search shipments", "搜索发货单")}
+            value={value("search")}
+            onChange={(e) => update({ search: e.target.value, page: 1 })}
+            style={inputStyle}
+            placeholder={say("Shipment, order, customer or SKU", "发货单号、订单、客户或 SKU")}
+          />
+        </Field>
+        <Field label={say("Status", "状态")}>
+          <select
+            aria-label={say("Shipment status filter", "发货单状态筛选")}
+            style={inputStyle}
+            value={value("status")}
+            onChange={(e) => update({ status: e.target.value, page: 1 })}
+          >
+            <option value="">{say("All statuses", "全部状态")}</option>
+            <option value="to_post">{say("To post", "待过账")}</option>
+            <option value="posted">{say("Posted", "已过账")}</option>
+            <option value="reversed">{say("Reversed", "已冲销")}</option>
+            <option value="cancelled">{say("Cancelled", "已取消")}</option>
+          </select>
+        </Field>
+      </ListSearchCard>
+      <ListCard title={say("Shipment list", "发货单列表")} total={data?.total} shown={data?.shipments.length}>
+        <div className={tableScrollClass} ref={listTableCardsRef}>
+          <table className={`w-full min-w-[1040px] text-left ${tableBodyTextClass}`}>
+            <thead>
+              <tr style={listHeadRowStyle}>
+                <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>{say("Shipment", "发货单")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{say("Sales order", "销售订单")}</th>
+                {/* The shipment's one status, the first line of a phone card. */}
+                <th className={thClass} style={{ color: A.gray1 }} data-card-status="">{say("Status", "状态")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{say("Lines", "发货行")}</th>
+                <th className={thRightClass} style={{ color: A.gray1 }}>{say("Quantity", "数量")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{say("Warehouse", "仓库")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{say("Posted", "过账日期")}</th>
+                <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{say("Actions", "操作")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data?.shipments.map((row, index) => {
+                const state = shipmentStatus(row);
+                return (
+                  <tr key={row.id} className={listRowClass} style={listRowStyle(index, data.shipments.length)} data-testid={`shipment-row-${row.id}`}>
+                    <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                      <Link to={`/app/sales/shipments/${encodeURIComponent(row.id)}`} className={`${tableLinkClass} ${phoneTapClass}`}>
+                        {row.shipmentNumber}
+                      </Link>
+                      <div className="text-[11px] font-normal" style={{ color: A.sub }}>{say("Created", "创建")} {day(row.createdAt)}</div>
+                    </td>
+                    <td className="min-w-[180px] max-w-[280px] whitespace-normal px-4 py-3">
+                      <Link to={`/app/sales/orders/${encodeURIComponent(row.salesOrderId)}`} className={tableLinkClass}>
+                        {row.salesOrderNumber || "—"}
+                      </Link>
+                      <div className="text-[11px]" style={{ color: A.sub }}>{row.customerName || ""}</div>
+                    </td>
+                    <td className={tdNowrapClass}>
+                      <StatusChip label={status(state)} tone={SHIPMENT_TONE[state] || "neutral"} />
+                    </td>
+                    <td className="min-w-[160px] max-w-[260px] whitespace-normal px-4 py-3">
+                      {say(`${row.lineCount} ${row.lineCount === 1 ? "line" : "lines"}`, `${row.lineCount} 行`)}
+                      <div className="text-[11px]" style={{ color: A.sub }}>
+                        {row.skus.slice(0, 3).join(", ")}
+                        {row.skus.length > 3 ? say(` and ${row.skus.length - 3} more`, ` 等 ${row.skus.length} 个`) : ""}
+                      </div>
+                    </td>
+                    <td className={tdNumericRightClass}>{row.quantity == null ? "—" : quantityWithUnit(row.quantity, row.unit, language)}</td>
+                    <td className="min-w-[120px] max-w-[220px] whitespace-normal px-4 py-3">{row.warehouseIds.map((warehouseId) => warehouseName(warehouseId)).join(", ") || "—"}</td>
+                    <td className={tdNowrapClass}>
+                      {row.postingStatus === "reversed"
+                        ? say(`Reversed ${day(row.reversedAt)}`, `${day(row.reversedAt)} 冲销`)
+                        : row.postedAt
+                          ? day(row.postedAt)
+                          : "—"}
+                    </td>
+                    <td className={`${tdActionClass} sticky right-0 z-10 !min-w-0 bg-white`}>
+                      <Link className={rowActionClass.primary} to={`/app/sales/shipments/${encodeURIComponent(row.id)}`}>
+                        {copy("查看")}
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {/* Outside the table body: an empty or failed read leaves no rows. */}
+          {data && data.shipments.length === 0 && (
+            <div className="px-4 py-12 text-center text-sm" style={{ color: A.sub }} data-testid="shipment-list-empty">
+              {filtered
+                ? say("No shipments match these filters.", "没有符合筛选条件的发货单。")
+                : say("No shipments yet. A shipment is drafted from a confirmed sales order with stock reserved.", "暂无发货单。发货单从已确认并已预留库存的销售订单创建。")}
+              {filtered && (
+                <button className="ml-2 font-semibold text-blue-600" onClick={() => setParams({})}>
+                  {say("Clear filters", "清除筛选")}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        {data && (
+          <ListPager page={data.page || page} pageSize={data.pageSize || SHIPMENT_LIST_PAGE_SIZE} total={data.total} onPage={(next) => update({ page: next })} testId="shipment-list-pager" />
+        )}
+      </ListCard>
     </div>
   );
 }
