@@ -62,4 +62,22 @@ test("disabled outbound capability makes list and direct entry read-only", async
   });
   expect(create.status()).toBe(409);
   expect((await create.json()).code).toBe("OUTBOUND_CAPABILITY_NOT_AVAILABLE");
+
+  // Shipments stay readable with outbound writes off (design audit L4-28):
+  // the list under Sales and the shipment page open, with no action offered.
+  await page.goto("/app/sales/orders");
+  await page.getByTestId("module-subnav").getByRole("link", { name: "发货单" }).click();
+  await expect(page.getByTestId("shipment-list")).toBeVisible();
+  const shipmentRow = page.getByRole("row").filter({ hasText: "SO-SHIPPED" });
+  await expect(shipmentRow).toContainText("DN-");
+  await expect(shipmentRow).toContainText("已过账");
+  await shipmentRow.getByRole("link", { name: "查看" }).click();
+  await expect(page.getByTestId("capability-route-blocked")).toHaveCount(0);
+  await expect(page.getByTestId("shipment-workbench")).toBeVisible();
+  await expect(page.getByTestId("open-post")).toHaveCount(0);
+  await expect(page.getByTestId("open-reverse")).toHaveCount(0);
+  // The shipment number on its stock movement opens it too.
+  await page.goto("/app/inventory/movements");
+  await page.getByRole("link", { name: /DN-/ }).first().click();
+  await expect(page.getByTestId("shipment-workbench")).toBeVisible();
 });

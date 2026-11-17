@@ -170,7 +170,10 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   expect((await blockedPost.json()).code).toBe("SALES_ORDER_ON_HOLD");
   await page.getByRole("link", { name: /SO-/ }).click();
   await page.getByRole("button", { name: "恢复" }).click();
-  await expect(page.getByText("已确认", { exact: true }).first()).toBeVisible();
+  // Resumed: the order can be held again, and its one status says how far
+  // reserving got (design audit L7-42: the header shows one status).
+  await expect(page.getByTestId("hold-sales-order")).toBeVisible();
+  await expect(page.getByTestId("sales-order-statuses")).toContainText("部分预留");
   await page.getByText(postedNumber, { exact: true }).click();
   // Posting is one confirmation: the dialog reads its preview as it opens.
   await page.getByTestId("open-post").click();
@@ -514,4 +517,76 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
   await expect(page.locator('#movements td[data-card-role="title"]').first()).toHaveText(deliveryNumber);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(2);
+});
+
+// Design audit L4-08, L4-28, L7-25, L7-42: for a two-line order "Reserve
+// all" and "Ship all" make one reservation request and one shipment, not one
+// per line; the Shipments tab under Sales lists it with both lines; the
+// order's steps show where it stands.
+test("reserve all and ship all make one shipment for a two-line order, listed under Sales", async ({ page, request }) => {
+  const login = await request.post("/api/auth/login", { data: { email: "kim@example.com", name: "Kim", company: "Browser Company" } });
+  expect(login.ok()).toBeTruthy();
+  const session = await login.json();
+  await page.addInitScript(({ token, user }) => {
+    localStorage.setItem("flowchain:auth-token", token);
+    localStorage.setItem("flowchain:current-user", JSON.stringify(user));
+  }, session);
+  const headers = { Authorization: `Bearer ${session.token}` };
+  const created = await request.post("/api/sales/orders", {
+    headers,
+    data: {
+      customerId: "CUST-PW-ID",
+      currency: "USD",
+      idempotencyKey: "browser-ship-all-create",
+      lines: [
+        { itemId: "outbound-browser-item", quantity: "1", unitPrice: "5" },
+        { itemId: "outbound-browser-item", quantity: "1", unitPrice: "6" },
+      ],
+    },
+  });
+  expect(created.status()).toBe(201);
+  const { order } = await created.json();
+  const confirmed = await request.post(`/api/sales/orders/${encodeURIComponent(order.id)}/confirm`, {
+    headers,
+    data: { expectedOrderVersion: order.version, idempotencyKey: "browser-ship-all-confirm" },
+  });
+  expect(confirmed.ok()).toBeTruthy();
+
+  await page.goto(`/app/sales/orders/${encodeURIComponent(order.id)}`);
+  await expect(page.getByTestId("sales-order-progress")).toBeVisible();
+  await expect(page.getByTestId("sales-order-step-ordered")).toHaveAttribute("data-status", "done");
+  await expect(page.getByTestId("sales-order-step-reserved")).toHaveAttribute("data-status", "current");
+  await page.getByTestId("open-reserve-all").click();
+  await expect(page.getByTestId("bulk-plan").getByRole("listitem")).toHaveCount(2);
+  await expect(page.getByTestId("confirm-reserve-all")).toBeEnabled();
+  await page.getByTestId("confirm-reserve-all").click();
+  await expect(page.getByTestId("sales-order-step-reserved")).toHaveAttribute("data-status", "done");
+
+  await page.getByTestId("open-ship-all").click();
+  await expect(page.getByTestId("bulk-plan").getByRole("listitem")).toHaveCount(2);
+  await expect(page.getByTestId("confirm-ship-all")).toBeEnabled();
+  await page.getByTestId("confirm-ship-all").click();
+  const number = await createdShipmentNumber(page);
+  // One shipment for the order, not one for each line.
+  await expect(page.locator('#shipments a[href*="/app/sales/shipments/"]')).toHaveCount(1);
+  await expect(page.getByTestId("open-ship-all")).toHaveCount(0);
+
+  // The Shipments tab under Sales lists it, with both lines.
+  await page.getByTestId("module-subnav").getByRole("link", { name: "发货单" }).click();
+  await expect(page).toHaveURL(/\/app\/sales\/shipments$/);
+  await expect(page.getByTestId("shipment-list")).toBeVisible();
+  const row = page.getByRole("row").filter({ hasText: number });
+  await expect(row).toContainText(order.orderNumber);
+  await expect(row).toContainText("2 行");
+  await expect(row).toContainText("待过账");
+  await row.getByRole("link", { name: "查看" }).click();
+  await expect(page.getByTestId("shipment-workbench")).toBeVisible();
+
+  // The stock goes back for the specs after this one.
+  const current = await (await request.get(`/api/sales/orders/${encodeURIComponent(order.id)}/workbench`, { headers })).json();
+  const cancelled = await request.post(`/api/sales/orders/${encodeURIComponent(order.id)}/cancel`, {
+    headers,
+    data: { expectedOrderVersion: current.order.version, reason: "Browser test done", idempotencyKey: "browser-ship-all-cancel" },
+  });
+  expect(cancelled.ok()).toBeTruthy();
 });

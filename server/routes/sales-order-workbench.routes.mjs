@@ -18,9 +18,11 @@ export async function handleSalesOrderWorkbenchRoute(ctx) {
   const transition = path.match(/^\/api\/sales\/orders\/([^/]+)\/(confirm|hold|resume)$/)
   const orderRead = path.match(/^\/api\/sales\/orders\/([^/]+)\/(workbench|evidence|links|reconciliation)$/)
   const shipmentRead = path.match(/^\/api\/sales\/shipments\/([^/]+)\/(workbench|evidence|links|reconciliation)$/)
-  if (!collection && !entryData && !detail && !transition && !orderRead && !shipmentRead) return false
+  // The workspace's shipments (design audit L4-28); reading needs shipment.read.
+  const shipmentList = path === '/api/sales/shipments'
+  if (!collection && !entryData && !detail && !transition && !orderRead && !shipmentRead && !shipmentList) return false
   if (!ctx.identity?.authenticated) { ctx.send(ctx.res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.' }); return true }
-  const isRead = (collection || entryData || orderRead || shipmentRead) && ctx.req.method === 'GET'
+  const isRead = (collection || entryData || orderRead || shipmentRead || shipmentList) && ctx.req.method === 'GET'
   const isCreate = collection && ctx.req.method === 'POST'
   const isEdit = detail && ctx.req.method === 'PATCH'
   const isTransition = transition && ctx.req.method === 'POST'
@@ -32,6 +34,7 @@ export async function handleSalesOrderWorkbenchRoute(ctx) {
     const context = { identity: ctx.identity }
     if (isRead) {
       if (entryData) { ctx.send(ctx.res, 200, await createSalesOrderReadService({ prisma, lifecycleCapability }).entryData(context, Object.fromEntries(ctx.url.searchParams))); return true }
+      if (shipmentList) { ctx.send(ctx.res, 200, await createOutboundWorkbenchReadService({ prisma }).listShipments(Object.fromEntries(ctx.url.searchParams), context)); return true }
       if (orderRead || shipmentRead) {
         const capabilities = {
           lifecycle: lifecycleCapability,

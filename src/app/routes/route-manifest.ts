@@ -35,7 +35,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     inventory inventory:stock inventory:movements inventory:warnings
     inventory:reorder inventory:lots inventory:serials inventory:bins
     inventory:exceptions
-    sales sales:orders sales:risks sales:evidence sales:order-detail
+    sales sales:orders sales:shipments sales:risks sales:evidence sales:order-detail
     sales:invoices sales:invoice-detail sales:invoice-document
     reports reports:overview reports:procurement reports:sales
     reports:inventory reports:finance reports:suppliers reports:library
@@ -132,6 +132,9 @@ const primaryNavigation: Record<
   // both present.
   contracts: { navigationOrder: 65, navigationLabel: "合同" },
   "master-data:items": { navigationOrder: 70, navigationLabel: "物料" },
+  // Customers, warehouses, locations, payment terms, tax codes, imports and
+  // print templates, which had no sidebar entry (design audit L6-07, L7-40).
+  "master-data": { navigationOrder: 72, navigationLabel: "基础资料" },
   // Money owed to suppliers and by customers. Shown only while the
   // operational finance capability and the finance.overview.read permission
   // are both present. Bills and invoices themselves live under Purchasing and
@@ -262,9 +265,12 @@ const mapCapability = (capability: string, routeIds: string) => {
   for (const routeId of ids(routeIds))
     assignUniquePolicy(routeCapability, routeId, capability, "capability policy");
 };
+// The shipment list and page are read with the sales capability; drafting,
+// posting and reversing keep their own capabilities, checked by the API
+// (design audit L4-28: the page needed the write switch to be read).
 mapCapability(
   "sales",
-  "sales sales:orders sales:risks sales:evidence sales:order-detail sales:invoices sales:invoice-detail sales:invoice-document",
+  "sales sales:orders sales:risks sales:evidence sales:order-detail sales:invoices sales:invoice-detail sales:invoice-document sales:shipments sales:shipment-detail",
 );
 mapCapability(
   "stock-transfer",
@@ -392,7 +398,7 @@ mapPermission(
 );
 mapPermission(
   "shipment.read",
-  "sales:delivery sales:delivery:new sales:delivery:edit sales:receipts sales:receipts:new sales:shipment-detail sales:delivery-detail sales:receipt-detail",
+  "sales:delivery sales:delivery:new sales:delivery:edit sales:receipts sales:receipts:new sales:shipments sales:shipment-detail sales:delivery-detail sales:receipt-detail",
 );
 mapPermission("finance.overview.read", "finance finance:overview");
 mapPermission("finance.payable.read", "finance:payables");
@@ -562,6 +568,8 @@ function limitationFor(
     return `Moved; redirects to ${legacyRouteRedirects[route.id].to}.`;
   if (financeWriteGatedRouteIds.has(route.id))
     return "Reading needs only the read permission; recording, matching, approving and issuing need the operational finance capability, checked by the API.";
+  if (route.id === "sales:shipments" || route.id === "sales:shipment-detail")
+    return "Reading needs shipment.read; a reader limited to some warehouses sees the shipments in them. Drafting, posting and reversing need the outbound capabilities, checked by the API.";
   if (classification === "LEGACY")
     return "Retired legacy route; no one-to-one Universal Intake replacement exists.";
   if (classification === "EXTENSION")
