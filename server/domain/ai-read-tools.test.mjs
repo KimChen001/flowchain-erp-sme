@@ -7,7 +7,7 @@ import { validateAiToolArgs, aiToolList, AI_TOOL_LIMITS } from './ai-read-tool-c
 import { AI_READ_TOOLS, aiStockSku } from './ai-read-tools.mjs'
 import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
-import { createSupplierInsightsReadService } from './supplier-insights.mjs'
+import { buildSupplierInsights, createSupplierInsightsReadService } from './supplier-insights.mjs'
 
 async function factsFor(roleKey = 'workspace-administrator') {
   const scenario = aiSkillScenario({ roleKey })
@@ -291,6 +291,33 @@ test('supplier_performance reads the last 90 days by default, or the calendar pe
   await runAiReadTool('supplier_performance', { period: 'last_quarter' }, { facts: { ...facts, supplierScorecard: scorecard } })
   assert.deepEqual(asked.slice(0, 2), [{}, {}])
   assert.ok(asked[2].from && asked[2].to)
+})
+
+// Design audit C7: the assistant reads the supplier list's figures. On one
+// scorecard, supplier_performance gives each supplier's on time and OTIF as
+// the list shows them, ranks by OTIF (L9-03), and gives the receipt-line
+// rejection rate when quantities cannot be added (L9-04) and the deliveries
+// withheld from this reader (L9-06).
+test('supplier_performance gives the on time and OTIF of the supplier list, ranked by OTIF, with receipt-line rejections and withheld deliveries', async () => {
+  const facts = await factsFor()
+  const metric = (rate, count, of) => ({ rate, count, of })
+  const card = { period: { from: '2026-08-12', to: '2026-11-09' }, fieldVisibility: {}, suppliers: [
+    { supplierId: 'SUP-001', supplierName: 'Acme', sampleSize: 5, sampleStatus: 'ok', withheldCount: 1, metrics: { onTime: metric(1, 5, 5), inFull: metric(0.6, 3, 5), otif: metric(0.6, 3, 5), rejection: { rate: null, multipleSkus: true }, rejectedLines: metric(0.2, 2, 10) } },
+    { supplierId: 'SUP-002', supplierName: 'Summit', sampleSize: 5, sampleStatus: 'ok', withheldCount: 0, metrics: { onTime: metric(0.8, 4, 5), inFull: metric(1, 5, 5), otif: metric(0.8, 4, 5), rejection: { rate: 0, multipleSkus: false }, rejectedLines: metric(0, 0, 6) } },
+  ] }
+  const result = (await runAiReadTool('supplier_performance', {}, { facts: { ...facts, supplierScorecard: async () => card } })).result
+  assert.deepEqual(result.suppliers.map((row) => row.name), ['Summit', 'Acme'])
+  const acme = result.suppliers[1]
+  assert.deepEqual([acme.onTime.percent, acme.onTimeInFull.percent, acme.rejection, acme.rejectedReceiptLines.percent, acme.withheldDeliveries], [100, 60, null, 20, 1])
+  assert.equal('withheldDeliveries' in result.suppliers[0], false)
+  // The supplier list's cells on the same scorecard.
+  const list = buildSupplierInsights({ suppliers: [{ id: 'SUP-001' }, { id: 'SUP-002' }], scorecard: card, visibility: { onTime: true } })
+  for (const row of result.suppliers) {
+    const id = row.ref.id
+    assert.equal(row.onTime.percent, Math.round(list[id].onTime.rate * 1000) / 10)
+    assert.equal(row.onTimeInFull.percent, Math.round(list[id].otif.rate * 1000) / 10)
+    assert.deepEqual([row.onTimeInFull.count, row.onTimeInFull.of], [list[id].otif.count, list[id].otif.of])
+  }
 })
 
 test('an order row names its items as the stock rows do, so a draft can name them', async () => {

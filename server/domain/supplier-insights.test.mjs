@@ -27,9 +27,10 @@ test('metrics are null when the reader may not see them', () => {
   const openRows = [{ supplierId: 'A', isOpen: true, overdueDays: 3 }, { supplierId: 'A', isOpen: true, overdueDays: 0 }]
   const signals = [{ type: 'po_overdue', supplierId: 'A' }, { type: 'po_due_7d', supplierId: 'A' }, { type: 'invoice_variance', supplierId: 'A' }, { type: 'invoice_variance', supplierId: '' }]
   const seen = buildSupplierInsights({ suppliers, totals, openRows, signals, visibility: { orders: true, amounts: true, onTime: false, issues: true } }).A
-  assert.deepEqual([seen.spend12m, seen.openPos, seen.overduePos, seen.onTime, seen.openIssues], [[{ currency: 'USD', amount: 100 }], 2, 1, null, 2])
+  // The overdue order is in "Overdue POs", not counted again as an open issue (design audit L9-14).
+  assert.deepEqual([seen.spend12m, seen.openPos, seen.overduePos, seen.onTime, seen.otif, seen.openIssues], [[{ currency: 'USD', amount: 100 }], 2, 1, null, null, 1])
   const hidden = buildSupplierInsights({ suppliers, totals, openRows, signals, visibility: { orders: false, amounts: false, onTime: false, issues: false } }).A
-  assert.deepEqual([hidden.spend12m, hidden.orders12m, hidden.openPos, hidden.overduePos, hidden.onTime, hidden.openIssues], [null, null, null, null, null, null])
+  assert.deepEqual([hidden.spend12m, hidden.orders12m, hidden.openPos, hidden.overduePos, hidden.onTime, hidden.otif, hidden.openIssues], [null, null, null, null, null, null, null])
 })
 
 test('FlowChain suggests no tier: tiers are set by a person (owner decision 2026-10-09)', () => {
@@ -58,16 +59,19 @@ test('supplier risks list every supplier issue the earliest date first, never by
     { id: 'invoice_variance:INV-9', type: 'invoice_variance', supplierId: 'B', entityType: 'supplier_invoice', entityId: 'INV-9', label: 'INV-9', when: when('open', '2026-09-20', 14), data: { variance: 12.5, currency: 'USD' }, severity: 'risk' },
     { id: 'po_overdue:PO-2', type: 'po_overdue', supplierId: 'A', entityType: 'purchase_order', entityId: 'PO-2', label: 'PO-2', when: when('overdue', '2026-09-28', 6), data: { days: 6 }, severity: 'risk' },
     { id: 'po_overdue:PO-1', type: 'po_overdue', supplierId: 'A', entityType: 'purchase_order', entityId: 'PO-1', label: 'PO-1', when: when('overdue', '2026-09-01', 33), data: { days: 33 }, severity: 'risk' },
+    // Not supplier issues: a receipt the buyer has not posted yet (design
+    // audit L9-14), an order due soon, and an issue of a supplier not in the
+    // master. None is listed.
     { id: 'grn_received_unposted:GRN-4', type: 'grn_received_unposted', supplierId: 'C', entityType: 'receiving_doc', entityId: 'GRN-4', label: 'GRN-4', when: when('open', '2026-10-01', 3), data: {}, severity: 'info' },
-    // Not a supplier issue, and an issue of a supplier not in the master: neither is listed.
     { id: 'po_due_7d:PO-3', type: 'po_due_7d', supplierId: 'A', entityType: 'purchase_order', entityId: 'PO-3', label: 'PO-3', when: when('due', '2026-10-06', 2), data: {} },
     { id: 'po_overdue:PO-X', type: 'po_overdue', supplierId: 'GONE', entityType: 'purchase_order', entityId: 'PO-X', label: 'PO-X', when: when('overdue', '2026-08-01', 64), data: { days: 64 } },
   ]
   const master = [{ id: 'A', code: 'SUP-A', name: 'Acme' }, { id: 'B', code: '', name: 'Birch' }, { id: 'C', code: 'SUP-C', name: '' }]
   const rows = insights.supplierRiskRows(signals, master)
-  assert.deepEqual(rows.map((row) => row.entityId), ['PO-1', 'INV-9', 'PO-2', 'GRN-4'])
+  assert.deepEqual(rows.map((row) => row.entityId), ['PO-1', 'INV-9', 'PO-2'])
   assert.deepEqual(rows.map((row) => row.when.date), [...rows.map((row) => row.when.date)].sort())
-  assert.deepEqual(rows.map((row) => [row.supplierId, row.supplierCode, row.supplierName]), [['A', 'SUP-A', 'Acme'], ['B', 'B', 'Birch'], ['A', 'SUP-A', 'Acme'], ['C', 'SUP-C', 'C']])
+  assert.deepEqual(rows.map((row) => [row.supplierId, row.supplierCode, row.supplierName]), [['A', 'SUP-A', 'Acme'], ['B', 'B', 'Birch'], ['A', 'SUP-A', 'Acme']])
+  assert.equal(insights.SUPPLIER_ISSUE_TYPES.includes('grn_received_unposted'), false)
   assert.deepEqual(rows[0], { id: 'po_overdue:PO-1', type: 'po_overdue', entityType: 'purchase_order', entityId: 'PO-1', label: 'PO-1', when: when('overdue', '2026-09-01', 33), data: { days: 33 }, supplierId: 'A', supplierCode: 'SUP-A', supplierName: 'Acme' })
   // No score, weight or severity rank travels with a row.
   assert.ok(rows.every((row) => !('severity' in row) && !('score' in row) && !('rank' in row)))
@@ -92,7 +96,8 @@ test('an order approved but never sent is open, but not overdue or an open issue
     { id: 'po_overdue:PO-UNSENT', type: 'po_overdue', supplierId: 'A', entityType: 'purchase_order', entityId: 'PO-UNSENT', label: 'PO-UNSENT', when: when(9), data: { days: 9, notSent: true } },
   ]
   const row = buildSupplierInsights({ suppliers, openRows, signals, visibility: { orders: true, amounts: false, onTime: false, issues: true } }).A
-  assert.deepEqual([row.openPos, row.overduePos, row.notSentPos, row.openIssues], [3, 1, 2, 1])
+  // The sent order is overdue; it is in "Overdue POs" only, not again in "Open issues" (design audit L9-14).
+  assert.deepEqual([row.openPos, row.overduePos, row.notSentPos, row.openIssues], [3, 1, 2, 0])
   assert.equal(buildSupplierInsights({ suppliers, openRows, signals, visibility: { orders: false, issues: false } }).A.notSentPos, null)
   // Supplier risks and the detail page's issues leave it out too.
   assert.deepEqual(insights.supplierRiskRows(signals, [{ id: 'A', code: 'SUP-A', name: 'Acme' }]).map((entry) => entry.entityId), ['PO-SENT'])
@@ -100,6 +105,43 @@ test('an order approved but never sent is open, but not overdue or an open issue
   // The detail page's purchase records: no days overdue, marked not sent.
   const records = supplierPurchaseRecords([po('A', 10, { id: 'PO-UNSENT', status: 'approved' }), po('A', 10, { id: 'PO-SENT', createdAt: '2026-08-01' })], 'A', { openRows, timeZone: 'America/New_York' }).rows
   assert.deepEqual(records.map((entry) => [entry.id, entry.overdueDays, entry.notSent]), [['PO-UNSENT', 0, true], ['PO-SENT', 4, false]])
+})
+
+// Design audit L9-07: an order closed short after a partial receipt counted
+// at its full amount, though the rest will never come or be billed.
+test('an order closed short counts what was received of it in the 12-month spend', () => {
+  const lines = [
+    { orderedQuantity: 10, receivedQuantity: 4, unitPrice: 25, amount: 250 },
+    { orderedQuantity: 6, receivedQuantity: 0, unitPrice: 10, amount: 60 },
+  ]
+  const totals = supplierPurchaseTotals([po('A', 310, { status: 'closed', lines }), po('A', 40)], window)
+  assert.deepEqual(Object.fromEntries(totals.get('A').byCurrency), { USD: 140 })
+  assert.equal(totals.get('A').amountKnown, true)
+  // Without a line price, the line amount over the ordered quantity prices it.
+  const byAmount = supplierPurchaseTotals([po('A', 310, { status: 'closed', lines: [{ orderedQuantity: 10, receivedQuantity: 4, amount: 250 }] })], window)
+  assert.deepEqual(Object.fromEntries(byAmount.get('A').byCurrency), { USD: 100 })
+  // A line with no quantity received on record makes the spend incomplete, not a guess.
+  const unknown = supplierPurchaseTotals([po('B', 310, { status: 'closed', lines: [{ orderedQuantity: 10, receivedQuantity: null, unitPrice: 25 }] })], window)
+  assert.equal(unknown.get('B').amountKnown, false)
+  // A fully received order still counts its amount.
+  assert.deepEqual(Object.fromEntries(supplierPurchaseTotals([po('A', 310, { status: 'fully_received', lines })], window).get('A').byCurrency), { USD: 310 })
+})
+
+// Design audit L9-03 and L9-13: the list and Supplier evaluation showed only
+// on time (a partial first receipt passes), and "—" for any supplier with
+// fewer than 5 deliveries in 90 days. OTIF is now a column of its own, and
+// each rate carries the counts behind it, plus the deliveries withheld for
+// receipts in warehouses the reader cannot see (L9-06).
+test('the list carries OTIF beside on time, with counts below the sample and the deliveries withheld', () => {
+  const scorecard = { suppliers: [
+    { supplierId: 'A', sampleStatus: 'ok', withheldCount: 2, metrics: { onTime: { rate: 0.8, count: 4, of: 5 }, otif: { rate: 0.6, count: 3, of: 5 } } },
+    { supplierId: 'B', sampleStatus: 'insufficient_sample', withheldCount: 0, metrics: { onTime: { rate: null, count: 3, of: 3 }, otif: { rate: null, count: 2, of: 3 } } },
+  ] }
+  const rows = buildSupplierInsights({ suppliers, scorecard, visibility: { orders: true, amounts: true, onTime: true, issues: true } })
+  assert.deepEqual(rows.A.onTime, { rate: 0.8, count: 4, of: 5, sampleStatus: 'ok', withheld: 2 })
+  assert.deepEqual(rows.A.otif, { rate: 0.6, count: 3, of: 5, sampleStatus: 'ok', withheld: 2 })
+  assert.deepEqual([rows.B.onTime.rate, rows.B.onTime.count, rows.B.onTime.of, rows.B.otif.count, rows.B.otif.of], [null, 3, 3, 2, 3])
+  assert.deepEqual(rows.C.otif, { rate: null, count: 0, of: 0, sampleStatus: 'no_obligations', withheld: 0 })
 })
 
 // The issues as they were read before 2026-11-08: the assistant's signals

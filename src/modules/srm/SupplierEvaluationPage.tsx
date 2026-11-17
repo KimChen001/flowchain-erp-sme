@@ -10,11 +10,11 @@ import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { supplierCopy } from "./supplierCopy";
 import { TierChip, TierForm, type Tier } from "./SupplierTier";
 import type { SupplierInsight, SupplierInsights } from "./supplierInsights";
-import { ON_TIME_HEADER_TIP, sortSuppliersBy, useSupplierMetricCells, type SupplierSort } from "./supplierMetrics";
+import { METRIC_HEADER_TIPS, sortSuppliersBy, useSupplierMetricCells, type SupplierSort } from "./supplierMetrics";
 
 // Supplier evaluation (owner decision 2026-10-09): each supplier's indicators
-// (spend over 12 months, open and overdue POs, on time over 90 days, open
-// issues, from GET /api/master-data/supplier-insights) with its business
+// (spend over 12 months, open and overdue POs, on time and OTIF over 90 days,
+// open issues, from GET /api/master-data/supplier-insights) with its business
 // owner and, next to them, the tier a person set. People with
 // master_data.supplier.manage set or change a tier here, with a reason,
 // through the tier endpoint and its audit row. FlowChain suggests no tier.
@@ -47,11 +47,12 @@ const SORTS: Array<{ value: SupplierSort; label: string }> = [
   { value: "open", label: "Open POs, most first" },
   { value: "overdue", label: "Overdue POs, most first" },
   { value: "onTime", label: "On time, lowest first" },
+  { value: "otif", label: "OTIF, lowest first" },
   { value: "issues", label: "Open issues, most first" },
 ];
 const STATUS_LABEL: Record<Status, string> = { active: "Active", inactive: "Inactive", draft: "Draft" };
 // The long metric headers wrap to two lines, as on the supplier list.
-const METRIC_HEADERS = ["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"];
+const METRIC_HEADERS = ["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "OTIF, 90 days", "Open issues"];
 
 function normalize(value: Record<string, unknown>): EvaluatedSupplier {
   const text = (candidate: unknown) => String(candidate ?? "").trim();
@@ -73,7 +74,7 @@ export default function SupplierEvaluationPage() {
   const { language } = useI18n();
   const t = (value: string) => supplierCopy(value, language);
   const canEdit = useMasterDataWriteAccess().suppliers;
-  const { count, spendCell, onTimeCell } = useSupplierMetricCells();
+  const { count, spendCell, onTimeCell, otifCell, workspaceCurrency } = useSupplierMetricCells();
   const [rows, setRows] = useState<EvaluatedSupplier[]>([]);
   const [counts, setCounts] = useState<Counts | null>(null);
   const [loading, setLoading] = useState(true);
@@ -131,13 +132,13 @@ export default function SupplierEvaluationPage() {
   }, [query, status, tier, owner]);
 
   const insightOf = (id: string): SupplierInsight | undefined => insights?.suppliers[id];
-  const shown = sortSuppliersBy(rows, sortBy, insightOf);
+  const shown = sortSuppliersBy(rows, sortBy, insightOf, workspaceCurrency);
   const filtered = Boolean(query || status || tier || owner);
   const resetFilters = () => { setQuery(""); setStatus(""); setTier(""); setOwner(""); };
   const refresh = () => { load(); loadInsights(); };
   // The total is every supplier under the search and status; tier and owner narrow what is shown.
   const total = counts?.all ?? rows.length;
-  const columns = 9 + (canEdit ? 1 : 0);
+  const columns = 10 + (canEdit ? 1 : 0);
 
   return (
     <div className="space-y-5" data-testid="supplier-evaluation">
@@ -214,13 +215,13 @@ export default function SupplierEvaluationPage() {
           </div>
         ) : (
           <div className={tableScrollClass} ref={listTableCardsRef}>
-            <table className={`w-full min-w-[1080px] text-left ${tableBodyTextClass}`} data-testid="supplier-evaluation-table">
+            <table className={`w-full min-w-[1160px] text-left ${tableBodyTextClass}`} data-testid="supplier-evaluation-table">
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
                   <th className={`${thClass} sticky left-0 z-20 bg-white align-bottom`} style={{ color: A.gray1 }}>{t("Supplier code")}</th>
                   <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Supplier name")}</th>
                   <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Business owner")}</th>
-                  {METRIC_HEADERS.map((label) => <th key={label} title={label === "On time, 90 days" ? t(ON_TIME_HEADER_TIP) : undefined} className={`${thClass} align-bottom !whitespace-normal min-w-[84px] max-w-[120px] text-right`} style={{ color: A.gray1 }}>{t(label)}</th>)}
+                  {METRIC_HEADERS.map((label) => <th key={label} title={METRIC_HEADER_TIPS[label] ? t(METRIC_HEADER_TIPS[label]) : undefined} className={`${thClass} align-bottom !whitespace-normal min-w-[84px] max-w-[120px] text-right`} style={{ color: A.gray1 }}>{t(label)}</th>)}
                   <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Tier")}</th>
                   {canEdit && <th className={`${thClass} sticky right-0 z-20 bg-white align-bottom`} style={{ color: A.gray1 }}>{t("Actions")}</th>}
                 </tr>
@@ -243,6 +244,7 @@ export default function SupplierEvaluationPage() {
                         <td className={tdNumericRightClass}>{count(insight?.openPos)}</td>
                         <td className={tdNumericRightClass}>{count(insight?.overduePos)}</td>
                         <td className={tdNumericRightClass}>{onTimeCell(insight)}</td>
+                        <td className={tdNumericRightClass}>{otifCell(insight)}</td>
                         <td className={tdNumericRightClass}>{count(insight?.openIssues)}</td>
                         <td className={tdNowrapClass} title={row.tierReason || undefined}><TierChip tier={row.tier} short /></td>
                         {canEdit && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>

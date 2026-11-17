@@ -55,8 +55,11 @@ test('finding 6: late orders are flagged on the PO list and the workbench, which
   assert.match(page, /data-testid=\{`po-late-\$\{order\.po\}`\}/)
   assert.match(workbench, /\.\.\.\(daysLate \? \["overdue"\] : \[\]\)/)
   assert.match(workbench, /late: \["\{n\} days late", "逾期 \{n\} 天"\]/)
-  // A late order is not an invoice or match issue.
-  assert.match(workbench, /ISSUE_SIGNALS = new Set\(\["invoice_variance", "match_exception"\]\)/)
+  // A late order is not an invoice or match issue: since design audit L1-18
+  // the issues are the held supplier invoices themselves (workQueue.ts,
+  // tested in procurement-work-queue.test.mjs).
+  assert.match(workbench, /\.\.\.heldInvoiceRows\(invoices, today\)/)
+  assert.doesNotMatch(workbench, /ISSUE_SIGNALS/)
   assert.match(workbench, /\|\| byDate\(left, right\)\)/)
   assert.match(workbench, /to="\/app\/inventory\/reorder"/)
   assert.match(workbench, /apiJson<[^>]+>\("\/api\/inventory\/reorder-list"\)/)

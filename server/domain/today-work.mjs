@@ -18,11 +18,17 @@ import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from '
 //                     safety stock, at the reorder point) labels the row.
 //   bills             the bills page's next step: submitted and waiting for
 //                     the receipt or the match, matched and waiting for
-//                     approval, or a match exception to review.
+//                     approval, or a match exception to review. A bill held
+//                     by a match exception past its due date counts as
+//                     overdue (design audit L2-01): it is owed and no payable
+//                     reminds anyone of it.
 //   invoices          customer invoices approved and not yet issued (the
 //                     finance landing's "awaiting issue").
 //   receivables       money still owed after the due date (the finance
 //                     landing's overdue rule, by calendar day).
+//   payables          money we still owe after the due date, held or not (the
+//                     payables list's overdue rule, overduePayableWhere;
+//                     design audit L7-12 / L7-18).
 //   sales orders      confirmed orders with quantity still to reserve or ship.
 //   purchasing        purchase requests to approve or convert, purchase orders
 //                     to approve and draft purchase orders to review.
@@ -47,6 +53,7 @@ import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from '
 export const TODAY_WORK_KINDS = Object.freeze([
   'purchase_order_overdue',
   'receivable_overdue',
+  'payable_overdue',
   'sales_order_to_ship',
   'sales_order_to_reserve',
   'purchase_order_due',
@@ -224,18 +231,30 @@ export function billNextStep(invoice) {
   return null
 }
 
-function billWork(supplierInvoices, timeZone) {
+function billWork(supplierInvoices, timeZone, today) {
   return array(supplierInvoices).flatMap((invoice) => {
     const kind = billNextStep(invoice)
     if (!kind) return []
     const id = text(invoice.id)
+    // A bill the match held (stored status "exception": a difference to
+    // review, or every difference approved and the bill still to approve) is
+    // owed although it has no payable yet: past its due date it is overdue
+    // (design audit L2-01). It keeps its invoice date, so the row stays where
+    // it was and a decision on it still holds.
+    const due = text(invoice.status).toLowerCase() === 'exception' ? calendarDay(invoice.dueDate) : ''
+    const pastDue = daysLate(due, today)
     return [row(kind, 'supplier_invoice', id, {
       label: text(invoice.invoiceNumber) || id,
       name: text(invoice.supplierName) || null,
       href: `/app/procurement/bills/${encode(id)}`,
       date: calendarDay(invoice.invoiceDate) || instantCalendarDay(invoice.createdAt, timeZone) || null,
       dateKind: 'invoice',
-      detail: { amount: quantity(invoice.totalAmount ?? invoice.amount), currency: text(invoice.currency) || null },
+      overdueDays: pastDue,
+      detail: {
+        amount: quantity(invoice.totalAmount ?? invoice.amount),
+        currency: text(invoice.currency) || null,
+        ...(pastDue ? { dueDate: due } : {}),
+      },
     })]
   })
 }
@@ -276,6 +295,31 @@ function receivableWork(receivables, today) {
       dateKind: 'due',
       overdueDays: daysLate(due, today),
       detail: { outstanding, currency: text(receivable.currency) || null, disputed: text(receivable.disputeStatus) === 'open' },
+    })]
+  })
+}
+
+// Overdue as the payables list counts it (overduePayableWhere): money we
+// still owe on an approved, export-ready, held or partly paid payable past
+// its due date, by calendar day (design audit L7-12 / L7-18). A held payable
+// is still owed, and says it is on hold. A bill has a payable only once it
+// is approved, so no bill is also a bill_* row.
+const OVERDUE_PAYABLE_STATUSES = new Set(['approved', 'export_ready', 'held', 'partially_settled'])
+function payableWork(payables, today) {
+  return array(payables).flatMap((payable) => {
+    const due = calendarDay(payable.dueDate)
+    const outstanding = quantity(payable.outstandingAmount)
+    const owed = outstanding === null ? payable.amountHidden === true : outstanding > 0
+    if (!OVERDUE_PAYABLE_STATUSES.has(text(payable.status)) || !owed || !due || due >= today) return []
+    const invoiceId = text(payable.supplierInvoiceId)
+    return [row('payable_overdue', 'supplier_invoice', invoiceId || text(payable.id), {
+      label: text(payable.supplierInvoiceNumber) || text(payable.obligationNumber) || text(payable.id),
+      name: text(payable.supplierName) || null,
+      href: invoiceId ? `/app/procurement/bills/${encode(invoiceId)}` : '/app/finance/payables?status=overdue',
+      date: due,
+      dateKind: 'due',
+      overdueDays: daysLate(due, today),
+      detail: { outstanding, currency: text(payable.currency) || null, held: text(payable.status) === 'held' },
     })]
   })
 }
@@ -418,9 +462,10 @@ export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFA
   const items = [
     ...purchaseOrderWork(signals, new Map(rows.map((entry) => [entry.id, entry]))),
     ...reorderWork(sources.reorder, stockSignalBySku(signals)),
-    ...billWork(sources.supplierInvoices, timeZone),
+    ...billWork(sources.supplierInvoices, timeZone, today),
     ...customerInvoiceWork(sources.customerInvoices, timeZone),
     ...receivableWork(sources.receivables, today),
+    ...payableWork(sources.payables, today),
     ...salesOrderWork(sources.salesOrders, today),
     ...purchasingWork(sources.purchaseRequests, sources.purchaseOrders, sources.rfqs),
     ...contractWork(sources.contracts, today),

@@ -220,18 +220,26 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await capture(page, "09-inventory-warnings");
 
   await page.goto("/app/procurement/workbench");
-  // The walkthrough scenario has one submitted purchase request and 21 purchase
-  // orders that still need work: 32 orders less 8 fully received and 3 cancelled.
-  await expect(page.getByRole("link", { name: /^全部待办: 22,/ })).toBeVisible();
+  // The walkthrough scenario has one submitted purchase request, 21 purchase
+  // orders that still need work (35 orders less 11 fully received and 3
+  // cancelled) and one supplier invoice held by a match exception,
+  // LOCAL-DEMO-INV-001 on PO-001. Since design audit A6 (L1-18 = L7-02) the
+  // held invoice is a row of its own, the "Invoice or match issues" queue,
+  // as the supplier invoice list's Match exceptions counts it: 22 became 23.
+  // PO-001 stays a row once, as open work, without the invoice's chips.
+  await expect(page.getByRole("link", { name: /^全部待办: 23,/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^发票或匹配问题: 1,/ })).toBeVisible();
   const workbenchRow = (id: string) => page.getByRole("row").filter({ has: page.getByText(id, { exact: true }) });
   // Statuses read as labels in the interface language, not stored codes.
   await expect(workbenchRow("LOCAL-DEMO-PO-001")).toContainText("部分收货");
   await expect(workbenchRow("LOCAL-DEMO-PO-001")).not.toContainText("partially_received");
   await expect(workbenchRow("LOCAL-DEMO-PO-002")).toContainText("已下达");
   await expect(workbenchRow("LOCAL-DEMO-PO-002")).not.toContainText("issued");
-  await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("发票差异", { exact: true })).toBeVisible();
-  await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("三单匹配异常", { exact: true })).toBeVisible();
-  await expect(workbenchRow("LOCAL-DEMO-PO-002").getByText("发票差异", { exact: true })).toHaveCount(0);
+  // The match exception is on the held invoice's row, which names its order.
+  await expect(workbenchRow("LOCAL-DEMO-INV-001").getByText("三单匹配异常", { exact: true })).toBeVisible();
+  await expect(workbenchRow("LOCAL-DEMO-INV-001")).toContainText("对应 LOCAL-DEMO-PO-001");
+  await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("三单匹配异常", { exact: true })).toHaveCount(0);
+  await expect(workbenchRow("LOCAL-DEMO-PO-002").getByText("三单匹配异常", { exact: true })).toHaveCount(0);
   await expect(page.getByText("LOCAL-DEMO-PO-003", { exact: true })).toHaveCount(0);
   await expect(page.getByText("LOCAL-DEMO-PO-030", { exact: true })).toHaveCount(0);
   await capture(page, "10-procurement-workbench");

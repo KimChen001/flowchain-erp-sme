@@ -172,6 +172,54 @@ test('an overdue receivable is listed with what is owed; one due next month is n
   assert.equal(hidden.detail.outstanding, null)
 })
 
+// Design audit L7-12 = L7-18: Today's Overdue counted receivables and
+// purchase orders but never a payable past its due date, so the money we owe
+// late was nowhere on Today. It lists them by the payables list's rule,
+// held ones too.
+test('a payable past its due date is listed as overdue with what we still owe; one paid or not yet due is not', () => {
+  const payables = [
+    { id: 'AP-1', obligationNumber: 'AP-0001', supplierInvoiceId: 'BILL-LATE', supplierInvoiceNumber: 'INV-7700', supplierName: 'Valve Supply Co', status: 'approved', dueDate: '2026-10-05T00:00:00.000Z', outstandingAmount: '75', currency: 'USD' },
+    // Held from payment, still owed and late.
+    { id: 'AP-2', obligationNumber: 'AP-0002', supplierInvoiceId: 'BILL-HELD', supplierInvoiceNumber: 'INV-7701', supplierName: 'Valve Supply Co', status: 'held', dueDate: '2026-10-01T00:00:00.000Z', outstandingAmount: '20', currency: 'USD' },
+    // Due today: not overdue yet, even in the New York evening.
+    { id: 'AP-3', obligationNumber: 'AP-0003', supplierInvoiceId: 'BILL-TODAY', supplierInvoiceNumber: 'INV-7702', supplierName: 'Valve Supply Co', status: 'approved', dueDate: '2026-10-07T00:00:00.000Z', outstandingAmount: '10', currency: 'USD' },
+    { id: 'AP-4', obligationNumber: 'AP-0004', supplierInvoiceId: 'BILL-PAID', supplierInvoiceNumber: 'INV-7781', supplierName: 'Valve Supply Co', status: 'settled', dueDate: '2026-10-01T00:00:00.000Z', outstandingAmount: '0', currency: 'USD' },
+  ]
+  const work = firstDay(EVENING, { payables })
+  const overdue = work.items.filter((item) => item.kind === 'payable_overdue')
+  assert.deepEqual(overdue.map((item) => [item.label, item.overdueDays, item.detail.outstanding, item.detail.held]), [['INV-7701', 6, 20, true], ['INV-7700', 2, 75, false]])
+  assert.equal(overdue[0].href, '/app/procurement/bills/BILL-HELD')
+  assert.equal(overdue[0].entityType, 'supplier_invoice')
+  assert.equal(overdue[0].dateKind, 'due')
+  // They count in Today's Overdue.
+  assert.equal(work.overdue - firstDay(EVENING).overdue, 2)
+  // Without the amount permission the amount is hidden, and the row stays.
+  const hidden = firstDay(EVENING, { payables: [{ ...payables[0], outstandingAmount: null, amountHidden: true }] }).items.find((item) => item.kind === 'payable_overdue')
+  assert.equal(hidden.detail.outstanding, null)
+})
+
+// Design audit L2-01: a bill the three-way match held has no payable, so no
+// payable reminded anyone once its due date passed. Past its due date it
+// counts as overdue, and keeps its invoice date, so its place and any
+// decision on it hold.
+test('a bill held by a match exception past its due date counts as overdue', () => {
+  const held = [
+    { id: 'BILL-HELD-LATE', invoiceNumber: 'INV-7600', supplierName: 'Valve Supply Co', status: 'exception', matchStatus: 'exception', totalAmount: '90.0000', currency: 'USD', invoiceDate: '2026-09-01T00:00:00.000Z', dueDate: '2026-10-01T00:00:00.000Z' },
+    // Every difference approved, still to approve, also late.
+    { id: 'BILL-DIFF-OK', invoiceNumber: 'INV-7601', supplierName: 'Valve Supply Co', status: 'exception', matchStatus: 'variance_approved', totalAmount: '40.0000', currency: 'USD', invoiceDate: '2026-09-02T00:00:00.000Z', dueDate: '2026-10-02T00:00:00.000Z' },
+    { id: 'BILL-HELD-NEW', invoiceNumber: 'INV-7602', supplierName: 'Valve Supply Co', status: 'exception', matchStatus: 'exception', totalAmount: '10.0000', currency: 'USD', invoiceDate: '2026-10-06T00:00:00.000Z', dueDate: '2026-11-05T00:00:00.000Z' },
+    // Matched and not held: waits for approval, not counted as overdue here.
+    { id: 'BILL-MATCHED', invoiceNumber: 'INV-7603', supplierName: 'Valve Supply Co', status: 'matched', totalAmount: '10.0000', currency: 'USD', invoiceDate: '2026-09-01T00:00:00.000Z', dueDate: '2026-10-01T00:00:00.000Z' },
+  ]
+  const work = firstDay(MORNING, { supplierInvoices: held })
+  const row = (label) => work.items.find((item) => item.label === label)
+  assert.deepEqual([row('INV-7600').kind, row('INV-7600').overdueDays, row('INV-7600').date, row('INV-7600').dateKind, row('INV-7600').detail.dueDate], ['bill_exception', 6, '2026-09-01', 'invoice', '2026-10-01'])
+  assert.deepEqual([row('INV-7601').kind, row('INV-7601').overdueDays], ['bill_to_approve', 5])
+  assert.equal(row('INV-7602').overdueDays, 0)
+  assert.equal(row('INV-7602').detail.dueDate, undefined)
+  assert.equal(row('INV-7603').overdueDays, 0)
+})
+
 test('bills, invoices and sales orders follow their pages\' next step', () => {
   assert.equal(billNextStep({ status: 'submitted', poId: 'PO-1', receiptId: null }), 'bill_awaiting_receipt')
   assert.equal(billNextStep({ status: 'submitted', poId: 'PO-1', receiptId: 'GRN-1' }), 'bill_to_match')
@@ -381,7 +429,7 @@ test('a role without purchasing sees no purchase order items; one without financ
 
   const buyer = (await homeFor(roleAccess('procurement-specialist'))).payload
   assert.deepEqual(buyer.workItems.map((item) => item.kind), ['purchase_order_due', 'reorder_now', 'reorder_now', 'reorder_now'])
-  assert.deepEqual(buyer.hidden, ['bills', 'sales_orders', 'customer_invoices', 'receivables'])
+  assert.deepEqual(buyer.hidden, ['bills', 'sales_orders', 'customer_invoices', 'receivables', 'payables'])
   // The setup steps a buyer may not do have no link.
   assert.equal(buyer.firstRun.steps.find((step) => step.id === 'teammates').href, null)
 })

@@ -75,15 +75,17 @@ test('supplier metrics agree with the reports, per reader', async () => {
       // Spend: committed orders of the last 12 months, in USD, never other statuses.
       const usd = purchaseOrders.filter((po) => po.supplierId === supplierId && COMMITTED.has(po.status)).reduce((sum, po) => sum + Number(po.amount), 0)
       assert.deepEqual(row.spend12m, usd ? [{ currency: 'USD', amount: Math.round(usd * 100) / 100 }] : [], supplierId)
-      // Overdue orders are open issues too, as in the assistant.
-      assert.ok(row.openIssues >= row.overduePos, `${supplierId}: ${row.openIssues} issues, ${row.overduePos} overdue`)
     }
-    // Some issues are not overdue orders: rejected or unposted receipts, invoice variances.
-    assert.ok(Object.values(admin.suppliers).some((row) => row.openIssues > row.overduePos))
+    // "Open issues" leaves out overdue orders, which "Overdue POs" counts
+    // (design audit L9-14): rejected receipts and invoice variances remain.
+    assert.ok(Object.values(admin.suppliers).some((row) => row.openIssues > 0))
     // On time against the original promise, in deliveries, as the scorecard
     // reports it: PO-023, approved and due yesterday but never sent to the
     // supplier, is not measured (owner decision 2026-10-06).
-    assert.deepEqual(admin.suppliers[SUP(5)].onTime, { rate: 4 / 6, count: 4, of: 6, sampleStatus: 'ok' })
+    assert.deepEqual(admin.suppliers[SUP(5)].onTime, { rate: 4 / 6, count: 4, of: 6, sampleStatus: 'ok', withheld: 0 })
+    // OTIF beside it, from the same scorecard (design audit L9-03).
+    assert.equal(admin.suppliers[SUP(5)].otif.sampleStatus, 'ok')
+    assert.ok(admin.suppliers[SUP(5)].otif.count <= admin.suppliers[SUP(5)].onTime.count)
     // The report counts PO-023 overdue (decision V5); the supplier pages do
     // not hold it against Northstar, as Today says it was never sent.
     const po23 = report.find((po) => po.id === 'LOCAL-DEMO-PO-023')
@@ -111,7 +113,10 @@ test('supplier metrics agree with the reports, per reader', async () => {
     assert.deepEqual(operations.visibility, { orders: false, amounts: false, onTime: false, issues: true })
 
     // One supplier's detail page (T3): its purchase records and open issues,
-    // per reader. The issues are what the list counts as "Open issues".
+    // per reader. The issues are what the list counts in "Open issues", plus
+    // the overdue orders it counts in "Overdue POs".
+    const listed = (issues) => issues.filter((issue) => issue.type !== 'po_overdue')
+    const overdueOrders = (issues) => issues.filter((issue) => issue.type === 'po_overdue')
     const activity = (key, supplierId) => service.readActivity({ env, repositories, identity: { authenticated: true, tenantId, userId: `${tenantId}-${key}`, role: people[key], name: `Insights ${key}`, source: 'test-suite' } }, supplierId)
     const acme = await activity('admin', SUP(1))
     assert.deepEqual(acme.visibility, { orders: true, orderAmounts: true, invoices: true, invoiceAmounts: true, issues: true })
@@ -143,7 +148,11 @@ test('supplier metrics agree with the reports, per reader', async () => {
     if (before.payableObligation) await prisma.payableObligation.update({ where: { id: before.payableObligation.id }, data: { status: before.payableObligation.status } })
     else await prisma.payableObligation.delete({ where: { id: `${approvedInvoice.id}-u22` } })
     await prisma.supplierInvoice.update({ where: { id: approvedInvoice.id }, data: { status: before.status } })
-    for (const [supplierId, row] of Object.entries(admin.suppliers)) assert.equal((await activity('admin', supplierId)).issues.length, row.openIssues, supplierId)
+    for (const [supplierId, row] of Object.entries(admin.suppliers)) {
+      const { issues } = await activity('admin', supplierId)
+      assert.deepEqual([listed(issues).length, overdueOrders(issues).length], [row.openIssues, row.overduePos], supplierId)
+      assert.ok(issues.every((issue) => issue.type !== 'grn_received_unposted'), supplierId)
+    }
     // The assistant's date order: overdue records first, longest overdue first.
     const overdue = acme.issues.filter((issue) => issue.when.kind === 'overdue')
     assert.deepEqual(acme.issues.slice(0, overdue.length), overdue)
@@ -154,7 +163,7 @@ test('supplier metrics agree with the reports, per reader', async () => {
     assert.deepEqual(viewerAcme.visibility, { orders: true, orderAmounts: false, invoices: false, invoiceAmounts: false, issues: true })
     assert.ok(viewerAcme.purchaseOrders.rows.every((row) => row.amount === null))
     assert.equal(viewerAcme.invoices, null)
-    assert.equal(viewerAcme.issues.length, viewer.suppliers[SUP(1)].openIssues)
+    assert.equal(listed(viewerAcme.issues).length, viewer.suppliers[SUP(1)].openIssues)
     // Finance: invoices with amounts, no orders.
     const financeAcme = await activity('finance', SUP(1))
     assert.deepEqual(financeAcme.visibility, { orders: false, orderAmounts: false, invoices: true, invoiceAmounts: true, issues: true })
@@ -167,13 +176,13 @@ test('supplier metrics agree with the reports, per reader', async () => {
     // Supplier risks: every supplier's open issues on one list, the earliest
     // date first, never by a score; the same issues the list counts, per reader.
     const risks = (key) => service.readRisks({ env, repositories, identity: { authenticated: true, tenantId, userId: `${tenantId}-${key}`, role: people[key], name: `Insights ${key}`, source: 'test-suite' } })
-    const totalIssues = (insights) => Object.values(insights.suppliers).reduce((sum, row) => sum + (row.openIssues || 0), 0)
+    const totalIssues = (insights) => Object.values(insights.suppliers).reduce((sum, row) => sum + (row.openIssues || 0) + (row.overduePos || 0), 0)
     const adminRisks = await risks('admin')
     assert.deepEqual(adminRisks.visibility, { orders: true, receipts: true, invoices: true, issues: true })
     assert.equal(adminRisks.asOf, AS_OF)
     assert.ok(adminRisks.issues.length > 0)
     assert.equal(adminRisks.issues.length, totalIssues(admin))
-    for (const [supplierId, row] of Object.entries(admin.suppliers)) assert.equal(adminRisks.issues.filter((issue) => issue.supplierId === supplierId).length, row.openIssues, supplierId)
+    for (const [supplierId, row] of Object.entries(admin.suppliers)) assert.equal(listed(adminRisks.issues.filter((issue) => issue.supplierId === supplierId)).length, row.openIssues, supplierId)
     const dated = adminRisks.issues.filter((issue) => issue.when.date).map((issue) => issue.when.date)
     assert.deepEqual(dated, [...dated].sort(), 'earliest date first')
     assert.ok(adminRisks.issues.slice(dated.length).every((issue) => !issue.when.date), 'undated issues last')

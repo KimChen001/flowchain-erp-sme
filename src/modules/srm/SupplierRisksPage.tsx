@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ElementType } from "react";
-import { AlertTriangle, FileWarning, PackageX, Truck } from "lucide-react";
+import { AlertTriangle, FileWarning, PackageX } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { useSearchParams } from "react-router";
 import { A, Card, Field, inputStyle } from "../../components/ui";
@@ -13,9 +13,12 @@ import { useSupplierActivityFormat, useSupplierIssueText, type SupplierIssue, ty
 
 // Supplier risks (owner decision 2026-10-09): every supplier's open issues on
 // one list, from GET /api/master-data/supplier-risks: the same signals the
-// supplier list's "Open issues" counts and each detail page's "Risks and
-// exceptions" lists, with the reader's access. Earliest date first, never by
-// a score (owner rule 2026-10-03).
+// supplier list counts in "Overdue POs" and "Open issues" and each detail
+// page's "Risks and exceptions" lists, with the reader's access. Earliest
+// date first, never by a score (owner rule 2026-10-03). Only what is open now:
+// a resolved issue leaves the list, and no history is kept here. A receipt
+// not yet posted is the buyer's to post, not a supplier issue (design audit
+// L9-14).
 
 type RiskRow = SupplierIssue & { supplierId: string; supplierCode: string; supplierName: string };
 type SupplierRisks = {
@@ -29,7 +32,6 @@ type SupplierRisks = {
 const KINDS: Array<{ type: SupplierIssueType; label: string; sub: string; source: keyof SupplierRisks["visibility"]; icon: ElementType; color: string }> = [
   { type: "po_overdue", label: "Overdue purchase orders", sub: "Past their promised date", source: "orders", icon: AlertTriangle, color: A.red },
   { type: "grn_rejected_qty", label: "Receipts with rejections", sub: "A quantity was rejected on receipt", source: "receipts", icon: PackageX, color: A.orange },
-  { type: "grn_received_unposted", label: "Received, not posted", sub: "Not yet posted to inventory", source: "receipts", icon: Truck, color: A.blue },
   { type: "invoice_variance", label: "Invoice variances", sub: "Invoices that differ from the PO or receipt", source: "invoices", icon: FileWarning, color: A.purple },
 ];
 
@@ -76,7 +78,7 @@ export default function SupplierRisksPage() {
 
   return (
     <div className="space-y-5" data-testid="supplier-risks-page">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         {KINDS.map((kind) => (
           <ActionableMetricCard
             key={kind.type}
@@ -124,6 +126,7 @@ export default function SupplierRisksPage() {
           </div>
         </div>
         {data?.issues && <p className="px-5 pt-3 text-[11px]" style={{ color: A.sub }}>{t("Earliest date first: an overdue purchase order by its promised date, any other issue by the day it started. Never ordered by a score.")}</p>}
+        {data?.issues && <p className="px-5 pt-1 text-[11px]" style={{ color: A.sub }} data-testid="supplier-risks-current">{t("Only issues open now: an issue leaves this list once it is resolved, and past issues are not kept here.")}</p>}
         {hiddenKinds.length > 0 && <p className="px-5 pt-1 text-[11px]" style={{ color: A.sub }} data-testid="supplier-risks-partial">
           {t("Some kinds of issue are hidden for your role: {kinds}.").replace("{kinds}", hiddenKinds.map((kind) => t(kind.label)).join(listSeparator))}
         </p>}
@@ -142,7 +145,7 @@ export default function SupplierRisksPage() {
           <div className="py-14 text-center text-sm" style={{ color: A.sub }} data-testid="supplier-risks-empty">
             <span className="font-semibold" style={{ color: A.label }}>{t(filtered ? "No issues match these filters" : "No open supplier issues")}</span>
             <br />
-            <span className="text-xs">{t(filtered ? "Reset the filters to see every open issue." : "Overdue purchase orders, rejected or unposted receipts and invoice variances are listed here when they happen. Nothing needs following up now.")}</span>
+            <span className="text-xs">{t(filtered ? "Reset the filters to see every open issue." : "Overdue purchase orders, receipts with rejections and invoice variances are listed here while they are open. Nothing needs following up now.")}</span>
           </div>
         ) : (
           <div className={tableScrollClass} ref={listTableCardsRef}>

@@ -196,6 +196,7 @@ export function todayWorkOf(context, sources = {}, { now = new Date(), timeZone 
     reorder: sources.reorder,
     customerInvoices: sources.customerInvoices,
     receivables: sources.receivables,
+    payables: sources.payables,
     contracts: sources.contracts,
   }, { now, timeZone })
 }

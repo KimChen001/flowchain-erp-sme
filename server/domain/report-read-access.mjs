@@ -60,12 +60,13 @@ export function reportReadAccessFor(actor) {
     amounts: allowed('finance.amounts.read'),
     partner: allowed('finance.partner_snapshot.read'),
     // What the home page reads beyond the business read context, with each
-    // page's own permission: customer invoices, receivables, contracts (their
+    // page's own permission: customer invoices, receivables, payables, contracts (their
     // owner's, or every one for a reader who manages contracts), and the
     // first-day setup steps the reader may do themselves.
     home: {
       customerInvoices: allowed('finance.customer_invoice.read'),
       receivables: allowed('finance.receivable.read'),
+      payables: allowed('finance.payable.read'),
       contracts: {
         read: allowed('contracts.contract.read'),
         manage: allowed('contracts.contract.manage'),

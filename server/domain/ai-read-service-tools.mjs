@@ -502,7 +502,7 @@ const priceHistory = defineAiTool({
 // records the user may read; the others are named in `hidden`.
 const supplierRisks = defineAiTool({
   name: 'supplier_risks',
-  description: 'The Supplier risks list: each supplier\'s open issues (overdue purchase orders, rejected receipt quantities, receipts received but not posted, supplier invoice variances) with a count per supplier, earliest date first. It does not score or rank suppliers. Filter by supplier or issue type. Record kinds the user may not read are named in hidden: their issues are missing, not zero.',
+  description: 'The Supplier risks list: each supplier\'s open issues (overdue purchase orders, rejected receipt quantities, supplier invoice variances) with a count per supplier, earliest date first. It does not score or rank suppliers. Filter by supplier or issue type. Record kinds the user may not read are named in hidden: their issues are missing, not zero.',
   parameters: {
     supplier: { type: 'string', description: 'A supplier name or code.' },
     type: { type: 'string', enum: SUPPLIER_ISSUE_TYPES },

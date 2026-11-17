@@ -13,18 +13,24 @@ import { SUPPLIER_SCORECARD_READ_PERMISSIONS, createSupplierScorecardReadService
 // reuses an existing rule:
 //   spend        committed purchase orders (isCommittedPurchaseOrder) by their
 //                business date over the last 12 months, per currency, never
-//                added across currencies;
+//                added across currencies; an order closed short counts what
+//                was received of it (design audit L9-07);
 //   open/overdue the open purchase orders report;
-//   on time      the supplier scorecard against the original promise, 90 days,
-//                counted in deliveries (one PO, one promised date), no rate
-//                under its minimum sample of 5 deliveries;
-//   open issues  the assistant's signals (overdue orders, rejected or unposted
+//   on time,     the supplier scorecard against the original promise, 90 days,
+//   OTIF         counted in deliveries (one PO, one promised date), no rate
+//                under its minimum sample of 5 deliveries, when the counts
+//                are shown instead (design audit L9-03, L9-13);
+//   open issues  the assistant's signals the supplier answers for (rejected
 //                receipts, invoice variances), read through its masked facts.
+//                Overdue orders have their own column, so the list does not
+//                count them twice; the detail page and Supplier risks list
+//                them with the rest. A receipt received but not posted is the
+//                buyer's to post, not a supplier issue (design audit L9-14).
 // Each is computed with the reader's own access and is null when the reader
 // may not see it. FlowChain never suggests a tier: tiers differ per company
 // and are set by a person (owner decision 2026-10-09).
 export const SUPPLIER_SPEND_LOOKBACK_DAYS = 365
-export const SUPPLIER_ISSUE_TYPES = Object.freeze(['po_overdue', 'grn_rejected_qty', 'grn_received_unposted', 'invoice_variance'])
+export const SUPPLIER_ISSUE_TYPES = Object.freeze(['po_overdue', 'grn_rejected_qty', 'invoice_variance'])
 // The detail page's purchase records (design §5, T3).
 export const SUPPLIER_ACTIVITY_LIMIT = 20
 
@@ -32,6 +38,23 @@ const text = (value) => String(value ?? '').trim()
 const DAY = 86400000
 const addDays = (day, days) => new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY).toISOString().slice(0, 10)
 const money = (value) => Math.round(value * 100) / 100
+
+const number = (value) => (value === null || value === undefined || value === '' ? NaN : Number(value))
+// What an order closed short is worth: its received quantities at the line
+// prices. NaN when a line lacks its quantity or price, so the spend is marked
+// incomplete rather than guessed.
+function receivedValueOf(po) {
+  const lines = Array.isArray(po?.lines) ? po.lines : []
+  if (!lines.length) return NaN
+  return lines.reduce((sum, line) => {
+    const received = number(line.receivedQuantity)
+    const ordered = number(line.orderedQuantity ?? line.quantity)
+    const unitPrice = number(line.unitPrice)
+    const value = Number.isFinite(unitPrice) ? received * unitPrice : number(line.amount) * received / ordered
+    return sum + (received === 0 ? 0 : value)
+  }, 0)
+}
+const isClosedShort = (po) => text(po?.status).toLowerCase() === 'closed'
 
 // Committed purchase orders per supplier id over a window of business days.
 export function supplierPurchaseTotals(purchaseOrders = [], { from, to, timeZone }) {
@@ -42,9 +65,10 @@ export function supplierPurchaseTotals(purchaseOrders = [], { from, to, timeZone
     if (!supplierId || !isCommittedPurchaseOrder(po) || !day || day < from || day > to) continue
     const row = totals.get(supplierId) || { orders: 0, byCurrency: new Map(), amountKnown: true }
     row.orders += 1
-    const amount = Number(po.totalAmount ?? po.amount)
+    // Closed short: the rest will never be delivered or billed.
+    const amount = isClosedShort(po) ? receivedValueOf(po) : Number(po.totalAmount ?? po.amount)
     const currency = reportCurrencyCode(po.currency || po.lines?.[0]?.currency)
-    if (po.totalAmount === null || po.amount === null || !Number.isFinite(amount) || !currency) row.amountKnown = false
+    if ((!isClosedShort(po) && (po.totalAmount === null || po.amount === null)) || !Number.isFinite(amount) || !currency) row.amountKnown = false
     else row.byCurrency.set(currency, money((row.byCurrency.get(currency) || 0) + amount))
     totals.set(supplierId, row)
   }
@@ -60,9 +84,13 @@ export function supplierPurchaseTotals(purchaseOrders = [], { from, to, timeZone
 // L9-02). The rule is the assistant's (aiSkillPurchaseOrderNotSent).
 const notSentSignal = (signal) => signal.type === 'po_overdue' && Boolean(signal.data?.notSent)
 const countsAgainstSupplier = (signal) => SUPPLIER_ISSUE_TYPES.includes(signal.type) && !notSentSignal(signal)
+// The list's "Open issues": every issue but an overdue order, which the list
+// counts in "Overdue POs" (design audit L9-14).
+export const SUPPLIER_LIST_ISSUE_TYPES = Object.freeze(SUPPLIER_ISSUE_TYPES.filter((type) => type !== 'po_overdue'))
 
-// One supplier's open issues in the assistant's date order: what the list's
-// "Open issues" counts and the detail page's "Risks and exceptions" lists.
+// One supplier's open issues in the assistant's date order: what the detail
+// page's "Risks and exceptions" lists, the list's "Open issues" and
+// "Overdue POs" together.
 const isSupplierIssue = (signal, id) => Boolean(id) && text(signal.supplierId) === id && countsAgainstSupplier(signal)
 export function supplierIssueSignals(signals = [], supplierId) {
   const id = text(supplierId)
@@ -83,12 +111,19 @@ export function buildSupplierInsights({ suppliers = [], totals = new Map(), open
   }
   const scored = new Map((scorecard?.suppliers || []).map((row) => [row.supplierId, row]))
   const issues = new Map()
-  for (const supplier of suppliers) issues.set(supplier.id, signals.filter((signal) => isSupplierIssue(signal, text(supplier.id))).length)
+  for (const supplier of suppliers) issues.set(supplier.id, signals.filter((signal) => isSupplierIssue(signal, text(supplier.id)) && SUPPLIER_LIST_ISSUE_TYPES.includes(signal.type)).length)
+  // A scorecard rate with the counts behind it: a supplier with fewer than 5
+  // deliveries shows "3 of 3" rather than nothing (design audit L9-13).
+  // withheld: deliveries received in a warehouse the reader cannot see, left
+  // out (design audit L9-06).
+  const rateOf = (score, metric) => ({ rate: score?.metrics?.[metric]?.rate ?? null, count: score?.metrics?.[metric]?.count ?? 0, of: score?.metrics?.[metric]?.of ?? 0, sampleStatus: score?.sampleStatus || 'no_obligations', withheld: score?.withheldCount || 0 })
   return Object.fromEntries(suppliers.map((supplier) => {
     const total = totals.get(supplier.id)
     const score = scored.get(supplier.id)
     return [supplier.id, {
-      spend12m: visibility.amounts ? [...(total?.byCurrency || new Map())].map(([currency, amount]) => ({ currency, amount })).sort((a, b) => b.amount - a.amount || a.currency.localeCompare(b.currency)) : null,
+      // By currency code: amounts in different currencies are never compared
+      // (design audit L9-16). The page puts the workspace currency first.
+      spend12m: visibility.amounts ? [...(total?.byCurrency || new Map())].map(([currency, amount]) => ({ currency, amount })).sort((a, b) => a.currency.localeCompare(b.currency)) : null,
       spendComplete: visibility.amounts ? (total?.amountKnown ?? true) : null,
       orders12m: visibility.orders ? total?.orders || 0 : null,
       openPos: visibility.orders ? open.get(supplier.id)?.open || 0 : null,
@@ -96,7 +131,11 @@ export function buildSupplierInsights({ suppliers = [], totals = new Map(), open
       // Open orders approved but not sent to the supplier yet: counted in
       // openPos, never in overduePos.
       notSentPos: visibility.orders ? open.get(supplier.id)?.notSent || 0 : null,
-      onTime: visibility.onTime ? { rate: score?.metrics?.onTime?.rate ?? null, count: score?.metrics?.onTime?.count ?? 0, of: score?.metrics?.onTime?.of ?? 0, sampleStatus: score?.sampleStatus || 'no_obligations' } : null,
+      onTime: visibility.onTime ? rateOf(score, 'onTime') : null,
+      // On time and in full against the same promise (design audit L9-03): a
+      // column of its own beside on time, which a partial first receipt
+      // passes. A delivery still short inside its window is not counted yet.
+      otif: visibility.onTime ? rateOf(score, 'otif') : null,
       openIssues: visibility.issues ? issues.get(supplier.id) || 0 : null,
     }]
   }))

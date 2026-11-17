@@ -53,6 +53,33 @@ test('Today lists a receivable due yesterday as overdue in a London workspace', 
   assert.deepEqual(ids, ['DUE-1112', 'DUE-1113'])
 })
 
+// Design audit L7-12 = L7-18: Today read no payables at all. It reads those
+// overdue by the payables list's rule (overduePayableWhere), on the instant
+// and the workspace timezone, and only for a reader who may read payables.
+test('Today reads the payables past their due date by the payables list rule, for a reader who may read them', async () => {
+  const payable = (id, due, { status = 'approved', outstanding = '10.0000' } = {}) => ({
+    id, tenantId: TENANT, obligationNumber: `AP-${id}`, supplierInvoiceId: `BILL-${id}`, dueDate: day(due), outstandingAmount: outstanding, currency: 'GBP', status,
+    supplierInvoice: { id: `BILL-${id}`, invoiceNumber: `INV-${id}`, supplierName: 'Acme' },
+  })
+  const payables = [
+    payable('DUE-1113', '2026-11-13'), // yesterday: overdue
+    payable('HELD-1110', '2026-11-10', { status: 'held' }),
+    payable('DUE-1114', '2026-11-14'), // today: not overdue yet
+    payable('PAID-1101', '2026-11-01', { status: 'settled', outstanding: '0.0000' }),
+    payable('VOID-1101', '2026-11-01', { status: 'cancelled' }),
+    { ...payable('OTHER-1101', '2026-11-01'), tenantId: 'another-tenant' },
+  ]
+  const read = async (home, amounts = true) => readTodayWorkSources(
+    { identity: { tenantId: TENANT }, env: {}, homeOverviewPrisma: { payableObligation: inMemoryModel(payables) } },
+    { access: { home, collections: {}, amounts, partner: true }, rawContext: {}, now: new Date('2026-11-15T04:30:00.000Z'), today: '2026-11-14', timeZone: 'America/New_York' },
+  )
+  const { sources } = await read({ payables: true })
+  assert.deepEqual(sources.payables.map((row) => row.id), ['HELD-1110', 'DUE-1113'])
+  assert.deepEqual([sources.payables[0].supplierInvoiceNumber, sources.payables[0].supplierName, sources.payables[0].outstandingAmount, sources.payables[0].status], ['INV-HELD-1110', 'Acme', '10.0000', 'held'])
+  assert.equal((await read({ payables: true }, false)).sources.payables[0].outstandingAmount, null)
+  assert.equal((await read({})).sources.payables, undefined)
+})
+
 // Design audit 2026-11-15 (V-C-03): past 100 held invoices the newest were
 // read, so the oldest cards Today shows first had no prepared step, and
 // nothing said so.

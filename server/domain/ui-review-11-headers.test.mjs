@@ -51,9 +51,11 @@ test('item actions say item, in English and Chinese', async () => {
 })
 
 // The finance overview counted difference lines (44) while its card opens the
-// list of invoices with differences and Today counts invoices (27).
+// list of invoices with differences and Today counts invoices (27). Since
+// design audit L2-14 the card counts by the rule of the list it opens, the
+// supplier invoices held by a match exception (status=exception).
 test('the match exceptions card counts supplier invoices with a difference to decide', async () => {
   const service = await read('server/domain/operational-finance-o2c-read-service.mjs')
-  assert.match(service, /prisma\.supplierInvoice\.count\(\{\s*where: \{\s*tenantId: current\.tenantId,\s*matchExceptions: \{ some: \{ status: \{ in: \["open", "reviewed"\] \} \} \},/)
+  assert.match(service, /prisma\.supplierInvoice\.count\(\{\s*where: \{ tenantId: current\.tenantId, \.\.\.matchHeldInvoiceWhere\(\) \},/)
   assert.doesNotMatch(service, /prisma\.financeMatchException\.count\(/)
 })
