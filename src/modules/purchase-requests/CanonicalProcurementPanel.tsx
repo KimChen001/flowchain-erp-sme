@@ -9,7 +9,7 @@ import { usePermissionSet } from "../../lib/usePermissionSet";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
-import { ArrowLeft, CheckCircle2, ClipboardCheck, FileText, Plus, RefreshCw, Truck } from "lucide-react";
+import { CheckCircle2, ClipboardCheck, FileText, Plus, RefreshCw, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { rememberDocumentNumbers, resolveDocumentNumbers } from "../../lib/documentNumbers";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
@@ -25,10 +25,13 @@ function signedInName() {
     return "";
   }
 }
-import { A, Card, Field, inputStyle, useConfirm } from "../../components/ui";
+import { A, Card, DocumentHistoryPanel, Field, inputStyle, SectionHeader, useConfirm } from "../../components/ui";
+import { DocumentShell, OverviewFields } from "../../components/document/DocumentShell";
+import { BackToListLink } from "../procurement/BackToListLink";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
 import { EntityLink } from "../../components/business/EntityLink";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
-import { ExportButton, ListCard, ListSearchCard, ListStateRow, PrimaryButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, PrimaryButton, RefreshButton, ResetButton, RowMenu, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { FormActionBar, FormHeader, FormLineCard, FormSection, focusFirstInvalid, formGridClass, useFormCopy } from "../../components/ui/formLayout";
 import { statusCodeLabel } from "../../i18n/statusLabels";
@@ -147,7 +150,7 @@ const FIELD_MESSAGES: Record<string, ErrorPair> = {
   quantity: ["Enter a quantity above 0.", "请输入大于 0 的数量。"],
   estimatedUnitPrice: ["Enter an estimated unit price (0 or more).", "请输入预计单价（可为 0）。"],
   estimatedAmount: ["Enter an amount above 0.", "请输入大于 0 的金额。"],
-  needByDate: ["Choose a required date.", "请选择需求日期。"],
+  needByDate: ["Choose a need-by date.", "请选择需求日期。"],
   defaultCurrency: ["Choose a currency.", "请选择币种。"],
   defaultNeedByDate: ["Enter a valid date.", "请输入有效日期。"],
 };
@@ -248,16 +251,11 @@ const REQUEST_ACTIONS_BY_STATUS: Record<string, RequestAction[]> = {
   submitted: ["approve", "reject", "withdraw"],
   approved: ["generate-purchase-orders"],
 };
-// How each action looks on a list row, and the main step of the detail header.
-const ROW_ACTION_TONE: Record<RequestAction, "primary" | "neutral" | "danger"> = {
-  edit: "primary",
-  submit: "neutral",
-  approve: "primary",
-  reject: "danger",
-  withdraw: "neutral",
-  "generate-purchase-orders": "primary",
-};
+// The step that moves a request on: the blue button of the detail header,
+// first in a row's More menu.
 const DETAIL_PRIMARY = new Set<RequestAction>(["submit", "approve", "generate-purchase-orders"]);
+// Rows to a page, as on the purchase order list (design audit U-14).
+const PR_LIST_PAGE_SIZE = 50;
 const COPY = {
   // The metric tiles name each state as its status chip does, so a state has
   // one name on this page; the note says what it means.
@@ -319,6 +317,18 @@ const COPY = {
   withdrawTitle: ["Withdraw {number}?", "撤回 {number}？"],
   withdrawBody: ["It leaves the approval queue and goes back to draft. You can edit it and submit it again.", "该申请将退出审批并退回草稿；可以修改后重新提交。"],
   withdraw: ["Withdraw", "撤回"],
+  // The detail page in the PO's layout (design audit U-09).
+  moduleLabel: ["Purchase request", "采购申请"],
+  notFound: ["Purchase request not found.", "未找到采购申请。"],
+  overview: ["Overview", "概览"],
+  estimatedTotal: ["Estimated total", "预计总额"],
+  department: ["Department", "部门"],
+  currency: ["Currency", "币种"],
+  defaultNeedBy: ["Default need by", "默认需求日期"],
+  changes: ["Changes", "变更记录"],
+  history: ["Changes to this request", "申请变更记录"],
+  historyEmpty: ["No changes recorded for this request yet.", "此申请暂无变更记录。"],
+  more: ["More", "更多"],
 } as const;
 const request = <T,>(url: string, method = "GET", body?: unknown) =>
   apiJson<T>(url, {
@@ -402,6 +412,12 @@ export default function CanonicalProcurementPanel({
   const [formOpen, setFormOpen] = useState(() => opensForm(searchParams));
   useEffect(() => {
     if (opensForm(searchParams)) setFormOpen(true);
+    // Back from a new request's address (?mode=create) closes its form; an
+    // edit has no address of its own and stays open (design audit U-13).
+    else if (formOpen && !editing && !detailEdit.current) {
+      reset();
+      setFormOpen(false);
+    }
   }, [location.key]);
   const [filters, setFilters] = useState({ number: "", item: "", requester: "" });
   // The status filter lives in the URL, so the metric cards can set it.
@@ -425,10 +441,11 @@ export default function CanonicalProcurementPanel({
     setDefaultDate(workspaceDay);
     setLines((current) => current.map((line) => (line.needByDate === previous ? { ...line, needByDate: workspaceDay } : line)));
   }, [timezone]);
-  const selected =
-    focus?.entityType === "purchase_request"
-      ? rows.find((row) => row.id === focus.entityId)
-      : null;
+  // A request opens by its id or by its number, as a PO does (design audit U-08).
+  const focusKey = focus?.entityType === "purchase_request" ? focus.entityId : "";
+  const selected = focusKey
+    ? rows.find((row) => row.id === focusKey || (row.number || "").toLowerCase() === focusKey.toLowerCase())
+    : null;
   // The breadcrumb names the request by its number, not the id in the address.
   useDetailCrumb(selected ? numberOf(selected) : null);
   const load = async () => {
@@ -731,6 +748,8 @@ export default function CanonicalProcurementPanel({
   const openNewForm = () => {
     reset();
     setFormOpen(true);
+    // Its own address: Back returns to the list and a reload keeps the form (U-13).
+    if (!opensForm(searchParams)) setSearchParams({ mode: "create" });
   };
   // Back to the list; a link's form query is dropped so it does not reopen.
   const closeForm = () => {
@@ -985,10 +1004,12 @@ export default function CanonicalProcurementPanel({
     && (!filters.item.trim() || pr.lines.some((line) => contains(line.sku, filters.item) || contains(line.itemNameSnapshot, filters.item)))
     && (!filters.requester.trim() || contains(requesterOf(pr), filters.requester)),
   );
+  const paged = usePagedRows(shownRows, PR_LIST_PAGE_SIZE, JSON.stringify([filters, statusFilter]));
   const resetFilters = () => {
     setFilters({ number: "", item: "", requester: "" });
     setStatusFilter("");
   };
+  const reload = () => load().catch((error) => toast.error(errorText(error, LOAD_FAILED)));
   // Document numbers, not internal ids, in the file.
   const exportRequests = async () => {
     const orderNumbers = await resolveDocumentNumbers("purchase_order", shownRows.flatMap((pr) => pr.linkedPurchaseOrderIds || []));
@@ -1028,55 +1049,53 @@ export default function CanonicalProcurementPanel({
   };
   if (selected && !editingSelected) {
     // The detail header offers what the list row offers for this status, the
-    // main step last; a draft's Submit asks for approval as it is.
-    const detailActions = [...actionsFor(selected)].sort((a, b) => Number(DETAIL_PRIMARY.has(a)) - Number(DETAIL_PRIMARY.has(b)));
+    // main step first, as on a PO; a draft's Submit asks for approval as it is.
+    const detailActions = [...actionsFor(selected)].sort((a, b) => Number(DETAIL_PRIMARY.has(b)) - Number(DETAIL_PRIMARY.has(a)));
     const busy = submitting || acting === selected.id;
     const runDetailAction = (action: RequestAction) => {
       if (action === "edit") return editFromDetail(selected);
       if (action === "submit") return void submitDraft(selected);
       return void act(selected, action);
     };
+    const departmentName = departments.find((option) => option.id === selected.departmentId)?.label;
+    // The PO's header card and overview (DocumentShell, OverviewFields): the
+    // number with its status, "Purchase request · requester", the steps in the
+    // card, then the facts the form asked for (design audit U-09, U-17).
     return (
-      <div className="space-y-5 pb-16">
-        {/* Above the card, as on the other purchasing detail pages (BackToListLink). */}
-        <button type="button" onClick={() => onNavigate?.("procurement:requests")} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9">
-          <ArrowLeft size={13} />{copy("返回采购申请列表")}
-        </button>
-        <Card className="p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="fc-page-title" style={{ color: A.label }}>{numberOf(selected)}</h1>
-                <StatusChip label={statusLabel(selected.status)} tone={statusToneOf(selected.status)} />
-              </div>
-              <p className="mt-1 text-xs" style={{ color: A.sub }} data-testid="pr-detail-meta">
-                {[labelled(tr("requester"), requesterOf(selected)), selected.createdAt ? labelled(tr("createdOn"), dayText(selected.createdAt)) : ""].filter(Boolean).join(" · ")}
-              </p>
+      <div className="space-y-3 pb-16">
+        <BackToListLink list="requests" />
+        <DocumentShell
+          title={numberOf(selected)}
+          moduleLabel={tr("moduleLabel")}
+          status={statusLabel(selected.status)}
+          statusTone={statusToneOf(selected.status)}
+          subtitle={<span data-testid="pr-detail-meta">{[labelled(tr("requester"), requesterOf(selected)), selected.createdAt ? labelled(tr("createdOn"), dayText(selected.createdAt)) : ""].filter(Boolean).join(" · ")}</span>}
+          header={detailActions.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2" data-testid="pr-detail-actions">
+              {detailActions.map((action) => (
+                <button
+                  key={action}
+                  type="button"
+                  data-testid={action === "generate-purchase-orders" ? "pr-detail-create-po" : `pr-detail-${action}`}
+                  disabled={busy}
+                  onClick={() => runDetailAction(action)}
+                  className={DETAIL_PRIMARY.has(action) ? listButtonClass.primary : action === "reject" ? listButtonClass.danger : listButtonClass.secondary}
+                >
+                  {action === "submit" ? tr("submitForApproval") : actionLabel(action)}
+                </button>
+              ))}
             </div>
-            <div className="flex flex-col items-end gap-3">
-              {detailActions.length > 0 && (
-                <div className="flex flex-wrap items-center justify-end gap-2" data-testid="pr-detail-actions">
-                  {detailActions.map((action) => (
-                    <button
-                      key={action}
-                      type="button"
-                      data-testid={action === "generate-purchase-orders" ? "pr-detail-create-po" : `pr-detail-${action}`}
-                      disabled={busy}
-                      onClick={() => runDetailAction(action)}
-                      className={DETAIL_PRIMARY.has(action) ? listButtonClass.primary : action === "reject" ? `${listButtonClass.secondary} !bg-red-50 !text-red-700 hover:!bg-red-100` : listButtonClass.secondary}
-                    >
-                      {action === "submit" ? tr("submitForApproval") : actionLabel(action)}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="text-right">
-                <div className="text-[11px]" style={{ color: A.sub }}>{copy("预计总额")}</div>
-                <strong className="text-lg tabular-nums" style={{ color: A.label }}>{amount(selected.totalAmount, selected.defaultCurrency)}</strong>
-              </div>
-            </div>
-          </div>
-        </Card>
+          ) : undefined}
+        >
+        <div>
+          <SectionHeader title={tr("overview")} />
+          <OverviewFields testId="pr-overview" fields={[
+            { label: tr("estimatedTotal"), value: amount(selected.totalAmount, selected.defaultCurrency) },
+            { label: tr("department"), value: departmentName ? copy(departmentName) : selected.departmentId || "—" },
+            { label: tr("currency"), value: selected.defaultCurrency || "—" },
+            { label: tr("defaultNeedBy"), value: dayText(selected.defaultNeedByDate) },
+          ]} />
+        </div>
         <ListCard title={tr("lines")}>
           {/* Fits a 1440 px window: the item, supplier, place and notes wrap
               to two lines instead of widening the table; on a phone each line
@@ -1128,20 +1147,43 @@ export default function CanonicalProcurementPanel({
             </div>
           )}
         </Card>
+        <div>
+          <SectionHeader title={tr("changes")} />
+          <DocumentHistoryPanel
+            entityType="purchaseRequest"
+            entityId={selected.id}
+            title={tr("history")}
+            emptyText={tr("historyEmpty")}
+            refreshKey={`${selected.version}:${selected.status}`}
+          />
+        </div>
+        </DocumentShell>
         {confirmDialog.element}
       </div>
     );
   }
+  // An address naming no request in this workspace says so, as the PO page
+  // does, rather than showing the list (design audit U-08).
+  if (focusKey && loaded && !selected && !formOpen) {
+    return (
+      <div className="space-y-3">
+        <BackToListLink list="requests" />
+        <Card className="p-8 text-center text-xs" style={{ color: A.gray2 }} data-testid="pr-not-found">{tr("notFound")}</Card>
+      </div>
+    );
+  }
   if (!formOpen) {
-    const count = (status: string) => rows.filter((row) => row.status === status).length;
+    const count = (status: string) => (loaded ? String(rows.filter((row) => row.status === status).length) : "—");
+    const menuItemClass = "w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50 disabled:opacity-60 max-sm:min-h-9";
     const statusLink = (status: string) => `/app/procurement/requests?status=${status}`;
     return (
       <div className="space-y-5 pb-16" data-testid="purchase-request-list-page">
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <ActionableMetricCard label={statusLabel("draft")} value={String(count("draft"))} description={tr("draftsNote")} to={statusLink("draft")} icon={FileText} color={A.gray1} />
-          <ActionableMetricCard label={statusLabel("submitted")} value={String(count("submitted"))} description={tr("awaitingApprovalNote")} to={statusLink("submitted")} icon={ClipboardCheck} color={A.orange} />
-          <ActionableMetricCard label={statusLabel("approved")} value={String(count("approved"))} description={tr("readyForPoNote")} to={statusLink("approved")} icon={CheckCircle2} color={A.blue} />
-          <ActionableMetricCard label={statusLabel("converted")} value={String(count("converted"))} description={tr("convertedNote")} to={statusLink("converted")} icon={Truck} color={A.purple} />
+          {/* "—" until the requests load, as on the other lists (design audit U-15). */}
+          <ActionableMetricCard label={statusLabel("draft")} value={count("draft")} description={tr("draftsNote")} to={statusLink("draft")} icon={FileText} color={A.gray1} />
+          <ActionableMetricCard label={statusLabel("submitted")} value={count("submitted")} description={tr("awaitingApprovalNote")} to={statusLink("submitted")} icon={ClipboardCheck} color={A.orange} />
+          <ActionableMetricCard label={statusLabel("approved")} value={count("approved")} description={tr("readyForPoNote")} to={statusLink("approved")} icon={CheckCircle2} color={A.blue} />
+          <ActionableMetricCard label={statusLabel("converted")} value={count("converted")} description={tr("convertedNote")} to={statusLink("converted")} icon={Truck} color={A.purple} />
         </div>
 
         <ListSearchCard
@@ -1149,6 +1191,7 @@ export default function CanonicalProcurementPanel({
           subtitle={tr("searchSubtitle")}
           actions={<>
             <ResetButton onClick={resetFilters} />
+            <RefreshButton onClick={reload} />
             <ExportButton onClick={exportRequests} />
             <PrimaryButton onClick={openNewForm} testId="pr-new">{copy("新建采购申请")}</PrimaryButton>
           </>}
@@ -1170,7 +1213,8 @@ export default function CanonicalProcurementPanel({
           </Field>
         </ListSearchCard>
 
-        <ListCard title={tr("listTitle")} total={rows.length} shown={shownRows.length} testId="purchase-request-list">
+        {/* Total: the requests the filters match; shown: those on this page (design audit U-14). */}
+        <ListCard title={tr("listTitle")} total={loaded ? shownRows.length : undefined} shown={paged.pageRows.length} testId="purchase-request-list">
           <div className={tableScrollClass}>
             <table className={`w-full min-w-[1100px] text-left ${tableBodyTextClass}`}>
               <thead>
@@ -1189,12 +1233,12 @@ export default function CanonicalProcurementPanel({
                     ? <ListStateRow colSpan={8} state="empty" title={copy("暂无采购申请")} detail={copy("点击“新建采购申请”开始录入。")} />
                     : <ListStateRow colSpan={8} state="empty" title={tr("noMatch")} />
                 )}
-                {shownRows.map((pr, index) => {
+                {paged.pageRows.map((pr, index) => {
                   const overrides = pr.lines.filter((line) => hasSupplierOverride(line.supplierOverride));
                   const suppliers = suppliersOf(pr);
                   const rowActions = actionsFor(pr);
                   return (
-                    <tr key={pr.id} className={listRowClass} style={listRowStyle(index, shownRows.length)}>
+                    <tr key={pr.id} className={listRowClass} style={listRowStyle(index, paged.pageRows.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                         <EntityLink kind="purchase_request" id={pr.id} number={numberOf(pr)} className={tableLinkClass} />
                         {pr.createdAt && <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr("created")} {dayText(pr.createdAt)}</div>}
@@ -1232,20 +1276,25 @@ export default function CanonicalProcurementPanel({
                         ) : null}
                       </td>
                       <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
+                        {/* One blue View and, when the request has steps left, a More
+                            menu holding them by the detail page's names (design audit U-10). */}
                         <div className="flex items-center gap-1.5">
-                          {rowActions.map((action) => (
-                            <button
-                              key={action}
-                              type="button"
-                              disabled={acting === pr.id}
-                              className={`${rowActionClass[ROW_ACTION_TONE[action]]} disabled:opacity-60`}
-                              onClick={() => (action === "edit" ? void edit(pr) : void act(pr, action))}
-                            >
-                              {actionLabel(action)}
-                            </button>
-                          ))}
-                          {!rowActions.length && (
-                            <EntityLink kind="purchase_request" id={pr.id} className={`${rowActionClass.neutral} !font-medium !text-slate-700 !no-underline`}>{tr("view")}</EntityLink>
+                          <EntityLink kind="purchase_request" id={pr.id} className={`${rowActionClass.primary} !font-medium !no-underline`}>{tr("view")}</EntityLink>
+                          {rowActions.length > 0 && (
+                            <RowMenu label={tr("more")} testId={`pr-row-more-${pr.id}`}>
+                              {[...rowActions].sort((a, b) => Number(DETAIL_PRIMARY.has(b)) - Number(DETAIL_PRIMARY.has(a))).map((action) => (
+                                <button
+                                  key={action}
+                                  type="button"
+                                  data-testid={`pr-row-${action}`}
+                                  disabled={acting === pr.id}
+                                  className={`${menuItemClass} ${DETAIL_PRIMARY.has(action) ? "font-semibold text-blue-700" : action === "reject" ? "text-red-700" : ""}`}
+                                  onClick={() => (action === "edit" ? void edit(pr) : void act(pr, action))}
+                                >
+                                  {action === "submit" ? tr("submitForApproval") : actionLabel(action)}
+                                </button>
+                              ))}
+                            </RowMenu>
                           )}
                         </div>
                       </td>
@@ -1255,6 +1304,7 @@ export default function CanonicalProcurementPanel({
               </tbody>
             </table>
           </div>
+          {loaded && <ListPager page={paged.page} pageSize={PR_LIST_PAGE_SIZE} total={shownRows.length} onPage={paged.setPage} testId="pr-list-pager" />}
         </ListCard>
         {confirmDialog.element}
       </div>

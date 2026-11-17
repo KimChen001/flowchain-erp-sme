@@ -7,6 +7,7 @@ import { aiSkillPrepareComparison, runSupplierComparison } from './ai-skill-supp
 import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
 import { AI_SKILL_RECENT_DAYS, aiSkillPurchaseOrderNotSent } from './ai-skill-signals.mjs'
 import { asideFor, decisionsSetAside } from './ai-decision-aside.mjs'
+import { SUPPLIER_TIER_NAMES } from '../../shared/supplier-tiers.mjs'
 
 // The read tools of the model-first assistant (docs/ai-model-first-design.md
 // §4). Each reads the asking user's facts (readAiSkillFacts), which hold only
@@ -98,7 +99,7 @@ const listPurchaseOrders = defineAiTool({
   parameters: {
     status: { type: 'string', enum: ['open', 'overdue', 'pending_approval', 'all'], description: 'open (default): not closed or fully received; overdue: open and past the promised date; pending_approval; all.' },
     supplier: { type: 'string', description: 'A supplier name, code or id.' },
-    tier: { type: 'integer', minimum: 1, maximum: 3, description: 'Only orders from suppliers of this tier (1 strategic, 2 core, 3 transactional).' },
+    tier: { type: 'integer', minimum: 1, maximum: 3, description: `Only orders from suppliers of this tier (${SUPPLIER_TIER_NAMES}).` },
     sku: { type: 'string', description: 'Only orders with a line for this SKU.' },
     limit: limitParam,
   },
@@ -339,7 +340,7 @@ const listRfqs = defineAiTool({
 
 const listSuppliers = defineAiTool({
   name: 'list_suppliers',
-  description: 'Suppliers the user may read, with their code and tier (1 strategic, 2 core, 3 transactional, or none). A tiered supplier gives tierReason (why, as its setter wrote), tierSetOn and tierSetBy. Use it to find a supplier\'s exact name.',
+  description: `Suppliers the user may read, with their code and tier (${SUPPLIER_TIER_NAMES}, or none). A tiered supplier gives tierReason (why, as its setter wrote), tierSetOn and tierSetBy. Use it to find a supplier's exact name.`,
   parameters: { name: { type: 'string', description: 'Part of a supplier name.' }, tier: { type: 'integer', minimum: 1, maximum: 3 }, limit: limitParam },
   available: (facts) => Array.isArray(facts.suppliers),
   run(args, { facts }) {

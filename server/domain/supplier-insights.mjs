@@ -4,6 +4,7 @@ import { readAiSkillSupplierIssueFacts } from './ai-skill-readers.mjs'
 import { aiSkillPurchaseOrderNotSent, buildAiSkillSignals, compareSignalsByDate, compareSignalsByPrintedDate } from './ai-skill-signals.mjs'
 import { isCommittedPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { buildOpenPurchaseOrdersReport, purchaseOrderDueDay, purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
+import { billPaymentStatus } from './operational-finance-read-service.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
 import { SUPPLIER_SCORECARD_READ_PERMISSIONS, createSupplierScorecardReadService } from './supplier-scorecard.mjs'
@@ -272,7 +273,7 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
       const [{ purchaseOrders, signals }, invoices] = await Promise.all([
         ordersAndIssues(skillContext, { orders: visibility.orders, issues: visibility.issues }),
         visibility.invoices
-          ? prisma.supplierInvoice.findMany({ where: { tenantId, supplierId: supplier.id }, orderBy: [{ invoiceDate: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }], take: SUPPLIER_ACTIVITY_LIMIT + 1, select: { id: true, invoiceNumber: true, invoiceDate: true, dueDate: true, status: true, matchStatus: true, totalAmount: true, amount: true, currency: true, createdAt: true } })
+          ? prisma.supplierInvoice.findMany({ where: { tenantId, supplierId: supplier.id }, orderBy: [{ invoiceDate: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }], take: SUPPLIER_ACTIVITY_LIMIT + 1, select: { id: true, invoiceNumber: true, invoiceDate: true, dueDate: true, status: true, matchStatus: true, totalAmount: true, amount: true, currency: true, createdAt: true, payableObligation: { select: { status: true } } } })
           : [],
       ])
       const mine = purchaseOrders.filter((po) => text(po.supplierId) === supplier.id)
@@ -295,6 +296,9 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
               dueDate: dayOf(row.dueDate),
               status: text(row.status),
               matchStatus: text(row.matchStatus) || null,
+              // Where an approved invoice's payment stands, as the invoice
+              // list says it (design audit U-22).
+              paymentStatus: billPaymentStatus(row.status, row.payableObligation?.status),
               amount: visibility.invoiceAmounts ? decimal(row.totalAmount ?? row.amount) : null,
               currency: reportCurrencyCode(row.currency) || null,
             })),

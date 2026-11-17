@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle, useConfirm } from "../../components/ui";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
-import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass } from "../../components/ui/listLayout";
+import { ListSearchCard, PrimaryButton, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -56,6 +56,8 @@ type Supplier = {
   tierReason: string | null;
   tierSetAt: string | null;
   tierSetBy: { id: string; name: string | null } | null;
+  tierReviewedAt?: string | null;
+  tierNextReviewOn?: string | null;
   businessOwner: { id: string; name: string | null } | null;
   tierHistory?: TierHistoryRow[];
 };
@@ -121,6 +123,8 @@ const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", 
 // A supplier's supplied items drawn at a time; the pager under the table
 // gives the true total.
 const SUPPLIED_ITEM_PAGE_SIZE = 25;
+// Suppliers to a page, as on the purchase order list (design audit U-14).
+const SUPPLIER_PAGE_SIZE = 50;
 
 function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): Supplier {
   const text = (candidate: unknown, fallback = "") => String(candidate ?? "").trim() || fallback;
@@ -156,6 +160,8 @@ function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): 
     tierReason: text(value.tierReason) || null,
     tierSetAt: text(value.tierSetAt) || null,
     tierSetBy: (value.tierSetBy as Supplier["tierSetBy"]) || null,
+    tierReviewedAt: text(value.tierReviewedAt) || null,
+    tierNextReviewOn: text(value.tierNextReviewOn) || null,
     businessOwner: (value.businessOwner as Supplier["businessOwner"]) || null,
     tierHistory: Array.isArray(value.tierHistory) ? (value.tierHistory as TierHistoryRow[]) : [],
   };
@@ -473,6 +479,7 @@ export default function SupplierMasterPage({
   };
   const insightOf = (id: string): SupplierInsight | undefined => insights?.suppliers[id];
   const sortedRows = sortSuppliersBy(rows, sortBy, insightOf, spendCurrency);
+  const supplierPage = usePagedRows(sortedRows, SUPPLIER_PAGE_SIZE, [query, status, category, owner, tab, sortBy].join("|"));
   // Earlier PO prices of each supplied item from this supplier only, in the
   // link currency and the item's unit, in one request. Display only.
   // The item being linked gets the same facts under its reference price, in
@@ -742,38 +749,22 @@ export default function SupplierMasterPage({
   // card with labelled filters, then the list with its tabs. The module shell
   // already shows the page title.
   const filtersApplied = Boolean(query || status || category || owner || tab !== "all");
+  const resetFilters = () => { setQuery(""); setStatus(""); setCategory(""); setOwner(""); };
   return (
     <div className="space-y-5">
-      <Card className="p-5">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="fc-section-title" style={{ color: A.label }}>{copy("Supplier search")}</h2>
-            <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("Search suppliers by code, name, status, category and owner.")}</div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={load}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium"
-              style={{ background: A.gray6, color: A.label }}
-            >
-              <RefreshCw size={13} />
-              {copy("刷新")}
-            </button>
-            <DataImportLink type="suppliers" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700" />
-            {writes.suppliers && (
-              <button
-                type="button"
-                onClick={startCreate}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white"
-              >
-                <Plus size={13} />
-                {copy("新增供应商")}
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+      {/* The shared search card (design audit U-16): on a phone only the
+          search shows; the other filters fold behind Filters. */}
+      <ListSearchCard
+        title={copy("Supplier search")}
+        subtitle={copy("Search suppliers by code, name, status, category and owner.")}
+        activeFilters={[status, category, owner].filter(Boolean).length}
+        actions={<>
+          <ResetButton onClick={resetFilters} />
+          <RefreshButton onClick={load} />
+          <DataImportLink type="suppliers" className={listButtonClass.secondary} />
+          {writes.suppliers && <PrimaryButton onClick={startCreate} testId="supplier-new">{copy("新增供应商")}</PrimaryButton>}
+        </>}
+      >
           <Field label={copy("Search")}>
             <label className="flex items-center gap-2" style={{ ...inputStyle, paddingTop: 0, paddingBottom: 0 }}>
               <Search size={14} style={{ color: A.gray2 }} />
@@ -817,8 +808,7 @@ export default function SupplierMasterPage({
               ))}
             </select>
           </Field>
-        </div>
-      </Card>
+      </ListSearchCard>
 
       <Card>
         <div className="flex flex-wrap items-end gap-3 px-5 pt-3" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
@@ -889,8 +879,8 @@ export default function SupplierMasterPage({
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map((row, index) => (
-                  <tr key={row.id} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < sortedRows.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
+                {supplierPage.pageRows.map((row, index) => (
+                  <tr key={row.id} className={listRowClass} style={listRowStyle(index, supplierPage.pageRows.length)}>
                     <td className={`${tdIdClass} sticky left-0 z-10 max-w-[240px] bg-white`}>
                       <EntityLink kind="supplier" id={row.id} className={tableLinkClass}>
                         {row.supplierCode}
@@ -928,6 +918,7 @@ export default function SupplierMasterPage({
             </table>
           </div>
         )}
+        {!error && rows.length > 0 && <ListPager page={supplierPage.page} pageSize={SUPPLIER_PAGE_SIZE} total={sortedRows.length} onPage={supplierPage.setPage} testId="supplier-list-pager" />}
       </Card>
       {confirmDialog.element}
     </div>

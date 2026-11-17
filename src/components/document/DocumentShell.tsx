@@ -129,6 +129,26 @@ export function DocumentShell({
   );
 }
 
+// The overview facts under a detail page's header card (the PO's, and the
+// purchase request's). Values may be chips, and long values and notes wrap
+// rather than being cut off.
+export type OverviewField = { label: string; value: React.ReactNode; helper?: React.ReactNode };
+export function OverviewFields({ fields, testId = "po-overview" }: { fields: OverviewField[]; testId?: string }) {
+  return (
+    <Card className="p-4" data-testid={testId}>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-4">
+        {fields.map((field) => (
+          <div key={field.label} className="min-w-0">
+            <dt className="fc-caption font-medium" style={{ color: A.gray2 }}>{field.label}</dt>
+            <dd className="mt-1 break-words text-xs font-semibold" style={{ color: A.label }}>{field.value || "—"}</dd>
+            {field.helper ? <dd className="fc-caption mt-0.5 leading-4" style={{ color: A.sub }}>{field.helper}</dd> : null}
+          </div>
+        ))}
+      </dl>
+    </Card>
+  );
+}
+
 export function DocumentHeader({ fields, columns = 4 }: { fields: DocumentField[]; columns?: 2 | 3 | 4 }) {
   const copy = useWorkspaceCopy();
   const gridClass = columns === 2

@@ -14,7 +14,7 @@ import {
 } from "../domain/procurement-workflow.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "../domain/receiving-transaction-policy.mjs";
 import { itemStockUnit, unitOtherThanStock } from "../domain/item-stock-unit.mjs";
-import { applyPromisedDateChanges, recordOriginalPromises } from "../domain/purchase-order-promise-dates.mjs";
+import { applyPromisedDateChanges } from "../domain/purchase-order-promise-dates.mjs";
 import { mergeOperationalSettings } from "../domain/workspace-settings-contract.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { isTransactionConflict } from "../persistence/transaction-conflict.mjs";
@@ -605,7 +605,6 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         const approvalTimeline = approvedWithRequest
           ? [{ action: "approve", actorId: requestApproval?.actorId || actor.user.id, at: requestApproval?.at || serial(now()), reason: null, via: "approved_purchase_request", purchaseRequestId: row.id, requestApprovedBy: requestApproval?.actorId || null, requestApprovedAt: requestApproval?.at || null, convertedBy: actor.user.id, convertedAt: serial(now()) }]
           : [];
-        const originalPromisesRecorded = [];
         for (const group of groups.values()) {
           // Each order's number is the workspace's next PO-YYYYMM-NNNN; its
           // metadata.orderNumber carries the same number for older readers.
@@ -636,24 +635,19 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           } });
           // Each line's date from its PR line (a promised date, or else the need-by
           // date) goes through the promise-date helper, like every later change.
-          // On a draft it only sets the date; the original promise is recorded
-          // when the PO is issued.
+          // It only sets the date, on an approved PO too: the original promise
+          // is recorded when the PO is issued or first received, once the
+          // supplier has it (design audit L1-05).
           const lineDates = lines.map((line, index) => ({ purchaseOrderLineId: line.id, promisedDate: group.lines[index].metadata?.promisedDate || group.lines[index].metadata?.needByDate || null })).filter((change) => change.promisedDate);
           if (lineDates.length) {
             await applyPromisedDateChanges(tx, { tenantId: actor.tenantId, purchaseOrder: await tx.purchaseOrder.findFirst({ where: { id: poId, tenantId: actor.tenantId }, include: { lines: true } }), changes: lineDates, actorId: actor.user.id, source: "procurement_request_command_service", at: now(), idFactory, bumpVersions: false });
-          }
-          // Approval fixes each dated line's original promise, as approving a
-          // PO does; the supplier scorecard measures against it.
-          if (approvedWithRequest) {
-            const created = await tx.purchaseOrder.findFirst({ where: { id: poId, tenantId: actor.tenantId }, include: { lines: true } });
-            originalPromisesRecorded.push(...(await recordOriginalPromises(tx, { purchaseOrder: created })).map((entry) => ({ purchaseOrderId: poId, ...entry })));
           }
           await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "PurchaseOrder", entityId: poId, operation: "upsert", entityVersion: 0, actorId: actor.user.id, source: "procurement_request_command_service", requestId: idempotencyKey, payloadHash: hash({ id: poId, version: 0, status }), sensitivityGroups: ["procurement_prices", "finance_partner_snapshot"], moduleKey: "procurement", authorizationClass: "procurement.purchase_order.read", resourceTenantId: actor.tenantId } });
         }
         await tx.purchaseRequest.update({ where: { id: row.id }, data: sourcedRequest(row, actor, "create_purchase_orders", { status: PURCHASE_REQUEST_STATUS.CONVERTED, linkedPoId: purchaseOrderIds[0], metadata: { procurementPath: "direct_po", linkedPurchaseOrderIds: purchaseOrderIds } }) });
         const orders = await tx.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, id: { in: purchaseOrderIds } }, include: { lines: true }, orderBy: { id: "asc" } });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, actor.tenantId, row.id));
-        return { result: { purchaseRequestId: row.id, purchaseRequest, createdPurchaseOrders: orders.map(mapPurchaseOrder) }, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_converted_to_purchase_orders", summary: `Created ${purchaseOrderIds.length} ${approvedWithRequest ? "approved " : ""}purchase order(s) from purchase request ${numberOf(row)}: ${purchaseOrderNumbers.join(", ")}.`, metadata: { expectedVersion, purchaseOrderIds, purchaseOrderNumbers, approvedWithRequest, ...(approvedWithRequest ? { originalPromisesRecorded } : {}), ...withOverrides(carriedOverrides) } } };
+        return { result: { purchaseRequestId: row.id, purchaseRequest, createdPurchaseOrders: orders.map(mapPurchaseOrder) }, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_converted_to_purchase_orders", summary: `Created ${purchaseOrderIds.length} ${approvedWithRequest ? "approved " : ""}purchase order(s) from purchase request ${numberOf(row)}: ${purchaseOrderNumbers.join(", ")}.`, metadata: { expectedVersion, purchaseOrderIds, purchaseOrderNumbers, approvedWithRequest, ...withOverrides(carriedOverrides) } } };
       },
     });
   }

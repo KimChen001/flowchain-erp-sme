@@ -4,7 +4,8 @@ import { AlarmClock, CalendarClock, FilePen, FileSignature, Plus, Search } from 
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { RefreshButton, ResetButton, listButtonClass } from "../../components/ui/listLayout";
+import { ListSearchCard, RefreshButton, ResetButton, listButtonClass } from "../../components/ui/listLayout";
+import { ListPager } from "../procurement/listPaging";
 import { CONTRACT_TYPES } from "../../../shared/contract-status.mjs";
 import { ContractTable } from "./ContractTable";
 import {
@@ -57,13 +58,16 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
   const [knownOwners, setKnownOwners] = useState<Person[]>([]);
   const sequence = useRef(0);
   const loadedOnce = useRef(false);
+  // The list a page at a time (the server pages it); a new search or filter
+  // starts at the first page (design audit U-14).
+  const [page, setPage] = useState(1);
 
   const load = async () => {
     const current = ++sequence.current;
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ pageSize: String(CONTRACT_PAGE_SIZE), sort: ending ? "key_date" : "recent" });
+      const params = new URLSearchParams({ pageSize: String(CONTRACT_PAGE_SIZE), page: String(page), sort: ending ? "key_date" : "recent" });
       if (query.trim()) params.set("search", query.trim());
       if (type) params.set("type", type);
       if (ending) params.set("state", ENDING_STATES.join(","));
@@ -84,12 +88,13 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
       if (current === sequence.current) setLoading(false);
     }
   };
+  useEffect(() => setPage(1), [query, type, state, owner, supplierId, mode]);
   // Filters apply as they change; typing waits for a short pause.
   useEffect(() => {
     const timer = setTimeout(load, loadedOnce.current ? 300 : 0);
     loadedOnce.current = true;
     return () => clearTimeout(timer);
-  }, [query, type, state, owner, supplierId, mode]);
+  }, [query, type, state, owner, supplierId, mode, page]);
   useEffect(() => {
     apiJson<{ suppliers: Array<{ id: string; supplierName?: string; name?: string; supplierCode?: string }> }>("/api/master-data/suppliers")
       .then(({ suppliers: rows }) => setSuppliers((rows || []).map((row) => ({ id: row.id, name: String(row.supplierName || row.name || row.id), code: String(row.supplierCode || "") }))))
@@ -100,7 +105,8 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
   const contracts = data?.contracts || [];
   const filtered = Boolean(query || type || (!ending && state) || owner || supplierId);
   const total = ending ? data?.total ?? 0 : counts?.all ?? 0;
-  const truncated = (data?.total ?? 0) > contracts.length;
+  // The server reads at most its scan limit of contracts; then the list says so.
+  const truncated = Boolean(data?.limitations?.includes("truncated"));
   const canManage = Boolean(data?.access.manage);
   const resetFilters = () => { setQuery(""); setType(""); setState(""); setOwner(""); setSupplierId(""); };
   const newButton = (testId: string) => canManage ? (
@@ -134,19 +140,17 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
         </div>
       )}
 
-      <Card className="p-5">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="fc-section-title" style={{ color: A.label }}>{t("Contract search")}</h2>
-            <div className="mt-1 text-xs" style={{ color: A.sub }}>{t("Search contracts by number, their reference, title, supplier, type, state and owner.")}</div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <ResetButton onClick={resetFilters} />
-            <RefreshButton onClick={load} />
-            {newButton("contract-new")}
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
+      {/* The shared search card (design audit U-16). */}
+      <ListSearchCard
+        title={t("Contract search")}
+        subtitle={t("Search contracts by number, their reference, title, supplier, type, state and owner.")}
+        activeFilters={[type, !ending && state, owner, supplierId].filter(Boolean).length}
+        actions={<>
+          <ResetButton onClick={resetFilters} />
+          <RefreshButton onClick={load} />
+          {newButton("contract-new")}
+        </>}
+      >
           <Field label={t("Search")}>
             <label className="flex items-center gap-2" style={{ ...inputStyle, paddingTop: 0, paddingBottom: 0 }}>
               <Search size={14} style={{ color: A.gray2 }} />
@@ -182,8 +186,7 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
               {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
             </select>
           </Field>
-        </div>
-      </Card>
+      </ListSearchCard>
 
       <Card>
         <div className="flex flex-wrap items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
@@ -194,7 +197,7 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
             </div>
           </div>
         </div>
-        {truncated && <p className="px-5 pt-3 text-[11px]" style={{ color: A.sub }}>{t("Only the first {count} are shown. Narrow the search to see the rest.", { count: contracts.length })}</p>}
+        {truncated && <p className="px-5 pt-3 text-[11px]" style={{ color: A.sub }}>{t("Only the first {count} are shown. Narrow the search to see the rest.", { count: data?.total ?? 0 })}</p>}
         {error ? (
           <div className="p-8 text-center">
             <div role="alert" className="text-sm" style={{ color: A.red }}>{t("Could not load contracts.")} {contractErrorText(error, t)}</div>
@@ -224,7 +227,10 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
             )}
           </div>
         ) : (
-          <ContractTable contracts={contracts} canManage={canManage} />
+          <>
+            <ContractTable contracts={contracts} canManage={canManage} />
+            <ListPager page={page} pageSize={CONTRACT_PAGE_SIZE} total={data?.total ?? 0} onPage={setPage} testId="contracts-pager" />
+          </>
         )}
       </Card>
     </div>

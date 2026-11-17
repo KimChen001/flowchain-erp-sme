@@ -343,12 +343,45 @@ export async function handleMasterDataRoute(ctx) {
     return true
   }
 
+  // The supplier's indicators as the person deciding its tier sees them (on
+  // time, OTIF, overdue orders, open issues, with their own access), kept on
+  // the tier change or review audit row (design audit L9-12). Read here,
+  // never taken from the request. null when they cannot be read.
+  const tierIndicators = async (supplierId) => {
+    try {
+      const service = ctx.supplierInsightsService || createSupplierInsightsReadService({ prisma: await getPrismaClient(ctx.env || process.env), listPurchaseOrders: ctx.repositories?.procurementRuntime?.listForReport })
+      const read = await service.read(ctx)
+      const row = read?.suppliers?.[decodeURIComponent(String(supplierId || ''))]
+      if (!row) return null
+      const rate = (value) => (value ? { rate: value.rate, count: value.count, of: value.of } : null)
+      return { asOf: read.asOf, onTime: rate(row.onTime), otif: rate(row.otif), overduePos: row.overduePos ?? null, openIssues: row.openIssues ?? null }
+    } catch {
+      return null
+    }
+  }
+
   const supplierTierMatch = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/(tier|owner)$/)
   if (req.method === 'PATCH' && supplierTierMatch) {
     if (!(await authorizeWrite('supplier-master'))) return true
-    const change = supplierTierMatch[2] === 'tier' ? repository.setSupplierTier : repository.setSupplierOwner
+    const isTier = supplierTierMatch[2] === 'tier'
+    const change = isTier ? repository.setSupplierTier : repository.setSupplierOwner
     try {
-      send(res, 200, { supplier: await supplierFor(await change(supplierTierMatch[1], await readBody(req), actor(), tenantScope())) })
+      const body = await readBody(req)
+      const options = isTier ? { indicators: await tierIndicators(supplierTierMatch[1]) } : undefined
+      send(res, 200, { supplier: await supplierFor(await change(supplierTierMatch[1], body, actor(), tenantScope(), options)) })
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
+    }
+    return true
+  }
+
+  // Records a review that keeps the supplier's tier (design audit L9-12).
+  const supplierTierReviewMatch = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/tier-review$/)
+  if (req.method === 'POST' && supplierTierReviewMatch && typeof repository.reviewSupplierTier === 'function') {
+    if (!(await authorizeWrite('supplier-master'))) return true
+    try {
+      const body = await readBody(req)
+      send(res, 200, { supplier: await supplierFor(await repository.reviewSupplierTier(supplierTierReviewMatch[1], body, actor(), tenantScope(), { indicators: await tierIndicators(supplierTierReviewMatch[1]) })) })
     } catch (error) {
       send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
     }

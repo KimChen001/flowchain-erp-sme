@@ -15,6 +15,7 @@ import {
   receivingMovementNetUnits,
   receivingWorkflowStatus,
 } from './receiving-transaction-policy.mjs'
+import { recordOriginalPromises } from './purchase-order-promise-dates.mjs'
 
 const POST_COMMAND = 'receiving.post'
 const REVERSE_COMMAND = 'receiving.reverse'
@@ -409,6 +410,11 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
         }
 
         await faultInjector('after_movements', { tx, receivingDocument, purchaseOrder, movements, balances })
+        // The supplier has delivered against the PO, so each dated line's
+        // original promise is recorded now if issuing did not: an approved PO
+        // can be received without being issued (design audit L1-05). A line
+        // that already has one keeps it.
+        const originalPromisesRecorded = await recordOriginalPromises(tx, { purchaseOrder })
         const poLines = [...updatedPoLines.values()]
         const nextPoStatus = poStatus(poLines, purchaseOrder.status, purchaseOrder.receivingBaseStatus)
         const poUpdated = await tx.purchaseOrder.updateMany({
@@ -431,11 +437,14 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
             id: auditId, tenantId: scope.tenantId, actorId: scope.actorId, source: 'receiving_command_service',
             module: 'procurement_receiving', action: 'receiving_posted', entityType: 'ReceivingDocument', entityId: receivingDocument.id,
             summary: `Receiving ${receivingDocument.documentNumber || receivingDocument.id} posted to inventory.`,
-            metadata: auditMetadata({
-              action: 'receiving_posted', before: { postingStatus: receivingDocument.postingStatus, poStatus: purchaseOrder.status, poWorkflowStatus: receivingWorkflowStatus(purchaseOrder), poFulfillmentStatus: receivingFulfillmentStatus(purchaseOrder.lines) },
-              after: { postingStatus: 'posted', poStatus: nextPoStatus, poWorkflowStatus: receivingWorkflowStatus({ ...purchaseOrder, status: nextPoStatus, receivingBaseStatus: purchaseOrder.receivingBaseStatus || purchaseOrder.status }), poFulfillmentStatus: receivingFulfillmentStatus(poLines) }, purchaseOrder, receivingDocument,
-              postingBatchId, idempotencyKey: normalized.idempotencyKey, movements, balances,
-            }),
+            metadata: {
+              ...(originalPromisesRecorded.length ? { originalPromisesRecorded } : {}),
+              ...auditMetadata({
+                action: 'receiving_posted', before: { postingStatus: receivingDocument.postingStatus, poStatus: purchaseOrder.status, poWorkflowStatus: receivingWorkflowStatus(purchaseOrder), poFulfillmentStatus: receivingFulfillmentStatus(purchaseOrder.lines) },
+                after: { postingStatus: 'posted', poStatus: nextPoStatus, poWorkflowStatus: receivingWorkflowStatus({ ...purchaseOrder, status: nextPoStatus, receivingBaseStatus: purchaseOrder.receivingBaseStatus || purchaseOrder.status }), poFulfillmentStatus: receivingFulfillmentStatus(poLines) }, purchaseOrder, receivingDocument,
+                postingBatchId, idempotencyKey: normalized.idempotencyKey, movements, balances,
+              }),
+            },
           },
         })
         await tx.domainChangeFeed.createMany({ data: [
