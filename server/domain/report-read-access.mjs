@@ -130,6 +130,10 @@ function withoutPartner(invoice) {
 export function scopeBusinessContext(context, access) {
   if (!access) throw new Error('Report read access is required.')
   const scoped = { ...context }
+  // The allocation model's inputs hold every order's demand and every
+  // committed purchase order, prices included. Allocation is built from the
+  // unscoped context, so the scoped one never carries them.
+  delete scoped.allocationInputs
   const restrictedSubjects = []
   for (const [key, readable] of Object.entries(access.collections)) {
     if (readable) continue

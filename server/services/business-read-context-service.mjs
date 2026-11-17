@@ -12,6 +12,38 @@ async function call(repository, method, fallback = [], ...args) {
   return await repository[method](...args)
 }
 
+// The allocation model's inputs over every record of the workspace, added up
+// in the database (design audit 2026-11-15, L15): stock per SKU in the
+// reader's warehouses with every item, open demand per SKU, and every
+// committed purchase order. The context's lists stop at 500 balance rows, the
+// latest 500 orders of each kind and 200 items, which cut stock and incoming
+// once a workspace passed them. null when a repository cannot read them; the
+// model then uses the lists. truncatedSubjects names a read past its safety
+// bound (ALLOCATION_READ_LIMIT).
+async function readAllocationInputs(repositories, inventoryScope) {
+  const { inventoryRuntime, salesOrders, procurementRuntime } = repositories
+  if (typeof inventoryRuntime?.listAllocationStock !== 'function'
+    || typeof salesOrders?.summarizeDemandBySku !== 'function'
+    || typeof procurementRuntime?.listCommittedPurchaseOrders !== 'function') return null
+  const truncated = new Map()
+  const onTruncated = ({ subject, limit }) => { if (subject) truncated.set(subject, { subject, limit }) }
+  const scope = { tenantId: inventoryScope.tenantId, onTruncated }
+  const [stock, salesDemand, supply] = await Promise.all([
+    inventoryRuntime.listAllocationStock({ ...scope, ...(Array.isArray(inventoryScope.warehouseIds) ? { warehouseIds: inventoryScope.warehouseIds } : {}) }),
+    salesOrders.summarizeDemandBySku(scope),
+    procurementRuntime.listCommittedPurchaseOrders(scope),
+  ])
+  return {
+    inventoryItems: array(stock.inventoryItems),
+    items: array(stock.items),
+    itemUnits: array(stock.itemUnits),
+    salesDemand: array(salesDemand),
+    purchaseOrders: array(supply.purchaseOrders),
+    purchaseOrderKeys: array(supply.lineKeys),
+    truncatedSubjects: [...truncated.values()],
+  }
+}
+
 export function createBusinessReadContextService({ repositories = {}, dataMode = 'user' } = {}) {
   return {
     async read(options = {}) {
@@ -25,7 +57,7 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
       const warehouseScoped = Array.isArray(options.warehouseIds)
       const inventoryScope = warehouseScoped ? { ...scope, warehouseIds: options.warehouseIds } : scope
       const itemMethod = typeof masterData?.listManagedItems === 'function' ? 'listManagedItems' : 'listItems'
-      const [items, suppliers, customers, itemSupplierRelationships, inventoryItems, salesOrders, procurement] = await Promise.all([
+      const [items, suppliers, customers, itemSupplierRelationships, inventoryItems, salesOrders, procurement, allocationInputs] = await Promise.all([
         call(masterData, itemMethod, [], scope),
         call(masterData, 'listSuppliers', [], scope),
         call(masterData, 'listCustomers', [], scope),
@@ -33,6 +65,7 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
         call(repositories.inventoryRuntime, 'listItems', [], inventoryScope),
         call(repositories.salesOrders, 'listOrders', [], scope),
         call(repositories.procurementRuntime, 'snapshot', {}, scope),
+        readAllocationInputs(repositories, inventoryScope),
       ])
       // The recorded stock unit of every item a purchase order line names, read
       // apart from the bounded item list, so incoming never adds a line in
@@ -74,6 +107,9 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
         supplierInvoices: array(procurement.supplierInvoices),
         itemSupplierRelationships: array(itemSupplierRelationships),
         itemUnits: array(itemUnits),
+        // What the inventory allocation model reads, when present (see
+        // readAllocationInputs). Never served: scopeBusinessContext drops it.
+        ...(allocationInputs ? { allocationInputs } : {}),
         dataLimitations: [...new Set(dataLimitations)],
         truncatedSubjects: [...truncated.values()],
         runtimeAdapters: {

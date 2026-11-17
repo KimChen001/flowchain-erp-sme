@@ -1335,7 +1335,7 @@ model PurchaseOrderLine {
   promiseRevisions PurchaseOrderPromiseRevision[]
 
   @@index([purchaseOrderId])
-  @@index([itemId])
+  @@index([itemId, purchaseOrderId])
 }
 
 // One row for every change to a line's promised date after the PO is issued.
@@ -2952,6 +2952,7 @@ model InventoryMovement {
   @@unique([tenantId, movementType, sourceDocumentLineId])
   @@index([tenantId, sku])
   @@index([tenantId, movementDate])
+  @@index([tenantId, occurredAt])
   @@index([tenantId, status])
   @@index([tenantId, relatedGrnId, movementType])
   @@index([tenantId, sku, warehouseId, locationKey])
@@ -3505,7 +3506,7 @@ model ShipmentDocument {
 
   @@unique([tenantId, shipmentNumber])
   @@index([tenantId, salesOrderId])
-  @@index([tenantId, postingStatus])
+  @@index([tenantId, postingStatus, postedAt])
   @@index([tenantId, workflowStatus])
 }
 

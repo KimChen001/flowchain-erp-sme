@@ -8,7 +8,7 @@ import { createInventoryAuthoritativeReadService } from "../domain/inventory-aut
 import { capabilityForEnvironment } from "../domain/capability-registry.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { reportReadAccess, scopeBusinessContext, sendReadAccessError } from "../domain/report-read-access.mjs";
-import { createReorderListReadService, stockTruncatedSubjects } from "../domain/reorder-list-read-service.mjs";
+import { allocationTruncatedSubjects, createReorderListReadService } from "../domain/reorder-list-read-service.mjs";
 import { forecastClientFromEnv } from "../domain/reorder-point-forecast.mjs";
 import { readTenantTimezone } from "../domain/tenant-timezone.mjs";
 import { tenantCalendarDay } from "../domain/tenant-calendar-day.mjs";
@@ -369,7 +369,7 @@ export async function handleInventoryRoute(ctx) {
       // The context's subjects the list depends on: stock balances, sales
       // orders (reservations) and purchase orders (incoming). It reads the
       // items and shipments itself and adds its own.
-      truncatedSubjects: stockTruncatedSubjects(context.truncatedSubjects),
+      truncatedSubjects: allocationTruncatedSubjects(context),
       forecastClient: reorderForecast ? forecastClient : null,
     });
     if (reorderForecast) {

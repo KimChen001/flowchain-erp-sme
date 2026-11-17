@@ -74,7 +74,7 @@ export function recordedItemUnit(record = {}) {
   return text(record.unit || meta.baseUom || meta.uom)
 }
 
-function mapItem(record = {}) {
+export function mapItem(record = {}) {
   const meta = metadata(record)
   const itemId = text(record.id || record.sku)
   const itemName = text(record.name || record.sku)
