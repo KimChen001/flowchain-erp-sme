@@ -77,7 +77,10 @@ test('the overview has one figure per area, and each opens its analytics tab', (
   assert.deepEqual(report.kpis.map((row) => [row.id, row.currentValue, row.drilldownPath]), [
     ['purchase_order_amount', 1000, '/app/reports/procurement?view=analytics'],
     ['sales_order_amount', 1100, '/app/reports/sales'],
-    ['low_stock_sku', 3, '/app/reports/inventory'],
+    // Below safety stock on hand, as the inventory warnings count it: A (none
+    // left) and B, not C, which is under its reorder point but above its
+    // safety stock (design audit L3-07). The figure still opens its tab.
+    ['low_stock_sku', 2, '/app/reports/inventory'],
     ['invoice_amount', 120, '/app/reports/finance'],
   ]);
   assert.deepEqual(report.drilldowns.map((row) => row.path), report.kpis.map((row) => row.drilldownPath));
@@ -96,7 +99,7 @@ test('the overview has one figure per area, and each opens its analytics tab', (
     { name: '2026-09', 'Committed PO amount': 500, 'Sales order amount': 400 },
   ]);
   assert.equal(chart(report, 'overview_purchases_and_sales').currencyCode, 'GBP');
-  // The low-stock figure is the stock status chart's slices other than in stock.
+  // The stock status chart beside it keeps every status.
   const statuses = Object.fromEntries(chart(report, 'overview_stock_status').data.map((row) => [row.name, row.value]));
   assert.deepEqual(statuses, { below_reorder_point: 1, below_safety_stock: 1, ok: 1, out_of_stock: 1 });
   assert.equal(chart(report, 'overview_stock_status').statusLabels, true);
@@ -159,12 +162,13 @@ test('the overview\'s key findings cover sales, purchasing and stock, from the f
   const report = buildRuntimeGovernedReport(business(), { subject: 'overview' }, asOf);
   assert.deepEqual(findings(report).map((item) => [item.id, item.figure, item.text, item.path]), [
     ['overview_last_month', 'GBP 400', '2026-09, the last whole month: GBP 400 in sales orders and GBP 500 in committed purchases.', '/app/reports/sales'],
-    ['stock', '3', '3 of 4 SKUs are low on stock: 1 out of stock, 1 below safety stock and 1 below reorder point.', '/app/reports/inventory'],
+    // Without the reorder list (no database here) only the shelf is named.
+    ['stock', '2', '2 items are below safety stock on hand.', '/app/inventory/warnings?signal=below_safety'],
     ['busiest_supplier', '2', 'Acme has the most committed purchase orders: 2.', '/app/reports/procurement?view=analytics'],
   ]);
   assert.deepEqual(findings(report, 'zh-CN').map((item) => item.text), [
     '2026-09（最近一个完整月份）：销售订单 GBP 400，已承诺采购 GBP 500。',
-    '4 个 SKU 中有 3 个库存偏低：缺货 1 个、低于安全库存 1 个、低于再订货点 1 个。',
+    '2 个物料的现有库存低于安全库存。',
     'Acme 的已承诺采购订单最多：2 张。',
   ]);
   // A date range adds the largest change against the previous period first.
@@ -173,7 +177,7 @@ test('the overview\'s key findings cover sales, purchasing and stock, from the f
   assert.match(findings(ranged)[0].text, /^Sales order amount fell 42\.9% against the previous period/);
   // Stock with nothing low reads as such; a reader who may not read inventory gets no stock finding.
   const healthy = { ...business(), inventoryItems: [stock('A', 50), stock('B', 50), stock('C', 50), stock('D', 50)] };
-  assert.equal(findings(buildRuntimeGovernedReport(healthy, { subject: 'overview' }, asOf)).find((item) => item.id === 'stock').text, 'No SKU is out of stock or below its safety stock or reorder point.');
+  assert.equal(findings(buildRuntimeGovernedReport(healthy, { subject: 'overview' }, asOf)).find((item) => item.id === 'stock').text, "No item's stock on hand is below its safety stock.");
   assert.equal(findings(buildRuntimeGovernedReport({ ...business(), restrictedSubjects: ['inventory_balances'] }, { subject: 'overview' }, asOf)).some((item) => item.id === 'stock'), false);
   // Suppliers tied at the top of every bar have no leader.
   const tied = { ...business(), purchaseOrders: business().purchaseOrders.filter((row) => row.id !== 'PO-2') };

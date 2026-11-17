@@ -44,7 +44,7 @@ test('overview covers each area, and its figures and charts open their tabs with
   for (const heading of ['Purchases and sales by month', 'SKUs by stock status', 'Record activity by month', 'Committed purchase orders by supplier']) await expect(page.getByRole('heading', { name: heading })).toBeVisible();
   await expect(page.locator('[data-chart-id]')).toHaveCount(4);
   // One figure per area: purchasing, sales, inventory and supplier invoices.
-  for (const [id, label] of [['purchase_order_amount', 'Committed PO amount'], ['sales_order_amount', 'Sales order amount'], ['low_stock_sku', 'Low-stock SKUs'], ['invoice_amount', 'Supplier invoice amount']]) await expect(page.getByTestId(`report-kpi-${id}`)).toContainText(label);
+  for (const [id, label] of [['purchase_order_amount', 'Committed PO amount'], ['sales_order_amount', 'Sales order amount'], ['low_stock_sku', 'Below safety stock (on hand)'], ['invoice_amount', 'Supplier invoice amount']]) await expect(page.getByTestId(`report-kpi-${id}`)).toContainText(label);
   await expect(page.getByTestId('report-kpi-inventory_risk_sku')).toHaveCount(0);
   // A figure opens its area's analytics tab, keeping the dates.
   await page.getByTestId('report-kpi-sales_order_amount').click();
@@ -72,7 +72,7 @@ test('overview stays available in Chinese', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '每月业务记录活动' })).toBeVisible();
   await expect(page.getByRole('heading', { name: '每月采购与销售金额' })).toBeVisible();
   await expect(page.getByRole('heading', { name: '按库存状态统计 SKU' })).toBeVisible();
-  await expect(page.getByTestId('report-kpi-low_stock_sku')).toContainText('库存偏低 SKU');
+  await expect(page.getByTestId('report-kpi-low_stock_sku')).toContainText('低于安全库存（现有）');
   await expect(page.getByRole('heading', { name: '需要关注' })).toBeVisible();
 });
 
@@ -107,7 +107,8 @@ test('a populated overview reads in words across areas, and a view saved with th
   await expect(page.locator('[data-chart-id]')).toHaveCount(4);
   // The saved order still leads; the charts it does not name follow.
   expect(await page.locator('[data-chart-id]').evaluateAll(cards => cards.map(card => card.getAttribute('data-chart-id')))).toEqual(['overview_activity', 'overview_suppliers', 'overview_purchases_and_sales', 'overview_stock_status']);
-  await expect(page.getByTestId('report-kpi-low_stock_sku').getByTestId('report-kpi-value')).toHaveText('3');
+  // Below safety stock on hand, as the inventory warnings count it: A and B (design audit L3-07).
+  await expect(page.getByTestId('report-kpi-low_stock_sku').getByTestId('report-kpi-value')).toHaveText('2');
   await expect(page.getByTestId('report-kpi-sales_order_amount').getByTestId('report-kpi-value')).toHaveText('$1,100.00');
   await expect(page.getByTestId('report-kpi-invoice_amount').getByTestId('report-kpi-value')).toHaveText('$120.00');
   await expect(page.locator('[data-chart-id="overview_stock_status"]')).toContainText('Below safety stock');
@@ -115,7 +116,8 @@ test('a populated overview reads in words across areas, and a view saved with th
   // Key findings speak for sales, purchasing and stock.
   const findings = page.getByTestId('report-insights');
   await expect(findings).toContainText('2026-09, the last whole month: $400.00 in sales orders and $500.00 in committed purchases.');
-  await expect(findings).toContainText('3 of 4 SKUs are low on stock: 1 out of stock, 1 below safety stock and 1 below reorder point.');
+  // Without the reorder list (this page is served without one) only the shelf is named.
+  await expect(findings).toContainText('2 items are below safety stock on hand.');
   await expect(findings).toContainText('Acme Components has the most committed purchase orders: 2.');
   // The old ids hide nothing and do not count against keeping one chart visible.
   await dashboard.getByRole('button', { name: 'Customize view', exact: true }).click();

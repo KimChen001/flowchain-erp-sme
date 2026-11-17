@@ -110,7 +110,9 @@ async function routeReports(ctx) {
         showPurchaseOrders: Boolean(access.collections.purchaseOrders),
         truncatedSubjects: (allocationContext.truncatedSubjects || []).filter((entry) => ['inventory_items', 'sales_orders', 'purchase_orders'].includes(entry?.subject)),
       })
-      return list.scope?.kind === 'all_warehouses' ? { orderNow: list.summary.orderNow } : null
+      // The rows let the overview judge each item as the inventory warnings do
+      // (shared/inventory-stock-signals.mjs).
+      return list.scope?.kind === 'all_warehouses' ? { orderNow: list.summary.orderNow, rows: list.rows, notJudged: list.notJudged || [] } : null
     } catch {
       return null
     }

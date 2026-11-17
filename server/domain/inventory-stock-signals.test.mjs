@@ -30,9 +30,13 @@ test('need replenishment is the reorder list\'s order now, and below safety stoc
   assert.equal(cakestand.needsReplenishment, true)
   assert.equal(cakestand.belowSafetyOnHand, false)
   assert.equal(stockStateOf(cakestand, balances[1]), 'replenish')
-  // On hand under the reorder point, but the position is above it: no warning.
+  // On hand under the reorder point, but the position is above it: no
+  // warning, and not "Sufficient" either: on order (design audit L7-22).
   assert.equal(signals.get('84991').warned, false)
-  assert.equal(stockStateOf(signals.get('84991'), balances[2]), 'ok')
+  assert.equal(signals.get('84991').onOrder, true)
+  assert.equal(stockStateOf(signals.get('84991'), balances[2]), 'on_order')
+  // Above its reorder point on hand: enough.
+  assert.equal(stockStateOf(signals.get('20725'), balances[3]), 'ok')
   assert.deepEqual(stockSignalCounts(signals), { warned: 2, needsReplenishment: 1, belowSafetyOnHand: 1, coveredByOpenOrders: 1, noneAvailable: 0, positionUnknown: false })
 })
 
