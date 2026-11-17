@@ -9,8 +9,7 @@ export const salesDemandEnglish: Record<string, string> = {
   "已暂停": "On hold",
   "可发货": "Ready to ship",
   "部分分配": "Partially allocated",
-  // Labels of the JSON sales demand read model
-  // (server/domain/sales-demand-read-model.mjs), when that model is served.
+  // Labels of the retired JSON sales demand read model, kept for stored text.
   "部分发货": "Partially shipped",
   // Delivery risk labels.
   "已阻塞": "Blocked",

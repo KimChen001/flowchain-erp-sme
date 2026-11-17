@@ -47,8 +47,6 @@ import { handleSettingsRuntimeRoute } from "../routes/settings-runtime.routes.mj
 import { handleSopRoute } from "../routes/sop.routes.mjs";
 import { handleSupplierPerformanceRoute } from "../routes/supplier-performance.routes.mjs";
 import { handleSupplierRecommendationsRoute } from "../routes/supplier-recommendations.routes.mjs";
-import { handleUserConfirmedActionsRoute } from "../routes/user-confirmed-actions.routes.mjs";
-import { handleUserDataRoute } from "../routes/user-data.routes.mjs";
 
 // The retired /api/ai endpoints (the Chinese template chat and its rule-based
 // operational queries). The assistant is /api/ai-runtime/respond (assistant
@@ -100,9 +98,7 @@ const orderedRouteHandlers = Object.freeze([
   handleCustomFieldsRoute,
   handleMasterDataRoute,
   handleActionDraftsRoute,
-  handleUserConfirmedActionsRoute,
   handleProcurementWorkflowRoute,
-  handleUserDataRoute,
   handleMarketRoute,
   handleLegacyAiRoute,
   handleRfqsRoute,

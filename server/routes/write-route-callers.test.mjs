@@ -46,9 +46,6 @@ const FROZEN_SETTLEMENT = 'Internal settlement, cashbook and the settlement work
 const BANK_STEP = 'The bank reconciliation workbench imports, parses, validates, commits, matches and reverses; it has no control for this step.'
 const RECEIVABLE_STEP = 'The receivable screens offer only Record payment; dispute, resolve and external reference have no control yet.'
 const INTAKE_STEP = 'The intake page pastes or uploads, maps, normalizes, validates, reviews and excludes records; it has no control for this step yet.'
-const LEGACY_JSON = 'Legacy JSON-mode route: database mode answers 501 (route-classification.mjs) and the app uses /api/procurement/... instead.'
-const OLDER_IMPORT = 'Older JSON-mode import API that only server tests call; the app imports through /api/data-import.'
-const OLDER_CONFIRMED_ACTION = 'Older confirmed-action API that only server tests call; the assistant confirms steps through its own record and form cards.'
 const MOBILE_SYNC = 'Offline mobile sync protocol; its client is not in this repository, and the route and Postgres tests drive it.'
 
 // Write routes with no caller in the app, each with the reason.
@@ -122,21 +119,8 @@ const NO_APP_CALLER = {
   'POST /api/action-drafts': 'Same handler as POST /api/action-drafts/save, which the app calls.',
 
   // Older and retired routes.
-  'POST /api/purchase-requests': LEGACY_JSON,
-  'PATCH /api/purchase-requests/:id/status': LEGACY_JSON,
-  'POST /api/purchase-requests/:id/convert-to-po': LEGACY_JSON,
-  'POST /api/purchase-orders': LEGACY_JSON,
-  'PATCH /api/purchase-orders/:id/status': LEGACY_JSON,
-  'POST /api/rfqs': LEGACY_JSON,
-  'PATCH /api/rfqs/:id/status': LEGACY_JSON,
   'POST /api/inventory/items': 'Answers 501: balances change only through transfers, counts and adjustments.',
   'POST /api/sales-demand/orders': 'Answers 501: sales orders are created through POST /api/sales/orders.',
-  'POST /api/user-data/import/preview': OLDER_IMPORT,
-  'POST /api/user-data/import/dry-run': OLDER_IMPORT,
-  'POST /api/user-data/import/commit': OLDER_IMPORT,
-  'POST /api/user-data/import/deactivate': OLDER_IMPORT,
-  'POST /api/user-confirmed-actions': OLDER_CONFIRMED_ACTION,
-  'POST /api/user-confirmed-actions/validate': OLDER_CONFIRMED_ACTION,
 
   // Used outside the web app.
   'POST /api/sync/clients/register': MOBILE_SYNC,
