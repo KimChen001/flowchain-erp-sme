@@ -22,7 +22,6 @@ const SOURCE_MODULE_LABELS: Record<string, string> = {
   "master-data": "基础资料",
   reports: "报表中心",
   imports: "数据接入与质量",
-  "exception-cases": "异常处理工单",
   ai: "AI 助手",
   globalSearch: "全局搜索",
 };

@@ -10,9 +10,7 @@ import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
 import { handleInventoryRoute } from '../routes/inventory.routes.mjs'
 import { handleProcurementReadRoute } from '../routes/procurement-read.routes.mjs'
 import { handleSearchRoute } from '../routes/search.routes.mjs'
-import { handleTodayCockpitRoute } from '../routes/today-cockpit.routes.mjs'
 import { buildActionDraftSuggestion } from './action-draft-boundary.mjs'
-import { buildTodayCockpit } from './today-cockpit-read-model.mjs'
 import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..')
@@ -120,27 +118,6 @@ function expectPreviewOnly(payload) {
   assert.equal(payload.draft.confirmationBoundary.submitted, false)
 }
 
-test('system harness covers cockpit to inventory and procurement evidence paths', async () => {
-  const db = createDb()
-  const before = snapshot(db)
-  const cockpitRoute = routeContext('GET', '/api/today-cockpit', db)
-  await handleTodayCockpitRoute(cockpitRoute.ctx)
-
-  assert.equal(cockpitRoute.response.status, 200)
-  for (const key of ['summary', 'cards', 'followups', 'inventoryRisks', 'recentDocuments', 'recentMovements', 'recommendedActions', 'evidence']) {
-    assert.ok(cockpitRoute.response.payload[key] !== undefined)
-  }
-  const inventoryRisk = cockpitRoute.response.payload.inventoryRisks.find((item) => item.sku === 'SKU-00287')
-  assert.ok(inventoryRisk)
-  assert.equal(inventoryRisk.target.entityType, 'inventory_item')
-  assert.equal(inventoryRisk.target.entityId, 'SKU-00287')
-
-  const procurementAction = cockpitRoute.response.payload.recommendedActions.find((item) => item.target?.documentType || item.evidence?.length)
-  assert.ok(procurementAction)
-  assert.ok(procurementAction.evidence.every((item) => item.type && (item.id || item.label || item.summary)))
-  assert.equal(snapshot(db), before)
-})
-
 test('system harness validates global search and canonical evidence target shape', async () => {
   const db = createDb()
   const searchRoute = routeContext('GET', '/api/search?q=PO-2026-1301', db)
@@ -214,13 +191,11 @@ test('system harness covers key read API contracts without mutation', async () =
 test('system harness validates evidence and navigation compatibility surfaces', () => {
   const helper = readSource('src', 'lib', 'evidenceLinks.ts')
   const app = readSource('src', 'app', 'FlowChainApp.tsx')
-  const cockpit = buildTodayCockpit(createDb())
 
   assert.match(helper, /pr: \{ entityType: "purchase_request", moduleId: "procurement:requests"/)
   assert.match(helper, /threeWayMatch: \{ entityType: "supplier_invoice", moduleId: "procurement:bills"/)
   assert.match(helper, /focusTarget: clickable \? \{ entityType: normalizedEntityType, entityId \}/)
   assert.match(app, /navigationIntentFromGlobalSearchResult\(result, \{ returnTo: active \}\)/)
-  assert.ok(cockpit.recommendedActions.every((item) => Array.isArray(item.evidence)))
 })
 
 test('system harness records typography grep boundary for current product scope', () => {

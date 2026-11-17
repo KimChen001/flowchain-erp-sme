@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Plus, Save, Search, ShieldCheck, X } from 'lucide-react';
+import { Plus, Save, Search, ShieldCheck, X } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 import { A, Card, RecoveryActions } from '../../components/ui';
 import { BusinessEntityLink } from '../../components/business/BusinessEntityLink';
@@ -12,7 +12,7 @@ import { roleLabel } from '../../../shared/roles.mjs';
 import CustomFieldsSettings from './CustomFieldsSettings';
 import { DOCUMENT_NUMBER_PREFIX_PATTERN, DOCUMENT_NUMBER_TYPES, formatDocumentNumber, numberingPeriod } from '../../../shared/document-numbering.mjs';
 
-type View = keyof SettingsRuntime | 'audit';
+type View = Exclude<keyof SettingsRuntime, 'modules' | 'advanced'> | 'audit';
 type NavigateFn = (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null) => void;
 type Translate = ReturnType<typeof useI18n>['t'];
 type TranslationKey = Parameters<Translate>[0];
@@ -85,18 +85,9 @@ const sectionDescriptions: Record<View, { en: string; zh: string }> = {
   roles: { en: 'Manage members, roles and whether they are active.', zh: '管理访问成员、角色和启用状态。' },
   numbering: { en: 'Each document FlowChain issues is numbered prefix-year-month-sequence when it is saved. Set the prefixes here.', zh: 'FlowChain 开出的每张单据在保存时按“前缀-年月-流水号”自动编号。可在此设置前缀。' },
   review: { en: 'Purchase order approval, supplier follow-up email and invoice matching tolerances are in effect. The other review settings are not in effect yet.', zh: '采购订单审批、供应商催货邮件和发票匹配容差已生效；其他复核设置尚未生效。' },
-  modules: { en: 'Choose enabled modules, their order, the default entry and which roles see them.', zh: '配置启用模块、顺序、默认入口和角色可见性。' },
   ai: { en: 'Set each AI capability to allowed, allowed after review, or not allowed.', zh: '按能力设置允许、复核或禁止等级。' },
   audit: { en: 'Search recorded settings and business audit entries.', zh: '检索真实设置与业务审计记录。' },
-  advanced: { en: 'Controlled security, export and display parameters.', zh: '维护安全、导出和显示类受控参数。' },
 };
-
-// Sections that nothing reads yet (see OPERATIONAL_SETTINGS_IN_EFFECT in
-// server/domain/workspace-settings-contract.mjs). They are shown read-only so
-// saving never reports success for a setting that changes nothing. In the AI
-// section only the AI features switch is in effect; its capability levels
-// stay read-only.
-const NOT_IN_EFFECT_SECTIONS: View[] = ['modules', 'advanced'];
 
 const TOLERANCE_FIELDS = [
   { key: 'quantityTolerance', label: 'settings.tolerance.quantity', help: 'settings.tolerance.quantityHelp' },
@@ -128,7 +119,7 @@ const buttonClass = 'inline-flex items-center justify-center gap-2 rounded-lg px
 
 function Header({ view, dirty, saving, invalid, onSave, onCancel }: { view: View; dirty?: boolean; saving?: boolean; invalid?: boolean; onSave?: () => void; onCancel?: () => void }) {
   const { t, language } = useI18n();
-  const key = ({ company: 'settings.company', roles: 'settings.roles', numbering: 'settings.numbering', review: 'settings.review', modules: 'settings.modules', ai: 'settings.ai', audit: 'settings.audit', advanced: 'settings.advanced' } as const)[view];
+  const key = ({ company: 'settings.company', roles: 'settings.roles', numbering: 'settings.numbering', review: 'settings.review', ai: 'settings.ai', audit: 'settings.audit' } as const)[view];
   const title = t(key);
   const description = sectionDescriptions[view][language === 'en-US' ? 'en' : 'zh'];
   return <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -215,18 +206,6 @@ function Review({ value, onChange }: { value: SettingsRuntime['review']; onChang
   </div><div className="rounded-xl bg-slate-50 p-4"><div className="font-medium">{t('settings.policySimulation')}</div><label className="mt-3 block text-xs">{t('settings.simulatedAmount')}<input type="number" className={`${fieldClass} mt-1`} value={amount} onChange={e => setAmount(Number(e.target.value))} /></label><div className={`mt-3 rounded-lg p-3 text-sm ${requires ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>{requires ? t('settings.reviewRequired', { roles: reviewerNames }) : t('settings.standardFlow')}</div></div></div></NotInEffect></section></div>;
 }
 
-function Modules({ value, onChange }: { value: SettingsRuntime['modules']; onChange: (v: SettingsRuntime['modules']) => void }) {
-  const { t, language } = useI18n();
-  const sorted = [...value.items].sort((a, b) => a.order - b.order);
-  const update = (id: string, patch: Partial<(typeof value.items)[number]>) => onChange({ ...value, items: value.items.map(item => item.id === id ? { ...item, ...patch } : item) });
-  const move = (index: number, delta: number) => { const next = [...sorted]; const target = index + delta; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target], next[index]]; onChange({ ...value, items: next.map((item, i) => ({ ...item, order: i + 1 })) }); };
-  return <div className="grid gap-5 lg:grid-cols-[1fr_260px]"><div className="space-y-2">{sorted.map((item, index) => <div key={item.id} className="grid items-center gap-2 rounded-xl border border-slate-200 p-3 sm:grid-cols-[32px_1fr_160px_110px]">
-    <div className="flex flex-col"><button className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-slate-100" aria-label={t('settings.moveUp')} onClick={() => move(index, -1)}><ArrowUp size={14} /></button><button className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-slate-100" aria-label={t('settings.moveDown')} onClick={() => move(index, 1)}><ArrowDown size={14} /></button></div><div className="min-w-0"><div className="font-medium" style={{ color: A.label }} data-testid={`settings-module-name-${item.id}`}>{labelFor(t, 'settings.module', item.id, item.label)}</div><div className="mt-1 text-xs" style={{ color: A.sub }} title={item.roles.join(', ')} aria-label={t('settings.visibleRoles', { module: labelFor(t, 'settings.module', item.id, item.label) })}>{t('settings.visibleTo', { roles: roleNames(item.roles, language) || t('settings.none') })}</div></div>
-    <label className="text-sm"><input type="radio" name="default-module" checked={value.defaultModule === item.id} onChange={() => onChange({ ...value, defaultModule: item.id })} /> {t('settings.setDefault')}</label>
-    <label className="text-sm"><input type="checkbox" checked={item.enabled} disabled={['overview', 'settings'].includes(item.id)} onChange={e => update(item.id, { enabled: e.target.checked })} /> {item.enabled ? t('settings.enabled') : t('settings.disabled')}</label>
-  </div>)}</div><div className="rounded-xl bg-slate-900 p-4 text-white"><div className="text-xs text-slate-400">{t('settings.sidebarPreview')}</div><div className="mt-3 space-y-1">{sorted.filter(x => x.enabled).map(x => <div key={x.id} className={`rounded-lg px-3 py-2 text-sm ${x.id === value.defaultModule ? 'bg-blue-600' : 'bg-slate-800'}`}>{labelFor(t, 'settings.module', x.id, x.label)}</div>)}</div></div></div>;
-}
-
 // The AI features switch, in effect: off by default; on, the assistant may call
 // the configured model until this month's spend reaches the cap.
 function AiModelSwitch({ value, onChange }: { value: SettingsRuntime['ai']; onChange: (v: SettingsRuntime['ai']) => void }) {
@@ -254,11 +233,6 @@ function AiGovernance({ value, onChange }: { value: SettingsRuntime['ai']; onCha
   const { t } = useI18n();
   // Option values are the stored level codes; only the labels are translated.
   return <><div className="space-y-2">{value.capabilities.map(cap => <div key={cap.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-4"><div className="font-medium" title={`${t('settings.capabilityId')}: ${cap.id}`}>{labelFor(t, 'settings.capability', cap.id, cap.label)}</div><select aria-label={labelFor(t, 'settings.capability', cap.id, cap.label)} className={`${fieldClass} max-w-[220px]`} value={cap.level} onChange={e => onChange({ ...value, capabilities: value.capabilities.map(x => x.id === cap.id ? { ...x, level: e.target.value } : x) })}>{AI_LEVELS.map(level => <option key={level} value={level}>{t(`settings.level.${level}` as TranslationKey)}</option>)}</select></div>)}</div><div className="mt-4 flex flex-wrap gap-6 rounded-xl bg-slate-50 p-4 text-sm"><label><input type="checkbox" checked={value.evidenceRequired} onChange={e => onChange({ ...value, evidenceRequired: e.target.checked })} /> {t('settings.evidenceRequired')}</label><label>{t('settings.retentionDays')} <input type="number" className="ml-2 w-24 rounded border px-2 py-1" value={value.retainDays} onChange={e => onChange({ ...value, retainDays: Number(e.target.value) })} /></label></div></>;
-}
-
-function Advanced({ value, onChange }: { value: SettingsRuntime['advanced']; onChange: (v: SettingsRuntime['advanced']) => void }) {
-  const { t } = useI18n();
-  return <div className="grid gap-4 md:grid-cols-2"><label className="text-sm">{t('settings.sessionTimeout')}<input type="number" className={`${fieldClass} mt-1`} value={value.sessionTimeoutMinutes} onChange={e => onChange({ ...value, sessionTimeoutMinutes: Number(e.target.value) })} /></label><label className="text-sm">{t('settings.exportLimit')}<input type="number" className={`${fieldClass} mt-1`} value={value.exportLimit} onChange={e => onChange({ ...value, exportLimit: Number(e.target.value) })} /></label><label className="text-sm">{t('settings.dateFormat')}<select className={`${fieldClass} mt-1`} value={value.dateFormat} onChange={e => onChange({ ...value, dateFormat: e.target.value })}><option>YYYY-MM-DD</option><option>DD/MM/YYYY</option><option>MM/DD/YYYY</option></select></label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value.negativeInventoryBlocked} onChange={e => onChange({ ...value, negativeInventoryBlocked: e.target.checked })} />{t('settings.blockNegative')}</label><label className="text-sm md:col-span-2">{t('settings.maintenanceNotice')}<textarea rows={3} className={`${fieldClass} mt-1`} value={value.maintenanceNotice} onChange={e => onChange({ ...value, maintenanceNotice: e.target.value })} /></label></div>;
 }
 
 function Audit() {
@@ -292,7 +266,7 @@ export default function SettingsPage({ initialView }: { initialView?: string; on
   const { t, locale, timezone } = useI18n();
   if (initialView === 'custom-fields') return <CustomFieldsSettings />;
   if (['profile', 'company', 'roles', 'warehouse-access', 'readiness'].includes(initialView || '')) return <WorkspaceSettings view={initialView || 'profile'} />;
-  const view = ((initialView === 'boundaries' ? 'advanced' : initialView) || 'company') as View;
+  const view = (initialView || 'company') as View;
   const [data, setData] = useState<SettingsRuntime | null>(null); const [draft, setDraft] = useState<SettingsRuntime | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [saving, setSaving] = useState(false); const [notice, setNotice] = useState('');
   useEffect(() => { setLoading(true); fetchSettingsRuntime().then(next => { setData(next); setDraft(next); setError(''); }).catch(err => setError(err instanceof Error ? err.message : t('settings.loadFailed'))).finally(() => setLoading(false)); }, []);
   if (view === 'audit') return <Card className="p-5"><Header view="audit" /><Audit /></Card>;
@@ -300,13 +274,12 @@ export default function SettingsPage({ initialView }: { initialView?: string; on
   if (error || !data || !draft) return <Card className="p-6"><div className="text-sm text-red-600">{error || t('settings.loadFailed')}</div><RecoveryActions actions={[{ key: 'reload', label: t('settings.reload'), onClick: () => window.location.reload(), kind: 'list' }]} /></Card>;
   const section = view as keyof SettingsRuntime;
   const dirty = JSON.stringify(data[section]) !== JSON.stringify(draft[section]);
-  const readOnly = NOT_IN_EFFECT_SECTIONS.includes(view);
   const numberingPrefixes = draft.numbering.rules.map(rule => rule.prefix.toUpperCase());
   const invalid = (view === 'review' && TOLERANCE_FIELDS.some(field => toleranceError(field.key, draft.review[field.key]) !== null))
     || (view === 'numbering' && (new Set(numberingPrefixes).size !== numberingPrefixes.length || numberingPrefixes.some(prefix => !DOCUMENT_NUMBER_PREFIX_PATTERN.test(prefix))));
   const change = <K extends keyof SettingsRuntime>(next: SettingsRuntime[K]) => { setDraft({ ...draft, [section]: next }); setNotice(''); };
-  const save = async () => { setSaving(true); setNotice(''); try { const result = await saveSettingsSection(section, draft[section]); setData({ ...data, [section]: result.settings }); setDraft({ ...draft, [section]: result.settings }); setNotice(t('settings.savedAt', { time: new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date()) })); if (section === 'modules') { localStorage.setItem('flowchain:module-settings', JSON.stringify(result.settings)); window.dispatchEvent(new Event('flowchain:module-settings')); } } catch { setNotice(t('settings.saveFailed')); } finally { setSaving(false); } };
-  return <Card className="p-5" data-testid={`settings-${view}`}><Header view={view} dirty={dirty} saving={saving} invalid={invalid} onSave={readOnly ? undefined : save} onCancel={() => setDraft(data)} />{notice && <div role="status" className={`mb-4 rounded-lg p-3 text-sm ${notice.startsWith(t('settings.saved').slice(0, 3)) ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'}`}>{notice}</div>}
-    {view === 'numbering' && <Numbering value={draft.numbering} onChange={change} timezone={timezone} />}{view === 'review' && <Review value={draft.review} onChange={change} />}{view === 'modules' && <NotInEffect><Modules value={draft.modules} onChange={change} /></NotInEffect>}{view === 'ai' && <><AiModelSwitch value={draft.ai} onChange={change} /><NotInEffect><AiGovernance value={draft.ai} onChange={change} /></NotInEffect></>}{view === 'advanced' && <NotInEffect><Advanced value={draft.advanced} onChange={change} /></NotInEffect>}
+  const save = async () => { setSaving(true); setNotice(''); try { const result = await saveSettingsSection(section, draft[section]); setData({ ...data, [section]: result.settings }); setDraft({ ...draft, [section]: result.settings }); setNotice(t('settings.savedAt', { time: new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date()) })); } catch { setNotice(t('settings.saveFailed')); } finally { setSaving(false); } };
+  return <Card className="p-5" data-testid={`settings-${view}`}><Header view={view} dirty={dirty} saving={saving} invalid={invalid} onSave={save} onCancel={() => setDraft(data)} />{notice && <div role="status" className={`mb-4 rounded-lg p-3 text-sm ${notice.startsWith(t('settings.saved').slice(0, 3)) ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'}`}>{notice}</div>}
+    {view === 'numbering' && <Numbering value={draft.numbering} onChange={change} timezone={timezone} />}{view === 'review' && <Review value={draft.review} onChange={change} />}{view === 'ai' && <><AiModelSwitch value={draft.ai} onChange={change} /><NotInEffect><AiGovernance value={draft.ai} onChange={change} /></NotInEffect></>}
     <div className="mt-5 flex items-center gap-2 border-t border-slate-100 pt-4 text-xs text-slate-500"><ShieldCheck size={14} />{t('settings.auditHint')}</div></Card>;
 }

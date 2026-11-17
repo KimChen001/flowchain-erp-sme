@@ -102,12 +102,8 @@ import {
   type ActionDraftPreviewRequest,
 } from "../modules/action-drafts/ActionDraftReviewShell";
 import { isStructuredDraftType, structuredDraftTarget } from "../modules/action-drafts/structuredDraftHandoff";
-import ExceptionCasesPage from "../modules/exception-cases/Page";
 import SalesDemandPage from "../modules/sales/Page";
-import CollaborationDraftsPage from "../modules/collaboration-drafts/Page";
 import SettingsPage from "../modules/settings/Page";
-import AuditHistoryPage from "../modules/audit-history/Page";
-import PilotReadinessPage from "../modules/pilot-readiness/Page";
 import { ReviewFirstActionWorkflowV2 } from "../components/actions/ReviewFirstActionWorkflowV2";
 import { BusinessEntityDetailPage } from "../components/business/BusinessEntityDetailPage";
 import {
@@ -245,7 +241,6 @@ const FOCUS_ENTITY_LABELS: Record<string, LabelPair> = {
   receiving_doc: { en: "Receipt", zh: "收货单" },
   supplier: { en: "Supplier", zh: "供应商" },
   supplier_invoice: { en: "Supplier invoice", zh: "采购发票" },
-  exception_case: { en: "Exception case", zh: "异常工单" },
   // Any other record.
   record: { en: "Business record", zh: "业务对象" },
 };
@@ -502,22 +497,7 @@ export default function FlowChainApp() {
     Set<string>
   >(() => readExperimentalModuleIds());
   const [enabledModuleIds, setEnabledModuleIds] = useState<Set<string> | null>(
-    () => {
-      try {
-        const saved = JSON.parse(
-          localStorage.getItem("flowchain:module-settings") || "null",
-        );
-        return saved?.items
-          ? new Set(
-              saved.items
-                .filter((item: { enabled: boolean }) => item.enabled)
-                .map((item: { id: string }) => item.id),
-            )
-          : null;
-      } catch {
-        return null;
-      }
-    },
+    null,
   );
   const [user, setUser] = useState<WorkspaceUser | null>(() => {
     try {
@@ -529,25 +509,6 @@ export default function FlowChainApp() {
   });
 
   useEffect(() => {
-    const refreshModuleSettings = () => {
-      try {
-        const saved = JSON.parse(
-          localStorage.getItem("flowchain:module-settings") || "null",
-        );
-        setEnabledModuleIds(
-          saved?.items
-            ? new Set(
-                saved.items
-                  .filter((item: { enabled: boolean }) => item.enabled)
-                  .map((item: { id: string }) => item.id),
-              )
-            : null,
-        );
-      } catch {
-        setEnabledModuleIds(null);
-      }
-    };
-    window.addEventListener("flowchain:module-settings", refreshModuleSettings);
     const refreshExperiments = () =>
       setExperimentalModuleIds(readExperimentalModuleIds());
     window.addEventListener(
@@ -555,10 +516,6 @@ export default function FlowChainApp() {
       refreshExperiments,
     );
     return () => {
-      window.removeEventListener(
-        "flowchain:module-settings",
-        refreshModuleSettings,
-      );
       window.removeEventListener(
         "flowchain:experimental-modules",
         refreshExperiments,
@@ -635,14 +592,17 @@ export default function FlowChainApp() {
         const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
         setCapabilities(byId);
         setCapabilityLoadState("ready");
+        // The same rule as the route guard (resolveCapabilityRouteAccess): a
+        // preview opens only when turned on in this browser, so the menu does
+        // not show a preview the guard would then lock (design audit L6-09).
         setEnabledModuleIds(
           new Set(
             rows
               .filter(
                 (row) =>
-                  row.enabled ||
-                  (row.maturity === "preview" &&
-                    experimentalModuleIds.has(row.id)),
+                  row.maturity === "preview"
+                    ? experimentalModuleIds.has(row.id)
+                    : row.enabled,
               )
               .map((row) => row.id),
           ),
@@ -862,9 +822,6 @@ export default function FlowChainApp() {
             "imports",
             "universal-intake",
             "review-actions",
-            "collaboration-drafts",
-            "audit-history",
-            "pilot-readiness",
             "settings",
           ].includes(activeModule)
         ? "max-w-[1360px]"
@@ -1246,11 +1203,7 @@ export default function FlowChainApp() {
       <ImportsPanel initialView={activeView as any} onNavigate={navigateTo} />
     ),
     "universal-intake": <UniversalIntakePanel />,
-    "exception-cases": <ExceptionCasesPage onNavigate={navigateTo} />,
-    "collaboration-drafts": <CollaborationDraftsPage onNavigate={navigateTo} />,
     "review-actions": <ReviewFirstActionWorkflowV2 onNavigate={navigateTo} />,
-    "audit-history": <AuditHistoryPage onNavigate={navigateTo} />,
-    "pilot-readiness": <PilotReadinessPage onNavigate={navigateTo} />,
     settings: (
       <SettingsPage initialView={activeView as any} onNavigate={navigateTo} />
     ),

@@ -62,7 +62,6 @@ const ENTITY_TARGETS: Record<string, { moduleId: string; entityType: string; mod
   supplier: { moduleId: "srm:master", entityType: "supplier", module: "supplier", label: "供应商" },
   supplier_master: { moduleId: "srm:master", entityType: "supplier", module: "supplier", label: "供应商" },
   supplier_invoice: { moduleId: "procurement:bills", entityType: "supplier_invoice", module: "procurement", label: "采购发票" },
-  exception_case: { moduleId: "exception-cases", entityType: "exception_case", module: "procurement", label: "异常工单" },
   warehouse: { moduleId: "master-data:warehouses", entityType: "warehouse", module: "masterData", label: "仓库" },
   bin: { moduleId: "master-data:warehouses", entityType: "bin", module: "masterData", label: "库位" },
 };

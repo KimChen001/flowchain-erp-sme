@@ -27,7 +27,6 @@ const routeDefinitions = [
   { method: 'GET', pattern: /^\/api\/ai\/tools$/, group: 'ai', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
   { method: 'POST', pattern: /^\/api\/ai\/chat$/, group: 'ai', classification: ROUTE_CLASSES.readOnly, writesJson: 'best-effort-audit', databaseMode: 'allowed-no-json-persist' },
   { method: 'GET', pattern: /^\/api\/search$/, group: 'search', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
-  { method: 'GET', pattern: /^\/api\/today-cockpit$/, group: 'today-cockpit', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
 
   { method: 'GET', pattern: /^\/api\/sales-demand\/(?:summary|orders|risks|impact|po-impact)(?:\/.*)?$/, group: 'sales-demand', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'GET', pattern: /^\/api\/evidence-graph(?:\/.*)?$/, group: 'evidence-graph', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },

@@ -27,12 +27,7 @@ const localCapabilityFallback: Record<string, ModuleCapability> = Object.fromEnt
   ["settings", "beta", "Workspace settings."],
   ["imports", "unavailable", "This import page was replaced by Data intake."],
   ["universal-intake", "preview", "Data intake is a preview: files can be uploaded but not yet turned into records."],
-  ["forecast", "unavailable", "Forecast and MRP planning are not available yet."],
-  ["exception-cases", "preview", "Exception cases are an internal preview."],
-  ["collaboration-drafts", "preview", "Collaboration drafts are an internal preview."],
   ["review-actions", "preview", "The review queue is an internal preview."],
-  ["audit-history", "preview", "Audit history is an internal preview."],
-  ["pilot-readiness", "preview", "Readiness checks are an internal preview."],
 ].map(([id, maturity, reason]) => [id, {
   id,
   maturity,
