@@ -131,6 +131,10 @@ test("the language picked on the sign-in page stays after signing in, for a user
   await page.getByLabel("工作邮箱").fill(email);
   await page.getByRole("button", { name: "发送登录链接", exact: true }).click();
   const link = await waitForLinkCount(email, before + 1);
+  // The email is in the page's language too, for someone with no saved one
+  // (design audit L16: it came in the workspace default, English).
+  const sent = (await outbox()).filter((message) => message.to === email && message.tag === "sign-in-link").at(-1)!;
+  expect(sent.subject).toBe("你的 FlowChain 登录链接");
   await page.goto(link);
   await page.getByRole("button", { name: /^登录 / }).click();
   await expect(page).toHaveURL(/\/app\//);

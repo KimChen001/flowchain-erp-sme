@@ -1,5 +1,14 @@
 import type React from "react";
 import type { PrintDocumentData, PrintLayoutElement, PrintLayoutTemplate } from "./printLayoutTypes";
+import { useI18n } from "../../i18n/I18n";
+
+// The words the canvas prints itself, in the interface language (design audit L16).
+const CANVAS_COPY = {
+  pageNumber: ["Page 1 of 1", "第 1 页 / 共 1 页"],
+  colon: [": ", "："],
+  barcode: ["Barcode placeholder", "条码占位"],
+  qrcode: ["QR code placeholder", "二维码占位"],
+} as const;
 
 function textValue(value: unknown) {
   if (value === undefined || value === null || value === "") return "—";
@@ -7,6 +16,8 @@ function textValue(value: unknown) {
 }
 
 function ElementContent({ element, data, instanceValues }: { element: PrintLayoutElement; data: PrintDocumentData; instanceValues: Record<string, string> }) {
+  const { language } = useI18n();
+  const say = (key: keyof typeof CANVAS_COPY) => CANVAS_COPY[key][language === "en-US" ? 0 : 1];
   const style: React.CSSProperties = {
     fontSize: element.style?.fontSize || 12,
     fontWeight: element.style?.bold ? 700 : element.style?.fontWeight || 400,
@@ -25,12 +36,12 @@ function ElementContent({ element, data, instanceValues }: { element: PrintLayou
     );
   }
   if (element.type === "line") return <div style={{ borderTop: `${element.style?.borderWidth || 1}px solid #111`, marginTop: element.height / 2 }} />;
-  if (element.type === "pageNumber") return <div style={style}>第 1 页 / 共 1 页</div>;
-  if (element.type === "barcode") return <div className="print-placeholder-code" style={style}><small>条码占位</small><br />||||| {textValue(data[element.field || "documentNo"])}</div>;
-  if (element.type === "qrcode") return <div className="print-placeholder-qr" style={style}><small>二维码占位</small><br />QR<br />{textValue(data[element.field || "documentNo"])}</div>;
+  if (element.type === "pageNumber") return <div style={style} data-testid="print-page-number">{say("pageNumber")}</div>;
+  if (element.type === "barcode") return <div className="print-placeholder-code" style={style}><small>{say("barcode")}</small><br />||||| {textValue(data[element.field || "documentNo"])}</div>;
+  if (element.type === "qrcode") return <div className="print-placeholder-qr" style={style}><small>{say("qrcode")}</small><br />QR<br />{textValue(data[element.field || "documentNo"])}</div>;
   const mode = element.contentMode || (element.type === "field" ? "field" : "static");
   const value = mode === "instance" ? instanceValues[element.id] : mode === "field" ? data[element.field || ""] : element.value;
-  if (element.type === "field" || mode === "field") return <div style={style}><span className="print-field-label">{element.title}：</span>{textValue(value)}</div>;
+  if (element.type === "field" || mode === "field") return <div style={style}><span className="print-field-label">{element.title}{say("colon")}</span>{textValue(value)}</div>;
   if (element.type === "signature") return <div className="print-multiline-content" style={style}>{value ? String(value) : element.title}</div>;
   return <div className="print-multiline-content" style={style}>{value ? String(value) : element.placeholder || element.title}</div>;
 }

@@ -6,6 +6,10 @@ import { listButtonClass, rowActionClass } from "../../components/ui/listLayout"
 import { useI18n } from "../../i18n/I18n";
 import { unitLabel } from "../../i18n/unitLabels";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { apiErrorText } from "../../lib/apiErrorText";
+// A failed step says why in the interface language, never the server's raw
+// English (design audit L16).
+const RETRY_LATER = ["Try again in a moment.", "请稍后重试。"] as const;
 import { useDocumentNumbers } from "../../lib/documentNumbers";
 import { formatQuantity } from "../../lib/format";
 import { followUpMessage, invoiceCorrectionMessage, useDecisionCopy, type DecisionCopyKey } from "./decisionCopy";
@@ -231,7 +235,7 @@ function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kin
       onChanged();
     } catch (error) {
       if (error instanceof ApiError && error.code === "DECISION_ALREADY_MADE") { setMessage(t("stale")); onChanged(); }
-      else setMessage(t("failed", { message: error instanceof Error ? error.message : String(error) }));
+      else setMessage(t("failed", { message: apiErrorText(error, t.language, RETRY_LATER) }));
     } finally {
       setBusy(false);
     }
@@ -698,7 +702,7 @@ function SetAsideList({ entries, canDecide, day, kindLabel, labelOf, onChanged }
       await apiJson("/api/decision-items/reopen", { method: "POST", body: JSON.stringify({ key }) });
       onChanged();
     } catch (error) {
-      setMessage(t("failed", { message: error instanceof Error ? error.message : String(error) }));
+      setMessage(t("failed", { message: apiErrorText(error, t.language, RETRY_LATER) }));
     } finally {
       setBusyKey(null);
     }

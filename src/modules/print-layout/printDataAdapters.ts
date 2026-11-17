@@ -1,10 +1,27 @@
 import type { PrintDocumentData, PrintDocumentType, PrintFieldOption } from "./printLayoutTypes";
 
-export const printFieldOptions: Record<PrintDocumentType, PrintFieldOption[]> = {
-  receive_sheet: ["companyName", "documentNo", "documentDate", "supplier", "warehouse", "sourceOrderNo", "handler", "receiver", "receiveDate", "createdBy", "reviewedBy", "remarks"].map((key) => ({ key, label: ({ companyName: "公司名称", documentNo: "单据编号", documentDate: "单据日期", supplier: "供应商", warehouse: "仓库", sourceOrderNo: "采购订单", handler: "经办人", receiver: "收货人", receiveDate: "收货日期", createdBy: "创建人", reviewedBy: "审核人", remarks: "备注" } as Record<string, string>)[key] })),
-  delivery_note: ["companyName", "documentNo", "documentDate", "customer", "warehouse", "sourceOrderNo", "handler", "deliveryDate", "logisticsCompany", "driver", "vehicleNo", "cartonCount", "createdBy", "reviewedBy", "remarks"].map((key) => ({ key, label: ({ companyName: "公司名称", documentNo: "单据编号", documentDate: "单据日期", customer: "客户", warehouse: "仓库", sourceOrderNo: "销售订单", handler: "经办人", deliveryDate: "发货日期", logisticsCompany: "物流公司", driver: "司机", vehicleNo: "车辆", cartonCount: "箱数", createdBy: "创建人", reviewedBy: "审核人", remarks: "备注" } as Record<string, string>)[key] })),
-  sign_receipt: ["companyName", "documentNo", "documentDate", "receiptNo", "deliveryNo", "sourceOrderNo", "customer", "receiverName", "receiverPhone", "signDate", "exceptionNote", "deliveryPerson", "reviewedBy", "signature", "remarks"].map((key) => ({ key, label: ({ companyName: "公司名称", documentNo: "单据编号", documentDate: "单据日期", receiptNo: "签收单号", deliveryNo: "发货单号", sourceOrderNo: "销售订单", customer: "客户", receiverName: "签收人", receiverPhone: "签收电话", signDate: "签收日期", exceptionNote: "异常说明", deliveryPerson: "配送人", reviewedBy: "审核人", signature: "客户签名", remarks: "备注" } as Record<string, string>)[key] })),
+// The fields a sheet can print, by document type, named in the interface
+// language (design audit L6-18, L11-28: the list was Chinese only).
+const FIELD_LABELS: Record<string, [string, string]> = {
+  companyName: ["Company", "公司名称"], documentNo: ["Document number", "单据编号"], documentDate: ["Document date", "单据日期"],
+  supplier: ["Supplier", "供应商"], customer: ["Customer", "客户"], warehouse: ["Warehouse", "仓库"], handler: ["Handled by", "经办人"],
+  receiver: ["Received by", "收货人"], receiveDate: ["Received on", "收货日期"], createdBy: ["Created by", "创建人"], reviewedBy: ["Reviewed by", "审核人"],
+  remarks: ["Notes", "备注"], deliveryDate: ["Shipped on", "发货日期"], logisticsCompany: ["Carrier", "物流公司"], driver: ["Driver", "司机"],
+  vehicleNo: ["Vehicle", "车辆"], cartonCount: ["Cartons", "箱数"], receiptNo: ["Receipt number", "签收单号"], deliveryNo: ["Delivery number", "发货单号"],
+  receiverName: ["Signed by", "签收人"], receiverPhone: ["Signer phone", "签收电话"], signDate: ["Signed on", "签收日期"], exceptionNote: ["Exception note", "异常说明"],
+  deliveryPerson: ["Delivered by", "配送人"], signature: ["Customer signature", "客户签名"],
 };
+// The order a sheet names its source by: a purchase order on a receipt, a sales order on a delivery or a signed receipt.
+const SOURCE_ORDER: Record<PrintDocumentType, [string, string]> = { receive_sheet: ["Purchase order", "采购订单"], delivery_note: ["Sales order", "销售订单"], sign_receipt: ["Sales order", "销售订单"] };
+const FIELD_KEYS: Record<PrintDocumentType, string[]> = {
+  receive_sheet: ["companyName", "documentNo", "documentDate", "supplier", "warehouse", "sourceOrderNo", "handler", "receiver", "receiveDate", "createdBy", "reviewedBy", "remarks"],
+  delivery_note: ["companyName", "documentNo", "documentDate", "customer", "warehouse", "sourceOrderNo", "handler", "deliveryDate", "logisticsCompany", "driver", "vehicleNo", "cartonCount", "createdBy", "reviewedBy", "remarks"],
+  sign_receipt: ["companyName", "documentNo", "documentDate", "receiptNo", "deliveryNo", "sourceOrderNo", "customer", "receiverName", "receiverPhone", "signDate", "exceptionNote", "deliveryPerson", "reviewedBy", "signature", "remarks"],
+};
+export function printFieldOptionsFor(documentType: PrintDocumentType, language: string): PrintFieldOption[] {
+  const index = language === "en-US" ? 0 : 1;
+  return FIELD_KEYS[documentType].map((key) => ({ key, label: (key === "sourceOrderNo" ? SOURCE_ORDER[documentType] : FIELD_LABELS[key])[index] }));
+}
 
 // Every sheet prints what its record holds and nothing else. A value the
 // record does not hold is left empty (the sheet prints a dash, a signature

@@ -20,11 +20,11 @@ export function procurementError(code, message, details = [], status = 422, extr
   const error = new Error(message); Object.assign(error, { code, details, status, ...extra }); return error
 }
 export function assertVersion(entity, expectedVersion) {
-  if (Number(expectedVersion) !== Number(entity.version)) throw procurementError('VERSION_CONFLICT','该记录已被其他用户更新，请重新加载后继续。',[],409,{ expectedVersion, currentVersion: entity.version, updatedAt: entity.updatedAt, updatedBy: entity.updatedBy })
+  if (Number(expectedVersion) !== Number(entity.version)) throw procurementError('VERSION_CONFLICT','This record was changed by someone else. Reload it and try again.',[],409,{ expectedVersion, currentVersion: entity.version, updatedAt: entity.updatedAt, updatedBy: entity.updatedBy })
 }
 export function transition(entity, next, transitions, expectedVersion, actor, action) {
   assertVersion(entity, expectedVersion)
-  if (!(transitions[entity.status] || []).includes(next)) throw procurementError('INVALID_STATE_TRANSITION',`不能从 ${entity.status} 转换为 ${next}`,[],409,{ currentStatus: entity.status, currentVersion: entity.version })
+  if (!(transitions[entity.status] || []).includes(next)) throw procurementError('INVALID_STATE_TRANSITION',`A ${entity.status} record cannot move to ${next}.`,[],409,{ currentStatus: entity.status, currentVersion: entity.version })
   const before = structuredClone(entity); entity.status = next; entity.version += 1; entity.updatedAt = new Date().toISOString(); entity.updatedBy = actor
   return { before, after: structuredClone(entity), action }
 }
@@ -55,9 +55,9 @@ export function validateDirectPo(pr, policy = {}, permission = true) {
         : Boolean(x.sku)
     return !catalogValid || Number(x.quantity) <= 0 || !(x.unitSnapshot || x.unit) || Number(x.unitPrice || 0) < 0
   })) details.push({ field:'lines', message:'采购明细不完整' })
-  if (!permission) throw procurementError('PERMISSION_DENIED','无权创建采购订单',[],403)
+  if (!permission) throw procurementError('PERMISSION_DENIED','You do not have permission to create purchase orders.',[],403)
   if (Number(pr.totalAmount) >= Number(policy.rfqRequiredAboveAmount ?? Infinity) && policy.allowManagerOverride === false) details.push({ field:'totalAmount', message:'公司策略要求询价且不可覆盖' })
-  if (details.length) throw procurementError('DIRECT_PO_NOT_ALLOWED','当前采购申请不能直接创建采购订单',details)
+  if (details.length) throw procurementError('DIRECT_PO_NOT_ALLOWED','This purchase request cannot be turned into a purchase order yet.',details)
   return true
 }
 
@@ -137,10 +137,10 @@ export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) 
         (line.itemId || line.sku ? "catalog_item" : "non_catalog_item");
       const lineBasis = line.lineBasis || "quantity";
       const supplierId = String(line.supplierId || "").trim();
-      if (!supplierId) throw procurementError("SUPPLIER_REQUIRED", "每一条采购行必须选择供应商", [{ field: `lines.${index}.supplierId` }], 400);
+      if (!supplierId) throw procurementError("SUPPLIER_REQUIRED", "Every line needs a supplier.", [{ field: `lines.${index}.supplierId` }], 400);
       const supplier = itemRepository?.getSupplier ? await itemRepository.getSupplier(supplierId) : { id: supplierId };
-      if (!supplier) throw procurementError("SUPPLIER_NOT_FOUND", "供应商不存在", [{ field: `lines.${index}.supplierId` }], 400);
-      if (["inactive", "disabled", "停用"].includes(String(supplier.status || "").toLowerCase())) throw procurementError("SUPPLIER_INACTIVE", "供应商已停用", [{ field: `lines.${index}.supplierId` }], 400);
+      if (!supplier) throw procurementError("SUPPLIER_NOT_FOUND", "The supplier was not found in this workspace.", [{ field: `lines.${index}.supplierId` }], 400);
+      if (["inactive", "disabled", "停用"].includes(String(supplier.status || "").toLowerCase())) throw procurementError("SUPPLIER_INACTIVE", "The supplier is inactive.", [{ field: `lines.${index}.supplierId` }], 400);
       const supplierSnapshot = {
         id: supplier.id || supplierId,
         supplierCode: supplier.supplierCode || supplier.code || supplierId,
@@ -150,21 +150,21 @@ export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) 
       const quantity = line.quantity == null || line.quantity === "" ? null : Number(line.quantity);
       const estimatedAmount = lineBasis === "amount" ? Number(line.estimatedAmount) : Number(quantity) * Number(estimatedUnitPrice);
       if (lineBasis === "amount" ? !(estimatedAmount > 0) : !(quantity > 0 && Number(estimatedUnitPrice) >= 0 && estimatedUnitPrice !== "" && estimatedUnitPrice != null))
-        throw procurementError("LINE_VALUE_REQUIRED", lineBasis === "amount" ? "预计总金额必须大于 0" : "数量和预计单价必须明确填写", [{ field: `lines.${index}.${lineBasis === "amount" ? "estimatedAmount" : "estimatedUnitPrice"}` }], 400);
-      if (!line.needByDate) throw procurementError("NEED_BY_DATE_REQUIRED", "需求日期必填", [{ field: `lines.${index}.needByDate` }], 400);
-      if (line.serviceStartDate && line.serviceEndDate && line.serviceStartDate > line.serviceEndDate) throw procurementError("INVALID_SERVICE_DATE_RANGE", "服务开始日期不得晚于结束日期", [{ field: `lines.${index}.serviceEndDate` }], 400);
+        throw procurementError("LINE_VALUE_REQUIRED", lineBasis === "amount" ? "The estimated amount must be above 0." : "Enter a quantity and an estimated unit price.", [{ field: `lines.${index}.${lineBasis === "amount" ? "estimatedAmount" : "estimatedUnitPrice"}` }], 400);
+      if (!line.needByDate) throw procurementError("NEED_BY_DATE_REQUIRED", "Every line needs a need-by date.", [{ field: `lines.${index}.needByDate` }], 400);
+      if (line.serviceStartDate && line.serviceEndDate && line.serviceStartDate > line.serviceEndDate) throw procurementError("INVALID_SERVICE_DATE_RANGE", "The service start date cannot be after its end date.", [{ field: `lines.${index}.serviceEndDate` }], 400);
       if (lineType === "non_catalog_item") {
         if (!String(line.itemNameSnapshot || line.itemName || "").trim())
           throw procurementError(
             "NON_CATALOG_ITEM_NAME_REQUIRED",
-            "非目录物料名称必填",
+            "A non-catalog line needs an item name.",
             [{ field: `lines.${index}.itemNameSnapshot` }],
             400,
           );
         if (lineBasis === "quantity" && !String(line.unitSnapshot || line.unit || "").trim())
           throw procurementError(
             "NON_CATALOG_ITEM_UNIT_REQUIRED",
-            "非目录物料单位必填",
+            "A non-catalog line needs a unit.",
             [{ field: `lines.${index}.unitSnapshot` }],
             400,
           );
@@ -195,21 +195,21 @@ export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) 
       if (!item)
         throw procurementError(
           "ITEM_NOT_FOUND",
-          "物料不存在",
+          "The item was not found in this workspace.",
           [{ field: `lines.${index}.itemId` }],
           400,
         );
       if (item.status !== "active")
         throw procurementError(
           "ITEM_INACTIVE",
-          "物料已停用",
+          "The item is inactive.",
           [{ field: `lines.${index}.itemId` }],
           400,
         );
       if (!item.purchasable)
         throw procurementError(
           "ITEM_NOT_PURCHASABLE",
-          "物料不允许采购",
+          "The item cannot be purchased.",
           [{ field: `lines.${index}.itemId` }],
           400,
         );
@@ -219,18 +219,18 @@ export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) 
       )
         throw procurementError(
           "ITEM_MAPPING_MISMATCH",
-          "itemId 与 SKU 不匹配",
+          "The item id and SKU do not match.",
           [{ field: `lines.${index}.sku` }],
           400,
         );
       let supplierOverride = null;
       if (itemRepository?.approvedSuppliersForItem) {
         const approved = await itemRepository.approvedSuppliersForItem(item.itemId);
-        if (!approved.length) throw procurementError("ITEM_HAS_NO_APPROVED_SUPPLIER", "该 SKU 尚未维护可采购供应商，请先维护 SKU–供应商关系。", [{ field: `lines.${index}.supplierId` }], 400);
-        if (!approved.some(row => row.id === supplierId)) throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "所选供应商不是该 SKU 的已批准供应商", [{ field: `lines.${index}.supplierId` }], 400);
+        if (!approved.length) throw procurementError("ITEM_HAS_NO_APPROVED_SUPPLIER", "This item has no approved supplier yet. Add one on the item first.", [{ field: `lines.${index}.supplierId` }], 400);
+        if (!approved.some(row => row.id === supplierId)) throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "The chosen supplier is not an approved source for this item.", [{ field: `lines.${index}.supplierId` }], 400);
         supplierOverride = supplierOverrideFor(line, index, supplierId, approved);
       } else if (item.defaultSupplierId && supplierId !== item.defaultSupplierId) {
-        throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "所选供应商不是该 SKU 的已批准供应商", [{ field: `lines.${index}.supplierId` }], 400);
+        throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "The chosen supplier is not an approved source for this item.", [{ field: `lines.${index}.supplierId` }], 400);
       }
       // No conversion between units is recorded (item-stock-unit.mjs), so a
       // catalog line is built in the item's stock unit, whatever its purchase

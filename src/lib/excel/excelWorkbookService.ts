@@ -57,8 +57,17 @@ export async function downloadExcelTemplate(schema: ExcelBusinessSchema) {
   return downloadWorkbook(XLSX, workbook, schema.filename);
 }
 
+// The interface language of the page (I18n sets the html element's lang).
+const interfaceChinese = () => typeof document !== "undefined" && document.documentElement.lang === "zh-CN";
+const EXPORT_COPY = {
+  results: ["Results", "当前结果"],
+  note: ["Note", "说明"],
+  empty: ["No records in the current filters", "当前筛选范围暂无数据"],
+} as const;
+const exportText = (key: keyof typeof EXPORT_COPY) => EXPORT_COPY[key][interfaceChinese() ? 1 : 0];
+
 // timeZone: the workspace timezone for the filename date (America/New_York when not given).
-export async function exportRowsToWorkbook(businessObject: string, rows: Record<string, unknown>[], sheetName = "当前结果", timeZone?: string) {
+export async function exportRowsToWorkbook(businessObject: string, rows: Record<string, unknown>[], sheetName = exportText("results"), timeZone?: string) {
   const XLSX = await loadXlsx();
   const headers = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
   const sheet = XLSX.utils.json_to_sheet(rows, { header: headers, cellDates: true });
@@ -75,7 +84,7 @@ export async function exportWorkbookSheets(businessObject: string, sheets: Array
   const XLSX = await loadXlsx();
   const workbook = XLSX.utils.book_new();
   sheets.forEach(({ name, rows }) => {
-    const safeRows = rows.length ? rows : [{ 说明: "当前筛选范围暂无数据" }];
+    const safeRows = rows.length ? rows : [{ [exportText("note")]: exportText("empty") }];
     const headers = Array.from(new Set(safeRows.flatMap((row) => Object.keys(row))));
     const sheet = XLSX.utils.json_to_sheet(safeRows, { header: headers, cellDates: true });
     sheet["!cols"] = fitColumns(safeRows, headers);

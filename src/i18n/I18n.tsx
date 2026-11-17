@@ -1,7 +1,7 @@
 import { workspaceCopy } from "./workspaceCopy";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiJson, AUTH_TOKEN_KEY } from "../lib/api-client";
-import { setWorkspaceTimeZone } from "../lib/format";
+import { setWorkspaceNumberLocale, setWorkspaceTimeZone } from "../lib/format";
 import type { AppRouteDefinition } from "../app/routeRegistry";
 
 export type SupportedLanguage = "zh-CN" | "en-US";
@@ -2859,6 +2859,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.lang = state.effectiveLanguage;
   }, [state.effectiveLanguage]);
   useEffect(() => { setWorkspaceTimeZone(state.timezone); }, [state.timezone]);
+  useEffect(() => { setWorkspaceNumberLocale(state.locale); }, [state.locale]);
   const value = useMemo<I18nValue>(() => {
     const t = (key: keyof typeof zh, variables: Record<string, string | number> = {}) => translate(state.effectiveLanguage, key, variables);
     return {

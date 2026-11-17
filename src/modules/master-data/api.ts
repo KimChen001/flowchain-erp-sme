@@ -160,7 +160,8 @@ export function normalizeItemRows(
     const status = backendStatus(apiItem.status);
     return {
       sku: text(apiItem.sku || apiItem.itemId || apiItem.id, fallback?.sku || `ITEM-${index + 1}`),
-      name: text(apiItem.itemName || apiItem.name, fallback?.name || text(apiItem.sku || apiItem.itemId || apiItem.id, `物料 ${index + 1}`)),
+      // A name the record lacks reads as its SKU or id, never "物料 1" (design audit L16).
+      name: text(apiItem.itemName || apiItem.name, fallback?.name || text(apiItem.sku || apiItem.itemId || apiItem.id, "—")),
       category: text(apiItem.category, fallback?.category || ""),
       specification: fallback?.specification || "",
       unit: text(apiItem.baseUnit || apiItem.baseUom, fallback?.unit || ""),
@@ -190,7 +191,7 @@ export function normalizeSupplierRows(
     const category = text(apiSupplier.categories?.[0], fallback?.category || "");
     return {
       code: text(apiSupplier.supplierCode || apiSupplier.id, fallback?.code || `SUP-${index + 1}`),
-      name: text(apiSupplier.supplierName || apiSupplier.name, fallback?.name || `供应商 ${index + 1}`),
+      name: text(apiSupplier.supplierName || apiSupplier.name, fallback?.name || text(apiSupplier.supplierCode || apiSupplier.id, "—")),
       category,
       contact: fallback?.contact || "",
       email: fallback?.email || "",
