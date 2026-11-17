@@ -78,6 +78,7 @@ jobs:
       - run: npm run test:db:ai-read-tools
       - run: npm run test:db:report-truncation
       - run: npm run test:db:inventory-allocation
+      - run: npm run test:db:allocation-inputs
       - run: npm run test:db:ai-knowledge
       - run: npm run test:ai:eval:knowledge
       - run: npm run test:db:ai-pgvector

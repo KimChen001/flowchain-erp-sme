@@ -16,6 +16,7 @@ const COPY = {
   loading: ["Loading…", "加载中…"],
   retry: ["Retry", "重试"],
   shown: ["{total} total, {shown} shown", "共 {total} 条，当前显示 {shown} 条"],
+  matching: ["{total} of {all} match the filters, {shown} shown", "{all} 条中 {total} 条符合筛选，当前显示 {shown} 条"],
   filters: ["Filters ({count})", "筛选（{count}）"],
   filtersNone: ["Filters", "筛选"],
   hideFilters: ["Hide filters", "收起筛选"],
@@ -36,6 +37,8 @@ export const listButtonClass = {
   secondary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-50 px-3 max-sm:h-9 ${typography.denseButton} text-slate-900 hover:bg-slate-100`,
   export: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-50 px-3 max-sm:h-9 ${typography.denseButton} text-blue-600 hover:bg-blue-100`,
   primary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 max-sm:h-9 ${typography.denseButton} text-white hover:bg-blue-700 disabled:opacity-60`,
+  // Reject and cancel: one look on every detail page (design audit U-17).
+  danger: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-red-50 px-3 max-sm:h-9 ${typography.denseButton} text-red-700 hover:bg-red-100 disabled:opacity-50`,
 };
 
 // Buttons inside a table row: the main one tinted, the others neutral. On a
@@ -112,9 +115,14 @@ export function ListSearchCard({ title, subtitle, actions, children, activeFilte
   );
 }
 
-export function ListCard({ title, total, shown, right, children, testId }: {
+// A list's count line: `total` is the rows the filters match, `shown` the
+// rows this page draws, and `all` the rows before any filter. With a filter
+// that narrows the list it reads "1 of 196 match the filters, 1 shown", not
+// "196 total, 1 shown" (design audit U-14, W-04).
+export function ListCard({ title, total, all, shown, right, children, testId }: {
   title: string;
   total?: number;
+  all?: number;
   shown?: number;
   right?: React.ReactNode;
   children: React.ReactNode;
@@ -126,7 +134,7 @@ export function ListCard({ title, total, shown, right, children, testId }: {
       <div className="flex flex-wrap items-center gap-3 px-4 py-3.5 sm:px-5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
         <div>
           <div className="text-sm font-semibold" style={{ color: A.label }}>{title}</div>
-          {total !== undefined && <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{say("shown", { total, shown: shown ?? total })}</div>}
+          {total !== undefined && <div className="mt-0.5 text-[11px]" style={{ color: A.sub }} data-testid="list-count">{all !== undefined && all !== total ? say("matching", { total, all, shown: shown ?? total }) : say("shown", { total, shown: shown ?? total })}</div>}
         </div>
         {right && <div className="ml-auto flex items-center gap-2">{right}</div>}
       </div>

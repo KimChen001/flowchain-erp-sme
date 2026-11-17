@@ -5,7 +5,7 @@ import { readTenantTimezone } from '../domain/tenant-timezone.mjs'
 import { createSupplierScorecardReadService } from '../domain/supplier-scorecard.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { reportReadAccess, scopeBusinessContext, sendReadAccessError } from '../domain/report-read-access.mjs'
-import { createReorderListReadService } from '../domain/reorder-list-read-service.mjs'
+import { allocationTruncatedSubjects, createReorderListReadService } from '../domain/reorder-list-read-service.mjs'
 import { buildRuntimeInventoryAllocation } from '../domain/runtime-inventory-allocation-read-model.mjs'
 import { tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
 
@@ -108,7 +108,7 @@ async function routeReports(ctx) {
         timeZone,
         allocationRows: buildRuntimeInventoryAllocation(allocationContext).availability,
         showPurchaseOrders: Boolean(access.collections.purchaseOrders),
-        truncatedSubjects: (allocationContext.truncatedSubjects || []).filter((entry) => ['inventory_items', 'sales_orders', 'purchase_orders'].includes(entry?.subject)),
+        truncatedSubjects: allocationTruncatedSubjects(allocationContext),
       })
       // The rows let the overview judge each item as the inventory warnings do
       // (shared/inventory-stock-signals.mjs).

@@ -1,3 +1,4 @@
+import { billPaymentStatus } from '../../server/domain/operational-finance-read-service.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
@@ -132,6 +133,21 @@ test('supplier metrics agree with the reports, per reader', async () => {
     }
     assert.ok(acme.purchaseOrders.rows.some((row) => row.overdueDays > 0))
     assert.equal(acme.invoices.rows.length, Math.min(20, await prisma.supplierInvoice.count({ where: { tenantId, supplierId: SUP(1) } })))
+    // An approved invoice says where its payment stands, as the invoice list
+    // does (design audit U-22): one invoice, approved with a part-paid
+    // payable for this check, then put back as it was.
+    const approvedInvoice = acme.invoices.rows[0]
+    const before = await prisma.supplierInvoice.findUnique({ where: { id: approvedInvoice.id }, select: { status: true, payableObligation: { select: { id: true, status: true } } } })
+    await prisma.supplierInvoice.update({ where: { id: approvedInvoice.id }, data: { status: 'approved' } })
+    if (before.payableObligation) await prisma.payableObligation.update({ where: { id: before.payableObligation.id }, data: { status: 'partially_settled' } })
+    else await prisma.payableObligation.create({ data: { id: `${approvedInvoice.id}-u22`, tenantId, supplierInvoiceId: approvedInvoice.id, obligationNumber: `AP-U22-${approvedInvoice.id}`, originalAmount: '10', outstandingAmount: '5', currency: 'USD', dueDate: new Date('2026-12-01'), status: 'partially_settled' } })
+    const paid = await activity('admin', SUP(1))
+    assert.equal(paid.invoices.rows.find((row) => row.id === approvedInvoice.id).paymentStatus, 'partially_settled')
+    const stored = new Map((await prisma.supplierInvoice.findMany({ where: { tenantId, supplierId: SUP(1) }, select: { id: true, status: true, payableObligation: { select: { status: true } } } })).map((row) => [row.id, billPaymentStatus(row.status, row.payableObligation?.status)]))
+    for (const row of paid.invoices.rows) assert.equal(row.paymentStatus, stored.get(row.id), row.id)
+    if (before.payableObligation) await prisma.payableObligation.update({ where: { id: before.payableObligation.id }, data: { status: before.payableObligation.status } })
+    else await prisma.payableObligation.delete({ where: { id: `${approvedInvoice.id}-u22` } })
+    await prisma.supplierInvoice.update({ where: { id: approvedInvoice.id }, data: { status: before.status } })
     for (const [supplierId, row] of Object.entries(admin.suppliers)) {
       const { issues } = await activity('admin', supplierId)
       assert.deepEqual([listed(issues).length, overdueOrders(issues).length], [row.openIssues, row.overduePos], supplierId)

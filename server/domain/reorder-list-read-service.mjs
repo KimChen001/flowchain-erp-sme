@@ -35,6 +35,15 @@ export function stockTruncatedSubjects(entries = []) {
     .filter((entry) => !(entry.subject === 'sales_orders' && entry.openDemandComplete === true))
 }
 
+// The same for the stock positions built from a business read context: with
+// allocationInputs (read over every record), only those reads that passed
+// their safety bound; without, the context's own truncated lists.
+export function allocationTruncatedSubjects(context = {}) {
+  return context?.allocationInputs
+    ? stockTruncatedSubjects(context.allocationInputs.truncatedSubjects)
+    : stockTruncatedSubjects(context?.truncatedSubjects)
+}
+
 const ITEM_LIMIT = 2000
 const SHIPMENT_LINE_LIMIT = 20000
 // Two years of shipments for the model forecast: more lines, fewer fields.

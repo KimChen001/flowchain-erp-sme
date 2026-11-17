@@ -60,7 +60,46 @@ const OTHER_SUPPLIERS = 'Other suppliers'
 const OTHER_CUSTOMERS = 'Other customers'
 
 const poSupplier = row => text(row?.supplierSnapshot?.supplierName || row?.supplierName || row?.supplierId)
-const invoiceSupplier = row => text(row?.supplierName || row?.supplierId)
+
+// The name a report gives a supplier: the supplier master's current name by
+// the record's supplier id, so a supplier renamed since its orders stays one
+// row and one filter value (design audit L9-15); the name on the record when
+// the master has none for it (a reader without supplier records).
+const supplierNamers = new WeakMap()
+export function reportSupplierName(context) {
+  const key = context && typeof context === 'object' ? context : {}
+  if (!supplierNamers.has(key)) {
+    const names = new Map(array(key.suppliers).map(row => [text(row.id || row.supplierId), text(row.supplierName || row.name)]).filter(([id, name]) => id && name))
+    supplierNamers.set(key, row => names.get(text(row?.supplierId)) || poSupplier(row))
+  }
+  return supplierNamers.get(key)
+}
+
+// A purchase order closed short: closed with a line still short of its
+// ordered quantity. The rest will never be delivered or billed, so it counts
+// what was received (design audit L9-07). receivedValue: the received
+// quantities at the line prices (or the line amount pro rata); null when a
+// line lacks its quantity or price.
+export function isClosedShortPurchaseOrder(row) {
+  if (text(row?.status).toLowerCase() !== 'closed') return false
+  return array(row.lines).some(line => {
+    const ordered = known(line.orderedQuantity ?? line.quantity), received = known(line.receivedQuantity)
+    return ordered === null || received === null || received < ordered
+  })
+}
+export function closedShortReceivedValue(row) {
+  const lines = array(row?.lines)
+  if (!lines.length) return null
+  let total = 0
+  for (const line of lines) {
+    const received = known(line.receivedQuantity), ordered = known(line.orderedQuantity ?? line.quantity), unitPrice = known(line.unitPrice), amount = known(line.amount)
+    if (received === 0) continue
+    const value = received === null ? null : unitPrice !== null ? received * unitPrice : amount !== null && ordered ? amount * received / ordered : null
+    if (value === null) return null
+    total += value
+  }
+  return money(total)
+}
 
 // The three-way match engine records matched or exception on the invoice;
 // older records call an exception a variance. An invoice the engine has not
@@ -198,6 +237,7 @@ function purchasesAndSalesVisual(id, series, { restrictedSubjects, partial, dril
 // Committed purchase orders in scope, with their receipt and invoice progress.
 function purchaseOrderFacts(context, all, receiptsByPo, invoicesByPo, timeZone) {
   const inScope = new Set(all.purchase_orders.map(row => row.id))
+  const supplierOf = reportSupplierName(context)
   return array(context.purchaseOrders).filter(row => inScope.has(text(row.id || row.po)) && isCommittedPurchaseOrder(row)).map(row => {
     const id = text(row.id || row.po)
     const lines = array(row.lines).map(line => {
@@ -207,14 +247,19 @@ function purchaseOrderFacts(context, all, receiptsByPo, invoicesByPo, timeZone) 
       const amount = known(line.amount) ?? (ordered !== null && unitPrice !== null ? ordered * unitPrice : null)
       return { item: text(line.itemName || line.itemNameSnapshot || line.sku), ordered, received, unitPrice, amount, receivedValue: received !== null && unitPrice !== null ? received * unitPrice : null }
     })
-    const amount = known(row.totalAmount ?? row.amount)
+    const closedShort = isClosedShortPurchaseOrder(row)
+    // Closed short: what was received of it (design audit L9-07).
+    const amount = closedShort ? closedShortReceivedValue(row) : known(row.totalAmount ?? row.amount)
     const invoices = invoicesByPo.get(id) || []
-    const fullyReceived = !isOpenPurchaseOrder(row)
+    const open = isOpenPurchaseOrder(row)
+    // "Fully received" is an order that got everything; an order closed short
+    // did not, and has its own stage.
+    const fullyReceived = !open && !closedShort
     return {
-      id, supplier: poSupplier(row), date: purchaseOrderBusinessDate(row, timeZone), amount, currency: reportCurrencyCode(row.currency || row.lines?.[0]?.currency),
-      due: purchaseOrderDueDay(row), open: !fullyReceived, lines,
-      receivingStarted: fullyReceived || lines.some(line => line.received > 0) || receiptsByPo.has(id),
-      fullyReceived, invoiced: invoices.length > 0,
+      id, supplier: supplierOf(row), date: purchaseOrderBusinessDate(row, timeZone), amount, currency: reportCurrencyCode(row.currency || row.lines?.[0]?.currency),
+      due: purchaseOrderDueDay(row), open, lines,
+      receivingStarted: !open || lines.some(line => line.received > 0) || receiptsByPo.has(id),
+      fullyReceived, closedShort, invoiced: invoices.length > 0,
       matched: invoices.length > 0 && invoices.every(invoice => invoiceMatchOutcome(invoice) === 'matched'),
       orderedValue: lines.length ? sumKnown(lines.map(line => line.amount)) : amount,
       receivedValue: lines.length ? sumKnown(lines.map(line => line.receivedValue)) : null,
@@ -237,10 +282,12 @@ function lifecycleVisual(id, pos) {
     ['Committed', () => true],
     ['Receiving started', po => po.receivingStarted],
     ['Fully received', po => po.fullyReceived],
+    ['Closed short', po => po.closedShort],
     ['Invoiced', po => po.invoiced],
     ['Invoice matched', po => po.matched],
   ]
-  const data = stages.map(([name, test]) => ({ name, value: pos.filter(test).length }))
+  // "Closed short" shows only when an order was closed short (design audit L9-07).
+  const data = stages.map(([name, test]) => ({ name, value: pos.filter(test).length })).filter(row => row.name !== 'Closed short' || row.value > 0)
   return visual(id, 'Purchase order lifecycle', 'funnel', pos.length ? data : [], { nested: false, drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders in range. Each bar counts the orders that reached that step, whatever happened at the others: an order can be invoiced before it is fully received.' })
 }
 
@@ -287,11 +334,12 @@ function spendTreemapVisual(id, pos, scope) {
 // way it narrows the orders. Receipts use the arrival day in the workspace
 // timezone, falling back to the posting and then the creation time.
 function receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone) {
+  const supplierOf = reportSupplierName(context)
   return array(context.receipts).filter(row => !voidReceiptStatuses.has(text(row.status).toLowerCase())).map(row => {
     const po = poById.get(text(row.poId))
     const day = instantCalendarDay(row.arrivedAt || row.postedAt || row.createdAt, timeZone)
     const lines = array(row.lines).map(line => ({ accepted: known(line.acceptedQty), rejected: known(line.rejectedQty) }))
-    return { id: text(row.id), poId: text(row.poId), po, supplier: text(row.supplierName || row.supplierId) || poSupplier(po), date: day, lines }
+    return { id: text(row.id), poId: text(row.poId), po, supplier: po ? supplierOf(po) : supplierOf(row), date: day, lines }
   }).filter(row => inRange(row.date, query) && (row.po ? !purchaseOrderIdsAnyDate || purchaseOrderIdsAnyDate.has(row.poId) : (!query.supplier || row.supplier === query.supplier) && !query.currency && !query.status))
 }
 
@@ -317,11 +365,19 @@ export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today,
   const readable = Array.isArray(warehouseIds) ? new Set(warehouseIds.map(text)) : null
   const receiptLines = new Map()
   const receivedPurchaseOrderIds = new Set()
+  // Orders with a posted receipt in a warehouse the reader cannot see: without
+  // it a delivered line would read as late, and with it the reader would learn
+  // when that warehouse received it, so they are left out, as on the supplier
+  // scorecard (design audit V-C-05, L9-06).
+  const withheld = new Set()
   for (const document of array(context.receipts)) {
     if (text(document.postingStatus).toLowerCase() !== 'posted') continue
     // A posted receipt in any warehouse means the supplier got the order.
     if (text(document.poId)) receivedPurchaseOrderIds.add(text(document.poId))
-    if (readable && text(document.warehouseId) && !readable.has(text(document.warehouseId))) continue
+    if (readable && text(document.warehouseId) && !readable.has(text(document.warehouseId))) {
+      if (text(document.poId)) withheld.add(text(document.poId))
+      continue
+    }
     const day = instantCalendarDay(document.arrivedAt || document.postedAt, timeZone) || null
     for (const line of array(document.lines)) {
       const lineId = text(line.purchaseOrderLineId)
@@ -330,17 +386,20 @@ export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today,
   }
   const from = query.from || '0001-01-01'
   const to = query.to || '9999-12-31'
+  const supplierOf = reportSupplierName(context)
   return array(context.purchaseOrders)
+    .filter(po => !withheld.has(text(po.id || po.po)))
     .filter(po => (!measured || measured.has(text(po.id || po.po))) && scorecardPurchaseOrderStanding({ ...po, id: text(po.id || po.po) }, { receiptLinesByLine: receiptLines, receivedPurchaseOrderIds }) === 'measured')
-    .flatMap(po => array(po.lines).map(line => ({ ...evaluatePromiseLine({ line, purchaseOrder: { ...po, id: text(po.id || po.po) }, receipts: receiptLines.get(text(line.id)) || [], asOfDay: today || null, graceDays, timeZone }), supplier: poSupplier(po) })))
+    .flatMap(po => array(po.lines).map(line => ({ ...evaluatePromiseLine({ line, purchaseOrder: { ...po, id: text(po.id || po.po) }, receipts: receiptLines.get(text(line.id)) || [], asOfDay: today || null, graceDays, timeZone }), supplier: supplierOf(po) })))
     .filter(line => ['evaluated', 'not_received'].includes(line.status) && line.originalPromisedDate && line.originalPromisedDate >= from && line.originalPromisedDate <= to)
 }
 
 // The on-time rate of the deliveries the lines make up, as a percentage, null
 // below the minimum sample, with the number of deliveries judged.
+const percentOf = rate => rate === null || rate === undefined ? null : Math.round(rate * 1000) / 10
 const onTimeOf = lines => {
   const { metrics, sampleSize } = summarizeScorecardLines({ lines })
-  return { percent: metrics.onTime.rate === null ? null : Math.round(metrics.onTime.rate * 1000) / 10, deliveries: sampleSize }
+  return { percent: percentOf(metrics.onTime.rate), otif: percentOf(metrics.otif.rate), deliveries: sampleSize }
 }
 
 function receiptCalendarVisual(id, receipts, query) {
@@ -350,7 +409,7 @@ function receiptCalendarVisual(id, receipts, query) {
   return visual(id, 'Receiving activity by day', 'calendar', days, { range: [first, last], drilldownPath: '/app/procurement/receiving', description: 'Receipts per arrival day.' })
 }
 
-function supplierPerformance(pos, receipts, invoices, scope, promiseLines = []) {
+function supplierPerformance(pos, receipts, invoices, scope, promiseLines = [], supplierOf = poSupplier) {
   const suppliers = new Map()
   const entry = name => {
     if (!suppliers.has(name)) suppliers.set(name, { name, amount: 0, amountKnown: true, orders: 0, receipts: 0, promised: [], lines: 0, accepted: 0, decided: 0, matched: 0 })
@@ -371,7 +430,7 @@ function supplierPerformance(pos, receipts, invoices, scope, promiseLines = []) 
   for (const invoice of invoices) {
     const outcome = invoiceMatchOutcome(invoice)
     if (outcome === 'pending') continue
-    const row = entry(invoiceSupplier(invoice) || 'Unspecified')
+    const row = entry(supplierOf(invoice) || 'Unspecified')
     row.decided += 1
     if (outcome === 'matched') row.matched += 1
   }
@@ -384,6 +443,7 @@ function supplierPerformance(pos, receipts, invoices, scope, promiseLines = []) 
       spend: scope.ok && row.amountKnown ? row.amount : null,
       promisedDeliveries: onTime.deliveries,
       onTimeRate: onTime.percent,
+      otifRate: onTime.otif,
       // Rates only from the scorecard's minimum sample (5), as on-time is.
       acceptedRate: sampledShare(row.accepted, row.lines),
       matchRate: sampledShare(row.matched, row.decided),
@@ -411,7 +471,11 @@ const ON_TIME_EMPTY = 'No supplier has 5 or more deliveries first promised in th
 const ON_TIME_WITHHELD = { restricted: 'Your role cannot view receipts.', truncated: 'Not every receipt could be loaded, so on-time deliveries are not measured here.', period_too_long: 'The range is longer than the supplier scorecard allows, so on-time deliveries are not measured. Choose a shorter range.' }
 
 function scorecardVisual(id, performance, scope) {
-  const indicators = [['On-time deliveries', 'onTimeRate'], ['Lines accepted in full', 'acceptedRate'], ['Invoices matched', 'matchRate'], [scope.ok ? 'Share of spend' : 'Share of orders', 'spendShare']]
+  // The supplier scorecard's measures, by its names (design audit L9-05):
+  // "Lines accepted in full" read as the table's "In full" (received in the
+  // end) though it counted receipt lines with nothing rejected, and a share of
+  // spend is no measure of performance.
+  const indicators = [['On-time deliveries', 'onTimeRate'], ['OTIF', 'otifRate'], ['Receipt lines without rejection', 'acceptedRate'], ['Invoices matched', 'matchRate']]
   const size = row => scope.ok ? row.spend ?? -1 : row.orders
   const candidates = performance.filter(row => row.name !== 'Unspecified').sort((a, b) => size(b) - size(a) || a.name.localeCompare(b.name)).slice(0, 5)
   const used = indicators.filter(([, key]) => candidates.some(row => row[key] !== null))
@@ -436,7 +500,7 @@ function activityHeatmapVisual(id, pos, partial) {
 
 function invoiceFacts(context, all, timeZone) {
   const inScope = new Set(all.supplier_invoices.map(row => row.id))
-  return array(context.supplierInvoices).filter(row => inScope.has(text(row.id || row.invoiceNumber)) && submittedInvoiceStatuses.has(text(row.status).toLowerCase())).map(row => ({ id: text(row.id || row.invoiceNumber), supplier: invoiceSupplier(row), date: reportCalendarDay(row.invoiceDate) || instantCalendarDay(row.createdAt, timeZone), amount: known(row.totalAmount ?? row.amount), variance: known(row.varianceAmount), currency: reportCurrencyCode(row.currency), outcome: invoiceMatchOutcome(row), raw: row }))
+  return array(context.supplierInvoices).filter(row => inScope.has(text(row.id || row.invoiceNumber)) && submittedInvoiceStatuses.has(text(row.status).toLowerCase())).map(row => ({ id: text(row.id || row.invoiceNumber), supplier: reportSupplierName(context)(row), date: reportCalendarDay(row.invoiceDate) || instantCalendarDay(row.createdAt, timeZone), amount: known(row.totalAmount ?? row.amount), variance: known(row.varianceAmount), currency: reportCurrencyCode(row.currency), outcome: invoiceMatchOutcome(row), raw: row }))
 }
 
 function matchGaugeVisual(id, invoices) {
@@ -558,7 +622,7 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
   const receipts = lazy(() => receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone))
   const invoices = lazy(() => invoiceFacts(context, all, timeZone))
   const promiseLines = lazy(() => onTimeWithheld ? [] : promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone, promiseOptions))
-  const performance = lazy(() => supplierPerformance(pos(), receipts(), invoices().map(row => row.raw), poScope(), promiseLines()))
+  const performance = lazy(() => supplierPerformance(pos(), receipts(), invoices().map(row => row.raw), poScope(), promiseLines(), reportSupplierName(context)))
 
   // The overview shows each area once (owner review, round 8): purchases and
   // sales side by side by month here, stock status, and from

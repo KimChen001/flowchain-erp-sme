@@ -41,6 +41,8 @@ import { ActionableMetricCard } from "../../components/cards/ActionableMetricCar
 import {
   DocumentShell,
   DocumentTotals,
+  OverviewFields,
+  type OverviewField,
   type TimelineStep,
 } from "../../components/document/DocumentShell";
 import { poDelayedRisk } from "../../domain/contextual-ai";
@@ -107,7 +109,8 @@ const PAGE_ENGLISH: Record<string, string> = {
   "无需匹配": "No match needed",
   "等待审批": "Awaiting approval",
   "提交审批": "Submit it for approval",
-  "订单已驳回，修改后重新提交": "Rejected; revise it and submit again",
+  "订单已驳回，来源采购申请可重新下单": "Rejected; its purchase request can be ordered again",
+  "订单已驳回，不再继续处理": "Rejected; this order goes no further",
   "全部收货": "Fully received",
   "部分开票": "Partly invoiced",
   "差异已批准": "Variance approved",
@@ -583,13 +586,13 @@ function paymentOf(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
 
 // The next action, from what is left. Before the supplier has the order it
 // waits on its approver or on being issued; after that, see nextOpenAction.
-type PoAction = NextAction | { kind: "cancelled" } | { kind: "submit" } | { kind: "awaiting_approval" } | { kind: "rejected" } | { kind: "issue" };
+type PoAction = NextAction | { kind: "cancelled" } | { kind: "submit" } | { kind: "awaiting_approval" } | { kind: "rejected"; fromRequest: boolean } | { kind: "issue" };
 function nextActionForPo(po: PurchaseOrder, facts: ProcurementRuntimeFacts): PoAction {
   const code = purchaseOrderStatusCode(po.status);
   if (code === "cancelled") return { kind: "cancelled" };
   if (code === "draft") return { kind: "submit" };
   if (code === "pending_approval") return { kind: "awaiting_approval" };
-  if (code === "rejected") return { kind: "rejected" };
+  if (code === "rejected") return { kind: "rejected", fromRequest: Boolean(po.sourceRequest) };
   // Approved but not issued: the supplier does not have it yet, so nothing
   // can arrive; it is sent first (decision V5).
   if (code === "approved") return { kind: "issue" };
@@ -609,7 +612,9 @@ function poActionText(action: PoAction, words: StoryWords) {
     case "cancelled": return pick(["Order cancelled; no receipt required", "订单已取消，无需收货"]);
     case "submit": return pick(["Submit it for approval", "提交审批"]);
     case "awaiting_approval": return pick(["Awaiting approval", "等待审批"]);
-    case "rejected": return pick(["Rejected; revise it and submit again", "订单已驳回，修改后重新提交"]);
+    // A rejected PO cannot be revised (that is OC8); its request is approved
+    // again once none of its orders is open (design audit L1-09).
+    case "rejected": return pick(action.fromRequest ? ["Rejected; its purchase request can be ordered again", "订单已驳回，来源采购申请可重新下单"] : ["Rejected; this order goes no further", "订单已驳回，不再继续处理"]);
     // The words of the Mark as issued button and its note.
     case "issue": return pick(["Send the PO to the supplier, then mark it issued", "将采购订单发给供应商，然后标记为已下达"]);
     default: return nextActionText(action, words);
@@ -946,24 +951,6 @@ function SectionTitle({ title, right }: { title: string; right?: React.ReactNode
   return <SectionHeader title={title} right={right} />;
 }
 
-// The overview facts. Values may be chips, and long values and notes wrap
-// rather than being cut off.
-type OverviewField = { label: string; value: React.ReactNode; helper?: React.ReactNode };
-function OverviewFields({ fields }: { fields: OverviewField[] }) {
-  return (
-    <Card className="p-4" data-testid="po-overview">
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-4">
-        {fields.map((field) => (
-          <div key={field.label} className="min-w-0">
-            <dt className="fc-caption font-medium" style={{ color: A.gray2 }}>{field.label}</dt>
-            <dd className="mt-1 break-words text-xs font-semibold" style={{ color: A.label }}>{field.value || "—"}</dd>
-            {field.helper ? <dd className="fc-caption mt-0.5 leading-4" style={{ color: A.sub }}>{field.helper}</dd> : null}
-          </div>
-        ))}
-      </dl>
-    </Card>
-  );
-}
 
 const STEP_COLORS: Record<TimelineStep["status"], string> = { done: A.green, current: A.blue, warning: A.orange, blocked: A.red, pending: A.gray3 };
 
@@ -1731,7 +1718,9 @@ export default function PurchasingOrdersPage({
     );
   })();
 
-  if (loading || !loadedForAddress) {
+  // Only the first read of an address shows the loading card; Refresh and an
+  // action's re-read keep the page on screen (design audit U-15).
+  if (!loadedForAddress) {
     return <Card className="p-12 text-center text-sm" data-testid="po-loading-state">{copy("正在加载采购订单…")}</Card>;
   }
 
@@ -1764,7 +1753,7 @@ export default function PurchasingOrdersPage({
         <ActionableMetricCard label={copy("已承诺采购订单金额")} value={!summary ? "—" : committedHidden ? copy("受限") : committedValue.length === 0 ? formatCurrencyAmount(0, "") : committedValue.map((row) => formatCurrencyAmount(row.amount, row.currency)).join(" · ")} description={loading ? copy("加载中") : `${summary?.committedOrderCount ?? 0} ${copy("张已承诺订单（已批准、已下达或已收货）")}`} to="/app/procurement/orders" icon={FileText} color={A.blue} />
         <ActionableMetricCard label={copy("未结采购订单")} value={summary ? String(summary.openOrderCount) : "—"} description={copy("已承诺且仍有待收数量")} to="/app/procurement/orders?status=open" icon={Truck} color={A.orange} />
         <ActionableMetricCard label={copy("发票差异")} value={String(invoiceExceptions)} description={copy("采购与财务共同复核")} to="/app/procurement/bills?matchStatus=variance" icon={AlertCircle} color={A.red} />
-        <ActionableMetricCard label={copy("匹配复核")} value={String(matchExceptions)} description={copy("查看三单匹配异常")} to="/app/procurement/bills?status=exception" icon={ShieldCheck} color={A.purple} />
+        <ActionableMetricCard label={copy("匹配复核")} value={String(matchExceptions)} description={copy("查看三单匹配异常")} to="/app/procurement/three-way-match?result=variance" icon={ShieldCheck} color={A.purple} />
       </div>
 
       <ListSearchCard
@@ -1803,9 +1792,9 @@ export default function PurchasingOrdersPage({
             ))}
           </select>
         </Field>
-        <Field label={copy("负责人")}>
+        <Field label={copy("采购负责人")}>
           <input value={filters.owner} onChange={(event) => updateFilter("owner", event.target.value)}
-            placeholder={copy("采购负责人")} style={inputStyle} />
+            placeholder={say("Buyer name", "采购负责人姓名")} style={inputStyle} />
         </Field>
         <Field label={say("ETA from", "预计到货起")}>
           <input type="date" value={filters.etaFrom} max={filters.etaTo || undefined} onChange={(event) => updateFilter("etaFrom", event.target.value)}
@@ -1835,8 +1824,9 @@ export default function PurchasingOrdersPage({
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 && (
-                <ListStateRow colSpan={8} state="empty" title={copy("当前工作区没有符合条件的采购订单。")} />
+              {filtered.length === 0 && (orders.length === 0
+                ? <ListStateRow colSpan={8} state="empty" title={say("No purchase orders yet", "暂无采购订单")} detail={say("A purchase order is created from an approved purchase request.", "采购订单由已批准的采购申请生成。")} />
+                : <ListStateRow colSpan={8} state="empty" title={copy("当前工作区没有符合条件的采购订单。")} />
               )}
               {paged.pageRows.map((order, index) => {
                 const firstGrn = grnsForPo(order.po, facts)[0];
@@ -1874,7 +1864,7 @@ export default function PurchasingOrdersPage({
                           {entryRules.canRecordBill(order.status) && !fullyInvoiced(order, facts) && <button type="button" data-testid={`po-row-record-bill-${order.po}`} onClick={() => routerNavigate(recordBillPath(order.po))} className={menuItemClass}>{say("Record supplier invoice", "录入采购发票")}</button>}
                           {firstGrn && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, receiptNumberOf(firstGrn))} className={menuItemClass}>{copy("查看收货单")}</button>}
                           {firstInvoice && canOpenRoute("procurement:bills") && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, invoiceNumberOf(firstInvoice))} className={menuItemClass}>{copy("查看采购发票")}</button>}
-                          {canOpenRoute("procurement:match") && (firstGrn || firstInvoice) && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:match")} className={menuItemClass}>{copy("查看三单匹配")}</button>}
+                          {canOpenRoute("procurement:match") && (firstGrn || firstInvoice) && <button type="button" onClick={() => routerNavigate(`/app/procurement/three-way-match?q=${encodeURIComponent(purchaseOrderNumber(order))}`)} className={menuItemClass}>{copy("查看三单匹配")}</button>}
                           {order.sourceRequest && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, documentNumberFor("purchase_request", order.sourceRequest, order.prNumber))} className={menuItemClass}>{say("View source PR", "查看来源采购申请")}</button>}
                           {order.sourceRfq && <button type="button" onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, documentNumberFor("rfq", order.sourceRfq, order.rfqNumber))} className={menuItemClass}>{say("View source RFQ", "查看来源询价单")}</button>}
                         </RowMenu>

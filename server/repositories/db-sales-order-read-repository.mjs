@@ -1,7 +1,7 @@
 import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
-import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
+import { ALLOCATION_READ_LIMIT, findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
 
 const text = (value, fallback = '') => String(value ?? '').trim() || fallback
 const number = (value) => {
@@ -287,6 +287,63 @@ export function createDbSalesOrderReadRepository({ env = process.env, prisma } =
     return db.salesOrder.count({ where: { tenantId: requireTenantId(filters), workflowStatus: { notIn: OPEN_DEMAND_EXCLUDED_STATUSES }, fulfillmentStatus: { not: 'fully_fulfilled' } } })
   }
 
+  // Open demand per SKU over every order of the workspace, for the allocation
+  // model (salesDemandBySku in runtime-inventory-allocation-read-model.mjs
+  // gives the same figures from listed orders): the database adds up each
+  // SKU's lines, where listOrders reads the latest 500 orders. A line counts
+  // only on an order that is not draft or cancelled. An order without lines
+  // stands for one line of nothing under its own id, as mapOrder lists it.
+  // SKUs come in the order they first appear on listOrders' orders, and each
+  // SKU's orders still to ship some of it in that order. More than
+  // ALLOCATION_READ_LIMIT SKUs is reported to onTruncated as sales_orders.
+  async function summarizeDemandBySku(filters = {}) {
+    const tenantId = requireTenantId(filters)
+    const db = await client()
+    const limit = ALLOCATION_READ_LIMIT
+    const rows = await db.$queryRaw`
+      WITH lines AS (
+        SELECT o.id AS "orderId",
+          CASE WHEN l.id IS NULL THEN trim(o.id) WHEN l.sku = '' THEN trim(l."itemId") ELSE trim(l.sku) END AS sku,
+          trim(o."workflowStatus") NOT IN ('draft', 'cancelled', 'canceled') AS open,
+          COALESCE(l."orderedQuantity", 0) AS ordered,
+          COALESCE(l."fulfilledQuantity", 0) AS fulfilled,
+          COALESCE(l."reservedQuantity", 0) AS reserved,
+          row_number() OVER (ORDER BY o."updatedAt" DESC, o.id ASC, l.id ASC NULLS FIRST) AS position
+        FROM "SalesOrder" o
+        LEFT JOIN "SalesOrderLine" l ON l."salesOrderId" = o.id
+        WHERE o."tenantId" = ${tenantId}
+      ), orders AS (
+        SELECT sku, "orderId", min(position) AS position,
+          count(*) FILTER (WHERE open) AS "openLines",
+          sum(GREATEST(ordered - fulfilled, 0)) FILTER (WHERE open) AS "openDemand",
+          sum(GREATEST(ordered - fulfilled - reserved, 0)) FILTER (WHERE open) AS "unreservedDemand",
+          sum(reserved) FILTER (WHERE open) AS reserved,
+          bool_or(open AND ordered > fulfilled) AS "toShip"
+        FROM lines
+        WHERE sku <> ''
+        GROUP BY sku, "orderId"
+      )
+      SELECT sku,
+        sum("openLines")::int AS "openLines",
+        COALESCE(sum("openDemand"), 0)::text AS "openDemand",
+        COALESCE(sum("unreservedDemand"), 0)::text AS "unreservedDemand",
+        COALESCE(sum(reserved), 0)::text AS reserved,
+        COALESCE(array_agg("orderId" ORDER BY position) FILTER (WHERE "toShip"), '{}') AS "salesOrderIds"
+      FROM orders
+      GROUP BY sku
+      ORDER BY min(position)
+      LIMIT ${limit + 1}`
+    if (rows.length > limit && typeof filters.onTruncated === 'function') filters.onTruncated({ subject: 'sales_orders', limit })
+    return rows.slice(0, limit).map((row) => ({
+      sku: text(row.sku),
+      openLines: Number(row.openLines) || 0,
+      openDemand: number(row.openDemand),
+      unreservedDemand: number(row.unreservedDemand),
+      reserved: number(row.reserved),
+      salesOrderIds: (Array.isArray(row.salesOrderIds) ? row.salesOrderIds : []).map((id) => text(id)),
+    }))
+  }
+
   // Report figures over every order of the workspace, however many listOrders
   // returns (it reads the latest 500 with their lines). The database groups
   // the orders by business day in the workspace timezone (the creation day,
@@ -364,6 +421,7 @@ export function createDbSalesOrderReadRepository({ env = process.env, prisma } =
     listOrders,
     countOrders,
     countOrdersWithOpenDemand,
+    summarizeDemandBySku,
     summarizeOrdersForReport,
     // One order by its id or its number, however old it is.
     async getOrder(id, filters = {}) {

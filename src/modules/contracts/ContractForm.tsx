@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FileSignature } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, inputStyle } from "../../components/ui";
+import { FormActionBar, RequiredNote } from "../../components/ui/formLayout";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 import { CONTRACT_DEFAULT_REMINDER_DAYS, CONTRACT_MAX_NOTICE_DAYS, CONTRACT_MAX_REMINDER_DAYS, CONTRACT_RENEWALS, CONTRACT_TYPES } from "../../../shared/contract-status.mjs";
@@ -198,7 +199,7 @@ export function ContractForm({ contract = null, initialSupplierId = "", onSaved,
           <p className="text-sm" style={{ color: A.sub }}>{t("Record a signed agreement. It is saved as a draft; activate it once the signed date and start date are in.")}</p>
           {/* The server numbers a new contract (CT-YYYYMM-NNNN) when it is saved; the number on the signed document goes in Their reference. */}
           {!editing && <p className="mt-1 text-sm" style={{ color: A.sub }} data-testid="contract-number-on-save">{t("The contract number is assigned when you save. Put the number on the signed document in Their reference.")}</p>}
-          <p className="mt-2 text-xs" style={{ color: A.sub }}>* {t("Required fields")}</p>
+          <RequiredNote />
         </div>
       </div>
 
@@ -328,16 +329,17 @@ export function ContractForm({ contract = null, initialSupplierId = "", onSaved,
         {fieldError("notes")}
       </Card>
 
-      {Boolean(error) && (
-        <div role="alert" data-testid="contract-form-error" className="flex flex-wrap items-center gap-3 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
-          <span>{contractErrorText(error, t)}</span>
-          {isVersionConflict(error) && onReload && <button type="button" className="fc-action-button fc-action-secondary fc-action-compact" onClick={onReload}>{t("Reload")}</button>}
-        </div>
-      )}
-      <div className="flex justify-end gap-2">
-        <button type="button" className="fc-action-button fc-action-quiet" onClick={onCancel}>{t("Cancel")}</button>
-        <button type="submit" data-testid="contract-save" className="fc-action-button fc-action-primary" disabled={saving}>{t(saving ? "Saving…" : editing ? "Save changes" : "Save draft")}</button>
-      </div>
+      <FormActionBar
+        onCancel={onCancel}
+        submit={{ label: t(editing ? "Save changes" : "Save draft"), onClick: () => void save(), busy: saving, testId: "contract-save" }}
+        message={error ? (
+          <span className="flex flex-wrap items-center gap-3">
+            <span>{contractErrorText(error, t)}</span>
+            {isVersionConflict(error) && onReload && <button type="button" className="fc-action-button fc-action-secondary fc-action-compact" onClick={onReload}>{t("Reload")}</button>}
+          </span>
+        ) : undefined}
+        messageTestId="contract-form-error"
+      />
     </form>
   );
 }
