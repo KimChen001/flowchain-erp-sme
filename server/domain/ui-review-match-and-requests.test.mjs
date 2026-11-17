@@ -40,8 +40,9 @@ test("the three-way match page is titled by the invoice number and never shows a
 test("a purchase request's detail header offers the list row's actions, by status and permission, and says what happened", () => {
   const source = read("src/modules/purchase-requests/CanonicalProcurementPanel.tsx");
   // One table of actions by status, each with the permission the server checks.
-  assert.match(source, /submitted: \["approve", "reject", "withdraw"\]/);
-  assert.match(source, /approved: \["generate-purchase-orders"\]/);
+  // Cancel (with a reason) and Return to draft since design audit C6 (L1-16).
+  assert.match(source, /submitted: \["approve", "reject", "withdraw", "cancel"\]/);
+  assert.match(source, /approved: \["generate-purchase-orders", "cancel"\]/);
   assert.match(source, /approve: "procurement\.purchase_order\.approve"/);
   assert.match(source, /reject: "procurement\.purchase_order\.reject"/);
   assert.match(source, /"generate-purchase-orders": "procurement\.purchase_order\.revise"/);

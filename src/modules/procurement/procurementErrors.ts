@@ -18,6 +18,11 @@ const PURCHASING_CODES: Record<string, ErrorPair> = {
   PURCHASE_ORDER_NOT_ISSUED: ["The purchase order has not been issued yet.", "该采购订单尚未下达。"],
   PURCHASE_ORDER_PROMISE_CLOSED: ["Promised dates can no longer be changed on this order.", "该订单已不能修改承诺交期。"],
   PURCHASE_ORDER_LINE_ALREADY_RECEIVED: ["This line has been received in full, so its promised date cannot change.", "该行已全部收货，不能修改承诺交期。"],
+  // Design audit C6: a reason to cancel, a price on every line, an active supplier.
+  CANCEL_REASON_REQUIRED: ["Give a reason to cancel the request.", "请填写取消原因。"],
+  PURCHASE_REQUEST_LINE_UNPRICED: ["A line has no price yet. Enter its estimated price before creating the purchase order.", "有采购行尚未填写价格，请先填写预计价格再生成采购订单。"],
+  SUPPLIER_NOT_ACTIVE: ["A line's supplier is not active. Activate the supplier or choose another first.", "有采购行的供应商未启用，请先启用该供应商或改选其他供应商。"],
+  DOWNSTREAM_OBJECT_ALREADY_EXISTS: ["This request already has an open purchase order or RFQ.", "该申请已有未结的采购订单或询价单。"],
   PURCHASE_ORDER_HAS_OPEN_RECEIPTS: ["This purchase order has receipts that are not posted yet. Post or cancel them first.", "该采购订单还有未过账的收货单，请先过账或取消。"],
   // No conversion between units is recorded, so lines and receipts are in the item's stock unit only.
   PURCHASE_UNIT_CONVERSION_MISSING: ["A line is in a unit other than its item's stock unit, and no conversion between the two is recorded. Request the item again in its stock unit.", "有采购行的单位不是该物料的库存单位，且未记录两者的换算关系。请按库存单位重新请购。"],

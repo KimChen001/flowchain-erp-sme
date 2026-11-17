@@ -138,9 +138,9 @@ export const PROCUREMENT_STATUS_TRANSITIONS = Object.freeze({
     draft: ['submitted', 'cancelled'],
     submitted: ['approved', 'rejected', 'draft', 'cancelled'],
     approved: ['draft', 'cancelled', 'converted'],
-    rejected: [],
+    rejected: ['draft'],
     cancelled: [],
-    converted: [],
+    converted: ['approved'],
   }),
   rfq: freezeTransitions({
     draft: ['open', 'cancelled'],

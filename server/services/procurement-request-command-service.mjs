@@ -35,6 +35,7 @@ export const PURCHASE_REQUEST_PERMISSIONS = Object.freeze({
   update: "procurement.purchase_order.revise",
   submit: "procurement.purchase_order.revise",
   withdraw: "procurement.purchase_order.revise",
+  reopen: "procurement.purchase_order.revise",
   cancel: "procurement.purchase_order.revise",
   approve: "procurement.purchase_order.approve",
   reject: "procurement.purchase_order.reject",
@@ -51,8 +52,21 @@ const NEXT_STATUS = Object.freeze({
   approve: PURCHASE_REQUEST_STATUS.APPROVED,
   reject: PURCHASE_REQUEST_STATUS.REJECTED,
   withdraw: PURCHASE_REQUEST_STATUS.DRAFT,
+  // A rejected request goes back to draft to be revised (design audit L1-16).
+  reopen: PURCHASE_REQUEST_STATUS.DRAFT,
   cancel: PURCHASE_REQUEST_STATUS.CANCELLED,
 });
+// The statuses an action starts from, where the status table alone would
+// allow more: withdraw takes a request out of approval, reopen revives a
+// rejected one.
+const ACTION_FROM = Object.freeze({
+  withdraw: [PURCHASE_REQUEST_STATUS.SUBMITTED, PURCHASE_REQUEST_STATUS.APPROVED],
+  reopen: [PURCHASE_REQUEST_STATUS.REJECTED],
+});
+// A PO that no longer stands for the request's demand: cancelled, or
+// rejected (design audit L1-09; the downstream check also counted rejected
+// POs as live, so the request could not be converted again).
+export const ENDED_PURCHASE_ORDER_STATUSES = Object.freeze([PURCHASE_ORDER_STATUS.CANCELLED, PURCHASE_ORDER_STATUS.REJECTED]);
 
 const SCALE = 10_000n;
 const text = (value) => String(value ?? "").trim();
@@ -93,6 +107,37 @@ function dateOnly(value, field) {
 // units is recorded (item-stock-unit.mjs). A request saved before that rule,
 // or whose item's unit changed since, is refused here rather than turned into
 // a PO whose receipt would book boxes as pieces.
+// What converting an approved request makes: one PO per supplier, currency
+// and delivery warehouse; and what refuses it, first problem first:
+// - a line without a supplier, currency or warehouse;
+// - a line priced at 0: the request's price is an estimate, the PO's a
+//   promise to the supplier, so nobody's 0 becomes an approved PO (L1-03);
+// - a supplier that is not active, a draft one included (L1-28).
+export async function purchaseOrderPlan(client, tenantId, row) {
+  const issues = [];
+  const lines = row.lines || [];
+  const missing = lines.flatMap((line, index) => ["supplierId", "currency", "targetWarehouseId"].filter((field) => !text(line.metadata?.[field])).map((field) => ({ field: `lines.${index}.${field}` })));
+  if (!lines.length || missing.length) issues.push({ code: "DIRECT_PO_NOT_ALLOWED", message: "Every line needs a supplier, a currency and a delivery warehouse before a PO can be created.", details: missing.length ? missing : [{ field: "lines" }] });
+  const unpriced = lines.flatMap((line, index) => receivingDecimalUnits(String(line.amount ?? "0")) > 0n ? [] : [{ field: `lines.${index}.${line.quantity === null ? "estimatedAmount" : "estimatedUnitPrice"}` }]);
+  if (unpriced.length) issues.push({ code: "PURCHASE_REQUEST_LINE_UNPRICED", message: "Every line needs a price above 0 before a PO can be created.", details: unpriced });
+  const supplierIds = [...new Set(lines.map((line) => text(line.metadata?.supplierId)).filter(Boolean))];
+  const suppliers = supplierIds.length ? await client.supplier.findMany({ where: { tenantId, id: { in: supplierIds } }, select: { id: true, status: true } }) : [];
+  const statusOf = new Map(suppliers.map((supplier) => [supplier.id, text(supplier.status || "active").toLowerCase()]));
+  const inactive = lines.flatMap((line, index) => {
+    const supplierId = text(line.metadata?.supplierId);
+    return supplierId && statusOf.get(supplierId) !== "active" ? [{ field: `lines.${index}.supplierId`, supplierId, supplierStatus: statusOf.get(supplierId) || null }] : [];
+  });
+  if (inactive.length) issues.push({ code: "SUPPLIER_NOT_ACTIVE", message: "A line's supplier is not active. Activate the supplier or choose another before creating the PO.", details: inactive });
+  const groups = new Map();
+  for (const line of lines) {
+    const meta = line.metadata || {};
+    const groupKey = [meta.supplierId, meta.currency, meta.targetWarehouseId].join("::");
+    if (!groups.has(groupKey)) groups.set(groupKey, { supplierId: meta.supplierId, supplierName: text(meta.supplierSnapshot?.supplierName) || null, currency: meta.currency, warehouseId: meta.targetWarehouseId, lines: [] });
+    groups.get(groupKey).lines.push(line);
+  }
+  return { issues, groups };
+}
+
 async function assertLinesInStockUnit(tx, tenantId, lines) {
   const itemIds = [...new Set(lines.map((line) => text(line.itemId)).filter(Boolean))];
   if (!itemIds.length) return;
@@ -386,7 +431,10 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
       execute: async (tx, actor) => {
         const row = await lockRequest(tx, actor.tenantId, id);
         assertCurrentVersion(row, expectedVersion);
-        if (!(PR_TRANSITIONS[row.status] || []).includes(next)) fail("INVALID_STATE_TRANSITION", `A ${row.status} purchase request cannot be moved to ${next}.`, 409, [], { currentStatus: row.status, currentVersion: versionOf(row) });
+        if (!(PR_TRANSITIONS[row.status] || []).includes(next) || (ACTION_FROM[action] && !ACTION_FROM[action].includes(row.status))) fail("INVALID_STATE_TRANSITION", `A ${row.status} purchase request cannot be moved to ${next}.`, 409, [], { currentStatus: row.status, currentVersion: versionOf(row) });
+        // Cancelling a request that left its author (submitted or approved)
+        // says why; a draft is the author's own (design audit L1-16).
+        if (action === "cancel" && row.status !== PURCHASE_REQUEST_STATUS.DRAFT && !reason) fail("CANCEL_REASON_REQUIRED", "A reason is required to cancel a submitted or approved purchase request.", 400, [{ field: "reason" }]);
         // Withdrawing or cancelling an approved PR must not orphan its RFQ or POs.
         if (row.status === PURCHASE_REQUEST_STATUS.APPROVED) await assertNoActiveDownstream(tx, actor.tenantId, row.id);
         const version = versionOf(row) + 1;
@@ -423,7 +471,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
 
   // An approved PR feeds either one open RFQ or its purchase orders, never both.
   async function assertNoActiveDownstream(tx, tenantId, purchaseRequestId) {
-    const po = await tx.purchaseOrder.findFirst({ where: { tenantId, sourceRequestId: purchaseRequestId, status: { not: PURCHASE_ORDER_STATUS.CANCELLED } }, select: { id: true, number: true, metadata: true } });
+    const po = await tx.purchaseOrder.findFirst({ where: { tenantId, sourceRequestId: purchaseRequestId, status: { notIn: [...ENDED_PURCHASE_ORDER_STATUSES] } }, select: { id: true, number: true, metadata: true } });
     if (po) fail("DOWNSTREAM_OBJECT_ALREADY_EXISTS", `Purchase order ${numberOf(po)} already exists for this purchase request.`, 409, [], { entityId: po.id });
     const rfq = await tx.rfq.findFirst({ where: { tenantId, sourceRequestId: purchaseRequestId, status: { notIn: INACTIVE_RFQ_STATUSES } }, select: { id: true, number: true } });
     if (rfq) fail("DOWNSTREAM_OBJECT_ALREADY_EXISTS", `RFQ ${numberOf(rfq)} is still open for this purchase request.`, 409, [], { entityId: rfq.id });
@@ -529,16 +577,10 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         assertCurrentVersion(row, expectedVersion);
         assertApproved(row);
         await assertNoActiveDownstream(tx, actor.tenantId, row.id);
-        const missing = row.lines.flatMap((line, index) => ["supplierId", "currency", "targetWarehouseId"].filter((field) => !text(line.metadata?.[field])).map((field) => ({ field: `lines.${index}.${field}` })));
-        if (!row.lines.length || missing.length) fail("DIRECT_PO_NOT_ALLOWED", "Every line needs a supplier, a currency and a delivery warehouse before a PO can be created.", 422, missing.length ? missing : [{ field: "lines" }]);
+        const plan = await purchaseOrderPlan(tx, actor.tenantId, row);
+        if (plan.issues.length) fail(plan.issues[0].code, plan.issues[0].message, 422, plan.issues[0].details);
         await assertLinesInStockUnit(tx, actor.tenantId, row.lines);
-        const groups = new Map();
-        for (const line of row.lines) {
-          const meta = line.metadata || {};
-          const groupKey = [meta.supplierId, meta.currency, meta.targetWarehouseId].join("::");
-          if (!groups.has(groupKey)) groups.set(groupKey, { supplierId: meta.supplierId, supplierName: text(meta.supplierSnapshot?.supplierName) || null, currency: meta.currency, warehouseId: meta.targetWarehouseId, lines: [] });
-          groups.get(groupKey).lines.push(line);
-        }
+        const groups = plan.groups;
         // A line that skips the item's preferred supplier with no reason
         // (approved before reasons were asked) reaches its PO marked "no
         // reason recorded"; a recorded reason travels as it is.
@@ -610,6 +652,37 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
     });
   }
 
+  // What "Create purchase order" would make, read before anything is
+  // created: one PO per supplier, currency and warehouse with its lines and
+  // amount, the status it starts in, and what would refuse it (design audit
+  // L1-26). The command itself runs the same plan.
+  async function previewPurchaseOrdersFromPurchaseRequest(id, context) {
+    const client = await db();
+    const actor = await actorFor(client, context, PURCHASE_REQUEST_PERMISSIONS.createPurchaseOrders);
+    const row = await readRequest(client, actor.tenantId, id)
+      || await client.purchaseRequest.findFirst({ where: { tenantId: actor.tenantId, number: text(id) }, include: { lines: { orderBy: { id: "asc" } } } });
+    if (!row) fail("ENTITY_NOT_FOUND", "Purchase request was not found.", 404);
+    const plan = await purchaseOrderPlan(client, actor.tenantId, row);
+    const tenant = await client.tenant.findUnique({ where: { id: actor.tenantId }, select: { operationalSettings: true } });
+    const approvedWithRequest = mergeOperationalSettings(tenant?.operationalSettings).review.approvedRequestApprovesPurchaseOrder !== false;
+    return {
+      purchaseRequestId: row.id,
+      number: numberOf(row),
+      status: row.status,
+      version: versionOf(row),
+      purchaseOrderStatus: approvedWithRequest ? PURCHASE_ORDER_STATUS.APPROVED : PURCHASE_ORDER_STATUS.DRAFT,
+      orders: [...plan.groups.values()].map((group) => ({
+        supplierId: group.supplierId,
+        supplierName: group.supplierName,
+        currency: group.currency,
+        warehouseId: group.warehouseId,
+        lineCount: group.lines.length,
+        amount: receivingDecimalString(group.lines.reduce((sum, line) => sum + receivingDecimalUnits(String(line.amount ?? "0")), 0n)),
+      })),
+      issues: plan.issues.map(({ code, message, details }) => ({ code, message, details })),
+    };
+  }
+
   async function readPurchaseRequest(id, context) {
     const client = await db();
     const actor = await actorFor(client, context, PURCHASE_REQUEST_PERMISSIONS.read);
@@ -628,5 +701,6 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
     createRfqFromPurchaseRequest,
     transitionRfq,
     createPurchaseOrdersFromPurchaseRequest,
+    previewPurchaseOrdersFromPurchaseRequest,
   };
 }

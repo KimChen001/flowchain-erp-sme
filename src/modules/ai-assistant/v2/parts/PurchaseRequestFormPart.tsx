@@ -541,12 +541,16 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
     }
   };
 
-  const transition = async (action: "submit" | "cancel" | "withdraw") => {
+  // Cancelling a submitted request says why, as on the request page (design
+  // audit L1-16); null while not asking.
+  const [cancelReason, setCancelReason] = useState<string | null>(null);
+  const transition = async (action: "submit" | "cancel" | "withdraw", reason = "") => {
     if (!receipt || busy) return;
     setBusy(true);
     setError("");
     try {
-      const next = await apiJson<PrReceipt>(`/api/procurement/requests/${encodeURIComponent(receipt.id)}/${action}`, { method: "POST", body: JSON.stringify({ expectedVersion: receipt.version }) });
+      const next = await apiJson<PrReceipt>(`/api/procurement/requests/${encodeURIComponent(receipt.id)}/${action}`, { method: "POST", body: JSON.stringify({ expectedVersion: receipt.version, ...(reason ? { reason } : {}) }) });
+      setCancelReason(null);
       record({ id: next.id || receipt.id, number: next.number || receipt.number, version: next.version, status: next.status || receipt.status });
     } catch (failure) {
       setError(errorText(failure, copy));
@@ -577,9 +581,19 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
           {draft ? primaryButton(busy ? copy.t("ai.v2.form.working") : copy.t("ai.v2.form.submit"), busy, () => void transition("submit"), "ai-v2-pr-submit") : null}
           {draft ? secondary(copy.t("ai.v2.form.cancelDraft"), () => void transition("cancel"), "ai-v2-pr-cancel") : null}
           {submitted ? secondary(copy.t("ai.v2.form.withdraw"), () => void transition("withdraw"), "ai-v2-pr-withdraw") : null}
-          {submitted ? secondary(copy.t("ai.v2.form.cancelRequest"), () => void transition("cancel"), "ai-v2-pr-cancel") : null}
+          {submitted && cancelReason === null ? secondary(copy.t("ai.v2.form.cancelRequest"), () => setCancelReason(""), "ai-v2-pr-cancel") : null}
           {open}
         </div>
+        {submitted && cancelReason !== null ? (
+          <div className="flex flex-wrap items-end gap-2" data-testid="ai-v2-pr-cancel-ask">
+            <label className="flex min-w-0 flex-1 flex-col gap-1">
+              <span style={{ color: A.sub }}>{copy.t("ai.v2.form.cancelReason")}</span>
+              <input data-testid="ai-v2-pr-cancel-reason" value={cancelReason} maxLength={500} onChange={(event) => setCancelReason(event.target.value)} className="rounded-md border px-2 py-1" style={{ borderColor: A.border }} />
+            </label>
+            {secondary(copy.t("ai.v2.form.cancelRequest"), () => { if (cancelReason.trim()) void transition("cancel", cancelReason.trim()); }, "ai-v2-pr-cancel-confirm")}
+            {secondary(copy.t("ai.v2.form.keepRequest"), () => setCancelReason(null), "ai-v2-pr-cancel-back")}
+          </div>
+        ) : null}
       </section>
     );
   }

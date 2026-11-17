@@ -996,3 +996,96 @@ test('an item stocked in box with purchase unit pcs is requested, and its line i
   assert.equal(refused.status, 400, describe(refused))
   assert.equal(refused.body.code, 'PURCHASE_UNIT_CONVERSION_MISSING')
 })
+
+// Design audit C6 (2026-11-17): the request and PO lifecycle.
+test('C6: cancelling a request that left its author needs a reason; a rejected request goes back to draft (L1-16)', async () => {
+  const requestRow = (id) => prisma.purchaseRequest.findFirst({ where: { tenantId: tenantA, id } })
+  await seedPurchaseRequest('PR-C6-CANCEL', { status: 'submitted' })
+  const noReason = await api(tokens.managerA, 'POST', '/api/procurement/requests/PR-C6-CANCEL/cancel', { expectedVersion: 1 })
+  assert.equal(noReason.status, 400, describe(noReason))
+  assert.equal(noReason.body.code, 'CANCEL_REASON_REQUIRED')
+  const cancelled = await api(tokens.managerA, 'POST', '/api/procurement/requests/PR-C6-CANCEL/cancel', { expectedVersion: 1, reason: 'Ordered on the framework contract instead' })
+  assert.equal(cancelled.status, 200, describe(cancelled))
+  const row = await requestRow('PR-C6-CANCEL')
+  assert.equal(row.status, 'cancelled')
+  assert.equal(row.metadata.lastReason, 'Ordered on the framework contract instead')
+  // A draft never left its author: it is cancelled as it is.
+  await seedPurchaseRequest('PR-C6-DRAFT', { status: 'draft' })
+  const draft = await api(tokens.buyerA, 'POST', '/api/procurement/requests/PR-C6-DRAFT/cancel', { expectedVersion: 1 })
+  assert.equal(draft.status, 200, describe(draft))
+  // Rejected: Withdraw does not apply, Return to draft does.
+  await seedPurchaseRequest('PR-C6-REJECTED', { status: 'rejected' })
+  const withdraw = await api(tokens.buyerA, 'POST', '/api/procurement/requests/PR-C6-REJECTED/withdraw', { expectedVersion: 1 })
+  assert.equal(withdraw.status, 409, describe(withdraw))
+  const reopened = await api(tokens.buyerA, 'POST', '/api/procurement/requests/PR-C6-REJECTED/reopen', { expectedVersion: 1 })
+  assert.equal(reopened.status, 200, describe(reopened))
+  assert.equal((await requestRow('PR-C6-REJECTED')).status, 'draft')
+  assert.equal(await prisma.auditLog.count({ where: { tenantId: tenantA, entityType: 'PurchaseRequest', entityId: 'PR-C6-REJECTED', action: 'purchase_request_reopen' } }), 1)
+})
+
+test('C6: the preview names the orders a request makes; a cancelled or rejected PO gives the request back (L1-26, L1-09)', async () => {
+  const requestRow = (id) => prisma.purchaseRequest.findFirst({ where: { tenantId: tenantA, id } })
+  const id = 'PR-C6-RESTORE'
+  await seedPurchaseRequest(id, { status: 'approved' })
+  const preview = await api(tokens.managerA, 'GET', `/api/procurement/requests/${id}/purchase-order-preview`)
+  assert.equal(preview.status, 200, describe(preview))
+  assert.equal(preview.body.purchaseOrderStatus, 'approved')
+  assert.deepEqual(preview.body.orders.map((order) => [order.supplierId, order.currency, order.warehouseId, order.lineCount, order.amount]), [[supplierA, 'USD', warehouseA, 1, '125.0000']])
+  assert.deepEqual(preview.body.issues, [])
+  const foreign = await api(tokens.managerB, 'GET', `/api/procurement/requests/${id}/purchase-order-preview`)
+  assert.equal(foreign.status, 404, describe(foreign))
+
+  const first = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 1 })
+  assert.equal(first.status, 201, describe(first))
+  const firstPo = first.body.createdPurchaseOrders[0].id
+  assert.equal((await requestRow(id)).status, 'converted')
+  const cancelled = await api(tokens.managerA, 'POST', `/api/procurement/orders/${firstPo}/cancel`, { expectedVersion: 0 })
+  assert.equal(cancelled.status, 200, describe(cancelled))
+  const restored = await requestRow(id)
+  assert.equal(restored.status, 'approved')
+  assert.equal(restored.metadata.version, 3)
+  assert.equal(restored.metadata.timeline.at(-1).action, 'demand_restored')
+  assert.equal(await prisma.auditLog.count({ where: { tenantId: tenantA, entityType: 'PurchaseRequest', entityId: id, action: 'purchase_request_demand_restored' } }), 1)
+  // The cancelled PO no longer blocks a new one.
+  const second = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 3 })
+  assert.equal(second.status, 201, describe(second))
+  assert.notEqual(second.body.createdPurchaseOrders[0].id, firstPo)
+
+  // A rejected PO gives its request back too, and does not count as live.
+  await seedPurchaseRequest('PR-C6-REJECT-PO', { status: 'converted' })
+  await seedPurchaseOrder('PO-C6-REJECT', { status: 'pending_approval' })
+  await prisma.purchaseOrder.update({ where: { id: 'PO-C6-REJECT' }, data: { sourceRequestId: 'PR-C6-REJECT-PO' } })
+  const rejected = await api(tokens.managerA, 'POST', '/api/procurement/orders/PO-C6-REJECT/reject', { expectedVersion: 0, reason: 'Wrong supplier for this item' })
+  assert.equal(rejected.status, 200, describe(rejected))
+  assert.equal((await requestRow('PR-C6-REJECT-PO')).status, 'approved')
+  const again = await api(tokens.managerA, 'POST', '/api/procurement/requests/PR-C6-REJECT-PO/generate-purchase-orders', { expectedVersion: 2 })
+  assert.equal(again.status, 201, describe(again))
+})
+
+test('C6: a line priced at 0 or a supplier that is not active refuses the PO (L1-03, L1-28)', async () => {
+  const ordersOf = (id) => prisma.purchaseOrder.count({ where: { tenantId: tenantA, sourceRequestId: id } })
+  await seedPurchaseRequest('PR-C6-ZERO', { status: 'approved', unitPrice: '0' })
+  const preview = await api(tokens.managerA, 'GET', '/api/procurement/requests/PR-C6-ZERO/purchase-order-preview')
+  assert.equal(preview.status, 200, describe(preview))
+  assert.deepEqual(preview.body.issues.map((issue) => issue.code), ['PURCHASE_REQUEST_LINE_UNPRICED'])
+  const zero = await api(tokens.managerA, 'POST', '/api/procurement/requests/PR-C6-ZERO/generate-purchase-orders', { expectedVersion: 1 })
+  assert.equal(zero.status, 422, describe(zero))
+  assert.equal(zero.body.code, 'PURCHASE_REQUEST_LINE_UNPRICED')
+  assert.equal(await ordersOf('PR-C6-ZERO'), 0)
+
+  await prisma.supplier.create({ data: { id: 'flow-supplier-c6-draft', tenantId: tenantA, code: 'SUP-FLOW-C6', name: 'Draft Supplier Ltd', status: 'draft' } })
+  await seedPurchaseRequest('PR-C6-DRAFT-SUPPLIER', { status: 'approved' })
+  const line = await prisma.purchaseRequestLine.findFirst({ where: { id: 'PR-C6-DRAFT-SUPPLIER-L1' } })
+  await prisma.purchaseRequestLine.update({ where: { id: line.id }, data: { metadata: { ...line.metadata, supplierId: 'flow-supplier-c6-draft' } } })
+  const inactive = await api(tokens.managerA, 'POST', '/api/procurement/requests/PR-C6-DRAFT-SUPPLIER/generate-purchase-orders', { expectedVersion: 1 })
+  assert.equal(inactive.status, 422, describe(inactive))
+  assert.equal(inactive.body.code, 'SUPPLIER_NOT_ACTIVE')
+  assert.equal(await ordersOf('PR-C6-DRAFT-SUPPLIER'), 0)
+
+  // Issuing to a supplier that is not active is refused too.
+  await seedPurchaseOrder('PO-C6-DRAFT-SUPPLIER', { status: 'approved' })
+  await prisma.purchaseOrder.update({ where: { id: 'PO-C6-DRAFT-SUPPLIER' }, data: { supplierId: 'flow-supplier-c6-draft' } })
+  const issue = await api(tokens.managerA, 'POST', '/api/procurement/orders/PO-C6-DRAFT-SUPPLIER/issue', { expectedVersion: 0 })
+  assert.equal(issue.status, 409, describe(issue))
+  assert.equal(issue.body.code, 'SUPPLIER_NOT_ACTIVE')
+})
