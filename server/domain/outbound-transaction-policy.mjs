@@ -129,14 +129,20 @@ function projectOrderLines(order, impacts) {
   })
 }
 
+// Every line of an order being fulfilled refers to an item of the workspace
+// with the line's SKU. Whether the item is still active is not asked: a
+// reservation, shipment draft, posting or reversal finishes an order already
+// taken, so deactivating an item stops new orders, never the ones in
+// progress or the correction of a wrong shipment (design audit L4-03). New
+// and revised orders still need active items (sales-order-workbench-service).
 async function validateOrderItems(prisma, tenantId, order, blockingIssues) {
   const itemIds = sorted(order.lines.map((line) => outboundText(line.itemId)))
   const items = itemIds.length ? await prisma.item.findMany({ where: { tenantId, id: { in: itemIds } }, orderBy: { id: 'asc' } }) : []
   const itemMap = new Map(items.map((item) => [item.id, item]))
   for (const line of order.lines) {
     const item = itemMap.get(line.itemId)
-    if (!item || item.tenantId !== tenantId || item.id !== line.itemId || item.sku !== line.sku || item.status !== 'active') {
-      blockingIssues.push(policyError('SALES_ORDER_ITEM_INVALID', `Sales order line ${line.id} does not reference an active tenant item with the same SKU.`, 422))
+    if (!item || item.tenantId !== tenantId || item.id !== line.itemId || item.sku !== line.sku) {
+      blockingIssues.push(policyError('SALES_ORDER_ITEM_INVALID', `Sales order line ${line.id} does not reference a tenant item with the same SKU.`, 422))
     }
   }
   return itemMap

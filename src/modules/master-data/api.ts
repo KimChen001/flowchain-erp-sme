@@ -297,6 +297,7 @@ export function normalizeCustomerRows(apiCustomers: ApiCustomer[] | undefined): 
     contact: text(customer.contact),
     phone: text(customer.phone),
     address: text(customer.address),
+    country: text(customer.country),
     creditStatus: creditStatus(customer.creditStatus),
     paymentTerms: text(customer.paymentTerms),
     status: ["inactive", "disabled", "停用"].includes(text(customer.status).toLowerCase()) ? "停用" : "启用",
