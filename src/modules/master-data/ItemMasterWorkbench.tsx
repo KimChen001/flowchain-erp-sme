@@ -7,6 +7,7 @@ import { ListPager, usePagedRows } from "../procurement/listPaging";
 const ITEM_PAGE_SIZE = 50;
 import { AlertCircle, ArrowLeft, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
+import { toast } from "sonner";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { RefreshButton, ResetButton, StatusChip, listButtonClass } from "../../components/ui/listLayout";
@@ -66,18 +67,50 @@ export type MasterItem = {
   createdAt: string;
   updatedBy: string;
   updatedAt: string;
+  // What someone recorded (null when nothing was); the fields above fill gaps
+  // for display, such as pcs, an MOQ of 1 or zeros.
+  recorded?: { unit: string | null; category: string | null; safetyStock: number | null; reorderPoint: number | null; minimumOrderQuantity: number | null; purchaseLeadTimeDays: number | null; purchaseUnit: string | null; itemType: string | null } | null;
 };
-// Stored defaults are language-neutral: no category until one is chosen, and
-// the unit code "pcs" (shown translated), so an English user never stores 件.
-const empty: Partial<MasterItem> = {
-  itemType: "material",
-  category: "",
-  baseUnit: "pcs",
-  purchaseUnit: "pcs",
-  status: "active",
-  purchasable: true,
-  inventoryItem: true,
-};
+// The edit form's values as typed: numbers stay text until saved, so an empty
+// field is sent as null ("not recorded"), never 0.
+type ItemDraft = Record<string, string | boolean>;
+const NUMBER_FIELDS = ["safetyStock", "reorderPoint", "minimumOrderQuantity", "purchaseLeadTimeDays"];
+const FLAG_FIELDS = ["purchasable", "inventoryItem", "batchManaged", "serialManaged", "shelfLifeManaged"];
+// A new item starts with nothing made up: no unit, category or numbers until
+// someone enters them (design audit L4-20: the unit defaulted to pcs).
+const EMPTY_DRAFT: ItemDraft = { sku: "", itemName: "", shortName: "", itemType: "", category: "", brand: "", specification: "", baseUnit: "", purchaseUnit: "", defaultWarehouseId: "", taxCodeId: "", safetyStock: "", reorderPoint: "", minimumOrderQuantity: "", purchaseLeadTimeDays: "", barcode: "", manufacturerPartNumber: "", comments: "", status: "active", purchasable: true, inventoryItem: true, batchManaged: false, serialManaged: false, shelfLifeManaged: false };
+// An item as the form edits it: the values someone recorded, read from
+// `recorded`, not the display fill-ins (design audit L4-02).
+function draftOf(item: MasterItem): ItemDraft {
+  const recorded = item.recorded || null;
+  const numberText = (value: number | null | undefined) => (value === null || value === undefined ? "" : String(value));
+  return {
+    ...EMPTY_DRAFT,
+    sku: item.sku, itemName: item.itemName, shortName: item.shortName, brand: item.brand, specification: item.specification,
+    itemType: recorded ? recorded.itemType || "" : item.itemType,
+    category: recorded ? recorded.category || "" : item.category,
+    baseUnit: recorded ? recorded.unit || "" : item.baseUnit,
+    purchaseUnit: recorded ? recorded.purchaseUnit || "" : item.purchaseUnit,
+    defaultWarehouseId: item.defaultWarehouseId, taxCodeId: item.taxCodeId, barcode: item.barcode, manufacturerPartNumber: item.manufacturerPartNumber, comments: item.comments,
+    safetyStock: numberText(recorded ? recorded.safetyStock : item.safetyStock),
+    reorderPoint: numberText(recorded ? recorded.reorderPoint : item.reorderPoint),
+    minimumOrderQuantity: numberText(recorded ? recorded.minimumOrderQuantity : item.minimumOrderQuantity),
+    purchaseLeadTimeDays: numberText(recorded ? recorded.purchaseLeadTimeDays : item.purchaseLeadTimeDays),
+    status: item.status, purchasable: item.purchasable, inventoryItem: item.inventoryItem, batchManaged: item.batchManaged, serialManaged: item.serialManaged, shelfLifeManaged: item.shelfLifeManaged,
+  };
+}
+// What a save sends: for a new item every field filled in; for an existing
+// one only the fields changed, so changing the name writes nothing else (no
+// pcs, no 0). An emptied number is sent as null.
+export function itemSaveBody(draft: ItemDraft, initial: ItemDraft | null): Record<string, unknown> {
+  const value = (key: string) => {
+    const raw = draft[key];
+    if (NUMBER_FIELDS.includes(key)) return String(raw ?? "").trim() === "" ? null : Number(raw);
+    return typeof raw === "boolean" ? raw : String(raw ?? "").trim();
+  };
+  const keys = Object.keys(draft).filter((key) => (initial ? key !== "sku" && draft[key] !== initial[key] : FLAG_FIELDS.includes(key) || key === "status" || String(draft[key] ?? "").trim() !== ""));
+  return Object.fromEntries(keys.map((key) => [key, value(key)]));
+}
 const FLAG_LABELS: Record<string, { en: string; zh: string }> = {
   purchasable: { en: "Purchasable", zh: "可采购" },
   inventoryItem: { en: "Inventory item", zh: "库存物料" },
@@ -90,12 +123,12 @@ const flagLabel = (key: string, language: string) => FLAG_LABELS[key]?.[language
 // interface language and anything else as stored.
 const ITEM_TYPE_LABELS: Record<string, string> = { material: "Material" };
 // The reorder list reads a missing, zero or negative reorder point as none
-// (server/domain/reorder-list.mjs), and the form saves 0 for an empty field.
+// (server/domain/reorder-list.mjs); an emptied field is saved as none.
 const hasReorderPoint = (item: MasterItem) => item.reorderPoint > 0;
 type SupplierName = { id: string; supplierCode?: string; supplierName?: string };
 
+// No item ID field: the server makes the id (design audit L4-20).
 const fields: Array<[keyof MasterItem, string, string]> = [
-  ["itemId", "物料 ID", "text"],
   ["sku", "SKU 编码", "text"],
   ["itemName", "物料名称", "text"],
   ["shortName", "简称", "text"],
@@ -158,6 +191,7 @@ function normalizeMasterItem(item: Partial<MasterItem> & Record<string, unknown>
     createdAt: text(item.createdAt),
     updatedBy: text(item.updatedBy, "system"),
     updatedAt: text(item.updatedAt),
+    recorded: (item.recorded as MasterItem["recorded"]) || null,
   };
 }
 
@@ -190,7 +224,10 @@ export default function ItemMasterWorkbench({
   const detailBack = useDetailBack("/app/master-data/items", ["Back to items", "返回 SKU 列表"], () => setSelected(null));
   // A failed request in the interface language, never the server's own words.
   const loadFailed = (cause: unknown) => apiErrorText(cause, language, ["Could not load items. Try again.", copy("Could not load items. Try again.")]);
-  const [editing, setEditing] = useState<Partial<MasterItem> | null>(null);
+  // The form's values and what they were when it opened (null for a new item).
+  const [editing, setEditing] = useState<ItemDraft | null>(null);
+  const [editingFrom, setEditingFrom] = useState<ItemDraft | null>(null);
+  const startEditing = (item: MasterItem | null) => { const draft = item ? draftOf(item) : { ...EMPTY_DRAFT }; setEditing(draft); setEditingFrom(item ? draft : null); };
   const [query, setQuery] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
   const status = searchParams.get("status") || "";
@@ -272,13 +309,16 @@ export default function ItemMasterWorkbench({
       const url = isNew
         ? "/api/master-data/items"
         : `/api/master-data/items/${encodeURIComponent(selected.itemId)}`;
-      const result = await apiJson<{ item: MasterItem }>(url, {
+      const result = await apiJson<{ item: MasterItem & { nameAlsoUsedBy?: Array<{ code: string }> } }>(url, {
         method: isNew ? "POST" : "PATCH",
         body: JSON.stringify({
-          ...editing,
-          expectedVersion: selected?.version,
+          ...itemSaveBody(editing, isNew ? null : editingFrom),
+          ...(isNew ? {} : { expectedVersion: selected?.version }),
         }),
       });
+      // Saved either way; a name another item has is worth a second look (design audit L4-18).
+      const same = result.item.nameAlsoUsedBy || [];
+      if (same.length) toast.warning(copy("Another item already has this name: {codes}", { codes: same.map((row) => row.code).join(", ") }));
       setSelected(result.item);
       setEditing(null);
       setError("");
@@ -316,25 +356,19 @@ export default function ItemMasterWorkbench({
             <Field key={key} label={copy(label)}>
               <input
                 aria-label={copy(label)}
-                disabled={Boolean(selected) && key === "itemId"}
+                // The SKU is locked once the item exists (design audit L4-20).
+                disabled={Boolean(selected) && key === "sku"}
+                title={selected && key === "sku" ? copy("The SKU cannot change once the item exists.") : undefined}
                 type={inputType}
                 value={String(editing[key] ?? "")}
-                onChange={(event) =>
-                  setEditing({
-                    ...editing,
-                    [key]:
-                      inputType === "number"
-                        ? Number(event.target.value)
-                        : event.target.value,
-                  })
-                }
+                onChange={(event) => setEditing({ ...editing, [key]: event.target.value })}
                 style={inputStyle}
               />
             </Field>
           ))}
           <Field label={copy("状态")}>
             <select
-              value={editing.status}
+              value={String(editing.status)}
               onChange={(e) =>
                 setEditing({ ...editing, status: e.target.value })
               }
@@ -416,7 +450,7 @@ export default function ItemMasterWorkbench({
           {canEdit && (
             <button
               type="button"
-              onClick={() => setEditing(selected)}
+              onClick={() => startEditing(selected)}
               className={listButtonClass.secondary}
             >
               <Pencil size={13} />
@@ -474,7 +508,7 @@ export default function ItemMasterWorkbench({
                 className={listButtonClass.primary}
                 onClick={() => {
                   setSelected(null);
-                  setEditing({ ...empty });
+                  startEditing(null);
                 }}
               >
                 <Plus size={13} />{copy("New item")}
@@ -590,7 +624,7 @@ export default function ItemMasterWorkbench({
                           className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium"
                           onClick={() => {
                             setSelected(item);
-                            setEditing(item);
+                            startEditing(item);
                           }}
                         >
                           {copy("编辑")}

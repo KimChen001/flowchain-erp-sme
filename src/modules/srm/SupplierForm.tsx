@@ -39,7 +39,7 @@ export function SupplierForm({ form, editing, saving, errors, currencyWarning, w
   const termOptions = (paymentTerms || []).map(term => (stored && term.recordId === stored ? { ...term, id: stored } : term));
   if (stored && !termOptions.some(term => term.id === stored)) termOptions.push({ id: stored, label: stored });
   const hints: Record<string, string> = {
-    supplierCode: 'Use a unique code, such as SUP-001.',
+    supplierCode: editing ? 'The code cannot change once the supplier exists.' : 'Use a unique code, such as SUP-001.',
     categories: 'Separate categories with commas.',
     paymentTermsId: paymentTerms === null ? 'Could not load the workspace payment terms. The stored term is kept.' : 'Leave empty when the term is not agreed yet.',
   };
@@ -50,7 +50,8 @@ export function SupplierForm({ form, editing, saving, errors, currencyWarning, w
       ? <select {...props}><option value="">{t('Choose currency')}</option>{orderedCurrencyCodes(workspaceCurrency, null, form.defaultCurrency).map(code => <option key={code} value={code}>{code}</option>)}</select>
       : key === 'paymentTermsId'
         ? <select {...props}><option value="">{t('Not recorded')}</option>{termOptions.map(term => <option key={term.id} value={term.id}>{term.label === term.id ? term.id : `${term.label} (${term.id})`}</option>)}</select>
-        : <input {...props} type={key === 'email' ? 'email' : key === 'telephone' ? 'tel' : key === 'deliveryCycleDays' ? 'number' : 'text'} min={key === 'deliveryCycleDays' ? 0 : undefined} step={key === 'deliveryCycleDays' ? 1 : undefined} maxLength={500} />;
+        // The code is locked once the supplier exists, as the server holds it (design audit L4-17).
+        : <input {...props} disabled={editing && key === 'supplierCode'} type={key === 'email' ? 'email' : key === 'telephone' ? 'tel' : key === 'deliveryCycleDays' ? 'number' : 'text'} min={key === 'deliveryCycleDays' ? 0 : undefined} step={key === 'deliveryCycleDays' ? 1 : undefined} maxLength={500} />;
     return <div key={key} className={WIDE.includes(key) ? 'md:col-span-2' : ''}>
       <Field label={t(label)} required={REQUIRED.includes(key)} error={error ? t(error.message || 'Check the highlighted fields.') : null} hint={hints[key] ? t(hints[key]) : undefined}>{control}</Field>
     </div>;

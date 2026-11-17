@@ -275,6 +275,9 @@ function LocalSignInLink({ email }: { email: string }) {
 
 export function LoginScreen({ localStatus, onSignedIn }: { localStatus: LocalDevelopmentStatus | null; onSignedIn?: (user: WorkspaceUser, token: string) => void }) {
   const copy = useCopy();
+  // The page's language goes with the request, so the email reads as the
+  // page did for someone with no saved language (design audit L16).
+  const { language: pageLanguage } = useI18n();
   const [email, setEmail] = useState(localStatus?.availableLoginEmails[0] || "");
   // Local walkthrough: sign in by itself as the first local account (the
   // administrator), unless the person just signed out; the account buttons
@@ -317,7 +320,7 @@ export function LoginScreen({ localStatus, onSignedIn }: { localStatus: LocalDev
     setSending(true);
     setError("");
     try {
-      await apiJson("/api/auth/email-link", { method: "POST", body: JSON.stringify({ email: address }) });
+      await apiJson("/api/auth/email-link", { method: "POST", body: JSON.stringify({ email: address, language: pageLanguage }) });
       setSentTo(address);
       setResendAt(Date.now() + RESEND_DELAY_SECONDS * 1000);
       setClock(Date.now());
@@ -440,7 +443,7 @@ export function AcceptInvitationScreen({ localStatus }: { localStatus: LocalDeve
     setStatus("accepting"); setError("");
     try {
       await apiJson("/api/workspace/invitations/accept", { method: "POST", body: JSON.stringify({ token: token.current, name: name.trim() }) });
-      await apiJson("/api/auth/email-link", { method: "POST", body: JSON.stringify({ email: invitation.email }) });
+      await apiJson("/api/auth/email-link", { method: "POST", body: JSON.stringify({ email: invitation.email, language }) });
       setStatus("sent");
     } catch (failure) {
       setError(failure instanceof ApiError && failure.status < 500 ? failure.message : copy("inviteFailed"));

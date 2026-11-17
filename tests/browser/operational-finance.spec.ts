@@ -404,7 +404,9 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
       : route.fallback(),
   );
   await page.getByTestId("customer-invoice-submit").click();
-  await expect(page.getByTestId("customer-invoice-submit-panel")).toContainText("Someone else changed this invoice first.");
+  // In the interface language: the server's own sentence in English, the
+  // conflict said in Chinese (design audit L16).
+  await expect(page.getByTestId("customer-invoice-submit-panel")).toContainText(/Someone else changed this invoice first\.|已有其他人先做了更改/);
   // The earlier preview no longer holds: Confirm stays available and previews
   // again before it runs (the form standard never disables it to wait).
   await expect(page.getByTestId("customer-invoice-submit-confirm")).toBeEnabled();

@@ -234,6 +234,19 @@ async function main() {
       },
     });
 
+    // Confirming needs a customer chosen from Customers and a price on every
+    // line (design audit L4-13, L4-26): the order entered below is revised
+    // to this customer before it is confirmed.
+    await prisma.runtimeRecord.create({
+      data: {
+        id: randomUUID(),
+        tenantId,
+        namespace: "master-data.customers",
+        recordKey: "CUST-API-ENTRY",
+        payload: { id: "CUST-API-ENTRY-ID", code: "CUST-API-ENTRY", name: "API Entry Revised", status: "active", version: 1 },
+      },
+    });
+
     api = startApi(env);
     await waitFor(`${base}/api/health`);
     let token = await login(base, prisma);
@@ -282,8 +295,8 @@ async function main() {
           idempotencyKey: "api-entry-revise",
           revisionMode: "replace_all",
           expectedLineIds: lifecycle.order.lines.map((line) => line.id),
-          header: { customerName: "API Entry Revised", currency: "CNY" },
-          lines: [{ itemId: "outbound-smoke-item", quantity: "3" }],
+          header: { customerId: "CUST-API-ENTRY-ID", currency: "CNY" },
+          lines: [{ itemId: "outbound-smoke-item", quantity: "3", unitPrice: "4" }],
         },
       },
     );

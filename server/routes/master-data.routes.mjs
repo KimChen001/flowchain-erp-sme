@@ -157,8 +157,15 @@ export async function handleMasterDataRoute(ctx) {
   const customerMatch = url.pathname.match(
     /^\/api\/master-data\/customers\/([^/]+)$/,
   )
+  // A name two records share answers 409 with the candidates (design audit L4-18).
+  const ambiguous = (error) => {
+    if (error?.code !== 'NAME_AMBIGUOUS') throw error
+    send(res, 409, { code: error.code, message: error.message, details: error.details || [] })
+    return true
+  }
   if (req.method === 'GET' && customerMatch) {
-    const customer = await repository.getCustomer(customerMatch[1], tenantScope())
+    let customer
+    try { customer = await repository.getCustomer(customerMatch[1], tenantScope()) } catch (error) { return ambiguous(error) }
     send(
       res,
       customer ? 200 : 404,
@@ -219,7 +226,8 @@ export async function handleMasterDataRoute(ctx) {
     const managedItem = repository.getManagedItem
       ? await repository.getManagedItem(itemId, tenantScope())
       : null
-    const item = managedItem || await repository.getItem(itemId, tenantScope())
+    let item = managedItem
+    if (!item) try { item = await repository.getItem(itemId, tenantScope()) } catch (error) { return ambiguous(error) }
     if (!item) {
       send(res, 404, { error: 'Item not found' })
       return true
@@ -402,10 +410,12 @@ export async function handleMasterDataRoute(ctx) {
     const query = String(url.searchParams.get('query') || '').trim().toLowerCase()
     const suppliers = await suppliersFor(await repository.listSuppliers(everyRecord()))
     send(res, 200, {
-      suppliers: suppliers.filter(row => !query || [row.id, row.name].some(value => String(value || '').toLowerCase().includes(query))).map(row => ({
+      // The supplier's own code, which people type and imports match on, not
+      // its row id (design audit L4-17).
+      suppliers: suppliers.filter(row => !query || [row.id, row.supplierCode, row.name].some(value => String(value || '').toLowerCase().includes(query))).map(row => ({
         ...row,
         supplierName: row.name,
-        supplierCode: row.id,
+        supplierCode: row.supplierCode || row.id,
       })),
     })
     return true
@@ -422,7 +432,8 @@ export async function handleMasterDataRoute(ctx) {
     /^\/api\/master-data\/suppliers\/([^/]+)$/,
   )
   if (req.method === 'GET' && supplierMatch) {
-    const supplier = await repository.getSupplier(supplierMatch[1], tenantScope())
+    let supplier
+    try { supplier = await repository.getSupplier(supplierMatch[1], tenantScope()) } catch (error) { return ambiguous(error) }
     if (!supplier) {
       send(res, 404, { error: 'Supplier not found' })
       return true

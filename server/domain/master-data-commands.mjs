@@ -83,14 +83,18 @@ export function itemInputIssues(input = {}, old = null) {
   else if (name.length > 200) issue('itemName', 'NAME_TOO_LONG', 'An item name has at most 200 characters.')
   const status = has(input, 'status') ? text(input.status) : text(old?.status) || 'active'
   if (!STATUSES.includes(status)) issue('status', 'STATUS_INVALID', 'Choose a valid status.')
-  const unit = has(input, 'baseUnit') || has(input, 'unit') ? text(input.baseUnit ?? input.unit) : text(old?.unit) || 'pcs'
-  if (!unit) issue('baseUnit', 'UNIT_REQUIRED', 'Enter a unit.')
+  // The unit is what someone entered: a new item needs one, and an edit that
+  // does not send it keeps the stored one, even none, never "pcs" (design
+  // audit L4-02, L4-20).
+  const unitGiven = has(input, 'baseUnit') || has(input, 'unit')
+  const unit = unitGiven ? text(input.baseUnit ?? input.unit) : text(old?.unit || meta(old).baseUom)
+  if ((!old || unitGiven) && !unit) issue('baseUnit', 'UNIT_REQUIRED', 'Enter a unit.')
   const category = has(input, 'category') ? text(input.category) || null : old?.category ?? null
   const safetyStock = numberField(input, 'safetyStock', issues, { label: 'Safety stock' })
   const reorderPoint = numberField(input, 'reorderPoint', issues, { label: 'Reorder point' })
   const minimumOrderQuantity = numberField(input, 'minimumOrderQuantity', issues, { positive: true, label: 'Minimum order quantity' })
   const leadTimeDays = numberField(input, 'purchaseLeadTimeDays', issues, { integer: true, label: 'Lead time' })
-  return { issues, values: { sku, name, status, unit, category, safetyStock, reorderPoint, minimumOrderQuantity, leadTimeDays } }
+  return { issues, values: { sku, name, status, unit, unitGiven, category, safetyStock, reorderPoint, minimumOrderQuantity, leadTimeDays } }
 }
 
 // What holds an item's stock unit, or null. The unit gives every stock
@@ -122,7 +126,7 @@ export async function saveItemMaster(prisma, id, input = {}, actorId, scope) {
     const currentVersion = Number(previous.version || 1)
     if (old && Number(input.expectedVersion) !== currentVersion) throw fail(409, 'VERSION_CONFLICT', 'This item changed. Reopen it and try again.')
     const { issues, values } = itemInputIssues(input, old)
-    const { sku, name, status, unit, category, safetyStock, reorderPoint, minimumOrderQuantity: moq, leadTimeDays: leadTime } = values
+    const { sku, name, status, unit, unitGiven, category, safetyStock, reorderPoint, minimumOrderQuantity: moq, leadTimeDays: leadTime } = values
     const issue = (field, code, message) => issues.push({ field, code, message })
 
     const next = { ...previous }
@@ -130,7 +134,8 @@ export async function saveItemMaster(prisma, id, input = {}, actorId, scope) {
     for (const key of ITEM_FLAGS) if (has(input, key)) next[key] = Boolean(input[key])
     if (moq !== undefined) { next.minimumOrderQuantity = moq; next.moq = moq }
     if (leadTime !== undefined) { next.purchaseLeadTimeDays = leadTime; next.leadTimeDays = leadTime }
-    next.baseUom = unit
+    // Only a unit someone gave is written (design audit L4-02).
+    if (!old || unitGiven) next.baseUom = unit
 
     let preferredSupplierId = old?.preferredSupplierId ?? null
     if (has(input, 'defaultSupplierId') || has(input, 'preferredSupplierId')) {
@@ -162,7 +167,8 @@ export async function saveItemMaster(prisma, id, input = {}, actorId, scope) {
     next.updatedBy = actorId
     if (!old) next.createdBy = actorId
     const data = {
-      name, status, unit, category, preferredSupplierId, metadata: next,
+      name, status, category, preferredSupplierId, metadata: next,
+      ...(!old || unitGiven ? { unit } : {}),
       ...(safetyStock !== undefined ? { safetyStock: safetyStock === null ? null : String(safetyStock) } : {}),
       ...(reorderPoint !== undefined ? { reorderPoint: reorderPoint === null ? null : String(reorderPoint) } : {}),
     }
@@ -176,7 +182,13 @@ export async function saveItemMaster(prisma, id, input = {}, actorId, scope) {
 
 // ---------------------------------------------------------------- customers
 
-const CUSTOMER_TEXT_FIELDS = ['contact', 'phone', 'email', 'address', 'paymentTerms', 'creditStatus']
+const CUSTOMER_TEXT_FIELDS = ['contact', 'phone', 'email', 'address', 'country', 'paymentTerms', 'creditStatus']
+// A customer's credit standing (design audit L4-26): normal, or restricted,
+// which stops its sales orders from being confirmed. Empty when nobody set
+// one. Older records may hold the Chinese words; they read as the codes.
+export const CUSTOMER_CREDIT_STATUSES = Object.freeze(['normal', 'restricted'])
+const LEGACY_CREDIT_STATUSES = Object.freeze({ 正常: 'normal', 受限: 'restricted' })
+export const customerCreditStatus = (value) => LEGACY_CREDIT_STATUSES[text(value)] || text(value)
 
 async function findCustomerRecord(tx, tenantId, idOrCode) {
   const key = text(idOrCode)
@@ -206,6 +218,10 @@ export function customerInputIssues(input = {}, old = null) {
   for (const key of CUSTOMER_TEXT_FIELDS) if (has(input, key)) textValues[key] = text(input[key])
   const email = has(textValues, 'email') ? textValues.email : previous.email
   if (email && !EMAIL.test(email)) issue('email', 'EMAIL_INVALID', 'Enter a valid email address.')
+  if (has(textValues, 'creditStatus')) {
+    textValues.creditStatus = customerCreditStatus(textValues.creditStatus)
+    if (textValues.creditStatus && !CUSTOMER_CREDIT_STATUSES.includes(textValues.creditStatus)) issue('creditStatus', 'CREDIT_STATUS_INVALID', 'Choose normal or restricted.')
+  }
   let currency
   if (has(input, 'currency')) {
     currency = text(input.currency).toUpperCase()
