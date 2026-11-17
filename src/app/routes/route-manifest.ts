@@ -72,7 +72,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
   `),
   // Owner decision: internal settlement, cashbook and the settlement
   // workflow, and the empty sales delivery and receipt pages, are frozen
-  // (FROZEN_PRODUCT_ROUTE_IDS).
+  // (FROZEN_PRODUCT_ROUTE_IDS); forecast / MRP is unavailable.
   FROZEN: new Set([
     ...ids(`
   `),
