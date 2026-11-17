@@ -44,8 +44,7 @@ const STATUS_KEYS: Record<string, TranslationKey> = {
 // Finance statuses the shared tones do not know: an approved variance is
 // done; an approved invoice still to pay, or an issued one still to be paid,
 // is in progress.
-const STATUS_TONES: Record<string, StatusTone> = { variance_approved: "success", to_pay: "info", to_be_paid: "info" };
-export const financeStatusTone = (status: string): StatusTone => STATUS_TONES[status] || statusToneOf(status);
+export const financeStatusTone = (status: string): StatusTone => statusToneOf(status);
 
 // The status a supplier invoice shows. Once approved, where its payment
 // stands (to_pay, partially_settled, settled: the server's paymentStatus);

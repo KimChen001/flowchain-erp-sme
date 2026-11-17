@@ -103,6 +103,8 @@ test("SME navigation, direct access and browser history follow the route manifes
     "销售",
     "供应商",
     "物料",
+    // Customers and the other master data pages (design audit L6-07).
+    "基础资料",
     "报表",
   ]) {
     await expect(sidebar.getByRole("button", { name: label, exact: true })).toBeVisible();
@@ -141,6 +143,7 @@ test("SME navigation, direct access and browser history follow the route manifes
     { label: "销售", path: /\/app\/sales\/orders$/ },
     { label: "供应商", path: /\/app\/master-data\/suppliers$/ },
     { label: "物料", path: /\/app\/master-data\/items$/ },
+    { label: "基础资料", path: /\/app\/master-data\/customers$/ },
     { label: "报表", path: /\/app\/reports\/overview$/ },
   ]) {
     await sidebar

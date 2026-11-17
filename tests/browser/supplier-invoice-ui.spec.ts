@@ -75,7 +75,12 @@ test("a rejected overcharge is not offered for approval and can be cancelled", a
   const rejectId = await reject.getAttribute("data-testid");
   await run(page, String(rejectId), "Price above the PO");
   await expect(page.getByTestId("invoice-approve")).toHaveCount(0);
-  await run(page, "invoice-cancel", "Supplier billed above the PO price");
+  // Cancelling asks why in a dialog (design audit U-17).
+  await page.getByTestId("invoice-cancel").click();
+  const cancel = page.getByTestId("invoice-cancel-dialog");
+  await expect(cancel).toContainText("UI-INV-002");
+  await cancel.getByTestId("invoice-cancel-dialog-field").fill("Supplier billed above the PO price");
+  await cancel.getByTestId("invoice-cancel-dialog-confirm").click();
   await expect(page.getByTestId("supplier-invoice-actions")).not.toContainText(/Cancel invoice|取消发票/);
   await expect(page.getByTestId("supplier-invoice-detail")).toContainText(/Cancelled|已取消/);
 });

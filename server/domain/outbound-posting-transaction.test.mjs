@@ -20,6 +20,22 @@ import {
 } from "./sales-order-workbench-service.mjs";
 import { createOutboundWorkbenchReadService } from "./outbound-workbench-read-service.mjs";
 import { createInventoryAuthoritativeReadService } from "./inventory-authoritative-read-service.mjs";
+import { handleSalesOrderWorkbenchRoute } from "../routes/sales-order-workbench.routes.mjs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { build } from "esbuild";
+
+// The order page's whole-order plans (src/modules/sales/outboundPlans.ts),
+// bundled so this suite sends what the page sends.
+async function loadOutboundPlans() {
+  const directory = await mkdtemp(join(tmpdir(), "flowchain-outbound-plans-"));
+  const result = await build({ entryPoints: [resolve(import.meta.dirname, "../../src/modules/sales/outboundPlans.ts")], bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
+  const file = join(directory, "plans.mjs");
+  await writeFile(file, result.outputFiles[0].text);
+  try { return await import(pathToFileURL(file).href); } finally { await rm(directory, { recursive: true, force: true }); }
+}
 
 const gate = realPostgresSuiteGate("npm run test:db:outbound");
 const realPostgres = gate.enabled;
@@ -610,6 +626,95 @@ if (!realPostgres) {
       }),
       1,
     );
+  });
+
+  // Design audit L4-08, L4-28: "Reserve all" and "Ship all" on the order
+  // page send every line in one request, so a two-line order makes one
+  // shipment, not two. The shipment list reads it in the reader's warehouses,
+  // and with the outbound write switch off the list and the shipment page
+  // still read.
+  test("reserve all and ship all make one multi-line shipment, which the list and the shipment page read with writes off", async () => {
+    const { reserveAllPlan, shipAllPlan } = await loadOutboundPlans();
+    const ids = await seed({ stock: "10.0000", ordered: "6.0000" });
+    const ctx = identity(ids.tenantId, ids.actorId);
+    const suffix = randomUUID(),
+      itemB = `item-b-${suffix}`,
+      skuB = `SKU-B-${suffix}`;
+    await prisma.item.create({ data: { id: itemB, tenantId: ids.tenantId, sku: skuB, name: "Second item", unit: "EA" } });
+    await prisma.inventoryBalance.create({
+      data: { id: `bal-b-${suffix}`, tenantId: ids.tenantId, itemId: itemB, sku: skuB, itemName: "Second item", warehouseId: ids.warehouseId, warehouseKey: ids.warehouseId, location: "B-01", locationKey: "b-01", onHandQuantity: "5", reservedQuantity: "0", availableQuantity: "5", unit: "EA", status: "available" },
+    });
+    await prisma.salesOrderLine.create({
+      data: { id: `sol-b-${suffix}`, salesOrderId: ids.salesOrderId, itemId: itemB, sku: skuB, itemName: "Second item", orderedQuantity: "3", unit: "EA" },
+    });
+    const read = createOutboundWorkbenchReadService({ prisma, capabilities: enabledWorkbenchCapabilities });
+
+    // Reserve all: one request covers both lines.
+    let work = await read.orderWorkbench(ids.salesOrderId, ctx);
+    const reservePlan = reserveAllPlan(work.lines, work.availability);
+    assert.deepEqual(reservePlan.short, []);
+    assert.deepEqual(reservePlan.allocations.map((row) => [row.salesOrderLineId === ids.salesOrderLineId ? "A" : "B", row.quantity]).sort(), [["A", "6"], ["B", "3"]]);
+    await command().reserveSalesOrderInventory({ salesOrderId: ids.salesOrderId, expectedOrderVersion: work.order.version, idempotencyKey: `reserve-all-${suffix}`, allocations: reservePlan.allocations }, ctx);
+
+    // Ship all: one shipment, one number, both lines.
+    work = await read.orderWorkbench(ids.salesOrderId, ctx);
+    assert.equal(work.order.reservationStatus, "fully_reserved");
+    const shipPlan = shipAllPlan(work.lines, work.reservations);
+    assert.equal(shipPlan.length, 2);
+    const drafted = await command().createShipmentDraft({ salesOrderId: ids.salesOrderId, expectedOrderVersion: work.order.version, idempotencyKey: `ship-all-${suffix}`, lines: shipPlan }, ctx);
+    const shipments = await prisma.shipmentDocument.findMany({ where: { tenantId: ids.tenantId, salesOrderId: ids.salesOrderId }, include: { lines: true } });
+    assert.equal(shipments.length, 1);
+    assert.equal(shipments[0].id, drafted.shipment.id);
+    assert.deepEqual(shipments[0].lines.map((line) => fixed(line.requestedQuantity)).sort(), ["3.0000", "6.0000"]);
+    // Nothing is left to ship on another draft.
+    assert.deepEqual(shipAllPlan((await read.orderWorkbench(ids.salesOrderId, ctx)).lines, (await read.orderWorkbench(ids.salesOrderId, ctx)).reservations), []);
+
+    // The list: the shipment with its two lines, the counts, the filters.
+    const listed = await read.listShipments({}, ctx);
+    assert.equal(listed.total, 1);
+    assert.deepEqual(
+      [listed.shipments[0].shipmentNumber, listed.shipments[0].lineCount, listed.shipments[0].quantity, listed.shipments[0].unit, listed.shipments[0].warehouseIds],
+      [drafted.shipment.shipmentNumber, 2, "9.0000", "EA", [ids.warehouseId]],
+    );
+    assert.deepEqual(listed.counts, { all: 1, to_post: 1, posted: 0, reversed: 0, cancelled: 0 });
+    assert.equal((await read.listShipments({ status: "posted" }, ctx)).total, 0);
+    assert.equal((await read.listShipments({ search: skuB.toLowerCase() }, ctx)).total, 1);
+    assert.equal((await read.listShipments({ search: "no-such-shipment" }, ctx)).total, 0);
+    await command().postShipment({ shipmentId: drafted.shipment.id, expectedShipmentVersion: drafted.shipment.version, idempotencyKey: `ship-all-post-${suffix}` }, ctx);
+    assert.deepEqual((await read.listShipments({ status: "posted" }, ctx)).shipments.map((row) => row.id), [drafted.shipment.id]);
+
+    // A reader limited to another warehouse sees none of it.
+    const otherWarehouse = `wh-other-${suffix}`,
+      otherUser = `reader-other-${suffix}`;
+    await prisma.warehouse.create({ data: { id: otherWarehouse, tenantId: ids.tenantId, code: `WH-O-${suffix}`, name: "Other Warehouse", status: "active" } });
+    await prisma.user.create({ data: { id: otherUser, tenantId: ids.tenantId, email: `${otherUser}@example.com`, name: "Other Reader", role: "manager" } });
+    await prisma.userWarehouseScope.create({ data: { id: `scope-other-${suffix}`, tenantId: ids.tenantId, userId: otherUser, warehouseId: otherWarehouse, accessLevel: "read" } });
+    const other = await read.listShipments({}, identity(ids.tenantId, otherUser));
+    assert.deepEqual([other.total, other.shipments.length, other.counts.all], [0, 0, 0]);
+
+    // With the outbound write switch off, the list and the shipment page read.
+    const get = async (path) => {
+      let sent = null;
+      const handled = await handleSalesOrderWorkbenchRoute({
+        url: new URL(`http://localhost${path}`),
+        req: { method: "GET" },
+        res: {},
+        identity: ctx.identity,
+        env: { ...env, FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: "false" },
+        outboundPrisma: prisma,
+        send: (_res, status, body) => { sent = { status, body }; },
+      });
+      assert.equal(handled, true, path);
+      return sent;
+    };
+    const list = await get("/api/sales/shipments");
+    assert.deepEqual([list.status, list.body.total], [200, 1]);
+    const page = await get(`/api/sales/shipments/${encodeURIComponent(drafted.shipment.id)}/workbench`);
+    assert.equal(page.status, 200);
+    assert.equal(page.body.shipment.postingStatus, "posted");
+    assert.equal(page.body.lines.length, 2);
+    // Read-only: nothing can be posted, reversed or cancelled.
+    assert.deepEqual([page.body.availableActions.canPost, page.body.availableActions.canReverse, page.body.availableActions.canCancel], [false, false, false]);
   });
 
   async function seed({

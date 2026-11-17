@@ -45,9 +45,10 @@ test('receiving workbench posts and reverses through real PostgreSQL APIs', asyn
   await expect(page.getByText('Posted', { exact: true }).first()).toBeVisible()
   await expect(page.getByText(/Movements · 1/)).toBeVisible()
   await expect(page.getByText(/Audit · 1/)).toBeVisible()
-  // Once posted the posting status is the receipt's one status.
+  // Once posted the posting status is the receipt's one status, beside its
+  // number (design audit U-17).
   await expect(page.getByText('Workflow', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('Status', { exact: true }).first()).toBeVisible()
+  await expect(page.getByTestId('receipt-status')).toHaveText('Posted')
 
   await page.getByTestId('receiving-primary-action').click()
   await expect(page.getByText('Review receipt reversal')).toBeVisible()
