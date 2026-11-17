@@ -121,7 +121,8 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
   const { t, language } = useI18n();
   // A server error in the interface language: its own sentence in English,
   // the shared wording in Chinese, never the server's English (design audit L16).
-  const failure = (cause: ApiError) => issueText?.(cause.code) || (language === "en-US" ? cause.message : apiErrorText(cause, language, ["Try again in a moment.", "请稍后重试。"]));
+  // A 409 after an allowed preview means someone else acted first.
+  const failure = (cause: ApiError) => issueText?.(cause.code) || (language === "en-US" ? cause.message : apiErrorText(cause, language, cause.status === 409 ? ["Someone else changed this first. Preview it again, then confirm.", "已有其他人先做了更改，请重新预览后再确认。"] : ["Try again in a moment.", "请稍后重试。"]));
   const reasonId = useId();
   const reasonRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);

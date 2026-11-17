@@ -68,7 +68,7 @@ test('a server error reads in the interface language, never as the server\'s raw
   assert.doesNotMatch(decisions, /t\("failed", \{ message: error instanceof Error \? error\.message/)
   assert.match(decisions, /t\("failed", \{ message: apiErrorText\(error, t\.language, RETRY_LATER\) \}\)/)
   const finance = read('src/modules/finance/FinanceControls.tsx')
-  assert.match(finance, /const failure = \(cause: ApiError\) => issueText\?\.\(cause\.code\) \|\| \(language === "en-US" \? cause\.message : apiErrorText\(cause, language,/)
+  assert.match(finance, /const failure = \(cause: ApiError\) => issueText\?\.\(cause\.code\) \|\| \(language === "en-US" \? cause\.message : apiErrorText\(cause, language, cause\.status === 409 \? \["Someone else changed this first/)
 })
 
 test('purchase request checks speak English on the server, and the page names an item with no approved supplier (L1-31)', () => {
