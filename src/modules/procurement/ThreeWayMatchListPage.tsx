@@ -1,16 +1,20 @@
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { AlertCircle, CheckCircle2, Clock3, Scale } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
+import { ListPager, usePagedRows } from "./listPaging";
 import type { ProcurementDocument } from "./procurementTypes";
 import { useI18n } from "../../i18n/I18n";
 import { formatLocaleAmount } from "../../lib/format";
+
+// Rows to a page, as on the purchase order list (design audit U-14).
+const PAGE_SIZE = 50;
 
 function money(value: number | undefined, currency: string | undefined, locale: string) {
   if (!Number.isFinite(value)) return "—";
@@ -48,6 +52,8 @@ const COPY = {
   empty: ["No matching records in this workspace", "当前工作区暂无可匹配记录"],
   emptyDetail: ["A match needs a real purchase order, receipt and supplier invoice.", "需要真实采购订单、收货单和采购发票后才能形成匹配。"],
   noMatch: ["No matches fit these filters", "没有符合筛选条件的匹配记录"],
+  actions: ["Actions", "操作"],
+  view: ["View", "查看"],
 } as const;
 
 // A match as the list reads it: the read model adds the supplier's invoice
@@ -75,9 +81,10 @@ export function ThreeWayMatchListPage() {
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
   const [rows, setRows] = useState<MatchRow[]>([]);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
-  const [query, setQuery] = useState("");
-  const [supplier, setSupplier] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
+  // A PO's "View three-way match" opens its matches: ?q=<PO number> (design audit U-20).
+  const [query, setQuery] = useState(() => searchParams.get("q") || "");
+  const [supplier, setSupplier] = useState("");
   const result = searchParams.get("result") || "";
   const setResult = (next: string) => {
     const params = new URLSearchParams(searchParams);
@@ -110,6 +117,7 @@ export function ThreeWayMatchListPage() {
     && (!supplier || row.supplierName === supplier)
     && (!needle || [row.invoiceNumber, row.poNumber, row.grnNumber, row.id, poOf(row), row.grnId, row.invoiceId].some((value) => String(value || "").toLowerCase().includes(needle))),
   );
+  const paged = usePagedRows(shown, PAGE_SIZE, [result, supplier, needle].join("|"));
   const suppliers = [...new Set(rows.map((row) => String(row.supplierName || "")).filter(Boolean))].sort();
   const count = (name: Result) => rows.filter((row) => resultOf(row) === name).length;
   const value = (count: number) => state === "loaded" ? String(count) : "—";
@@ -155,7 +163,7 @@ export function ThreeWayMatchListPage() {
         </Field>
       </ListSearchCard>
 
-      <ListCard title={tr("listTitle")} total={state === "loaded" ? rows.length : undefined} shown={shown.length} testId="three-way-match-record-list">
+      <ListCard title={tr("listTitle")} total={state === "loaded" ? shown.length : undefined} all={state === "loaded" ? rows.length : undefined} shown={paged.pageRows.length} testId="three-way-match-record-list">
         {/* Six columns that fit a 1440 px window: the match by its invoice
             number, the PO and receipt by theirs, the invoice amount, the
             variance and the status. The whole PO amount is not a column: an
@@ -171,21 +179,22 @@ export function ThreeWayMatchListPage() {
                 <th className={thRightClass} style={{ color: A.gray1 }}>{tr("invoiceAmount")}</th>
                 <th className={thRightClass} style={{ color: A.gray1 }}>{tr("varianceAmount")}</th>
                 <th className={thClass} style={{ color: A.gray1 }} data-card-status="">{tr("status")}</th>
+                <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{tr("actions")}</th>
               </tr>
             </thead>
             <tbody>
-              {state === "loading" && <tr><td colSpan={6} className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>{tr("loading")}</td></tr>}
-              {state === "error" && <ListStateRow colSpan={6} state="error" title={tr("loadFailed")} onRetry={() => void load()} />}
+              {state === "loading" && <ListStateRow colSpan={7} state="loading" />}
+              {state === "error" && <ListStateRow colSpan={7} state="error" title={tr("loadFailed")} onRetry={() => void load()} />}
               {state === "loaded" && shown.length === 0 && (
                 rows.length === 0
-                  ? <ListStateRow colSpan={6} state="empty" title={tr("empty")} detail={tr("emptyDetail")} />
-                  : <ListStateRow colSpan={6} state="empty" title={tr("noMatch")} />
+                  ? <ListStateRow colSpan={7} state="empty" title={tr("empty")} detail={tr("emptyDetail")} />
+                  : <ListStateRow colSpan={7} state="empty" title={tr("noMatch")} />
               )}
-              {state === "loaded" && shown.map((row, index) => {
+              {state === "loaded" && paged.pageRows.map((row, index) => {
                 const reason = row.blockingReason || row.exceptionReason;
                 const variance = Number(row.varianceAmount || 0);
                 return (
-                  <tr key={row.id} className={`${listRowClass} align-top`} style={listRowStyle(index, shown.length)} data-testid="three-way-match-row">
+                  <tr key={row.id} className={`${listRowClass} align-top`} style={listRowStyle(index, paged.pageRows.length)} data-testid="three-way-match-row">
                     <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                       <BusinessEntityLink entityType="three_way_match" entityId={row.id} className={tableLinkClass}>{invoiceOf(row)}</BusinessEntityLink>
                     </td>
@@ -203,12 +212,18 @@ export function ThreeWayMatchListPage() {
                       <StatusChip label={copy(row.matchStatus || row.status || "—")} tone={RESULT_TONE[resultOf(row)]} />
                       {reason && <div className="mt-1 max-w-[260px] whitespace-normal text-[11px] leading-4 text-amber-800">{copy(reason)}</div>}
                     </td>
+                    {/* A blue View, as on every other list (design audit U-20). */}
+                    <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
+                      {/* Named "View", not by the match: the number's link carries that name. */}
+                      <Link to={`/app/procurement/three-way-match/${encodeURIComponent(row.id || "")}`} className={rowActionClass.primary} data-testid="three-way-match-view">{tr("view")}</Link>
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
+        {state === "loaded" && <ListPager page={paged.page} pageSize={PAGE_SIZE} total={shown.length} onPage={paged.setPage} testId="three-way-match-pager" />}
       </ListCard>
     </div>
   );

@@ -62,7 +62,7 @@ const operationalEnglish: Record<string, string> = {
   '采购订单证据': 'Purchase order evidence', '采购订单历史': 'Purchase order history', '采购订单查询': 'Purchase order search',
   '采购订单列表': 'Purchase order list', 'PO 编号': 'PO number', '采购订单行号': 'PO line number', 'PO 明细行': 'PO line items', 'PO 金额': 'PO amount', 'PO 总额': 'PO total', 'PO 数量': 'Ordered quantity', 'PO 单价': 'PO unit price',
   '来源 PR': 'Source PR', '来源询价单': 'Source RFQ', '来源采购申请行': 'Source PR line', '来源询价单行': 'Source RFQ line',
-  '供应商名称': 'Supplier name', '采购负责人': 'Buyer', '创建日期': 'Created date', '需求日期': 'Required date', '预计到货': 'Expected arrival', '目标仓库': 'Destination warehouse',
+  '供应商名称': 'Supplier name', '采购负责人': 'Buyer', '创建日期': 'Created date', '需求日期': 'Need by', '预计到货': 'Expected arrival', '目标仓库': 'Destination warehouse',
   '订购': 'Ordered', '订购数量': 'Ordered quantity', '履约': 'Fulfillment', '交付': 'Delivery', '已收 / 未收': 'Received / outstanding', '已开票 / 未开票': 'Invoiced / uninvoiced',
   '收货状态': 'Receiving status', '发票状态': 'Invoice status', '三单匹配状态': 'Three-way match status', '当前下一步': 'Next action', '下一步': 'Next action',
   '物料 / SKU': 'Item / SKU', '物料名称待补齐': 'Item name missing', 'SKU 或品名': 'SKU or item name', '负责人': 'Owner',

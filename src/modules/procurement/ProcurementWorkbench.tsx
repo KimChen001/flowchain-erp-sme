@@ -11,10 +11,14 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { ListCard, ListSearchCard, ListStateRow, PrimaryButton, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass, tableBodyTextClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
+import { ListPager, usePagedRows } from "./listPaging";
 import type { ProcurementNavigate, ProcurementWorkItem } from "./procurementTypes";
 import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { formatCalendarDay, formatLocaleAmount, todayInTimeZone } from "../../lib/format";
+
+// Rows to a page, as on the purchase order list (design audit U-14).
+const PAGE_SIZE = 50;
 
 const FINISHED_PURCHASE_ORDER_STATUSES = ["fully_received", "completed", "closed", "cancelled", "已完成", "已关闭", "已取消"];
 
@@ -182,6 +186,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
     .filter(row => !status || row.status === status)
     .filter(row => !needle || [row.number, row.id, row.item, row.supplier].some(value => String(value || "").toLowerCase().includes(needle)))
     .sort((left, right) => Number(right.bucket === "approval") - Number(left.bucket === "approval") || Number(Boolean(right.signals?.length)) - Number(Boolean(left.signals?.length)) || byDate(left, right));
+  const paged = usePagedRows(shown, PAGE_SIZE, [queue, type, status, needle].join("|"));
   const count = (name: Queue) => rows.filter(row => inQueue(row, name)).length;
   const reset = () => { setQuery(""); setType(""); setStatus(""); setQueue("all"); };
   const money = (row: ProcurementWorkItem) => row.amount === null || !Number.isFinite(Number(row.amount)) ? "—" : formatLocaleAmount(Number(row.amount), row.currency, locale, { maximumFractionDigits: 2 });
@@ -235,7 +240,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
         </Field>
       </ListSearchCard>
 
-      <ListCard title={tr("listTitle")} total={state === "loaded" ? rows.length : undefined} shown={shown.length} testId="procurement-work-queue">
+      <ListCard title={tr("listTitle")} total={state === "loaded" ? shown.length : undefined} all={state === "loaded" ? rows.length : undefined} shown={paged.pageRows.length} testId="procurement-work-queue">
         <div className={tableScrollClass}>
           <table className={`w-full min-w-[1100px] text-left ${tableBodyTextClass}`}>
             <thead>
@@ -258,8 +263,8 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
                   ? <ListStateRow colSpan={8} state="empty" title={tr("empty")} detail={tr("emptyDetail")} />
                   : <ListStateRow colSpan={8} state="empty" title={tr("noMatch")} />
               )}
-              {state === "loaded" && shown.map((row, index) => (
-                <tr key={`${row.kind}:${row.id}`} className={listRowClass} style={listRowStyle(index, shown.length)}>
+              {state === "loaded" && paged.pageRows.map((row, index) => (
+                <tr key={`${row.kind}:${row.id}`} className={listRowClass} style={listRowStyle(index, paged.pageRows.length)}>
                   <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                     <EntityLink kind={row.kind} id={row.id} number={row.number} className={tableLinkClass} />
                     <div className="text-[11px] font-normal" style={{ color: A.sub }}>{tr(row.kind === "purchase_request" ? "request" : "order")}</div>
@@ -291,6 +296,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
             </tbody>
           </table>
         </div>
+        {state === "loaded" && <ListPager page={paged.page} pageSize={PAGE_SIZE} total={shown.length} onPage={paged.setPage} testId="procurement-work-pager" />}
       </ListCard>
     </div>
   );

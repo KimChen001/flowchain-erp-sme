@@ -19,10 +19,11 @@ test("the three-way match list names each match by its invoice number and search
   assert.doesNotMatch(source, /entityType="supplier_invoice"/);
   // Search covers the invoice, PO and GRN numbers as well as the ids.
   assert.match(source, /\[row\.invoiceNumber, row\.poNumber, row\.grnNumber, row\.id, poOf\(row\), row\.grnId, row\.invoiceId\]/);
-  // Six columns that fit 1440 px: no whole-PO amount column, a narrower table.
+  // Six data columns and View (design audit U-20) that fit 1440 px: no
+  // whole-PO amount column, a narrower table.
   assert.doesNotMatch(source, /poAmount/);
   assert.match(source, /min-w-\[900px\]/);
-  assert.doesNotMatch(source, /colSpan=\{7\}/);
+  assert.doesNotMatch(source, /colSpan=\{8\}/);
 });
 
 test("the three-way match page is titled by the invoice number and never shows a stored id", () => {

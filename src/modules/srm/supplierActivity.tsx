@@ -5,6 +5,7 @@ import { apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
+import { financeStatusTone, shownBillStatus, useFinanceStatusLabel } from "../finance/FinanceControls";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 
 // A supplier's purchase records and open risks on its detail page
@@ -16,7 +17,7 @@ import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNowr
 
 export type When = { kind: "overdue" | "due" | "open" | "undated"; days: number | null; date: string | null };
 type PurchaseRecord = { id: string; orderNumber: string; date: string | null; status: string; promisedDate: string | null; overdueDays: number; amount: number | null; currency: string | null };
-type InvoiceRecord = { id: string; invoiceNumber: string; invoiceDate: string | null; dueDate: string | null; status: string; matchStatus: string | null; amount: number | null; currency: string | null };
+type InvoiceRecord = { id: string; invoiceNumber: string; invoiceDate: string | null; dueDate: string | null; status: string; matchStatus: string | null; paymentStatus?: string | null; amount: number | null; currency: string | null };
 export type SupplierIssueType = "po_overdue" | "grn_rejected_qty" | "grn_received_unposted" | "invoice_variance";
 export type SupplierIssue = { id: string; type: SupplierIssueType; entityType: "purchase_order" | "receiving_doc" | "supplier_invoice"; entityId: string; label: string; when: When; data: { days?: number; rejected?: number; unit?: string; variance?: number | null; currency?: string } };
 type Issue = SupplierIssue;
@@ -128,6 +129,7 @@ const Note = ({ children, testId }: { children: React.ReactNode; testId?: string
 export function SupplierActivityCards({ supplierId, titles, empty }: { supplierId: string; titles: { orders: string; risks: string }; empty: { orders: string; risks: string } }) {
   const t = useCopy();
   const f = useSupplierActivityFormat();
+  const billStatusLabel = useFinanceStatusLabel();
   const { issueText } = useSupplierIssueText();
   const { data, error, loading, reload } = useSupplierActivity(supplierId);
   const status = (testId: string) => (loading && !data
@@ -184,7 +186,8 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
                       <tr key={row.id} className={listRowClass} style={listRowStyle(index, invoices.rows.length)} data-testid="supplier-invoice-record">
                         <td className={tdIdClass}><EntityLink kind="supplier_invoice" id={row.id} className={tableLinkClass}>{row.invoiceNumber}</EntityLink></td>
                         <td className={tdNowrapClass}>{f.day(row.invoiceDate)}</td>
-                        <td className={tdNowrapClass}><Status code={row.status} label={f.status(row.status)} /></td>
+                        {/* The status the invoice list shows: To pay, Partly paid or Paid once approved (design audit U-22). */}
+                        <td className={tdNowrapClass} data-testid="supplier-invoice-record-status">{(() => { const shown = shownBillStatus(row); return <StatusChip label={billStatusLabel(shown)} tone={financeStatusTone(shown)} />; })()}</td>
                         <td className={tdNowrapClass}><Status code={row.matchStatus} label={f.status(row.matchStatus)} /></td>
                         {data.visibility.invoiceAmounts ? <td className={tdNumericRightClass}>{f.money(row.amount, row.currency)}</td> : null}
                       </tr>

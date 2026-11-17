@@ -68,7 +68,7 @@ const REVISION_SOURCE_LABELS: Labels = {
 
 const RELATION_LABELS: Labels = {
   canonical_record: ["本询价单", "This RFQ"],
-  source_request: ["来源采购申请", "Source purchase request"],
+  source_request: ["来源采购申请", "Source PR"],
   linked_po: ["关联采购订单", "Linked purchase order"],
   quotation: ["供应商报价", "Supplier quotation"],
 };
@@ -287,7 +287,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
             [tr("截止日期", "Due date"), day(record.dueDate)],
             [tr("币种", "Currency"), record.currency || "—"],
             // The request and order open from here (design audit U-18).
-            [tr("来源 PR", "Source purchase request"), record.linkedPr ? <BusinessEntityLink entityType="purchase_request" entityId={record.linkedPr} number={requestNumber || undefined} /> : "—"],
+            [tr("来源采购申请", "Source PR"), record.linkedPr ? <BusinessEntityLink entityType="purchase_request" entityId={record.linkedPr} number={requestNumber || undefined} /> : "—"],
             [tr("创建时间", "Created at"), when(record.createdAt)],
             [tr("更新时间", "Updated at"), when(record.updatedAt)],
             [tr("已记录响应", "Responses recorded"), `${record.suppliers.responseRecordedCount} / ${record.suppliers.participantCount}`],
@@ -305,7 +305,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
         <div className="border-b p-4"><h2 className="text-sm font-semibold">{tr("询价单行项目", "RFQ line items")}</h2></div>
         {record.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单没有行项目。", "This RFQ has no line items.")}</div> : (
           <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs">
-            <thead><tr style={listHeadRowStyle}>{([[tr("行", "Line")], [tr("物料 / SKU", "Item / SKU")], [tr("数量", "Quantity"), "right"], [tr("单位", "Unit")], [tr("目标 / 参考单价", "Target / reference unit price"), "right"], [tr("要求日期", "Required date")], [tr("交付地点", "Delivery location")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
+            <thead><tr style={listHeadRowStyle}>{([[tr("行", "Line")], [tr("物料 / SKU", "Item / SKU")], [tr("数量", "Quantity"), "right"], [tr("单位", "Unit")], [tr("目标 / 参考单价", "Target / reference unit price"), "right"], [tr("需求日期", "Need by")], [tr("交付地点", "Delivery location")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
             <tbody>{record.lines.map((line, index) => <tr key={line.id} className="border-t align-top" data-testid={`rfq-line-${line.id}`}>
               <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums" title={line.id}>{tr(`第 ${index + 1} 行`, `Line ${index + 1}`)}</td>
               <td className="px-4 py-3"><div>{line.itemName || "—"}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || line.itemId || "—"}</div></td>

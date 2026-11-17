@@ -15,6 +15,13 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   const api = async (path: string) => (await request.get(path, { headers: { Authorization: `Bearer ${session.token}` } })).json()
 
   await page.goto('/app/procurement/requests')
+  // The new request's form has an address: Back returns to the list (design audit U-13).
+  await page.getByRole('button', { name: 'New purchase request' }).click()
+  await expect(page).toHaveURL(/\/app\/procurement\/requests\?mode=create$/)
+  await expect(page.getByTestId('purchase-request-form')).toBeVisible()
+  await page.goBack()
+  await expect(page.getByTestId('purchase-request-list-page')).toBeVisible()
+  await expect(page.getByTestId('purchase-request-form')).toHaveCount(0)
   await page.getByRole('button', { name: 'New purchase request' }).click()
   await page.getByLabel('SKU 1').selectOption('browser-pr-item')
   const supplier = page.getByLabel('Supplier 1')
@@ -48,9 +55,14 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   expect(submitted.totalAmount).toBe(49.2)
   // Pages show the document number (PR-YYYYMM-NNNN); the id stays in links and calls.
   const row = page.locator('tr', { hasText: submitted.number || submitted.id })
+  // A row has one View, and a More menu holding the request's steps by the
+  // detail page's names (design audit U-10).
+  await expect(row.getByRole('link', { name: 'View', exact: true })).toBeVisible()
+  await row.locator('summary', { hasText: 'More' }).click()
   await row.getByRole('button', { name: 'Approve' }).click()
   // The list row says what happened, by number (UI review 7).
   await expect(page.getByText(`Approved ${submitted.number || submitted.id}`)).toBeVisible()
+  await row.locator('summary', { hasText: 'More' }).click()
   await expect(row.getByRole('button', { name: 'Create purchase order' })).toBeVisible()
   await row.getByRole('button', { name: 'Create purchase order' }).click()
 
@@ -122,9 +134,9 @@ test('a purchase request opened from the assistant arrives prefilled, labels eac
   await expect(page.getByTestId('prefill-source-targetWarehouseId')).toHaveText('Item default warehouse')
   await expect(page.getByTestId('prefill-source-internalLineComment')).toHaveText('Reason from the assistant')
   // The header's default date is the line's date, not today (2026-11-04).
-  const lineDay = await field(page, 'Required date').locator('input').first().inputValue()
+  const lineDay = await field(page, 'Need by').locator('input').first().inputValue()
   expect(lineDay).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-  await expect(page.getByLabel('Default required date')).toHaveValue(lineDay)
+  await expect(page.getByLabel('Default need by')).toHaveValue(lineDay)
   // Opening the form saves nothing.
   expect((await api('/api/procurement/requests')).filter((pr: { id: string }) => !before.has(pr.id))).toHaveLength(0)
 
@@ -147,8 +159,8 @@ test('a purchase request opened from the assistant arrives prefilled, labels eac
   // 11-21).
   const due = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
   await page.goto(`/app/procurement/requests?mode=create&itemId=browser-pr-item&sku=browser-pr-item&quantity=17&due=${due}&origin=ai_assistant`)
-  await expect(field(page, 'Required date').locator('input').first()).toHaveValue(due)
-  await expect(page.getByLabel('Default required date')).toHaveValue(due)
+  await expect(field(page, 'Need by').locator('input').first()).toHaveValue(due)
+  await expect(page.getByLabel('Default need by')).toHaveValue(due)
 
   // A reorder list row whose shortfall (19) was raised to the supplier's
   // minimum (20) labels the quantity as that minimum, not as the shortfall
@@ -250,9 +262,9 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   await expect(page.getByTestId('supplier-override-reason-1')).toHaveCount(0)
   // The preferred supplier's 5-day lead time sets the need-by date, so the
   // order is not due the day it is placed (walkthrough 2026-10-07).
-  const defaultDay = await page.getByLabel('Default required date').inputValue()
+  const defaultDay = await page.getByLabel('Default need by').inputValue()
   const inFiveDays = new Date(Date.parse(`${defaultDay}T12:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10)
-  await expect(field(page, 'Required date').locator('input').first()).toHaveValue(inFiveDays)
+  await expect(field(page, 'Need by').locator('input').first()).toHaveValue(inFiveDays)
   await page.getByLabel('Supplier 1').selectOption(ids.bolt)
   const picker = page.getByTestId('supplier-override-reason-1')
   await expect(picker).toContainText(`Why not the preferred supplier (Acme ${ids.stamp})?`)
@@ -294,7 +306,18 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   const number = submitted.number || submitted.id
   await expect(page.getByTestId('pr-detail-meta')).toHaveText(/^Requester: .+ · Created: [A-Z][a-z]{2} \d{1,2}, \d{4}$/)
   await expect(page.getByTestId('pr-detail-line-quantity')).toHaveText('6 ea × $3.20')
-  await expect(page.getByTestId('pr-detail-actions').getByRole('button')).toHaveText(['Reject', 'Withdraw', 'Approve'])
+  // The PO's header: "Purchase request" under the number, the main step first.
+  await expect(page.getByTestId('document-header')).toContainText(`Purchase request · Requester: `)
+  await expect(page.getByTestId('pr-detail-actions').getByRole('button')).toHaveText(['Approve', 'Reject', 'Withdraw'])
+  await expect(page.getByTestId('pr-overview')).toContainText('Default need by')
+  // The request opens by its number as well as by its id (design audit U-08).
+  if (submitted.number) {
+    await page.goto(`/app/procurement/requests/${encodeURIComponent(submitted.number)}`)
+    await expect(page.getByTestId('document-header')).toContainText(submitted.number)
+  }
+  await page.goto('/app/procurement/requests/PR-NOT-THERE')
+  await expect(page.getByTestId('pr-not-found')).toHaveText('Purchase request not found.')
+  await page.goto(`/app/procurement/requests/${encodeURIComponent(submitted.id)}`)
   // Withdraw asks first here too; going back changes nothing.
   await page.getByTestId('pr-detail-withdraw').click()
   await expect(page.getByTestId('withdraw-request-dialog')).toContainText(`Withdraw ${number}?`)
@@ -330,7 +353,7 @@ test.describe('a browser on UTC just after midnight UTC', () => {
     await page.goto('/app/procurement/requests?mode=create')
     await page.getByLabel('SKU 1').selectOption(ids.withPreferred)
     await expect(page.getByLabel('Supplier 1')).toHaveValue(ids.acme)
-    await expect(page.getByLabel('Default required date')).toHaveValue(workspaceDay)
-    await expect(field(page, 'Required date').locator('input').first()).toHaveValue(inFiveDays)
+    await expect(page.getByLabel('Default need by')).toHaveValue(workspaceDay)
+    await expect(field(page, 'Need by').locator('input').first()).toHaveValue(inFiveDays)
   })
 })
