@@ -364,7 +364,8 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
   const created = await request.post("/api/sales/orders", {
     headers,
     data: {
-      customerName: "US Customer",
+      // Confirming needs a customer from Customers (design audit L4-26).
+      customerId: "CUST-US-ID",
       currency: "USD",
       idempotencyKey: "pw-english-order",
       lines: [{ itemId: "outbound-browser-item", quantity: "2", unitPrice: "5" }],
