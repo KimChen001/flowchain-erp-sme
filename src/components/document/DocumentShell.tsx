@@ -2,6 +2,8 @@ import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import React from "react";
 import { X } from "lucide-react";
 import { A, Card, Chip } from "../ui";
+import { StatusChip } from "../ui/listLayout";
+import { statusToneOf } from "../ui/statusTones";
 import { RelatedRecordsPanel } from "../navigation/RelatedRecordsPanel";
 import { resolveBusinessLinkedRecord, type BusinessLinkedRecord, type BusinessLinkedRecordInput } from "../../lib/businessLinks";
 import type { WorkflowContext } from "../../lib/workflowContext";
@@ -56,14 +58,6 @@ export function documentToneStyle(tone: DocumentTone = "neutral") {
   return { color: A.gray1, bg: A.gray6 };
 }
 
-export function statusTone(status?: string): DocumentTone {
-  if (!status) return "neutral";
-  if (["已付款", "已过账应付", "已审批", "已批准", "已完成", "已入库", "自动匹配", "已解决", "approved", "fully_received", "completed"].includes(status)) return "success";
-  if (["待审批", "待匹配", "人工复核", "质检中", "已发出", "部分到货", "pending_approval", "issued", "partially_received"].includes(status)) return "warning";
-  if (["存在差异", "已驳回", "已取消", "异常处理", "差异待处理", "重复发票", "rejected", "cancelled"].includes(status)) return "danger";
-  if (["已匹配", "已接收", "已签收", "matched", "received"].includes(status)) return "info";
-  return "neutral";
-}
 
 export function DocumentShell({
   title,
@@ -90,7 +84,9 @@ export function DocumentShell({
   onClose?: () => void;
 }) {
   const copy = useWorkspaceCopy();
-  const style = documentToneStyle(tone || statusTone(status));
+  // The status chip of every list, in the status's one tone (design audit
+  // U-06): this header had its own table, where cancelled read red and issued orange.
+  const chipTone = tone === "purple" ? "info" : tone || statusToneOf(status);
   // The header card every detail page uses (UI review 11): the title (H1) with
   // its status beside it, then what the record is and with whom, actions on
   // the right, and the rest of the header in the same card.
@@ -101,7 +97,7 @@ export function DocumentShell({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="fc-page-title" style={{ color: A.label }}>{copy(title)}</h1>
-              {status && <Chip label={copy(status)} color={style.color} bg={style.bg} />}
+              {status && <StatusChip label={copy(status)} tone={chipTone} testId="document-status" />}
             </div>
             <div className="text-xs mt-1" style={{ color: A.sub }}>
               {moduleLabel ? <span>{moduleLabel}</span> : null}

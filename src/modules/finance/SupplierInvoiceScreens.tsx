@@ -3,10 +3,10 @@ import type { MouseEvent } from "react";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
-import { A, Card, Field, inputStyle } from "../../components/ui";
+import { A, Card, Field, inputStyle, useConfirm } from "../../components/ui";
 import { FieldError, FormActionBar, FormHeader, FormSection, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
-import { StatusChip as ToneChip, type StatusTone } from "../../components/ui/listLayout";
+import { StatusChip as ToneChip, listButtonClass, type StatusTone } from "../../components/ui/listLayout";
 import { listTableCardsRef } from "../../components/ui/workbenchTable";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { useI18n } from "../../i18n/I18n";
@@ -1007,6 +1007,53 @@ function billReadFailure(reason: unknown): BillReadFailure {
   return "error";
 }
 
+// Cancelling a supplier invoice asks why in a dialog, as cancelling a
+// customer invoice, a receipt or a PO does (design audit U-17; it was an
+// in-page panel): the server's preview first, then the cancel.
+function CancelSupplierInvoice({ base, version, number, onDone }: { base: string; version: Record<string, unknown>; number: string; onDone: () => void }) {
+  const { t, language } = useI18n();
+  const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
+  const dialog = useConfirm();
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const cancel = async () => {
+    setError("");
+    const reason = await dialog.prompt({
+      title: say(`Cancel ${number}?`, `取消 ${number}？`),
+      description: say("It will not be approved or paid. Its purchase order and receipt stay as they are.", "该发票将不会被批准或付款，其采购订单和收货单保持不变。"),
+      tone: "danger",
+      confirmLabel: t("finance.action.cancel"),
+      cancelLabel: say("Keep invoice", "保留发票"),
+      testId: "invoice-cancel-dialog",
+      field: { label: t("finance.cancelReason"), maxLength: 500 },
+    });
+    if (reason === null) return;
+    const body = { ...version, reason, resolution: reason };
+    setBusy(true);
+    try {
+      const plan = await apiJson<{ allowed: boolean; blockingIssues?: Array<{ code?: string; message?: string }> }>(`${base}/cancel-preview`, { method: "POST", body: JSON.stringify(body) });
+      if (!plan.allowed) {
+        setError(plan.blockingIssues?.[0]?.message || t("finance.loadFailed"));
+        return;
+      }
+      await apiJson(`${base}/cancel`, { method: "POST", body: JSON.stringify({ ...body, idempotencyKey: createSecureClientMutationId("p2p") }) });
+      toast.success(say(`Cancelled ${number}`, `已取消 ${number}`));
+      onDone();
+    } catch (cause) {
+      setError(procurementErrorText(cause, language, ["The supplier invoice could not be cancelled. Try again.", "采购发票取消失败，请重试。"]));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button type="button" data-testid="invoice-cancel" disabled={busy} onClick={() => void cancel()} className={listButtonClass.danger}>{t("finance.action.cancel")}</button>
+      {error && <div className="w-full"><Notice>{error}</Notice></div>}
+      {dialog.element}
+    </>
+  );
+}
+
 export function SupplierInvoiceDetail() {
   const { t, locale, language, formatNumber } = useI18n();
   const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
@@ -1116,7 +1163,15 @@ export function SupplierInvoiceDetail() {
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="fc-page-title" style={{ color: A.label }}>{data.invoiceNumber}</h1>
+            {/* The status beside the number, as on every detail page (design audit U-17). */}
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="fc-page-title" style={{ color: A.label }}>{data.invoiceNumber}</h1>
+              <span data-testid="supplier-invoice-status">
+                {readyToApprove
+                  ? <ToneChip label={say("Variance approved, ready to approve", "差异已批准，待批准")} tone="warning" testId="supplier-invoice-ready-to-approve" />
+                  : <StatusChip status={shownStatus} />}
+              </span>
+            </div>
             <p className="mt-1 text-sm text-slate-500" data-testid="supplier-invoice-sources">
               {data.supplierName || "—"}
               {" · "}{t("finance.purchaseOrder")} {data.relatedPoId ? <BusinessEntityLink entityType="purchase_order" entityId={data.relatedPoId} number={data.relatedPoNumber || data.poNumber} /> : "—"}
@@ -1131,11 +1186,6 @@ export function SupplierInvoiceDetail() {
           </div>
           <div className="text-right">
             <strong>{money(data.totalAmount, data.currency, locale)}</strong>
-            <div className="mt-1" data-testid="supplier-invoice-status">
-              {readyToApprove
-                ? <ToneChip label={say("Variance approved, ready to approve", "差异已批准，待批准")} tone="warning" testId="supplier-invoice-ready-to-approve" />
-                : <StatusChip status={shownStatus} />}
-            </div>
           </div>
         </div>
         {inException && <VarianceReason invoice={data} />}
@@ -1149,7 +1199,7 @@ export function SupplierInvoiceDetail() {
           {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="invoice-submit" oneStep previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={() => version} onDone={load} />}
           {actions.includes("match") && <TwoStepAction label={t("finance.action.match")} testId="invoice-match" oneStep previewUrl={`${base}/match-preview`} runUrl={`${base}/match`} payload={() => version} onDone={load} />}
           {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="invoice-approve" tone={inException ? "secondary" : "primary"} oneStep previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={() => version} issueText={duplicateIssueText(t)} issueDetail={(issue) => <DuplicateApprovalDetail issue={issue} />} onDone={() => { toast.success(say(`Approved ${data.invoiceNumber}`, `已批准 ${data.invoiceNumber}`)); load(); }} />}
-          {actions.includes("cancel") && <TwoStepAction label={t("finance.action.cancel")} testId="invoice-cancel" tone="secondary" previewUrl={`${base}/cancel-preview`} runUrl={`${base}/cancel`} payload={() => version} reasonLabel={t("finance.cancelReason")} onDone={load} />}
+          {actions.includes("cancel") && <CancelSupplierInvoice base={base} version={version} number={data.invoiceNumber} onDone={load} />}
           {!invoiceSteps && (nextOnPayable
             ? <a href="#supplier-invoice-payable" onClick={scrollToCard("supplier-invoice-payable")} className={`text-sm font-semibold text-blue-600 hover:underline ${phoneTapClass}`} data-testid="supplier-invoice-next">{nextOnPayable}</a>
             : <span className="text-xs text-slate-500" data-testid="supplier-invoice-no-actions">{payable?.status === "settled" ? say("Paid in full. Nothing else to do.", "已全额付款，无需其他操作。") : t("finance.noActions")}</span>)}

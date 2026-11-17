@@ -1,5 +1,6 @@
 import type { EChartsCoreOption } from "echarts/core";
 import type { ReportChart, ReportMeasure } from "../governedReports";
+import { STATUS_CHART_COLORS } from "../../../components/ui/statusTones.ts";
 
 // ECharts options for each report visual type. Business names (suppliers,
 // customers, SKUs, months) are shown as recorded; status codes, stage names
@@ -39,15 +40,13 @@ const AXIS_LINE = "#e2e8f0";
 const DONE = "#0d9488";
 const WAITING = "#f59e0b";
 const PROBLEM = "#dc2626";
+// A status's colour is its tone's (statusTones.ts), the tone the status
+// chips use, so a chart and the table under it agree (design audit L6-08).
 const SEMANTIC: Record<string, string> = {
-  draft: "#94a3b8", pending_approval: WAITING, approved: "#0ea5e9", issued: "#2563eb", partially_received: "#8b5cf6",
-  fully_received: DONE, received: DONE, closed: "#64748b", cancelled: "#94a3b8", canceled: "#94a3b8", rejected: PROBLEM,
-  submitted: "#0ea5e9", matching: "#6366f1", exception: PROBLEM, matched: DONE, held: WAITING,
-  confirmed: "#2563eb", shortage_risk: PROBLEM, fulfilled: DONE, partially_fulfilled: "#8b5cf6", ready_to_ship: "#0ea5e9",
-  out_of_stock: PROBLEM, below_safety_stock: "#ea580c", below_reorder_point: WAITING, ok: DONE, unknown: "#94a3b8",
-  high: PROBLEM, medium: WAITING, low: DONE,
-  Matched: DONE, "Match exception": PROBLEM, "Awaiting match": WAITING,
+  ...STATUS_CHART_COLORS,
+  Matched: STATUS_CHART_COLORS.matched, "Match exception": STATUS_CHART_COLORS.exception, "Awaiting match": STATUS_CHART_COLORS.pending,
 };
+export const chartStatusColor = (code: string) => SEMANTIC[code];
 // Stages run from indigo through blue and sky to teal and green as work moves
 // toward done: bright, never the near-black navy of the 11/08 theme.
 const STAGES = ["#4f46e5", "#2563eb", "#0ea5e9", "#14b8a6", "#16a34a"];

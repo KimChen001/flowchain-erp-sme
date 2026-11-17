@@ -101,7 +101,7 @@ const PHONE_TAP = "max-sm:inline-flex max-sm:min-h-9 max-sm:items-center";
 // An approved supplier invoice still to pay, or an issued customer invoice
 // still to be paid, is in progress (blue); the shared tones do not know the
 // codes.
-const documentTone = (status: string) => (status === "to_pay" || status === "to_be_paid" ? "info" : statusToneOf(status));
+const documentTone = (status: string) => statusToneOf(status);
 
 // The value of a Today tile, at the KPI size of the list pages' cards from a
 // tablet up and a step smaller three to a row on a phone.

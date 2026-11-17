@@ -4,7 +4,7 @@ import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { listTableCardsRef, tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
-import { ListSearchCard, RefreshButton, ResetButton, listRowClass, rowActionClass } from "../../components/ui/listLayout";
+import { ListSearchCard, RefreshButton, ResetButton, StatusChip, listRowClass, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { supplierCopy } from "./supplierCopy";
@@ -250,7 +250,7 @@ export default function SupplierEvaluationPage() {
                         </td>
                         <td className={`${tdNameClass} max-w-[220px]`} title={row.supplierName}>
                           <div className="truncate font-medium" style={{ color: A.label }}>{row.supplierName}</div>
-                          {row.status !== "active" && <div className="mt-0.5"><Chip label={t(STATUS_LABEL[row.status])} color={A.gray1} bg={A.gray6} /></div>}
+                          {row.status !== "active" && <div className="mt-0.5"><StatusChip label={t(STATUS_LABEL[row.status])} tone={statusToneOf(row.status)} /></div>}
                         </td>
                         <td className={tdNowrapClass} style={{ color: A.sub }}>{row.businessOwner?.name || "—"}</td>
                         <td className={tdNumericRightClass}>{spendCell(insight)}</td>
