@@ -97,6 +97,8 @@ const AUDIT_ACTION_LABELS: Record<string, [string, string]> = {
   purchase_request_reject: ["Rejected", "已驳回"],
   purchase_request_withdraw: ["Withdrawn to draft", "已撤回为草稿"],
   purchase_request_cancel: ["Cancelled", "已取消"],
+  purchase_request_reopen: ["Returned to draft", "已退回草稿"],
+  purchase_request_demand_restored: ["Approved again: its purchase order was cancelled or rejected", "采购订单取消或驳回后，申请恢复为已批准"],
   purchase_request_converted_to_purchase_orders: ["Purchase orders created", "已生成采购订单"],
   rfq_created_from_purchase_request: ["RFQ created from the request", "由申请创建询价单"],
   purchase_request_approved: ["Request approved", "批准申请"],

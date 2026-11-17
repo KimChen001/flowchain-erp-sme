@@ -83,7 +83,7 @@ async function cancelCreatedRequests(request: APIRequestContext, session: Sessio
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const current = await apiJson<RequestRow>(request, session, path);
       if (!["draft", "submitted"].includes(current.status)) break;
-      const cancelled = await request.post(`${path}/cancel`, { headers: auth(session), data: { expectedVersion: current.version } });
+      const cancelled = await request.post(`${path}/cancel`, { headers: auth(session), data: { expectedVersion: current.version, reason: "Test clean-up" } });
       if (cancelled.ok()) break;
       await new Promise((settle) => setTimeout(settle, 200));
     }
@@ -198,7 +198,10 @@ async function runS4(page: Page, session: Session, panel: Locator, requestsBefor
   await receipt.getByTestId("ai-v2-pr-submit").click();
   await expect(receipt).toHaveAttribute("data-status", "submitted");
   await expect(receipt.getByTestId("ai-v2-pr-emailed")).toHaveText("Approvers get an email when approval emails are turned on for this workspace.");
+  // Cancelling a submitted request says why (design audit L1-16).
   await receipt.getByTestId("ai-v2-pr-cancel").click();
+  await receipt.getByTestId("ai-v2-pr-cancel-reason").fill("Ordered elsewhere");
+  await receipt.getByTestId("ai-v2-pr-cancel-confirm").click();
   await expect(receipt).toHaveAttribute("data-status", "cancelled");
   const cancelled = (await apiJson<Array<{ id: string; status: string }>>(page.request, session, "/api/procurement/requests")).find((row) => row.id === requestId);
   expect(cancelled?.status).toBe("cancelled");

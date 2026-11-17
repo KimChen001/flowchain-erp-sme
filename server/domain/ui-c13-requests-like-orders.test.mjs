@@ -53,7 +53,8 @@ test('a request row has one blue View and a More menu with the detail page\'s st
 
 test('both detail headers put the main step first and reject or cancel in one red style (U-17)', () => {
   assert.match(panel, /sort\(\(a, b\) => Number\(DETAIL_PRIMARY\.has\(b\)\) - Number\(DETAIL_PRIMARY\.has\(a\)\)\)/)
-  assert.match(panel, /action === "reject" \? listButtonClass\.danger : listButtonClass\.secondary/)
+  // Reject, and Cancel since C6 (DANGER_ACTIONS).
+  assert.match(panel, /DANGER_ACTIONS\.has\(action\) \? listButtonClass\.danger : listButtonClass\.secondary/)
   assert.match(read('src/components/ui/listLayout.tsx'), /danger: `inline-flex h-8 items-center gap-1\.5 rounded-lg bg-red-50 px-3/)
   const po = read('src/modules/purchasing/components/PurchaseOrderWorkflowActions.tsx')
   assert.match(po, /const DANGER_ACTIONS = new Set<WorkflowAction>\(\["reject", "cancel"\]\)/)

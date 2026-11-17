@@ -52,6 +52,13 @@ const LOAD_FAILED: ErrorPair = ["Purchase requests could not be loaded. Try agai
 const SOURCES_FAILED: ErrorPair = ["The item's supplier sources could not be loaded.", "供应商关系加载失败。"];
 const SAVE_FAILED: ErrorPair = ["The purchase request could not be saved.", "采购申请保存失败。"];
 const UPDATE_FAILED: ErrorPair = ["The purchase request could not be updated.", "采购申请更新失败。"];
+const PREVIEW_FAILED: ErrorPair = ["The purchase orders this would create could not be read. Try again.", "无法读取将生成的采购订单，请重试。"];
+// GET /api/procurement/requests/:id/purchase-order-preview.
+type PurchaseOrderPreview = {
+  purchaseOrderStatus: string;
+  orders: { supplierId: string; supplierName: string | null; currency: string; warehouseId: string; lineCount: number; amount: string }[];
+  issues: { code: string; message: string }[];
+};
 
 type Item = {
   itemId: string;
@@ -206,7 +213,7 @@ function supplierMinimumPrefill(fields: Partial<Record<PrefillLineField, Prefill
 }
 // Today in the workspace timezone (America/New_York when unknown), not UTC.
 const today = (timeZone?: string) => todayInTimeZone(timeZone);
-const makeLine = (date = today()): Line => ({
+const makeLine = (date = ""): Line => ({
   lineId: createClientTemporaryId("pr-line"),
   sourceType: "catalog_item",
   lineBasis: "quantity",
@@ -237,23 +244,31 @@ const opensForm = (params: URLSearchParams) =>
 // detail page alike, each shown only to a person holding the permission the
 // server checks for it (PURCHASE_REQUEST_PERMISSIONS in
 // server/services/procurement-request-command-service.mjs).
-type RequestAction = "edit" | "submit" | "approve" | "reject" | "withdraw" | "generate-purchase-orders";
+type RequestAction = "edit" | "submit" | "approve" | "reject" | "withdraw" | "reopen" | "cancel" | "generate-purchase-orders";
 const REQUEST_ACTION_PERMISSION: Record<RequestAction, string> = {
   edit: "procurement.purchase_order.revise",
   submit: "procurement.purchase_order.revise",
   approve: "procurement.purchase_order.approve",
   reject: "procurement.purchase_order.reject",
   withdraw: "procurement.purchase_order.revise",
+  reopen: "procurement.purchase_order.revise",
+  cancel: "procurement.purchase_order.revise",
   "generate-purchase-orders": "procurement.purchase_order.revise",
 };
 const REQUEST_ACTIONS_BY_STATUS: Record<string, RequestAction[]> = {
-  draft: ["edit", "submit"],
-  submitted: ["approve", "reject", "withdraw"],
-  approved: ["generate-purchase-orders"],
+  // A request can be cancelled, with a reason, until it is turned into a
+  // purchase order, and a rejected one goes back to draft to be revised
+  // (design audit L1-16).
+  draft: ["edit", "submit", "cancel"],
+  submitted: ["approve", "reject", "withdraw", "cancel"],
+  approved: ["generate-purchase-orders", "cancel"],
+  rejected: ["reopen"],
 };
 // The step that moves a request on: the blue button of the detail header,
 // first in a row's More menu.
-const DETAIL_PRIMARY = new Set<RequestAction>(["submit", "approve", "generate-purchase-orders"]);
+const DETAIL_PRIMARY = new Set<RequestAction>(["submit", "approve", "reopen", "generate-purchase-orders"]);
+// Steps that end or refuse a request: red, as on a PO.
+const DANGER_ACTIONS = new Set<RequestAction>(["reject", "cancel"]);
 // Rows to a page, as on the purchase order list (design audit U-14).
 const PR_LIST_PAGE_SIZE = 50;
 const COPY = {
@@ -317,6 +332,21 @@ const COPY = {
   withdrawTitle: ["Withdraw {number}?", "撤回 {number}？"],
   withdrawBody: ["It leaves the approval queue and goes back to draft. You can edit it and submit it again.", "该申请将退出审批并退回草稿；可以修改后重新提交。"],
   withdraw: ["Withdraw", "撤回"],
+  cancel: ["Cancel request", "取消申请"],
+  cancelTitle: ["Cancel {number}?", "取消 {number}？"],
+  cancelBody: ["It will not be approved or turned into a purchase order, and it cannot be reopened.", "该申请将不会被批准，也不会生成采购订单，且不能恢复。"],
+  cancelReason: ["Why is it cancelled?", "取消原因"],
+  cancelledNumber: ["Cancelled {number}", "已取消 {number}"],
+  reopen: ["Return to draft", "退回草稿"],
+  reopenedNumber: ["{number} is a draft again. Edit it and submit it again.", "{number} 已退回草稿，可修改后重新提交。"],
+  // L1-26: what "Create purchase order" will make, before it is made.
+  convertTitleOne: ["Create a purchase order from {number}?", "从 {number} 生成采购订单？"],
+  convertTitleMany: ["Create {count} purchase orders from {number}?", "从 {number} 生成 {count} 张采购订单？"],
+  convertApproved: ["Each order starts approved, as the request was. Send it to the supplier, then mark it issued on its page.", "订单随申请一并批准；发给供应商后在订单页标记为已下达。"],
+  convertDraft: ["Each order starts as a draft and goes for purchase order approval.", "每张订单以草稿开始，需经采购订单审批。"],
+  lineOne: ["1 line", "1 行"],
+  lineMany: ["{count} lines", "{count} 行"],
+  previewFailed: ["The purchase orders this would create could not be read. Try again.", "无法读取将生成的采购订单，请重试。"],
   // The detail page in the PO's layout (design audit U-09).
   moduleLabel: ["Purchase request", "采购申请"],
   notFound: ["Purchase request not found.", "未找到采购申请。"],
@@ -374,8 +404,11 @@ export default function CanonicalProcurementPanel({
   const [departmentId, setDepartmentId] = useState("operations"),
     [currency, setCurrency] = useState(""),
     [workspaceCurrency, setWorkspaceCurrency] = useState(""),
-    [defaultDate, setDefaultDate] = useState(() => today(timezone)),
-    [lines, setLines] = useState<Line[]>(() => [makeLine(today(timezone))]),
+    // No default need-by date: today is never when goods can arrive. A
+    // line's date is today + its supplier's lead time when one is recorded,
+    // or the person picks it (design audit L7-09).
+    [defaultDate, setDefaultDate] = useState(""),
+    [lines, setLines] = useState<Line[]>(() => [makeLine()]),
     [loadError, setLoadError] = useState("");
   const [editing, setEditing] = useState<PR | null>(null),
     [errors, setErrors] = useState<FieldError[]>([]),
@@ -428,19 +461,6 @@ export default function CanonicalProcurementPanel({
     setSearchParams(params, { replace: true });
   };
   const currencyInitialized = useRef(false);
-  // The default date is first set before the workspace timezone loads, on the
-  // browser's own day. Once the timezone is known, a default nobody changed,
-  // and the lines still on it, move to the workspace day, which the
-  // lead-time need-by date also counts from.
-  const untouchedDefault = useRef(defaultDate);
-  useEffect(() => {
-    const workspaceDay = today(timezone);
-    const previous = untouchedDefault.current;
-    if (defaultDate !== previous || workspaceDay === previous) return;
-    untouchedDefault.current = workspaceDay;
-    setDefaultDate(workspaceDay);
-    setLines((current) => current.map((line) => (line.needByDate === previous ? { ...line, needByDate: workspaceDay } : line)));
-  }, [timezone]);
   // A request opens by its id or by its number, as a PO does (design audit U-08).
   const focusKey = focus?.entityType === "purchase_request" ? focus.entityId : "";
   const selected = focusKey
@@ -873,20 +893,60 @@ export default function CanonicalProcurementPanel({
       // The picker still shows for the refused line (hasOverrideIssue).
     }
   };
+  // What "Create purchase order" will make, read from the server's plan:
+  // each order's supplier, currency, delivery place, lines and amount, and
+  // the status it starts in. A request the server would refuse says why and
+  // creates nothing (design audit L1-26, L1-03, L1-28).
+  const confirmConversion = async (pr: PR) => {
+    let preview: PurchaseOrderPreview;
+    try {
+      preview = await request<PurchaseOrderPreview>(`/api/procurement/requests/${encodeURIComponent(pr.id)}/purchase-order-preview`);
+    } catch (error) {
+      toast.error(errorText(error, PREVIEW_FAILED));
+      return false;
+    }
+    if (preview.issues.length) {
+      toast.error(errorText({ code: preview.issues[0].code, status: 422 }, UPDATE_FAILED));
+      return false;
+    }
+    const count = preview.orders.length;
+    const title = (count === 1 ? tr("convertTitleOne") : tr("convertTitleMany").replace("{count}", String(count))).replace("{number}", numberOf(pr));
+    return confirmDialog.confirm({
+      title,
+      description: (
+        <div data-testid="pr-convert-preview">
+          <ul className="space-y-1">
+            {preview.orders.map((order, index) => (
+              <li key={index} data-testid="pr-convert-order">
+                {[order.supplierName || order.supplierId, order.currency, warehouseName(order.warehouseId) || order.warehouseId, order.lineCount === 1 ? tr("lineOne") : tr("lineMany").replace("{count}", String(order.lineCount)), amount(order.amount, order.currency)].filter(Boolean).join(" · ")}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs">{preview.purchaseOrderStatus === "approved" ? tr("convertApproved") : tr("convertDraft")}</p>
+        </div>
+      ),
+      confirmLabel: tr("createPurchaseOrder"),
+      cancelLabel: tr("goBack"),
+      testId: "pr-convert-dialog",
+    });
+  };
   const act = async (pr: PR, action: string) => {
     try {
+      if (action === "generate-purchase-orders" && !(await confirmConversion(pr))) return;
+      // Rejecting and cancelling each say why (L1-16).
       const reason =
-        action === "reject"
+        action === "reject" || action === "cancel"
           ? await confirmDialog.prompt({
-              title: tr("rejectTitle"),
-              description: tr("rejectBody"),
-              field: { label: tr("rejectReason") },
-              confirmLabel: tr("reject"),
+              title: action === "reject" ? tr("rejectTitle") : tr("cancelTitle").replace("{number}", numberOf(pr)),
+              description: action === "reject" ? tr("rejectBody") : tr("cancelBody"),
+              field: { label: action === "reject" ? tr("rejectReason") : tr("cancelReason") },
+              confirmLabel: action === "reject" ? tr("reject") : tr("cancel"),
               cancelLabel: tr("goBack"),
               tone: "danger",
+              ...(action === "cancel" ? { testId: "cancel-request-dialog" } : {}),
             })
           : "";
-      if (action === "reject" && !reason) return;
+      if ((action === "reject" || action === "cancel") && !reason) return;
       // Withdrawing takes a submitted request out of approval, so it asks first.
       if (
         action === "withdraw" &&
@@ -914,6 +974,8 @@ export default function CanonicalProcurementPanel({
         action === "approve" ? tr("approved")
           : action === "reject" ? tr("rejected")
           : action === "withdraw" ? tr("withdrawn")
+          : action === "cancel" ? tr("cancelledNumber")
+          : action === "reopen" ? tr("reopenedNumber")
           : action === "submit" ? tr("submittedNumber")
           : orders.length > 1 ? tr("createdOrders").replace("{count}", String(orders.length))
           : orders.length ? tr("createdOrder").replace("{po}", orders[0].number || orders[0].id || "")
@@ -945,7 +1007,7 @@ export default function CanonicalProcurementPanel({
     setEditing(pr);
     setDepartmentId(pr.departmentId);
     setCurrency(pr.defaultCurrency || "");
-    setDefaultDate(pr.defaultNeedByDate || today(timezone));
+    setDefaultDate(pr.defaultNeedByDate || "");
     setLines(
       pr.lines.map((l) => ({
         ...l,
@@ -1079,7 +1141,7 @@ export default function CanonicalProcurementPanel({
                   data-testid={action === "generate-purchase-orders" ? "pr-detail-create-po" : `pr-detail-${action}`}
                   disabled={busy}
                   onClick={() => runDetailAction(action)}
-                  className={DETAIL_PRIMARY.has(action) ? listButtonClass.primary : action === "reject" ? listButtonClass.danger : listButtonClass.secondary}
+                  className={DETAIL_PRIMARY.has(action) ? listButtonClass.primary : DANGER_ACTIONS.has(action) ? listButtonClass.danger : listButtonClass.secondary}
                 >
                   {action === "submit" ? tr("submitForApproval") : actionLabel(action)}
                 </button>
@@ -1288,7 +1350,7 @@ export default function CanonicalProcurementPanel({
                                   type="button"
                                   data-testid={`pr-row-${action}`}
                                   disabled={acting === pr.id}
-                                  className={`${menuItemClass} ${DETAIL_PRIMARY.has(action) ? "font-semibold text-blue-700" : action === "reject" ? "text-red-700" : ""}`}
+                                  className={`${menuItemClass} ${DETAIL_PRIMARY.has(action) ? "font-semibold text-blue-700" : DANGER_ACTIONS.has(action) ? "text-red-700" : ""}`}
                                   onClick={() => (action === "edit" ? void edit(pr) : void act(pr, action))}
                                 >
                                   {action === "submit" ? tr("submitForApproval") : actionLabel(action)}

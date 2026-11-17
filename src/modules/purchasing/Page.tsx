@@ -110,7 +110,8 @@ const PAGE_ENGLISH: Record<string, string> = {
   "无需匹配": "No match needed",
   "等待审批": "Awaiting approval",
   "提交审批": "Submit it for approval",
-  "订单已驳回，修改后重新提交": "Rejected; revise it and submit again",
+  "订单已驳回，来源采购申请可重新下单": "Rejected; its purchase request can be ordered again",
+  "订单已驳回，不再继续处理": "Rejected; this order goes no further",
   "全部收货": "Fully received",
   "部分开票": "Partly invoiced",
   "差异已批准": "Variance approved",
@@ -586,13 +587,13 @@ function paymentOf(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
 
 // The next action, from what is left. Before the supplier has the order it
 // waits on its approver or on being issued; after that, see nextOpenAction.
-type PoAction = NextAction | { kind: "cancelled" } | { kind: "submit" } | { kind: "awaiting_approval" } | { kind: "rejected" } | { kind: "issue" };
+type PoAction = NextAction | { kind: "cancelled" } | { kind: "submit" } | { kind: "awaiting_approval" } | { kind: "rejected"; fromRequest: boolean } | { kind: "issue" };
 function nextActionForPo(po: PurchaseOrder, facts: ProcurementRuntimeFacts): PoAction {
   const code = purchaseOrderStatusCode(po.status);
   if (code === "cancelled") return { kind: "cancelled" };
   if (code === "draft") return { kind: "submit" };
   if (code === "pending_approval") return { kind: "awaiting_approval" };
-  if (code === "rejected") return { kind: "rejected" };
+  if (code === "rejected") return { kind: "rejected", fromRequest: Boolean(po.sourceRequest) };
   // Approved but not issued: the supplier does not have it yet, so nothing
   // can arrive; it is sent first (decision V5).
   if (code === "approved") return { kind: "issue" };
@@ -612,7 +613,9 @@ function poActionText(action: PoAction, words: StoryWords) {
     case "cancelled": return pick(["Order cancelled; no receipt required", "订单已取消，无需收货"]);
     case "submit": return pick(["Submit it for approval", "提交审批"]);
     case "awaiting_approval": return pick(["Awaiting approval", "等待审批"]);
-    case "rejected": return pick(["Rejected; revise it and submit again", "订单已驳回，修改后重新提交"]);
+    // A rejected PO cannot be revised (that is OC8); its request is approved
+    // again once none of its orders is open (design audit L1-09).
+    case "rejected": return pick(action.fromRequest ? ["Rejected; its purchase request can be ordered again", "订单已驳回，来源采购申请可重新下单"] : ["Rejected; this order goes no further", "订单已驳回，不再继续处理"]);
     // The words of the Mark as issued button and its note.
     case "issue": return pick(["Send the PO to the supplier, then mark it issued", "将采购订单发给供应商，然后标记为已下达"]);
     default: return nextActionText(action, words);
