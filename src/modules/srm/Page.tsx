@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle, useConfirm } from "../../components/ui";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
-import { ListSearchCard, PrimaryButton, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass } from "../../components/ui/listLayout";
+import { ListSearchCard, PrimaryButton, RefreshButton, ResetButton, StatusChip, statusToneOf, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -508,7 +508,7 @@ export default function SupplierMasterPage({
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="fc-page-title">{selected.supplierName}</h1>
                 <TierChip tier={selected.tier} />
-                <StatusChip label={copy(statusLabel[selected.status])} tone={selected.status === "active" ? "success" : "neutral"} />
+                <StatusChip label={copy(statusLabel[selected.status])} tone={statusToneOf(selected.status)} />
               </div>
               <div className="mt-1 text-xs" style={{ color: A.sub }}>
                 {selected.supplierCode}
@@ -898,11 +898,7 @@ export default function SupplierMasterPage({
                     <td className={tdNumericRightClass}>{otifCell(insightOf(row.id))}</td>
                     <td className={tdNumericRightClass}>{count(insightOf(row.id)?.openIssues)}</td>
                     <td className={tdNowrapClass}>
-                      {row.status === "active"
-                        ? <Chip label={copy(statusLabel[row.status])} color={A.green} bg="#f0faf4" />
-                        : row.status === "draft"
-                          ? <Chip label={copy(statusLabel[row.status])} color={A.orange} bg="#fff8f0" />
-                          : <Chip label={copy(statusLabel[row.status])} color={A.gray1} bg={A.gray6} />}
+                      <StatusChip label={copy(statusLabel[row.status])} tone={statusToneOf(row.status)} />
                     </td>
                     {writes.suppliers && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                       <div className="flex items-center gap-1.5">

@@ -15,7 +15,7 @@ test('workspace copy and document status chips translate stored status codes', a
   const copy = await readFile(new URL('../../src/i18n/workspaceCopy.ts', import.meta.url), 'utf8')
   assert.match(copy, /statusCodeLabel\(label, language\)/)
   const shell = await readFile(new URL('../../src/components/document/DocumentShell.tsx', import.meta.url), 'utf8')
-  assert.match(shell, /<Chip label=\{copy\(status\)\}/)
+  assert.match(shell, /<StatusChip label=\{copy\(status\)\} tone=\{chipTone\}/)
 })
 
 test('inventory adjustment movements name their reason, so opening stock stands apart', () => {

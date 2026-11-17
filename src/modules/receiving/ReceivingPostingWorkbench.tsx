@@ -397,8 +397,12 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   // is the receipt's one status, as on the receipt list: the workflow still
   // reads "ready to post" there and would contradict it.
   const settled = grn.postingStatus === "posted" || grn.postingStatus === "reversed";
+  // The receipt's status sits beside its number, as on a PO (design audit
+  // U-17): the posting status once posted or reversed, else the workflow;
+  // before posting the facts still show both.
+  const headerStatus = settled ? grn.postingStatus : grn.workflowStatus;
   const statusFacts: Array<[string, React.ReactNode]> = settled
-    ? [[say("Status", "状态"), chip(grn.postingStatus)]]
+    ? []
     : [[say("Workflow", "流程状态"), chip(grn.workflowStatus)], [say("Posting", "过账状态"), chip(grn.postingStatus)]];
   const facts: Array<[string, React.ReactNode]> = [
     ...statusFacts,
@@ -449,7 +453,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert" title={errorCode}>{error}</div>}
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><h1 className="fc-page-title">{grn.documentNumber}</h1><p className="mt-1 text-sm text-gray-500">{grn.supplier?.name || say("Unknown supplier", "未知供应商")} · {say("Purchase order", "采购订单")} <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}><DocumentNumber type="purchase_order" id={detail.purchaseOrder.id} number={detail.purchaseOrder.number} /></a></p></div>
+        <div><div className="flex flex-wrap items-center gap-2"><h1 className="fc-page-title">{grn.documentNumber}</h1><StatusChip label={statusText(headerStatus)} tone={statusToneOf(headerStatus)} testId="receipt-status" /></div><p className="mt-1 text-sm text-gray-500">{grn.supplier?.name || say("Unknown supplier", "未知供应商")} · {say("Purchase order", "采购订单")} <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}><DocumentNumber type="purchase_order" id={detail.purchaseOrder.id} number={detail.purchaseOrder.number} /></a></p></div>
         {/* The next step first (Submit for a draft, Post once submitted), then
             the other non-destructive actions; cancelling or reversing the
             receipt comes last, tinted red. */}

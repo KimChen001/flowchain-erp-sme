@@ -110,7 +110,8 @@ test('AI priorities shows Today\'s first rows with their dates', () => {
   assert.ok(format.includes('const tone = (row: Row) => todayDateTone(row as TodayDated, today);'))
   const copy = read('src/modules/overview/todayCopy.ts')
   assert.match(copy, /export function todayDateText\(/)
-  assert.match(copy, /to_pay: \["To pay", "待付款"\]/)
+  // The one status table since design audit L6-14.
+  assert.match(read('src/i18n/statusLabels.ts'), /to_pay: \["To pay", "待付款"\]/)
 })
 
 test('Today\'s reorder links and "{n} in all" are 36 px tall on a phone, with room between the links', () => {
@@ -124,7 +125,9 @@ test('Today\'s reorder links and "{n} in all" are 36 px tall on a phone, with ro
   assert.match(page, /\$\{PHONE_TAP\}`\} onClick=\{\(\) => setFullKinds/)
   // A supplier invoice still to pay, or a customer invoice still to be paid
   // (round 8b), reads in progress (blue).
-  assert.match(page, /status === "to_pay" \|\| status === "to_be_paid" \? "info" : statusToneOf\(status\)/)
+  // To pay and to be paid are blue in the one tone table (design audit L6-08).
+  assert.match(page, /const documentTone = \(status: string\) => statusToneOf\(status\);/)
+  assert.match(read('src/components/ui/statusTones.ts'), /"to_pay", "to_be_paid"/)
 })
 
 test('Today is named as the sidebar names it, and /app/today opens it', () => {

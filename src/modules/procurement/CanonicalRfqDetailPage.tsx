@@ -264,13 +264,16 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: A.sub }}>RFQ · {rfqNumber}</div>
-            <h1 className="fc-page-title mt-1">{record.title || rfqNumber}</h1>
+            {/* The status beside the title, as on every detail page (design audit U-17). */}
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <h1 className="fc-page-title">{record.title || rfqNumber}</h1>
+              <StatusChip label={statusLabel(record.status, RFQ_STATUS_LABELS, language)} tone={statusToneOf(record.status)} testId="rfq-status" />
+            </div>
             {record.description && <p className="mt-2 text-sm" style={{ color: A.sub }}>{record.description}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <StatusChip label={statusLabel(record.status, RFQ_STATUS_LABELS, language)} tone={statusToneOf(record.status)} />
             {canOpen && <button type="button" disabled={busy !== null} onClick={() => void transition("open")} className={listButtonClass.primary} data-testid="rfq-open-button"><Play size={14} />{tr("开启询价", "Open RFQ")}</button>}
-            {canCancel && <button type="button" disabled={busy !== null} onClick={() => void transition("cancel")} className={listButtonClass.secondary} data-testid="rfq-cancel-button"><Ban size={14} />{tr("取消询价单", "Cancel RFQ")}</button>}
+            {canCancel && <button type="button" disabled={busy !== null} onClick={() => void transition("cancel")} className={listButtonClass.danger} data-testid="rfq-cancel-button"><Ban size={14} />{tr("取消询价单", "Cancel RFQ")}</button>}
             {canCompare && <Link
               className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700"
               data-testid="rfq-comparison-link"
