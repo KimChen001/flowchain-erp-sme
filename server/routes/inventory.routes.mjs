@@ -82,7 +82,7 @@ export async function handleInventoryRoute(ctx) {
     (runtimeModel ||= buildRuntimeInventoryAllocation(await scopedContext()));
 
   const allocationPath =
-    /^\/api\/inventory\/(?:availability|allocation|shortages|demand-supply-gap|available-to-promise|reservation-preview|sales-order-impact|po-supply-impact)(?:\/.*)?$/.test(
+    /^\/api\/inventory\/(?:availability|allocation|shortages|demand-supply-gap|available-to-promise|po-supply-impact)(?:\/.*)?$/.test(
       url.pathname,
     );
   if (allocationPath && req.method !== "GET") {
@@ -219,72 +219,6 @@ export async function handleInventoryRoute(ctx) {
             summary: model.summary,
           }
         : { error: "Inventory availability not found" },
-    );
-    return true;
-  }
-
-  if (
-    req.method === "GET" &&
-    url.pathname === "/api/inventory/reservation-preview"
-  ) {
-    const model = await allocationModel();
-    const availability = getRuntimeSkuAvailability(
-      model,
-      url.searchParams.get("sku") || "",
-    );
-    const requestedQty = Number(url.searchParams.get("requestedQty") || 0);
-    const reservationPreview = {
-      sku: availability?.sku || "",
-      salesOrderId: url.searchParams.get("salesOrderId") || "",
-      requestedQty,
-      reservableQty:
-        availability?.available === null || !availability
-          ? null
-          : Math.min(Math.max(0, requestedQty), availability.available),
-      dataLimitations: availability?.dataLimitations || [
-        "inventory_balance_missing",
-      ],
-      evidenceLinks: availability?.evidence || [],
-    };
-    send(res, 200, {
-      reservationPreview,
-      availability,
-      allocation: availability,
-      summary: model.summary,
-      risks: [],
-      evidenceLinks: reservationPreview.evidenceLinks,
-      dataLimitations: reservationPreview.dataLimitations,
-    });
-    return true;
-  }
-
-  if (
-    req.method === "GET" &&
-    url.pathname === "/api/inventory/sales-order-impact"
-  ) {
-    if (!access.collections.salesOrders) return denied("sales_order.read", "Your role cannot view sales orders.");
-    const context = await scopedContext();
-    const model = buildRuntimeInventoryAllocation(context);
-    const id = url.searchParams.get("salesOrderId") || "";
-    const order = scopeBusinessContext(context, access).salesOrders.find(
-      (row) => String(row.salesOrderId || row.id) === id,
-    );
-    const availability = order
-      ? getRuntimeSkuAvailability(model, order.sku || order.itemId)
-      : null;
-    send(
-      res,
-      order ? 200 : 404,
-      order
-        ? {
-            salesOrder: order,
-            availability,
-            allocation: availability,
-            summary: model.summary,
-            risks: availability?.shortage > 0 ? [availability] : [],
-            dataLimitations: availability?.dataLimitations || [],
-          }
-        : { error: "Sales order not found" },
     );
     return true;
   }
