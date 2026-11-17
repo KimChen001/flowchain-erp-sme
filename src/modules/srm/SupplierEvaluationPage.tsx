@@ -17,7 +17,10 @@ import { METRIC_HEADER_TIPS, sortSuppliersBy, useSupplierMetricCells, type Suppl
 // open issues, from GET /api/master-data/supplier-insights) with its business
 // owner and, next to them, the tier a person set. People with
 // master_data.supplier.manage set or change a tier here, with a reason,
-// through the tier endpoint and its audit row. FlowChain suggests no tier.
+// through the tier endpoint and its audit row, or record a review that keeps
+// it. FlowChain suggests no tier. A Tier 1 supplier whose on time or OTIF is
+// below 80% gets a prompt to review its tier, never a change (design audit
+// L7-37).
 
 type Person = { id: string; name: string | null };
 type Status = "draft" | "active" | "inactive";
@@ -29,6 +32,7 @@ type EvaluatedSupplier = {
   version: number;
   tier: Tier;
   tierReason: string | null;
+  tierNextReviewOn: string | null;
   businessOwner: Person | null;
 };
 type Counts = { all: number; mine: number; tier1: number; tier2: number; tier3: number; untiered: number };
@@ -51,6 +55,14 @@ const SORTS: Array<{ value: SupplierSort; label: string }> = [
   { value: "issues", label: "Open issues, most first" },
 ];
 const STATUS_LABEL: Record<Status, string> = { active: "Active", inactive: "Inactive", draft: "Draft" };
+// Below this, a Tier 1 supplier's delivery prompts a look at its tier.
+export const TIER_ONE_REVIEW_BELOW = 0.8;
+// Tier 1 with on time or OTIF (each with its minimum sample) below 80%: only
+// a prompt to review, since a person sets the tier (owner decision 2026-10-09).
+export function tierReviewPrompted(tier: Tier, insight?: SupplierInsight) {
+  if (tier !== 1 || !insight) return false;
+  return [insight.onTime?.rate, insight.otif?.rate].some((rate) => typeof rate === "number" && rate < TIER_ONE_REVIEW_BELOW);
+}
 // The long metric headers wrap to two lines, as on the supplier list.
 const METRIC_HEADERS = ["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "OTIF, 90 days", "Open issues"];
 
@@ -66,6 +78,7 @@ function normalize(value: Record<string, unknown>): EvaluatedSupplier {
     version: Number(value.version || 1),
     tier: ([1, 2, 3].includes(Number(value.tier)) ? Number(value.tier) : null) as Tier,
     tierReason: text(value.tierReason) || null,
+    tierNextReviewOn: text(value.tierNextReviewOn) || null,
     businessOwner: (value.businessOwner as Person | null) || null,
   };
 }
@@ -246,7 +259,10 @@ export default function SupplierEvaluationPage() {
                         <td className={tdNumericRightClass}>{onTimeCell(insight)}</td>
                         <td className={tdNumericRightClass}>{otifCell(insight)}</td>
                         <td className={tdNumericRightClass}>{count(insight?.openIssues)}</td>
-                        <td className={tdNowrapClass} title={row.tierReason || undefined}><TierChip tier={row.tier} short /></td>
+                        <td className={tdNowrapClass} title={row.tierReason || undefined}>
+                          <TierChip tier={row.tier} short />
+                          {tierReviewPrompted(row.tier, insight) && <div className="mt-0.5 text-[11px]" style={{ color: A.orange }} data-testid="supplier-tier-review-prompt" title={t("Tier 1, with on time or OTIF below 80% over the last 90 days. Tiers are set by your team: this is only a prompt to review.")}>{t("Review tier?")}</div>}
+                        </td>
                         {canEdit && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                           <button type="button" data-testid="supplier-evaluation-set-tier" aria-expanded={editing === row.id} onClick={() => setEditing(editing === row.id ? null : row.id)} className={rowActionClass.neutral}>
                             {t(row.tier === null ? "Set tier" : "Change tier")}

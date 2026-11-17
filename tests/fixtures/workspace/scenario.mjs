@@ -6,7 +6,6 @@ import { getPrismaClient, disconnectPrismaClient } from '../../../server/persist
 import { assertLocalDevelopment } from '../../../server/domain/local-development-contract.mjs'
 import { localDemoSupplier } from './master-data.mjs'
 import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../../../server/domain/procurement-status-authority.mjs'
-import { isCommittedPurchaseOrder } from '../../../server/domain/open-purchase-order.mjs'
 import { createReceivingPostingCommandService } from '../../../server/domain/receiving-posting-command-service.mjs'
 import { applyPromisedDateChanges, recordOriginalPromises } from '../../../server/domain/purchase-order-promise-dates.mjs'
 import { contractsEnabled } from '../../../server/domain/contract-policy.mjs'
@@ -511,10 +510,12 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
           metadata: { ...metadata, targetWarehouseId: WAREHOUSE, requestedDate: promisedDate, promisedDate },
         })
       }
-      // A committed order keeps its first promised date, as the approve and
-      // issue commands record it; so does a cancelled order that was sent first.
-      // Recorded once; a later seed leaves it alone.
-      if (isCommittedPurchaseOrder({ status: po.status }) || po.sent) {
+      // An order the supplier has keeps its first promised date, as the issue
+      // command records it; so does a cancelled order that was sent first. An
+      // approved order not sent yet has none: approval records nothing, and
+      // its first posted receipt would (design audit L1-05). Recorded once; a
+      // later seed leaves it alone.
+      if (sent) {
         await recordOriginalPromises(tx, { purchaseOrder: await tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { lines: true } }) })
       }
       // A revised promise goes through the same helper as the revise command:

@@ -4,9 +4,19 @@ Status: design, 2026-10-04. Written against main at `36025e4`. On 2026-10-04 the
 approved all eight decisions in [§10](#10-decisions-for-the-owner) as recommended and asked
 for T1.
 
+> **Superseded in part (owner decision 2026-10-09).** FlowChain does not suggest
+> tiers: what makes a supplier Tier 1 differs per company, so a person sets every
+> tier, with a reason. §3 (Suggestions) and the suggestion parts of §4 and §8 are
+> kept only as the record of what was first designed; none of it is built. The
+> tiers' meanings live in `shared/supplier-tiers.mjs`, which the supplier pages and
+> the assistant's tools both read. Since the design audit of 2026-11-15 (L9-12) a
+> person can also record a review that keeps the tier, with a reason and a next
+> review date; the audit row keeps the supplier's indicators as the reviewer saw
+> them (§2).
+
 Owner decisions so far, all made on 2026-10-04:
-- Tiers mean importance to the business. People set them; the system suggests a
-  tier and states its reasons.
+- Tiers mean importance to the business. People set them. (The system suggesting
+  a tier was withdrawn on 2026-10-09.)
 - The search bug comes first. It is fixed in #132.
 - Two points are read as follows; the owner was told and may correct them:
   - anyone with `master_data.supplier.manage` may set a tier, and every change is
@@ -25,11 +35,12 @@ The decisions still open are in [§10](#10-decisions-for-the-owner).
   - Not tiered, until someone decides. A supplier never gets a tier silently.
 - **A person sets the tier with a reason.** Every change is an audit row, and the
   supplier page shows the history.
-- **The system suggests a tier from facts it can show.** These are the supplier's
-  share of spend, whether it is the only source of an item, and whether it was used
-  at all in the last 12 months. There is no weighted score: the owner rejected
-  hand-set scores for the assistant on 2026-10-03, and the same reasoning applies
-  here. Delivery performance is shown next to the tier, never mixed into it.
+- **No suggested tier** (owner decision 2026-10-09). The first design had the system
+  suggest a tier from the supplier's share of spend, sole sourcing and use in the
+  last 12 months; that was withdrawn. Delivery performance is shown next to the
+  tier, never mixed into it. Supplier evaluation only prompts a review when a Tier 1
+  supplier's on time or OTIF is below 80% (design audit L7-37); it never changes a
+  tier.
 - **The supplier list gets tabs and business columns.**
   - Tabs: All, Managed by me, one tab per tier, and Not tiered.
   - Columns: tier, business owner, 12-month spend, open and overdue orders, on-time
@@ -107,8 +118,15 @@ start as not tiered, with no owner.
   tier tabs show active suppliers by default.
 - The detail page shows the tier history from the audit rows: date, from and to,
   who, and the reason.
+- **Reviews** (design audit L9-12, 2026-11-16). Keeping the tier and saving records a
+  review: `POST /api/master-data/suppliers/:id/tier-review` with a reason and an
+  optional next review date, written as audit action `tier_reviewed`. A tier change
+  can set the next review date too. Both audit rows keep the supplier's indicators
+  as the person saw them (on time, OTIF, overdue orders, open issues), read by the
+  server with that person's access; the history shows the review, not the
+  indicators. A change to the same tier is still refused (`TIER_UNCHANGED`).
 
-## 3. Suggestions
+## 3. Suggestions (withdrawn 2026-10-09, not built)
 
 The suggestion is computed when it is read: as of today, over the last 12 months,
 and with the reader's own access. It is never stored. Rules are checked in order.

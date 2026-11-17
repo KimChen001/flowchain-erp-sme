@@ -6,12 +6,16 @@ import pg from 'pg'
 import { backfillTenantAuthorization } from '../../server/auth/authorization-backfill.mjs'
 import { createDbProcurementCommandService } from '../../server/domain/procurement-db-command-service.mjs'
 import { applyPromisedDateChanges } from '../../server/domain/purchase-order-promise-dates.mjs'
+import { createReceivingPostingCommandService } from '../../server/domain/receiving-posting-command-service.mjs'
+import { cleanupReceivingScenario, seedReceivingScenario } from '../../server/domain/receiving-posting-live-test-helpers.mjs'
 import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 
 // A PO line keeps the date the supplier first promised, apart from the current
 // expected date that moves with the shipment. Supplier scorecards measure
-// against the first one, so it must be recorded at approval (or at issue, for
-// a line dated after approval) and never change.
+// against the first one, so it is recorded once the supplier has the PO: when
+// it is issued, or at its first posted receipt for a PO received without
+// being issued. Approval records nothing, so the buyer can still set the date
+// the supplier confirms (design audit L1-05). It never changes.
 // Run with: node scripts/run-postgres-test-files.mjs tests/postgres/purchase-order-original-promise.test.mjs
 
 const migrationName = '20260930010000_purchase_order_original_promise'
@@ -239,24 +243,34 @@ test('issuing records the original promise; a later revision keeps it and writes
       assert.equal(await prisma.purchaseOrderPromiseRevision.count(), before)
     })
 
-    await t.test('a PO that is not issued yet is not revised through the command', async () => {
+    await t.test('an approved PO not issued yet takes the date the supplier confirms through the command, as a plain change', async () => {
       await approvedPo(prisma, 'PROMISE-PO-3', { lines: [{ promisedDate: '2026-10-05' }] })
-      await assert.rejects(service.revisePromisedDates('PROMISE-PO-3', { expectedVersion: 0, idempotencyKey: 'revise-approved', lines: [{ purchaseOrderLineId: 'PROMISE-PO-3-L1', promisedDate: '2026-10-08' }], reason: 'Too early' }, contextOf(people.buyer)), (error) => error.code === 'PURCHASE_ORDER_NOT_ISSUED')
+      const set = await service.revisePromisedDates('PROMISE-PO-3', { expectedVersion: 0, idempotencyKey: 'revise-approved', lines: [{ purchaseOrderLineId: 'PROMISE-PO-3-L1', promisedDate: '2026-10-08' }], reason: 'The supplier confirmed the 8th' }, contextOf(people.buyer))
+      assert.deepEqual([set.purchaseOrder.lines[0].originalPromisedDate, set.purchaseOrder.lines[0].promisedDate], [null, '2026-10-08'])
+      assert.equal(await prisma.purchaseOrderPromiseRevision.count({ where: { purchaseOrderId: 'PROMISE-PO-3' } }), 0)
+      // The same date again changes nothing.
+      const stored = await prisma.purchaseOrder.findUnique({ where: { id: 'PROMISE-PO-3' } })
+      await assert.rejects(service.revisePromisedDates('PROMISE-PO-3', { expectedVersion: stored.version, idempotencyKey: 'revise-approved-again', lines: [{ purchaseOrderLineId: 'PROMISE-PO-3-L1', promisedDate: '2026-10-08' }], reason: 'Again' }, contextOf(people.buyer)), (error) => error.code === 'PROMISED_DATE_UNCHANGED')
+      // A draft is not committed to anyone: still refused.
+      await approvedPo(prisma, 'PROMISE-PO-6', { status: 'draft', lines: [{ promisedDate: '2026-10-05' }] })
+      await assert.rejects(service.revisePromisedDates('PROMISE-PO-6', { expectedVersion: 0, idempotencyKey: 'revise-draft', lines: [{ purchaseOrderLineId: 'PROMISE-PO-6-L1', promisedDate: '2026-10-08' }], reason: 'Too early' }, contextOf(people.buyer)), (error) => error.code === 'PURCHASE_ORDER_NOT_ISSUED')
     })
 
-    await t.test('approval records the original promise; issue keeps it after the date moves', async () => {
+    // Design audit L1-05: approval fixed the original promise to the buyer's
+    // need date before the supplier ever saw the PO.
+    await t.test('approval records no original promise; issue records the date the PO has then', async () => {
       // L1 has its own date, L2 reads the header date.
       await approvedPo(prisma, 'PROMISE-PO-4', { status: 'pending_approval', expectedDate: '2026-10-20', lines: [{ promisedDate: '2026-10-12' }, {}] })
       await approvedPo(prisma, 'PROMISE-PO-5', { status: 'pending_approval', expectedDate: null, lines: [{}] })
       const approved = await service.approvePurchaseOrder('PROMISE-PO-4', { expectedVersion: 0, idempotencyKey: 'approve-4' }, contextOf(people.approver))
-      assert.deepEqual(approved.purchaseOrder.lines.map((line) => [line.id, line.originalPromisedDate]), [['PROMISE-PO-4-L1', '2026-10-12'], ['PROMISE-PO-4-L2', '2026-10-20']])
+      assert.deepEqual(approved.purchaseOrder.lines.map((line) => [line.id, line.originalPromisedDate]), [['PROMISE-PO-4-L1', null], ['PROMISE-PO-4-L2', null]])
       const approveAudit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityId: 'PROMISE-PO-4', action: 'purchase_order_approve' } })
-      assert.deepEqual(approveAudit.metadata.originalPromisesRecorded.map((row) => row.originalPromisedDate), ['2026-10-12', '2026-10-20'])
-      // An undated line has no promise to record.
+      assert.equal(approveAudit.metadata.originalPromisesRecorded, undefined)
       const undated = await service.approvePurchaseOrder('PROMISE-PO-5', { expectedVersion: 0, idempotencyKey: 'approve-5' }, contextOf(people.approver))
       assert.equal(undated.purchaseOrder.lines[0].originalPromisedDate, null)
 
-      // Before issue a date simply moves: no revision, and the original stays.
+      // Before issue the date the supplier confirms simply replaces the need
+      // date: no revision, and nothing original yet.
       await prisma.$transaction(async (tx) => {
         const row = await tx.purchaseOrder.findUnique({ where: { id: 'PROMISE-PO-4' }, include: { lines: { orderBy: { id: 'asc' } } } })
         await applyPromisedDateChanges(tx, { tenantId: tenantA, purchaseOrder: row, changes: [{ purchaseOrderLineId: 'PROMISE-PO-4-L1', promisedDate: '2026-10-15' }], source: 'test' })
@@ -264,9 +278,27 @@ test('issuing records the original promise; a later revision keeps it and writes
       assert.equal(await prisma.purchaseOrderPromiseRevision.count({ where: { purchaseOrderId: 'PROMISE-PO-4' } }), 0)
       const current = await prisma.purchaseOrder.findUnique({ where: { id: 'PROMISE-PO-4' } })
       const issued = await service.issuePurchaseOrder('PROMISE-PO-4', { expectedVersion: current.version, idempotencyKey: 'issue-4' }, contextOf(people.buyer))
-      assert.deepEqual(issued.purchaseOrder.lines.map((line) => [line.id, line.originalPromisedDate, line.promisedDate]), [['PROMISE-PO-4-L1', '2026-10-12', '2026-10-15'], ['PROMISE-PO-4-L2', '2026-10-20', '2026-10-20']])
+      assert.deepEqual(issued.purchaseOrder.lines.map((line) => [line.id, line.originalPromisedDate, line.promisedDate]), [['PROMISE-PO-4-L1', '2026-10-15', '2026-10-15'], ['PROMISE-PO-4-L2', '2026-10-20', '2026-10-20']])
       const issueAudit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityId: 'PROMISE-PO-4', action: 'purchase_order_issue' } })
-      assert.deepEqual(issueAudit.metadata.originalPromisesRecorded, [])
+      assert.deepEqual(issueAudit.metadata.originalPromisesRecorded.map((row) => [row.purchaseOrderLineId, row.originalPromisedDate]), [['PROMISE-PO-4-L1', '2026-10-15'], ['PROMISE-PO-4-L2', '2026-10-20']])
+    })
+
+    // verify-p1-a §2 on L1-05: locked only at issue, an approved PO received
+    // without being issued would never get an original promise and would fall
+    // out of the scorecard as original_not_recorded.
+    await t.test('a PO received without being issued gets its original promise at its first posted receipt', async () => {
+      const scenario = await seedReceivingScenario(prisma, { poStatus: 'approved', ordered: ['10'], accepted: ['4'] })
+      try {
+        await prisma.purchaseOrder.update({ where: { id: scenario.poId }, data: { expectedDate: at('2026-10-10') } })
+        await prisma.purchaseOrderLine.update({ where: { id: scenario.poLines[0].id }, data: { metadata: { promisedDate: '2026-10-08' } } })
+        const posted = await createReceivingPostingCommandService({ prisma }).postReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: 'post-unissued' }, { identity: scenario.actor })
+        assert.equal(posted.purchaseOrder.status, 'partially_received')
+        assert.equal(day((await prisma.purchaseOrderLine.findUnique({ where: { id: scenario.poLines[0].id } })).originalPromisedDate), '2026-10-08')
+        const audit = await prisma.auditLog.findFirst({ where: { tenantId: scenario.tenantId, action: 'receiving_posted' } })
+        assert.deepEqual(audit.metadata.originalPromisesRecorded, [{ purchaseOrderLineId: scenario.poLines[0].id, originalPromisedDate: '2026-10-08' }])
+      } finally {
+        await cleanupReceivingScenario(prisma, scenario)
+      }
     })
   } finally {
     await prisma.$disconnect()

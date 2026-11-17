@@ -13,8 +13,8 @@ import { currentPromisedDay, promiseDay } from './purchase-order-promise-dates.m
 // share one original promised date. A 12-line order promised for one day is
 // one delivery, not twelve, so a large order cannot outweigh many small ones.
 // Until suppliers confirm dates in FlowChain, the original promise is the date
-// on the PO when it was approved, which may be the buyer's need date
-// (rules.promiseBasis 'po_date').
+// on the PO when it was issued or first received, which may be the buyer's
+// need date (rules.promiseBasis 'po_date'; design audit L1-05).
 //
 // Only orders the supplier actually got are measured (owner decision of
 // 2026-10-06, as decision V5 chases only issued orders): a PO issued to the
@@ -127,8 +127,9 @@ export function wilsonInterval(successes, trials, z = WILSON_Z) {
 // on the report dashboards: committed orders (approved, issued or received).
 // Drafts, pending approvals and rejections were never promised; a cancelled
 // order was called off by the buyer, so its undelivered lines are not late.
-// An approved order can still be cancelled, and approval records the original
-// promise, so cancelled orders are left out explicitly.
+// An approved order can still be cancelled, and an order issued and then
+// cancelled has an original promise, so cancelled orders are left out
+// explicitly.
 export const isPromiseMeasuredPurchaseOrder = (purchaseOrder) => isCommittedPurchaseOrder(purchaseOrder)
 const PROMISE_UNMEASURED_PO_STATUSES = ['draft', 'pending_approval', 'rejected', 'cancelled']
 

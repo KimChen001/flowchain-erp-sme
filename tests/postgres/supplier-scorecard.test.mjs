@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { backfillTenantAuthorization } from '../../server/auth/authorization-backfill.mjs'
 import { createDbProcurementCommandService } from '../../server/domain/procurement-db-command-service.mjs'
+import { recordOriginalPromises } from '../../server/domain/purchase-order-promise-dates.mjs'
 import { createSupplierScorecardReadService } from '../../server/domain/supplier-scorecard.mjs'
 import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 import { handleReportsAnalyticsRoute } from '../../server/routes/reports-analytics.routes.mjs'
@@ -140,12 +141,17 @@ test('the supplier scorecard is measured against the original promise, per tenan
       assert.equal(graced.suppliers[0].metrics.onTime.count, 6)
     })
 
-    await t.test('a line approved but never issued, with a posted receipt, is measured against the promise recorded at approval', async () => {
+    await t.test('a line approved but never issued, with a posted receipt, is measured against the promise recorded at its first receipt', async () => {
       // Approved for Aug 20, received Aug 22 without being issued in FlowChain:
       // the supplier got the order, so it counts (owner decision 2026-10-06).
+      // Approval records no original promise; the first posted receipt does
+      // (design audit L1-05). The receipt here is written directly, so the
+      // promise is recorded the way the posting command records it.
       await prisma.purchaseOrder.create({ data: { id: 'SC-PO-APPROVED', tenantId: tenantA, status: 'pending_approval', supplierId: 'SC-SUP-A', supplierName: 'Scorecard Supplier', currency: 'USD', amount: 500, lines: { create: [{ id: 'SC-PO-APPROVED-L1', sku: 'SC-SKU', itemName: 'Sensor', orderedQuantity: 10, receivedQuantity: 0, unit: 'pcs', unitPrice: 50, amount: 500, metadata: { promisedDate: '2026-08-20' } }] } } })
       await service.approvePurchaseOrder('SC-PO-APPROVED', { expectedVersion: 0, idempotencyKey: 'SC-PO-APPROVED-approve' }, { identity: identityOf(users.admin) })
       await prisma.receivingDocument.create({ data: { id: 'SC-PO-APPROVED-GRN', tenantId: tenantA, poId: 'SC-PO-APPROVED', supplierId: 'SC-SUP-A', postingStatus: 'posted', arrivedAt: at('2026-08-22', '15:00:00'), lines: { create: [{ id: 'SC-PO-APPROVED-GRNL', purchaseOrderLineId: 'SC-PO-APPROVED-L1', acceptedQty: 10, rejectedQty: 0 }] } } })
+      assert.equal((await prisma.purchaseOrderLine.findUnique({ where: { id: 'SC-PO-APPROVED-L1' } })).originalPromisedDate, null)
+      await prisma.$transaction(async (tx) => recordOriginalPromises(tx, { purchaseOrder: await tx.purchaseOrder.findUnique({ where: { id: 'SC-PO-APPROVED' }, include: { lines: true } }) }))
       const { payload } = await scorecard(prisma, users.admin, '?from=2026-08-01&to=2026-08-31')
       const [supplier] = payload.suppliers
       assert.equal(supplier.originalNotRecordedCount, 0)
@@ -155,13 +161,16 @@ test('the supplier scorecard is measured against the original promise, per tenan
     })
 
     await t.test('an order approved and then cancelled is not late on the scorecard or on the dashboard', async () => {
-      // Five lines promised for Jul 10: approval records the promise, and the
-      // buyer cancels before issue with nothing received.
+      // Five lines promised for Jul 10, approved and cancelled before issue
+      // with nothing received. Orders approved before 2026-11-16 got their
+      // original promise at approval, so these are given one, as such an
+      // order has: even with it, a cancelled order is not late.
       const identity = { identity: identityOf(users.admin) }
       for (const n of [1, 2, 3, 4, 5]) {
         const id = `SC-PO-CANCEL-${n}`
         await prisma.purchaseOrder.create({ data: { id, tenantId: tenantA, status: 'pending_approval', supplierId: 'SC-SUP-A', supplierName: 'Scorecard Supplier', currency: 'USD', amount: 500, lines: { create: [{ id: `${id}-L1`, sku: 'SC-SKU', itemName: 'Sensor', orderedQuantity: 10, receivedQuantity: 0, unit: 'pcs', unitPrice: 50, amount: 500, metadata: { promisedDate: '2026-07-10' } }] } } })
         await service.approvePurchaseOrder(id, { expectedVersion: 0, idempotencyKey: `${id}-approve` }, identity)
+        await prisma.$transaction(async (tx) => recordOriginalPromises(tx, { purchaseOrder: await tx.purchaseOrder.findUnique({ where: { id }, include: { lines: true } }) }))
         await service.cancelPurchaseOrder(id, { expectedVersion: 1, idempotencyKey: `${id}-cancel`, reason: 'No longer needed' }, identity)
       }
       const cancelled = await prisma.purchaseOrderLine.findMany({ where: { purchaseOrderId: { startsWith: 'SC-PO-CANCEL-' } } })
@@ -188,7 +197,9 @@ test('the supplier scorecard is measured against the original promise, per tenan
       const june = '?from=2026-06-01&to=2026-06-30'
       const unsent = (await scorecard(prisma, users.admin, june)).payload
       assert.deepEqual(unsent.suppliers.map((row) => [row.supplierId, row.sampleSize, row.waitingCount, row.overdueUndeliveredCount, row.notSentCount]), [['SC-SUP-A', 0, 0, 0, 1]])
-      assert.deepEqual(unsent.suppliers[0].notSentPurchaseOrders.map((row) => [row.purchaseOrderId, row.orderNumber, row.status, row.promisedDate, row.lines.map((line) => [line.purchaseOrderLineId, line.originalPromisedDate, line.amount])]), [[id, id, 'approved', '2026-06-15', [[`${id}-L1`, '2026-06-15', 500]]]])
+      assert.deepEqual(unsent.suppliers[0].notSentPurchaseOrders.map((row) => [row.purchaseOrderId, row.orderNumber, row.status, row.promisedDate, row.lines.map((line) => [line.purchaseOrderLineId, line.originalPromisedDate, line.amount])]), [[id, id, 'approved', '2026-06-15', [[`${id}-L1`, null, 500]]]])
+      // Approval records no original promise: the PO is listed by its current
+      // date until it is issued or first received (design audit L1-05).
       // A viewer sees the order without its amount.
       assert.equal((await scorecard(prisma, users.viewer, june)).payload.suppliers[0].notSentPurchaseOrders[0].lines[0].amount, null)
       const dashboard = async () => {
