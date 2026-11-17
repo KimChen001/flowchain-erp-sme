@@ -13,7 +13,7 @@ import { listTableCardsRef, tableBodyTextClass, thClass, thRightClass } from '..
 import { ReportDateInput } from './ReportDateInput';
 
 type Row = { id: string; orderNumber: string; supplier: string; supplierId: string; createdDate: string; dueDate: string; overdueDays: number | null; owner: string; ordered: number | null; received: number | null; remaining: number | null; unit: string; openLines?: number; lineCount?: number; amount: number | null; currency: string; status: string; isOpen: boolean; dataIncomplete: boolean };
-type Report = { overdueSuppliers: { supplier: string; count: number }[]; overdueSupplierTotal?: number; overdueOrdersNotShown?: number; asOf: string; generatedAt: string; total: number; page: number; pageSize: number; pages: number; suppliers: string[]; currencies: string[]; rows: Row[]; exportRows?: Row[]; summary: { open: number; overdue: number; incomplete: number; totals: { currency: string; amount: number | null }[] } };
+type Report = { overdueSuppliers: { supplier: string; supplierId?: string; count: number }[]; supplierOptions?: { id: string; name: string }[]; overdueSupplierTotal?: number; overdueOrdersNotShown?: number; asOf: string; generatedAt: string; total: number; page: number; pageSize: number; pages: number; suppliers: string[]; currencies: string[]; rows: Row[]; exportRows?: Row[]; summary: { open: number; overdue: number; incomplete: number; totals: { currency: string; amount: number | null }[] } };
 const zh: Record<string, string> = {
   'Enter a valid date range in YYYY-MM-DD format.': '请输入有效的日期范围，格式为 YYYY-MM-DD。',
   'Suppliers with overdue orders': '逾期订单供应商', 'Top 5 suppliers with overdue orders': '逾期订单最多的 5 家供应商', 'Select a supplier to view its overdue orders.': '选择供应商查看其逾期订单。', 'No overdue orders in this scope.': '当前范围没有逾期订单。',
@@ -119,6 +119,14 @@ export function OpenPurchaseOrdersPage() {
     if (value) next.set(key, value); else next.delete(key);
     setParams(next, { replace: true });
   };
+  // The supplier filter: by id; an older link's supplier name gives way to it.
+  const chooseSupplier = (value: string) => {
+    const next = new URLSearchParams(params); next.delete('page'); next.delete('supplier');
+    if (value) next.set('supplierId', value); else next.delete('supplierId');
+    setParams(next, { replace: true });
+  };
+  const supplierOptions = report?.supplierOptions || (report?.suppliers || []).map(name => ({ id: name, name }));
+  const supplierLabel = supplierOptions.find(option => option.id === params.get('supplierId'))?.name || params.get('supplier') || '';
   const sort = (key: string) => {
     const next = new URLSearchParams(params); next.delete('page'); next.set('sort', key);
     next.set('direction', params.get('sort') === key && params.get('direction') === 'asc' ? 'desc' : 'asc');
@@ -134,7 +142,7 @@ export function OpenPurchaseOrdersPage() {
       const rows = (result.exportRows || []).map(row => Object.fromEntries(exportColumns.map(column => [t(column.label), cell(row, column.key)])));
       await exportWorkbookSheets('Open-Purchase-Orders', [
         { name: t('Purchase orders'), rows: rows.length ? rows : [{ [t('Scope')]: t('No orders match these filters.') }] },
-        { name: t('Report scope'), rows: [{ [t('Generated at')]: result.generatedAt, [t('As of (workspace time)')]: result.asOf, [t('Matching orders')]: result.total, [t('Scope')]: t(({ open: 'Open orders', all: 'All orders', overdue: 'Overdue', incomplete: 'Missing data' } as Record<string, string>)[scope]), [t('Order date from')]: params.get('from') || '', [t('Order date to')]: params.get('to') || '', [t('Supplier')]: params.get('supplier') || t('All suppliers'), [t('Currency')]: params.get('currency') || t('All currencies'), [t('Search PO, supplier or owner')]: params.get('search') || '', [t('FX converted')]: t('No') }] },
+        { name: t('Report scope'), rows: [{ [t('Generated at')]: result.generatedAt, [t('As of (workspace time)')]: result.asOf, [t('Matching orders')]: result.total, [t('Scope')]: t(({ open: 'Open orders', all: 'All orders', overdue: 'Overdue', incomplete: 'Missing data' } as Record<string, string>)[scope]), [t('Order date from')]: params.get('from') || '', [t('Order date to')]: params.get('to') || '', [t('Supplier')]: supplierLabel || t('All suppliers'), [t('Currency')]: params.get('currency') || t('All currencies'), [t('Search PO, supplier or owner')]: params.get('search') || '', [t('FX converted')]: t('No') }] },
         { name: t('Metric definitions'), rows: definitions.map(value => ({ [t('Definition')]: t(value) })) },
       ], timezone);
     } catch { setError('Could not export report. Please retry.'); } finally { setExporting(false); }
@@ -156,7 +164,10 @@ export function OpenPurchaseOrdersPage() {
         <button type="button" onClick={() => setParams({}, { replace: true })} className="ml-auto h-8 rounded-lg px-2 text-[11px] font-medium hover:bg-blue-50" style={{ color: A.blue }}>{t('Clear filters')}</button>
       </div>
       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,2fr)]">
-        {([['supplier', 'Supplier', 'All suppliers', report?.suppliers || []], ['currency', 'Currency', 'All currencies', report?.currencies || []]] as const).map(([key, label, all, values]) => <label key={key} className="text-[11px] font-medium" style={{ color: A.gray1 }}>{t(label)}<select className={`${control} mt-1`} style={{ background: A.gray6 }} value={params.get(key) || ''} onChange={event => change(key, event.target.value)}><option value="">{t(all)}</option>{values.map(value => <option key={value} value={value}>{value}</option>)}</select></label>)}
+        {/* A supplier is chosen by its id and shown by its current name, so a
+            renamed supplier's older orders stay under it. */}
+        <label className="text-[11px] font-medium" style={{ color: A.gray1 }}>{t('Supplier')}<select className={`${control} mt-1`} style={{ background: A.gray6 }} value={params.get('supplierId') || ''} onChange={event => chooseSupplier(event.target.value)}><option value="">{t('All suppliers')}</option>{supplierOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label>
+        <label className="text-[11px] font-medium" style={{ color: A.gray1 }}>{t('Currency')}<select className={`${control} mt-1`} style={{ background: A.gray6 }} value={params.get('currency') || ''} onChange={event => change('currency', event.target.value)}><option value="">{t('All currencies')}</option>{(report?.currencies || []).map(value => <option key={value} value={value}>{value}</option>)}</select></label>
         <label className="text-[11px] font-medium" style={{ color: A.gray1 }}>{t('Search PO, supplier or owner')}<input className={`${control} mt-1`} style={{ background: A.gray6 }} aria-label={t('Search PO, supplier or owner')} placeholder={t('Search PO, supplier or owner')} value={params.get('search') || ''} onChange={event => change('search', event.target.value)} /></label>
       </div>
     </Card>
@@ -170,7 +181,7 @@ export function OpenPurchaseOrdersPage() {
       <Card className="p-4" data-testid="open-po-overdue-suppliers">
         <h2 className="text-sm font-semibold" style={{ color: A.label }}>{t(moreSuppliers ? 'Top 5 suppliers with overdue orders' : 'Suppliers with overdue orders')}</h2>
         <p className="mt-0.5 text-[11px]" style={{ color: A.gray2 }}>{t('Select a supplier to view its overdue orders.')}</p>
-        <div className="mt-3 space-y-1">{report.overdueSuppliers.length ? report.overdueSuppliers.map(item => <button key={item.supplier} type="button" className="flex w-full items-center gap-3 rounded p-1.5 text-xs hover:bg-slate-50" onClick={() => { const next = new URLSearchParams(params); next.set('supplier', item.supplier); next.set('scope', 'overdue'); next.delete('page'); setParams(next, { replace: true }); }}><span className="w-32 shrink-0 truncate text-left sm:w-48" title={item.supplier}>{item.supplier || t('Unavailable')}</span><span className="h-2.5 flex-1 rounded" style={{ background: A.gray5 }}><span className="block h-2.5 rounded" style={{ width: `${item.count / Math.max(...report.overdueSuppliers.map(value => value.count)) * 100}%`, background: A.orange }} /></span><strong className="w-8 text-right tabular-nums">{count.format(item.count)}</strong></button>) : <p className="py-3 text-xs" style={{ color: A.sub }}>{t('No overdue orders in this scope.')}</p>}</div>
+        <div className="mt-3 space-y-1">{report.overdueSuppliers.length ? report.overdueSuppliers.map(item => <button key={item.supplier} type="button" className="flex w-full items-center gap-3 rounded p-1.5 text-xs hover:bg-slate-50" onClick={() => { const next = new URLSearchParams(params); next.delete('supplier'); next.set('supplierId', item.supplierId || item.supplier); next.set('scope', 'overdue'); next.delete('page'); setParams(next, { replace: true }); }}><span className="w-32 shrink-0 truncate text-left sm:w-48" title={item.supplier}>{item.supplier || t('Unavailable')}</span><span className="h-2.5 flex-1 rounded" style={{ background: A.gray5 }}><span className="block h-2.5 rounded" style={{ width: `${item.count / Math.max(...report.overdueSuppliers.map(value => value.count)) * 100}%`, background: A.orange }} /></span><strong className="w-8 text-right tabular-nums">{count.format(item.count)}</strong></button>) : <p className="py-3 text-xs" style={{ color: A.sub }}>{t('No overdue orders in this scope.')}</p>}</div>
         {moreSuppliers > 0 && <button type="button" className="mt-2 text-[11px] font-medium" style={{ color: A.blue }} data-testid="open-po-overdue-more" onClick={() => change('scope', 'overdue')}>{say(`+${count.format(moreSuppliers)} more ${moreSuppliers === 1 ? 'supplier' : 'suppliers'} with ${count.format(report.overdueOrdersNotShown ?? 0)} overdue ${(report.overdueOrdersNotShown ?? 0) === 1 ? 'order' : 'orders'}`, `另有 ${count.format(moreSuppliers)} 家供应商共 ${count.format(report.overdueOrdersNotShown ?? 0)} 张逾期订单`)}</button>}
       </Card>
       <div className="text-[11px]" style={{ color: A.sub }}>{t('Updated')}: {formatDateTime(report.generatedAt)} · {t('As of (workspace time)')}: {day(report.asOf)}</div>
