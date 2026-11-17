@@ -29,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 154);
+  assert.equal(routes.length, 157);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -46,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    154,
+    157,
   );
   assert.throws(
     () =>
@@ -698,5 +698,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /154\/154 frontend route stability audit/);
+  assert.match(matrix, /157\/157 frontend route stability audit/);
 });

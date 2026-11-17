@@ -16,12 +16,12 @@ backend-authorized.
 
 ## Classification summary
 
-- Core: 76
+- Core: 79
 - Extension: 51
 - Internal: 0
 - Frozen: 12
 - Legacy: 15
-- Total: 154
+- Total: 157
 
 ## Default SME navigation
 
@@ -40,7 +40,7 @@ and Internal surfaces remain outside normal navigation.
 The classification summary and the executable route matrix below are
 regenerated with `node scripts/generate-route-authority-matrix.mjs`.
 
-The 154/154 frontend route stability audit verifies
+The 157/157 frontend route stability audit verifies
 resolution, shell rendering, no route-level 404 recovery, no render crash, and
 no observed API 5xx. It does not prove business semantics, data authority,
 permission correctness, capability correctness, or complete functionality.
@@ -172,7 +172,10 @@ classification and navigation metadata.
 | `inventory:transfer` | `/app/inventory/transfers` | 库存调拨 | `inventory` | EXTENSION | SECONDARY | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | stock-transfer | inventory.transfer.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `inventory:transfer:new` | `/app/inventory/transfers/new` | 新建库存调拨 | `inventory` | EXTENSION | CONTEXTUAL | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | stock-transfer | inventory.transfer.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `inventory:transfer-detail` | `/app/inventory/transfers/:id` | 库存调拨工作台 | `inventory` | EXTENSION | CONTEXTUAL | no | stock_transfer | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | stock-transfer | inventory.transfer.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
+| `inventory:lots` | `/app/inventory/lots` | 批次 | `inventory` | CORE | SECONDARY | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | inventory.balance.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `inventory:serials` | `/app/inventory/serials` | 序列号 | `inventory` | CORE | SECONDARY | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | inventory.balance.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `inventory:bins` | `/app/inventory/bins` | 库位管理 | `inventory` | CORE | SECONDARY | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | inventory-bin-read | inventory.balance.read | CAPABILITY_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `inventory:exceptions` | `/app/inventory/exceptions` | 库存异常 | `inventory` | CORE | SECONDARY | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | inventory.balance.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `finance` | `/app/finance` | 应付与应收 | `finance` | EXTENSION | PRIMARY | no | finance | `src/modules/finance` | /api/finance/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | finance | finance.overview.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `finance:overview` | `/app/finance/overview` | 概览 | `finance` | EXTENSION | SECONDARY | no | finance | `src/modules/finance` | /api/finance/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | finance | finance.overview.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `finance:invoices` | `/app/finance/invoices` | 采购发票 | `finance` | LEGACY | HIDDEN | no | finance | `src/modules/finance` | /api/finance/* | Retired legacy route | RETIRED | RETIRED | — | — | LEGACY_REDIRECT | procurement:bills | Moved; redirects to procurement:bills. |

@@ -24,6 +24,8 @@ const ROUTES = [
   // With filter chips: their labels are copy, their values are as given.
   "/app/inventory/movements?movementType=receipt&status=posted",
   "/app/inventory/warnings",
+  "/app/inventory/lots",
+  "/app/inventory/serials",
   "/app/inventory/transfers",
   "/app/inventory/transfers/new",
   "/app/inventory/counts",

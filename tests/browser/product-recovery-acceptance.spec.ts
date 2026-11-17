@@ -259,4 +259,9 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByRole("row").filter({ hasText: "TST-004" }).first()).toBeVisible();
   await expect(page.getByText(/STATIC-|SKU-01100/)).toHaveCount(0);
 
+  for (const route of ["lots", "serials", "exceptions"]) {
+    await page.goto(`/app/inventory/${route}`);
+    await expect(page.getByText(/当前工作区暂无|当前没有库存异常/)).toBeVisible();
+    await expect(page.getByText(/STATIC-|SKU-01100/)).toHaveCount(0);
+  }
 });
