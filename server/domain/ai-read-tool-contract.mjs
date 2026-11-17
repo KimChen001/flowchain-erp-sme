@@ -24,7 +24,10 @@ export function defineAiTool({ name, description, parameters = {}, required = []
   return Object.freeze({
     name,
     description,
-    schema: Object.freeze({ type: 'object', properties: parameters, required, additionalProperties: false }),
+    // An empty `required` is left out: a schema without one requires nothing,
+    // and every request carries every tool's schema (2026-11-17: room for
+    // record_history in the earlier-turn budget).
+    schema: Object.freeze({ type: 'object', properties: parameters, ...(required.length ? { required } : {}), additionalProperties: false }),
     available,
     run,
     ...(assistantV2Only ? { assistantV2Only: true } : {}),
@@ -39,7 +42,7 @@ export function validateAiToolArgs(schema, input) {
   if (typeof args !== 'object' || Array.isArray(args)) return { ok: false, errors: ['arguments must be an object'] }
   const errors = []
   for (const key of Object.keys(args)) if (!schema.properties[key]) errors.push(`unknown argument ${key}`)
-  for (const key of schema.required) if (args[key] === undefined || args[key] === null || args[key] === '') errors.push(`missing argument ${key}`)
+  for (const key of schema.required || []) if (args[key] === undefined || args[key] === null || args[key] === '') errors.push(`missing argument ${key}`)
   for (const [key, rule] of Object.entries(schema.properties)) {
     const value = args[key]
     if (value === undefined || value === null) continue

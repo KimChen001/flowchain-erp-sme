@@ -66,6 +66,7 @@ const BASIS_SOURCES = Object.freeze({
   inventory_value: 'inventory', stock_on_hand: 'inventory', optimize_order_plan: 'inventory', order_quantity_costs: 'inventory', suggest_purchase_lines: 'inventory', suggest_purchase_request: 'inventory',
   item_suppliers: 'suppliers', rfq_quotes: 'rfqs', sales_summary: 'sales_orders', list_receivables: 'receivables',
   supplier_payables: 'payables', cash_movements: 'payments', gross_profit: 'gross_profit', stock_movements: 'inventory', list_shipments: 'sales_orders',
+  record_history: 'audit',
   records_missing_data: 'items', setup_status: 'items', suggest_setup_records: 'items',
   workspace_summary: 'overview', attention_list: 'overview', decision_items: 'overview', decision_history: 'overview', search_records: 'overview',
 })

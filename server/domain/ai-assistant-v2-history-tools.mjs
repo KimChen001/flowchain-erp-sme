@@ -1,4 +1,4 @@
-import { AI_TOOL_LIMITS, aiStockSku, aiToolList, aiToolRef, defineAiTool } from './ai-read-tool-contract.mjs'
+import { AI_TOOL_LIMITS, aiStockSku, aiToolList, aiToolPurchaseOrder, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
 import { createInventoryAuthoritativeReadService } from './inventory-authoritative-read-service.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
 import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
@@ -101,4 +101,74 @@ const listShipments = defineAiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_HISTORY_TOOLS = Object.freeze([stockMovements, listShipments])
+// The audit log's names for each kind of record, as its writers spell them,
+// and the permission that reads the record itself.
+const HISTORY_KINDS = Object.freeze({
+  purchase_order: { types: ['purchase_order', 'PurchaseOrder'], read: 'procurement.purchase_order.read' },
+  sales_order: { types: ['SalesOrder', 'sales_order'], read: 'sales_order.read' },
+  item: { types: ['item', 'inventory_item'], read: 'inventory.balance.read' },
+  supplier: { types: ['supplier'], read: null },
+})
+const HISTORY_READ = 50
+
+// The record the model named, among those the reader may read: a purchase
+// order number, a sales order number, an SKU or a supplier, in that order. A
+// purchase order, item or supplier is found in the reader's facts (already
+// masked to them); a sales order needs sales_order.read. One argument instead
+// of a kind and a record keeps the tool's text short: every request carries
+// it. { kind, id, label } or { error }.
+async function historyRecord(record, { facts, context }) {
+  const allowed = (kind) => !HISTORY_KINDS[kind].read || can(context, HISTORY_KINDS[kind].read)
+  const order = allowed('purchase_order') ? aiToolPurchaseOrder(facts, record) : null
+  if (order) return { kind: 'purchase_order', id: text(order.id), label: text(order.orderNumber) || text(order.id) }
+  if (allowed('sales_order')) {
+    const sale = await context.prisma.salesOrder.findFirst({ where: { tenantId: context.tenantId, OR: [{ id: text(record) }, { orderNumber: text(record) }] }, select: { id: true, orderNumber: true } })
+    if (sale) return { kind: 'sales_order', id: sale.id, label: text(sale.orderNumber) || sale.id }
+  }
+  const stock = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)]
+  const item = allowed('item') ? stock.find((row) => text(row.sku).toLowerCase() === text(record).toLowerCase() && row.itemId) : null
+  if (item) return { kind: 'item', id: text(item.itemId), label: text(item.sku) }
+  const found = aiToolSupplier(facts, record)
+  if (found.supplier) return { kind: 'supplier', id: text(found.supplier.id), label: text(found.supplier.name) || text(found.supplier.id) }
+  return found.error === 'supplier_ambiguous' ? { error: 'ambiguous', candidates: found.candidates } : { error: 'not_found' }
+}
+
+// Who changed a record and when, newest first, from the audit log (design
+// audit 2026-11-15, L5-04: "who moved PO-020's date?"). Needs audit.read, as
+// the audit page does, and the record's own read permission; the before and
+// after values need audit.read_sensitive, as there.
+const recordHistory = defineAiTool({
+  name: 'record_history',
+  description: 'Who changed a PO, SO, SKU or supplier, and when.',
+  parameters: { record: { type: 'string' } },
+  required: ['record'],
+  available: (_facts, context) => Boolean(context?.actor && context.prisma) && can(context, 'audit.read'),
+  assistantV2Only: true,
+  async run(args, { facts, context }) {
+    const found = await historyRecord(args.record, { facts, context })
+    if (found.error) return found
+    const sensitive = can(context, 'audit.read_sensitive')
+    const rows = array(await context.prisma.auditLog.findMany({
+      where: { tenantId: context.tenantId, entityId: found.id, entityType: { in: HISTORY_KINDS[found.kind].types } },
+      select: { createdAt: true, action: true, summary: true, metadata: true, actor: { select: { name: true } } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      take: HISTORY_READ + 1,
+    }))
+    return {
+      record: found.label,
+      kind: found.kind,
+      ref: aiToolRef(found.kind, found.id, found.label),
+      ...(rows.length > HISTORY_READ ? { partial: { limit: HISTORY_READ } } : {}),
+      ...aiToolList(rows.slice(0, HISTORY_READ).map((row) => {
+        const before = row.metadata?.before, after = row.metadata?.after
+        return {
+          at: (row.createdAt instanceof Date ? row.createdAt.toISOString() : text(row.createdAt)).slice(0, 16) || null,
+          action: text(row.action) || null, summary: text(row.summary).slice(0, AI_TOOL_LIMITS.text) || null, by: text(row.actor?.name) || null,
+          ...(sensitive && (before !== undefined || after !== undefined) ? { before: before ?? null, after: after ?? null } : {}),
+        }
+      })),
+    }
+  },
+})
+
+export const AI_ASSISTANT_V2_HISTORY_TOOLS = Object.freeze([stockMovements, listShipments, recordHistory])
