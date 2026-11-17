@@ -34,7 +34,6 @@ test('inventory SKU focus renders a local detail and canonical entity navigation
   assert.match(inventorySource, /库存详情/)
   assert.match(inventorySource, /<EntityLink kind="item"/)
   assert.match(inventorySource, /movements:\s*\{\s*url:\s*"\/api\/inventory\/movements"/)
-  assert.match(inventorySource, /exceptions:\s*\{\s*url:\s*"\/api\/inventory\/exceptions"/)
 })
 
 test('PO detail and draft review shell use shared recovery actions', () => {

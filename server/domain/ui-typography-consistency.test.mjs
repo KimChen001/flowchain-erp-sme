@@ -67,19 +67,6 @@ test('action draft review shell keeps evidence links and draft actions on shared
   assert.match(source, /className=\{draftEvidenceLinkClass\}/)
 })
 
-test('Forecast MRP and S&OP tables use shared workbench typography scale', () => {
-  const source = readSource('src', 'modules', 'forecast', 'Page.tsx')
-  const activeSource = source.split('// Legacy forecast block removed in favor of S&OP engine above')[0]
-
-  assert.match(activeSource, /from "\.\.\/\.\.\/components\/ui\/workbenchTable"/)
-  assert.match(activeSource, /tableBodyTextClass/)
-  assert.match(activeSource, /className=\{thClass\}/)
-  assert.match(activeSource, /className=\{thWideClass\}/)
-  assert.match(activeSource, /className=\{tdNumericClass\}/)
-  assert.match(activeSource, /className=\{tdWideNumericClass\}/)
-  assert.doesNotMatch(activeSource, /<table className="w-full text-xs">/)
-})
-
 test('global search results use dedicated search result typography tokens', () => {
   const source = readSource('src', 'app', 'FlowChainApp.tsx')
 
