@@ -10,7 +10,7 @@ import PrintCanvas from "./PrintCanvas";
 import PrintElementInspector from "./PrintElementInspector";
 import PrintInstancePanel from "./PrintInstancePanel";
 import PrintLayoutImportBanner from "./PrintLayoutImportBanner";
-import { printFieldOptions } from "./printDataAdapters";
+import { printFieldOptionsFor } from "./printDataAdapters";
 import { clearPrintInstance, loadPrintInstance, savePrintInstance } from "./printInstanceStorage";
 import { createPrintElement, instanceElementId, withInstanceFields, type NewPrintElementType } from "./printLayoutElements";
 import { defaultPrintTemplate } from "./printLayoutPresets";
@@ -36,7 +36,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
   data: PrintDocumentData;
   onClose: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [template, setTemplate] = useState<PrintLayoutTemplate>(() => withInstanceFields(defaultPrintTemplate(documentType, t), documentType, t));
   const [selectedId, setSelectedId] = useState("title");
   const [documents, setDocuments] = useState<DocumentSettings | null>(null);
@@ -331,7 +331,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
           <PrintElementInspector
             elements={template.elements}
             selected={selected}
-            fieldOptions={printFieldOptions[documentType]}
+            fieldOptions={printFieldOptionsFor(documentType, language)}
             instanceValue={selected ? instanceValues[selected.id] : ""}
             onSelect={setSelectedId}
             onChange={changeSelected}

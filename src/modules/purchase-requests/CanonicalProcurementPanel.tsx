@@ -167,6 +167,9 @@ const CODE_MESSAGES: Record<string, ErrorPair> = {
   SUPPLIER_INACTIVE: ["This supplier is inactive. Choose another.", "该供应商已停用，请选择其他供应商。"],
   ITEM_INACTIVE: ["This item is inactive.", "该物料已停用。"],
   ITEM_NOT_PURCHASABLE: ["This item cannot be purchased.", "该物料不允许采购。"],
+  // The item's own problem, under its supplier field (design audit L1-31: it read "Choose a supplier.").
+  ITEM_HAS_NO_APPROVED_SUPPLIER: ["This item has no approved supplier yet. Add one on the item's page first.", "该物料还没有已批准的供应商，请先在物料页面维护。"],
+  ITEM_SUPPLIER_RELATIONSHIP_INVALID: ["This supplier is not an approved source for the item. Choose another.", "所选供应商不是该物料的已批准供应商，请重新选择。"],
 };
 const HEADER_FIELDS = new Set(["defaultCurrency", "defaultNeedByDate"]);
 const LINE_FIELD = /^lines\.\d+\.(\w+)$/;
@@ -359,6 +362,8 @@ const COPY = {
   history: ["Changes to this request", "申请变更记录"],
   historyEmpty: ["No changes recorded for this request yet.", "此申请暂无变更记录。"],
   more: ["More", "更多"],
+  // L1-31: the item field's label in both languages.
+  skuOrOther: ["SKU / other", "SKU / 其他"],
 } as const;
 const request = <T,>(url: string, method = "GET", body?: unknown) =>
   apiJson<T>(url, {
@@ -1082,7 +1087,7 @@ export default function CanonicalProcurementPanel({
       [tr("requester")]: requesterOf(pr),
       [tr("needBy")]: needByOf(pr) || "",
       [tr("amount")]: pr.totalAmount ?? "",
-      Currency: pr.defaultCurrency,
+      [tr("currency")]: pr.defaultCurrency,
       [tr("status")]: statusLabel(pr.status),
       [tr("purchaseOrders")]: (pr.linkedPurchaseOrderIds || []).map((id) => orderNumbers.get(id) || id).join("; "),
     })), timezone);
@@ -1512,7 +1517,7 @@ export default function CanonicalProcurementPanel({
                   </select>
                 </Field>
                 <div className="md:col-span-1 xl:col-span-2">
-                  <Field label="SKU / 其他" required={line.sourceType === "catalog_item"} error={line.sourceType === "catalog_item" ? lineError(index, "itemId") : null}>
+                  <Field label={tr("skuOrOther")} required={line.sourceType === "catalog_item"} error={line.sourceType === "catalog_item" ? lineError(index, "itemId") : null}>
                     {line.sourceType === "catalog_item" ? (
                       <select
                         aria-label={`SKU ${index + 1}`}

@@ -6,6 +6,7 @@ import { FieldError, RequiredMark, invalidProps } from "../../components/ui/form
 import { StatusChip as ToneChip, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { apiErrorText } from "../../lib/apiErrorText";
 import { createSecureClientMutationId } from "../../lib/client-id";
 
 // Controls shared by the bill, invoice and payment screens: the translated
@@ -117,7 +118,10 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
   issueDetail?: (issue: Issue) => ReactNode;
   oneStep?: boolean;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  // A server error in the interface language: its own sentence in English,
+  // the shared wording in Chinese, never the server's English (design audit L16).
+  const failure = (cause: ApiError) => issueText?.(cause.code) || (language === "en-US" ? cause.message : apiErrorText(cause, language, ["Try again in a moment.", "请稍后重试。"]));
   const reasonId = useId();
   const reasonRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
@@ -144,7 +148,7 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       setPlan(next);
       return next;
     } catch (reason) {
-      setError(reason instanceof ApiError ? issueText?.(reason.code) || reason.message : message(reason, t("finance.loadFailed")));
+      setError(reason instanceof ApiError ? failure(reason) : message(reason, t("finance.loadFailed")));
       return null;
     }
   };
@@ -179,7 +183,7 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       onDone();
       return true;
     } catch (cause) {
-      setError(cause instanceof ApiError ? issueText?.(cause.code) || cause.message : cause instanceof Error ? cause.message : t("finance.loadFailed"));
+      setError(cause instanceof ApiError ? failure(cause) : t("finance.loadFailed"));
       // The preview no longer holds (another change got there first): preview again before confirming.
       setPlan(null);
       return false;

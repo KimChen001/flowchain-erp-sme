@@ -1,11 +1,19 @@
 // A missing or hidden amount (null, undefined, empty or not a number)
 // renders as "—", never as 0: a role without the amount permission gets null
 // from the server, and showing it as $0.00 would state a false value.
+// The workspace's number format (I18n sets it with the localization it
+// reads), so an amount formatted outside a hook reads as the pages do
+// (design audit U-07); en-US until it is known.
+let workspaceLocale = "en-US";
+export function setWorkspaceNumberLocale(locale?: string | null) {
+  workspaceLocale = String(locale || "").trim() || "en-US";
+}
+
 export function formatNumberAmount(value: number | string | null | undefined, options: Intl.NumberFormatOptions = {}) {
   if (value === null || value === undefined || value === "") return "—";
   const amount = Number(value);
   if (!Number.isFinite(amount)) return "—";
-  return new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat(workspaceLocale, {
     maximumFractionDigits: 2,
     ...options,
   }).format(amount);

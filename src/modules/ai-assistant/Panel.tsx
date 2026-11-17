@@ -171,7 +171,7 @@ export default function FloatingAiAssistant({
   userName?: string | null;
   onNavigate?: AiNavigate;
 }) {
-  const { language } = useI18n();
+  const { language, locale } = useI18n();
   const zh = language === "zh-CN";
   const docked = useDocked();
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
@@ -561,7 +561,7 @@ export default function FloatingAiAssistant({
             </div>
             {inputTooLong ? (
               <p data-testid="ai-input-too-long" role="status" className="mt-1 px-1 text-[12px]" style={{ color: "#9A3412" }}>
-                {translate(language, "ai.v2.input.tooLong", { count: inputLength.toLocaleString(language), limit: questionLimit.toLocaleString(language) })}
+                {translate(language, "ai.v2.input.tooLong", { count: inputLength.toLocaleString(locale), limit: questionLimit.toLocaleString(locale) })}
               </p>
             ) : null}
           </div>
