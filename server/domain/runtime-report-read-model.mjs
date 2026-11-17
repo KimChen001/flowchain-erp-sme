@@ -1,4 +1,5 @@
 import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-inventory-allocation-read-model.mjs'
+import { allocationTruncatedSubjects } from './reorder-list-read-service.mjs'
 import { OVERVIEW_TABS, buildBusinessOverview } from './business-overview.mjs'
 import { isCommittedPurchaseOrder, isOpenPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
@@ -171,7 +172,9 @@ const dashboardMetrics = {
 // quantity otherwise); a sales order names a SKU only when it has one line.
 function runtimeRows(context, inventory, timeZone) {
   // An inventory row names its item and unit; the SKU is its business ID.
-  const units = new Map([...array(context.items), ...array(context.inventoryItems)].map(row => [text(row.sku || row.itemId || row.id), text(row.unit)]).filter(([sku, unit]) => sku && unit))
+  // The capped lists name it as before; the allocation's item units fill in
+  // the SKUs past them.
+  const units = new Map([...array(inventory.itemUnits), ...array(context.items), ...array(context.inventoryItems)].map(row => [text(row.sku || row.itemId || row.id), text(row.unit)]).filter(([sku, unit]) => sku && unit))
   const inventoryUnit = sku => units.get(sku) || ''
   const supplierOf = reportSupplierName(context)
   const purchaseQuantity = row => {
@@ -388,16 +391,31 @@ const DASHBOARD_TRUNCATION_SUBJECTS = {
   finance: ['supplier_invoices'],
   suppliers: ['suppliers', 'purchase_orders', 'receipts', 'supplier_invoices'],
 }
+// The subjects a dashboard reads only for its stock figures (stock, available,
+// in transit, the stock signals), which the allocation model builds. When the
+// allocation read its inputs over every record (allocationInputs, design
+// audit C1), those subjects are named from that read's own cuts, as on the
+// reorder list and Today (allocationTruncatedSubjects), not from the read
+// context's capped lists. The overview's purchase order, invoice and sales
+// figures, its open and unfulfilled order cards and its table still count the
+// capped lists, so they keep naming them.
+const STOCK_ONLY_SUBJECTS = {
+  overview: ['inventory_items', 'items'],
+  inventory: ['inventory_items', 'items', 'purchase_orders', 'sales_orders'],
+}
 // Sales orders are read newest first, up to a limit. Their figures are still
 // whole when the context carries the database's totals over every order
 // (salesOrderGroups) and every order with open demand was read
 // (openDemandComplete): the overview and inventory then need no note, and the
 // sales dashboard says only that its table and download list the latest
 // orders (figuresComplete, with the number of orders, total).
-function dashboardTruncation(context, subject, allOrders) {
+// allocationSource is the context the allocation model was built from.
+function dashboardTruncation(context, subject, allOrders, allocationSource = context) {
   const groupsComplete = Array.isArray(context.salesOrderGroups)
-  return array(context.truncatedSubjects)
-    .filter(entry => text(entry?.subject) && Number.isFinite(Number(entry?.limit)) && DASHBOARD_TRUNCATION_SUBJECTS[subject].includes(text(entry.subject)))
+  const fromAllocation = Boolean(allocationSource?.allocationInputs) && Object.hasOwn(STOCK_ONLY_SUBJECTS, subject)
+  const stockOnly = fromAllocation ? STOCK_ONLY_SUBJECTS[subject] : []
+  const listed = array(context.truncatedSubjects)
+    .filter(entry => text(entry?.subject) && Number.isFinite(Number(entry?.limit)) && DASHBOARD_TRUNCATION_SUBJECTS[subject].includes(text(entry.subject)) && !stockOnly.includes(text(entry.subject)))
     .flatMap(entry => {
       const base = { subject: text(entry.subject), limit: Number(entry.limit) }
       if (base.subject !== 'sales_orders') return [base]
@@ -406,6 +424,13 @@ function dashboardTruncation(context, subject, allOrders) {
       if (subject === 'overview') return groupsComplete && openDemandComplete ? [] : [base]
       return groupsComplete ? [{ ...base, figuresComplete: true, openDemandComplete, total: allOrders }] : [base]
     })
+  // A subject named for a capped list is named once, at that list's limit.
+  const stock = fromAllocation
+    ? allocationTruncatedSubjects(allocationSource)
+      .filter(entry => Number.isFinite(Number(entry?.limit)) && !listed.some(row => row.subject === text(entry.subject)))
+      .map(entry => ({ subject: text(entry.subject), limit: Number(entry.limit) }))
+    : []
+  return [...listed, ...stock]
 }
 
 // The rows a detail table lists: dated documents newest first by their
@@ -440,8 +465,12 @@ function overviewStockSignals(inventory, reorder) {
 
 export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const restriction = { subjects: new Set(array(context.restrictedSubjects)), amounts: context.restrictedAmounts || {} }
-  const inventory = buildRuntimeInventoryAllocation(options.allocationContext && !restriction.subjects.has('inventory_balances') ? options.allocationContext : context)
+  const allocationSource = options.allocationContext && !restriction.subjects.has('inventory_balances') ? options.allocationContext : context
+  const inventory = buildRuntimeInventoryAllocation(allocationSource)
   inventory.units = [...new Set(array(context.inventoryItems).map(row => text(row.unit)).filter(Boolean))]
+  // The recorded unit of every item the allocation read, for the stock rows
+  // past the capped item and inventory lists.
+  inventory.itemUnits = array(allocationSource.allocationInputs?.itemUnits)
   if (inventory.units.length > 1) inventory.dataLimitations.push('inventory_units_mixed')
   const query = { subject: dashboardMetrics[input.subject] ? input.subject : 'overview', from: text(input.filters?.from || ''), to: text(input.filters?.to || ''), supplier: text(input.filters?.supplier || ''), customer: text(input.filters?.customer || ''), currency: currencyCode(input.filters?.currency), status: text(input.filters?.status || ''), stock: REPORT_DRILL_FILTERS.stock.includes(text(input.filters?.stock)) ? text(input.filters?.stock) : '', match: REPORT_DRILL_FILTERS.match.includes(text(input.filters?.match)) ? text(input.filters?.match) : '', limit: Math.max(1, Math.min(200, number(input.limit || 50))) }
   const timeZone = options.timeZone || DEFAULT_TENANT_TIMEZONE
@@ -514,7 +543,7 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const overview = query.subject === 'overview' && !options.kpisOnly ? buildBusinessOverview(all, { salesDemand, reorder: options.reorder || null, salesActivity: all.sales_order_groups, partial, restrictedSubjects: restriction.subjects }) : null
   // Subjects the read context could not load in full whose cut changes this
   // dashboard's figures; totals over them may be low.
-  const truncatedSubjects = dashboardTruncation(context, query.subject, totalWeight(source.sales_order_groups))
+  const truncatedSubjects = dashboardTruncation(context, query.subject, totalWeight(source.sales_order_groups), allocationSource)
   return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, ...(query.subject === 'overview' && !restriction.subjects.has('inventory_balances') ? { stockSignals } : {}), restrictedSubjects: [...restriction.subjects], restrictedAmounts: Object.keys(restriction.amounts).filter(key => restriction.amounts[key]), kpis, charts: overview ? [...visuals, ...overview.charts] : visuals, attention: overview?.attention || [], totalRecords, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: drilldownOf(id, query.subject) })), exportRows: listed, metricDefinitions: kpis }
 }
 

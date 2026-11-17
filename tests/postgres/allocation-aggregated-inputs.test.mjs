@@ -4,6 +4,7 @@ import { backfillTenantAuthorization } from '../../server/auth/authorization-bac
 import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 import { createDatabaseRepositoryRegistry } from '../../server/repositories/adapter-registry.mjs'
 import { handleInventoryRoute } from '../../server/routes/inventory.routes.mjs'
+import { handleReportsAnalyticsRoute } from '../../server/routes/reports-analytics.routes.mjs'
 
 // Design audit 2026-11-15, L15 "fails first": the allocation model and the
 // reorder list read stock, demand and incoming from SQL aggregates over every
@@ -27,17 +28,17 @@ async function seedTenant(prisma, tenantId, warehouses = ['WH-1']) {
   return admin
 }
 
-function caller(prisma, tenantId, user) {
+function caller(prisma, tenantId, user, handler = handleInventoryRoute) {
   const env = { ...process.env, FLOWCHAIN_PERSISTENCE_MODE: 'database', NODE_ENV: 'test' }
   const repositories = createDatabaseRepositoryRegistry({ env, prisma })
   return async (path) => {
     let sent
     const ctx = {
-      url: new URL(`http://local${path}`), req: { method: 'GET', headers: {} }, res: {}, env, repositories, inventoryPrisma: prisma, reorderListNow: NOW,
+      url: new URL(`http://local${path}`), req: { method: 'GET', headers: {} }, res: {}, env, repositories, inventoryPrisma: prisma, reorderListNow: NOW, reportNow: NOW,
       identity: { authenticated: true, tenantId, userId: user.id, role: user.role, source: 'signed-session' },
       send: (_res, status, payload) => { sent = { status, body: JSON.parse(JSON.stringify(payload ?? null)) } },
     }
-    assert.equal(await handleInventoryRoute(ctx), true, path)
+    assert.equal(await handler(ctx), true, path)
     assert.equal(sent.status, 200, path)
     return sent.body
   }
@@ -133,6 +134,17 @@ test('the 501st open purchase order counts toward incoming, and a late one is fl
     assert.deepEqual([row.onHand, row.incoming, row.position, row.reorderPoint, row.shortfall, row.orderNow], [0, 501, 501, 600, 99, true])
     assert.deepEqual(row.flags, [{ code: 'po_line_late', orderNumber: 'PO-202608-0001', dueDay: '2026-09-01' }])
     assert.deepEqual(list.truncatedSubjects, [])
+
+    // The inventory report counts the same 501 orders in transit and, like the
+    // reorder list, names no cut: its stock figures read every order, not the
+    // latest 500. The overview still names purchase orders at 500: its order
+    // amount, open orders card and table count the orders read.
+    const report = caller(prisma, tenantId, admin, handleReportsAnalyticsRoute)
+    const inventory = await report('/api/reports/inventory')
+    assert.equal(inventory.details.find((entry) => entry.id === 'C-1').availableToPromise, 501)
+    assert.deepEqual(inventory.truncatedSubjects, [])
+    const overview = await report('/api/reports/overview')
+    assert.deepEqual(overview.truncatedSubjects, [{ subject: 'purchase_orders', limit: 500 }])
   } finally {
     await prisma.$disconnect()
   }
