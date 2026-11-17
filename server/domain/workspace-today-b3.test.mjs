@@ -50,6 +50,9 @@ test('the workbench and the other pages count from the workspace day, not the br
     assert.doesNotMatch(source, /const today = todayInTimeZone\(timezone\);/, file)
     assert.match(source, /const today = workspaceToday;/, file)
   }
+  // Before the day is known the RFQ list must not build a date from "" (Invalid
+  // Date throws in toISOString and took the list down in the browser run).
+  assert.match(read('src/modules/procurement/RfqListPage.tsx'), /const inAWeek = today \? new Date\(/)
   const orders = read('src/modules/purchasing/Page.tsx')
   assert.match(orders, /const dueOf = \(order: PurchaseOrder\) => order\.dueDay \|\| order\.eta;/)
   assert.match(orders, /!workspaceToday \|\| !dueOf\(order\) \|\| String\(dueOf\(order\)\) >= workspaceToday/)

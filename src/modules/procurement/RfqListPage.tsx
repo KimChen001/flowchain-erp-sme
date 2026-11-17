@@ -96,10 +96,12 @@ export function RfqListPage() {
 
   // The workspace's day from the server (design audit B3): never the browser's own.
   const today = workspaceToday;
-  const inAWeek = new Date(Date.parse(`${today}T12:00:00Z`) + 7 * 86400000).toISOString().slice(0, 10);
+  // Until the localization has loaded the day is "": no window yet, and no
+  // Invalid Date (which would throw and take the list down).
+  const inAWeek = today ? new Date(Date.parse(`${today}T12:00:00Z`) + 7 * 86400000).toISOString().slice(0, 10) : "";
   const isOpen = (row: ProcurementDocument) => OPEN_STATUSES.includes(String(row.status || ""));
   const quotesIn = (row: ProcurementDocument) => (row.supplierCount ?? 0) > 0 && (row.respondedSupplierCount ?? 0) >= (row.supplierCount ?? 0);
-  const dueSoon = (row: ProcurementDocument) => isOpen(row) && Boolean(row.dueDate) && String(row.dueDate) <= inAWeek;
+  const dueSoon = (row: ProcurementDocument) => isOpen(row) && Boolean(inAWeek) && Boolean(row.dueDate) && String(row.dueDate) <= inAWeek;
   const overdue = (row: ProcurementDocument) => isOpen(row) && Boolean(row.dueDate) && String(row.dueDate) < today;
   const needle = query.trim().toLowerCase();
   const shown = rows.filter((row) =>
