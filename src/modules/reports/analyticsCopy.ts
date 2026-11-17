@@ -1,3 +1,4 @@
+import { statusCodeLabel } from "../../i18n/statusLabels.ts";
 // Presentation labels only. Do not translate record names or identifiers.
 const chinese: Record<string, string> = {
   'Mixed units': '混合计量单位', 'Units differ, so there is no total': '单位不同，无法合计',
@@ -198,21 +199,9 @@ export function analyticsSentence(key: string, language: string, values: Record<
   return Object.entries(values).reduce((text, [name, value]) => text.split(`{${name}}`).join(String(value)), pair[language === 'zh-CN' ? 1 : 0]);
 }
 
+// A status in a report reads as on every other page: the one status table
+// (statusLabels.ts). The report's own table said 有差异 for exception, 已暂挂
+// for held, 已履约 where Today said 已完成 (design audit L6-14).
 export function reportStatusCopy(value: string, language: string) {
-  const states: Record<string, [string, string]> = {
-    fully_received: ['Fully received', '全部收货'], pending_approval: ['Pending approval', '待审批'], rejected: ['Rejected', '已驳回'],
-    shortage_risk: ['Shortage risk', '缺货风险'], partially_fulfilled: ['Partially fulfilled', '部分履约'], fulfilled: ['Fulfilled', '已履约'],
-    ready_to_ship: ['Ready to ship', '可发货'], partially_allocated: ['Partially allocated', '部分分配'], on_hold: ['On hold', '已暂停'],
-    issued: ['Issued', '已下达'], partially_received: ['Partially received', '部分收货'], received: ['Received', '已收货'],
-    open: ['Open', '未结'], closed: ['Closed', '已关闭'], cancelled: ['Cancelled', '已取消'], completed: ['Completed', '已完成'],
-    draft: ['Draft', '草稿'], approved: ['Approved', '已批准'], active: ['Active', '启用'], inactive: ['Inactive', '停用'],
-    high: ['High', '高'], medium: ['Medium', '中'], low: ['Low', '低'], unknown: ['Unknown', '未知'],
-    partial: ['Partial', '部分履约'], delivered: ['Delivered', '已交付'], confirmed: ['Confirmed', '已确认'],
-    out_of_stock: ['Out of stock', '缺货'], below_safety_stock: ['Below safety stock', '低于安全库存'],
-    below_reorder_point: ['Below reorder point', '低于再订货点'], ok: ['In stock', '库存正常'],
-    submitted: ['Submitted', '已提交'], matching: ['Matching', '匹配中'], exception: ['Exception', '有差异'], matched: ['Matched', '已匹配'],
-    reserved: ['Reserved', '已预留'], held: ['Held', '已暂挂'], pending: ['Pending', '待处理'], variance: ['Variance', '有差异'], canceled: ['Cancelled', '已取消'],
-  };
-  const pair = states[value];
-  return pair ? pair[language === 'en-US' ? 0 : 1] : analyticsCopy(value, language);
+  return statusCodeLabel(value, language) ?? analyticsCopy(value, language);
 }

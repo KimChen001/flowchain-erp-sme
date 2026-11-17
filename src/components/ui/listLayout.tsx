@@ -262,24 +262,9 @@ export const listRowStyle = (index: number, count: number): React.CSSProperties 
   borderBottom: index < count - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none",
 });
 
-export type StatusTone = "success" | "warning" | "danger" | "info" | "neutral";
-
-// Status colours follow the brand rules: teal for done, orange for waiting on
-// someone (approval, matching), red for exceptions, blue for in progress and
-// gray for drafts and cancelled records. Codes and the server's Chinese
-// labels are both recognised; anything unknown is neutral.
-const TONES: Record<StatusTone, string[]> = {
-  success: ["approved", "matched", "variance_approved", "recorded", "auto_matched", "converted", "completed", "fully_received", "fully_reserved", "fully_fulfilled", "closed", "awarded", "settled", "resolved", "posted", "已批准", "已审批", "已匹配", "自动匹配", "已完成", "已转换", "已解决", "已入库"],
-  warning: ["submitted", "pending", "pending_approval", "pending_match", "held", "on_hold", "awaiting_receipt", "unposted", "partially_reserved", "待审批", "待匹配", "待处理", "人工复核", "缺少收货"],
-  danger: ["rejected", "exception", "variance", "mismatch", "disputed", "overdue", "已驳回", "已拒绝", "存在差异", "差异待处理", "异常处理", "重复发票", "缺货风险"],
-  info: ["open", "confirmed", "issued", "sent", "issued_outside_flowchain", "collecting_quotes", "partially_received", "partially_fulfilled", "received", "ready_for_receiving", "export_ready", "partially_settled", "reviewed", "已发出", "部分到货", "已收货", "已签收", "质检中", "已确认", "部分分配", "可发货", "部分发货"],
-  neutral: ["draft", "cancelled", "canceled", "withdrawn", "not_sent", "reversed", "voided", "not_reserved", "not_fulfilled", "草稿", "已取消", "已撤回"],
-};
-const toneOf = new Map(Object.entries(TONES).flatMap(([tone, codes]) => codes.map((code) => [code, tone as StatusTone])));
-
-export function statusToneOf(status?: string | null): StatusTone {
-  return toneOf.get(String(status || "").trim()) || "neutral";
-}
+// Status tones come from the one table in statusTones.ts (design audit L6-08).
+export { statusToneOf, type StatusTone } from "./statusTones";
+import type { StatusTone } from "./statusTones";
 
 const TONE_CLASS: Record<StatusTone, string> = {
   success: "bg-teal-50 text-teal-700",

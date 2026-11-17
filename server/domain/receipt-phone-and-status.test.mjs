@@ -30,7 +30,9 @@ test('the form says Save and submit: submitting does not post', () => {
 
 test('a posted or reversed receipt shows one status, and its creation reads Recorded', () => {
   assert.match(page, /const settled = grn\.postingStatus === "posted" \|\| grn\.postingStatus === "reversed"/)
-  assert.match(page, /\? \[\[say\("Status", "状态"\), chip\(grn\.postingStatus\)\]\]/)
+  // Since design audit U-17 that one status sits beside the number.
+  assert.match(page, /const headerStatus = settled \? grn\.postingStatus : grn\.workflowStatus;/)
+  assert.match(page, /testId="receipt-status"/)
   assert.match(page, /event\.postedFact && event\.event !== "receiving_created" \? say\("Posted", "已过账"\) : say\("Recorded", "已记录"\)/)
 })
 

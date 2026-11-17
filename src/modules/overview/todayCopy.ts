@@ -375,41 +375,15 @@ export function todayDateTone(item: TodayDated, today: string) {
   return { color: "#1d4ed8", background: "#eff6ff" };
 }
 
-// Statuses the shared labels do not cover, for the document types Today lists.
-const EXTRA_STATUS: Record<string, [string, string]> = {
-  // An approved supplier invoice still to pay (the server's billPaymentStatus;
-  // partly paid and paid are partially_settled and settled below).
-  to_pay: ["To pay", "待付款"],
-  confirmed: ["Confirmed", "已确认"],
-  fulfilled: ["Fulfilled", "已完成"],
-  matching: ["Matching", "匹配中"],
-  held: ["Held", "已暂停"],
-  paid: ["Paid", "已付款"],
-  void: ["Voided", "已作废"],
-  voided: ["Voided", "已作废"],
-  export_ready: ["Export ready", "可导出"],
-  settled: ["Paid", "已结清"],
-  partially_settled: ["Partly paid", "部分付款"],
-  recorded: ["Recorded", "已登记"],
-  overdue: ["Overdue", "已逾期"],
-  not_reserved: ["Not reserved", "未预留"],
-  partially_reserved: ["Partially reserved", "部分预留"],
-  fully_reserved: ["Reserved", "已预留"],
-  not_fulfilled: ["Not fulfilled", "未履约"],
-  partially_fulfilled: ["Partially fulfilled", "部分履约"],
-  fully_fulfilled: ["Fulfilled", "已履约"],
-};
-
 // A stored status code as a label. A code no table knows reads as words in
 // English ("ready_to_ship" is "Ready to ship") and as "其他状态" in Chinese;
 // the page keeps the stored code in the chip's tooltip.
 export function todayStatusLabel(code: string, language: string) {
   const value = String(code || "").trim();
   if (!value) return "—";
+  // The one status table (statusLabels.ts, design audit L6-14).
   const shared = statusCodeLabel(value, language);
   if (shared) return shared;
-  const extra = EXTRA_STATUS[value];
-  if (extra) return extra[language === "en-US" ? 0 : 1];
   if (!/^[a-z]+(_[a-z]+)*$/.test(value)) return value;
   if (language !== "en-US") return "其他状态";
   const words = value.replace(/_/g, " ");

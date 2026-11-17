@@ -10,7 +10,7 @@ const read = (path) => readFile(new URL(`../../${path}`, import.meta.url), 'utf8
 test('the PO page header is a card with the status beside the title and the next steps inside', async () => {
   const shell = await read('src/components/document/DocumentShell.tsx')
   assert.match(shell, /<Card className="p-5" data-testid="document-header">/)
-  assert.match(shell, /<h1 className="fc-page-title" style=\{\{ color: A\.label \}\}>\{copy\(title\)\}<\/h1>\s*\{status && <Chip label=\{copy\(status\)\}/)
+  assert.match(shell, /<h1 className="fc-page-title" style=\{\{ color: A\.label \}\}>\{copy\(title\)\}<\/h1>\s*\{status && <StatusChip label=\{copy\(status\)\}/)
   assert.match(shell, /\{header \? <div className="mt-4">\{header\}<\/div> : null\}/)
   const po = await read('src/modules/purchasing/Page.tsx')
   assert.match(po, /header=\{<div className="space-y-3" data-testid="po-header-actions">/)

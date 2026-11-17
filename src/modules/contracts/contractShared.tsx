@@ -1,3 +1,4 @@
+import { STATUS_TONE_COLORS, type StatusTone } from "../../components/ui/statusTones";
 import { useCallback, useMemo } from "react";
 import { ApiError, apiJson, AUTH_TOKEN_KEY } from "../../lib/api-client";
 import { documentToneStyle, type DocumentTone } from "../../components/document/DocumentShell";
@@ -160,9 +161,10 @@ export function useContractFormat() {
 
 export function ContractStateChip({ state, testId = "contract-state-chip" }: { state: ContractState; testId?: string }) {
   const t = useContractCopy();
-  const style = documentToneStyle(STATE_TONE[state] || "neutral");
+  // The list chips' colours (design audit U-06), not a second palette.
+  const style = STATUS_TONE_COLORS[(STATE_TONE[state] || "neutral") as StatusTone];
   return (
-    <span className="fc-status-chip inline-flex w-fit items-center whitespace-nowrap" data-testid={testId} data-state={state} style={{ color: style.color, background: style.bg }}>
+    <span className="fc-status-chip inline-flex w-fit items-center whitespace-nowrap" data-testid={testId} data-state={state} style={{ color: style.color, background: style.background }}>
       {t(STATE_LABEL[state] || "Changed")}
     </span>
   );

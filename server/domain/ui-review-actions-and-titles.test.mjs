@@ -81,7 +81,8 @@ test("detail page titles are one H1 in the shared page-title style", () => {
     // The request's header is the PO's (DocumentShell, design audit U-09).
     "src/modules/purchase-requests/CanonicalProcurementPanel.tsx": /<DocumentShell\s+title=\{numberOf\(selected\)\}/,
     "src/modules/receiving/ReceivingPostingWorkbench.tsx": /<h1 className="fc-page-title">\{grn\.documentNumber\}<\/h1>/,
-    "src/modules/procurement/CanonicalRfqDetailPage.tsx": /<h1 className="fc-page-title mt-1">/,
+    // The status beside the title since design audit U-17.
+    "src/modules/procurement/CanonicalRfqDetailPage.tsx": /<h1 className="fc-page-title">\{record\.title \|\| rfqNumber\}<\/h1>/,
     "src/modules/procurement/CanonicalRfqComparisonPage.tsx": /<h1 className="fc-page-title mt-1">/,
     "src/components/business/BusinessEntityDetailPage.tsx": /<h1 className="fc-page-title mt-1 tabular-nums"/,
   };
