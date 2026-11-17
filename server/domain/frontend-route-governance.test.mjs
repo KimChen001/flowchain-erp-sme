@@ -253,7 +253,6 @@ test("hidden and searchable route projections respect classifications", () => {
     "settings:advanced",
     "finance:reconciliation",
     "finance:settlement",
-    "forecast:mrp",
     "imports:failed",
     "procurement:invoice-detail",
     "procurement:match-detail",

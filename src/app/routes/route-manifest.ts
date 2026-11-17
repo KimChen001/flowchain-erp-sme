@@ -81,11 +81,9 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
   `),
   // Owner decision: internal settlement, cashbook and the settlement
   // workflow, and the empty sales delivery and receipt pages, are frozen
-  // (FROZEN_PRODUCT_ROUTE_IDS); forecast / MRP is unavailable.
+  // (FROZEN_PRODUCT_ROUTE_IDS).
   FROZEN: new Set([
     ...ids(`
-    forecast forecast:cockpit forecast:demand forecast:mrp
-    forecast:replenishment forecast:parameters
   `),
     ...FROZEN_PRODUCT_ROUTE_IDS,
   ]),
@@ -211,7 +209,6 @@ const ownerByModule: Record<string, string> = {
   "mobile-operations": "src/modules/mobile",
   reports: "src/modules/reports",
   settings: "src/modules/settings",
-  forecast: "src/modules/forecast",
   imports: "src/modules/imports",
   "universal-intake": "src/modules/intake",
   "exception-cases": "src/modules/exception-cases",
@@ -232,7 +229,6 @@ const apiByModule: Record<string, string> = {
   "mobile-operations": "/api/mobile/*",
   reports: "/api/reports/*",
   settings: "/api/settings/*",
-  forecast: "/api/forecast-plans, /api/mrp-plan",
   imports: "retired legacy import APIs",
   "universal-intake": "/api/intake/*",
   "exception-cases": "/api/exception-cases",

@@ -23,7 +23,6 @@ const SOURCE_MODULE_LABELS: Record<string, string> = {
   reports: "报表中心",
   imports: "数据接入与质量",
   "exception-cases": "异常处理工单",
-  forecast: "预测与 MRP",
   ai: "AI 助手",
   globalSearch: "全局搜索",
 };

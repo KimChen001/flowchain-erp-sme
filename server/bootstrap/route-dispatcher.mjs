@@ -24,7 +24,6 @@ import { handleMarketRoute } from "../routes/market.routes.mjs";
 import { handleMasterDataRoute } from "../routes/master-data.routes.mjs";
 import { handleMobileOperationsRoute } from "../routes/mobile-operations.routes.mjs";
 import { handleMobileSyncRoute } from "../routes/mobile-sync.routes.mjs";
-import { handleMrpRoute } from "../routes/mrp.routes.mjs";
 import { handleOperationalFinanceRoute } from "../routes/operational-finance.routes.mjs";
 import { handleOutboundRoute } from "../routes/outbound.routes.mjs";
 import { handlePilotImportRoute } from "../routes/pilot-import.routes.mjs";
@@ -71,7 +70,6 @@ async function handleLegacyAiRoute(ctx) {
 }
 
 const orderedRouteHandlers = Object.freeze([
-  handleMrpRoute,
   handleSopRoute,
   handleContextRoute,
   handleBusinessReadContextRoute,
