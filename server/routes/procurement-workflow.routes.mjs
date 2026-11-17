@@ -103,13 +103,17 @@ export async function handleProcurementWorkflowRoute(ctx) {
   if (req.method === "PATCH" && requestDetail)
     return respond(ctx, 200, async () => requestCommands(ctx).updatePurchaseRequestDraft(decodeURIComponent(requestDetail[1]), await commandBody(ctx), ctx));
   const action = url.pathname.match(
-    /^\/api\/procurement\/requests\/([^/]+)\/(submit|approve|reject|withdraw|cancel)$/,
+    /^\/api\/procurement\/requests\/([^/]+)\/(submit|approve|reject|withdraw|reopen|cancel)$/,
   );
   // A submitted PR waits for approval; its approvers are emailed after the
   // answer, and a replayed submit sends nothing.
   if (req.method === "POST" && action)
     return respond(ctx, 200, async () => requestCommands(ctx).transitionPurchaseRequest(decodeURIComponent(action[1]), action[2], await commandBody(ctx), ctx),
       (result) => action[2] === "submit" && notifyApprovalWaiting(ctx, result, { documentType: "purchase_request", documentId: result?.id }));
+  // What "Create purchase order" would make, before it is made (design audit L1-26).
+  const poPreview = url.pathname.match(/^\/api\/procurement\/requests\/([^/]+)\/purchase-order-preview$/);
+  if (req.method === "GET" && poPreview)
+    return respond(ctx, 200, async () => requestCommands(ctx).previewPurchaseOrdersFromPurchaseRequest(decodeURIComponent(poPreview[1]), ctx));
   const recommendation = url.pathname.match(
     /^\/api\/procurement\/requests\/([^/]+)\/path-recommendation$/,
   );
