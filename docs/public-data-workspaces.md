@@ -129,7 +129,7 @@ npm run walkthrough:local -- --reset --as-of=2026-11-10   # seed as of a given d
 - One in four UCI customers, and 200 of about 3,900 products sold in the window; 196 of CA_1's 3,049 items. The business read context also lists at most 200 customers and the 500 most recent sales orders; the reorder list and Today warn about the sales orders only when an order that can still need stock was left out.
 - Suppliers deliver on time and in full apart from the walkthrough scene and the supplier invoice rules above; purchase prices are a fixed share of selling prices, so every UCI item has the same 50 % cost ratio on its median price.
 - M5 has no supplier invoices or payments: it carries the purchase price ratio only.
-- Supplier invoices carry no tax lines, and supplier credit notes and returns are not seeded.
+- No invoice carries VAT or any other tax: every customer and supplier invoice has tax 0. Supplier credit notes and returns are not seeded.
 
 ## Tests
 
