@@ -95,18 +95,15 @@ function stockHealth(signals: NonNullable<GovernedReport["stockSignals"]>, zh: b
 }
 
 // The supplier with the most committed purchase orders, from the overview's
-// supplier chart, saying when several tie. When every bar ties there is no
-// leader, and suppliers past the chart's last bar may tie too.
+// supplier chart. A tie is no finding: "3 suppliers tie at 52 each" said only
+// that the orders came on a schedule (design audit L7-27).
 function busiestSupplier(chart: ReportChart, zh: boolean, format: Format): Insight | null {
   const rows = chart.data || [];
   const top = num(rows[0]?.value);
   if (!top || rows.length < 2) return null;
-  const tied = rows.filter(row => num(row.value) === top);
-  if (tied.length === rows.length) return null;
+  if (rows.filter(row => num(row.value) === top).length > 1) return null;
   const figure = format(top, "number");
-  return { id: "busiest_supplier", tone: "neutral", figure, path: chart.drilldownPath, text: tied.length === 1
-    ? zh ? `${tied[0].name} 的已承诺采购订单最多：${figure} 张。` : `${tied[0].name} has the most committed purchase orders: ${figure}.`
-    : zh ? `${tied.length} 家供应商并列已承诺采购订单最多：各 ${figure} 张。` : `${tied.length} suppliers tie for the most committed purchase orders: ${figure} each.` };
+  return { id: "busiest_supplier", tone: "neutral", figure, path: chart.drilldownPath, text: zh ? `${rows[0].name} 的已承诺采购订单最多：${figure} 张。` : `${rows[0].name} has the most committed purchase orders: ${figure}.` };
 }
 
 // The highest and lowest on-time share among suppliers, saying when several

@@ -3,7 +3,7 @@ import { OVERVIEW_TABS, buildBusinessOverview } from './business-overview.mjs'
 import { isCommittedPurchaseOrder, isOpenPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
-import { buildDashboardFacts, buildDashboardVisuals, invoiceMatchOutcome, partialMonths } from './report-dashboard-visuals.mjs'
+import { buildDashboardFacts, buildDashboardVisuals, closedShortReceivedValue, invoiceMatchOutcome, isClosedShortPurchaseOrder, partialMonths, reportSupplierName } from './report-dashboard-visuals.mjs'
 import { inventoryStockSignals, stockSignalCounts } from '../../shared/inventory-stock-signals.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
 import { SUPPLIER_SCORECARD_RULES, addDays, daysBetween } from './supplier-scorecard.mjs'
@@ -115,7 +115,7 @@ const unknownCurrencyLabel = '币种缺失或无效'
 const metricDefinitions = {
   sales_order_count: ['销售订单数量', 'sales_orders', 'number', '当前范围内真实销售订单记录数。', '/app/sales/orders'],
   open_sales_demand: ['未履约销售需求', 'sales_orders', 'number', 'Ordered less fulfilled quantity on confirmed sales order lines, before inventory reservations. Shown only while every line with demand left is the same SKU in the same unit.', '/app/sales/orders'],
-  purchase_order_amount: ['Committed PO amount', 'purchase_orders', 'currency', '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，不含草稿、待审批、已驳回和已取消的订单；有订单缺少金额时不显示合计。', '/app/procurement/orders'],
+  purchase_order_amount: ['Committed PO amount', 'purchase_orders', 'currency', '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，部分到货后关闭的订单按已收金额计；不含草稿、待审批、已驳回和已取消的订单；有订单缺少金额时不显示合计。', '/app/procurement/orders'],
   open_po_count: ['未结 PO', 'purchase_orders', 'number', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/reports/procurement?status=open'],
   inventory_on_hand: ['在手库存', 'inventory_balances', 'number', 'On-hand quantity recorded in inventory. Shown only while all inventory is the same SKU in the same unit.', '/app/inventory'],
   inventory_risk_sku: ['SKUs short for sales orders', 'inventory_balances', 'number', 'SKUs whose open sales demand, less its reservations, is more than the available stock. Incoming purchase orders are not counted.', '/app/reports/inventory?stock=short_for_sales'],
@@ -173,6 +173,7 @@ function runtimeRows(context, inventory, timeZone) {
   // An inventory row names its item and unit; the SKU is its business ID.
   const units = new Map([...array(context.items), ...array(context.inventoryItems)].map(row => [text(row.sku || row.itemId || row.id), text(row.unit)]).filter(([sku, unit]) => sku && unit))
   const inventoryUnit = sku => units.get(sku) || ''
+  const supplierOf = reportSupplierName(context)
   const purchaseQuantity = row => {
     const { total, unit } = oneItemTotal(array(row.lines).map(line => ({ ...purchaseOrderReportLine(line, row), sku: text(line.sku || line.itemId) })), 'ordered', { requireUnit: true })
     return { quantity: total, unit }
@@ -185,7 +186,10 @@ function runtimeRows(context, inventory, timeZone) {
   const sales = array(context.salesOrders).map(row => ({ id: text(row.salesOrderId || row.id), number: text(row.orderNumber), date: salesOrderDate(row, timeZone), customer: text(row.customerName || row.customerId), ...salesQuantity(row), status: text(inactiveSalesStatuses.includes(row.workflowStatus) ? row.workflowStatus : row.status || row.statusLabel), amount: amountOf(row.totalAmount ?? row.amount), currency: currencyCode(row.currency) }))
   return {
     // number: what the order shows (PO-202611-0001); before numbering, its id.
-    purchase_orders: array(context.purchaseOrders).map(row => ({ id: text(row.id || row.po), number: text(row.number || row.orderNumber), date: purchaseOrderBusinessDate(row, timeZone), supplier: text(row.supplierSnapshot?.supplierName || row.supplierName || row.supplierId), amount: amountOf(row.totalAmount ?? row.amount), ...purchaseQuantity(row), status: text(row.status), isOpen: isOpenPurchaseOrder(row), currency: currencyCode(row.currency || row.lines?.[0]?.currency) })),
+    // A supplier is named as the supplier master names it now, so a renamed
+    // supplier is one row (design audit L9-15); an order closed short counts
+    // what was received of it (L9-07).
+    purchase_orders: array(context.purchaseOrders).map(row => ({ id: text(row.id || row.po), number: text(row.number || row.orderNumber), date: purchaseOrderBusinessDate(row, timeZone), supplier: supplierOf(row), amount: isClosedShortPurchaseOrder(row) ? closedShortReceivedValue(row) : amountOf(row.totalAmount ?? row.amount), ...purchaseQuantity(row), status: text(row.status), isOpen: isOpenPurchaseOrder(row), currency: currencyCode(row.currency || row.lines?.[0]?.currency) })),
     // id opens the record; number is what people call it (SO-1042, AV-5512).
     sales_orders: sales,
     // The sales figures (counts, amounts, months, customers, status and
@@ -198,7 +202,7 @@ function runtimeRows(context, inventory, timeZone) {
     inventory_balances: inventory.availability.map(row => ({ id: row.sku, itemName: row.itemName === row.sku ? '' : row.itemName, unit: inventoryUnit(row.sku), quantity: row.onHand, reserved: row.reserved, available: row.available, shortage: row.shortage, availableToPromise: row.availableToPromise, stockStatus: row.stockStatus, status: row.riskLevel })),
     // match: the three-way match outcome of a submitted invoice (null before
     // it is submitted), for the drill-through filter; not a table column.
-    supplier_invoices: array(context.supplierInvoices).map(row => ({ id: text(row.id || row.invoiceNumber), number: text(row.invoiceNumber), date: invoiceDate(row, timeZone), supplier: text(row.supplierName || row.supplierId), amount: amountOf(row.totalAmount ?? row.amount), status: text(row.status), currency: currencyCode(row.currency), match: committedInvoiceStatuses.has(text(row.status).toLowerCase()) ? invoiceMatchOutcome(row) : null })),
+    supplier_invoices: array(context.supplierInvoices).map(row => ({ id: text(row.id || row.invoiceNumber), number: text(row.invoiceNumber), date: invoiceDate(row, timeZone), supplier: supplierOf(row), amount: amountOf(row.totalAmount ?? row.amount), status: text(row.status), currency: currencyCode(row.currency), match: committedInvoiceStatuses.has(text(row.status).toLowerCase()) ? invoiceMatchOutcome(row) : null })),
     // number: the supplier code the lists show; id stays for the link.
     suppliers: array(context.suppliers).map(row => ({ id: text(row.id || row.supplierCode), number: text(row.supplierCode), supplier: text(row.supplierName || row.name), status: text(row.status) })),
   }
@@ -501,7 +505,12 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   // A sales dashboard counts every order its groups cover, not only the
   // orders read for the table.
   const totalRecords = primaryKey === 'sales_orders' ? totalWeight(all.sales_order_groups) : all[primaryKey].length
-  const dataScope = { label: '当前工作区数据', company: null, currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from, to: query.to, activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => ['from', 'to'].includes(key) ? text(input.filters?.[key]) : query[key]).length, sourceLabel: '业务记录', completenessLabel: totalRecords ? `已读取 ${totalRecords} 条真实记录` : '当前范围无真实业务记录', filterOptions: { companies: [], suppliers: distinct([...array(context.suppliers).map(row => row.supplierName || row.name), ...source.purchase_orders.map(row => row.supplier)]), customers: distinct([...array(context.customers).map(row => row.name || row.customerName), ...source.sales_order_groups.map(row => row.customer)]), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_order_groups, ...source.supplier_invoices].map(row => row.currency)) } }
+  // What the figures were read from, by source (design audit L7-28: the line
+  // counted purchase orders only, beside sales figures from thousands of
+  // sales orders). Each dashboard names the sources its figures read.
+  const DASHBOARD_SOURCES = { overview: ['purchase_orders', 'sales_orders', 'supplier_invoices', 'inventory_balances'], procurement: ['purchase_orders'], sales: ['sales_orders'], inventory: ['inventory_balances'], finance: ['supplier_invoices'], suppliers: ['suppliers', 'purchase_orders'] }
+  const recordCounts = Object.fromEntries((DASHBOARD_SOURCES[query.subject] || []).filter(subject => !restriction.subjects.has(subject)).map(subject => [subject, subject === 'sales_orders' ? totalWeight(all.sales_order_groups) : all[subject].length]))
+  const dataScope = { label: '当前工作区数据', company: null, currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from, to: query.to, activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => ['from', 'to'].includes(key) ? text(input.filters?.[key]) : query[key]).length, sourceLabel: '业务记录', completenessLabel: totalRecords ? `已读取 ${totalRecords} 条真实记录` : '当前范围无真实业务记录', recordCounts, filterOptions: { companies: [], suppliers: distinct([...array(context.suppliers).map(row => row.supplierName || row.name), ...source.purchase_orders.map(row => row.supplier)]), customers: distinct([...array(context.customers).map(row => row.name || row.customerName), ...source.sales_order_groups.map(row => row.customer)]), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_order_groups, ...source.supplier_invoices].map(row => row.currency)) } }
   const overview = query.subject === 'overview' && !options.kpisOnly ? buildBusinessOverview(all, { salesDemand, reorder: options.reorder || null, salesActivity: all.sales_order_groups, partial, restrictedSubjects: restriction.subjects }) : null
   // Subjects the read context could not load in full whose cut changes this
   // dashboard's figures; totals over them may be low.
