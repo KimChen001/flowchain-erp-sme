@@ -12,6 +12,10 @@
 //                            not orders are coming. The shelf is low; it is
 //                            "covered by open orders" when the item does not
 //                            need replenishment and has stock incoming.
+//   on order                 neither of those, but the stock on hand is at or
+//                            below the reorder point and open purchase orders
+//                            keep the position above it: not a warning, and not
+//                            "Sufficient" either (design audit L7-22).
 //
 // The safety stock and reorder point are one figure for the whole item, so the
 // available stock is added over every location of the item, as the reorder
@@ -25,7 +29,10 @@ const number = (value) => {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-export const STOCK_STATES = Object.freeze(['out', 'replenish', 'below_safety', 'ok'])
+export const STOCK_STATES = Object.freeze(['out', 'replenish', 'below_safety', 'on_order', 'ok'])
+// The signals a link can ask the warnings view for (?signal=), each the flag
+// its card counts, so the rows shown are the card's count.
+export const STOCK_SIGNAL_FILTERS = Object.freeze({ replenish: 'needsReplenishment', below_safety: 'belowSafetyOnHand', covered: 'coveredByOpenOrders' })
 
 // balances: the stock records shown (availableQuantity, onHandQuantity,
 // safetyStock, reorderPoint per row). reorderList: the reorder list response
@@ -53,21 +60,27 @@ export function inventoryStockSignals({ balances = [], reorderList = null } = {}
     signal.belowSafetyOnHand = signal.safetyStock > 0 && signal.available < signal.safetyStock
     signal.coveredByOpenOrders = signal.belowSafetyOnHand && signal.positionKnown && !signal.needsReplenishment && (signal.incoming ?? 0) > 0
     signal.warned = signal.needsReplenishment || signal.belowSafetyOnHand
+    signal.onOrder = !signal.warned && signal.positionKnown && signal.reorderPoint > 0 && signal.available <= signal.reorderPoint && (signal.incoming ?? 0) > 0
   }
   return signals
 }
 
 // The one chip a stock row shows: nothing at this row's location, need
 // replenishment (the item's position), below safety stock on hand (the item),
-// or enough.
+// on order (under the reorder point on hand, covered by open orders), or
+// enough.
 export function stockStateOf(signal, row = null) {
   const available = row ? number(row.availableQuantity ?? row.onHandQuantity) : number(signal?.available)
   const onHand = row ? number(row.onHandQuantity) : available
   if (available <= 0 && onHand <= 0) return 'out'
   if (signal?.needsReplenishment) return 'replenish'
   if (signal?.belowSafetyOnHand) return 'below_safety'
+  if (signal?.onOrder) return 'on_order'
   return 'ok'
 }
+
+// Whether a signal has the flag a ?signal= link asks for.
+export const stockSignalMatches = (signal, filter) => Boolean(STOCK_SIGNAL_FILTERS[filter] && signal?.[STOCK_SIGNAL_FILTERS[filter]])
 
 // The cards over the warned items: each SKU once.
 export function stockSignalCounts(signals) {

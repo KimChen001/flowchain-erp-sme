@@ -79,7 +79,7 @@ export function buildBusinessOverview(all, { salesDemand = null, reorder = null,
       ...(Number.isInteger(reorder?.orderNow) ? [{ id: 'items_to_reorder', label: 'Items to reorder', count: reorder.orderNow, path: '/app/inventory/reorder', action: 'Open reorder list' }] : []),
       // Short against open sales orders; an item below its reorder point is in
       // the card above and in the low-stock KPI.
-      ...card('inventory_balances', { id: 'inventory_shortages', label: 'Short for sales orders', count: all.inventory_balances.filter(row => row.shortage !== null && row.shortage > 0).length, path: '/app/inventory?risk=high', action: 'Review inventory' }),
+      ...card('inventory_balances', { id: 'inventory_shortages', label: 'Short for sales orders', count: all.inventory_balances.filter(row => row.shortage !== null && row.shortage > 0).length, path: '/app/reports/inventory?stock=short_for_sales', action: 'Review inventory' }),
       ...card('sales_orders', { id: 'unfulfilled_sales', label: 'Unfulfilled sales orders', count: sales.filter(row => active(row) && row.status !== 'draft' && unfulfilled(row)).length, path: '/app/sales/orders', action: 'Review orders' }),
     ],
   };

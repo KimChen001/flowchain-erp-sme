@@ -441,12 +441,12 @@ function invoiceFacts(context, all, timeZone) {
 
 function matchGaugeVisual(id, invoices) {
   const matched = invoices.filter(row => row.outcome === 'matched').length
-  return visual(id, 'Invoices matched', 'gauge', invoices.length ? [{ name: 'Invoices matched', value: share(matched, invoices.length) }] : [], { unit: 'percentage', detail: { count: matched, total: invoices.length, exception: invoices.filter(row => row.outcome === 'exception').length, pending: invoices.filter(row => row.outcome === 'pending').length }, drilldownPath: '/app/finance/three-way-match', description: 'Share of submitted invoices whose three-way match passed.' })
+  return visual(id, 'Invoices matched', 'gauge', invoices.length ? [{ name: 'Invoices matched', value: share(matched, invoices.length) }] : [], { unit: 'percentage', detail: { count: matched, total: invoices.length, exception: invoices.filter(row => row.outcome === 'exception').length, pending: invoices.filter(row => row.outcome === 'pending').length }, drilldownPath: '/app/reports/finance?match=submitted', description: 'Share of submitted invoices whose three-way match passed.' })
 }
 
 function matchOutcomeVisual(id, invoices) {
   const data = ['matched', 'exception', 'pending'].map(outcome => ({ name: MATCH_OUTCOME_LABELS[outcome], value: invoices.filter(row => row.outcome === outcome).length })).filter(row => row.value > 0)
-  return visual(id, 'Match outcome', 'donut', data, { drilldownPath: '/app/finance/three-way-match', description: 'Submitted invoices by three-way match result.' })
+  return visual(id, 'Match outcome', 'donut', data, { drilldownPath: '/app/reports/finance?match=submitted', description: 'Submitted invoices by three-way match result.' })
 }
 
 // Supplier to match outcome, counting invoices: the eight suppliers with the
@@ -463,7 +463,7 @@ function invoiceFlowVisual(id, invoices) {
     const [source, outcome] = key.split('\u0000')
     return { source, target: MATCH_OUTCOME_LABELS[outcome], value }
   }).sort((a, b) => b.value - a.value || a.source.localeCompare(b.source))
-  return visual(id, 'Invoices from supplier to match outcome', 'sankey', rows.map(row => ({ name: `${row.source} → ${row.target}`, value: row.value })), { links: rows, targets: Object.values(MATCH_OUTCOME_LABELS), drilldownPath: '/app/finance/invoices', description: 'Each band is a number of submitted invoices.' })
+  return visual(id, 'Invoices from supplier to match outcome', 'sankey', rows.map(row => ({ name: `${row.source} → ${row.target}`, value: row.value })), { links: rows, targets: Object.values(MATCH_OUTCOME_LABELS), drilldownPath: '/app/procurement/bills', description: 'Each band is a number of submitted invoices.' })
 }
 
 // Sales orders in scope with their shipping progress, decided per line
@@ -593,12 +593,12 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
     const scope = restrictedAmounts.supplier_invoices ? RESTRICTED_SCOPE : moneyScope(invoices(), query)
     const variance = scope.ok ? grouped(invoices(), row => row.supplier, row => row.variance === null ? null : Math.abs(row.variance)).filter(row => row.value > 0) : []
     return [
-      trendVisual('finance_invoice_trend', 'Submitted invoices by month', invoices(), scope, { countKey: 'Invoices', amountKey: 'Invoice amount', drilldownPath: '/app/finance/invoices', description: 'Submitted supplier invoices by invoice date. Bars are amounts, the line is the number of invoices.', partial }),
+      trendVisual('finance_invoice_trend', 'Submitted invoices by month', invoices(), scope, { countKey: 'Invoices', amountKey: 'Invoice amount', drilldownPath: '/app/procurement/bills', description: 'Submitted supplier invoices by invoice date. Bars are amounts, the line is the number of invoices.', partial }),
       matchGaugeVisual('finance_match_rate', invoices()),
       matchOutcomeVisual('finance_match_outcome', invoices()),
       invoiceFlowVisual('finance_invoice_flow', invoices()),
-      rankingVisual('finance_variance_by_supplier', 'Invoice variance by supplier', variance, { unit: 'currency', currencyCode: scope.currencyCode, drilldownPath: '/app/finance/invoices', crossFilter: 'supplier', description: 'Absolute variance between invoices and their orders and receipts.', emptyState: scope.ok ? 'No invoice variance in the selected range.' : noAmountsState(scope, invoices()) }),
-      statusVisual('finance_invoice_status', 'Invoice status', all.supplier_invoices, '/app/finance/invoices'),
+      rankingVisual('finance_variance_by_supplier', 'Invoice variance by supplier', variance, { unit: 'currency', currencyCode: scope.currencyCode, drilldownPath: '/app/procurement/bills', crossFilter: 'supplier', description: 'Absolute variance between invoices and their orders and receipts.', emptyState: scope.ok ? 'No invoice variance in the selected range.' : noAmountsState(scope, invoices()) }),
+      statusVisual('finance_invoice_status', 'Invoice status', all.supplier_invoices, '/app/procurement/bills'),
     ]
   }
 

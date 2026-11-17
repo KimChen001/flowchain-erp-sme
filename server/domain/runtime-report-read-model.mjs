@@ -3,7 +3,8 @@ import { OVERVIEW_TABS, buildBusinessOverview } from './business-overview.mjs'
 import { isCommittedPurchaseOrder, isOpenPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
-import { buildDashboardFacts, buildDashboardVisuals, partialMonths } from './report-dashboard-visuals.mjs'
+import { buildDashboardFacts, buildDashboardVisuals, invoiceMatchOutcome, partialMonths } from './report-dashboard-visuals.mjs'
+import { inventoryStockSignals, stockSignalCounts } from '../../shared/inventory-stock-signals.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
 import { SUPPLIER_SCORECARD_RULES, addDays, daysBetween } from './supplier-scorecard.mjs'
 import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from './tenant-calendar-day.mjs'
@@ -115,27 +116,39 @@ const metricDefinitions = {
   sales_order_count: ['销售订单数量', 'sales_orders', 'number', '当前范围内真实销售订单记录数。', '/app/sales/orders'],
   open_sales_demand: ['未履约销售需求', 'sales_orders', 'number', 'Ordered less fulfilled quantity on confirmed sales order lines, before inventory reservations. Shown only while every line with demand left is the same SKU in the same unit.', '/app/sales/orders'],
   purchase_order_amount: ['Committed PO amount', 'purchase_orders', 'currency', '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，不含草稿、待审批、已驳回和已取消的订单；有订单缺少金额时不显示合计。', '/app/procurement/orders'],
-  open_po_count: ['未结 PO', 'purchase_orders', 'number', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/procurement/orders'],
+  open_po_count: ['未结 PO', 'purchase_orders', 'number', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/reports/procurement?status=open'],
   inventory_on_hand: ['在手库存', 'inventory_balances', 'number', 'On-hand quantity recorded in inventory. Shown only while all inventory is the same SKU in the same unit.', '/app/inventory'],
-  inventory_risk_sku: ['SKUs short for sales orders', 'inventory_balances', 'number', 'SKUs whose open sales demand, less its reservations, is more than the available stock. Incoming purchase orders are not counted.', '/app/inventory?risk=high'],
-  invoice_amount: ['采购发票金额', 'supplier_invoices', 'currency', '已提交采购发票（已提交、匹配中、有差异、已匹配、已批准或暂挂）的金额合计，不含草稿、已驳回和已取消的发票；有发票缺少金额时不显示合计。', '/app/finance/invoices'],
+  inventory_risk_sku: ['SKUs short for sales orders', 'inventory_balances', 'number', 'SKUs whose open sales demand, less its reservations, is more than the available stock. Incoming purchase orders are not counted.', '/app/reports/inventory?stock=short_for_sales'],
+  invoice_amount: ['采购发票金额', 'supplier_invoices', 'currency', '已提交采购发票（已提交、匹配中、有差异、已匹配、已批准或暂挂）的金额合计，不含草稿、已驳回和已取消的发票；有发票缺少金额时不显示合计。', '/app/reports/finance?match=submitted'],
   supplier_count: ['供应商数量', 'suppliers', 'number', '当前供应商基础资料记录数。', '/app/master-data/suppliers'],
   overdue_open_po_count: ['Overdue open POs', 'purchase_orders', 'number', "Open purchase orders whose earliest line still to receive was due before today in the workspace timezone (the line's promised date, else the order's expected date).", '/app/reports/procurement?scope=overdue'],
   on_time_receipt_rate: ['On-time deliveries (date on the PO)', 'receipts', 'percentage', "Deliveries (the lines of one PO with one date) first promised in range whose every line had a posted receipt by the date on the PO, which may be the buyer's need date. Orders approved but not sent to the supplier are left out. Needs at least 5 deliveries.", '/app/reports/suppliers'],
   active_supplier_count: ['Suppliers with committed orders', 'purchase_orders', 'number', 'Suppliers with at least one committed purchase order in range.', '/app/master-data/suppliers'],
-  invoice_match_rate: ['Invoices matched', 'supplier_invoices', 'percentage', 'Share of submitted supplier invoices whose three-way match passed.', '/app/finance/three-way-match'],
-  invoices_awaiting_match: ['Invoices awaiting match', 'supplier_invoices', 'number', 'Submitted supplier invoices without a three-way match result yet.', '/app/finance/three-way-match'],
-  invoices_with_exception: ['Match exceptions', 'supplier_invoices', 'number', 'Submitted supplier invoices whose three-way match found an exception.', '/app/finance/three-way-match'],
+  invoice_match_rate: ['Invoices matched', 'supplier_invoices', 'percentage', 'Share of submitted supplier invoices whose three-way match passed.', '/app/reports/finance?match=submitted'],
+  invoices_awaiting_match: ['Invoices awaiting match', 'supplier_invoices', 'number', 'Submitted supplier invoices without a three-way match result yet.', '/app/reports/finance?match=pending'],
+  invoices_with_exception: ['Match exceptions', 'supplier_invoices', 'number', 'Submitted supplier invoices whose three-way match found an exception.', '/app/reports/finance?match=exception'],
   sales_order_amount: ['Sales order amount', 'sales_orders', 'currency', 'Total of sales orders in the current range, without drafts and cancellations. No total is shown across currencies.', '/app/sales/orders'],
   order_fulfillment_rate: ['Orders shipped in full', 'sales_orders', 'percentage', 'Share of confirmed sales orders whose every line has shipped its ordered quantity.', '/app/sales/orders'],
-  out_of_stock_sku: ['Out-of-stock SKUs', 'inventory_balances', 'number', 'SKUs with no available stock under the shared availability calculation.', '/app/inventory?risk=high'],
-  negative_atp_sku: ['SKUs short after incoming', 'inventory_balances', 'number', 'SKUs whose available-to-promise quantity (available stock plus incoming purchase orders, less open demand) is below zero.', '/app/inventory?risk=high'],
-  low_stock_sku: ['Low-stock SKUs', 'inventory_balances', 'number', 'SKUs out of stock, below safety stock, or at or below the reorder point once incoming purchase orders and open demand are counted: the stock statuses other than in stock and unknown.', '/app/inventory'],
+  out_of_stock_sku: ['Out-of-stock SKUs', 'inventory_balances', 'number', 'SKUs with no available stock under the shared availability calculation.', '/app/reports/inventory?stock=out_of_stock'],
+  negative_atp_sku: ['SKUs short after incoming', 'inventory_balances', 'number', 'SKUs whose available-to-promise quantity (available stock plus incoming purchase orders, less open demand) is below zero.', '/app/reports/inventory?stock=short_after_incoming'],
+  // The inventory pages' "Below safety stock (on hand)" (shared/inventory-
+  // stock-signals.mjs), not a mix of shelf and position statuses (design audit
+  // L3-07, L6-06): the reorder list's "order now" is its own figure, "Items to
+  // reorder", in Needs attention, as on Today.
+  low_stock_sku: ['Below safety stock (on hand)', 'inventory_balances', 'number', 'SKUs whose stock on hand is under their safety stock, whether or not orders are coming, as the inventory warnings count them. Items to reorder by stock position are counted apart, as on the reorder list.', '/app/inventory/warnings?signal=below_safety'],
 }
 
-// The stock statuses (runtime-inventory-allocation-read-model.mjs) the
-// low-stock KPI counts, as the stock status chart beside it shows them.
-const LOW_STOCK_STATUSES = new Set(['out_of_stock', 'below_safety_stock', 'below_reorder_point'])
+// A KPI's drill-through filter for the report's own detail rows: each value
+// keeps the rows its KPI counts, so the rows shown are that KPI (design audit
+// L6-05). stock applies to inventory rows, match to supplier invoices.
+const STOCK_FILTERS = Object.freeze({
+  out_of_stock: row => row.stockStatus === 'out_of_stock',
+  short_for_sales: row => isInventoryRiskSku(row),
+  short_after_incoming: row => row.availableToPromise !== null && row.availableToPromise !== undefined && row.availableToPromise < 0,
+})
+// submitted: every submitted invoice; the others, its three-way match outcome.
+const MATCH_FILTERS = Object.freeze(['submitted', 'pending', 'matched', 'exception'])
+export const REPORT_DRILL_FILTERS = Object.freeze({ stock: Object.freeze(Object.keys(STOCK_FILTERS)), match: MATCH_FILTERS })
 
 // The overview has one figure per area (owner review, round 8): purchasing,
 // sales, inventory and supplier invoices. Open purchase orders and SKUs short
@@ -183,7 +196,9 @@ function runtimeRows(context, inventory, timeZone) {
       ? context.salesOrderGroups.map(row => ({ date: reportCalendarDay(row.date), customer: text(row.customer), currency: currencyCode(row.currency), status: text(row.status), count: Math.max(0, Math.floor(number(row.count))), amount: amountOf(row.amount), reserved: Boolean(row.reserved), shipped: Boolean(row.shipped), shippedInFull: Boolean(row.shippedInFull) })).filter(row => row.count > 0)
       : array(context.salesOrders).map((order, index) => ({ date: sales[index].date, customer: sales[index].customer, currency: sales[index].currency, status: sales[index].status, count: 1, amount: sales[index].amount, ...salesShipping(order) })),
     inventory_balances: inventory.availability.map(row => ({ id: row.sku, itemName: row.itemName === row.sku ? '' : row.itemName, unit: inventoryUnit(row.sku), quantity: row.onHand, reserved: row.reserved, available: row.available, shortage: row.shortage, availableToPromise: row.availableToPromise, stockStatus: row.stockStatus, status: row.riskLevel })),
-    supplier_invoices: array(context.supplierInvoices).map(row => ({ id: text(row.id || row.invoiceNumber), number: text(row.invoiceNumber), date: invoiceDate(row, timeZone), supplier: text(row.supplierName || row.supplierId), amount: amountOf(row.totalAmount ?? row.amount), status: text(row.status), currency: currencyCode(row.currency) })),
+    // match: the three-way match outcome of a submitted invoice (null before
+    // it is submitted), for the drill-through filter; not a table column.
+    supplier_invoices: array(context.supplierInvoices).map(row => ({ id: text(row.id || row.invoiceNumber), number: text(row.invoiceNumber), date: invoiceDate(row, timeZone), supplier: text(row.supplierName || row.supplierId), amount: amountOf(row.totalAmount ?? row.amount), status: text(row.status), currency: currencyCode(row.currency), match: committedInvoiceStatuses.has(text(row.status).toLowerCase()) ? invoiceMatchOutcome(row) : null })),
     // number: the supplier code the lists show; id stays for the link.
     suppliers: array(context.suppliers).map(row => ({ id: text(row.id || row.supplierCode), number: text(row.supplierCode), supplier: text(row.supplierName || row.name), status: text(row.status) })),
   }
@@ -205,7 +220,7 @@ function statusMatches(row, status) {
 // date is outside every date range.
 const subjectFilters = {
   purchase_orders: ['from', 'to', 'supplier', 'currency'], sales_orders: ['from', 'to', 'customer', 'currency'],
-  supplier_invoices: ['from', 'to', 'supplier', 'currency'], inventory_balances: [], suppliers: ['supplier'],
+  supplier_invoices: ['from', 'to', 'supplier', 'currency', 'match'], inventory_balances: ['stock'], suppliers: ['supplier'],
   receipts: ['from', 'to', 'supplier', 'currency'],
 }
 // Groups of sales orders take the sales order filters.
@@ -214,7 +229,7 @@ const applicableFilters = (subject, primaryKey) => [...subjectFilters[filterSubj
 
 function filtered(rows, query, filters) {
   const applies = key => query[key] && filters.includes(key)
-  return rows.filter(row => (!applies('from') || (row.date && row.date >= query.from)) && (!applies('to') || (row.date && row.date <= query.to)) && (!applies('supplier') || row.supplier === query.supplier) && (!applies('customer') || row.customer === query.customer) && (!applies('currency') || row.currency === query.currency) && (!applies('status') || statusMatches(row, query.status)))
+  return rows.filter(row => (!applies('stock') || STOCK_FILTERS[query.stock](row)) && (!applies('match') || (Boolean(row.match) && (query.match === 'submitted' || row.match === query.match))) && (!applies('from') || (row.date && row.date >= query.from)) && (!applies('to') || (row.date && row.date <= query.to)) && (!applies('supplier') || row.supplier === query.supplier) && (!applies('customer') || row.customer === query.customer) && (!applies('currency') || row.currency === query.currency) && (!applies('status') || statusMatches(row, query.status)))
 }
 
 function value(id, all, inventory, facts) {
@@ -233,7 +248,7 @@ function value(id, all, inventory, facts) {
   if (id === 'order_fulfillment_rate') return facts.orderFulfillmentRate
   if (id === 'out_of_stock_sku') return inventory.availability.filter(row => row.stockStatus === 'out_of_stock').length
   if (id === 'negative_atp_sku') return inventory.availability.filter(row => row.availableToPromise !== null && row.availableToPromise < 0).length
-  if (id === 'low_stock_sku') return inventory.availability.filter(row => LOW_STOCK_STATUSES.has(row.stockStatus)).length
+  if (id === 'low_stock_sku') return facts.stockSignals.belowSafetyOnHand
   return 0
 }
 
@@ -314,7 +329,9 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts, partia
   const dataStatus = incomplete ? 'incomplete' : id === 'inventory_on_hand' && !inventory.availability.length ? 'empty' : unit === 'percentage' && currentValue === null ? 'no_records' : 'complete'
   const limitations = money ? money.limitations : demand ? (demand.limitation ? [demand.limitation] : []) : receiptsCut ? ['receipts_truncated'] : periodTooLong ? ['period_too_long'] : smallSample ? ['insufficient_sample'] : []
   const currency = money ? { currencyCode: money.currencyCode, currencyLabel: money.currencyLabel, currencies: money.currencies, currencyAggregationStatus: money.currencyAggregationStatus, currencyAmounts: money.currencyAmounts } : {}
-  return { id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, ...(demand ? { quantityUnit: demand.unit } : {}), comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, trend: metricTrend(id, all, money, partial), generatedAt: new Date().toISOString() }
+  // Below safety stock carries how many of those SKUs open orders cover (W-03).
+  const detail = id === 'low_stock_sku' ? { detail: { coveredByOpenOrders: facts.stockSignals?.coveredByOpenOrders ?? null } } : {}
+  return { ...detail, id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, ...(demand ? { quantityUnit: demand.unit } : {}), comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, trend: metricTrend(id, all, money, partial), generatedAt: new Date().toISOString() }
 }
 
 // Period comparison (docs/report-collaboration-design.md §5.1): a figure over
@@ -399,12 +416,30 @@ const byBusinessDate = (a, b) => Number(Boolean(b.date)) - Number(Boolean(a.date
 // options.allocationContext, when the context was scoped to a reader, is the
 // unscoped context: each SKU's reserved and available quantity counts every
 // sales order, whether or not the reader can read sales orders.
+// The overview's stock figures: the inventory pages' two signals over the
+// report's stock rows and the reorder list (shared/inventory-stock-signals.mjs).
+// needsReplenishment is the reorder list's "order now", as Today and the list
+// count it; belowSafetyOnHand the shelf under its safety stock, and
+// coveredByOpenOrders those of them open orders cover (design audit L3-07,
+// L6-06, W-03). A reader the reorder list cannot judge has no position: the
+// two position figures are null.
+function overviewStockSignals(inventory, reorder) {
+  const reorderList = reorder && Array.isArray(reorder.rows) ? reorder : null
+  const balances = inventory.availability.map(row => ({ sku: row.sku, availableQuantity: row.available, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint }))
+  const counts = stockSignalCounts(inventoryStockSignals({ balances, reorderList }))
+  return {
+    needsReplenishment: Number.isInteger(reorder?.orderNow) ? reorder.orderNow : null,
+    belowSafetyOnHand: counts.belowSafetyOnHand,
+    coveredByOpenOrders: reorderList ? counts.coveredByOpenOrders : null,
+  }
+}
+
 export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const restriction = { subjects: new Set(array(context.restrictedSubjects)), amounts: context.restrictedAmounts || {} }
   const inventory = buildRuntimeInventoryAllocation(options.allocationContext && !restriction.subjects.has('inventory_balances') ? options.allocationContext : context)
   inventory.units = [...new Set(array(context.inventoryItems).map(row => text(row.unit)).filter(Boolean))]
   if (inventory.units.length > 1) inventory.dataLimitations.push('inventory_units_mixed')
-  const query = { subject: dashboardMetrics[input.subject] ? input.subject : 'overview', from: text(input.filters?.from || ''), to: text(input.filters?.to || ''), supplier: text(input.filters?.supplier || ''), customer: text(input.filters?.customer || ''), currency: currencyCode(input.filters?.currency), status: text(input.filters?.status || ''), limit: Math.max(1, Math.min(200, number(input.limit || 50))) }
+  const query = { subject: dashboardMetrics[input.subject] ? input.subject : 'overview', from: text(input.filters?.from || ''), to: text(input.filters?.to || ''), supplier: text(input.filters?.supplier || ''), customer: text(input.filters?.customer || ''), currency: currencyCode(input.filters?.currency), status: text(input.filters?.status || ''), stock: REPORT_DRILL_FILTERS.stock.includes(text(input.filters?.stock)) ? text(input.filters?.stock) : '', match: REPORT_DRILL_FILTERS.match.includes(text(input.filters?.match)) ? text(input.filters?.match) : '', limit: Math.max(1, Math.min(200, number(input.limit || 50))) }
   const timeZone = options.timeZone || DEFAULT_TENANT_TIMEZONE
   const today = tenantCalendarDay(options.now instanceof Date && Number.isFinite(options.now.getTime()) ? options.now : new Date(), timeZone)
   // The supplier dashboard shares its page with the supplier scorecard, so it
@@ -449,11 +484,12 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   // delivery, so those figures count orders in every currency.
   const promisePurchaseOrderIds = query.subject === 'suppliers' && query.currency ? new Set(filtered(source.purchase_orders, { ...query, from: '', to: '', currency: '' }, applicableFilters('purchase_orders', primaryKey)).map(row => row.id)) : null
   const promiseOptions = { graceDays: query.graceDays, warehouseIds: Array.isArray(options.warehouseIds) ? options.warehouseIds : null, purchaseOrderIds: promisePurchaseOrderIds }
-  const facts = { ...buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand, onTimeWithheld, promiseOptions }), salesDemandTotal: salesDemandTotal(salesDemand), inventoryOnHand: inventoryOnHandTotal(source.inventory_balances, inventory.units) }
+  const stockSignals = overviewStockSignals(inventory, options.reorder)
+  const facts = { ...buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand, onTimeWithheld, promiseOptions }), salesDemandTotal: salesDemandTotal(salesDemand), inventoryOnHand: inventoryOnHandTotal(source.inventory_balances, inventory.units), stockSignals }
   const visuals = options.kpisOnly ? [] : buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts, restrictedSubjects: restriction.subjects, today, timeZone, salesDemand, onTimeWithheld, promiseOptions, partial })
   const inventoryLabels = primaryKey === 'inventory_balances' ? { id: 'SKU', itemName: '物料名称', status: 'Risk' } : primaryKey === 'suppliers' ? { number: '供应商编号' } : {}
   const repeatsId = key => key === 'number' && details.every(row => !text(row.number) || text(row.number) === text(row.id))
-  const columns = [...new Set(details.flatMap(row => Object.keys(row)))].filter(key => !repeatsId(key)).map(key => ({ key, label: inventoryLabels[key] || ({ id: '业务编号', number: '单据号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', unit: '单位', fulfilled: '已履约', reserved: 'Reserved quantity', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: 'Short now', availableToPromise: 'Available to promise', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'fulfilled', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
+  const columns = [...new Set(details.flatMap(row => Object.keys(row)))].filter(key => !repeatsId(key) && key !== 'match').map(key => ({ key, label: inventoryLabels[key] || ({ id: '业务编号', number: '单据号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', unit: '单位', fulfilled: '已履约', reserved: 'Reserved quantity', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: 'Short now', availableToPromise: 'Available to promise', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'fulfilled', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
   // input.comparison 'previous_period' sets the comparison; options.kpisOnly
   // marks the inner run for the earlier period, which needs only its KPIs.
   const comparisonRange = input.comparison === 'previous_period' && !options.kpisOnly ? previousPeriod(query.from, query.to) : null
@@ -470,13 +506,13 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   // Subjects the read context could not load in full whose cut changes this
   // dashboard's figures; totals over them may be low.
   const truncatedSubjects = dashboardTruncation(context, query.subject, totalWeight(source.sales_order_groups))
-  return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, restrictedSubjects: [...restriction.subjects], restrictedAmounts: Object.keys(restriction.amounts).filter(key => restriction.amounts[key]), kpis, charts: overview ? [...visuals, ...overview.charts] : visuals, attention: overview?.attention || [], totalRecords, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: drilldownOf(id, query.subject) })), exportRows: listed, metricDefinitions: kpis }
+  return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, ...(query.subject === 'overview' && !restriction.subjects.has('inventory_balances') ? { stockSignals } : {}), restrictedSubjects: [...restriction.subjects], restrictedAmounts: Object.keys(restriction.amounts).filter(key => restriction.amounts[key]), kpis, charts: overview ? [...visuals, ...overview.charts] : visuals, attention: overview?.attention || [], totalRecords, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: drilldownOf(id, query.subject) })), exportRows: listed, metricDefinitions: kpis }
 }
 
 export function getRuntimeReportCatalog() {
   const subjects = {
     purchase_orders: ['采购订单', '/app/procurement/orders'], sales_orders: ['销售订单', '/app/sales/orders'],
-    inventory_balances: ['库存余额', '/app/inventory'], supplier_invoices: ['采购发票', '/app/finance/invoices'],
+    inventory_balances: ['库存余额', '/app/inventory'], supplier_invoices: ['采购发票', '/app/procurement/bills'],
     suppliers: ['供应商', '/app/master-data/suppliers'], purchase_requests: ['采购申请', '/app/procurement/requests'],
     rfqs: ['询报价', '/app/procurement/rfq'], receiving: ['收货', '/app/procurement/receiving'],
   }
