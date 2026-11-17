@@ -157,6 +157,7 @@ if (!realPostgres) {
     const base = await seed(),
       ctx = identity(base.tenantId, base.actorId),
       service = createSalesOrderWorkbenchService({ prisma });
+    await prisma.runtimeRecord.create({ data: { id: randomUUID(), tenantId: base.tenantId, namespace: "master-data.customers", recordKey: "CUST-LIFE", payload: { id: "CUST-LIFE-ID", code: "CUST-LIFE", name: "Lifecycle Revised", status: "active" } } });
     const created = await service.createOrder(
       {
         customerName: "Lifecycle Customer",
@@ -202,8 +203,8 @@ if (!realPostgres) {
         idempotencyKey: "lifecycle-revise",
         revisionMode: "replace_all",
         expectedLineIds: created.order.lines.map((line) => line.id),
-        header: { customerName: "Lifecycle Revised", currency: "CNY" },
-        lines: [{ itemId: base.itemId, quantity: "3" }],
+        header: { customerId: "CUST-LIFE-ID", currency: "CNY" },
+        lines: [{ itemId: base.itemId, quantity: "3", unitPrice: "4" }],
       },
       ctx,
     );
@@ -333,6 +334,74 @@ if (!realPostgres) {
   // Document numbering (owner decisions 2026-11-04): the server gives each
   // sales order SO-YYYYMM-NNNN and each shipment draft DN-YYYYMM-NNNN, the
   // sequence per workspace, type and workspace month. A client number is ignored.
+  // Design audit L4-13, L4-14, L4-26: an order could be confirmed with no
+  // price (invoicing refused it only after it shipped) or for a customer that
+  // was inactive or restricted, and a revision that left the customer out
+  // cleared it.
+  test("confirming needs a price on every line and an active, unrestricted customer; a revision keeps what it leaves out", async () => {
+    const base = await seed(),
+      ctx = identity(base.tenantId, base.actorId),
+      service = createSalesOrderWorkbenchService({ prisma });
+    const customer = (code, extra = {}) => ({ id: randomUUID(), tenantId: base.tenantId, namespace: "master-data.customers", recordKey: code, payload: { id: `${code}-ID`, code, name: `${code} Ltd`, status: "active", ...extra } });
+    await prisma.runtimeRecord.createMany({ data: [customer("CONF-OK"), customer("CONF-RESTRICTED"), customer("CONF-LEGACY", { creditStatus: "受限" })] });
+    const draft = async (key, extra = {}) => (await service.createOrder({ customerId: "CONF-OK-ID", currency: "USD", idempotencyKey: key, promisedDate: "2026-11-30T12:00:00.000Z", lines: [{ itemId: base.itemId, quantity: "1", unitPrice: "5" }], ...extra }, ctx)).order;
+    const confirm = (order, key) => service.confirmOrder(order.id, { expectedOrderVersion: order.version, idempotencyKey: key }, ctx);
+
+    // A line without a price: refused, naming the line. Zero is a price (a free item).
+    const unpriced = await draft("conf-unpriced", { lines: [{ itemId: base.itemId, quantity: "1" }] });
+    await assert.rejects(confirm(unpriced, "conf-unpriced-confirm"), (error) => error.code === "SALES_ORDER_PRICE_REQUIRED" && error.details.lineIds.length === 1);
+    const free = await draft("conf-free", { lines: [{ itemId: base.itemId, quantity: "1", unitPrice: "0" }] });
+    assert.equal((await confirm(free, "conf-free-confirm")).order.workflowStatus, "confirmed");
+
+    // A customer typed in, not chosen from Customers: refused.
+    const typed = (await service.createOrder({ customerName: "Walk-in", currency: "USD", idempotencyKey: "conf-typed", lines: [{ itemId: base.itemId, quantity: "1", unitPrice: "5" }] }, ctx)).order;
+    await assert.rejects(confirm(typed, "conf-typed-confirm"), (error) => error.code === "SALES_ORDER_CUSTOMER_REQUIRED");
+
+    // Restricted (as a code, or the Chinese word older records hold), or inactive since: refused.
+    const restricted = await draft("conf-restricted", { customerId: "CONF-RESTRICTED-ID" });
+    await prisma.runtimeRecord.updateMany({ where: { tenantId: base.tenantId, recordKey: "CONF-RESTRICTED" }, data: { payload: { id: "CONF-RESTRICTED-ID", code: "CONF-RESTRICTED", name: "CONF-RESTRICTED Ltd", status: "active", creditStatus: "restricted" } } });
+    await assert.rejects(confirm(restricted, "conf-restricted-confirm"), (error) => error.code === "SALES_ORDER_CUSTOMER_RESTRICTED");
+    const legacy = await draft("conf-legacy", { customerId: "CONF-LEGACY-ID" });
+    await assert.rejects(confirm(legacy, "conf-legacy-confirm"), (error) => error.code === "SALES_ORDER_CUSTOMER_RESTRICTED");
+    const closed = await draft("conf-closed")
+    await prisma.runtimeRecord.updateMany({ where: { tenantId: base.tenantId, recordKey: "CONF-OK" }, data: { payload: { id: "CONF-OK-ID", code: "CONF-OK", name: "CONF-OK Ltd", status: "inactive" } } });
+    await assert.rejects(confirm(closed, "conf-closed-confirm"), (error) => error.code === "SALES_ORDER_CUSTOMER_NOT_FOUND");
+    await prisma.runtimeRecord.updateMany({ where: { tenantId: base.tenantId, recordKey: "CONF-OK" }, data: { payload: { id: "CONF-OK-ID", code: "CONF-OK", name: "CONF-OK Ltd", status: "active" } } });
+
+    // A revision that sends only lines keeps the customer and the promised date.
+    const kept = await draft("conf-keep");
+    const revised = (await service.reviseOrder(kept.id, { expectedOrderVersion: kept.version, idempotencyKey: "conf-keep-revise", revisionMode: "replace_all", expectedLineIds: kept.lines.map((line) => line.id), header: {}, lines: [{ itemId: base.itemId, quantity: "2", unitPrice: "5" }] }, ctx)).order;
+    assert.deepEqual([revised.customerId, revised.customerName, revised.promisedDate?.slice(0, 10)], ["CONF-OK-ID", "CONF-OK Ltd", "2026-11-30"]);
+    // Sent empty, the promised date is cleared.
+    const cleared = (await service.reviseOrder(kept.id, { expectedOrderVersion: revised.version, idempotencyKey: "conf-keep-clear", revisionMode: "replace_all", expectedLineIds: revised.lines.map((line) => line.id), header: { promisedDate: null }, lines: [{ itemId: base.itemId, quantity: "2", unitPrice: "5" }] }, ctx)).order;
+    assert.deepEqual([cleared.customerId, cleared.promisedDate], ["CONF-OK-ID", null]);
+  });
+
+  // Design audit L4-03: deactivating an item stopped every open order with it
+  // from shipping, a wrong shipment from being reversed, and the order from
+  // being held or resumed.
+  test("an item deactivated after the order was confirmed still reserves, ships, reverses, holds and resumes", async () => {
+    const ids = await seed();
+    const service = command();
+    const ctx = identity(ids.tenantId, ids.actorId);
+    await prisma.item.update({ where: { id: ids.itemId }, data: { status: "inactive" } });
+    const reserved = await service.reserveSalesOrderInventory(reserveInput(ids, "4.0000", "inactive-reserve"), ctx);
+    const reservationId = reserved.reservations[0].id;
+    const drafted = await service.createShipmentDraft({ salesOrderId: ids.salesOrderId, expectedOrderVersion: 1, idempotencyKey: "inactive-draft", lines: [{ salesOrderLineId: ids.salesOrderLineId, allocations: [{ reservationId, quantity: "4.0000" }] }] }, ctx);
+    const posted = await service.postShipment({ shipmentId: drafted.shipment.id, expectedShipmentVersion: 0, idempotencyKey: "inactive-post" }, ctx);
+    assert.equal(posted.movementIds.length, 1);
+    const reversed = await service.reverseShipment({ shipmentId: drafted.shipment.id, expectedShipmentVersion: 1, idempotencyKey: "inactive-reverse", reason: "Wrong item sent" }, ctx);
+    assert.equal(reversed.movementIds.length, 1);
+    // Hold and resume read the lines again, without asking for an active item.
+    const workbench = createSalesOrderWorkbenchService({ prisma });
+    const order = await prisma.salesOrder.findUnique({ where: { id: ids.salesOrderId } });
+    const held = await workbench.holdOrder(ids.salesOrderId, { expectedOrderVersion: order.version, idempotencyKey: "inactive-hold" }, ctx);
+    const resumed = await workbench.resumeOrder(ids.salesOrderId, { expectedOrderVersion: held.order.version, idempotencyKey: "inactive-resume" }, ctx);
+    assert.equal(resumed.order.workflowStatus, "confirmed");
+    // A new order with the item is still refused.
+    await assert.rejects(workbench.createOrder({ customerName: "New order", currency: "USD", idempotencyKey: "inactive-new", lines: [{ itemId: ids.itemId, quantity: "1", unitPrice: "1" }] }, ctx), (error) => error.code === "SALES_ORDER_ITEM_INVALID");
+  });
+
   test("sales orders are numbered SO-YYYYMM-NNNN by the server in the workspace month; a client number is ignored", async () => {
     const base = await seed(),
       ctx = identity(base.tenantId, base.actorId);
@@ -1690,7 +1759,7 @@ if (!realPostgres) {
     await assertReconciled(ids);
   });
 
-  test("reservation policy rejects cross-tenant, SKU, inactive item, and balance identity corruption", async () => {
+  test("reservation policy rejects cross-tenant, SKU and balance identity corruption, and lets an inactive item finish its order", async () => {
     const ids = await seed(),
       item = await prisma.item.findUnique({ where: { id: ids.itemId } });
     const input = reserveInput(ids, "1", "integrity-preview");
@@ -1729,11 +1798,8 @@ if (!realPostgres) {
       where: { id: ids.itemId },
       data: { status: "inactive" },
     });
-    assert.ok(
-      (await plan()).blockingIssues.some(
-        (issue) => issue.code === "SALES_ORDER_ITEM_INVALID",
-      ),
-    );
+    // Deactivating an item stops new orders, not the ones in progress (design audit L4-03).
+    assert.equal((await plan()).allowed, true);
     await prisma.item.update({
       where: { id: ids.itemId },
       data: { status: "active" },

@@ -11,6 +11,12 @@ const zh: Record<string, string> = {
   "Details": "详情", "Yes": "是", "No": "否",
   "No customers yet. Create or import customers to continue.": "暂无客户。请新建或导入客户后继续。",
   "New customer": "新建客户", "Currency": "币种", "Email": "邮箱", "Save customer": "保存客户", "Cancel": "取消",
+  // Customer editing (design audit L4-06, L4-18, L4-26).
+  "Edit": "编辑", "Edit customer": "编辑客户", "Country": "国家或地区", "Not set": "未设置", "Save changes": "保存修改",
+  "A restricted customer's sales orders cannot be confirmed.": "信用受限的客户，其销售订单无法确认。",
+  "Another customer already has this name: {codes}": "已有客户使用这个名称：{codes}",
+  "Another item already has this name: {codes}": "已有物料使用这个名称：{codes}",
+  "The SKU cannot change once the item exists.": "物料创建后不能修改 SKU。",
   "Saving…": "正在保存…", "Set inactive": "设为停用", "Set active": "设为启用", "Could not save the customer.": "客户保存失败。",
   "Could not change the customer status.": "客户状态修改失败。",
   "Template name": "模板名称", "Document type": "单据类型", "Default": "默认", "Custom": "自定义", "Last updated": "最近更新时间",

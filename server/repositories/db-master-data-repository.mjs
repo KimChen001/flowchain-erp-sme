@@ -3,7 +3,7 @@ import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
 import { changeSupplierOwner, changeSupplierTier, reviewSupplierTier } from '../domain/supplier-tier-command.mjs'
-import { CUSTOMER_NAMESPACE, listItemSupplierRecords, mapItemSupplierRecord, saveCustomerMaster, saveItemMaster, saveItemSupplier } from '../domain/master-data-commands.mjs'
+import { CUSTOMER_NAMESPACE, listItemSupplierRecords, mapItemSupplierRecord, saveCustomerMaster, saveItemMaster, saveItemSupplier, customerCreditStatus } from '../domain/master-data-commands.mjs'
 import { ITEM_SUPPLIER_LINK_READ_CAP, itemSupplierLinkOptions, itemSupplierLinkPage, joinItemSupplierLinks, preferredSupplierLink } from '../domain/item-supplier-links.mjs'
 import { saveWarehouse, saveWarehouseBin, setWarehouseBinStatus, setWarehouseStatus, warehouseVersion } from '../domain/warehouse-master-commands.mjs'
 import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
@@ -56,13 +56,31 @@ function safeLimit(value, fallback = 200) {
 // or code, then its name, each ignoring case. A database query, so a record
 // is found however many the workspace has (it was the first 500 read). The
 // key is escaped: Prisma sends a case-insensitive equals as ILIKE.
+// A name is not unique, so a name that two records share finds neither: the
+// lookup answers 409 NAME_AMBIGUOUS with the candidates (their id and code)
+// instead of quietly taking the first by id (design audit L4-18).
 async function findByKey(delegate, where, key, fields, args = {}) {
   const equals = { equals: escapeLikePattern(key), mode: 'insensitive' }
   for (const field of fields) {
-    const record = await delegate.findFirst({ ...args, where: { ...where, [field]: equals }, orderBy: [{ id: 'asc' }] })
-    if (record) return record
+    if (field !== 'name') {
+      const record = await delegate.findFirst({ ...args, where: { ...where, [field]: equals }, orderBy: [{ id: 'asc' }] })
+      if (record) return record
+      continue
+    }
+    const named = await delegate.findMany({ ...args, where: { ...where, name: equals }, orderBy: [{ id: 'asc' }], take: 5 })
+    if (named.length > 1) throw Object.assign(new Error(`More than one record is named "${key}". Use its code.`), { status: 409, code: 'NAME_AMBIGUOUS', details: named.map((record) => ({ id: record.id, code: record.sku || record.code || record.recordKey || record.id, name: record.name })) })
+    if (named.length) return named[0]
   }
   return null
+}
+
+// Other records of the workspace with this name, for a warning when one is
+// created: a name is no key, but two items or suppliers with one name are
+// usually a duplicate (design audit L4-18).
+export async function sameNameRecords(delegate, where, name, excludeId, codeOf) {
+  if (!text(name)) return []
+  const rows = await delegate.findMany({ where: { ...where, name: { equals: escapeLikePattern(text(name)), mode: 'insensitive' }, ...(excludeId ? { id: { not: excludeId } } : {}) }, orderBy: [{ id: 'asc' }], take: 5 })
+  return rows.map((row) => ({ id: row.id, code: codeOf(row) }))
 }
 const ITEM_KEY_FIELDS = ['id', 'sku', 'name']
 const SUPPLIER_KEY_FIELDS = ['id', 'code', 'name']
@@ -73,6 +91,8 @@ export function recordedItemUnit(record = {}) {
   const meta = metadata(record)
   return text(record.unit || meta.baseUom || meta.uom)
 }
+
+const recordedNumberOf = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
 
 function mapItem(record = {}) {
   const meta = metadata(record)
@@ -93,6 +113,19 @@ function mapItem(record = {}) {
     baseUom: baseUnit,
     baseUnit,
     recordedUnit: recordedItemUnit(record),
+    // What someone recorded, null when nothing was: the fields above fill
+    // gaps for display (pcs, Uncategorized, MOQ 1, zeros), and an edit form
+    // that saved them back made them look recorded (design audit L4-02).
+    recorded: {
+      unit: recordedItemUnit(record) || null,
+      category: text(record.category || meta.category) || null,
+      safetyStock: recordedNumberOf(record.safetyStock ?? meta.safetyStock),
+      reorderPoint: recordedNumberOf(record.reorderPoint ?? meta.reorderPoint),
+      minimumOrderQuantity: recordedNumberOf(meta.minimumOrderQuantity ?? meta.moq),
+      purchaseLeadTimeDays: recordedNumberOf(meta.purchaseLeadTimeDays ?? meta.leadTimeDays ?? meta.leadTime),
+      purchaseUnit: text(meta.purchaseUnit) || null,
+      itemType: text(meta.itemType) || null,
+    },
     purchaseUnit: text(meta.purchaseUnit, baseUnit),
     // Only a warehouse someone set: drafts and data-quality checks rely on it.
     defaultWarehouseId: meta.defaultWarehouseId || meta.warehouseId || '',
@@ -269,7 +302,9 @@ function mapCustomer(record = {}) {
     email: text(payload.email),
     address: text(payload.address),
     paymentTerms: text(payload.paymentTerms),
-    creditStatus: text(payload.creditStatus),
+    country: text(payload.country),
+    // A code, normal or restricted (older records' Chinese words read as them).
+    creditStatus: customerCreditStatus(payload.creditStatus),
     version: Number(payload.version || 1),
     sourceType: 'database',
   }
@@ -284,7 +319,11 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
   return {
     mode: 'database',
     adapter: 'db-master-data-v1',
-    createSupplier: async (input, actorId, scope) => mapSupplier(await withPeople(await saveSupplierMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope))),
+    createSupplier: async (input, actorId, scope) => {
+      const client = await resolvePrisma({ env, prisma })
+      const saved = await saveSupplierMaster(client, null, input, actorId, scope)
+      return { ...mapSupplier(await withPeople(saved)), nameAlsoUsedBy: await sameNameRecords(client.supplier, tenantWhere(scope), saved.name, saved.id, (row) => row.code || row.id) }
+    },
     updateSupplier: async (id, input, actorId, scope) => mapSupplier(await withPeople(await saveSupplierMaster(await resolvePrisma({ env, prisma }), id, input, actorId, scope))),
     setSupplierTier: async (id, input, actorId, scope, options = {}) => mapSupplier(await withPeople(await changeSupplierTier(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope, options))),
     reviewSupplierTier: async (id, input, actorId, scope, options = {}) => mapSupplier(await withPeople(await reviewSupplierTier(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope, options))),
@@ -333,9 +372,23 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
             : { fromOwner: person(row.metadata?.fromOwnerId), toOwner: person(row.metadata?.toOwnerId) }),
       }))
     },
-    createItem: async (input, actorId, scope) => mapItem(await saveItemMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope)),
+    // A new item names the items that already had its name (nameAlsoUsedBy),
+    // for a warning; the item is created either way.
+    createItem: async (input, actorId, scope) => {
+      const client = await resolvePrisma({ env, prisma })
+      const saved = await saveItemMaster(client, null, input, actorId, scope)
+      return { ...mapItem(saved), nameAlsoUsedBy: await sameNameRecords(client.item, tenantWhere(scope), saved.name, saved.id, (row) => row.sku) }
+    },
     updateItem: async (id, input, actorId, scope) => mapItem(await saveItemMaster(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope)),
-    createCustomer: async (input, actorId, scope) => mapCustomer(await saveCustomerMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope)),
+    // A customer's name is inside its record, so the same name is matched as
+    // written (case and all).
+    createCustomer: async (input, actorId, scope) => {
+      const client = await resolvePrisma({ env, prisma })
+      const saved = await saveCustomerMaster(client, null, input, actorId, scope)
+      const customer = mapCustomer(saved)
+      const named = customer.name ? await client.runtimeRecord.findMany({ where: { ...tenantWhere(scope), namespace: CUSTOMER_NAMESPACE, id: { not: saved.id }, payload: { path: ['name'], equals: customer.name } }, orderBy: [{ recordKey: 'asc' }], take: 5 }) : []
+      return { ...customer, nameAlsoUsedBy: named.map((row) => ({ id: row.id, code: row.recordKey })) }
+    },
     updateCustomer: async (id, input, actorId, scope) => mapCustomer(await saveCustomerMaster(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope)),
     createItemSupplier: async (itemId, input, actorId, scope) => saveItemSupplier(await resolvePrisma({ env, prisma }), itemId, null, input, actorId, scope),
     updateItemSupplier: async (itemId, relationshipId, input, actorId, scope) => saveItemSupplier(await resolvePrisma({ env, prisma }), itemId, relationshipId, input, actorId, scope),

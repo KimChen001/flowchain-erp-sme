@@ -42,13 +42,14 @@ test('item checks keep their fields and messages and add codes', () => {
     { field: 'purchaseLeadTimeDays', code: 'WHOLE_NUMBER_REQUIRED', message: 'Lead time must be a whole number, zero or greater.' },
   ])
   assert.equal(values.sku, 'BAD SKU')
-  assert.deepEqual(itemInputIssues({}).issues.map((row) => row.code), ['SKU_REQUIRED', 'NAME_REQUIRED'])
+  // A new item needs a unit: none is made up (design audit L4-20).
+  assert.deepEqual(itemInputIssues({}).issues.map((row) => row.code), ['SKU_REQUIRED', 'NAME_REQUIRED', 'UNIT_REQUIRED'])
   // An existing item keeps its SKU, unit and status unless they are sent.
   const edit = itemInputIssues({ sku: 'OTHER' }, { sku: 'SKU-1', name: 'Valve', unit: 'EA', status: 'active' })
   assert.deepEqual(edit.issues.map((row) => row.code), ['SKU_LOCKED'])
   assert.deepEqual([edit.values.sku, edit.values.unit, edit.values.status], ['SKU-1', 'EA', 'active'])
   // Empty number fields are "not recorded", never zero.
-  const empty = itemInputIssues({ sku: 'SKU-2', itemName: 'Pump', safetyStock: '', reorderPoint: null })
+  const empty = itemInputIssues({ sku: 'SKU-2', itemName: 'Pump', baseUnit: 'pcs', safetyStock: '', reorderPoint: null })
   assert.deepEqual([empty.issues, empty.values.safetyStock, empty.values.reorderPoint, empty.values.leadTimeDays], [[], null, null, undefined])
 })
 

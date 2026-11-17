@@ -4,7 +4,7 @@ import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { outboundRequestHash } from './outbound-posting-command-service.mjs'
 import { outboundDecimalString as fixed, outboundDecimalUnits as units, SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES } from './outbound-transaction-policy.mjs'
-import { CUSTOMER_NAMESPACE } from './master-data-commands.mjs'
+import { CUSTOMER_NAMESPACE, customerCreditStatus } from './master-data-commands.mjs'
 import { allocateDocumentNumber } from './document-numbering.mjs'
 import { SALES_ORDER_DEMAND_FILTERS, salesOrderRiskWhere } from '../repositories/db-sales-order-read-repository.mjs'
 
@@ -42,7 +42,7 @@ async function actorFor(prisma, context) { return resolveProvisionedActor(prisma
 // A customer from the workspace's Customers master data.
 const customerOf = (record) => {
   const payload = record?.payload && typeof record.payload === 'object' ? record.payload : {}
-  return { id: text(payload.id) || record.id, code: record.recordKey, name: text(payload.name), currency: text(payload.currency) || null, paymentTerms: text(payload.paymentTerms) || null, status: text(payload.status) || 'active' }
+  return { id: text(payload.id) || record.id, code: record.recordKey, name: text(payload.name), currency: text(payload.currency) || null, paymentTerms: text(payload.paymentTerms) || null, status: text(payload.status) || 'active', creditStatus: customerCreditStatus(payload.creditStatus) }
 }
 
 // The order form's item search: the matches shown at a time, and how many of a
@@ -61,7 +61,9 @@ async function chosenCustomer(tx, tenantId, customerId) {
   if (!customer?.name || customer.status !== 'active') fail('SALES_ORDER_CUSTOMER_NOT_FOUND', 'Choose an active customer from Customers.', 422)
   return customer
 }
-async function authoritativeLines(prisma, tenantId, lines) {
+// requireActive: a new or revised order needs active items; holding or
+// resuming one already confirmed does not (design audit L4-03).
+async function authoritativeLines(prisma, tenantId, lines, { requireActive = true } = {}) {
   if (!Array.isArray(lines) || !lines.length) fail('SALES_ORDER_VALIDATION_FAILED', 'At least one sales order line is required.', 422)
   const normalized = lines.map((line) => {
     const orderedQuantity = quantity(line.quantity ?? line.orderedQuantity)
@@ -69,9 +71,9 @@ async function authoritativeLines(prisma, tenantId, lines) {
     return { itemId: text(line.itemId), orderedQuantity, unitPrice, amount: amount(orderedQuantity, unitPrice) }
   })
   if (normalized.some((line) => !line.itemId)) fail('SALES_ORDER_VALIDATION_FAILED', 'Every line requires an item.', 422)
-  const items = await prisma.item.findMany({ where: { tenantId, id: { in: [...new Set(normalized.map((line) => line.itemId))] }, status: 'active' } })
+  const items = await prisma.item.findMany({ where: { tenantId, id: { in: [...new Set(normalized.map((line) => line.itemId))] }, ...(requireActive ? { status: 'active' } : {}) } })
   const map = new Map(items.map((item) => [item.id, item]))
-  if (normalized.some((line) => !map.has(line.itemId))) fail('SALES_ORDER_ITEM_INVALID', 'Every line must reference an active item in this workspace.', 422)
+  if (normalized.some((line) => !map.has(line.itemId))) fail('SALES_ORDER_ITEM_INVALID', requireActive ? 'Every line must reference an active item in this workspace.' : 'Every line must reference an item in this workspace.', 422)
   // Lines are read back ordered by id, so the ids of one order's lines share
   // a random part and end in their position: they show in the order entered.
   const batch = randomUUID()
@@ -168,9 +170,17 @@ export function createSalesOrderWorkbenchService({ prisma, idFactory = randomUUI
       const lines = await authoritativeLines(tx, actor.tenantId, payload.lines)
       const currency = text(payload.header.currency || current.currency).toUpperCase()
       if (!/^[A-Z]{3}$/.test(currency)) fail('SALES_ORDER_VALIDATION_FAILED', 'Currency must be a three-letter code.', 422)
-      const customer = text(payload.header.customerId) ? await chosenCustomer(tx, actor.tenantId, text(payload.header.customerId)) : null
+      // A header field the request leaves out keeps its value: a client that
+      // sends only new lines does not clear the customer or the promised date
+      // (design audit L4-14). Sent empty, it is cleared.
+      const header = payload.header
+      const customerSent = Object.hasOwn(header, 'customerId')
+      const customer = customerSent && text(header.customerId) ? await chosenCustomer(tx, actor.tenantId, text(header.customerId)) : null
+      const customerId = customerSent ? customer?.id || null : current.customerId
+      const customerName = customer?.name || text(header.customerName || current.customerName)
+      const promisedDate = Object.hasOwn(header, 'promisedDate') ? (header.promisedDate ? new Date(header.promisedDate) : null) : current.promisedDate
       await tx.salesOrderLine.deleteMany({ where: { salesOrderId: current.id } })
-      const order = await tx.salesOrder.update({ where: { id: current.id }, data: { customerName: customer?.name || text(payload.header.customerName || current.customerName), customerId: customer?.id || null, promisedDate: payload.header.promisedDate ? new Date(payload.header.promisedDate) : null, currency, version: { increment: 1 }, lines: { create: lines } }, include: { lines: { orderBy: { id: 'asc' } } } })
+      const order = await tx.salesOrder.update({ where: { id: current.id }, data: { customerName, customerId, promisedDate, currency, version: { increment: 1 }, lines: { create: lines } }, include: { lines: { orderBy: { id: 'asc' } } } })
       return { order, summary: `Sales order ${order.orderNumber} draft revised.` }
     })
   }
@@ -188,7 +198,18 @@ export function createSalesOrderWorkbenchService({ prisma, idFactory = randomUUI
       // Everything is shipped, so there is nothing left to hold back.
       if (action === 'hold' && current.fulfillmentStatus === 'fully_fulfilled') fail('SALES_ORDER_INVALID_STATE', 'A fully shipped sales order cannot be put on hold.', 409)
       if (!current.lines.length) fail('SALES_ORDER_VALIDATION_FAILED', 'Sales order requires at least one line.', 422)
-      await authoritativeLines(tx, actor.tenantId, current.lines.map((line) => ({ itemId: line.itemId, quantity: fixed(units(line.orderedQuantity)), unitPrice: line.unitPrice === null || line.unitPrice === undefined ? null : fixed(units(line.unitPrice)) })))
+      // Confirming commits the order, so it needs what invoicing will: a price
+      // on every line (zero for a free item) and a customer from Customers
+      // that is active and not restricted (design audit L4-13, L4-26). An
+      // order was invoiced only after it shipped, too late to fix.
+      if (action === 'confirm') {
+        const unpriced = current.lines.filter((line) => line.unitPrice === null || line.unitPrice === undefined)
+        if (unpriced.length) fail('SALES_ORDER_PRICE_REQUIRED', 'Enter a price on every line before confirming; use 0 for a free item.', 422, { lineIds: unpriced.map((line) => line.id) })
+        if (!current.customerId) fail('SALES_ORDER_CUSTOMER_REQUIRED', 'Choose the customer from Customers before confirming.', 422)
+        const customer = await chosenCustomer(tx, actor.tenantId, current.customerId)
+        if (customer.creditStatus === 'restricted') fail('SALES_ORDER_CUSTOMER_RESTRICTED', `${customer.name} is restricted in Customers, so its orders cannot be confirmed.`, 409)
+      }
+      await authoritativeLines(tx, actor.tenantId, current.lines.map((line) => ({ itemId: line.itemId, quantity: fixed(units(line.orderedQuantity)), unitPrice: line.unitPrice === null || line.unitPrice === undefined ? null : fixed(units(line.unitPrice)) })), { requireActive: action === 'confirm' })
       const order = await tx.salesOrder.update({ where: { id: current.id }, data: { workflowStatus: definition[1], version: { increment: 1 } }, include: { lines: { orderBy: { id: 'asc' } } } })
       return { order, summary: `Sales order ${order.orderNumber} ${action} completed.` }
     })

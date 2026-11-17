@@ -19,7 +19,10 @@ const currencies = new Set(Intl.supportedValuesOf('currency'));
 // also keeps the stored value.
 export function supplierInputIssues(input = {}, old = null, { sensitiveFieldsWritable = false } = {}) {
   const meta = old?.metadata && typeof old.metadata === 'object' ? old.metadata : {};
-  const code = String(input.supplierCode ?? old?.code ?? '').trim();
+  // The code is the key imports match on, so like a SKU or a customer code
+  // it cannot change once the supplier exists (design audit L4-17).
+  const code = old ? String(old.code ?? '').trim() : String(input.supplierCode ?? '').trim();
+  const codeChanged = Boolean(old) && Object.hasOwn(input, 'supplierCode') && String(input.supplierCode ?? '').trim() !== '' && String(input.supplierCode ?? '').trim() !== code;
   const name = String(input.supplierName ?? old?.name ?? '').trim();
   const status = input.status ?? old?.status ?? 'active';
   const next = { ...meta };
@@ -41,6 +44,7 @@ export function supplierInputIssues(input = {}, old = null, { sensitiveFieldsWri
   if (Object.hasOwn(input, 'deliveryCycleDays')) next.deliveryCycleDays = Number(input.deliveryCycleDays);
   const issues = [];
   const issue = (field, issueCode, message) => issues.push({ field, code: issueCode, message });
+  if (codeChanged) issue('supplierCode', 'CODE_LOCKED', 'The supplier code cannot be changed once the supplier exists.');
   if (!code) issue('supplierCode', 'CODE_REQUIRED', 'Enter a supplier code.');
   if (!name) issue('supplierName', 'NAME_REQUIRED', 'Enter a supplier name.');
   if (!['active', 'inactive', 'draft'].includes(status)) issue('status', 'STATUS_INVALID', 'Choose a valid status.');
