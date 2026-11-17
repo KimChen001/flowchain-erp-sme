@@ -80,7 +80,6 @@ await phase("shell and routing", [
   "tests/browser/app-layout-width.spec.ts",
   "tests/browser/typography-system.spec.ts",
   "tests/browser/authoritative-mutation-auth.spec.ts",
-  "tests/browser/user-data-import-preview.spec.ts",
   "tests/browser/motion-transitions.spec.ts",
 ]);
 // Email sign-in end to end, through the local mail outbox.

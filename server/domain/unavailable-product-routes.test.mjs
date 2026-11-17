@@ -39,7 +39,7 @@ test('no in-page link or search entry points into a frozen or unavailable surfac
   const allowed = new Set([
     'src/app/routeRegistry.tsx', 'src/app/routes/route-manifest.ts', 'src/app/capabilityRouteGuard.ts',
     'src/components/business/businessEntityRoutes.ts', 'src/i18n/I18n.tsx',
-    'src/modules/finance/InternalSettlementWorkbench.tsx', 'src/modules/finance/Page.tsx', 'src/modules/imports/Page.tsx',
+    'src/modules/finance/InternalSettlementWorkbench.tsx', 'src/modules/finance/Page.tsx',
     // Kept code whose output is filtered: evidence links are hidden at render,
     // the planning answer and the report catalog drop these targets, and the
     // mobile settlement task loop is switched off.
