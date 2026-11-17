@@ -472,9 +472,10 @@ test('step 3b: an approved PR becomes an approved PO (POST /api/procurement/requ
   assert.equal(dec(po.lines[0].unitPrice), '12.5')
   assert.equal(dec(po.lines[0].amount), '125')
   // The PR line's need-by date becomes the line's promised date through the
-  // promise-date helper, and approval records it as the original promise.
+  // promise-date helper. The original promise waits for the PO to be issued
+  // or first received (design audit L1-05).
   assert.equal(po.lines[0].metadata.promisedDate, needBy)
-  assert.equal(po.lines[0].originalPromisedDate?.toISOString().slice(0, 10), needBy)
+  assert.equal(po.lines[0].originalPromisedDate, null)
   assert.equal(po.lines[0].version, 0)
   assert.equal(po.expectedDate.toISOString().slice(0, 10), needBy)
   assert.equal(await prisma.purchaseOrderPromiseRevision.count({ where: { purchaseOrderId: po.id } }), 0)

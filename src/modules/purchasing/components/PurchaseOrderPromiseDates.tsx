@@ -6,18 +6,22 @@ import { useI18n } from "../../../i18n/I18n";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
 import { listTableCardsRef } from "../../../components/ui/workbenchTable";
 
-// Promised dates of an issued PO: each line's original promise, its current
-// date and the revisions between them. Revising needs a reason; the server
-// keeps the original promise and records the revision.
+// Promised dates of an approved or issued PO: each line's original promise,
+// its current date and the revisions between them. Before issue a date (such
+// as the one the supplier confirms) simply changes: the original promise is
+// recorded when the PO is issued or first received (design audit L1-05).
+// After issue a change needs a reason; the server keeps the original promise
+// and records the revision.
 
 type PromiseLine = { id: string; sku: string | null; itemName: string | null; orderedQuantity: string | null; receivedQuantity: string | null; unit: string | null; promisedDate: string | null; originalPromisedDate: string | null };
 type PromiseRevision = { id: string; purchaseOrderLineId: string; previousDate: string | null; newDate: string; reason: string; createdAt: string };
 type PurchaseOrderPromises = { id: string; status: string; version: number; lines: PromiseLine[]; promiseRevisions: PromiseRevision[] };
 
-const REVISABLE = new Set(["issued", "partially_received"]);
+const REVISABLE = new Set(["approved", "issued", "partially_received"]);
 const COPY: Record<string, [string, string]> = {
   title: ["Promised dates", "承诺交期"],
   note: ["Supplier scorecards measure deliveries against the original promise.", "供应商绩效按原始承诺交期衡量交付。"],
+  notIssuedNote: ["Not issued yet: set the date the supplier confirms. The original promise is recorded when the PO is issued or first received.", "尚未下达：可填写供应商确认的日期。原始承诺交期在下达或首次收货时记录。"],
   line: ["Line", "订单行"], original: ["Original promise", "原始承诺交期"], current: ["Current date", "当前交期"],
   notRecorded: ["Not recorded", "未记录"], change: ["Change promised date", "修改承诺交期"],
   newDate: ["New promised date", "新的承诺交期"], reason: ["Reason", "原因"], reasonPlaceholder: ["For example: the supplier moved the ship date", "例如：供应商推迟了发货日期"],
@@ -73,7 +77,7 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
   return (
     <section data-testid="po-promise-dates" className="rounded-xl border bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h3 className="text-sm font-semibold">{tr("title")}</h3><p className="text-[11px] text-slate-500">{tr("note")}</p></div>
+        <div><h3 className="text-sm font-semibold">{tr("title")}</h3><p className="text-[11px] text-slate-500">{tr("note")}</p>{po.status === "approved" && <p className="text-[11px] text-slate-500" data-testid="po-promise-not-issued">{tr("notIssuedNote")}</p>}</div>
         {unchanged && !form && (
           <button type="button" aria-expanded={!folded} data-testid="po-promise-toggle" className="h-8 rounded-lg px-2 text-xs font-medium text-blue-600 hover:bg-blue-50" onClick={() => setExpanded(!expanded)}>
             {tr(folded ? "showLines" : "hideLines")}
