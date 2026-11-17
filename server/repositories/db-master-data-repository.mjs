@@ -94,7 +94,7 @@ export function recordedItemUnit(record = {}) {
 
 const recordedNumberOf = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
 
-function mapItem(record = {}) {
+export function mapItem(record = {}) {
   const meta = metadata(record)
   const itemId = text(record.id || record.sku)
   const itemName = text(record.name || record.sku)

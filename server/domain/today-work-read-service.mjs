@@ -3,7 +3,7 @@ import { readContractWork } from './contract-read-service.mjs'
 import { firstRunSetupOptions, readFirstRunSetupCounts } from './first-run-setup.mjs'
 import { overdueReceivableWhere } from './operational-finance-o2c-read-service.mjs'
 import { overduePayableWhere } from './operational-finance-read-service.mjs'
-import { createReorderListReadService, stockTruncatedSubjects } from './reorder-list-read-service.mjs'
+import { allocationTruncatedSubjects, createReorderListReadService } from './reorder-list-read-service.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
 import { billNextStep } from './today-work.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
@@ -120,7 +120,7 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
       timeZone,
       allocationRows: allocation.availability,
       showPurchaseOrders: Boolean(access.collections.purchaseOrders),
-      truncatedSubjects: stockTruncatedSubjects(rawContext.truncatedSubjects),
+      truncatedSubjects: allocationTruncatedSubjects(rawContext),
     })).then((reorder) => { sources.reorder = reorder }))
   }
   if (home.customerInvoices) {

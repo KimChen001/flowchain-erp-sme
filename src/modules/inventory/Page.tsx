@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, ListChecks, PackageOpen, Warehouse } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
-import { inventoryStockSignals, stockSignalCounts, stockStateOf as stockSignalState } from "../../../shared/inventory-stock-signals.mjs";
+import { STOCK_SIGNAL_FILTERS, inventoryStockSignals, stockSignalCounts, stockSignalMatches, stockStateOf as stockSignalState } from "../../../shared/inventory-stock-signals.mjs";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { formatDateTimeInTimeZone, formatQuantity } from "../../lib/format";
 import { movementTypeLabel, statusCodeLabel } from "../../i18n/statusLabels";
@@ -165,6 +165,10 @@ const COPY = {
   stockStatus: ["Stock status", "库存状态"],
   allStock: ["All stock", "全部库存"],
   sufficient: ["Sufficient", "库存充足"],
+  // Under the reorder point on hand, with open purchase orders keeping the position above it (design audit L7-22).
+  onOrder: ["On order", "已有在途采购"],
+  onOrderNote: ["Stock on hand is at or below the reorder point; open purchase orders keep the position above it", "现有量等于或低于再订货点，在途采购使库存头寸高于再订货点"],
+  stockSignal: ["Stock signal", "库存信号"],
   outOfStock: ["Out of stock", "缺货"],
   movementType: ["Movement type", "流水类型"],
   allTypes: ["All types", "全部类型"],
@@ -414,12 +418,16 @@ export default function InventoryPage({
     [items, rows, signals, view],
   );
   const stockStateOf = (item: Item) => stockSignalState(signals.get(item.sku), item);
+  // ?signal= (a report or card link): the items its card counts, so the rows
+  // shown are that count (design audit L6-05). An unknown value is ignored.
+  const signalFilter = Object.hasOwn(STOCK_SIGNAL_FILTERS, searchParams.get("signal") || "") ? searchParams.get("signal")! : "";
   const visible = base.filter((row: any) => {
     if (view === "overview" || view === "warnings") {
       const item = row as Item;
       return contains(query, item.sku, item.itemName, item.name)
         && (!warehouse || (item.warehouseId || item.defaultWarehouseId) === warehouse)
-        && (!stockStatus || stockStateOf(item) === stockStatus);
+        && (!stockStatus || stockStateOf(item) === stockStatus)
+        && (!signalFilter || stockSignalMatches(signals.get(item.sku), signalFilter));
     }
     // The server has already searched and filtered the page of movements.
     if (view === "movements") return true;
@@ -427,8 +435,12 @@ export default function InventoryPage({
       && (!status || row.status === status);
   });
   // One page of rows is drawn; movements arrive a page at a time already.
-  const paged = usePagedRows(visible, LIST_PAGE_SIZE, [view, queryString, query, warehouse, stockStatus, status].join("|"));
+  const paged = usePagedRows(visible, LIST_PAGE_SIZE, [view, queryString, query, warehouse, stockStatus, status, signalFilter].join("|"));
   const drawn: any[] = view === "movements" ? visible : paged.pageRows;
+  // The count line: every row the view holds, and those the filters match
+  // when they narrow it (the server filters movements itself).
+  const listAll = view === "movements" && serverTotal !== null ? serverTotal : view === "overview" && serverTotal !== null ? Math.max(serverTotal, base.length) : base.length;
+  const narrowed = view !== "movements" && visible.length !== base.length;
   const selected =
     view === "overview" || view === "warnings"
       ? items.find(
@@ -451,6 +463,7 @@ export default function InventoryPage({
     if (name === "movementType") return movementTypeLabel(value, language);
     if (name === "warehouseId") return warehouseName(value) || named("selectedRecord");
     if (name === "status") return statusLabel(value);
+    if (name === "signal") return tr(value === "replenish" ? "short" : value === "below_safety" ? "belowSafety" : "covered");
     return named("selectedRecord");
   };
   const activeFilters = [
@@ -464,6 +477,7 @@ export default function InventoryPage({
     { name: "movementType", en: "Movement type", zh: "流水类型" },
     { name: "itemId", en: "Item", zh: "物料" },
     { name: "status", en: "Status", zh: "状态" },
+    ...(signalFilter ? [{ name: "signal", en: COPY.stockSignal[0], zh: COPY.stockSignal[1] }] : []),
   ].flatMap(({ name, en, zh }) =>
     searchParams.get(name)
       ? [{ name, label: english ? en : zh, value: filterValue(name, searchParams.get(name)!) }]
@@ -472,6 +486,7 @@ export default function InventoryPage({
   const clearFilters = () => {
     const next = new URLSearchParams(searchParams);
     supportedFilterNames.forEach((name) => next.delete(name));
+    next.delete("signal");
     setSearchParams(next);
   };
   const reset = () => {
@@ -590,6 +605,7 @@ export default function InventoryPage({
               <option value="replenish">{tr("short")}</option>
               <option value="below_safety">{tr("belowSafety")}</option>
               <option value="out">{tr("outOfStock")}</option>
+              <option value="on_order">{tr("onOrder")}</option>
               <option value="ok">{tr("sufficient")}</option>
             </select>
           </Field>
@@ -659,7 +675,7 @@ export default function InventoryPage({
       )}
 
       {listTitle && (
-        <ListCard title={tr(listTitle)} total={state === "ready" ? (view === "movements" && serverTotal !== null ? serverTotal : view === "overview" && serverTotal !== null ? Math.max(serverTotal, base.length) : base.length) : undefined} shown={drawn.length} testId={`inventory-${view}-list`}>
+        <ListCard title={tr(listTitle)} total={state === "ready" ? (narrowed ? visible.length : listAll) : undefined} all={state === "ready" && narrowed ? listAll : undefined} shown={drawn.length} testId={`inventory-${view}-list`}>
           <div className={tableScrollClass}>
             {balances && (
               <table className={`w-full min-w-[1000px] text-left ${tableBodyTextClass}`}>
@@ -697,7 +713,9 @@ export default function InventoryPage({
                               ? <StatusChip label={tr("short")} tone="warning" />
                               : stock === "below_safety"
                                 ? <StatusChip label={tr("belowSafety")} tone={signals.get(item.sku)?.coveredByOpenOrders ? "info" : "danger"} />
-                                : <StatusChip label={tr("sufficient")} tone="success" />}
+                                : stock === "on_order"
+                                  ? <span title={tr("onOrderNote")} data-testid={`inventory-on-order-${item.sku}`}><StatusChip label={tr("onOrder")} tone="info" /></span>
+                                  : <StatusChip label={tr("sufficient")} tone="success" />}
                           {stock !== "replenish" && signals.get(item.sku)?.coveredByOpenOrders && (
                             <div className="mt-0.5 text-[11px]" style={{ color: A.sub }} data-testid={`inventory-covered-${item.sku}`}>{tr("coveredShort")}</div>
                           )}

@@ -15,6 +15,8 @@ import { procurementErrorCode, procurementErrorText } from "../../procurement/pr
 export const poSecondaryButtonClass = `inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 ${typography.denseButton} text-slate-700 hover:bg-slate-50 disabled:opacity-50`;
 
 type WorkflowAction = "submit" | "approve" | "reject" | "issue" | "cancel" | "close";
+// Rejecting or cancelling looks the same as on a purchase request (design audit U-17).
+const DANGER_ACTIONS = new Set<WorkflowAction>(["reject", "cancel"]);
 
 // Mirrors the server's PO command table: the actions each status allows and
 // the permission each needs. The server still checks both on every command.
@@ -150,7 +152,7 @@ export function PurchaseOrderWorkflowActions({
           data-testid={`po-action-${action}`}
           disabled={Boolean(busy)}
           onClick={() => void run(action)}
-          className={PRIMARY_ACTIONS.has(action) ? listButtonClass.primary : poSecondaryButtonClass}
+          className={PRIMARY_ACTIONS.has(action) ? listButtonClass.primary : DANGER_ACTIONS.has(action) ? listButtonClass.danger : poSecondaryButtonClass}
         >
           {tr(action)}
         </button>

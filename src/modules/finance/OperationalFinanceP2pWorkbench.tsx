@@ -5,7 +5,7 @@ import { AlertCircle, AlertTriangle, CheckCircle2, Coins, FileMinus, FileText, I
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
-import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, metricGridClass, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, metricGridClass, rowActionClass, statusToneOf, useListCopy } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ListPager } from "../procurement/listPaging";
 import { useI18n } from "../../i18n/I18n";
@@ -577,6 +577,7 @@ function FinanceList({
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<ListPayload | null>(null);
   const [error, setError] = useState<ApiErrorView | null>(null);
+  const listSay = useListCopy();
   const invoices = kind === "invoice";
   const payables = kind === "payable";
   const status = searchParams.get("status") || "";
@@ -639,7 +640,13 @@ function FinanceList({
   // A supplier invoice opened from the payables list returns to it, filters kept.
   const location = useLocation();
   const billFromPayables = (billId: string) => `/app/procurement/bills/${encodeURIComponent(billId)}?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`;
-  if (error) return <Warning title={error.code}>{error.message}</Warning>;
+  // A failed read keeps a way back: Retry beside the notice (design audit U-15).
+  if (error) return (
+    <div className="space-y-3" data-testid="finance-list-load-error">
+      <Warning title={error.code}>{error.message}</Warning>
+      <button type="button" onClick={load} className={listButtonClass.secondary}>{listSay("retry")}</button>
+    </div>
+  );
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const enabled = data.capabilities?.[capability]?.enabled;
   const today = todayInTimeZone(timezone);

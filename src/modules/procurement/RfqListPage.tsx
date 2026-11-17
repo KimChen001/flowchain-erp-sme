@@ -7,10 +7,14 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
+import { ListPager, usePagedRows } from "./listPaging";
 import { useI18n } from "../../i18n/I18n";
 import { formatCalendarDay, todayInTimeZone } from "../../lib/format";
 import type { ProcurementDocument } from "./procurementTypes";
 import { RfqNoOrderNote } from "./RfqNoOrderNote";
+
+// Rows to a page, as on the purchase order list (design audit U-14).
+const PAGE_SIZE = 50;
 
 const RFQ_STATUS_LABELS: Record<string, readonly [string, string]> = {
   draft: ["Draft", "草稿"],
@@ -103,6 +107,7 @@ export function RfqListPage() {
     && (!due || dueSoon(row))
     && (!needle || [row.number, row.id, row.title, row.itemName, row.category].some((value) => String(value || "").toLowerCase().includes(needle))),
   );
+  const paged = usePagedRows(shown, PAGE_SIZE, [status, quotes, due, needle].join("|"));
   const reset = () => {
     setQuery("");
     setSearchParams({}, { replace: true });
@@ -153,7 +158,7 @@ export function RfqListPage() {
         </Field>
       </ListSearchCard>
 
-      <ListCard title={tr("listTitle")} total={state === "loaded" ? rows.length : undefined} shown={shown.length}>
+      <ListCard title={tr("listTitle")} total={state === "loaded" ? shown.length : undefined} all={state === "loaded" ? rows.length : undefined} shown={paged.pageRows.length}>
         <div className={tableScrollClass}>
           <table className={`w-full min-w-[1040px] text-left ${tableBodyTextClass}`}>
             <thead>
@@ -175,10 +180,10 @@ export function RfqListPage() {
                   ? <ListStateRow colSpan={7} state="empty" title={tr("empty")} detail={tr("emptyDetail")} />
                   : <ListStateRow colSpan={7} state="empty" title={tr("noMatch")} />
               )}
-              {state === "loaded" && shown.map((row, index) => {
+              {state === "loaded" && paged.pageRows.map((row, index) => {
                 const responded = row.respondedSupplierCount ?? 0;
                 return (
-                  <tr key={row.id} className={listRowClass} style={listRowStyle(index, shown.length)}>
+                  <tr key={row.id} className={listRowClass} style={listRowStyle(index, paged.pageRows.length)}>
                     <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                       <Link
                         className={`${tableLinkClass} text-blue-600`}
@@ -211,6 +216,7 @@ export function RfqListPage() {
             </tbody>
           </table>
         </div>
+        {state === "loaded" && <ListPager page={paged.page} pageSize={PAGE_SIZE} total={shown.length} onPage={paged.setPage} testId="rfq-list-pager" />}
       </ListCard>
     </div>
   );

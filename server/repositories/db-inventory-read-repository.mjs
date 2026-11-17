@@ -10,7 +10,8 @@ import {
 } from '../domain/inventory-read.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
-import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
+import { mapItem, recordedItemUnit } from './db-master-data-repository.mjs'
+import { ALLOCATION_READ_LIMIT, findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
 
 function requireDatabaseConfig(env = process.env) {
   return validateDatabasePersistenceConfig(env)
@@ -217,10 +218,87 @@ async function loadInventorySnapshot(client, filters = {}) {
   }
 }
 
+// One SKU's balance rows added up, as mapBalance would list each of them:
+// on hand falls back to available, a missing reservation is 0, and the safety
+// stock and reorder point are the sums of the rows' values above 0 (a row's
+// reorder point falls back to its safety stock), which is all the allocation
+// model reads of them.
+function mapStockTotal(row = {}) {
+  const sku = text(row.sku)
+  const itemName = text(row.itemName || row.metadataItemName || sku)
+  return {
+    sku,
+    id: text(row.itemId || sku),
+    itemId: text(row.itemId || sku),
+    name: itemName,
+    itemName,
+    availableQuantity: numberFrom(row.available, 0),
+    onHandQuantity: numberFrom(row.onHand, 0),
+    reservedQuantity: numberFrom(row.reserved, 0),
+    safetyStock: numberFrom(row.safetyStock, 0),
+    reorderPoint: numberFrom(row.reorderPoint, 0),
+  }
+}
+
+// The allocation model's stock inputs over every record, in the database
+// (design audit 2026-11-15, L15): balance rows added up per SKU in the
+// reader's warehouses, where loadInventorySnapshot lists only the first 500
+// rows, so a SKU past them lost its stock or part of it. Then, as there,
+// every item with no balance row in any warehouse, read from its record, and
+// no row for an item stocked only outside the reader's warehouses. Also every
+// item as the master data list maps it (thresholds, name, recorded unit),
+// where the read context's item list holds 200. inventoryItems are the rows
+// listItems would return if it read everything. More than
+// ALLOCATION_READ_LIMIT SKUs or items is reported to onTruncated as
+// inventory_items.
+async function loadAllocationStock(client, filters = {}) {
+  const tenantId = requireTenantId(filters)
+  const warehouseIds = Array.isArray(filters.warehouseIds) ? filters.warehouseIds.map((id) => text(id)).filter(Boolean) : null
+  const limit = ALLOCATION_READ_LIMIT
+  const truncated = () => { if (typeof filters.onTruncated === 'function') filters.onTruncated({ subject: 'inventory_items', limit }) }
+  const [totals, stocked, items] = await Promise.all([
+    client.$queryRaw`
+      SELECT b.sku,
+        min(b."itemId") AS "itemId",
+        min(NULLIF(trim(b."itemName"), '')) AS "itemName",
+        min(NULLIF(trim(b.metadata->>'itemName'), '')) AS "metadataItemName",
+        sum(COALESCE(b."onHandQuantity", b."availableQuantity", 0))::text AS "onHand",
+        sum(COALESCE(b."reservedQuantity", 0))::text AS reserved,
+        sum(COALESCE(b."availableQuantity", 0))::text AS available,
+        COALESCE(sum(b."safetyStock") FILTER (WHERE b."safetyStock" > 0), 0)::text AS "safetyStock",
+        COALESCE(sum(COALESCE(b."reorderPoint", b."safetyStock")) FILTER (WHERE COALESCE(b."reorderPoint", b."safetyStock") > 0), 0)::text AS "reorderPoint"
+      FROM "InventoryBalance" b
+      WHERE b."tenantId" = ${tenantId}
+        AND (${!warehouseIds} OR b."warehouseId" = ANY(${warehouseIds || []}::text[]))
+      GROUP BY b.sku
+      ORDER BY b.sku
+      LIMIT ${limit + 1}`,
+    client.$queryRaw`SELECT DISTINCT sku FROM "InventoryBalance" WHERE "tenantId" = ${tenantId}`,
+    findManyWithinLimit(client.item, { where: { tenantId }, orderBy: [{ sku: 'asc' }] }, { limit, subject: 'inventory_items', onTruncated: filters.onTruncated }),
+  ])
+  if (totals.length > limit) truncated()
+  const stockedSkus = new Set(stocked.map((row) => text(row.sku).toLowerCase()).filter(Boolean))
+  return {
+    inventoryItems: buildInventoryItems({
+      products: [
+        ...totals.slice(0, limit).map(mapStockTotal),
+        ...items.filter((item) => !stockedSkus.has(text(item.sku).toLowerCase())).map(mapItemWithoutBalance),
+      ],
+    }),
+    items: items.map(mapItem),
+    itemUnits: items.map((record) => ({ sku: text(record.sku), itemId: text(record.id), unit: recordedItemUnit(record) })),
+  }
+}
+
 export function createDbInventoryReadRepository({ env = process.env, prisma } = {}) {
   return {
     mode: 'database',
     adapter: 'db-inventory-read-v1',
+    // The allocation model's stock inputs (loadAllocationStock).
+    listAllocationStock: async (filters = {}) => {
+      const client = await resolvePrisma({ env, prisma })
+      return loadAllocationStock(client, filters)
+    },
     listItems: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const snapshot = await loadInventorySnapshot(client, filters)

@@ -256,8 +256,9 @@ test('metrics list only the filters their subject can apply', () => {
   const report = buildRuntimeGovernedReport(filterContext(), { subject: 'overview' })
   assert.deepEqual(kpi(report, 'purchase_order_amount').applicableFilters, ['from', 'to', 'supplier', 'currency', 'status'])
   assert.deepEqual(kpi(report, 'sales_order_amount').applicableFilters, ['from', 'to', 'customer', 'currency'])
-  assert.deepEqual(kpi(report, 'low_stock_sku').applicableFilters, [])
-  assert.deepEqual(kpi(report, 'invoice_amount').applicableFilters, ['from', 'to', 'supplier', 'currency'])
+  // Each also takes its drill-through filter (design audit L6-05).
+  assert.deepEqual(kpi(report, 'low_stock_sku').applicableFilters, ['stock'])
+  assert.deepEqual(kpi(report, 'invoice_amount').applicableFilters, ['from', 'to', 'supplier', 'currency', 'match'])
 })
 
 test('purchase orders use the order date, then the creation date, never the last update', () => {

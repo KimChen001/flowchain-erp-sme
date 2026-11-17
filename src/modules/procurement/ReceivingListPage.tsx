@@ -119,7 +119,7 @@ export function ReceivingListPage() {
         </Field>
       </ListSearchCard>
 
-      <ListCard title={tr("收货单列表", "Receipt list")} total={state === "loaded" ? shown.length : undefined} shown={pageRows.length} testId="receiving-record-list">
+      <ListCard title={tr("收货单列表", "Receipt list")} total={state === "loaded" ? shown.length : undefined} all={state === "loaded" ? rows.length : undefined} shown={pageRows.length} testId="receiving-record-list">
         <div className={tableScrollClass}>
           <table className={`w-full min-w-[1000px] text-left ${tableBodyTextClass}`}>
             <thead>
@@ -135,7 +135,7 @@ export function ReceivingListPage() {
               </tr>
             </thead>
             <tbody>
-              {state === "loading" && <tr><td colSpan={8} className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>{tr("正在读取收货记录…", "Loading receiving records…")}</td></tr>}
+              {state === "loading" && <ListStateRow colSpan={8} state="loading" />}
               {state === "error" && <ListStateRow colSpan={8} state="error" title={tr("收货记录加载失败", "Could not load receiving records")} onRetry={() => void load()} />}
               {state === "loaded" && shown.length === 0 && (
                 rows.length === 0

@@ -2,7 +2,8 @@ import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { createDbProcurementCommandService } from "../domain/procurement-db-command-service.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "../domain/receiving-transaction-policy.mjs";
 import { mapPurchaseRequest, mapRfq } from "./db-procurement-read-repository.mjs";
-import { findManyWithinLimit, requireTenantId } from "./repository-read-scope.mjs";
+import { isPurchaseOrderReceivable } from "../domain/procurement-status-authority.mjs";
+import { ALLOCATION_READ_LIMIT, findManyWithinLimit, requireTenantId } from "./repository-read-scope.mjs";
 import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 
 const text = (value) => String(value ?? "").trim();
@@ -114,6 +115,40 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
       // beside it, so the home page orders and dates them like other documents.
       const withInstant = (mapped, row) => ({ ...mapped, updatedAtInstant: iso(row.updatedAt) });
       return { purchaseRequests: requestRows.map(row => withInstant(mapPurchaseRequest(row), row)), rfqs: rfqRows.map(row => withInstant(mapRfq(row, quotations, participations), row)), supplierQuotations: [], purchaseOrders: rows.map(mapPo), receipts, receivingDocs: receipts, supplierInvoices, documentLinks: [], procurementFollowups: [] };
+    },
+    // The allocation model's incoming over every record (design audit
+    // 2026-11-15, L15), where snapshot() reads the latest 500 orders: every
+    // committed purchase order (approved, issued or partially received, as
+    // isPurchaseOrderReceivable reads the stored status) with its lines, newest
+    // change first as snapshot() lists them, so every open line counts
+    // (#249). Also the key each line of any order is counted under (SKU, else
+    // item id, else line id), in the order snapshot() lists them, as the model
+    // lists a SKU on any order. More than ALLOCATION_READ_LIMIT orders or keys
+    // is reported to onTruncated as purchase_orders.
+    async listCommittedPurchaseOrders(filters = {}) {
+      const tenantId = requireTenantId(filters);
+      const dbClient = await client();
+      const limit = ALLOCATION_READ_LIMIT;
+      const bounded = { limit, subject: "purchase_orders", onTruncated: filters.onTruncated };
+      const stored = await dbClient.$queryRaw`SELECT DISTINCT status FROM "PurchaseOrder" WHERE "tenantId" = ${tenantId}`;
+      const statuses = stored.map((row) => row.status).filter(isPurchaseOrderReceivable);
+      const [rows, keys] = await Promise.all([
+        statuses.length ? findManyWithinLimit(dbClient.purchaseOrder, { where: { tenantId, status: { in: statuses } }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }] }, bounded) : [],
+        dbClient.$queryRaw`
+          SELECT key FROM (
+            SELECT trim(COALESCE(NULLIF(l.sku, ''), NULLIF(l."itemId", ''), l.id)) AS key,
+              row_number() OVER (ORDER BY po."updatedAt" DESC, po.id ASC, l.id ASC) AS position
+            FROM "PurchaseOrderLine" l
+            JOIN "PurchaseOrder" po ON po.id = l."purchaseOrderId"
+            WHERE po."tenantId" = ${tenantId}
+          ) lines
+          WHERE key <> ''
+          GROUP BY key
+          ORDER BY min(position)
+          LIMIT ${limit + 1}`,
+      ]);
+      if (keys.length > limit && typeof filters.onTruncated === "function") filters.onTruncated({ subject: "purchase_orders", limit });
+      return { purchaseOrders: rows.map(mapPo), lineKeys: keys.slice(0, limit).map((row) => text(row.key)) };
     },
     // snapshot()'s receipts and supplier invoices alone, read and bounded the
     // same way, for the supplier issue signals (ai-skill-readers.mjs

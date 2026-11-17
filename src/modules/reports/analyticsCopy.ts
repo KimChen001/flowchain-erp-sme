@@ -14,7 +14,7 @@ const chinese: Record<string, string> = {
   'Multiple SKUs': '多个 SKU', 'See open demand by SKU': '请按 SKU 查看未履约需求', 'See on hand by SKU': '请按 SKU 查看在手库存',
   "Ordered less shipped quantity, in each SKU's unit. Bars in different units are not comparable.": '订购数量减去已发货数量，按各 SKU 自身单位计。不同单位的柱形不可比较。',
   'Share of confirmed sales orders whose every line has shipped its ordered quantity.': '每一行均已按订购数量全部发货的已确认销售订单占比。',
-  'Total of committed purchase orders (approved, issued, partially received or fully received). Drafts and orders pending approval, rejected or cancelled are excluded. No total is shown while a committed order has no amount.': '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，不含草稿、待审批、已驳回和已取消的订单；有订单缺少金额时不显示合计。',
+  'Total of committed purchase orders (approved, issued, partially received or fully received); an order closed short counts what was received of it. Drafts and orders pending approval, rejected or cancelled are excluded. No total is shown while a committed order has no amount.': '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，部分到货后关闭的订单按已收金额计；不含草稿、待审批、已驳回和已取消的订单；有订单缺少金额时不显示合计。',
   'Purchase orders that are committed (approved, issued, or partially received) and still have quantity to receive.': '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。',
   'On-hand quantity recorded in inventory. Shown only while all inventory is the same SKU in the same unit.': '库存中已记录的在手数量；仅当全部库存为同一 SKU、同一单位时显示合计。',
   'SKUs with a shortage under the shared availability calculation.': '按统一 availability 口径存在 shortage 的 SKU 数。',
@@ -94,6 +94,9 @@ const chinese: Record<string, string> = {
   'Committed amount': '已承诺金额', 'Cumulative share': '累计占比', 'Invoice amount': '发票金额', 'Invoices': '发票数', 'Order amount': '订单金额',
   'Reserved quantity': '已预留数量', 'On-time receipts': '准时收货率', 'Receipts': '收货单数', 'Lines accepted in full': '全数验收的收货行',
   'Share of spend': '采购额占比', 'Share of orders': '订单数占比',
+  'Receipt lines without rejection': '无拒收的收货行', 'OTIF': '准时足量率', 'Closed short': '短交关闭',
+  // The sources a dashboard's figures were read from (design audit L7-28).
+  '{n} purchase orders': '{n} 张采购订单', '{n} sales orders': '{n} 张销售订单', '{n} supplier invoices': '{n} 张采购发票', '{n} SKUs': '{n} 个 SKU', '{n} suppliers': '{n} 家供应商',
   'Committed': '已承诺', 'Receiving started': '已开始收货', 'Fully received': '已全部收货', 'Invoiced': '已开票', 'Invoice matched': '发票已匹配',
   'Active orders': '有效订单', 'Reserved or shipped': '已预留或已发货', 'Shipped': '已发货', 'Shipped in full': '已全部发货',
   'Ordered': '订购', 'Not yet received': '尚未收货', 'Received above order': '超订单收货', 'Received': '已收货', 'Received, not invoiced': '已收货未开票', 'Invoiced above receipts': '开票超过收货',
@@ -138,6 +141,10 @@ const chinese: Record<string, string> = {
   // The business overview: one figure and one chart per area (round 8).
   'Low-stock SKUs': '库存偏低 SKU',
   'SKUs out of stock, below safety stock, or at or below the reorder point once incoming purchase orders and open demand are counted: the stock statuses other than in stock and unknown.': '缺货、低于安全库存，或计入在途采购订单和未履约需求后不高于再订货点的 SKU，即库存状态为“库存正常”和“未知”以外的 SKU。',
+  // The overview's stock figure in the inventory pages' terms (design audit L3-07, W-03).
+  'Below safety stock (on hand)': '低于安全库存（现有）',
+  'SKUs whose stock on hand is under their safety stock, whether or not orders are coming, as the inventory warnings count them. Items to reorder by stock position are counted apart, as on the reorder list.': '现有库存低于安全库存的 SKU，不论是否有在途采购，与库存预警的计数一致。按库存头寸需要补货的物料另行计数，与补货清单一致。',
+  '{n} covered by open orders': '其中 {n} 个已有在途采购覆盖',
   'Purchases and sales by month': '每月采购与销售金额',
   'Committed purchase orders and confirmed sales orders in range, by order date. The two are shown side by side, never added.': '当前范围内的已承诺采购订单和已确认销售订单，按订单日期统计。两者并列显示，不相加。',
   'SKUs by stock status': '按库存状态统计 SKU',

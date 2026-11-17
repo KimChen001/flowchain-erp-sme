@@ -3,7 +3,7 @@ import { capabilityForEnvironment } from './capability-registry.mjs'
 import { createContractReadService } from './contract-read-service.mjs'
 import { createOperationalFinanceO2cReadService } from './operational-finance-o2c-read-service.mjs'
 import { createPriceHistoryReadService } from './price-history-read-service.mjs'
-import { createReorderListReadService } from './reorder-list-read-service.mjs'
+import { allocationTruncatedSubjects, createReorderListReadService } from './reorder-list-read-service.mjs'
 import { DEMAND_WINDOW_DAYS } from './reorder-list.mjs'
 import { forecastClientFromEnv } from './reorder-point-forecast.mjs'
 import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
@@ -115,7 +115,7 @@ const reorderList = defineAiTool({
     const list = await serviceOf(context, 'reorderList', createReorderListReadService).read({
       tenantId: context.tenantId, warehouseIds: access.warehouseIds ?? null, today: facts.today, timeZone: facts.timezone,
       allocationRows: allocation.availability, showPurchaseOrders: Boolean(access.collections.purchaseOrders),
-      truncatedSubjects: array(allocationContext.truncatedSubjects).filter((entry) => ['inventory_items', 'sales_orders', 'purchase_orders'].includes(entry?.subject)),
+      truncatedSubjects: allocationTruncatedSubjects(allocationContext),
       // The forecasting model's reorder point the page shows (TimesFM, when
       // FLOWCHAIN_FORECAST_URL is set), only when asked: it reads two years of
       // shipments (design audit 2026-11-15, L5-25: the page showed it, the

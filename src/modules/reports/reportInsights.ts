@@ -67,37 +67,43 @@ function lastWholeMonth(chart: ReportChart, zh: boolean, format: Format, salesCu
     : `${last.name}, the last whole month: ${parts.join(" and ")}.` };
 }
 
-// SKUs low on stock, from the overview's stock status chart: the statuses the
-// low-stock KPI counts, each named as the chart names it.
-const LOW_STOCK: Array<[string, string, string]> = [["out_of_stock", "out of stock", "缺货"], ["below_safety_stock", "below safety stock", "低于安全库存"], ["below_reorder_point", "below reorder point", "低于再订货点"]];
-function stockHealth(chart: ReportChart, zh: boolean, format: Format): Insight | null {
-  const rows = chart.data || [];
-  const count = (code: string) => num(rows.find(row => row.name === code)?.value) ?? 0;
-  const total = rows.reduce((sum, row) => sum + (num(row.value) ?? 0), 0);
-  if (!total) return null;
-  const low = LOW_STOCK.reduce((sum, [code]) => sum + count(code), 0);
+// Stock, in the inventory pages' two signals (design audit L3-07, L7-19,
+// W-03): the SKUs to reorder by stock position, as the reorder list and Today
+// count them, and the SKUs below safety stock on hand, with how many of those
+// open orders already cover. The two are separate questions, so neither is
+// said to be part of the other. Without the reorder list (a reader of only
+// some warehouses) only the shelf is named.
+function stockHealth(signals: NonNullable<GovernedReport["stockSignals"]>, zh: boolean, format: Format): Insight | null {
   const n = (value: number) => format(value, "number");
-  if (!low) return { id: "stock", tone: "positive", figure: n(0), path: chart.drilldownPath, text: zh ? "没有 SKU 缺货、低于安全库存或低于再订货点。" : "No SKU is out of stock or below its safety stock or reorder point." };
-  const parts = LOW_STOCK.filter(([code]) => count(code)).map(([code, en, cn]) => zh ? `${cn} ${n(count(code))} 个` : `${n(count(code))} ${en}`);
-  const list = zh ? parts.join("、") : parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
-  return { id: "stock", tone: "attention", figure: n(low), path: chart.drilldownPath, text: zh
-    ? `${n(total)} 个 SKU 中有 ${n(low)} 个库存偏低：${list}。`
-    : `${n(low)} of ${n(total)} ${plural(total, "SKU", "SKUs")} ${plural(low, "is", "are")} low on stock: ${list}.` };
+  const reorder = signals.needsReplenishment;
+  const below = signals.belowSafetyOnHand;
+  const covered = signals.coveredByOpenOrders;
+  if (!below && !reorder) return { id: "stock", tone: "positive", figure: n(0), path: "/app/inventory/warnings", text: reorder === null
+    ? zh ? "没有物料的现有库存低于安全库存。" : "No item's stock on hand is below its safety stock."
+    : zh ? "没有物料需要补货，也没有物料的现有库存低于安全库存。" : "No item needs reordering, and no item's stock on hand is below its safety stock." };
+  const reorderText = reorder === null ? "" : zh ? `${n(reorder)} 个物料按库存头寸需要补货` : `${n(reorder)} ${plural(reorder, "item needs", "items need")} reordering by stock position`;
+  const belowText = !below ? "" : covered === null
+    ? zh ? `${n(below)} 个物料的现有库存低于安全库存` : `${n(below)} ${plural(below, "item is", "items are")} below safety stock on hand`
+    : covered === below
+      ? zh ? `${n(below)} 个物料的现有库存低于安全库存，均已有在途采购覆盖` : `${n(below)} ${plural(below, "item is", "items are")} below safety stock on hand, all covered by open orders`
+      : zh ? `${n(below)} 个物料的现有库存低于安全库存，其中 ${n(covered)} 个已有在途采购覆盖` : `${n(below)} ${plural(below, "item is", "items are")} below safety stock on hand, ${n(covered)} of them covered by open orders`;
+  const parts = [reorderText, belowText].filter(Boolean);
+  const text = zh ? `${parts.join("；")}。` : `${parts.join("; ")}.`;
+  // Attention while something must be ordered or a low shelf is not covered.
+  const attention = (reorder ?? 0) > 0 || (covered === null ? below > 0 : below > covered);
+  return { id: "stock", tone: attention ? "attention" : "neutral", figure: n(reorder ?? below), path: reorder ? "/app/inventory/warnings?signal=replenish" : "/app/inventory/warnings?signal=below_safety", text: zh ? text : text.charAt(0).toUpperCase() + text.slice(1) };
 }
 
 // The supplier with the most committed purchase orders, from the overview's
-// supplier chart, saying when several tie. When every bar ties there is no
-// leader, and suppliers past the chart's last bar may tie too.
+// supplier chart. A tie is no finding: "3 suppliers tie at 52 each" said only
+// that the orders came on a schedule (design audit L7-27).
 function busiestSupplier(chart: ReportChart, zh: boolean, format: Format): Insight | null {
   const rows = chart.data || [];
   const top = num(rows[0]?.value);
   if (!top || rows.length < 2) return null;
-  const tied = rows.filter(row => num(row.value) === top);
-  if (tied.length === rows.length) return null;
+  if (rows.filter(row => num(row.value) === top).length > 1) return null;
   const figure = format(top, "number");
-  return { id: "busiest_supplier", tone: "neutral", figure, path: chart.drilldownPath, text: tied.length === 1
-    ? zh ? `${tied[0].name} 的已承诺采购订单最多：${figure} 张。` : `${tied[0].name} has the most committed purchase orders: ${figure}.`
-    : zh ? `${tied.length} 家供应商并列已承诺采购订单最多：各 ${figure} 张。` : `${tied.length} suppliers tie for the most committed purchase orders: ${figure} each.` };
+  return { id: "busiest_supplier", tone: "neutral", figure, path: chart.drilldownPath, text: zh ? `${rows[0].name} 的已承诺采购订单最多：${figure} 张。` : `${rows[0].name} has the most committed purchase orders: ${figure}.` };
 }
 
 // The highest and lowest on-time share among suppliers, saying when several
@@ -160,8 +166,7 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
   if (view === "overview") {
     const money = chartById(report, "overview_purchases_and_sales");
     if (money) insights.push(lastWholeMonth(money, zh, format, salesCut));
-    const stock = chartById(report, "overview_stock_status");
-    if (stock) insights.push(stockHealth(stock, zh, format));
+    if (report.stockSignals) insights.push(stockHealth(report.stockSignals, zh, format));
     const suppliers = chartById(report, "overview_suppliers");
     if (suppliers) insights.push(busiestSupplier(suppliers, zh, format));
   }

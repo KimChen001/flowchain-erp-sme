@@ -15,6 +15,13 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   const api = async (path: string) => (await request.get(path, { headers: { Authorization: `Bearer ${session.token}` } })).json()
 
   await page.goto('/app/procurement/requests')
+  // The new request's form has an address: Back returns to the list (design audit U-13).
+  await page.getByRole('button', { name: 'New purchase request' }).click()
+  await expect(page).toHaveURL(/\/app\/procurement\/requests\?mode=create$/)
+  await expect(page.getByTestId('purchase-request-form')).toBeVisible()
+  await page.goBack()
+  await expect(page.getByTestId('purchase-request-list-page')).toBeVisible()
+  await expect(page.getByTestId('purchase-request-form')).toHaveCount(0)
   await page.getByRole('button', { name: 'New purchase request' }).click()
   await page.getByLabel('SKU 1').selectOption('browser-pr-item')
   const supplier = page.getByLabel('Supplier 1')
@@ -39,6 +46,13 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   await field(page, 'Quantity').locator('input').fill('12')
   await expect(field(page, 'Quantity').locator('input')).not.toHaveAttribute('aria-invalid', 'true')
   await field(page, 'Destination warehouse or service location').locator('select').selectOption('browser-warehouse')
+  // No default need-by date of today, and this supplier has no lead time, so
+  // the line's date is the requester's to pick (design audit L7-09).
+  await expect(page.getByLabel('Default need by')).toHaveValue('')
+  await expect(field(page, 'Need by').locator('input').first()).toHaveValue('')
+  await page.getByRole('button', { name: 'Save and submit' }).click()
+  await expect(field(page, 'Need by').locator('input').first()).toHaveAccessibleDescription('Choose a need-by date.')
+  await field(page, 'Need by').locator('input').first().fill('2026-12-15')
   await page.getByRole('button', { name: 'Save and submit' }).click()
   await expect(page.getByText('Purchase request submitted')).toBeVisible()
 
@@ -48,11 +62,22 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   expect(submitted.totalAmount).toBe(49.2)
   // Pages show the document number (PR-YYYYMM-NNNN); the id stays in links and calls.
   const row = page.locator('tr', { hasText: submitted.number || submitted.id })
+  // A row has one View, and a More menu holding the request's steps by the
+  // detail page's names (design audit U-10).
+  await expect(row.getByRole('link', { name: 'View', exact: true })).toBeVisible()
+  await row.locator('summary', { hasText: 'More' }).click()
   await row.getByRole('button', { name: 'Approve' }).click()
   // The list row says what happened, by number (UI review 7).
   await expect(page.getByText(`Approved ${submitted.number || submitted.id}`)).toBeVisible()
+  await row.locator('summary', { hasText: 'More' }).click()
   await expect(row.getByRole('button', { name: 'Create purchase order' })).toBeVisible()
   await row.getByRole('button', { name: 'Create purchase order' }).click()
+  // It first says what it will make (design audit L1-26).
+  const convert = page.getByTestId('pr-convert-dialog')
+  await expect(convert).toContainText(`Create a purchase order from ${submitted.number || submitted.id}?`)
+  await expect(convert.getByTestId('pr-convert-order')).toHaveText([/^Browser Packaging Supply · USD · .+ · 1 line · \$49\.20$/])
+  await expect(convert).toContainText('Each order starts approved, as the request was.')
+  await convert.getByRole('button', { name: 'Create purchase order' }).click()
 
   await expect.poll(async () => (await api('/api/procurement/orders')).filter((po: { sourceRequest: string }) => po.sourceRequest === submitted.id).length).toBe(1)
   const po = (await api('/api/procurement/orders')).find((order: { sourceRequest: string }) => order.sourceRequest === submitted.id)
@@ -121,16 +146,18 @@ test('a purchase request opened from the assistant arrives prefilled, labels eac
   await expect(page.getByTestId('prefill-source-estimatedUnitPrice')).toHaveText('Reference price')
   await expect(page.getByTestId('prefill-source-targetWarehouseId')).toHaveText('Item default warehouse')
   await expect(page.getByTestId('prefill-source-internalLineComment')).toHaveText('Reason from the assistant')
-  // The header's default date is the line's date, not today (2026-11-04).
-  const lineDay = await field(page, 'Required date').locator('input').first().inputValue()
-  expect(lineDay).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-  await expect(page.getByLabel('Default required date')).toHaveValue(lineDay)
+  // No due date and no supplier lead time: the line has no need-by date
+  // until the requester picks one, and the header follows the line (design
+  // audit L7-09; 2026-11-04).
+  await expect(field(page, 'Need by').locator('input').first()).toHaveValue('')
+  await expect(page.getByLabel('Default need by')).toHaveValue('')
   // Opening the form saves nothing.
   expect((await api('/api/procurement/requests')).filter((pr: { id: string }) => !before.has(pr.id))).toHaveLength(0)
 
   // A changed value is no longer the suggestion, so it loses its label.
   await field(page, 'Quantity').locator('input').fill('20')
   await expect(page.getByTestId('prefill-source-quantity')).toHaveCount(0)
+  await field(page, 'Need by').locator('input').first().fill(new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10))
   await page.getByRole('button', { name: 'Save draft' }).click()
   await expect(page.getByText('Purchase request draft saved')).toBeVisible()
   await expect(page.getByTestId('prefill-banner')).toHaveCount(0)
@@ -147,8 +174,8 @@ test('a purchase request opened from the assistant arrives prefilled, labels eac
   // 11-21).
   const due = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
   await page.goto(`/app/procurement/requests?mode=create&itemId=browser-pr-item&sku=browser-pr-item&quantity=17&due=${due}&origin=ai_assistant`)
-  await expect(field(page, 'Required date').locator('input').first()).toHaveValue(due)
-  await expect(page.getByLabel('Default required date')).toHaveValue(due)
+  await expect(field(page, 'Need by').locator('input').first()).toHaveValue(due)
+  await expect(page.getByLabel('Default need by')).toHaveValue(due)
 
   // A reorder list row whose shortfall (19) was raised to the supplier's
   // minimum (20) labels the quantity as that minimum, not as the shortfall
@@ -249,10 +276,13 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   await expect(page.getByLabel('Supplier 1')).toHaveValue(ids.acme)
   await expect(page.getByTestId('supplier-override-reason-1')).toHaveCount(0)
   // The preferred supplier's 5-day lead time sets the need-by date, so the
-  // order is not due the day it is placed (walkthrough 2026-10-07).
-  const defaultDay = await page.getByLabel('Default required date').inputValue()
-  const inFiveDays = new Date(Date.parse(`${defaultDay}T12:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10)
-  await expect(field(page, 'Required date').locator('input').first()).toHaveValue(inFiveDays)
+  // order is not due the day it is placed (walkthrough 2026-10-07); there is
+  // no default date (design audit L7-09).
+  await expect(page.getByLabel('Default need by')).toHaveValue('')
+  const { timezone } = await (await request.get('/api/me/localization', { headers })).json()
+  const workspaceDay = new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const inFiveDays = new Date(Date.parse(`${workspaceDay}T12:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10)
+  await expect(field(page, 'Need by').locator('input').first()).toHaveValue(inFiveDays)
   await page.getByLabel('Supplier 1').selectOption(ids.bolt)
   const picker = page.getByTestId('supplier-override-reason-1')
   await expect(picker).toContainText(`Why not the preferred supplier (Acme ${ids.stamp})?`)
@@ -294,7 +324,18 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   const number = submitted.number || submitted.id
   await expect(page.getByTestId('pr-detail-meta')).toHaveText(/^Requester: .+ · Created: [A-Z][a-z]{2} \d{1,2}, \d{4}$/)
   await expect(page.getByTestId('pr-detail-line-quantity')).toHaveText('6 ea × $3.20')
-  await expect(page.getByTestId('pr-detail-actions').getByRole('button')).toHaveText(['Reject', 'Withdraw', 'Approve'])
+  // The PO's header: "Purchase request" under the number, the main step first.
+  await expect(page.getByTestId('document-header')).toContainText(`Purchase request · Requester: `)
+  await expect(page.getByTestId('pr-detail-actions').getByRole('button')).toHaveText(['Approve', 'Reject', 'Withdraw', 'Cancel request'])
+  await expect(page.getByTestId('pr-overview')).toContainText('Default need by')
+  // The request opens by its number as well as by its id (design audit U-08).
+  if (submitted.number) {
+    await page.goto(`/app/procurement/requests/${encodeURIComponent(submitted.number)}`)
+    await expect(page.getByTestId('document-header')).toContainText(submitted.number)
+  }
+  await page.goto('/app/procurement/requests/PR-NOT-THERE')
+  await expect(page.getByTestId('pr-not-found')).toHaveText('Purchase request not found.')
+  await page.goto(`/app/procurement/requests/${encodeURIComponent(submitted.id)}`)
   // Withdraw asks first here too; going back changes nothing.
   await page.getByTestId('pr-detail-withdraw').click()
   await expect(page.getByTestId('withdraw-request-dialog')).toContainText(`Withdraw ${number}?`)
@@ -302,8 +343,9 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   await expect(page.getByTestId('withdraw-request-dialog')).toHaveCount(0)
   await page.getByTestId('pr-detail-approve').click()
   await expect(page.getByText(`Approved ${number}`)).toBeVisible()
-  await expect(page.getByTestId('pr-detail-actions').getByRole('button')).toHaveText(['Create purchase order'])
+  await expect(page.getByTestId('pr-detail-actions').getByRole('button')).toHaveText(['Create purchase order', 'Cancel request'])
   await page.getByTestId('pr-detail-create-po').click()
+  await page.getByTestId('pr-convert-dialog').getByRole('button', { name: 'Create purchase order' }).click()
   await expect(page.getByText(new RegExp(`^Created PO-\\S+ from ${number}$`))).toBeVisible()
   await expect.poll(async () => (await api('/api/procurement/orders')).filter((po: { sourceRequest: string }) => po.sourceRequest === submitted.id).length).toBe(1)
   const po = (await api('/api/procurement/orders')).find((order: { sourceRequest: string }) => order.sourceRequest === submitted.id)
@@ -317,7 +359,7 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
 // night. A browser on UTC at 00:30 UTC must show the workspace day.
 test.describe('a browser on UTC just after midnight UTC', () => {
   test.use({ timezoneId: 'UTC' })
-  test('the default and lead-time need-by dates both count from the workspace day', async ({ page, request }) => {
+  test('the lead-time need-by date counts from the workspace day, and there is no default date', async ({ page, request }) => {
     const headers = await signIn(page, request)
     const ids = await supplierChoiceData(request, headers)
     const now = new Date()
@@ -330,7 +372,9 @@ test.describe('a browser on UTC just after midnight UTC', () => {
     await page.goto('/app/procurement/requests?mode=create')
     await page.getByLabel('SKU 1').selectOption(ids.withPreferred)
     await expect(page.getByLabel('Supplier 1')).toHaveValue(ids.acme)
-    await expect(page.getByLabel('Default required date')).toHaveValue(workspaceDay)
-    await expect(field(page, 'Required date').locator('input').first()).toHaveValue(inFiveDays)
+    // No default date to disagree with (design audit L7-09); the lead-time
+    // date counts from the workspace day.
+    await expect(page.getByLabel('Default need by')).toHaveValue('')
+    await expect(field(page, 'Need by').locator('input').first()).toHaveValue(inFiveDays)
   })
 })

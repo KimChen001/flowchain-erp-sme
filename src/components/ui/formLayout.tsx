@@ -220,7 +220,7 @@ export function FormActionBar({ onCancel, draft, submit, message, messageTestId,
     </button>
   );
   return (
-    <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border bg-white p-3 shadow-sm sm:px-4" style={{ borderColor: A.border }} data-testid={testId}>
+    <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border bg-white p-3 shadow-sm max-sm:pr-16 sm:px-4" style={{ borderColor: A.border }} data-testid={testId}>
       {message && (
         <div role="alert" className="flex min-w-0 flex-1 basis-60 items-start gap-1.5 text-xs leading-5 text-red-700" data-testid={messageTestId}>
           <AlertCircle size={14} className="mt-[3px] shrink-0" aria-hidden="true" />
