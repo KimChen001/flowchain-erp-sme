@@ -175,7 +175,7 @@ export default function MasterDataPage({
         </Field>
       </ListSearchCard>
 
-      <ListCard title={copy(view.list)} total={all} shown={tab === "customers" ? customerPage.pageRows.length : shown} testId={`master-data-${tab}-list`}>
+      <ListCard title={copy(view.list)} total={shown} all={all} shown={tab === "customers" ? customerPage.pageRows.length : shown} testId={`master-data-${tab}-list`}>
         {shown === 0 && !creatingCustomer ? (
           <div className="px-6 py-12 text-center text-sm" style={{ color: A.sub }}>
             {filtered ? copy("No records match these filters") : copy(view.empty)}

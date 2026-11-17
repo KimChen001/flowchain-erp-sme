@@ -4,6 +4,7 @@ import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { listTableCardsRef, tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
+import { ListSearchCard, RefreshButton, ResetButton, listRowClass, rowActionClass } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { supplierCopy } from "./supplierCopy";
@@ -154,21 +155,16 @@ export default function SupplierEvaluationPage() {
 
   return (
     <div className="space-y-5" data-testid="supplier-evaluation">
-      <Card className="p-5">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="fc-section-title" style={{ color: A.label }}>{t("Supplier search")}</h2>
-            <div className="mt-1 text-xs" style={{ color: A.sub }}>{t("Filter suppliers by name, tier, owner and status, and compare their indicators.")}</div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={resetFilters} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>{t("Reset")}</button>
-            <button type="button" onClick={refresh} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>
-              <RefreshCw size={13} />
-              {t("Refresh")}
-            </button>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+      {/* The shared search card (design audit U-16). */}
+      <ListSearchCard
+        title={t("Supplier search")}
+        subtitle={t("Filter suppliers by name, tier, owner and status, and compare their indicators.")}
+        activeFilters={[tier, owner, status].filter(Boolean).length}
+        actions={<>
+          <ResetButton onClick={resetFilters} />
+          <RefreshButton onClick={refresh} />
+        </>}
+      >
           <Field label={t("Search")}>
             <label className="flex items-center gap-2" style={{ ...inputStyle, paddingTop: 0, paddingBottom: 0 }}>
               <Search size={14} style={{ color: A.gray2 }} />
@@ -198,8 +194,7 @@ export default function SupplierEvaluationPage() {
               <option value="draft">{t("Draft")}</option>
             </select>
           </Field>
-        </div>
-      </Card>
+      </ListSearchCard>
 
       <Card>
         <div className="flex flex-wrap items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
@@ -249,7 +244,7 @@ export default function SupplierEvaluationPage() {
                   const insight = insightOf(row.id);
                   return (
                     <Fragment key={row.id}>
-                      <tr className="transition-colors hover:bg-blue-50/40" data-testid={`supplier-evaluation-row-${row.id}`} style={{ borderBottom: index < shown.length - 1 || editing === row.id ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
+                      <tr className={listRowClass} data-testid={`supplier-evaluation-row-${row.id}`} style={{ borderBottom: index < shown.length - 1 || editing === row.id ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
                         <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                           <EntityLink kind="supplier" id={row.id} className={tableLinkClass}>{row.supplierCode}</EntityLink>
                         </td>
@@ -269,7 +264,7 @@ export default function SupplierEvaluationPage() {
                           {tierReviewPrompted(row.tier, insight) && <div className="mt-0.5 text-[11px]" style={{ color: A.orange }} data-testid="supplier-tier-review-prompt" title={t("Tier 1, with on time or OTIF below 80% over the last 90 days. Tiers are set by your team: this is only a prompt to review.")}>{t("Review tier?")}</div>}
                         </td>
                         {canEdit && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
-                          <button type="button" data-testid="supplier-evaluation-set-tier" aria-expanded={editing === row.id} onClick={() => setEditing(editing === row.id ? null : row.id)} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">
+                          <button type="button" data-testid="supplier-evaluation-set-tier" aria-expanded={editing === row.id} onClick={() => setEditing(editing === row.id ? null : row.id)} className={rowActionClass.neutral}>
                             {t(row.tier === null ? "Set tier" : "Change tier")}
                           </button>
                         </td>}

@@ -437,6 +437,10 @@ export default function InventoryPage({
   // One page of rows is drawn; movements arrive a page at a time already.
   const paged = usePagedRows(visible, LIST_PAGE_SIZE, [view, queryString, query, warehouse, stockStatus, status, signalFilter].join("|"));
   const drawn: any[] = view === "movements" ? visible : paged.pageRows;
+  // The count line: every row the view holds, and those the filters match
+  // when they narrow it (the server filters movements itself).
+  const listAll = view === "movements" && serverTotal !== null ? serverTotal : view === "overview" && serverTotal !== null ? Math.max(serverTotal, base.length) : base.length;
+  const narrowed = view !== "movements" && visible.length !== base.length;
   const selected =
     view === "overview" || view === "warnings"
       ? items.find(
@@ -671,7 +675,7 @@ export default function InventoryPage({
       )}
 
       {listTitle && (
-        <ListCard title={tr(listTitle)} total={state === "ready" ? (view === "movements" && serverTotal !== null ? serverTotal : view === "overview" && serverTotal !== null ? Math.max(serverTotal, base.length) : base.length) : undefined} shown={drawn.length} testId={`inventory-${view}-list`}>
+        <ListCard title={tr(listTitle)} total={state === "ready" ? (narrowed ? visible.length : listAll) : undefined} all={state === "ready" && narrowed ? listAll : undefined} shown={drawn.length} testId={`inventory-${view}-list`}>
           <div className={tableScrollClass}>
             {balances && (
               <table className={`w-full min-w-[1000px] text-left ${tableBodyTextClass}`}>
