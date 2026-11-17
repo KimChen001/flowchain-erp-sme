@@ -368,7 +368,7 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
     headers,
     data: {
       // Confirming needs a customer from Customers (design audit L4-26).
-      customerId: "CUST-US-ID",
+      customerId: "CUST-PW-ID",
       currency: "USD",
       idempotencyKey: "pw-english-order",
       lines: [{ itemId: "outbound-browser-item", quantity: "2", unitPrice: "5" }],
@@ -451,7 +451,7 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
   const shipment = page.getByTestId("shipment-workbench");
   // The header names the order, customer, warehouse and date; no "Posted —" placeholders.
   await expect(page.getByTestId("shipment-sales-order")).toContainText(order.orderNumber);
-  await expect(page.getByTestId("shipment-customer")).toContainText("US Customer");
+  await expect(page.getByTestId("shipment-customer")).toContainText("Playwright Customer");
   await expect(page.getByTestId("shipment-warehouse")).toContainText("华东成品仓 / A-01");
   await expect(page.getByTestId("shipment-date")).toContainText("Created");
   await expect(page.getByTestId("shipment-status")).toHaveText("Ready to post");

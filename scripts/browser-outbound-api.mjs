@@ -116,7 +116,6 @@ try {
     data: [
       ["CUST-PW", "Playwright Customer", "Net 30"],
       ["CUST-CANCEL", "Cancelling Customer", null],
-      ["CUST-US", "US Customer", null],
     ].map(([code, name, paymentTerms]) => ({
       id: randomUUID(),
       tenantId,
