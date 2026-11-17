@@ -83,6 +83,7 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   },
   stock_movements: { rows: ['date', 'quantity', 'unit', 'documentNumber'] },
   list_shipments: { rows: ['shipment', 'shipped', 'salesOrder', 'customer'] },
+  record_history: { rows: ['at', 'action', 'summary', 'by'] },
   gross_profit: {
     '': ['currency', 'invoices', 'revenue', 'cost', 'grossProfit', 'grossMarginPercent'],
     rows: ['month', 'sku', 'itemName', 'quantity', 'unit', 'customer', 'revenue', 'cost', 'grossProfit', 'grossMarginPercent'],
