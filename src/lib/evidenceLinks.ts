@@ -287,9 +287,6 @@ function navigationIntentFromApiRoute(url: URL, options: { source?: string } = {
       source: options.source,
     });
   }
-  if (parts[1] === "inventory" && parts[2] === "exceptions") {
-    return navigationIntentFromModule("inventory:exceptions", { source: options.source });
-  }
   if (parts[1] === "inventory" && parts[2] === "movements") {
     return navigationIntentFromModule("inventory:movements", { source: options.source });
   }

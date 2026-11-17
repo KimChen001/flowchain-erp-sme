@@ -81,9 +81,6 @@ const empty: Partial<MasterItem> = {
 const FLAG_LABELS: Record<string, { en: string; zh: string }> = {
   purchasable: { en: "Purchasable", zh: "可采购" },
   inventoryItem: { en: "Inventory item", zh: "库存物料" },
-  batchManaged: { en: "Batch managed", zh: "批次管理" },
-  serialManaged: { en: "Serial managed", zh: "序列号管理" },
-  shelfLifeManaged: { en: "Shelf-life managed", zh: "保质期管理" },
 };
 const flagLabel = (key: string, language: string) => FLAG_LABELS[key]?.[language === "en-US" ? "en" : "zh"] || key;
 // Item types and units are stored as codes; known ones are shown in the
@@ -348,9 +345,9 @@ export default function ItemMasterWorkbench({
             [
               "purchasable",
               "inventoryItem",
-              "batchManaged",
-              "serialManaged",
-              "shelfLifeManaged",
+              // Batch, serial and shelf-life tracking are not built yet: no receipt,
+              // shipment or count records a lot, serial or expiry date, so the
+              // switches stay hidden and stored values are kept (design audit L3-13).
             ] as const
           ).map((key) => (
             <label key={key} className="flex items-center gap-2 text-xs">

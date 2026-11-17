@@ -130,7 +130,6 @@ import {
 import { PublicDataNoteBanner } from "./PublicDataNote";
 
 const ReportsPanel = React.lazy(() => import("../modules/reports/Page"));
-const ImportsPanel = React.lazy(() => import("../modules/imports/Page"));
 const UniversalIntakePanel = React.lazy(() => import("../modules/intake/Page"));
 
 const DRAFT_MESSAGES = {
@@ -819,7 +818,6 @@ export default function FlowChainApp() {
       : [
             "overview",
             "reports",
-            "imports",
             "universal-intake",
             "review-actions",
             "settings",
@@ -1198,9 +1196,6 @@ export default function FlowChainApp() {
     "mobile-operations": <MobileOperationsPage initialView={activeView} />,
     reports: (
       <ReportsPanel initialView={activeView as any} onNavigate={navigateTo} />
-    ),
-    imports: (
-      <ImportsPanel initialView={activeView as any} onNavigate={navigateTo} />
     ),
     "universal-intake": <UniversalIntakePanel />,
     "review-actions": <ReviewFirstActionWorkflowV2 onNavigate={navigateTo} />,

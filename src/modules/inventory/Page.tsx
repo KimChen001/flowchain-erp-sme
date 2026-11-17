@@ -38,23 +38,6 @@ type Item = {
   locationKey?: string;
   unit?: string;
 };
-type Lot = {
-  lotId?: string;
-  lot?: string;
-  sku: string;
-  itemName?: string;
-  quantity?: number;
-  expiryDate?: string;
-  status?: string;
-  warehouseId?: string;
-};
-type Serial = {
-  serialId?: string;
-  sn?: string;
-  sku: string;
-  status?: string;
-  warehouseId?: string;
-};
 type Movement = {
   movementId?: string;
   movementType?: string;
@@ -80,14 +63,6 @@ type Movement = {
   sourceDocument?: string;
   status?: string;
 };
-type InventoryException = {
-  id: string;
-  sku?: string;
-  itemName?: string;
-  quantityImpact?: number;
-  status?: string;
-  reason?: string;
-};
 type Focus = {
   entityType: string;
   entityId: string;
@@ -101,7 +76,7 @@ const BALANCE_PAGE_LIMIT = 50;
 // page of 50 at a time, as on the other long lists, with the type, warehouse
 // and search applied there.
 const MOVEMENT_PAGE_SIZE = 50;
-// The other lists (balances, warnings, lots, serials) hold every row in the
+// The other lists (balances, warnings) hold every row in the
 // browser, so search and the cards count them all, and draw 50 at a time.
 const LIST_PAGE_SIZE = 50;
 // Every type and warehouse in the list, from the server, for the menus.
@@ -122,10 +97,7 @@ const INTERNAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const endpointFor: Record<string, { url: string; key: string }> = {
   overview: { url: "/api/inventory/balances", key: "balances" },
   warnings: { url: "/api/inventory/balances", key: "balances" },
-  lots: { url: "/api/inventory/lots", key: "lots" },
-  serials: { url: "/api/inventory/serials", key: "serials" },
   movements: { url: "/api/inventory/movements", key: "movements" },
-  exceptions: { url: "/api/inventory/exceptions", key: "exceptions" },
 };
 
 const COPY = {
@@ -152,10 +124,6 @@ const COPY = {
   searchWarningsSubtitle: ["Items to reorder by stock position (on hand − reserved + open purchase orders, as on the reorder list), and items whose stock on hand is below safety stock. Each item is judged over all its locations.", "按库存头寸（现有 − 预留 + 在途采购，与补货清单一致）需要补货的物料，以及现有量低于安全库存的物料；每个物料按其所有库位合计判断。"],
   searchMovements: ["Movement search", "流水查询"],
   searchMovementsSubtitle: ["Posted receipts, shipments, transfers and adjustments.", "已过账的入库、出库、调拨和调整。"],
-  searchLots: ["Lot search", "批次查询"],
-  searchSerials: ["Serial number search", "序列号查询"],
-  searchExceptions: ["Exception search", "异常查询"],
-  searchTrackedSubtitle: ["Records appear once tracked stock is posted.", "启用追踪并完成过账后才会出现记录。"],
   search: ["Search", "搜索"],
   searchItem: ["SKU or item name", "SKU 或物料名称"],
   searchMovement: ["SKU, item or source document", "SKU、物料或来源单据"],
@@ -177,9 +145,6 @@ const COPY = {
   balanceList: ["Inventory balance list", "库存余额列表"],
   warningList: ["Warning list", "预警列表"],
   movementList: ["Movement list", "库存流水列表"],
-  lotList: ["Lot list", "批次列表"],
-  serialList: ["Serial number list", "序列号列表"],
-  exceptionList: ["Exception list", "异常列表"],
   skuItem: ["SKU / item", "SKU / 物料"],
   warehouseLocation: ["Warehouse / location", "仓库 / 库位"],
   onHand: ["On hand", "在手量"],
@@ -193,13 +158,6 @@ const COPY = {
   quantityIn: ["In", "入库"],
   quantityOut: ["Out", "出库"],
   date: ["Date", "日期"],
-  lot: ["Lot", "批次"],
-  quantity: ["Quantity", "数量"],
-  expiry: ["Expiry date", "到期日"],
-  serial: ["Serial number", "序列号"],
-  exception: ["Exception", "异常单号"],
-  impact: ["Quantity impact", "数量影响"],
-  reason: ["Reason", "原因"],
   loadFailed: ["Inventory could not be loaded", "库存数据加载失败"],
   noMatch: ["Nothing matches these filters", "没有符合筛选条件的记录"],
   reorderList: ["Open the reorder list", "打开补货清单"],
@@ -227,18 +185,6 @@ const emptyStateFor = (copy: (label: string) => string): Record<string, { title:
   warnings: {
     title: copy("当前没有库存预警"),
     description: copy("当前可见库存余额未低于安全库存或再订货点。"),
-  },
-  lots: {
-    title: copy("当前工作区暂无批次记录"),
-    description: copy("只有启用批次管理并完成正式库存过账后才会出现批次记录。"),
-  },
-  serials: {
-    title: copy("当前工作区暂无序列号记录"),
-    description: copy("只有启用序列号管理并完成正式库存过账后才会出现序列号记录。"),
-  },
-  exceptions: {
-    title: copy("当前没有库存异常"),
-    description: copy("当前可见库存记录未产生需要处理的异常。"),
   },
 });
 
@@ -542,9 +488,9 @@ export default function InventoryPage({
       </tr>
     </thead>
   );
-  const searchTitle = { overview: "searchBalances", warnings: "searchWarnings", movements: "searchMovements", lots: "searchLots", serials: "searchSerials", exceptions: "searchExceptions" }[view] as keyof typeof COPY | undefined;
-  const searchSubtitle = view === "overview" ? tr("searchBalancesSubtitle") : view === "warnings" ? tr("searchWarningsSubtitle") : view === "movements" ? tr("searchMovementsSubtitle") : tr("searchTrackedSubtitle");
-  const listTitle = { overview: "balanceList", warnings: "warningList", movements: "movementList", lots: "lotList", serials: "serialList", exceptions: "exceptionList" }[view] as keyof typeof COPY | undefined;
+  const searchTitle = { overview: "searchBalances", warnings: "searchWarnings", movements: "searchMovements" }[view] as keyof typeof COPY | undefined;
+  const searchSubtitle = view === "overview" ? tr("searchBalancesSubtitle") : view === "warnings" ? tr("searchWarningsSubtitle") : tr("searchMovementsSubtitle");
+  const listTitle = { overview: "balanceList", warnings: "warningList", movements: "movementList" }[view] as keyof typeof COPY | undefined;
 
   return (
     <div className="space-y-5">
@@ -746,63 +692,6 @@ export default function InventoryPage({
                       <td className={tdNumericRightClass} style={{ color: Number(row.quantityIn || 0) ? "#0f766e" : A.gray2 }}>{Number(row.quantityIn || 0) ? `${formatQuantity(row.quantityIn)}${row.unit ? ` ${unitLabel(row.unit, language, Number(row.quantityIn))}` : ""}` : "—"}</td>
                       <td className={tdNumericRightClass} style={{ color: Number(row.quantityOut || 0) ? A.label : A.gray2 }}>{Number(row.quantityOut || 0) ? `${formatQuantity(row.quantityOut)}${row.unit ? ` ${unitLabel(row.unit, language, Number(row.quantityOut))}` : ""}` : "—"}</td>
                       <td className={tdNowrapClass} style={{ color: A.sub }}>{formatDateTimeInTimeZone(row.date, locale, timezone)}</td>
-                      <td className={tdNowrapClass}><StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            {view === "lots" && (
-              <table className={`w-full min-w-[900px] text-left ${tableBodyTextClass}`}>
-                {head([[tr("lot"), "left"], [tr("skuItem"), "left"], [tr("warehouse"), "left"], [tr("quantity"), "right"], [tr("expiry"), "left"], [tr("status"), "left"]])}
-                <tbody>
-                  {stateRow(6)}
-                  {state === "ready" && (drawn as Lot[]).map((row, index) => (
-                    <tr key={row.lotId || row.lot || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
-                      <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.lotId || row.lot || "—"}</td>
-                      <td className={tdNameClass}>
-                        <EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink>
-                        {row.itemName && <div className="text-[11px]" style={{ color: A.sub }}>{row.itemName}</div>}
-                      </td>
-                      <td className={tdNowrapClass}>{warehouseName(row.warehouseId) || "—"}</td>
-                      <td className={tdNumericRightClass}>{formatQuantity(row.quantity ?? 0)}</td>
-                      <td className={tdNowrapClass} style={{ color: A.sub }}>{row.expiryDate ? String(row.expiryDate).slice(0, 10) : "—"}</td>
-                      <td className={tdNowrapClass}><StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            {view === "serials" && (
-              <table className={`w-full min-w-[760px] text-left ${tableBodyTextClass}`}>
-                {head([[tr("serial"), "left"], [tr("skuItem"), "left"], [tr("warehouse"), "left"], [tr("status"), "left"]])}
-                <tbody>
-                  {stateRow(4)}
-                  {state === "ready" && (drawn as Serial[]).map((row, index) => (
-                    <tr key={row.serialId || row.sn || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
-                      <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.serialId || row.sn || "—"}</td>
-                      <td className={tdNameClass}><EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink></td>
-                      <td className={tdNowrapClass}>{warehouseName(row.warehouseId) || "—"}</td>
-                      <td className={tdNowrapClass}><StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            {view === "exceptions" && (
-              <table className={`w-full min-w-[900px] text-left ${tableBodyTextClass}`}>
-                {head([[tr("exception"), "left"], [tr("skuItem"), "left"], [tr("impact"), "right"], [tr("reason"), "left"], [tr("status"), "left"]])}
-                <tbody>
-                  {stateRow(5)}
-                  {state === "ready" && (drawn as InventoryException[]).map((row, index) => (
-                    <tr key={row.id || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
-                      <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.id}</td>
-                      <td className={tdNameClass}>
-                        <EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink>
-                        {row.itemName && <div className="text-[11px]" style={{ color: A.sub }}>{row.itemName}</div>}
-                      </td>
-                      <td className={tdNumericRightClass}>{row.quantityImpact === undefined ? "—" : formatQuantity(row.quantityImpact)}</td>
-                      <td className={`${tdNameClass} max-w-[320px] truncate`} title={row.reason ? copy(row.reason) : undefined}>{row.reason ? copy(row.reason) : "—"}</td>
                       <td className={tdNowrapClass}><StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} /></td>
                     </tr>
                   ))}

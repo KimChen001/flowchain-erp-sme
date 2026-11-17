@@ -33,8 +33,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     procurement:receiving-detail
     procurement:match-detail
     inventory inventory:stock inventory:movements inventory:warnings
-    inventory:reorder inventory:lots inventory:serials inventory:bins
-    inventory:exceptions
+    inventory:reorder inventory:bins
     sales sales:orders sales:risks sales:evidence sales:order-detail
     sales:invoices sales:invoice-detail sales:invoice-document
     reports reports:overview reports:procurement reports:sales
@@ -139,7 +138,7 @@ export const legacyRouteRedirects: Record<
   string,
   { to: string; search?: string }
 > = {
-  imports: { to: "universal-intake" },
+  imports: { to: "master-data:import" },
   "procurement:invoices": { to: "procurement:bills" },
   "procurement:invoice-detail": { to: "procurement:bill-detail" },
   "finance:invoices": { to: "procurement:bills" },
@@ -200,7 +199,6 @@ const ownerByModule: Record<string, string> = {
   "mobile-operations": "src/modules/mobile",
   reports: "src/modules/reports",
   settings: "src/modules/settings",
-  imports: "src/modules/imports",
   "universal-intake": "src/modules/intake",
   "review-actions": "src/modules/action-drafts",
 };
@@ -338,7 +336,7 @@ mapPermission("procurement.prices.read", "procurement:rfq-comparison");
 mapPermission("returns.request.read", "procurement:returns");
 mapPermission(
   "inventory.balance.read",
-  "inventory inventory:stock inventory:movements inventory:warnings inventory:reorder inventory:lots inventory:serials inventory:bins inventory:exceptions inventory:operations",
+  "inventory inventory:stock inventory:movements inventory:warnings inventory:reorder inventory:bins inventory:operations",
 );
 mapPermission(
   "inventory.transfer.read",
@@ -535,7 +533,7 @@ function limitationFor(
   if (compatibilityRouteIds.has(route.id))
     return "Compatibility extension; not part of the default SME Core surface.";
   if (route.id === "imports")
-    return "Retired legacy root; redirects exactly to Universal Intake.";
+    return "Retired legacy root; redirects to the data import page.";
   if (legacyRouteRedirects[route.id])
     return `Moved; redirects to ${legacyRouteRedirects[route.id].to}.`;
   if (financeWriteGatedRouteIds.has(route.id))
