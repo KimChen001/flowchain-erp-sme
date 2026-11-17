@@ -102,6 +102,7 @@ export type PurchaseOrder = {
   // The status receiving started from: "approved" means received without being issued.
   receivingBaseStatus?: string | null;
   eta: string;
+  dueDay?: string | null;
   owner: string;
   amount: number;
   items: number;

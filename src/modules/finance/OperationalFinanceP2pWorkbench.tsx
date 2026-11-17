@@ -570,7 +570,7 @@ function FinanceList({
   capability: string;
   kind: "invoice" | "payable" | "credit" | "match";
 }) {
-  const { t, locale, language, timezone, formatNumber } = useI18n();
+  const { t, locale, language, timezone, formatNumber, workspaceToday } = useI18n();
   const tr = (key: keyof typeof LIST_COPY) => LIST_COPY[key][language === "en-US" ? 0 : 1];
   // "Next: Approve"; in Chinese the full-width colon, with no space after it.
   const colon = language === "en-US" ? ": " : "：";
@@ -649,7 +649,8 @@ function FinanceList({
   );
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const enabled = data.capabilities?.[capability]?.enabled;
-  const today = todayInTimeZone(timezone);
+  // The workspace's day from the server (design audit B3): never the browser's own.
+  const today = workspaceToday;
   const statusOf = (row: Record<string, any>) => String(value(row, "status", "matchStatus") || "");
   const derivedLabels: Record<string, string> = { outstanding: tr("unpaidStatus") };
   const statusText = (code: string) => derivedLabels[code] || (tokenKeys[code] ? t(tokenKeys[code]) : code || "—");

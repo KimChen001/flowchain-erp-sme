@@ -607,6 +607,10 @@ function nextActionForPo(po: PurchaseOrder, facts: ProcurementRuntimeFacts): PoA
   });
 }
 
+// An order's due day by Today's rule (the server's dueDay: the earliest open
+// line's promised day), else its expected arrival (design audit V-B-02).
+const dueOf = (order: PurchaseOrder) => order.dueDay || order.eta;
+
 function poActionText(action: PoAction, words: StoryWords) {
   const pick = (pair: [string, string]) => (words.language === "en-US" ? pair[0] : pair[1]);
   switch (action.kind) {
@@ -1059,7 +1063,7 @@ export default function PurchasingOrdersPage({
 }) {
   const copy = usePageCopy();
   const priceCopy = usePriceHistoryCopy();
-  const { t, timezone, language, formatNumber } = useI18n();
+  const { t, timezone, language, formatNumber, workspaceToday } = useI18n();
   const say = useSay();
   const day = useCalendarDay();
   // "供应商" alone is the Suppliers module name; a column holds one supplier.
@@ -1163,7 +1167,8 @@ export default function PurchasingOrdersPage({
     const overdue = searchParams.get("overdue") === "true";
     if (supplier && order.supplier !== supplier) return false;
     // Overdue: open, with an expected arrival before today in the workspace timezone.
-    if (overdue && (!(summary?.openPurchaseOrderIds || []).includes(order.po) || !order.eta || String(order.eta) >= todayInTimeZone())) return false;
+    // The same day and due day as "N days late" below (design audit B3, V-B-02).
+    if (overdue && (!(summary?.openPurchaseOrderIds || []).includes(order.po) || !workspaceToday || !dueOf(order) || String(dueOf(order)) >= workspaceToday)) return false;
     return true;
   });
   // One page of the list is drawn, as on the other long lists; search and
@@ -1229,10 +1234,12 @@ export default function PurchasingOrdersPage({
   // Which rows of the list may offer Receive and Record supplier invoice.
   const entryRules = usePurchaseOrderEntryRules();
   // Open orders whose expected arrival is before today in the workspace's timezone.
-  const today = todayInTimeZone(timezone);
+  // The workspace's day from the server, as Today counts from (design audit B3).
+  const today = workspaceToday;
   const daysLate = (order: PurchaseOrder) => {
-    if (!order.eta || !summary?.openPurchaseOrderIds?.includes(order.po)) return 0;
-    const days = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${String(order.eta).slice(0, 10)}T00:00:00Z`)) / 86_400_000);
+    const due = dueOf(order);
+    if (!today || !due || !summary?.openPurchaseOrderIds?.includes(order.po)) return 0;
+    const days = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${String(due).slice(0, 10)}T00:00:00Z`)) / 86_400_000);
     return Number.isFinite(days) && days > 0 ? days : 0;
   };
   const poLineHistoryKeys = new Map((viewMode === "detail" && selectedPO?.lines ? selectedPO.lines : []).map((line) => [line.poLineId, priceHistoryKey({ itemId: line.itemId, unit: line.unit, currency: line.currency || selectedPO?.currency })]));

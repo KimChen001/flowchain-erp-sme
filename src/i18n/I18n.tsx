@@ -1,7 +1,7 @@
 import { workspaceCopy } from "./workspaceCopy";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiJson, AUTH_TOKEN_KEY } from "../lib/api-client";
-import { setWorkspaceTimeZone } from "../lib/format";
+import { todayInTimeZone, setWorkspaceTimeZone } from "../lib/format";
 import type { AppRouteDefinition } from "../app/routeRegistry";
 
 export type SupportedLanguage = "zh-CN" | "en-US";
@@ -13,6 +13,7 @@ type LocalizationPayload = {
   effectiveLanguage: SupportedLanguage;
   locale: SupportedLocale;
   timezone: string;
+  workspaceToday?: string;
   workspaceName: string;
 };
 
@@ -2785,6 +2786,11 @@ type I18nValue = {
   locale: SupportedLocale;
   timezone: string;
   workspaceName: string;
+  // Today on the workspace's calendar, from the server; "" until the
+  // workspace's localization has loaded, so no page counts days from the
+  // browser's own day in the meantime (design audit B3, L6-02).
+  workspaceToday: string;
+  localizationReady: boolean;
   defaultLanguage: SupportedLanguage;
   t: (key: keyof typeof zh, variables?: Record<string, string | number>) => string;
   routeLabel: (route: AppRouteDefinition, module?: boolean) => string;
@@ -2807,6 +2813,8 @@ const fallback: I18nValue = {
   locale: FALLBACK_LOCALE,
   timezone: FALLBACK_TIMEZONE,
   workspaceName: "",
+  workspaceToday: "",
+  localizationReady: false,
   defaultLanguage: "en-US",
   t: key => en[key],
   routeLabel: route => route.label,
@@ -2827,6 +2835,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     timezone: FALLBACK_TIMEZONE,
     workspaceName: "",
   });
+  const [ready, setReady] = useState(false);
   const refresh = useCallback(async () => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
       const guestLanguage = localStorage.getItem("flowchain:guest-language") === "zh-CN" ? "zh-CN" : "en-US";
@@ -2840,6 +2849,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       // zone stay the workspace's.
       const guest = localStorage.getItem("flowchain:guest-language");
       setState(!payload.languagePreference && (guest === "zh-CN" || guest === "en-US") ? { ...payload, effectiveLanguage: guest } : payload);
+      setReady(true);
     } catch {
       setState(current => ({ ...current, effectiveLanguage: current.effectiveLanguage || "en-US" }));
     }
@@ -2866,6 +2876,10 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       locale: state.locale,
       timezone: state.timezone,
       workspaceName: state.workspaceName,
+      // The server's day; a server that does not send it is asked in the
+      // workspace's timezone, never the browser's.
+      workspaceToday: ready ? state.workspaceToday || todayInTimeZone(state.timezone) : "",
+      localizationReady: ready,
       defaultLanguage: state.defaultLanguage,
       t,
       routeLabel: (route, module = false) => {
@@ -2877,7 +2891,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       refresh,
       setGuestLanguage,
     };
-  }, [refresh, setGuestLanguage, state]);
+  }, [refresh, setGuestLanguage, state, ready]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 

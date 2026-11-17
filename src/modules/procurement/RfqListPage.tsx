@@ -62,7 +62,7 @@ const COPY = {
 } as const;
 
 export function RfqListPage() {
-  const { language, locale, timezone, formatNumber } = useI18n();
+  const { language, locale, timezone, formatNumber, workspaceToday } = useI18n();
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
   const statusLabel = (status?: string) => status ? (RFQ_STATUS_LABELS[status] ? RFQ_STATUS_LABELS[status][language === "en-US" ? 0 : 1] : status) : "—";
   const [rows, setRows] = useState<ProcurementDocument[]>([]);
@@ -94,7 +94,8 @@ export function RfqListPage() {
     void load();
   }, [load]);
 
-  const today = todayInTimeZone(timezone);
+  // The workspace's day from the server (design audit B3): never the browser's own.
+  const today = workspaceToday;
   const inAWeek = new Date(Date.parse(`${today}T12:00:00Z`) + 7 * 86400000).toISOString().slice(0, 10);
   const isOpen = (row: ProcurementDocument) => OPEN_STATUSES.includes(String(row.status || ""));
   const quotesIn = (row: ProcurementDocument) => (row.supplierCount ?? 0) > 0 && (row.respondedSupplierCount ?? 0) >= (row.supplierCount ?? 0);

@@ -82,6 +82,8 @@ await phase("shell and routing", [
   "tests/browser/authoritative-mutation-auth.spec.ts",
   "tests/browser/user-data-import-preview.spec.ts",
   "tests/browser/motion-transitions.spec.ts",
+  // Days late from the workspace's day, not the browser's (design audit B3).
+  "tests/browser/workspace-today.spec.ts",
 ]);
 // Email sign-in end to end, through the local mail outbox.
 const outboxPath = join(tmpdir(), `flowchain-mail-outbox-${process.pid}.json`);

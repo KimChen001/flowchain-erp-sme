@@ -82,14 +82,61 @@ const COPY = {
 const EXPECTED_ORDER_STATUSES = new Set(["approved", "issued", "partially_received"]);
 type ReorderCounts = { orderNow: number; listed: number };
 
+type WorkLists = { requests: Awaited<ReturnType<typeof procurementApi.listRequests>>; orders: Awaited<ReturnType<typeof procurementApi.listOrders>>; invoices: Awaited<ReturnType<typeof procurementApi.listDocuments>> };
+// The work rows: requests to approve or source, open orders with their days
+// late against `today` (the workspace's day), and held supplier invoices.
+function workRows({ requests, orders, invoices }: WorkLists, today: string): WorkRow[] {
+  return [
+    ...requests.filter(row => ["submitted", "approved"].includes(row.status)).map((row): ProcurementWorkItem => {
+      const lines = row.lines || [];
+      const suppliers = [...new Set(lines.map(line => line.supplierSnapshot?.supplierName).filter(Boolean))] as string[];
+      const needBy = lines.map(line => line.needByDate).filter(Boolean).sort()[0] || row.defaultNeedByDate;
+      return { id: row.id, number: row.number || row.id, kind: "purchase_request", status: row.status, bucket: row.status === "submitted" ? "approval" : "tracking", amount: row.totalAmount, currency: row.defaultCurrency, item: lines[0]?.itemNameSnapshot || lines[0]?.sku || "", moreLines: Math.max(lines.length - 1, 0), supplier: suppliers.join(", "), dueDate: needBy };
+    }),
+    ...orders
+      // A fully received, closed or cancelled order needs no more purchasing work.
+      .filter(row => !FINISHED_PURCHASE_ORDER_STATUSES.includes(row.status))
+      .map((row): WorkRow => {
+        // Due by Today's rule: the earliest open line's promised day (V-B-02).
+        const due = row.dueDay || row.eta;
+        const late = due && today && EXPECTED_ORDER_STATUSES.has(purchaseOrderStatusCode(row.status)) ? daysBetween(String(due), today) : 0;
+        const daysLate = Number.isFinite(late) && late > 0 ? late : 0;
+        return {
+          daysLate,
+          id: row.id,
+          number: row.number || row.id,
+          kind: "purchase_order",
+          status: row.status,
+          transmissionStatus: row.transmissionStatus,
+          bucket: row.status === "pending_approval" ? "approval" : "tracking",
+          amount: row.totalAmount,
+          currency: row.currency,
+          item: row.sourceName || row.lines?.[0]?.itemNameSnapshot || "",
+          moreLines: Math.max((row.lines?.length || 0) - 1, 0),
+          supplier: row.supplier || row.supplierSnapshot?.supplierName || "",
+          dueDate: row.dueDay || row.eta,
+          signals: [
+            ...(daysLate ? ["overdue"] : []),
+          ],
+        };
+      }),
+    // Each supplier invoice held by a match exception, also on a closed order.
+    ...heldInvoiceRows(invoices, today),
+  ];
+}
+
 export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate }) {
-  const { language, locale, timezone } = useI18n();
+  // Days late count from the workspace's day, from the server (design audit
+  // B3, L6-02): "" until it has loaded, and then the counts read "—".
+  const { language, locale, workspaceToday } = useI18n();
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
   const statusLabel = (code: string) => statusCodeLabel(code, language) || code;
   const navigate = useNavigate();
   const canOpenRoute = useRouteAvailability();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [rows, setRows] = useState<WorkRow[]>([]);
+  // The lists as read; the rows are built from them and the workspace day,
+  // so the days late follow that day when it arrives or changes.
+  const [lists, setLists] = useState<WorkLists | null>(null);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   // The reorder list's counts, read on their own so a slow or refused read
   // never holds up the work queue; null while unread or when it failed.
@@ -116,55 +163,22 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
   };
   const load = async () => {
     setState("loading");
-    // Open orders past their expected arrival, by the workspace's calendar day.
-    const today = todayInTimeZone(timezone);
     try {
       const [requests, orders, invoices] = await Promise.all([
         procurementApi.listRequests(),
         procurementApi.listOrders(),
         procurementApi.listDocuments("invoice"),
       ]);
-      setRows([
-        ...requests.filter(row => ["submitted", "approved"].includes(row.status)).map((row): ProcurementWorkItem => {
-          const lines = row.lines || [];
-          const suppliers = [...new Set(lines.map(line => line.supplierSnapshot?.supplierName).filter(Boolean))] as string[];
-          const needBy = lines.map(line => line.needByDate).filter(Boolean).sort()[0] || row.defaultNeedByDate;
-          return { id: row.id, number: row.number || row.id, kind: "purchase_request", status: row.status, bucket: row.status === "submitted" ? "approval" : "tracking", amount: row.totalAmount, currency: row.defaultCurrency, item: lines[0]?.itemNameSnapshot || lines[0]?.sku || "", moreLines: Math.max(lines.length - 1, 0), supplier: suppliers.join(", "), dueDate: needBy };
-        }),
-        ...orders
-          // A fully received, closed or cancelled order needs no more purchasing work.
-          .filter(row => !FINISHED_PURCHASE_ORDER_STATUSES.includes(row.status))
-          .map((row): WorkRow => {
-            const late = row.eta && EXPECTED_ORDER_STATUSES.has(purchaseOrderStatusCode(row.status)) ? daysBetween(String(row.eta), today) : 0;
-            const daysLate = Number.isFinite(late) && late > 0 ? late : 0;
-            return {
-              daysLate,
-              id: row.id,
-              number: row.number || row.id,
-              kind: "purchase_order",
-              status: row.status,
-              transmissionStatus: row.transmissionStatus,
-              bucket: row.status === "pending_approval" ? "approval" : "tracking",
-              amount: row.totalAmount,
-              currency: row.currency,
-              item: row.sourceName || row.lines?.[0]?.itemNameSnapshot || "",
-              moreLines: Math.max((row.lines?.length || 0) - 1, 0),
-              supplier: row.supplier || row.supplierSnapshot?.supplierName || "",
-              dueDate: row.eta,
-              signals: [
-                ...(daysLate ? ["overdue"] : []),
-              ],
-            };
-          }),
-        // Each supplier invoice held by a match exception, also on a closed order.
-        ...heldInvoiceRows(invoices, today),
-      ]);
+      setLists({ requests, orders, invoices });
       setState("loaded");
     } catch { setState("error"); }
     // After the queue's lists, loaded or not; the tile shows "—" until then.
     window.setTimeout(loadReorder, 0);
   };
   useEffect(() => { void load(); }, []);
+  const rows = useMemo(() => (lists && workspaceToday ? workRows(lists, workspaceToday) : []), [lists, workspaceToday]);
+  // The queue counts and the list wait for the workspace's day as well.
+  const ready = state === "loaded" && Boolean(workspaceToday);
   const statuses = useMemo(() => [...new Set(rows.map(row => row.status))], [rows]);
   const needle = query.trim().toLowerCase();
   // Approvals first, then rows that need attention (late, or an invoice or
@@ -183,7 +197,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
   const reset = () => { setQuery(""); setType(""); setStatus(""); setQueue("all"); };
   const money = (row: ProcurementWorkItem) => row.amount === null || !Number.isFinite(Number(row.amount)) ? "—" : formatLocaleAmount(Number(row.amount), row.currency, locale, { maximumFractionDigits: 2 });
   const queueLink = (name: Queue) => `/app/procurement/workbench${name === "all" ? "" : `?queue=${name}`}`;
-  const value = (name: Queue) => state === "loaded" ? String(count(name)) : "—";
+  const value = (name: Queue) => ready ? String(count(name)) : "—";
   return (
     <div className="space-y-5" data-testid="procurement-workbench">
       <div className={`grid grid-cols-2 gap-3 ${canOpenReorder ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
@@ -232,7 +246,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
         </Field>
       </ListSearchCard>
 
-      <ListCard title={tr("listTitle")} total={state === "loaded" ? shown.length : undefined} all={state === "loaded" ? rows.length : undefined} shown={paged.pageRows.length} testId="procurement-work-queue">
+      <ListCard title={tr("listTitle")} total={ready ? shown.length : undefined} all={ready ? rows.length : undefined} shown={paged.pageRows.length} testId="procurement-work-queue">
         <div className={tableScrollClass}>
           <table className={`w-full min-w-[1100px] text-left ${tableBodyTextClass}`}>
             <thead>
@@ -248,14 +262,14 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
               </tr>
             </thead>
             <tbody>
-              {state === "loading" && <ListStateRow colSpan={8} state="loading" />}
+              {(state === "loading" || (state === "loaded" && !workspaceToday)) && <ListStateRow colSpan={8} state="loading" />}
               {state === "error" && <ListStateRow colSpan={8} state="error" title={tr("loadFailed")} onRetry={() => void load()} />}
-              {state === "loaded" && shown.length === 0 && (
+              {ready && shown.length === 0 && (
                 rows.length === 0
                   ? <ListStateRow colSpan={8} state="empty" title={tr("empty")} detail={tr("emptyDetail")} />
                   : <ListStateRow colSpan={8} state="empty" title={tr("noMatch")} />
               )}
-              {state === "loaded" && paged.pageRows.map((row, index) => (
+              {ready && paged.pageRows.map((row, index) => (
                 <tr key={`${row.kind}:${row.id}`} className={listRowClass} style={listRowStyle(index, paged.pageRows.length)}>
                   <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                     <EntityLink kind={row.kind} id={row.id} number={row.number} className={tableLinkClass} />
@@ -291,7 +305,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
             </tbody>
           </table>
         </div>
-        {state === "loaded" && <ListPager page={paged.page} pageSize={PAGE_SIZE} total={shown.length} onPage={paged.setPage} testId="procurement-work-pager" />}
+        {ready && <ListPager page={paged.page} pageSize={PAGE_SIZE} total={shown.length} onPage={paged.setPage} testId="procurement-work-pager" />}
       </ListCard>
     </div>
   );
