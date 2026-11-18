@@ -34,10 +34,15 @@ export const operationalSettingsSeed = {
     // supplier, after the person confirms the text and then the address, only
     // once an administrator turns this on (docs/drafted-decisions-design.md §4.11).
     supplierFollowUpEmail: false,
+    // Three-way match tolerances (owner decision 2026-11-17, design audit B2):
+    // a line's price difference passes within the larger of 2% of the line
+    // and 1 currency unit; quantity has no tolerance. A workspace that saved
+    // its own values keeps them, and a match keeps the values it used
+    // (operational-finance-policy.mjs, THREE_WAY_MATCH_RULE).
     quantityTolerance: '0.0000',
-    pricePercentageTolerance: '0.0000',
+    pricePercentageTolerance: '2.0000',
     priceAbsoluteTolerance: '0.0000',
-    amountTolerance: '0.0000',
+    amountTolerance: '1.0000',
     riskLevels: ['high'],
     inventoryTolerancePercent: 5,
     reviewerRoles: ['admin', 'manager'],

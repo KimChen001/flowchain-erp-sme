@@ -8,12 +8,16 @@ import {
   buildSupplierInvoicePlan,
   buildSupplierMatchPlan,
   financeFixed,
+  financeTimes,
   financeUnits,
+  matchRuleOf,
+  quantityApprovalRefused,
   supplierCreditMemoNumberDuplicate,
+  THREE_WAY_MATCH_RULE,
 } from "./operational-finance-policy.mjs";
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
 import { derivePayableSettlementStatus } from "./obligation-status-policy.mjs";
-import { CREDIT_HOLDING_STATUSES } from "./return-credit-rules.mjs";
+import { CREDIT_HOLDING_STATUSES, proportionalTaxCap } from "./return-credit-rules.mjs";
 import {
   DUPLICATE_KINDS,
   duplicateFlagView,
@@ -55,6 +59,81 @@ export function matchStatusAfterReview(statuses) {
   return list.length && list.every((status) => status === "approved")
     ? MATCH_VARIANCE_APPROVED
     : null;
+}
+
+// A quantity difference of a match made under THREE_WAY_MATCH_RULE is not
+// approved for payment (owner decision 2026-11-17, design audit L2-05): it is
+// rejected, or waits for the receipt and the invoice is matched again, or it
+// is accepted at the received quantity (accept_received), which approves it
+// and leaves what was not received out of the payable. A match made before
+// the rule keeps approve as it was.
+export const ACCEPT_RECEIVED = "accept_received";
+export const RECEIVED_QUANTITY = "received_quantity";
+const MATCH_EXCEPTION_DECISIONS = ["approved", "rejected", ACCEPT_RECEIVED];
+export function exceptionDecisionIssues(match, exception, decision) {
+  if (decision === "approved" && quantityApprovalRefused(match, exception?.exceptionType))
+    return [{
+      code: "MATCH_EXCEPTION_QUANTITY_NOT_APPROVABLE",
+      message: "A quantity difference cannot be approved for payment. Reject it, wait for the receipt and match the invoice again, or accept the invoice at the received quantity.",
+      status: 409,
+    }];
+  if (decision === ACCEPT_RECEIVED && !quantityApprovalRefused(match, exception?.exceptionType))
+    return [{
+      code: "MATCH_EXCEPTION_DECISION_INVALID",
+      message: "Only a quantity difference of a match made under the current rule is accepted at the received quantity.",
+      status: 422,
+    }];
+  return [];
+}
+
+// What the payable leaves out for the quantity differences accepted at the
+// received quantity on the invoice's current match: per line, the quantity
+// not received at the invoice's unit price, and its share of the line's tax.
+async function notReceivedPart(db, invoice) {
+  const latest = await db.threeWayMatch.findFirst({
+    where: { tenantId: invoice.tenantId, invoiceId: invoice.id, status: { not: "superseded" } },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { id: true, metadata: true },
+  });
+  if (matchRuleOf(latest) !== THREE_WAY_MATCH_RULE) return { amount: 0n, lines: [] };
+  const accepted = (await db.financeMatchException.findMany({
+    where: { matchId: latest.id, exceptionType: "quantity", status: "approved" },
+    select: { id: true, matchLineId: true, varianceValue: true, metadata: true },
+  })).filter((row) => row.metadata?.acceptedAt === RECEIVED_QUANTITY);
+  if (!accepted.length) return { amount: 0n, lines: [] };
+  const matchLines = await db.threeWayMatchLine.findMany({
+    where: { id: { in: accepted.map((row) => row.matchLineId).filter(Boolean) } },
+    select: { id: true, supplierInvoiceLineId: true },
+  });
+  const invoiceLineOf = new Map(matchLines.map((row) => [row.id, row.supplierInvoiceLineId]));
+  const invoiceLines = await db.supplierInvoiceLine.findMany({
+    where: { supplierInvoiceId: invoice.id },
+    select: { id: true, lineNumber: true, sku: true, quantity: true, unitPrice: true, enteredTaxAmount: true },
+  });
+  const lineById = new Map(invoiceLines.map((row) => [row.id, row]));
+  const lines = [];
+  let amount = 0n;
+  for (const row of accepted) {
+    const line = lineById.get(invoiceLineOf.get(row.matchLineId));
+    if (!line) continue;
+    const invoiced = financeUnits(line.quantity || 0);
+    let missing = financeUnits(row.varianceValue || 0);
+    if (missing < 0n) missing = 0n;
+    if (missing > invoiced) missing = invoiced;
+    const goods = financeTimes(missing, financeUnits(line.unitPrice || 0));
+    const tax = proportionalTaxCap(financeUnits(line.enteredTaxAmount || 0), missing, invoiced);
+    amount += goods + tax;
+    lines.push({
+      supplierInvoiceLineId: line.id,
+      lineNumber: line.lineNumber,
+      sku: line.sku,
+      invoicedQuantity: financeFixed(invoiced),
+      payableQuantity: financeFixed(invoiced - missing),
+      notReceivedQuantity: financeFixed(missing),
+      notReceivedAmount: financeFixed(goods + tax),
+    });
+  }
+  return { amount, lines };
 }
 
 const commandPermission = (commandType) => ({
@@ -472,10 +551,11 @@ async function approvedCreditTotal(db, supplierInvoiceId) {
   return rows.reduce((sum, row) => sum + financeUnits(row.totalAmount), 0n);
 }
 
-// The payable a bill opens with: its total less the credits already
+// The payable a bill opens with: its total, less what was accepted at the
+// received quantity and not received (notReceived), less the credits already
 // approved against it, with the status those amounts give.
-function openingPayable(invoice, credited) {
-  const total = financeUnits(invoice.totalAmount ?? invoice.amount);
+function openingPayable(invoice, credited, notReceived = 0n) {
+  const total = financeUnits(invoice.totalAmount ?? invoice.amount) - notReceived;
   const amounts = {
     originalAmount: financeFixed(total),
     approvedCreditAmount: financeFixed(credited),
@@ -1468,10 +1548,10 @@ export function createOperationalFinanceCommandService({
           where: { id: normalized.invoiceId },
           include: { lines: true },
         });
-        if (current.status !== "submitted")
+        if (!["submitted", "exception"].includes(current.status))
           fail(
             "SUPPLIER_INVOICE_STATUS_INVALID",
-            "Only a submitted supplier invoice can start a match run.",
+            "Only a submitted supplier invoice, or one the match held, can start a match run.",
             409,
           );
         if (current.version !== normalized.expectedVersion)
@@ -1497,6 +1577,15 @@ export function createOperationalFinanceCommandService({
             invoiceId: current.id,
           }),
         );
+        // Matched again (design audit L2-04): the earlier runs are replaced.
+        // Their differences still open or rejected are resolved as superseded,
+        // with the new run named; accepted ones stay as they were decided.
+        const earlierRuns = plan.rematch
+          ? await tx.threeWayMatch.findMany({
+              where: { tenantId: actor.tenantId, invoiceId: current.id, status: { not: "superseded" } },
+              select: { id: true, matchNumber: true },
+            })
+          : [];
         const matchId = idFactory();
         const match = await tx.threeWayMatch.create({
           data: {
@@ -1520,6 +1609,12 @@ export function createOperationalFinanceCommandService({
               : null,
             matchedAt: now(),
             matchedById: actor.user.id,
+            // The rule and tolerances this match used, kept with it.
+            metadata: {
+              rule: plan.rule,
+              tolerances: plan.tolerances,
+              ...(earlierRuns.length ? { supersedes: earlierRuns.map((run) => run.id) } : {}),
+            },
             lines: {
               create: plan.lines.map((line) => ({
                 id: idFactory(),
@@ -1529,6 +1624,24 @@ export function createOperationalFinanceCommandService({
           },
           include: { lines: true },
         });
+        let superseded = 0;
+        if (earlierRuns.length) {
+          const earlierIds = earlierRuns.map((run) => run.id);
+          superseded = (await tx.financeMatchException.updateMany({
+            where: { matchId: { in: earlierIds }, status: { in: ["open", "rejected"] } },
+            data: {
+              status: "resolved",
+              resolution: `Superseded by match ${match.matchNumber}.`,
+              resolvedAt: now(),
+              resolvedById: actor.user.id,
+              version: { increment: 1 },
+            },
+          })).count;
+          await tx.threeWayMatch.updateMany({
+            where: { id: { in: earlierIds } },
+            data: { status: "superseded", version: { increment: 1 } },
+          });
+        }
         const matchLineByInvoiceLine = new Map(
           match.lines.map((line) => [line.supplierInvoiceLineId, line.id]),
         );
@@ -1585,7 +1698,9 @@ export function createOperationalFinanceCommandService({
             action: "supplier_invoice_matched",
             entityType: result.entityType,
             entityId: result.entityId,
-            summary: "Supplier invoice three-way match completed line by line.",
+            summary: earlierRuns.length
+              ? "Supplier invoice matched again line by line; the earlier match is superseded."
+              : "Supplier invoice three-way match completed line by line.",
             ...command,
             before: invoiceResult(current).invoice,
             after: result.invoice,
@@ -1594,6 +1709,10 @@ export function createOperationalFinanceCommandService({
               purchaseOrderId: current.relatedPoId,
               receivingDocumentId: current.relatedGrnId,
               exceptionIds: [],
+              rule: plan.rule,
+              ...(earlierRuns.length
+                ? { supersededMatchIds: earlierRuns.map((run) => run.id), supersededExceptions: superseded }
+                : {}),
             },
           }),
         });
@@ -1643,10 +1762,10 @@ export function createOperationalFinanceCommandService({
             "Match exception changed concurrently.",
             409,
           );
-        if (!["approved", "rejected"].includes(normalized.decision))
+        if (!MATCH_EXCEPTION_DECISIONS.includes(normalized.decision))
           fail(
             "MATCH_EXCEPTION_DECISION_INVALID",
-            "Decision must be approved or rejected.",
+            "Decision must be approved, rejected or accept_received.",
             422,
           );
         // The match row is locked first, so two reviews of the same match
@@ -1658,14 +1777,26 @@ export function createOperationalFinanceCommandService({
           current.matchId,
           "THREE_WAY_MATCH_NOT_FOUND",
         );
+        const matchRun = await tx.threeWayMatch.findUnique({
+          where: { id: current.matchId },
+          select: { metadata: true },
+        });
+        const [decisionIssue] = exceptionDecisionIssues(matchRun, current, normalized.decision);
+        if (decisionIssue) fail(decisionIssue.code, decisionIssue.message, decisionIssue.status);
+        const acceptedAtReceived = normalized.decision === ACCEPT_RECEIVED;
         const exception = await tx.financeMatchException.update({
           where: { id: current.id },
           data: {
-            status: normalized.decision,
+            // Accepted at the received quantity is an approval of the
+            // difference; the payable leaves out what was not received.
+            status: acceptedAtReceived ? "approved" : normalized.decision,
             resolution: normalized.resolution,
             resolvedAt: now(),
             resolvedById: actor.user.id,
             version: { increment: 1 },
+            ...(acceptedAtReceived
+              ? { metadata: { ...(current.metadata || {}), acceptedAt: RECEIVED_QUANTITY } }
+              : {}),
           },
         });
         // Once every exception of the match is approved, the match is no
@@ -1704,6 +1835,7 @@ export function createOperationalFinanceCommandService({
             status: exception.status,
             resolution: exception.resolution,
             version: exception.version,
+            ...(acceptedAtReceived ? { acceptedAt: RECEIVED_QUANTITY } : {}),
           },
           ...(matchAfter ? { match: matchAfter } : {}),
         };
@@ -1759,12 +1891,19 @@ export function createOperationalFinanceCommandService({
         message: "Only an open match exception can be reviewed.",
         status: 409,
       });
-    if (!["approved", "rejected"].includes(decision))
+    if (!MATCH_EXCEPTION_DECISIONS.includes(decision))
       blockingIssues.push({
         code: "MATCH_EXCEPTION_DECISION_INVALID",
-        message: "Decision must be approved or rejected.",
+        message: "Decision must be approved, rejected or accept_received.",
         status: 422,
       });
+    else {
+      const matchRun = await prisma.threeWayMatch.findFirst({
+        where: { id: exception.matchId, tenantId: actor.tenantId },
+        select: { metadata: true },
+      });
+      blockingIssues.push(...exceptionDecisionIssues(matchRun, exception, decision));
+    }
     if (!text(input.resolution))
       blockingIssues.push({
         code: MATCH_EXCEPTION_RESOLUTION_REQUIRED,
@@ -1777,10 +1916,11 @@ export function createOperationalFinanceCommandService({
       where: { matchId: exception.matchId },
       select: { id: true, status: true },
     });
+    const statusAfter = decision === ACCEPT_RECEIVED ? "approved" : decision;
     const matchStatus = blockingIssues.length
       ? null
       : matchStatusAfterReview(
-          siblings.map((row) => (row.id === exception.id ? decision : row.status)),
+          siblings.map((row) => (row.id === exception.id ? statusAfter : row.status)),
         );
     return {
       operation: "review_match_exception",
@@ -1792,8 +1932,9 @@ export function createOperationalFinanceCommandService({
         version: exception.version,
       },
       after: {
-        status: decision,
+        status: statusAfter,
         version: exception.version + 1,
+        ...(decision === ACCEPT_RECEIVED ? { acceptedAt: RECEIVED_QUANTITY } : {}),
         ...(matchStatus ? { matchStatus } : {}),
       },
       paymentExecution: false,
@@ -1853,7 +1994,8 @@ export function createOperationalFinanceCommandService({
     const typedNumber = text(input.obligationNumber);
     if (typedNumber && (await payableNumberTaken(prisma, actor.tenantId, typedNumber)))
       blockingIssues.push(payableNumberDuplicate(typedNumber));
-    const opening = openingPayable(invoice, await approvedCreditTotal(prisma, invoice.id));
+    const notReceived = await notReceivedPart(prisma, invoice);
+    const opening = openingPayable(invoice, await approvedCreditTotal(prisma, invoice.id), notReceived.amount);
     blockingIssues.push(...opening.issues);
     return {
       operation: "approve_supplier_invoice",
@@ -1865,7 +2007,10 @@ export function createOperationalFinanceCommandService({
         payableStatus: opening.status,
         obligationNumber:
           typedNumber || (await nextPayableNumber(prisma, actor.tenantId, invoice)),
-        originalAmount: String(invoice.totalAmount ?? invoice.amount),
+        originalAmount: notReceived.lines.length ? opening.originalAmount : String(invoice.totalAmount ?? invoice.amount),
+        ...(notReceived.lines.length
+          ? { invoiceTotal: String(invoice.totalAmount ?? invoice.amount), notReceivedAmount: financeFixed(notReceived.amount), notReceived: notReceived.lines }
+          : {}),
         approvedCreditAmount: opening.approvedCreditAmount,
         outstandingAmount: opening.outstandingAmount,
         currency: invoice.currency,
@@ -1941,8 +2086,10 @@ export function createOperationalFinanceCommandService({
           typedNumber || (await nextPayableNumber(tx, actor.tenantId, current));
         // A credit memo approved before the bill: the payable opens at the
         // bill's total less that credit (credit approval locks this bill, so
-        // the two cannot pass each other).
-        const opening = openingPayable(current, await approvedCreditTotal(tx, current.id));
+        // the two cannot pass each other). A quantity difference accepted at
+        // the received quantity: the payable leaves out what was not received.
+        const notReceived = await notReceivedPart(tx, current);
+        const opening = openingPayable(current, await approvedCreditTotal(tx, current.id), notReceived.amount);
         if (opening.issues.length)
           fail(opening.issues[0].code, opening.issues[0].message, opening.issues[0].status);
         const invoice = await tx.supplierInvoice.update({
@@ -1962,7 +2109,7 @@ export function createOperationalFinanceCommandService({
               tenantId: actor.tenantId,
               supplierInvoiceId: current.id,
               obligationNumber,
-              originalAmount: current.totalAmount ?? current.amount,
+              originalAmount: notReceived.lines.length ? opening.originalAmount : current.totalAmount ?? current.amount,
               approvedCreditAmount: opening.approvedCreditAmount,
               outstandingAmount: opening.outstandingAmount,
               currency: current.currency,
@@ -1970,6 +2117,17 @@ export function createOperationalFinanceCommandService({
               status: opening.status,
               approvedAt: now(),
               approvedById: actor.user.id,
+              ...(notReceived.lines.length
+                ? {
+                    metadata: {
+                      receivedQuantityBasis: {
+                        invoiceTotal: financeFixed(financeUnits(current.totalAmount ?? current.amount)),
+                        notReceivedAmount: financeFixed(notReceived.amount),
+                        lines: notReceived.lines,
+                      },
+                    },
+                  }
+                : {}),
             },
           });
         } catch (error) {
@@ -2010,6 +2168,9 @@ export function createOperationalFinanceCommandService({
               payableObligationId: payable.id,
               matchStatus: current.matchStatus,
               approvedCreditAmount: opening.approvedCreditAmount,
+              ...(notReceived.lines.length
+                ? { notReceivedAmount: financeFixed(notReceived.amount), notReceived: notReceived.lines }
+                : {}),
             },
           }),
         });

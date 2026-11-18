@@ -102,7 +102,28 @@ Buy side (`docs/operational-finance-phase-5a.md`):
   approval. A receipt of another order, an unposted or reversed receipt, or
   one without goods for a line is refused.
 - Price, quantity and amount are checked per line against configured
-  tolerances; line variances never offset each other.
+  tolerances; line variances never offset each other. Since 2026-11-17
+  (design audit B2) a match records the rule and tolerances it used
+  (`ThreeWayMatch.metadata`), and matches made before keep their results:
+  - Quantity is what the bill claims on its purchase-order line against what
+    every posted receipt of that line brought in, less other bills on the
+    line and goods returned and not credited. The default quantity tolerance
+    is 0.
+  - A line's price difference (quantity × price difference) passes within the
+    larger of the unit-price tolerances over the quantity and the line amount
+    tolerance; by default the larger of 2% of the line and 1 currency unit.
+    A price difference beyond it is one price exception: the amount check
+    covers only what the bill's price does not explain.
+  - A quantity exception is not approved for payment. It is rejected, or the
+    bill waits for the receipt and is matched again (a bill the match held can
+    be matched again while a difference is open or rejected; the earlier match
+    is superseded), or it is accepted at the received quantity: the payable is
+    then created for what was received, at the bill's price and its share of
+    tax. A quantity exception of a match made before the rule can still be
+    approved.
+- A purchase order with a bill that is not cancelled cannot be cancelled, and
+  a purchase order cannot be closed while one of its bills has a match
+  exception still to review.
 - Bill lifecycle: `draft → submitted → matched | exception → approved | held`,
   plus cancel. Approval creates the bill to pay (`AP-…` number).
 - Bill numbers are unique per supplier.
@@ -392,9 +413,10 @@ contacts", "Import inventory items" and the Xero API reference; Microsoft
   bill itself can be recorded first. How a service is "received" is still
   open.
 - A bill links one receipt. If the goods on one bill arrive in several
-  receipts, only one can be linked today, and the match reports the rest as
-  missing. Linking several receipts to one bill needs a model change; decide
-  whether it is needed.
+  receipts, one is linked, and the match counts every posted receipt of the
+  bill's purchase-order lines (since 2026-11-17), so the bill is matched again
+  once the rest arrives. Linking several receipts by name to one bill would
+  need a model change.
 - Supplier deposits and prepayments are not supported.
 - Sales tax is not calculated; exports leave tax to the accounting system. This
   is also why QuickBooks Online customers with sales tax need the connector.

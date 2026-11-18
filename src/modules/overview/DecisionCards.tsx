@@ -546,6 +546,7 @@ function InvoiceExceptionBody({ draft, row, busy, canDecide, aside, onContacted,
       case "over_ordered": return t("cause_over_ordered", { ordered: qty(entry.ordered, entry.unit) });
       case "already_invoiced": return t("cause_already_invoiced", { previous: qty(entry.previouslyInvoiced, entry.unit) });
       case "not_yet_received": return t("cause_not_yet_received", { missing: qty(entry.missing, entry.unit) });
+      case "order_closed": return t("cause_order_closed", { missing: qty(entry.missing, entry.unit) });
       case "line_amount": return t("cause_line_amount");
       default: return t("cause_hidden");
     }
@@ -555,7 +556,11 @@ function InvoiceExceptionBody({ draft, row, busy, canDecide, aside, onContacted,
   const openOrder = draft.orderId ? <Link to={`/app/procurement/orders/${encodeURIComponent(draft.orderId)}`} className={draft.step === "wait_receipt" ? BUTTON.primary : BUTTON.secondary} data-testid={draft.step === "wait_receipt" ? "decision-primary" : undefined}>{t("checkReceipt")}</Link> : null;
   const contact = <button type="button" disabled={busy} className={draft.step === "ask_supplier" ? BUTTON.primary : BUTTON.secondary} onClick={() => onContacted(text)} data-testid={draft.step === "ask_supplier" ? "decision-primary" : "decision-copy"}>{t("copyAndContacted")}</button>;
   const primary = !canDecide ? null : draft.step === "review_price" ? openInvoice : draft.step === "wait_receipt" ? openOrder || openInvoice : contact;
-  if (!open) return <><Short>{short}</Short><LineEnd>{primary}{toggle}</LineEnd></>;
+  // Asking the supplier is one way to settle a difference; accepting or
+  // rejecting it is the other, on the invoice, so both are on the line
+  // (design audit L7-13: the card offered only the message).
+  const second = canDecide && draft.step === "ask_supplier" ? openInvoice : null;
+  if (!open) return <><Short>{short}</Short><LineEnd>{primary}{second}{toggle}</LineEnd></>;
   return (
     <>
       <LineEnd>{toggle}</LineEnd>

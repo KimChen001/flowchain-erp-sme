@@ -53,7 +53,18 @@ const money = (amount: unknown, currency: unknown, locale: string) => {
     ? new Intl.NumberFormat(locale, { style: "currency", currency: code, maximumFractionDigits: 4 }).format(numeric)
     : `${amount} ${code}`.trim();
 };
-const fixed = (value: number) => (Number.isFinite(value) ? value.toFixed(4) : "0.0000");
+// A line amount as the server works it out (operational-finance-policy.mjs):
+// quantity × unit price in whole ten-thousandths, rounded half up, so the
+// form shows what the invoice will hold. The form does not send line amounts
+// or the total; the server computes them (design audit L2-17: floating point
+// here gave 2.5002 where the server has 2.5003, and the save was refused).
+// Only for values that already pass DECIMAL (not negative, four decimals).
+const toUnits = (value: string) => {
+  const [whole, fraction = ""] = value.trim().split(".");
+  return BigInt(whole || "0") * 10000n + BigInt((fraction + "0000").slice(0, 4));
+};
+const fromUnits = (value: bigint) => Number(`${value / 10000n}.${String(value % 10000n).padStart(4, "0")}`);
+export const invoiceLineAmount = (quantity: string, unitPrice: string) => fromUnits((toUnits(quantity) * toUnits(unitPrice) + 5000n) / 10000n);
 // A label and what follows it: "Other bill: …", or "另一张发票：…" with the
 // full-width colon and no space after it.
 const colonOf = (language: string) => (language === "en-US" ? ": " : "：");
@@ -251,16 +262,14 @@ export function NewSupplierInvoice() {
       const quantity = (lines[line.id]?.quantity || "").trim();
       const unitPrice = String(linePrice(line.id, line.purchaseOrderLineId)).trim();
       const tax = (lines[line.id]?.tax || "").trim() || "0";
-      return { purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, quantity, unitPrice, lineAmount: fixed(Number(quantity) * Number(unitPrice)), enteredTaxAmount: tax };
+      return { purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, quantity, unitPrice, enteredTaxAmount: tax };
     });
-    const total = chosen.reduce((sum, line) => sum + Number(line.lineAmount) + Number(line.enteredTaxAmount || 0), 0);
     return {
       invoiceNumber: invoiceNumber.trim(),
       supplierId,
       currency,
       invoiceDate: invoiceDate ? new Date(`${invoiceDate}T00:00:00.000Z`).toISOString() : "",
       dueDate: dueDate ? new Date(`${dueDate}T00:00:00.000Z`).toISOString() : "",
-      totalAmount: fixed(total),
       lines: chosen,
     };
   };
@@ -396,10 +405,11 @@ export function NewSupplierInvoice() {
   const amountOf = (line: (typeof formLines)[number]) => {
     const quantity = (lines[line.id]?.quantity || "").trim();
     const price = String(linePrice(line.id, line.purchaseOrderLineId)).trim();
-    return DECIMAL.test(quantity) && Number(quantity) > 0 && DECIMAL.test(price) ? Number(quantity) * Number(price) : null;
+    return DECIMAL.test(quantity) && Number(quantity) > 0 && DECIMAL.test(price) ? invoiceLineAmount(quantity, price) : null;
   };
-  const subtotal = billed.reduce((sum, line) => sum + (amountOf(line) || 0), 0);
-  const tax = billed.reduce((sum, line) => sum + (DECIMAL.test((lines[line.id]?.tax || "").trim()) ? Number(lines[line.id]?.tax) : 0), 0);
+  // Summed in ten-thousandths, as the server adds them.
+  const subtotal = fromUnits(billed.reduce((sum, line) => { const amount = amountOf(line); return amount === null ? sum : sum + toUnits(amount.toFixed(4)); }, 0n));
+  const tax = fromUnits(billed.reduce((sum, line) => { const entered = (lines[line.id]?.tax || "").trim(); return DECIMAL.test(entered) ? sum + toUnits(entered) : sum; }, 0n));
   const quantityText = (value: string, unit: string | null) => `${formatNumber(Number(value))}${unit ? ` ${unitLabel(unit, language, Number(value))}` : ""}`;
   const cellInputClass = "w-24 rounded-lg border px-2 py-1.5 text-sm tabular-nums";
   const lineErrorId = (lineId: string, key: LineKey) => `supplier-invoice-${key}-${lineId}`;
@@ -819,7 +829,15 @@ function VarianceReason({ invoice }: { invoice: { id: string; version?: number; 
 // ------------------------------------------------------------ match card
 
 type MatchLineView = { id: string; supplierInvoiceLineId?: string | null; invoiceQuantity?: string | null; priceVariance?: string | null };
-type MatchExceptionView = { id: string; matchLineId?: string | null; exceptionType: string; status: string; expectedValue?: string | null; actualValue?: string | null; varianceValue?: string | null; currency?: string | null; resolution?: string | null; version: number };
+type MatchExceptionView = { id: string; matchLineId?: string | null; exceptionType: string; status: string; expectedValue?: string | null; actualValue?: string | null; varianceValue?: string | null; currency?: string | null; resolution?: string | null; version: number; acceptedAt?: string | null };
+
+// The rule a match was made under (THREE_WAY_MATCH_RULE on the server). Under
+// it a quantity difference is not approved for payment: it is rejected, waits
+// for the receipt and the invoice is matched again, or is accepted at the
+// received quantity (the bill to pay leaves out what was not received).
+export const RECEIVED_QUANTITY_RULE = "per_line_2026_11";
+export const quantityAcceptedAtReceived = (matchRule: string | null | undefined, exceptionType: string) =>
+  matchRule === RECEIVED_QUANTITY_RULE && exceptionType === "quantity";
 
 // The order the differences are listed in: per line, quantity, price, amount.
 const EXCEPTION_ORDER: Record<string, number> = { quantity: 0, price: 1, amount: 2 };
@@ -857,6 +875,7 @@ const EXCEPTION_CHIPS: Record<string, { label: [string, string]; tone: StatusTon
   approved: { label: ["Approved", "已批准"], tone: "success" },
   rejected: { label: ["Rejected", "已驳回"], tone: "danger" },
 };
+const ACCEPTED_AT_RECEIVED_CHIP: { label: [string, string]; tone: StatusTone } = { label: ["Accepted at received quantity", "按实收数量接受"], tone: "success" };
 
 // The three-way match of the bill: its status, one line on where the review
 // stands (counted here, in the interface language; the server's stored
@@ -920,6 +939,7 @@ function MatchCard({ invoice, onDone }: { invoice: any; onDone: () => void }) {
   const reviewUrl = (entry: MatchExceptionView, step: "review" | "review-preview") => `/api/finance/match-exceptions/${encodeURIComponent(entry.id)}/${step}`;
   const reviewIssue = (code: string | undefined) =>
     code === "MATCH_EXCEPTION_RESOLUTION_REQUIRED" ? say("Enter why you accept or reject this difference.", "请填写处理说明。")
+      : code === "MATCH_EXCEPTION_QUANTITY_NOT_APPROVABLE" ? say("A quantity difference cannot be approved for payment. Reject it, wait for the receipt and match again, or accept the invoice at the received quantity.", "数量差异不能批准付款。请驳回，或等收货后重新匹配，或按实收数量接受。")
       : code === "MATCH_EXCEPTION_STATUS_INVALID" ? say("This difference was already reviewed. Reload the page.", "该差异已复核，请刷新页面。")
       : code === "FINANCE_VERSION_CONFLICT" ? say("This difference changed after the page opened. Reload the page.", "页面打开后该差异已有变化，请刷新页面。")
       : undefined;
@@ -939,7 +959,8 @@ function MatchCard({ invoice, onDone }: { invoice: any; onDone: () => void }) {
       {summary && <p className="text-sm text-slate-600" data-testid="supplier-invoice-match-summary">{summary}</p>}
       {followUpError && <Notice>{followUpError}</Notice>}
       {exceptions.map((entry) => {
-        const chip = EXCEPTION_CHIPS[entry.status];
+        const chip = entry.acceptedAt === "received_quantity" ? ACCEPTED_AT_RECEIVED_CHIP : EXCEPTION_CHIPS[entry.status];
+        const atReceived = quantityAcceptedAtReceived(match.rule, entry.exceptionType);
         const sku = invoiceLines.length > 1 ? lineOf(entry)?.sku : null;
         const amount = amountFollowingPrice(entry, exceptions, lines);
         const causedBy = following.get(entry.id) || null;
@@ -960,7 +981,38 @@ function MatchCard({ invoice, onDone }: { invoice: any; onDone: () => void }) {
             {entry.status === "open" && causedBy && (
               <div className="text-xs text-slate-600" data-testid="match-exception-follows-price">{say("Caused by the price difference above: approving the price difference accepts it too.", "由上方的价格差异造成：批准价格差异时会一并接受。")}</div>
             )}
-            {entry.status === "open" && !causedBy && (
+            {entry.status === "open" && atReceived && (
+              <div className="text-xs text-slate-600" data-testid="match-exception-quantity-rule">{say("A quantity difference is not approved for payment: wait for the receipt and match the invoice again, accept the invoice at the received quantity, or reject it.", "数量差异不能批准付款：可等收货后重新匹配，或按实收数量接受，或驳回。")}</div>
+            )}
+            {entry.status === "open" && atReceived && (
+              <div className="flex flex-wrap gap-2">
+                <TwoStepAction
+                  label={say("Accept at received quantity", "按实收数量接受")}
+                  testId={`exception-accept-received-${entry.id}`}
+                  previewUrl={reviewUrl(entry, "review-preview")}
+                  runUrl={reviewUrl(entry, "review")}
+                  payload={() => ({ expectedVersion: entry.version, decision: "accept_received" })}
+                  reasonLabel={say("Resolution", "处理说明")}
+                  reasonRequired={say("Enter why you accept this invoice at the received quantity.", "请填写处理说明。")}
+                  note={say("The bill to pay will cover only what was received; the rest of this line is not paid.", "应付款只按已收数量生成，本行未收到的部分不付款。")}
+                  issueText={reviewIssue}
+                  onDone={onDone}
+                />
+                <TwoStepAction
+                  label={say("Reject difference", "驳回差异")}
+                  testId={`exception-reject-${entry.id}`}
+                  tone="secondary"
+                  previewUrl={reviewUrl(entry, "review-preview")}
+                  runUrl={reviewUrl(entry, "review")}
+                  payload={() => ({ expectedVersion: entry.version, decision: "rejected" })}
+                  reasonLabel={say("Resolution", "处理说明")}
+                  reasonRequired={say("Enter why you reject this difference.", "请填写处理说明。")}
+                  issueText={reviewIssue}
+                  onDone={onDone}
+                />
+              </div>
+            )}
+            {entry.status === "open" && !causedBy && !atReceived && (
               <div className="flex flex-wrap gap-2">
                 <TwoStepAction
                   label={say("Approve difference", "批准差异")}
@@ -1197,7 +1249,8 @@ export function SupplierInvoiceDetail() {
         )}
         <div className="mt-4 flex flex-wrap gap-2" data-testid="supplier-invoice-actions" id="supplier-invoice-actions">
           {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="invoice-submit" oneStep previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={() => version} onDone={load} />}
-          {actions.includes("match") && <TwoStepAction label={t("finance.action.match")} testId="invoice-match" oneStep previewUrl={`${base}/match-preview`} runUrl={`${base}/match`} payload={() => version} onDone={load} />}
+          {/* An invoice the match held is matched again, e.g. after a late receipt (design audit L2-04). */}
+          {actions.includes("match") && <TwoStepAction label={data.status === "exception" ? say("Match again", "重新匹配") : t("finance.action.match")} testId="invoice-match" oneStep previewUrl={`${base}/match-preview`} runUrl={`${base}/match`} payload={() => version} onDone={load} />}
           {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="invoice-approve" tone={inException ? "secondary" : "primary"} oneStep previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={() => version} issueText={duplicateIssueText(t)} issueDetail={(issue) => <DuplicateApprovalDetail issue={issue} />} onDone={() => { toast.success(say(`Approved ${data.invoiceNumber}`, `已批准 ${data.invoiceNumber}`)); load(); }} />}
           {actions.includes("cancel") && <CancelSupplierInvoice base={base} version={version} number={data.invoiceNumber} onDone={load} />}
           {!invoiceSteps && (nextOnPayable
@@ -1241,6 +1294,9 @@ export function SupplierInvoiceDetail() {
             {/* The payable's total stays here; what is paid and still owed is under it. */}
             <div className="flex items-center gap-2" data-testid="supplier-invoice-payable-total"><strong>{money(payable.originalAmount ?? data.totalAmount, payable.currency, locale)}</strong><StatusChip status={payable.status} /></div>
           </div>
+          {payable.notReceivedAmount !== null && payable.notReceivedAmount !== undefined && Number(payable.notReceivedAmount) > 0 && (
+            <p className="text-xs text-slate-600" data-testid="supplier-invoice-payable-not-received">{say(`Covers what was received: ${money(payable.notReceivedAmount, payable.currency, locale)} invoiced for goods not received is not payable.`, `按已收数量生成：发票中未收到货物的 ${money(payable.notReceivedAmount, payable.currency, locale)} 不付款。`)}</p>
+          )}
           <PaymentRecords kind="payable" obligation={payable} onDone={load} />
           <div className="flex flex-wrap gap-2">
             {/* No export exists yet, so "Mark export ready" leads nowhere and stays hidden (design audit L2-15). */}

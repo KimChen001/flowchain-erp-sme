@@ -148,6 +148,7 @@
     "test:db:finance-read-permissions": "node scripts/run-postgres-test-files.mjs tests/postgres/finance-read-permissions.test.mjs",
     "test:db:payment-records": "node scripts/run-postgres-test-files.mjs tests/postgres/payment-records.test.mjs",
     "test:db:bill-before-receipt": "node scripts/run-postgres-test-files.mjs tests/postgres/bill-before-receipt.test.mjs",
+    "test:db:three-way-match-rules": "node scripts/run-postgres-test-files.mjs tests/postgres/three-way-match-rules.test.mjs",
     "test:db:supplier-invoice-duplicates": "node scripts/run-postgres-test-files.mjs tests/postgres/supplier-invoice-duplicates.test.mjs",
     "test:db:sales-read-permissions": "node scripts/run-postgres-test-files.mjs tests/postgres/sales-read-permissions.test.mjs",
     "test:db:entry-picker-reach": "node scripts/run-postgres-test-files.mjs tests/postgres/entry-picker-reach.test.mjs",
