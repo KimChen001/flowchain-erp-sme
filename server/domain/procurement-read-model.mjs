@@ -702,10 +702,12 @@ export function buildProcurementThreeWayMatches(data = {}) {
       currency: text(invoice.currency || po?.currency || grn?.currency),
       matchStatus: status,
       status,
-      // Every difference approved ("variance_approved"): the amount stays on
-      // record, but nothing is left to review.
-      blockingReason: varianceAmount && status !== MATCH_VARIANCE_APPROVED ? 'PO 金额与发票金额存在差异，需复核后处理。' : '',
-      exceptionReason: varianceAmount && status !== MATCH_VARIANCE_APPROVED ? `差异金额 ${varianceAmount}` : '',
+      // Every difference approved ("variance_approved"), or matched within the
+      // workspace's tolerance (a matched status with a small variance, since
+      // design audit B2): the amount stays on record, but nothing is left to
+      // review (fresh walk 11/18: the list asked to review a matched invoice).
+      blockingReason: varianceAmount && status !== MATCH_VARIANCE_APPROVED && !MATCHED_STATUS.test(text(status)) ? 'PO 金额与发票金额存在差异，需复核后处理。' : '',
+      exceptionReason: varianceAmount && status !== MATCH_VARIANCE_APPROVED && !MATCHED_STATUS.test(text(status)) ? `差异金额 ${varianceAmount}` : '',
       // Line by line: one entry per invoice line, against its PO line.
       lines,
       ...lineTotals,

@@ -107,6 +107,7 @@ const AUDIT_ACTION_LABELS: Record<string, [string, string]> = {
   purchase_request_converted_to_po: ["Turned into a purchase order", "转采购订单"],
   purchaseOrder_created: ["Purchase order created", "创建采购订单"],
   purchase_order_created_from_pr: ["Created from a purchase request", "由 PR 生成 PO"],
+  purchase_order_approved_with_request: ["Approved with its purchase request", "随采购申请一并批准"],
   purchase_order_created_from_rfq: ["Created from an RFQ", "由询价单生成 PO"],
   purchase_order_approved: ["Approved", "批准订单"],
   purchase_order_rejected: ["Rejected", "驳回订单"],

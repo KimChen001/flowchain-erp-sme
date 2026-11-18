@@ -1040,6 +1040,8 @@ test('C6: the preview names the orders a request makes; a cancelled or rejected 
   const first = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 1 })
   assert.equal(first.status, 201, describe(first))
   const firstPo = first.body.createdPurchaseOrders[0].id
+  // The order's own history starts at the conversion: made from the request, approved with it (fresh walk 11/18).
+  assert.deepEqual((await prisma.auditLog.findMany({ where: { tenantId: tenantA, entityType: 'PurchaseOrder', entityId: firstPo } })).map((row) => row.action).sort(), ['purchase_order_approved_with_request', 'purchase_order_created_from_pr'])
   // The order made has the lines and the status the preview named.
   assert.deepEqual(first.body.createdPurchaseOrders[0].lines.map((line) => [line.sku, line.itemName, line.orderedQuantity, line.unit]), [[itemA.sku, itemA.name, 10, 'EA']])
   assert.equal(first.body.createdPurchaseOrders[0].status, preview.body.purchaseOrderStatus)
