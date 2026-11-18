@@ -6,6 +6,7 @@ import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from "./procurement-status-authority.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "./receiving-transaction-policy.mjs";
 import { applyPromisedDateChanges, currentPromisedDay, isIssuedPurchaseOrder, promiseDay, recordOriginalPromises } from "./purchase-order-promise-dates.mjs";
+import { lastActorOf, selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
 
 export class ProcurementCommandError extends Error {
   constructor(code, message, status = 400, details) {
@@ -222,6 +223,14 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
         if (!command.from.includes(row.status)) fail("PURCHASE_ORDER_WORKFLOW_CONFLICT", `A ${row.status} purchase order cannot take the ${action} action.`, 409, { entityId: row.id, currentStatus: row.status, currentVersion: row.version });
         const elevated = command.elevatedFrom?.[row.status];
         if (elevated) assertAuthorized({ actor, permission: elevated, tenantId: actor.tenantId });
+        // Who created or submitted the order does not approve it, unless no
+        // one else may; then the audit row says so (design audit C4).
+        let selfApproval = null;
+        if (action === "approve") {
+          const check = await selfApprovalCheck(tx, { tenantId: actor.tenantId, actorId: actor.user.id, authorIds: [row.metadata?.createdBy, row.metadata?.createdById, lastActorOf(row.metadata?.approvalTimeline, "submit")], permissionCode: permission });
+          if (check.blocked) { const refusal = selfApprovalRefusal("purchase order"); fail(refusal.code, refusal.message, refusal.status, { entityId: row.id }); }
+          selfApproval = check.auditFlag;
+        }
         if (action === "cancel" || action === "close") {
           // A receipt still being prepared against the PO would become unpostable.
           const openReceipt = await tx.receivingDocument.findFirst({ where: { tenantId: actor.tenantId, poId: row.id, postingStatus: "unposted", workflowStatus: { not: "cancelled" } }, select: { id: true, documentNumber: true } });
@@ -256,7 +265,7 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
         const originalPromisesRecorded = recordsPromises ? await recordOriginalPromises(tx, { purchaseOrder: row }) : [];
         await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus, version: { increment: 1 }, ...(action === "issue" && !row.issuedAt ? { issuedAt } : {}), metadata: { ...(row.metadata || {}), ...issued, ...closed, approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } } });
         const restoredRequest = action === "cancel" || action === "reject" ? await restoreRequestDemand(tx, actor, row, action, text(input.reason)) : null;
-        return { action: `purchase_order_${action}`, summary: `${action} purchase order ${row.id}.`, metadata: { reason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null, ...(recordsPromises ? { originalPromisesRecorded } : {}), ...(action === "close" ? { closedOpenQuantities } : {}), ...(restoredRequest ? { restoredPurchaseRequestId: restoredRequest } : {}) } };
+        return { action: `purchase_order_${action}`, summary: `${action} purchase order ${row.id}.`, metadata: { reason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null, ...(recordsPromises ? { originalPromisesRecorded } : {}), ...(action === "close" ? { closedOpenQuantities } : {}), ...(restoredRequest ? { restoredPurchaseRequestId: restoredRequest } : {}), ...(selfApproval ? { selfApproval } : {}) } };
       },
     });
   }

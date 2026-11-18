@@ -9,6 +9,7 @@ import {
 } from "./return-governance-policy.mjs";
 import { buildReturnAuthorizationClosurePlan } from "./return-authorization-closure-policy.mjs";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
+import { selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
 
 export class ReturnGovernanceError extends Error {
   constructor(code, message, status = 400, details) {
@@ -809,6 +810,20 @@ export function createReturnGovernanceCommandService({
         );
         const warehouseIds = sortedWarehouseIds(plan.request.lines);
         assertWarehouseAccess(actor, warehouseIds, "read");
+        // Who requested or submitted the return does not authorize it, unless
+        // no one else may (who also reads its warehouses, as this command
+        // asks); then the audit row says so (design audit L8-25).
+        const selfApproval = await selfApprovalCheck(tx, {
+          tenantId: actor.tenantId,
+          actorId: actor.user.id,
+          authorIds: [current.requestedById, current.submittedById],
+          permissionCode: "returns.authorization.approve",
+          warehouseIds,
+        });
+        if (selfApproval.blocked) {
+          const refusal = selfApprovalRefusal("return request");
+          fail(refusal.code, refusal.message, refusal.status);
+        }
         if (
           plan.authorization.expiresAt &&
           (!Number.isFinite(plan.authorization.expiresAt.getTime()) ||
@@ -863,6 +878,7 @@ export function createReturnGovernanceCommandService({
           },
           metadata: {
             authorizationLineIds: authorization.lines.map((line) => line.id),
+            ...(selfApproval.auditFlag ? { selfApproval: selfApproval.auditFlag } : {}),
           },
         });
         await tx.auditLog.create({ data: event });

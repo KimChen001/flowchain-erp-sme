@@ -23,6 +23,7 @@ import { isPrismaConcurrencyError } from "../domain/prisma-concurrency-error.mjs
 import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 import { sanitizeSuggestionTrail } from "../../shared/prefill-suggestions.mjs";
 import { mapPurchaseOrder, mapPurchaseRequest, mapRfq } from "../repositories/db-procurement-read-repository.mjs";
+import { lastActorOf, selfApprovalCheck, selfApprovalRefusal } from "../domain/self-approval.mjs";
 
 // The permission catalog has no purchase-request codes, and adding one means
 // migrating the TenantRolePermission catalog CHECK constraint. Each command
@@ -435,6 +436,14 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         // Cancelling a request that left its author (submitted or approved)
         // says why; a draft is the author's own (design audit L1-16).
         if (action === "cancel" && row.status !== PURCHASE_REQUEST_STATUS.DRAFT && !reason) fail("CANCEL_REASON_REQUIRED", "A reason is required to cancel a submitted or approved purchase request.", 400, [{ field: "reason" }]);
+        // Who raised or submitted the request does not approve it, unless no
+        // one else may; then the audit row says so (design audit C4).
+        let selfApproval = null;
+        if (action === "approve") {
+          const check = await selfApprovalCheck(tx, { tenantId: actor.tenantId, actorId: actor.user.id, authorIds: [row.requester, row.metadata?.requesterId, lastActorOf(row.metadata?.timeline, "submit")], permissionCode: PURCHASE_REQUEST_PERMISSIONS.approve });
+          if (check.blocked) { const refusal = selfApprovalRefusal("purchase request"); fail(refusal.code, refusal.message, refusal.status); }
+          selfApproval = check.auditFlag;
+        }
         // Withdrawing or cancelling an approved PR must not orphan its RFQ or POs.
         if (row.status === PURCHASE_REQUEST_STATUS.APPROVED) await assertNoActiveDownstream(tx, actor.tenantId, row.id);
         const version = versionOf(row) + 1;
@@ -464,7 +473,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           },
         });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, actor.tenantId, row.id));
-        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: `purchase_request_${action}`, summary: `${action} purchase request ${numberOf(row)}.`, metadata: { expectedVersion, version, from: row.status, to: next, reason: reason || null, ...(missingOverrides.length ? { supplierOverridesMissing: missingOverrides } : {}) } } };
+        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: `purchase_request_${action}`, summary: `${action} purchase request ${numberOf(row)}.`, metadata: { expectedVersion, version, from: row.status, to: next, reason: reason || null, ...(missingOverrides.length ? { supplierOverridesMissing: missingOverrides } : {}), ...(selfApproval ? { selfApproval } : {}) } } };
       },
     });
   }

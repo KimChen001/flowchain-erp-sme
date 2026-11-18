@@ -19,6 +19,7 @@ import {
 } from "./operational-finance-o2c-read-service.mjs";
 import { DEFAULT_TENANT_TIMEZONE } from "./tenant-calendar-day.mjs";
 import { allocateDocumentNumber } from "./document-numbering.mjs";
+import { selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const workspaceTimezone = async (client, tenantId) =>
@@ -601,6 +602,16 @@ export function createOperationalFinanceO2cCommandService({
         message: `Customer invoice must be ${requiredStatus} before ${action}.`,
         status: 409,
       });
+    // The approval would be refused as a self-approval (design audit C4).
+    if (action === "approve") {
+      const check = await selfApprovalCheck(prisma, {
+        tenantId: actor.tenantId,
+        actorId: actor.user.id,
+        authorIds: [invoice.submittedById],
+        permissionCode: "finance.customer_invoice.approve",
+      });
+      if (check.blocked) blockingIssues.push(selfApprovalRefusal("customer invoice"));
+    }
     if (action === "submit") {
       const check = await buildCustomerInvoicePlan({
         prisma,
@@ -687,6 +698,21 @@ export function createOperationalFinanceO2cCommandService({
             "Customer invoice changed concurrently.",
             409,
           );
+        // Who submitted the invoice does not approve it, unless no one else
+        // may; then the audit row says so (design audit C4).
+        const selfApproval =
+          action === "approve"
+            ? await selfApprovalCheck(tx, {
+                tenantId: actor.tenantId,
+                actorId: actor.user.id,
+                authorIds: [current.submittedById],
+                permissionCode: "finance.customer_invoice.approve",
+              })
+            : null;
+        if (selfApproval?.blocked) {
+          const refusal = selfApprovalRefusal("customer invoice");
+          fail(refusal.code, refusal.message, refusal.status);
+        }
         if (action === "submit") {
           await lockChildren(
             tx,
@@ -788,6 +814,7 @@ export function createOperationalFinanceO2cCommandService({
               salesOrderId: current.salesOrderId,
               shipmentId: current.shipmentId,
               receivableObligationId: receivable?.id || null,
+              ...(selfApproval?.auditFlag ? { selfApproval: selfApproval.auditFlag } : {}),
             },
           }),
         });

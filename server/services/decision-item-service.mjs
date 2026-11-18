@@ -42,8 +42,9 @@ function setAsideEntry({ key, row, item }) {
   }
 }
 
-// canDecide: whether this reader may decide (DECISION_PERMISSION); the page
-// shows the buttons only then.
+// canDecide: whether this reader may decide some kind (DECISION_PERMISSIONS);
+// the page shows a card's buttons only for the kinds the reader may decide
+// (canDecideKinds, added by today-read-service.mjs).
 export async function syncTodayDecisions({ prisma, tenantId, rows, today, now = new Date(), timeZone, hidden = [], limitations = [], context = {}, sources = {}, canDecide = false }) {
   const repository = createDecisionItemRepository({ prisma })
   let items = await repository.listLive(tenantId)

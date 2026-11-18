@@ -1,5 +1,5 @@
 import { can } from '../auth/authorization-service.mjs'
-import { DECISION_KIND_AREA, DECISION_PERMISSION, DRAFTED_DECISION_KINDS, decisionKey, parseDecision } from '../domain/decision-items.mjs'
+import { DECISION_KIND_AREA, DECISION_PERMISSIONS, DRAFTED_DECISION_KINDS, decisionKey, decisionPermissionOf, parseDecision } from '../domain/decision-items.mjs'
 import { buildDecisionDrafts } from '../domain/decision-drafts.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { sendReadAccessError } from '../domain/report-read-access.mjs'
@@ -15,7 +15,8 @@ import { readTodayForReader } from '../services/today-read-service.mjs'
 // key is "kind:recordId" as Today sends it. The row must be on the reader's
 // own Today now, read by the same rules as GET /api/home/overview, so nobody
 // decides on a row they cannot see. Deciding needs the permission the drafted
-// actions need (DECISION_PERMISSION). A decision records only: the documents
+// action of the row's kind needs (DECISION_PERMISSIONS, design audit L11-09).
+// A decision records only: the documents
 // an accepted draft names were created through their own routes, with their
 // own checks, and must exist in this workspace.
 //
@@ -67,8 +68,12 @@ export async function handleDecisionItemsRoute(ctx) {
     const prisma = await databaseClient(ctx)
     if (!prisma?.decisionItem) throw fail(503, 'DECISIONS_UNAVAILABLE', 'Decisions need the workspace database.')
     const actor = await resolveProvisionedActor(prisma, ctx.identity)
-    const permission = action === 'send' ? SUPPLIER_EMAIL_PERMISSION : DECISION_PERMISSION
-    if (!can({ actor, permission, tenantId: actor.tenantId })) throw fail(403, action === 'send' ? 'SUPPLIER_EMAIL_NOT_ALLOWED' : 'DECISION_NOT_ALLOWED', action === 'send' ? 'Your role cannot email suppliers. Ask an administrator.' : 'Your role cannot decide on these. Ask a buyer or an administrator.')
+    // Sending needs the email permission; deciding, a kind's own permission
+    // (checked again on the row below), so a reader with none is refused here.
+    const permitted = action === 'send'
+      ? can({ actor, permission: SUPPLIER_EMAIL_PERMISSION, tenantId: actor.tenantId })
+      : [...new Set(Object.values(DECISION_PERMISSIONS))].some((permission) => can({ actor, permission, tenantId: actor.tenantId }))
+    if (!permitted) throw fail(403, action === 'send' ? 'SUPPLIER_EMAIL_NOT_ALLOWED' : 'DECISION_NOT_ALLOWED', action === 'send' ? 'Your role cannot email suppliers. Ask an administrator.' : 'Your role cannot decide on these. Ask a buyer or an administrator.')
     const repository = createDecisionItemRepository({ prisma })
     const reader = await readTodayForReader(ctx)
     if (action === 'send') {
@@ -83,6 +88,7 @@ export async function handleDecisionItemsRoute(ctx) {
     const row = reader.work.all.find((entry) => DRAFTED_DECISION_KINDS.includes(entry.kind) && decisionKey(entry) === key)
       || (action === 'decide' ? await convertedRow(repository, tenantId, key, body, reader) : null)
     if (!row) throw fail(404, 'DECISION_ROW_NOT_FOUND', 'This is no longer on your Today. Reload Today.')
+    if (!can({ actor, permission: decisionPermissionOf(row.kind), tenantId: actor.tenantId })) throw fail(403, 'DECISION_NOT_ALLOWED', 'Your role cannot decide on this kind of item. Ask someone who handles it or an administrator.')
     const options = { now: reader.now, today: reader.today }
     let saved
     if (action === 'decide') {

@@ -6,7 +6,7 @@ import { FieldError, RequiredMark, invalidProps } from "../../components/ui/form
 import { StatusChip as ToneChip, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
-import { apiErrorText } from "../../lib/apiErrorText";
+import { apiErrorText, knownCodeText } from "../../lib/apiErrorText";
 import { createSecureClientMutationId } from "../../lib/client-id";
 
 // Controls shared by the bill, invoice and payment screens: the translated
@@ -130,7 +130,8 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const describe = (issue: Issue) => issueText?.(issue.code) || issue.message;
+  // A shared code (a self-approval refused, design audit C4) reads in Chinese too.
+  const describe = (issue: Issue) => issueText?.(issue.code) || (language === "en-US" ? issue.message : knownCodeText(issue.code, language) || issue.message);
   const body = () => ({ ...payload(), ...(reasonLabel ? { reason, resolution: reason } : {}) });
   // The required reason, checked here before the server is asked.
   const reasonGiven = () => {

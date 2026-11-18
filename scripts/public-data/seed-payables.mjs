@@ -36,7 +36,7 @@ const pad = (value) => String(value).padStart(3, '0')
 // plan: a UCI plan with payables. purchaseOrderIds[position] is the id the
 // seed gave plan.purchasing.orders[position]; supplierIdOf(key) a supplier's
 // id. retrying(work) runs a command again after a serializable conflict.
-export async function seedSupplierInvoices(prisma, { plan, env, identity, tenantId, calendar, purchaseOrderIds, supplierIdOf, metadata, retrying, log = () => {} }) {
+export async function seedSupplierInvoices(prisma, { plan, env, identity, approver = identity, tenantId, calendar, purchaseOrderIds, supplierIdOf, metadata, retrying, log = () => {} }) {
   const { at, isoDay } = calendar
   const offset = plan.offsetOf
   const currency = plan.profile.currency
@@ -47,6 +47,8 @@ export async function seedSupplierInvoices(prisma, { plan, env, identity, tenant
   const payments = createPaymentRecordCommandService({ prisma, env, now })
   const procurement = createDbProcurementCommandService({ prisma, env, now })
   const context = { identity }
+  // A second person approves what the first submitted (design audit C4).
+  const approverContext = { identity: approver }
   const itemOf = new Map(plan.items.map((item) => [item.key, item]))
   const recorded = []
   const started = Date.now()
@@ -93,7 +95,7 @@ export async function seedSupplierInvoices(prisma, { plan, env, identity, tenant
     let payable = null
     if (invoice.match === 'matched') {
       step('approved', linkDay, invoice.recordedAgainstOrder ? '11:10' : '10:15')
-      payable = (await approve(finance, id, result.invoice.version, { prisma, key, context, retrying, receiptId, poId })).payable
+      payable = (await approve(finance, id, result.invoice.version, { prisma, key, context: approverContext, retrying, receiptId, poId })).payable
     }
     if (invoice.rule === 'short_delivery') {
       step('closed', linkDay, '11:20')

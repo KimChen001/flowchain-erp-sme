@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Copy, Plus, Save, ShieldAlert, Users } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
+import { knownCodeText } from "../../lib/apiErrorText";
 import { A, Card, useConfirm } from "../../components/ui";
 import { permissionLabel } from "./permissionLabels";
 import { useI18n } from "../../i18n/I18n";
@@ -29,6 +30,8 @@ export default function AuthorizationWorkbench() {
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const tr = (zh: string, english: string) => en ? english : zh;
+  // A role governance refusal in the reader's language (design audit L4-30); otherwise the server's own sentence.
+  const failText = (error: unknown, zh: string, english: string) => knownCodeText((error as { code?: string } | null)?.code, language) || (error instanceof Error ? error.message : tr(zh, english));
   const confirmDialog = useConfirm();
   const roleName = (role: Role) => roleDisplayName(role, language);
   // A default template's description as the workspace was given it
@@ -59,7 +62,7 @@ export default function AuthorizationWorkbench() {
   const selected = model?.roles.find((role) => role.id === selectedId);
   const changed = Boolean(draft && selected && JSON.stringify({ name: draft.name, description: draft.description, status: draft.status, permissionCodes: [...draft.permissionCodes].sort() }) !== JSON.stringify({ name: selected.name, description: selected.description, status: selected.status, permissionCodes: [...selected.permissionCodes].sort() }));
   const toggle = (code: string) => setDraft((current) => current ? { ...current, permissionCodes: current.permissionCodes.includes(code) ? current.permissionCodes.filter((item) => item !== code) : [...current.permissionCodes, code] } : current);
-  const save = async () => { if (!draft) return; setSaving(true); try { await apiJson(`/api/authorization/roles/${encodeURIComponent(draft.id)}`, { method: "PATCH", body: JSON.stringify({ name: draft.name, description: draft.description, status: draft.status, permissionCodes: draft.permissionCodes }) }); await load(); setNotice(tr("角色权限已立即生效。", "Role permissions are effective immediately.")); } catch (error) { setNotice(error instanceof Error ? error.message : tr("保存失败", "Save failed")); } finally { setSaving(false); } };
+  const save = async () => { if (!draft) return; setSaving(true); try { await apiJson(`/api/authorization/roles/${encodeURIComponent(draft.id)}`, { method: "PATCH", body: JSON.stringify({ name: draft.name, description: draft.description, status: draft.status, permissionCodes: draft.permissionCodes, expectedVersion: draft.version }) }); await load(); setNotice(tr("角色权限已立即生效。", "Role permissions are effective immediately.")); } catch (error) { setNotice(failText(error, "保存失败", "Save failed")); } finally { setSaving(false); } };
   const create = async (copyFromRoleId?: string) => {
     const source = copyFromRoleId ? model?.roles.find((role) => role.id === copyFromRoleId) : undefined;
     const name = await confirmDialog.prompt({
@@ -69,7 +72,7 @@ export default function AuthorizationWorkbench() {
       confirmLabel: tr("创建角色", "Create role"),
     });
     if (!name) return;
-    try { const role = await apiJson<Role>("/api/authorization/roles", { method: "POST", body: JSON.stringify({ name, copyFromRoleId }) }); await load(); setSelectedId(role.id); } catch (error) { setNotice(error instanceof Error ? error.message : tr("创建失败", "Create failed")); } };
+    try { const role = await apiJson<Role>("/api/authorization/roles", { method: "POST", body: JSON.stringify({ name, copyFromRoleId }) }); await load(); setSelectedId(role.id); } catch (error) { setNotice(failText(error, "创建失败", "Create failed")); } };
   // Ticking a role changes the member's access at once and ends their
   // sessions, so it names the change and asks first.
   const assign = async (user: User, roleId: string, enabled: boolean) => {
@@ -84,7 +87,7 @@ export default function AuthorizationWorkbench() {
       testId: "role-assignment-dialog",
     });
     if (!confirmed) return;
-    const roleIds = enabled ? [...new Set([...user.roleIds, roleId])] : user.roleIds.filter((id) => id !== roleId); try { await apiJson(`/api/authorization/users/${encodeURIComponent(user.id)}/roles`, { method: "PUT", body: JSON.stringify({ roleIds }) }); await load(); } catch (error) { setNotice(error instanceof Error ? error.message : tr("分配失败", "Assignment failed")); } };
+    const roleIds = enabled ? [...new Set([...user.roleIds, roleId])] : user.roleIds.filter((id) => id !== roleId); try { await apiJson(`/api/authorization/users/${encodeURIComponent(user.id)}/roles`, { method: "PUT", body: JSON.stringify({ roleIds }) }); await load(); } catch (error) { setNotice(failText(error, "分配失败", "Assignment failed")); } };
   if (!model) return <Card className="p-6" data-testid="authorization-workbench">{notice || tr("正在加载用户与角色…", "Loading users and roles…")}</Card>;
   return <div className="space-y-5" data-testid="authorization-workbench">
     {confirmDialog.element}

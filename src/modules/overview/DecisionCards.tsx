@@ -98,7 +98,9 @@ export type SetAsideEntry = {
 // workspace switch, the reader's permission and a mail provider), and whether
 // an email would only reach the local outbox.
 export type SupplierEmail = { enabled: boolean; canSend: boolean; outbox: boolean };
-export type TodayDecisions = { available: boolean; canDecide?: boolean; supplierEmail?: SupplierEmail; waiting?: WaitingEntry[]; setAside?: SetAsideEntry[] };
+// canDecideKinds: the kinds this reader may decide, each by its own
+// permission (design audit L11-09); an older server sends only canDecide.
+export type TodayDecisions = { available: boolean; canDecide?: boolean; canDecideKinds?: string[]; supplierEmail?: SupplierEmail; waiting?: WaitingEntry[]; setAside?: SetAsideEntry[] };
 
 const REASONS = ["seasonal", "discontinued", "covered_elsewhere", "supplier_confirmed", "other"] as const;
 // A card's actions read like the buttons on top of the list pages: the one
@@ -121,8 +123,10 @@ async function decide(key: string, body: Record<string, unknown>) {
 }
 
 type Shared = {
-  // Whether this reader may decide; otherwise the cards are read only.
+  // Whether this reader may decide some kind; otherwise the cards are read only.
   canDecide: boolean;
+  // The kinds they may decide, when the server says (L11-09).
+  decideKinds?: string[] | null;
   today: string;
   day: (value: string) => string;
   dateText: (row: TodayRow) => string;
@@ -138,7 +142,7 @@ const SHOWN = 5;
 export function DecisionSection({ decisions, overdueOnly, ...rest }: Omit<Shared, "canDecide"> & { decisions: TodayDecisions; overdueOnly: boolean }) {
   const t = useDecisionCopy();
   const [all, setAll] = useState(false);
-  const shared: Shared = { ...rest, canDecide: decisions.canDecide === true };
+  const shared: Shared = { ...rest, canDecide: decisions.canDecide === true, decideKinds: decisions.canDecideKinds ?? null };
   const waiting = (decisions.waiting || []).filter((entry) => !overdueOnly || entry.row.overdueDays > 0);
   const shown = all ? waiting : waiting.slice(0, SHOWN);
   const setAside = decisions.setAside || [];
@@ -206,7 +210,7 @@ export function TodayDecisionCards({ keys: named, more: namedMore = 0, limit = 3
   if (welcome && (failed || !overview || !decisions?.available || !keys.length)) return null;
   if (failed || (overview && !decisions?.available)) return <p className="text-xs" style={{ color: A.sub }} data-testid="ai-decisions-unavailable">{t("chatUnavailable")}</p>;
   if (!overview) return <p className="text-xs" style={{ color: A.sub }}>{t("chatLoading")}</p>;
-  const shared: Shared = { canDecide: decisions?.canDecide === true, today, day, dateText, tone, kindLabel, labelOf, onChanged: () => { void load(); } };
+  const shared: Shared = { canDecide: decisions?.canDecide === true, decideKinds: decisions?.canDecideKinds ?? null, today, day, dateText, tone, kindLabel, labelOf, onChanged: () => { void load(); } };
   const heading = welcome ? (
     <button type="button" className="flex w-full items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-[13px] font-semibold hover:bg-slate-50" style={{ color: A.label, borderColor: A.gray4 }} aria-expanded={welcomeOpen} onClick={() => setWelcomeOpen((value) => !value)} data-testid="ai-welcome-decisions-toggle">
       <Sparkles size={14} style={{ color: "#2563eb" }} aria-hidden />
@@ -235,9 +239,11 @@ export function TodayDecisionCards({ keys: named, more: namedMore = 0, limit = 3
   );
 }
 
-function DecisionCard({ entry, email, canDecide, today, day, dateText, tone, kindLabel, labelOf, onChanged }: Shared & { entry: WaitingEntry; email: SupplierEmail | null }) {
+function DecisionCard({ entry, email, canDecide: canDecideSome, decideKinds, today, day, dateText, tone, kindLabel, labelOf, onChanged }: Shared & { entry: WaitingEntry; email: SupplierEmail | null }) {
   const t = useDecisionCopy();
   const { row, draft } = entry;
+  // This card's kind, by its own permission (design audit L11-09).
+  const canDecide = canDecideSome && (!decideKinds || decideKinds.includes(row.kind));
   const [mode, setMode] = useState<null | "not_now" | "not_needed">(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
