@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { addCalendarDays, orderSupplierChoices, planNonCatalogPrefill, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
+import { PREFILL_LINES_MAX, addCalendarDays, orderSupplierChoices, parsePrefillLines, planNonCatalogPrefill, planPurchaseRequestPrefill, prefillLineQuery, prefillLineValue } from '../../shared/purchase-request-prefill.mjs'
 import { mapItemSupplierRecord } from './master-data-commands.mjs'
 
 const item = { itemId: 'item-1', defaultWarehouseId: 'wh-main' }
@@ -256,4 +256,31 @@ test('a non-catalog handoff fills an Other line from the user\'s words only, eac
   assert.deepEqual(Object.keys(loose.fields), ['itemNameSnapshot'])
   // A blank request opens an empty line.
   assert.deepEqual(planNonCatalogPrefill({ query: { lineType: 'non_catalog', origin: 'ai_assistant' }, units, suppliers, defaultDate: '2026-11-04' }).fields, {})
+})
+
+// Design audit L3-24: several reorder list rows open one request, a line each.
+test('several reorder list rows travel as one line value each and are planned as one row is', () => {
+  const values = [
+    prefillLineValue({ itemId: 'ITEM-C', quantity: 20, supplierId: 'SUP-1', shortfall: 15 }),
+    prefillLineValue({ itemId: 'ITEM-A', quantity: null, supplierId: 'SUP-1' }),
+    prefillLineValue({ itemId: 'ITEM-D', quantity: 7.5, supplierId: '' }),
+  ]
+  assert.deepEqual(values, ['ITEM-C~20~SUP-1~15', 'ITEM-A~~SUP-1~', 'ITEM-D~7.5~~'])
+  // An item twice, an empty item, a quantity that is not above 0: dropped or emptied.
+  assert.deepEqual(parsePrefillLines([...values, 'ITEM-C~5~~', '~3~SUP-1~', 'ITEM-E~0~~x']), [
+    { itemId: 'ITEM-C', quantity: '20', supplierId: 'SUP-1', shortfall: '15' },
+    { itemId: 'ITEM-A', quantity: '', supplierId: 'SUP-1', shortfall: '' },
+    { itemId: 'ITEM-D', quantity: '7.5', supplierId: '', shortfall: '' },
+    { itemId: 'ITEM-E', quantity: '', supplierId: '', shortfall: '' },
+  ])
+  assert.equal(parsePrefillLines(Array.from({ length: PREFILL_LINES_MAX + 5 }, (_, index) => `ITEM-${index}~1~~`)).length, PREFILL_LINES_MAX)
+  // Each line's query: what the lines share, and its own item, quantity,
+  // supplier and minimum; a line without them never takes another's.
+  const shared = { origin: 'reorder_list', reason: 'Reorder list: 2 items', line: 'ITEM-C~20~SUP-1~15', quantityFrom: 'supplier_minimum', shortfall: '15' }
+  const [raised, open] = parsePrefillLines(values)
+  assert.deepEqual(prefillLineQuery(shared, raised), { origin: 'reorder_list', reason: 'Reorder list: 2 items', itemId: 'ITEM-C', quantity: '20', suppliers: 'SUP-1', quantityFrom: 'supplier_minimum', shortfall: '15' })
+  assert.deepEqual(prefillLineQuery(shared, open), { origin: 'reorder_list', reason: 'Reorder list: 2 items', itemId: 'ITEM-A', suppliers: 'SUP-1' })
+  // Planned as one row: no quantity on a reorder list line leaves it for the person.
+  const plan = planPurchaseRequestPrefill({ query: prefillLineQuery(shared, open), item: { itemId: 'ITEM-A' }, suppliers: [{ id: 'SUP-1', name: 'Acme', preferred: true }], today: '2026-10-05', defaultDate: '2026-10-05' })
+  assert.deepEqual([plan.values.quantity, plan.fields.quantity.ref, plan.values.supplierId], ['', 'reorder_list:enter_quantity', 'SUP-1'])
 })

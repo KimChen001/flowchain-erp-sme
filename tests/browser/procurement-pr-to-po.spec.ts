@@ -187,6 +187,15 @@ test('a purchase request opened from the assistant arrives prefilled, labels eac
   // A plain reorder quantity keeps its own label.
   await page.goto('/app/procurement/requests?itemId=browser-pr-item&quantity=19&suppliers=browser-supplier&origin=reorder_list&reason=Reorder&plain=1')
   await expect(page.getByTestId('prefill-source-quantity')).toHaveText('Quantity from the reorder list')
+  // Several reorder list rows (design audit L3-24): a line each, planned and
+  // labelled as one row is.
+  await page.goto(`/app/procurement/requests?origin=reorder_list&reason=Reorder&line=${encodeURIComponent('browser-pr-item~20~browser-supplier~19')}&line=${encodeURIComponent('browser-item~5~~')}`)
+  await expect(page.getByLabel('SKU 1')).toHaveValue('browser-pr-item')
+  await expect(page.getByLabel('SKU 2')).toHaveValue('browser-item')
+  const quantities = page.getByTestId('prefill-source-quantity')
+  await expect(quantities).toHaveCount(2)
+  await expect(quantities.nth(0)).toHaveText('Supplier minimum (shortfall 19 ea)')
+  await expect(quantities.nth(1)).toHaveText('Quantity from the reorder list')
 })
 
 // Suppliers and items made through the API, so each run has its own:

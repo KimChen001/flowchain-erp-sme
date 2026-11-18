@@ -1,7 +1,7 @@
 // Typed access to the shared prefill rules (shared/prefill-suggestions.mjs),
 // which the server applies to the same trail.
 import { buildSuggestionTrail as buildTrail, prefillOrigin as originOf } from "../../shared/prefill-suggestions.mjs";
-import { addCalendarDays as addDays, planNonCatalogPrefill as planNonCatalog, planPurchaseRequestPrefill as planRequest } from "../../shared/purchase-request-prefill.mjs";
+import { PREFILL_LINES_MAX as LINES_MAX, addCalendarDays as addDays, parsePrefillLines as parseLines, planNonCatalogPrefill as planNonCatalog, planPurchaseRequestPrefill as planRequest, prefillLineQuery as lineQuery, prefillLineValue as lineValue } from "../../shared/purchase-request-prefill.mjs";
 
 export type PrefillSource = "record" | "default" | "template" | "history" | "workspace_history" | "model";
 export type PrefillOutcome = "accepted" | "edited" | "cleared";
@@ -17,6 +17,19 @@ export function addCalendarDays(day: string, days: number): string {
 
 export function prefillOrigin(value: unknown): PrefillOrigin {
   return originOf(value);
+}
+
+// Several rows in one request (shared/purchase-request-prefill.mjs, design audit L3-24).
+export type PrefillLine = { itemId: string; quantity: string; supplierId: string; shortfall: string };
+export const PREFILL_LINES_MAX: number = LINES_MAX;
+export function prefillLineValue(line: { itemId: string; quantity?: number | string | null; supplierId?: string | null; shortfall?: number | string | null }): string {
+  return lineValue(line);
+}
+export function parsePrefillLines(values: string[]): PrefillLine[] {
+  return parseLines(values);
+}
+export function prefillLineQuery(shared: Record<string, string>, line: PrefillLine): Record<string, string> {
+  return lineQuery(shared, line);
 }
 
 export function buildSuggestionTrail(input: { origin?: unknown; prefills?: Record<string, PrefillEntry>; values?: Record<string, unknown> }): SuggestionTrail | null {
