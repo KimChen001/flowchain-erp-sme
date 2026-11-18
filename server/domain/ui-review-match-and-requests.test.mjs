@@ -43,8 +43,9 @@ test("a purchase request's detail header offers the list row's actions, by statu
   // Cancel (with a reason) and Return to draft since design audit C6 (L1-16).
   assert.match(source, /submitted: \["approve", "reject", "withdraw", "cancel"\]/);
   assert.match(source, /approved: \["generate-purchase-orders", "cancel"\]/);
-  assert.match(source, /approve: "procurement\.purchase_order\.approve"/);
-  assert.match(source, /reject: "procurement\.purchase_order\.reject"/);
+  // A request's own codes since design audit C4; turning it into orders is ordering.
+  assert.match(source, /approve: "procurement\.purchase_request\.approve"/);
+  assert.match(source, /reject: "procurement\.purchase_request\.reject"/);
   assert.match(source, /"generate-purchase-orders": "procurement\.purchase_order\.revise"/);
   // The list row and the detail header both draw them from actionsFor.
   assert.match(source, /const rowActions = actionsFor\(pr\);/);

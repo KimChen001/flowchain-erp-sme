@@ -28,7 +28,8 @@ export const DECISION_PERMISSION = 'procurement.purchase_order.revise'
 // the finance side's, the person who reviews its match exceptions; the
 // purchasing kinds keep the purchasing permission their drafted actions need.
 export const DECISION_PERMISSIONS = Object.freeze({
-  reorder_now: DECISION_PERMISSION,
+  // A reorder card's step is raising a purchase request (C4 codes).
+  reorder_now: 'procurement.purchase_request.create',
   purchase_order_overdue: DECISION_PERMISSION,
   purchase_request_to_convert: DECISION_PERMISSION,
   bill_exception: 'finance.match_exception.review',

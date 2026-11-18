@@ -8,7 +8,8 @@ import { can } from '../auth/authorization-service.mjs'
 // catalog has no separate read code for them.
 export const AI_SKILL_SOURCES = Object.freeze({
   purchase_orders: Object.freeze({ permission: 'procurement.purchase_order.read', area: 'purchasing' }),
-  purchase_requests: Object.freeze({ permission: 'procurement.purchase_order.read', area: 'purchasing' }),
+  // A request's own read code since design audit C4, as report-read-access reads it.
+  purchase_requests: Object.freeze({ permission: 'procurement.purchase_request.read', area: 'purchasing' }),
   rfqs: Object.freeze({ permission: 'procurement.purchase_order.read', area: 'sourcing' }),
   inventory: Object.freeze({ permission: 'inventory.balance.read', area: 'inventory' }),
   supplier_invoices: Object.freeze({ permission: 'finance.supplier_invoice.read', area: 'finance' }),

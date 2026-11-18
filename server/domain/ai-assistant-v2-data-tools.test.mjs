@@ -568,13 +568,15 @@ test('suggest_purchase_lines hides prices and suppliers from roles that may not 
   assert.equal(shown.pricesHidden, true)
   assert.equal(shown.rows[0].estimatedUnitPrice, null)
   assert.equal(shown.rows[0].supplier.id, 'SUP-001')
-  // Operations reads stock only: no supplier, no purchase order or request.
+  // Operations reads stock and, since they raise requests (design audit C4,
+  // owner decision 2026-11-17), purchase requests: still no supplier, price
+  // or purchase order.
   const operations = await v2({ roleKey: 'operations-specialist', change: highReorderPoint })
   const stock = (await operations.run('suggest_purchase_lines')).result
   assert.equal(stock.suppliersHidden, true)
-  assert.equal(stock.purchaseRequestsRead, false)
+  assert.equal(stock.purchaseRequestsRead, true)
   assert.ok(stock.rows.length > 0 && stock.rows.every((row) => row.supplier === null && row.supplierChoices.length === 0 && row.estimatedUnitPrice === null))
-  assert.doesNotMatch(JSON.stringify(stock), /PO-0\d\d|PR-0\d\d|Acme/)
+  assert.doesNotMatch(JSON.stringify(stock), /PO-0\d\d|Acme/)
   // Nobody gets a contact's email address.
   const withEmail = await v2({ change: (data) => { highReorderPoint(data); data.suppliers[0].email = 'orders@acme.example'; data.suppliers[0].contactName = 'Ada' } })
   assert.doesNotMatch(JSON.stringify((await withEmail.run('suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'] })).result), /@|Ada/)

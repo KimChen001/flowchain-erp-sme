@@ -21,7 +21,7 @@ import { defaultRoleTemplates, legacyRoleTemplateMap } from '../auth/permission-
 // never 0, and the report marks a figure built from it as restricted.
 
 const COLLECTION_PERMISSION = Object.freeze({
-  purchaseRequests: 'procurement.purchase_order.read',
+  purchaseRequests: 'procurement.purchase_request.read',
   rfqs: 'procurement.purchase_order.read',
   purchaseOrders: 'procurement.purchase_order.read',
   receipts: 'receiving.read',

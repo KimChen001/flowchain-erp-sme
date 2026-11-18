@@ -35,7 +35,7 @@ const amount = (quantityValue, priceValue) => {
   const product = units(quantityValue) * units(priceValue)
   return fixed((product + 5_000n) / 10_000n)
 }
-const commandPermission = (commandType) => commandType === 'create_sales_order_draft' ? 'sales_order.create' : commandType === 'revise_sales_order_draft' ? 'sales_order.revise' : commandType === 'hold_sales_order' ? 'sales_order.cancel' : 'sales_order.submit'
+const commandPermission = (commandType) => commandType === 'create_sales_order_draft' ? 'sales_order.create' : commandType === 'revise_sales_order_draft' ? 'sales_order.revise' : commandType === 'hold_sales_order' ? 'sales_order.hold' : 'sales_order.submit'
 
 async function actorFor(prisma, context) { return resolveProvisionedActor(prisma, context?.identity || context) }
 

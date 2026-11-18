@@ -249,13 +249,13 @@ const opensForm = (params: URLSearchParams) =>
 // server/services/procurement-request-command-service.mjs).
 type RequestAction = "edit" | "submit" | "approve" | "reject" | "withdraw" | "reopen" | "cancel" | "generate-purchase-orders";
 const REQUEST_ACTION_PERMISSION: Record<RequestAction, string> = {
-  edit: "procurement.purchase_order.revise",
-  submit: "procurement.purchase_order.revise",
-  approve: "procurement.purchase_order.approve",
-  reject: "procurement.purchase_order.reject",
-  withdraw: "procurement.purchase_order.revise",
-  reopen: "procurement.purchase_order.revise",
-  cancel: "procurement.purchase_order.revise",
+  edit: "procurement.purchase_request.create",
+  submit: "procurement.purchase_request.submit",
+  approve: "procurement.purchase_request.approve",
+  reject: "procurement.purchase_request.reject",
+  withdraw: "procurement.purchase_request.submit",
+  reopen: "procurement.purchase_request.create",
+  cancel: "procurement.purchase_request.create",
   "generate-purchase-orders": "procurement.purchase_order.revise",
 };
 const REQUEST_ACTIONS_BY_STATUS: Record<string, RequestAction[]> = {

@@ -25,21 +25,21 @@ import { sanitizeSuggestionTrail } from "../../shared/prefill-suggestions.mjs";
 import { mapPurchaseOrder, mapPurchaseRequest, mapRfq } from "../repositories/db-procurement-read-repository.mjs";
 import { lastActorOf, selfApprovalCheck, selfApprovalRefusal } from "../domain/self-approval.mjs";
 
-// The permission catalog has no purchase-request codes, and adding one means
-// migrating the TenantRolePermission catalog CHECK constraint. Each command
-// therefore uses the closest existing purchase-order permission: drafting and
-// converting follow "revise" (buyer, manager, admin); decisions follow
-// "approve" and "reject" (manager, admin).
+// Requests have their own codes since design audit C4 (L1-07 = L4-11), so a
+// role may raise requests without ordering. The migration that added them
+// gave each to the roles holding the purchase-order code these commands used
+// before ("read"; "revise" for drafting; "approve" and "reject"). Turning a
+// request into an RFQ or purchase orders is ordering, and stays on "revise".
 export const PURCHASE_REQUEST_PERMISSIONS = Object.freeze({
-  read: "procurement.purchase_order.read",
-  create: "procurement.purchase_order.revise",
-  update: "procurement.purchase_order.revise",
-  submit: "procurement.purchase_order.revise",
-  withdraw: "procurement.purchase_order.revise",
-  reopen: "procurement.purchase_order.revise",
-  cancel: "procurement.purchase_order.revise",
-  approve: "procurement.purchase_order.approve",
-  reject: "procurement.purchase_order.reject",
+  read: "procurement.purchase_request.read",
+  create: "procurement.purchase_request.create",
+  update: "procurement.purchase_request.create",
+  submit: "procurement.purchase_request.submit",
+  withdraw: "procurement.purchase_request.submit",
+  reopen: "procurement.purchase_request.create",
+  cancel: "procurement.purchase_request.create",
+  approve: "procurement.purchase_request.approve",
+  reject: "procurement.purchase_request.reject",
   createRfq: "procurement.purchase_order.revise",
   createPurchaseOrders: "procurement.purchase_order.revise",
   openRfq: "procurement.purchase_order.revise",
