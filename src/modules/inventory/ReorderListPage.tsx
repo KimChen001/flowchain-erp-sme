@@ -664,7 +664,7 @@ export default function ReorderListPage() {
                               {/* The level the request's quantity orders up to, and where it comes from (C3): an assumed level says so. */}
                               {row.purchaseRequest.quantity !== null && row.orderUpTo?.level != null && (
                                 <div className={`mt-1 max-w-[9.25rem] ${small}`} style={{ color: A.sub }} data-testid={`reorder-order-up-to-${row.sku}`}>
-                                  {t(row.orderUpTo.source === "recorded" ? "orderUpToRecorded" : row.orderUpTo.source === "assumed" ? "orderUpToAssumed" : "orderUpToPoint", { level: withUnit(row.orderUpTo.level, row.unit, t.language), days: row.orderUpTo.reviewDays })}
+                                  {t(row.orderUpTo.source === "recorded" ? "orderUpToRecorded" : row.orderUpTo.source === "assumed" ? "orderUpToAssumed" : "orderUpToPoint", { level: withUnit(oneDecimal(row.orderUpTo.level), row.unit, t.language), days: row.orderUpTo.reviewDays })}
                                   {row.lotSize ? `, ${t("inLots", { lot: withUnit(row.lotSize, row.unit, t.language) })}` : ""}
                                 </div>
                               )}

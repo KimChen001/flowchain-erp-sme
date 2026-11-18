@@ -42,7 +42,7 @@ import { addCalendarDays, buildSuggestionTrail, planNonCatalogPrefill, planPurch
 import { SupplierChoices } from "../../components/procurement/SupplierChoices";
 import { SupplierOverrideCount, SupplierOverrideFlag, SupplierOverrideReason, hasSupplierOverride, supplierOverrideIssueText, type SupplierOverride } from "../../components/procurement/SupplierOverrideReason";
 import { overrideNeeded, validateSupplierOverride } from "../../../shared/supplier-override-reasons.mjs";
-import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
+import { PriceHistoryFacts, formatUnitPrice, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 import { procurementErrorText, type ErrorPair } from "../procurement/procurementErrors";
 
 // Fallback sentences for a failed request; a known error code or HTTP status
@@ -1188,7 +1188,8 @@ export default function CanonicalProcurementPanel({
                     </td>
                     <td className={tdNumericClass} data-testid="pr-detail-line-quantity">
                       {line.lineBasis === "quantity"
-                        ? `${quantityText(line)} × ${amount(line.estimatedUnitPrice, line.currency || selected.defaultCurrency)}`
+                        // The unit price to 4 decimals when it has them, so quantity × price is the amount (fresh walk 11/18).
+                        ? `${quantityText(line)} × ${line.estimatedUnitPrice === null || line.estimatedUnitPrice === undefined || line.estimatedUnitPrice === "" ? "—" : formatUnitPrice(Number(line.estimatedUnitPrice), line.currency || selected.defaultCurrency, locale)}`
                         : copy("金额 / 服务型")}
                     </td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{dayText(line.needByDate || selected.defaultNeedByDate)}</td>

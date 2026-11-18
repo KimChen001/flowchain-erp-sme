@@ -154,9 +154,12 @@ export async function handlePilotWorkspaceRoute(ctx) {
       // a request without the field keeps the current choice.
       const approvalEmails = Object.hasOwn(body, 'approvalEmailsEnabled')
       if (approvalEmails && typeof body.approvalEmailsEnabled !== 'boolean') fail('INVALID_PREFERENCE', 'approvalEmailsEnabled must be true or false.', 400)
+      // The version the change is based on is required: without it the
+      // update reached the database as NaN and answered 500 (fresh walk 11/18).
+      if (!Number.isInteger(Number(body.version)) || body.version === null || body.version === '') fail('VERSION_REQUIRED', 'Send the profile version you are changing.', 422)
       const before = publicUser(actor.user)
       const result = await prisma.$transaction(async tx => {
-        const updated = await tx.user.updateMany({ where: { id: actor.user.id, tenantId: actor.tenantId, version: Number(body.version) }, data: { name: text(body.name), jobTitle: text(body.jobTitle) || null, languagePreference, ...(approvalEmails ? { approvalEmailsEnabled: body.approvalEmailsEnabled } : {}), defaultWarehouseId: text(body.defaultWarehouseId) || null, profileCompletedAt: text(body.name) && text(body.jobTitle) ? new Date() : null, version: { increment: 1 } } })
+        const updated = await tx.user.updateMany({ where: { id: actor.user.id, tenantId: actor.tenantId, version: Number(body.version) }, data: { name: Object.hasOwn(body, 'name') ? text(body.name) : actor.user.name, jobTitle: Object.hasOwn(body, 'jobTitle') ? text(body.jobTitle) || null : actor.user.jobTitle, languagePreference, ...(approvalEmails ? { approvalEmailsEnabled: body.approvalEmailsEnabled } : {}), defaultWarehouseId: text(body.defaultWarehouseId) || null, profileCompletedAt: text(body.name) && text(body.jobTitle) ? new Date() : null, version: { increment: 1 } } })
         if (updated.count !== 1) fail('VERSION_CONFLICT', 'Profile changed concurrently.', 409)
         const user = await tx.user.findUnique({ where: { id: actor.user.id }, include: { warehouseScopes: true } })
         await tx.auditLog.create({ data: auditData({ actor, action: 'profile_settings_updated', entityType: 'User', entityId: actor.user.id, summary: 'User profile and language preference updated.', before, after: publicUser(user) }) })

@@ -21,7 +21,7 @@ import { BusinessEntityLink } from "../../components/business/BusinessEntityLink
 import { formatCalendarDay, formatCurrencyAmount, instantDayInTimeZone, todayInTimeZone } from "../../lib/format";
 import { typography } from "../../components/ui/typography";
 import { usePriceHistoryCopy } from "../procurement/priceHistoryCopy";
-import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
+import { PriceHistoryFacts, formatUnitPrice, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { documentNumberFor, rememberDocumentNumbers, resolveDocumentNumbers, useDocumentNumber } from "../../lib/documentNumbers";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
@@ -339,7 +339,7 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
   const say = useSay();
   const day = useCalendarDay();
   const lineName = useLineName();
-  const { formatNumber, language } = useI18n();
+  const { formatNumber, language, locale } = useI18n();
   if (!rows.length) {
     return <Card className="p-8 text-center text-xs" style={{ color: A.gray2 }}>{copy("当前采购订单没有明细行。")}</Card>;
   }
@@ -379,7 +379,8 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
                     {line.remainingQty > 0 && line.receivedQty > 0 ? <div className="text-[11px]" style={{ color: A.sub }}>{say(`${formatNumber(line.remainingQty)} to come`, `还差 ${formatNumber(line.remainingQty)}`)}</div> : null}
                   </td>
                   <td className={tdNumericRightClass}>{qty(line.invoicedQty, line.unit)}</td>
-                  <td className={tdNumericRightClass}>{fmt(line.unitPrice)}</td>
+                  {/* Up to 4 decimals when the price has them, so quantity × price is the amount (fresh walk 11/18). */}
+                  <td className={tdNumericRightClass}>{formatUnitPrice(line.unitPrice, line.currency || currency, locale)}</td>
                   <td className={`${tdNumericRightClass} font-semibold`}>{fmt(line.lineAmount)}</td>
                   <td className={tdNowrapClass}>
                     <div>{day(line.promisedDate)}</div>
