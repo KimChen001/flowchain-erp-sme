@@ -12,8 +12,10 @@
 // }, orders: [{ created, promised, supplierKey, status, scene, closed, lines:
 // [{ itemKey, quantity }], receipts: [{ index, lines: [{ itemKey, quantity }]
 // }] }] }, payables { invoices, notYetInvoiced } (planSupplierInvoices in
-// plan.mjs). Day index i is the seed day plus (i - days); the last day of the
-// data is the day before the seed day.
+// plan.mjs), requests [{ state, itemKey, supplierKey, quantity, day, needBy
+// }] (planPurchaseRequests) and openSales [{ position, state, shipLines }]
+// (planOpenSales; design audit C12). Day index i is the seed day plus (i -
+// days); the last day of the data is the day before the seed day.
 const DAY_MS = 86400000
 const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places
 const sum = (rows, pick) => rows.reduce((total, row) => total + pick(row), 0)
@@ -37,7 +39,25 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
   const bySku = new Map(plan.items.map((item) => [item.sku, item]))
   const suppliers = new Map(plan.suppliers.map((supplier) => [supplier.key, supplier]))
   const customers = new Map(plan.customers.map((customer) => [customer.key, customer]))
-  const orders = plan.purchasing.orders
+  // The weekly and scene orders, and the orders converted purchase requests
+  // became: issued the day they were raised, promised by their need-by day.
+  const requests = plan.requests || []
+  const orders = [
+    ...plan.purchasing.orders,
+    ...requests.filter((row) => row.state === 'converted').map((row) => ({ created: row.day, promised: row.needBy, supplierKey: row.supplierKey, status: 'issued', request: true, lines: [{ itemKey: row.itemKey, quantity: row.quantity }], receipts: [] })),
+  ]
+  // Open purchase requests (draft, submitted, approved) count in the reorder
+  // list's position (design audit C2).
+  const requestedFor = (key) => sum(requests.filter((row) => ['draft', 'submitted', 'approved'].includes(row.state) && row.itemKey === key), (row) => row.quantity)
+  // UCI orders still being filled [assumed]: their lines not shipped are
+  // still on hand, reserved (or backordered when the order is not reserved
+  // yet), and are not shipped demand.
+  const unshipped = (plan.openSales || []).flatMap((row) => {
+    const order = plan.salesOrders[row.position]
+    return order.lines.filter((_, index) => !row.shipLines.includes(index)).map((line) => ({ itemKey: line.itemKey, quantity: line.quantity, index: order.index, reserved: row.state !== 'not_reserved' }))
+  })
+  const unshippedFor = (key, pick = () => true) => sum(unshipped.filter((line) => line.itemKey === key && pick(line)), (line) => line.quantity)
+  const onHandOf = (key) => plan.purchasing.closing[key] + unshippedFor(key)
   const received = (order, key) => sum(order.receipts, (receipt) => sum(receipt.lines.filter((line) => line.itemKey === key), (line) => line.quantity))
   const ordered = (order, key) => sum(order.lines.filter((line) => line.itemKey === key), (line) => line.quantity)
   const outstanding = (order) => sum(order.lines, (line) => line.quantity - received(order, line.itemKey))
@@ -59,8 +79,9 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
   const item = (sku) => {
     const row = bySku.get(sku)
     if (!row) throw new Error(`The plan has no item ${sku}.`)
-    const onHand = plan.purchasing.closing[row.key]
+    const onHand = onHandOf(row.key)
     const incoming = onOrder(row.key)
+    const reserved = unshippedFor(row.key, (line) => line.reserved)
     return {
       sku: row.sku,
       name: row.name,
@@ -69,8 +90,11 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
       sellingPrice: row.price,
       supplier: suppliers.get(row.supplierKey)?.name,
       onHand,
+      reserved,
+      available: onHand - reserved,
       onOrder: incoming,
-      position: onHand + incoming,
+      // On hand and on order less what orders still being filled need.
+      position: onHand - unshippedFor(row.key) + incoming,
       safetyStock: row.safetyStock,
       reorderPoint: row.reorderPoint,
       minimumOrderQuantity: row.minimumOrderQuantity,
@@ -94,7 +118,7 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     let days = 0
     for (let back = 1; back <= DEMAND_WINDOW_DAYS; back += 1) {
       const index = todayIndex - back
-      const quantity = index >= 0 && index < plan.days ? Number(row.daily[index]) || 0 : 0
+      const quantity = index >= 0 && index < plan.days ? (Number(row.daily[index]) || 0) - unshippedFor(row.key, (line) => line.index === index) : 0
       shipped += quantity
       if (quantity > 0) days += 1
     }
@@ -111,8 +135,9 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
   // Reorder: the reorder list's (s, S) rule since design audit C2 and C3
   // (owner "按建议做"; the level is an app default, not a finding), worked
   // out here in ten-thousandths as the list works:
-  //   position  on hand + on order + orders not yet issued (this workspace
-  //             has no reservations, backorders or purchase requests);
+  //   position  on hand - reserved - backorders (the orders still being
+  //             filled) + on order + orders not yet issued + open purchase
+  //             requests; an item without a reorder point is not checked;
   //   due       the position at the reorder point or below, or above it by
   //             less than a day of demand (its order-by day is today);
   //   level     the reorder point + 7 days of average daily demand over the
@@ -123,7 +148,8 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
   const ORDER_UP_TO_DAYS = 7
   const UNITS = 10000
   const reorder = plan.items.flatMap((row) => {
-    const position = plan.purchasing.closing[row.key] + onOrder(row.key) + pendingFor(row.key)
+    if (!(row.reorderPoint > 0)) return []
+    const position = plan.purchasing.closing[row.key] + onOrder(row.key) + pendingFor(row.key) + requestedFor(row.key)
     const { shipped, days } = recentHistory(row)
     const shippedUnits = days >= 8 && shipped > 0 ? Math.round(shipped * UNITS) : null
     const pointUnits = Math.round(row.reorderPoint * UNITS)
@@ -134,10 +160,10 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     if (!due || gap <= 0) return []
     return [{ sku: row.sku, shortfall: Math.max(0, row.reorderPoint - position), orderUpTo: levelUnits / UNITS, quantity: Math.max(gap, row.minimumOrderQuantity) }]
   })
-  const belowSafetyStock = plan.items.filter((row) => plan.purchasing.closing[row.key] < row.safetyStock).map((row) => row.sku)
+  const belowSafetyStock = plan.items.filter((row) => onHandOf(row.key) < row.safetyStock).map((row) => row.sku)
 
-  // Sales by calendar month (YYYY-MM): every line shipped in full on its
-  // order's day, at its own price; line amounts in pence as the invoices hold
+  // Sales by calendar month (YYYY-MM): every order line on its order's day
+  // (an order still being filled too), at its own price; line amounts in pence as the invoices hold
   // them. The cost of what was sold is the units at the purchase price, so
   // gross profit is the sales less that cost.
   const lineAmount = (line) => round(line.quantity * line.unitPrice)
@@ -181,8 +207,11 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
   }
 
   // Receivables: each shipment's invoice is due 30 days later and was paid
-  // on its due date when that was before the seed day; the rest are open.
-  const unpaid = plan.salesOrders.filter((order) => order.index + 30 >= plan.days)
+  // on its due date when that was before the seed day; the rest are open. An
+  // order still being filled is invoiced for the lines shipped, if any.
+  const openSaleOf = new Map((plan.openSales || []).map((row) => [row.position, row]))
+  const invoicedLines = (order, position) => (openSaleOf.has(position) ? order.lines.filter((_, index) => openSaleOf.get(position).shipLines.includes(index)) : order.lines)
+  const unpaid = plan.salesOrders.map((order, position) => ({ ...order, lines: invoicedLines(order, position) })).filter((order) => order.index + 30 >= plan.days && order.lines.length)
   const owedBy = new Map()
   for (const order of unpaid) owedBy.set(order.customerKey, (owedBy.get(order.customerKey) || 0) + sum(order.lines, lineAmount))
   const receivables = {
@@ -192,7 +221,7 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
   }
 
   // Stock at the purchase price (assumed), and a year of holding it at 25%.
-  const stockValue = round(sum(plan.items, (row) => plan.purchasing.closing[row.key] * costOf(row)))
+  const stockValue = round(sum(plan.items, (row) => onHandOf(row.key) * costOf(row)))
   const inventory = { value: stockValue, holdingPerYear: round(stockValue * UCI_HOLDING_RATE) }
 
   // Supplier invoices [assumed] (plan.payables): the three-way match result,
@@ -287,7 +316,11 @@ function payablesFacts(plan, { dateOf, todayIndex, items, suppliers }) {
   const state = (row) => (row.payment === 'paid' || row.payment === 'held' ? row.payment : row.due < todayIndex ? 'overdue' : 'open')
   const view = (row) => ({ number: row.number, supplier: suppliers.get(row.supplierKey)?.name, date: dateOf(row.day), due: dateOf(row.due), total: row.total, rule: row.rule, match: row.match, state: state(row) })
   const inState = (name) => invoices.filter((row) => state(row) === name)
-  const tally = (rows) => ({ count: rows.length, total: money(sum(rows, (row) => row.totalPence)) })
+  // What an approved invoice's payable is for: the invoice, less what was
+  // not received when a quantity difference was accepted at the received
+  // quantity (design audit C12); a held one is counted at the invoice.
+  const payable = (row) => row.payablePence ?? row.totalPence
+  const tally = (rows, amount = payable) => ({ count: rows.length, total: money(sum(rows, amount)) })
   // A difference names its line: the order price and the invoice price, what
   // was received and what was billed, and what the invoice charges beyond the
   // order and the receipt (over).
@@ -300,12 +333,14 @@ function payablesFacts(plan, { dateOf, todayIndex, items, suppliers }) {
       over: price ? money((line.unitPricePence - line.orderPricePence) * line.quantity) : money((line.quantity - line.received) * line.orderPricePence),
     }
   }
-  const differences = invoices.filter((row) => row.match === 'exception').map(difference).sort((a, b) => b.over - a.over || a.number.localeCompare(b.number))
+  // Differences still open at the match; one reviewed within 14 days (design
+  // audit L7-14) is approved and paid like a matched invoice.
+  const differences = invoices.filter((row) => row.match === 'exception' && !row.resolution).map(difference).sort((a, b) => b.over - a.over || a.number.localeCompare(b.number))
   const open = inState('open')
   const overdue = inState('overdue')
   return {
     count: invoices.length,
-    match: { matched: invoices.filter((row) => row.match === 'matched').length, exception: differences.length },
+    match: { matched: invoices.filter((row) => row.match === 'matched').length, exception: differences.length, reviewed: invoices.filter((row) => row.resolution).length },
     differences,
     priceDifferences: differences.filter((row) => row.kind === 'price'),
     quantityDifferences: differences.filter((row) => row.kind === 'quantity'),
@@ -315,9 +350,9 @@ function payablesFacts(plan, { dateOf, todayIndex, items, suppliers }) {
     open: tally(open),
     overdue: { ...tally(overdue), invoices: overdue.map(view).sort((a, b) => a.due.localeCompare(b.due) || a.number.localeCompare(b.number)) },
     // Not approved: waiting at the three-way match.
-    held: tally(inState('held')),
+    held: tally(inState('held'), (row) => row.totalPence),
     paid: tally(inState('paid')),
-    paidIn: (month) => money(sum(invoices.filter((row) => row.payment === 'paid' && dateOf(row.paidDay).startsWith(month)), (row) => row.totalPence)),
+    paidIn: (month) => money(sum(invoices.filter((row) => row.payment === 'paid' && dateOf(row.paidDay).startsWith(month)), payable)),
     // Received and not invoiced yet, at the order price.
     notInvoiced: { count: plan.payables.notYetInvoiced.length, total: money(sum(plan.payables.notYetInvoiced, (row) => row.totalPence)) },
   }
