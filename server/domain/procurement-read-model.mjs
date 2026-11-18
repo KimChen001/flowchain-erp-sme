@@ -866,8 +866,11 @@ export function buildProcurementSummary(data = {}, options = {}) {
     openPoCount: documents.filter((item) => item.documentType === 'po' && isOpenStatus(item.status)).length,
     pendingReceivingCount: documents.filter((item) => item.documentType === 'grn' && isOpenStatus(item.status)).length,
     invoiceExceptionCount: documents.filter((item) => item.documentType === 'invoice' && item.matchStatus !== 'variance_approved' && (toNumber(item.varianceAmount) !== 0 || /差异|异常|待复核/.test(item.matchStatus))).length,
-    // A match whose differences were all approved keeps its variance amount but is no exception.
-    threeWayMatchExceptionCount: documents.filter((item) => item.documentType === 'threeWayMatch' && item.matchStatus !== MATCH_VARIANCE_APPROVED && toNumber(item.varianceAmount) !== 0).length,
+    // An exception not yet cleared, by its match status, as the match list's
+    // Variances card counts it. A match whose differences were all approved,
+    // or matched within the tolerance (design audit B2), keeps its variance
+    // amount but is no exception. A variance without a status reads 存在差异.
+    threeWayMatchExceptionCount: documents.filter((item) => item.documentType === 'threeWayMatch' && VARIANCE_MATCH_STATUS.test(text(item.matchStatus))).length,
     // Never added across currencies: with several currencies there is no total.
     totalOpenAmount: openAmountCurrency.currencies.length > 1 ? null : openAmountDocuments.reduce((sum, item) => sum + toNumber(item.amount, 0), 0),
     currency: openAmountCurrency.currency,

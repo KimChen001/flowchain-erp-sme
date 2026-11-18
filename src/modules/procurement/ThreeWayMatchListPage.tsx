@@ -5,10 +5,11 @@ import { AlertCircle, CheckCircle2, Clock3, Scale } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, type StatusTone } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
 import { ListPager, usePagedRows } from "./listPaging";
+import { matchResultOf, type MatchResult } from "./threeWayMatchResult";
 import type { ProcurementDocument } from "./procurementTypes";
 import { useI18n } from "../../i18n/I18n";
 import { formatLocaleAmount } from "../../lib/format";
@@ -61,19 +62,10 @@ const COPY = {
 // recorded, to the ids it links by.
 type MatchRow = ProcurementDocument & { grnNumber?: string };
 
-type Result = "matched" | "pending" | "variance";
-// The server's match status, a code or its Chinese label, read as one of three results.
-// A match whose every difference was approved ("variance_approved", which the
-// read model also says of an invoice approved before that status was stored)
-// is resolved, though its variance amount stays on record; the Matched tile
-// says it counts them.
-const resultOf = (row: ProcurementDocument): Result => {
-  const tone: StatusTone = statusToneOf(row.matchStatus || row.status);
-  if (row.matchStatus === "variance_approved" || row.status === "variance_approved") return "matched";
-  if (tone === "danger" || Number(row.varianceAmount || 0) !== 0) return "variance";
-  return tone === "success" ? "matched" : "pending";
-};
-const RESULT_TONE: Record<Result, StatusTone> = { matched: "success", pending: "warning", variance: "danger" };
+// Each match reads as Matched, Pending or Variances by its match status
+// (matchResultOf): the cards and ?result= use the same rule, and a match
+// inside the tolerance keeps its small variance in the Variance column.
+const RESULT_TONE: Record<MatchResult, StatusTone> = { matched: "success", pending: "warning", variance: "danger" };
 
 export function ThreeWayMatchListPage() {
   const copy = useWorkspaceCopy();
@@ -113,13 +105,13 @@ export function ThreeWayMatchListPage() {
   const receiptOf = (row: MatchRow) => row.grnNumber || row.grnId || "";
   const needle = query.trim().toLowerCase();
   const shown = rows.filter((row) =>
-    (!result || resultOf(row) === result)
+    (!result || matchResultOf(row) === result)
     && (!supplier || row.supplierName === supplier)
     && (!needle || [row.invoiceNumber, row.poNumber, row.grnNumber, row.id, poOf(row), row.grnId, row.invoiceId].some((value) => String(value || "").toLowerCase().includes(needle))),
   );
   const paged = usePagedRows(shown, PAGE_SIZE, [result, supplier, needle].join("|"));
   const suppliers = [...new Set(rows.map((row) => String(row.supplierName || "")).filter(Boolean))].sort();
-  const count = (name: Result) => rows.filter((row) => resultOf(row) === name).length;
+  const count = (name: MatchResult) => rows.filter((row) => matchResultOf(row) === name).length;
   const value = (count: number) => state === "loaded" ? String(count) : "—";
   const reset = () => {
     setQuery("");
@@ -206,10 +198,10 @@ export function ThreeWayMatchListPage() {
                       </div>
                     </td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row.invoiceAmount, row.currency, locale)}</td>
-                    {/* Red only while the variance waits on a decision; an approved one stays on record in gray. */}
-                    <td className={tdNumericRightClass} style={{ color: variance && resultOf(row) === "variance" ? "#b91c1c" : A.sub }}>{money(row.varianceAmount, row.currency, locale)}</td>
+                    {/* Red only while the variance waits on a decision; an approved one, or one inside the tolerance, stays on record in gray. */}
+                    <td className={tdNumericRightClass} style={{ color: variance && matchResultOf(row) === "variance" ? "#b91c1c" : A.sub }}>{money(row.varianceAmount, row.currency, locale)}</td>
                     <td className={`${tdNameClass} min-w-[160px]`}>
-                      <StatusChip label={copy(row.matchStatus || row.status || "—")} tone={RESULT_TONE[resultOf(row)]} />
+                      <StatusChip label={copy(row.matchStatus || row.status || "—")} tone={RESULT_TONE[matchResultOf(row)]} />
                       {reason && <div className="mt-1 max-w-[260px] whitespace-normal text-[11px] leading-4 text-amber-800">{copy(reason)}</div>}
                     </td>
                     {/* A blue View, as on every other list (design audit U-20). */}
