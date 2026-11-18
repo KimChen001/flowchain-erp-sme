@@ -40,10 +40,13 @@ export function buildUciMoneyCases(facts, { last }) {
       numbers: [{ label: '有差异的发票数', value: invoices.differences.length }],
       matches: [{ label: '说到价格高于订单', pattern: '单价|价格|价差|高于订单' }, { label: '说到开票数量多于收货', pattern: '数量|少送|短缺|多于收货|超出收货|未收到' }],
     } })
+  // A kind with no difference left open (the C12 seed reviews most of them,
+  // design audit C12) expects the answer to say there is none.
+  const none = { matches: [{ label: 'says there is none', pattern: String.raw`(no|none|not any|nothing)` }] }
   add({ id: 'invoice-price-en', kind: 'payables', language: 'en-US', turns: ['Which supplier invoices charge more than the order price?'],
-    expect: { mentions: [invoiceNamed(invoices.priceDifferences[0])], numbers: [{ label: 'invoices priced above the order', value: invoices.priceDifferences.length }] } })
+    expect: invoices.priceDifferences.length ? { mentions: [invoiceNamed(invoices.priceDifferences[0])], numbers: [{ label: 'invoices priced above the order', value: invoices.priceDifferences.length }] } : none })
   add({ id: 'invoice-quantity-en', kind: 'payables', language: 'en-US', turns: ['Which supplier invoices bill for more than we received?'],
-    expect: { mentions: [invoiceNamed(invoices.quantityDifferences[0])], numbers: [{ label: 'invoices billing more than received', value: invoices.quantityDifferences.length }] } })
+    expect: invoices.quantityDifferences.length ? { mentions: [invoiceNamed(invoices.quantityDifferences[0])], numbers: [{ label: 'invoices billing more than received', value: invoices.quantityDifferences.length }] } : none })
   add({ id: 'payables-owed-en', kind: 'payables', language: 'en-US', turns: ['How much do we owe our suppliers right now?'],
     expect: { numbers: [money(invoices.owed.total, 'owed to suppliers')] } })
   add({ id: 'payables-overdue-zh', kind: 'payables', language: 'zh-CN', turns: ['有哪些供应商发票已经逾期没付？一共多少钱？'],

@@ -326,6 +326,34 @@ test('the UCI figures with purchase requests, orders still being filled and revi
   assert.deepEqual(invoices.match, { matched: 3, exception: 1, reviewed: 1 })
   assert.deepEqual(invoices.differences.map((row) => row.number), ['INV-G-0001'])
   assert.deepEqual([invoices.owed, invoices.open, invoices.held], [{ count: 3, total: 185 }, { count: 2, total: 85 }, { count: 1, total: 26 }])
+  // The reviewed difference, the requests by state, the order being filled
+  // and the tiers, for the records cases.
+  assert.deepEqual(invoices.reviewedDifferences.map((row) => [row.number, row.kind, row.decision, row.reviewed, row.payable]), [['INV-A-0003', 'quantity', 'accept_received', '2026-11-08', 70]])
+  assert.deepEqual(Object.fromEntries(Object.entries(facts.purchaseRequests.byState).map(([state, rows]) => [state, rows.map((row) => [row.sku, row.quantity, row.reason ?? null])])),
+    { draft: [['C1', 20, null]], submitted: [], approved: [], converted: [['S1', 40, null]], rejected: [['H1', 70, 'not needed now']], cancelled: [] })
+  assert.deepEqual(facts.ordersBeingFilled, [{ state: 'reserved', customerId: 'c1', customer: 'Customer c1 (United Kingdom)', ordered: '2026-11-05', toShip: [{ sku: 'S1', quantity: 2 }], shipped: [] }])
+  assert.deepEqual(facts.tiers.map((row) => [row.name, row.tier]), [['Acme Home Goods', 1], ['Globex Party Supplies', null], ['Supplier of other codes (assumed)', null]])
+  // The cases: with no quantity difference left open, the answer should say
+  // there is none; the records cases come last, asked by the manager. (The
+  // draft request is moved to P1, so the cakestand the reorder cases ask
+  // about stays on the list.)
+  plan.requests = plan.requests.map((row) => (row.state === 'draft' ? { ...row, itemKey: 'P1', supplierKey: 'A' } : row))
+  const cases = buildUciCases(uciFacts(plan))
+  const byId = Object.fromEntries(cases.map((row) => [row.id, row]))
+  assert.deepEqual(byId['invoice-quantity-en'].expect.matches.map((entry) => entry.label), ['says there is none'])
+  assert.deepEqual(byId['invoice-price-en'].expect.mentions, [{ label: 'INV-G-0001', any: ['INV-G-0001'] }])
+  const records = cases.slice(cases.findIndex((row) => row.id === 'requests-rejected-en'))
+  // No request waits for approval or is approved here, and the one order
+  // being filled is reserved, so those cases are left out.
+  assert.deepEqual(records.map((row) => row.id), ['requests-rejected-en', 'requests-draft-zh', 'open-sales-en', 'reviewed-differences-en', 'tier-one-en'])
+  assert.ok(records.every((row) => row.asUser === 'kim@example.com'))
+  assert.deepEqual(byId['requests-rejected-en'].expect.mentions, [{ label: 'H1', any: ['H1', 'Hero Lamp'] }])
+  assert.deepEqual(byId['requests-draft-zh'].expect, { mentions: [{ label: 'P1', any: ['P1', 'Pending Sign'] }], numbers: [{ label: '草稿张数', value: 1 }] })
+  assert.deepEqual(byId['open-sales-en'].expect, { numbers: [{ label: 'orders still to ship', value: 1 }], mentions: [{ label: 'Customer c1 (United Kingdom)', any: ['c1'] }] })
+  assert.deepEqual(byId['reviewed-differences-en'].expect, { numbers: [{ label: 'reviewed', value: 1 }], mentions: [{ label: 'INV-A-0003', any: ['INV-A-0003'] }] })
+  assert.deepEqual(byId['tier-one-en'].expect.mentions, [{ label: 'Acme Home Goods', any: ['Acme Home Goods'] }])
+  // Without the C12 documents in the plan there are no records cases.
+  assert.equal(buildUciCases(uciFacts(smallPlan())).filter((row) => row.kind === 'records').length, 0)
 })
 
 // 2026-11-11, the owner's "先测再改" on hard limits.

@@ -274,6 +274,33 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     }
     return latest && { date: dateOf(latest.index), quantity: latest.quantity }
   }
+  // The purchase requests [assumed] by state (design audit C12), each with
+  // the item, supplier and quantity it asks for; rejected and cancelled ones
+  // carry the seed's stated reason.
+  const REQUEST_STATES = ['draft', 'submitted', 'approved', 'converted', 'rejected', 'cancelled']
+  const REQUEST_REASONS = { rejected: 'not needed now', cancelled: 'no longer needed' }
+  const requestRow = (row) => ({
+    state: row.state, sku: items.get(row.itemKey).sku, name: items.get(row.itemKey).name, supplier: suppliers.get(row.supplierKey)?.name,
+    quantity: row.quantity, raised: dateOf(row.day), needBy: dateOf(row.needBy), ...(REQUEST_REASONS[row.state] ? { reason: REQUEST_REASONS[row.state] } : {}),
+  })
+  const purchaseRequests = {
+    total: requests.length,
+    byState: Object.fromEntries(REQUEST_STATES.map((state) => [state, requests.filter((row) => row.state === state).map(requestRow)])),
+  }
+  // The UCI orders still being filled [assumed] (design audit C12): not
+  // reserved yet, reserved, or partly shipped, with what is left to ship.
+  const ordersBeingFilled = (plan.openSales || []).map((row) => {
+    const order = plan.salesOrders[row.position]
+    return {
+      state: row.state, customerId: order.customerKey, customer: customers.get(order.customerKey)?.name, ordered: dateOf(order.index),
+      toShip: order.lines.filter((_, index) => !row.shipLines.includes(index)).map((line) => ({ sku: items.get(line.itemKey).sku, quantity: line.quantity })),
+      shipped: order.lines.filter((_, index) => row.shipLines.includes(index)).map((line) => ({ sku: items.get(line.itemKey).sku, quantity: line.quantity })),
+    }
+  })
+  // Supplier tiers [assumed] (design audit L7-37, C12): by share of spend,
+  // except a tier the walkthrough scene sets.
+  const tiers = plan.suppliers.map((row) => ({ name: row.name, tier: row.tier ?? null, basis: row.tierBasis ?? null, share: row.spendShare ?? null }))
+
   const waitingForApproval = orders.filter((order) => order.status === 'pending_approval').map((order) => ({
     supplier: suppliers.get(order.supplierKey)?.name,
     lines: order.lines.map((line) => ({ sku: items.get(line.itemKey).sku, quantity: line.quantity, amount: round(line.quantity * costOf(items.get(line.itemKey))) })),
@@ -295,6 +322,9 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     suppliedBy,
     lastReceipt,
     waitingForApproval,
+    purchaseRequests,
+    ordersBeingFilled,
+    tiers,
     supplierCount: plan.suppliers.length,
     // Every item's SKU in the plan's order, and its unit price and minimum
     // order by SKU, for the constraint cases' form checks (an object lists
@@ -342,6 +372,10 @@ function payablesFacts(plan, { dateOf, todayIndex, items, suppliers }) {
     count: invoices.length,
     match: { matched: invoices.filter((row) => row.match === 'matched').length, exception: differences.length, reviewed: invoices.filter((row) => row.resolution).length },
     differences,
+    // Differences a second person reviewed (design audit C12): approved as
+    // billed (a price difference) or accepted at the quantity received (a
+    // short delivery), then owed or paid like a matched invoice.
+    reviewedDifferences: invoices.filter((row) => row.resolution).map((row) => ({ ...difference(row), decision: row.resolution.decision, reviewed: dateOf(row.resolution.day), payable: money(payable(row)) })).sort((a, b) => a.reviewed.localeCompare(b.reviewed) || a.number.localeCompare(b.number)),
     priceDifferences: differences.filter((row) => row.kind === 'price'),
     quantityDifferences: differences.filter((row) => row.kind === 'quantity'),
     datedBeforeReceipt: invoices.filter((row) => row.rule === 'dated_before_receipt').map(view),
