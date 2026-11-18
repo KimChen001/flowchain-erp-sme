@@ -56,17 +56,6 @@ test('shared field input and chip typography follows compact SaaS scale', () => 
   assert.match(source, /fontSize: 13, lineHeight: "20px"/)
 })
 
-test('action draft review shell keeps evidence links and draft actions on shared typography tokens', () => {
-  const source = readSource('src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx')
-
-  assert.match(source, /import \{ typography \} from "\.\.\/\.\.\/components\/ui\/typography"/)
-  assert.match(source, /draftButtonClass = `h-8 rounded-lg px-3 \$\{typography\.denseButton\} disabled:cursor-not-allowed`/)
-  assert.match(source, /draftEvidenceTitleClass = `\$\{typography\.metadata\} font-semibold`/)
-  assert.match(source, /draftEvidenceLinkClass = `text-left \$\{draftEvidenceTitleClass\} hover:underline`/)
-  assert.match(source, /draftEvidenceMetaClass = typography\.compactMetadata/)
-  assert.match(source, /className=\{draftEvidenceLinkClass\}/)
-})
-
 test('global search results use dedicated search result typography tokens', () => {
   const source = readSource('src', 'app', 'FlowChainApp.tsx')
 

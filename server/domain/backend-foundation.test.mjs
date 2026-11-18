@@ -146,7 +146,7 @@ test('database mode guard is before legacy auth and capability gate is registere
   })
 })
 
-test('database mode blocks legacy writes while allowing health and preview routes', async () => {
+test('database mode blocks legacy writes while allowing health and other write routes', async () => {
   const previous = process.env.FLOWCHAIN_PERSISTENCE_MODE
   const previousDatabaseUrl = process.env.DATABASE_URL
   process.env.FLOWCHAIN_PERSISTENCE_MODE = 'database'
@@ -160,7 +160,7 @@ test('database mode blocks legacy writes while allowing health and preview route
     const forecastPlan = await requestJson(port, 'POST', '/api/forecast-plans', { sku: 'SKU-DB-GUARD', history: [1, 2, 3, 4, 5, 6] })
     const sopCycle = await requestJson(port, 'POST', '/api/sop-cycle', { cycle: '2026-06' })
     const blocked = await requestJson(port, 'POST', '/api/purchase-requests', { sourceSku: 'SKU-DB-GUARD' })
-    const preview = await requestJson(port, 'POST', '/api/action-drafts/preview', { type: 'unsupported_draft', payload: {} })
+    const receiptPost = await requestJson(port, 'POST', '/api/procurement/receiving/GRN-DB-GUARD/post', {})
 
     assert.equal(health.status, 200)
     assert.equal(health.payload.ok, true)
@@ -182,10 +182,11 @@ test('database mode blocks legacy writes while allowing health and preview route
     assert.equal(sopCycle.payload.code, 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED')
     assert.equal(blocked.status, 501)
     assert.deepEqual(blocked.payload, databaseModeMutationBlockedPayload())
-    // The write guard lets preview through; the sign-in gate then answers.
-    assert.equal(preview.status, 401)
-    assert.equal(preview.payload.code, 'AUTHENTICATION_REQUIRED')
-    assert.notDeepEqual(preview.payload, databaseModeMutationBlockedPayload())
+    // The write guard lets a write that is not a legacy mutation through; the
+    // sign-in gate then answers.
+    assert.equal(receiptPost.status, 401)
+    assert.equal(receiptPost.payload.code, 'AUTHENTICATION_REQUIRED')
+    assert.notDeepEqual(receiptPost.payload, databaseModeMutationBlockedPayload())
   } finally {
     if (previous === undefined) {
       delete process.env.FLOWCHAIN_PERSISTENCE_MODE

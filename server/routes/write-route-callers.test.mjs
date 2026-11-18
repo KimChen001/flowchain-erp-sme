@@ -118,7 +118,6 @@ const NO_APP_CALLER = {
   'POST /api/procurement/orders/:id/return-for-revision': 'The desktop PO page has no Return for revision; the phone uses /api/mobile/purchase-orders/:id/return-for-revision.',
   'POST /api/report-views/:id/share': 'The reports page saves, updates, clones and deletes views; it has no share action.',
   'DELETE /api/attachments/:id': 'No screen deletes an attachment by id; contract files use DELETE /api/contracts/:id/attachments/:id.',
-  'POST /api/action-drafts': 'Same handler as POST /api/action-drafts/save, which the app calls.',
 
   // Older and retired routes.
   'POST /api/inventory/items': 'Answers 501: balances change only through transfers, counts and adjustments.',

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { createDatabaseRepositoryRegistry } from '../repositories/adapter-registry.mjs'
 import { createDbAuditLogRepository } from '../repositories/db-audit-log-repository.mjs'
 import { DATABASE_CONFIG_ERROR } from '../persistence/persistence-config.mjs'
-import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
 import { handleAuditLogRoute } from '../routes/audit-log.routes.mjs'
 import {
   legacyMutationBlockedAuditEntry,
@@ -24,46 +23,6 @@ function createDb() {
     marketSignals: [],
     events: [],
     auditLog: [],
-  }
-}
-
-function draft() {
-  return {
-    id: 'DRAFT-AUDIT-1',
-    tenantId: 'tenant-flowchain-sme',
-    type: 'purchase_request_draft',
-    title: 'Purchase request draft',
-    status: 'preview',
-    source: 'test',
-    requiresConfirmation: true,
-    confirmationBoundary: { previewOnly: true, submitted: false },
-    originEvidence: [{ type: 'inventory_item', id: 'A100' }],
-    payload: { itemIdOrSku: 'A100', quantity: 10 },
-    validation: { ok: true, missingFields: [], warnings: [], errors: [] },
-    auditTrail: [{ action: 'ai_draft_prepared', summary: 'Prepared draft' }],
-  }
-}
-
-const draftAuthor = { authenticated: true, tenantId: 'tenant-audit-draft', userId: 'user-audit-draft', role: 'manager', source: 'test' }
-
-function createActionDraftRoute({ body, repositories, db = createDb(), pathname = '/api/action-drafts', identity = draftAuthor } = {}) {
-  let response = null
-  return {
-    ctx: {
-      req: { method: 'POST', body },
-      res: {},
-      url: new URL(pathname, 'http://localhost'),
-      db,
-      repositories,
-      identity,
-      send(_res, status, payload) {
-        response = { status, payload }
-      },
-      readBody: async (req) => req.body,
-    },
-    get response() {
-      return response
-    },
   }
 }
 
@@ -133,92 +92,6 @@ function createAuditRoute({ method = 'GET', path = '/api/audit-log', repositorie
     },
   }
 }
-
-function createPrismaRecorder() {
-  const auditWrites = []
-  return {
-    auditWrites,
-    prisma: {
-      actionDraft: {
-        create: async ({ data }) => ({
-          ...data,
-          createdAt: new Date('2026-06-30T00:00:00.000Z'),
-          updatedAt: new Date('2026-06-30T00:00:00.000Z'),
-          validations: [],
-          auditTrail: [],
-        }),
-      },
-      auditLog: {
-        create: async ({ data }) => {
-          auditWrites.push(data)
-          return {
-            ...data,
-            createdAt: data.createdAt || new Date('2026-06-30T00:00:00.000Z'),
-          }
-        },
-        findMany: async () => auditWrites.map((item) => ({
-          ...item,
-          createdAt: item.createdAt || new Date('2026-06-30T00:00:00.000Z'),
-        })),
-      },
-    },
-  }
-}
-
-function databaseRepositories(prisma) {
-  return createDatabaseRepositoryRegistry({
-    db: createDb(),
-    env: {
-      FLOWCHAIN_PERSISTENCE_MODE: 'database',
-      DATABASE_URL: 'postgresql://user:pass@localhost:5432/flowchain',
-    },
-    prisma,
-  })
-}
-
-test('action draft save records best-effort DB audit without creating business documents', async () => {
-  const { prisma, auditWrites } = createPrismaRecorder()
-  const repositories = databaseRepositories(prisma)
-  const route = createActionDraftRoute({ repositories, body: { draft: draft() } })
-
-  assert.equal(await handleActionDraftsRoute(route.ctx), true)
-
-  assert.equal(route.response.status, 201)
-  assert.equal(route.response.payload.createsBusinessDocument, false)
-  assert.equal(auditWrites.length, 1)
-  assert.equal(auditWrites[0].action, 'draft_saved')
-  assert.equal(auditWrites[0].entityType, 'actionDraft')
-  assert.equal(auditWrites[0].entityId, 'DRAFT-AUDIT-1')
-  assert.equal(auditWrites[0].tenantId, 'tenant-audit-draft')
-  assert.equal(auditWrites[0].actorId, 'user-audit-draft')
-  assert.doesNotMatch(JSON.stringify(auditWrites), /itemIdOrSku|quantity|Bearer|DATABASE_URL|postgresql:\/\/user:pass/)
-})
-
-test('audit failure does not break action draft preview', async () => {
-  const repositories = {
-    actionDrafts: {
-      getSchema: () => ({}),
-      previewDraft: () => ({ ok: true, draft: draft() }),
-    },
-    auditLog: {
-      mode: 'database',
-      recordAuditEntry: async () => {
-        throw new Error('audit unavailable with DATABASE_URL=postgresql://user:pass@db/app')
-      },
-    },
-  }
-  const route = createActionDraftRoute({
-    repositories,
-    pathname: '/api/action-drafts/preview',
-    body: { type: 'purchase_request_draft', payload: { itemIdOrSku: 'A100', quantity: 10 } },
-  })
-
-  assert.equal(await handleActionDraftsRoute(route.ctx), true)
-
-  assert.equal(route.response.status, 200)
-  assert.equal(route.response.payload.previewOnly, true)
-  assert.doesNotMatch(JSON.stringify(route.response.payload), /postgresql:\/\/user:pass|DATABASE_URL/)
-})
 
 test('legacy mutation blocked audit omits request body and redacts secrets', async () => {
   const writes = []

@@ -16,7 +16,6 @@ test('repository registry is PostgreSQL-only', () => {
   assert.match(registry.inventoryRead.adapter, /^db-/)
   assert.match(registry.procurementRead.adapter, /^db-/)
   assert.match(registry.auditLog.adapter, /^db-/)
-  assert.match(registry.actionDrafts.adapter, /^db-/)
   assert.equal(registry.aiConversation.mode, 'transient-session-context')
 })
 

@@ -1013,20 +1013,20 @@ export function createDbProcurementReadRepository({ env = process.env, prisma } 
       const rows = [...buildProcurementDocumentLinks(snapshot), ...snapshot.documentLinks]
       return filterProcurementRows(access ? readableProcurementRows(rows, access) : rows, filters)
     },
-    listFollowups: async (filters = {}, { access = null } = {}) => {
+    listFollowups: async (filters = {}, { access = null, timeZone } = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const loaded = await loadProcurementSnapshot(client, filters)
       const snapshot = access ? readableProcurementSnapshot(loaded, access) : loaded
-      const rows = [...buildProcurementFollowups(snapshot), ...snapshot.procurementFollowups]
+      const rows = [...buildProcurementFollowups(snapshot, { timeZone }), ...snapshot.procurementFollowups]
       return filterProcurementRows(access ? readableProcurementRows(rows, access) : rows, filters)
     },
     // Counts come from what the actor may read; the open amount is hidden
     // when any amount behind it is.
-    getSummary: async (filters = {}, { access = null } = {}) => {
+    getSummary: async (filters = {}, { access = null, timeZone } = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const loaded = await loadProcurementSnapshot(client, filters)
       const snapshot = access ? readableProcurementSnapshot(loaded, access) : loaded
-      const built = buildProcurementSummary(snapshot)
+      const built = buildProcurementSummary(snapshot, { timeZone })
       const explicitFollowups = snapshot.procurementFollowups.length
       const summary = explicitFollowups ? { ...built, followupCount: built.followupCount + explicitFollowups } : built
       return access ? maskProcurementSummary(summary, access) : summary

@@ -220,7 +220,7 @@ const apiByModule: Record<string, string> = {
   settings: "/api/settings/*",
   imports: "retired legacy import APIs",
   "universal-intake": "/api/intake/*",
-  "review-actions": "/api/action-drafts",
+  "review-actions": "/api/review-first-action-workflow",
 };
 
 const routeCapability = new Map<string, string>();

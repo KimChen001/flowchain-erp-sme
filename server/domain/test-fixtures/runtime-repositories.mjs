@@ -1,9 +1,3 @@
-import { actionDraftSchema, buildActionDraftSuggestion } from '../action-draft-boundary.mjs'
-import { buildPurchaseRequestDraftPreview } from '../purchase-request-draft-preview.mjs'
-import {
-  buildRfqDraftPreview,
-  buildSupplierFollowupDraftPreview,
-} from '../rfq-and-supplier-followup-draft-preview.mjs'
 import {
   buildInventoryExceptions,
   buildInventoryItems,
@@ -39,18 +33,8 @@ function rows(value) {
 }
 
 export function createTestRepositoryRegistry(db = {}) {
-  const previewDraft = (input) => {
-    if (input?.type === 'purchase_request_draft') return buildPurchaseRequestDraftPreview(input, { db })
-    if (input?.type === 'rfq_draft') return buildRfqDraftPreview(input, { db })
-    if (input?.type === 'supplier_followup_draft') return buildSupplierFollowupDraftPreview(input, { db })
-    return buildActionDraftSuggestion(input)
-  }
   return {
     mode: 'test-postgresql-boundary',
-    actionDrafts: {
-      getSchema: () => actionDraftSchema(),
-      previewDraft,
-    },
     auditLog: {
       mode: 'database',
       adapter: 'db-audit-log-v1',
