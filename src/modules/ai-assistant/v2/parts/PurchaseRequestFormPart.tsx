@@ -465,7 +465,7 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
   const update = (key: string, patch: Partial<FormLine>) => setLines((current) => current.map((line) => line.key === key ? { ...line, ...patch } : line));
   // A date the user asked for or changed is kept; otherwise it follows the supplier's lead time.
   const needByFor = (line: FormLine, lead: number | null | undefined) =>
-    !line.needByEdited && line.row.needByDate.source !== "user_named" && lead !== null && lead !== undefined ? addCalendarDays(todayInTimeZone(copy.timezone), lead) : line.needByDate;
+    !line.needByEdited && line.row.needByDate.source !== "user_named" && lead !== null && lead !== undefined ? addCalendarDays(copy.workspaceToday || todayInTimeZone(copy.timezone), lead) : line.needByDate;
   const chooseSupplier = (line: FormLine, supplierId: string, extra: ApprovedSupplier[] = line.added) => {
     const option = supplierOptions({ ...line, added: extra }).find((supplier) => supplier.id === supplierId);
     const fresh = option?.link === "new";

@@ -1,3 +1,4 @@
+import { purchaseOrderDueDay } from '../domain/open-purchase-orders-report.mjs'
 import { maskProcurementDocuments, maskProcurementSummary, readableProcurementRows, readableProcurementSnapshot } from '../domain/procurement-read-access.mjs'
 import {
   buildProcurementDocumentLinks,
@@ -475,6 +476,10 @@ export function mapPurchaseOrder(record = {}) {
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
     eta: isoDate(record.expectedDate),
+    // The day it is due by the rule Today and the reports use: the earliest
+    // promised day of a line still to receive (design audit V-B-02). The
+    // header's expected date can sit on a line received long ago.
+    dueDay: purchaseOrderDueDay(record) || null,
     expectedDeliveryDate: isoDate(record.expectedDate),
     owner: text(record.owner),
     amount: numberFrom(record.amount, lineQuantity(record.lines, 'amount', 0)),
