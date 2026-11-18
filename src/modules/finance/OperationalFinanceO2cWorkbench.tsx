@@ -4,6 +4,9 @@ import { AlertTriangle, CheckCircle2, FilePlus2, FileText, MessageSquareWarning,
 import { Link, useLocation, useNavigate } from "react-router";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { exportRowsToCsv } from "../../lib/data-export";
+import { fetchAllListRows } from "../../lib/listExport";
+import { statusCodeLabel } from "../../i18n/statusLabels";
 import { apiErrorView, type ApiErrorView } from "../../lib/apiErrorText";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { StatusChip, TwoStepAction, shownCustomerInvoiceStatus, useFinanceStatusLabel } from "./FinanceControls";
@@ -12,7 +15,7 @@ import { useI18n } from "../../i18n/I18n";
 import { unitLabel } from "../../i18n/unitLabels";
 import { A, Card, Field, inputStyle, useConfirm } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, metricGridClass, rowActionClass } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, metricGridClass, rowActionClass } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { FormActionBar, FormHeader, FormLineCard, FormSection, focusFirstInvalid, formGridClass, useFormCopy } from "../../components/ui/formLayout";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
@@ -532,9 +535,28 @@ function NextHint({ to, steps }: { to: string; steps: string[] }) {
 }
 
 function InvoiceList() {
-  const { t, locale, timezone, workspaceToday } = useI18n();
+  const { t, locale, language, timezone, workspaceToday } = useI18n();
   const tr = useListCopyO2c();
   const { data, error, load } = useFinanceList<Invoice>("/api/finance/customer-invoices");
+  // Every customer invoice the filters match, page after page from the
+  // server, worded as the list shows it (design audit U-14).
+  const exportInvoices = async () => {
+    const filters = new URLSearchParams(queryString());
+    filters.delete("page");
+    const { rows: all } = await fetchAllListRows<Invoice>("/api/finance/customer-invoices", filters);
+    await exportRowsToCsv("customer-invoices-export.csv", all.map((row) => {
+      const shown = shownCustomerInvoiceStatus(row);
+      return {
+        [tr("number")]: row.invoiceNumber,
+        [tr("customer")]: row.customerName || "",
+        [tr("shipment")]: row.shipmentNumber || row.shipmentId || "",
+        [tr("dueDate")]: row.dueDate ? String(row.dueDate).slice(0, 10) : "",
+        [tr("amount")]: Number(row.totalAmount ?? 0),
+        [tr("currency")]: row.currency || "",
+        [tr("status")]: statusCodeLabel(shown, language) || shown,
+      };
+    }), timezone);
+  };
   if (error) return <Notice title={error.code}>{error.message}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const enabled =
@@ -558,7 +580,8 @@ function InvoiceList() {
         statuses={["draft", "submitted", "approved", "issued", "to_be_paid", "partially_settled", "settled", "cancelled"]}
         currencies={data.currencies || data.items.map((row) => row.currency)}
         onRefresh={load}
-        actions={(
+        actions={(<>
+          <ExportButton onClick={() => void exportInvoices()} />
           <Link
             to="/app/sales/invoices/new"
             aria-disabled={!enabled}
@@ -568,7 +591,7 @@ function InvoiceList() {
             <FilePlus2 size={13} />
             {t("finance.newCustomerInvoice")}
           </Link>
-        )}
+        </>)}
       />
       {!enabled && <Notice>{t("finance.capabilityDisabled")}</Notice>}
       <ListCard title={tr("invoiceList")} total={data.total} shown={data.items.length} testId="customer-invoice-list">
