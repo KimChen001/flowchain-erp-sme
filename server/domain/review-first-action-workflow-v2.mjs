@@ -16,14 +16,17 @@ import { buildSupplierEntityIndex } from './ai-supplier-operational-query.mjs'
 export const FORBIDDEN_REVIEW_WORKFLOW_ACTION_PATTERN = /自动批准|自动下单|正式创建\s*PO|下发\s*PO|发送\s*PO|发布\s*RFQ|邀请供应商|发送邮件|提交收货|Receive Submit|Submit Receipt|库存过账|Post Invoice|Approve Invoice|Mark as Paid|Payment execution|Export to Accounting|付款|会计过账|修改供应商主数据|更新银行账户|发布风险评级|自动黑名单|自动暂停供应商|自动修复|自动提交导入|自动覆盖数据|自动写入数据库|批量删除|清空数据/i
 export const FORBIDDEN_REVIEW_WORKFLOW_TECHNICAL_PATTERN = /JSON|dry-run|tenantId|userId|datasetId|writesDb|writesFiles|DB|tool_result|provider|fallback|deterministic|mock|fake|demo|UAT|sample data|demo data|response_card|entityType|documentType|raw enum/i
 
-const STATUS = {
-  preview: '草稿预览',
-  waiting: '等待人工复核',
-  info: '需要补充信息',
-  returned: '已退回复核',
-  cancelled: '已取消',
-  handled: '已标记人工处理',
-}
+// A draft's status is a stable code; the page shows it in the interface
+// language (src/components/actions/reviewQueueCopy.ts, design audit L6-20).
+export const REVIEW_DRAFT_STATUSES = Object.freeze({
+  preview: 'draft_preview',
+  waiting: 'awaiting_review',
+  info: 'needs_information',
+  returned: 'returned',
+  cancelled: 'cancelled',
+  handled: 'handled_manually',
+})
+const STATUS = REVIEW_DRAFT_STATUSES
 
 const DRAFT_TYPE_LABELS = {
   internal_review_note: '内部复核备注',
@@ -184,7 +187,6 @@ function normalizeEvidence(items = [], fallback = '') {
 function reviewActionsFor(status = STATUS.preview) {
   const transitions = allowedTransitionsFor(status)
   return transitions.map((transition) => ({
-    label: transition.to,
     transitionTo: transition.to,
     reasonRequired: transition.reasonRequired,
     previewOnly: true,
@@ -729,7 +731,7 @@ export function buildReviewFirstActionWorkflowV2(data = {}, options = {}) {
       highPriorityCount: drafts.filter((draft) => priorityRank(draft.priority) >= 4).length,
       dataLimitedCount: drafts.filter((draft) => draft.dataLimitations.length).length,
       sourceCount: buildSourceSummary(drafts).filter((source) => source.draftCount > 0).length,
-      overallStatusLabel: drafts.some((draft) => draft.status === STATUS.waiting) ? '等待人工复核' : drafts.length ? '草稿预览' : '需要补充信息',
+      overallStatus: drafts.some((draft) => draft.status === STATUS.waiting) ? STATUS.waiting : drafts.length ? STATUS.preview : STATUS.info,
     },
     drafts,
     sourceSummary: buildSourceSummary(drafts),

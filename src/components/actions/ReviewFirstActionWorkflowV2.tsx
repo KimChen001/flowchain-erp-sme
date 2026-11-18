@@ -5,11 +5,13 @@ import { A } from "../ui";
 import { typography } from "../ui/typography";
 import type { CanonicalFocusTarget } from "../../lib/evidenceLinks";
 import { fetchReviewFirstActionWorkflowV2, type ReviewActionDraft, type ReviewActionNavigationLink, type ReviewFirstActionWorkflowV2 as ReviewFirstActionWorkflowPayload } from "../../modules/action-drafts/actionWorkflow";
+import { useI18n } from "../../i18n/I18n";
+import { reviewStatusLabel, reviewTransitionLabel } from "./reviewQueueCopy";
 
 const filterOptions = [
   { key: "all", label: "全部" },
-  { key: "waiting", label: "等待人工复核" },
-  { key: "info", label: "需要补充信息" },
+  { key: "waiting", label: "", status: "awaiting_review" },
+  { key: "info", label: "", status: "needs_information" },
   { key: "high", label: "高优先级" },
   { key: "ai_response", label: "AI" },
   { key: "control_tower", label: "风险与异常" },
@@ -39,8 +41,8 @@ function isHigh(priority = "") {
 
 function matchesFilter(draft: ReviewActionDraft, filter: string) {
   if (filter === "all") return true;
-  if (filter === "waiting") return draft.status === "等待人工复核";
-  if (filter === "info") return draft.status === "需要补充信息";
+  if (filter === "waiting") return draft.status === "awaiting_review";
+  if (filter === "info") return draft.status === "needs_information";
   if (filter === "high") return isHigh(draft.priority);
   if (filter === "limited") return draft.dataLimitations.length > 0 || draft.missingInformation.length > 0;
   if (filter === "p2p") return ["purchase_request", "rfq_sourcing", "po_receiving_invoice"].includes(draft.sourceCategory);
@@ -52,15 +54,6 @@ function focusFromLink(link: ReviewActionNavigationLink): CanonicalFocusTarget {
     entityType: link.entityType || "business_object",
     entityId: link.entityId || "",
   };
-}
-
-function transitionButtonLabel(to: string) {
-  if (to === "等待人工复核") return "标记进入人工复核";
-  if (to === "需要补充信息") return "要求补充信息";
-  if (to === "已退回复核") return "退回复核";
-  if (to === "已取消") return "取消草稿";
-  if (to === "已标记人工处理") return "标记人工处理";
-  return to;
 }
 
 function Section({ title, children, testId }: { title: string; children: React.ReactNode; testId?: string }) {
@@ -89,6 +82,8 @@ export function ReviewFirstActionWorkflowV2({
 }: {
   onNavigate?: (moduleId: string, focusTarget?: CanonicalFocusTarget | null, options?: Record<string, unknown>) => void;
 }) {
+  const { language } = useI18n();
+  const statusLabel = (code: string) => reviewStatusLabel(code, language);
   const [workflow, setWorkflow] = useState<ReviewFirstActionWorkflowPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -157,14 +152,11 @@ export function ReviewFirstActionWorkflowV2({
 
   const summary = [
     ["草稿总数", workflow.summary.totalDraftCount],
-    ["等待人工复核", drafts.filter((draft) => draft.status === "等待人工复核").length],
-    ["需要补充信息", drafts.filter((draft) => draft.status === "需要补充信息").length],
-    ["已取消", drafts.filter((draft) => draft.status === "已取消").length],
-    ["已标记人工处理", drafts.filter((draft) => draft.status === "已标记人工处理").length],
+    ...["awaiting_review", "needs_information", "cancelled", "handled_manually"].map((code) => [statusLabel(code), drafts.filter((draft) => draft.status === code).length]),
     ["高优先级", drafts.filter((draft) => isHigh(draft.priority)).length],
     ["数据限制事项", workflow.summary.dataLimitedCount],
     ["来源数量", workflow.summary.sourceCount],
-    ["当前状态", workflow.summary.overallStatusLabel],
+    ["当前状态", statusLabel(workflow.summary.overallStatus)],
   ];
 
   return (
@@ -233,7 +225,7 @@ export function ReviewFirstActionWorkflowV2({
             className="h-8 rounded-md px-3 text-[12px] font-semibold"
             style={filter === item.key ? { background: A.blue, color: A.white } : { background: A.white, color: A.gray1, border: `1px solid ${A.border}` }}
           >
-            {item.label}
+            {item.status ? statusLabel(item.status) : item.label}
           </button>
         ))}
       </div>
@@ -258,11 +250,11 @@ export function ReviewFirstActionWorkflowV2({
                     <td className="px-2 py-3" style={{ color: A.sub }}>{draft.draftTypeLabel}</td>
                     <td className="px-2 py-3" style={{ color: A.sub }}>{sourceLabels[draft.sourceCategory] || draft.sourceLabel}</td>
                     <td className="px-2 py-3" style={{ color: A.sub }}>{draft.targetEntityLabel}</td>
-                    <td className="px-2 py-3"><span className="rounded-md px-2 py-1" style={{ background: "#eef4ff", color: A.blue }}>{draft.status}</span></td>
+                    <td className="px-2 py-3"><span className="rounded-md px-2 py-1" style={{ background: "#eef4ff", color: A.blue }}>{statusLabel(draft.status)}</span></td>
                     <td className="px-2 py-3" style={{ color: A.sub }}>{draft.owner}</td>
                     <td className="px-2 py-3" style={{ color: A.sub }}>{draft.dueLabel || draft.createdAtLabel}</td>
                     <td className="px-2 py-3 max-w-48" style={{ color: A.sub }}>{draft.keyEvidence[0] || "证据待复核"}</td>
-                    <td className="px-2 py-3" style={{ color: A.sub }}>{draft.reviewActions[0]?.label || "人工复核"}</td>
+                    <td className="px-2 py-3" style={{ color: A.sub }}>{draft.reviewActions[0] ? statusLabel(draft.reviewActions[0].transitionTo) : "人工复核"}</td>
                     <td className="px-2 py-3">
                       <button type="button" onClick={() => { setSelectedId(draft.id); setValidation(""); setReason(""); }} className="rounded-md px-2 py-1 font-semibold" style={{ background: A.blue, color: A.white }}>
                         查看
@@ -283,7 +275,7 @@ export function ReviewFirstActionWorkflowV2({
                   <div>
                     <div className={typography.metadata} style={{ color: A.gray2 }}>生命周期状态</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <span className="rounded-md px-2 py-1 text-[12px] font-semibold" style={{ background: "#eef4ff", color: A.blue }}>{selectedDraft.status}</span>
+                      <span className="rounded-md px-2 py-1 text-[12px] font-semibold" style={{ background: "#eef4ff", color: A.blue }}>{statusLabel(selectedDraft.status)}</span>
                       <span className="text-[12px]" style={{ color: A.sub }}>{selectedDraft.draftNo} · {selectedDraft.draftTypeLabel}</span>
                     </div>
                   </div>
@@ -314,7 +306,7 @@ export function ReviewFirstActionWorkflowV2({
               <Section title="复核清单"><ListBlock items={selectedDraft.reviewChecklist} /></Section>
               <Section title="缺失信息"><ListBlock items={selectedDraft.missingInformation} empty="当前未标记缺失信息" /></Section>
               <Section title="建议下一步">
-                <ListBlock items={selectedDraft.reviewActions.map((action) => action.label)} />
+                <ListBlock items={selectedDraft.reviewActions.map((action) => statusLabel(action.transitionTo))} />
               </Section>
 
               <Section title="可点击跳转">
@@ -347,7 +339,7 @@ export function ReviewFirstActionWorkflowV2({
                         className="rounded-md px-3 py-1.5 text-[12px] font-semibold"
                         style={{ background: transition.reasonRequired ? "#fff8f0" : "#eef4ff", color: transition.reasonRequired ? A.orange : A.blue }}
                       >
-                        {transitionButtonLabel(transition.to)}
+                        {reviewTransitionLabel(transition.to, language)}
                       </button>
                     )) : (
                       <div className="text-[12px]" style={{ color: A.gray2 }}>当前状态不允许继续流转</div>
@@ -366,7 +358,7 @@ export function ReviewFirstActionWorkflowV2({
               </Section>
 
               <Section title="需要原因的流转">
-                <ListBlock items={workflow.lifecyclePolicy.reasonRequiredTransitions} />
+                <ListBlock items={workflow.lifecyclePolicy.reasonRequiredTransitions.map(statusLabel)} />
               </Section>
 
               <Section title="边界说明">
