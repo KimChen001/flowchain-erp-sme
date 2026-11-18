@@ -652,7 +652,9 @@ test('reorder_list carries the suggested reorder point beside the recorded one, 
   const row = (await runAiReadTool('reorder_list', { sku: 'LDM-001' }, { facts, context })).result.rows[0]
   assert.deepEqual([row.reorderPoint, row.suggestedReorderPoint], [200, 285])
   const { basis, ...suggestion } = row.reorderPointSuggestion
-  assert.deepEqual(suggestion, { recordedBelow: true, coverDays: 19, leadTimeDays: 12, reviewDays: 7, shipmentDays: 90, reason: null })
+  // 200 is within 30% of 285 (199.5 or more), so it is not marked below the
+  // suggestion (design audit L7-21).
+  assert.deepEqual(suggestion, { recordedBelow: false, coverDays: 19, leadTimeDays: 12, reviewDays: 7, shipmentDays: 90, reason: null })
   assert.match(basis, /next 19 days \(lead time 12 \+ 7 review days\) in 5 of 6 past 19-day stretches/)
   // The rule's own figures are as without the suggestion.
   assert.equal(row.shortfall, 17)
@@ -925,5 +927,34 @@ test('the reorder list and suggest_purchase_lines give the same position and qua
     assert.equal(listed.requestQuantity, suggested.suggestedQuantity.value)
     assert.equal(suggested.suggestedQuantity.value, minimumOrderQuantity ? 100 : 52)
     assert.deepEqual(listed.requests, ['PR-001'])
+  }
+})
+
+// Acceptance (design audit C3): with recorded demand both order up to the same
+// level. LDM-001 ships 10 a day: the assumed level is 285 + 70 = 355, so from
+// the position of 233 both ask for 122; with the item's own level of 400 in
+// lots of 25, both ask for 175.
+test('the reorder list and suggest_purchase_lines order up to the same level', async () => {
+  for (const own of [null, { orderUpToLevel: 400, lotSize: 25 }]) {
+    const scenario = aiSkillScenario({ supplierLinks: [link({ minimumOrderQuantity: 100 })] })
+    highReorderPoint(scenario.data)
+    shipping(scenario.data)
+    if (own) Object.assign(scenario.data.items[0], own)
+    everyWarehouse(scenario.ctx.aiSkillActor)
+    const items = scenario.data.items.map((row) => ({ ...row, status: 'active' }))
+    const suppliers = scenario.data.suppliers.map((row) => ({ id: row.id, code: row.supplierCode, name: row.name, status: 'active' }))
+    const purchaseRequestLines = scenario.data.purchaseRequests.flatMap((request) => request.lines.map((line) => ({ ...line, request: { id: request.id, number: request.pr, status: request.status } })))
+    const shipmentLines = scenario.data.shipmentLines.map((line) => ({ itemId: line.itemId, unit: line.unit, quantity: line.postedQuantity, postedAt: line.shipment.postedAt.toISOString() }))
+    const reorderList = { read: async (input) => buildReorderList({ allocationRows: input.allocationRows, items, shipmentLines, supplierLinks: [link({ minimumOrderQuantity: 100 })], suppliers, purchaseRequestLines, today: input.today, timeZone: input.timeZone, showPurchaseOrders: input.showPurchaseOrders }) }
+    const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+    const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
+    const listed = (await runAiReadTool('reorder_list', { sku: 'LDM-001' }, { facts, context })).result.rows[0]
+    const suggested = (await runAiReadTool('suggest_purchase_lines', { skus: ['LDM-001'] }, { facts, context })).result.rows[0]
+    const label = own ? 'recorded' : 'assumed'
+    assert.deepEqual([listed.position, listed.orderUpTo, listed.orderUpToSource], [233, own ? 400 : 355, label], label)
+    assert.deepEqual(suggested.orderUpTo, { level: listed.orderUpTo, source: label })
+    assert.equal(listed.requestQuantity, suggested.suggestedQuantity.value)
+    assert.equal(suggested.suggestedQuantity.value, own ? 175 : 122)
+    assert.equal(suggested.lotSize, own ? 25 : null)
   }
 })

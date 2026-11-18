@@ -702,6 +702,11 @@ model Item {
   status              String   @default("active")
   safetyStock         Decimal? @db.Decimal(18, 4)
   reorderPoint        Decimal? @db.Decimal(18, 4)
+  // The (s, S) rule's S and the multiple an order is rounded up to (design
+  // audit C3). Without an order-up-to level the app assumes the reorder point
+  // plus seven days of average demand.
+  orderUpToLevel      Decimal? @db.Decimal(18, 4)
+  lotSize             Decimal? @db.Decimal(18, 4)
   metadata            Json?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt

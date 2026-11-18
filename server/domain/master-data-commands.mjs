@@ -71,6 +71,7 @@ const ITEM_FLAGS = ['purchasable', 'inventoryItem', 'batchManaged', 'serialManag
 
 // The field checks of an item write that need no database, in the order the
 // form shows them. old is the stored item when editing, otherwise null.
+const storedNumber = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
 export function itemInputIssues(input = {}, old = null) {
   const issues = []
   const issue = (field, code, message) => issues.push({ field, code, message })
@@ -94,7 +95,18 @@ export function itemInputIssues(input = {}, old = null) {
   const reorderPoint = numberField(input, 'reorderPoint', issues, { label: 'Reorder point' })
   const minimumOrderQuantity = numberField(input, 'minimumOrderQuantity', issues, { positive: true, label: 'Minimum order quantity' })
   const leadTimeDays = numberField(input, 'purchaseLeadTimeDays', issues, { integer: true, label: 'Lead time' })
-  return { issues, values: { sku, name, status, unit, unitGiven, category, safetyStock, reorderPoint, minimumOrderQuantity, leadTimeDays } }
+  // The (s, S) rule's order-up-to level and the lot an order is rounded up to
+  // (design audit C3). A level sent is checked against the reorder point it
+  // will sit with: at or below it, it would never be ordered up to. An empty
+  // field is none (the reorder list then assumes a week of demand above the
+  // reorder point).
+  const orderUpToLevel = numberField(input, 'orderUpToLevel', issues, { positive: true, label: 'Order-up-to level' })
+  const lotSize = numberField(input, 'lotSize', issues, { positive: true, label: 'Lot size' })
+  const pointAfter = reorderPoint !== undefined ? reorderPoint : storedNumber(old?.reorderPoint)
+  if (orderUpToLevel !== undefined && orderUpToLevel !== null && pointAfter !== null && pointAfter > 0 && orderUpToLevel <= pointAfter) {
+    issue('orderUpToLevel', 'ORDER_UP_TO_NOT_ABOVE_REORDER_POINT', 'The order-up-to level must be above the reorder point.')
+  }
+  return { issues, values: { sku, name, status, unit, unitGiven, category, safetyStock, reorderPoint, minimumOrderQuantity, leadTimeDays, orderUpToLevel, lotSize } }
 }
 
 // What holds an item's stock unit, or null. The unit gives every stock
@@ -126,7 +138,7 @@ export async function saveItemMaster(prisma, id, input = {}, actorId, scope) {
     const currentVersion = Number(previous.version || 1)
     if (old && Number(input.expectedVersion) !== currentVersion) throw fail(409, 'VERSION_CONFLICT', 'This item changed. Reopen it and try again.')
     const { issues, values } = itemInputIssues(input, old)
-    const { sku, name, status, unit, unitGiven, category, safetyStock, reorderPoint, minimumOrderQuantity: moq, leadTimeDays: leadTime } = values
+    const { sku, name, status, unit, unitGiven, category, safetyStock, reorderPoint, minimumOrderQuantity: moq, leadTimeDays: leadTime, orderUpToLevel, lotSize } = values
     const issue = (field, code, message) => issues.push({ field, code, message })
 
     const next = { ...previous }
@@ -171,6 +183,8 @@ export async function saveItemMaster(prisma, id, input = {}, actorId, scope) {
       ...(!old || unitGiven ? { unit } : {}),
       ...(safetyStock !== undefined ? { safetyStock: safetyStock === null ? null : String(safetyStock) } : {}),
       ...(reorderPoint !== undefined ? { reorderPoint: reorderPoint === null ? null : String(reorderPoint) } : {}),
+      ...(orderUpToLevel !== undefined ? { orderUpToLevel: orderUpToLevel === null ? null : String(orderUpToLevel) } : {}),
+      ...(lotSize !== undefined ? { lotSize: lotSize === null ? null : String(lotSize) } : {}),
     }
     const saved = old
       ? await tx.item.update({ where: { id: old.id }, data })

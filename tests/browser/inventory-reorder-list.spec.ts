@@ -202,6 +202,30 @@ test("a shortfall raised to the supplier's minimum hands over the minimum and th
   expect(plain.searchParams.get("shortfall")).toBeNull();
 });
 
+test("the request orders up to a level, an assumed level says so, and a search narrows the rows by SKU or name", async ({ page }) => {
+  // RL-C ships 9 on 8 days (0.8 a day): it orders up to its reorder point plus
+  // 7 days of demand, 20 + 5.6, from 5: 21 (design audit C3). RL-A is not due.
+  const lines = [...shipmentLines, ...shipments("ITEM-C", 8, 9)];
+  await open(page, "en-US", attachReorderPointSuggestions(buildReorderList({ ...listInput, shipmentLines: lines }), lines));
+  const c = page.getByTestId("reorder-row-RL-C");
+  await expect(c.getByTestId("reorder-order-up-to-RL-C")).toContainText("Orders up to 25.6 pcs (assumed: reorder point + 7 days of demand)");
+  const href = new URL((await page.getByTestId("reorder-create-request-RL-C").getAttribute("href"))!, "http://local");
+  expect(href.searchParams.get("quantity")).toBe("21");
+  await expect(page.getByTestId("reorder-order-up-to-RL-A")).toHaveCount(0);
+  // Search by name, then by SKU (design audit L3-24).
+  const rows = page.getByTestId("reorder-list-page").locator("tbody tr");
+  await page.getByTestId("reorder-list-search").fill("seal");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toHaveAttribute("data-testid", "reorder-row-RL-C");
+  await page.getByTestId("reorder-list-search").fill("rl-d");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toHaveAttribute("data-testid", "reorder-row-RL-D");
+  await page.getByTestId("reorder-list-search").fill("nothing like this");
+  await expect(page.getByText("No items match this filter.")).toBeVisible();
+  await page.getByTestId("reorder-list-search").fill("");
+  await expect(rows).toHaveCount(3);
+});
+
 test("Create purchase request opens the prefilled form; nothing is submitted", async ({ page }) => {
   await open(page);
   const link = page.getByTestId("reorder-create-request-RL-C");

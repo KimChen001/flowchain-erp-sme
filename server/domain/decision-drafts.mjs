@@ -73,6 +73,9 @@ function reorderDraft(row, { reorderRows, openRequests }) {
     shortfall: quantity(entry.shortfall),
     position: quantity(entry.position),
     reorderPoint: quantity(entry.reorderPoint),
+    // The level the quantity orders up to, recorded on the item or assumed
+    // (reorder point plus a week of demand), as the reorder list shows it.
+    orderUpTo: entry.orderUpTo ? { level: quantity(entry.orderUpTo.level), source: text(entry.orderUpTo.source) || null } : null,
     orderByDate: entry.orderByDate || null,
     supplier,
     openRequests: openRequests.get(text(entry.itemId)) || [],

@@ -121,6 +121,8 @@ export function mapItem(record = {}) {
       category: text(record.category || meta.category) || null,
       safetyStock: recordedNumberOf(record.safetyStock ?? meta.safetyStock),
       reorderPoint: recordedNumberOf(record.reorderPoint ?? meta.reorderPoint),
+      orderUpToLevel: recordedNumberOf(record.orderUpToLevel),
+      lotSize: recordedNumberOf(record.lotSize),
       minimumOrderQuantity: recordedNumberOf(meta.minimumOrderQuantity ?? meta.moq),
       purchaseLeadTimeDays: recordedNumberOf(meta.purchaseLeadTimeDays ?? meta.leadTimeDays ?? meta.leadTime),
       purchaseUnit: text(meta.purchaseUnit) || null,
@@ -140,6 +142,10 @@ export function mapItem(record = {}) {
     // Item.safetyStock and Item.reorderPoint are columns; metadata is the legacy fallback.
     safetyStock: numberFrom(record.safetyStock ?? meta.safetyStock, 0),
     reorderPoint: numberFrom(record.reorderPoint ?? meta.reorderPoint, 0),
+    // The (s, S) level and lot size (design audit C3): null when none is
+    // recorded, never a made-up figure.
+    orderUpToLevel: recordedNumberOf(record.orderUpToLevel),
+    lotSize: recordedNumberOf(record.lotSize),
     taxCodeId: text(meta.taxCodeId),
     barcode: text(meta.barcode),
     manufacturerPartNumber: text(meta.manufacturerPartNumber),

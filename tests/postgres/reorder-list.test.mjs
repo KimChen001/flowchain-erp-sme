@@ -119,6 +119,14 @@ test('the reorder list ranks items by order-by day from recorded data over every
     assert.equal(c.demand.shipmentDays, 0)
     assert.deepEqual(c.purchaseRequest, { itemId: 'RL-ITEM-C', supplierId: 'RL-SUP', quantity: 15, raisedToMinimum: false })
     assert.deepEqual([c.supplier.leadTimeDays, c.supplier.minimumOrderQuantity], [null, null])
+    // No shipments to assume a level from: it orders up to its reorder point.
+    assert.deepEqual(c.orderUpTo, { level: 20, source: 'reorder_point', reviewDays: 7 })
+    // The item's own order-up-to level and lot size, read from its columns
+    // (design audit C3): up to 40 from 5 is 35, in lots of 12: 36.
+    await prisma.item.update({ where: { id: 'RL-ITEM-C' }, data: { orderUpToLevel: '40', lotSize: '12' } })
+    const own = (await call('admin')).body.rows.find((row) => row.sku === 'RL-C')
+    assert.deepEqual([own.orderUpTo, own.lotSize, own.purchaseRequest.quantity], [{ level: 40, source: 'recorded', reviewDays: 7 }, 12, 36])
+    await prisma.item.update({ where: { id: 'RL-ITEM-C' }, data: { orderUpToLevel: null, lotSize: null } })
     // The suggested reorder point beside the recorded one. RL-A shipped 9 on 8
     // days in a row; a stretch is 10 days' lead time + 7 = 17 days. 66 of the
     // 90 circular stretches hold none of those days, so the 75th smallest
@@ -128,7 +136,11 @@ test('the reorder list ranks items by order-by day from recorded data over every
     // 201 items without a reorder point: the first 50 by SKU are named.
     assert.equal(admin.body.noReorderPoint.count, 201)
     assert.equal(admin.body.noReorderPoint.items.length, 50)
-    assert.deepEqual(admin.body.noReorderPoint.items[0], { itemId: 'RL-ITEM-B', sku: 'RL-B', itemName: 'Gasket' })
+    // Each with its unit, lead time and a suggested reorder point to set from
+    // the list (design audit L3-09); RL-B has no shipments to suggest from.
+    const { reorderPointSuggestion: bSuggestion, ...b } = admin.body.noReorderPoint.items[0]
+    assert.deepEqual(b, { itemId: 'RL-ITEM-B', sku: 'RL-B', itemName: 'Gasket', unit: 'pcs', leadTimeDays: null })
+    assert.deepEqual([bSuggestion.suggestedReorderPoint, bSuggestion.reason], [null, 'not_enough_history'])
     assert.ok(admin.body.dataLimitations.includes('transfers_not_considered'))
     // The read context's item list was cut at 200; the reorder list reads its
     // own items, so that is not reported as a gap in the list.

@@ -116,8 +116,11 @@ export function suggestReorderPoint({ lines = [], stockUnit = '', leadTimeDays =
 // The reorder list (buildReorderList's result) with a suggestion on each row,
 // from the shipment lines the list was built from ({ itemId, unit, quantity,
 // postedAt }) and the row's preferred supplier lead time. recordedBelow: the
-// recorded reorder point is below the suggestion. Nothing else on the row
-// changes.
+// recorded reorder point is more than SUGGESTION_GAP below the suggestion; a
+// smaller difference is not worth a mark on every row (design audit L7-21).
+// Nothing else on the row changes. Items without a reorder point get one too
+// (L3-09), so a person can set it from the list.
+export const SUGGESTION_GAP = 0.3
 export function attachReorderPointSuggestions(list, shipmentLines = []) {
   const linesByItem = new Map()
   for (const line of rows(shipmentLines)) {
@@ -125,12 +128,14 @@ export function attachReorderPointSuggestions(list, shipmentLines = []) {
     if (!linesByItem.has(key)) linesByItem.set(key, [])
     linesByItem.get(key).push(line)
   }
+  const suggest = (entry) => suggestReorderPoint({ lines: linesByItem.get(text(entry.itemId)), stockUnit: entry.unit || '', leadTimeDays: entry.leadTimeDays ?? entry.supplier?.leadTimeDays ?? null, today: list.today, timeZone: list.timeZone })
   return {
     ...list,
     rows: rows(list?.rows).map((row) => {
-      const suggestion = suggestReorderPoint({ lines: linesByItem.get(text(row.itemId)), stockUnit: row.unit, leadTimeDays: row.leadTimeDays ?? row.supplier?.leadTimeDays ?? null, today: list.today, timeZone: list.timeZone })
-      const recordedBelow = suggestion.suggestedReorderPoint !== null && Number(row.reorderPoint) < suggestion.suggestedReorderPoint
+      const suggestion = suggest(row)
+      const recordedBelow = suggestion.suggestedReorderPoint !== null && Number(row.reorderPoint) < suggestion.suggestedReorderPoint * (1 - SUGGESTION_GAP)
       return { ...row, reorderPointSuggestion: { ...suggestion, recordedBelow } }
     }),
+    ...(list?.noReorderPoint ? { noReorderPoint: { ...list.noReorderPoint, items: rows(list.noReorderPoint.items).map((item) => ({ ...item, reorderPointSuggestion: { ...suggest(item), recordedBelow: false } })) } } : {}),
   }
 }

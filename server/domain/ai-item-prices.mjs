@@ -45,7 +45,7 @@ function approvedSourcesOf(item, records, suppliersById) {
 // warehouse. One read in the user's workspace.
 export async function storedItems({ prisma, tenantId }, itemIds) {
   if (!itemIds.length) return new Map()
-  const items = await prisma.item.findMany({ where: { tenantId, id: { in: itemIds } }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, metadata: true, status: true, reorderPoint: true } })
+  const items = await prisma.item.findMany({ where: { tenantId, id: { in: itemIds } }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, metadata: true, status: true, reorderPoint: true, orderUpToLevel: true, lotSize: true } })
   return new Map(array(items).map((row) => [text(row.id), row]))
 }
 

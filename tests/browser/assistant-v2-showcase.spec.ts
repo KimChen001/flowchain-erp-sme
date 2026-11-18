@@ -163,8 +163,12 @@ async function runS4(page: Page, session: Session, panel: Locator, requestsBefor
   const sensor = rows.filter({ hasText: "TST-002" });
   await sensor.getByTestId("ai-v2-pr-tick").check();
   await expect(sensor).toHaveAttribute("data-checked", "true");
-  // The draft PO-028 (4) counts in the position since design audit C2: 1735 - 4.
-  await expect(sensor.locator('[data-field="quantity"] input')).toHaveValue("1731");
+  // "This week" says when, not a period to cover, so the reorder point rule
+  // sizes the line. Design audit C2 counts the draft PO-028 (4) in the
+  // position (1735 - 4 = 1731 to the reorder point); C3 orders up to the
+  // assumed level, the reorder point plus 7 days of TST-002's demand (70.x),
+  // so the gap rounds up to 1731 + 71 = 1802, above Acme's minimum of 50.
+  await expect(sensor.locator('[data-field="quantity"] input')).toHaveValue("1802");
   await expect(sensor.locator('[data-field="needBy"]')).toContainText("Lead time 14 days");
   const create = form.getByTestId("ai-v2-pr-create");
   await expect(create).toHaveText("Create draft request (1 line)");

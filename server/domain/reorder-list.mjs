@@ -1,5 +1,5 @@
 import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
-import { OPEN_PURCHASE_REQUEST_STATUSES, inventoryPosition, requestLineCountsFor, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
+import { OPEN_PURCHASE_REQUEST_STATUSES, inventoryPosition, orderUpToLevel, requestLineCountsFor, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
 import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay } from './tenant-calendar-day.mjs'
 
 // The reorder list: the items to order, ranked by the day each one's stock
@@ -34,10 +34,20 @@ import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay } from './tenant-calendar-d
 //                    when there were at least 8 shipment days.
 //   order-by day     today + floor((position - reorder point) / daily demand)
 //                    days, never before today; at or below the reorder point it
-//                    is today ("order now"). Without daily demand an item is
-//                    listed only when it is at or below its reorder point.
-//   request quantity the shared rule's quantity: the shortfall rounded up,
-//                    raised to the supplier's minimum order.
+//                    is today. Without daily demand an item is listed only when
+//                    it is at or below its reorder point.
+//   order-up-to      the (s, S) rule's level (design audit C3): the item's
+//                    recorded order-up-to level, else assumed to be the reorder
+//                    point plus 7 days of average daily demand, else the
+//                    reorder point; marked recorded or assumed.
+//   order now        an order is due today (at or below the reorder point, or
+//                    an order-by day of today) and the shared rule has a
+//                    quantity for it: the level less the position, rounded up
+//                    to the item's lot size and raised to the supplier's
+//                    minimum. Ordering it lifts the position to the level, so
+//                    the row leaves "order now" (V-A-01), and a row due today
+//                    always has a quantity (W-02). Due today with nothing to
+//                    order (a recorded level already reached) is due tomorrow.
 //   lead time, MOQ   the preferred supplier link's, else the item's own when
 //                    one is recorded there (more than 0), marked as the item's
 //                    (design audit L3-08).
@@ -157,6 +167,22 @@ export function orderByDay({ positionUnits, reorderPointUnits, shippedUnits, tod
   return { orderByDate: addCalendarDays(today, days), orderNow: false, daysUntilOrderBy: days }
 }
 
+// The (s, S) sizing of one item with a recorded reorder point, shared by the
+// reorder list and the assistant's suggest_purchase_lines so both give the
+// same level, quantity and due day for the same records (design audit C3).
+// demand as dailyDemand gives it (null: none read); position and stock as
+// inventoryPosition gives them; minimum the supplier's, in the stock unit.
+// dated: orderByDay's answer (null: above the point with no demand to date
+// it by); level: orderUpToLevel's; sized: suggestPurchaseQuantity's.
+export function reorderSizing({ item, reorderPoint, demand, position, stock, minimum, today }) {
+  const dated = orderByDay({ positionUnits: toUnits(position), reorderPointUnits: toUnits(reorderPoint), shippedUnits: demand?.shippedUnits ?? null, today })
+  const level = orderUpToLevel({ reorderPoint, recorded: quantity(item?.orderUpToLevel), averageDailyDemand: demand?.averageDailyDemand ?? null })
+  const lotSize = quantity(item?.lotSize) > 0 ? quantity(item.lotSize) : null
+  const dueToday = Boolean(dated) && !dated.orderNow && dated.daysUntilOrderBy === 0
+  const sized = suggestPurchaseQuantity({ reorderPoint, orderUpTo: level.level, lotSize, position, stock, dueToday, minimum })
+  return { dated, level, lotSize, sized }
+}
+
 // The preferred source of an item: the active, approved item-supplier link
 // marked preferred, else the one for the item's preferred supplier, with an
 // active supplier. Lead time and minimum order quantity only when recorded on
@@ -264,8 +290,19 @@ function judgeItem({ item, allocation, demand, reorderPoint, stockUnit, today, s
   const incomingUnits = lines.reduce((sum, line) => sum + toUnits(Number(line.remaining)), 0)
   const parts = inventoryPosition({ onHand, reserved, incoming: fromUnits(incomingUnits), pendingOrders: pending, openRequests: requests.quantity, backorders })
   const positionUnits = toUnits(parts.position)
-  const result = orderByDay({ positionUnits, reorderPointUnits, shippedUnits: demand.shippedUnits, today })
-  if (!result) return { aboveReorderPointWithoutHistory: true }
+  const { dated, level, lotSize, sized } = reorderSizing({ item, reorderPoint, demand, position: parts.position, stock: parts.stock, minimum: requestMinimumOf(item, supplier, stockUnit), today })
+  if (!dated) return { aboveReorderPointWithoutHistory: true }
+  const ordering = sized.quantity.value !== null
+  // At the reorder point with too little history to assume a level above it:
+  // the level is the point, nothing to order, nothing to date it by. Not
+  // listed, counted with the items above the point without history.
+  if (!ordering && dated.orderNow && level.source === 'reorder_point') return { aboveReorderPointWithoutHistory: true }
+  // Due today, nothing to order: due tomorrow, so "today" always has a quantity.
+  const result = ordering
+    ? { orderByDate: today, orderNow: true, daysUntilOrderBy: 0 }
+    : dated.daysUntilOrderBy === 0
+      ? { orderByDate: addCalendarDays(today, 1), orderNow: false, daysUntilOrderBy: 1 }
+      : { ...dated, orderNow: false }
   const late = (line) => Boolean(line.dueDay) && line.dueDay < today
   const flags = [
     ...rows(allocation.incomingExcluded).map((line) => ({ code: 'po_line_other_unit', orderNumber: poRef(line), unit: text(line.unit) })),
@@ -284,13 +321,11 @@ function judgeItem({ item, allocation, demand, reorderPoint, stockUnit, today, s
   const purchaseUnit = purchaseUnitOf(item, stockUnit)
   const purchaseUnitDiffers = !sameUnit(purchaseUnit, stockUnit)
   if (purchaseUnitDiffers) flags.push({ code: 'purchase_unit_differs', unit: purchaseUnit })
-  // A request below the supplier's minimum order would be refused or rounded
-  // up by the supplier, so the request asks for at least the minimum: the
-  // shared rule's quantity, as the assistant suggests it. The shortfall itself
-  // is shown as computed.
-  const minimum = requestMinimumOf(item, supplier, stockUnit)
-  const sized = suggestPurchaseQuantity({ reorderPoint, position: parts.position, stock: parts.stock, minimum })
-  const requestQuantity = shortfall > 0 && !purchaseUnitDiffers ? sized.quantity.value : null
+  // The request asks for the shared rule's quantity, as the assistant
+  // suggests it: up to the order-up-to level, in whole lots, at least the
+  // supplier's minimum. The shortfall to the reorder point is shown as
+  // computed.
+  const requestQuantity = ordering && !purchaseUnitDiffers ? sized.quantity.value : null
   return {
     row: {
       ...base,
@@ -313,6 +348,11 @@ function judgeItem({ item, allocation, demand, reorderPoint, stockUnit, today, s
       backorders,
       position,
       reorderPoint,
+      // The level the request orders up to, and where it comes from: the
+      // item's (recorded) or the app's default (assumed: reorder point plus a
+      // week of demand), or the reorder point without demand to assume from.
+      orderUpTo: { level: level.level, source: level.source, reviewDays: 7 },
+      lotSize,
       shortfall,
       demand: {
         averageDailyDemand: demand.averageDailyDemand,
@@ -379,7 +419,11 @@ export function buildReorderList({ allocationRows = [], items = [], shipmentLine
     const reorderPoint = recordedReorderPoint(item)
     if (reorderPoint === null) {
       noReorderPoint += 1
-      noReorderPointItems.push(base)
+      // The unit and lead time a suggested reorder point is sized with
+      // (design audit L3-09: these items had no suggestion at all).
+      const stockUnit = itemStockUnit(item)
+      const supplier = stockUnit ? preferredSupplierFor(item, supplierLinks, suppliersById, { moqUnit: purchaseUnitOf(item, stockUnit) }) : null
+      noReorderPointItems.push({ ...base, unit: stockUnit || null, leadTimeDays: supplier?.leadTimeDays ?? itemPlanningValues(item).leadTimeDays })
       continue
     }
     // The reorder point covers every warehouse; a part of them is never set against it.

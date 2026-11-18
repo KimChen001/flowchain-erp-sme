@@ -184,9 +184,9 @@ test('a purchase request opened from the assistant arrives prefilled, labels eac
   await expect(field(page, 'Quantity').locator('input')).toHaveValue('20')
   await expect(page.getByTestId('prefill-source-quantity')).toHaveText('Supplier minimum (shortfall 19 ea)')
   await expect(page.getByTestId('prefill-source-quantity')).toHaveAttribute('data-prefill-ref', 'reorder_list:supplier_minimum')
-  // A plain shortfall keeps its own label.
+  // A plain reorder quantity keeps its own label.
   await page.goto('/app/procurement/requests?itemId=browser-pr-item&quantity=19&suppliers=browser-supplier&origin=reorder_list&reason=Reorder&plain=1')
-  await expect(page.getByTestId('prefill-source-quantity')).toHaveText('Shortfall from the reorder list')
+  await expect(page.getByTestId('prefill-source-quantity')).toHaveText('Quantity from the reorder list')
 })
 
 // Suppliers and items made through the API, so each run has its own:

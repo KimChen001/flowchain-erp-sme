@@ -9,8 +9,9 @@ import { reportReadAccessFor } from './report-read-access.mjs'
 import { defaultRoleTemplates, permissionCodes } from '../auth/permission-catalog.mjs'
 
 // The new customer's first day (walkthrough of 2026-10-07, New York): a PO due
-// today with 20 of 50 still to come, three items at or below their reorder
-// point, a matched and paid bill, a bill waiting for its match, an invoice
+// today with 20 of 50 still to come, three items below their reorder point
+// (at it, with no shipment history, the order-up-to level is the point and
+// there is nothing to order: design audit C3), a matched and paid bill, a bill waiting for its match, an invoice
 // with money owed but not yet due, and the overdue and pending finance work a
 // later day brings.
 const NY = 'America/New_York'
@@ -19,7 +20,7 @@ const EVENING = new Date('2026-10-08T00:00:00Z') // 20:00 in New York, already O
 const AFTER_MIDNIGHT = new Date('2026-10-08T04:30:00Z') // 00:30 in New York on Oct 8
 
 const items = [
-  { id: 'ITEM-V', itemId: 'ITEM-V', sku: 'VALVE-150', name: 'Ball valve 1.5 in', unit: 'EA', safetyStock: 10, reorderPoint: 20, status: 'active' },
+  { id: 'ITEM-V', itemId: 'ITEM-V', sku: 'VALVE-150', name: 'Ball valve 1.5 in', unit: 'EA', safetyStock: 10, reorderPoint: 25, status: 'active' },
   { id: 'ITEM-F', itemId: 'ITEM-F', sku: 'FIT-300', name: 'Pipe fitting', unit: 'EA', reorderPoint: 50, status: 'active' },
   { id: 'ITEM-S', itemId: 'ITEM-S', sku: 'SEAL-400', name: 'Seal kit', unit: 'EA', reorderPoint: 100, status: 'active' },
   { id: 'ITEM-G', itemId: 'ITEM-G', sku: 'GASKET-500', name: 'Gasket', unit: 'EA', reorderPoint: 10, status: 'active' },
@@ -27,7 +28,7 @@ const items = [
 const balances = [
   { sku: 'VALVE-150', itemId: 'ITEM-V', onHandQuantity: 0, reservedQuantity: 0, warehouseId: 'WH-1' },
   { sku: 'FIT-300', itemId: 'ITEM-F', onHandQuantity: 40, reservedQuantity: 0, warehouseId: 'WH-1' },
-  { sku: 'SEAL-400', itemId: 'ITEM-S', onHandQuantity: 100, reservedQuantity: 0, warehouseId: 'WH-1' },
+  { sku: 'SEAL-400', itemId: 'ITEM-S', onHandQuantity: 90, reservedQuantity: 0, warehouseId: 'WH-1' },
   { sku: 'GASKET-500', itemId: 'ITEM-G', onHandQuantity: 500, reservedQuantity: 0, warehouseId: 'WH-1' },
 ]
 const po = (overrides = {}, line = {}) => ({
@@ -122,7 +123,9 @@ test('items at or below their reorder point are listed from the reorder list, la
   assert.ok(reorder.every((item) => item.date === '2026-10-07' && item.actionHref === '/app/inventory/reorder'))
   const valve = reorder.find((item) => item.label === 'VALVE-150')
   assert.equal(valve.href, '/app/master-data/items/ITEM-V')
-  assert.deepEqual({ position: valve.detail.position, reorderPoint: valve.detail.reorderPoint, unit: valve.detail.unit }, { position: 20, reorderPoint: 20, unit: 'EA' })
+  assert.deepEqual({ position: valve.detail.position, reorderPoint: valve.detail.reorderPoint, unit: valve.detail.unit }, { position: 20, reorderPoint: 25, unit: 'EA' })
+  // Every row due today has a quantity to order (design audit W-02).
+  assert.deepEqual(reorder.map((item) => item.detail.purchaseRequest.quantity), [10, 10, 5])
   assert.equal(valve.detail.stockSignal, 'stock_below_safety')
   assert.equal(reorder.find((item) => item.label === 'FIT-300').detail.stockSignal, 'stock_below_reorder')
   // GASKET-500 is well above its reorder point.
