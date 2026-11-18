@@ -82,6 +82,21 @@ function salesShipping(order) {
 const weight = row => Number.isFinite(row?.count) ? row.count : 1
 const totalWeight = rows => rows.reduce((total, row) => total + weight(row), 0)
 
+// The units the inventory list's items are kept in, for the mixed-units note.
+// When the allocation read its inputs over every record (allocationInputs,
+// design audit C1), each of that read's stock rows in its item's recorded unit
+// (a row whose item records none adds no unit); else the capped list's units,
+// where an item past the 500th row was never checked.
+function inventoryUnits(context, allocationInputs) {
+  if (!allocationInputs) return [...new Set(array(context.inventoryItems).map(row => text(row.unit)).filter(Boolean))]
+  const recorded = new Map()
+  for (const row of array(allocationInputs.itemUnits)) {
+    for (const key of [text(row.sku), text(row.itemId)]) if (key && !recorded.has(key)) recorded.set(key, text(row.unit))
+  }
+  const unitOf = row => recorded.get(text(row.sku)) ?? recorded.get(text(row.itemId)) ?? ''
+  return [...new Set(array(allocationInputs.inventoryItems).map(unitOf).filter(Boolean))]
+}
+
 // On hand over the inventory rows: a total only while they are one SKU in one
 // unit, else null with the reason, as for open sales demand. The "On hand by
 // SKU" chart shows each SKU in its own unit. No rows is an empty inventory, 0.
@@ -467,10 +482,10 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const restriction = { subjects: new Set(array(context.restrictedSubjects)), amounts: context.restrictedAmounts || {} }
   const allocationSource = options.allocationContext && !restriction.subjects.has('inventory_balances') ? options.allocationContext : context
   const inventory = buildRuntimeInventoryAllocation(allocationSource)
-  inventory.units = [...new Set(array(context.inventoryItems).map(row => text(row.unit)).filter(Boolean))]
   // The recorded unit of every item the allocation read, for the stock rows
   // past the capped item and inventory lists.
   inventory.itemUnits = array(allocationSource.allocationInputs?.itemUnits)
+  inventory.units = inventoryUnits(context, allocationSource.allocationInputs)
   if (inventory.units.length > 1) inventory.dataLimitations.push('inventory_units_mixed')
   const query = { subject: dashboardMetrics[input.subject] ? input.subject : 'overview', from: text(input.filters?.from || ''), to: text(input.filters?.to || ''), supplier: text(input.filters?.supplier || ''), customer: text(input.filters?.customer || ''), currency: currencyCode(input.filters?.currency), status: text(input.filters?.status || ''), stock: REPORT_DRILL_FILTERS.stock.includes(text(input.filters?.stock)) ? text(input.filters?.stock) : '', match: REPORT_DRILL_FILTERS.match.includes(text(input.filters?.match)) ? text(input.filters?.match) : '', limit: Math.max(1, Math.min(200, number(input.limit || 50))) }
   const timeZone = options.timeZone || DEFAULT_TENANT_TIMEZONE
