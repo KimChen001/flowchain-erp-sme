@@ -707,6 +707,8 @@ test('every data tool declares its columns, and each declared column is in its r
       { obligationType: 'payable', paymentDate: new Date('2026-09-10T00:00:00Z'), amount: '600', currency: 'USD', status: 'recorded' },
     ]
     data.receipts[0].lines[0].purchaseOrderLineId = 'PO-001-L1'
+    // PO-001's change history (record_history).
+    data.auditLogs = [{ entityType: 'purchase_order', entityId: 'PO-001', action: 'update', summary: 'Promised date moved to 2026-09-20', createdAt: new Date('2026-09-18T14:05:00Z'), actor: { name: 'Sam' }, metadata: {} }]
     // A posted shipment of SO-001 (list_shipments).
     data.shipments = [{ id: 'SHP-1', shipmentNumber: 'SHP-1', postedAt: new Date('2026-09-27T09:00:00Z'), reversedAt: null, postingStatus: 'posted', salesOrder: { id: 'SO-001', orderNumber: 'SO-001', customerName: 'Redwood Retail' }, lines: [{ sku: 'LDM-001', postedQuantity: '5', unit: 'pcs', allocations: [{ warehouseId: 'WH-1' }] }] }]
   }
@@ -749,6 +751,7 @@ test('every data tool declares its columns, and each declared column is in its r
     cash_movements: [{ period: 'last_12_months' }],
     stock_movements: [{ sku: 'LDM-001' }],
     list_shipments: [{ order: 'SO-001' }],
+    record_history: [{ record: 'PO-001' }],
     gross_profit: [{ from: '2026-01-01', to: '2026-12-31' }, { by: 'month', from: '2026-01-01', to: '2026-12-31' }, { by: 'item', from: '2026-01-01', to: '2026-12-31' }, { by: 'customer', from: '2026-01-01', to: '2026-12-31' }],
   }
   // A nested column under a null value (a rate with too few deliveries) is

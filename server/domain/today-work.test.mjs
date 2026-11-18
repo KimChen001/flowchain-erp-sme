@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { billNextStep, buildFirstRunChecklist, buildTodayWork, compareTodayWork, countDocumentsUpdatedToday } from './today-work.mjs'
+import { billNextStep, buildFirstRunChecklist, buildTodayWork, compareTodayWork, countDocumentsUpdatedToday, purchaseOrderSignalRows } from './today-work.mjs'
 import { buildReorderList } from './reorder-list.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
 import { buildHomeOverview } from '../services/business-read-context-service.mjs'
@@ -477,4 +477,11 @@ test('a source that cannot be read is named instead of failing the page', async 
   assert.ok(response.payload.limitations.includes('today_database_sources_unavailable'))
   assert.equal(response.payload.firstRun, null)
   assert.ok(response.payload.workItems.some((item) => item.kind === 'purchase_order_due'))
+})
+
+// Today reads the open purchase orders report's rows, so it names a renamed
+// supplier by its current name too (listForReport adds currentSupplierName).
+test("Today names an order's supplier by its current name, as the open purchase orders report does", () => {
+  const { rows } = purchaseOrderSignalRows([{ id: 'P', supplierId: 'SUP-1', supplierName: 'Acme Ltd', currentSupplierName: 'Acme Components', status: 'issued', createdAt: '2026-09-01', expectedDate: '2026-09-09', lines: [{ quantity: 10, receivedQuantity: 0, unit: 'pcs' }] }], new Date('2026-09-11T15:00:00Z'), 'America/New_York')
+  assert.deepEqual([rows[0].supplierId, rows[0].supplier], ['SUP-1', 'Acme Components'])
 })

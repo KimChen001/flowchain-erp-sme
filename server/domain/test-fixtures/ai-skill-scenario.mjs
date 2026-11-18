@@ -142,7 +142,10 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     decisionItem: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.decisionItems).filter((row) => (!where.state || row.state === where.state) && (!where.recordId || row.recordId === where.recordId) && (!where.activeKey || Boolean(row.activeKey))) },
     // Posted shipments and sales orders by number (list_shipments), none unless a test adds them.
     shipmentDocument: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.shipments).filter((row) => !where.salesOrderId || row.salesOrder?.id === where.salesOrderId) },
-    salesOrder: { findFirst: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? array(data.salesOrders).map((row) => ({ id: row.id, orderNumber: row.salesOrderId || row.id })).find((row) => row.orderNumber === where.orderNumber) || null : null) },
+    salesOrder: { findFirst: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? array(data.salesOrders).map((row) => ({ id: row.id, orderNumber: row.salesOrderId || row.id })).find((row) => row.orderNumber === where.orderNumber || (where.OR || []).some((entry) => entry.id === row.id || entry.orderNumber === row.orderNumber)) || null : null) },
+    // A record's audit entries (record_history), newest first; none unless a
+    // test adds them.
+    auditLog: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.auditLogs).filter((row) => row.entityId === where.entityId && where.entityType.in.includes(row.entityType)).sort((a, b) => String(b.createdAt.toISOString?.() || b.createdAt).localeCompare(String(a.createdAt.toISOString?.() || a.createdAt))).slice(0, where.take ?? undefined) },
     // Suppliers, read by both the minimum order and the scorecard, and one by
     // id for a supplier's detail page (supplier-insights.mjs readActivity).
     supplier: {

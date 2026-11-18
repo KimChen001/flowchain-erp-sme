@@ -127,3 +127,45 @@ test('reorder_list adds the forecasting model\'s reorder point when asked, and r
   assert.equal((await none.run('reorder_list', { forecast: true })).forecastAvailable, false)
   assert.equal(passed.at(-1), null)
 })
+
+// L5-04: the assistant could not say who changed a record or when; the audit
+// page could. record_history reads the audit log with the audit page's rules.
+test('record_history gives a record\'s changes newest first, within the reader\'s permissions', async () => {
+  const entry = (entityType, entityId, at, action, summary, name, metadata = {}) => ({ entityType, entityId, action, summary, createdAt: new Date(at), actor: name ? { name } : null, metadata })
+  const scenario = aiSkillScenario()
+  scenario.data.auditLogs = [
+    entry('purchase_order', 'PO-001', '2026-09-10T09:00:00Z', 'create', 'Purchase order created', 'Alex'),
+    entry('PurchaseOrder', 'PO-001', '2026-09-18T14:05:00Z', 'update', 'Promised date moved', 'Sam', { before: { promisedDate: '2026-09-15' }, after: { promisedDate: '2026-09-20' } }),
+    entry('purchase_order', 'PO-002', '2026-09-19T10:00:00Z', 'update', 'Another order', 'Sam'),
+    entry('supplier', 'SUP-001', '2026-09-12T08:00:00Z', 'tier_change', 'Tier set to 1', 'Kim'),
+    entry('item', 'ITEM-001', '2026-09-11T08:00:00Z', 'update', 'Item LDM-001 updated', null),
+    entry('SalesOrder', 'SO-001', '2026-09-13T08:00:00Z', 'confirm', 'Sales order confirmed', 'Lee'),
+  ]
+  const context = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
+  const run = (args) => tool('record_history').run(args, { facts, context })
+
+  // Both spellings of a purchase order's entries, newest first, with who and,
+  // for a reader with audit.read_sensitive, the values before and after.
+  const order = await run({ record: 'PO-001' })
+  assert.deepEqual([order.record, order.kind], ['PO-001', 'purchase_order'])
+  assert.deepEqual(order.ref, { type: 'purchase_order', id: 'PO-001', label: 'PO-001' })
+  assert.deepEqual(order.rows.map((row) => [row.at, row.action, row.by]), [['2026-09-18T14:05', 'update', 'Sam'], ['2026-09-10T09:00', 'create', 'Alex']])
+  assert.deepEqual([order.rows[0].before, order.rows[0].after], [{ promisedDate: '2026-09-15' }, { promisedDate: '2026-09-20' }])
+  assert.deepEqual((await run({ record: 'Acme Components' })).rows.map((row) => row.summary), ['Tier set to 1'])
+  assert.deepEqual((await run({ record: 'LDM-001' })).rows.map((row) => [row.summary, row.by]), [['Item LDM-001 updated', null]])
+  assert.deepEqual((await run({ record: 'SO-001' })).rows.map((row) => row.action), ['confirm'])
+  assert.deepEqual(await run({ record: 'PO-404' }), { error: 'not_found' })
+
+  // Without audit.read_sensitive the values are left out, as on the audit page.
+  context.actor.permissionCodes.delete('audit.read_sensitive')
+  const plain = await run({ record: 'PO-001' })
+  assert.equal('before' in plain.rows[0], false)
+  // Without the record's own read permission it is not found.
+  context.actor.permissionCodes.delete('sales_order.read')
+  assert.deepEqual(await run({ record: 'SO-001' }), { error: 'not_found' })
+  // Offered only with audit.read.
+  assert.equal(tool('record_history').available(facts, context), true)
+  context.actor.permissionCodes.delete('audit.read')
+  assert.equal(tool('record_history').available(facts, context), false)
+})

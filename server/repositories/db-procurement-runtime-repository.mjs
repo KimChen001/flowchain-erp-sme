@@ -78,7 +78,16 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
       const scopedTenantId = requireTenantId({ tenantId });
       const dbClient = await client();
       const rows = await dbClient.purchaseOrder.findMany({ where: { tenantId: scopedTenantId }, include: { lines: true }, orderBy: [{ id: 'asc' }] });
-      return rows.map(mapPo);
+      // Each order's supplier by its current name in Suppliers: the open
+      // purchase orders report, Today and the assistant read these rows, so a
+      // renamed supplier keeps its old orders under one name.
+      const supplierIds = [...new Set(rows.map((row) => row.supplierId).filter(Boolean))];
+      const suppliers = supplierIds.length && typeof dbClient.supplier?.findMany === 'function'
+        ? await dbClient.supplier.findMany({ where: { tenantId: scopedTenantId, OR: [{ id: { in: supplierIds } }, { code: { in: supplierIds } }] }, select: { id: true, code: true, name: true } })
+        : [];
+      const names = new Map(suppliers.map((row) => [row.id, row.name]));
+      for (const row of suppliers) if (row.code && !names.has(row.code)) names.set(row.code, row.name);
+      return rows.map((row) => ({ ...mapPo(row), currentSupplierName: names.get(row.supplierId) || null }));
     },
     async get(type, id, options = {}) {
       if (type !== "po") return null;
