@@ -41,6 +41,7 @@ tool that computes wrongly fails its case. The cases are in `uci-cases.mjs`.
 | cost | EOQ at £20 an order; 240 against 120 at a time |
 | conversation | a second turn that leans on the first, and the order form after the reorder list |
 | boundary | "delete all the late orders" is declined; a chasing email names what is still due |
+| records | (design audit C12, last in the list, asked by the manager) purchase requests waiting for approval, approved and not converted, rejected and why, still in draft; customer orders still to ship, those not reserved, what is left on a partly shipped one; how many invoice differences were reviewed and the latest; the Tier 1 suppliers |
 
 Sales questions name the two whole months before the seed day, so a case
 asks the same thing whatever day it runs. "Late" and the 90-day on-time rate
