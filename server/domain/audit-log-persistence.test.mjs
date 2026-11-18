@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { createDatabaseRepositoryRegistry } from '../repositories/adapter-registry.mjs'
 import { createDbAuditLogRepository } from '../repositories/db-audit-log-repository.mjs'
 import { DATABASE_CONFIG_ERROR } from '../persistence/persistence-config.mjs'
-import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
 import { handleAuditLogRoute } from '../routes/audit-log.routes.mjs'
 import {
   legacyMutationBlockedAuditEntry,
@@ -24,29 +23,6 @@ function createDb() {
     marketSignals: [],
     events: [],
     auditLog: [],
-  }
-}
-
-const draftAuthor = { authenticated: true, tenantId: 'tenant-audit-draft', userId: 'user-audit-draft', role: 'manager', source: 'test' }
-
-function createActionDraftRoute({ body, repositories, db = createDb(), pathname = '/api/action-drafts/used', identity = draftAuthor } = {}) {
-  let response = null
-  return {
-    ctx: {
-      req: { method: 'POST', body },
-      res: {},
-      url: new URL(pathname, 'http://localhost'),
-      db,
-      repositories,
-      identity,
-      send(_res, status, payload) {
-        response = { status, payload }
-      },
-      readBody: async (req) => req.body,
-    },
-    get response() {
-      return response
-    },
   }
 }
 
@@ -116,78 +92,6 @@ function createAuditRoute({ method = 'GET', path = '/api/audit-log', repositorie
     },
   }
 }
-
-function createPrismaRecorder() {
-  const auditWrites = []
-  return {
-    auditWrites,
-    prisma: {
-      auditLog: {
-        create: async ({ data }) => {
-          auditWrites.push(data)
-          return {
-            ...data,
-            createdAt: data.createdAt || new Date('2026-06-30T00:00:00.000Z'),
-          }
-        },
-        findMany: async () => auditWrites.map((item) => ({
-          ...item,
-          createdAt: item.createdAt || new Date('2026-06-30T00:00:00.000Z'),
-        })),
-      },
-    },
-  }
-}
-
-function databaseRepositories(prisma) {
-  return createDatabaseRepositoryRegistry({
-    db: createDb(),
-    env: {
-      FLOWCHAIN_PERSISTENCE_MODE: 'database',
-      DATABASE_URL: 'postgresql://user:pass@localhost:5432/flowchain',
-    },
-    prisma,
-  })
-}
-
-test('recording draft use writes a best-effort DB audit row with codes only', async () => {
-  const { prisma, auditWrites } = createPrismaRecorder()
-  const repositories = databaseRepositories(prisma)
-  const route = createActionDraftRoute({ repositories, body: { draftType: 'po_followup_draft', use: 'copied', message: 'Please confirm PO-013' } })
-
-  assert.equal(await handleActionDraftsRoute(route.ctx), true)
-
-  assert.equal(route.response.status, 202)
-  assert.deepEqual(route.response.payload, { recorded: true, sendsMessage: false })
-  assert.equal(auditWrites.length, 1)
-  assert.equal(auditWrites[0].action, 'ai_draft_used')
-  assert.equal(auditWrites[0].entityType, 'actionDraft')
-  assert.equal(auditWrites[0].entityId, 'po_followup_draft')
-  assert.equal(auditWrites[0].tenantId, 'tenant-audit-draft')
-  assert.equal(auditWrites[0].actorId, 'user-audit-draft')
-  assert.doesNotMatch(JSON.stringify(auditWrites), /Please confirm|Bearer|DATABASE_URL|postgresql:\/\/user:pass/)
-})
-
-test('audit failure does not break recording draft use', async () => {
-  const repositories = {
-    auditLog: {
-      mode: 'database',
-      recordAuditEntry: async () => {
-        throw new Error('audit unavailable with DATABASE_URL=postgresql://user:pass@db/app')
-      },
-    },
-  }
-  const route = createActionDraftRoute({
-    repositories,
-    body: { draftType: 'po_followup_draft', use: 'opened_in_email' },
-  })
-
-  assert.equal(await handleActionDraftsRoute(route.ctx), true)
-
-  assert.equal(route.response.status, 202)
-  assert.deepEqual(route.response.payload, { recorded: false, sendsMessage: false })
-  assert.doesNotMatch(JSON.stringify(route.response.payload), /postgresql:\/\/user:pass|DATABASE_URL/)
-})
 
 test('legacy mutation blocked audit omits request body and redacts secrets', async () => {
   const writes = []

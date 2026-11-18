@@ -103,7 +103,7 @@ All Evidence Graph routes are GET-only and do not create drafts, write audit eve
 
 | Method | Path | Class | Source | Mutation | Notes |
 |---|---|---|---|---|---|
-| `POST` | `/api/action-drafts/used` | Audit | action draft use record | Audit row only | Records that a text draft was copied or opened in the mail app; sends nothing. The schema and preview routes were removed in November 2026. |
+| — | — | — | — | — | No action draft routes remain: schema, preview, save and "used" were removed in November 2026 with the unreachable review shell. |
 
 ## Audit Log
 

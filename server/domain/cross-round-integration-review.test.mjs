@@ -9,13 +9,11 @@ function readSource(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), 'utf8')
 }
 
-test('route audit lists the action draft use route and none of the removed draft routes', () => {
+test('route audit lists none of the removed action draft routes', () => {
   const routeAudit = readSource('docs', 'backend-route-audit.md')
-  const draftRoutes = readSource('server', 'routes', 'action-drafts.routes.mjs')
 
-  assert.match(routeAudit, /`POST \/api\/action-drafts\/used`/)
-  assert.doesNotMatch(routeAudit, /`(?:GET|POST) \/api\/action-drafts\/(?:schema|preview|save)`/)
-  assert.doesNotMatch(draftRoutes, /writeDb\(/)
+  assert.doesNotMatch(routeAudit, /`(?:GET|POST) \/api\/action-drafts(?:\/[a-z]+)?`/)
+  assert.equal(fs.existsSync(path.join(repoRoot, 'server', 'routes', 'action-drafts.routes.mjs')), false)
 })
 
 // The legacy /api/ai route and its provider switch were removed on

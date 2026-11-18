@@ -78,7 +78,7 @@ function readModels(db = {}, options = {}) {
     today: workspaceDueToday(options),
     procurementDocuments: buildProcurementDocuments(data),
     procurementFollowups: buildProcurementFollowups(data, options),
-    procurementSummary: buildProcurementSummary(data),
+    procurementSummary: buildProcurementSummary(data, options),
     supplierInvoices: buildProcurementSupplierInvoices(data),
     threeWayMatches: buildProcurementThreeWayMatches(data),
     inventoryItems: buildInventoryItems(data),

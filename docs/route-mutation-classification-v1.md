@@ -72,7 +72,7 @@ Database mode uses migrated DB read adapters where available and JSON read fallb
 
 | Method | Path | Class | Calls `writeDb` | JSON mode | Database mode v1 | Notes |
 |---|---|---|---|---|---|---|
-| `POST` | `/api/action-drafts/used` | not classified | No | Removed | Audit row only | Records that a text draft was copied or opened in the mail app; sends nothing. The schema, preview and save routes were removed in November 2026. |
+| — | — | — | — | — | — | No action draft routes remain: schema, preview, save and "used" were removed in November 2026 with the unreachable review shell. |
 
 ### Planning / Market / Forecast
 

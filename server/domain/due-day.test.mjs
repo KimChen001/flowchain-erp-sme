@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import { dueCalendarDay, isPastDueOn, workspaceDueToday } from './due-day.mjs'
 import { buildAiResponseContractV2 } from './ai-response-contract-v2.mjs'
 import { buildOperationsControlTowerV2 } from './operations-control-tower-v2.mjs'
+import { buildProcurementFollowups, buildProcurementSummary } from './procurement-read-model.mjs'
 
 // Design audit L6-23: the review-actions queue read "3月4日" as 2026 and
 // judged overdue at UTC midnight. These cases use 2027 and 2028 and time
@@ -63,9 +64,27 @@ test('the assistant contract judges an ETA on the workspace day', () => {
   assert.equal(severity({ now: lateNight, timeZone: 'UTC' }), 'risk')
 })
 
+// Found alongside L6-23: the procurement follow-ups read the same dates the same way.
+test('procurement follow-ups judge an expected date on the workspace day, with its year from that day', () => {
+  const overdueIds = (data, options) => buildProcurementFollowups(data, options).filter((row) => row.type === 'overdue_po').map((row) => row.documentId)
+  const march = { purchaseOrders: [{ po: 'PO-FU-MARCH', status: '已发出', supplier: 'Atlas Industrial Supply', eta: '3月4日', items: 10, received: 0 }] }
+  assert.deepEqual(overdueIds(march, { now: '2027-03-05T03:00:00Z', timeZone: 'America/New_York' }), [])
+  assert.deepEqual(overdueIds(march, { now: '2027-03-05T03:00:00Z', timeZone: 'UTC' }), ['PO-FU-MARCH'])
+  assert.equal(buildProcurementSummary(march, { now: '2027-03-05T03:00:00Z', timeZone: 'America/New_York' }).followupCount, 0)
+  const december = { purchaseOrders: [{ po: 'PO-FU-DEC', status: '已发出', supplier: 'Atlas Industrial Supply', eta: '12月20日', items: 10, received: 0 }] }
+  assert.deepEqual(overdueIds(december, { now: '2028-01-03T12:00:00Z', timeZone: 'Asia/Shanghai' }), ['PO-FU-DEC'])
+  const january = { purchaseOrders: [{ po: 'PO-FU-JAN', status: '已发出', supplier: 'Atlas Industrial Supply', eta: '1月5日', items: 10, received: 0 }] }
+  assert.deepEqual(overdueIds(january, { now: '2027-12-28T12:00:00Z', timeZone: 'Asia/Shanghai' }), [])
+})
+
 test('the review-actions and data-quality routes pass the workspace time zone', () => {
   for (const file of ['review-first-action-workflow.routes.mjs', 'data-access-quality.routes.mjs']) {
     const source = fs.readFileSync(new URL(`../routes/${file}`, import.meta.url), 'utf8')
     assert.match(source, /\{ timeZone: await readTenantTimezone\(ctx\) \}/, file)
   }
+})
+
+test('the procurement follow-up and summary routes pass the workspace time zone', () => {
+  const source = fs.readFileSync(new URL('../routes/procurement-read.routes.mjs', import.meta.url), 'utf8')
+  assert.equal(source.split('timeZone: await readTenantTimezone(ctx)').length - 1, 2)
 })

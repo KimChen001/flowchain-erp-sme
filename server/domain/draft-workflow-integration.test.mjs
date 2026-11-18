@@ -21,13 +21,3 @@ test('inventory replenishment enters canonical PR form without auto-submit or le
   assert.doesNotMatch(inventory, /预览 PR|预览 RFQ|demo-data|inventoryReadFallbackScopes/)
   assert.doesNotMatch(inventory, /submit|purchase_request_draft|rfq_draft/)
 })
-
-test('the action draft route only records draft use and does not use persistence writes', () => {
-  const route = readSource('server', 'routes', 'action-drafts.routes.mjs')
-
-  assert.match(route, /\/api\/action-drafts\/used/)
-  assert.doesNotMatch(route, /\/api\/action-drafts\/(?:preview|save|schema)|'\/api\/action-drafts'/)
-  assert.doesNotMatch(route, /writeDb/)
-  assert.doesNotMatch(route, /saveDb/)
-  assert.doesNotMatch(route, /createPurchaseRequest/)
-})

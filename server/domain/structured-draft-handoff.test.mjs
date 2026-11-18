@@ -9,9 +9,11 @@ function readSource(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), 'utf8')
 }
 
-test('the text draft review shell and its preview and save calls are gone from the app', () => {
+test('the text draft review shell, its message helpers and their draft calls are gone from the app', () => {
   const app = readSource('src', 'app', 'FlowChainApp.tsx')
-  assert.equal(fs.existsSync(path.join(repoRoot, 'src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx')), false)
+  for (const file of ['ActionDraftReviewShell.tsx', 'draftMessage.ts']) {
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src', 'modules', 'action-drafts', file)), false, file)
+  }
   assert.doesNotMatch(app, /ActionDraftReviewShell|onReviewActionDraft|\/api\/action-drafts\/(?:preview|save)/)
   assert.doesNotMatch(app, /\/api\/purchase-requests/)
 })

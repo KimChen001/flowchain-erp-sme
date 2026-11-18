@@ -48,11 +48,9 @@ point.
 
 ## Action draft routes
 
-- `POST /api/action-drafts/used` records, as codes in the audit log, that a
-  person copied a text draft or opened it in their own mail app. Nothing is
-  sent and no business document is created.
-- The draft schema, preview and save routes were removed in November 2026 with
-  the text draft review shell, which no screen could open.
+- None. The draft schema, preview, save and "used" routes were removed in
+  November 2026 with the text draft review shell, which no screen could open.
+  Old audit entries for action drafts still read through the audit log.
 
 ## Fail-closed boundaries
 

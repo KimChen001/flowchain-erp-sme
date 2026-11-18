@@ -74,7 +74,6 @@ test('database mode blocks legacy mutation routes but allows read and preview ro
     ['GET', '/api/inventory/available-to-promise'],
     ['GET', '/api/mrp-plan'],
     ['GET', '/api/sop-cycle'],
-    ['POST', '/api/action-drafts/used'],
     ['POST', '/api/auth/login'],
     ['POST', '/api/auth/logout'],
     ['POST', '/api/auth/email-link'],
