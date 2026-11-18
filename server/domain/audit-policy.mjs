@@ -55,37 +55,6 @@ export async function recordDatabaseAuditBestEffort(ctx = {}, entry = {}, option
   }
 }
 
-export function actionDraftPreviewAuditEntry(result = {}) {
-  const draft = result.draft || {}
-  return {
-    module: 'action-drafts',
-    action: 'draft_previewed',
-    entity: { type: 'actionDraft', id: draft.id || '' },
-    summary: `Action draft preview prepared for ${safeText(draft.type || 'unknown draft')}.`,
-    metadata: {
-      draftType: safeText(draft.type || ''),
-      previewOnly: true,
-      requiresConfirmation: draft.requiresConfirmation !== false,
-      validationOk: draft.validation?.ok === true,
-    },
-  }
-}
-
-export function actionDraftSavedAuditEntry(saved = {}) {
-  return {
-    module: 'action-drafts',
-    action: 'draft_saved',
-    entity: { type: 'actionDraft', id: saved.id || '' },
-    summary: `Action draft ${safeText(saved.id || 'unknown')} saved without creating a business document.`,
-    metadata: {
-      draftType: safeText(saved.type || ''),
-      createsBusinessDocument: false,
-      requiresConfirmation: true,
-      status: safeText(saved.status || ''),
-    },
-  }
-}
-
 // A reviewed text draft the user copied or opened in their own mail app.
 // FlowChain sends nothing; this records only the draft type, the use and,
 // when the draft was prefilled, which suggested fields were kept (codes,

@@ -46,13 +46,13 @@ point.
 | Operational finance | `operational-finance.routes.mjs` | Optional PostgreSQL extension, never payment execution |
 | Bank reconciliation | `bank-reconciliation.routes.mjs` | Optional evidence/reconciliation extension |
 
-## Preview-only Routes
+## Action draft routes
 
-- `GET /api/action-drafts/schema` returns the supported draft contract.
-- `POST /api/action-drafts/preview` validates and renders a reviewable text
-  draft without creating or changing a business document.
-- Preview routes are separate from `POST /api/action-drafts/save`; saving keeps
-  an internal review draft and is not business-document execution.
+- `POST /api/action-drafts/used` records, as codes in the audit log, that a
+  person copied a text draft or opened it in their own mail app. Nothing is
+  sent and no business document is created.
+- The draft schema, preview and save routes were removed in November 2026 with
+  the text draft review shell, which no screen could open.
 
 ## Fail-closed boundaries
 

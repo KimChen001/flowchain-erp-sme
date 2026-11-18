@@ -72,9 +72,7 @@ Database mode uses migrated DB read adapters where available and JSON read fallb
 
 | Method | Path | Class | Calls `writeDb` | JSON mode | Database mode v1 | Notes |
 |---|---|---|---|---|---|---|
-| `GET` | `/api/action-drafts/schema` | read-only | No | Allowed | Allowed with JSON read fallback | Draft schema. |
-| `POST` | `/api/action-drafts/preview` | preview-only | No | Allowed | Allowed with JSON read fallback | Does not create PR/RFQ/PO or send supplier messages. |
-| `POST` | `/api/action-drafts` / `/api/action-drafts/save` | controlled-persistence | No JSON write | Demo-safe 501 | Allowed with DB persistence | Saves ActionDraft shell only; does not confirm or create business documents. |
+| `POST` | `/api/action-drafts/used` | not classified | No | Removed | Audit row only | Records that a text draft was copied or opened in the mail app; sends nothing. The schema, preview and save routes were removed in November 2026. |
 
 ### Planning / Market / Forecast
 

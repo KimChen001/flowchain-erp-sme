@@ -5,7 +5,6 @@ import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
 import { useDocumentNumbers } from "../../lib/documentNumbers";
-import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import { todayDateText, todayDateTone, useTodayCopy, type TodayCopyKey, type TodayDated } from "./todayCopy";
 import { firstRowsByKind, todayTileCounts } from "./todayRows";
 
@@ -58,7 +57,7 @@ const COPY = {
   },
 };
 
-export default function AiSuggestionsPage({ onOpenAi }: { onNavigate: NavigateFn; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; onOpenAi?: () => void }) {
+export default function AiSuggestionsPage({ onOpenAi }: { onNavigate: NavigateFn; onOpenAi?: () => void }) {
   const { language, locale } = useI18n();
   const copy = COPY[language === "zh-CN" ? "zh" : "en"];
   // A whole sentence with its figures filled in.

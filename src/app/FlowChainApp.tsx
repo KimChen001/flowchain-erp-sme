@@ -3,7 +3,7 @@ import { useBackLabel } from "../components/navigation/backLabel";
 import { FadeIn, PageSkeleton, PageTransition } from "../components/motion/Motion";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { Toaster, toast } from "sonner";
+import { Toaster } from "sonner";
 import {
   AlertTriangle,
   LogOut,
@@ -96,12 +96,6 @@ import ContractsPage from "../modules/contracts/Page";
 import AiPanel, { type ActiveContext } from "../modules/ai-assistant/Panel";
 // The records the assistant's panel can name as the page's record.
 const ASSISTANT_RECORD_TYPES = new Set(["supplier", "item", "rfq", "purchase_request", "purchase_order", "sales_order", "supplier_invoice", "receiving_doc"]);
-import {
-  ActionDraftReviewShell,
-  type ActionDraftPreview,
-  type ActionDraftPreviewRequest,
-} from "../modules/action-drafts/ActionDraftReviewShell";
-import { isStructuredDraftType, structuredDraftTarget } from "../modules/action-drafts/structuredDraftHandoff";
 import SalesDemandPage from "../modules/sales/Page";
 import SettingsPage from "../modules/settings/Page";
 import { ReviewFirstActionWorkflowV2 } from "../components/actions/ReviewFirstActionWorkflowV2";
@@ -131,25 +125,6 @@ import { PublicDataNoteBanner } from "./PublicDataNote";
 
 const ReportsPanel = React.lazy(() => import("../modules/reports/Page"));
 const UniversalIntakePanel = React.lazy(() => import("../modules/intake/Page"));
-
-const DRAFT_MESSAGES = {
-  unavailable: { en: "A draft preview is not available yet. Add more context and try again.", zh: "草稿预览暂不可用，请补充上下文后重试。" },
-  unsupported: { en: "This action needs human review and has no draft preview yet.", zh: "当前动作需要人工复核，尚未接入草稿预览。" },
-  previewBoundary: { en: "Draft preview problem: the service did not confirm the draft is preview-only.", zh: "草稿预览边界异常：接口未返回 previewOnly。" },
-  saved: { en: "Draft saved", zh: "草稿已保存" },
-  savedDetail: { en: "Only a draft for review was kept. No business document was created.", zh: "仅保存待复核草稿，不会创建业务单据。" },
-  createsDocument: { en: "Draft problem: the service said saving would create a business document, so nothing was kept.", zh: "留存边界异常：接口声明会创建业务单据。" },
-};
-const draftMessage = (key: keyof typeof DRAFT_MESSAGES, language: string) => DRAFT_MESSAGES[key][language === "en-US" ? "en" : "zh"];
-
-function actionDraftErrorMessage(error: unknown, language: string) {
-  const message = error instanceof Error ? error.message.trim() : "";
-  if (!message) return draftMessage("unavailable", language);
-  if (/^\s*[{[]/.test(message) || /<html|stack|trace| at /i.test(message)) {
-    return draftMessage("unsupported", language);
-  }
-  return message;
-}
 
 type GlobalSearchResult = {
   id: string;
@@ -428,12 +403,6 @@ export default function FlowChainApp() {
   useEffect(() => {
     apiJson<LocalDevelopmentStatus>("/api/dev/local-status").then(setLocalStatus).catch(() => setLocalStatus(null));
   }, []);
-  const [draftShellOpen, setDraftShellOpen] = useState(false);
-  const [draftPreview, setDraftPreview] = useState<ActionDraftPreview | null>(
-    null,
-  );
-  const [draftLoading, setDraftLoading] = useState(false);
-  const [draftError, setDraftError] = useState("");
   const [aiOpenSignal, setAiOpenSignal] = useState(0);
   const [aiActiveContext, setAiActiveContext] = useState<ActiveContext | null>(
     null,
@@ -1009,53 +978,6 @@ export default function FlowChainApp() {
     );
   }
 
-  async function openActionDraftReview(request: ActionDraftPreviewRequest) {
-    if (isStructuredDraftType(request.type)) {
-      const target = structuredDraftTarget(request.type, request.payload, request.source);
-      navigateTo(target.moduleId, null, { returnTo: "ai", entityLabel: request.title, source: "ai", query: target.query });
-      return;
-    }
-    setDraftShellOpen(true);
-    setDraftPreview(null);
-    setDraftError("");
-    setDraftLoading(true);
-    try {
-      const response = await apiJson<{
-        draft: ActionDraftPreview;
-        previewOnly: boolean;
-      }>("/api/action-drafts/preview", {
-        method: "POST",
-        body: JSON.stringify(request),
-      });
-      setDraftPreview(response.draft);
-      if (!response.previewOnly)
-        setDraftError(draftMessage("previewBoundary", language));
-    } catch (error) {
-      setDraftError(actionDraftErrorMessage(error, language));
-    } finally {
-      setDraftLoading(false);
-    }
-  }
-
-  async function saveActionDraftReview(draft: ActionDraftPreview) {
-    const response = await apiJson<{
-      draft: ActionDraftPreview;
-      persisted: boolean;
-      createsBusinessDocument: boolean;
-      requiresConfirmation: boolean;
-    }>("/api/action-drafts/save", {
-      method: "POST",
-      body: JSON.stringify({ draft }),
-    });
-    if (response.createsBusinessDocument) {
-      throw new Error(draftMessage("createsDocument", language));
-    }
-    setDraftPreview(response.draft);
-    toast.success(draftMessage("saved", language), {
-      description: draftMessage("savedDetail", language),
-    });
-  }
-
   function openSearchResult(result: GlobalSearchResult) {
     // A result with its own page opens that page, with a way back to the page
     // the search was made from.
@@ -1088,7 +1010,6 @@ export default function FlowChainApp() {
         initialView={activeView}
         onNavigate={navigateTo}
         onOpenAi={() => setAiOpenSignal(Date.now())}
-        onReviewActionDraft={openActionDraftReview}
       />
     ),
     sales: (
@@ -1106,7 +1027,6 @@ export default function FlowChainApp() {
         focus={searchFocus}
         onNavigate={navigateTo}
         onActiveContextChange={setAiActiveContext}
-        onReviewActionDraft={openActionDraftReview}
       />
     ),
     // Compatibility aliases for older dashboard/report actions; sidebar uses module:view ids.
@@ -1997,20 +1917,6 @@ export default function FlowChainApp() {
           onNavigate={navigateTo}
         />
       </PanelErrorBoundary>
-      <ActionDraftReviewShell
-        open={draftShellOpen}
-        loading={draftLoading}
-        error={draftError}
-        draft={draftPreview}
-        onClose={() => setDraftShellOpen(false)}
-        onCancelPreview={() => {
-          setDraftPreview(null);
-          setDraftError("");
-          setDraftShellOpen(false);
-        }}
-        onSaveDraft={saveActionDraftReview}
-        onNavigate={navigateTo}
-      />
     </div>
   );
 }

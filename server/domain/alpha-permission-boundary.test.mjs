@@ -1,14 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { buildCurrentContext, permissionsForUser } from './context.mjs'
 import {
   ROUTE_CLASSES,
   classifyRoute,
   isDatabaseModeWriteBlocked,
 } from './route-classification.mjs'
-
-const actionDraftShell = readFileSync(new URL('../../src/modules/action-drafts/ActionDraftReviewShell.tsx', import.meta.url), 'utf8')
 
 test('Alpha role context exposes lightweight boundaries without production RBAC claims', () => {
   const roles = [
@@ -75,18 +72,5 @@ test('Alpha permission gate keeps legacy mutations blocked and preview routes di
     assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method, pathname }), false, pathname)
   }
 
-  assert.equal(classifyRoute('POST', '/api/action-drafts/preview').classification, ROUTE_CLASSES.previewOnly)
-  assert.equal(classifyRoute('POST', '/api/action-drafts/save').classification, ROUTE_CLASSES.controlledPersistence)
-  assert.equal(classifyRoute('POST', '/api/action-drafts/save').databaseMode, 'allowed-db-persistence')
   assert.equal(classifyRoute('GET', '/api/mrp-plan').classification, ROUTE_CLASSES.capabilityDisabled)
-})
-
-test('ActionDraft UI copy keeps final confirmation boundaries explicit', () => {
-  assert.match(actionDraftShell, /文本草稿编辑器：仅用于供应商消息或内部备注，不替代正式业务页面/)
-  assert.doesNotMatch(actionDraftShell, /confirmed-action-boundary|记录复核结果/)
-  assert.match(actionDraftShell, /不提交/)
-  assert.match(actionDraftShell, /不外发/)
-  assert.match(actionDraftShell, /不写库存/)
-  assert.match(actionDraftShell, /不写财务凭证/)
-  assert.match(actionDraftShell, /不处理资金/)
 })

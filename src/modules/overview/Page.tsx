@@ -4,7 +4,6 @@ import { AlarmClock, ArrowRight, CheckCircle2, ChevronDown, Circle, ListChecks, 
 import { A, Card } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
-import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import AiSuggestionsPage from "./AiSuggestionsPage";
 import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
@@ -115,8 +114,8 @@ function TileIcon({ icon: Icon, color }: { icon: ElementType; color: string }) {
   );
 }
 
-export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi, onReviewActionDraft }: { initialView?: string; onNavigate: Navigate; onOpenAi: () => void; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void }) {
-  if (initialView === "ai") return <AiSuggestionsPage onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} onOpenAi={onOpenAi} />;
+export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi }: { initialView?: string; onNavigate: Navigate; onOpenAi: () => void }) {
+  if (initialView === "ai") return <AiSuggestionsPage onNavigate={onNavigate} onOpenAi={onOpenAi} />;
   return <RuntimeHomepage />;
 }
 

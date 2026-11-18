@@ -87,7 +87,7 @@ test('business, settings and AI endpoints refuse anonymous requests on the real 
       ['GET', '/api/ai-runtime/readiness'],
       ['POST', '/api/ai-runtime/respond'],
       ['POST', '/api/ai/chat'],
-      ['POST', '/api/action-drafts/preview'],
+      ['POST', '/api/action-drafts/used'],
       ['GET', '/api/master-data/items'],
       ['GET', '/api/workspace'],
     ]

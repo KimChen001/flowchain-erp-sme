@@ -269,7 +269,6 @@ export default function InventoryPage({
   focus?: Focus;
   onNavigate?: (...args: any[]) => void;
   onActiveContextChange?: (...args: any[]) => void;
-  onReviewActionDraft?: (...args: any[]) => void;
 }) {
   const view = endpointFor[initialView] ? initialView : "empty";
   const copy = useWorkspaceCopy();

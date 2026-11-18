@@ -18,9 +18,6 @@ test('route classification covers read preview legacy mutation and diagnostics r
   assert.equal(classifyRoute('GET', '/api/evidence-graph/sku/SKU-00412').writesJson, false)
   assert.equal(classifyRoute('GET', '/api/inventory/availability').classification, ROUTE_CLASSES.readOnly)
   assert.equal(classifyRoute('GET', '/api/inventory/reservation-preview').classification, ROUTE_CLASSES.readOnly)
-  assert.equal(classifyRoute('POST', '/api/action-drafts/preview').classification, ROUTE_CLASSES.previewOnly)
-  assert.equal(classifyRoute('POST', '/api/action-drafts').classification, ROUTE_CLASSES.controlledPersistence)
-  assert.equal(classifyRoute('POST', '/api/action-drafts/save').databaseMode, 'allowed-db-persistence')
   assert.equal(classifyRoute('POST', '/api/procurement/receiving/GRN-1/post').classification, ROUTE_CLASSES.controlledPersistence)
   assert.equal(classifyRoute('POST', '/api/procurement/receiving/GRN-1/reverse').databaseMode, 'allowed-db-persistence')
   assert.equal(classifyRoute('GET', '/api/sales/orders/SO-1/outbound-state').databaseMode, 'allowed-db-read')
@@ -77,7 +74,7 @@ test('database mode blocks legacy mutation routes but allows read and preview ro
     ['GET', '/api/inventory/available-to-promise'],
     ['GET', '/api/mrp-plan'],
     ['GET', '/api/sop-cycle'],
-    ['POST', '/api/action-drafts/preview'],
+    ['POST', '/api/action-drafts/used'],
     ['POST', '/api/auth/login'],
     ['POST', '/api/auth/logout'],
     ['POST', '/api/auth/email-link'],
@@ -95,7 +92,7 @@ test('database mode blocks legacy mutation routes but allows read and preview ro
 test('route classification metadata includes major route groups and clean block payload', () => {
   const groups = new Set(listRouteClassifications().map((route) => route.group))
 
-  for (const group of ['ai', 'sales-demand', 'evidence-graph', 'master-data', 'procurement-read', 'inventory-read', 'action-drafts', 'purchase-requests', 'rfqs', 'purchase-orders', 'receiving', 'forecast', 'planning', 'market', 'auth']) {
+  for (const group of ['ai', 'sales-demand', 'evidence-graph', 'master-data', 'procurement-read', 'inventory-read', 'purchase-requests', 'rfqs', 'purchase-orders', 'receiving', 'forecast', 'planning', 'market', 'auth']) {
     assert.equal(groups.has(group), true, group)
   }
 

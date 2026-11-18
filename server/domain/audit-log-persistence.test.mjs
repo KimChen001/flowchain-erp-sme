@@ -27,26 +27,9 @@ function createDb() {
   }
 }
 
-function draft() {
-  return {
-    id: 'DRAFT-AUDIT-1',
-    tenantId: 'tenant-flowchain-sme',
-    type: 'purchase_request_draft',
-    title: 'Purchase request draft',
-    status: 'preview',
-    source: 'test',
-    requiresConfirmation: true,
-    confirmationBoundary: { previewOnly: true, submitted: false },
-    originEvidence: [{ type: 'inventory_item', id: 'A100' }],
-    payload: { itemIdOrSku: 'A100', quantity: 10 },
-    validation: { ok: true, missingFields: [], warnings: [], errors: [] },
-    auditTrail: [{ action: 'ai_draft_prepared', summary: 'Prepared draft' }],
-  }
-}
-
 const draftAuthor = { authenticated: true, tenantId: 'tenant-audit-draft', userId: 'user-audit-draft', role: 'manager', source: 'test' }
 
-function createActionDraftRoute({ body, repositories, db = createDb(), pathname = '/api/action-drafts', identity = draftAuthor } = {}) {
+function createActionDraftRoute({ body, repositories, db = createDb(), pathname = '/api/action-drafts/used', identity = draftAuthor } = {}) {
   let response = null
   return {
     ctx: {
@@ -139,15 +122,6 @@ function createPrismaRecorder() {
   return {
     auditWrites,
     prisma: {
-      actionDraft: {
-        create: async ({ data }) => ({
-          ...data,
-          createdAt: new Date('2026-06-30T00:00:00.000Z'),
-          updatedAt: new Date('2026-06-30T00:00:00.000Z'),
-          validations: [],
-          auditTrail: [],
-        }),
-      },
       auditLog: {
         create: async ({ data }) => {
           auditWrites.push(data)
@@ -176,30 +150,26 @@ function databaseRepositories(prisma) {
   })
 }
 
-test('action draft save records best-effort DB audit without creating business documents', async () => {
+test('recording draft use writes a best-effort DB audit row with codes only', async () => {
   const { prisma, auditWrites } = createPrismaRecorder()
   const repositories = databaseRepositories(prisma)
-  const route = createActionDraftRoute({ repositories, body: { draft: draft() } })
+  const route = createActionDraftRoute({ repositories, body: { draftType: 'po_followup_draft', use: 'copied', message: 'Please confirm PO-013' } })
 
   assert.equal(await handleActionDraftsRoute(route.ctx), true)
 
-  assert.equal(route.response.status, 201)
-  assert.equal(route.response.payload.createsBusinessDocument, false)
+  assert.equal(route.response.status, 202)
+  assert.deepEqual(route.response.payload, { recorded: true, sendsMessage: false })
   assert.equal(auditWrites.length, 1)
-  assert.equal(auditWrites[0].action, 'draft_saved')
+  assert.equal(auditWrites[0].action, 'ai_draft_used')
   assert.equal(auditWrites[0].entityType, 'actionDraft')
-  assert.equal(auditWrites[0].entityId, 'DRAFT-AUDIT-1')
+  assert.equal(auditWrites[0].entityId, 'po_followup_draft')
   assert.equal(auditWrites[0].tenantId, 'tenant-audit-draft')
   assert.equal(auditWrites[0].actorId, 'user-audit-draft')
-  assert.doesNotMatch(JSON.stringify(auditWrites), /itemIdOrSku|quantity|Bearer|DATABASE_URL|postgresql:\/\/user:pass/)
+  assert.doesNotMatch(JSON.stringify(auditWrites), /Please confirm|Bearer|DATABASE_URL|postgresql:\/\/user:pass/)
 })
 
-test('audit failure does not break action draft preview', async () => {
+test('audit failure does not break recording draft use', async () => {
   const repositories = {
-    actionDrafts: {
-      getSchema: () => ({}),
-      previewDraft: () => ({ ok: true, draft: draft() }),
-    },
     auditLog: {
       mode: 'database',
       recordAuditEntry: async () => {
@@ -209,14 +179,13 @@ test('audit failure does not break action draft preview', async () => {
   }
   const route = createActionDraftRoute({
     repositories,
-    pathname: '/api/action-drafts/preview',
-    body: { type: 'purchase_request_draft', payload: { itemIdOrSku: 'A100', quantity: 10 } },
+    body: { draftType: 'po_followup_draft', use: 'opened_in_email' },
   })
 
   assert.equal(await handleActionDraftsRoute(route.ctx), true)
 
-  assert.equal(route.response.status, 200)
-  assert.equal(route.response.payload.previewOnly, true)
+  assert.equal(route.response.status, 202)
+  assert.deepEqual(route.response.payload, { recorded: false, sendsMessage: false })
   assert.doesNotMatch(JSON.stringify(route.response.payload), /postgresql:\/\/user:pass|DATABASE_URL/)
 })
 

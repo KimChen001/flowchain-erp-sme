@@ -1,8 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { sanitizePrefillMap } from '../../shared/prefill-suggestions.mjs'
-import { buildActionDraftSuggestion } from './action-draft-boundary.mjs'
-import { buildSupplierFollowupDraftPreview } from './rfq-and-supplier-followup-draft-preview.mjs'
 import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
 import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 
@@ -46,43 +44,6 @@ test('a prefill map keeps well-formed suggestions with their values and drops th
   assert.equal(sanitizePrefillMap(null), null)
   assert.equal(sanitizePrefillMap([{ source: 'record', value: 'x' }]), null)
   assert.equal(sanitizePrefillMap({ x: { source: 'guess', value: 'y' } }), null)
-})
-
-test('an invoice variance draft keeps its recipient, subject and lines, and names the invoice', () => {
-  const lines = [{ lineId: 'L1', sku: 'LDM-001', remaining: 40, unit: 'pcs', promisedDate: '2026-09-28', originalPromisedDate: null }]
-  const result = buildSupplierFollowupDraftPreview({
-    type: 'supplier_followup_draft',
-    source: 'ai_assistant',
-    payload: { supplierId: 'SUP-ATLAS', supplierName: 'Atlas Industrial Supply', invoiceId: 'INV-001', poId: 'PO-013', to: 'orders@atlas.example', contactName: 'Dana Park', subject: 'INV-001: price variance', message: 'Invoice INV-001 differs from the purchase order.', lines },
-    prefill: {
-      to: { source: 'default', ref: 'supplier:email', value: 'orders@atlas.example' },
-      message: { source: 'template', ref: 'draft.invoice.message', value: 'Invoice INV-001 differs from the purchase order.' },
-      'not a field': { source: 'record', value: 'x' },
-      subject: { source: 'guess', value: 'INV-001: price variance' },
-    },
-  }, { db: db(), now: new Date('2026-10-03T00:00:00Z') })
-  assert.equal(result.ok, true)
-  const { payload, prefill } = result.draft
-  assert.equal(payload.to, 'orders@atlas.example')
-  assert.equal(payload.contactName, 'Dana Park')
-  assert.equal(payload.subject, 'INV-001: price variance')
-  assert.equal(payload.messageDraft, 'Invoice INV-001 differs from the purchase order.')
-  assert.deepEqual(payload.lines, lines)
-  assert.equal(payload.relatedDocumentType, 'supplier_invoice')
-  assert.equal(payload.relatedDocumentId, 'INV-001')
-  assert.equal(payload.poId, 'PO-013')
-  // The message suggestion follows the field it is stored in; invalid entries are dropped.
-  assert.deepEqual(prefill, {
-    to: { source: 'default', ref: 'supplier:email', value: 'orders@atlas.example' },
-    messageDraft: { source: 'template', ref: 'draft.invoice.message', value: 'Invoice INV-001 differs from the purchase order.' },
-  })
-})
-
-test('a purchase order follow-up preview carries its prefill map; without one there is none', () => {
-  const withPrefill = buildActionDraftSuggestion({ type: 'po_followup_draft', payload: { poId: 'PO-013', message: 'Please confirm a delivery date.' }, prefill: { message: { source: 'template', ref: 'draft.po_followup.message', value: 'Please confirm a delivery date.' } } })
-  assert.deepEqual(withPrefill.draft.prefill, { message: { source: 'template', ref: 'draft.po_followup.message', value: 'Please confirm a delivery date.' } })
-  const without = buildActionDraftSuggestion({ type: 'po_followup_draft', payload: { poId: 'PO-013', message: 'Hi' } })
-  assert.equal('prefill' in without.draft, false)
 })
 
 test('copying a draft or opening it in the mail app records codes only and sends nothing', async () => {

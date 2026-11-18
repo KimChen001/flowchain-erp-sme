@@ -1,4 +1,3 @@
-import { createDbActionDraftRepository } from './db-action-draft-repository.mjs'
 import { createDbAuditLogRepository } from './db-audit-log-repository.mjs'
 import { createDbMasterDataRepository } from './db-master-data-repository.mjs'
 import { createDbProcurementReadRepository } from './db-procurement-read-repository.mjs'
@@ -57,7 +56,6 @@ export function createDatabaseRepositoryRegistry({ db = {}, env = process.env, p
     purchaseOrderDocuments: createPurchaseOrderDocumentReadService({ env, prisma }),
     procurementRequests: createProcurementRequestCommandService({ env, prisma, masterData }),
     salesOrders: createDbSalesOrderReadRepository({ env, prisma }),
-    actionDrafts: createDbActionDraftRepository({ db, env, prisma }),
     auditLog: createDbAuditLogRepository({ env, prisma }),
     aiConversation: createTransientAiConversationRepository(),
     intake: createDbIntakeRepository({ env, prisma }),

@@ -7,7 +7,6 @@ const appSource = readFileSync(new URL('../../src/app/FlowChainApp.tsx', import.
 const inventorySource = readFileSync(new URL('../../src/modules/inventory/Page.tsx', import.meta.url), 'utf8')
 const purchasingSource = readFileSync(new URL('../../src/modules/purchasing/Page.tsx', import.meta.url), 'utf8')
 const purchaseRequestsSource = readFileSync(new URL('../../src/modules/purchase-requests/CanonicalProcurementPanel.tsx', import.meta.url), 'utf8')
-const actionDraftSource = readFileSync(new URL('../../src/modules/action-drafts/ActionDraftReviewShell.tsx', import.meta.url), 'utf8')
 const uiSource = readFileSync(new URL('../../src/components/ui/index.tsx', import.meta.url), 'utf8')
 
 test('AI assistant UI has a duplicate request guard, Stop, and a retry of the same question', () => {
@@ -37,15 +36,10 @@ test('inventory SKU focus renders a local detail and canonical entity navigation
   assert.match(inventorySource, /exceptions:\s*\{\s*url:\s*"\/api\/inventory\/exceptions"/)
 })
 
-test('PO detail and draft review shell use shared recovery actions', () => {
+test('PO detail uses shared recovery actions', () => {
   assert.match(purchasingSource, /<RecoveryActions/)
   assert.match(purchasingSource, /返回采购订单/)
   assert.match(purchasingSource, /查看三单匹配/)
-  assert.match(actionDraftSource, /<RecoveryActions/)
-  assert.match(actionDraftSource, /取消草稿/)
-  assert.doesNotMatch(actionDraftSource, /onConfirmSafeAction|记录复核结果/)
-  assert.match(actionDraftSource, /文本草稿编辑器/)
-  assert.match(actionDraftSource, /不外发/)
 })
 
 test('procurement PR details expose canonical recovery paths', () => {
