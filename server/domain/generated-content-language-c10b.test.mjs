@@ -38,7 +38,8 @@ test('an export\'s sheet, empty note and the PO list\'s columns are in the inter
 
 test('a printed sheet and its layout editor are in the interface language (L16, L6-18, L11-28)', () => {
   const canvas = read('src/modules/print-layout/PrintCanvas.tsx')
-  assert.match(canvas, /pageNumber: \["Page 1 of 1", "第 1 页 \/ 共 1 页"\]/)
+  // Where the page numbers go; the browser numbers the printed pages (L11-17).
+  assert.match(canvas, /pageNumber: \["Page n of N", "第 n 页 \/ 共 N 页"\]/)
   assert.match(canvas, /colon: \[": ", "："\]/)
   assert.match(canvas, /\{element\.title\}\{say\("colon"\)\}/)
   const fields = read('src/modules/print-layout/printDataAdapters.ts')

@@ -28,6 +28,9 @@
 .print-data-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .print-data-table th, .print-data-table td { padding: 5px 6px; border: 1px solid #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .print-data-table th { background: #f3f4f6; font-weight: 700; }
+/* A band of the sheet (printBands in printPaging.ts) is no box on screen: its
+   elements sit on the sheet where they were placed. */
+.print-canvas-band { display: contents; }
 .print-placeholder-code { letter-spacing: 3px; padding: 5px; border: 1px solid #111; }
 .print-placeholder-qr { display: grid; place-items: center; height: 100%; border: 2px dotted #111; }
 .print-layout-sidepanels { min-width: 0; overflow-y: auto; background: white; border-left: 1px solid #d8dee8; }
@@ -84,18 +87,32 @@
 /* Print only the sheet, and only while the editor is open: PrintLayoutEditor
    puts fc-print-layout-open on the body when it opens and takes it off when
    it closes. This stylesheet stays loaded after that (the receiving page
-   imports it), so without the class every other page prints as it is. */
+   imports it), so without the class every other page prints as it is.
+   A long sheet pages (design audit L11-17): everything but the editor is
+   taken out of the page and the editor's ancestors become plain blocks, so
+   the sheet flows from the top of the first page onto the next ones. The
+   sheet has no fixed height and clips nothing; the lines table grows to hold
+   every line and pushes the band below it down (printBands in printPaging.ts),
+   its header row repeats on each page and a line is never split. The page
+   size, margins and page numbers are the editor's @page rule (printPageRule). */
 @media print {
-  body.fc-print-layout-open * { visibility: hidden !important; }
-  body.fc-print-layout-open .print-layout-editor, body.fc-print-layout-open .print-layout-editor .print-canvas-sheet, body.fc-print-layout-open .print-layout-editor .print-canvas-sheet * { visibility: visible !important; }
-  body.fc-print-layout-open .print-layout-editor { position: absolute; inset: 0; display: block; background: white; }
+  body.fc-print-layout-open *:not(:has(.print-layout-editor)):not(.print-layout-editor):not(.print-layout-editor *) { display: none !important; }
+  body.fc-print-layout-open :has(.print-layout-editor) { display: block !important; position: static !important; overflow: visible !important; width: auto !important; min-width: 0 !important; max-width: none !important; height: auto !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; border: 0 !important; box-shadow: none !important; transform: none !important; background: white !important; }
+  body.fc-print-layout-open .print-layout-editor { position: static; display: block; height: auto; background: white; }
   body.fc-print-layout-open .print-layout-toolbar, body.fc-print-layout-open .print-component-toolbar, body.fc-print-layout-open .print-layout-sidepanels, body.fc-print-layout-open .print-paper-label, body.fc-print-layout-open .print-unsaved-backdrop, body.fc-print-layout-open .print-readonly-note, body.fc-print-layout-open .print-import-banner { display: none !important; }
   body.fc-print-layout-open .print-layout-workspace, body.fc-print-layout-open .print-canvas-stage { display: block; padding: 0; overflow: visible; }
   body.fc-print-layout-open .print-canvas-scaled { width: auto !important; height: auto !important; }
-  body.fc-print-layout-open .print-canvas-sheet { position: absolute; left: 0; top: 0; transform: none !important; box-shadow: none; overflow: visible; }
+  body.fc-print-layout-open .print-canvas-sheet { position: relative; height: auto !important; transform: none !important; box-shadow: none; overflow: visible; }
+  body.fc-print-layout-open .print-canvas-band { display: block; position: relative; height: var(--print-band-height); }
+  body.fc-print-layout-open .print-canvas-band-table { height: auto; min-height: var(--print-band-height); }
+  body.fc-print-layout-open .print-canvas-band-below { break-inside: avoid; }
+  body.fc-print-layout-open .print-canvas-band > .print-layout-element { top: var(--print-top) !important; }
+  body.fc-print-layout-open .print-canvas-band > .print-layout-element[data-element-type="table"] { position: relative; height: auto !important; min-height: var(--print-height); overflow: visible; }
+  body.fc-print-layout-open .print-layout-element[data-element-type="pageNumber"] { display: none !important; }
   body.fc-print-layout-open .print-layout-element.is-selected { outline: none; }
   body.fc-print-layout-open .print-layout-element[data-instance-empty="true"] { display: none !important; }
   body.fc-print-layout-open .print-resize-handle { display: none !important; }
   body.fc-print-layout-open .print-data-table thead { display: table-header-group; }
   body.fc-print-layout-open .print-data-table tr { break-inside: avoid; }
+  body.fc-print-layout-open .print-data-table th, body.fc-print-layout-open .print-data-table td { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
 }

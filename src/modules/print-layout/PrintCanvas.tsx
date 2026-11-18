@@ -1,10 +1,14 @@
 import type React from "react";
 import type { PrintDocumentData, PrintLayoutElement, PrintLayoutTemplate } from "./printLayoutTypes";
 import { useI18n } from "../../i18n/I18n";
+import { printBands } from "./printPaging";
 
 // The words the canvas prints itself, in the interface language (design audit L16).
+// The page number is where the numbers go: in print the browser numbers each
+// page at its foot (printPageRule in printPaging.ts), never a fixed "1 of 1"
+// (design audit L11-17).
 const CANVAS_COPY = {
-  pageNumber: ["Page 1 of 1", "第 1 页 / 共 1 页"],
+  pageNumber: ["Page n of N", "第 n 页 / 共 N 页"],
   colon: [": ", "："],
   barcode: ["Barcode placeholder", "条码占位"],
   qrcode: ["QR code placeholder", "二维码占位"],
@@ -95,23 +99,32 @@ export default function PrintCanvas({
         style={{ width: template.page.width, height: template.page.height, transform: `scale(${scale})` }}
         onPointerDown={() => onSelect("")}
       >
-        {template.elements.filter((element) => element.visible).map((element) => (
-          <div
-            key={element.id}
-            className={`print-layout-element ${selectedId === element.id ? "is-selected" : ""} ${element.style?.bordered ? "is-bordered" : ""}`}
-            data-testid={`print-element-${element.id}`}
-            data-element-id={element.id}
-            data-instance-empty={(element.contentMode === "instance" && !instanceValues[element.id]) || undefined}
-            role="button"
-            tabIndex={0}
-            onPointerDown={(event) => startPointer(event, element, "move")}
-            onClick={(event) => { event.stopPropagation(); onSelect(element.id); }}
-            style={{ left: element.x, top: element.y, width: element.width, height: element.height, borderWidth: element.style?.borderWidth }}
-          >
-            <ElementContent element={element} data={data} instanceValues={instanceValues} />
-            {selectedId === element.id && element.resizable && (
-              <span className="print-resize-handle" data-testid="print-resize-handle" onPointerDown={(event) => startPointer(event, element, "resize")} />
-            )}
+        {/* On screen a band is no box of its own (display: contents), so each
+            element sits where it was placed on the sheet. In print the bands
+            let the lines table grow and push what is below it down
+            (printBands in printPaging.ts). */}
+        {printBands(template.elements.filter((element) => element.visible)).map((band) => (
+          <div key={band.id} className={`print-canvas-band print-canvas-band-${band.id}`} data-print-band={band.id} style={{ "--print-band-height": `${band.height}px` } as React.CSSProperties}>
+            {band.elements.map((element) => (
+              <div
+                key={element.id}
+                className={`print-layout-element ${selectedId === element.id ? "is-selected" : ""} ${element.style?.bordered ? "is-bordered" : ""}`}
+                data-testid={`print-element-${element.id}`}
+                data-element-id={element.id}
+                data-element-type={element.type}
+                data-instance-empty={(element.contentMode === "instance" && !instanceValues[element.id]) || undefined}
+                role="button"
+                tabIndex={0}
+                onPointerDown={(event) => startPointer(event, element, "move")}
+                onClick={(event) => { event.stopPropagation(); onSelect(element.id); }}
+                style={{ left: element.x, top: element.y, width: element.width, height: element.height, borderWidth: element.style?.borderWidth, "--print-top": `${element.y - band.offset}px`, "--print-height": `${element.height}px` } as React.CSSProperties}
+              >
+                <ElementContent element={element} data={data} instanceValues={instanceValues} />
+                {selectedId === element.id && element.resizable && (
+                  <span className="print-resize-handle" data-testid="print-resize-handle" onPointerDown={(event) => startPointer(event, element, "resize")} />
+                )}
+              </div>
+            ))}
           </div>
         ))}
       </div>
