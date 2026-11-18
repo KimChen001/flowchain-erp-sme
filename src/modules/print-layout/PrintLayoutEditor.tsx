@@ -14,6 +14,7 @@ import { printFieldOptionsFor } from "./printDataAdapters";
 import { clearPrintInstance, loadPrintInstance, savePrintInstance } from "./printInstanceStorage";
 import { createPrintElement, instanceElementId, withInstanceFields, type NewPrintElementType } from "./printLayoutElements";
 import { defaultPrintTemplate } from "./printLayoutPresets";
+import { printPageRule } from "./printPaging";
 import {
   deletePrintTemplate, fetchWorkspacePrintSettings, loadLastTemplate, PrintLayoutChangedError, restoreDefaultTemplate,
   saveExistingPrintTemplate, saveNewPrintTemplate, templatesFor, workspaceLayouts, type PrintLayoutSaveError,
@@ -273,7 +274,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
 
   return (
     <div className="print-layout-editor" data-testid="print-layout-editor" role="dialog" aria-modal="true" aria-label={t("printLayout.dialogLabel", { documentNo })}>
-      <style>{`@media print { @page { size: A4 ${template.page.orientation}; margin: 0; } }`}</style>
+      <style>{printPageRule(template.page, template.elements.some((element) => element.visible && element.type === "pageNumber"), language)}</style>
       <header className="print-layout-toolbar">
         <div className="print-toolbar-group">
           <button type="button" onClick={requestClose}><ArrowLeft size={15} /> {t("printLayout.back")}</button>

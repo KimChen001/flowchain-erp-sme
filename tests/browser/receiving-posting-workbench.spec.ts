@@ -1,4 +1,55 @@
 import { test, expect } from '@playwright/test'
+import { PDFParse } from 'pdf-parse'
+
+// Design audit L11-17: a receive sheet longer than one page printed only its
+// first dozen lines (the table was a fixed box that clipped the rest) and
+// "Page 1 of 1". Printed now, the sheet runs onto as many pages as its lines
+// need, every line in full, numbered by the browser.
+test('a 40-line receive sheet prints every line across pages', async ({ page, request }) => {
+  const login = await request.post('/api/auth/login', { data: { company: 'Forged Browser Company', name: 'Forged Name', email: 'kim@example.com', role: 'admin', tenantId: 'forged' } })
+  expect(login.ok()).toBeTruthy()
+  const session = await login.json()
+  await page.addInitScript(({ token, user }) => {
+    localStorage.setItem('flowchain:auth-token', token)
+    localStorage.setItem('flowchain:current-user', JSON.stringify(user))
+  }, session)
+  // The seeded receipt has one line; the page reads it with 40.
+  const sku = (n: number) => `PRINT-SKU-${String(n).padStart(2, '0')}`
+  await page.route('**/api/procurement/receiving/browser-grn', async (route) => {
+    const response = await route.fetch()
+    const detail = await response.json()
+    const line = detail.lines[0]
+    detail.lines = Array.from({ length: 40 }, (_, index) => ({ ...line, id: `${line.id}-print-${index + 1}`, sku: sku(index + 1), itemName: `Printed line ${index + 1}` }))
+    await route.fulfill({ response, json: detail })
+  })
+
+  await page.goto('/app/procurement/receiving/browser-grn')
+  await page.getByTestId('receiving-print-sheet').click()
+  const editor = page.getByTestId('print-layout-editor')
+  await expect(editor).toContainText(sku(40))
+  await page.emulateMedia({ media: 'print' })
+  // In print the table's box holds all 40 lines: none is cut off below it.
+  const table = await page.evaluate(() => {
+    const element = document.querySelector('[data-testid="print-data-table"]')!.closest<HTMLElement>('.print-layout-element')!
+    const rows = [...element.querySelectorAll('tbody tr')]
+    return { rows: rows.length, overflow: getComputedStyle(element).overflow, inside: rows.every((row) => row.getBoundingClientRect().bottom <= element.getBoundingClientRect().bottom + 1) }
+  })
+  expect(table).toEqual({ rows: 40, overflow: 'visible', inside: true })
+
+  const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true })
+  const parser = new PDFParse({ data: new Uint8Array(pdf) })
+  try {
+    const { text, total } = await parser.getText()
+    expect(total).toBeGreaterThan(1)
+    for (let n = 1; n <= 40; n += 1) expect(text).toContain(sku(n))
+    // The header row repeats on the next page; no page says "1 of 1".
+    expect(text.split('Qty received').length - 1).toBeGreaterThanOrEqual(total)
+    expect(text).not.toContain('Page 1 of 1')
+    expect(text).toContain(`Page ${total} of ${total}`)
+  } finally {
+    await parser.destroy()
+  }
+})
 
 test('receiving workbench posts and reverses through real PostgreSQL APIs', async ({ page, request }) => {
   const login = await request.post('/api/auth/login', { data: { company: 'Forged Browser Company', name: 'Forged Name', email: 'kim@example.com', role: 'admin', tenantId: 'forged' } })
