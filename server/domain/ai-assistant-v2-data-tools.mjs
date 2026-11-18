@@ -18,7 +18,7 @@ import { AI_ASSISTANT_V2_HISTORY_TOOLS } from './ai-assistant-v2-history-tools.m
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
 import { REPLENISHMENT_SOLVER_DEFAULTS, ReplenishmentInputError, logReplenishmentCall, planReplenishment } from './replenishment-solver.mjs'
 import { addCalendarDays, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
-import { OPEN_PURCHASE_REQUEST_STATUSES, PURCHASE_SUGGESTION_SOURCES, openRequestQuantity, requestLineCountsFor, suggestNeedByDate, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
+import { OPEN_PURCHASE_REQUEST_STATUSES, PURCHASE_SUGGESTION_SOURCES, inventoryPosition, openRequestQuantity, requestLineCountsFor, suggestNeedByDate, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
 
 // The data tools only assistant v2 is offered (docs/ai-assistant-v2-design.md
 // §5.1): the attention list, the records missing data, the purchase request
@@ -42,11 +42,12 @@ const stockRow = (facts, sku) => array(facts.inventory?.rows).find((row) => fold
 const openRequestsRead = (facts) => Array.isArray(facts.purchaseRequests?.open)
 
 // The shared quantity rule over a stock row (shared/purchase-suggestion.mjs):
-// open purchase requests in any open status count as cover.
+// open purchase requests in any open status count as cover. The position has
+// the parts the reorder list adds, so both give the same quantity for the
+// same records (design audit C2).
 const openRequestsOf = (facts, row) => openRequestQuantity(facts.purchaseRequests?.open, { sku: row.sku, itemId: row.itemId, unit: row.unit })
-const quantityOf = (facts, row, minimum = 0) => suggestPurchaseQuantity({
-  reorderPoint: row.reorderPoint, safetyStock: row.safetyStock, openDemand: row.openSalesDemand, available: row.available, incoming: row.incomingApprovedPo, openRequests: openRequestsOf(facts, row), minimum,
-})
+const positionOf = (facts, row) => inventoryPosition({ onHand: row.onHand, reserved: row.reserved, incoming: row.incomingApprovedPo, pendingOrders: row.pendingPurchaseQty, openRequests: openRequestsOf(facts, row), backorders: row.unreservedSalesDemand })
+const quantityOf = (facts, row, minimum = 0) => suggestPurchaseQuantity({ reorderPoint: row.reorderPoint, safetyStock: row.safetyStock, ...positionOf(facts, row), minimum })
 
 // A record the question narrows the attention list to: a purchase order by
 // its number, an item by its SKU, or a supplier the user may read.
@@ -326,7 +327,7 @@ const COVER_SOURCE = Object.freeze({ [PURCHASE_SUGGESTION_SOURCES.reorderGap]: P
 // point; the reorder point rule when there is no cover target.
 function sizeOf(facts, row, minimum, target) {
   if (target === null) return quantityOf(facts, row, minimum)
-  const sized = suggestPurchaseQuantity({ reorderPoint: target, safetyStock: row.safetyStock, openDemand: row.openSalesDemand, available: row.available, incoming: row.incomingApprovedPo, openRequests: openRequestsOf(facts, row), minimum })
+  const sized = suggestPurchaseQuantity({ reorderPoint: target, safetyStock: row.safetyStock, ...positionOf(facts, row), minimum })
   const source = COVER_SOURCE[sized.quantity.source]
   return source ? { ...sized, quantity: { ...sized.quantity, source } } : sized
 }
@@ -445,6 +446,8 @@ const suggestPurchaseLines = defineAiTool({
         item: { id: text(row.itemId) || null, sku: row.sku, name: row.itemName || null, unit: row.unit || (item ? itemStockUnit(item) : '') || null },
         onHand: row.onHand ?? null, available: row.available ?? null, safetyStock: row.safetyStock ?? null, reorderPoint: row.reorderPoint ?? null,
         openSalesDemand: row.openSalesDemand ?? null, incoming: row.incomingApprovedPo ?? null, openRequests: openRequestsOf(facts, row),
+        // The position the quantity is set against, and its other parts.
+        pendingOrders: row.pendingPurchaseQty ?? null, backorders: row.unreservedSalesDemand ?? null, position: row.noStock ? null : positionOf(facts, row).position,
         target: row.noStock ? null : quantity.target, gap: row.noStock ? null : quantity.gap,
         suggestedQuantity: notRun ? { value: null, source: notRun } : quantity.quantity,
         // The chosen supplier's minimum order in the item's unit, so the form

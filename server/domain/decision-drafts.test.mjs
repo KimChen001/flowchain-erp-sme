@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildDecisionDrafts, followUpSupplierLinkKeys, openRequestsByItem } from './decision-drafts.mjs'
+import { COVERING_REQUEST_STATUSES, buildDecisionDrafts, followUpSupplierLinkKeys, openRequestsByItem } from './decision-drafts.mjs'
 
 const now = new Date('2026-11-12T15:00:00Z')
 const timeZone = 'America/New_York'
@@ -115,6 +115,17 @@ test('only the drafted kinds get drafts, and only open requests count', () => {
   ])
   assert.deepEqual([...open.keys()], ['I-1'])
   assert.equal(open.get('I-1').length, 1)
+})
+
+// Design audit L11-02: a draft request set a reorder item aside as covered.
+test('only a request past draft can cover a reorder item', () => {
+  const requests = [
+    { id: 'PR-1', status: 'draft', lines: [{ itemId: 'I-1' }] },
+    { id: 'PR-2', status: 'submitted', lines: [{ itemId: 'I-2' }] },
+    { id: 'PR-3', status: 'approved', lines: [{ itemId: 'I-3' }] },
+  ]
+  assert.deepEqual([...openRequestsByItem(requests).keys()], ['I-1', 'I-2', 'I-3'])
+  assert.deepEqual([...openRequestsByItem(requests, { statuses: COVERING_REQUEST_STATUSES }).keys()], ['I-2', 'I-3'])
 })
 
 test('a held supplier invoice gets its differences, their causes and the supplier contact from Today\'s source', () => {

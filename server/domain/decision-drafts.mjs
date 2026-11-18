@@ -37,12 +37,15 @@ const quantity = (value) => (value === null || value === undefined || value === 
 
 // Purchase request states that still ask for their items.
 export const OPEN_REQUEST_STATUSES = Object.freeze(['draft', 'submitted', 'pending_approval', 'approved'])
+// The states that can cover a reorder item on Today: past draft. A draft
+// alone never set an item aside (design audit L11-02).
+export const COVERING_REQUEST_STATUSES = Object.freeze(['submitted', 'pending_approval', 'approved'])
 
 // The open purchase requests per item id: [{ id, number, status }].
-export function openRequestsByItem(purchaseRequests) {
+export function openRequestsByItem(purchaseRequests, { statuses = OPEN_REQUEST_STATUSES } = {}) {
   const byItem = new Map()
   for (const request of array(purchaseRequests)) {
-    if (!OPEN_REQUEST_STATUSES.includes(text(request.status).toLowerCase())) continue
+    if (!statuses.includes(text(request.status).toLowerCase())) continue
     for (const line of array(request.lines)) {
       const itemId = text(line.itemId)
       if (!itemId) continue
