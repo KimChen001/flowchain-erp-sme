@@ -46,6 +46,10 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
   // the rest) is done.
   const open = orders.filter((order) => order.status === 'issued' && !order.closed && outstanding(order) > 0)
   const onOrder = (key) => sum(open, (order) => ordered(order, key) - received(order, key))
+  // Orders not yet issued (waiting for approval, or drafts): not on order, but
+  // in the reorder list's position since design audit C2.
+  const notIssued = orders.filter((order) => ['pending_approval', 'draft'].includes(order.status) && !order.closed)
+  const pendingFor = (key) => sum(notIssued, (order) => ordered(order, key))
   // What the business pays for an item [assumed]: the plan's purchase price,
   // a share of the selling price (the item's supplier terms carry it, so the
   // order form, stock value and holding cost use it). A plan without one
@@ -81,13 +85,20 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     }
   }
   // Days after the data's last day shipped nothing.
-  const recentDemand = (row) => {
+  const recentDemand = (row) => recentHistory(row).shipped / DEMAND_WINDOW_DAYS
+  // What shipped over the 90 days before today and on how many days. A plan
+  // without daily figures ships its mean every day.
+  const recentHistory = (row) => {
+    if (!row.daily) return { shipped: row.meanDaily * DEMAND_WINDOW_DAYS, days: DEMAND_WINDOW_DAYS }
     let shipped = 0
+    let days = 0
     for (let back = 1; back <= DEMAND_WINDOW_DAYS; back += 1) {
       const index = todayIndex - back
-      if (index >= 0 && index < plan.days) shipped += Number(row.daily?.[index]) || 0
+      const quantity = index >= 0 && index < plan.days ? Number(row.daily[index]) || 0 : 0
+      shipped += quantity
+      if (quantity > 0) days += 1
     }
-    return row.daily ? shipped / DEMAND_WINDOW_DAYS : row.meanDaily
+    return { shipped, days }
   }
 
   // Late: issued, promised before today, not fully received.
@@ -97,12 +108,32 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     lines: order.lines.map((line) => ({ sku: items.get(line.itemKey).sku, ordered: line.quantity, received: received(order, line.itemKey), outstanding: line.quantity - received(order, line.itemKey) })),
   }))
 
-  // Reorder: an item whose position (on hand + on order) is at or below its
-  // reorder point gets the larger of its shortfall and its minimum order.
-  const reorder = plan.items
-    .map((row) => ({ row, position: plan.purchasing.closing[row.key] + onOrder(row.key) }))
-    .filter(({ row, position }) => position <= row.reorderPoint)
-    .map(({ row, position }) => ({ sku: row.sku, shortfall: row.reorderPoint - position, quantity: Math.max(row.reorderPoint - position, row.minimumOrderQuantity) }))
+  // Reorder: the reorder list's (s, S) rule since design audit C2 and C3
+  // (owner "按建议做"; the level is an app default, not a finding), worked
+  // out here in ten-thousandths as the list works:
+  //   position  on hand + on order + orders not yet issued (this workspace
+  //             has no reservations, backorders or purchase requests);
+  //   due       the position at the reorder point or below, or above it by
+  //             less than a day of demand (its order-by day is today);
+  //   level     the reorder point + 7 days of average daily demand over the
+  //             90 days before today, with at least 8 shipment days; without
+  //             them, the reorder point (no lot sizes are seeded);
+  //   quantity  level - position, rounded up, at least the minimum order.
+  // Ordering it brings the position to the level, so the item is no longer due.
+  const ORDER_UP_TO_DAYS = 7
+  const UNITS = 10000
+  const reorder = plan.items.flatMap((row) => {
+    const position = plan.purchasing.closing[row.key] + onOrder(row.key) + pendingFor(row.key)
+    const { shipped, days } = recentHistory(row)
+    const shippedUnits = days >= 8 && shipped > 0 ? Math.round(shipped * UNITS) : null
+    const pointUnits = Math.round(row.reorderPoint * UNITS)
+    const positionUnits = Math.round(position * UNITS)
+    const due = positionUnits <= pointUnits || (shippedUnits !== null && Math.floor(((positionUnits - pointUnits) * DEMAND_WINDOW_DAYS) / shippedUnits) === 0)
+    const levelUnits = pointUnits + (shippedUnits === null ? 0 : ORDER_UP_TO_DAYS * Math.round(shippedUnits / DEMAND_WINDOW_DAYS))
+    const gap = Math.ceil((levelUnits - positionUnits) / UNITS)
+    if (!due || gap <= 0) return []
+    return [{ sku: row.sku, shortfall: Math.max(0, row.reorderPoint - position), orderUpTo: levelUnits / UNITS, quantity: Math.max(gap, row.minimumOrderQuantity) }]
+  })
   const belowSafetyStock = plan.items.filter((row) => plan.purchasing.closing[row.key] < row.safetyStock).map((row) => row.sku)
 
   // Sales by calendar month (YYYY-MM): every line shipped in full on its
