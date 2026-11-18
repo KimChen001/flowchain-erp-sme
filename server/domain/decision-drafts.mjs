@@ -19,10 +19,13 @@ import { invoiceExceptionDraft } from './invoice-exception-draft.mjs'
 //                                but never sent gets send_purchase_order
 //                                instead: the order and its supplier, to send
 //                                from the order's page, and no follow-up;
-//   purchase_request_to_convert  the draft purchase orders the request would
+//   purchase_request_to_convert  the purchase orders the request would
 //                                make, one per supplier, currency and
 //                                delivery warehouse, and the lines that lack
-//                                one of the three;
+//                                one of the three. They start approved with
+//                                the request (D3) unless the workspace turns
+//                                that off; the card reads which, and each
+//                                line, from the purchase-order preview;
 //   bill_exception               what the three-way match found different on
 //                                a held supplier invoice, the likely cause of
 //                                each difference and the step for the invoice

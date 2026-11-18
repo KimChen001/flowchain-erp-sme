@@ -23,11 +23,12 @@ test("finance direct URL is blocked while its database capability is disabled", 
   await expect(blocked).toContainText("你有访问权限，但此功能在当前工作区未开启。");
 });
 
-// Forecast / MRP is unavailable: the old local experiment switch must not open it.
-test("forecast direct URL stays unavailable even with the local experiment switched on", async ({ page }) => {
+// Forecast / MRP was removed (design audit L3-25): the old local experiment
+// switch opens nothing, and the old address offers a way back.
+test("the removed forecast address stays closed even with the local experiment switched on", async ({ page }) => {
   await authenticate(page, ["forecast"]);
   await page.goto("/app/forecast/cockpit");
-  await expect(page.getByTestId("capability-route-blocked")).toContainText("FlowChain 的这部分功能暂不提供。");
+  await expect(page.getByTestId("not-found-recovery")).toBeVisible();
   await expect(page.locator("[data-planning-view]")).toHaveCount(0);
 });
 

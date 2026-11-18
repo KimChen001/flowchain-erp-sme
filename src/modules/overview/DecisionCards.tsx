@@ -60,6 +60,22 @@ type ConversionDraft = {
   orders: Array<{ supplierId: string; supplierName: string; currency: string; warehouseId: string; lines: number }>;
   missing: Array<{ line: number; sku: string | null; fields: string[] }>;
 };
+// What Create would make, from GET /api/procurement/requests/:id/purchase-order-preview:
+// the status the orders start in (approved with the request, owner decision
+// D3, or draft when the workspace turns that off), each order's lines, and
+// what would refuse it.
+type OrderPreview = {
+  purchaseOrderStatus: string;
+  orders: Array<{ supplierId: string; supplierName: string | null; currency: string; warehouseId: string; lineCount: number; lines?: Array<{ sku: string | null; itemName: string | null; quantity: string | null; unit: string | null }> }>;
+  issues: Array<{ code: string; message?: string }>;
+};
+type PreviewState = { state: "idle" | "loading" } | { state: "loaded"; value: OrderPreview } | { state: "error"; message: string };
+// Why the server would refuse the orders, in the reader's language.
+const ISSUE_COPY: Record<string, DecisionCopyKey> = {
+  DIRECT_PO_NOT_ALLOWED: "issueFields",
+  PURCHASE_REQUEST_LINE_UNPRICED: "issueUnpriced",
+  SUPPLIER_NOT_ACTIVE: "issueSupplierInactive",
+};
 // A supplier invoice the three-way match held (server/domain/invoice-exception-draft.mjs).
 type InvoiceDifference = {
   exceptionId: string; kind: "price" | "quantity" | "amount"; cause: string | null; sku: string | null; unit: string | null;
@@ -598,7 +614,23 @@ function InvoiceExceptionBody({ draft, row, busy, canDecide, aside, onContacted,
   );
 }
 
-function ConversionBody({ draft, row, busy, canDecide, aside, onCreate, open, toggle }: View & { draft: ConversionDraft; row: TodayRow; busy: boolean; canDecide: boolean; aside: ReactNode; onCreate: () => void }) {
+// What Create would make, read when the card opens and again each time it
+// reopens, so the status and lines are the server's at that moment.
+function useOrderPreview(requestId: string, version: number, enabled: boolean, language: string): PreviewState {
+  const [preview, setPreview] = useState<PreviewState>({ state: "idle" });
+  useEffect(() => {
+    if (!enabled) { setPreview((current) => (current.state === "idle" ? current : { state: "idle" })); return; }
+    let live = true;
+    setPreview({ state: "loading" });
+    apiJson<OrderPreview>(`/api/procurement/requests/${encodeURIComponent(requestId)}/purchase-order-preview`)
+      .then((value) => { if (live) setPreview({ state: "loaded", value }); })
+      .catch((error) => { if (live) setPreview({ state: "error", message: apiErrorText(error, language, RETRY_LATER) }); });
+    return () => { live = false; };
+  }, [requestId, version, enabled, language]);
+  return preview;
+}
+
+function ConversionBody({ draft, row, busy, canDecide, aside, onCreate, open, toggle, onOpen }: View & { draft: ConversionDraft; row: TodayRow; busy: boolean; canDecide: boolean; aside: ReactNode; onCreate: () => void }) {
   const t = useDecisionCopy();
   const fields = (codes: string[]) => codes.map((code) => t(`field_${code}` as DecisionCopyKey)).join(t.language === "zh-CN" ? "、" : ", ");
   const ready = canDecide && draft.missing.length === 0 && draft.orders.length > 0;
@@ -606,25 +638,54 @@ function ConversionBody({ draft, row, busy, canDecide, aside, onCreate, open, to
   // turns a request into orders (design audit 2026-11-15, L5-13: here one
   // click made them).
   const [confirming, setConfirming] = useState(false);
-  const create = !ready ? null : confirming
+  // Before that click the card says what will be created: approved orders
+  // (approving the request approved them, owner decision D3) or drafts when
+  // the workspace turns that off, with each line's item, quantity and
+  // supplier, and what would refuse them (design audit L11-05).
+  const preview = useOrderPreview(draft.purchaseRequestId, draft.version, open && canDecide, t.language);
+  const plan = preview.state === "loaded" ? preview.value : null;
+  const approved = plan?.purchaseOrderStatus === "approved";
+  const checked = Boolean(plan && plan.issues.length === 0 && plan.orders.length > 0);
+  const qty = (value: string | null, unit: string | null) => (value === null ? "—" : `${formatQuantity(Number(value))}${unit ? ` ${unitLabel(unit, t.language, Number(value))}` : ""}`);
+  const createButton = <button type="button" disabled={busy} className={BUTTON.primary} onClick={() => { onOpen(); setConfirming(true); }} data-testid="decision-create-orders">{t("createOrders")}</button>;
+  const create = !ready ? null : confirming && open
     ? (
       <span className="inline-flex flex-wrap items-center gap-2" data-testid="decision-confirm-orders">
-        <span className="text-xs" style={{ color: A.sub }}>{t.count("confirmCreateOrders", draft.orders.length)}</span>
-        <button type="button" disabled={busy} className={BUTTON.primary} onClick={onCreate} data-testid="decision-primary">{busy ? t("creating") : t("confirmCreate")}</button>
+        <span className="text-xs" style={{ color: A.sub }}>{plan ? t.count(approved ? "confirmCreateApproved" : "confirmCreateDraft", plan.orders.length) : t("previewLoading")}</span>
+        <button type="button" disabled={busy || !checked} className={BUTTON.primary} onClick={onCreate} data-testid="decision-primary">{busy ? t("creating") : t("confirmCreate")}</button>
         <button type="button" disabled={busy} className={BUTTON.secondary} onClick={() => setConfirming(false)}>{t("cancel")}</button>
       </span>
     )
-    : <button type="button" disabled={busy} className={BUTTON.primary} onClick={() => setConfirming(true)} data-testid="decision-create-orders">{t("createOrders")}</button>;
+    : createButton;
   const openRequest = <Link to={row.href} className={BUTTON.secondary}>{t("openRequest")}</Link>;
-  if (!open) return <><Short>{t.count("convertDraft", draft.orders.length)}</Short><LineEnd>{create || openRequest}{toggle}</LineEnd></>;
+  if (!open) return <><Short>{t.count("convertDraft", draft.orders.length)}</Short><LineEnd>{ready ? createButton : openRequest}{toggle}</LineEnd></>;
   return (
     <>
       <LineEnd>{toggle}</LineEnd>
       <Below>
-        <Prepared>{t.count("convertDraft", draft.orders.length)}</Prepared>
-        <ul className="mt-1 list-disc pl-5 text-xs" style={{ color: A.sub }}>
-          {draft.orders.map((order) => <li key={`${order.supplierId}:${order.currency}:${order.warehouseId}`}>{t.count("convertOrder", order.lines, { supplier: order.supplierName, currency: order.currency })}</li>)}
-        </ul>
+        <Prepared>{plan ? t.count(approved ? "willCreateApproved" : "willCreateDraft", plan.orders.length) : t.count("convertDraft", draft.orders.length)}</Prepared>
+        {plan ? (
+          <>
+            <p className="mt-1 text-xs" style={{ color: A.sub }} data-testid="decision-order-status">{t(approved ? "approvedWithRequest" : "draftForApproval")}</p>
+            <ul className="mt-1 space-y-1 text-xs" style={{ color: A.sub }} data-testid="decision-order-preview">
+              {plan.orders.map((order) => (
+                <li key={`${order.supplierId}:${order.currency}:${order.warehouseId}`}>
+                  <span className="font-medium" style={{ color: A.label }}>{t("previewOrder", { supplier: order.supplierName || order.supplierId, currency: order.currency })}</span>
+                  <ul className="list-disc pl-5">
+                    {(order.lines || []).map((line, index) => <li key={index} data-testid="decision-order-line">{t("previewLine", { item: line.itemName || line.sku || "—", qty: qty(line.quantity, line.unit) })}</li>)}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+            {plan.issues.map((issue) => <p key={issue.code} className="mt-1 text-xs text-amber-700" data-testid="decision-order-issue">{t(ISSUE_COPY[issue.code] || "issueOther")}</p>)}
+          </>
+        ) : (
+          <ul className="mt-1 list-disc pl-5 text-xs" style={{ color: A.sub }}>
+            {draft.orders.map((order) => <li key={`${order.supplierId}:${order.currency}:${order.warehouseId}`}>{t.count("convertOrder", order.lines, { supplier: order.supplierName, currency: order.currency })}</li>)}
+          </ul>
+        )}
+        {preview.state === "loading" ? <p className="mt-1 text-xs" style={{ color: A.sub }} role="status">{t("previewLoading")}</p> : null}
+        {preview.state === "error" ? <p className="mt-1 text-xs text-amber-700" data-testid="decision-order-preview-failed">{t("previewFailed", { message: preview.message })}</p> : null}
         {draft.missing.map((line) => <p key={line.line} className="mt-1 text-xs text-amber-700">{t("convertMissing", { line: line.line, sku: line.sku || "—", fields: fields(line.fields) })}</p>)}
         <Actions aside={aside}>
           {create}

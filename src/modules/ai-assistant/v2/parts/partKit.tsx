@@ -51,7 +51,8 @@ export function usePartCopy(answerLanguage?: string) {
       return value(input, unit, currency);
     }
   };
-  return { language, locale: i18n.locale, timezone: i18n.timezone, t, known, number, money, day, value, compact };
+  // workspaceToday: the workspace's day from the server ("" until known, design audit B3).
+  return { language, locale: i18n.locale, timezone: i18n.timezone, workspaceToday: i18n.workspaceToday, t, known, number, money, day, value, compact };
 }
 
 export type PartCopy = ReturnType<typeof usePartCopy>;

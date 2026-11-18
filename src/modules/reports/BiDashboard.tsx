@@ -192,7 +192,7 @@ const AS_OF_TODAY_METRICS = new Set(["open_po_count", "overdue_open_po_count", "
 const knownChartIds = (ids: string[], charts: Array<{ id: string }> | undefined) => charts ? ids.filter((id) => charts.some((chart) => chart.id === id)) : ids;
 
 export function BiDashboard({ view, onNavigate: _onNavigate, afterInsights }: { view: DashboardView; onNavigate?: NavigateFn; afterInsights?: React.ReactNode }) {
-  const { language, locale, timezone, formatDateTime } = useI18n();
+  const { language, locale, timezone, formatDateTime, workspaceToday: serverToday } = useI18n();
   const copy = useCallback((label: string) => reportCopy(label, language), [language]);
   const confirmDialog = useConfirm();
   const navigate = useNavigate(); const [params, setParams] = useSearchParams();
@@ -275,7 +275,8 @@ export function BiDashboard({ view, onNavigate: _onNavigate, afterInsights }: { 
     if (item.comparisonRate !== null) return `${sign}${Math.abs(item.comparisonRate).toFixed(1)}%`;
     return `${sign}${chartContext.format(Math.abs(item.comparisonDelta), item.unit, item.currencyCode)}`;
   };
-  const today = useMemo(() => workspaceToday(timezone), [timezone]);
+  // The server's workspace day once the localization has loaded (design audit B3, #17).
+  const today = useMemo(() => serverToday || workspaceToday(timezone), [serverToday, timezone]);
   const count = useMemo(() => new Intl.NumberFormat(locale), [locale]);
   const detailTotal = report?.totalRecords ?? report?.details.length ?? 0;
   // No records of the dashboard's own kind in range (and the reader may read

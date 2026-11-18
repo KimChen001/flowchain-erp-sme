@@ -46,7 +46,6 @@ test('capability registry hides preview and unavailable modules by default', asy
   assert.equal(byId['universal-intake'].enabled, false)
   assert.equal(byId['universal-intake'].maturity, 'preview')
   assert.equal(byId['universal-intake'].businessCommitReady, false)
-  assert.equal(byId.forecast.enabled, false)
   assert.equal(byId.finance.enabled, false)
   assert.equal(byId['receiving-posting'].enabled, false)
   assert.equal(byId['receiving-posting'].databaseOnly, true)
