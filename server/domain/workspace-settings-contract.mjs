@@ -2,7 +2,10 @@ import { documentSettingsSeed, normalizeDocumentSettings, validateDocumentSettin
 import { DOCUMENT_NUMBER_PREFIX_PATTERN, DOCUMENT_NUMBER_TYPES, defaultNumberingRules } from '../../shared/document-numbering.mjs'
 
 export const SUPPORTED_LANGUAGES = ['en-US', 'zh-CN']
-export const SUPPORTED_LOCALES = ['zh-CN', 'en-US']
+// The regional format: how dates and numbers are written in the workspace,
+// whatever each person's interface language (design audit L11-27). en-GB
+// writes the day before the month (18 Nov 2026), as a UK workspace does.
+export const SUPPORTED_LOCALES = ['zh-CN', 'en-US', 'en-GB']
 export const SUPPORTED_TIMEZONES = [
   'Asia/Shanghai',
   'America/New_York',

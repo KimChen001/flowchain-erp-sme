@@ -148,6 +148,7 @@ export const PUBLIC_DATA_WORKSPACE_DATASETS = Object.freeze({
     workspaceName: 'Walmart store CA_1 (M5 public data)',
     currency: 'USD',
     timezone: 'America/Los_Angeles',
+    locale: 'en-US',
     countryCode: 'US',
     warehouseName: 'Store CA_1 stockroom',
   }),
@@ -157,6 +158,8 @@ export const PUBLIC_DATA_WORKSPACE_DATASETS = Object.freeze({
     workspaceName: 'UK online gift retailer (UCI public data)',
     currency: 'GBP',
     timezone: 'Europe/London',
+    // A UK business writes the day first (18 Nov 2026), design audit L11-27.
+    locale: 'en-GB',
     countryCode: 'GB',
     warehouseName: 'Main warehouse',
   }),

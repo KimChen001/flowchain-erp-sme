@@ -43,6 +43,10 @@ const publicWorkspace = (tenant, baseCurrencyLocked = false) => ({
   locale: tenant.locale,
   defaultLanguage: tenant.defaultLanguage,
   baseCurrencyLocked,
+  // Posted records keep the day they were posted in this timezone; changing it
+  // afterwards would move those days on screen and on reprinted documents
+  // (design audit L11-27), so it locks with the base currency.
+  timezoneLocked: baseCurrencyLocked,
   workspaceCompletedAt: tenant.workspaceCompletedAt,
   version: tenant.version,
   options: {
@@ -187,6 +191,7 @@ export async function handlePilotWorkspaceRoute(ctx) {
         const defaultLanguage = assertSupportedLanguage(body.defaultLanguage || current.defaultLanguage)
         const locked = await hasPostedTransactions(tx, actor.tenantId, current)
         if (locked && baseCurrency !== current.currency) fail('BASE_CURRENCY_LOCKED', 'Base currency cannot change after posted transactions exist.', 409)
+        if (locked && timezone !== current.timezone) fail('TIMEZONE_LOCKED', 'Timezone cannot change after posted transactions exist.', 409)
         const updated = await tx.tenant.updateMany({ where: { id: actor.tenantId, version: Number(body.version) }, data: { name: workspaceName, legalName: companyName || null, countryCode: text(body.countryCode) || current.countryCode || 'US', currency: baseCurrency, timezone, locale, defaultLanguage, workspaceCompletedAt: workspaceName && companyName && baseCurrency && timezone ? new Date() : null, version: { increment: 1 } } })
         if (updated.count !== 1) fail('VERSION_CONFLICT', 'Workspace changed concurrently.', 409)
         const next = await tx.tenant.findUnique({ where: { id: actor.tenantId } })

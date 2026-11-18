@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Save, ShieldCheck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
+import { apiErrorText } from "../../lib/apiErrorText";
 import { A, Card } from "../../components/ui";
 import { isTranslationKey, useI18n } from "../../i18n/I18n";
 import AuthorizationWorkbench from "./AuthorizationWorkbench";
@@ -50,9 +51,10 @@ type Workspace = {
   countryCode: string;
   baseCurrency: string;
   timezone: string;
-  locale: "zh-CN" | "en-US";
+  locale: "zh-CN" | "en-US" | "en-GB";
   defaultLanguage: "zh-CN" | "en-US";
   baseCurrencyLocked: boolean;
+  timezoneLocked?: boolean;
   workspaceCompletedAt?: string;
   version: number;
   options: { languages: string[]; locales: string[]; timezones: string[]; currencies: string[] };
@@ -242,7 +244,9 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       window.dispatchEvent(new Event("flowchain:localization-changed"));
     } catch (error) {
       setWorkspaceState("failure");
-      setNotice(error instanceof Error ? error.message : t("settings.saveFailed"));
+      // A refusal in the interface language: the locks say why (design audit L11-27).
+      const own = (key: Parameters<typeof t>[0]) => [t(key), t(key)] as const;
+      setNotice(apiErrorText(error, language, own("settings.saveFailed"), { BASE_CURRENCY_LOCKED: own("settings.currencyLocked"), TIMEZONE_LOCKED: own("settings.timezoneLocked") }));
     }
   }
   async function saveScopes() {
@@ -275,7 +279,8 @@ export default function WorkspaceSettings({ view }: { view: string }) {
   const localeOptions = [
     { value: "zh-CN", label: "简体中文（中国）— zh-CN" },
     { value: "en-US", label: "English (United States) — en-US" },
-  ];
+    { value: "en-GB", label: "English (United Kingdom) — en-GB" },
+  ].filter(option => !workspace.options.locales.length || workspace.options.locales.includes(option.value));
   // Someone who reads or grants warehouse access is sent every warehouse, but
   // their own default warehouse must still be one they can read.
   const ownWarehouseIds = new Set((profile.warehouseScopes || []).map(scope => scope.warehouseId));
@@ -310,7 +315,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
     {view === "company" && <div className="mt-4 grid gap-4 md:grid-cols-2">
       <label>{t("settings.companyName")}<input className={field} value={workspace.companyName} disabled={!canEditWorkspace} onChange={event => setWorkspace({ ...workspace, companyName: event.target.value, legalName: event.target.value })} /></label>
       <label>{t("settings.workspaceName")}<input className={field} value={workspace.workspaceName} disabled={!canEditWorkspace} onChange={event => setWorkspace({ ...workspace, workspaceName: event.target.value, name: event.target.value })} /></label>
-      <SettingSelect label={t("settings.timezone")} value={workspace.timezone} options={timezoneOptions} disabled={!canEditWorkspace} onChange={value => setWorkspace({ ...workspace, timezone: value })} />
+      <SettingSelect label={t("settings.timezone")} value={workspace.timezone} options={timezoneOptions} disabled={!canEditWorkspace} locked={workspace.timezoneLocked ? t("settings.timezoneLocked") : ""} onChange={value => setWorkspace({ ...workspace, timezone: value })} />
       <SettingSelect label={t("settings.currency")} value={workspace.baseCurrency} options={currencyOptions} disabled={!canEditWorkspace} locked={workspace.baseCurrencyLocked ? t("settings.currencyLocked") : ""} onChange={value => setWorkspace({ ...workspace, baseCurrency: value })} />
       <SettingSelect label={t("settings.locale")} value={workspace.locale} options={localeOptions} disabled={!canEditWorkspace} onChange={value => setWorkspace({ ...workspace, locale: value as Workspace["locale"] })} />
       <SettingSelect label={t("settings.defaultLanguage")} value={workspace.defaultLanguage} options={languageOptions} disabled={!canEditWorkspace} onChange={value => setWorkspace({ ...workspace, defaultLanguage: value as Workspace["defaultLanguage"] })} />
@@ -319,6 +324,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
         {new Intl.DateTimeFormat(workspace.locale, { dateStyle: "medium", timeStyle: "short", timeZone: workspace.timezone }).format(new Date("2026-07-17T08:30:00Z"))}
         {" · "}
         {new Intl.NumberFormat(workspace.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1234567.89)}
+        <p className="mt-1 text-xs text-slate-500">{t("settings.localeHint")}</p>
       </div>
     </div>}
 
