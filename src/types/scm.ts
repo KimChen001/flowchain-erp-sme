@@ -87,6 +87,10 @@ export type PurchaseOrderLine = {
 export type PurchaseOrder = {
   // Set by the server when the role may not read prices ("amounts").
   restrictedFields?: string[];
+  // Whether this reader may approve the order now: it waits for approval, they
+  // hold the permission, and it is not their own order while someone else may
+  // approve it (server/domain/approval-rights.mjs).
+  canApprove?: boolean;
   // The internal id: URLs, links and API calls.
   po: string;
   // The document number people read (PO-YYYYMM-NNNN; the id for orders made before numbering).

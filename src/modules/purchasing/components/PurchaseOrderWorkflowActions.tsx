@@ -85,6 +85,7 @@ export function PurchaseOrderWorkflowActions({
   number,
   status,
   version,
+  canApprove = false,
   onChanged,
   showNote = true,
 }: {
@@ -93,6 +94,10 @@ export function PurchaseOrderWorkflowActions({
   number?: string;
   status: string;
   version?: number;
+  // Whether this reader may approve the order now (the read's canApprove):
+  // Approve and Reject show only then, so whoever created or submitted it
+  // never meets a button the approval would refuse (design audit C4).
+  canApprove?: boolean;
   onChanged: () => void;
   // Off when the page shows the action notes on a line of their own.
   showNote?: boolean;
@@ -103,7 +108,7 @@ export function PurchaseOrderWorkflowActions({
   const [busy, setBusy] = useState<WorkflowAction | "">("");
   const confirmDialog = useConfirm();
 
-  const actions = (ACTIONS_BY_STATUS[status] || []).filter((action) => permissions?.has(PERMISSION[action](status)));
+  const actions = (ACTIONS_BY_STATUS[status] || []).filter((action) => permissions?.has(PERMISSION[action](status)) && ((action !== "approve" && action !== "reject") || canApprove));
   if (!Number.isInteger(version) || !actions.length) return null;
 
   const run = async (action: WorkflowAction) => {

@@ -1598,7 +1598,7 @@ export default function PurchasingOrdersPage({
               document and supplier invoice entry sit to the right. */}
           <div className="flex flex-wrap items-center gap-2">
             <PurchaseOrderReceiveAction poId={selectedPO.po} status={selectedPO.status} showNote={false} />
-            <PurchaseOrderWorkflowActions poId={selectedPO.po} number={selectedPONumber} status={selectedPO.status} version={selectedPO.version} onChanged={loadWorkbench} showNote={false} />
+            <PurchaseOrderWorkflowActions poId={selectedPO.po} number={selectedPONumber} status={selectedPO.status} version={selectedPO.version} canApprove={selectedPO.canApprove === true} onChanged={loadWorkbench} showNote={false} />
             <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
               {/* A bill can arrive before or after the goods; none once every line is invoiced. */}
               {BILLABLE_PO_STATUSES.has(selectedPO.status) && !selectedPOFullyInvoiced && <span className="inline-flex [&_button]:h-8 [&_button]:py-0"><RecordBillAction purchaseOrderId={selectedPO.po} /></span>}

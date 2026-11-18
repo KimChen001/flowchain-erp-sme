@@ -13,6 +13,7 @@ import {
   isLivePosting,
 } from "./return-authorization-closure-policy.mjs";
 import { assertAuthorized, can } from "../auth/authorization-service.mjs";
+import { approvalAuthorIds, selfApprovalCheck } from "./self-approval.mjs";
 
 export class ReturnGovernanceReadError extends Error {
   constructor(code, message, status = 400, details) {
@@ -779,12 +780,26 @@ export function createReturnGovernanceReadService({
           )
         : [],
     ]);
+    // Authorize and Reject are not offered to who requested or submitted the
+    // return while someone else who reads its warehouses may authorize it, as
+    // the authorization command rules (design audit C4, L8-25).
+    const actions = actionModel(resolved, request, capabilities);
+    const selfBlocked = (actions.authorize || actions.reject) && (await selfApprovalCheck(prisma, {
+      tenantId: resolved.tenantId,
+      actorId: resolved.user?.id,
+      authorIds: approvalAuthorIds("return_authorization", request),
+      permissionCode: "returns.authorization.approve",
+      warehouseIds: warehouseIds(request.lines),
+    })).blocked;
+    const availableActions = selfBlocked ? { ...actions, authorize: false, reject: false } : actions;
     return {
       dataSource: "Authoritative PostgreSQL",
       request: requestModel(request),
       lines: request.lines.map(lineModel),
       authorizations: request.authorizations.map(authorizationModel),
-      availableActions: actionModel(resolved, request, capabilities),
+      availableActions,
+      // Whether this reader may authorize the return now.
+      canApprove: availableActions.authorize === true,
       evidence: [...requestEvidence, ...authorizationEvidence].sort((a, b) =>
         String(a.occurredAt).localeCompare(String(b.occurredAt)),
       ),

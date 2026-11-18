@@ -70,6 +70,52 @@ export function selfApprovalRefusal(documentLabel) {
   };
 }
 
+// Each approval's permission and the authors of its document: the one table
+// both the approval commands and the reads take them from, so a page offers
+// Approve exactly when the command would accept it (canApprove).
+export const APPROVAL_KINDS = Object.freeze({
+  purchase_request: Object.freeze({ permission: "procurement.purchase_request.approve", authors: (row) => [row?.requester, row?.metadata?.requesterId, lastActorOf(row?.metadata?.timeline, "submit")] }),
+  purchase_order: Object.freeze({ permission: "procurement.purchase_order.approve", authors: (row) => [row?.metadata?.createdBy, row?.metadata?.createdById, lastActorOf(row?.metadata?.approvalTimeline, "submit")] }),
+  supplier_invoice: Object.freeze({ permission: "finance.supplier_invoice.approve", authors: (row) => [row?.submittedById] }),
+  customer_invoice: Object.freeze({ permission: "finance.customer_invoice.approve", authors: (row) => [row?.submittedById] }),
+  return_authorization: Object.freeze({ permission: "returns.authorization.approve", authors: (row) => [row?.requestedById, row?.submittedById] }),
+});
+
+// The authors of a stored document (the database row, with its metadata).
+export function approvalAuthorIds(kind, row) {
+  return [...new Set((APPROVAL_KINDS[kind]?.authors(row) || []).map(text).filter(Boolean))];
+}
+
+// What a reader may approve, counted once for a whole list: the approval
+// permissions of `kinds` they hold (`holds(permission)`), and those no one
+// else in the workspace holds, where approving their own document is allowed.
+// A count that cannot be read counts as someone else: the reader's own
+// documents then show no Approve, and the command still decides.
+export async function approverStanding(client, actor, holds, kinds = Object.keys(APPROVAL_KINDS)) {
+  const userId = text(actor?.user?.id || actor?.userId);
+  const held = new Set([...new Set(kinds.map((kind) => APPROVAL_KINDS[kind]?.permission).filter(Boolean))].filter((permission) => holds(permission)));
+  const sole = new Set();
+  if (client?.user && userId) {
+    for (const permission of held) {
+      try {
+        if ((await otherApproverCount(client, { tenantId: actor.tenantId, actorId: userId, permissionCode: permission })) === 0) sole.add(permission);
+      } catch { /* someone else, as above */ }
+    }
+  }
+  return { userId, held, sole };
+}
+
+// Whether the reader may approve a document with these authors now: the
+// permission, and not a self-approval that someone else could give (C4). A
+// return's other approvers must read its warehouses too, so its pages ask
+// selfApprovalCheck with them instead.
+export function mayApprove(standing, kind, authorIds = []) {
+  const permission = APPROVAL_KINDS[kind]?.permission;
+  if (!standing || !permission || !standing.held?.has(permission)) return false;
+  const authors = new Set(authorIds.map(text).filter(Boolean));
+  return !authors.has(standing.userId) || standing.sole.has(permission);
+}
+
 // The latest actor of an action in a timeline ([{ action, actorId }]).
 export function lastActorOf(timeline, action) {
   const entries = Array.isArray(timeline) ? timeline : [];

@@ -130,9 +130,11 @@ test("English trial: global search answers in English", async ({ page }) => {
 });
 
 // The sales orders the harness adds under PLAYWRIGHT_US_TRIAL on the
-// walkthrough data: LOCAL-TRIAL-SO-101 has three lines; LOCAL-TRIAL-SO-102 is
-// on hold and has no recorded customer name. The read API sends their labels
-// in Chinese; the page translates them when shown.
+// walkthrough data: LOCAL-TRIAL-SO-101 (Harbor Supply Co) has three lines;
+// LOCAL-TRIAL-SO-102 (Lakeside Outfitters) is on hold. Both have a customer
+// from Customers and a price on every line, as confirming requires (design
+// audit C5). The read API sends their labels in Chinese; the page translates
+// them when shown.
 // "View order" goes to the sales order workbench, and a sales order focus is
 // routed to /app/sales/orders/:id; these pages have no order drawer.
 test.describe("sales delivery risks with the trial orders", () => {
@@ -141,7 +143,7 @@ test.describe("sales delivery risks with the trial orders", () => {
   // UI review 8, findings 13 and 31: a customer's page lists its orders,
   // invoices and balance and starts a new order; an item's page shows its
   // stock, movements and the orders still to ship it, with filtered links.
-  // LOCAL-TRIAL-SO-101 is Harbor Supply Co's order (recorded by name) for
+  // LOCAL-TRIAL-SO-101 is Harbor Supply Co's order (from Customers) for
   // TST-001 among others.
   test("the customer and item pages show their related records in English", async ({ page }) => {
     await signIn(page);
@@ -181,7 +183,7 @@ test.describe("sales delivery risks with the trial orders", () => {
     await expectEnglish(page);
   });
 
-  test("English: server labels, the unnamed customer and the multi-line item are translated", async ({ page }) => {
+  test("English: server labels, the order on hold and the multi-line item are translated", async ({ page }) => {
     await signIn(page);
     await page.goto("/app/sales/risks");
     await settle(page);
@@ -198,7 +200,7 @@ test.describe("sales delivery risks with the trial orders", () => {
     await expect(multiLine).not.toContainText("Data limitations");
     await expect(page.getByTestId("delivery-risk-reorder-LOCAL-TRIAL-SO-101")).toHaveAttribute("href", "/app/inventory/reorder");
     const onHold = page.getByRole("row", { name: /LOCAL-TRIAL-SO-102/ });
-    await expect(onHold).toContainText("Unnamed customer");
+    await expect(onHold).toContainText("Lakeside Outfitters");
     await expect(onHold).toContainText("Blocked");
     await expect(onHold).toContainText("The order is on hold.");
     // The first card counts every order in the list's own term: "Sales orders".
@@ -208,7 +210,7 @@ test.describe("sales delivery risks with the trial orders", () => {
     await page.goto("/app/sales/evidence");
     await settle(page);
     const evidenceRow = page.getByRole("row", { name: /LOCAL-TRIAL-SO-102/ });
-    await expect(evidenceRow).toContainText("Unnamed customer");
+    await expect(evidenceRow).toContainText("Lakeside Outfitters");
     await expect(evidenceRow).toContainText("Shortage risk");
     await expect(evidenceRow).toContainText("Blocked");
     await expect(page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ })).toContainText("Flow Controller and 2 more");
@@ -225,7 +227,8 @@ test.describe("sales delivery risks with the trial orders", () => {
     await expect(page.getByTestId("sales-order-status-LOCAL-TRIAL-SO-102")).toHaveText("On hold");
     await expect(page.getByTestId("sales-order-status-LOCAL-TRIAL-SO-101")).toHaveText("Confirmed");
     const listed = page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ });
-    await expect(listed).toContainText("Not priced");
+    // 12 × $58 + 8 × $26.50 + 20 × $12.
+    await expect(listed).toContainText("$1,148.00");
     await expect(listed).not.toContainText("Not set");
     await expect(page.getByRole("columnheader")).toHaveText(["Order number", "Customer", "Status", "Order amount", "Promised date", "Ordered / reserved / fulfilled", "Invoicing", "Actions"]);
     await expectEnglish(page);
@@ -244,7 +247,7 @@ test.describe("sales delivery risks with the trial orders", () => {
     await expect(multiLine).toContainText("此处未计入在手库存和在途采购。");
     await expect(multiLine).toContainText("补货清单");
     const onHold = page.getByRole("row", { name: /LOCAL-TRIAL-SO-102/ });
-    await expect(onHold).toContainText("未命名客户");
+    await expect(onHold).toContainText("Lakeside Outfitters");
     await expect(onHold).toContainText("已阻塞");
     await expect(onHold).toContainText("订单已暂停。");
     await expect(page.locator("main").first()).not.toContainText(/Unnamed customer|Blocked|and 2 more/);
@@ -261,6 +264,6 @@ test.describe("sales delivery risks with the trial orders", () => {
     await settle(page);
     await expect(page.getByTestId("sales-order-status-LOCAL-TRIAL-SO-102")).toHaveText("暂停");
     await expect(page.getByTestId("sales-order-status-LOCAL-TRIAL-SO-101")).toHaveText("已确认");
-    await expect(page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ })).toContainText("未定价");
+    await expect(page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ })).toContainText("$1,148.00");
   });
 });

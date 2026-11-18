@@ -460,23 +460,31 @@ export const APPROVAL_ROW_PERMISSIONS = Object.freeze({
 })
 
 // An approval row goes to someone who may give the approval (design audit
-// L11-12): a reader with the permission, and not a request's own requester
-// unless no one else may approve it, as the approval itself rules
-// (self-approval.mjs). approver = { userId, permissionCodes: Set, soleApprover:
-// Set of the permissions only this reader holds }; without one (no database)
-// every row stays.
-export function rowForApprover(row, approver, requesterOf = () => '') {
+// L11-12): a reader with the permission, and not who raised or submitted the
+// request, order or bill unless no one else may approve it, as the approval
+// itself rules (self-approval.mjs). approver = { userId, permissionCodes:
+// Set, soleApprover: Set of the permissions only this reader holds }; without
+// one (no database) every row stays. authorsOf(recordId, kind) gives the
+// record's authors (an id or a list).
+export function rowForApprover(row, approver, authorsOf = () => []) {
   const permission = APPROVAL_ROW_PERMISSIONS[row.kind]
   if (!permission || !approver) return true
   if (!approver.permissionCodes?.has(permission)) return false
-  if (row.kind !== 'purchase_request_to_approve') return true
-  return requesterOf(row.recordId) !== text(approver.userId) || Boolean(approver.soleApprover?.has(permission))
+  const authors = [].concat(authorsOf(row.recordId, row.kind) ?? []).map(text)
+  return !authors.includes(text(approver.userId)) || Boolean(approver.soleApprover?.has(permission))
 }
 
 export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, approver = null } = {}) {
   const today = tenantCalendarDay(now, timeZone)
-  const requesters = new Map(array(sources.purchaseRequests).map((request) => [text(request.id), text(request.requesterId || request.requester)]))
-  const requesterOf = (id) => requesters.get(text(id)) || ''
+  // Who raised or submitted each request, order and bill (the read model's
+  // approvalAuthorIds; a request read without them, its requester).
+  const authorsBy = (rows, fallback = () => []) => new Map(array(rows).map((entry) => [text(entry.id), Array.isArray(entry.approvalAuthorIds) ? entry.approvalAuthorIds : fallback(entry)]))
+  const authors = {
+    purchase_request_to_approve: authorsBy(sources.purchaseRequests, (request) => [request.requesterId, request.requester]),
+    purchase_order_to_approve: authorsBy(sources.purchaseOrders),
+    bill_to_approve: authorsBy(sources.supplierInvoices),
+  }
+  const authorsOf = (id, kind) => authors[kind]?.get(text(id)) || []
   const reportOrders = sources.reportPurchaseOrders ?? sources.purchaseOrders
   const { asOf, rows } = purchaseOrderSignalRows(reportOrders, now, timeZone)
   // The assistant's signals over the same facts it reads: open purchase
@@ -492,7 +500,7 @@ export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFA
     ...salesOrderWork(sources.salesOrders, today),
     ...purchasingWork(sources.purchaseRequests, sources.purchaseOrders, sources.rfqs),
     ...contractWork(sources.contracts, today),
-  ].filter((row) => rowForApprover(row, approver, requesterOf)).sort(compareTodayWork)
+  ].filter((row) => rowForApprover(row, approver, authorsOf)).sort(compareTodayWork)
   return {
     today,
     items: todayWorkResponseRows(items),

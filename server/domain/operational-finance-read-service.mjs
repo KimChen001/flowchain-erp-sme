@@ -1,4 +1,5 @@
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
+import { approvalAuthorIds, approverStanding, mayApprove } from "./self-approval.mjs";
 import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 import { can } from "../auth/authorization-service.mjs";
 import { paymentRecordsView } from "./payment-record-command-service.mjs";
@@ -145,7 +146,9 @@ const workspaceZone = async (prisma, tenantId) =>
 // A search box's text as a contains filter; LIKE wildcards are matched as typed.
 const containsText = (value) => ({ contains: value, mode: "insensitive" });
 
-function actions(actor, capability, row, type) {
+// `standing`: what this reader may approve (self-approval.mjs); without it
+// Approve follows the permission alone.
+function actions(actor, capability, row, type, standing = null) {
   if (!capability?.enabled) return [];
   if (type === "invoice") {
     const values = [];
@@ -166,9 +169,12 @@ function actions(actor, capability, row, type) {
       values.push("match");
     // An exception invoice can be approved only once every match exception
     // is approved; until then the list must not offer Approve.
+    // Nor to the person who submitted it while someone else may approve it
+    // (design audit C4): the approval would refuse them.
     if (
       can({ actor, permission: "finance.supplier_invoice.approve", tenantId: actor.tenantId }) &&
-      (row.status === "matched" || (row.status === "exception" && Number(row.blockingExceptionCount || 0) === 0))
+      (row.status === "matched" || (row.status === "exception" && Number(row.blockingExceptionCount || 0) === 0)) &&
+      (!standing || mayApprove(standing, "supplier_invoice", approvalAuthorIds("supplier_invoice", row)))
     )
       values.push("approve");
     if (
@@ -210,8 +216,8 @@ function protectFinanceFields(model, actor) {
   return output;
 }
 
-function invoiceSummary(row, actor, capabilities) {
-  return protectFinanceFields({
+function invoiceSummary(row, actor, capabilities, standing = null) {
+  const summary = protectFinanceFields({
     id: row.id,
     invoiceNumber: row.invoiceNumber || row.id,
     supplierId: row.supplierId,
@@ -236,8 +242,11 @@ function invoiceSummary(row, actor, capabilities) {
       capabilities["supplier-invoice"],
       row,
       "invoice",
+      standing,
     ),
   }, actor);
+  // Whether this reader may approve it now, as the Approve action says.
+  return { ...summary, canApprove: summary.availableActions.includes("approve") };
 }
 
 function payableSummary(row, actor, capabilities) {
@@ -304,6 +313,11 @@ export function createOperationalFinanceReadService({
 
   async function actor(context) {
     return resolveProvisionedActor(prisma, context?.identity || context);
+  }
+
+  // Whether the reader may approve supplier invoices, and only they may.
+  async function approvalStanding(current) {
+    return approverStanding(prisma, current, (permission) => can({ actor: current, permission, tenantId: current.tenantId }), ["supplier_invoice"]);
   }
 
   async function listSupplierInvoices(query, context) {
@@ -387,9 +401,10 @@ export function createOperationalFinanceReadService({
       blocking.set(row.supplierInvoiceId, (blocking.get(row.supplierInvoiceId) || 0) + row._count._all);
       exceptionTypes.set(row.supplierInvoiceId, [...(exceptionTypes.get(row.supplierInvoiceId) || []), row.exceptionType].sort());
     }
+    const standing = await approvalStanding(current);
     return {
       items: rows.map((row) => ({
-        ...invoiceSummary({ ...row, blockingExceptionCount: blocking.get(row.id) || 0, blockingQuantityException: (exceptionTypes.get(row.id) || []).includes("quantity") }, current, capabilities),
+        ...invoiceSummary({ ...row, blockingExceptionCount: blocking.get(row.id) || 0, blockingQuantityException: (exceptionTypes.get(row.id) || []).includes("quantity") }, current, capabilities, standing),
         // The kinds of difference still to decide (price, quantity, amount).
         openExceptionTypes: exceptionTypes.get(row.id) || [],
       })),
@@ -508,7 +523,7 @@ export function createOperationalFinanceReadService({
       .filter((entry) => ["open", "rejected"].includes(entry.status));
     const blockingExceptionCount = blockingExceptions.length;
     const blockingQuantityException = blockingExceptions.some((entry) => entry.exceptionType === "quantity");
-    const summary = invoiceSummary({ ...invoice, blockingExceptionCount, blockingQuantityException }, current, capabilities);
+    const summary = invoiceSummary({ ...invoice, blockingExceptionCount, blockingQuantityException }, current, capabilities, await approvalStanding(current));
     const duplicateChecks = await duplicateChecksView(invoice, current);
     // An approver dismisses an open flag with a reason before approval; an
     // approved, held or cancelled bill is past that step.
