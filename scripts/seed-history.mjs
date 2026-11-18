@@ -69,6 +69,24 @@ export async function scenarioActor(prisma, tenantId, permissions, documents) {
   throw new Error(`No active workspace user may post ${documents}. Run pilot:setup first.`)
 }
 
+// Someone other than the submitter who may approve, for the step a second
+// person takes: who submitted a document does not approve it when someone
+// else may (design audit C4, self-approval.mjs). The submitter when no one
+// else may, which the app allows and audits.
+export async function scenarioApprover(prisma, tenantId, submitter, permission) {
+  const users = await prisma.user.findMany({ where: { tenantId, status: 'active', id: { not: submitter.userId } }, orderBy: { email: 'asc' } })
+  for (const user of users) {
+    const identity = { authenticated: true, tenantId, userId: user.id, role: user.role, name: user.name, source: 'local_walkthrough_scenario' }
+    try {
+      const actor = await resolveProvisionedActor(prisma, identity)
+      if (authorize({ actor, permission, tenantId }).allowed) return identity
+    } catch {
+      // A user without a complete role assignment cannot approve; try the next one.
+    }
+  }
+  return submitter
+}
+
 export const HISTORY_PERMISSIONS = ['inventory.adjustment.create', 'inventory.adjustment.approve', 'inventory.adjustment.post', 'shipment.prepare', 'shipment.post']
 
 // Ships one confirmed sales order in full as of its day: reserve, draft and

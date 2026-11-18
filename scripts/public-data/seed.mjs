@@ -31,7 +31,7 @@ import { saveItemSupplier } from '../../server/domain/master-data-commands.mjs'
 import { applySupplierTierChange } from '../../server/domain/supplier-tier-command.mjs'
 import { findPaymentTerm } from '../../server/domain/standard-payment-terms.mjs'
 import { backfillTenantAuthorization } from '../../server/auth/authorization-backfill.mjs'
-import { HISTORY_PERMISSIONS, scenarioActor, scenarioCalendar, shipHistoryOrder } from '../seed-history.mjs'
+import { HISTORY_PERMISSIONS, scenarioActor, scenarioApprover, scenarioCalendar, shipHistoryOrder } from '../seed-history.mjs'
 import { publicDataPlanCounts } from './plan.mjs'
 import { PAYABLES_PERMISSIONS, seedSupplierInvoices } from './seed-payables.mjs'
 
@@ -359,7 +359,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
     const financeEnv = { ...historyEnv, FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: 'true' }
     const financeActor = await scenarioActor(prisma, tenantId, PAYABLES_PERMISSIONS, 'supplier invoices and payments')
     payables = await seedSupplierInvoices(prisma, {
-      plan, env: financeEnv, identity: financeActor, tenantId, calendar, purchaseOrderIds: purchaseOrders.map((order) => order.id), supplierIdOf: supplierId, metadata, retrying, log,
+      plan, env: financeEnv, identity: financeActor, approver: await scenarioApprover(prisma, tenantId, financeActor, 'finance.supplier_invoice.approve'), tenantId, calendar, purchaseOrderIds: purchaseOrders.map((order) => order.id), supplierIdOf: supplierId, metadata, retrying, log,
     })
   }
   lap('supplierInvoices', since)

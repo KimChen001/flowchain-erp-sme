@@ -22,6 +22,7 @@ import {
   loadDuplicateChecks,
   workspaceTimezone,
 } from "./supplier-invoice-duplicates.mjs";
+import { selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
 
 export class OperationalFinanceError extends Error {
   constructor(code, message, status = 400, details) {
@@ -1848,6 +1849,14 @@ export function createOperationalFinanceCommandService({
         message: "This supplier invoice already has a payable obligation.",
         status: 409,
       });
+    // The approval would be refused as a self-approval (design audit C4).
+    const selfApproval = await selfApprovalCheck(prisma, {
+      tenantId: actor.tenantId,
+      actorId: actor.user.id,
+      authorIds: [invoice.submittedById],
+      permissionCode: "finance.supplier_invoice.approve",
+    });
+    if (selfApproval.blocked) blockingIssues.push(selfApprovalRefusal("supplier invoice"));
     const { openFlags } = await duplicateChecks(prisma, actor.tenantId, invoice);
     blockingIssues.push(...duplicateReviewIssues(openFlags, amountsVisible(actor)));
     const typedNumber = text(input.obligationNumber);
@@ -1927,6 +1936,18 @@ export function createOperationalFinanceCommandService({
             "Every line-level match exception must be approved before invoice approval.",
             409,
           );
+        // Who submitted the bill does not approve it, unless no one else
+        // may; then the audit row says so (design audit C4).
+        const selfApproval = await selfApprovalCheck(tx, {
+          tenantId: actor.tenantId,
+          actorId: actor.user.id,
+          authorIds: [current.submittedById],
+          permissionCode: "finance.supplier_invoice.approve",
+        });
+        if (selfApproval.blocked) {
+          const refusal = selfApprovalRefusal("supplier invoice");
+          fail(refusal.code, refusal.message, refusal.status);
+        }
         // Recomputed here, so a bill entered or edited after the preview is
         // seen. Not retryable: the approver has to look at the flag.
         const { openFlags } = await duplicateChecks(tx, actor.tenantId, current);
@@ -2010,6 +2031,7 @@ export function createOperationalFinanceCommandService({
               payableObligationId: payable.id,
               matchStatus: current.matchStatus,
               approvedCreditAmount: opening.approvedCreditAmount,
+              ...(selfApproval.auditFlag ? { selfApproval: selfApproval.auditFlag } : {}),
             },
           }),
         });

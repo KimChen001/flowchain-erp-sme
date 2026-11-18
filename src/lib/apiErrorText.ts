@@ -33,6 +33,12 @@ const CODES: Record<string, Pair> = {
   AUTHORITATIVE_INVENTORY_READ_NOT_AVAILABLE: NOT_ON,
   // Saving an item whose stock unit is held by stock or open orders (the item form and any other item editor).
   UNIT_LOCKED: ["This item's unit cannot be changed: it already has stock, stock movements or open order lines in that unit.", "该物料已有库存、库存流水或未完成的订单行，不能修改单位。"],
+  // Approving a document you raised or submitted, when someone else may approve it (design audit C4).
+  // Role governance (design audit L4-30).
+  AUTHORIZATION_SELF_ASSIGNMENT: ["You cannot give yourself a role. Ask another administrator.", "不能给自己分配角色，请让其他管理员操作。"],
+  AUTHORIZATION_ROLE_VERSION_CONFLICT: CHANGED,
+  AUTHORIZATION_GRANT_EXCEEDS_OWN: ["You can only grant permissions you hold yourself.", "只能授予你自己拥有的权限。"],
+  SELF_APPROVAL_BLOCKED: ["You raised or submitted this, so someone else who may approve it has to approve it.", "这张单据是你提交的，需要由其他有审批权限的人来审批。"],
 };
 
 const IN_USE: Pair = ["This code or number is already in use. Choose another.", "该编号已被使用，请换一个。"];
@@ -69,4 +75,13 @@ export function apiErrorView(reason: unknown, language: string, fallback: Pair, 
 /** The same message as plain text, for a toast or a one-line notice. */
 export function apiErrorText(reason: unknown, language: string, fallback: Pair, own: Record<string, Pair> = {}): string {
   return apiErrorView(reason, language, fallback, own).message;
+}
+
+/**
+ * The shared wording for a code listed above, or undefined: for a preview's
+ * blocking issue, which carries a code but is not an error.
+ */
+export function knownCodeText(code: string | undefined, language: string): string | undefined {
+  const pair = code ? CODES[code] : undefined;
+  return pair ? (language === "en-US" ? pair[0] : pair[1]) : undefined;
 }

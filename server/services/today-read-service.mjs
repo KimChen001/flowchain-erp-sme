@@ -2,13 +2,15 @@ import { buildHomeOverview, createBusinessReadContextService, todayWorkOf } from
 import { syncTodayDecisions } from './decision-item-service.mjs'
 import { supplierEmailSettingOn } from './supplier-follow-up-email-service.mjs'
 import { can } from '../auth/authorization-service.mjs'
-import { DECISION_PERMISSION } from '../domain/decision-items.mjs'
+import { DRAFTED_DECISION_KINDS, decisionPermissionOf } from '../domain/decision-items.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { reportReadAccess, scopeBusinessContext } from '../domain/report-read-access.mjs'
 import { SUPPLIER_EMAIL_PERMISSION, supplierEmailDelivery } from '../domain/supplier-follow-up-email.mjs'
 import { tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
 import { readTenantTimezone } from '../domain/tenant-timezone.mjs'
 import { databaseClient, readTodayWorkSources, todayHiddenWork } from '../domain/today-work-read-service.mjs'
+import { APPROVAL_ROW_PERMISSIONS } from '../domain/today-work.mjs'
+import { otherApproverCount } from '../domain/self-approval.mjs'
 
 // Today for the signed-in reader, shared by GET /api/home/overview, the
 // decision routes and the assistant's decision tools, so all three read the
@@ -33,8 +35,29 @@ export async function readTodayForReader(ctx) {
   const today = tenantCalendarDay(now, timeZone)
   const read = await readTodayWorkSources(ctx, { access, rawContext: raw, now, today, timeZone })
   const hidden = todayHiddenWork(access, ctx.env || process.env)
-  const work = todayWorkOf(context, read.sources, { now, timeZone })
+  const work = todayWorkOf(context, read.sources, { now, timeZone, approver: await todayApprover(ctx) })
   return { access, raw, context, timeZone, now, today, read, hidden, work }
+}
+
+// Which approvals the reader may give, for Today's approval rows (design
+// audit L11-12): the approve permissions they hold, and those no one else
+// in the workspace holds, where approving their own request is allowed.
+// null without a database or a provisioned reader, and then no row is
+// filtered, as before.
+export async function todayApprover(ctx) {
+  try {
+    const prisma = await databaseClient(ctx)
+    if (!prisma?.user) return null
+    const actor = await resolveProvisionedActor(prisma, ctx.identity)
+    const permissionCodes = new Set([...new Set(Object.values(APPROVAL_ROW_PERMISSIONS))].filter((permission) => can({ actor, permission, tenantId: actor.tenantId })))
+    const soleApprover = new Set()
+    for (const permission of permissionCodes) {
+      if (await otherApproverCount(prisma, { tenantId: actor.tenantId, actorId: actor.user.id, permissionCode: permission }) === 0) soleApprover.add(permission)
+    }
+    return { userId: actor.user.id, permissionCodes, soleApprover }
+  } catch {
+    return null
+  }
 }
 
 // The procurement snapshot reads at most this many requests, orders and
@@ -70,17 +93,20 @@ export async function todayDecisions(ctx, reader) {
     const prisma = await databaseClient(ctx)
     const tenantId = String(ctx.identity?.tenantId || '').trim()
     if (!prisma?.decisionItem || !tenantId) return { available: false }
-    let canDecide = false
+    let decideKinds = []
     let canSend = false
     try {
       const actor = await resolveProvisionedActor(prisma, ctx.identity)
-      canDecide = can({ actor, permission: DECISION_PERMISSION, tenantId: actor.tenantId })
+      // The kinds this reader may decide, each by its own permission (L11-09).
+      decideKinds = DRAFTED_DECISION_KINDS.filter((kind) => can({ actor, permission: decisionPermissionOf(kind), tenantId: actor.tenantId }))
       canSend = can({ actor, permission: SUPPLIER_EMAIL_PERMISSION, tenantId: actor.tenantId })
-    } catch { canDecide = false }
+    } catch { decideKinds = [] }
+    const canDecide = decideKinds.length > 0
     const decisions = await syncTodayDecisions({
       prisma, tenantId, rows: reader.work.all, today: reader.today, now: reader.now, timeZone: reader.timeZone,
       hidden: reader.hidden, limitations: todayReadLimitations(reader), context: reader.context, sources: reader.read.sources, canDecide,
     })
+    decisions.canDecideKinds = decideKinds
     // Whether the follow-up cards may email the supplier
     // (server/services/supplier-follow-up-email-service.mjs), and whether an
     // email would only reach the local outbox.

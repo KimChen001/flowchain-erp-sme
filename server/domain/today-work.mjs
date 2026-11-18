@@ -452,8 +452,31 @@ export function todayWorkResponseRows(items, { limit = TODAY_WORK_LIMIT, perKind
 }
 
 // sources: what the reader may read, already scoped (see buildHomeOverview).
-export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
+// The rows that wait for an approval, and the permission that gives it.
+export const APPROVAL_ROW_PERMISSIONS = Object.freeze({
+  purchase_request_to_approve: 'procurement.purchase_order.approve',
+  purchase_order_to_approve: 'procurement.purchase_order.approve',
+  bill_to_approve: 'finance.supplier_invoice.approve',
+})
+
+// An approval row goes to someone who may give the approval (design audit
+// L11-12): a reader with the permission, and not a request's own requester
+// unless no one else may approve it, as the approval itself rules
+// (self-approval.mjs). approver = { userId, permissionCodes: Set, soleApprover:
+// Set of the permissions only this reader holds }; without one (no database)
+// every row stays.
+export function rowForApprover(row, approver, requesterOf = () => '') {
+  const permission = APPROVAL_ROW_PERMISSIONS[row.kind]
+  if (!permission || !approver) return true
+  if (!approver.permissionCodes?.has(permission)) return false
+  if (row.kind !== 'purchase_request_to_approve') return true
+  return requesterOf(row.recordId) !== text(approver.userId) || Boolean(approver.soleApprover?.has(permission))
+}
+
+export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, approver = null } = {}) {
   const today = tenantCalendarDay(now, timeZone)
+  const requesters = new Map(array(sources.purchaseRequests).map((request) => [text(request.id), text(request.requesterId || request.requester)]))
+  const requesterOf = (id) => requesters.get(text(id)) || ''
   const reportOrders = sources.reportPurchaseOrders ?? sources.purchaseOrders
   const { asOf, rows } = purchaseOrderSignalRows(reportOrders, now, timeZone)
   // The assistant's signals over the same facts it reads: open purchase
@@ -469,7 +492,7 @@ export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFA
     ...salesOrderWork(sources.salesOrders, today),
     ...purchasingWork(sources.purchaseRequests, sources.purchaseOrders, sources.rfqs),
     ...contractWork(sources.contracts, today),
-  ].sort(compareTodayWork)
+  ].filter((row) => rowForApprover(row, approver, requesterOf)).sort(compareTodayWork)
   return {
     today,
     items: todayWorkResponseRows(items),

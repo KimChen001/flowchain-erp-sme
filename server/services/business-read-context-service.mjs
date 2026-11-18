@@ -220,7 +220,7 @@ export function pickRecentDocuments(documents, { limit = RECENT_DOCUMENTS, perTy
 //                    rows set aside (server/services/decision-item-service.mjs),
 //                    or { available: false } without a database. workItems
 //                    still lists every row; the page splits them.
-export function todayWorkOf(context, sources = {}, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
+export function todayWorkOf(context, sources = {}, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, approver = null } = {}) {
   return buildTodayWork({
     purchaseOrders: context.purchaseOrders,
     reportPurchaseOrders: sources.reportPurchaseOrders,
@@ -234,7 +234,7 @@ export function todayWorkOf(context, sources = {}, { now = new Date(), timeZone 
     receivables: sources.receivables,
     payables: sources.payables,
     contracts: sources.contracts,
-  }, { now, timeZone })
+  }, { now, timeZone, approver })
 }
 
 export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, sources = {}, setup = null, setupOptions = {}, hidden = [], limitations = [], work: computed = null, decisions = { available: false } } = {}) {

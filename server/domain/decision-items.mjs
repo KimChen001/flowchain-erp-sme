@@ -24,6 +24,16 @@ export const SUPPLIER_MESSAGE_KINDS = Object.freeze(['purchase_order_overdue', '
 // Who may decide: every drafted action (a purchase request, a promised date,
 // orders from a request) needs this permission, so deciding needs it too.
 export const DECISION_PERMISSION = 'procurement.purchase_order.revise'
+// Who may decide, by kind (design audit L11-09): a held supplier invoice is
+// the finance side's, the person who reviews its match exceptions; the
+// purchasing kinds keep the purchasing permission their drafted actions need.
+export const DECISION_PERMISSIONS = Object.freeze({
+  reorder_now: DECISION_PERMISSION,
+  purchase_order_overdue: DECISION_PERMISSION,
+  purchase_request_to_convert: DECISION_PERMISSION,
+  bill_exception: 'finance.match_exception.review',
+})
+export const decisionPermissionOf = (kind) => DECISION_PERMISSIONS[kind] || DECISION_PERMISSION
 // What a person may choose; "covered" is recorded by the system only.
 export const DECISION_OPTIONS = Object.freeze(['not_now', 'not_needed', 'chased', 'accepted'])
 export const SYSTEM_DECISIONS = Object.freeze(['covered'])
