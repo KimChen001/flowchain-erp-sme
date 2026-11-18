@@ -677,6 +677,10 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         currency: group.currency,
         warehouseId: group.warehouseId,
         lineCount: group.lines.length,
+        // Each line as its PO will carry it, for the card that asks before
+        // creating (design audit L11-05): an amount-basis line (a service)
+        // is ordered as one unit, as the command orders it.
+        lines: group.lines.map((line) => ({ sku: text(line.sku) || null, itemName: text(line.itemName) || null, quantity: line.quantity === null ? "1.0000" : decimalText(line.quantity), unit: text(line.unit) || null })),
         amount: receivingDecimalString(group.lines.reduce((sum, line) => sum + receivingDecimalUnits(String(line.amount ?? "0")), 0n)),
       })),
       issues: plan.issues.map(({ code, message, details }) => ({ code, message, details })),
