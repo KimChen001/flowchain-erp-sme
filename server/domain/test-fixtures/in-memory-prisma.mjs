@@ -50,13 +50,19 @@ export function matches(row, where = {}) {
   })
 }
 
+// An orderBy entry as [path, direction]; a nested entry orders by a field of
+// a to-one relation the row embeds ({ purchaseOrder: { createdAt: 'desc' } }).
+const orderPaths = (entry, prefix = []) => Object.entries(entry).flatMap(([field, direction]) =>
+  direction && typeof direction === 'object' ? orderPaths(direction, [...prefix, field]) : [[[...prefix, field], direction]])
+const valueAt = (row, path) => path.reduce((value, key) => value?.[key], row)
+
 function sorted(rows, orderBy) {
-  const keys = (Array.isArray(orderBy) ? orderBy : orderBy ? [orderBy] : []).flatMap((entry) => Object.entries(entry))
+  const keys = (Array.isArray(orderBy) ? orderBy : orderBy ? [orderBy] : []).flatMap((entry) => orderPaths(entry))
   if (!keys.length) return rows
   return [...rows].sort((a, b) => {
     for (const [field, direction] of keys) {
-      const left = comparable(a[field])
-      const right = comparable(b[field])
+      const left = comparable(valueAt(a, field))
+      const right = comparable(valueAt(b, field))
       if (left === right) continue
       const order = left === null || left === undefined ? 1 : right === null || right === undefined ? -1 : left < right ? -1 : 1
       return direction === 'desc' ? -order : order

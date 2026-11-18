@@ -249,11 +249,16 @@ test('a matched bill goes to whoever may approve bills, by its invoice number', 
 })
 
 test('a bill with match exceptions waits for the last one to be approved; previews and a review that leaves one open send nothing', async () => {
-  await prisma.purchaseOrder.create({ data: { id: 'po-ae-ex', tenantId: tenantA, status: 'approved', supplierId: supplier, supplierName: 'Approval Supply Co.', currency: 'USD', amount: '100.0000', lines: { create: { id: 'po-ae-ex-L1', itemId: item.id, sku: item.sku, itemName: item.name, orderedQuantity: '10.0000', receivedQuantity: '10.0000', unit: 'EA', unitPrice: '10.0000' } } } })
-  await prisma.receivingDocument.create({ data: { id: 'grn-ae-ex', tenantId: tenantA, documentNumber: 'GRN-AE-2', poId: 'po-ae-ex', supplierId: supplier, supplierName: 'Approval Supply Co.', status: 'received', workflowStatus: 'posted', postingStatus: 'posted', postedAt: new Date(), postedById: users.submitter.id, warehouseId: warehouse, currency: 'USD', lines: { create: { id: 'grn-ae-ex-L1', purchaseOrderLineId: 'po-ae-ex-L1', itemId: item.id, sku: item.sku, itemName: item.name, acceptedQty: '10.0000', rejectedQty: '0.0000', unit: 'EA', warehouseId: warehouse, location: 'A-01', locationKey: 'a-01' } } } })
+  // Two lines, so the bill has two exceptions to review.
+  const orderLine = (n) => ({ id: `po-ae-ex-L${n}`, itemId: item.id, sku: item.sku, itemName: item.name, orderedQuantity: '10.0000', receivedQuantity: '10.0000', unit: 'EA', unitPrice: '10.0000' })
+  const receiptLine = (n) => ({ id: `grn-ae-ex-L${n}`, purchaseOrderLineId: `po-ae-ex-L${n}`, itemId: item.id, sku: item.sku, itemName: item.name, acceptedQty: '10.0000', rejectedQty: '0.0000', unit: 'EA', warehouseId: warehouse, location: 'A-01', locationKey: 'a-01' })
+  await prisma.purchaseOrder.create({ data: { id: 'po-ae-ex', tenantId: tenantA, status: 'approved', supplierId: supplier, supplierName: 'Approval Supply Co.', currency: 'USD', amount: '200.0000', lines: { create: [orderLine(1), orderLine(2)] } } })
+  await prisma.receivingDocument.create({ data: { id: 'grn-ae-ex', tenantId: tenantA, documentNumber: 'GRN-AE-2', poId: 'po-ae-ex', supplierId: supplier, supplierName: 'Approval Supply Co.', status: 'received', workflowStatus: 'posted', postingStatus: 'posted', postedAt: new Date(), postedById: users.submitter.id, warehouseId: warehouse, currency: 'USD', lines: { create: [receiptLine(1), receiptLine(2)] } } })
   const finance = createOperationalFinanceCommandService({ prisma, env: process.env })
-  // Billed at 11 against an order price of 10: a price and an amount exception.
-  const bill = await finance.createSupplierInvoice({ invoiceNumber: 'AE-BILL-2', supplierId: supplier, currency: 'USD', invoiceDate: '2026-09-01', dueDate: '2026-10-01', totalAmount: '110.0000', idempotencyKey: 'ae-bill2-create', lines: [{ purchaseOrderLineId: 'po-ae-ex-L1', receivingLineId: 'grn-ae-ex-L1', quantity: '10.0000', unitPrice: '11.0000', lineAmount: '110.0000', enteredTaxAmount: '0' }] }, { identity })
+  // Both lines billed at 11 against an order price of 10: a price exception
+  // on each (a price difference is not raised again as an amount one).
+  const billLine = (n) => ({ purchaseOrderLineId: `po-ae-ex-L${n}`, receivingLineId: `grn-ae-ex-L${n}`, quantity: '10.0000', unitPrice: '11.0000', lineAmount: '110.0000', enteredTaxAmount: '0' })
+  const bill = await finance.createSupplierInvoice({ invoiceNumber: 'AE-BILL-2', supplierId: supplier, currency: 'USD', invoiceDate: '2026-09-01', dueDate: '2026-10-01', totalAmount: '220.0000', idempotencyKey: 'ae-bill2-create', lines: [billLine(1), billLine(2)] }, { identity })
   await finance.submitSupplierInvoice(bill.entityId, { expectedVersion: 0, idempotencyKey: 'ae-bill2-submit' }, { identity })
 
   const matched = await emailsAfter(() => api(tokens.submitter, 'POST', `/api/finance/supplier-invoices/${bill.entityId}/match`, { expectedVersion: 1, idempotencyKey: 'ae-bill2-match' }), 0)
@@ -276,7 +281,7 @@ test('a bill with match exceptions waits for the last one to be approved; previe
   assert.equal(last.result.status, 200, describe(last.result))
   assert.deepEqual(last.messages.map((message) => message.to).sort(), [users.approverEn.email, users.approverZh.email, users.finance.email], await deliveryReport(bill.entityId))
   assert.equal(last.messages.find((message) => message.to === users.approverEn.email).subject, 'Supplier invoice AE-BILL-2 is waiting for approval')
-  for (const message of last.messages) assertOnlyTypeNumberAndLink(message, `https://flowchain.test/app/procurement/bills/${bill.entityId}`, ['110.00', '11.00', 'Price agreed', 'GRN-AE-2'])
+  for (const message of last.messages) assertOnlyTypeNumberAndLink(message, `https://flowchain.test/app/procurement/bills/${bill.entityId}`, ['220.00', '11.00', 'Price agreed', 'GRN-AE-2'])
 })
 
 test('a new adjustment goes only to approvers who may operate its warehouse', async () => {
