@@ -52,6 +52,11 @@ const chinese: Record<string, string> = {
   'Showing': '显示', 'of': '共', 'records in the loaded scope': '条已加载范围内的记录',
   'Dates must use YYYY-MM-DD.': '日期必须使用 YYYY-MM-DD。', 'Start date must not be after end date.': '开始日期不得晚于结束日期。',
   'Record date': '记录日期', 'Current workspace records': '当前工作区数据', 'Business records': '业务记录',
+  // The state words the report read model writes (REPORT_STATE_LABELS in
+  // runtime-report-read-model.mjs), with its currency names (design audit L6-20).
+  'Multiple currencies, not converted': '多币种，未折算', 'No currency data': '无币种数据', 'All currencies': '全部币种',
+  'Insufficient data': '数据不足', 'Records loaded: {n}': '已读取 {n} 条真实记录',
+  'Chinese yuan (CNY)': '人民币（CNY）', 'US dollar (USD)': '美元（USD）', 'Euro (EUR)': '欧元（EUR）',
   'Stock status': '库存状态',
   // Dashboard visuals.
   'Committed spend by month': '每月已承诺采购额', 'Purchase order lifecycle': '采购订单生命周期', 'Spend concentration by supplier': '供应商采购集中度',

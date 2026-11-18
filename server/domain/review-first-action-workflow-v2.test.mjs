@@ -5,11 +5,15 @@ import {
   buildReviewFirstActionWorkflowV2,
   FORBIDDEN_REVIEW_WORKFLOW_ACTION_PATTERN,
   FORBIDDEN_REVIEW_WORKFLOW_TECHNICAL_PATTERN,
+  REVIEW_DRAFT_STATUSES,
 } from './review-first-action-workflow-v2.mjs'
+import { REVIEW_STATUS_LABELS, REVIEW_TRANSITION_LABELS, reviewStatusLabel, reviewTransitionLabel } from '../../src/components/actions/reviewQueueCopy.ts'
 import { buildDataAccessQualityV2 } from './data-access-quality-v2.mjs'
 import { buildOperationsControlTowerV2 } from './operations-control-tower-v2.mjs'
 import { buildReportsAnalyticsV2 } from './reports-analytics-v2.mjs'
 import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
+
+const CJK = /[㐀-鿿＀-￯]/
 
 function loadDb() {
   return createProductReviewScenarioDb()
@@ -59,13 +63,44 @@ test('each draft carries source target evidence content and navigation', () => {
 test('lifecycle policy includes allowed transitions and reason requirements', () => {
   const workflow = buildReviewFirstActionWorkflowV2(loadDb())
   const transitions = workflow.lifecyclePolicy.allowedTransitions.map((item) => `${item.from}->${item.to}`)
-  for (const transition of ['草稿预览->等待人工复核', '草稿预览->需要补充信息', '草稿预览->已取消', '等待人工复核->已退回复核', '等待人工复核->已标记人工处理']) {
+  for (const transition of ['draft_preview->awaiting_review', 'draft_preview->needs_information', 'draft_preview->cancelled', 'awaiting_review->returned', 'awaiting_review->handled_manually']) {
     assert.ok(transitions.includes(transition), transition)
   }
-  for (const status of ['需要补充信息', '已退回复核', '已取消', '已标记人工处理']) {
+  for (const status of ['needs_information', 'returned', 'cancelled', 'handled_manually']) {
     assert.ok(workflow.lifecyclePolicy.reasonRequiredTransitions.includes(status), status)
   }
-  assert.ok(workflow.lifecyclePolicy.allowedTransitions.some((item) => item.to === '已取消' && item.reasonRequired))
+  assert.ok(workflow.lifecyclePolicy.allowedTransitions.some((item) => item.to === 'cancelled' && item.reasonRequired))
+})
+
+// Design audit L6-20: a draft's status is a code the page names in the
+// interface language, never a Chinese status word kept as the value.
+test('draft statuses are codes the page names in English and Chinese', () => {
+  const workflow = buildReviewFirstActionWorkflowV2(loadDb())
+  const codes = new Set(Object.values(REVIEW_DRAFT_STATUSES))
+  const used = [
+    ...workflow.drafts.flatMap((draft) => [draft.status, ...draft.allowedTransitions.flatMap((item) => [item.from, item.to]), ...draft.reviewActions.map((action) => action.transitionTo)]),
+    ...workflow.lifecyclePolicy.statuses.map((item) => item.status),
+    ...workflow.lifecyclePolicy.allowedTransitions.flatMap((item) => [item.from, item.to]),
+    ...workflow.lifecyclePolicy.reasonRequiredTransitions,
+    workflow.summary.overallStatus,
+    buildReviewFirstActionWorkflowV2({}).summary.overallStatus,
+  ]
+  for (const status of used) {
+    assert.ok(codes.has(status), `${status} is a status code`)
+    assert.doesNotMatch(status, CJK)
+  }
+  assert.ok(workflow.drafts.some((draft) => draft.status === 'awaiting_review'))
+  assert.ok(workflow.drafts.flatMap((draft) => draft.reviewActions).every((action) => !Object.hasOwn(action, 'label')))
+  // Every code has an English and a Chinese name, as a status and as the
+  // button that moves a draft to it; the map has no codes the server lacks.
+  assert.deepEqual(Object.keys(REVIEW_STATUS_LABELS).sort(), [...codes].sort())
+  assert.deepEqual(Object.keys(REVIEW_TRANSITION_LABELS).sort(), [...codes].sort())
+  for (const code of codes) {
+    for (const name of [reviewStatusLabel(code, 'en-US'), reviewTransitionLabel(code, 'en-US')]) assert.ok(name && name !== code && !CJK.test(name), `${code}: ${name}`)
+    for (const name of [reviewStatusLabel(code, 'zh-CN'), reviewTransitionLabel(code, 'zh-CN')]) assert.match(name, CJK, code)
+  }
+  assert.equal(reviewStatusLabel('awaiting_review', 'en-US'), 'Awaiting human review')
+  assert.equal(reviewStatusLabel('awaiting_review', 'zh-CN'), '等待人工复核')
 })
 
 test('review actions are preview only and require human review', () => {

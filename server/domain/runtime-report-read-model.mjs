@@ -108,10 +108,25 @@ const committed = {
 }
 // Money figures over sales orders read the groups, which cover every order.
 const moneySubject = subject => subject === 'sales_orders' ? 'sales_order_groups' : subject
-const currencyNames = { CNY: '人民币', USD: '美元', EUR: '欧元' }
+// The words this model writes for a state (the currency mix, a comparison,
+// the data scope) are English copy keys that the dashboard translates through
+// its copy table (src/modules/reports/analyticsCopy.ts), never Chinese words
+// it has to look up backwards (design audit L6-20). Currency codes stay codes.
+const currencyNames = { CNY: 'Chinese yuan', USD: 'US dollar', EUR: 'Euro' }
 const currencyCode = reportCurrencyCode
-const currencyLabel = code => code ? (currencyNames[code] ? `${currencyNames[code]}（${code}）` : code) : '全部币种'
-const unknownCurrencyLabel = '币种缺失或无效'
+const currencyLabel = code => code ? (currencyNames[code] ? `${currencyNames[code]} (${code})` : code) : 'All currencies'
+const unknownCurrencyLabel = 'Missing or invalid currency'
+export const REPORT_STATE_LABELS = Object.freeze({
+  multiCurrency: 'Multiple currencies, not converted',
+  noCurrencyData: 'No currency data',
+  insufficientData: 'Insufficient data',
+  notCompared: 'Not compared',
+  previousPeriod: 'Previous period',
+  scope: 'Current workspace records',
+  source: 'Business records',
+  recordsLoaded: 'Records loaded: {n}',
+  noRecords: 'No business records in this range',
+})
 
 const metricDefinitions = {
   sales_order_count: ['销售订单数量', 'sales_orders', 'number', '当前范围内真实销售订单记录数。', '/app/sales/orders'],
@@ -293,7 +308,7 @@ function currencySummary(rows, query) {
   const codes = query.currency ? [query.currency] : [...known, ...(unknown ? [''] : [])]
   return {
     currencyCode: code,
-    currencyLabel: status === 'multi_currency_unconverted' ? '多币种，未折算' : status === 'no_currency_data' ? '无币种数据' : status === 'currency_unknown' ? unknownCurrencyLabel : currencyLabel(code),
+    currencyLabel: status === 'multi_currency_unconverted' ? REPORT_STATE_LABELS.multiCurrency : status === 'no_currency_data' ? REPORT_STATE_LABELS.noCurrencyData : status === 'currency_unknown' ? unknownCurrencyLabel : currencyLabel(code),
     currencies: query.currency ? [query.currency] : known,
     currencyAggregationStatus: status,
     currencyAmounts: codes.map(group => ({ currencyCode: group || null, currencyLabel: group ? currencyLabel(group) : unknownCurrencyLabel, amount: knownTotal(groups.get(group) || []), recordCount: totalWeight(groups.get(group) || []) })),
@@ -338,7 +353,7 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts, partia
   const currency = money ? { currencyCode: money.currencyCode, currencyLabel: money.currencyLabel, currencies: money.currencies, currencyAggregationStatus: money.currencyAggregationStatus, currencyAmounts: money.currencyAmounts } : {}
   // Below safety stock carries how many of those SKUs open orders cover (W-03).
   const detail = id === 'low_stock_sku' ? { detail: { coveredByOpenOrders: facts.stockSignals?.coveredByOpenOrders ?? null } } : {}
-  return { ...detail, id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, ...(demand ? { quantityUnit: demand.unit } : {}), comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, trend: metricTrend(id, all, money, partial), generatedAt: new Date().toISOString() }
+  return { ...detail, id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, ...(demand ? { quantityUnit: demand.unit } : {}), comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? REPORT_STATE_LABELS.multiCurrency : incomplete ? REPORT_STATE_LABELS.insufficientData : REPORT_STATE_LABELS.notCompared, comparisonUnit: unit, calculationLabel: description, trend: metricTrend(id, all, money, partial), generatedAt: new Date().toISOString() }
 }
 
 // Period comparison (docs/report-collaboration-design.md §5.1): a figure over
@@ -365,7 +380,7 @@ function compareKpi(current, earlier, range) {
   if (current.unit === 'number' && earlier.currentValue === 0) return none
   const points = current.unit === 'percentage'
   const delta = round4(current.currentValue - earlier.currentValue)
-  return { ...current, comparisonValue: earlier.currentValue, comparisonDelta: delta, comparisonRate: points ? null : round4(delta / Math.abs(earlier.currentValue) * 100), comparisonDirection: delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat', comparisonLabel: '上期', comparisonUnit: points ? 'percentage_points' : current.unit, comparisonRange: range }
+  return { ...current, comparisonValue: earlier.currentValue, comparisonDelta: delta, comparisonRate: points ? null : round4(delta / Math.abs(earlier.currentValue) * 100), comparisonDirection: delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat', comparisonLabel: REPORT_STATE_LABELS.previousPeriod, comparisonUnit: points ? 'percentage_points' : current.unit, comparisonRange: range }
 }
 
 // Notes about inventory data belong on the dashboards that show inventory
@@ -539,7 +554,7 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   // sales orders). Each dashboard names the sources its figures read.
   const DASHBOARD_SOURCES = { overview: ['purchase_orders', 'sales_orders', 'supplier_invoices', 'inventory_balances'], procurement: ['purchase_orders'], sales: ['sales_orders'], inventory: ['inventory_balances'], finance: ['supplier_invoices'], suppliers: ['suppliers', 'purchase_orders'] }
   const recordCounts = Object.fromEntries((DASHBOARD_SOURCES[query.subject] || []).filter(subject => !restriction.subjects.has(subject)).map(subject => [subject, subject === 'sales_orders' ? totalWeight(all.sales_order_groups) : all[subject].length]))
-  const dataScope = { label: '当前工作区数据', company: null, currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from, to: query.to, activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => ['from', 'to'].includes(key) ? text(input.filters?.[key]) : query[key]).length, sourceLabel: '业务记录', completenessLabel: totalRecords ? `已读取 ${totalRecords} 条真实记录` : '当前范围无真实业务记录', recordCounts, filterOptions: { companies: [], suppliers: distinct([...array(context.suppliers).map(row => row.supplierName || row.name), ...source.purchase_orders.map(row => row.supplier)]), customers: distinct([...array(context.customers).map(row => row.name || row.customerName), ...source.sales_order_groups.map(row => row.customer)]), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_order_groups, ...source.supplier_invoices].map(row => row.currency)) } }
+  const dataScope = { label: REPORT_STATE_LABELS.scope, company: null, currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from, to: query.to, activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => ['from', 'to'].includes(key) ? text(input.filters?.[key]) : query[key]).length, sourceLabel: REPORT_STATE_LABELS.source, completenessLabel: totalRecords ? REPORT_STATE_LABELS.recordsLoaded : REPORT_STATE_LABELS.noRecords, recordCounts, filterOptions: { companies: [], suppliers: distinct([...array(context.suppliers).map(row => row.supplierName || row.name), ...source.purchase_orders.map(row => row.supplier)]), customers: distinct([...array(context.customers).map(row => row.name || row.customerName), ...source.sales_order_groups.map(row => row.customer)]), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_order_groups, ...source.supplier_invoices].map(row => row.currency)) } }
   const overview = query.subject === 'overview' && !options.kpisOnly ? buildBusinessOverview(all, { salesDemand, reorder: options.reorder || null, salesActivity: all.sales_order_groups, partial, restrictedSubjects: restriction.subjects }) : null
   // Subjects the read context could not load in full whose cut changes this
   // dashboard's figures; totals over them may be low.
