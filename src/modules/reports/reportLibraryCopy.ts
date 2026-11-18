@@ -30,3 +30,20 @@ export function reportLibraryCopy(source: string, language: string) {
   // Metric labels the server writes in English take their Chinese from the analytics copy.
   return language === 'en-US' ? english[value] || value : analyticsCopy(value, language);
 }
+
+// A builder column is named by its own entry, keyed by the catalog's field key,
+// never through the label lookup above, where 供应商 is the Suppliers subject:
+// the column holds one supplier ("Supplier"), the subject lists them all. Of
+// the builder's columns only supplier shared a word with a subject name; each
+// has its own entry so none can borrow one again. [English, Chinese].
+export const REPORT_COLUMN_LABELS: Readonly<Record<string, readonly [string, string]>> = {
+  id: ['Business ID', '业务编号'], date: ['Business date', '业务日期'],
+  supplier: ['Supplier', '供应商'], customer: ['Customer', '客户'],
+  sku: ['SKU', 'SKU'], amount: ['Amount', '金额'],
+  quantity: ['Quantity', '数量'], status: ['Status', '状态'],
+};
+
+export function reportColumnLabel(field: { key: string; label: string }, language: string) {
+  const pair = REPORT_COLUMN_LABELS[field.key];
+  return pair ? pair[language === 'en-US' ? 0 : 1] : reportLibraryCopy(field.label, language);
+}
