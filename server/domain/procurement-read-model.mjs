@@ -1,3 +1,5 @@
+import { isPastDueOn, workspaceDueToday } from './due-day.mjs'
+
 function asArray(value) {
   return Array.isArray(value) ? value : []
 }
@@ -100,18 +102,6 @@ function compactRelatedDocuments(values = []) {
 function isOpenStatus(status = '') {
   const value = text(status)
   return value ? !TERMINAL_STATUSES.has(value) : true
-}
-
-function rowDateValue(value = '') {
-  const raw = text(value)
-  if (!raw) return null
-  const iso = raw.match(/^20\d{2}-\d{2}-\d{2}/)?.[0]
-  if (iso) return new Date(`${iso}T00:00:00Z`).getTime()
-  const chinese = raw.match(/(\d{1,2})月(\d{1,2})日/)
-  if (chinese) {
-    return new Date(`2026-${String(chinese[1]).padStart(2, '0')}-${String(chinese[2]).padStart(2, '0')}T00:00:00Z`).getTime()
-  }
-  return null
 }
 
 function poId(po = {}, index = 0) {
@@ -777,11 +767,12 @@ export function buildProcurementDocumentLinks(data = {}) {
 }
 
 export function buildProcurementFollowups(data = {}, options = {}) {
-  const nowMs = options.now ? new Date(options.now).getTime() : Date.now()
+  // An order is overdue once its expected date is before the workspace's
+  // today (options.timeZone), not at UTC midnight (design audit L6-23).
+  const today = workspaceDueToday(options)
   const items = []
   for (const po of buildProcurementPurchaseOrders(data)) {
-    const dueMs = rowDateValue(po.expectedDate)
-    if (dueMs && dueMs < nowMs && !['已完成', '已取消', '已收货'].includes(po.status)) {
+    if (isPastDueOn(po.expectedDate, today) && !['已完成', '已取消', '已收货'].includes(po.status)) {
       items.push({
         type: 'overdue_po',
         id: `FOLLOWUP-overdue_po-${po.id}`,
@@ -853,9 +844,9 @@ function summarizeOpenAmountCurrency(openDocuments = []) {
   return { currency: currencies.length === 1 ? currencies[0] : null, currencies, currencyAggregationStatus }
 }
 
-export function buildProcurementSummary(data = {}) {
+export function buildProcurementSummary(data = {}, options = {}) {
   const documents = buildProcurementDocuments(data)
-  const followups = buildProcurementFollowups(data)
+  const followups = buildProcurementFollowups(data, options)
   const openAmountDocuments = documents.filter((item) => ['pr', 'po', 'invoice'].includes(item.documentType) && isOpenStatus(item.status || item.invoiceStatus))
   const openAmountCurrency = summarizeOpenAmountCurrency(openAmountDocuments)
   return {

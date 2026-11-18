@@ -1,4 +1,3 @@
-import { handleActionDraftsRoute } from "../routes/action-drafts.routes.mjs";
 import { handleAiRuntimeGatewayRoute } from "../routes/ai-runtime-gateway.routes.mjs";
 import { handleAttachmentRoute } from "../routes/attachments.routes.mjs";
 import { handleAuditLogRoute } from "../routes/audit-log.routes.mjs";
@@ -97,7 +96,6 @@ const orderedRouteHandlers = Object.freeze([
   handleDataImportRoute,
   handleCustomFieldsRoute,
   handleMasterDataRoute,
-  handleActionDraftsRoute,
   handleProcurementWorkflowRoute,
   handleMarketRoute,
   handleLegacyAiRoute,

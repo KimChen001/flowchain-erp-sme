@@ -198,9 +198,19 @@ test('the UCI figures: stock and position, late orders, the reorder rule, months
   const facts = uciFacts(smallPlan())
   assert.deepEqual(['onHand', 'onOrder', 'position', 'supplier'].map((key) => facts.item('H1')[key]), [30, 210, 240, 'Acme Home Goods'])
   assert.deepEqual(facts.late.map((row) => [row.supplier, row.promised, row.lines[0].outstanding]), [['Acme Home Goods', '2026-11-04', 70], ['Globex Party Supplies', '2026-11-05', 90], ['Acme Home Goods', '2026-11-06', 140]])
-  // C1 ends 2 under its reorder point: its minimum order. P1's order waits for
-  // approval, so it is not on order.
-  assert.deepEqual(facts.reorder, [{ sku: 'C1', shortfall: 2, quantity: 20 }, { sku: 'P1', shortfall: 6, quantity: 10 }])
+  // C1 ends 2 under its reorder point: it orders up to 42 + 7 days of 2 = 56,
+  // 16, raised to its minimum of 20. P1's order waiting for approval is not on
+  // order, but is in the reorder list's position (design audit C2): 15 + 10 =
+  // 25 against 21, 4 days of demand above it, so it is not listed.
+  assert.deepEqual(facts.reorder, [{ sku: 'C1', shortfall: 2, orderUpTo: 56, quantity: 20 }])
+  assert.equal(facts.item('P1').onOrder, 0)
+  // Further below, up to the level (design audit C3): 30 on hand asks for 26.
+  // Less than a day of demand above the reorder point is due today: S1 at
+  // 20 + 90 = 110 against 105 is a day above (not due); at 109 it is due and
+  // orders up to 105 + 35 = 140: 31, raised to its minimum of 40.
+  const lower = smallPlan()
+  lower.purchasing.closing = { ...lower.purchasing.closing, C1: 30, S1: 19 }
+  assert.deepEqual(uciFacts(lower).reorder, [{ sku: 'S1', shortfall: 0, orderUpTo: 140, quantity: 40 }, { sku: 'C1', shortfall: 12, orderUpTo: 56, quantity: 26 }])
   assert.deepEqual(facts.belowSafetyStock, ['H1', 'S1'])
   const october = facts.month('2026-10')
   assert.deepEqual([october.orders, october.units, october.revenue, october.byUnits[0].sku, october.customers[0].id, october.customers[0].topItem], [2, 23, 86, 'H1', 'c2', { sku: 'H1', units: 20 }])
