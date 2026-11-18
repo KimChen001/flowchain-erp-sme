@@ -73,8 +73,34 @@ const DATE_PATTERNS = [
   { pattern: new RegExp(`\\b${MONTH}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?(?!\\d)`, 'gi'), read: (m) => ({ year: m[3] ? +m[3] : null, month: MONTHS[m[1].slice(0, 3).toLowerCase()], day: +m[2] }) },
   { pattern: new RegExp(`(?<!\\d)(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH}\\b\\.?(?:,?\\s+(\\d{4}))?`, 'gi'), read: (m) => ({ year: m[3] ? +m[3] : null, month: MONTHS[m[2].slice(0, 3).toLowerCase()], day: +m[1] }) },
   { pattern: new RegExp(`\\b${MONTH}\\s+(\\d{4})(?!\\d)`, 'gi'), read: (m) => ({ year: +m[2], month: MONTHS[m[1].slice(0, 3).toLowerCase()], day: null }) },
-  { pattern: /(?<![\d/])(\d{1,2})\/(\d{1,2})\/(\d{4})(?![\d/])/g, read: (m) => ({ year: +m[3], month: +m[1], day: +m[2] }) },
+  // Written with slashes, in the workspace's order (aiSlashDateParts).
+  { pattern: /(?<![\d/])(\d{1,2})\/(\d{1,2})\/(\d{4})(?![\d/])/g, read: (m, dayFirst) => ({ year: +m[3], ...(aiSlashDateParts(+m[1], +m[2], dayFirst) || { month: 0, day: 0 }) }) },
 ]
+
+// Whether the workspace writes the day before the month (en-GB 18/11/2026)
+// or after it (en-US 11/18/2026; zh-CN 2026/11/18), from its locale's own
+// date format. An unknown locale reads month first, as before.
+export function aiSlashDayFirst(locale) {
+  try {
+    const parts = new Intl.DateTimeFormat(String(locale || 'en-US'), { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(Date.UTC(2026, 10, 18))
+    return parts.find((part) => part.type === 'day' || part.type === 'month')?.type === 'day'
+  } catch {
+    return false
+  }
+}
+
+// The month and day of a slash date (design audit, en-GB follow-up to
+// L11-27): read in the workspace's order. One that order cannot read but the
+// other can (18/11 in an en-US workspace) is read the other way, since no one
+// can mistake it; one both orders can read (05/06) is read the workspace's
+// way only, as its readers read it. null when neither order is a date.
+export function aiSlashDateParts(first, second, dayFirst = false) {
+  const valid = (month, day) => month >= 1 && month <= 12 && day >= 1 && day <= 31
+  const [month, day] = dayFirst ? [second, first] : [first, second]
+  if (valid(month, day)) return { month, day }
+  if (valid(day, month)) return { month: day, day: month }
+  return null
+}
 // A month and day written 10/28 or 11-07 is a date only when the tool results
 // hold one; otherwise its parts are checked as numbers ("4/5 deliveries",
 // "3-5 days"). On 2026-11-03 the reorder answer wrote order-by days as 11-07
@@ -242,7 +268,8 @@ const zhCount = (value) => {
 // search), their numbers with the key and currency they came with, and their
 // dates and months. A date written in a passage without its year is kept as
 // ????-MM-DD, which matches the same day in any year.
-export function aiGroundingSources(results = []) {
+// dayFirst: the workspace writes slash dates day first (aiSlashDayFirst).
+export function aiGroundingSources(results = [], { dayFirst = false } = {}) {
   const strings = []
   const numbers = []
   const days = new Set()
@@ -259,7 +286,7 @@ export function aiGroundingSources(results = []) {
     let rest = figuresText(value)
     for (const { pattern, read } of DATE_PATTERNS) {
       rest = rest.replace(pattern, (...match) => {
-        const date = read(match)
+        const date = read(match, dayFirst)
         if (!date.month || date.month > 12 || (date.endDay !== undefined && (date.endDay <= date.day || date.endDay > 31))) return match[0]
         const year = date.year ? String(date.year) : '????'
         const month = String(date.month).padStart(2, '0')
@@ -598,18 +625,21 @@ export function aiCalculationGrounded(input = {}, { results = [], question = '',
   return values.every((value) => value === 0 || value === 1 || near(value))
 }
 
-export function checkAiModelFirstGrounding({ answer, results = [], refs = [], question = '', conversation = '', facts = null, today = null, limitClaims = false }) {
+// locale: the workspace's, for the order of a slash date (the facts' when
+// not given).
+export function checkAiModelFirstGrounding({ answer, results = [], refs = [], question = '', conversation = '', facts = null, today = null, limitClaims = false, locale = null }) {
   const problems = []
   const checked = { record: 0, name: 0, date: 0, number: 0, derived: 0, citation: 0 }
   const fail = (kind, value) => { if (!problems.some((row) => row.kind === kind && row.value === value)) problems.push({ kind, value }) }
   const title = text(answer?.title)
   const body = text(answer?.answer)
   if (!body) fail('format', 'answer')
-  const sources = aiGroundingSources(results)
+  const dayFirst = aiSlashDayFirst(locale || facts?.locale)
+  const sources = aiGroundingSources(results, { dayFirst })
   const asked = fold(question)
   // Record numbers and names may also come from the conversation so far.
   const named = fold(`${question}\n${conversation}`)
-  const given = aiGroundingSources([question])
+  const given = aiGroundingSources([question], { dayFirst })
   if (today) { sources.days.add(today); sources.months.add(today.slice(0, 7)) }
   // The highest item number of the answer's own numbered lists, quoted ones
   // (a drafted message) included: "steps 1 and 2" points into them.
@@ -681,7 +711,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   }
   for (const { pattern, read } of DATE_PATTERNS) {
     rest = rest.replace(pattern, (...match) => {
-      const date = read(match)
+      const date = read(match, dayFirst)
       if (!date.month || date.month > 12 || (date.day !== null && (date.day < 1 || date.day > 31))) return match[0]
       if (date.endDay !== undefined && (date.endDay <= date.day || date.endDay > 31)) return match[0]
       checked.date += 1
@@ -689,13 +719,18 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
       return blank(match[0])
     })
   }
-  for (const pattern of [SLASH_DAY, DASH_DAY]) {
-    rest = rest.replace(pattern, (whole, month, day) => {
-      if (+month > 12 || +day > 31 || !dayKnown({ year: null, month: +month, day: +day })) return whole
-      checked.date += 1
-      return blank(whole)
-    })
-  }
+  // A short slash date in the workspace's order; 11-07 is always month-day.
+  rest = rest.replace(SLASH_DAY, (whole, first, second) => {
+    const date = aiSlashDateParts(+first, +second, dayFirst)
+    if (!date || !dayKnown({ year: null, ...date })) return whole
+    checked.date += 1
+    return blank(whole)
+  })
+  rest = rest.replace(DASH_DAY, (whole, month, day) => {
+    if (+month > 12 || +day > 31 || !dayKnown({ year: null, month: +month, day: +day })) return whole
+    checked.date += 1
+    return blank(whole)
+  })
   // Aging buckets are labels, not figures, in an answer about overdue or aged
   // amounts: "nothing in the 1–30, 31–60, 61–90 or over-90-day buckets"
   // (2026-11-09 on Flash: five flagged in a receivables answer).
