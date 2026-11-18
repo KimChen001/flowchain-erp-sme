@@ -294,6 +294,64 @@ test("a reorder point below the suggestion is highlighted, and only a confirmed 
   expect(reads).toBeGreaterThan(0);
 });
 
+// Design audit L3-24: ticked rows open one purchase request with a line each,
+// and their suggested reorder points are adopted after one confirmation.
+test("ticked rows open one purchase request with a line each, and their suggestions are adopted together after one confirmation", async ({ page }) => {
+  // RL-A recorded at 30, below the suggested 45; RL-C has no suggestion.
+  const low = attachReorderPointSuggestions(buildReorderList({ ...listInput, items: listInput.items.map((item) => (item.sku === "RL-A" ? { ...item, reorderPoint: 30 } : item)) }), shipmentLines);
+  // First as a reader who may not change items.
+  await page.route("**/api/authorization/context", async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    await route.fulfill({ response, json: { ...json, effectivePermissions: (json.effectivePermissions || []).filter((code: string) => code !== "master_data.item.manage") } });
+  });
+  await open(page, "en-US", low);
+  await page.getByTestId("reorder-select-RL-A").check();
+  await page.getByTestId("reorder-select-RL-C").check();
+  await expect(page.getByTestId("reorder-selection-count")).toHaveText("2 rows selected");
+  // In rank order, each with its own supplier and quantity: RL-C 15 with no
+  // preferred supplier; RL-A not due, so no quantity, from Reorder Supply.
+  const href = new URL((await page.getByTestId("reorder-batch-request").getAttribute("href"))!, "http://local");
+  expect(href.pathname).toBe("/app/procurement/requests");
+  expect(href.searchParams.get("origin")).toBe("reorder_list");
+  expect(href.searchParams.getAll("line")).toEqual(["ITEM-C~15~~", "ITEM-A~~SUP-1~"]);
+  expect(href.searchParams.get("reason")).toBe("Reorder list: 2 items, the first to order by 2026-10-05.");
+  await expect(page.getByTestId("reorder-batch-request")).toHaveText("Create one purchase request (2 lines)");
+  // Without the right to change items there is nothing to adopt.
+  await expect(page.getByTestId("reorder-batch-adopt")).toHaveCount(0);
+  // The page box ticks every row on the page; Clear empties the selection.
+  await page.getByTestId("reorder-select-page").check();
+  await expect(page.getByTestId("reorder-selection-count")).toHaveText("3 rows selected");
+  await page.getByTestId("reorder-selection-clear").click();
+  await expect(page.getByTestId("reorder-selection")).toHaveCount(0);
+
+  // With item management: one confirmation sets every ticked suggestion.
+  await page.unrouteAll();
+  await page.route("**/api/authorization/context", async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    await route.fulfill({ response, json: { ...json, effectivePermissions: [...(json.effectivePermissions || []), "master_data.item.manage"] } });
+  });
+  const writes: { method: string; body: unknown }[] = [];
+  await page.route("**/api/master-data/items/ITEM-A", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") return route.fulfill({ json: { item: { itemId: "ITEM-A", sku: "RL-A", reorderPoint: 30, version: 3 } } });
+    writes.push({ method: request.method(), body: request.postDataJSON() });
+    return route.fulfill({ json: { item: { itemId: "ITEM-A", sku: "RL-A", reorderPoint: 45, version: 4 } } });
+  });
+  await open(page, "en-US", low);
+  await page.getByTestId("reorder-select-RL-A").check();
+  await page.getByTestId("reorder-select-RL-C").check();
+  await expect(page.getByTestId("reorder-batch-adopt")).toHaveText("Adopt suggested reorder points (1)");
+  await page.getByTestId("reorder-batch-adopt").click();
+  await expect(page.getByTestId("reorder-adopt-rows")).toContainText("RL-A: 30 pcs → 45 pcs");
+  await expect(page.getByTestId("reorder-adopt-row-RL-C")).toHaveCount(0);
+  expect(writes).toEqual([]);
+  await page.getByTestId("reorder-adopt-confirm").click();
+  await expect(page.getByTestId("reorder-list-saved")).toContainText("Set 1 reorder point to the suggestion.");
+  expect(writes).toEqual([{ method: "PATCH", body: { reorderPoint: 45, baseUnit: "pcs", expectedVersion: 3 } }]);
+});
+
 test("the reorder list is available in Chinese and says when nothing needs ordering", async ({ page }) => {
   await open(page, "zh-CN");
   await expect(page.getByRole("heading", { level: 1, name: "补货清单" })).toBeVisible();

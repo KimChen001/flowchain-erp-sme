@@ -4,6 +4,8 @@ import { ChevronDown, ClipboardList, RefreshCw } from "lucide-react";
 import { A, Card, Chip, Modal, inputStyle } from "../../components/ui";
 import { rowActionClass } from "../../components/ui/listLayout";
 import { apiJson } from "../../lib/api-client";
+import { apiErrorText } from "../../lib/apiErrorText";
+import { PREFILL_LINES_MAX, prefillLineValue } from "../../lib/prefill";
 import { formatQuantity } from "../../lib/format";
 import { useI18n } from "../../i18n/I18n";
 import { unitLabel } from "../../i18n/unitLabels";
@@ -191,6 +193,102 @@ function purchaseRequestHref(row: ReorderRow, reason: string) {
   return `/app/procurement/requests?${params.toString()}`;
 }
 
+// Several rows in one purchase request (design audit L3-24): the form opens
+// with one line per row, each planned as the single-row link plans it (its
+// supplier, its quantity and, when raised to the minimum, its shortfall).
+// One row opens exactly as its own link does.
+function batchRequestHref(rows: ReorderRow[], reason: string, singleReason: (row: ReorderRow) => string) {
+  if (rows.length === 1) return purchaseRequestHref(rows[0], singleReason(rows[0]));
+  const params = new URLSearchParams({ origin: "reorder_list", reason });
+  for (const row of rows) {
+    params.append("line", prefillLineValue({
+      itemId: row.purchaseRequest.itemId || row.itemId,
+      quantity: row.purchaseRequest.quantity,
+      supplierId: row.purchaseRequest.supplierId,
+      shortfall: row.purchaseRequest.quantity !== null && row.purchaseRequest.raisedToMinimum ? row.shortfall : null,
+    }));
+  }
+  return `/app/procurement/requests?${params.toString()}`;
+}
+
+// The rows whose suggested reorder point can be adopted: a suggestion above
+// 0 that differs from the recorded point.
+const adoptable = (row: ReorderRow) => {
+  const value = row.reorderPointSuggestion?.suggestedReorderPoint ?? null;
+  return value !== null && value > 0 && value !== row.reorderPoint;
+};
+
+// Confirm, then set each selected item's reorder point to its suggestion,
+// one item update after another (PATCH /api/master-data/items/:id, versioned
+// and audited), as the single "Set reorder point" does (#263: nothing changes
+// before the person confirms). A recorded order-up-to level the new point
+// reaches is said, since the list then assumes a level (design audit C3).
+function AdoptSuggestionsDialog({ rows, t, onClose, onDone }: { rows: ReorderRow[]; t: Copy; onClose: () => void; onDone: (count: number) => void }) {
+  const [done, setDone] = useState<number | null>(null);
+  const [failures, setFailures] = useState<{ sku: string; message: string }[]>([]);
+  const running = done !== null && done < rows.length;
+  const save = async () => {
+    const failed: { sku: string; message: string }[] = [];
+    let saved = 0;
+    for (const [index, row] of rows.entries()) {
+      setDone(index);
+      const value = row.reorderPointSuggestion?.suggestedReorderPoint as number;
+      try {
+        const path = `/api/master-data/items/${encodeURIComponent(row.itemId)}`;
+        const { item } = await apiJson<{ item: { version?: number } }>(path);
+        await apiJson(path, { method: "PATCH", body: JSON.stringify({ reorderPoint: value, baseUnit: row.unit, expectedVersion: item?.version ?? 1 }) });
+        saved += 1;
+      } catch (cause) {
+        failed.push({ sku: row.sku, message: apiErrorText(cause, t.language, ["Could not be saved.", "保存失败。"]) });
+      }
+    }
+    setDone(rows.length);
+    setFailures(failed);
+    if (!failed.length) onDone(saved);
+    else if (saved) onDone(saved);
+  };
+  return (
+    <Modal
+      open
+      onClose={running ? () => {} : onClose}
+      width={520}
+      title={t.count("adoptTitle", rows.length)}
+      footer={
+        <>
+          <button type="button" onClick={onClose} disabled={running} className="rounded-md px-3 py-2 text-xs">{failures.length ? t("close") : t("dialogCancel")}</button>
+          {!failures.length && (
+            <button type="button" onClick={save} disabled={running} data-testid="reorder-adopt-confirm" className="rounded-md px-3 py-2 text-xs font-semibold text-white disabled:opacity-60" style={{ background: A.blue }}>
+              {running ? t("adoptProgress", { done: (done ?? 0) + 1, n: rows.length }) : t.count("adoptConfirm", rows.length)}
+            </button>
+          )}
+        </>
+      }
+    >
+      <div className="space-y-3 text-xs leading-5" data-testid="reorder-adopt-dialog">
+        <p>{t("adoptIntro")}</p>
+        <ul className="max-h-64 space-y-1 overflow-y-auto" data-testid="reorder-adopt-rows">
+          {rows.map((row) => {
+            const value = row.reorderPointSuggestion?.suggestedReorderPoint as number;
+            const level = row.orderUpTo?.source === "recorded" ? row.orderUpTo.level : null;
+            return (
+              <li key={row.itemId} data-testid={`reorder-adopt-row-${row.sku}`}>
+                <span className="font-semibold">{t("adoptRow", { sku: row.sku, current: withUnit(row.reorderPoint, row.unit, t.language), suggested: withUnit(value, row.unit, t.language) })}</span>
+                {level !== null && level <= value && <div style={{ color: A.orange }} data-testid={`reorder-adopt-level-${row.sku}`}>{t("adoptLevelNote", { level: withUnit(level, row.unit, t.language) })}</div>}
+              </li>
+            );
+          })}
+        </ul>
+        {failures.length > 0 && (
+          <div role="alert" style={{ color: A.red }} data-testid="reorder-adopt-failures">
+            <p>{t.count("adoptFailures", failures.length)}</p>
+            <ul>{failures.map((failure) => <li key={failure.sku}>{failure.sku}: {failure.message}</li>)}</ul>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 const itemHref = (itemId: string) => `/app/master-data/items/${encodeURIComponent(itemId)}`;
 
 type Copy = ReturnType<typeof useReorderListCopy>;
@@ -341,6 +439,9 @@ export default function ReorderListPage() {
   const [list, setList] = useState<ReorderList | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error" | "unavailable">("loading");
   const [setting, setSetting] = useState<ReorderRow | null>(null);
+  // The rows ticked for one request or for adopting suggestions, by item.
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [adopting, setAdopting] = useState<ReorderRow[] | null>(null);
   const [saved, setSaved] = useState("");
   const [forecasts, setForecasts] = useState<Record<string, Forecast>>({});
   const [forecastState, setForecastState] = useState<ForecastState>("off");
@@ -367,6 +468,7 @@ export default function ReorderListPage() {
   };
   const load = () => {
     setState("loading");
+    setSelected(new Set());
     apiJson<ReorderList>("/api/inventory/reorder-list")
       .then((payload) => {
         setList(payload);
@@ -398,6 +500,21 @@ export default function ReorderListPage() {
   // recorded reorder point is none (L3-09).
   const noPointRow = (item: NoPointItem) => ({ ...item, unit: item.unit || "", reorderPoint: 0 }) as unknown as ReorderRow;
 
+  // The ticked rows in rank order, across pages and filters.
+  const selectedRows = (list?.rows || []).filter((row) => selected.has(row.itemId));
+  const pageIds = pageRows.map((row) => row.itemId);
+  const pageAllSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+  const toggle = (ids: string[], on: boolean) => setSelected((current) => {
+    const next = new Set(current);
+    for (const id of ids) {
+      if (on) next.add(id);
+      else next.delete(id);
+    }
+    return next;
+  });
+  const adoptableRows = canSetReorderPoint ? selectedRows.filter(adoptable) : [];
+  const singleReason = (row: ReorderRow) => t("reason", { position: withUnit(row.position, row.unit, t.language), reorderPoint: withUnit(row.reorderPoint, row.unit, t.language), date: row.orderByDate });
+  const batchReason = t("reasonMany", { n: selectedRows.length, date: selectedRows.map((row) => row.orderByDate).filter(Boolean).sort()[0] || "" });
   const total = list?.scope.totalWarehouseCount ?? list?.scope.warehouseCount ?? 0;
   const scopeLabel = list?.scope.kind === "reader_warehouses" ? t.count("scopeReader", list.scope.warehouseCount ?? 0, { total }) : t("scopeAll");
   const truncated = (list?.truncatedSubjects || []).map((entry) => t(SUBJECT_KEYS[entry.subject] || "subjectOther"));
@@ -543,6 +660,27 @@ export default function ReorderListPage() {
             </div>
           )}
 
+          {selectedRows.length > 0 && (
+            <Card className="flex flex-wrap items-center gap-x-3 gap-y-2 p-3 text-xs" data-testid="reorder-selection">
+              <span className="font-semibold" data-testid="reorder-selection-count">{t.count("selectedCount", selectedRows.length)}</span>
+              {selectedRows.length > PREFILL_LINES_MAX ? (
+                <span style={{ color: A.orange }}>{t("batchRequestTooMany", { max: PREFILL_LINES_MAX })}</span>
+              ) : (
+                <Link to={batchRequestHref(selectedRows, batchReason, singleReason)} data-testid="reorder-batch-request" className={`${rowActionClass.primary} inline-block whitespace-nowrap !no-underline`}>
+                  {t.count("batchRequest", selectedRows.length)}
+                </Link>
+              )}
+              {adoptableRows.length > 0 && (
+                <button type="button" onClick={() => setAdopting(adoptableRows)} data-testid="reorder-batch-adopt" className={`${rowActionClass.neutral} whitespace-nowrap`}>
+                  {t("batchAdopt", { n: adoptableRows.length })}
+                </button>
+              )}
+              <button type="button" onClick={() => setSelected(new Set())} data-testid="reorder-selection-clear" className="font-medium hover:underline" style={{ color: A.blue }}>
+                {t("clearSelection")}
+              </button>
+            </Card>
+          )}
+
           {rows.length === 0 ? (
             <Card className="p-10 text-center" data-testid="reorder-list-empty">
               <ClipboardList className="mx-auto mb-3" size={28} color={A.gray2} />
@@ -560,7 +698,12 @@ export default function ReorderListPage() {
                       <tr style={{ borderBottom: `1px solid ${A.border}` }}>
                         {columns.map((key, index) => (
                           <th key={key} className={`${index === 0 ? firstCell : index === columns.length - 1 ? lastCell : (STOCK_COLUMNS as readonly string[]).includes(key) ? stockCell : cell} !py-2.5 text-left align-bottom`} data-card-title={key === "colItem" ? "" : undefined}>
-                            {key === STOCK_BLOCK ? null : t(key)}
+                            {index === 0 ? (
+                              <label className="inline-flex items-center gap-1.5">
+                                <input type="checkbox" checked={pageAllSelected} onChange={(event) => toggle(pageIds, event.target.checked)} aria-label={t("selectPage")} data-testid="reorder-select-page" />
+                                {t(key as ReorderListCopyKey)}
+                              </label>
+                            ) : key === STOCK_BLOCK ? null : t(key)}
                           </th>
                         ))}
                       </tr>
@@ -583,7 +726,10 @@ export default function ReorderListPage() {
                           <tr key={row.itemId} data-testid={`reorder-row-${row.sku}`} style={{ borderBottom: `1px solid ${A.border}` }} className="align-top">
                             <td className={`${firstCell} whitespace-nowrap`} data-testid="reorder-order-by">
                               <div className="max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-2">
-                                <div className="font-semibold">{formatDay(row.orderByDate, locale)}</div>
+                                <label className="inline-flex items-center gap-1.5 font-semibold max-sm:min-h-9">
+                                  <input type="checkbox" checked={selected.has(row.itemId)} onChange={(event) => toggle([row.itemId], event.target.checked)} aria-label={t("selectRow", { sku: row.sku })} data-testid={`reorder-select-${row.sku}`} />
+                                  {formatDay(row.orderByDate, locale)}
+                                </label>
                                 {row.orderNow ? (
                                   <span className="mt-0.5 inline-block max-sm:mt-0"><Chip label={t("orderNow")} color={A.orange} bg="#fff4e8" /></span>
                                 ) : (
@@ -707,6 +853,18 @@ export default function ReorderListPage() {
         </>
       )}
 
+      {adopting && (
+        <AdoptSuggestionsDialog
+          rows={adopting}
+          t={t}
+          onClose={() => setAdopting(null)}
+          onDone={(count) => {
+            setSaved(t.count("adoptedNotice", count));
+            if (count === adopting.length) setAdopting(null);
+            load();
+          }}
+        />
+      )}
       {setting && (
         <SetReorderPointDialog
           row={setting}

@@ -38,7 +38,7 @@ import { statusCodeLabel } from "../../i18n/statusLabels";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { createClientTemporaryId } from "../../lib/client-id";
 import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
-import { addCalendarDays, buildSuggestionTrail, planNonCatalogPrefill, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
+import { addCalendarDays, buildSuggestionTrail, parsePrefillLines, planNonCatalogPrefill, planPurchaseRequestPrefill, prefillLineQuery, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
 import { SupplierChoices } from "../../components/procurement/SupplierChoices";
 import { SupplierOverrideCount, SupplierOverrideFlag, SupplierOverrideReason, hasSupplierOverride, supplierOverrideIssueText, type SupplierOverride } from "../../components/procurement/SupplierOverrideReason";
 import { overrideNeeded, validateSupplierOverride } from "../../../shared/supplier-override-reasons.mjs";
@@ -240,9 +240,9 @@ const makeLine = (date = ""): Line => ({
 });
 const PR_STATUSES = ["draft", "submitted", "approved", "converted", "rejected", "withdrawn", "cancelled"];
 // A link that opens the form: "New purchase request", or a handoff that
-// fills it (the assistant, the reorder list).
+// fills it (the assistant, the reorder list, or several reorder list rows).
 const opensForm = (params: URLSearchParams) =>
-  params.get("mode") === "create" || params.get("lineType") === "non_catalog" || Boolean(params.get("itemId") || params.get("sku"));
+  params.get("mode") === "create" || params.get("lineType") === "non_catalog" || Boolean(params.get("itemId") || params.get("sku")) || params.getAll("line").length > 0;
 // The status-based actions a request offers, on its list row and on its
 // detail page alike, each shown only to a person holding the permission the
 // server checks for it (PURCHASE_REQUEST_PERMISSIONS in
@@ -394,7 +394,11 @@ export default function CanonicalProcurementPanel({
   // so a handoff while the page is open (the assistant opening another
   // request, or the same one again) fills the form again.
   const prefilled = useRef<string | null>(null);
-  const [prefill, setPrefill] = useState<LinePrefill | null>(null);
+  // One entry per prefilled line: the address fills one line, or several
+  // reorder list rows at once (`line`, design audit L3-24).
+  const [prefills, setPrefills] = useState<LinePrefill[]>([]);
+  const prefill = prefills[0] ?? null;
+  const prefillOf = (line: Line) => prefills.find((entry) => entry.lineId === line.lineId) ?? null;
   const [items, setItems] = useState<Item[]>([]),
     [suppliers, setSuppliers] = useState<Supplier[]>([]),
     [warehouses, setWarehouses] = useState<SelectorOption[]>([]),
@@ -526,6 +530,24 @@ export default function CanonicalProcurementPanel({
   const followLineDate = (day: string) => {
     if (/^\d{4}-\d{2}-\d{2}$/.test(day)) setDefaultDate(day);
   };
+  // The request line a prefill plan fills for an item: the item's own
+  // snapshot and the plan's values (one line, or each of several).
+  const lineFromPlan = (item: Item, itemId: string, plan: ReturnType<typeof planPurchaseRequestPrefill>): Line => ({
+    ...makeLine(defaultDate),
+    itemId,
+    sku: item.sku,
+    itemNameSnapshot: item.itemName || item.name || "",
+    unitSnapshot: requestLineUnit(item),
+    specificationSnapshot: item.specification || "",
+    commodityId: item.category || "",
+    targetWarehouseId: plan.values.targetWarehouseId,
+    quantity: plan.values.quantity,
+    supplierId: plan.values.supplierId,
+    estimatedUnitPrice: plan.values.estimatedUnitPrice,
+    currency: plan.values.currency || currency,
+    needByDate: plan.values.needByDate,
+    internalLineComment: plan.values.internalLineComment,
+  });
   useEffect(() => {
     const handoff = location.key;
     if (prefilled.current === handoff) return;
@@ -549,10 +571,44 @@ export default function CanonicalProcurementPanel({
       };
       setLines([line]);
       followLineDate(line.needByDate);
-      setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: [] });
+      setPrefills([{ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: [] }]);
       return;
     }
     if (!items.length) return;
+    // Several reorder list rows: one line each, planned as a single line is,
+    // in the order given; rows whose item is not found are left out.
+    const many = parsePrefillLines(searchParams.getAll("line"))
+      .map((wanted) => ({ wanted, item: items.find((row) => (row.itemId || row.id) === wanted.itemId || row.sku === wanted.itemId) }))
+      .filter((row): row is { wanted: typeof row.wanted; item: Item } => Boolean(row.item));
+    if (searchParams.getAll("line").length) {
+      if (!many.length) return;
+      prefilled.current = handoff;
+      const shared = Object.fromEntries(searchParams.entries());
+      Promise.all(many.map(({ wanted, item }) => {
+        const itemId = item.itemId || item.id || "";
+        return Promise.all([
+          request<{ suppliers: SupplierOption[] }>(`/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`),
+          request<{ lastOrders: (SupplierLastOrder & { supplierId: string })[] }>(`/api/procurement/item-supplier-orders?itemId=${encodeURIComponent(itemId)}`)
+            .then((payload) => Object.fromEntries(payload.lastOrders.map((row) => [row.supplierId, row])))
+            .catch(() => null),
+        ]).then(([result, lastOrders]) => ({ wanted, item, itemId, suppliers: result.suppliers, lastOrders }));
+      }))
+        .then((rows) => {
+          setItemSuppliers((current) => ({ ...current, ...Object.fromEntries(rows.map((row) => [row.itemId, row.suppliers])) }));
+          const built = rows.map((row) => {
+            const query = prefillLineQuery(shared, { ...row.wanted, itemId: row.itemId });
+            const plan = planPurchaseRequestPrefill({ query, item: { itemId: row.itemId, defaultWarehouseId: row.item.defaultWarehouseId }, suppliers: row.suppliers, today: today(timezone), defaultDate, lastOrders: row.lastOrders });
+            const line = lineFromPlan(row.item, row.itemId, plan);
+            return { line, prefill: { origin: plan.origin, intent: plan.intent, lineId: line.lineId, ...supplierMinimumPrefill(plan.fields, new URLSearchParams(query)), supplierChoices: plan.supplierChoices } };
+          });
+          setLines(built.map((entry) => entry.line));
+          // The header's default date is the earliest line's.
+          followLineDate(built.map((entry) => entry.line.needByDate).filter(Boolean).sort()[0] || "");
+          setPrefills(built.map((entry) => entry.prefill));
+        })
+        .catch((error) => toast.error(errorText(error, SOURCES_FAILED)));
+      return;
+    }
     const requestedItem = searchParams.get("itemId") || searchParams.get("sku");
     if (!requestedItem) return;
     const item = items.find(
@@ -588,38 +644,25 @@ export default function CanonicalProcurementPanel({
           defaultDate,
           lastOrders,
         });
-        const line: Line = {
-          ...makeLine(defaultDate),
-          itemId,
-          sku: item.sku,
-          itemNameSnapshot: item.itemName || item.name || "",
-          unitSnapshot: requestLineUnit(item),
-          specificationSnapshot: item.specification || "",
-          commodityId: item.category || "",
-          targetWarehouseId: plan.values.targetWarehouseId,
-          quantity: plan.values.quantity,
-          supplierId: plan.values.supplierId,
-          estimatedUnitPrice: plan.values.estimatedUnitPrice,
-          currency: plan.values.currency || currency,
-          needByDate: plan.values.needByDate,
-          internalLineComment: plan.values.internalLineComment,
-        };
+        const line = lineFromPlan(item, itemId, plan);
         setLines([line]);
         followLineDate(line.needByDate);
-        setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, ...supplierMinimumPrefill(plan.fields, searchParams), supplierChoices: plan.supplierChoices });
+        setPrefills([{ origin: plan.origin, intent: plan.intent, lineId: line.lineId, ...supplierMinimumPrefill(plan.fields, searchParams), supplierChoices: plan.supplierChoices }]);
       })
       .catch((error) => toast.error(errorText(error, SOURCES_FAILED)));
   }, [items, loaded, searchParams, location.key]);
-  const prefillChip = (line: Line, field: PrefillLineField) =>
-    prefill && line.lineId === prefill.lineId ? (
+  const prefillChip = (line: Line, field: PrefillLineField) => {
+    const entry = prefillOf(line);
+    return entry ? (
       <PrefillSourceChip
-        entry={prefill.fields[field]}
+        entry={entry.fields[field]}
         current={line[field] ?? ""}
         testId={`prefill-source-${field}`}
         // "Supplier minimum (shortfall 19 pcs)": the shortfall in the line's unit.
-        params={field === "quantity" && prefill.shortfall ? { shortfall: `${formatQuantity(prefill.shortfall)}${line.unitSnapshot ? ` ${unitLabel(line.unitSnapshot, language, prefill.shortfall)}` : ""}` } : undefined}
+        params={field === "quantity" && entry.shortfall ? { shortfall: `${formatQuantity(entry.shortfall)}${line.unitSnapshot ? ` ${unitLabel(line.unitSnapshot, language, entry.shortfall)}` : ""}` } : undefined}
       />
     ) : null;
+  };
   // Earlier PO prices for every catalog line, in one request. Never fills a price.
   const priceHistoryKeyOf = (line: Line) => line.sourceType === "catalog_item" ? priceHistoryKey({ itemId: line.itemId, unit: line.unitSnapshot, currency: line.currency || currency }) : "";
   const priceHistory = usePriceHistory(lines.map(priceHistoryKeyOf));
@@ -656,7 +699,7 @@ export default function CanonicalProcurementPanel({
   };
   // The date the user named in a request the assistant filled in.
   const keepsUserDate = (line: Line) => {
-    const entry = prefill && line.lineId === prefill.lineId ? prefill.fields.needByDate : undefined;
+    const entry = prefillOf(line)?.fields.needByDate;
     return entry?.source === "record" && entry.value === line.needByDate;
   };
   const selectItem = async (index: number, value: string) => {
@@ -766,7 +809,7 @@ export default function CanonicalProcurementPanel({
   );
   const reset = () => {
     setEditing(null);
-    setPrefill(null);
+    setPrefills([]);
     setLines([makeLine(defaultDate)]);
     setErrors([]);
   };
@@ -822,12 +865,15 @@ export default function CanonicalProcurementPanel({
         })),
       };
       // What became of each prefilled value: codes only, for the audit row.
-      const prefilledLine = prefill && !editing ? lines.find((line) => line.lineId === prefill.lineId) : undefined;
+      // One prefilled line keeps its `line.` fields; several are numbered
+      // as the request's lines are (`lines.0.quantity`).
+      const prefilledLines = !editing ? prefills.map((entry) => ({ entry, line: lines.find((line) => line.lineId === entry.lineId), index: lines.findIndex((line) => line.lineId === entry.lineId) })).filter((row) => row.line) : [];
+      const fieldKey = (index: number, field: string) => (prefills.length === 1 ? `line.${field}` : `lines.${index}.${field}`);
       const suggestionTrail = prefill && !editing
         ? buildSuggestionTrail({
             origin: prefill.origin,
-            prefills: Object.fromEntries(Object.entries(prefill.fields).map(([field, entry]) => [`line.${field}`, entry])),
-            values: Object.fromEntries(Object.keys(prefill.fields).map((field) => [`line.${field}`, prefilledLine?.[field as PrefillLineField] ?? ""])),
+            prefills: Object.fromEntries(prefilledLines.flatMap(({ entry, index }) => Object.entries(entry.fields).map(([field, value]) => [fieldKey(index, field), value]))),
+            values: Object.fromEntries(prefilledLines.flatMap(({ entry, line, index }) => Object.keys(entry.fields).map((field) => [fieldKey(index, field), line?.[field as PrefillLineField] ?? ""]))),
           })
         : null;
       const pr = editing
@@ -1568,10 +1614,10 @@ export default function CanonicalProcurementPanel({
                       ))}
                     </select>
                     {prefillChip(line, "supplierId")}
-                    {prefill && !editing && line.lineId === prefill.lineId && line.itemId && line.itemId === prefill.fields.itemId?.value ? (
+                    {prefillOf(line) && !editing && line.itemId && line.itemId === prefillOf(line)?.fields.itemId?.value ? (
                       <SupplierChoices
-                        choices={prefill.supplierChoices}
-                        preferredOnly={prefill.fields.supplierId?.ref === "item_supplier:choose_preferred"}
+                        choices={prefillOf(line)?.supplierChoices || []}
+                        preferredOnly={prefillOf(line)?.fields.supplierId?.ref === "item_supplier:choose_preferred"}
                         selectedId={line.supplierId}
                         onChoose={(supplierId) => { if (supplierId !== line.supplierId) chooseSupplier(index, supplierId); }}
                       />
