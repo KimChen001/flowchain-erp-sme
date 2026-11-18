@@ -19,10 +19,13 @@ import { invoiceExceptionDraft } from './invoice-exception-draft.mjs'
 //                                but never sent gets send_purchase_order
 //                                instead: the order and its supplier, to send
 //                                from the order's page, and no follow-up;
-//   purchase_request_to_convert  the draft purchase orders the request would
+//   purchase_request_to_convert  the purchase orders the request would
 //                                make, one per supplier, currency and
 //                                delivery warehouse, and the lines that lack
-//                                one of the three;
+//                                one of the three. They start approved with
+//                                the request (D3) unless the workspace turns
+//                                that off; the card reads which, and each
+//                                line, from the purchase-order preview;
 //   bill_exception               what the three-way match found different on
 //                                a held supplier invoice, the likely cause of
 //                                each difference and the step for the invoice
@@ -34,12 +37,15 @@ const quantity = (value) => (value === null || value === undefined || value === 
 
 // Purchase request states that still ask for their items.
 export const OPEN_REQUEST_STATUSES = Object.freeze(['draft', 'submitted', 'pending_approval', 'approved'])
+// The states that can cover a reorder item on Today: past draft. A draft
+// alone never set an item aside (design audit L11-02).
+export const COVERING_REQUEST_STATUSES = Object.freeze(['submitted', 'pending_approval', 'approved'])
 
 // The open purchase requests per item id: [{ id, number, status }].
-export function openRequestsByItem(purchaseRequests) {
+export function openRequestsByItem(purchaseRequests, { statuses = OPEN_REQUEST_STATUSES } = {}) {
   const byItem = new Map()
   for (const request of array(purchaseRequests)) {
-    if (!OPEN_REQUEST_STATUSES.includes(text(request.status).toLowerCase())) continue
+    if (!statuses.includes(text(request.status).toLowerCase())) continue
     for (const line of array(request.lines)) {
       const itemId = text(line.itemId)
       if (!itemId) continue

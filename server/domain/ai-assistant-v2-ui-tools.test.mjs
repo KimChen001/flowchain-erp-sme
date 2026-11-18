@@ -16,12 +16,14 @@ import { PURCHASE_ORDER_COMMANDS } from './procurement-db-command-service.mjs'
 import { latestOrderPlan } from './ai-assistant-v2.mjs'
 
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
-// order of 100 and a reference price of 95 USD. With a reorder point of 200
-// the fixture suggests 100 (the gap of 52 raised to the minimum).
+// order of 100 and a reference price of 95 USD. With a reorder point of 285
+// and a position of 233 (design audit C2: on hand, incoming, PO-006 pending
+// approval and PR-001, less SO-001's backorder) the fixture suggests 100 (the
+// gap of 52 raised to the minimum).
 const link = (extra = {}) => ({ id: 'ITEM-001::SUP-001', payload: { itemId: 'ITEM-001', supplierId: 'SUP-001', preferred: true, active: true, approved: true, leadTimeDays: 12, minimumOrderQuantity: 100, referencePrice: 95, currency: 'USD', ...extra } })
 const highReorderPoint = (data) => {
-  data.items[0].reorderPoint = 200
-  data.balances[0].reorderPoint = 200
+  data.items[0].reorderPoint = 285
+  data.balances[0].reorderPoint = 285
 }
 const tool = (name) => AI_ASSISTANT_V2_UI_TOOLS.find((entry) => entry.name === name)
 const at = (value, path) => path.split('.').reduce((entry, key) => (entry === null || entry === undefined ? undefined : entry[key]), value)

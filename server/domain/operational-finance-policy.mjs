@@ -219,8 +219,11 @@ export async function buildSupplierInvoicePlan({
     ? []
     : [...RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES];
   // A bill waiting for its receipt is checked against what was ordered,
-  // less what other bills already claim on the same purchase-order lines.
-  const previousPoRows = waitingForReceipt && consumingStatuses.length
+  // less what other bills already claim on the same purchase-order lines. A
+  // bill from a receipt is checked on its purchase-order lines as well: what
+  // every bill claims there, waiting for its receipt or not, cannot pass what
+  // the line's posted receipts brought in (design audit L2-07).
+  const previousPoRows = consumingStatuses.length
     ? await prisma.supplierInvoiceLine.findMany({
         where: {
           purchaseOrderLineId: { in: poLineIds },
@@ -264,6 +267,22 @@ export async function buildSupplierInvoicePlan({
       (previousByReceiving.get(row.receivingLineId) || ZERO) +
         decimalUnits(row.quantity || 0),
     );
+  const lineReceiptRows = !waitingForReceipt && consumingStatuses.length
+    ? await prisma.receivingLine.findMany({
+        where: {
+          purchaseOrderLineId: { in: poLineIds },
+          receivingDocument: { tenantId, postingStatus: "posted", reversedAt: null },
+        },
+        select: { purchaseOrderLineId: true, acceptedQty: true },
+      })
+    : [];
+  const receivedByPoLine = new Map();
+  for (const row of lineReceiptRows)
+    receivedByPoLine.set(
+      row.purchaseOrderLineId,
+      (receivedByPoLine.get(row.purchaseOrderLineId) || ZERO) +
+        decimalUnits(row.acceptedQty || 0),
+    );
 
   let subtotal = ZERO;
   let tax = ZERO;
@@ -281,12 +300,20 @@ export async function buildSupplierInvoicePlan({
       `Line ${index + 1} unit price`,
       { nonNegative: true },
     );
-    const lineAmount = units(
-      requested.lineAmount,
-      blockingIssues,
-      `Line ${index + 1} line amount`,
-      { nonNegative: true },
-    );
+    // The line amount is quantity × unit price to four decimals, worked out
+    // here when the request leaves it out (the invoice form does, so no
+    // floating-point rounding in the browser can make it differ: design audit
+    // L2-17). A line amount that is sent must still equal it.
+    const lineAmount = requested.lineAmount
+      ? units(
+          requested.lineAmount,
+          blockingIssues,
+          `Line ${index + 1} line amount`,
+          { nonNegative: true },
+        )
+      : quantity !== null && unitPrice !== null
+        ? multiply(quantity, unitPrice)
+        : null;
     const enteredTaxAmount = units(
       requested.enteredTaxAmount,
       blockingIssues,
@@ -428,6 +455,27 @@ export async function buildSupplierInvoicePlan({
           },
         ),
       );
+    else if (
+      quantity !== null &&
+      consumingStatuses.length &&
+      quantity + (previousByPoLine.get(poLine.id) || ZERO) >
+        (receivedByPoLine.get(poLine.id) || ZERO)
+    )
+      blockingIssues.push(
+        issue(
+          "SUPPLIER_INVOICE_QUANTITY_EXCEEDS_RECEIVED",
+          `Line ${index + 1} and the other invoices of its purchase-order line bill more than was received on that line.`,
+          409,
+          {
+            receivingLineId: receiving.id,
+            purchaseOrderLineId: poLine.id,
+            receivedQuantity: decimalString(receivedByPoLine.get(poLine.id) || ZERO),
+            previouslyInvoicedQuantity: decimalString(
+              previousByPoLine.get(poLine.id) || ZERO,
+            ),
+          },
+        ),
+      );
     if (
       quantity !== null &&
       unitPrice !== null &&
@@ -523,6 +571,37 @@ function toleranceUnits(value) {
   }
 }
 
+const larger = (...values) => values.reduce((top, value) => (value > top ? value : top), ZERO);
+
+// The rule a three-way match was made under, kept on the match run
+// (ThreeWayMatch.metadata.rule) with the tolerances it used, so a match keeps
+// the rule it was made with. A match without it was made before 2026-11-17
+// and keeps its result and its exceptions as they are.
+//   per_line_2026_11 (design audit B2, owner decision 2026-11-17):
+//   - quantity: what the invoice bills against what was received on the
+//     purchase-order line, over all its posted receipts (a later receipt
+//     counts when the invoice is matched again), less what other invoices
+//     claim on the line and goods returned and not credited;
+//   - price: the line's price difference (quantity × (invoice price − PO
+//     price)) against the larger of the unit-price tolerances over the
+//     quantity and the line amount tolerance; it is raised once, as a price
+//     difference;
+//   - amount: only what the invoice price does not explain (line amount
+//     against quantity × invoice price), so a price difference never raises
+//     a second, amount difference;
+//   - a quantity difference cannot be approved for payment: it is rejected,
+//     waits for the receipt and is matched again, or is accepted at the
+//     received quantity (the payable leaves out what was not received).
+export const THREE_WAY_MATCH_RULE = "per_line_2026_11";
+export const matchRuleOf = (match) =>
+  text(match?.metadata?.rule) || null;
+export const quantityApprovalRefused = (match, exceptionType) =>
+  exceptionType === "quantity" && matchRuleOf(match) === THREE_WAY_MATCH_RULE;
+
+// Statuses of other invoices whose lines count against a purchase-order
+// line at the match.
+const MATCH_CLAIMING_STATUSES = ["matching", "exception", "matched", "approved", "held"];
+
 export async function buildSupplierMatchPlan({
   prisma,
   tenantId,
@@ -554,13 +633,30 @@ export async function buildSupplierMatchPlan({
         status: invoice.status,
       },
     });
-  // The same rule as the match command: only a submitted invoice starts a
-  // match run. An exception invoice is cancelled and entered again instead.
-  if (invoice.status !== "submitted")
+  // A submitted invoice starts a match run. An invoice the match held is
+  // matched again while a difference is still open or rejected, for example
+  // once the rest of the goods are received (design audit L2-04): the new run
+  // replaces the earlier one. An invoice whose every difference was accepted
+  // is approved instead.
+  const rematch = invoice.status === "exception";
+  const blockingBefore = rematch
+    ? await prisma.financeMatchException.count({
+        where: { supplierInvoiceId: invoice.id, status: { in: ["open", "rejected"] } },
+      })
+    : 0;
+  if (!["submitted", "exception"].includes(invoice.status))
     blockingIssues.push(
       issue(
         "SUPPLIER_INVOICE_STATUS_INVALID",
-        "Only a submitted supplier invoice can start a match run.",
+        "Only a submitted supplier invoice, or one the match held, can start a match run.",
+        409,
+      ),
+    );
+  else if (rematch && blockingBefore === 0)
+    blockingIssues.push(
+      issue(
+        "SUPPLIER_INVOICE_MATCH_REVIEWED",
+        "Every difference of this supplier invoice was accepted; approve the invoice instead of matching it again.",
         409,
       ),
     );
@@ -576,7 +672,7 @@ export async function buildSupplierMatchPlan({
   );
   const receivingIds = invoice.lines.map((line) => line.receivingLineId);
   const poLineIds = invoice.lines.map((line) => line.purchaseOrderLineId);
-  const [receivingRows, poRows, previousRows] = await Promise.all([
+  const [receivingRows, poRows, previousRows, lineReceipts] = await Promise.all([
     prisma.receivingLine.findMany({
       where: { id: { in: receivingIds } },
       include: { receivingDocument: true },
@@ -585,35 +681,69 @@ export async function buildSupplierMatchPlan({
       where: { id: { in: poLineIds } },
       include: { purchaseOrder: true },
     }),
+    // What other invoices claim on the same purchase-order lines, whichever
+    // receipt they name (design audit L2-07).
     prisma.supplierInvoiceLine.findMany({
       where: {
-        receivingLineId: { in: receivingIds },
+        purchaseOrderLineId: { in: poLineIds },
         supplierInvoiceId: { not: invoice.id },
         supplierInvoice: {
           tenantId,
-          status: { in: ["matching", "exception", "matched", "approved", "held"] },
+          status: { in: MATCH_CLAIMING_STATUSES },
         },
       },
-      select: { receivingLineId: true, quantity: true },
+      select: { purchaseOrderLineId: true, quantity: true },
+    }),
+    // Every posted receipt line of those purchase-order lines.
+    prisma.receivingLine.findMany({
+      where: {
+        purchaseOrderLineId: { in: poLineIds },
+        receivingDocument: { tenantId, postingStatus: "posted", reversedAt: null },
+      },
+      select: { id: true, purchaseOrderLineId: true, acceptedQty: true },
     }),
   ]);
   const receivingById = new Map(receivingRows.map((row) => [row.id, row]));
   const poById = new Map(poRows.map((row) => [row.id, row]));
-  const previousByReceiving = new Map();
-  for (const row of previousRows)
-    previousByReceiving.set(
-      row.receivingLineId,
-      (previousByReceiving.get(row.receivingLineId) || ZERO) +
-        decimalUnits(row.quantity || 0),
-    );
+  const sumBy = (rows, key, value) => {
+    const totals = new Map();
+    for (const row of rows)
+      totals.set(row[key], (totals.get(row[key]) || ZERO) + value(row));
+    return totals;
+  };
+  const previousByPoLine = sumBy(previousRows, "purchaseOrderLineId", (row) =>
+    decimalUnits(row.quantity || 0),
+  );
+  const receivedByPoLine = sumBy(lineReceipts, "purchaseOrderLineId", (row) =>
+    decimalUnits(row.acceptedQty || 0),
+  );
+  const receiptLinesByPoLine = new Map();
+  for (const row of lineReceipts)
+    receiptLinesByPoLine.set(row.purchaseOrderLineId, [
+      ...(receiptLinesByPoLine.get(row.purchaseOrderLineId) || []),
+      row.id,
+    ]);
   // Goods sent back to the supplier are no longer received for billing,
   // unless an approved credit memo already took them off a bill (L2-06).
   const returnsByReceiving = await uncreditedReturnedQuantities({
     prisma,
     tenantId,
     sourceDocumentType: "ReceivingDocument",
-    sourceLineIds: receivingIds,
+    sourceLineIds: lineReceipts.map((row) => row.id),
   });
+  const returnsOfPoLine = (poLineId) => {
+    let found = null;
+    for (const id of receiptLinesByPoLine.get(poLineId) || []) {
+      const entry = returnsByReceiving.get(id);
+      if (!entry) continue;
+      found = {
+        returned: (found?.returned || ZERO) + entry.returned,
+        credited: (found?.credited || ZERO) + entry.credited,
+        uncredited: (found?.uncredited || ZERO) + entry.uncredited,
+      };
+    }
+    return found;
+  };
   const matchLines = [];
   const exceptions = [];
   let invoiceTotal = ZERO;
@@ -655,16 +785,18 @@ export async function buildSupplierMatchPlan({
       continue;
     }
     const invoiceQuantity = decimalUnits(line.quantity || 0);
-    const receivedQuantity = decimalUnits(receiving.acceptedQty || 0);
-    const previouslyInvoiced =
-      previousByReceiving.get(receiving.id) || ZERO;
-    const returns = returnsByReceiving.get(receiving.id);
+    // Received on the purchase-order line over all its posted receipts, and
+    // claimed there by other invoices (THREE_WAY_MATCH_RULE).
+    const receivedQuantity = receivedByPoLine.get(poLine.id) || ZERO;
+    const previouslyInvoiced = previousByPoLine.get(poLine.id) || ZERO;
+    const returns = returnsOfPoLine(poLine.id);
     const returnedNotCredited = returns?.uncredited || ZERO;
     const available = receivedQuantity - previouslyInvoiced - returnedNotCredited;
     const poPrice = decimalUnits(poLine.unitPrice || 0);
     const invoicePrice = decimalUnits(line.unitPrice || 0);
     const invoiceLineAmount = decimalUnits(line.lineAmount ?? line.amount ?? 0);
     const expectedAmount = multiply(invoiceQuantity, poPrice);
+    const atInvoicePrice = multiply(invoiceQuantity, invoicePrice);
     const quantityVariance = invoiceQuantity - available;
     const priceVariance = invoicePrice - poPrice;
     const amountVariance = invoiceLineAmount - expectedAmount;
@@ -676,27 +808,31 @@ export async function buildSupplierMatchPlan({
         actualValue: decimalString(invoiceQuantity),
         varianceValue: decimalString(quantityVariance),
       });
-    const percentageThreshold =
-      poPrice === ZERO
-        ? ZERO
-        : multiply(abs(poPrice), pricePercentageTolerance) / 100n;
-    const priceThreshold =
-      percentageThreshold > priceAbsoluteTolerance
-        ? percentageThreshold
-        : priceAbsoluteTolerance;
-    if (abs(priceVariance) > priceThreshold)
+    // The price difference over the line, against the larger of: the unit
+    // price tolerances over the quantity (a percentage of the PO line amount,
+    // or an amount per unit) and the line amount tolerance. With the defaults
+    // that is the larger of 2% of the line and 1 currency unit.
+    const lineThreshold = larger(
+      multiply(abs(expectedAmount), pricePercentageTolerance) / 100n,
+      multiply(invoiceQuantity, priceAbsoluteTolerance),
+      amountTolerance,
+    );
+    if (priceVariance !== ZERO && abs(atInvoicePrice - expectedAmount) > lineThreshold)
       lineExceptions.push({
         exceptionType: "price",
         expectedValue: decimalString(poPrice),
         actualValue: decimalString(invoicePrice),
         varianceValue: decimalString(priceVariance),
       });
-    if (abs(amountVariance) > amountTolerance)
+    // The line amount the invoice price does not explain; a price difference
+    // is not raised a second time as an amount difference (design audit L2-03).
+    const unexplained = invoiceLineAmount - atInvoicePrice;
+    if (abs(unexplained) > amountTolerance)
       lineExceptions.push({
         exceptionType: "amount",
-        expectedValue: decimalString(expectedAmount),
+        expectedValue: decimalString(atInvoicePrice),
         actualValue: decimalString(invoiceLineAmount),
-        varianceValue: decimalString(amountVariance),
+        varianceValue: decimalString(unexplained),
       });
     invoiceTotal += invoiceLineAmount;
     poTotal += expectedAmount;
@@ -720,16 +856,18 @@ export async function buildSupplierMatchPlan({
       amountVariance: decimalString(amountVariance),
       currency: invoice.currency,
       status: lineExceptions.length ? "exception" : "matched",
-      // The receipt's supplier returns, so the expected quantity can be read
-      // back: received - previously invoiced - returned + credited.
-      ...(returns
-        ? {
-            metadata: {
+      // The receipts of the purchase-order line counted as received, and
+      // their supplier returns, so the expected quantity can be read back:
+      // received - previously invoiced - returned + credited.
+      metadata: {
+        receiptLineIds: receiptLinesByPoLine.get(poLine.id) || [],
+        ...(returns
+          ? {
               returnedQuantity: decimalString(returns.returned),
               creditedReturnQuantity: decimalString(returns.credited),
-            },
-          }
-        : {}),
+            }
+          : {}),
+      },
     };
     matchLines.push(linePlan);
     exceptions.push(
@@ -747,6 +885,8 @@ export async function buildSupplierMatchPlan({
       currency: invoice.currency,
       status: invoice.status,
     },
+    rule: THREE_WAY_MATCH_RULE,
+    rematch,
     tolerances: {
       quantity: decimalString(quantityTolerance),
       pricePercentage: decimalString(pricePercentageTolerance),
@@ -1039,3 +1179,6 @@ export async function buildSupplierCreditMemoPlan({
 
 export const financeFixed = decimalString;
 export const financeUnits = decimalUnits;
+// Quantity × price in units of 0.0001, rounded half away from zero, as a
+// line amount is.
+export const financeTimes = multiply;

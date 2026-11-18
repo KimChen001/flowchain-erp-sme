@@ -493,6 +493,8 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
       orderMinimum: minimums.get(text(row.sku)) || null,
       sku: row.sku, itemId: row.itemId, itemName: row.itemName, unit: unitBySku.get(text(row.sku)) || null, onHand: row.onHand, reserved: row.reserved, available: row.available,
       openSalesDemand: row.openSalesDemand, incomingApprovedPo: row.incomingApprovedPo, shortage: row.shortage,
+      // The inventory position's other parts (shared/purchase-suggestion.mjs).
+      unreservedSalesDemand: row.unreservedSalesDemand ?? null, pendingPurchaseQty: row.pendingPurchaseQty ?? null,
       availableToPromise: row.availableToPromise, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint,
       // Purchase order ids only for readers of purchase orders; the incoming
       // quantity is part of available to promise, which inventory shows.

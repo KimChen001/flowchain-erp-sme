@@ -142,7 +142,8 @@ test('every list counts what its filters match, says out of how many, and pages 
     const source = read(file)
     assert.match(source, /const PAGE_SIZE = 50;/, file)
     assert.match(source, /const paged = usePagedRows\(shown, PAGE_SIZE, /, file)
-    assert.match(source, /total=\{state === "loaded" \? shown\.length : undefined\} all=\{state === "loaded" \? rows\.length : undefined\} shown=\{paged\.pageRows\.length\}/, file)
+    // The workbench also waits for the workspace day (`ready`, design audit B3).
+    assert.match(source, /total=\{(?:state === "loaded"|ready) \? shown\.length : undefined\} all=\{(?:state === "loaded"|ready) \? rows\.length : undefined\} shown=\{paged\.pageRows\.length\}/, file)
     assert.match(source, new RegExp(`<ListPager page=\{paged\.page\} pageSize=\{PAGE_SIZE\} total=\{shown\.length\} onPage=\{paged\.setPage\} testId="${pager}" />`), file)
     assert.doesNotMatch(source, /&& shown\.map\(/, file)
   }

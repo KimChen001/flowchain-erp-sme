@@ -111,7 +111,10 @@ const purchaseOrders = [
   { n: 25, supplier: EVERGREEN, sku: 'TST-006', qty: 150, price: 18.25, status: S.PENDING_APPROVAL, created: -1, promised: 18 },
   { n: 26, supplier: PRECISION, sku: 'TST-004', qty: 20000, price: 0.37, status: S.PENDING_APPROVAL, created: -4, promised: 25 },
   { n: 27, supplier: ATLAS, sku: 'TST-004', qty: 3000, price: 0.4, status: S.DRAFT, created: -1, promised: 20 },
-  { n: 28, supplier: NORTHSTAR, sku: 'TST-002', qty: 50, price: 64, status: S.DRAFT, created: 0, promised: 28 },
+  // A small top-up draft: draft orders are on order in the reorder position
+  // (design audit C2), and at 4 the sensor stays one short of its reorder
+  // point, so the walkthrough keeps an item to order now.
+  { n: 28, supplier: NORTHSTAR, sku: 'TST-002', qty: 4, price: 64, status: S.DRAFT, created: 0, promised: 28 },
   { n: 29, supplier: SUMMIT, sku: 'TST-006', qty: 60, price: 17.75, status: S.DRAFT, created: -3, promised: 15 },
   { n: 30, supplier: ACME, sku: 'TST-005', qty: 1000, price: 1.95, status: S.CANCELLED, created: -45, promised: -30, sent: true, cancellationReason: 'Replaced by a lower-priced order' },
   { n: 31, supplier: EVERGREEN, sku: 'TST-003', qty: 500, price: 12.9, status: S.CANCELLED, created: -28, promised: -12, sent: true, cancellationReason: 'Supplier could not meet the delivery date' },

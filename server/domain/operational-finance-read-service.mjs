@@ -2,7 +2,7 @@ import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 import { can } from "../auth/authorization-service.mjs";
 import { paymentRecordsView } from "./payment-record-command-service.mjs";
-import { awaitingReceipt, financeFixed, financeUnits } from "./operational-finance-policy.mjs";
+import { awaitingReceipt, financeFixed, financeUnits, matchRuleOf } from "./operational-finance-policy.mjs";
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
 import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 import { invoiceDayKey, isDuplicateReviewClosed, loadDuplicateChecks, workspaceTimezone } from "./supplier-invoice-duplicates.mjs";
@@ -156,7 +156,13 @@ function actions(actor, capability, row, type) {
     // before it can be matched.
     if (can({ actor, permission: "finance.supplier_invoice.revise", tenantId: actor.tenantId }) && waiting)
       values.push("link_receipt");
-    if (can({ actor, permission: "finance.three_way_match.execute", tenantId: actor.tenantId }) && row.status === "submitted" && !waiting)
+    // An invoice the match held for goods not received is matched again once
+    // they are, for example after a late receipt (L2-04). Matching a price
+    // difference again finds the same difference, so it is not offered.
+    if (
+      can({ actor, permission: "finance.three_way_match.execute", tenantId: actor.tenantId }) &&
+      ((row.status === "submitted" && !waiting) || (row.status === "exception" && row.blockingQuantityException === true))
+    )
       values.push("match");
     // An exception invoice can be approved only once every match exception
     // is approved; until then the list must not offer Approve.
@@ -191,7 +197,7 @@ function actions(actor, capability, row, type) {
 // Money on a finance record needs finance.amounts.read and the supplier needs
 // finance.partner_snapshot.read. A hidden value is null with a fieldVisibility
 // entry, never 0. A quantity exception's values are quantities, not money.
-const FINANCE_MONEY_KEYS = ["subtotalAmount", "enteredTaxAmount", "totalAmount", "varianceAmount", "originalAmount", "outstandingAmount", "approvedCreditAmount", "paidAmount", "unitPrice", "lineAmount", "poUnitPrice", "invoiceUnitPrice", "priceVariance", "amountVariance", "expectedValue", "actualValue", "varianceValue"];
+const FINANCE_MONEY_KEYS = ["subtotalAmount", "enteredTaxAmount", "totalAmount", "varianceAmount", "originalAmount", "outstandingAmount", "approvedCreditAmount", "paidAmount", "notReceivedAmount", "unitPrice", "lineAmount", "poUnitPrice", "invoiceUnitPrice", "priceVariance", "amountVariance", "expectedValue", "actualValue", "varianceValue"];
 const QUANTITY_VALUE_KEYS = new Set(["expectedValue", "actualValue", "varianceValue"]);
 
 function protectFinanceFields(model, actor) {
@@ -247,6 +253,10 @@ function payableSummary(row, actor, capabilities) {
     // What was paid so far: the original amount less approved credits and
     // what is still outstanding.
     paidAmount: financeFixed(financeUnits(row.originalAmount) - financeUnits(row.approvedCreditAmount || 0) - financeUnits(row.outstandingAmount)),
+    // Left out of the payable: goods invoiced and not received, where a
+    // quantity difference was accepted at the received quantity (null when
+    // nothing was left out).
+    notReceivedAmount: row.metadata?.receivedQuantityBasis ? decimal(row.metadata.receivedQuantityBasis.notReceivedAmount) : null,
     currency: row.currency,
     dueDate: serial(row.dueDate),
     status: row.status,
@@ -379,7 +389,7 @@ export function createOperationalFinanceReadService({
     }
     return {
       items: rows.map((row) => ({
-        ...invoiceSummary({ ...row, blockingExceptionCount: blocking.get(row.id) || 0 }, current, capabilities),
+        ...invoiceSummary({ ...row, blockingExceptionCount: blocking.get(row.id) || 0, blockingQuantityException: (exceptionTypes.get(row.id) || []).includes("quantity") }, current, capabilities),
         // The kinds of difference still to decide (price, quantity, amount).
         openExceptionTypes: exceptionTypes.get(row.id) || [],
       })),
@@ -493,10 +503,12 @@ export function createOperationalFinanceReadService({
       fail("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404);
     // The same approval rule as the list: open or rejected exceptions on any
     // match run block approval, so the detail does not offer it.
-    const blockingExceptionCount = invoice.matchRuns
+    const blockingExceptions = invoice.matchRuns
       .flatMap((run) => run.exceptions || [])
-      .filter((entry) => ["open", "rejected"].includes(entry.status)).length;
-    const summary = invoiceSummary({ ...invoice, blockingExceptionCount }, current, capabilities);
+      .filter((entry) => ["open", "rejected"].includes(entry.status));
+    const blockingExceptionCount = blockingExceptions.length;
+    const blockingQuantityException = blockingExceptions.some((entry) => entry.exceptionType === "quantity");
+    const summary = invoiceSummary({ ...invoice, blockingExceptionCount, blockingQuantityException }, current, capabilities);
     const duplicateChecks = await duplicateChecksView(invoice, current);
     // An approver dismisses an open flag with a reason before approval; an
     // approved, held or cancelled bill is past that step.
@@ -559,6 +571,10 @@ export function createOperationalFinanceReadService({
             status: match.status,
             blockingReason: match.blockingReason,
             createdAt: serial(match.createdAt),
+            // The rule the match was made under (THREE_WAY_MATCH_RULE), null
+            // for a match made before it: its quantity differences can be
+            // approved as before.
+            rule: matchRuleOf(match),
             lines: match.lines.map((line) => protectFinanceFields({
               id: line.id,
               supplierInvoiceLineId: line.supplierInvoiceLineId,
@@ -589,6 +605,9 @@ export function createOperationalFinanceReadService({
               currency: entry.currency,
               resolution: entry.resolution,
               version: entry.version,
+              // Accepted at the received quantity: the payable leaves out
+              // what was not received.
+              acceptedAt: entry.metadata?.acceptedAt || null,
             }, current)),
           }
         : null,

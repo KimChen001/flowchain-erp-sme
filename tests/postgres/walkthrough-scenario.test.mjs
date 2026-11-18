@@ -242,13 +242,18 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
     // 8 shipment days in its 90, each item's shipped quantity over the
     // window's posted shipments, and an order-by day. Every open purchase
     // order line counts, late or not. TST-002 comes first: 150 on hand plus
-    // PO-014's 50 still to come (six days late), PO-002's 40 (due in 4 days)
-    // and PO-021's 25 (in 14) is 265, below its reorder point of 270, so it is
-    // ordered now, and the 5 short are raised to Acme's minimum of 50.
+    // PO-014's 50 still to come (six days late), PO-002's 40 (due in 4 days),
+    // PO-021's 25 (in 14) and the draft PO-028's 4 (design audit C2: draft and
+    // pending orders, open requests and backorders are in the position) is
+    // 269, below its reorder point of 270, so it is ordered now, and the 1
+    // short is raised to Acme's minimum of 50.
     const businessContext = await readBusinessContext({ repositories: createDatabaseRepositoryRegistry({ env, prisma }), identity: { tenantId } })
     const allocationRows = buildRuntimeInventoryAllocation(businessContext).availability
     const reorder = await createReorderListReadService({ prisma }).read({ tenantId, today: AS_OF, timeZone, allocationRows })
-    assert.deepEqual(reorder.rows.map((row) => row.sku), ['TST-002', 'TST-001', 'TST-006', 'TST-005', 'TST-003', 'TST-004'])
+    // The position also counts draft and pending-approval orders and open
+    // requests, less backorders (design audit C2), which moves TST-005 ahead
+    // of TST-006.
+    assert.deepEqual(reorder.rows.map((row) => row.sku), ['TST-002', 'TST-001', 'TST-005', 'TST-006', 'TST-003', 'TST-004'])
     const shipmentLines = history.flatMap((order) => order.shipments.flatMap((shipment) => shipment.lines.map((line) => ({ ...line, day: localDay(shipment.postedAt) }))))
       .filter((line) => line.day >= shiftDay(AS_OF, -90) && line.day <= shiftDay(AS_OF, -1))
     for (const row of reorder.rows) {
@@ -260,7 +265,7 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
       assert.equal(row.orderNow, row.sku === 'TST-002', `${row.sku} is ordered by ${row.orderByDate}`)
     }
     const sensor = reorder.rows[0]
-    assert.deepEqual([sensor.onHand, sensor.incoming, sensor.position, sensor.reorderPoint, sensor.shortfall, sensor.purchaseRequest.quantity, sensor.purchaseRequest.raisedToMinimum], [150, 115, 265, 270, 5, 50, true])
+    assert.deepEqual([sensor.onHand, sensor.incoming, sensor.requested, sensor.position, sensor.reorderPoint, sensor.shortfall, sensor.purchaseRequest.quantity, sensor.purchaseRequest.raisedToMinimum], [150, 115, 4, 269, 270, 1, 50, true])
     assert.deepEqual(sensor.incomingLines.map((line) => [line.orderNumber, line.remaining, line.late]).sort(), [['LOCAL-DEMO-PO-002', 40, false], ['LOCAL-DEMO-PO-014', 50, true], ['LOCAL-DEMO-PO-021', 25, false]])
     // Late lines still count, and are flagged for the buyer to confirm with
     // the supplier: PO-014 for the sensor, Acme's PO-001 and PO-015 for the
@@ -268,18 +273,21 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
     const lateOrders = (row) => row.flags.filter((flag) => flag.code === 'po_line_late').map((flag) => flag.orderNumber).sort()
     assert.deepEqual(lateOrders(sensor), ['LOCAL-DEMO-PO-014'])
     const controller = reorder.rows[1]
-    assert.deepEqual([controller.sku, controller.onHand, controller.incoming, controller.position, controller.orderNow, controller.daysUntilOrderBy], ['TST-001', 28, 70, 98, false, 11])
+    // The Flow Controller: 28 on hand + 70 incoming + PO-024's 120 (pending
+    // approval) and PR-001's 50 (submitted) - SO-001's 35 backordered = 233.
+    assert.deepEqual([controller.sku, controller.onHand, controller.incoming, controller.requested, controller.backorders, controller.position, controller.orderNow, controller.daysUntilOrderBy], ['TST-001', 28, 70, 170, 35, 233, false, 39])
+    assert.deepEqual(controller.requests.map((request) => request.number), ['LOCAL-DEMO-PR-001'])
     assert.deepEqual(lateOrders(controller), ['LOCAL-DEMO-PO-001', 'LOCAL-DEMO-PO-015'])
     assert.ok(reorder.rows.every((row) => row.incoming === row.incomingLines.reduce((sum, line) => sum + line.remaining, 0)), 'every open line counts')
     // The walkthrough is reseeded before it is shown, and the same holds
     // while the list is read up to six days later: every shipment is still in
-    // the window, and TST-002 is still ordered now, 5 short with its request
+    // the window, and TST-002 is still ordered now, 1 short with its request
     // raised to the minimum (PO-002 is late from the fifth day, and counts).
     for (let daysLater = 1; daysLater <= 6; daysLater += 1) {
       const later = await createReorderListReadService({ prisma }).read({ tenantId, today: shiftDay(AS_OF, daysLater), timeZone, allocationRows })
       const row = later.rows.find((entry) => entry.sku === 'TST-002')
       assert.equal(later.rows[0].sku, 'TST-002', `${daysLater} days later`)
-      assert.deepEqual([row.orderNow, row.position, row.shortfall, row.purchaseRequest.quantity, row.purchaseRequest.raisedToMinimum], [true, 265, 5, 50, true], `${daysLater} days later`)
+      assert.deepEqual([row.orderNow, row.position, row.shortfall, row.purchaseRequest.quantity, row.purchaseRequest.raisedToMinimum], [true, 269, 1, 50, true], `${daysLater} days later`)
       assert.deepEqual(lateOrders(row), daysLater > 4 ? ['LOCAL-DEMO-PO-002', 'LOCAL-DEMO-PO-014'] : ['LOCAL-DEMO-PO-014'], `${daysLater} days later`)
       assert.deepEqual(later.rows.map((entry) => entry.demand.shippedQuantity), later.rows.map((entry) => reorder.rows.find((first) => first.sku === entry.sku).demand.shippedQuantity), `${daysLater} days later`)
     }

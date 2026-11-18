@@ -1,5 +1,4 @@
 // Empty collections are UI initialization state, never business-data authority.
-export const FORECAST_SKUS: any[] = [];
 export const INVENTORY_MOVEMENT_LEDGER: any[] = [];
 export const LOTS: any[] = [];
 export const OWNERS: any[] = [];
@@ -17,4 +16,3 @@ export const VARIANCES: any[] = [];
 export const inventoryItems: any[] = [];
 export const purchaseOrders: any[] = [];
 export const receivingDocs: any[] = [];
-export const supplierData: any[] = [];

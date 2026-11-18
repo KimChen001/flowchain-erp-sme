@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { NO_REORDER_POINT_LISTED, buildReorderList, dailyDemand, orderByDay, preferredSupplierFor, recordedReorderPoint } from './reorder-list.mjs'
+import { inventoryPosition, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
 
 const TODAY = '2026-10-05'
 const TZ = 'America/New_York'
@@ -55,7 +56,9 @@ test('at the reorder point the item is "order now", and the shortfall is reorder
   assert.equal(b.position, 17.5)
   assert.equal(b.incoming, 5)
   assert.equal(b.shortfall, 12.5)
-  assert.equal(b.purchaseRequest.quantity, 12.5)
+  // The request asks for the shared rule's quantity: the shortfall rounded up,
+  // as the assistant suggests it (design audit C2).
+  assert.equal(b.purchaseRequest.quantity, 13)
   assert.equal(list.summary.orderNow, 2)
 })
 
@@ -210,11 +213,11 @@ test('the preferred supplier shows its lead time and minimum order quantity only
     { id: 'r3', payload: { itemId: 'ITEM-C', supplierId: 'SUP-3', approved: false, preferred: true } },
     { id: 'r4', payload: { itemId: 'ITEM-D', supplierId: 'SUP-3', minimumOrderQuantity: 24, leadTimeDays: 0 } },
   ]
-  assert.deepEqual(preferredSupplierFor(item('A'), links, suppliers), { id: 'SUP-1', code: 'S1', name: 'Acme', leadTimeDays: 7, minimumOrderQuantity: null, moqUnit: null })
+  assert.deepEqual(preferredSupplierFor(item('A'), links, suppliers), { id: 'SUP-1', code: 'S1', name: 'Acme', leadTimeDays: 7, leadTimeFrom: 'supplier', minimumOrderQuantity: null, moqFrom: null, moqUnit: null })
   assert.equal(preferredSupplierFor(item('B'), links, suppliers), null, 'an inactive supplier is not a source')
   assert.equal(preferredSupplierFor(item('C'), links, suppliers), null, 'an unapproved link is not a source')
   assert.equal(preferredSupplierFor(item('D'), links, suppliers), null, 'a link that is not preferred, for an item with no preferred supplier')
-  assert.deepEqual(preferredSupplierFor(item('D', { preferredSupplierId: 'SUP-3' }), links, suppliers, { moqUnit: 'CASE' }), { id: 'SUP-3', code: '', name: 'Gamma', leadTimeDays: 0, minimumOrderQuantity: 24, moqUnit: 'CASE' })
+  assert.deepEqual(preferredSupplierFor(item('D', { preferredSupplierId: 'SUP-3' }), links, suppliers, { moqUnit: 'CASE' }), { id: 'SUP-3', code: '', name: 'Gamma', leadTimeDays: 0, leadTimeFrom: 'supplier', minimumOrderQuantity: 24, moqFrom: 'supplier', moqUnit: 'CASE' })
 
   const list = build({ items: [item('A')], allocationRows: [allocation('A', { onHand: 0 })], supplierLinks: links, suppliers: [...suppliers.values()] })
   assert.equal(rowOf(list, 'A').purchaseRequest.supplierId, 'SUP-1')
@@ -293,4 +296,57 @@ test('the purchase request asks for at least the supplier minimum, and the short
   assert.deepEqual(request('A'), [50, 100, true])
   assert.deepEqual(request('B'), [160, 160, false])
   assert.deepEqual(request('C'), [50, 50, false], 'no minimum recorded')
+})
+
+// Design audit C2 (L3-03, L3-04, L3-06, L1-11): the position counts draft and
+// pending-approval purchase orders and open purchase requests, and takes
+// backorders out once; the request quantity is the shared rule's.
+test('the position adds pending orders and open requests and takes out backorders, each once', () => {
+  const request = (number, status, quantity, extra = {}) => ({ itemId: 'ITEM-A', sku: 'A', quantity, unit: 'pcs', request: { id: number, number, status }, ...extra })
+  const lines = [
+    request('PR-1', 'draft', 4),
+    request('PR-2', 'approved', 3),
+    request('PR-3', 'converted', 50),
+    request('PR-4', 'submitted', 9, { unit: 'box' }),
+  ]
+  const list = build({
+    items: [item('A', { reorderPoint: 30 })],
+    allocationRows: [allocation('A', { onHand: 40, reserved: 10, unreservedSalesDemand: 15, pendingPurchaseQty: 5, pendingLines: [{ purchaseOrderId: 'PO-9', orderNumber: 'PO-9', status: 'draft', remaining: 5 }], incomingLines: [incoming('PO-1', 2, '2026-10-01')] })],
+    purchaseRequestLines: lines,
+  })
+  const a = rowOf(list, 'A')
+  // 40 - 10 + 2 + 5 + (4 + 3) - 15 = 29: one short of the reorder point.
+  assert.deepEqual([a.position, a.incoming, a.pendingOrders, a.openRequests, a.requested, a.backorders, a.shortfall, a.orderNow], [29, 2, 5, 7, 12, 15, 1, true])
+  assert.deepEqual(a.requests, [{ number: 'PR-1', status: 'draft' }, { number: 'PR-2', status: 'approved' }])
+  assert.deepEqual(a.pendingLines, [{ orderNumber: 'PO-9', status: 'draft', remaining: 5 }])
+  assert.ok(a.flags.some((flag) => flag.code === 'request_line_other_unit' && flag.count === 1))
+  // The same quantity the shared rule gives on the same parts.
+  const parts = inventoryPosition({ onHand: 40, reserved: 10, incoming: 2, pendingOrders: 5, openRequests: 7, backorders: 15 })
+  assert.equal(a.purchaseRequest.quantity, suggestPurchaseQuantity({ reorderPoint: 30, ...parts }).quantity.value)
+  assert.equal(a.purchaseRequest.quantity, 1)
+  // A reader who may not see purchase requests: counted, never named.
+  const hidden = rowOf(build({ items: [item('A', { reorderPoint: 30 })], allocationRows: [allocation('A', { onHand: 40, reserved: 10, unreservedSalesDemand: 15, pendingPurchaseQty: 5 })], purchaseRequestLines: lines, showPurchaseRequests: false }), 'A')
+  assert.deepEqual([hidden.openRequests, hidden.requests], [7, []])
+  // Fully reserved: 100 on hand, 100 reserved, no backorder; reorder point 30.
+  const full = rowOf(build({ items: [item('F', { reorderPoint: 30 })], allocationRows: [allocation('F', { onHand: 100, reserved: 100, unreservedSalesDemand: 0 })] }), 'F')
+  assert.deepEqual([full.position, full.shortfall, full.purchaseRequest.quantity], [0, 30, 30])
+  // Backorders not readable: the item is not checked rather than misjudged.
+  assert.equal(build({ items: [item('U')], allocationRows: [allocation('U', { unreservedSalesDemand: null })] }).notJudged[0].reason, 'stock_incomplete')
+})
+
+// Design audit L3-08: the lead time and MOQ on the item form were ignored.
+test("the item's own lead time and minimum order stand in when the supplier link records none", () => {
+  const suppliers = [{ id: 'SUP-1', code: 'S1', name: 'Acme', status: 'active' }]
+  const links = [{ id: 'r1', payload: { itemId: 'ITEM-A', supplierId: 'SUP-1', preferred: true } }]
+  const own = { purchaseLeadTimeDays: 10, minimumOrderQuantity: 25 }
+  const list = build({ items: [item('A', { metadata: own }), item('B', { metadata: own }), item('Z', { metadata: { purchaseLeadTimeDays: 0, minimumOrderQuantity: 0 } })], allocationRows: [allocation('A', { onHand: 0 }), allocation('B', { onHand: 0 }), allocation('Z', { onHand: 0 })], supplierLinks: links, suppliers })
+  const a = rowOf(list, 'A')
+  assert.deepEqual([a.supplier.leadTimeDays, a.supplier.leadTimeFrom, a.supplier.minimumOrderQuantity, a.supplier.moqFrom], [10, 'item', 25, 'item'])
+  assert.deepEqual([a.leadTimeDays, a.leadTimeFrom, a.purchaseRequest.quantity, a.purchaseRequest.raisedToMinimum], [10, 'item', 25, true])
+  // No supplier link: the row still plans with the item's lead time.
+  const b = rowOf(list, 'B')
+  assert.deepEqual([b.supplier, b.leadTimeDays, b.leadTimeFrom], [null, 10, 'item'])
+  // 0 on the item is not recorded.
+  const z = rowOf(list, 'Z')
+  assert.deepEqual([z.leadTimeDays, z.leadTimeFrom, z.purchaseRequest.quantity], [null, null, 20])
 })

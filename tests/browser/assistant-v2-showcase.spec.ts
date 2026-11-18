@@ -163,7 +163,8 @@ async function runS4(page: Page, session: Session, panel: Locator, requestsBefor
   const sensor = rows.filter({ hasText: "TST-002" });
   await sensor.getByTestId("ai-v2-pr-tick").check();
   await expect(sensor).toHaveAttribute("data-checked", "true");
-  await expect(sensor.locator('[data-field="quantity"] input')).toHaveValue("1735");
+  // The draft PO-028 (4) counts in the position since design audit C2: 1735 - 4.
+  await expect(sensor.locator('[data-field="quantity"] input')).toHaveValue("1731");
   await expect(sensor.locator('[data-field="needBy"]')).toContainText("Lead time 14 days");
   const create = form.getByTestId("ai-v2-pr-create");
   await expect(create).toHaveText("Create draft request (1 line)");

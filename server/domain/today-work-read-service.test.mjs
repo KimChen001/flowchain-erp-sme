@@ -95,3 +95,26 @@ test('past 100 held invoices, the oldest get the prepared step and Today says th
   assert.deepEqual(drafted, held.slice(0, 100).map((row) => row.id))
   assert.ok(read.limitations.includes('truncated:invoice_exceptions'))
 })
+
+// Design audit B2 (L2-04, L11-08): a held invoice carries its order's status
+// and date, so the drafted step knows a closed order will not deliver the
+// rest; and only the lines of orders the business committed to (approved,
+// issued or received), newest first, are read as evidence of a price.
+test('a held invoice carries its order status and date, and price evidence comes from committed orders only', async () => {
+  const rawContext = { supplierInvoices: [{ id: 'INV-1', status: 'exception', matchStatus: 'exception', invoiceDate: '2026-10-05' }] }
+  const order = (id, status, created) => ({ id, tenantId: TENANT, number: id, status, supplierId: 'SUP-1', metadata: {}, createdAt: new Date(created) })
+  const orders = [order('PO-A', 'closed', '2026-10-01T09:00:00Z'), order('PO-DRAFT', 'cancelled', '2026-10-10T09:00:00Z'), order('PO-NEW', 'issued', '2026-10-20T09:00:00Z'), order('PO-NEWER', 'approved', '2026-10-25T09:00:00Z')]
+  const orderLine = (id, orderId, price) => ({ id, sku: 'SKU-1', unitPrice: price, purchaseOrder: orders.find((row) => row.id === orderId) })
+  const ctx = { identity: { tenantId: TENANT }, env: {}, homeOverviewPrisma: {
+    supplierInvoice: inMemoryModel([{ id: 'INV-1', tenantId: TENANT, invoiceNumber: 'BILL-1', supplierId: 'SUP-1', supplierName: 'Acme', relatedPoId: 'PO-A', currency: 'GBP' }]),
+    financeMatchException: inMemoryModel([{ id: 'EX-1', tenantId: TENANT, supplierInvoiceId: 'INV-1', matchLineId: 'ML-1', exceptionType: 'price', status: 'open', expectedValue: '1.27', actualValue: '1.32', varianceValue: '0.05', createdAt: new Date('2026-10-05T10:00:00Z') }]),
+    threeWayMatchLine: inMemoryModel([{ id: 'ML-1', sku: 'SKU-1', unit: 'pcs', orderedQuantity: '10', receivedQuantity: '10', previouslyInvoicedQuantity: '0', invoiceQuantity: '10', poUnitPrice: '1.27', invoiceUnitPrice: '1.32' }]),
+    purchaseOrder: inMemoryModel(orders),
+    purchaseOrderLine: inMemoryModel([orderLine('L-A', 'PO-A', '1.27'), orderLine('L-DRAFT', 'PO-DRAFT', '1.32'), orderLine('L-NEW', 'PO-NEW', '1.32'), orderLine('L-NEWER', 'PO-NEWER', '1.33')]),
+  } }
+  const read = await readTodayWorkSources(ctx, { access: { home: {}, collections: { supplierInvoices: true }, amounts: true, partner: true }, rawContext, now: new Date('2026-11-15T12:00:00Z'), today: '2026-11-15', timeZone: 'Europe/London' })
+  const held = read.sources.invoiceExceptions
+  assert.deepEqual([held.invoices[0].orderStatus, held.invoices[0].orderDate], ['closed', '2026-10-01T09:00:00.000Z'])
+  assert.deepEqual(held.orderPrices.map((row) => row.orderId), ['PO-NEWER', 'PO-NEW', 'PO-A'])
+  assert.equal(held.orderPrices[1].orderDate, '2026-10-20T09:00:00.000Z')
+})

@@ -1,13 +1,19 @@
-// How much of an item to request and by when, for the assistant's purchase
-// request lines (docs/ai-assistant-v2-design.md §4.1 and §5.1, owner
-// decisions V2-5 and V2-6 of 2026-11-02). One rule, so every place that
-// suggests a quantity gives the same figure:
+// How much of an item to request and by when: the reorder list, the
+// assistant's purchase request lines and Today's reorder drafts
+// (docs/ai-assistant-v2-design.md §4.1 and §5.1, owner decisions V2-5 and
+// V2-6 of 2026-11-02; design audit 2026-11-15 batch C2, owner "按建议做"). One
+// rule, so every place that suggests a quantity gives the same figure:
 //
-//   target   the highest of the reorder point, the safety stock and the open
-//            sales demand;
-//   gap      target - available - incoming on open purchase orders - the
-//            quantity of open purchase requests (draft, submitted or
-//            approved), rounded up;
+//   position on hand - reserved + incoming on committed purchase orders +
+//            pending purchase orders (draft or pending approval) + open
+//            purchase requests (draft, submitted or approved) - backorders
+//            (open sales demand no reservation covers yet). Reserved stock
+//            is out of on hand once and the backorders are the demand it
+//            does not cover, so no sales order counts twice; backorders are
+//            counted here, in the position, and nowhere else (L3-04, L3-06);
+//   target   the reorder point; without one, the safety stock; without
+//            either, 0 (backorders alone still make a gap);
+//   gap      target - position, rounded up;
 //   quantity the gap, raised to the supplier's minimum order. A quantity the
 //            user typed wins. No gap: nothing is suggested.
 //
@@ -41,6 +47,10 @@ const text = (value) => String(value ?? '').trim()
 const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(text(value)) && !Number.isNaN(Date.parse(`${text(value)}T00:00:00Z`))
 const count = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? 0 : Number(value))
 const positive = (value) => (count(value) > 0 ? count(value) : null)
+// Quantities are stored with four decimals; the position adds them in whole
+// ten-thousandths so 0.1 + 0.2 is 0.3.
+const SCALE = 10000
+const units = (value) => Math.round(count(value) * SCALE)
 
 // Whether a purchase request line counts towards an item: a line for it, in
 // the item's unit (a line in another unit is never added).
@@ -63,13 +73,25 @@ export function openRequestQuantity(requests, item = {}) {
   return total
 }
 
-// { target, gap, covered, quantity: { value, source }, minimum }. covered:
-// short against the target, but open orders and requests bring enough.
-export function suggestPurchaseQuantity({ reorderPoint, safetyStock, openDemand, available, incoming, openRequests, minimum, typed } = {}) {
-  const target = Math.max(count(reorderPoint), count(safetyStock), count(openDemand))
-  const gap = Math.ceil(target - count(available) - count(incoming) - count(openRequests))
+// An item's inventory position, from its parts in its stock unit. available
+// (on hand less reserved) may be given instead of onHand and reserved.
+// { stock, supply, position }: stock is what is on hand for new demand (after
+// reservations and backorders), supply what is on order or requested.
+export function inventoryPosition({ onHand = null, reserved = null, available = null, incoming = 0, pendingOrders = 0, openRequests = 0, backorders = 0 } = {}) {
+  const free = available !== null && available !== undefined ? units(available) : units(onHand) - units(reserved)
+  const stock = free - units(backorders)
+  const supply = units(incoming) + units(pendingOrders) + units(openRequests)
+  return { stock: stock / SCALE, supply: supply / SCALE, position: (stock + supply) / SCALE }
+}
+
+// { target, gap, covered, quantity: { value, source }, minimum }. position and
+// stock as inventoryPosition gives them. covered: short against the target on
+// the stock alone, but what is on order or requested brings enough.
+export function suggestPurchaseQuantity({ reorderPoint, safetyStock, position, stock, minimum, typed } = {}) {
+  const target = positive(reorderPoint) ?? positive(safetyStock) ?? 0
+  const gap = Math.ceil((units(target) - units(position)) / SCALE)
   const moq = positive(minimum)
-  const covered = gap <= 0 && target > count(available)
+  const covered = gap <= 0 && units(target) > units(stock)
   const base = { target, gap, covered, minimum: moq }
   const asked = positive(typed)
   if (asked !== null) return { ...base, quantity: { value: asked, source: PURCHASE_SUGGESTION_SOURCES.userTyped } }

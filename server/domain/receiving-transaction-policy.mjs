@@ -212,9 +212,8 @@ export async function buildReceivingReversalPlan({ prisma, tenantId, receivingDo
   // invoice position decides the outcome regardless of stock. Invoice lines
   // carry no tenantId, so the tenant is enforced through the owning invoice.
   //
-  // This refusal is permanent for that receipt, by design. Supplier invoices
-  // have no cancel or void operation, and a supplier credit memo is sourced
-  // from a supplier return, not from the invoice, so neither releases the hold.
+  // A supplier credit memo is sourced from a supplier return, not from the
+  // invoice, so it does not release the hold.
   // Receipt reversal corrects a mistaken posting before anything is committed
   // against it; once an invoice claims the goods, the correction is a supplier
   // return. The message says so rather than pointing at an action that does

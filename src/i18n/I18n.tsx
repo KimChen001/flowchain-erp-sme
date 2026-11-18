@@ -1,7 +1,7 @@
 import { workspaceCopy } from "./workspaceCopy";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiJson, AUTH_TOKEN_KEY } from "../lib/api-client";
-import { setWorkspaceNumberLocale, setWorkspaceTimeZone } from "../lib/format";
+import { setWorkspaceNumberLocale, setWorkspaceTimeZone, todayInTimeZone } from "../lib/format";
 import type { AppRouteDefinition } from "../app/routeRegistry";
 
 export type SupportedLanguage = "zh-CN" | "en-US";
@@ -13,6 +13,7 @@ type LocalizationPayload = {
   effectiveLanguage: SupportedLanguage;
   locale: SupportedLocale;
   timezone: string;
+  workspaceToday?: string;
   workspaceName: string;
 };
 
@@ -28,13 +29,8 @@ const zh = {
   "nav.finance": "应付与应收",
   "nav.reports": "报表",
   "nav.settings": "系统管理",
-  "nav.forecast": "预测与 MRP",
   "nav.imports": "数据接入与质量",
-  "nav.exception-cases": "异常处理工单",
-  "nav.collaboration-drafts": "协同通知草稿",
   "nav.review-actions": "复核队列",
-  "nav.audit-history": "业务审计与历史",
-  "nav.pilot-readiness": "试点准备度",
   "nav.contracts": "合同",
   // List page titles whose Chinese word is also a field label ("客户", "税码").
   "route.customers": "客户",
@@ -50,10 +46,8 @@ const zh = {
   "settings.readiness": "系统就绪状态",
   "settings.numbering": "编号规则",
   "settings.review": "复核策略",
-  "settings.modules": "菜单与模块",
   "settings.ai": "AI 治理",
   "settings.audit": "操作日志",
-  "settings.advanced": "高级设置",
   "settings.saved": "已保存",
   "settings.cancel": "取消",
   "settings.save": "保存更改",
@@ -85,8 +79,6 @@ const zh = {
   "settings.defaultWarehouse": "默认仓库",
   "settings.none": "无",
   "settings.status": "状态",
-  "settings.enabled": "已启用",
-  "settings.disabled": "已停用",
   "settings.user": "用户",
   "settings.warehouseScope": "仓库权限",
   "settings.allWarehouses": "全部仓库",
@@ -190,9 +182,6 @@ const zh = {
   "settings.policy.supplier-invoice-match-exception": "采购发票匹配异常",
   "settings.policy.payable-approval": "应付审批",
   "settings.policy.customer-credit-note-approval": "客户贷项通知单审批",
-  "settings.setDefault": "设为默认",
-  "settings.sidebarPreview": "侧边栏预览",
-  "settings.visibleTo": "可见角色：{roles}",
   "settings.readOnly": "只读",
   "settings.diagnostics.overall.ready": "就绪",
   "settings.diagnostics.overall.attention": "需要关注",
@@ -209,11 +198,6 @@ const zh = {
   "settings.capabilityId": "代码",
   "settings.evidenceRequired": "回答必须附业务证据",
   "settings.retentionDays": "记录保留天数",
-  "settings.sessionTimeout": "会话超时（分钟）",
-  "settings.exportLimit": "单次导出上限",
-  "settings.dateFormat": "日期格式",
-  "settings.blockNegative": "阻止负库存过账",
-  "settings.maintenanceNotice": "维护公告",
   "settings.searchAudit": "搜索操作日志",
   "settings.auditPlaceholder": "搜索操作者、摘要或实体",
   "settings.moduleFilter": "模块筛选",
@@ -223,8 +207,6 @@ const zh = {
   "settings.after": "变更后",
   "settings.openEntity": "打开关联实体",
   "settings.noAudit": "没有符合条件的日志",
-  "settings.moveUp": "上移",
-  "settings.moveDown": "下移",
   "settings.aiModel": "AI 功能",
   "settings.aiModelHelp": "让助手在本工作区使用 AI 模型：理解更多问法、规划要查的数据、根据你的文档回答。答案中的数字和记录始终来自工作区数据。",
   "settings.aiModelToggle": "在本工作区使用 AI 模型",
@@ -280,15 +262,14 @@ const zh = {
   "settings.tolerance.quantity": "数量容差",
   "settings.tolerance.quantityHelp": "发票行数量可超出已收货未开票数量的上限（按单位计）。",
   "settings.tolerance.pricePercentage": "单价容差（%）",
-  "settings.tolerance.pricePercentageHelp": "按采购订单单价的百分比计算。两项单价容差取较大者。",
+  "settings.tolerance.pricePercentageHelp": "按采购订单单价的百分比计算。一行的价格差在以下三项中最大的一项之内即通过：该百分比乘行金额、每单位容差乘数量、行金额容差。",
   "settings.tolerance.priceAbsolute": "单价容差（金额）",
   "settings.tolerance.priceAbsoluteHelp": "每单位允许的差额，按单据币种计。",
   "settings.tolerance.amount": "行金额容差",
-  "settings.tolerance.amountHelp": "发票行金额与“数量 × 采购单价”之间允许的差额，按单据币种计。",
+  "settings.tolerance.amountHelp": "每个发票行允许的差额，按单据币种计：价格差在此金额内即通过，不论百分比。",
   "settings.tolerance.invalid": "请输入不小于 0、最多 4 位小数的数字。",
   "settings.tolerance.percentInvalid": "请输入 0 到 100 之间、最多 4 位小数的百分比。",
   "settings.otherReviewSettings": "其他复核设置",
-  "settings.visibleRoles": "{module} 可见角色",
   "settings.level.allow": "允许",
   "settings.level.review_required": "复核后允许",
   "settings.level.draft_only": "仅生成待确认动作",
@@ -297,14 +278,6 @@ const zh = {
   "settings.capability.draft": "生成业务草稿",
   "settings.capability.write": "业务数据变更",
   "settings.capability.external": "对外发送",
-  "settings.module.overview": "今日工作台",
-  "settings.module.procurement": "采购执行",
-  "settings.module.inventory": "库存管理",
-  "settings.module.sales": "销售与需求",
-  "settings.module.finance": "结算管理",
-  "settings.module.reports": "报表中心",
-  "settings.module.master-data": "基础资料",
-  "settings.module.settings": "系统管理",
   "top.search": "搜索业务记录",
   "top.profile": "我的资料",
   "top.settings": "设置",
@@ -1380,13 +1353,8 @@ const en: Record<keyof typeof zh, string> = {
   "nav.finance": "Payables & receivables",
   "nav.reports": "Reports",
   "nav.settings": "System administration",
-  "nav.forecast": "Forecast & MRP",
   "nav.imports": "Data & imports",
-  "nav.exception-cases": "Exception cases",
-  "nav.collaboration-drafts": "Collaboration drafts",
   "nav.review-actions": "Review queue",
-  "nav.audit-history": "Audit history",
-  "nav.pilot-readiness": "Readiness",
   "nav.contracts": "Contracts",
   "route.customers": "Customers",
   "route.taxCodes": "Tax codes",
@@ -1401,10 +1369,8 @@ const en: Record<keyof typeof zh, string> = {
   "settings.readiness": "System readiness",
   "settings.numbering": "Numbering rules",
   "settings.review": "Review policies",
-  "settings.modules": "Menus & modules",
   "settings.ai": "AI governance",
   "settings.audit": "Audit log",
-  "settings.advanced": "Advanced settings",
   "settings.saved": "Saved",
   "settings.cancel": "Cancel",
   "settings.save": "Save changes",
@@ -1436,8 +1402,6 @@ const en: Record<keyof typeof zh, string> = {
   "settings.defaultWarehouse": "Default warehouse",
   "settings.none": "None",
   "settings.status": "Status",
-  "settings.enabled": "Enabled",
-  "settings.disabled": "Disabled",
   "settings.user": "User",
   "settings.warehouseScope": "Warehouse scope",
   "settings.allWarehouses": "All warehouses",
@@ -1540,9 +1504,6 @@ const en: Record<keyof typeof zh, string> = {
   "settings.policy.supplier-invoice-match-exception": "Supplier invoice match exception",
   "settings.policy.payable-approval": "Payable approval",
   "settings.policy.customer-credit-note-approval": "Customer credit note approval",
-  "settings.setDefault": "Set as default",
-  "settings.sidebarPreview": "Sidebar preview",
-  "settings.visibleTo": "Visible to: {roles}",
   "settings.readOnly": "Read only",
   "settings.diagnostics.overall.ready": "Ready",
   "settings.diagnostics.overall.attention": "Needs attention",
@@ -1559,11 +1520,6 @@ const en: Record<keyof typeof zh, string> = {
   "settings.capabilityId": "Code",
   "settings.evidenceRequired": "Require business evidence in answers",
   "settings.retentionDays": "Retention days",
-  "settings.sessionTimeout": "Session timeout (minutes)",
-  "settings.exportLimit": "Export row limit",
-  "settings.dateFormat": "Date format",
-  "settings.blockNegative": "Block negative inventory posting",
-  "settings.maintenanceNotice": "Maintenance notice",
   "settings.searchAudit": "Search audit log",
   "settings.auditPlaceholder": "Search actor, summary, or entity",
   "settings.moduleFilter": "Module filter",
@@ -1573,8 +1529,6 @@ const en: Record<keyof typeof zh, string> = {
   "settings.after": "After",
   "settings.openEntity": "Open related entity",
   "settings.noAudit": "No matching audit entries",
-  "settings.moveUp": "Move up",
-  "settings.moveDown": "Move down",
   "settings.aiModel": "AI features",
   "settings.aiModelHelp": "Lets the assistant use an AI model in this workspace: it understands more ways of asking, plans which data to look up and answers from your documents. Figures and records in answers always come from your workspace data.",
   "settings.aiModelToggle": "Use an AI model in this workspace",
@@ -1629,15 +1583,14 @@ const en: Record<keyof typeof zh, string> = {
   "settings.tolerance.quantity": "Quantity tolerance",
   "settings.tolerance.quantityHelp": "Units an invoice line may exceed the received quantity that is not yet invoiced.",
   "settings.tolerance.pricePercentage": "Unit price tolerance (%)",
-  "settings.tolerance.pricePercentageHelp": "Percentage of the PO unit price. The larger of the two unit price tolerances applies.",
+  "settings.tolerance.pricePercentageHelp": "Percentage of the PO unit price. A line's price difference passes within the largest of: this percentage of the line, the per-unit amount times the quantity, and the line amount tolerance.",
   "settings.tolerance.priceAbsolute": "Unit price tolerance (amount)",
   "settings.tolerance.priceAbsoluteHelp": "Allowed difference per unit, in the document currency.",
   "settings.tolerance.amount": "Line amount tolerance",
-  "settings.tolerance.amountHelp": "Allowed difference between the invoice line amount and quantity × PO unit price, in the document currency.",
+  "settings.tolerance.amountHelp": "Allowed difference per invoice line, in the document currency: a price difference within it passes, whatever the percentage.",
   "settings.tolerance.invalid": "Enter a number of 0 or more with up to 4 decimal places.",
   "settings.tolerance.percentInvalid": "Enter a percentage from 0 to 100 with up to 4 decimal places.",
   "settings.otherReviewSettings": "Other review settings",
-  "settings.visibleRoles": "Roles that can see {module}",
   "settings.level.allow": "Allowed",
   "settings.level.review_required": "Allowed after review",
   "settings.level.draft_only": "Drafts, confirmed by a person",
@@ -1646,14 +1599,6 @@ const en: Record<keyof typeof zh, string> = {
   "settings.capability.draft": "Prepare business drafts",
   "settings.capability.write": "Change business data",
   "settings.capability.external": "Send outside the workspace",
-  "settings.module.overview": "Today",
-  "settings.module.procurement": "Purchasing",
-  "settings.module.inventory": "Inventory",
-  "settings.module.sales": "Sales and demand",
-  "settings.module.finance": "Finance",
-  "settings.module.reports": "Reports",
-  "settings.module.master-data": "Master data",
-  "settings.module.settings": "Settings",
   "top.search": "Search business records",
   "top.profile": "My profile",
   "top.settings": "Settings",
@@ -2760,13 +2705,8 @@ const routeKeys: Record<string, keyof typeof zh> = {
   "finance:customer-credit-notes": "finance.customerCreditNotes",
   reports: "nav.reports",
   settings: "nav.settings",
-  forecast: "nav.forecast",
   imports: "nav.imports",
-  "exception-cases": "nav.exception-cases",
-  "collaboration-drafts": "nav.collaboration-drafts",
   "review-actions": "nav.review-actions",
-  "audit-history": "nav.audit-history",
-  "pilot-readiness": "nav.pilot-readiness",
   contracts: "nav.contracts",
   "contracts:list": "contracts.listTab",
   "contracts:ending": "contracts.endingTab",
@@ -2779,10 +2719,8 @@ const routeKeys: Record<string, keyof typeof zh> = {
   "settings:readiness": "settings.readiness",
   "settings:numbering": "settings.numbering",
   "settings:review": "settings.review",
-  "settings:modules": "settings.modules",
   "settings:ai": "settings.ai",
   "settings:audit": "settings.audit",
-  "settings:advanced": "settings.advanced",
   // Plural list titles beside "Suppliers" and "Items".
   "master-data:customers": "route.customers",
   "master-data:tax-codes": "route.taxCodes",
@@ -2793,6 +2731,11 @@ type I18nValue = {
   locale: SupportedLocale;
   timezone: string;
   workspaceName: string;
+  // Today on the workspace's calendar, from the server; "" until the
+  // workspace's localization has loaded, so no page counts days from the
+  // browser's own day in the meantime (design audit B3, L6-02).
+  workspaceToday: string;
+  localizationReady: boolean;
   defaultLanguage: SupportedLanguage;
   t: (key: keyof typeof zh, variables?: Record<string, string | number>) => string;
   routeLabel: (route: AppRouteDefinition, module?: boolean) => string;
@@ -2815,6 +2758,8 @@ const fallback: I18nValue = {
   locale: FALLBACK_LOCALE,
   timezone: FALLBACK_TIMEZONE,
   workspaceName: "",
+  workspaceToday: "",
+  localizationReady: false,
   defaultLanguage: "en-US",
   t: key => en[key],
   routeLabel: route => route.label,
@@ -2835,6 +2780,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     timezone: FALLBACK_TIMEZONE,
     workspaceName: "",
   });
+  const [ready, setReady] = useState(false);
   const refresh = useCallback(async () => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
       const guestLanguage = localStorage.getItem("flowchain:guest-language") === "zh-CN" ? "zh-CN" : "en-US";
@@ -2848,6 +2794,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       // zone stay the workspace's.
       const guest = localStorage.getItem("flowchain:guest-language");
       setState(!payload.languagePreference && (guest === "zh-CN" || guest === "en-US") ? { ...payload, effectiveLanguage: guest } : payload);
+      setReady(true);
     } catch {
       setState(current => ({ ...current, effectiveLanguage: current.effectiveLanguage || "en-US" }));
     }
@@ -2875,6 +2822,10 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       locale: state.locale,
       timezone: state.timezone,
       workspaceName: state.workspaceName,
+      // The server's day; a server that does not send it is asked in the
+      // workspace's timezone, never the browser's.
+      workspaceToday: ready ? state.workspaceToday || todayInTimeZone(state.timezone) : "",
+      localizationReady: ready,
       defaultLanguage: state.defaultLanguage,
       t,
       routeLabel: (route, module = false) => {
@@ -2886,7 +2837,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       refresh,
       setGuestLanguage,
     };
-  }, [refresh, setGuestLanguage, state]);
+  }, [refresh, setGuestLanguage, state, ready]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 

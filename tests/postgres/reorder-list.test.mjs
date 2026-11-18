@@ -111,7 +111,9 @@ test('the reorder list ranks items by order-by day from recorded data over every
     assert.deepEqual([a.demand.averageDailyDemand, a.demand.shipmentDays, a.demand.shippedQuantity], [0.8, 8, 72])
     assert.deepEqual(a.flags, [{ code: 'po_line_other_unit', orderNumber: 'PO-0040', unit: 'CASE' }])
     assert.deepEqual([...a.incomingLines].sort((x, y) => x.orderNumber.localeCompare(y.orderNumber)), [{ orderNumber: 'PO-0039', remaining: 30, dueDay: '2026-10-08', late: false }, { orderNumber: 'PO-0042', remaining: 20, dueDay: '2026-12-31', late: false }])
-    assert.deepEqual(a.supplier, { id: 'RL-SUP', code: 'RLS', name: 'Reorder Supply', leadTimeDays: 10, minimumOrderQuantity: null, moqUnit: 'pcs' })
+    assert.deepEqual(a.supplier, { id: 'RL-SUP', code: 'RLS', name: 'Reorder Supply', leadTimeDays: 10, leadTimeFrom: 'supplier', minimumOrderQuantity: null, moqFrom: null, moqUnit: 'pcs' })
+    // Nothing requested or backordered in this workspace (design audit C2).
+    assert.deepEqual([a.requested, a.backorders, a.requests], [0, 0, []])
     const c = admin.body.rows.find((row) => row.sku === 'RL-C')
     assert.equal(c.demand.enough, false)
     assert.equal(c.demand.shipmentDays, 0)

@@ -97,7 +97,7 @@ const suggestionFacts = (suggestion) => ({
 // from the row's supplier, never from the row itself.
 const reorderList = defineAiTool({
   name: 'reorder_list',
-  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point. safetyStock and belowSafetyStock give that judgement for each row. Flags name late lines and lines it could not count. counts gives, over every row of the list whatever SKU or supplier is asked, how many are to order now, due within 7 and within 30 days (order-now included), without an order-by date, and raised to the supplier minimum; orderByRange gives the earliest and latest order-by dates of every row: use them instead of counting or reading a range off the rows shown. Rows come a page at a time (shownFrom to shownTo of total); due narrows them and offset gives the next page. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. forecast: true adds the forecasting model\'s reorder point (forecastReorderPoint). Transfers between warehouses are not considered.',
+  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests. The stock position is on hand minus reserved, plus every open purchase order line (drafts included) and open purchase request, minus backorders (sales orders not reserved); a late line still counts and is marked late. Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point. safetyStock and belowSafetyStock give that judgement for each row. Flags name late lines and lines it could not count. counts gives, over every row of the list whatever SKU or supplier is asked, how many are to order now, due within 7 and within 30 days (order-now included), without an order-by date, and raised to the supplier minimum; orderByRange gives the earliest and latest order-by dates of every row: use them instead of counting or reading a range off the rows shown. Rows come a page at a time (shownFrom to shownTo of total); due narrows them and offset gives the next page. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. forecast: true adds the forecasting model\'s reorder point (forecastReorderPoint). Transfers between warehouses are not considered.',
   parameters: {
     sku: { type: 'string', description: 'Only this item: its SKU or its name as the records write it.' },
     supplier: { type: 'string', description: 'Only items whose preferred supplier is this one: a name or code.' },
@@ -114,7 +114,7 @@ const reorderList = defineAiTool({
     const forecastClient = route.forecastClient !== undefined ? route.forecastClient : forecastClientFromEnv(route.env || process.env)
     const list = await serviceOf(context, 'reorderList', createReorderListReadService).read({
       tenantId: context.tenantId, warehouseIds: access.warehouseIds ?? null, today: facts.today, timeZone: facts.timezone,
-      allocationRows: allocation.availability, showPurchaseOrders: Boolean(access.collections.purchaseOrders),
+      allocationRows: allocation.availability, showPurchaseOrders: Boolean(access.collections.purchaseOrders), showPurchaseRequests: Boolean(access.collections.purchaseRequests),
       truncatedSubjects: allocationTruncatedSubjects(allocationContext),
       // The forecasting model's reorder point the page shows (TimesFM, when
       // FLOWCHAIN_FORECAST_URL is set), only when asked: it reads two years of
@@ -144,7 +144,10 @@ const reorderList = defineAiTool({
       listed = listed.filter((row) => text(row.supplier?.id) === found.supplier.id)
     }
     const rows = listed.map((row) => ({
-      ...primitives(row, ['sku', 'itemName', 'name', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'position', 'reorderPoint', 'shortfall']),
+      ...primitives(row, ['sku', 'itemName', 'name', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'requested', 'backorders', 'position', 'reorderPoint', 'shortfall']),
+      // The open purchase requests already asking for the item, by number, for
+      // a reader who may see them (design audit L5-06).
+      requests: array(row.requests).map((request) => text(request.number)).filter(Boolean),
       // One decimal as the model reads it ("7.1556 件" was copied as is).
       averageDailyDemand: row.demand?.averageDailyDemand === null || row.demand?.averageDailyDemand === undefined ? null : Math.round(Number(row.demand.averageDailyDemand) * 10) / 10,
       supplier: text(row.supplier?.name) || null,
@@ -152,13 +155,13 @@ const reorderList = defineAiTool({
       // can say it (2026-11-09 on Flash: "48 pcs available" in a reorder
       // answer was flagged, as no result held it).
       ...(() => { const stock = stockRowOf(facts, row.sku); const safety = stock?.safetyStock ?? null; const available = Number.isFinite(Number(row.onHand)) ? Number(row.onHand) - (Number(row.reserved) || 0) : null; return { safetyStock: safety, availableToday: available, belowSafetyStock: safety !== null && available !== null ? available < safety : null } })(),
-      leadTimeDays: row.supplier?.leadTimeDays ?? null,
+      leadTimeDays: row.leadTimeDays ?? row.supplier?.leadTimeDays ?? null,
       // When an order placed today would arrive (the request's need-by date),
       // beside orderByDate, the last day to order: on 2026-11-04 an answer
       // gave the order-by day as the need-by day.
       // Only on a row to order now: for one not due, today plus the lead time
       // fell before its order-by day plus the lead time and read as wrong.
-      needByDate: row.orderNow === true && Number.isInteger(row.supplier?.leadTimeDays) && /^\d{4}-\d{2}-\d{2}$/.test(text(facts.today)) ? addCalendarDays(facts.today, row.supplier.leadTimeDays) : null,
+      needByDate: row.orderNow === true && Number.isInteger(row.leadTimeDays ?? row.supplier?.leadTimeDays) && /^\d{4}-\d{2}-\d{2}$/.test(text(facts.today)) ? addCalendarDays(facts.today, row.leadTimeDays ?? row.supplier.leadTimeDays) : null,
       minimumOrderQuantity: row.supplier?.minimumOrderQuantity ?? null,
       moqUnit: row.supplier?.moqUnit ?? null,
       requestQuantity: row.purchaseRequest?.quantity ?? null,

@@ -297,7 +297,7 @@ export type PurchaseRequestSummary = {
   lines?: Array<{ itemNameSnapshot?: string; sku?: string | null; needByDate?: string; supplierSnapshot?: { supplierName?: string } | null }>;
 };
 export type PurchaseOrderLine = { sourcePurchaseRequestLineId: string; itemNameSnapshot: string; estimatedAmount: number };
-export type PurchaseOrder = { id: string; number?: string; status: string; transmissionStatus: string; totalAmount: number | null; currency?: string; supplier?: string; eta?: string; sourceName?: string; supplierId: string; supplierSnapshot?: { supplierName?: string }; targetWarehouseId?: string; sourcePrId?: string; sourcePurchaseRequestId?: string; lines: PurchaseOrderLine[] };
+export type PurchaseOrder = { id: string; number?: string; status: string; transmissionStatus: string; totalAmount: number | null; currency?: string; supplier?: string; eta?: string; dueDay?: string | null; sourceName?: string; supplierId: string; supplierSnapshot?: { supplierName?: string }; targetWarehouseId?: string; sourcePrId?: string; sourcePurchaseRequestId?: string; lines: PurchaseOrderLine[] };
 // number: the document number people read (requests, RFQs and orders; the id for
 // documents made before numbering). poNumber/prNumber/rfqNumber: the numbers of
 // the documents this one refers to, when the server sends them.

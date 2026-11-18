@@ -14,8 +14,7 @@ test("Structured Intake wizard profiles, maps, validates, and reviews parser-own
     localStorage.setItem("flowchain:experimental-modules", JSON.stringify(["universal-intake"]));
   }, session);
 
-  await page.goto("/app/imports");
-  await expect(page).toHaveURL(/\/app\/universal-intake$/);
+  await page.goto("/app/universal-intake");
   await expect(page.getByRole("heading", { name: "Structured Smart Intake" })).toBeVisible();
   await expect(page.getByText("No Supplier, Item, or Customer will be created.")).toBeVisible();
   await page.getByRole("button", { name: "Paste table" }).click();
