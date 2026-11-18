@@ -800,18 +800,6 @@ export function createReturnGovernanceCommandService({
             "Return request version does not match.",
             409,
           );
-        // Who requested or submitted the return does not authorize it, unless
-        // no one else may; then the audit row says so (design audit L8-25).
-        const selfApproval = await selfApprovalCheck(tx, {
-          tenantId: actor.tenantId,
-          actorId: actor.user.id,
-          authorIds: [current.requestedById, current.submittedById],
-          permissionCode: "returns.authorization.approve",
-        });
-        if (selfApproval.blocked) {
-          const refusal = selfApprovalRefusal("return request");
-          fail(refusal.code, refusal.message, refusal.status);
-        }
         const plan = enforce(
           await buildReturnAuthorizationPlan({
             prisma: tx,
@@ -822,6 +810,20 @@ export function createReturnGovernanceCommandService({
         );
         const warehouseIds = sortedWarehouseIds(plan.request.lines);
         assertWarehouseAccess(actor, warehouseIds, "read");
+        // Who requested or submitted the return does not authorize it, unless
+        // no one else may (who also reads its warehouses, as this command
+        // asks); then the audit row says so (design audit L8-25).
+        const selfApproval = await selfApprovalCheck(tx, {
+          tenantId: actor.tenantId,
+          actorId: actor.user.id,
+          authorIds: [current.requestedById, current.submittedById],
+          permissionCode: "returns.authorization.approve",
+          warehouseIds,
+        });
+        if (selfApproval.blocked) {
+          const refusal = selfApprovalRefusal("return request");
+          fail(refusal.code, refusal.message, refusal.status);
+        }
         if (
           plan.authorization.expiresAt &&
           (!Number.isFinite(plan.authorization.expiresAt.getTime()) ||

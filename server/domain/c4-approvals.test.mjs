@@ -33,6 +33,14 @@ test('who raised or submitted a document does not approve it while someone else 
   assert.equal(where.OR[1].rolesAssignedAt, null)
   // The approval emails and addresses findApprovalRecipients needs play no part.
   assert.equal(JSON.stringify(where).includes('approvalEmailsEnabled'), false)
+  assert.equal(where.AND, undefined)
+  // A return's authorization reads its warehouses: only someone who reads them counts.
+  const scoped = counting(0)
+  await otherApproverCount(scoped, { tenantId: 'T', actorId: 'U1', permissionCode: 'returns.authorization.approve', warehouseIds: ['WH-1', 'WH-2', 'WH-1'] })
+  assert.deepEqual(scoped.calls[0].where.AND, [
+    { warehouseScopes: { some: { warehouseId: 'WH-1', accessLevel: { in: ['read', 'operate'] } } } },
+    { warehouseScopes: { some: { warehouseId: 'WH-2', accessLevel: { in: ['read', 'operate'] } } } },
+  ])
 })
 
 test('a sole approver may approve their own document, and the approval says so', async () => {
@@ -56,7 +64,7 @@ test('each first approval checks its own authors and permission, and audits a so
     ['server/domain/procurement-db-command-service.mjs', /authorIds: \[row\.metadata\?\.createdBy, row\.metadata\?\.createdById, lastActorOf\(row\.metadata\?\.approvalTimeline, "submit"\)\], permissionCode: permission/, /\.\.\.\(selfApproval \? \{ selfApproval \} : \{\}\)/],
     ['server/domain/operational-finance-command-service.mjs', /authorIds: \[current\.submittedById\],\s+permissionCode: "finance\.supplier_invoice\.approve"/, /\.\.\.\(selfApproval\.auditFlag \? \{ selfApproval: selfApproval\.auditFlag \} : \{\}\)/],
     ['server/domain/operational-finance-o2c-command-service.mjs', /authorIds: \[current\.submittedById\],\s+permissionCode: "finance\.customer_invoice\.approve"/, /\.\.\.\(selfApproval\?\.auditFlag \? \{ selfApproval: selfApproval\.auditFlag \} : \{\}\)/],
-    ['server/domain/return-governance-command-service.mjs', /authorIds: \[current\.requestedById, current\.submittedById\],\s+permissionCode: "returns\.authorization\.approve"/, /\.\.\.\(selfApproval\.auditFlag \? \{ selfApproval: selfApproval\.auditFlag \} : \{\}\)/],
+    ['server/domain/return-governance-command-service.mjs', /authorIds: \[current\.requestedById, current\.submittedById\],\s+permissionCode: "returns\.authorization\.approve",\s+warehouseIds,/, /\.\.\.\(selfApproval\.auditFlag \? \{ selfApproval: selfApproval\.auditFlag \} : \{\}\)/],
   ]
   for (const [file, check, flag] of cases) {
     const source = read(file)
