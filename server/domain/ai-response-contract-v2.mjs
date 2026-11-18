@@ -13,6 +13,7 @@ import {
   buildInventorySummary,
 } from './inventory-read.mjs'
 import { buildSupplierEntityIndex } from './ai-supplier-operational-query.mjs'
+import { isPastDueOn, workspaceDueToday } from './due-day.mjs'
 
 export const FORBIDDEN_AI_RESPONSE_V2_ACTION_PATTERN = /自动批准|自动下单|正式创建\s*PO|下发\s*PO|发送\s*PO|发布\s*RFQ|邀请供应商|发送供应商邮件|提交收货|Receive Submit|Submit Receipt|修改库存|库存过账|Post Invoice|Approve Invoice|Mark as Paid|Payment execution|Export to Accounting|会计过账|付款|修改供应商主数据|修改付款条款|更新银行账户|更新税务信息|发布风险评级|自动黑名单|自动暂停供应商|合同签署/i
 export const FORBIDDEN_AI_RESPONSE_V2_TECHNICAL_PATTERN = /JSON|dry-run|tenantId|userId|datasetId|writesDb|writesFiles|tool_result|provider|fallback|deterministic|mock|fake|demo|UAT|sample data|demo data|response_card|entityType|documentType|raw enum/i
@@ -73,6 +74,8 @@ function readModels(db = {}, options = {}) {
   const data = modelInput(db)
   return {
     data,
+    // The workspace's today, for every due date and ETA in this answer.
+    today: workspaceDueToday(options),
     procurementDocuments: buildProcurementDocuments(data),
     procurementFollowups: buildProcurementFollowups(data, options),
     procurementSummary: buildProcurementSummary(data),
@@ -89,23 +92,6 @@ function readModels(db = {}, options = {}) {
 
 function isTerminalStatus(status = '') {
   return ['已完成', '已取消', '已关闭', '已收货', '已转PO', '已授标', '已付款', 'completed', 'closed', 'cancelled', 'canceled', 'paid'].includes(text(status).toLowerCase())
-}
-
-function dateMs(value = '') {
-  const raw = text(value)
-  if (!raw) return 0
-  const iso = raw.match(/^20\d{2}-\d{2}-\d{2}/)?.[0]
-  if (iso) return new Date(`${iso}T00:00:00.000Z`).getTime()
-  const zh = raw.match(/(\d{1,2})月(\d{1,2})日/)
-  if (zh) return new Date(`2026-${String(zh[1]).padStart(2, '0')}-${String(zh[2]).padStart(2, '0')}T00:00:00.000Z`).getTime()
-  return 0
-}
-
-function isPastDue(value = '', now = new Date()) {
-  const due = dateMs(value)
-  if (!due) return false
-  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-  return due < today
 }
 
 function docTypeFromId(id = '') {
@@ -484,7 +470,7 @@ function supplierRiskRows(db = {}, models = {}) {
     const invoices = docs.filter((doc) => doc.documentType === 'invoice' || doc.documentType === 'threeWayMatch')
     const grns = docs.filter((doc) => doc.documentType === 'grn')
     const explicitRisk = text(supplier.risk || supplier.riskStatus)
-    const overduePos = pos.filter((po) => isPastDue(po.expectedDate || po.dueDate) && !isTerminalStatus(po.status))
+    const overduePos = pos.filter((po) => isPastDueOn(po.expectedDate || po.dueDate, models.today) && !isTerminalStatus(po.status))
     const pendingRfqs = rfqs.filter((rfq) => toNumber(rfq.pendingSupplierCount, 0) > 0)
     const issueInvoices = invoices.filter((invoice) => toNumber(invoice.varianceAmount, 0) !== 0 || /差异|异常|待复核|未匹配/.test(text(invoice.matchStatus || invoice.status)))
     const issueGrns = grns.filter((grn) => /异常|差异|待|质检/.test(text(grn.status)))
@@ -514,7 +500,7 @@ function supplierRiskRows(db = {}, models = {}) {
   }).sort((a, b) => (a.since && b.since ? a.since.localeCompare(b.since) : a.since ? -1 : b.since ? 1 : 0) || text(a.supplierName).localeCompare(text(b.supplierName)))
 }
 
-function unreceivedPoRows(db = {}, models = {}, now = new Date()) {
+function unreceivedPoRows(db = {}, models = {}) {
   return asArray(models.procurementDocuments)
     .filter((doc) => doc.documentType === 'po' && !isTerminalStatus(doc.status) && toNumber(doc.orderedQuantity, 0) > toNumber(doc.receivedQuantity, 0))
     .map((po) => {
@@ -527,7 +513,7 @@ function unreceivedPoRows(db = {}, models = {}, now = new Date()) {
         line,
         remaining,
         eta: po.expectedDate || po.dueDate || raw.eta || raw.expectedDate,
-        overdue: isPastDue(po.expectedDate || po.dueDate || raw.eta, now),
+        overdue: isPastDueOn(po.expectedDate || po.dueDate || raw.eta, models.today),
         grns: rawGrnsForPo(db, po.id),
       }
     })
@@ -621,9 +607,9 @@ function preferredTodayEvidence(models = {}, suppliers = []) {
   return preferred
 }
 
-function buildTodayContract(query, db, models, options) {
+function buildTodayContract(query, db, models) {
   const suppliers = supplierRiskRows(db, models)
-  const unreceived = unreceivedPoRows(db, models, options.now || new Date())
+  const unreceived = unreceivedPoRows(db, models)
   const rni = receivedNotInvoicedRows(db, models)
   const matches = matchRows(db, models)
   const inventory = inventoryRiskRows(models)
@@ -726,8 +712,8 @@ function buildSupplierRiskContract(query, db, models, singleSupplier = false) {
   })
 }
 
-function buildUnreceivedPoContract(query, db, models, options) {
-  const rows = unreceivedPoRows(db, models, options.now || new Date()).slice(0, 6)
+function buildUnreceivedPoContract(query, db, models) {
+  const rows = unreceivedPoRows(db, models).slice(0, 6)
   const evidence = rows.map((row) => evidenceFromDocument(row.po, {
     summary: `${row.po.id} · PO Line ${row.line.poLineId} · 未收数量 ${row.remaining.toLocaleString()}${row.line.unit ? ` ${row.line.unit}` : ''} · ETA ${row.eta || '待确认'} · 供应商 ${row.po.supplierName || '待确认'}。`,
     severity: row.overdue ? 'risk' : 'warning',
@@ -1005,7 +991,7 @@ function buildPoPriorityContract(query, db, models, body) {
   ], (doc) => `${doc.documentType}:${doc.id}`)
   const sku = line.sku ? asArray(models.inventoryItems).find((item) => compact(item.sku) === compact(line.sku)) : inventoryRiskRows(models)[0]
   const evidence = [
-    evidenceFromDocument(po, { summary: `${po.id} 当前 ${po.status}，ETA ${po.expectedDate || '待确认'}，PO Line ${line.poLineId} 已收 ${line.receivedQty.toLocaleString()} / 订购 ${line.orderedQty.toLocaleString()}。`, severity: isPastDue(po.expectedDate || po.dueDate) ? 'risk' : 'warning' }),
+    evidenceFromDocument(po, { summary: `${po.id} 当前 ${po.status}，ETA ${po.expectedDate || '待确认'}，PO Line ${line.poLineId} 已收 ${line.receivedQty.toLocaleString()} / 订购 ${line.orderedQty.toLocaleString()}。`, severity: isPastDueOn(po.expectedDate || po.dueDate, models.today) ? 'risk' : 'warning' }),
     ...docs.filter((doc) => doc.id !== po.id).map((doc) => evidenceFromDocument(doc, { summary: `${docLabel(doc.documentType, doc.id)} 是 ${po.id} 的关联证据。` })),
     ...(sku ? [evidenceFromInventory(sku, { summary: `${sku.sku} 库存风险会放大 ${po.id} 的处理优先级。` })] : []),
   ]
@@ -1016,7 +1002,7 @@ function buildPoPriorityContract(query, db, models, body) {
     conclusion: {
       title: `${po.id} 优先级说明`,
       summary: `${po.id} 优先，是因为 ETA ${po.expectedDate || '待确认'}、状态 ${po.status || '待复核'}、PO Line 未收数量 ${Math.max(0, line.orderedQty - line.receivedQty).toLocaleString()}；未到货明细和供应商剩余交期需要人工确认。`,
-      severity: isPastDue(po.expectedDate || po.dueDate) ? 'risk' : 'warning',
+      severity: isPastDueOn(po.expectedDate || po.dueDate, models.today) ? 'risk' : 'warning',
       confidence: 'high',
     },
     keyEvidence: evidence,
@@ -1142,7 +1128,7 @@ export function buildAiResponseContractV2(db = {}, body = {}, options = {}) {
   if (!intent) return null
   const models = readModels(db, options)
   const contract = intent === 'today_work_queue_v2'
-    ? buildTodayContract(query, db, models, options)
+    ? buildTodayContract(query, db, models)
     : intent === 'supplier_risk_summary_v2'
       ? buildSupplierRiskContract(query, db, models, false)
       : intent === 'supplier_recent_issues_v2'
@@ -1150,7 +1136,7 @@ export function buildAiResponseContractV2(db = {}, body = {}, options = {}) {
         : intent === 'po_priority_v2'
           ? buildPoPriorityContract(query, db, models, body)
           : intent === 'po_unreceived_v2'
-            ? buildUnreceivedPoContract(query, db, models, options)
+            ? buildUnreceivedPoContract(query, db, models)
             : intent === 'received_not_invoiced_v2'
               ? buildReceivedNotInvoicedContract(query, db, models)
               : intent === 'three_way_match_failure_v2'

@@ -630,7 +630,7 @@ export function buildDataAccessQualityV2(data = {}, options = {}) {
   const inventoryItems = buildInventoryItems(data)
   const products = asArray(data.products)
   const supplierIndex = buildSupplierEntityIndex(data)
-  const tower = buildOperationsControlTowerV2(data, { generatedAt })
+  const tower = buildOperationsControlTowerV2(data, { generatedAt, now: options.now, timeZone: options.timeZone })
 
   const sources = collectSources({ docs, rfqs, purchaseOrders, receivingDocs, invoices, suppliers, inventoryItems, products })
   const fieldMappings = collectFieldMappings()
