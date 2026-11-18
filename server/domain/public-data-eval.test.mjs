@@ -272,7 +272,7 @@ test('the UCI money figures: purchase price, gross profit, cash, supplier invoic
   // Customers paid October's due invoices (the 2026-09-06 order, 29.80); suppliers nothing until November.
   assert.deepEqual(facts.cash('2026-10'), { received: 29.8, paid: 0, net: 29.8 })
   const invoices = facts.supplierInvoices
-  assert.deepEqual(invoices.match, { matched: 3, exception: 2 })
+  assert.deepEqual(invoices.match, { matched: 3, exception: 2, reviewed: 0 })
   // The short delivery bills 4 units more than received (4.00); the price difference 2p on 50 (1.00).
   assert.deepEqual(invoices.differences.map((row) => [row.number, row.kind, row.over]), [['INV-A-0003', 'quantity', 4], ['INV-G-0001', 'price', 1]])
   assert.deepEqual([invoices.owed, invoices.open, invoices.held], [{ count: 2, total: 115 }, { count: 1, total: 15 }, { count: 2, total: 100 }])
@@ -294,6 +294,38 @@ test('the UCI money figures: purchase price, gross profit, cash, supplier invoic
   assert.equal(cases.filter((row) => row.kind === 'payables').length, 8)
   // Without payables in the plan there are no payables cases.
   assert.equal(buildUciCases(uciFacts(smallPlan())).filter((row) => row.kind === 'payables').length, 0)
+})
+
+// Design audit C12: the seed's purchase requests, its UCI orders still being
+// filled and its reviewed invoice differences move the expected figures.
+test('the UCI figures with purchase requests, orders still being filled and reviewed differences', () => {
+  const plan = smallPlanWithPayables()
+  plan.requests = [
+    { key: 'draft-1', state: 'draft', itemKey: 'C1', supplierKey: 'X', quantity: 20, day: 66, needBy: 80 },
+    { key: 'converted-1', state: 'converted', itemKey: 'S1', supplierKey: 'G', quantity: 40, day: 67, needBy: 81 },
+    { key: 'rejected-1', state: 'rejected', itemKey: 'H1', supplierKey: 'A', quantity: 70, day: 68, needBy: 82 },
+  ]
+  // The newest order (2 S1 for c1) is reserved and not shipped yet.
+  plan.openSales = [{ position: 3, state: 'reserved', shipLines: [] }]
+  // The short delivery was reviewed: accepted at the 70 received.
+  const short = plan.payables.invoices.find((row) => row.number === 'INV-A-0003')
+  Object.assign(short, { resolution: { day: 68, decision: 'accept_received' }, approvedDay: 68, payablePence: 7000, payment: 'open' })
+  const facts = uciFacts(plan)
+  // S1: the unshipped 2 are still on hand and reserved; the converted
+  // request's 40 is on order; the position is as if they had shipped.
+  assert.deepEqual(['onHand', 'reserved', 'available', 'onOrder', 'position'].map((key) => facts.item('S1')[key]), [22, 2, 20, 130, 150])
+  // The draft request for C1 (20) lifts it above its reorder point: off the list.
+  assert.equal(facts.reorder.find((row) => row.sku === 'C1'), undefined)
+  // The rejected request counts for nothing; the converted one is not late.
+  assert.equal(facts.item('H1').position, uciFacts(smallPlanWithPayables()).item('H1').position)
+  assert.equal(facts.late.length, uciFacts(smallPlanWithPayables()).late.length)
+  // The unshipped order has no invoice yet.
+  assert.deepEqual([facts.receivables.invoices, facts.receivables.total], [2, 86])
+  // The reviewed invoice is owed at what was received; the price difference is still held.
+  const invoices = facts.supplierInvoices
+  assert.deepEqual(invoices.match, { matched: 3, exception: 1, reviewed: 1 })
+  assert.deepEqual(invoices.differences.map((row) => row.number), ['INV-G-0001'])
+  assert.deepEqual([invoices.owed, invoices.open, invoices.held], [{ count: 3, total: 185 }, { count: 2, total: 85 }, { count: 1, total: 26 }])
 })
 
 // 2026-11-11, the owner's "先测再改" on hard limits.

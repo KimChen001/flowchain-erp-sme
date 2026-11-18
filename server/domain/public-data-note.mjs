@@ -6,10 +6,10 @@
 const DATASETS = new Set(['m5', 'uci'])
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
 const COUNT_KEYS = ['items', 'suppliers', 'customers', 'salesOrders', 'salesOrderLines', 'purchaseOrders', 'openPurchaseOrders', 'customerInvoices', 'supplierInvoices', 'cancellations']
-const ASSUMPTION_KEYS = ['leadTimeDays', 'reviewDays', 'holdingRatePercent', 'shortageToHolding', 'paymentTermsDays', 'purchasePricePercent']
+const ASSUMPTION_KEYS = ['leadTimeDays', 'reviewDays', 'holdingRatePercent', 'shortageToHolding', 'paymentTermsDays', 'purchasePricePercent', 'calibrationDays']
 // The UCI supplier invoice rules (PUBLIC_DATA_SUPPLIER_INVOICE_RULES in
 // scripts/public-data/plan.mjs), whole numbers only.
-const SUPPLIER_INVOICE_KEYS = ['delayDays', 'priceAbovePercent', 'priceAboveFrom', 'priceAboveTo', 'shortDeliveryPercent', 'shortByPercent', 'beforeReceiptPercent', 'beforeReceiptFrom', 'beforeReceiptTo', 'unpaidPercent', 'unpaidWithinDays']
+const SUPPLIER_INVOICE_KEYS = ['delayDays', 'priceAbovePercent', 'priceAboveFrom', 'priceAboveTo', 'shortDeliveryPercent', 'shortByPercent', 'beforeReceiptPercent', 'beforeReceiptFrom', 'beforeReceiptTo', 'resolveFrom', 'resolveTo', 'unpaidPercent', 'unpaidWithinDays']
 
 const day = (value) => (ISO_DAY.test(String(value || '')) ? String(value) : null)
 const whole = (value) => (Number.isInteger(value) ? value : null)
