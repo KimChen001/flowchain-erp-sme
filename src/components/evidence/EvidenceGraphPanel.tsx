@@ -170,7 +170,6 @@ function targetForNode(node: Partial<EvidenceGraphNode>) {
   if (type === "receiving_doc") return { moduleId: "procurement:receiving", entityType: "receiving_doc" };
   if (type === "supplier") return { moduleId: "srm:master", entityType: "supplier" };
   if (type === "supplier_invoice") return { moduleId: "procurement:bills", entityType: "supplier_invoice" };
-  if (type === "exception_case") return { moduleId: "exception-cases", entityType: "exception_case" };
   return { moduleId: node.moduleId || "", entityType: type };
 }
 

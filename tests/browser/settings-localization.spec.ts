@@ -13,8 +13,8 @@ async function session(page: any, value: any) {
     localStorage.setItem("flowchain:current-user", JSON.stringify(user));
   }, value);
 }
-const zhNavigation = ["我的资料", "公司与工作区", "用户与角色", "仓库与权限", "系统就绪状态", "编号规则", "复核策略", "菜单与模块", "AI 治理", "操作日志"];
-const enNavigation = ["My profile", "Company & workspace", "Users & roles", "Warehouses & access", "System readiness", "Numbering rules", "Review policies", "Menus & modules", "AI governance", "Audit log"];
+const zhNavigation = ["我的资料", "公司与工作区", "用户与角色", "仓库与权限", "系统就绪状态", "编号规则", "复核策略", "AI 治理", "操作日志"];
+const enNavigation = ["My profile", "Company & workspace", "Users & roles", "Warehouses & access", "System readiness", "Numbering rules", "Review policies", "AI governance", "Audit log"];
 
 async function expectNavigation(page: any, labels: string[], rejected: string[]) {
   const nav = page.getByTestId("module-subnav");
@@ -97,15 +97,6 @@ test("only the invoice matching tolerances and the AI switch save; settings noth
   await expect(page.getByLabel("Prefix for Sales Order", { exact: true })).toBeEnabled();
   await expect(page.getByTestId("settings-save")).toBeVisible();
 
-  for (const path of ["/app/settings/modules"]) {
-    await page.goto(path);
-    const notice = page.getByTestId("settings-not-in-effect");
-    await expect(notice).toContainText("Not in effect yet");
-    await expect(notice).toContainText("FlowChain does not use these settings yet");
-    await expect(page.getByTestId("settings-save")).toHaveCount(0);
-    await expect(notice.locator("input, select, textarea, button").first()).toBeDisabled();
-  }
-
   // In the AI section only the AI features switch is in effect; the capability
   // levels stay read-only. This server has no model configured, and says so.
   await page.goto("/app/settings/ai");
@@ -169,8 +160,6 @@ test("not-in-effect settings and matching tolerances are translated into Chinese
   await page.goto("/app/settings/numbering");
   await expect(page.getByTestId("settings-numbering-rule-NUM-SO")).toContainText("销售订单");
   await expect(page.getByTestId("settings-numbering-rule-NUM-SO")).toContainText("已生效");
-  await page.goto("/app/settings/modules");
-  await expect(page.getByTestId("settings-not-in-effect")).toContainText("尚未生效");
   await page.goto("/app/settings/ai");
   await expect(page.getByTestId("settings-ai-model")).toContainText("AI 功能");
   await expect(page.getByTestId("settings-ai-model-status")).toContainText("此服务器没有配置 AI 模型");

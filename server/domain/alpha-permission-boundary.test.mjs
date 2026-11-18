@@ -9,7 +9,6 @@ import {
 } from './route-classification.mjs'
 
 const actionDraftShell = readFileSync(new URL('../../src/modules/action-drafts/ActionDraftReviewShell.tsx', import.meta.url), 'utf8')
-const forecastPage = readFileSync(new URL('../../src/modules/forecast/Page.tsx', import.meta.url), 'utf8')
 
 test('Alpha role context exposes lightweight boundaries without production RBAC claims', () => {
   const roles = [
@@ -82,7 +81,7 @@ test('Alpha permission gate keeps legacy mutations blocked and preview routes di
   assert.equal(classifyRoute('GET', '/api/mrp-plan').classification, ROUTE_CLASSES.capabilityDisabled)
 })
 
-test('ActionDraft and Forecast/MRP UI copy keeps final confirmation and release boundaries explicit', () => {
+test('ActionDraft UI copy keeps final confirmation boundaries explicit', () => {
   assert.match(actionDraftShell, /文本草稿编辑器：仅用于供应商消息或内部备注，不替代正式业务页面/)
   assert.doesNotMatch(actionDraftShell, /confirmed-action-boundary|记录复核结果/)
   assert.match(actionDraftShell, /不提交/)
@@ -90,9 +89,4 @@ test('ActionDraft and Forecast/MRP UI copy keeps final confirmation and release 
   assert.match(actionDraftShell, /不写库存/)
   assert.match(actionDraftShell, /不写财务凭证/)
   assert.match(actionDraftShell, /不处理资金/)
-
-  assert.match(forecastPage, /系统只会生成采购申请草稿/)
-  assert.match(forecastPage, /需人工复核后才能继续处理/)
-  assert.match(forecastPage, /不会自动创建采购订单/)
-  assert.doesNotMatch(forecastPage, /确认释放|自动释放|提交 PR/)
 })

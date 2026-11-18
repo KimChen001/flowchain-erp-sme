@@ -21,7 +21,6 @@ test('R202 linked record resolver maps business objects and disables unavailable
     'procurement:receiving',
     'procurement:bills',
     'inventory:movements',
-    'inventory:exceptions',
   ]) {
     assert.match(links, new RegExp(route.replace(':', '[:]')))
   }
