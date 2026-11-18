@@ -4,10 +4,11 @@ import { CalendarClock, FileSearch, Inbox, MessageSquareQuote } from "lucide-rea
 import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
-import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
 import { ListPager, usePagedRows } from "./listPaging";
+import { exportRowsToCsv } from "../../lib/data-export";
 import { useI18n } from "../../i18n/I18n";
 import { formatCalendarDay, todayInTimeZone } from "../../lib/format";
 import type { ProcurementDocument } from "./procurementTypes";
@@ -49,6 +50,9 @@ const COPY = {
   listTitle: ["RFQ list", "询价单列表"],
   rfq: ["RFQ", "询价单"],
   subject: ["Subject / item", "主题 / 物料"],
+  exportItem: ["Item", "物料"],
+  exportCategory: ["Category", "类别"],
+  exportUnit: ["Unit", "单位"],
   quantity: ["Quantity", "数量"],
   responses: ["Supplier responses", "供应商回复"],
   actions: ["Actions", "操作"],
@@ -111,6 +115,18 @@ export function RfqListPage() {
     && (!needle || [row.number, row.id, row.title, row.itemName, row.category].some((value) => String(value || "").toLowerCase().includes(needle))),
   );
   const paged = usePagedRows(shown, PAGE_SIZE, [status, quotes, due, needle].join("|"));
+  // Every RFQ the filters match, worded as the list shows it (design audit U-14).
+  const exportRfqs = () => exportRowsToCsv("rfqs-export.csv", shown.map((row) => ({
+    [tr("rfq")]: row.number || row.id,
+    [tr("subject")]: row.title || "",
+    [tr("exportItem")]: row.itemName || "",
+    [tr("exportCategory")]: row.category || "",
+    [tr("quantity")]: row.quantity ?? "",
+    [tr("exportUnit")]: row.unit || "",
+    [tr("responses")]: `${row.respondedSupplierCount ?? 0} / ${row.supplierCount ?? 0}`,
+    [tr("due")]: row.dueDate ? String(row.dueDate).slice(0, 10) : "",
+    [tr("status")]: statusLabel(row.status),
+  })), timezone);
   const reset = () => {
     setQuery("");
     setSearchParams({}, { replace: true });
@@ -135,6 +151,7 @@ export function RfqListPage() {
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={() => void load()} />
+          <ExportButton onClick={() => void exportRfqs()} />
         </>}
       >
         <Field label={tr("search")}>

@@ -34,11 +34,13 @@ import {
   unitsToPlain,
 } from "./salesOrderFacts";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { exportRowsToCsv } from "../../lib/data-export";
+import { fetchAllListRows } from "../../lib/listExport";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { outboundEnglish } from "./outboundCopy";
 import { outboundPreviewSentences, type OutboundPreviewLookup } from "./outboundPreviewText";
-import { formatCalendarDay, formatLocaleAmount, formatQuantity } from "../../lib/format";
+import { formatCalendarDay, formatLocaleAmount, formatQuantity, instantDayInTimeZone } from "../../lib/format";
 import { formatInstantDay } from "../business-documents/documentFormat";
 import { ItemPicker, type PickerItem } from "./ItemPicker";
 import { movementTypeLabel } from "../../i18n/statusLabels";
@@ -66,7 +68,7 @@ import { FormActionBar, FormHeader, FormLineCard, FormSection, focusFirstInvalid
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useConfirm } from "../../components/ui/ConfirmDialog";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { ListCard, ListSearchCard, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import { ListPager, usePagedRows } from "../procurement/listPaging";
 import { SALES_ORDER_STAGES, salesOrderStage, salesOrderStageHint } from "./salesOrderStatus";
 import { reserveAllPlan, salesOrderProgress, shipAllPlan, type ReserveAllPlan, type SalesProgressStep, type ShipAllLine } from "./outboundPlans";
@@ -3226,6 +3228,28 @@ function ShipmentList() {
   }, [load]);
   const filtered = ["search", "status", "salesOrderId"].some((name) => params.get(name));
   const day = (value?: string | null) => (value ? formatInstantDay(value, locale, timezone) : "—");
+  // Every shipment the filters match, page after page from the server,
+  // worded as the list shows it (design audit U-14).
+  const exportShipments = async () => {
+    const filters = new URLSearchParams();
+    for (const name of ["search", "status", "salesOrderId"]) if (params.get(name)) filters.set(name, params.get(name) || "");
+    const { rows: all } = await fetchAllListRows<ShipmentRow>("/api/sales/shipments", filters, { itemsKey: "shipments" });
+    const dayOf = (value?: string | null) => (value ? instantDayInTimeZone(value, timezone) : "");
+    await exportRowsToCsv("shipments-export.csv", all.map((row) => ({
+      [say("Shipment", "发货单")]: row.shipmentNumber,
+      [say("Sales order", "销售订单")]: row.salesOrderNumber || "",
+      [say("Customer", "客户")]: row.customerName || "",
+      [say("Status", "状态")]: status(shipmentStatus(row)),
+      [say("Lines", "发货行")]: row.lineCount,
+      [say("SKUs", "SKU")]: row.skus.join(", "),
+      [say("Quantity", "数量")]: row.quantity ?? "",
+      [say("Unit", "单位")]: row.quantity == null ? "" : row.unit || "",
+      [say("Warehouse", "仓库")]: row.warehouseIds.map((warehouseId) => warehouseName(warehouseId)).join(", "),
+      [say("Created", "创建日期")]: dayOf(row.createdAt),
+      [say("Posted", "过账日期")]: dayOf(row.postedAt),
+      [say("Reversed", "冲销日期")]: dayOf(row.reversedAt),
+    })), timezone);
+  };
   const count = (key: string) => (data?.counts && typeof data.counts[key] === "number" ? String(data.counts[key]) : "—");
   return (
     <div className="space-y-5" data-testid="shipment-list">
@@ -3254,6 +3278,7 @@ function ShipmentList() {
         actions={<>
           <ResetButton onClick={() => setParams({})} />
           <RefreshButton onClick={() => void load()} />
+          <ExportButton onClick={() => void exportShipments()} />
         </>}
       >
         <Field label={say("Search", "搜索")}>

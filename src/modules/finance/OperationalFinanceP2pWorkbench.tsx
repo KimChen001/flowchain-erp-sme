@@ -5,11 +5,13 @@ import { AlertCircle, AlertTriangle, CheckCircle2, Coins, FileText, Inbox, Info,
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
-import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, metricGridClass, rowActionClass, statusToneOf, useListCopy } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, metricGridClass, rowActionClass, statusToneOf, useListCopy } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ListPager } from "../procurement/listPaging";
 import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
+import { exportRowsToCsv } from "../../lib/data-export";
+import { fetchAllListRows } from "../../lib/listExport";
 import { apiErrorView, type ApiErrorView } from "../../lib/apiErrorText";
 import { formatCalendarDay, todayInTimeZone } from "../../lib/format";
 import { financeStatusTone, shownBillStatus } from "./FinanceControls";
@@ -506,6 +508,8 @@ const LIST_COPY = {
   withVariance: ["With a variance", "有差异"],
   noVariance: ["No variance", "无差异"],
   poReceipt: ["PO / receipt", "采购订单 / 收货单"],
+  exportPurchaseOrder: ["Purchase order", "采购订单"],
+  exportCurrency: ["Currency", "币种"],
   invoiceDate: ["Invoice date", "发票日期"],
   due: ["Due", "到期"],
   dueDate: ["Due date", "到期日"],
@@ -661,6 +665,28 @@ function FinanceList({
   const suppliers = [...new Set([...(data.suppliers || []), ...rows.map((row) => String(row.supplierName || "")), supplier].filter(Boolean))].sort();
   const anyFilter = Boolean(status || search || supplier || variance);
   const title = tr(kind === "invoice" ? "invoiceTitle" : kind === "payable" ? "payableTitle" : kind === "credit" ? "creditTitle" : "matchTitle");
+  // Every supplier invoice the filters match, page after page from the
+  // server, worded as the list shows it (design audit U-14).
+  const exportInvoices = async () => {
+    const filters = new URLSearchParams();
+    if (status) filters.set("status", status);
+    if (search) filters.set("search", search);
+    if (supplier) filters.set("supplier", supplier);
+    if (variance) filters.set("variance", variance);
+    const { rows: all } = await fetchAllListRows<Record<string, any>>(endpoint, filters);
+    await exportRowsToCsv("supplier-invoices-export.csv", all.map((row) => ({
+      [t("finance.invoiceNumber")]: String(row.invoiceNumber || row.id || ""),
+      [tr("supplier")]: row.supplierName || "",
+      [tr("exportPurchaseOrder")]: row.relatedPoNumber || row.poNumber || row.relatedPoId || "",
+      [tr("receipt")]: row.relatedGrnNumber || row.grnNumber || row.relatedGrnId || "",
+      [tr("invoiceDate")]: row.invoiceDate ? String(row.invoiceDate).slice(0, 10) : "",
+      [tr("dueDate")]: row.dueDate ? String(row.dueDate).slice(0, 10) : "",
+      [t("finance.amount")]: Number(row.totalAmount ?? row.amount ?? 0),
+      [tr("exportCurrency")]: row.currency || "",
+      [tr("variance")]: Number(row.varianceAmount || 0),
+      [t("finance.status")]: statusText(statusOf(row)),
+    })), timezone);
+  };
   const reset = () => {
     setSearchText("");
     setSearchParams({}, { replace: true });
@@ -733,6 +759,7 @@ function FinanceList({
           actions={<>
             <ResetButton onClick={reset} />
             <RefreshButton onClick={load} />
+            <ExportButton onClick={() => void exportInvoices()} />
             {enabled && <Link data-testid="supplier-invoice-new" to="/app/procurement/bills/new" className={listButtonClass.primary}><Plus size={13} />{t("finance.newSupplierInvoice")}</Link>}
           </>}
         >
