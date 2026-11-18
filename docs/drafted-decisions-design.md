@@ -134,7 +134,7 @@ open ──► decided ──► resolved
 | --- | --- | --- | --- | --- |
 | `reorder_now` | A purchase request: the supplier and quantity the reorder list prefills (shortfall raised to the minimum order). Items due the same day for the same supplier are offered together | Create the request. It is a draft; Submit stays a second click (V2-3) | Edit in the form | `POST /api/procurement/requests` |
 | `purchase_order_overdue` | A follow-up email from `buildSupplierFollowupDraftPreview`: the order, the lines still to receive and the promised date | Chase: check the text, check the address, send (§4.11) | Record a new promised date with the supplier's reason | A new send route (§4.11); `POST /api/procurement/orders/:id/promised-dates` |
-| `purchase_request_to_convert` | The draft purchase orders the request would make, one per supplier, currency and delivery warehouse. A line missing any of the three is named, and there is no button until it is filled in | Create the draft orders | Open the request | `POST /api/procurement/requests/:id/generate-purchase-orders` |
+| `purchase_request_to_convert` | The purchase orders the request would make, one per supplier, currency and delivery warehouse. A line missing any of the three is named, and there is no button until it is filled in | Create the purchase orders. They start approved, since approving the request approved them (D3), or as drafts for PO approval when the workspace turns that off. Before the second click the card says which and lists each line: item, quantity, supplier (`GET …/purchase-order-preview`) | Open the request | `POST /api/procurement/requests/:id/generate-purchase-orders` |
 
 - **Why these three:**
   - each draft is fully set by rules already on `main`;
@@ -152,7 +152,7 @@ open ──► decided ──► resolved
 | --- | --- | --- | --- |
 | Read and work out | Read records; work out dates and quantities; order by date | — | — |
 | Draft | Prefill requests and orders; write follow-up text | — | — |
-| Create | — | A draft purchase request; draft purchase orders from an approved request | Submit, approve, or issue a purchase order to a supplier |
+| Create | — | A draft purchase request; the purchase orders from an approved request, approved with it (D3) unless the workspace turns that off | Submit or approve a request; issue a purchase order to a supplier |
 | Record | — | A new promised date with its reason; a decision with its reason | Change master data, settings or permissions |
 | Outside the workspace | — | A follow-up email to a supplier, after two confirmations: the text, then the address (§4.11) | Email customers; pay; post; delete |
 
@@ -365,13 +365,15 @@ Sizes are rough, in working days.
 | --- | --- | --- |
 | DD-1 | Direction: (a) decision items as one shared layer under Today, the assistant, #229 rules and #234 alerts; (b) cards in the assistant only; (c) not now | (a). One record of what was found and decided, used everywhere, instead of three lists |
 | DD-2 | The first kinds | `reorder_now`, `purchase_order_overdue` and `purchase_request_to_convert`. Each has a command on `main` and a draft set by existing rules |
-| DD-3 | What one click may do | Create draft documents, record a promised date, and record a decision. Send a supplier follow-up only after two confirmations (DD-9). Never submit, approve, issue a purchase order, email customers, pay, post, delete, or change master data |
+| DD-3 | What one click may do | Create a draft purchase request, create the purchase orders from an approved request, record a promised date, and record a decision. The orders start approved, because approving the request approved them (D3), unless the workspace turns that off; the card says so and lists each line before the second click. Send a supplier follow-up only after two confirmations (DD-9). Never submit or approve a request, issue a purchase order, email customers, pay, post, delete, or change master data |
 | DD-4 | Who a "Not needed" applies to: (a) the whole workspace, showing who, when and why, with Reopen for anyone with the permission; (b) only the person | (a). Purchasing is shared work; otherwise each teammate makes the same decision again |
 | DD-5 | When a set-aside item comes back | The table in §4.5 |
 | DD-6 | How items are raised | On read in v1; hourly on the #229 runner in v2 |
 | DD-7 | What is recorded | Codes, ids and dates, plus an optional short note. Research use only on the public-data workspaces unless COUHES approves |
 | DD-8 | Timing | After the five assistant PRs merge. Steps 1–2 in December, steps 2b–4 in January |
 | DD-9 | Supplier email guards. The direction is the owner's (2026-11-11): FlowChain sends after the text and then the address are confirmed | The defaults in §4.11: own permission; off per workspace until a provider and domain are set; reply-to the person; one email per order per day and 20 per workspace per day; no prices; outbox only on public-data and local workspaces |
+
+**DD-3 reworded 2026-11-17** (design audit L11-05; owner: 按建议做). The approved wording said one click creates "draft documents" and never approves, but converting an approved request makes approved purchase orders under D3. D3 stays; DD-3 now says what it does, and the card shows the status and each line before the second click.
 
 ## 10. Risks
 
