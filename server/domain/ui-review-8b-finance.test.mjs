@@ -409,7 +409,8 @@ test('the invoice document fits a phone screen and prints at its own size', asyn
   const shell = read('src/modules/business-documents/DocumentShell.tsx')
   // The scale is a screen rule only; printing keeps the A4 sheet as it was.
   assert.match(shell, /"@media screen \{ \.business-document-stage \.business-document-sheet \{ zoom: var\(--fc-document-scale, 1\); \} \}"/)
-  assert.match(shell, /@media print \{ @page \{ size: A4; margin: 12mm; \} \}/)
+  assert.match(shell, /<style>\{`\$\{documentPageRule\(language\)\} \$\{SCREEN_SCALE_CSS\}`\}<\/style>/)
+  assert.match(read('src/modules/business-documents/documentPaging.ts'), /@media print \{ @page \{ size: A4; margin: 12mm; @bottom-right \{/)
   const css = read('src/modules/business-documents/business-documents.css')
   assert.doesNotMatch(css, /zoom/)
 })

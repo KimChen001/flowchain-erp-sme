@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import type { DocumentLanguage } from "../../../shared/business-documents.mjs";
 import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
+import { documentPageRule } from "./documentPaging";
 import "./business-documents.css";
 
 export type DocumentBlock = null | "status" | "prices_hidden" | "invoice_status" | "not_issued" | "amounts_hidden";
@@ -80,7 +81,7 @@ export function DocumentShell({
   const { stageRef, scale } = useSheetScale(showSheet);
   return (
     <div className="space-y-4" data-testid="business-document" data-printable={printable ? "true" : "false"}>
-      <style>{`@media print { @page { size: A4; margin: 12mm; } } ${SCREEN_SCALE_CSS}`}</style>
+      <style>{`${documentPageRule(language)} ${SCREEN_SCALE_CSS}`}</style>
       <Card className="p-4">
         <div className="business-document-toolbar" data-testid="business-document-toolbar">
           <Link to={backTo} className="inline-flex items-center gap-2 text-sm font-semibold" style={{ color: A.blue }}>
