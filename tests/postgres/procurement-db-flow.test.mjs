@@ -1089,3 +1089,28 @@ test('C6: a line priced at 0 or a supplier that is not active refuses the PO (L1
   assert.equal(issue.status, 409, describe(issue))
   assert.equal(issue.body.code, 'SUPPLIER_NOT_ACTIVE')
 })
+
+test('C4: who raised or submitted a request does not approve it while someone else may (L1-08 = L4-10 = L11-14)', async () => {
+  // Step 2: the manager was the only one who could approve, so their own
+  // approval went ahead and its audit row says so.
+  const sole = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityType: 'PurchaseRequest', entityId: 'PR-FLOW-SUBMIT', action: 'purchase_request_approve' } })
+  assert.equal(sole?.metadata?.selfApproval, 'only_approver')
+  // A second approver joins tenant A: from now on the manager's own request
+  // waits for them. Last in this file, so no earlier step sees them.
+  const second = { id: 'flow-manager-a2', email: 'manager-a2@procurement-flow.invalid', name: 'Drew Approver', role: 'manager' }
+  await prisma.user.create({ data: { ...second, tenantId: tenantA } })
+  const secondToken = await login(second, tenantA)
+  const id = 'PR-C4-SELF'
+  await seedPurchaseRequest(id, { status: 'draft' })
+  const submitted = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/submit`, { expectedVersion: 1 })
+  assert.equal(submitted.status, 200, describe(submitted))
+  const own = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/approve`, { expectedVersion: 2 })
+  assert.equal(own.status, 409, describe(own))
+  assert.equal(own.body.code, 'SELF_APPROVAL_BLOCKED')
+  assert.equal((await prisma.purchaseRequest.findUnique({ where: { id } })).status, 'submitted')
+  const other = await api(secondToken, 'POST', `/api/procurement/requests/${id}/approve`, { expectedVersion: 2 })
+  assert.equal(other.status, 200, describe(other))
+  const audit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityType: 'PurchaseRequest', entityId: id, action: 'purchase_request_approve' } })
+  assert.equal(audit.actorId, second.id)
+  assert.equal(audit.metadata.selfApproval, undefined)
+})
