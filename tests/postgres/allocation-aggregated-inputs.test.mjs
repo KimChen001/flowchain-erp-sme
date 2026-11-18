@@ -54,12 +54,14 @@ test('with 501 balance rows no item is stock_incomplete and every balance is cou
   const prisma = await createPrismaClient(process.env)
   try {
     // 501 items, one balance row each. Odd items hold 3 against a reorder
-    // point of 5 (order now), even items 9 (above it, no shipments).
+    // point of 5 (order now), even items 9 (above it, no shipments). Item 501,
+    // past the read context's first 500 rows, is kept in kg, the rest in pcs.
     const tenantId = 'tenant-allocation-501-balances'
     const admin = await seedTenant(prisma, tenantId)
     const onHandOf = (n) => (n % 2 ? 3 : 9)
-    await prisma.item.createMany({ data: range(501).map((n) => ({ id: `${tenantId}-ITEM-${pad(n)}`, tenantId, sku: `A-${pad(n)}`, name: `Item ${pad(n)}`, unit: 'pcs', reorderPoint: 5 })) })
-    await prisma.inventoryBalance.createMany({ data: range(501).map((n) => balance(tenantId, `A-${pad(n)}`, `${tenantId}-ITEM-${pad(n)}`, 'WH-1', onHandOf(n))) })
+    const unitOf = (n) => (n === 501 ? 'kg' : 'pcs')
+    await prisma.item.createMany({ data: range(501).map((n) => ({ id: `${tenantId}-ITEM-${pad(n)}`, tenantId, sku: `A-${pad(n)}`, name: `Item ${pad(n)}`, unit: unitOf(n), reorderPoint: 5 })) })
+    await prisma.inventoryBalance.createMany({ data: range(501).map((n) => ({ ...balance(tenantId, `A-${pad(n)}`, `${tenantId}-ITEM-${pad(n)}`, 'WH-1', onHandOf(n)), unit: unitOf(n) })) })
     const call = caller(prisma, tenantId, admin)
 
     const list = await call('/api/inventory/reorder-list')
@@ -74,6 +76,11 @@ test('with 501 balance rows no item is stock_incomplete and every balance is cou
     for (const n of range(501)) assert.equal(onHand.get(`A-${pad(n)}`), onHandOf(n), `A-${pad(n)}`)
     assert.equal(allocation.availability.reduce((sum, row) => sum + row.onHand, 0), range(501).reduce((sum, n) => sum + onHandOf(n), 0))
     assert.equal(allocation.summary.stockStatusCounts.unknown, 0)
+
+    // The inventory report's mixed-units note sees item 501's unit too.
+    const inventoryReport = await caller(prisma, tenantId, admin, handleReportsAnalyticsRoute)('/api/reports/inventory')
+    assert.ok(inventoryReport.limitations.includes('inventory_units_mixed'), JSON.stringify(inventoryReport.limitations))
+    assert.equal(inventoryReport.exportRows.find((entry) => entry.id === 'A-0501')?.unit, 'kg')
 
     // Stock in two warehouses: B-0001 in one (1 row), B-0002 to B-0250 in
     // both (498 rows), and B-0251 in both: its rows are the 500th and 501st by
