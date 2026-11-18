@@ -33,7 +33,7 @@ const english: Record<string, string> = {
   '发货单详情': 'Shipment details', '签收单详情': 'Proof of delivery details', '新建退货申请': 'New return request', '客户贷项通知单': 'Customer credit notes', '贷项通知详情': 'Credit note details',
   '结算分析': 'Settlement analytics', '结算单': 'Settlements', '结算单详情': 'Settlement details', '系统参数': 'System parameters', '数据模型 · 自定义字段': 'Data model · custom fields',
   // The finance report tab shows supplier invoices and three-way match, not settlements.
-  '发票分析': 'Invoice analytics',
+  '发票分析': 'Invoice analytics', '采购发票分析': 'Supplier invoice analytics',
   '导入任务': 'Import jobs', '字段映射': 'Field mapping', '数据准备度': 'Data readiness', '失败项处理': 'Failed records', '数据接入历史': 'Import history', 'Pilot 导入': 'Pilot import',
   '工单列表': 'Cases', '未关闭工单': 'Open cases', '任务箱': 'Task inbox', '任务详情': 'Task details', '通知草稿列表': 'Notification drafts', '行动草稿工作台': 'Action draft workbench', '人工复核视图': 'Human review', '草稿复核历史': 'Draft review history', '业务对象历史': 'Business object history', '历史总览': 'History overview',
   '准备度总览': 'Readiness overview', '模块准备度': 'Module readiness', '数据限制草稿': 'Data limitation drafts', 'AI 与复核准备度': 'AI & review readiness', '治理准备度': 'Governance readiness', '试点复核清单': 'Pilot review checklist', 'AI 建议历史': 'AI recommendation history',

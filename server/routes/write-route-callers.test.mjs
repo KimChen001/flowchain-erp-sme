@@ -114,7 +114,6 @@ const NO_APP_CALLER = {
   'POST /api/intake/mapping-profiles/:id/activate': INTAKE_STEP,
   'POST /api/intake/mapping-profiles/:id/retire': INTAKE_STEP,
   'PATCH /api/returns/postings/:id': 'Returns stay off until December step 7, and the return posting page does not edit a posting draft yet.',
-  'PATCH /api/master-data/customers/:id': 'Customers can be created, activated and deactivated in the app, but not edited.',
   'PATCH /api/mobile/receiving/drafts/:id': 'The phone receiving page creates, submits and posts a draft; it does not revise one.',
   'POST /api/procurement/orders/:id/return-for-revision': 'The desktop PO page has no Return for revision; the phone uses /api/mobile/purchase-orders/:id/return-for-revision.',
   'POST /api/report-views/:id/share': 'The reports page saves, updates, clones and deletes views; it has no share action.',

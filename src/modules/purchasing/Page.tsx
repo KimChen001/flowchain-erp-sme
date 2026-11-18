@@ -708,7 +708,7 @@ function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts, sour
       sku: safeText(line.sku, po.sourceSku || "SKU 待补齐"),
       itemName: safeText(line.itemName, po.sourceName || "物料名称待补齐"),
       quantity: ordered,
-      unit: safeText(line.unit, po.unit || "件"),
+      unit: safeText(line.unit, po.unit || ""),
       unitPrice,
       lineAmount: poLineAmount(line, po),
       warehouse: safeText(line.warehouseId || po.warehouseId, "目标仓库待补齐"),
@@ -773,7 +773,7 @@ function buildGrnRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): GrnEvi
         acceptedQty,
         rejectedQty,
         rejectionReason: String(stored?.rejectionReason ?? "").trim(),
-        unit: safeText(line.unit || poLine?.unit, "件"),
+        unit: safeText(line.unit || poLine?.unit, ""),
         arrived: grn.arrived,
         receiver: safeText(grn.receiver, "收货人待补齐"),
         unitPrice,
@@ -833,7 +833,7 @@ function buildInvoiceRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): In
       grnLineId: String(line.grnLine || ""),
       sku: safeText(line.sku, "SKU 待补齐"),
       quantity: toNumber(line.quantity),
-      unit: safeText(line.unit, "件"),
+      unit: safeText(line.unit, ""),
       unitPrice: toNumber(line.unitPrice),
       invoiceAmount: toNumber(line.lineSubtotal),
       taxAmount: toNumber(line.taxAmount),
@@ -1303,21 +1303,24 @@ export default function PurchasingOrdersPage({
       resolveDocumentNumbers("purchase_request", filtered.filter((order) => !order.prNumber).map((order) => order.sourceRequest)),
       resolveDocumentNumbers("rfq", filtered.filter((order) => !order.rfqNumber).map((order) => order.sourceRfq)),
     ]);
+    // Headers and values in the interface language, as the list shows
+    // them; the status as its chip words it (design audit U-03).
     exportRowsToCsv("purchase-order-evidence-export.csv", filtered.map((order) => ({
-      PO编号: purchaseOrderNumber(order),
-      来源PR: order.sourceRequest ? order.prNumber || requestNumbers.get(order.sourceRequest) || order.sourceRequest : "",
-      来源询价单: order.sourceRfq ? order.rfqNumber || rfqNumbers.get(order.sourceRfq) || order.sourceRfq : "",
-      供应商: order.supplier,
-      状态: order.status,
-      采购负责人: order.owner,
-      行数: poTotals(order).lineCount,
-      订单金额: poAmount(order),
-      预计到货: order.eta,
-      收货状态: receivedStatus(order, facts),
-      发票状态: invoiceStatus(order, facts),
-      三单匹配状态: matchStatus(order, facts),
-      下一步: poActionText(nextActionForPo(order, facts), words(order.currency)),
-    })));
+      [say("PO number", "采购订单号")]: purchaseOrderNumber(order),
+      [say("Source PR", "来源采购申请")]: order.sourceRequest ? order.prNumber || requestNumbers.get(order.sourceRequest) || order.sourceRequest : "",
+      [say("Source RFQ", "来源询价单")]: order.sourceRfq ? order.rfqNumber || rfqNumbers.get(order.sourceRfq) || order.sourceRfq : "",
+      [say("Supplier", "供应商")]: order.supplier,
+      [say("Status", "状态")]: statusCodeLabel(purchaseOrderStatusCode(order.status), language) || copy(order.status),
+      [say("Buyer", "采购负责人")]: order.owner,
+      [say("Lines", "行数")]: poTotals(order).lineCount,
+      [say("Order amount", "订单金额")]: poAmount(order),
+      [say("Currency", "币种")]: order.currency || "",
+      [say("Expected arrival", "预计到货")]: order.eta,
+      [say("Receipt status", "收货状态")]: copy(receivedStatus(order, facts)),
+      [say("Invoice status", "发票状态")]: copy(invoiceStatus(order, facts)),
+      [say("Three-way match", "三单匹配状态")]: copy(matchStatus(order, facts)),
+      [say("Next step", "下一步")]: poActionText(nextActionForPo(order, facts), words(order.currency)),
+    })), timezone);
     toast.success(copy("当前结果已导出"));
   }
 

@@ -24,7 +24,9 @@ export function poStatusToneOf(status?: string | null): StatusTone {
 
 export function POStatusPill({ status }: { status: string }) {
   const { language } = useI18n();
-  const displayStatus = status || "未知";
+  // No status recorded reads "—", not 未知 (design audit L16).
+  if (!status) return <StatusChip label="—" tone="neutral" />;
+  const displayStatus = status;
   const translatedStatus = statusCodeLabel(poStatusCodeOf[displayStatus] || displayStatus, language) ?? workspaceCopy(displayStatus, language);
   const visibleStatus = translatedStatus !== displayStatus
     ? translatedStatus

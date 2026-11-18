@@ -93,19 +93,22 @@ test('reports say which subjects were cut off at the read limit', async () => {
       assert.equal(context.payload.items.length, 200)
 
       // Each dashboard names only the cut subjects its figures read. Every
-      // sales order still has demand left and only 500 were read, so open
-      // demand is not whole: the overview and inventory name sales orders.
+      // sales order still has demand left and only 500 were read, so the
+      // overview's unfulfilled orders card counts 500: it names sales orders.
       // The sales dashboard's own figures count every order from the
-      // database's totals; only its table and download are cut.
+      // database's totals; only its table and download are cut. Stock figures
+      // come from the allocation's reads over every record, which were not
+      // cut, as the reorder list says: the inventory dashboard names nothing,
+      // and the overview does not name items.
       const salesCut = { subject: 'sales_orders', limit: 500 }
       const named = {
         // The overview reads no receipts since round 8 (one figure per area).
-        overview: [{ subject: 'purchase_orders', limit: 500 }, { subject: 'supplier_invoices', limit: 500 }, salesCut, { subject: 'items', limit: 200 }],
+        overview: [{ subject: 'purchase_orders', limit: 500 }, { subject: 'supplier_invoices', limit: 500 }, salesCut],
         procurement: [{ subject: 'purchase_orders', limit: 500 }, { subject: 'receipts', limit: 500 }, { subject: 'supplier_invoices', limit: 500 }],
         sales: [{ ...salesCut, figuresComplete: true, openDemandComplete: false, total: 501 }],
         finance: [{ subject: 'supplier_invoices', limit: 500 }],
         suppliers: [{ subject: 'purchase_orders', limit: 500 }, { subject: 'receipts', limit: 500 }, { subject: 'supplier_invoices', limit: 500 }, { subject: 'suppliers', limit: 200 }],
-        inventory: [{ subject: 'purchase_orders', limit: 500 }, salesCut, { subject: 'items', limit: 200 }],
+        inventory: [],
       }
       for (const [subject, subjects] of Object.entries(named)) {
         const report = await asTenant(overTenant, 'POST', '/api/reports/query', { subject, filters: {} })

@@ -1,7 +1,7 @@
 import { workspaceCopy } from "./workspaceCopy";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiJson, AUTH_TOKEN_KEY } from "../lib/api-client";
-import { setWorkspaceTimeZone } from "../lib/format";
+import { setWorkspaceNumberLocale, setWorkspaceTimeZone } from "../lib/format";
 import type { AppRouteDefinition } from "../app/routeRegistry";
 
 export type SupportedLanguage = "zh-CN" | "en-US";
@@ -890,6 +890,10 @@ const zh = {
   "ai.v2.column.open": "未结",
   "ai.v2.column.original_promised_date": "原承诺交期",
   "ai.v2.column.document_number": "单据编号",
+  "ai.v2.column.at": "时间",
+  "ai.v2.column.action": "操作",
+  "ai.v2.column.summary": "内容",
+  "ai.v2.column.by": "操作人",
   "ai.v2.column.arrived": "到货日期",
   "ai.v2.column.posting_status": "过账状态",
   "ai.v2.column.rejected": "拒收数量",
@@ -2204,6 +2208,10 @@ const en: Record<keyof typeof zh, string> = {
   "ai.v2.column.open": "Open",
   "ai.v2.column.original_promised_date": "Original promise",
   "ai.v2.column.document_number": "Document",
+  "ai.v2.column.at": "When",
+  "ai.v2.column.action": "Action",
+  "ai.v2.column.summary": "What changed",
+  "ai.v2.column.by": "By",
   "ai.v2.column.arrived": "Arrived",
   "ai.v2.column.posting_status": "Posting status",
   "ai.v2.column.rejected": "Rejected",
@@ -2796,6 +2804,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.lang = state.effectiveLanguage;
   }, [state.effectiveLanguage]);
   useEffect(() => { setWorkspaceTimeZone(state.timezone); }, [state.timezone]);
+  useEffect(() => { setWorkspaceNumberLocale(state.locale); }, [state.locale]);
   const value = useMemo<I18nValue>(() => {
     const t = (key: keyof typeof zh, variables: Record<string, string | number> = {}) => translate(state.effectiveLanguage, key, variables);
     return {

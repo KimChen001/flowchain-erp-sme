@@ -274,7 +274,9 @@ function checkSupplier(values, lookups) {
 function checkCustomer(values, lookups) {
   const issues = []
   const input = { code: text(values.code), name: text(values.name) }
-  for (const key of ['contact', 'phone', 'email', 'address', 'paymentTerms']) put(input, key, text(values[key]) || undefined)
+  for (const key of ['contact', 'phone', 'email', 'address', 'country', 'paymentTerms']) put(input, key, text(values[key]) || undefined)
+  // normal or restricted (customerInputIssues checks it); case does not matter.
+  put(input, 'creditStatus', text(values.creditStatus).toLowerCase() || undefined)
   // Only a recorded currency: an empty cell stays empty.
   const currency = text(values.currency)
   if (currency) input.currency = currency

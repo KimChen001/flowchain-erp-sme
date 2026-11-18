@@ -76,6 +76,23 @@ const RELATION_LABELS: Labels = {
 // The server's data limitation notes (keyed by its text) in plain business
 // language, [Chinese, English]. A note not listed is shown as sent.
 const LIMITATION_LABELS: Labels = {
+  // The notes the read model adds for some RFQs only (design audit L16).
+  "当前读取 contract 没有 RFQ owner/requester 的独立权限字段。": [
+    "询价单没有单独的负责人或申请人权限。",
+    "The RFQ has no separate owner or requester permission.",
+  ],
+  "RFQ 状态不是当前状态目录的 canonical 值，已按不可用状态返回。": [
+    "该询价单的状态不是 FlowChain 当前使用的状态，按不可用显示。",
+    "This RFQ's status is not one FlowChain uses now, so it shows as unavailable.",
+  ],
+  "存在报价但缺少 RFQ Supplier Participation 的兼容记录；参与事实仍需后续内部命令补齐。": [
+    "有供应商报了价，但没有记录邀请该供应商参与。",
+    "A supplier has a quote, but no invitation to this RFQ is recorded for it.",
+  ],
+  "存在没有 Revision 的兼容报价聚合；其旧表头商业字段不是当前报价权威，已按不可用返回。": [
+    "有报价没有修订记录，其价格不作为当前报价显示。",
+    "A quote has no revision on record, so its prices are not shown as the current quote."
+  ],
   "RFQ Supplier Participation 仅表达内部采购参与事实；invited_internal 不证明邮件送达、Supplier Portal 身份或外部登录。": [
     "供应商参与情况是内部采购记录：记录了邀请，不代表邮件已送达，也不代表供应商已开通门户账号或已登录。",
     "Supplier participation is an internal purchasing record. A recorded invitation does not mean an email was delivered or that the supplier has a portal account or has signed in.",

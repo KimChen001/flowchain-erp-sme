@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { effectiveLanguage } from "../domain/workspace-settings-contract.mjs";
+import { effectiveLanguage, normalizeLanguagePreference } from "../domain/workspace-settings-contract.mjs";
 import { resolveServerTenantId } from "../domain/local-signed-session.mjs";
 import { createMailer } from "../mail/mailer.mjs";
 import { buildSignInEmail, SIGN_IN_LINK_TTL_MINUTES } from "../mail/sign-in-email.mjs";
@@ -80,6 +80,17 @@ const linkAudit = ({ tenantId, actorId, action, entityType, entityId, summary, m
   metadata,
 });
 
+// The sign-in email's language: the person's saved preference; without one,
+// the language the sign-in page was in when they asked; else the
+// workspace's default (design audit L16: the page read Chinese and the
+// email came in English).
+export function signInEmailLanguage(user, pageLanguage) {
+  if (normalizeLanguagePreference(user?.languagePreference)) return effectiveLanguage(user, user?.tenant);
+  let page = null;
+  try { page = normalizeLanguagePreference(pageLanguage); } catch { page = null; }
+  return page || effectiveLanguage(user, user?.tenant);
+}
+
 export function createEmailLinkService({
   env = process.env,
   prismaFactory = getPrismaClient,
@@ -115,7 +126,7 @@ export function createEmailLinkService({
   // Resolves once the request is recorded. The email itself is sent after
   // that, so the answer takes the same time whether or not a link was sent;
   // `delivery` settles when sending finishes and never rejects.
-  async function request({ email: rawEmail, client = {}, req = null }) {
+  async function request({ email: rawEmail, language: pageLanguage = null, client = {}, req = null }) {
     const email = normalizeSignInEmail(rawEmail);
     const tenantId = resolveServerTenantId(env);
     if (!email || !tenantId) return { outcome: "ignored", delivery: Promise.resolve() };
@@ -150,7 +161,7 @@ export function createEmailLinkService({
     const linkUrl = `${publicBaseUrl(env, req)}/sign-in/confirm?token=${encodeURIComponent(token)}`;
     let language = "en-US";
     try {
-      language = effectiveLanguage(user, user.tenant);
+      language = signInEmailLanguage(user, pageLanguage);
     } catch {
       // An unsupported stored preference falls back to US English.
     }

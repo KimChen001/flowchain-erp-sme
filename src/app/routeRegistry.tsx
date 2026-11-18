@@ -55,7 +55,8 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     path: "/app/overview",
     moduleId: "overview",
     moduleLabel: "首页",
-    label: "今日待办",
+    // One name for Today, as its page and the sidebar say (design audit L6-19).
+    label: "今日",
     description: "查看今天需要关注的经营事项。",
     icon: BarChart2,
     defaultChildId: "overview:risks",
@@ -1964,7 +1965,8 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     path: "/app/reports",
     moduleId: "reports",
     moduleLabel: "报表中心",
-    label: "经营总览",
+    // The module is Reports; its first page is the overview (L6-19: both were 经营总览).
+    label: "报表中心",
     description: "查看采购、销售、库存、结算和供应商经营分析。",
     icon: FileSpreadsheet,
     defaultChildId: "reports:overview",
@@ -2022,7 +2024,8 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     path: "/app/reports/finance",
     moduleId: "reports",
     moduleLabel: "报表中心",
-    label: "发票分析",
+    // It analyses supplier invoices only (L6-19).
+    label: "采购发票分析",
     parentId: "reports",
     pageType: "analysis",
     viewId: "finance",
