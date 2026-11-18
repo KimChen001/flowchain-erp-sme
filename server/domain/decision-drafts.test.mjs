@@ -7,7 +7,7 @@ const timeZone = 'America/New_York'
 
 test('a reorder draft is the reorder list prefill, with the open requests for the item', () => {
   const sources = { reorder: { rows: [{
-    itemId: 'ITEM-1', sku: 'SKU-1', itemName: 'Box', unit: 'pcs', shortfall: 180, position: 20, reorderPoint: 200, orderByDate: '2026-11-12',
+    itemId: 'ITEM-1', sku: 'SKU-1', itemName: 'Box', unit: 'pcs', shortfall: 180, position: 20, reorderPoint: 200, orderUpTo: { level: 240, source: 'assumed', reviewDays: 7 }, orderByDate: '2026-11-12',
     supplier: { id: 'SUP-1', name: 'Acme', minimumOrderQuantity: 240, leadTimeDays: 14 },
     purchaseRequest: { itemId: 'ITEM-1', supplierId: 'SUP-1', quantity: 240, raisedToMinimum: true },
   }] } }
@@ -18,7 +18,7 @@ test('a reorder draft is the reorder list prefill, with the open requests for th
   const drafts = buildDecisionDrafts([{ kind: 'reorder_now', recordId: 'ITEM-1' }], { context, sources, now, timeZone })
   assert.deepEqual(drafts['reorder_now:ITEM-1'], {
     type: 'purchase_request', itemId: 'ITEM-1', sku: 'SKU-1', itemName: 'Box', unit: 'pcs', quantity: 240, raisedToMinimum: true,
-    shortfall: 180, position: 20, reorderPoint: 200, orderByDate: '2026-11-12',
+    shortfall: 180, position: 20, reorderPoint: 200, orderUpTo: { level: 240, source: 'assumed' }, orderByDate: '2026-11-12',
     supplier: { id: 'SUP-1', name: 'Acme', minimumOrderQuantity: 240, leadTimeDays: 14 },
     openRequests: [{ id: 'PR-1', number: 'PR-202611-0001', status: 'draft' }],
   })

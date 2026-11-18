@@ -10,7 +10,7 @@ import { asideFor, decisionsSetAside } from './ai-decision-aside.mjs'
 import { createRfqSupplierComparisonService } from './rfq-supplier-comparison-service.mjs'
 import { listItemSupplierRecords } from './master-data-commands.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
-import { DEMAND_WINDOW_DAYS, boughtInStockUnit, dailyDemand, isActiveItem, itemStockUnit, recordedReorderPoint, requestMinimumOf, shippedByWorkspaceDay } from './reorder-list.mjs'
+import { DEMAND_WINDOW_DAYS, boughtInStockUnit, dailyDemand, isActiveItem, itemStockUnit, recordedReorderPoint, reorderSizing, requestMinimumOf, shippedByWorkspaceDay } from './reorder-list.mjs'
 import { scopedBusiness } from './ai-read-service-tools.mjs'
 import { itemSources, preferredSource, storedItems, unitPriceOf } from './ai-item-prices.mjs'
 import { AI_ASSISTANT_V2_MONEY_TOOLS } from './ai-assistant-v2-money-tools.mjs'
@@ -47,7 +47,24 @@ const openRequestsRead = (facts) => Array.isArray(facts.purchaseRequests?.open)
 // same records (design audit C2).
 const openRequestsOf = (facts, row) => openRequestQuantity(facts.purchaseRequests?.open, { sku: row.sku, itemId: row.itemId, unit: row.unit })
 const positionOf = (facts, row) => inventoryPosition({ onHand: row.onHand, reserved: row.reserved, incoming: row.incomingApprovedPo, pendingOrders: row.pendingPurchaseQty, openRequests: openRequestsOf(facts, row), backorders: row.unreservedSalesDemand })
-const quantityOf = (facts, row, minimum = 0) => suggestPurchaseQuantity({ reorderPoint: row.reorderPoint, safetyStock: row.safetyStock, ...positionOf(facts, row), minimum })
+// plan: the stored item and its recorded demand. With a recorded reorder
+// point the reorder list's (s, S) sizing runs: the same order-up-to level,
+// lot size and due day as the page (design audit C3). Without one, the
+// shared rule on safety stock.
+function quantityOf(facts, row, minimum = 0, plan = null) {
+  const parts = positionOf(facts, row)
+  const point = plan?.item ? recordedReorderPoint(plan.item) : null
+  if (point !== null) return reorderSizing({ item: plan.item, reorderPoint: point, demand: plan.demand, ...parts, minimum, today: facts.today }).sized
+  return suggestPurchaseQuantity({ reorderPoint: row.reorderPoint, safetyStock: row.safetyStock, ...parts, minimum })
+}
+// The order-up-to level a row's quantity is sized to, as the reorder list
+// shows it ({ level, source }), or null without a recorded reorder point.
+function orderUpToOf(facts, row, plan) {
+  const point = plan?.item ? recordedReorderPoint(plan.item) : null
+  if (point === null) return null
+  const { level } = reorderSizing({ item: plan.item, reorderPoint: point, demand: plan.demand, ...positionOf(facts, row), today: facts.today })
+  return { level: level.level, source: level.source }
+}
 
 // A record the question narrows the attention list to: a purchase order by
 // its number, an item by its SKU, or a supplier the user may read.
@@ -325,8 +342,8 @@ const coverTargetOf = (row, rate, lead, coverDays) => (rate === null || !coverDa
 const COVER_SOURCE = Object.freeze({ [PURCHASE_SUGGESTION_SOURCES.reorderGap]: PURCHASE_SUGGESTION_SOURCES.coverDays, [PURCHASE_SUGGESTION_SOURCES.raisedToMoq]: PURCHASE_SUGGESTION_SOURCES.coverDaysRaisedToMoq })
 // The shared quantity rule with the cover target in place of the reorder
 // point; the reorder point rule when there is no cover target.
-function sizeOf(facts, row, minimum, target) {
-  if (target === null) return quantityOf(facts, row, minimum)
+function sizeOf(facts, row, minimum, target, plan = null) {
+  if (target === null) return quantityOf(facts, row, minimum, plan)
   const sized = suggestPurchaseQuantity({ reorderPoint: target, safetyStock: row.safetyStock, ...positionOf(facts, row), minimum })
   const source = COVER_SOURCE[sized.quantity.source]
   return source ? { ...sized, quantity: { ...sized.quantity, source } } : sized
@@ -349,7 +366,7 @@ function coverRecords(facts, row) {
 
 const suggestPurchaseLines = defineAiTool({
   name: 'suggest_purchase_lines',
-  description: 'Purchase request lines worked out by the server, for the in-chat purchase request form: per item its on-hand stock, safety stock and reorder point, the suggested quantity (the gap between the highest of the reorder point, safety stock and open sales demand and what is available, incoming on purchase orders and on open purchase requests, raised to the supplier\'s minimum order; with coverDays, the cover target takes the reorder point\'s place), the supplier (the preferred, or the only approved one), the need-by date (today plus the supplier\'s lead time, with a warning when stock runs short sooner) and the reference price. Items already covered by open requests or orders come back as covered. An item that is not active, or has no stock row, gets no quantity (source item_inactive or no_stock_position). Name SKUs for those items; with none, the items below their stock levels, up to 8, less set-aside ones (setAsideLeftOut). The user chooses which lines to request.',
+  description: 'Purchase request lines worked out by the server, for the in-chat purchase request form: per item its on-hand stock, safety stock and reorder point, the suggested quantity (once the stock position is at the reorder point or below, up to the order-up-to level orderUpTo, in whole lots, raised to the supplier\'s minimum order; with coverDays, the cover target takes the level\'s place), the supplier (the preferred, or the only approved one), the need-by date (today plus the supplier\'s lead time, with a warning when stock runs short sooner) and the reference price. Items already covered by open requests or orders come back as covered. An item that is not active, or has no stock row, gets no quantity (source item_inactive or no_stock_position). Name SKUs for those items; with none, the items below their stock levels, up to 8, less set-aside ones (setAsideLeftOut). The user chooses which lines to request.',
   parameters: {
     skus: { type: 'array', items: { type: 'string' }, maxItems: AI_TOOL_LIMITS.items, description: 'The SKUs the user named.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_SUGGESTED, description: `How many items to suggest when none is named, ${MAX_SUGGESTED} by default.` },
@@ -388,9 +405,13 @@ const suggestPurchaseLines = defineAiTool({
     }
     const stored = await storedItems(context, [...new Set(rows.map((row) => text(row.itemId)).filter(Boolean))])
     const itemOf = (row) => stored.get(text(row.itemId)) || null
-    const demand = coverDays ? await recordedDemand(context, facts, [...stored.values()]) : null
+    // Recorded demand is read for every question: the reorder point rule
+    // orders up to a level a week of it above the reorder point, as the
+    // reorder list does (design audit C3).
+    const demand = await recordedDemand(context, facts, [...stored.values()])
     const demandOf = (row) => demand?.byItem.get(text(row.itemId)) || null
-    const rateOf = (row) => demandOf(row)?.averageDailyDemand ?? null
+    const planOf = (row) => ({ item: itemOf(row), demand: demandOf(row) })
+    const rateOf = (row) => (coverDays ? demandOf(row)?.averageDailyDemand ?? null : null)
     if (coverDays && !named) {
       // Those with recorded demand by the days their stock lasts, then those
       // below their levels without it (sized by the reorder point rule).
@@ -410,7 +431,7 @@ const suggestPurchaseLines = defineAiTool({
     // the answer can say why nothing is suggested.
     let listed = named ? rows : rows.filter((row) => {
       const lead = candidateSources ? preferredLead(candidateSources.byItem.get(text(row.itemId)) || []) : null
-      const quantity = sizeOf(facts, row, 0, coverTargetOf(row, rateOf(row), lead, coverDays))
+      const quantity = sizeOf(facts, row, 0, coverTargetOf(row, rateOf(row), lead, coverDays), planOf(row))
       return isActiveItem(itemOf(row)) && (quantity.quantity.value !== null || quantity.covered)
     })
     // An item whose reorder the user set aside on Today (not now, not needed,
@@ -433,7 +454,7 @@ const suggestPurchaseLines = defineAiTool({
       const chosen = sources.find((source) => source.id === plan.values.supplierId) || null
       const minimum = chosen && item ? requestMinimumOf(item, chosen, itemStockUnit(item)) : 0
       const coverTarget = row.noStock ? null : coverTargetOf(row, rateOf(row), chosen?.leadTimeDays ?? null, coverDays)
-      const quantity = sizeOf(facts, row, minimum, coverTarget)
+      const quantity = sizeOf(facts, row, minimum, coverTarget, planOf(row))
       // The rule is not run on an item that cannot be requested, nor on one
       // with no stock row, whose stock and levels are not known.
       const notRun = item && !isActiveItem(item) ? PURCHASE_SUGGESTION_SOURCES.itemInactive : row.noStock ? PURCHASE_SUGGESTION_SOURCES.noStockPosition : null
@@ -449,6 +470,9 @@ const suggestPurchaseLines = defineAiTool({
         // The position the quantity is set against, and its other parts.
         pendingOrders: row.pendingPurchaseQty ?? null, backorders: row.unreservedSalesDemand ?? null, position: row.noStock ? null : positionOf(facts, row).position,
         target: row.noStock ? null : quantity.target, gap: row.noStock ? null : quantity.gap,
+        // The level the reorder point quantity orders up to: the item's
+        // (recorded) or reorder point plus a week of demand (assumed).
+        orderUpTo: row.noStock || coverTarget !== null ? null : orderUpToOf(facts, row, planOf(row)), lotSize: Number(item?.lotSize) > 0 ? Number(item.lotSize) : null,
         suggestedQuantity: notRun ? { value: null, source: notRun } : quantity.quantity,
         // The chosen supplier's minimum order in the item's unit, so the form
         // raises a quantity below it (2026-11-11).

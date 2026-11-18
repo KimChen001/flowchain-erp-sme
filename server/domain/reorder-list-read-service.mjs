@@ -72,7 +72,7 @@ export function createReorderListReadService({ prisma }) {
       const [items, shipmentRows, supplierLinks, suppliers, requestRows] = await Promise.all([
         findManyWithinLimit(prisma.item, {
           where: { tenantId: scopedTenantId },
-          select: { id: true, sku: true, name: true, unit: true, reorderPoint: true, metadata: true, preferredSupplierId: true, status: true },
+          select: { id: true, sku: true, name: true, unit: true, reorderPoint: true, orderUpToLevel: true, lotSize: true, metadata: true, preferredSupplierId: true, status: true },
           orderBy: [{ sku: 'asc' }],
         }, { limit: ITEM_LIMIT, subject: 'items', onTruncated }),
         // A reversed shipment is no longer posted, so it drops out.

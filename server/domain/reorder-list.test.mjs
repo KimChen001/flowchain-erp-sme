@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { NO_REORDER_POINT_LISTED, buildReorderList, dailyDemand, orderByDay, preferredSupplierFor, recordedReorderPoint } from './reorder-list.mjs'
+import { buildTodayWork } from './today-work.mjs'
 import { inventoryPosition, suggestPurchaseQuantity } from '../../shared/purchase-suggestion.mjs'
 
 const TODAY = '2026-10-05'
@@ -32,11 +33,16 @@ test('the order-by day floors the days until the position reaches the reorder po
   assert.equal(a.orderNow, false)
   // Exactly one day of demand above the point: tomorrow.
   assert.equal(rowOf(list, 'B').orderByDate, '2026-10-06')
-  // 0.99 of a day above the point: today, but not "order now".
+  // 0.99 of a day above the point: due today, so "order now" with a quantity
+  // (design audit W-02): up to the reorder point plus 7 days of demand,
+  // 20 + 28 = 48, from 23.99: 25.
   const c = rowOf(list, 'C')
   assert.equal(c.orderByDate, TODAY)
-  assert.equal(c.orderNow, false)
+  assert.equal(c.orderNow, true)
   assert.equal(c.shortfall, 0)
+  assert.deepEqual(c.orderUpTo, { level: 48, source: 'assumed', reviewDays: 7 })
+  assert.equal(c.purchaseRequest.quantity, 25)
+  assert.equal(a.purchaseRequest.quantity, null)
   assert.deepEqual(list.rows.map((row) => row.sku), ['C', 'B', 'A'])
 })
 
@@ -46,23 +52,26 @@ test('at the reorder point the item is "order now", and the shortfall is reorder
     allocationRows: [allocation('A', { onHand: 25, reserved: 5 }), allocation('B', { onHand: 12.5, reserved: 0, incomingLines: [incoming('PO-1', 5, '2026-10-01')] })],
     shipmentLines: [...shipments('A', 8, 10), ...shipments('B', 8, 10)],
   })
+  // 80 over 90 days: 0.8889 a day, so the assumed order-up-to level is the
+  // reorder point plus 6.2223 (design audit C3).
   const a = rowOf(list, 'A')
   assert.equal(a.position, 20)
   assert.equal(a.orderNow, true)
   assert.equal(a.orderByDate, TODAY)
   assert.equal(a.shortfall, 0)
-  assert.equal(a.purchaseRequest.quantity, null)
+  assert.deepEqual(a.orderUpTo, { level: 26.2223, source: 'assumed', reviewDays: 7 })
+  assert.equal(a.purchaseRequest.quantity, 7)
   const b = rowOf(list, 'B')
   assert.equal(b.position, 17.5)
   assert.equal(b.incoming, 5)
   assert.equal(b.shortfall, 12.5)
-  // The request asks for the shared rule's quantity: the shortfall rounded up,
-  // as the assistant suggests it (design audit C2).
-  assert.equal(b.purchaseRequest.quantity, 13)
+  // The request asks for the shared rule's quantity, as the assistant
+  // suggests it: up to 36.2223 from 17.5, rounded up.
+  assert.equal(b.purchaseRequest.quantity, 19)
   assert.equal(list.summary.orderNow, 2)
 })
 
-test('daily demand needs 8 shipment days in the 90 days before today; with 7 only items at the point are listed', () => {
+test('daily demand needs 8 shipment days in the 90 days before today; with 7 only items below the point are listed', () => {
   const seven = dailyDemand({ lines: shipments('A', 7, 10), stockUnit: 'pcs', today: TODAY, timeZone: TZ })
   assert.equal(seven.shipmentDays, 7)
   assert.equal(seven.averageDailyDemand, null)
@@ -71,17 +80,23 @@ test('daily demand needs 8 shipment days in the 90 days before today; with 7 onl
   assert.equal(eight.windowStart, '2026-07-07')
   assert.equal(eight.windowEnd, '2026-10-04')
 
+  // Without daily demand the order-up-to level is the reorder point: below it
+  // the item orders up to it; at it there is nothing to order, so it is not
+  // listed, as above it.
   const list = build({
-    items: [item('LOW'), item('HIGH')],
-    allocationRows: [allocation('LOW', { onHand: 20 }), allocation('HIGH', { onHand: 21 })],
-    shipmentLines: [...shipments('LOW', 7, 10), ...shipments('HIGH', 7, 10)],
+    items: [item('LOW'), item('AT'), item('HIGH')],
+    allocationRows: [allocation('LOW', { onHand: 19 }), allocation('AT', { onHand: 20 }), allocation('HIGH', { onHand: 21 })],
+    shipmentLines: [...shipments('LOW', 7, 10), ...shipments('AT', 7, 10), ...shipments('HIGH', 7, 10)],
   })
   const low = rowOf(list, 'LOW')
   assert.equal(low.orderNow, true)
   assert.equal(low.demand.enough, false)
   assert.equal(low.demand.shipmentDays, 7)
+  assert.deepEqual(low.orderUpTo, { level: 20, source: 'reorder_point', reviewDays: 7 })
+  assert.equal(low.purchaseRequest.quantity, 1)
+  assert.equal(rowOf(list, 'AT'), undefined)
   assert.equal(rowOf(list, 'HIGH'), undefined)
-  assert.equal(list.summary.aboveReorderPointWithoutHistory, 1)
+  assert.equal(list.summary.aboveReorderPointWithoutHistory, 2)
 })
 
 test('shipments of today and of more than 90 days ago, and several lines on one day, count as the window says', () => {
@@ -139,7 +154,8 @@ test('only a recorded reorder point is judged: none, 0 and safety stock alone ar
   })
   assert.deepEqual(list.rows.map((row) => row.sku), ['SET'])
   // Each item to set a reorder point on is named, to link to its record.
-  assert.deepEqual(list.noReorderPoint, { count: 2, href: '/app/master-data/items', items: [{ itemId: 'ITEM-NONE', sku: 'NONE', itemName: 'Item NONE' }, { itemId: 'ITEM-ZERO', sku: 'ZERO', itemName: 'Item ZERO' }] })
+  // With the unit and lead time a suggested reorder point is sized with (L3-09).
+  assert.deepEqual(list.noReorderPoint, { count: 2, href: '/app/master-data/items', items: [{ itemId: 'ITEM-NONE', sku: 'NONE', itemName: 'Item NONE', unit: 'pcs', leadTimeDays: null }, { itemId: 'ITEM-ZERO', sku: 'ZERO', itemName: 'Item ZERO', unit: 'pcs', leadTimeDays: null }] })
   const many = build({ items: Array.from({ length: NO_REORDER_POINT_LISTED + 5 }, (_, index) => item(`N-${String(index).padStart(3, '0')}`, { reorderPoint: null })) })
   assert.equal(many.noReorderPoint.count, NO_REORDER_POINT_LISTED + 5)
   assert.equal(many.noReorderPoint.items.length, NO_REORDER_POINT_LISTED)
@@ -196,13 +212,54 @@ test('a purchase order placed today counts as incoming, so the item it covers is
   const supplierLinks = [{ id: 'r1', payload: { itemId: 'ITEM-A', supplierId: 'SUP-1', preferred: true, leadTimeDays: 17, minimumOrderQuantity: 50 } }]
   const open = [incoming('PO-014', 50, '2026-09-29'), incoming('PO-002', 40, '2026-10-09'), incoming('PO-021', 25, '2026-10-19')]
   // 10 a day; 150 on hand + 115 on order = 265 against a reorder point of 270.
+  // The request orders up to 270 + 70 = 340: 75, above Acme's minimum of 50.
   const read = (incomingLines) => rowOf(build({ items: [item('A', { reorderPoint: 270 })], allocationRows: [allocation('A', { onHand: 150, incomingLines })], shipmentLines: shipments('A', 9, 100), supplierLinks, suppliers }), 'A')
   const before = read(open)
-  assert.deepEqual([before.position, before.orderNow, before.shortfall, before.purchaseRequest.quantity, before.purchaseRequest.raisedToMinimum], [265, true, 5, 50, true])
+  assert.deepEqual([before.position, before.orderNow, before.shortfall, before.purchaseRequest.quantity, before.purchaseRequest.raisedToMinimum], [265, true, 5, 75, false])
   // The 50 ordered today, due in 17 days: 315, so order by (315 - 270) / 10 = 4.5 days.
   const after = read([...open, incoming('PO-NEW', 50, '2026-10-22')])
   assert.deepEqual([after.position, after.orderNow, after.daysUntilOrderBy, after.shortfall, after.purchaseRequest.quantity], [315, false, 4, 0, null])
   assert.ok(after.flags.every((flag) => flag.orderNumber !== 'PO-NEW'))
+})
+
+// Acceptance (design audit C3: L3-02, V-A-01, W-02), item 22065 on the UCI
+// walkthrough: 79 on hand + 112 incoming = 191 against a reorder point of
+// 238; 1,018 shipped in 90 days (11.3111 a day); a minimum of 80.
+test('22065: ordering the suggested quantity lifts the position to the order-up-to level and the row leaves "order now"', () => {
+  const suppliers = [{ id: 'SUP-1', code: 'S1', name: 'Acme', status: 'active' }]
+  const supplierLinks = [{ id: 'r1', payload: { itemId: 'ITEM-22065', supplierId: 'SUP-1', preferred: true, leadTimeDays: 14, minimumOrderQuantity: 80 } }]
+  const read = (allocationExtra, itemExtra = {}) => build({ items: [item('22065', { reorderPoint: 238, ...itemExtra })], allocationRows: [allocation('22065', allocationExtra)], shipmentLines: shipments('22065', 8, 127.25), supplierLinks, suppliers })
+  const before = rowOf(read({ onHand: 79, incomingLines: [incoming('PO-1', 112, '2026-10-12')] }), '22065')
+  assert.deepEqual([before.position, before.orderNow, before.shortfall], [191, true, 47])
+  assert.deepEqual(before.orderUpTo, { level: 317.1777, source: 'assumed', reviewDays: 7 })
+  assert.equal(before.purchaseRequest.quantity, 127)
+  assert.equal(before.purchaseRequest.raisedToMinimum, false)
+  // The request ordered: 318, at the level or above, ordered by in 7 days.
+  const after = rowOf(read({ onHand: 79, incomingLines: [incoming('PO-1', 112, '2026-10-12'), incoming('PO-NEW', 127, '2026-10-19')] }), '22065')
+  assert.ok(after.position >= before.orderUpTo.level)
+  assert.deepEqual([after.position, after.orderNow, after.daysUntilOrderBy, after.purchaseRequest.quantity], [318, false, 7, null])
+  // A recorded level and lot size are the item's own: up to 400 in lots of 24.
+  const recorded = rowOf(read({ onHand: 79, incomingLines: [incoming('PO-1', 112, '2026-10-12')] }, { orderUpToLevel: '400.0000', lotSize: '24.0000' }), '22065')
+  assert.deepEqual([recorded.orderUpTo, recorded.lotSize, recorded.purchaseRequest.quantity], [{ level: 400, source: 'recorded', reviewDays: 7 }, 24, 216])
+  // A recorded level at or below the reorder point is not a level: assumed.
+  assert.equal(rowOf(read({ onHand: 79 }, { orderUpToLevel: 238 }), '22065').orderUpTo.source, 'assumed')
+})
+
+test('22065: a row due today always has a quantity and shows on Today', () => {
+  // 245 on hand: 7 above the reorder point, less than a day of demand, so the
+  // order-by day is today. It is "order now", ordering up to 317.1777: 73.
+  const list = build({ items: [item('22065', { reorderPoint: 238 })], allocationRows: [allocation('22065', { onHand: 245 })], shipmentLines: shipments('22065', 8, 127.25) })
+  const row = rowOf(list, '22065')
+  assert.deepEqual([row.orderByDate, row.orderNow, row.daysUntilOrderBy, row.shortfall, row.purchaseRequest.quantity], [TODAY, true, 0, 0, 73])
+  assert.ok(list.rows.every((entry) => entry.orderByDate !== TODAY || entry.purchaseRequest.quantity > 0))
+  const today = buildTodayWork({ reorder: list }, { now: new Date(`${TODAY}T15:00:00Z`), timeZone: TZ })
+  const work = today.items.find((entry) => entry.kind === 'reorder_now')
+  assert.equal(work?.label, '22065')
+  assert.equal(work.detail.purchaseRequest.quantity, 73)
+  // A recorded level already reached the day it is due: due tomorrow, with no
+  // quantity, and not on Today.
+  const reached = build({ items: [item('22065', { reorderPoint: 238, orderUpToLevel: 240 })], allocationRows: [allocation('22065', { onHand: 245 })], shipmentLines: shipments('22065', 8, 127.25) })
+  assert.deepEqual([rowOf(reached, '22065').orderByDate, rowOf(reached, '22065').orderNow, rowOf(reached, '22065').purchaseRequest.quantity], ['2026-10-06', false, null])
 })
 
 test('the preferred supplier shows its lead time and minimum order quantity only when recorded', () => {

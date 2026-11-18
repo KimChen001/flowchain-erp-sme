@@ -52,6 +52,8 @@ export type MasterItem = {
   defaultWarehouseId: string;
   safetyStock: number;
   reorderPoint: number;
+  orderUpToLevel: number | null;
+  lotSize: number | null;
   minimumOrderQuantity: number;
   purchaseLeadTimeDays: number;
   defaultSupplierId: string;
@@ -69,16 +71,16 @@ export type MasterItem = {
   updatedAt: string;
   // What someone recorded (null when nothing was); the fields above fill gaps
   // for display, such as pcs, an MOQ of 1 or zeros.
-  recorded?: { unit: string | null; category: string | null; safetyStock: number | null; reorderPoint: number | null; minimumOrderQuantity: number | null; purchaseLeadTimeDays: number | null; purchaseUnit: string | null; itemType: string | null } | null;
+  recorded?: { unit: string | null; category: string | null; safetyStock: number | null; reorderPoint: number | null; orderUpToLevel?: number | null; lotSize?: number | null; minimumOrderQuantity: number | null; purchaseLeadTimeDays: number | null; purchaseUnit: string | null; itemType: string | null } | null;
 };
 // The edit form's values as typed: numbers stay text until saved, so an empty
 // field is sent as null ("not recorded"), never 0.
 type ItemDraft = Record<string, string | boolean>;
-const NUMBER_FIELDS = ["safetyStock", "reorderPoint", "minimumOrderQuantity", "purchaseLeadTimeDays"];
+const NUMBER_FIELDS = ["safetyStock", "reorderPoint", "orderUpToLevel", "lotSize", "minimumOrderQuantity", "purchaseLeadTimeDays"];
 const FLAG_FIELDS = ["purchasable", "inventoryItem", "batchManaged", "serialManaged", "shelfLifeManaged"];
 // A new item starts with nothing made up: no unit, category or numbers until
 // someone enters them (design audit L4-20: the unit defaulted to pcs).
-const EMPTY_DRAFT: ItemDraft = { sku: "", itemName: "", shortName: "", itemType: "", category: "", brand: "", specification: "", baseUnit: "", purchaseUnit: "", defaultWarehouseId: "", taxCodeId: "", safetyStock: "", reorderPoint: "", minimumOrderQuantity: "", purchaseLeadTimeDays: "", barcode: "", manufacturerPartNumber: "", comments: "", status: "active", purchasable: true, inventoryItem: true, batchManaged: false, serialManaged: false, shelfLifeManaged: false };
+const EMPTY_DRAFT: ItemDraft = { sku: "", itemName: "", shortName: "", itemType: "", category: "", brand: "", specification: "", baseUnit: "", purchaseUnit: "", defaultWarehouseId: "", taxCodeId: "", safetyStock: "", reorderPoint: "", orderUpToLevel: "", lotSize: "", minimumOrderQuantity: "", purchaseLeadTimeDays: "", barcode: "", manufacturerPartNumber: "", comments: "", status: "active", purchasable: true, inventoryItem: true, batchManaged: false, serialManaged: false, shelfLifeManaged: false };
 // An item as the form edits it: the values someone recorded, read from
 // `recorded`, not the display fill-ins (design audit L4-02).
 function draftOf(item: MasterItem): ItemDraft {
@@ -94,6 +96,8 @@ function draftOf(item: MasterItem): ItemDraft {
     defaultWarehouseId: item.defaultWarehouseId, taxCodeId: item.taxCodeId, barcode: item.barcode, manufacturerPartNumber: item.manufacturerPartNumber, comments: item.comments,
     safetyStock: numberText(recorded ? recorded.safetyStock : item.safetyStock),
     reorderPoint: numberText(recorded ? recorded.reorderPoint : item.reorderPoint),
+    orderUpToLevel: numberText(recorded?.orderUpToLevel ?? item.orderUpToLevel),
+    lotSize: numberText(recorded?.lotSize ?? item.lotSize),
     minimumOrderQuantity: numberText(recorded ? recorded.minimumOrderQuantity : item.minimumOrderQuantity),
     purchaseLeadTimeDays: numberText(recorded ? recorded.purchaseLeadTimeDays : item.purchaseLeadTimeDays),
     status: item.status, purchasable: item.purchasable, inventoryItem: item.inventoryItem, batchManaged: item.batchManaged, serialManaged: item.serialManaged, shelfLifeManaged: item.shelfLifeManaged,
@@ -142,6 +146,10 @@ const fields: Array<[keyof MasterItem, string, string]> = [
   ["taxCodeId", "税码", "text"],
   ["safetyStock", "安全库存", "number"],
   ["reorderPoint", "再订货点", "number"],
+  // The (s, S) rule (design audit C3): empty, the reorder list assumes the
+  // reorder point plus a week of demand.
+  ["orderUpToLevel", "补货目标库存", "number"],
+  ["lotSize", "订货批量", "number"],
   ["minimumOrderQuantity", "最小起订量", "number"],
   ["purchaseLeadTimeDays", "采购提前期（天）", "number"],
   ["barcode", "条码", "text"],
@@ -176,6 +184,8 @@ function normalizeMasterItem(item: Partial<MasterItem> & Record<string, unknown>
     defaultWarehouseId: text(item.defaultWarehouseId),
     safetyStock: number(item.safetyStock),
     reorderPoint: number(item.reorderPoint),
+    orderUpToLevel: item.orderUpToLevel === null || item.orderUpToLevel === undefined || !Number.isFinite(Number(item.orderUpToLevel)) ? null : Number(item.orderUpToLevel),
+    lotSize: item.lotSize === null || item.lotSize === undefined || !Number.isFinite(Number(item.lotSize)) ? null : Number(item.lotSize),
     minimumOrderQuantity: number(item.minimumOrderQuantity ?? item.moq, 1),
     purchaseLeadTimeDays: number(item.purchaseLeadTimeDays ?? item.leadTimeDays),
     defaultSupplierId: text(item.defaultSupplierId || item.preferredSupplierId),

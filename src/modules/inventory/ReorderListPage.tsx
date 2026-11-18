@@ -74,8 +74,15 @@ type ReorderRow = {
   flags: Flag[];
   purchaseRequest: { itemId: string; supplierId: string | null; quantity: number | null; raisedToMinimum?: boolean };
   reorderPointSuggestion?: Suggestion;
+  // The level the request orders up to (design audit C3): recorded on the
+  // item, assumed (reorder point plus reviewDays of demand) or the reorder
+  // point; and the item's lot size.
+  orderUpTo?: { level: number | null; source: "recorded" | "assumed" | "reorder_point" | null; reviewDays: number };
+  lotSize?: number | null;
 };
 type ItemRef = { itemId: string; sku: string; itemName: string };
+// An item with no reorder point, with what a suggestion for it needs (L3-09).
+type NoPointItem = ItemRef & { unit?: string | null; leadTimeDays?: number | null; reorderPointSuggestion?: Suggestion };
 type NotChecked = ItemRef & { reason: "stock_incomplete" | "stock_unit_not_recorded" | "warehouse_scope" };
 type ReorderList = {
   today: string;
@@ -84,7 +91,7 @@ type ReorderList = {
   rule: { windowDays: number; minShipmentDays: number };
   rows: ReorderRow[];
   notJudged: NotChecked[];
-  noReorderPoint: { count: number; href: string; items: ItemRef[] };
+  noReorderPoint: { count: number; href: string; items: NoPointItem[] };
   summary: { listed: number; orderNow: number; notJudged: number; noReorderPoint: number; aboveReorderPointWithoutHistory: number };
   suppliers: { id: string; code: string; name: string }[];
   truncatedSubjects?: { subject: string; limit: number }[];
@@ -294,7 +301,7 @@ function SetReorderPointDialog({ row, forecast, t, onClose, onSaved }: { row: Re
       }
     >
       <div className="space-y-3 text-xs leading-5" data-testid="reorder-set-point-dialog">
-        <p>{t("dialogCurrent", { value: withUnit(row.reorderPoint, row.unit, t.language) })}</p>
+        <p>{row.reorderPoint > 0 ? t("dialogCurrent", { value: withUnit(row.reorderPoint, row.unit, t.language) }) : t("dialogCurrentNone")}</p>
         <p>{t("dialogSuggested", { value: withUnit(suggestion.suggestedReorderPoint, row.unit, t.language), days: suggestion.coverDays ?? 0, lead: suggestion.leadTimeDays ?? 0, review: suggestion.reviewDays, history: suggestion.historyDays })}</p>
         {forecast && modelValue !== null && (
           <p data-testid="reorder-set-point-forecast">{t("dialogForecast", { value: withUnit(modelValue, row.unit, t.language), days: forecast.coverDays ?? 0, periods: forecast.periods })}</p>
@@ -344,6 +351,8 @@ export default function ReorderListPage() {
   const [methodOpen, setMethodOpen] = useState(false);
   const showMethod = !phone || methodOpen;
   const supplierFilter = searchParams.get("supplier") || "";
+  // A search by SKU or item name (design audit L3-24), kept in the address.
+  const query = searchParams.get("q") || "";
 
   // The list first; then, where the workspace has a forecast service, the
   // TimesFM line, so the list never waits for the model.
@@ -371,19 +380,23 @@ export default function ReorderListPage() {
 
   const rows = useMemo(() => {
     const all = list?.rows || [];
-    if (!supplierFilter) return all;
-    if (supplierFilter === NO_SUPPLIER) return all.filter((row) => !row.supplier);
-    return all.filter((row) => row.supplier?.id === supplierFilter);
-  }, [list, supplierFilter]);
-  // One page of the ranked rows; a new supplier filter starts at page 1.
-  const { page, pageRows, setPage } = usePagedRows(rows, PAGE_SIZE, supplierFilter);
+    const needle = query.trim().toLowerCase();
+    const bySupplier = !supplierFilter ? all : supplierFilter === NO_SUPPLIER ? all.filter((row) => !row.supplier) : all.filter((row) => row.supplier?.id === supplierFilter);
+    return needle ? bySupplier.filter((row) => row.sku.toLowerCase().includes(needle) || (row.itemName || "").toLowerCase().includes(needle)) : bySupplier;
+  }, [list, supplierFilter, query]);
+  // One page of the ranked rows; a new supplier filter or search starts at page 1.
+  const { page, pageRows, setPage } = usePagedRows(rows, PAGE_SIZE, `${supplierFilter}|${query}`);
 
-  const setSupplierFilter = (value: string) => {
+  const setParam = (key: string, value: string) => {
     const next = new URLSearchParams(searchParams);
-    if (value) next.set("supplier", value);
-    else next.delete("supplier");
+    if (value) next.set(key, value);
+    else next.delete(key);
     setSearchParams(next, { replace: true });
   };
+  const setSupplierFilter = (value: string) => setParam("supplier", value);
+  // An item with no reorder point opens the same dialog, as a row whose
+  // recorded reorder point is none (L3-09).
+  const noPointRow = (item: NoPointItem) => ({ ...item, unit: item.unit || "", reorderPoint: 0 }) as unknown as ReorderRow;
 
   const total = list?.scope.totalWarehouseCount ?? list?.scope.warehouseCount ?? 0;
   const scopeLabel = list?.scope.kind === "reader_warehouses" ? t.count("scopeReader", list.scope.warehouseCount ?? 0, { total }) : t("scopeAll");
@@ -438,6 +451,9 @@ export default function ReorderListPage() {
                 <p style={{ color: A.sub }}>{t("rule", { window: list.rule.windowDays, min: list.rule.minShipmentDays })}</p>
                 <p style={{ color: A.sub }} data-testid="reorder-list-horizon">{t("horizon")}</p>
                 <p style={{ color: A.sub }}>{t("units")}</p>
+                {list.rows.some((row) => row.orderUpTo) && (
+                  <p style={{ color: A.sub }} data-testid="reorder-list-order-up-to-rule">{t("orderUpToRule", { days: list.rows.find((row) => row.orderUpTo)?.orderUpTo?.reviewDays ?? 7 })}</p>
+                )}
                 {list.rows.some((row) => row.reorderPointSuggestion) && (
                   <p style={{ color: A.sub }} data-testid="reorder-list-suggestion-rule">{t("suggestionRule", { review: ruleReviewDays, window: list.rule.windowDays })}</p>
                 )}
@@ -460,11 +476,27 @@ export default function ReorderListPage() {
               <div data-testid="reorder-list-no-reorder-point">
                 <p>{t.count("noReorderPoint", list.noReorderPoint.count)}</p>
                 <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                  {list.noReorderPoint.items.map((item) => (
-                    <li key={item.itemId}>
-                      <Link to={itemHref(item.itemId)} className="font-semibold max-sm:inline-flex max-sm:min-h-9 max-sm:items-center" style={{ color: A.blue }}>{item.sku}</Link>
-                    </li>
-                  ))}
+                  {list.noReorderPoint.items.map((item) => {
+                    // A suggested reorder point to set from here (L3-09).
+                    const suggested = item.reorderPointSuggestion?.suggestedReorderPoint ?? null;
+                    return (
+                      <li key={item.itemId} className="max-sm:inline-flex max-sm:items-center max-sm:gap-1">
+                        <Link to={itemHref(item.itemId)} className="font-semibold max-sm:inline-flex max-sm:min-h-9 max-sm:items-center" style={{ color: A.blue }}>{item.sku}</Link>
+                        {suggested !== null && suggested > 0 && (
+                          <span data-testid={`reorder-no-point-suggestion-${item.sku}`} style={{ color: A.sub }}>
+                            {" "}({t("noPointSuggested", { value: withUnit(suggested, item.unit || "", t.language) })}
+                            {canSetReorderPoint && (
+                              <>
+                                {" · "}
+                                <button type="button" onClick={() => setSetting(noPointRow(item))} data-testid={`reorder-set-point-${item.sku}`} className="font-medium hover:underline max-sm:min-h-9" style={{ color: A.blue }}>{t("setReorderPoint")}</button>
+                              </>
+                            )}
+                            )
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
                   {list.noReorderPoint.count > list.noReorderPoint.items.length && (
                     <li>
                       <Link to={list.noReorderPoint.href} className="max-sm:inline-flex max-sm:min-h-9 max-sm:items-center" style={{ color: A.blue }}>{t("noReorderPointMore", { n: list.noReorderPoint.count - list.noReorderPoint.items.length })}</Link>
@@ -479,6 +511,19 @@ export default function ReorderListPage() {
           </Card>
 
           {list.rows.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <label className="flex items-center gap-2 text-xs">
+              <span className="font-semibold">{t("search")}</span>
+              <input
+                type="search"
+                data-testid="reorder-list-search"
+                value={query}
+                placeholder={t("searchPlaceholder")}
+                onChange={(event) => setParam("q", event.target.value)}
+                className="rounded-md border px-2 py-1 max-sm:h-9"
+                style={{ borderColor: A.border }}
+              />
+            </label>
             <label className="flex items-center gap-2 text-xs">
               <span className="font-semibold">{t("supplierFilter")}</span>
               <select
@@ -495,6 +540,7 @@ export default function ReorderListPage() {
                 <option value={NO_SUPPLIER}>{t("noSupplier")}</option>
               </select>
             </label>
+            </div>
           )}
 
           {rows.length === 0 ? (
@@ -615,6 +661,13 @@ export default function ReorderListPage() {
                               >
                                 {t("createRequest")}
                               </Link>
+                              {/* The level the request's quantity orders up to, and where it comes from (C3): an assumed level says so. */}
+                              {row.purchaseRequest.quantity !== null && row.orderUpTo?.level != null && (
+                                <div className={`mt-1 max-w-[9.25rem] ${small}`} style={{ color: A.sub }} data-testid={`reorder-order-up-to-${row.sku}`}>
+                                  {t(row.orderUpTo.source === "recorded" ? "orderUpToRecorded" : row.orderUpTo.source === "assumed" ? "orderUpToAssumed" : "orderUpToPoint", { level: withUnit(row.orderUpTo.level, row.unit, t.language), days: row.orderUpTo.reviewDays })}
+                                  {row.lotSize ? `, ${t("inLots", { lot: withUnit(row.lotSize, row.unit, t.language) })}` : ""}
+                                </div>
+                              )}
                               {/* The quantity the request opens with, when the shortfall is raised to the supplier's minimum. */}
                               {row.purchaseRequest.raisedToMinimum && row.purchaseRequest.quantity !== null && (
                                 <div className={`mt-1 max-w-[9.25rem] ${small}`} style={{ color: A.sub }} data-testid={`reorder-order-minimum-${row.sku}`}>

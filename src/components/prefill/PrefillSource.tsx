@@ -30,7 +30,7 @@ const REF_LABELS: Record<string, readonly [string, string]> = {
   "assistant:due": ["Date from the assistant", "来自助手的日期"],
   "assistant:supplier": ["Supplier from the assistant", "来自助手的供应商"],
   "assistant:item": ["Item from the assistant", "来自助手的物料"],
-  "reorder_list:gap": ["Shortfall from the reorder list", "来自补货清单的缺口"],
+  "reorder_list:gap": ["Quantity from the reorder list", "来自补货清单的数量"],
   "reorder_list:reason": ["Reason from the reorder list", "来自补货清单的原因"],
   "reorder_list:due": ["Date from the reorder list", "来自补货清单的日期"],
   "reorder_list:supplier": ["Preferred supplier from the reorder list", "来自补货清单的首选供应商"],

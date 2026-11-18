@@ -154,6 +154,10 @@ test('each reorder list row gets a suggestion, and the rule row is left as it wa
   assert.deepEqual([bySku.A.suggestedReorderPoint, bySku.A.coverDays, bySku.A.recordedBelow], [210, 21, true])
   assert.deepEqual([bySku.B.suggestedReorderPoint, bySku.B.recordedBelow], [210, false])
   assert.deepEqual([bySku.C.suggestedReorderPoint, bySku.C.reason, bySku.C.recordedBelow, bySku.C.coverDays], [null, 'not_enough_history', false, null])
+  // Marked below only when more than 30% below the suggestion (design audit
+  // L7-21): 147 is 70% of 210 and is not; 146 is.
+  const recordedAt = (point) => attachReorderPointSuggestions(buildReorderList({ allocationRows, items: items.map((item) => (item.sku === 'A' ? { ...item, reorderPoint: point } : item)), shipmentLines, supplierLinks, suppliers, today, timeZone }), shipmentLines).rows.find((row) => row.sku === 'A')?.reorderPointSuggestion.recordedBelow
+  assert.deepEqual([recordedAt(147), recordedAt(146)], [false, true])
 })
 
 const pick = (result) => [result.suggestedReorderPoint, result.reason, result.shipmentDays]
