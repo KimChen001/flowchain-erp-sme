@@ -11,7 +11,7 @@ const zh: Record<string, string> = {
   'Tax identifiers depend on the supplier’s country.': '税务登记信息取决于供应商所在国家。', 'Supplier saved': '供应商已保存',
   'Enter a supplier code.': '请填写供应商编号。', 'Enter a supplier name.': '请填写供应商名称。', 'Enter a valid email address.': '请填写有效邮箱。',
   'Lead time must be a whole number of days, zero or greater.': '提前期必须为零或正整数天。', 'Choose a valid currency.': '请选择有效币种。',
-  'Check the highlighted fields.': '请检查标记的字段。', 'This supplier code is already in use.': '该供应商编号已被使用。',
+  'Check the highlighted fields.': '请检查标记的字段。', "Changing a supplier's bank details needs the Manage supplier bank details permission.": '修改供应商银行信息需要“管理供应商银行信息”权限。', 'This supplier code is already in use.': '该供应商编号已被使用。',
   'This supplier changed. Reopen it and try again.': '供应商已被修改，请重新打开后再试。', 'Could not save supplier. Please try again.': '供应商保存失败，请重试。',
   'Could not load workspace currency. Choose a currency before saving.': '工作区币种加载失败，请在保存前选择币种。', 'Choose currency': '选择币种',
   'Not recorded': '未记录', 'Choose one of the workspace payment terms.': '请选择工作区中的付款条款。',

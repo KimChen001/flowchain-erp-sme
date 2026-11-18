@@ -17,7 +17,13 @@ const currencies = new Set(Intl.supportedValuesOf('currency'));
 // its stored values and a new one gets none. The fields they sent are listed
 // in restrictedFieldsKept for the audit row. A masked value from any writer
 // also keeps the stored value.
-export function supplierInputIssues(input = {}, old = null, { sensitiveFieldsWritable = false } = {}) {
+// A supplier's bank details change only for a writer with
+// master_data.supplier.bank.manage (bankFieldsWritable false refuses a
+// change; a caller that does not say, the import of new suppliers, is not
+// asked). Sending the stored or masked value is no change (design audit C4).
+export const SUPPLIER_BANK_FIELDS = Object.freeze(['bankName', 'bankAccountName', 'bankAccountNumber']);
+
+export function supplierInputIssues(input = {}, old = null, { sensitiveFieldsWritable = false, bankFieldsWritable } = {}) {
   const meta = old?.metadata && typeof old.metadata === 'object' ? old.metadata : {};
   // The code is the key imports match on, so like a SKU or a customer code
   // it cannot change once the supplier exists (design audit L4-17).
@@ -45,6 +51,11 @@ export function supplierInputIssues(input = {}, old = null, { sensitiveFieldsWri
   const issues = [];
   const issue = (field, issueCode, message) => issues.push({ field, code: issueCode, message });
   if (codeChanged) issue('supplierCode', 'CODE_LOCKED', 'The supplier code cannot be changed once the supplier exists.');
+  if (bankFieldsWritable === false) {
+    for (const key of SUPPLIER_BANK_FIELDS) {
+      if (String(next[key] ?? '') !== String(meta[key] ?? '')) issue(key, 'BANK_DETAILS_PERMISSION_REQUIRED', "Changing a supplier's bank details needs the Manage supplier bank details permission.");
+    }
+  }
   if (!code) issue('supplierCode', 'CODE_REQUIRED', 'Enter a supplier code.');
   if (!name) issue('supplierName', 'NAME_REQUIRED', 'Enter a supplier name.');
   if (!['active', 'inactive', 'draft'].includes(status)) issue('status', 'STATUS_INVALID', 'Choose a valid status.');
@@ -68,7 +79,7 @@ export async function saveSupplierMaster(prisma, id, input, actorId, scope) {
       if (id && !old) throw fail(404, 'NOT_FOUND', 'Supplier not found.');
       const meta = old?.metadata && typeof old.metadata === 'object' ? old.metadata : {};
       if (old && Number(input.expectedVersion) !== Number(meta.version || 1)) throw fail(409, 'VERSION_CONFLICT', 'This supplier changed. Reopen it and try again.');
-      const { issues, values: { code, name, status, metadata: next }, restrictedFieldsKept } = supplierInputIssues(input, old, { sensitiveFieldsWritable: scope.sensitiveFieldsWritable === true });
+      const { issues, values: { code, name, status, metadata: next }, restrictedFieldsKept } = supplierInputIssues(input, old, { sensitiveFieldsWritable: scope.sensitiveFieldsWritable === true, bankFieldsWritable: scope.bankFieldsWritable });
       if (!next.defaultCurrency) next.defaultCurrency = (await tx.tenant.findUnique({ where: { id: scope.tenantId } })).currency;
       const currencyIssue = supplierCurrencyIssue(next.defaultCurrency);
       if (currencyIssue) issues.push(currencyIssue);

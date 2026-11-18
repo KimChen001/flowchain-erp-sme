@@ -454,7 +454,7 @@ export function todayWorkResponseRows(items, { limit = TODAY_WORK_LIMIT, perKind
 // sources: what the reader may read, already scoped (see buildHomeOverview).
 // The rows that wait for an approval, and the permission that gives it.
 export const APPROVAL_ROW_PERMISSIONS = Object.freeze({
-  purchase_request_to_approve: 'procurement.purchase_order.approve',
+  purchase_request_to_approve: 'procurement.purchase_request.approve',
   purchase_order_to_approve: 'procurement.purchase_order.approve',
   bill_to_approve: 'finance.supplier_invoice.approve',
 })

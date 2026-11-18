@@ -217,7 +217,15 @@ test('items, customers and item suppliers can be created and edited in PostgreSQ
     const blindNew = await asSpecialist('POST', '/api/master-data/suppliers', { supplierCode: 'SUP-BLIND', supplierName: 'Blind Supplier', defaultCurrency: 'USD', bankAccountNumber: '999900001111' })
     assert.equal(blindNew.status, 201, JSON.stringify(blindNew.payload))
     assert.equal(Object.hasOwn((await prisma.supplier.findFirst({ where: { tenantId: tenantA, code: 'SUP-BLIND' } })).metadata, 'bankAccountNumber'), false)
-    // The manager, who reads them, can change them.
+    // The manager reads them, but changing the bank details needs
+    // master_data.supplier.bank.manage, which a new workspace's operations
+    // manager does not have (design audit C4): refused, field by field.
+    const managerRefused = await call('PATCH', '/api/master-data/suppliers/SUP-A', { bankAccountNumber: '555500002222', expectedVersion: blind.payload.supplier.version })
+    assert.equal(managerRefused.status, 422, JSON.stringify(managerRefused.payload))
+    assert.deepEqual(managerRefused.payload.details.map((issue) => [issue.field, issue.code]), [['bankAccountNumber', 'BANK_DETAILS_PERMISSION_REQUIRED']])
+    // Once an administrator grants it to the manager's role, the change is saved.
+    const managerRole = await prisma.tenantRole.findFirst({ where: { tenantId: tenantA, roleKey: 'operations-manager' } })
+    await prisma.tenantRolePermission.create({ data: { id: `${tenantA}-bank-grant`, tenantId: tenantA, roleId: managerRole.id, permissionCode: 'master_data.supplier.bank.manage' } })
     const managerEdit = await call('PATCH', '/api/master-data/suppliers/SUP-A', { bankAccountNumber: '555500002222', expectedVersion: blind.payload.supplier.version })
     assert.equal(managerEdit.status, 200, JSON.stringify(managerEdit.payload))
     assert.equal((await prisma.supplier.findUnique({ where: { id: 'SUP-A' } })).metadata.bankAccountNumber, '555500002222')
@@ -419,7 +427,8 @@ test('the master data permissions migration grants the new codes to existing def
     await client.query(migration)
 
     const after = await grants()
-    const expected = Object.fromEntries(defaultRoleTemplates.map((template) => [template.roleKey, template.permissions.filter((code) => code.startsWith('master_data.')).sort()]).sort(([a], [b]) => a.localeCompare(b)))
+    // The supplier bank code came later, with its own migration (C4), so this one does not grant it.
+    const expected = Object.fromEntries(defaultRoleTemplates.map((template) => [template.roleKey, template.permissions.filter((code) => code.startsWith('master_data.') && code !== 'master_data.supplier.bank.manage').sort()]).sort(([a], [b]) => a.localeCompare(b)))
     assert.deepEqual(masterDataGrants(after.filter((row) => row.tenantId === tenantExisting)), expected)
     assert.deepEqual(masterDataGrants(after.filter((row) => row.tenantId === tenantCustomOnly)), {})
     // Every other grant is untouched, and the new ones have deterministic ids.

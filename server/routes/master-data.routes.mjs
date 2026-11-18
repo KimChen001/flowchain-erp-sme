@@ -1,4 +1,4 @@
-import { assertAuthorized } from '../auth/authorization-service.mjs'
+import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 import { selectMasterData } from '../domain/master-data-selectors.mjs'
 import { maskReferencePrice, maskSupplier, masterDataReadAccess } from '../domain/master-data-read-access.mjs'
 import { PilotIdentityError, hasWarehouseAccess, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
@@ -88,7 +88,11 @@ export async function handleMasterDataRoute(ctx) {
   const pricesFor = async (rows) => { const visible = await readAccess(); return (rows || []).map((row) => maskReferencePrice(row, visible)) }
   // A supplier write changes the registration, tax and bank details only when
   // the writer may read them (supplierInputIssues in supplier-master-command).
-  const supplierWriteScope = async () => tenantScope({ sensitiveFieldsWritable: (await readAccess()).partner === true })
+  // Its bank details also need master_data.supplier.bank.manage (design audit C4).
+  const supplierWriteScope = async () => tenantScope({
+    sensitiveFieldsWritable: (await readAccess()).partner === true,
+    bankFieldsWritable: can({ actor: await provisionedActor(), permission: 'master_data.supplier.bank.manage', tenantId: ctx.identity.tenantId }),
+  })
 
   const selectorMatch = url.pathname.match(/^\/api\/master-data\/(departments|currencies|units|commodities|warehouses|payment-terms|tax-codes)\/select$/)
   if (req.method === 'GET' && selectorMatch) {
