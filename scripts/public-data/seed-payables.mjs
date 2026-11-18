@@ -5,22 +5,30 @@
 //
 //   as_ordered, price_above_order  created from the posted receipt, submitted
 //                                  and matched; a matched invoice is approved,
-//                                  which records its payable
+//                                  which records its payable. A price above
+//                                  the order within the match tolerance
+//                                  matches (design audit B2)
 //   dated_before_receipt           recorded against the purchase order on its
 //                                  own day and submitted, linked to the
 //                                  receipt on the receipt day, then matched
 //                                  and approved
 //   short_delivery                 recorded against the purchase order for the
-//                                  full ordered quantity and submitted, linked
-//                                  to the short receipt and matched (a
-//                                  quantity exception); the buyer closes the
-//                                  rest of the order the same day
+//                                  full ordered quantity and submitted; the
+//                                  buyer closes the rest of the order (before
+//                                  the match: FlowChain does not close an
+//                                  order with a difference nobody reviewed);
+//                                  then linked to the short receipt and
+//                                  matched (a quantity exception)
 //
-// An invoice with a difference stays at the match, unapproved, so it has no
-// payable and is not paid. Then every paid invoice gets its payment on its due
-// date. Last, each record is labelled assumed in its metadata and dated by the
-// plan, as the documents before it are (the commands stamp the seed's own
-// clock on createdAt).
+// An invoice with a difference waits at the match, unapproved, until its
+// review day (design audit L7-14): a second person reviews each difference
+// through the app's own command (a price difference approved, a quantity
+// difference accepted at the received quantity) and approves the invoice,
+// which records its payable (without what was not received). One whose
+// review day is not before the seed day stays open, with no payable. Then
+// every paid invoice gets its payment on its due date. Last, each record is
+// labelled assumed in its metadata and dated by the plan, as the documents
+// before it are (the commands stamp the seed's own clock on createdAt).
 import { createOperationalFinanceCommandService } from '../../server/domain/operational-finance-command-service.mjs'
 import { createPaymentRecordCommandService } from '../../server/domain/payment-record-command-service.mjs'
 import { createDbProcurementCommandService } from '../../server/domain/procurement-db-command-service.mjs'
@@ -32,11 +40,19 @@ export const PAYABLES_PERMISSIONS = [
 
 const money = (pence) => (pence / 100).toFixed(2)
 const pad = (value) => String(value).padStart(3, '0')
+// The plan's review decision for each difference: a price difference is
+// approved; a quantity difference is accepted at the received quantity.
+const REVIEW_REASONS = Object.freeze({
+  approved: 'The supplier confirmed the price change; accepted for this delivery [assumed].',
+  accept_received: 'The supplier will not send the rest; pay for what was received [assumed].',
+})
 
 // plan: a UCI plan with payables. purchaseOrderIds[position] is the id the
 // seed gave plan.purchasing.orders[position]; supplierIdOf(key) a supplier's
 // id. retrying(work) runs a command again after a serializable conflict.
-export async function seedSupplierInvoices(prisma, { plan, env, identity, approver = identity, tenantId, calendar, purchaseOrderIds, supplierIdOf, metadata, retrying, log = () => {} }) {
+// approver: a second person who may approve supplier invoices; reviewer: a
+// second person who may review match differences.
+export async function seedSupplierInvoices(prisma, { plan, env, identity, approver = identity, reviewer = approver, tenantId, calendar, purchaseOrderIds, supplierIdOf, metadata, retrying, log = () => {} }) {
   const { at, isoDay } = calendar
   const offset = plan.offsetOf
   const currency = plan.profile.currency
@@ -49,6 +65,7 @@ export async function seedSupplierInvoices(prisma, { plan, env, identity, approv
   const context = { identity }
   // A second person approves what the first submitted (design audit C4).
   const approverContext = { identity: approver }
+  const reviewerContext = { identity: reviewer }
   const itemOf = new Map(plan.items.map((item) => [item.key, item]))
   const recorded = []
   const started = Date.now()
@@ -79,9 +96,20 @@ export async function seedSupplierInvoices(prisma, { plan, env, identity, approv
     const id = result.invoice.id
     step('submitted', invoice.day, '10:05')
     result = await retrying(() => finance.submitSupplierInvoice(id, { idempotencyKey: key('submit'), expectedVersion: result.invoice.version }, context))
+    // A short delivery: the buyer closes the rest of the order before the
+    // match, while no difference of it is open (design audit B2).
+    if (invoice.rule === 'short_delivery') {
+      step('closed', invoice.day, '10:30')
+      const { version } = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: poId }, select: { version: true } })
+      const sku = itemOf.get(order.closed.itemKey).sku
+      await retrying(() => procurement.closePurchaseOrder(poId, {
+        idempotencyKey: key('close-order'), expectedVersion: version,
+        reason: `The supplier delivered ${order.closed.missing} fewer ${sku} than ordered and will not send the rest [assumed].`,
+      }, context))
+    }
     // A bill recorded against the order is linked to the receipt on the
     // later of its own day and the receipt day (after the 07:00 posting).
-    const linkDay = Math.max(invoice.day, invoice.receiptDay)
+    const linkDay = invoice.matchDay
     if (invoice.recordedAgainstOrder) {
       step('linked', linkDay, '11:00')
       const version = result.invoice.version
@@ -93,20 +121,28 @@ export async function seedSupplierInvoices(prisma, { plan, env, identity, approv
     // The app's own match must agree with the rule that made the invoice.
     if (result.invoice.status !== invoice.match) throw new Error(`Supplier invoice ${invoice.number} (${invoice.rule}) matched as ${result.invoice.status}, not ${invoice.match}.`)
     let payable = null
+    const reviewed = []
     if (invoice.match === 'matched') {
       step('approved', linkDay, invoice.recordedAgainstOrder ? '11:10' : '10:15')
       payable = (await approve(finance, id, result.invoice.version, { prisma, key, context: approverContext, retrying, receiptId, poId })).payable
+    } else if (invoice.resolution) {
+      // The review day: each open difference reviewed by the second person,
+      // then the invoice approved.
+      step('reviewed', invoice.resolution.day, '10:00')
+      const open = await prisma.financeMatchException.findMany({ where: { tenantId, supplierInvoiceId: id, status: 'open' }, orderBy: { id: 'asc' }, select: { id: true, version: true, exceptionType: true } })
+      for (const exception of open) {
+        await retrying(() => finance.reviewMatchException(exception.id, {
+          idempotencyKey: key(`review:${exception.id}`), expectedVersion: exception.version, decision: invoice.resolution.decision, resolution: REVIEW_REASONS[invoice.resolution.decision],
+        }, reviewerContext))
+        reviewed.push(exception.id)
+      }
+      const { version } = await prisma.supplierInvoice.findUniqueOrThrow({ where: { id }, select: { version: true } })
+      step('approved', invoice.resolution.day, '10:15')
+      payable = (await approve(finance, id, version, { prisma, key, context: approverContext, retrying, receiptId, poId })).payable
     }
-    if (invoice.rule === 'short_delivery') {
-      step('closed', linkDay, '11:20')
-      const { version } = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: poId }, select: { version: true } })
-      const sku = itemOf.get(order.closed.itemKey).sku
-      await retrying(() => procurement.closePurchaseOrder(poId, {
-        idempotencyKey: key('close-order'), expectedVersion: version,
-        reason: `The supplier delivered ${order.closed.missing} fewer ${sku} than ordered and will not send the rest [assumed].`,
-      }, context))
-    }
-    recorded.push({ invoice, id, payable, times })
+    // The app's payable must be what the plan pays.
+    if (payable && Math.round(Number(payable.originalAmount) * 100) !== invoice.payablePence) throw new Error(`Supplier invoice ${invoice.number} has a payable of ${payable.originalAmount}, not ${money(invoice.payablePence)}.`)
+    recorded.push({ invoice, id, payable, times, reviewed })
     if ((position + 1) % 50 === 0) log(`uci: ${position + 1}/${plan.payables.invoices.length} supplier invoices recorded (${Math.round((Date.now() - started) / 1000)} s)`)
   }
 
@@ -118,21 +154,22 @@ export async function seedSupplierInvoices(prisma, { plan, env, identity, approv
     entry.times.paid = clock
     const result = await retrying(() => payments.recordPayment('payable', payable.id, {
       idempotencyKey: `public-data:uci:supplier-payment:${invoice.number}`, expectedVersion: payable.version, paymentDate: isoDay(offset(invoice.paidDay)),
-      amount: money(invoice.totalPence), currency, method: 'other', reference: `Bank transfer ${invoice.number}`, note: 'Paid on the due date [assumed].',
+      amount: money(invoice.payablePence), currency, method: 'other', reference: `Bank transfer ${invoice.number}`, note: 'Paid on the due date [assumed].',
     }, context))
     entry.paymentId = result.payment.id
     paid += 1
   }
 
   // Labels and business times.
-  for (const { invoice, id, payable, paymentId, times } of recorded) {
+  for (const { invoice, id, payable, paymentId, times, reviewed } of recorded) {
     const order = plan.purchasing.orders[invoice.orderPosition]
     const changed = invoice.changedLine === null ? null : invoice.lines[invoice.changedLine]
     const label = {
       ...metadata, assumed: true, paymentTermsAssumed: terms, invoiceRule: invoice.rule,
-      ...(invoice.rule === 'price_above_order' ? { priceAboveOrder: { sku: itemOf.get(changed.itemKey).sku, orderPrice: money(changed.orderPricePence), invoicePrice: money(changed.unitPricePence), percentRule: invoice.percent } } : {}),
+      ...(invoice.rule === 'price_above_order' ? { priceAboveOrder: { sku: itemOf.get(changed.itemKey).sku, orderPrice: money(changed.orderPricePence), invoicePrice: money(changed.unitPricePence), percentRule: invoice.percent, heldAtMatch: invoice.match === 'exception' } } : {}),
       ...(invoice.rule === 'short_delivery' ? { shortDelivery: { sku: itemOf.get(changed.itemKey).sku, ordered: changed.quantity, received: changed.received } } : {}),
       ...(invoice.rule === 'dated_before_receipt' ? { datedBeforeReceipt: { receiptDate: isoDay(offset(invoice.receiptDay)) } } : {}),
+      ...(invoice.resolution ? { differenceReviewedAssumed: { decision: invoice.resolution.decision, on: isoDay(offset(invoice.resolution.day)) } } : {}),
       ...(invoice.payment === 'overdue' ? { leftUnpaidAssumed: true } : {}),
     }
     await prisma.supplierInvoice.update({ where: { id }, data: { metadata: label, createdAt: times.created } })
@@ -140,6 +177,7 @@ export async function seedSupplierInvoices(prisma, { plan, env, identity, approv
     await prisma.financeMatchException.updateMany({ where: { tenantId, supplierInvoiceId: id }, data: { createdAt: times.matched } })
     const audits = [['supplier_invoice_created', times.created], ['supplier_invoice_submitted', times.submitted], ['supplier_invoice_receipt_linked', times.linked], ['supplier_invoice_matched', times.matched], ['supplier_invoice_approved', times.approved]]
     for (const [action, when] of audits) if (when) await prisma.auditLog.updateMany({ where: { tenantId, entityId: id, action }, data: { createdAt: when } })
+    if (reviewed.length) await prisma.auditLog.updateMany({ where: { tenantId, entityId: { in: reviewed }, action: 'match_exception_reviewed' }, data: { createdAt: times.reviewed } })
     if (payable) await prisma.payableObligation.update({ where: { id: payable.id }, data: { createdAt: times.approved, metadata: { ...metadata, assumed: true, paymentTermsAssumed: terms } } })
     if (paymentId) {
       await prisma.paymentRecord.update({ where: { id: paymentId }, data: { createdAt: times.paid, metadata: { ...metadata, assumed: true, assumedPaidOn: isoDay(offset(invoice.paidDay)) } } })

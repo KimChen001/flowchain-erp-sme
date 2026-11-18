@@ -598,6 +598,37 @@ export const matchRuleOf = (match) =>
 export const quantityApprovalRefused = (match, exceptionType) =>
   exceptionType === "quantity" && matchRuleOf(match) === THREE_WAY_MATCH_RULE;
 
+// Whether a line's price difference is held at the match
+// (THREE_WAY_MATCH_RULE), in units of 0.0001: the difference over the line
+// (quantity × (invoice price − PO price)) against the larger of the unit
+// price tolerances over the quantity (a percentage of the PO line amount, or
+// an amount per unit) and the line amount tolerance. With the defaults that
+// is the larger of 2% of the line and 1 currency unit.
+export function linePriceDifferenceHeld({ invoiceQuantity, poPrice, invoicePrice, pricePercentageTolerance, priceAbsoluteTolerance, amountTolerance }) {
+  const expectedAmount = multiply(invoiceQuantity, poPrice);
+  const atInvoicePrice = multiply(invoiceQuantity, invoicePrice);
+  const lineThreshold = larger(
+    multiply(abs(expectedAmount), pricePercentageTolerance) / 100n,
+    multiply(invoiceQuantity, priceAbsoluteTolerance),
+    amountTolerance,
+  );
+  return invoicePrice !== poPrice && abs(atInvoicePrice - expectedAmount) > lineThreshold;
+}
+
+// The same for decimal values, under a workspace's review settings (the
+// defaults when it saved none): the public-data seed plans its invoice
+// differences with it (scripts/public-data/plan.mjs).
+export function priceDifferenceHeld({ quantity, orderPrice, invoicePrice, review = mergeOperationalSettings().review }) {
+  return linePriceDifferenceHeld({
+    invoiceQuantity: decimalUnits(String(quantity)),
+    poPrice: decimalUnits(String(orderPrice)),
+    invoicePrice: decimalUnits(String(invoicePrice)),
+    pricePercentageTolerance: toleranceUnits(review.pricePercentageTolerance),
+    priceAbsoluteTolerance: toleranceUnits(review.priceAbsoluteTolerance),
+    amountTolerance: toleranceUnits(review.amountTolerance),
+  });
+}
+
 // Statuses of other invoices whose lines count against a purchase-order
 // line at the match.
 const MATCH_CLAIMING_STATUSES = ["matching", "exception", "matched", "approved", "held"];
@@ -808,16 +839,7 @@ export async function buildSupplierMatchPlan({
         actualValue: decimalString(invoiceQuantity),
         varianceValue: decimalString(quantityVariance),
       });
-    // The price difference over the line, against the larger of: the unit
-    // price tolerances over the quantity (a percentage of the PO line amount,
-    // or an amount per unit) and the line amount tolerance. With the defaults
-    // that is the larger of 2% of the line and 1 currency unit.
-    const lineThreshold = larger(
-      multiply(abs(expectedAmount), pricePercentageTolerance) / 100n,
-      multiply(invoiceQuantity, priceAbsoluteTolerance),
-      amountTolerance,
-    );
-    if (priceVariance !== ZERO && abs(atInvoicePrice - expectedAmount) > lineThreshold)
+    if (linePriceDifferenceHeld({ invoiceQuantity, poPrice, invoicePrice, pricePercentageTolerance, priceAbsoluteTolerance, amountTolerance }))
       lineExceptions.push({
         exceptionType: "price",
         expectedValue: decimalString(poPrice),

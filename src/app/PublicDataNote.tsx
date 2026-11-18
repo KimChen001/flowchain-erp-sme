@@ -11,7 +11,7 @@ export type PublicDataNote = {
   window: { first: string; last: string };
   shiftDays: number;
   counts: Partial<Record<"items" | "suppliers" | "customers" | "salesOrders" | "salesOrderLines" | "purchaseOrders" | "openPurchaseOrders" | "customerInvoices" | "supplierInvoices" | "cancellations", number>>;
-  assumptions: Partial<Record<"leadTimeDays" | "reviewDays" | "holdingRatePercent" | "shortageToHolding" | "paymentTermsDays" | "purchasePricePercent", number>> & {
+  assumptions: Partial<Record<"leadTimeDays" | "reviewDays" | "holdingRatePercent" | "shortageToHolding" | "paymentTermsDays" | "purchasePricePercent" | "calibrationDays", number>> & {
     // UCI: the rules the supplier invoices and their payments follow.
     supplierInvoices?: Partial<Record<SupplierInvoiceRule, number>>;
   };
@@ -21,20 +21,22 @@ export type PublicDataNote = {
   sceneSuppliers: string[];
 };
 
-type SupplierInvoiceRule = "delayDays" | "priceAbovePercent" | "priceAboveFrom" | "priceAboveTo" | "shortDeliveryPercent" | "shortByPercent" | "beforeReceiptPercent" | "beforeReceiptFrom" | "beforeReceiptTo" | "unpaidPercent" | "unpaidWithinDays";
+type SupplierInvoiceRule = "delayDays" | "priceAbovePercent" | "priceAboveFrom" | "priceAboveTo" | "shortDeliveryPercent" | "shortByPercent" | "beforeReceiptPercent" | "beforeReceiptFrom" | "beforeReceiptTo" | "resolveFrom" | "resolveTo" | "unpaidPercent" | "unpaidWithinDays";
 
 // The seed's supplier invoice rules (PUBLIC_DATA_SUPPLIER_INVOICE_RULES in
 // scripts/public-data/plan.mjs), for any rule a note leaves out. A workspace
 // seeded before 2026-11-12 has no supplier invoices and shows no rules.
 const SUPPLIER_INVOICE_RULES: Record<SupplierInvoiceRule, number> = {
   delayDays: 5, priceAbovePercent: 5, priceAboveFrom: 2, priceAboveTo: 5, shortDeliveryPercent: 3, shortByPercent: 5,
-  beforeReceiptPercent: 2, beforeReceiptFrom: 1, beforeReceiptTo: 3, unpaidPercent: 10, unpaidWithinDays: 60,
+  beforeReceiptPercent: 2, beforeReceiptFrom: 1, beforeReceiptTo: 3, resolveFrom: 3, resolveTo: 14, unpaidPercent: 10, unpaidWithinDays: 60,
 };
 
-// The days of demand the seed averages for safety stock, reorder points and
-// minimum orders (THRESHOLD_WINDOW_DAYS in scripts/public-data/plan.mjs); the
-// note does not carry it.
-const THRESHOLD_WINDOW_DAYS = 90;
+// The calibration period of a note that does not say (calibrationDays in
+// PUBLIC_DATA_WORKSPACE_ASSUMPTIONS, scripts/public-data/plan.mjs), and the
+// supplier tier rule (PUBLIC_DATA_TIER_RULES there); the note does not carry
+// the tier rule.
+const CALIBRATION_DAYS = 90;
+const TIER_RULES = { daysBefore: 40, tier1Percent: 70, tier2Percent: 90 };
 const SATURDAY = 6;
 
 // One group of the details: a short heading over a list.
@@ -89,15 +91,13 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
   const last = note.window.last;
   // Sentences side by side: a space in English, none after a Chinese full stop.
   const join = (...parts: string[]) => parts.filter(Boolean).join(language === "en-US" ? " " : "");
-  // The seed's stock rules (itemThresholds and simulatePurchasing in
-  // scripts/public-data/plan.mjs): safety stock = review days, reorder point
-  // = lead time + review days of average demand; history orders at reorder
-  // point + safety stock.
+  // The seed's stock rules (thresholdsAsOf and simulatePurchasing in
+  // scripts/public-data/plan.mjs): the reorder list's own suggestion over
+  // lead time + review days, the app's order-up-to default, from the days
+  // before each review; the calibration period for the start.
   const cover = leadTimeDays + reviewDays;
-  const stockRules = {
-    leadTimeDays, reviewDays, cover, last, base: cover + reviewDays, window: THRESHOLD_WINDOW_DAYS,
-    times: reviewDays > 0 ? formatNumber(Math.round((cover / reviewDays) * 10) / 10) : "—",
-  };
+  const calibrationDays = note.assumptions.calibrationDays ?? CALIBRATION_DAYS;
+  const stockRules = { leadTimeDays, reviewDays, cover, last, calibrationDays };
   // Dates move by whole days, so weekdays move by shiftDays mod 7.
   const weekdayShift = ((note.shiftDays % 7) + 7) % 7;
   const weekdays = weekdayShift === 0
@@ -134,13 +134,16 @@ export function PublicDataNoteBanner({ note, reopen }: { note: PublicDataNote; r
                 <li>{t(note.dataset === "m5" ? "publicData.m5Items" : "publicData.uciItems")}</li>
                 <li data-testid="public-data-note-weekdays">{weekdays}</li>
                 <li>{t("publicData.dates")}</li>
+                {note.dataset === "uci" && <li data-testid="public-data-note-open-sales">{t("publicData.uciOpenSales")}</li>}
               </NoteGroup>
               <NoteGroup title={t("publicData.groupStock")} testId="public-data-note-stock">
                 <li>{t(note.dataset === "m5" ? "publicData.m5Suppliers" : "publicData.uciSuppliers")}</li>
+                <li data-testid="public-data-note-tiers">{t("publicData.tiers", TIER_RULES)}</li>
                 <li>{join(t("publicData.deliveries", stockRules), note.dataset === "uci" ? t("publicData.deliveriesExceptions") : "")}</li>
                 <li>{join(t("publicData.thresholds", stockRules), t("publicData.belowSuggestion"))}</li>
                 <li>{t("publicData.lookAhead", stockRules)}</li>
                 <li>{t("publicData.history", stockRules)}</li>
+                <li data-testid="public-data-note-requests">{t("publicData.requests")}</li>
                 <li>{join(t("publicData.reviewDay"), t("publicData.appRule"))}</li>
               </NoteGroup>
               <NoteGroup title={t("publicData.groupMoney")} testId="public-data-note-money">
