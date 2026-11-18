@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ElementType, ReactNode } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
-import { AlertCircle, AlertTriangle, CheckCircle2, Coins, FileMinus, FileText, Inbox, Info, MessageSquareWarning, PauseCircle, Plus, Send, ShieldCheck, Wallet } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Coins, FileText, Inbox, Info, MessageSquareWarning, PauseCircle, Plus, Send, ShieldCheck, Wallet } from "lucide-react";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
@@ -147,7 +147,6 @@ const LANDING_COPY = {
   matchExceptions: ["Supplier invoices held by a match exception: a price or quantity differs from the PO or receipt", "因匹配例外被扣住的采购发票：价格或数量与采购订单、收货不一致"],
   awaitingIssue: ["Approved, not yet sent to the customer", "已批准，尚未开具给客户"],
   disputedReceivables: ["The customer has raised a dispute", "客户提出了争议"],
-  supplierCredits: ["Raised from posted supplier returns", "由已过账的供应商退货生成"],
   customerCredits: ["Raised from posted customer returns", "由已过账的客户退货生成"],
   otherItems: ["Other items", "其他事项"],
   // One line for the currency, in place of the old currency card.
@@ -397,7 +396,6 @@ export function FinanceLanding() {
     ["supplierInvoicesAwaitingMatch", t("finance.awaitingMatch"), say("awaitingMatch"), "/app/procurement/bills?status=submitted", Inbox, A.orange],
     ["customerInvoicesAwaitingIssue", t("finance.awaitingIssue"), say("awaitingIssue"), "/app/sales/invoices?status=approved", Send, A.blue],
     ["disputedReceivables", t("finance.disputedReceivables"), say("disputedReceivables"), "/app/finance/receivables?disputeStatus=open", MessageSquareWarning, A.orange],
-    ["supplierCreditMemos", t("finance.supplierCredits"), say("supplierCredits"), "/app/finance/credits", FileMinus, A.purple],
     ["customerCreditNotes", t("finance.customerCredits"), say("customerCredits"), "/app/finance/customer-credit-notes", FileText, A.purple],
   ] as const;
   const currencyLine = currencies.length > 1

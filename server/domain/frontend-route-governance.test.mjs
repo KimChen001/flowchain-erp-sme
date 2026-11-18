@@ -29,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 183);
+  assert.equal(routes.length, 158);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -46,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    183,
+    158,
   );
   assert.throws(
     () =>
@@ -254,7 +254,6 @@ test("hidden and searchable route projections respect classifications", () => {
     "settings:advanced",
     "finance:reconciliation",
     "finance:settlement",
-    "forecast:mrp",
     "imports:failed",
     "procurement:invoice-detail",
     "procurement:match-detail",
@@ -367,7 +366,7 @@ test("legacy redirects and canonical operational deep links remain exact", () =>
   )) {
     assert.ok(byId(route.canonicalReplacement));
   }
-  assert.equal(byId("imports").canonicalReplacement, "universal-intake");
+  assert.equal(byId("imports").canonicalReplacement, "master-data:import");
   for (const id of [
     "imports:pilot",
     "imports:templates",
@@ -743,5 +742,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /183\/183 frontend route stability audit/);
+  assert.match(matrix, /158\/158 frontend route stability audit/);
 });

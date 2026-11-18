@@ -136,8 +136,12 @@ test('every finance overview card counts the rows of the list it opens', async (
     customerCreditNotes: ['/app/finance/customer-credit-notes', () => read(o2c.listCustomerCreditNotes, {})],
   }
   assert.deepEqual(Object.keys(landing.cards).sort(), Object.keys(cards).sort(), 'every card is checked')
+  // Supplier credit notes come only from supplier returns, which are off, so
+  // the overview shows no card for them (design audit W-07); the count stays.
+  const hidden = new Set(['supplierCreditMemos'])
   for (const [card, [link, list]] of Object.entries(cards)) {
-    assert.ok(page.includes(`"${link}"`), `${card} opens ${link}`)
+    if (hidden.has(card)) assert.ok(!page.includes(`"${link}"`), `${card} has no card`)
+    else assert.ok(page.includes(`"${link}"`), `${card} opens ${link}`)
     assert.equal(landing.cards[card], (await list()).total, `${card} = the rows of ${link}`)
   }
   // The numbers themselves: both submitted invoices, also the one waiting

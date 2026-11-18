@@ -347,8 +347,9 @@ test("SME navigation, direct access and browser history follow the route manifes
   // No internal storage or beta labels on a customer's receipt.
   await expect(page.getByText("Beta · PostgreSQL", { exact: true })).toHaveCount(0);
 
+  // Data intake is a closed preview; the old imports address opens the import that works (W-08).
   await page.goto("/app/imports");
-  await expect(page).toHaveURL(/\/app\/universal-intake$/);
+  await expect(page).toHaveURL(/\/app\/master-data\/import$/);
 });
 
 test("procurement invoice and match records use canonical authoritative read details", async ({
@@ -499,17 +500,6 @@ test("capability registry failure and frozen routes fail closed", async ({
   request,
 }) => {
   await login(page, request);
-  await page.addInitScript(() => {
-    localStorage.setItem(
-      "flowchain:module-settings",
-      JSON.stringify({
-        items: [
-          { id: "procurement", enabled: true },
-          { id: "forecast", enabled: true },
-        ],
-      }),
-    );
-  });
   await governRouteAccess(page, { capabilityFailure: true });
 
   await page.goto("/app/inventory/transfers");
@@ -524,8 +514,9 @@ test("capability registry failure and frozen routes fail closed", async ({
   await page.goto("/app/procurement/contracts");
   await expect(page).toHaveURL(/\/app\/contracts\/list$/);
   await expect(page.getByTestId("capability-registry-unavailable")).toBeVisible();
+  // Forecast / MRP was removed: its old address is not a page.
   await page.goto("/app/forecast/mrp");
-  await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
+  await expect(page.getByTestId("not-found-recovery")).toBeVisible();
 });
 
 test("exact route permissions govern primary navigation and direct access", async ({
@@ -686,7 +677,7 @@ test("legacy root preserves URL semantics while retired children stay truthful",
 }) => {
   await login(page, request);
   await page.goto("/app/imports?source=old#batch");
-  await expect(page).toHaveURL(/\/app\/universal-intake\?source=old#batch$/);
+  await expect(page).toHaveURL(/\/app\/master-data\/import\?source=old#batch$/);
 
   await page.goto("/app/imports/failed");
   await expect(page).toHaveURL(/\/app\/imports\/failed$/);
@@ -694,6 +685,6 @@ test("legacy root preserves URL semantics while retired children stay truthful",
   await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
   await expect(page.getByText("能力暂不可用", { exact: true })).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/\/app\/universal-intake\?source=old#batch$/);
+  await expect(page).toHaveURL(/\/app\/master-data\/import\?source=old#batch$/);
 });
 

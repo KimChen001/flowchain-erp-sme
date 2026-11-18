@@ -10,9 +10,7 @@ import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
 import { handleInventoryRoute } from '../routes/inventory.routes.mjs'
 import { handleProcurementReadRoute } from '../routes/procurement-read.routes.mjs'
 import { handleSearchRoute } from '../routes/search.routes.mjs'
-import { handleTodayCockpitRoute } from '../routes/today-cockpit.routes.mjs'
 import { buildActionDraftSuggestion } from './action-draft-boundary.mjs'
-import { buildTodayCockpit } from './today-cockpit-read-model.mjs'
 import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..')
@@ -120,27 +118,6 @@ function expectPreviewOnly(payload) {
   assert.equal(payload.draft.confirmationBoundary.submitted, false)
 }
 
-test('system harness covers cockpit to inventory and procurement evidence paths', async () => {
-  const db = createDb()
-  const before = snapshot(db)
-  const cockpitRoute = routeContext('GET', '/api/today-cockpit', db)
-  await handleTodayCockpitRoute(cockpitRoute.ctx)
-
-  assert.equal(cockpitRoute.response.status, 200)
-  for (const key of ['summary', 'cards', 'followups', 'inventoryRisks', 'recentDocuments', 'recentMovements', 'recommendedActions', 'evidence']) {
-    assert.ok(cockpitRoute.response.payload[key] !== undefined)
-  }
-  const inventoryRisk = cockpitRoute.response.payload.inventoryRisks.find((item) => item.sku === 'SKU-00287')
-  assert.ok(inventoryRisk)
-  assert.equal(inventoryRisk.target.entityType, 'inventory_item')
-  assert.equal(inventoryRisk.target.entityId, 'SKU-00287')
-
-  const procurementAction = cockpitRoute.response.payload.recommendedActions.find((item) => item.target?.documentType || item.evidence?.length)
-  assert.ok(procurementAction)
-  assert.ok(procurementAction.evidence.every((item) => item.type && (item.id || item.label || item.summary)))
-  assert.equal(snapshot(db), before)
-})
-
 test('system harness validates global search and canonical evidence target shape', async () => {
   const db = createDb()
   const searchRoute = routeContext('GET', '/api/search?q=PO-2026-1301', db)
@@ -214,13 +191,11 @@ test('system harness covers key read API contracts without mutation', async () =
 test('system harness validates evidence and navigation compatibility surfaces', () => {
   const helper = readSource('src', 'lib', 'evidenceLinks.ts')
   const app = readSource('src', 'app', 'FlowChainApp.tsx')
-  const cockpit = buildTodayCockpit(createDb())
 
   assert.match(helper, /pr: \{ entityType: "purchase_request", moduleId: "procurement:requests"/)
   assert.match(helper, /threeWayMatch: \{ entityType: "supplier_invoice", moduleId: "procurement:bills"/)
   assert.match(helper, /focusTarget: clickable \? \{ entityType: normalizedEntityType, entityId \}/)
   assert.match(app, /navigationIntentFromGlobalSearchResult\(result, \{ returnTo: active \}\)/)
-  assert.ok(cockpit.recommendedActions.every((item) => Array.isArray(item.evidence)))
 })
 
 test('system harness records typography grep boundary for current product scope', () => {
@@ -254,15 +229,13 @@ test('Phase 0 product positioning and visible language governance stay productiz
   const limitations = readSource('docs', 'current-development-limitations-v1.md')
   const language = readSource('docs', 'product-language-and-positioning-v1.md')
   const constants = readSource('src', 'lib', 'constants.ts')
-  const forecast = readSource('src', 'modules', 'forecast', 'Page.tsx')
   const actionShell = readSource('src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx')
   // The home page and its copy, which holds the page's English and Chinese text.
   const overview = [readSource('src', 'modules', 'overview', 'Page.tsx'), readSource('src', 'modules', 'overview', 'todayCopy.ts')].join('\n')
-  const importsPage = readSource('src', 'modules', 'imports', 'Page.tsx')
   const inventoryPage = readSource('src', 'modules', 'inventory', 'Page.tsx')
   const reportsPage = readSource('src', 'modules', 'reports', 'Page.tsx')
   const publicDocs = [readme.split('## Quick start')[0], docsIndex.split('# Phase 5.4B.1 local truthfulness')[0], narrative, roadmap, limitations.split('# Phase 5.4B.1 limitations')[0]].join('\n')
-  const uiCopySources = [constants, forecast, actionShell, overview, importsPage, inventoryPage, reportsPage].join('\n')
+  const uiCopySources = [constants, actionShell, overview, inventoryPage, reportsPage].join('\n')
 
   assert.match(readme, /FlowChain is an ERP and inventory-purchase-sales \(进销存\) collaboration platform for SMEs/)
   assert.match(language, /FlowChain 是面向中小企业的 ERP 进销存协同平台/)
@@ -275,11 +248,7 @@ test('Phase 0 product positioning and visible language governance stay productiz
   assert.match(roadmap, /Phase 2 Inventory Allocation/)
   assert.match(limitations, /Current Development Limitations/)
   assert.match(constants, /AI 进销存与供应链协同工作台/)
-  assert.match(forecast, /计划使用边界/)
-  assert.match(forecast, /当前物料需求计划基于工作区内的商品、库存、采购、销售需求与供应商记录/)
   assert.match(actionShell, /保留待复核草稿/)
-  assert.match(importsPage, /旧 Pilot Imports 不再创建预览批次、提交业务表或回滚历史批次/)
-  assert.match(importsPage, /Universal Intake 是唯一面向未来的数据接入权威/)
   assert.match(inventoryPage, /仅显示已过账的库存记录/)
   assert.match(inventoryPage, /不会用固定 SKU、批次、序列号或移动记录补足空数据/)
   assert.match(reportsPage, /API \/ 当前数据范围/)

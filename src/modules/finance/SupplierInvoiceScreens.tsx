@@ -1243,17 +1243,18 @@ export function SupplierInvoiceDetail() {
           </div>
           <PaymentRecords kind="payable" obligation={payable} onDone={load} />
           <div className="flex flex-wrap gap-2">
-            {payableActions.filter((action) => action !== "record_payment").map((action) => (
+            {/* No export exists yet, so "Mark export ready" leads nowhere and stays hidden (design audit L2-15). */}
+            {payableActions.filter((action) => action !== "record_payment" && action !== "mark_export_ready").map((action) => (
               <TwoStepAction
                 key={action}
-                label={t(action === "hold" ? "finance.action.hold" : action === "release" ? "finance.action.release" : "finance.action.mark_export_ready")}
+                label={t(action === "hold" ? "finance.action.hold" : "finance.action.release")}
                 testId={`payable-${action}`}
                 // Recording the payment is the main step; releasing a hold leads to it.
                 tone={action === "release" ? "primary" : "secondary"}
-                previewUrl={`/api/finance/payables/${encodeURIComponent(payable.id)}/${action === "mark_export_ready" ? "mark-export-ready" : action}-preview`}
-                runUrl={`/api/finance/payables/${encodeURIComponent(payable.id)}/${action === "mark_export_ready" ? "mark-export-ready" : action}`}
+                previewUrl={`/api/finance/payables/${encodeURIComponent(payable.id)}/${action}-preview`}
+                runUrl={`/api/finance/payables/${encodeURIComponent(payable.id)}/${action}`}
                 payload={() => ({ expectedVersion: payable.version })}
-                reasonLabel={action === "mark_export_ready" ? undefined : t("finance.reason")}
+                reasonLabel={t("finance.reason")}
                 onDone={load}
               />
             ))}

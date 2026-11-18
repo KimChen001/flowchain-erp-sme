@@ -45,7 +45,6 @@ import {
   type OverviewField,
   type TimelineStep,
 } from "../../components/document/DocumentShell";
-import { calculateInvoiceMatch } from "../../domain/procurement/invoice-matching";
 import { poDelayedRisk } from "../../domain/contextual-ai";
 import { grnLinesOf } from "../../domain/receiving/helpers";
 import { lineRemaining, lineStatusLabel, poLinesOf, poTotals, toNumber } from "../../domain/purchasing/helpers";

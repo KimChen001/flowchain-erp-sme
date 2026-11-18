@@ -80,7 +80,6 @@ await phase("shell and routing", [
   "tests/browser/app-layout-width.spec.ts",
   "tests/browser/typography-system.spec.ts",
   "tests/browser/authoritative-mutation-auth.spec.ts",
-  "tests/browser/user-data-import-preview.spec.ts",
   "tests/browser/motion-transitions.spec.ts",
   // Days late from the workspace's day, not the browser's (design audit B3).
   "tests/browser/workspace-today.spec.ts",
