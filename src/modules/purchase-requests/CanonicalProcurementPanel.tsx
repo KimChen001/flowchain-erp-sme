@@ -126,6 +126,10 @@ type Line = {
 type PR = {
   // The internal id: URLs, links and API calls.
   id: string;
+  // Whether this reader may approve the request now: it is submitted, they
+  // hold the permission, and it is not their own request while someone else
+  // may approve it (server/domain/approval-rights.mjs).
+  canApprove?: boolean;
   // The document number people read (PR-YYYYMM-NNNN; the id for requests made before numbering).
   number?: string;
   status: string;
@@ -270,6 +274,8 @@ const REQUEST_ACTIONS_BY_STATUS: Record<string, RequestAction[]> = {
 // The step that moves a request on: the blue button of the detail header,
 // first in a row's More menu.
 const DETAIL_PRIMARY = new Set<RequestAction>(["submit", "approve", "reopen", "generate-purchase-orders"]);
+// The approver's steps, offered only when the request says canApprove.
+const APPROVER_ACTIONS = new Set<RequestAction>(["approve", "reject"]);
 // Steps that end or refuse a request: red, as on a PO.
 const DANGER_ACTIONS = new Set<RequestAction>(["reject", "cancel"]);
 // Rows to a page, as on the purchase order list (design audit U-14).
@@ -444,7 +450,9 @@ export default function CanonicalProcurementPanel({
   const statusLabel = (status: string) => (status === "converted" ? tr("converted") : status === "submitted" ? statusCodeLabel("pending_approval", language) || copy(status) : statusCodeLabel(status, language) || copy(status));
   // What this person may do to a request in its status; nothing while the
   // permissions load or when they cannot be read.
-  const actionsFor = (pr: PR) => (REQUEST_ACTIONS_BY_STATUS[pr.status] || []).filter((action) => Boolean(permissions?.has(REQUEST_ACTION_PERMISSION[action])));
+  // Approve and Reject only when the server says this reader may approve it,
+  // so a requester never meets a button the approval would refuse (C4).
+  const actionsFor = (pr: PR) => (REQUEST_ACTIONS_BY_STATUS[pr.status] || []).filter((action) => Boolean(permissions?.has(REQUEST_ACTION_PERMISSION[action])) && (!APPROVER_ACTIONS.has(action) || pr.canApprove === true));
   // The request an action is running on, so its buttons cannot be pressed twice.
   const [acting, setActing] = useState("");
   const actionLabel = (action: RequestAction) =>

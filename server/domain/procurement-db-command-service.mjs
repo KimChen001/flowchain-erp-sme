@@ -6,7 +6,7 @@ import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from "./procurement-status-authority.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "./receiving-transaction-policy.mjs";
 import { applyPromisedDateChanges, currentPromisedDay, isIssuedPurchaseOrder, promiseDay, recordOriginalPromises } from "./purchase-order-promise-dates.mjs";
-import { lastActorOf, selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
+import { approvalAuthorIds, selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
 
 export class ProcurementCommandError extends Error {
   constructor(code, message, status = 400, details) {
@@ -227,7 +227,7 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
         // one else may; then the audit row says so (design audit C4).
         let selfApproval = null;
         if (action === "approve") {
-          const check = await selfApprovalCheck(tx, { tenantId: actor.tenantId, actorId: actor.user.id, authorIds: [row.metadata?.createdBy, row.metadata?.createdById, lastActorOf(row.metadata?.approvalTimeline, "submit")], permissionCode: permission });
+          const check = await selfApprovalCheck(tx, { tenantId: actor.tenantId, actorId: actor.user.id, authorIds: approvalAuthorIds("purchase_order", row), permissionCode: permission });
           if (check.blocked) { const refusal = selfApprovalRefusal("purchase order"); fail(refusal.code, refusal.message, refusal.status, { entityId: row.id }); }
           selfApproval = check.auditFlag;
         }

@@ -9,7 +9,7 @@ import {
 } from "./return-governance-policy.mjs";
 import { buildReturnAuthorizationClosurePlan } from "./return-authorization-closure-policy.mjs";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
-import { selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
+import { approvalAuthorIds, selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
 
 export class ReturnGovernanceError extends Error {
   constructor(code, message, status = 400, details) {
@@ -816,7 +816,7 @@ export function createReturnGovernanceCommandService({
         const selfApproval = await selfApprovalCheck(tx, {
           tenantId: actor.tenantId,
           actorId: actor.user.id,
-          authorIds: [current.requestedById, current.submittedById],
+          authorIds: approvalAuthorIds("return_authorization", current),
           permissionCode: "returns.authorization.approve",
           warehouseIds,
         });

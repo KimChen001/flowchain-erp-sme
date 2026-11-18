@@ -10,6 +10,7 @@ import { aiSkillVisibility } from './ai-skill-registry.mjs'
 import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
 import { aiSkillUnitLabel } from './ai-skill-copy.mjs'
 import { findPaymentTerm } from './standard-payment-terms.mjs'
+import { approvalAuthorIds, approverStanding, mayApprove } from './self-approval.mjs'
 
 // The UI tools of assistant v2 (docs/ai-assistant-v2-design.md §3.6, §4, §4.1,
 // §5.2). The model never writes a figure: it names a data tool result of this
@@ -1404,9 +1405,10 @@ const RECORD_STEP_WHO = Object.freeze({
 
 // Why the card offers nothing, worded for the model: the record's status and
 // who can take its next step, or that it has none.
-function nothingToOffer(type, status, label, { steps, downstream, poBlocked }) {
+function nothingToOffer(type, status, label, { steps, downstream, poBlocked, ownRecord }) {
   const waiting = Object.entries(RECORD_ACTION_RULES[type]).filter(([, from]) => from === status).map(([step]) => step)
   const kind = type === 'purchase_request' ? 'purchase request' : 'purchase order'
+  if (ownRecord && waiting.includes('approve')) return fail('not_allowed', `${label} is ${status.replace(/_/g, ' ')}. This user raised or submitted it, so someone else who may approve it has to approve it. Say so, naming ${label} so its link shows; do not show a card.`)
   if (!waiting.length) return fail('nothing_to_offer', `${label} is ${status.replace(/_/g, ' ')}; no step of this ${kind} can be taken in the chat. Give its status and link it; do not show a card.`)
   if (downstream) return fail('nothing_to_offer', `A purchase order or an open RFQ already comes from ${label}. Say so and link the request; do not show a card.`)
   if (poBlocked && waiting.every((step) => step === 'create_po') && steps.includes('create_po')) return fail('nothing_to_offer', `Every line of ${label} needs a supplier, a currency and a delivery warehouse before a purchase order can be created. Say that the user completes the request on its page first; link it.`)
@@ -1451,17 +1453,22 @@ const offerRecordActions = defineUiTool({
     if (!isCode(status)) return fail('record_unavailable', `${ref.label} has no status the card can read; link it instead.`)
     const amountsVisible = Boolean(aiSkillVisibility(actor).amounts.purchase_order_amounts)
     const requester = type === 'purchase_request' && text(row.requester) === actorUserId(actor)
+    // Approve and Reject are not offered on the user's own request or order
+    // while someone else may approve it: the approval would refuse them
+    // (design audit C4; self-approval.mjs).
+    const holds = (permission) => allowedTo(actor, permission)
+    const ownRecord = holds(RECORD_STEP_PERMISSIONS[type].approve) && !mayApprove(await approverStanding(ctx.prisma, { tenantId: ctx.tenantId, userId: actorUserId(actor) }, holds, [type]), type, approvalAuthorIds(type, row))
     // Every step the user's role permits here, whatever the status: the card
     // offers again from these after each click.
     const steps = Object.entries(RECORD_STEP_PERMISSIONS[type])
-      .filter(([step, permission]) => allowedTo(actor, permission) && (step !== 'submit' || requester) && !(downstream && step === 'create_po'))
+      .filter(([step, permission]) => allowedTo(actor, permission) && (step !== 'submit' || requester) && !(downstream && step === 'create_po') && !(ownRecord && (step === 'approve' || step === 'reject')))
       .map(([step]) => step)
     const lines = array(row.lines)
     const sourcing = type === 'purchase_request' && steps.includes('create_po')
     // What createPurchaseOrdersFromPurchaseRequest refuses (DIRECT_PO_NOT_ALLOWED).
     const poBlocked = sourcing && (!lines.length || lines.some((line) => ['supplierId', 'currency', 'targetWarehouseId'].some((field) => !text(metaOf(line)[field])))) ? 'lines_incomplete' : null
     const actions = recordActionsNow({ type, status, allowed: steps, poBlocked })
-    if (!actions.length) return nothingToOffer(type, status, ref.label, { steps: Object.keys(RECORD_STEP_PERMISSIONS[type]).filter((step) => allowedTo(actor, RECORD_STEP_PERMISSIONS[type][step])), downstream, poBlocked })
+    if (!actions.length) return nothingToOffer(type, status, ref.label, { steps: Object.keys(RECORD_STEP_PERMISSIONS[type]).filter((step) => allowedTo(actor, RECORD_STEP_PERMISSIONS[type][step])), downstream, poBlocked, ownRecord })
     const suppliers = [...new Set([text(row.supplierName), ...lines.map((line) => text(metaOf(line).supplierSnapshot?.supplierName))].filter(Boolean))].slice(0, 3).map((name) => name.slice(0, 200))
     const amount = decimalOf(row.amount)
     const currency = currencyCode(text(row.currency).toUpperCase())

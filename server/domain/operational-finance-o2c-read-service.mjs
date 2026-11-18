@@ -8,6 +8,7 @@ import { CUSTOMER_NAMESPACE } from "./master-data-commands.mjs";
 import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from "./tenant-calendar-day.mjs";
 import { SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES } from "./outbound-transaction-policy.mjs";
 import { uncreditedReturnedQuantities } from "./return-quantity-ledger.mjs";
+import { approvalAuthorIds, approverStanding, mayApprove } from "./self-approval.mjs";
 
 // Cancelling a customer invoice (cancel_customer_invoice) is the preparer's
 // step, as revising and cancelling a supplier invoice is
@@ -113,12 +114,16 @@ export function financeCurrencyLimitations(...currencyRows) {
 }
 
 // The invoice's next step, then "cancel" for one that was never issued.
-function invoiceActions(actor, capability, row) {
+// `standing`: what this reader may approve (self-approval.mjs); without it
+// Approve follows the permission alone.
+function invoiceActions(actor, capability, row, standing = null) {
   if (!capability?.enabled) return [];
   const allowed = (permission) => can({ actor, permission, tenantId: actor.tenantId });
   const actions = [];
   if (allowed("finance.customer_invoice.submit") && row.status === "draft") actions.push("submit");
-  if (allowed("finance.customer_invoice.approve") && row.status === "submitted") actions.push("approve");
+  // Not to the person who submitted it while someone else may approve it
+  // (design audit C4): the approval would refuse them.
+  if (allowed("finance.customer_invoice.approve") && row.status === "submitted" && (!standing || mayApprove(standing, "customer_invoice", approvalAuthorIds("customer_invoice", row)))) actions.push("approve");
   if (allowed("finance.customer_invoice.issue") && row.status === "approved") actions.push("issue");
   if (allowed(CANCEL_CUSTOMER_INVOICE_PERMISSION) && canCancelCustomerInvoice(row)) actions.push("cancel");
   return actions;
@@ -162,8 +167,8 @@ function protectFinanceFields(model, actor) {
   return output;
 }
 
-function invoiceSummary(row, actor, capabilities) {
-  return protectFinanceFields({
+function invoiceSummary(row, actor, capabilities, standing = null) {
+  const summary = protectFinanceFields({
     id: row.id,
     invoiceNumber: row.invoiceNumber,
     salesOrderId: row.salesOrderId,
@@ -187,8 +192,11 @@ function invoiceSummary(row, actor, capabilities) {
       actor,
       capabilities["customer-invoice"],
       row,
+      standing,
     ),
   }, actor);
+  // Whether this reader may approve it now, as the Approve action says.
+  return { ...summary, canApprove: summary.availableActions.includes("approve") };
 }
 
 function receivableSummary(row, actor, capabilities) {
@@ -383,6 +391,11 @@ export function createOperationalFinanceO2cReadService({
     return resolveProvisionedActor(prisma, context?.identity || context);
   }
 
+  // Whether the reader may approve customer invoices, and only they may.
+  async function approvalStanding(current) {
+    return approverStanding(prisma, current, (permission) => can({ actor: current, permission, tenantId: current.tenantId }), ["customer_invoice"]);
+  }
+
   async function listCustomerInvoices(query, context) {
     const current = await actor(context);
     assertRead(current, "finance.customer_invoice.read");
@@ -436,6 +449,7 @@ export function createOperationalFinanceO2cReadService({
       // Every currency, for the currency filter: one page shows only some.
       prisma.customerInvoice.findMany({ where: { tenantId: current.tenantId }, distinct: ["currency"], select: { currency: true } }),
     ]);
+    const standing = await approvalStanding(current);
     return {
       dataSource: "Authoritative PostgreSQL",
       ...paging,
@@ -445,7 +459,7 @@ export function createOperationalFinanceO2cReadService({
       counts: { toApprove, toIssue, issued, pastDue, to_be_paid: toBePaid, partially_settled: partlyPaid, settled: paid },
       currencies: currencies.map((row) => row.currency).filter(validCurrency).sort(),
       timezone,
-      items: rows.map((row) => invoiceSummary(row, current, capabilities)),
+      items: rows.map((row) => invoiceSummary(row, current, capabilities, standing)),
       capabilities,
     };
   }
@@ -471,7 +485,7 @@ export function createOperationalFinanceO2cReadService({
     const amountsVisible = amountsVisibleFor(current);
     const hidden = (value) => (amountsVisible ? decimal(value) : null);
     return {
-      ...invoiceSummary(row, current, capabilities),
+      ...invoiceSummary(row, current, capabilities, await approvalStanding(current)),
       // When each step happened, for the invoice's history; a cancelled
       // invoice keeps its reason.
       history: {
@@ -719,6 +733,7 @@ export function createOperationalFinanceO2cReadService({
     if (!["finance.customer_invoice.create", "finance.customer_credit.create"].some((permission) => can({ actor: current, permission, tenantId: current.tenantId })))
       return { postedShipments: [], customerInvoices: [], customerReturnPostings: [], capabilities };
     const amountsVisible = amountsVisibleFor(current);
+    const standing = await approvalStanding(current);
     const salesOrderFilter = text(query.salesOrder);
     const shipmentFilter = text(query.shipment);
     const focused = Boolean(salesOrderFilter || shipmentFilter);
@@ -872,7 +887,7 @@ export function createOperationalFinanceO2cReadService({
         shipment: sourceShipment ? { id: sourceShipment.id, shipmentNumber: sourceShipment.shipmentNumber, salesOrderId: sourceShipment.salesOrderId } : null,
       },
       customerInvoices: invoices.map((row) =>
-        invoiceSummary(row, current, capabilities),
+        invoiceSummary(row, current, capabilities, standing),
       ),
       // The invoice date is the workspace's calendar day, not the browser's.
       today: tenantCalendarDay(now(), tenant?.timezone || "America/New_York"),

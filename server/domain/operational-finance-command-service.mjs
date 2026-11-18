@@ -26,7 +26,7 @@ import {
   loadDuplicateChecks,
   workspaceTimezone,
 } from "./supplier-invoice-duplicates.mjs";
-import { selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
+import { approvalAuthorIds, selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
 
 export class OperationalFinanceError extends Error {
   constructor(code, message, status = 400, details) {
@@ -1994,7 +1994,7 @@ export function createOperationalFinanceCommandService({
     const selfApproval = await selfApprovalCheck(prisma, {
       tenantId: actor.tenantId,
       actorId: actor.user.id,
-      authorIds: [invoice.submittedById],
+      authorIds: approvalAuthorIds("supplier_invoice", invoice),
       permissionCode: "finance.supplier_invoice.approve",
     });
     if (selfApproval.blocked) blockingIssues.push(selfApprovalRefusal("supplier invoice"));
@@ -2086,7 +2086,7 @@ export function createOperationalFinanceCommandService({
         const selfApproval = await selfApprovalCheck(tx, {
           tenantId: actor.tenantId,
           actorId: actor.user.id,
-          authorIds: [current.submittedById],
+          authorIds: approvalAuthorIds("supplier_invoice", current),
           permissionCode: "finance.supplier_invoice.approve",
         });
         if (selfApproval.blocked) {

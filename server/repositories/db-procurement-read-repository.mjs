@@ -1,4 +1,5 @@
 import { purchaseOrderDueDay } from '../domain/open-purchase-orders-report.mjs'
+import { approvalAuthorIds } from '../domain/self-approval.mjs'
 import { maskProcurementDocuments, maskProcurementSummary, readableProcurementRows, readableProcurementSnapshot } from '../domain/procurement-read-access.mjs'
 import {
   buildProcurementDocumentLinks,
@@ -203,6 +204,9 @@ export function mapPurchaseRequest(record = {}) {
     number: procurementDocumentNumber(record),
     version: numberFrom(meta.version, 0),
     requesterId: text(meta.requesterId || record.requester),
+    // Who raised or submitted it, as its approval command reads them; the
+    // reads turn them into canApprove for the reader (design audit C4).
+    approvalAuthorIds: approvalAuthorIds('purchase_request', record),
     departmentId: text(meta.departmentId),
     defaultCurrency: text(record.currency),
     defaultNeedByDate: isoDate(record.requiredDate),
@@ -473,6 +477,7 @@ export function mapPurchaseOrder(record = {}) {
     number,
     orderNumber: number,
     version: numberFrom(record.version, 0),
+    approvalAuthorIds: approvalAuthorIds('purchase_order', record),
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
     eta: isoDate(record.expectedDate),
@@ -603,6 +608,7 @@ function mapSupplierInvoice(record = {}) {
     // The supplier's own invoice number as recorded (INV-UI7-B002), which
     // pages show; invoiceNumber above is the id the read model keys on.
     supplierInvoiceNumber: text(record.invoiceNumber),
+    approvalAuthorIds: approvalAuthorIds('supplier_invoice', record),
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
     relatedPo: text(record.relatedPoId),

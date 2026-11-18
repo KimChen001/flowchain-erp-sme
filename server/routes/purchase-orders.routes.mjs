@@ -1,6 +1,7 @@
 import { canReadProcurementDocument, maskProcurementSnapshot, procurementReadAccess } from '../domain/procurement-read-access.mjs'
 import { purchaseOrderWorkbenchSummary } from '../domain/purchase-order-workbench-summary.mjs'
 import { purchaseOrderLinesProjection, purchaseOrderListProjection } from '../domain/purchase-order-lines-projection.mjs'
+import { readerApprovalStanding, withCanApprove, withCanApproveOne } from '../domain/approval-rights.mjs'
 
 export async function handlePurchaseOrdersRoute(ctx) {
   const { req, res, url, send, repositories, identity } = ctx
@@ -11,7 +12,7 @@ export async function handlePurchaseOrdersRoute(ctx) {
     const access = await procurementReadAccess(ctx)
     if (!canReadProcurementDocument('po', access)) return send(res, 403, { code: 'PERMISSION_DENIED', message: 'Your role cannot view purchase orders.', details: [] }) || true
     const snapshot = maskProcurementSnapshot(await repositories.procurementRead.snapshot({ tenantId: identity.tenantId }), access)
-    return send(res, 200, snapshot.purchaseOrders) || true
+    return send(res, 200, withCanApprove(snapshot.purchaseOrders, 'purchase_order', await readerApprovalStanding(ctx, ['purchase_order']))) || true
   }
 
   if (req.method === 'GET' && url.pathname === '/api/purchase-orders-workbench') {
@@ -25,8 +26,9 @@ export async function handlePurchaseOrdersRoute(ctx) {
     if (url.searchParams.get('view') === 'lines') return send(res, 200, purchaseOrderLinesProjection(snapshot)) || true
     // Counts from the orders; the committed value only when prices are visible.
     const summary = purchaseOrderWorkbenchSummary(loaded.purchaseOrders)
+    // Each order says whether this reader may approve it (approval-rights.mjs).
     const workbench = {
-      purchaseOrders: snapshot.purchaseOrders,
+      purchaseOrders: withCanApprove(snapshot.purchaseOrders, 'purchase_order', await readerApprovalStanding(ctx, ['purchase_order'])),
       receivingDocs: snapshot.receivingDocs,
       supplierInvoices: snapshot.supplierInvoices,
       documentLinks: snapshot.documentLinks,
@@ -54,7 +56,7 @@ export async function handlePurchaseOrdersRoute(ctx) {
     if (!loaded) return send(res, 404, { code: 'PURCHASE_ORDER_NOT_FOUND', message: 'Purchase order not found.' }) || true
     const snapshot = maskProcurementSnapshot(loaded, access)
     return send(res, 200, {
-      purchaseOrder: snapshot.purchaseOrders[0],
+      purchaseOrder: withCanApproveOne(snapshot.purchaseOrders[0], 'purchase_order', await readerApprovalStanding(ctx, ['purchase_order'])),
       receivingDocs: snapshot.receivingDocs,
       supplierInvoices: snapshot.supplierInvoices,
       documentLinks: snapshot.documentLinks,

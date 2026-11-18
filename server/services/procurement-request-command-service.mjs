@@ -23,7 +23,7 @@ import { isPrismaConcurrencyError } from "../domain/prisma-concurrency-error.mjs
 import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 import { sanitizeSuggestionTrail } from "../../shared/prefill-suggestions.mjs";
 import { mapPurchaseOrder, mapPurchaseRequest, mapRfq } from "../repositories/db-procurement-read-repository.mjs";
-import { lastActorOf, selfApprovalCheck, selfApprovalRefusal } from "../domain/self-approval.mjs";
+import { approvalAuthorIds, selfApprovalCheck, selfApprovalRefusal } from "../domain/self-approval.mjs";
 
 // Requests have their own codes since design audit C4 (L1-07 = L4-11), so a
 // role may raise requests without ordering. The migration that added them
@@ -440,7 +440,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         // one else may; then the audit row says so (design audit C4).
         let selfApproval = null;
         if (action === "approve") {
-          const check = await selfApprovalCheck(tx, { tenantId: actor.tenantId, actorId: actor.user.id, authorIds: [row.requester, row.metadata?.requesterId, lastActorOf(row.metadata?.timeline, "submit")], permissionCode: PURCHASE_REQUEST_PERMISSIONS.approve });
+          const check = await selfApprovalCheck(tx, { tenantId: actor.tenantId, actorId: actor.user.id, authorIds: approvalAuthorIds("purchase_request", row), permissionCode: PURCHASE_REQUEST_PERMISSIONS.approve });
           if (check.blocked) { const refusal = selfApprovalRefusal("purchase request"); fail(refusal.code, refusal.message, refusal.status); }
           selfApproval = check.auditFlag;
         }

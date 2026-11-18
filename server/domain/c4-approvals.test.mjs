@@ -60,11 +60,11 @@ test('a sole approver may approve their own document, and the approval says so',
 
 test('each first approval checks its own authors and permission, and audits a sole approver', () => {
   const cases = [
-    ['server/services/procurement-request-command-service.mjs', /authorIds: \[row\.requester, row\.metadata\?\.requesterId, lastActorOf\(row\.metadata\?\.timeline, "submit"\)\], permissionCode: PURCHASE_REQUEST_PERMISSIONS\.approve/, /\.\.\.\(selfApproval \? \{ selfApproval \} : \{\}\)/],
-    ['server/domain/procurement-db-command-service.mjs', /authorIds: \[row\.metadata\?\.createdBy, row\.metadata\?\.createdById, lastActorOf\(row\.metadata\?\.approvalTimeline, "submit"\)\], permissionCode: permission/, /\.\.\.\(selfApproval \? \{ selfApproval \} : \{\}\)/],
-    ['server/domain/operational-finance-command-service.mjs', /authorIds: \[current\.submittedById\],\s+permissionCode: "finance\.supplier_invoice\.approve"/, /\.\.\.\(selfApproval\.auditFlag \? \{ selfApproval: selfApproval\.auditFlag \} : \{\}\)/],
-    ['server/domain/operational-finance-o2c-command-service.mjs', /authorIds: \[current\.submittedById\],\s+permissionCode: "finance\.customer_invoice\.approve"/, /\.\.\.\(selfApproval\?\.auditFlag \? \{ selfApproval: selfApproval\.auditFlag \} : \{\}\)/],
-    ['server/domain/return-governance-command-service.mjs', /authorIds: \[current\.requestedById, current\.submittedById\],\s+permissionCode: "returns\.authorization\.approve",\s+warehouseIds,/, /\.\.\.\(selfApproval\.auditFlag \? \{ selfApproval: selfApproval\.auditFlag \} : \{\}\)/],
+    ['server/services/procurement-request-command-service.mjs', /authorIds: approvalAuthorIds\("purchase_request", row\), permissionCode: PURCHASE_REQUEST_PERMISSIONS\.approve/, /\.\.\.\(selfApproval \? \{ selfApproval \} : \{\}\)/],
+    ['server/domain/procurement-db-command-service.mjs', /authorIds: approvalAuthorIds\("purchase_order", row\), permissionCode: permission/, /\.\.\.\(selfApproval \? \{ selfApproval \} : \{\}\)/],
+    ['server/domain/operational-finance-command-service.mjs', /authorIds: approvalAuthorIds\("supplier_invoice", current\),\s+permissionCode: "finance\.supplier_invoice\.approve"/, /\.\.\.\(selfApproval\.auditFlag \? \{ selfApproval: selfApproval\.auditFlag \} : \{\}\)/],
+    ['server/domain/operational-finance-o2c-command-service.mjs', /authorIds: approvalAuthorIds\("customer_invoice", current\),\s+permissionCode: "finance\.customer_invoice\.approve"/, /\.\.\.\(selfApproval\?\.auditFlag \? \{ selfApproval: selfApproval\.auditFlag \} : \{\}\)/],
+    ['server/domain/return-governance-command-service.mjs', /authorIds: approvalAuthorIds\("return_authorization", current\),\s+permissionCode: "returns\.authorization\.approve",\s+warehouseIds,/, /\.\.\.\(selfApproval\.auditFlag \? \{ selfApproval: selfApproval\.auditFlag \} : \{\}\)/],
   ]
   for (const [file, check, flag] of cases) {
     const source = read(file)

@@ -1017,6 +1017,26 @@ test('the record card offers the steps this user may take now, by status and rol
   assert.deepEqual(assertPart(await buyer.offer('purchase_order', 'PO-009'), 'record_actions').actions, ['issue'])
 })
 
+// Design audit C4 follow-up (2026-11-18): the card offers no Approve or
+// Reject on the user's own request or order while someone else may approve
+// it, since the approval would refuse them; the sole approver still may.
+test('the record card offers no approval on the user\'s own request or order while someone else may approve it', async () => {
+  const requests = { 'PR-0241': storedRequest('PR-0241', 'submitted', { requester: 'workspace-administrator-user' }) }
+  const orders = { 'PO-006': storedOrder('PO-006', 'pending_approval', { metadata: { orderNumber: 'PO-006', createdBy: 'workspace-administrator-user' } }) }
+  const card = await recordCard({ requests, orders })
+  const base = card.ctx.prisma
+  const otherApprovers = (count) => { card.ctx.prisma = new Proxy({}, { get: (_target, model) => (model === 'user' ? { count: async () => count } : base[model]) }) }
+  otherApprovers(2)
+  const own = await card.offer('purchase_request', 'PR-0241')
+  assertError(own, 'not_allowed')
+  assert.match(own.error.message, /^PR-0241 is submitted\. This user raised or submitted it, so someone else who may approve it has to approve it\./)
+  assertError(await card.offer('purchase_order', 'PO-006'), 'not_allowed')
+  // The only approver approves their own, as the command allows.
+  otherApprovers(0)
+  assert.deepEqual(assertPart(await card.offer('purchase_request', 'PR-0241'), 'record_actions').actions, ['approve', 'reject'])
+  assert.deepEqual(assertPart(await card.offer('purchase_order', 'PO-006'), 'record_actions').actions, ['approve'])
+})
+
 test('an approved request: an order directly whatever its amount, none without complete lines or once one exists', async () => {
   const requests = {
     'PR-0241': storedRequest('PR-0241', 'approved', { amount: '150000' }),
