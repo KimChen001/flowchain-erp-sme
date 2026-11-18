@@ -490,9 +490,16 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
   // One notice, and the cards are router links to the lists they count.
   await expect(page.getByTestId("finance-overview-notice")).toContainText(/应付款和应收款记录的是欠款|Payables and receivables record what is owed/);
-  // Four money and decision tiles, and five quieter ones shown even at 0.
+  // Four money and decision tiles, and four quieter ones shown even at 0.
+  // Supplier credit notes have no card while supplier returns are off
+  // (design audit W-07).
   await expect(page.getByTestId("finance-overview-cards").getByRole("link")).toHaveCount(4);
-  await expect(page.getByTestId("finance-overview-secondary").getByRole("link")).toHaveCount(5);
+  const quietTiles = page.getByTestId("finance-overview-secondary");
+  await expect(quietTiles.getByRole("link")).toHaveCount(4);
+  for (const name of [/^(待匹配采购发票|Supplier invoices awaiting match): /, /^(待开具销售发票|Customer invoices awaiting issue): /, /^(有争议的应收款|Disputed receivables): /, /^(客户贷项通知单|Customer credit notes): /]) {
+    await expect(quietTiles.getByRole("link", { name })).toBeVisible();
+  }
+  await expect(quietTiles.getByRole("link", { name: /^(供应商贷项通知单|Supplier credit notes): / })).toHaveCount(0);
   await expect(page.getByTestId("finance-overview-secondary").getByRole("link", { name: /^(有争议的应收款|Disputed receivables): 0,/ })).toBeVisible();
   await expect(page.getByText("应付款不代表已付款。")).toHaveCount(0);
   await page.getByTestId("finance-overview-cards").getByRole("link", { name: /^(待付款|To pay):/ }).click();
