@@ -1058,7 +1058,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       // The action-claim scan below still runs.
       let check
       try {
-        check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today })
+        check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results: [...results, ...earlierResults], refs, question: userText, conversation, facts, today: context.today, locale: context.tenant?.locale || facts?.locale || null })
       } catch {
         stats.checkFailures += 1
         check = { problems: [], checked: {}, failed: true }
@@ -1106,7 +1106,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         if (!FLAG_KINDS.has(row.kind)) continue
         // A date the user typed ("by Nov 20") is theirs, not the model's
         // invention (2026-11-05: it was marked as not matched).
-        if (row.kind === 'date' && aiV2UserTypedDate(row.value, userText)) continue
+        if (row.kind === 'date' && aiV2UserTypedDate(row.value, userText, { locale: context.tenant?.locale || facts?.locale || null })) continue
         // A count that adds up the totals this answer's lists returned ("4
         // waiting for approval: 3 purchase orders and 1 purchase request")
         // is checked against them (2026-11-05: the 4 was marked).

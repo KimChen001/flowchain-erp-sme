@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { aiGroundingItemNamePairs, checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
+import { aiV2UserTypedDate } from './ai-assistant-v2-display.mjs'
 
 // The grounding check against fictional records, one case per kind of failure
 // the model-on lane found (2026-10-29/30): a checker false positive it now
@@ -473,4 +474,32 @@ test('a SKU with a regex character (A.B12, X+Y1, P(1)) is checked, not thrown on
     // Its name is still checked: exactly one pair, the name the answer gave.
     assert.deepEqual(aiGroundingItemNamePairs(`${sku} 'Wrong Name Here' is low.`, facts, []).map((pair) => [pair.sku, pair.value, pair.expected]), [[sku.toLowerCase(), 'Wrong Name Here', 'Paper Box Large']], sku)
   }
+})
+
+// Slash dates follow the workspace's order (the en-GB format of L11-27): the
+// UCI workspace writes day first, M5 month first. 18/11/2026 and 11/18/2026
+// are both 18 November there; 05/06 is 5 June in en-GB, read as its readers
+// read it, never swapped.
+test('slash dates are read in the workspace order', () => {
+  const results = [{ orderNumber: 'PO-202611-0012', dueDate: '2026-11-18' }]
+  assert.deepEqual(kinds(check('PO-202611-0012 is due on 18/11/2026.', results, { locale: 'en-GB' })), [])
+  assert.deepEqual(kinds(check('PO-202611-0012 is due on 11/18/2026.', results, { locale: 'en-US' })), [])
+  // The workspace locale comes with the facts when not given.
+  assert.deepEqual(kinds(check('PO-202611-0012 is due on 18/11/2026.', results, { facts: { locale: 'en-GB' } })), [])
+  // A day past 12 can only be read one way, in either workspace.
+  assert.deepEqual(kinds(check('PO-202611-0012 is due on 18/11/2026.', results, { locale: 'en-US' })), [])
+  // 05/06 in an en-GB workspace is 5 June: a date of the results, not two figures.
+  const june = [{ orderNumber: 'PO-202606-0003', dueDate: '2026-06-05' }]
+  assert.deepEqual(kinds(check('PO-202606-0003 is due on 05/06.', june, { locale: 'en-GB' })), [])
+  assert.deepEqual(kinds(check('PO-202606-0003 is due on 05/06/2026.', june, { locale: 'en-GB' })), [])
+  // The same text in an en-US workspace is 6 May, which the results do not hold.
+  assert.deepEqual(kinds(check('PO-202606-0003 is due on 05/06/2026.', june, { locale: 'en-US' })), ['date:05/06/2026'])
+  // Read the workspace's way only: 5 June written for a 6 May date is flagged.
+  const may = [{ orderNumber: 'PO-202605-0004', dueDate: '2026-05-06' }]
+  assert.deepEqual(kinds(check('PO-202605-0004 is due on 05/06/2026.', may, { locale: 'en-GB' })), ['date:05/06/2026'])
+  // A date the user typed is flagged here and let through as theirs by the
+  // answer loop (aiV2UserTypedDate), read the workspace's way.
+  const question = 'Can it arrive by 18/11/2026?'
+  const [typed] = check('You asked for delivery by 18/11/2026.', [], { locale: 'en-GB', question }).problems
+  assert.deepEqual([typed.kind, aiV2UserTypedDate(typed.value, question, { locale: 'en-GB' })], ['date', true])
 })

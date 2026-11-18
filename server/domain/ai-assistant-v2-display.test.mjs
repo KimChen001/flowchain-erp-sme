@@ -158,3 +158,16 @@ test('a date half in Chinese and half in the app\'s format is written in the wor
   // Not a date: a decimal before 月, or no year.
   assert.equal(tidy('3.5 月 2, 2026 不是日期'), '3.5 月 2, 2026 不是日期')
 })
+
+// A slash date the user typed, in the workspace's order (en-GB day first).
+test('a slash date the user typed is read in the workspace order', () => {
+  assert.equal(aiV2UserTypedDate('18 Nov 2026', 'deliver by 18/11/2026', { locale: 'en-GB' }), true)
+  assert.equal(aiV2UserTypedDate('Nov 18, 2026', 'deliver by 11/18/2026', { locale: 'en-US' }), true)
+  // 05/06 is 5 June in en-GB and 6 May in en-US; zh-CN keeps month first.
+  assert.equal(aiV2UserTypedDate('5 Jun 2026', 'by 05/06', { locale: 'en-GB' }), true)
+  assert.equal(aiV2UserTypedDate('6 May 2026', 'by 05/06', { locale: 'en-GB' }), false)
+  assert.equal(aiV2UserTypedDate('May 6, 2026', 'by 05/06', { locale: 'en-US' }), true)
+  assert.equal(aiV2UserTypedDate('5月6日', '要在 05/06 前到', { locale: 'zh-CN' }), true)
+  // Without a locale, month first as before.
+  assert.equal(aiV2UserTypedDate('May 6, 2026', 'by 05/06'), true)
+})

@@ -1,3 +1,4 @@
+import { aiSlashDateParts, aiSlashDayFirst } from './ai-model-first-grounding.mjs'
 // How assistant v2 writes dates, amounts, quantities and record numbers in its
 // prose: as the app shows them in the workspace's locale and timezone, so the
 // text reads like the cards beside it ("Nov 4, 2026", "$2,500.00",
@@ -380,23 +381,24 @@ function zhPunctuation(piece, before) {
 }
 
 // The month-day keys of the dates a text writes (11-20), in the forms people
-// type: 2026-11-20, Nov 20, 20 November, 11/20, 11月20日.
+// type: 2026-11-20, Nov 20, 20 November, 11/20 (20/11 in a day-first
+// workspace, aiSlashDateParts), 11月20日.
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 }
 const MONTH = '(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
 const DAY_FORMS = [
   [/(?<!\d)\d{4}-(\d{1,2})-(\d{1,2})(?!\d)/g, (m) => [+m[1], +m[2]]],
   [new RegExp(`\\b${MONTH}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, 'gi'), (m) => [MONTHS[m[1].slice(0, 3).toLowerCase()], +m[2]]],
   [new RegExp(`(?<!\\d)(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH}\\b`, 'gi'), (m) => [MONTHS[m[2].slice(0, 3).toLowerCase()], +m[1]]],
-  [/(?<![\d/])(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?![\d/])/g, (m) => [+m[1], +m[2]]],
+  [/(?<![\d/])(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?![\d/])/g, (m, dayFirst) => { const date = aiSlashDateParts(+m[1], +m[2], dayFirst); return date ? [date.month, date.day] : [0, 0] }],
   [/(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g, (m) => [+m[1], +m[2]]],
   [/(?<![\w./-])(\d{1,2})-(\d{1,2})(?![\w/-])/g, (m) => [+m[1], +m[2]]],
 ]
-function dayKeys(value) {
+function dayKeys(value, dayFirst = false) {
   const keys = new Set()
   const source = text(value).normalize('NFKC')
   for (const [pattern, read] of DAY_FORMS) {
     for (const match of source.matchAll(pattern)) {
-      const [month, day] = read(match)
+      const [month, day] = read(match, dayFirst)
       if (month >= 1 && month <= 12 && day >= 1 && day <= 31) keys.add(`${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`)
     }
   }
@@ -404,10 +406,12 @@ function dayKeys(value) {
 }
 
 // Whether a date the check flagged is one the user typed in this conversation.
-export function aiV2UserTypedDate(value, userText) {
-  const typed = dayKeys(userText)
+// locale: the workspace's, for the order of a slash date (18/11 in en-GB).
+export function aiV2UserTypedDate(value, userText, { locale = null } = {}) {
+  const dayFirst = aiSlashDayFirst(locale)
+  const typed = dayKeys(userText, dayFirst)
   if (!typed.size) return false
-  return [...dayKeys(value)].some((key) => typed.has(key))
+  return [...dayKeys(value, dayFirst)].some((key) => typed.has(key))
 }
 
 // The words of a status, a signal type or a priority the results give as a
