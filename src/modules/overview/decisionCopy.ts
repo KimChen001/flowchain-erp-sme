@@ -375,4 +375,4 @@ export function invoiceCorrectionMessage(language: "en-US" | "zh-CN", facts: Inv
 
 // The follow-up to a supplier, in the language picked on the card: its own
 // module (followUpMessage.ts) so tests can load it without React.
-export { followUpMessage, type FollowUpFacts } from "./followUpMessage";
+export { followUpMessage, followUpSendErrorText, type FollowUpFacts } from "./followUpMessage";

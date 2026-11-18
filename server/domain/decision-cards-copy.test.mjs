@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { followUpMessage } from '../../src/modules/overview/followUpMessage.ts'
+import { followUpMessage, followUpSendErrorText } from '../../src/modules/overview/followUpMessage.ts'
 import { buildDecisionDrafts } from './decision-drafts.mjs'
 
 // Today's decision cards (src/modules/overview/DecisionCards.tsx) for the
@@ -32,7 +32,7 @@ test('the follow-up names each late line by SKU, item and the supplier part numb
 
 test('the card passes the item name and the part number of each draft line to the message', () => {
   assert.match(cards, /itemName: line\.itemName \|\| null,\s*supplierSku: line\.supplierSku \|\| null,/)
-  assert.match(copy, /export \{ followUpMessage, type FollowUpFacts \} from "\.\/followUpMessage"/)
+  assert.match(copy, /export \{ followUpMessage, followUpSendErrorText, type FollowUpFacts \} from "\.\/followUpMessage"/)
 })
 
 // L11-01: an overdue order approved but never sent gets send_purchase_order;
@@ -73,4 +73,34 @@ test('every draft type the server prepares has its own card, and "send the order
   for (const text of ['sendOrderDraft: "Send the order to {supplier}"', 'openOrder: "Open the order"', 'sendOrderDraft: "把订单发给{supplier}"', 'openOrder: "打开订单"', 'sendOrderShort: "Not sent to the supplier yet"', 'sendOrderShort: "尚未发给供应商"']) {
     assert.ok(copy.includes(text), text)
   }
+})
+
+// Design audit L5-12: a refused follow-up says what to change in the
+// interface language; the card showed "try again in a moment" for all of them.
+test('every refusal of a supplier follow-up has its own words in English and Chinese', () => {
+  const detail = { figure: '1,500', orderNumber: 'PO-202610-0007' }
+  assert.equal(followUpSendErrorText('SUPPLIER_EMAIL_FIGURE_CHANGED', detail, 'en-US'), "1,500 is not on order PO-202610-0007. The order's figures cannot be changed; edit only the wording.")
+  assert.equal(followUpSendErrorText('SUPPLIER_EMAIL_FIGURE_CHANGED', detail, 'zh-CN'), '1,500 不是订单 PO-202610-0007 上的数字。订单的数字不能改，只能改措辞。')
+  assert.equal(followUpSendErrorText('SUPPLIER_EMAIL_ORDER_MISSING', detail, 'zh-CN'), '请在邮件中保留订单号 PO-202610-0007。')
+  assert.equal(followUpSendErrorText('SUPPLIER_EMAIL_FIGURE_CHANGED', {}, 'en-US'), "A figure in the message is not on the order. The order's figures cannot be changed; edit only the wording.")
+  assert.equal(followUpSendErrorText('SUPPLIER_EMAIL_PRICE', null, 'zh-CN'), '催货邮件里不要写价格或币种。')
+  assert.equal(followUpSendErrorText('VERSION_CONFLICT', null, 'en-US'), null, 'not a follow-up refusal: the shared wording applies')
+  // Every SUPPLIER_EMAIL_ code the server can return has both.
+  const codes = new Set(['server/domain/supplier-follow-up-email.mjs', 'server/services/supplier-follow-up-email-service.mjs', 'server/routes/decision-items.routes.mjs'].flatMap((file) => source(file).match(/SUPPLIER_EMAIL_[A-Z_]+/g) || []))
+  codes.delete('SUPPLIER_EMAIL_PERMISSION')
+  codes.delete('SUPPLIER_EMAIL_LIMITS')
+  codes.delete('SUPPLIER_EMAIL_AUDIT_ACTION')
+  assert.ok(codes.size >= 15, [...codes].join(', '))
+  for (const code of codes) {
+    const english = followUpSendErrorText(code, detail, 'en-US')
+    const chinese = followUpSendErrorText(code, detail, 'zh-CN')
+    assert.ok(english && !/[\u4e00-\u9fff]/.test(english), `${code} in English`)
+    assert.ok(chinese && /[\u4e00-\u9fff]/.test(chinese), `${code} in Chinese`)
+  }
+  // The card shows them, and its own copy failure, instead of the generic retry.
+  const cards = source('src/modules/overview/DecisionCards.tsx')
+  assert.match(cards, /followUpSendErrorText\(error\.code, error\.details\?\.\[0\], t\.language\)/)
+  assert.ok(!cards.includes('throw new Error(t("copyFailed"))'))
+  // The message starts in the interface language; the person may switch it.
+  assert.equal((cards.match(/useState<"en-US" \| "zh-CN">\(language === "zh-CN" \? "zh-CN" : "en-US"\)/g) || []).length, 2)
 })

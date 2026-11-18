@@ -10,9 +10,12 @@ import { apiErrorText } from "../../lib/apiErrorText";
 // A failed step says why in the interface language, never the server's raw
 // English (design audit L16).
 const RETRY_LATER = ["Try again in a moment.", "请稍后重试。"] as const;
+// A message the card already wrote in the interface language: shown as it is,
+// not replaced by the generic "try again".
+class CardMessage extends Error {}
 import { useDocumentNumbers } from "../../lib/documentNumbers";
 import { formatQuantity } from "../../lib/format";
-import { followUpMessage, invoiceCorrectionMessage, useDecisionCopy, type DecisionCopyKey } from "./decisionCopy";
+import { followUpMessage, followUpSendErrorText, invoiceCorrectionMessage, useDecisionCopy, type DecisionCopyKey } from "./decisionCopy";
 import { formatLocaleAmount } from "../../lib/format";
 import { useTodayRowFormat } from "./todayRowFormat";
 
@@ -257,6 +260,7 @@ function DecisionCard({ entry, email, canDecide: canDecideSome, decideKinds, tod
       onChanged();
     } catch (error) {
       if (error instanceof ApiError && error.code === "DECISION_ALREADY_MADE") { setMessage(t("stale")); onChanged(); }
+      else if (error instanceof CardMessage) setMessage(t("failed", { message: error.message }));
       else setMessage(t("failed", { message: apiErrorText(error, t.language, RETRY_LATER) }));
     } finally {
       setBusy(false);
@@ -291,17 +295,22 @@ function DecisionCard({ entry, email, canDecide: canDecideSome, decideKinds, tod
         {entry.returned ? <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">{t("returned")}</span> : null}
       {draft?.type === "purchase_request" ? <ReorderBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} aside={aside} {...view} />
         : draft?.type === "supplier_follow_up" ? <FollowUpBody draft={draft} row={row} day={day} busy={busy} canDecide={canDecide} aside={aside} email={email} {...view} onChased={(text) => run(async () => {
-          try { await navigator.clipboard.writeText(text); } catch { throw new Error(t("copyFailed")); }
+          try { await navigator.clipboard.writeText(text); } catch { throw new CardMessage(t("copyFailed")); }
           await decide(entry.key, { option: "chased" });
           return t("copied");
         })} onSend={(mail) => run(async () => {
           // The address the person confirmed on the second step is the one sent to.
-          const result = await apiJson<{ outbox?: boolean }>("/api/decision-items/send-follow-up", { method: "POST", body: JSON.stringify({ key: entry.key, to: mail.to, confirmedTo: mail.to, subject: mail.subject, body: mail.body, recipientNotOnRecord: mail.recipientNotOnRecord }) });
+          // A refusal says what to change, in the interface language (L5-12).
+          const result = await apiJson<{ outbox?: boolean }>("/api/decision-items/send-follow-up", { method: "POST", body: JSON.stringify({ key: entry.key, to: mail.to, confirmedTo: mail.to, subject: mail.subject, body: mail.body, recipientNotOnRecord: mail.recipientNotOnRecord }) })
+            .catch((error) => {
+              const refusal = error instanceof ApiError ? followUpSendErrorText(error.code, error.details?.[0], t.language) : null;
+              throw refusal ? new CardMessage(refusal) : error;
+            });
           return result?.outbox ? t("sentOutbox") : t("sentEmail", { to: mail.to });
         })} />
           : draft?.type === "send_purchase_order" ? <SendOrderBody draft={draft} row={row} day={day} aside={aside} {...view} />
           : draft?.type === "invoice_exception" ? <InvoiceExceptionBody draft={draft} row={row} busy={busy} canDecide={canDecide} aside={aside} {...view} onContacted={(text) => run(async () => {
-            try { await navigator.clipboard.writeText(text); } catch { throw new Error(t("copyFailed")); }
+            try { await navigator.clipboard.writeText(text); } catch { throw new CardMessage(t("copyFailed")); }
             await decide(entry.key, { option: "chased" });
             return t("invoiceCopied");
           })} />
