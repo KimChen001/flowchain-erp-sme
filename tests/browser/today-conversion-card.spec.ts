@@ -11,6 +11,12 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const REQUEST_ID = "PR-L1105";
 
+// Today reloads its overview after a decision; a reload still in flight when
+// a test ends must not fail it through the stubbed route.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
 async function signIn(page: Page, language: "en-US" | "zh-CN") {
   const response = await page.request.post("/api/auth/login", {
     data: { email: "admin@flowchain.local", name: "Conversion card", company: "FlowChain" },
