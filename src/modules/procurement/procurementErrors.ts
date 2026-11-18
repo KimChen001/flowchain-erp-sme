@@ -24,6 +24,9 @@ const PURCHASING_CODES: Record<string, ErrorPair> = {
   SUPPLIER_NOT_ACTIVE: ["A line's supplier is not active. Activate the supplier or choose another first.", "有采购行的供应商未启用，请先启用该供应商或改选其他供应商。"],
   DOWNSTREAM_OBJECT_ALREADY_EXISTS: ["This request already has an open purchase order or RFQ.", "该申请已有未结的采购订单或询价单。"],
   PURCHASE_ORDER_HAS_OPEN_RECEIPTS: ["This purchase order has receipts that are not posted yet. Post or cancel them first.", "该采购订单还有未过账的收货单，请先过账或取消。"],
+  // Design audit L1-10 / L7-03: supplier invoices hold the order open.
+  PURCHASE_ORDER_HAS_SUPPLIER_INVOICES: ["A supplier invoice is recorded against this purchase order, so it cannot be cancelled. Cancel the invoice first.", "该采购订单已登记供应商发票，不能取消。请先取消发票。"],
+  PURCHASE_ORDER_HAS_INVOICE_EXCEPTIONS: ["A supplier invoice on this purchase order has a match difference still to review. Review it before closing the order.", "该采购订单的供应商发票还有待复核的匹配差异，请先复核再关闭订单。"],
   // No conversion between units is recorded, so lines and receipts are in the item's stock unit only.
   PURCHASE_UNIT_CONVERSION_MISSING: ["A line is in a unit other than its item's stock unit, and no conversion between the two is recorded. Request the item again in its stock unit.", "有采购行的单位不是该物料的库存单位，且未记录两者的换算关系。请按库存单位重新请购。"],
   RECEIVING_UNIT_MISMATCH: ["A line on this receipt is in a unit other than its item's stock unit, and no conversion is recorded, so it cannot be posted.", "该收货单有明细的单位不是物料的库存单位，且未记录换算关系，不能过账。"],

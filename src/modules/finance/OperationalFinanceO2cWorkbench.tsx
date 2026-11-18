@@ -532,7 +532,7 @@ function NextHint({ to, steps }: { to: string; steps: string[] }) {
 }
 
 function InvoiceList() {
-  const { t, locale, timezone } = useI18n();
+  const { t, locale, timezone, workspaceToday } = useI18n();
   const tr = useListCopyO2c();
   const { data, error, load } = useFinanceList<Invoice>("/api/finance/customer-invoices");
   if (error) return <Notice title={error.code}>{error.message}</Notice>;
@@ -540,7 +540,8 @@ function InvoiceList() {
   const enabled =
     data.capabilities["customer-invoice"]?.enabled && canPrepare();
   const count = (key: string) => String(data.counts?.[key] ?? 0);
-  const today = todayInTimeZone(timezone);
+  // The workspace's day from the server (design audit B3): never the browser's own.
+  const today = workspaceToday;
   return (
     <div className="space-y-5" data-testid="customer-invoice-workbench">
       <div className={metricGridClass} data-testid="customer-invoice-metrics">
@@ -632,13 +633,14 @@ const RECEIVABLE_ACTION_KEYS: Record<string, TranslationKey> = {
 };
 
 function Receivables() {
-  const { t, locale, timezone } = useI18n();
+  const { t, locale, timezone, workspaceToday } = useI18n();
   const tr = useListCopyO2c();
   // Overdue first, then the rest still owed, then paid; each newest first.
   const { data, error, load } = useFinanceList<Receivable>("/api/finance/receivables", "sort=attention");
   if (error) return <Notice title={error.code}>{error.message}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
-  const today = todayInTimeZone(timezone);
+  // The workspace's day from the server (design audit B3): never the browser's own.
+  const today = workspaceToday;
   const count = (key: string) => String(data.counts?.[key] ?? 0);
   return (
     <div className="space-y-5" data-testid="receivables-workbench">
@@ -1266,7 +1268,7 @@ function invoiceReadFailure(reason: unknown): InvoiceReadFailure {
 // issued here. Issuing opens the receivable; nothing on this page collects
 // money. Each step previews the server's plan before it runs.
 function InvoiceDetail() {
-  const { t, locale, language, timezone } = useI18n();
+  const { t, locale, language, timezone, workspaceToday } = useI18n();
   const tr = useListCopyO2c();
   const say = useDetailCopy();
   const dialog = useConfirm();
@@ -1304,7 +1306,8 @@ function InvoiceDetail() {
   const version = () => ({ expectedVersion: data.version });
   const receivable = data.receivable;
   // The list's overdue rule: still owed and past the due day in the workspace.
-  const today = todayInTimeZone(timezone);
+  // The workspace's day from the server (design audit B3): never the browser's own.
+  const today = workspaceToday;
   const pastDue = Boolean(receivable) && receivablePastDue(receivable, today);
   const lines: any[] = data.lines || [];
   const number = String(data.invoiceNumber || "");

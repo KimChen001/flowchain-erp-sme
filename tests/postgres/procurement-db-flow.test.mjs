@@ -1032,12 +1032,17 @@ test('C6: the preview names the orders a request makes; a cancelled or rejected 
   assert.equal(preview.body.purchaseOrderStatus, 'approved')
   assert.deepEqual(preview.body.orders.map((order) => [order.supplierId, order.currency, order.warehouseId, order.lineCount, order.amount]), [[supplierA, 'USD', warehouseA, 1, '125.0000']])
   assert.deepEqual(preview.body.issues, [])
+  // Each line as its PO will carry it, for the card that asks first (L11-05).
+  assert.deepEqual(preview.body.orders[0].lines, [{ sku: itemA.sku, itemName: itemA.name, quantity: '10.0000', unit: 'EA' }])
   const foreign = await api(tokens.managerB, 'GET', `/api/procurement/requests/${id}/purchase-order-preview`)
   assert.equal(foreign.status, 404, describe(foreign))
 
   const first = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 1 })
   assert.equal(first.status, 201, describe(first))
   const firstPo = first.body.createdPurchaseOrders[0].id
+  // The order made has the lines and the status the preview named.
+  assert.deepEqual(first.body.createdPurchaseOrders[0].lines.map((line) => [line.sku, line.itemName, line.orderedQuantity, line.unit]), [[itemA.sku, itemA.name, 10, 'EA']])
+  assert.equal(first.body.createdPurchaseOrders[0].status, preview.body.purchaseOrderStatus)
   assert.equal((await requestRow(id)).status, 'converted')
   const cancelled = await api(tokens.managerA, 'POST', `/api/procurement/orders/${firstPo}/cancel`, { expectedVersion: 0 })
   assert.equal(cancelled.status, 200, describe(cancelled))

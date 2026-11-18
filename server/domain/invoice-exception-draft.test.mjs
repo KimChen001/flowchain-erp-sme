@@ -57,3 +57,38 @@ test('an amount difference alone, a reviewed exception, and a reader who cannot 
   assert.deepEqual([hidden.differences[0].expected, hidden.differences[0].actual, hidden.differences[0].cause], [null, null, null])
   assert.equal(hidden.amountsVisible, false)
 })
+
+// Design audit L2-04 (B2): on a closed or cancelled order the rest of the
+// goods will not come, so the step is to ask the supplier for a credit note
+// or a corrected invoice, never to wait for the receipt.
+test('goods not received on an order that is closed: ask the supplier, not wait for the receipt', () => {
+  for (const orderStatus of ['closed', 'cancelled']) {
+    const draft = invoiceExceptionDraft({ invoice: { ...INVOICE, orderStatus }, exceptions: [{ id: 'E', matchLineId: 'L', exceptionType: 'quantity', status: 'open' }], lines: line('L', { receivedQuantity: 120, invoiceQuantity: 240 }) })
+    assert.equal(draft.differences[0].cause, 'order_closed', orderStatus)
+    assert.equal(draft.differences[0].missing, 120)
+    assert.equal(draft.step, 'ask_supplier', orderStatus)
+  }
+  // The same difference on an order still being received waits for the receipt.
+  const open = invoiceExceptionDraft({ invoice: { ...INVOICE, orderStatus: 'partially_received' }, exceptions: [{ id: 'E', matchLineId: 'L', exceptionType: 'quantity', status: 'open' }], lines: line('L', { receivedQuantity: 120, invoiceQuantity: 240 }) })
+  assert.equal(open.step, 'wait_receipt')
+})
+
+// Design audit L11-08 (B2): only an order dated after the invoice's order is
+// evidence that the supplier's price moved (the read service passes only
+// approved, issued or received orders).
+test('a price is taken as changed only from an order dated after the invoice\'s order', () => {
+  const draftWith = (orderPrices) => invoiceExceptionDraft({
+    invoice: { ...INVOICE, orderDate: '2026-10-01T09:00:00.000Z' },
+    exceptions: [{ id: 'EX-1', matchLineId: 'L1', exceptionType: 'price', status: 'open', expectedValue: '1.27', actualValue: '1.32' }],
+    lines: line('L1', { invoiceUnitPrice: 1.32 }),
+    orderPrices,
+  })
+  const older = draftWith([{ sku: '85123A', unitPrice: '1.32', orderId: 'PO-OLD', orderNumber: 'PO-202608-0001', orderDate: '2026-08-15T09:00:00.000Z' }])
+  assert.equal(older.differences[0].cause, 'invoice_price')
+  assert.equal(older.step, 'ask_supplier')
+  const undated = draftWith([{ sku: '85123A', unitPrice: '1.32', orderId: 'PO-X', orderNumber: 'PO-X' }])
+  assert.equal(undated.differences[0].cause, 'invoice_price')
+  const later = draftWith([{ sku: '85123A', unitPrice: '1.32', orderId: 'PO-OLD', orderNumber: 'PO-202608-0001', orderDate: '2026-08-15T09:00:00.000Z' }, { sku: '85123A', unitPrice: '1.32', orderId: 'PO-NEW', orderNumber: 'PO-202610-0030', orderDate: '2026-10-20T09:00:00.000Z' }])
+  assert.equal(later.differences[0].cause, 'price_changed')
+  assert.equal(later.differences[0].evidenceOrder, 'PO-202610-0030')
+})

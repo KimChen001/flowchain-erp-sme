@@ -28,9 +28,11 @@ function legacyRolesHolding(permissionCode) {
 // Active users of the workspace other than `actorId` who may approve: the
 // permission through an active assignment of an active role, as
 // resolveAuthorizationContext reads it, or a legacy role not yet turned into
-// assignments. Approval emails, addresses and warehouses play no part.
-export async function otherApproverCount(client, { tenantId, actorId, permissionCode }) {
+// assignments; and, when the approval itself checks warehouses (a return's),
+// read access to each of them. Approval emails and addresses play no part.
+export async function otherApproverCount(client, { tenantId, actorId, permissionCode, warehouseIds = [] }) {
   const legacyRoles = legacyRolesHolding(permissionCode);
+  const warehouses = [...new Set(warehouseIds.map(text).filter(Boolean))];
   return client.user.count({
     where: {
       tenantId,
@@ -40,6 +42,7 @@ export async function otherApproverCount(client, { tenantId, actorId, permission
         { roleAssignments: { some: { status: "active", role: { status: "active", permissions: { some: { permissionCode } } } } } },
         ...(legacyRoles.length ? [{ rolesAssignedAt: null, roleAssignments: { none: {} }, role: { in: legacyRoles } }] : []),
       ],
+      ...(warehouses.length ? { AND: warehouses.map((warehouseId) => ({ warehouseScopes: { some: { warehouseId, accessLevel: { in: ["read", "operate"] } } } })) } : {}),
     },
   });
 }
@@ -47,11 +50,11 @@ export async function otherApproverCount(client, { tenantId, actorId, permission
 // The authors of a document are the people who raised or submitted it. A
 // document none of them is approving is not a self-approval. Otherwise
 // `blocked` says whether someone else could approve it instead.
-export async function selfApprovalCheck(client, { tenantId, actorId, authorIds = [], permissionCode }) {
+export async function selfApprovalCheck(client, { tenantId, actorId, authorIds = [], permissionCode, warehouseIds = [] }) {
   const actor = text(actorId);
   const authors = new Set(authorIds.map(text).filter(Boolean));
   if (!actor || !authors.has(actor)) return { self: false, blocked: false, auditFlag: null };
-  const others = await otherApproverCount(client, { tenantId, actorId: actor, permissionCode });
+  const others = await otherApproverCount(client, { tenantId, actorId: actor, permissionCode, warehouseIds });
   return others > 0
     ? { self: true, blocked: true, auditFlag: null }
     : { self: true, blocked: false, auditFlag: SELF_APPROVAL_ONLY_APPROVER };

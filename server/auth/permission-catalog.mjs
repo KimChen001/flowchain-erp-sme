@@ -291,7 +291,6 @@ export const moduleReadPermissions = Object.freeze({
   inventory: ["inventory.balance.read", "inventory.transfer.read", "inventory.count.read", "inventory.adjustment.read"],
   finance: permissionCodes.filter((code) => code.startsWith("finance.") && code.endsWith(".read")),
   "mobile-operations": ["mobile.tasks.read", "mobile.procurement.approval.read", "mobile.receiving.read"],
-  "audit-history": ["audit.read"],
   "universal-intake": ["intake.artifact.read", "intake.batch.read", "custom_field.read"],
   contracts: ["contracts.contract.read"],
 })

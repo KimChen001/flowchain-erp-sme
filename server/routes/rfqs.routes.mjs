@@ -22,10 +22,5 @@ export async function handleRfqsRoute(ctx) {
     return send(res, 200, documents) || true
   }
 
-  const rfqStatusMatch = url.pathname.match(/^\/api\/rfqs\/([^/]+)\/status$/)
-  if ((req.method === 'POST' && url.pathname === '/api/rfqs') || (req.method === 'PATCH' && rfqStatusMatch)) {
-    throw Object.assign(new Error('Legacy RFQ mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
-  }
-
   return false
 }

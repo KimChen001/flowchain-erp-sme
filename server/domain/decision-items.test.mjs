@@ -66,6 +66,17 @@ test('a covered reorder comes back when no open request covers it, and stays whe
   assert.equal(comesBack(item, current, today, { covered: false }), true)
 })
 
+// Design audit L11-02: covered had no time limit and ignored the stock, so one
+// request kept a worsening shortage off Today for good.
+test('a covered reorder comes back after 30 days, or when its stock got worse, even while a request covers it', () => {
+  const item = decided('reorder_now', 'ITEM-1', 'covered', { decidedOn: '2026-10-20', snapshot: { shortfall: 10, stockSignal: 'stock_below_reorder' } })
+  const same = row('reorder_now', 'ITEM-1', { date: today, detail: { shortfall: 10, stockSignal: 'stock_below_reorder' } })
+  assert.equal(comesBack(item, same, '2026-11-18', { covered: true }), false, '29 days')
+  assert.equal(comesBack(item, same, '2026-11-19', { covered: true }), true, '30 days')
+  assert.equal(comesBack(item, row('reorder_now', 'ITEM-1', { date: today, detail: { shortfall: 20 } }), today, { covered: true }), true, 'the shortfall doubled')
+  assert.equal(comesBack(item, row('reorder_now', 'ITEM-1', { date: today, detail: { shortfall: 10, stockSignal: 'stock_shortage' } }), today, { covered: true }), true, 'a worse stock signal')
+})
+
 test('sync raises new rows, reopens what came back, and closes only rows it could see', () => {
   const rows = [
     row('reorder_now', 'ITEM-1', { date: today }),

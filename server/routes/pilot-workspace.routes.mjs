@@ -1,3 +1,4 @@
+import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { PilotIdentityError, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
@@ -138,6 +139,9 @@ export async function handlePilotWorkspaceRoute(ctx) {
         effectiveLanguage: effectiveLanguage(actor.user, tenant),
         locale: tenant.locale,
         timezone: tenant.timezone,
+        // Today on the workspace's calendar, so every page counts days late
+        // from the same day as Today and the finance pages (design audit B3).
+        workspaceToday: tenantCalendarDay(new Date(), tenant.timezone || DEFAULT_TENANT_TIMEZONE),
         workspaceName: tenant.name,
       }); return true
     }

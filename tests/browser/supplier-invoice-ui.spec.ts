@@ -85,7 +85,9 @@ test("a rejected overcharge is not offered for approval and can be cancelled", a
   await expect(page.getByTestId("supplier-invoice-detail")).toContainText(/Cancelled|已取消/);
 });
 
-test("one note approves a price difference and the amount difference it causes", async ({ page }) => {
+// A price difference is one difference: the match does not raise it again as
+// an amount difference (design audit B2, L2-03).
+test("a price difference is one difference, approved with one note", async ({ page }) => {
   await signIn(page, "manager@example.com");
   await page.goto("/app/procurement/bills");
   await page.getByTestId("supplier-invoice-new").click();
@@ -109,15 +111,11 @@ test("one note approves a price difference and the amount difference it causes",
   const price = match.locator('[data-testid="match-exception"][data-type="price"]');
   const amount = match.locator('[data-testid="match-exception"][data-type="amount"]');
   await expect(price).toContainText(/Price difference|价格差异/);
-  await expect(amount).toContainText(/Amount difference|金额差异/);
-  await expect(match.getByTestId("supplier-invoice-match-summary")).toContainText(/2 line differences to review|2 处行差异待复核/);
-  // The amount difference follows from the price: it has no buttons of its own.
-  await expect(amount.getByTestId("match-exception-follows-price")).toBeVisible();
-  await expect(amount.locator('[data-testid^="exception-approve-"]')).toHaveCount(0);
+  await expect(amount).toHaveCount(0);
+  await expect(match.getByTestId("supplier-invoice-match-summary")).toContainText(/1 line difference to review|1 处行差异待复核/);
   const approve = price.locator('[data-testid^="exception-approve-"]').first();
   const approveId = String(await approve.getAttribute("data-testid"));
   await approve.click();
-  await expect(page.getByTestId(`${approveId}-note`)).toContainText(/also accepts the amount difference it causes|一并接受由它造成的金额差异/);
   // Confirm works before Preview; an empty note is named under its field.
   await expect(page.getByTestId(`${approveId}-confirm`)).toBeEnabled();
   await page.getByTestId(`${approveId}-confirm`).click();
@@ -126,9 +124,9 @@ test("one note approves a price difference and the amount difference it causes",
   await page.getByTestId(`${approveId}-reason`).fill("Supplier raised the price; buyer agreed");
   await page.getByTestId(`${approveId}-confirm`).click();
   await expect(page.getByTestId(`${approveId}-panel`)).toHaveCount(0);
-  // Both are approved with the same note, and the match is no longer an exception.
+  // It is approved with the note, and the match is no longer an exception.
   await expect(match.locator('[data-testid^="exception-approve-"]')).toHaveCount(0);
-  await expect(amount).toContainText("Supplier raised the price; buyer agreed");
+  await expect(price).toContainText("Supplier raised the price; buyer agreed");
   await expect(match).toContainText(/Variance approved|差异已批准/);
   await expect(page.getByTestId("supplier-invoice-variance-reason")).toHaveCount(0);
   // The header no longer reads "Exception", and a toast leads back up to Approve.

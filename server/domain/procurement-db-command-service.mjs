@@ -235,6 +235,7 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
           // A receipt still being prepared against the PO would become unpostable.
           const openReceipt = await tx.receivingDocument.findFirst({ where: { tenantId: actor.tenantId, poId: row.id, postingStatus: "unposted", workflowStatus: { not: "cancelled" } }, select: { id: true, documentNumber: true } });
           if (openReceipt) fail("PURCHASE_ORDER_HAS_OPEN_RECEIPTS", `Cancel or post receipt ${openReceipt.documentNumber || openReceipt.id}, which is still being prepared for this purchase order, first.`, 409, { receivingDocumentId: openReceipt.id });
+          await supplierInvoiceGuard(tx, actor, row, action);
         }
         // What was still open when the PO was closed, for the audit and the PO.
         const closedOpenQuantities = action === "close"
@@ -267,6 +268,24 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
         return { action: `purchase_order_${action}`, summary: `${action} purchase order ${row.id}.`, metadata: { reason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null, ...(recordsPromises ? { originalPromisesRecorded } : {}), ...(action === "close" ? { closedOpenQuantities } : {}), ...(restoredRequest ? { restoredPurchaseRequestId: restoredRequest } : {}), ...(selfApproval ? { selfApproval } : {}) } };
       },
     });
+  }
+
+  // Supplier invoices hold a PO open (design audit L1-10 / L7-03). A PO with
+  // a supplier invoice that is not cancelled cannot be cancelled: the invoice
+  // would wait for goods that never come. A PO cannot be closed while one of
+  // its invoices has a match difference nobody has reviewed yet: review it
+  // first (approve or accept it, or reject it and ask the supplier). The
+  // invoice's lines name the PO's lines, so an invoice is found either way.
+  async function supplierInvoiceGuard(tx, actor, row, action) {
+    const lineIds = row.lines.map((line) => line.id);
+    const ofThisOrder = { OR: [{ relatedPoId: row.id }, ...(lineIds.length ? [{ lines: { some: { purchaseOrderLineId: { in: lineIds } } } }] : [])] };
+    if (action === "cancel") {
+      const invoice = await tx.supplierInvoice.findFirst({ where: { tenantId: actor.tenantId, status: { not: "cancelled" }, ...ofThisOrder }, select: { id: true, invoiceNumber: true, status: true }, orderBy: { id: "asc" } });
+      if (invoice) fail("PURCHASE_ORDER_HAS_SUPPLIER_INVOICES", `Supplier invoice ${invoice.invoiceNumber || invoice.id} is recorded against this purchase order, so it cannot be cancelled. Cancel the invoice first, or close the order once its invoices are resolved.`, 409, { supplierInvoiceId: invoice.id, invoiceStatus: invoice.status });
+      return;
+    }
+    const held = await tx.financeMatchException.findFirst({ where: { tenantId: actor.tenantId, status: "open", supplierInvoice: { status: { not: "cancelled" }, ...ofThisOrder } }, select: { supplierInvoiceId: true, supplierInvoice: { select: { invoiceNumber: true } } }, orderBy: { id: "asc" } });
+    if (held) fail("PURCHASE_ORDER_HAS_INVOICE_EXCEPTIONS", `Supplier invoice ${held.supplierInvoice?.invoiceNumber || held.supplierInvoiceId} on this purchase order has a match difference that is still to review. Review it before closing the order.`, 409, { supplierInvoiceId: held.supplierInvoiceId });
   }
 
   // When the last PO made from a request is cancelled or rejected, the

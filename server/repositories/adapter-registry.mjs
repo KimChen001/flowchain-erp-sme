@@ -3,9 +3,6 @@ import { createDbAuditLogRepository } from './db-audit-log-repository.mjs'
 import { createDbMasterDataRepository } from './db-master-data-repository.mjs'
 import { createDbProcurementReadRepository } from './db-procurement-read-repository.mjs'
 import { createDbInventoryReadRepository } from './db-inventory-read-repository.mjs'
-import { createDisabledUserDataRuntimeRepository } from './user-data-runtime-repository.mjs'
-import { createDbUserConfirmedActionRepository } from './db-user-confirmed-action-repository.mjs'
-import { createDbExceptionCaseRepository } from './db-exception-case-repository.mjs'
 import { createDbProcurementCommandService } from '../domain/procurement-db-command-service.mjs'
 import { createPurchaseOrderDocumentReadService } from '../domain/purchase-order-document-read-service.mjs'
 import { createDbProcurementRuntimeRepository } from './db-procurement-runtime-repository.mjs'
@@ -61,11 +58,8 @@ export function createDatabaseRepositoryRegistry({ db = {}, env = process.env, p
     procurementRequests: createProcurementRequestCommandService({ env, prisma, masterData }),
     salesOrders: createDbSalesOrderReadRepository({ env, prisma }),
     actionDrafts: createDbActionDraftRepository({ db, env, prisma }),
-    exceptionCases: createDbExceptionCaseRepository({ env, prisma }),
     auditLog: createDbAuditLogRepository({ env, prisma }),
     aiConversation: createTransientAiConversationRepository(),
-    userDataRuntime: createDisabledUserDataRuntimeRepository(),
-    userConfirmedActions: createDbUserConfirmedActionRepository({ env, prisma }),
     intake: createDbIntakeRepository({ env, prisma }),
   }
 }

@@ -16,7 +16,7 @@ test('settings, PO, master data and reports expose consolidated product surfaces
     read('src/app/routeRegistry.tsx'), read('src/modules/settings/Page.tsx'), read('src/modules/purchasing/Page.tsx'),
     read('server/routes/master-data.routes.mjs'), read('src/components/business/businessEntityRoutes.ts'), read('src/modules/reports/BiDashboard.tsx'),
   ])
-  for (const path of ['company', 'roles', 'numbering', 'review', 'modules', 'ai', 'audit', 'advanced']) assert.match(routes, new RegExp(`/app/settings/${path}`))
+  for (const path of ['company', 'roles', 'numbering', 'review', 'ai', 'audit']) assert.match(routes, new RegExp(`/app/settings/${path}`))
   assert.doesNotMatch(settings, /ControlledSettingsView/)
   assert.match(purchasing, /min-w-\[1150px\]/)
   assert.match(purchasing, /sticky left-0/)

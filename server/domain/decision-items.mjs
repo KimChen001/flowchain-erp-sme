@@ -143,6 +143,16 @@ export function decisionSnapshot(row, today) {
 const STOCK_SIGNAL_RANK = Object.freeze({ stock_below_reorder: 0, stock_below_safety: 1, stock_shortage: 2 })
 const stockRank = (signal) => STOCK_SIGNAL_RANK[signal] ?? 0
 
+// Whether a reorder item's stock got worse since it was decided: a worse
+// stock signal, or the shortfall at least doubled.
+function reorderWorsened(row, snapshot) {
+  const detail = row?.detail || {}
+  if (stockRank(detail.stockSignal) > stockRank(snapshot.stockSignal)) return true
+  const before = number(snapshot.shortfall)
+  const now = number(detail.shortfall)
+  return before !== null && before > 0 && now !== null && now >= before * 2
+}
+
 // Whether a decided item comes back as open, given its row on Today now.
 // covered: for reorder items, whether an open purchase request still covers
 // the item (an item set aside as covered comes back when none does); null
@@ -157,20 +167,16 @@ export function comesBack(item, row, today, { covered = null } = {}) {
     case 'not_now':
       return isDay(item.returnOn) ? item.returnOn <= today : true
     case 'covered':
-      return covered === false
+      // Back when no request covers it any more, after 30 days at most, or
+      // when its stock got worse since (design audit L11-02).
+      return covered === false || daysSince >= DECISION_RETURN.maxDays || (item.kind === 'reorder_now' && reorderWorsened(row, snapshot))
     case 'chased':
       return decidedOn ? addWorkdays(decidedOn, DECISION_RETURN.chasedWorkdays) <= today || (row.date || null) !== (snapshot.date || null) : true
     case 'accepted':
       return daysSince >= limit
     case 'not_needed': {
       if (daysSince >= limit) return true
-      const detail = row.detail || {}
-      if (item.kind === 'reorder_now') {
-        if (stockRank(detail.stockSignal) > stockRank(snapshot.stockSignal)) return true
-        const before = number(snapshot.shortfall)
-        const now = number(detail.shortfall)
-        return before !== null && before > 0 && now !== null && now >= before * 2
-      }
+      if (item.kind === 'reorder_now') return reorderWorsened(row, snapshot)
       if (item.kind === 'purchase_order_overdue') {
         if ((row.date || null) !== (snapshot.date || null)) return true
         return (Number(row.overdueDays) || 0) >= (Number(snapshot.overdueDays) || 0) + DECISION_RETURN.overdueMoreDays

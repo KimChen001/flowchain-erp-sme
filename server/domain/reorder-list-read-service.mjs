@@ -1,4 +1,5 @@
 import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
+import { OPEN_PURCHASE_REQUEST_STATUSES } from '../../shared/purchase-suggestion.mjs'
 import { findManyWithinLimit, requireTenantId } from '../repositories/repository-read-scope.mjs'
 import { listItemSupplierRecords } from './master-data-commands.mjs'
 import { DEMAND_WINDOW_DAYS, buildReorderList } from './reorder-list.mjs'
@@ -20,6 +21,10 @@ import { attachReorderPointSuggestions } from './reorder-point-suggestion.mjs'
 // lines and the preferred supplier's lead time (reorder-point-suggestion.mjs),
 // with its inputs. It never changes the row: the list is dated by the
 // recorded reorder point until a person changes it on the item.
+//
+// The lines of open purchase requests (draft, submitted or approved) are read
+// too: they are in the position (design audit C2), and their numbers are shown
+// with showPurchaseRequests.
 //
 // Given a forecast client (reorder-point-forecast.mjs), the shipments are read
 // over FORECAST_HISTORY_DAYS instead, the list itself still uses the last 90
@@ -45,13 +50,14 @@ export function allocationTruncatedSubjects(context = {}) {
 }
 
 const ITEM_LIMIT = 2000
+const REQUEST_LINE_LIMIT = 20000
 const SHIPMENT_LINE_LIMIT = 20000
 // Two years of shipments for the model forecast: more lines, fewer fields.
 const FORECAST_SHIPMENT_LINE_LIMIT = 200000
 
 export function createReorderListReadService({ prisma }) {
   return {
-    async read({ tenantId, warehouseIds = null, today, timeZone, allocationRows = [], showPurchaseOrders = true, truncatedSubjects = [], forecastClient = null }) {
+    async read({ tenantId, warehouseIds = null, today, timeZone, allocationRows = [], showPurchaseOrders = true, showPurchaseRequests = showPurchaseOrders, truncatedSubjects = [], forecastClient = null }) {
       const scopedTenantId = requireTenantId({ tenantId })
       const truncated = new Map(truncatedSubjects.map((entry) => [entry.subject, entry]))
       const onTruncated = (entry) => truncated.set(entry.subject, entry)
@@ -63,7 +69,7 @@ export function createReorderListReadService({ prisma }) {
       const forecasting = Boolean(forecastClient) && !scopeIds
       const from = new Date(`${addCalendarDays(today, -(forecasting ? FORECAST_HISTORY_DAYS : DEMAND_WINDOW_DAYS) - 1)}T00:00:00Z`)
       const to = new Date(`${addCalendarDays(today, 1)}T12:00:00Z`)
-      const [items, shipmentRows, supplierLinks, suppliers] = await Promise.all([
+      const [items, shipmentRows, supplierLinks, suppliers, requestRows] = await Promise.all([
         findManyWithinLimit(prisma.item, {
           where: { tenantId: scopedTenantId },
           select: { id: true, sku: true, name: true, unit: true, reorderPoint: true, metadata: true, preferredSupplierId: true, status: true },
@@ -77,7 +83,13 @@ export function createReorderListReadService({ prisma }) {
         }, { limit: forecasting ? FORECAST_SHIPMENT_LINE_LIMIT : SHIPMENT_LINE_LIMIT, subject: 'shipment_lines', onTruncated }),
         scopeIds ? [] : listItemSupplierRecords(prisma, scopedTenantId),
         scopeIds ? [] : prisma.supplier.findMany({ where: { tenantId: scopedTenantId }, select: { id: true, code: true, name: true, status: true } }),
+        scopeIds || typeof prisma.purchaseRequestLine?.findMany !== 'function' ? [] : findManyWithinLimit(prisma.purchaseRequestLine, {
+          where: { purchaseRequest: { tenantId: scopedTenantId, status: { in: [...OPEN_PURCHASE_REQUEST_STATUSES] } } },
+          select: { id: true, itemId: true, sku: true, quantity: true, unit: true, purchaseRequest: { select: { id: true, number: true, status: true } } },
+          orderBy: [{ id: 'asc' }],
+        }, { limit: REQUEST_LINE_LIMIT, subject: 'purchase_requests', onTruncated }),
       ])
+      const purchaseRequestLines = requestRows.map((line) => ({ itemId: line.itemId, sku: line.sku, quantity: line.quantity === null ? null : Number(line.quantity), unit: line.unit, request: line.purchaseRequest }))
       const longLines = shipmentRows.map((line) => ({
         itemId: line.itemId,
         unit: line.unit,
@@ -94,10 +106,12 @@ export function createReorderListReadService({ prisma }) {
         shipmentLines,
         supplierLinks,
         suppliers,
+        purchaseRequestLines,
         today,
         timeZone,
         scope: { warehouseIds: scopeIds, totalWarehouses: warehouses.length },
         showPurchaseOrders,
+        showPurchaseRequests,
       }), shipmentLines)
       // A truncated long read would show a seasonal item as quieter than it
       // is, so the model is not asked then.

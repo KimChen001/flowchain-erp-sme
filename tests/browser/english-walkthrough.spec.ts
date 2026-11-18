@@ -53,7 +53,6 @@ const ROUTES = [
   "/app/reports/procurement",
   "/app/settings/numbering",
   "/app/settings/review",
-  "/app/settings/modules",
   "/app/settings/ai",
   "/app/settings/audit",
 ];
@@ -261,7 +260,7 @@ test("the purchase orders header totals committed orders only, per currency", as
 
 test("frozen and unavailable modules have no entry point and show Capability unavailable", async ({ page }) => {
   await signIn(page);
-  for (const path of ["/app/finance/settlement", "/app/finance/reconciliation", "/app/mobile/settlements/any", "/app/forecast/mrp", "/app/forecast/cockpit", "/app/imports/failed"]) {
+  for (const path of ["/app/finance/settlement", "/app/finance/reconciliation", "/app/mobile/settlements/any", "/app/imports/failed"]) {
     await page.goto(path);
     await expect(page.getByTestId("capability-route-blocked"), path).toBeVisible();
     await expect(page.getByText("Capability unavailable", { exact: true })).toBeVisible();

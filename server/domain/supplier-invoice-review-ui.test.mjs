@@ -6,6 +6,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { matchStatusAfterReview, MATCH_VARIANCE_APPROVED } from './operational-finance-command-service.mjs'
+import { THREE_WAY_MATCH_RULE } from './operational-finance-policy.mjs'
 
 // Round 7 of the UI review, finance: a match whose every difference is
 // approved stops reading as an open variance; one decision closes a price
@@ -252,4 +253,24 @@ test('the finance dictionary has the approved-variance status and the Chinese wo
   assert.match(dictionary, /"ai\.v2\.column\.position": "库存位置（含在途）"/)
   assert.doesNotMatch(dictionary, /库存头寸/)
   assert.match(dictionary, /"finance\.method\.wire": "Bank transfer"/)
+})
+
+// Design audit B2. L2-17: the form showed quantity × price in floating point
+// (2.5 × 1.0001 = 2.5002) where the server rounds to 2.5003, and the save was
+// refused; it now works the amount out as the server does and sends none.
+// L2-05: under the current match rule a quantity difference offers "Accept
+// at received quantity" instead of "Approve difference".
+test('the invoice form works out line amounts as the server does, and quantity differences follow the match rule', async () => {
+  const screens = await load('screens')
+  assert.equal(screens.invoiceLineAmount('2.5', '1.0001'), 2.5003)
+  assert.equal(screens.invoiceLineAmount('1.5', '0.0003'), 0.0005)
+  assert.equal(screens.invoiceLineAmount('3', '12.5'), 37.5)
+  const source = read('src/modules/finance/SupplierInvoiceScreens.tsx')
+  assert.doesNotMatch(source, /lineAmount: fixed\(/)
+  assert.doesNotMatch(source, /totalAmount: fixed\(/)
+  assert.equal(screens.RECEIVED_QUANTITY_RULE, THREE_WAY_MATCH_RULE)
+  assert.equal(screens.quantityAcceptedAtReceived(THREE_WAY_MATCH_RULE, 'quantity'), true)
+  assert.equal(screens.quantityAcceptedAtReceived(THREE_WAY_MATCH_RULE, 'price'), false)
+  // A match made before the rule keeps approve on its quantity differences.
+  assert.equal(screens.quantityAcceptedAtReceived(null, 'quantity'), false)
 })

@@ -108,6 +108,7 @@ async function routeReports(ctx) {
         timeZone,
         allocationRows: buildRuntimeInventoryAllocation(allocationContext).availability,
         showPurchaseOrders: Boolean(access.collections.purchaseOrders),
+        showPurchaseRequests: Boolean(access.collections.purchaseRequests),
         truncatedSubjects: allocationTruncatedSubjects(allocationContext),
       })
       // The rows let the overview judge each item as the inventory warnings do

@@ -61,12 +61,8 @@ test("every legacy import API is classified capability-disabled", () => {
 });
 
 test("production frontend exposes retirement guidance and no legacy commit client", async () => {
-  const importsPage = await source("src/modules/imports/Page.tsx");
   const contextualActions = await source("src/components/import/ContextualImportActions.tsx");
   const intakePage = await source("src/modules/intake/Page.tsx");
-  assert.match(importsPage, /旧 Import 直接写入已停用/);
-  assert.match(importsPage, /Universal Intake/);
-  assert.equal(importsPage.includes("/api/imports"), false);
   assert.equal(contextualActions.includes('type="file"'), false);
   assert.equal(contextualActions.includes("ImportPreviewDialog"), false);
   for (const sourceLabel of ["Upload CSV", "Upload XLSX", "Paste Table", "Paste JSON"]) assert.match(intakePage, new RegExp(sourceLabel));
@@ -75,4 +71,5 @@ test("production frontend exposes retirement guidance and no legacy commit clien
   assert.equal(intakePage.includes('method: "POST", body: JSON.stringify({ records:'), false);
   await assert.rejects(access(join(root, "src/lib/excel/importPersistenceApi.ts")));
   await assert.rejects(access(join(root, "src/components/import/ImportPreviewDialog.tsx")));
+  await assert.rejects(access(join(root, "src/modules/imports/Page.tsx")));
 });

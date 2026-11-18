@@ -57,7 +57,6 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined
-          if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts'
           // Only the report dashboards use ECharts, so it loads with them.
           if (id.includes('node_modules/echarts') || id.includes('node_modules/zrender')) return 'vendor-echarts'
           return 'vendor'

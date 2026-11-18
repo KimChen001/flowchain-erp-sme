@@ -1,5 +1,5 @@
 import { purchaseOrderLineRemaining, reportCalendarDay } from './open-purchase-order.mjs'
-import { isPurchaseOrderReceivable } from './procurement-status-authority.mjs'
+import { isPurchaseOrderPending, isPurchaseOrderReceivable } from './procurement-status-authority.mjs'
 
 const rows = value => Array.isArray(value) ? value : []
 const text = value => String(value ?? '').trim()
@@ -121,13 +121,14 @@ export const STOCK_STATUSES = Object.freeze(['out_of_stock', 'below_safety_stock
 // cover. The inventory risk KPI counts these, and the assistant lists them.
 export const isInventoryRiskSku = row => row?.shortage !== null && row?.shortage !== undefined && row.shortage > 0
 
-// The item master holds the planning thresholds. A zero or missing master value
-// means none is set there, so the inventory balance rows' values are used.
-function stockThreshold(masterValue, inventoryRows, field) {
+// The item master holds the planning thresholds, and only it: a zero or
+// missing value is none set. The balance rows' copies were added up as a
+// fallback, so a reorder point set to 0 on purpose came back from old
+// balance values, and the inventory page and the reorder list disagreed
+// (design audit L3-21, L12-07).
+function stockThreshold(masterValue) {
   const fromMaster = quantity(masterValue)
-  if (fromMaster !== null && fromMaster > 0) return fromMaster
-  const fromBalances = inventoryRows.map(row => quantity(row[field])).filter(value => value !== null && value > 0)
-  return fromBalances.length ? fromBalances.reduce((sum, value) => sum + value, 0) : null
+  return fromMaster !== null && fromMaster > 0 ? fromMaster : null
 }
 
 // Stable status codes; the client translates them. Stock on hand now is
@@ -178,6 +179,12 @@ export function buildRuntimeInventoryAllocation(context) {
     inputs.purchaseOrders.filter(po => isPurchaseOrderReceivable(po.status)).flatMap(po => rows(po.lines).map(line => ({ po, line }))),
     ({ line }) => lineKey(line),
   )
+  // Every line of a draft or pending-approval purchase order, by SKU: on order
+  // for the inventory position, apart from incoming (design audit C2).
+  const pendingLinesBySku = groupBy(
+    inputs.purchaseOrders.filter(po => isPurchaseOrderPending(po.status)).flatMap(po => rows(po.lines).map(line => ({ po, line }))),
+    ({ line }) => lineKey(line),
+  )
 
   const availability = [...keys].map(sku => {
     const inventoryRows = inventoryBySku.get(sku) || []
@@ -203,6 +210,15 @@ export function buildRuntimeInventoryAllocation(context) {
       poLines.push({ po, line })
     }
     if (incomingExcluded.length) dataLimitations.push(limitation('po_line_unit_mismatch', sku))
+    // Pending lines in the stock unit; a line in another unit is never added.
+    const pendingLines = []
+    for (const { po, line } of pendingLinesBySku.get(sku) || []) {
+      const remaining = lineInTransit(line)
+      if (remaining === 0) continue
+      const unit = poLineUnit(line)
+      if (unit && stockUnit && !sameUnit(unit, stockUnit)) continue
+      pendingLines.push({ purchaseOrderId: text(po.id || po.po), orderNumber: text(po.orderNumber || po.po || po.id), status: text(po.status), remaining })
+    }
 
     const onHandParts = inventoryRows.map(row => quantity(row.onHandQuantity ?? row.onHand ?? row.currentStock))
     const explicitReserved = inventoryRows.map(row => quantity(row.reservedQuantity ?? row.reservedQty))
@@ -239,8 +255,8 @@ export function buildRuntimeInventoryAllocation(context) {
     const availableToPromise = available === null || unreservedSalesDemand === null || incomingApprovedPo === null
       ? null
       : available + incomingApprovedPo - unreservedSalesDemand
-    const safetyStock = stockThreshold(master?.safetyStock, inventoryRows, 'safetyStock')
-    const reorderPoint = stockThreshold(master?.reorderPoint, inventoryRows, 'reorderPoint')
+    const safetyStock = stockThreshold(master?.safetyStock)
+    const reorderPoint = stockThreshold(master?.reorderPoint)
     const stockStatus = stockStatusFor({ available, availableToPromise, safetyStock, reorderPoint })
     return {
       sku,
@@ -257,6 +273,10 @@ export function buildRuntimeInventoryAllocation(context) {
       // neither is recorded), and the lines left out for their unit.
       incomingLines: poLines.map(({ po, line }) => ({ purchaseOrderId: text(po.id || po.po), orderNumber: text(po.orderNumber || po.po || po.id), lineId: text(line.id), remaining: lineInTransit(line), dueDay: reportCalendarDay(line.promisedDate || po.expectedDate) })),
       incomingExcluded,
+      // Draft and pending-approval purchase order lines, and their total
+      // (null when a remainder is unknown): on order, not yet committed.
+      pendingPurchaseQty: sumKnown(pendingLines.map(line => line.remaining)),
+      pendingLines,
       shortage,
       availableToPromise,
       safetyStock,
