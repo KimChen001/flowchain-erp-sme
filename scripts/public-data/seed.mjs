@@ -5,7 +5,7 @@
 // app's own commands leave them; everything that moves stock goes through the
 // commands, in date order, so stock, movements, order status and the reorder
 // list agree:
-//   1. the workspace profile (name, currency, timezone), suppliers, customers
+//   1. the workspace profile (name, currency, timezone, regional format), suppliers, customers
 //      (UCI: on NET30 [assumed], with that payment term added when the
 //      workspace lacks it), items with the thresholds of their latest review
 //      (the app's own rules over the days before it, plan.mjs) and empty
@@ -78,7 +78,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } })
   if (!tenant) throw new Error(`Provision workspace ${tenantId} (scripts/setup-pilot-workspace.mjs) before seeding public data.`)
   if (await prisma.item.findFirst({ where: { tenantId }, select: { id: true } })) throw new Error(`Workspace ${tenantId} already has items; seed public data into an empty workspace.`)
-  await prisma.tenant.update({ where: { id: tenantId }, data: { name: profile.workspaceName, currency: profile.currency, timezone: profile.timezone, countryCode: profile.countryCode } })
+  await prisma.tenant.update({ where: { id: tenantId }, data: { name: profile.workspaceName, currency: profile.currency, timezone: profile.timezone, locale: profile.locale, countryCode: profile.countryCode } })
   const calendar = scenarioCalendar(plan.seedDay, profile.timezone)
   const { at, isoDay } = calendar
   const offset = plan.offsetOf

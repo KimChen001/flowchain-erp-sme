@@ -5,7 +5,7 @@ import { setWorkspaceNumberLocale, setWorkspaceTimeZone, todayInTimeZone } from 
 import type { AppRouteDefinition } from "../app/routeRegistry";
 
 export type SupportedLanguage = "zh-CN" | "en-US";
-export type SupportedLocale = "zh-CN" | "en-US";
+export type SupportedLocale = "zh-CN" | "en-US" | "en-GB";
 
 type LocalizationPayload = {
   languagePreference: SupportedLanguage | null;
@@ -70,6 +70,8 @@ const zh = {
   "settings.currency": "本位币",
   "settings.currencyLocked": "已有正式过账交易，本位币已锁定。",
   "settings.currencyLockedShort": "已锁定",
+  "settings.timezoneLocked": "已有正式过账交易，时区已锁定：改时区会让已过账记录和重印单据上的日期错开一天。",
+  "settings.localeHint": "日期和数字按区域格式书写，工作区里每个人都一样，不随个人的界面语言改变。",
   "settings.chinese": "简体中文",
   "settings.english": "English",
   "settings.profileName": "姓名",
@@ -1397,6 +1399,8 @@ const en: Record<keyof typeof zh, string> = {
   "settings.currency": "Base currency",
   "settings.currencyLocked": "Base currency is locked because posted transactions exist.",
   "settings.currencyLockedShort": "Locked",
+  "settings.timezoneLocked": "Timezone is locked because posted transactions exist: changing it would move the dates of posted records and reprinted documents by a day.",
+  "settings.localeHint": "Dates and numbers follow the regional format for everyone in this workspace, whatever each person's interface language.",
   "settings.chinese": "简体中文",
   "settings.english": "English",
   "settings.profileName": "Name",

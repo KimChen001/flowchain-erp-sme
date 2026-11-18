@@ -97,6 +97,13 @@ names, or supplier names in place. Translate their presentation where appropriat
   2026-11-04.
 - Dates on a Chinese page keep the workspace locale (en-US gives "Nov 2, 2026"):
   the interface language does not change date or number formats.
+- The workspace regional format (Settings > Company & workspace) is `en-US`,
+  `en-GB` or `zh-CN` (design audit L11-27, 2026-11-18). `en-GB` writes the day
+  first ("18 Nov 2026") in both interface languages; the UK public-data workspace
+  is seeded with it. Once posted transactions exist the timezone locks with the
+  base currency (`TIMEZONE_LOCKED`), since posted days are read in it. A source
+  test (`server/domain/l11-27-regional-format.test.mjs`) refuses any date or
+  number formatted with the interface language as its locale.
 - Shared form labels (`Field`), metric cards (`KpiCard`, `ActionableMetricCard`),
   section headers and dialogs translate with the interface language from the i18n
   context. They used to read `<html lang>`, which changes one render later, so a
