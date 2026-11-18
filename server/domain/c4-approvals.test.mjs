@@ -121,7 +121,7 @@ test('each kind of Today decision needs its own permission (L11-09)', () => {
   assert.match(read('src/modules/overview/DecisionCards.tsx'), /const canDecide = canDecideSome && \(!decideKinds \|\| decideKinds\.includes\(row\.kind\)\);/)
 })
 
-// A fake database for the role service: one transaction over in-memory rows.
+// The role service's database as in-memory rows, in one transaction.
 function rolesDatabase({ roles, assignments }) {
   const tx = {
     user: { findFirst: async ({ where }) => ({ id: where.id, email: `${where.id}@example.com`, rolesAssignedAt: new Date() }), update: async () => ({}), count: async () => 1 },
