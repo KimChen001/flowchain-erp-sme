@@ -120,6 +120,7 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
       timeZone,
       allocationRows: allocation.availability,
       showPurchaseOrders: Boolean(access.collections.purchaseOrders),
+      showPurchaseRequests: Boolean(access.collections.purchaseRequests),
       truncatedSubjects: allocationTruncatedSubjects(rawContext),
     })).then((reorder) => { sources.reorder = reorder }))
   }

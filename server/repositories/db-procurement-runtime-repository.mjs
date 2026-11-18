@@ -2,7 +2,7 @@ import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { createDbProcurementCommandService } from "../domain/procurement-db-command-service.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "../domain/receiving-transaction-policy.mjs";
 import { mapPurchaseRequest, mapRfq } from "./db-procurement-read-repository.mjs";
-import { isPurchaseOrderReceivable } from "../domain/procurement-status-authority.mjs";
+import { isPurchaseOrderPending, isPurchaseOrderReceivable } from "../domain/procurement-status-authority.mjs";
 import { ALLOCATION_READ_LIMIT, findManyWithinLimit, requireTenantId } from "./repository-read-scope.mjs";
 import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 
@@ -119,7 +119,8 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
     // The allocation model's incoming over every record (design audit
     // 2026-11-15, L15), where snapshot() reads the latest 500 orders: every
     // committed purchase order (approved, issued or partially received, as
-    // isPurchaseOrderReceivable reads the stored status) with its lines, newest
+    // isPurchaseOrderReceivable reads the stored status) and every draft or
+    // pending-approval one (isPurchaseOrderPending) with its lines, newest
     // change first as snapshot() lists them, so every open line counts
     // (#249). Also the key each line of any order is counted under (SKU, else
     // item id, else line id), in the order snapshot() lists them, as the model
@@ -131,7 +132,9 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
       const limit = ALLOCATION_READ_LIMIT;
       const bounded = { limit, subject: "purchase_orders", onTruncated: filters.onTruncated };
       const stored = await dbClient.$queryRaw`SELECT DISTINCT status FROM "PurchaseOrder" WHERE "tenantId" = ${tenantId}`;
-      const statuses = stored.map((row) => row.status).filter(isPurchaseOrderReceivable);
+      // Committed orders (incoming) and draft or pending-approval ones (on
+      // order for the inventory position, design audit C2).
+      const statuses = stored.map((row) => row.status).filter((status) => isPurchaseOrderReceivable(status) || isPurchaseOrderPending(status));
       const [rows, keys] = await Promise.all([
         statuses.length ? findManyWithinLimit(dbClient.purchaseOrder, { where: { tenantId, status: { in: statuses } }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }] }, bounded) : [],
         dbClient.$queryRaw`

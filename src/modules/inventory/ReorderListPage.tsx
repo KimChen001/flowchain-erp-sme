@@ -24,7 +24,7 @@ import { useReorderListCopy, type ReorderListCopyKey } from "./reorderListCopy";
 // for the same days, loaded after the list; the confirm dialog offers either.
 
 type Flag = { code: string; orderNumber?: string | null; unit?: string; dueDay?: string; count?: number };
-type Supplier = { id: string; code: string; name: string; leadTimeDays: number | null; minimumOrderQuantity: number | null; moqUnit: string | null };
+type Supplier = { id: string; code: string; name: string; leadTimeDays: number | null; leadTimeFrom?: "supplier" | "item" | null; minimumOrderQuantity: number | null; moqFrom?: "supplier" | "item" | null; moqUnit: string | null };
 type Suggestion = {
   suggestedReorderPoint: number | null;
   reason: "stock_unit_not_recorded" | "not_enough_history" | "lead_time_not_recorded" | null;
@@ -60,6 +60,12 @@ type ReorderRow = {
   onHand: number;
   reserved: number;
   incoming: number;
+  // On order but not committed, and asked for: pending purchase orders and
+  // open purchase requests; and backorders (design audit C2).
+  requested?: number;
+  backorders?: number;
+  requests?: { number: string; status: string }[];
+  pendingLines?: { orderNumber: string | null; status: string | null; remaining: number }[];
   position: number;
   reorderPoint: number;
   shortfall: number;
@@ -102,9 +108,9 @@ const SUBJECT_KEYS: Record<string, ReorderListCopyKey> = {
   inventory_items: "subjectStockBalances",
   sales_orders: "subjectSalesOrders",
 };
-const STOCK_COLUMNS = ["colOnHand", "colReserved", "colIncoming", "colPosition"] as const;
-// Phones (below 640 px, the list card breakpoint in theme.css) draw the four
-// stock quantities as one 2×2 block without a column label.
+const STOCK_COLUMNS = ["colOnHand", "colReserved", "colIncoming", "colRequested", "colBackorders", "colPosition"] as const;
+// Phones (below 640 px, the list card breakpoint in theme.css) draw the six
+// stock quantities as one block of two columns without a column label.
 const STOCK_BLOCK = "stock" as const;
 
 // Dense cells, so a row stays within about 90 px and the eleven columns fit a
@@ -157,6 +163,7 @@ function flagText(flag: Flag, t: ReturnType<typeof useReorderListCopy>, locale: 
     shipment_other_unit: () => t.count("shipmentOtherUnit", flag.count ?? 0, { unit: flag.unit || "" }),
     shipment_unit_not_recorded: () => t.count("shipmentUnitNotRecorded", flag.count ?? 0),
     purchase_unit_differs: () => t("purchaseUnitDiffers", { unit: flag.unit || "" }),
+    request_line_other_unit: () => t.count("requestOtherUnit", flag.count ?? 0),
   };
   return (byCode[flag.code] || (() => flag.code))();
 }
@@ -502,7 +509,7 @@ export default function ReorderListPage() {
               {/* The body holds the table and its pager, as ListCard's does: a new page scrolls back to the card's top. */}
               <div ref={listTableCardsRef}>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1100px] text-xs">
+                  <table className="w-full min-w-[1240px] text-xs">
                     <thead>
                       <tr style={{ borderBottom: `1px solid ${A.border}` }}>
                         {columns.map((key, index) => (
@@ -516,9 +523,13 @@ export default function ReorderListPage() {
                       {pageRows.map((row) => {
                         // The request's reason, in the interface language with its unit labels ("23 pcs", "23 件").
                         const reason = t("reason", { position: withUnit(row.position, row.unit, t.language), reorderPoint: withUnit(row.reorderPoint, row.unit, t.language), date: row.orderByDate });
-                        const stock: [ReorderListCopyKey, number][] = [["colOnHand", row.onHand], ["colReserved", row.reserved], ["colIncoming", row.incoming], ["colPosition", row.position]];
+                        const stock: [ReorderListCopyKey, number][] = [["colOnHand", row.onHand], ["colReserved", row.reserved], ["colIncoming", row.incoming], ["colRequested", row.requested ?? 0], ["colBackorders", row.backorders ?? 0], ["colPosition", row.position]];
+                        // The requests and pending orders already asking for the item, by number (L1-11).
+                        const requestedDocs = [...(row.requests || []).map((request) => request.number), ...(row.pendingLines || []).map((line) => line.orderNumber).filter(Boolean)];
                         const supplier = row.supplier;
-                        const leadTime = supplier && (supplier.leadTimeDays === null ? t("leadTimeNotRecorded") : t.count("leadTimeShort", supplier.leadTimeDays));
+                        const leadTimeText = supplier && (supplier.leadTimeDays === null ? t("leadTimeNotRecorded") : t.count("leadTimeShort", supplier.leadTimeDays));
+                        // A lead time recorded on the item, not the supplier link, says so (L3-08).
+                        const leadTime = leadTimeText && supplier?.leadTimeFrom === "item" ? t("fromItem", { text: leadTimeText }) : leadTimeText;
                         const moq = supplier && (supplier.minimumOrderQuantity === null
                           ? t("moqNotRecorded")
                           : t(supplier.moqUnit ? "moq" : "moqNoUnit", { n: formatQuantity(supplier.minimumOrderQuantity), unit: unitLabel(supplier.moqUnit, t.language, supplier.minimumOrderQuantity) }));
@@ -543,6 +554,9 @@ export default function ReorderListPage() {
                                   <ul className={`mt-0.5 space-y-0.5 ${small}`} data-testid="reorder-flags">
                                     {row.flags.map((flag, index) => <li key={`${flag.code}-${index}`} style={{ color: A.orange }}>{flagText(flag, t, locale, list.today)}</li>)}
                                   </ul>
+                                )}
+                                {requestedDocs.length > 0 && (
+                                  <div className={`mt-0.5 ${small}`} style={{ color: A.sub }} data-testid="reorder-requested">{t("alreadyRequested", { docs: requestedDocs.join(", ") })}</div>
                                 )}
                               </div>
                             </td>

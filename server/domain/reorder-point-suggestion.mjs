@@ -82,7 +82,8 @@ export function circularWindowSums(perDay, cover) {
 }
 
 // lines: { unit, quantity, postedAt } of posted shipments for one item.
-// leadTimeDays: the preferred supplier link's recorded lead time, or null.
+// leadTimeDays: the preferred supplier link's recorded lead time, else the
+// item's own (the row's leadTimeDays, design audit L3-08), or null.
 export function suggestReorderPoint({ lines = [], stockUnit = '', leadTimeDays = null, today, timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text(today))) throw new Error('A workspace calendar day is required.')
   const lead = quantity(leadTimeDays)
@@ -127,7 +128,7 @@ export function attachReorderPointSuggestions(list, shipmentLines = []) {
   return {
     ...list,
     rows: rows(list?.rows).map((row) => {
-      const suggestion = suggestReorderPoint({ lines: linesByItem.get(text(row.itemId)), stockUnit: row.unit, leadTimeDays: row.supplier?.leadTimeDays ?? null, today: list.today, timeZone: list.timeZone })
+      const suggestion = suggestReorderPoint({ lines: linesByItem.get(text(row.itemId)), stockUnit: row.unit, leadTimeDays: row.leadTimeDays ?? row.supplier?.leadTimeDays ?? null, today: list.today, timeZone: list.timeZone })
       const recordedBelow = suggestion.suggestedReorderPoint !== null && Number(row.reorderPoint) < suggestion.suggestedReorderPoint
       return { ...row, reorderPointSuggestion: { ...suggestion, recordedBelow } }
     }),

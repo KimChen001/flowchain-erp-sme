@@ -1,4 +1,4 @@
-import { buildDecisionDrafts, followUpSupplierLinkKeys, openRequestsByItem } from '../domain/decision-drafts.mjs'
+import { COVERING_REQUEST_STATUSES, buildDecisionDrafts, followUpSupplierLinkKeys, openRequestsByItem } from '../domain/decision-drafts.mjs'
 import { arrangeToday, closableAreas, planDecisionSync } from '../domain/decision-items.mjs'
 import { ITEM_SUPPLIER_NAMESPACE, mapItemSupplierRecord } from '../domain/master-data-commands.mjs'
 import { createDecisionItemRepository } from '../repositories/decision-item-repository.mjs'
@@ -47,11 +47,17 @@ function setAsideEntry({ key, row, item }) {
 export async function syncTodayDecisions({ prisma, tenantId, rows, today, now = new Date(), timeZone, hidden = [], limitations = [], context = {}, sources = {}, canDecide = false }) {
   const repository = createDecisionItemRepository({ prisma })
   let items = await repository.listLive(tenantId)
-  const openRequests = openRequestsByItem(context.purchaseRequests)
+  // A reorder item is covered when a request past draft asks for it and the
+  // item is no longer short. The requests are in the reorder list's position
+  // already (design audit C2), so a row still short is short after them: any
+  // open request alone, a draft included, set an item aside for good before
+  // (L11-02).
+  const openRequests = openRequestsByItem(context.purchaseRequests, { statuses: COVERING_REQUEST_STATUSES })
+  const shortNow = new Set(rows.filter((row) => row.kind === 'reorder_now' && Number(row.detail?.shortfall) > 0).map((row) => String(row.recordId)))
   // Coverage counts only for a reader who may see purchase requests: for
   // anyone else the list is empty, which says nothing about coverage.
   const coverageKnown = !hidden.includes('purchasing')
-  const coveredItemIds = coverageKnown ? new Set(openRequests.keys()) : null
+  const coveredItemIds = coverageKnown ? new Set([...openRequests.keys()].filter((itemId) => !shortNow.has(itemId))) : null
   const plan = planDecisionSync(items, rows, { today, areas: closableAreas({ hidden, limitations }), coveredItemIds })
   if (plan.create.length || plan.reopen.length || plan.close.length) {
     await repository.applySync(tenantId, plan, { now, today })

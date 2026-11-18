@@ -190,13 +190,17 @@ test('the reorder point is compared with the inventory position, so open supply 
   assert.equal(row.stockStatus, 'ok', '15 available + 30 in transit - 5 demand = 40, above the reorder point of 20')
 })
 
-test('without master thresholds the inventory balance values are used; unknown stock stays unknown', () => {
+// Design audit L3-21, L12-07: the balance rows' copies were added up when the
+// master had none, so a reorder point set to 0 came back from old balance
+// values and the reorder list (master only) disagreed with this model.
+test('thresholds come from the item master only: none there is none; unknown stock stays unknown', () => {
   const model = buildRuntimeInventoryAllocation(context({
     items: [master('BAL', 0, 0)],
     inventoryItems: [balance('BAL', 3, { safetyStock: 4, reorderPoint: 6 }), balance('NONE', 50), { sku: 'UNKNOWN' }],
   }))
-  assert.equal(getRuntimeSkuAvailability(model, 'BAL').stockStatus, 'below_safety_stock')
-  assert.equal(getRuntimeSkuAvailability(model, 'BAL').safetyStock, 4)
+  assert.equal(getRuntimeSkuAvailability(model, 'BAL').stockStatus, 'ok')
+  assert.equal(getRuntimeSkuAvailability(model, 'BAL').safetyStock, null)
+  assert.equal(getRuntimeSkuAvailability(model, 'BAL').reorderPoint, null)
   assert.equal(getRuntimeSkuAvailability(model, 'NONE').stockStatus, 'ok')
   assert.equal(getRuntimeSkuAvailability(model, 'NONE').safetyStock, null)
   assert.equal(getRuntimeSkuAvailability(model, 'UNKNOWN').stockStatus, 'unknown')
@@ -362,7 +366,8 @@ test('stock, demand and incoming added up per SKU (allocationInputs) give the sa
   // The same records as the database adds them up (listAllocationStock,
   // summarizeDemandBySku, listCommittedPurchaseOrders): one stock row per SKU
   // with the threshold values above 0 summed, demand per SKU in the order the
-  // SKUs first appear, only the committed orders, and every order's line keys.
+  // SKUs first appear, the committed and the draft or pending-approval orders
+  // (design audit C2), and every order's line keys.
   // The context's own lists are left empty: they are not read.
   const totals = context({
     allocationInputs: {
@@ -378,7 +383,7 @@ test('stock, demand and incoming added up per SKU (allocationInputs) give the sa
         { sku: 'C', openLines: 0, openDemand: 0, unreservedDemand: 0, reserved: 0, salesOrderIds: [] },
         { sku: 'SO-NOLINES', openLines: 1, openDemand: 0, unreservedDemand: 0, reserved: 0, salesOrderIds: [] },
       ],
-      purchaseOrders: purchaseOrders.slice(0, 2),
+      purchaseOrders: purchaseOrders.slice(0, 3),
       purchaseOrderKeys: ['A', 'B', 'D'],
       truncatedSubjects: [],
     },
@@ -387,7 +392,8 @@ test('stock, demand and incoming added up per SKU (allocationInputs) give the sa
   assert.deepEqual(buildRuntimeInventoryAllocation(totals), fromRecords)
 
   // The fixture reaches every input: A's late line counts and its CASE line is
-  // left out; B's thresholds come from the master, then the rows; C, D and the
+  // left out; B's thresholds come from the master alone; D's draft order is
+  // pending, apart from incoming; C, D and the
   // order without lines are listed as the records list them.
   const a = getRuntimeSkuAvailability(fromRecords, 'A')
   assert.deepEqual([a.onHand, a.reserved, a.openSalesDemand, a.unreservedSalesDemand, a.incomingApprovedPo, a.availableToPromise], [50, 5, 28, 23, 10, 32])
@@ -395,6 +401,8 @@ test('stock, demand and incoming added up per SKU (allocationInputs) give the sa
   assert.deepEqual(a.incomingExcluded.map(line => line.lineId), ['PO-1-CASE'])
   assert.deepEqual(a.salesOrderIds, ['SO-2', 'SO-1'])
   const b = getRuntimeSkuAvailability(fromRecords, 'B')
-  assert.deepEqual([b.onHand, b.reserved, b.safetyStock, b.reorderPoint, b.incomingApprovedPo], [5, 1, 5, 12, 10])
+  assert.deepEqual([b.onHand, b.reserved, b.safetyStock, b.reorderPoint, b.incomingApprovedPo], [5, 1, 5, null, 10])
+  const d = getRuntimeSkuAvailability(fromRecords, 'D')
+  assert.deepEqual([d.incomingApprovedPo, d.pendingPurchaseQty, d.pendingLines.map(line => [line.orderNumber, line.status, line.remaining])], [0, 8, [['PO-3', 'draft', 8]]])
   assert.deepEqual(fromRecords.availability.map(row => row.sku), ['A', 'B', 'C', 'SO-NOLINES', 'D'])
 })

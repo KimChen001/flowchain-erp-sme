@@ -366,6 +366,7 @@ export async function handleInventoryRoute(ctx) {
       timeZone,
       allocationRows: model.availability,
       showPurchaseOrders: Boolean(access?.collections.purchaseOrders),
+      showPurchaseRequests: Boolean(access?.collections.purchaseRequests),
       // The context's subjects the list depends on: stock balances, sales
       // orders (reservations) and purchase orders (incoming). It reads the
       // items and shipments itself and adds its own.

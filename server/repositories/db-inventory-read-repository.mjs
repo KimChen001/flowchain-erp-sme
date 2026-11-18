@@ -75,7 +75,8 @@ function mapBalance(record = {}) {
     onHandQuantity: numberFrom(record.onHandQuantity, numberFrom(record.availableQuantity, 0)),
     reservedQuantity: numberFrom(record.reservedQuantity, 0),
     safetyStock: numberFrom(record.safetyStock, 0),
-    reorderPoint: numberFrom(record.reorderPoint, numberFrom(record.safetyStock, 0)),
+    // Never the safety stock in its place (design audit L3-21).
+    reorderPoint: numberFrom(record.reorderPoint, 0),
     status: text(record.status || meta.status),
     riskLevel: text(record.riskLevel || meta.riskLevel),
     riskReason: text(meta.riskReason || record.riskLevel),

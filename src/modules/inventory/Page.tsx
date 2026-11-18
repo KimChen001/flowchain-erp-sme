@@ -245,8 +245,12 @@ const emptyStateFor = (copy: (label: string) => string): Record<string, { title:
 function quantity(item: Item) {
   return Number(item.availableQuantity ?? item.onHandQuantity ?? 0);
 }
-function reorder(item: Item) {
-  return Number(item.reorderPoint ?? item.safetyStock ?? 0);
+// A threshold as recorded on the item, or "—" when none is: an empty reorder
+// point read as the safety stock and an empty one as 0, while the reorder
+// list said "not set" (design audit L3-21).
+function threshold(value?: number | string | null) {
+  const number = Number(value);
+  return value === null || value === undefined || value === "" || !Number.isFinite(number) || number <= 0 ? "—" : formatQuantity(number);
 }
 // Stock signals per item (shared/inventory-stock-signals.mjs): "need
 // replenishment" is the reorder list's own "order now" (the stock position,
@@ -662,7 +666,7 @@ export default function InventoryPage({
                 [tr("onHand"), `${formatQuantity(selected.onHandQuantity ?? "0")} ${unitLabel(selected.unit, language, Number(selected.onHandQuantity ?? 0))}`],
                 [tr("reservedQty"), formatQuantity(selected.reservedQuantity ?? "0")],
                 [tr("available"), view === "overview" ? formatQuantity(selected.availableQuantity ?? "0") : formatQuantity(quantity(selected))],
-                [tr("safetyReorder"), `${formatQuantity(Number(selected.safetyStock || 0))} / ${formatQuantity(reorder(selected))}`],
+                [tr("safetyReorder"), `${threshold(selected.safetyStock)} / ${threshold(selected.reorderPoint)}`],
               ] as const).map(([label, value]) => (
                 <div key={label} className="rounded-lg bg-slate-50 px-3 py-2">
                   <div style={{ color: A.sub }}>{label}</div>
@@ -704,7 +708,7 @@ export default function InventoryPage({
                         <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>
                           {view === "overview" ? formatQuantity(item.availableQuantity ?? "0") : formatQuantity(quantity(item))}
                         </td>
-                        <td className={tdNumericRightClass} style={{ color: A.sub }}>{formatQuantity(Number(item.safetyStock || 0))} / {formatQuantity(reorder(item))}</td>
+                        <td className={tdNumericRightClass} style={{ color: A.sub }}>{threshold(item.safetyStock)} / {threshold(item.reorderPoint)}</td>
                         <td className={tdNowrapClass}>
                           {/* Need replenishment is the reorder list's position; below safety stock is the shelf, with whether open orders cover it. */}
                           {stock === "out"
