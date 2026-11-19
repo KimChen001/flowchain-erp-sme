@@ -21,6 +21,9 @@ export type SupplierReplyLine = {
   quote: string | null;
   dateKind: "stated" | "relative" | "vague" | null;
   readAs: { phrase: string; from: string; date: string } | null;
+  // The reading gave no exact day and code read the one day the quote names;
+  // readAs is set. Optional from an older server.
+  inferred?: boolean;
   readings: string[] | null;
   parts: Array<{ quantity: number | null; date: string; quote: string }> | null;
   sku: string | null;

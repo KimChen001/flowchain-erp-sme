@@ -37,6 +37,7 @@ export const SUPPLIER_REPLY_COPY = {
   daysLate: ["{n} days late", "已逾期 {n} 天"],
   dayLate: ["1 day late", "已逾期 1 天"],
   readAs: ["\"{phrase}\" read as {date}, from the reply date {from}", "“{phrase}”按回复日期 {from} 推算为 {date}"],
+  readInferred: ["Read as {date} — the reply gave no exact delivery day", "按 {date} 读取——回信没有给出确切交货日"],
   split: ["Split delivery: {parts}. The line is recorded at the last date.", "分批交货：{parts}。该行按最后一批的日期记录。"],
   part: ["{qty} on {date}", "{date} {qty}"],
   partNoQty: ["part on {date}", "{date} 一批"],

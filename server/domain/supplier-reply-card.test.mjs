@@ -116,6 +116,11 @@ test('every code the card shows has English and Chinese words', () => {
   for (const status of SUPPLIER_REPLY_READING_STATUSES.filter((value) => value !== 'read')) assert.ok(`outage_${status}` in SUPPLIER_REPLY_COPY, status)
   assert.equal(supplierReplyText('en-US', 'readAs', { phrase: 'next Friday', date: 'Nov 27, 2026', from: 'Nov 17, 2026' }), '"next Friday" read as Nov 27, 2026, from the reply date Nov 17, 2026')
   assert.equal(supplierReplyText('zh-CN', 'left', { qty: '60 件' }), '剩余 60 件')
+  // A day read from the reply, not stated as the delivery day (line.inferred).
+  assert.equal(supplierReplyText('en-US', 'readInferred', { date: 'Nov 28, 2026' }), 'Read as Nov 28, 2026 — the reply gave no exact delivery day')
+  assert.equal(supplierReplyText('zh-CN', 'readInferred', { date: 'Nov 28, 2026' }), '按 Nov 28, 2026 读取——回信没有给出确切交货日')
+  const inferred = cardFixture({ lines: [line({ inferred: true, dateKind: 'stated', readAs: { phrase: 'the 28th', from: '2026-11-17', date: '2026-11-28' } })] })
+  assert.ok(supplierReplyCardSchema.safeParse(inferred).success)
 })
 
 test('the paste box sits on a chased overdue item and on the order page; buttons need the revise permission', () => {
@@ -133,6 +138,7 @@ test('the paste box sits on a chased overdue item and on the order page; buttons
   // order version goes back as expectedVersion.
   assert.match(card, /\{open && card\.canDecide \? \(\n\s+<div className="mt-3 flex flex-wrap items-center gap-2" data-testid="supplier-reply-actions">/)
   assert.match(card, /expectedVersion: card\.orderVersion/)
+  assert.match(card, /line\.inferred \? t\("readInferred", \{ date: day\(line\.readAs\.date\) \}\) : t\("readAs"/)
   // The urls are written out (for the write-route caller test) and are the contract's routes.
   const order = '/api/procurement/orders/${encodeURIComponent(card.purchaseOrderId)}'
   assert.ok(card.includes(`const reply = \`${order}/supplier-replies/\${encodeURIComponent(card.id)}\`;`))

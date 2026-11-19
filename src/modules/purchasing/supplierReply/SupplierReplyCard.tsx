@@ -96,7 +96,9 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
     if (!line) return null;
     return (
       <>
-        {line.readAs ? <div className="text-[11px]" style={{ color: A.sub }} data-testid="supplier-reply-read-as">{t("readAs", { phrase: line.readAs.phrase, date: day(line.readAs.date), from: day(line.readAs.from) })}</div> : null}
+        {/* A day read from the reply, not stated as the delivery day, says so;
+            a relative date says what it counts from. */}
+        {line.readAs ? <div className={`text-[11px] ${line.inferred ? "text-amber-800" : ""}`} style={line.inferred ? undefined : { color: A.sub }} data-testid="supplier-reply-read-as" data-inferred={line.inferred ? "true" : "false"}>{line.inferred ? t("readInferred", { date: day(line.readAs.date) }) : t("readAs", { phrase: line.readAs.phrase, date: day(line.readAs.date), from: day(line.readAs.from) })}</div> : null}
         {line.parts?.length ? <div className="text-[11px]" style={{ color: A.sub }} data-testid="supplier-reply-split">{t("split", { parts: line.parts.map((part) => (part.quantity === null ? t("partNoQty", { date: day(part.date) }) : t("part", { qty: qty(part.quantity, line.unit), date: day(part.date) }))).join("; ") })}</div> : null}
       </>
     );
