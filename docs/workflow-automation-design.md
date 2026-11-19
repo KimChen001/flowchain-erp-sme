@@ -1,8 +1,8 @@
 # Workflow automation: the supplier reply flow first, or a framework first
 
-Status: proposal of 2026-11-19, revised the same day after a review, for the
-owner's decisions WA-1 to WA-4 (§5). Nothing is built by this document. Code
-references are to `main` at 465da8a0; the appendix holds the detail.
+Status: proposal of 2026-11-19, revised the same day after a review. WA-1 to
+WA-4 decided 2026-11-19 as recommended (§5): #363 is built on its own first.
+Code references are to `main` at 465da8a0; the appendix holds the detail.
 
 The 2026-11-19 study of Pallet's agent platform (vendor claims, not verified)
 recommended workflow automation: a trigger runs fixed steps, read → decide →
@@ -19,7 +19,7 @@ are written in code and switched on per workspace.
 - **核心取舍：** 如果运行不经人确认什么都不写、只留卡片，能带来新东西的流程其实只有"供应商回信 → 新交期"，而 #363 已经把它设计完了。补货草稿和三个只提醒的模板，今天页已经有对应的行和卡片。
 - **两条路：** (A) 先单独做 #363，约 8–9 天，带运行记录和 Zod 步骤约定，以后可以并入框架；(B) 先做通用框架，约 15–19 天才到同一个结果，其中定时和到期触发暂时没有流程用。
 - **推荐 A。** 等第二个流程需要应用里没有的触发方式（收信、定时）时再做框架，最早随首次部署，或按 #225 §13 在 2027 年第一季度和 L3 一起做。
-- **要定的 4 件事：** 单独做还是先做框架、费用上限、身份与可见范围、时间。
+- **要定的 4 件事：** 单独做还是先做框架、费用上限、身份与可见范围、时间。2026-11-19 已定（"方案C开始吧"）：全部按建议，先单独做 #363。
 
 ## 1. The choice
 
@@ -69,6 +69,12 @@ If a run may write nothing, it ends in a card. (#229's A2 let its reorder templa
 - **Corrections become draft eval cases,** as `scripts/assistant-feedback-cases.mjs` does for 👎, and a changed prompt or check passes the gate before use. No learned memory: it changes behaviour without a version, and memory built from supplier emails carries outside text into later prompts.
 
 ## 5. Decisions for the owner
+
+**Decided 2026-11-19.** The owner said "方案C开始吧" ("start option C") on the
+Pallet study. WA-1 to WA-4 are taken as recommended: A, built framework-ready;
+the cost guard of §3; the paster reads and the confirmer writes; and #363 steps 1
+and 1e start now, with its SR-1, 2, 3, 4, 6 and 8 taken as recommended. B waits
+as WA-4 says.
 
 | # | Decision | Recommendation |
 | --- | --- | --- |
