@@ -22,7 +22,7 @@ import { z } from 'zod'
 
 export const SUPPLIER_REPLY_CONTRACT_VERSION = 1
 // The prompt the reading call uses; stored with each reading (#363 §5).
-export const SUPPLIER_REPLY_PROMPT_VERSION = 'supplier-reply-read-1'
+export const SUPPLIER_REPLY_PROMPT_VERSION = 'supplier-reply-read-2'
 
 export const SUPPLIER_REPLY_LIMITS = Object.freeze({
   // The assistant's paste limit (QUESTION_LIMITS.assistantV2).
