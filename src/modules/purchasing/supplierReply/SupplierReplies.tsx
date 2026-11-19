@@ -7,8 +7,8 @@ import { useI18n } from "../../../i18n/I18n";
 import { apiJson } from "../../../lib/api-client";
 import { usePermissionSet } from "../../../lib/usePermissionSet";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
-import { SUPPLIER_REPLY_ROUTES, supplierReplyCardSchema } from "../../../../shared/supplier-reply-contract.mjs";
-import { SupplierReplyCard, supplierReplyRoute } from "./SupplierReplyCard";
+import { supplierReplyCardSchema } from "../../../../shared/supplier-reply-contract.mjs";
+import { SupplierReplyCard } from "./SupplierReplyCard";
 import { SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
 import { SUPPLIER_REPLY_TEXT_LIMIT, isOpenReply } from "./supplierReplyLogic";
 import type { SupplierReplyCardData } from "./supplierReplyTypes";
@@ -55,15 +55,20 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
   const [showEarlier, setShowEarlier] = useState(false);
   // Today: the box opens again over an open card only on request.
   const [pasteAgain, setPasteAgain] = useState(false);
+  // Today: the card just decided stays in view with what became of it.
+  const [decidedId, setDecidedId] = useState<string | null>(null);
+  // The order's replies (SUPPLIER_REPLY_ROUTES.list and .paste), written out
+  // so the write-route caller test reads them.
+  const replies_ = `/api/procurement/orders/${encodeURIComponent(orderId)}/supplier-replies`;
 
   const load = useCallback(async () => {
     try {
-      setReplies(validCards(await apiJson(supplierReplyRoute(SUPPLIER_REPLY_ROUTES.list, orderId))));
+      setReplies(validCards(await apiJson(replies_)));
       setLoadFailed(false);
     } catch {
       setLoadFailed(true);
     }
-  }, [orderId]);
+  }, [replies_]);
   // Today's item loads its replies when the person opens it.
   useEffect(() => { if (entry === "order" || open) void load(); }, [entry, open, load]);
 
@@ -72,7 +77,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
     if (!reply || reply.length > SUPPLIER_REPLY_TEXT_LIMIT) return;
     setBusy(true);
     try {
-      const result = await apiJson<{ reply: SupplierReplyCardData }>(supplierReplyRoute(SUPPLIER_REPLY_ROUTES.paste, orderId), {
+      const result = await apiJson<{ reply: SupplierReplyCardData }>(replies_, {
         method: "POST",
         body: JSON.stringify({ text: reply, ...(receivedOn ? { receivedOn } : {}) }),
       });
@@ -80,6 +85,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
       setReceivedOn("");
       if (entry === "order") setOpen(false);
       setPasteAgain(false);
+      setDecidedId(null);
       // A new reply replaces an open one; the list says so on reload.
       await load();
       if (!supplierReplyCardSchema.safeParse(result.reply).success) return;
@@ -92,6 +98,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
   };
   const changed = (next: SupplierReplyCardData, recorded: boolean) => {
     setReplies((current) => (current || []).map((card) => (card.id === next.id ? next : card)));
+    setDecidedId(next.id);
     if (recorded) onRecorded?.();
   };
 
@@ -121,7 +128,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
 
   if (entry === "today") {
     if (!canPaste) return null;
-    const current = list.find(isOpenReply) || null;
+    const current = list.find(isOpenReply) || list.find((card) => card.id === decidedId) || null;
     return (
       <div className="w-full" data-testid="supplier-reply-today">
         <button type="button" className="flex items-center gap-1 text-xs font-medium text-blue-600" aria-expanded={open} data-testid="supplier-reply-open" onClick={() => setOpen(!open)}>

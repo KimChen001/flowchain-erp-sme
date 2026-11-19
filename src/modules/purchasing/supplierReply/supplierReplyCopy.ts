@@ -66,6 +66,7 @@ export const SUPPLIER_REPLY_COPY = {
   promisedDate: ["New promised date", "新的承诺交期"],
   useReading: ["Use {date}", "按 {date}"],
   ambiguous: ["Day and month could be read either way:", "日和月的顺序无法确定："],
+  severalDates: ["The sentence names two dates. Which is the new one?", "这句话提到两个日期，哪个是新的交期？"],
   vagueSaid: ["The supplier said: \"{quote}\"", "供应商说：“{quote}”"],
 
   // Why a line is not proposed (SUPPLIER_REPLY_LINE_ISSUES).
@@ -80,6 +81,7 @@ export const SUPPLIER_REPLY_COPY = {
   issue_not_open: ["nothing left to receive on this line", "该行已无待收数量"],
   issue_unchanged: ["same as the current date", "与当前交期相同"],
   issue_split_incomplete: ["the parts do not cover what is still open", "分批数量未覆盖剩余待收数量"],
+  issue_several_dates: ["the sentence names more than one date", "该句提到不止一个日期"],
   unnamedLine: ["A line", "某一行"],
   supplierCode: ["supplier code {code}", "供应商编码 {code}"],
 

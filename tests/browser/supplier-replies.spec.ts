@@ -109,6 +109,53 @@ test.describe("supplier replies on an issued order", () => {
     }
   });
 
+  test("a chased overdue order on Today takes the reply, and a wrong reading is not recorded, with its reason", async ({ page, request }) => {
+    test.skip(!SCRIPTED, "needs FLOWCHAIN_SUPPLIER_REPLY_SCRIPTED (run-product-recovery-playwright.mjs)");
+    const auth = await signIn(page, request);
+    await useLanguage(page, "en-US");
+    await setAi(request, auth, true);
+    try {
+      // An overdue order waiting on Today, chased.
+      const overview = await (await request.get("/api/home/overview", auth)).json();
+      const item = (overview.decisions?.waiting || []).find((entry: { row: { kind: string } }) => entry.row.kind === "purchase_order_overdue");
+      test.skip(!item, "no overdue order waits on Today in this data");
+      expect((await request.post("/api/decision-items/decide", { ...auth, data: { key: item.key, option: "chased" } })).status()).toBe(200);
+      const detail = await (await request.get(`/api/procurement/orders/${encodeURIComponent(item.row.recordId)}`, auth)).json();
+      const at = (detail.lines as OrderLine[]).findIndex((line) => Number(line.orderedQuantity || 0) > Number(line.receivedQuantity || 0));
+      const { next } = await workspaceDays(request, auth, detail.lines[at].promisedDate);
+      const said = `Balance follows on ${written(next)}.`;
+      writeFileSync(SCRIPTED, JSON.stringify({ reading: { replyKind: "dates", lines: [{ line: `L${at + 1}`, date: next, quote: said, dateKind: "stated" }], flags: [], reason: null } }));
+
+      await page.goto("/app/overview");
+      const aside = page.getByTestId("today-set-aside");
+      await aside.getByRole("button").first().click();
+      const entry = aside.getByTestId("today-set-aside-item").filter({ hasText: item.row.label });
+      await entry.getByTestId("supplier-reply-open").click();
+      await entry.getByTestId("supplier-reply-paste-text").fill(`Hi,\n${said}\nThanks`);
+      await entry.getByTestId("supplier-reply-read").click();
+      const card = entry.getByTestId("supplier-reply-card");
+      await expect(card).toHaveAttribute("data-state", "proposed");
+      // The box closes behind the open card; a newer reply can still be pasted.
+      await expect(entry.getByTestId("supplier-reply-paste")).toHaveCount(0);
+      await expect(entry.getByTestId("supplier-reply-paste-again")).toBeVisible();
+
+      await card.getByTestId("supplier-reply-dont-record").click();
+      const form = card.getByTestId("supplier-reply-dismiss-form");
+      await form.locator("select").selectOption("other");
+      await expect(form.getByTestId("supplier-reply-dismiss-save")).toBeDisabled();
+      await form.getByRole("textbox").fill("Agreed a different date by phone.");
+      await form.getByTestId("supplier-reply-dismiss-save").click();
+      // The decided card stays in view with its reason; nothing was recorded.
+      await expect(entry.getByTestId("supplier-reply-card")).toHaveAttribute("data-state", "not_recorded");
+      await expect(entry.getByTestId("supplier-reply-not-recorded")).toContainText("Other");
+      await expect(entry.getByTestId("supplier-reply-not-recorded")).toContainText("Agreed a different date by phone.");
+      const after = await (await request.get(`/api/procurement/orders/${encodeURIComponent(item.row.recordId)}`, auth)).json();
+      expect(after.lines[at].promisedDate).toBe(detail.lines[at].promisedDate);
+    } finally {
+      await setAi(request, auth, false);
+    }
+  });
+
   test("with AI off the reply is kept and the person enters the date beside it, in English and in Chinese", async ({ page, request }) => {
     const auth = await signIn(page, request);
     await useLanguage(page, "en-US");

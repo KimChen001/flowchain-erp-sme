@@ -8,7 +8,6 @@ import { unitLabel } from "../../../i18n/unitLabels";
 import { apiJson } from "../../../lib/api-client";
 import { formatCalendarDay, formatQuantity } from "../../../lib/format";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
-import { SUPPLIER_REPLY_ROUTES } from "../../../../shared/supplier-reply-contract.mjs";
 import { SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
 import { SUPPLIER_REPLY_NOTE_LIMIT, dismissReady, formStart, isOpenReply, isOutage, markQuotes, needsManualForm, recordKey, recordLines, replyErrorKind } from "./supplierReplyLogic";
 import type { SupplierReplyCardData, SupplierReplyDismissReason, SupplierReplyLine } from "./supplierReplyTypes";
@@ -23,9 +22,6 @@ const BUTTON = { primary: `${listButtonClass.primary} !text-[12px]`, secondary: 
 const DISMISS_REASONS: SupplierReplyDismissReason[] = ["wrong_reading", "supplier_will_confirm", "other"];
 // A reading of an ambiguous date, on the grey form line: white, and blue once picked.
 const readingClass = (picked: boolean) => `inline-flex h-7 items-center rounded-lg border px-2 text-[12px] font-medium disabled:opacity-60 ${picked ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-100"}`;
-
-export const supplierReplyRoute = (route: string, orderId: string, replyId = "") =>
-  route.replace(":id", encodeURIComponent(orderId)).replace(":replyId", encodeURIComponent(replyId));
 
 export function SupplierReplyCard({ card, onChanged, refresh }: {
   card: SupplierReplyCardData;
@@ -83,15 +79,18 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
       setBusy(false);
     }
   };
-  const post = <T,>(route: string, body: unknown) => apiJson<T>(supplierReplyRoute(route, card.purchaseOrderId, card.id), { method: "POST", body: JSON.stringify(body) });
-  const recordProposal = () => act(() => post(SUPPLIER_REPLY_ROUTES.record, { expectedVersion: card.orderVersion, idempotencyKey: recordKey(card) }), () => t("recordedToast", { po: card.purchaseOrderNumber }), true);
+  // The reply's routes (SUPPLIER_REPLY_ROUTES in shared/supplier-reply-contract.mjs),
+  // written out so the write-route caller test reads them.
+  const reply = `/api/procurement/orders/${encodeURIComponent(card.purchaseOrderId)}/supplier-replies/${encodeURIComponent(card.id)}`;
+  const send = <T,>(url: string, body: unknown) => apiJson<T>(url, { method: "POST", body: JSON.stringify(body) });
+  const recordProposal = () => act(() => send(`${reply}/record`, { expectedVersion: card.orderVersion, idempotencyKey: recordKey(card) }), () => t("recordedToast", { po: card.purchaseOrderNumber }), true);
   const recordForm = () => {
     const lines = recordLines(card, values);
     if (!lines.length) { setMessage(t("enterADate")); return; }
-    return act(() => post(SUPPLIER_REPLY_ROUTES.record, { expectedVersion: card.orderVersion, lines, idempotencyKey: recordKey(card, lines) }), () => t("recordedToast", { po: card.purchaseOrderNumber }), true);
+    return act(() => send(`${reply}/record`, { expectedVersion: card.orderVersion, lines, idempotencyKey: recordKey(card, lines) }), () => t("recordedToast", { po: card.purchaseOrderNumber }), true);
   };
-  const notNow = () => act(() => post(SUPPLIER_REPLY_ROUTES.notNow, {}), () => t("notNowToast", { po: card.purchaseOrderNumber }));
-  const dismiss = () => act(() => post(SUPPLIER_REPLY_ROUTES.dismiss, { reason, ...(note.trim() ? { note: note.trim() } : {}) }), () => t("dismissedToast", { po: card.purchaseOrderNumber }));
+  const notNow = () => act(() => send(`${reply}/not-now`, {}), () => t("notNowToast", { po: card.purchaseOrderNumber }));
+  const dismiss = () => act(() => send(`${reply}/dismiss`, { reason, ...(note.trim() ? { note: note.trim() } : {}) }), () => t("dismissedToast", { po: card.purchaseOrderNumber }));
 
   const lineExtras = (line: SupplierReplyLine | undefined) => {
     if (!line) return null;
@@ -158,7 +157,7 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
                   {line?.quote ? <div className="italic" style={{ color: A.gray1 }} data-testid="supplier-reply-form-quote">{t("vagueSaid", { quote: line.quote })}</div> : null}
                   {line?.readings?.length === 2 ? (
                     <div className="mt-1 flex flex-wrap items-center gap-1.5" data-testid="supplier-reply-readings">
-                      <span className="w-full">{t("ambiguous")}</span>
+                      <span className="w-full">{t(line.issue === "several_dates" ? "severalDates" : "ambiguous")}</span>
                       {line.readings.map((reading) => <button key={reading} type="button" disabled={!card.canDecide} className={readingClass(values[lineId] === reading)} aria-pressed={values[lineId] === reading} onClick={() => setValues({ ...values, [lineId]: reading })}>{t("useReading", { date: day(reading) })}</button>)}
                     </div>
                   ) : null}

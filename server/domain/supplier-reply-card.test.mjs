@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   SUPPLIER_REPLY_CONTRACT_VERSION, SUPPLIER_REPLY_DISMISS_REASONS, SUPPLIER_REPLY_FLAG_KINDS, SUPPLIER_REPLY_LIMITS,
-  SUPPLIER_REPLY_ERROR_CODES, SUPPLIER_REPLY_LINE_ISSUES, SUPPLIER_REPLY_READING_STATUSES, supplierReplyCardSchema,
+  SUPPLIER_REPLY_ERROR_CODES, SUPPLIER_REPLY_LINE_ISSUES, SUPPLIER_REPLY_READING_STATUSES, SUPPLIER_REPLY_ROUTES, supplierReplyCardSchema,
 } from '../../shared/supplier-reply-contract.mjs'
 import {
   SUPPLIER_REPLY_NOTE_LIMIT, SUPPLIER_REPLY_TEXT_LIMIT, dismissReady, formStart, isOutage, markQuotes, needsManualForm,
@@ -133,4 +133,14 @@ test('the paste box sits on a chased overdue item and on the order page; buttons
   // order version goes back as expectedVersion.
   assert.match(card, /\{open && card\.canDecide \? \(\n\s+<div className="mt-3 flex flex-wrap items-center gap-2" data-testid="supplier-reply-actions">/)
   assert.match(card, /expectedVersion: card\.orderVersion/)
+  // The urls are written out (for the write-route caller test) and are the contract's routes.
+  const order = '/api/procurement/orders/${encodeURIComponent(card.purchaseOrderId)}'
+  assert.ok(card.includes(`const reply = \`${order}/supplier-replies/\${encodeURIComponent(card.id)}\`;`))
+  assert.equal(SUPPLIER_REPLY_ROUTES.paste, SUPPLIER_REPLY_ROUTES.list)
+  assert.ok(replies.includes('const replies_ = `/api/procurement/orders/${encodeURIComponent(orderId)}/supplier-replies`;'))
+  assert.equal(SUPPLIER_REPLY_ROUTES.list, '/api/procurement/orders/:id/supplier-replies')
+  for (const [route, action] of [[SUPPLIER_REPLY_ROUTES.record, 'record'], [SUPPLIER_REPLY_ROUTES.dismiss, 'dismiss'], [SUPPLIER_REPLY_ROUTES.notNow, 'not-now']]) {
+    assert.equal(route, `/api/procurement/orders/:id/supplier-replies/:replyId/${action}`)
+    assert.ok(card.includes(`send(\`\${reply}/${action}\``), action)
+  }
 })
