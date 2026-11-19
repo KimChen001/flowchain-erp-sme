@@ -198,26 +198,44 @@ test('the reading with a mocked model: a proposal recorded as proposed, a reply 
     const stored = await prisma.supplierReply.findFirst({ where: { id: first.id } })
     assert.deepEqual([stored.promptVersion, stored.usage.calls, stored.activeKey, stored.createdById], ['supplier-reply-read-2', 1, 'PO-C', `${tenantC}-buyer`])
 
-    // 2. A second reply supersedes the open card.
-    answers = [{ replyKind: 'no_date', lines: [], flags: [], reason: null }, { replyKind: 'no_date', lines: [], flags: [], reason: null }]
+    // 2. A reply with nothing to record, or an outage, leaves the open card
+    // in place (#394 review); the outage is kept, but is not the card.
+    answers = [{ replyKind: 'no_date', lines: [], flags: [], reason: null }]
     const second = (await service().pasteReply('PO-C', { text: 'Thanks, we are checking with the warehouse.' }, buyer)).reply
-    assert.equal(second.state, 'nothing_to_record')
-    const replaced = await prisma.supplierReply.findFirst({ where: { id: first.id } })
-    assert.deepEqual([replaced.state, replaced.activeKey, replaced.supersededById], ['superseded', null, second.id])
-    await assert.rejects(() => service().recordReply('PO-C', first.id, { expectedVersion: first.orderVersion }, buyer), { code: 'SUPPLIER_REPLY_NOT_OPEN' })
+    assert.deepEqual([second.state, second.canDecide], ['nothing_to_record', false])
+    const beside = (await service({ env: { FLOWCHAIN_AI_MONTHLY_CAP_USD: '0' } }).pasteReply('PO-C', { text: said }, buyer)).reply
+    assert.deepEqual([beside.state, beside.readingStatus, beside.canDecide], ['needs_you', 'over_cap', false])
+    await assert.rejects(() => service().dismissReply('PO-C', beside.id, { reason: 'wrong_reading' }, buyer), { code: 'SUPPLIER_REPLY_NOT_OPEN' })
+    assert.equal((await prisma.supplierReply.findFirst({ where: { id: first.id } })).activeKey, 'PO-C')
 
-    // 3. A fresh proposal recorded as proposed: no lines edited.
+    // 3. A read proposal supersedes it, and is recorded as proposed.
     answers = [{ replyKind: 'dates', lines: [{ line: 'L1', date: newDate, quote: `We can ship the balance on ${newDate}.`, dateKind: 'stated' }], flags: [], reason: null }]
     const third = (await service().pasteReply('PO-C', { text: said }, buyer)).reply
+    const replaced = await prisma.supplierReply.findFirst({ where: { id: first.id } })
+    assert.deepEqual([replaced.state, replaced.activeKey, replaced.supersededById], ['superseded', null, third.id])
+    await assert.rejects(() => service().recordReply('PO-C', first.id, { expectedVersion: first.orderVersion }, buyer), { code: 'SUPPLIER_REPLY_NOT_OPEN' })
     const recorded = await service().recordReply('PO-C', third.id, { expectedVersion: third.orderVersion }, buyer)
     assert.deepEqual([recorded.reply.state, recorded.reply.decision.editedLines, recorded.reply.decision.revisionIds.length], ['recorded', 0, 1])
     const revision = await prisma.purchaseOrderPromiseRevision.findFirst({ where: { tenantId: tenantC, purchaseOrderLineId: 'PO-C-L1' } })
     assert.deepEqual([iso(revision.newDate), revision.source], [newDate, 'supplier_reply'])
     assert.match(revision.reason, new RegExp(`"We can ship the balance on ${newDate}\\."`))
+    // A record run again after its dates were written (the card left open)
+    // is taken as recorded, with the same revisions.
+    await prisma.supplierReply.update({ where: { id: third.id }, data: { activeKey: 'PO-C', state: 'proposed', decision: null, revisionIds: null } })
+    const again = await service().recordReply('PO-C', third.id, { expectedVersion: recorded.purchaseOrder.version }, buyer)
+    assert.deepEqual([again.reply.state, again.reply.decision.revisionIds], ['recorded', recorded.reply.decision.revisionIds])
 
-    // 4. Dismissal needs a known reason, and a note with "other".
+    // 4. A stale proposal: the date changed on the order after the paste.
     answers = [{ replyKind: 'dates', lines: [{ line: 'L2', date: newDate, quote: `We can ship the balance on ${newDate}.`, dateKind: 'stated' }], flags: [], reason: null }]
     const fourth = (await service().pasteReply('PO-C', { text: said }, buyer)).reply
+    const meanwhile = iso(dayOffset(20))
+    const changed = await procurement.revisePromisedDates('PO-C', { expectedVersion: fourth.orderVersion, lines: [{ purchaseOrderLineId: 'PO-C-L2', promisedDate: meanwhile }], reason: 'Phoned the supplier', idempotencyKey: 'stale-card-test' }, buyer)
+    const shown = (await service().listReplies('PO-C', buyer)).replies.find((row) => row.id === fourth.id)
+    // The line keeps the date it was read against; the order's date now is in formLines.
+    assert.deepEqual([shown.orderVersion, shown.lines[0].currentDate, shown.formLines.find((line) => line.purchaseOrderLineId === 'PO-C-L2').currentDate], [changed.entityVersion, fourth.lines[0].currentDate, meanwhile])
+    await assert.rejects(() => service().recordReply('PO-C', fourth.id, { expectedVersion: changed.entityVersion }, buyer), { code: 'SUPPLIER_REPLY_STALE' })
+    assert.equal((await prisma.supplierReply.findFirst({ where: { id: fourth.id } })).activeKey, 'PO-C', 'a refused record leaves the card open')
+    // Dismissal needs a known reason, and a note with "other".
     await assert.rejects(() => service().dismissReply('PO-C', fourth.id, { reason: 'other' }, buyer), { code: 'SUPPLIER_REPLY_INVALID' })
     // "Not now" keeps it open and sets it aside.
     const aside = (await service().notNowReply('PO-C', fourth.id, {}, buyer)).reply
@@ -227,21 +245,26 @@ test('the reading with a mocked model: a proposal recorded as proposed, a reply 
 
     // 5. Permissions: a viewer may read, not paste; another workspace's order is not found.
     await assert.rejects(() => service().pasteReply('PO-C', { text: said }, as(tenantC, 'viewer')), { code: 'AUTHORIZATION_PERMISSION_DENIED' })
-    assert.equal((await service().listReplies('PO-C', as(tenantC, 'viewer'))).replies.length, 4)
+    assert.equal((await service().listReplies('PO-C', as(tenantC, 'viewer'))).replies.length, 5)
     await assert.rejects(() => service().listReplies('PO-C', as(tenantD, 'buyer')), { code: 'PURCHASE_ORDER_NOT_FOUND' })
+    // A reply received more than 60 days ago is refused.
+    await assert.rejects(() => service().pasteReply('PO-C', { text: said, receivedOn: iso(dayOffset(-90)) }, buyer), { code: 'SUPPLIER_REPLY_RECEIVED_TOO_EARLY' })
 
-    // 6. Outages: the workspace's AI is off, or the cap is spent; the reply is
-    // kept for the manual form and no model is called.
+    // 6. Outages: the workspace's AI is off; the reply is kept for the manual
+    // form and no model is called.
     calls.length = 0
     const off = (await service().pasteReply('PO-D', { text: said }, as(tenantD, 'buyer'))).reply
     assert.deepEqual([off.state, off.readingStatus], ['needs_you', 'ai_off'])
-    const spent = (await service({ env: { FLOWCHAIN_AI_MONTHLY_CAP_USD: '0' } }).pasteReply('PO-C', { text: said }, buyer)).reply
-    assert.deepEqual([spent.state, spent.readingStatus], ['needs_you', 'over_cap'])
     assert.equal(calls.length, 0)
     // A schema failure twice: two calls, then the person.
     answers = ['{"replyKind":"maybe"}', 'still not json']
     const invalid = (await service().pasteReply('PO-C', { text: said }, buyer)).reply
     assert.deepEqual([invalid.state, invalid.readingStatus, calls.length], ['needs_you', 'invalid', 2])
+    // A stream that stalls ends at the deadline: failed, the reply kept.
+    const stalled = { async *stream(request, signal) { await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('stopped'), { name: 'AbortError' })), { once: true })) } }
+    const slow = (await createSupplierReplyService({ prisma, env, procurement, modelClient: stalled, readingDeadlineMs: 100 }).pasteReply('PO-C', { text: said }, buyer)).reply
+    assert.deepEqual([slow.state, slow.readingStatus], ['needs_you', 'failed'])
+    assert.ok(await prisma.supplierReply.findFirst({ where: { id: slow.id } }))
   } finally {
     await prisma.$disconnect()
   }
