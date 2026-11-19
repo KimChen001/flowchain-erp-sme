@@ -91,6 +91,10 @@ test('one click picks only a 03/12 reading or one of two dates in a sentence; a 
   assert.deepEqual(pickableReadings({ issue: 'several_dates', readings }), readings)
   assert.equal(pickableReadings({ issue: 'date_mismatch', readings }), null)
   assert.equal(pickableReadings({ issue: 'ambiguous_numeric', readings: null }), null)
+  // A vague line may offer the one or two days its words could mean (二十八号, "on Friday").
+  assert.deepEqual(pickableReadings({ issue: 'vague', readings: ['2026-11-28'] }), ['2026-11-28'])
+  assert.deepEqual(pickableReadings({ issue: 'vague', readings }), readings)
+  assert.equal(pickableReadings({ issue: 'vague', readings: null }), null)
 })
 
 test('Now is the order date as the card was rendered, and a date moved since the reading is marked (finding 2)', () => {
@@ -121,6 +125,8 @@ test('a stale card and a closed reply are told apart from other refusals, in eit
   assert.equal(replyErrorKind({ code: 'SYNC_VERSION_CONFLICT', status: 409 }), 'stale')
   assert.equal(replyErrorKind({ status: 409, payload: { error: { code: 'SYNC_VERSION_CONFLICT' } } }), 'stale')
   assert.equal(replyErrorKind({ code: 'SUPPLIER_REPLY_NOT_OPEN', status: 409 }), 'closed')
+  // A line's date moved since the reading: refused, the card stays open and says so.
+  assert.equal(replyErrorKind({ code: 'SUPPLIER_REPLY_STALE', status: 409 }), 'moved')
   assert.equal(replyErrorKind({ code: 'PURCHASE_ORDER_PROMISE_CLOSED', status: 409 }), 'other')
   assert.equal(replyErrorKind(new Error('offline')), 'other')
   // Every other code the routes answer with has its own sentence, or the

@@ -70,9 +70,15 @@ export function recordLines(card: SupplierReplyCardData, values: Record<string, 
 // readings of a 03/12-style date, or the two dates one sentence names. A
 // date_mismatch with readings offers none (one may be the model's own date,
 // not the supplier's), so the person types the day.
+// A vague line may offer the one or two days its words could mean
+// (二十八号, "on Friday", a hedged "starting 3 Dec"), as choices.
 const PICKABLE = new Set(["ambiguous_numeric", "several_dates"]);
-export const pickableReadings = (line: { issue: string | null; readings: string[] | null }) =>
-  PICKABLE.has(String(line.issue)) && line.readings?.length === 2 ? line.readings : null;
+export function pickableReadings(line: { issue: string | null; readings: string[] | null }) {
+  const readings = line.readings || [];
+  if (PICKABLE.has(String(line.issue)) && readings.length === 2) return readings;
+  if (line.issue === "vague" && readings.length >= 1 && readings.length <= 2) return readings;
+  return null;
+}
 
 // The lines of a proposed card that still need the person: a reading that did
 // not pass, on a line of the order (#363 §4.8, "unmatched items go to needs
@@ -118,7 +124,8 @@ export const dismissReady = (reason: SupplierReplyDismissReason, note: string) =
   note.length <= SUPPLIER_REPLY_NOTE_LIMIT && (reason !== "other" || note.trim().length > 0);
 
 // A refusal the card explains on its own: the order changed since the card
-// was shown (stale), or the reply is no longer open (closed). The code may
+// was shown (stale), a line's date moved since the reply was read (moved), or
+// the reply is no longer open (closed). The code may
 // sit at the top of the answer, as the procurement routes send it, or under
 // `error`.
 // The routes answer a stale card with SYNC_VERSION_CONFLICT (the
@@ -126,14 +133,16 @@ export const dismissReady = (reason: SupplierReplyDismissReason, note: string) =
 // replaced with SUPPLIER_REPLY_NOT_OPEN (shared/supplier-reply-contract.mjs).
 const STALE_CODES = new Set(["SYNC_VERSION_CONFLICT", "PURCHASE_ORDER_VERSION_INVALID"]);
 const CLOSED_CODES = new Set(["SUPPLIER_REPLY_NOT_OPEN"]);
+const MOVED_CODES = new Set(["SUPPLIER_REPLY_STALE"]);
 export function replyErrorCode(error: unknown): string {
   const value = (error ?? {}) as { code?: unknown; payload?: { code?: unknown; error?: { code?: unknown } } };
   const code = value.code ?? value.payload?.code ?? value.payload?.error?.code;
   return typeof code === "string" ? code : "";
 }
-export function replyErrorKind(error: unknown): "stale" | "closed" | "other" {
+export function replyErrorKind(error: unknown): "stale" | "moved" | "closed" | "other" {
   const code = replyErrorCode(error);
   if (STALE_CODES.has(code)) return "stale";
+  if (MOVED_CODES.has(code)) return "moved";
   if (CLOSED_CODES.has(code)) return "closed";
   return "other";
 }

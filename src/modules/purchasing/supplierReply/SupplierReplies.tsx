@@ -101,7 +101,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
       setBusy(false);
     }
   };
-  const refused = (id: string) => async (kind: "stale" | "closed") => {
+  const refused = (id: string) => async (kind: "stale" | "moved" | "closed") => {
     setNotices((current) => ({ ...current, [id]: t(kind) }));
     setShownId(id);
     await load();

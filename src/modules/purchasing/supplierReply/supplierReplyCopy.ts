@@ -68,6 +68,7 @@ export const SUPPLIER_REPLY_COPY = {
   useReading: ["Use {date}", "按 {date}"],
   ambiguous: ["Day and month could be read either way:", "日和月的顺序无法确定："],
   severalDates: ["The sentence names two dates. Which is the new one?", "这句话提到两个日期，哪个是新的交期？"],
+  vagueChoices: ["No exact day was given. It could mean:", "回复没有给出确切日期，可能指："],
   vagueSaid: ["The supplier said: \"{quote}\"", "供应商说：“{quote}”"],
 
   // Why a line is not proposed (SUPPLIER_REPLY_LINE_ISSUES).
@@ -83,6 +84,8 @@ export const SUPPLIER_REPLY_COPY = {
   issue_unchanged: ["same as the current date", "与当前交期相同"],
   issue_split_incomplete: ["the parts do not cover what is still open", "分批数量未覆盖剩余待收数量"],
   issue_several_dates: ["the sentence names more than one date", "该句提到不止一个日期"],
+  issue_refused: ["the reply refuses this date and names no other", "回复拒绝了该日期，且未给出新日期"],
+  issue_addressed_to_system: ["the sentence is text addressed to the system, not followed", "该句是针对系统的指令文字，未执行"],
   unnamedLine: ["A line", "某一行"],
   supplierCode: ["supplier code {code}", "供应商编码 {code}"],
 
@@ -109,7 +112,7 @@ export const SUPPLIER_REPLY_COPY = {
   openQuestions: ["These lines need you before the dates are recorded:", "以下订单行需要你确认后才能记录交期："],
   leaveUnchanged: ["Leave this line unchanged", "此行保持不变"],
   resolveFirst: ["Give each line that needs you a date, or leave it unchanged.", "请为需要确认的每一行填写交期，或选择保持不变。"],
-  moved: ["Moved to {now} since the reply was read (was {was}). Check before recording.", "读取回复后已改为 {now}（原为 {was}），记录前请核对。"],
+  movedLine: ["Moved to {now} since the reply was read (was {was}). Check before recording.", "读取回复后已改为 {now}（原为 {was}），记录前请核对。"],
   viewOnly: ["Only people who may change this order can record its dates.", "只有可以修改该订单的人才能记录交期。"],
 
   // After a decision.
@@ -123,6 +126,7 @@ export const SUPPLIER_REPLY_COPY = {
   notNowToast: ["Set aside; the reply stays on {po}", "已暂不处理，回复保留在 {po} 上"],
   stale: ["This order changed since the card was shown, so nothing was recorded. The card has been refreshed; check it and try again.", "该订单在卡片显示后已被更改，本次未记录。卡片已刷新，请核对后重试。"],
   closed: ["This reply was already handled, or a later reply replaced it. The card has been refreshed.", "该回复已被处理，或已被之后的回复取代。卡片已刷新。"],
+  moved: ["A line's date changed since the reply was read, so nothing was recorded. Check the marked lines and record again.", "读取回复后有订单行的交期已被更改，本次未记录。请核对标记的行后重新记录。"],
   failed: ["The change could not be saved", "保存失败"],
   retry: ["Try again in a moment.", "请稍后重试。"],
 } as const satisfies Record<string, readonly [string, string]>;
@@ -142,6 +146,7 @@ export const SUPPLIER_REPLY_ERROR_TEXT: Record<string, readonly [string, string]
   SUPPLIER_REPLY_CONFLICT: ["Another reply was pasted on this order at the same moment. Reload and try again.", "另一条回复同时粘贴到了该订单，请刷新后重试。"],
   SUPPLIER_REPLY_EMPTY: ["Nothing is left to read once the quoted earlier messages are set aside. Paste the supplier's own answer.", "去掉引用的往来邮件后没有可读取的内容，请粘贴供应商本人的回复。"],
   SUPPLIER_REPLY_RECEIVED_IN_FUTURE: ["The reply date cannot be after today.", "回复收到日期不能晚于今天。"],
+  SUPPLIER_REPLY_RECEIVED_TOO_EARLY: ["The reply date can be at most 60 days ago.", "回复收到日期最早只能是 60 天前。"],
   SUPPLIER_REPLY_NO_DATES: ["There is no date to record. Enter at least one date that differs from the current one.", "没有可记录的交期，请至少填写一个与当前不同的交期。"],
   PROMISED_DATE_UNCHANGED: ["That date is already the line's promised date.", "该日期已是该行的承诺交期。"],
   SUPPLIER_REPLY_NOT_FOUND: ["This reply is no longer on the order. Reload the order.", "该回复已不在订单上，请重新加载订单。"],

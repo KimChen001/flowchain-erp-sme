@@ -30,7 +30,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null }:
   onChanged: (next: SupplierReplyCardData, recorded: boolean) => void;
   // A stale card or a reply no longer open: the list keeps the sentence for
   // this reply (`notice`) across the reload it then makes.
-  onRefused: (kind: "stale" | "closed") => void;
+  onRefused: (kind: "stale" | "moved" | "closed") => void;
   notice?: string | null;
 }) {
   const { language, locale, timezone } = useI18n();
@@ -112,7 +112,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null }:
       <>
         {day(now)}
         {late(overdueDays ?? line.overdueDays) ? <span className="text-red-700"> · {late(overdueDays ?? line.overdueDays)}</span> : null}
-        {movedFrom !== undefined ? <div className="text-amber-800" data-testid="supplier-reply-moved">{t("moved", { now: day(now), was: day(movedFrom) })}</div> : null}
+        {movedFrom !== undefined ? <div className="text-amber-800" data-testid="supplier-reply-moved">{t("movedLine", { now: day(now), was: day(movedFrom) })}</div> : null}
       </>
     );
   };
@@ -122,7 +122,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null }:
     if (!readings) return null;
     return (
       <div className="mt-1 flex flex-wrap items-center gap-1.5" data-testid="supplier-reply-readings">
-        <span className="w-full">{t(line.issue === "several_dates" ? "severalDates" : "ambiguous")}</span>
+        <span className="w-full">{t(line.issue === "several_dates" ? "severalDates" : line.issue === "vague" ? "vagueChoices" : "ambiguous")}</span>
         {readings.map((reading) => <button key={reading} type="button" disabled={!card.canDecide} className={readingClass(values[lineId] === reading)} aria-pressed={values[lineId] === reading} onClick={() => { setValues({ ...values, [lineId]: reading }); setSkipped(new Set([...skipped].filter((id) => id !== lineId))); }}>{t("useReading", { date: day(reading) })}</button>)}
       </div>
     );
