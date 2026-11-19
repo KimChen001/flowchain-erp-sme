@@ -18,6 +18,7 @@ import { formatQuantity } from "../../lib/format";
 import { followUpMessage, followUpSendErrorText, invoiceCorrectionMessage, useDecisionCopy, type DecisionCopyKey } from "./decisionCopy";
 import { formatLocaleAmount } from "../../lib/format";
 import { useTodayRowFormat } from "./todayRowFormat";
+import { SupplierReplies } from "../purchasing/supplierReply/SupplierReplies";
 
 // The decision cards on Today (docs/drafted-decisions-design.md): for each row
 // the server prepared a next step for (GET /api/home/overview, decisions),
@@ -805,6 +806,8 @@ function SetAsideList({ entries, canDecide, day, kindLabel, labelOf, onChanged }
                 <span style={{ color: A.sub }}>{status(entry)}</span>
                 {entry.decidedBy ? <span style={{ color: A.gray2 }}>{t("by", { name: entry.decidedBy.name, date: entry.decidedOn ? day(entry.decidedOn) : "" })}</span> : null}
                 {canDecide ? <button type="button" disabled={busyKey === entry.key} className={`${BUTTON.secondary} ml-auto`} onClick={() => reopen(entry.key)}>{t("reopen")}</button> : null}
+                {/* A chased order: the supplier's answer is pasted here (docs/supplier-reply-dates-design.md §4.2). */}
+                {entry.row.kind === "purchase_order_overdue" && entry.decision === "chased" ? <SupplierReplies orderId={entry.row.recordId} entry="today" onRecorded={onChanged} /> : null}
               </li>
             ))}
           </ul>

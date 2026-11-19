@@ -1,0 +1,256 @@
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { toast } from "sonner";
+import { A } from "../../../components/ui";
+import { listButtonClass } from "../../../components/ui/listLayout";
+import { useI18n } from "../../../i18n/I18n";
+import { unitLabel } from "../../../i18n/unitLabels";
+import { apiJson } from "../../../lib/api-client";
+import { formatCalendarDay, formatQuantity } from "../../../lib/format";
+import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
+import { SUPPLIER_REPLY_ROUTES } from "../../../../shared/supplier-reply-contract.mjs";
+import { supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
+import { SUPPLIER_REPLY_NOTE_LIMIT, dismissReady, formStart, isOpenReply, isOutage, markQuotes, needsManualForm, recordKey, recordLines, replyErrorKind } from "./supplierReplyLogic";
+import type { SupplierReplyCardData, SupplierReplyDismissReason, SupplierReplyLine } from "./supplierReplyTypes";
+
+// One supplier reply on an order (docs/supplier-reply-dates-design.md §4.5–4.9):
+// the proposal to record, the reply and the manual form when the person is
+// needed or AI could not read it, or what became of it. FlowChain never
+// answers the supplier; recording writes promised dates only, as the person,
+// with the supplier's sentence as the reason (the server does that).
+
+const BUTTON = { primary: `${listButtonClass.primary} !text-[12px]`, secondary: `${listButtonClass.secondary} !text-[12px]` };
+const DISMISS_REASONS: SupplierReplyDismissReason[] = ["wrong_reading", "supplier_will_confirm", "other"];
+
+export const supplierReplyRoute = (route: string, orderId: string, replyId = "") =>
+  route.replace(":id", encodeURIComponent(orderId)).replace(":replyId", encodeURIComponent(replyId));
+
+export function SupplierReplyCard({ card, onChanged, refresh }: {
+  card: SupplierReplyCardData;
+  // The card after a decision, as the server answered it.
+  onChanged: (next: SupplierReplyCardData, recorded: boolean) => void;
+  // Reload the order's replies (after a stale or closed refusal).
+  refresh: () => Promise<void> | void;
+}) {
+  const { language, locale } = useI18n();
+  const t = (key: SupplierReplyCopyKey, values?: Record<string, string | number>) => supplierReplyText(language, key, values);
+  const day = (value: string | null | undefined) => (value ? formatCalendarDay(value, locale) : t("noDate"));
+  const qty = (value: number | null, unit: string | null) => (value === null ? "—" : `${formatQuantity(value)}${unit ? ` ${unitLabel(unit, language, value)}` : ""}`);
+  const lineName = (line: { sku: string | null; itemName: string | null }) => [line.sku, line.itemName].filter(Boolean).join(" · ") || t("unnamedLine");
+  const late = (days: number | null) => (days ? (days === 1 ? t("dayLate") : t("daysLate", { n: days })) : null);
+
+  const open = isOpenReply(card);
+  const manual = needsManualForm(card);
+  const [editing, setEditing] = useState(false);
+  const [values, setValues] = useState<Record<string, string>>(() => formStart(card));
+  const [dismissing, setDismissing] = useState(false);
+  const [reason, setReason] = useState<SupplierReplyDismissReason>("wrong_reading");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [showReply, setShowReply] = useState(manual || card.state === "nothing_to_record");
+  const [showQuoted, setShowQuoted] = useState(false);
+
+  const byLine = useMemo(() => new Map(card.lines.filter((line) => line.purchaseOrderLineId).map((line) => [line.purchaseOrderLineId as string, line])), [card.lines]);
+  const proposedLines = card.lines.filter((line) => line.outcome === "proposed" || line.outcome === "confirmed");
+  const droppedLines = card.lines.filter((line) => line.outcome === "dropped" || (line.outcome === "needs_you" && !line.purchaseOrderLineId));
+  // The sentences the card points at, marked on the reply.
+  const segments = useMemo(() => markQuotes(card.text, [...card.lines.map((line) => line.quote), ...card.lines.flatMap((line) => (line.parts || []).map((part) => part.quote)), card.reason]), [card.text, card.lines, card.reason]);
+  const formOpen = open && (manual || editing);
+
+  const act = async (work: () => Promise<{ reply: SupplierReplyCardData }>, done: (next: SupplierReplyCardData) => string, recorded = false) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const { reply } = await work();
+      toast.success(done(reply));
+      setEditing(false);
+      setDismissing(false);
+      onChanged(reply, recorded);
+    } catch (error) {
+      const kind = replyErrorKind(error);
+      if (kind !== "other") {
+        setMessage(t(kind));
+        await refresh();
+      } else {
+        toast.error(t("failed"), { description: <span title={procurementErrorCode(error)}>{procurementErrorText(error, language, [t("retry"), t("retry")])}</span> });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+  const post = <T,>(route: string, body: unknown) => apiJson<T>(supplierReplyRoute(route, card.purchaseOrderId, card.id), { method: "POST", body: JSON.stringify(body) });
+  const recordProposal = () => act(() => post(SUPPLIER_REPLY_ROUTES.record, { expectedVersion: card.orderVersion, idempotencyKey: recordKey(card) }), () => t("recordedToast", { po: card.purchaseOrderNumber }), true);
+  const recordForm = () => {
+    const lines = recordLines(card, values);
+    if (!lines.length) { setMessage(t("enterADate")); return; }
+    return act(() => post(SUPPLIER_REPLY_ROUTES.record, { expectedVersion: card.orderVersion, lines, idempotencyKey: recordKey(card, lines) }), () => t("recordedToast", { po: card.purchaseOrderNumber }), true);
+  };
+  const notNow = () => act(() => post(SUPPLIER_REPLY_ROUTES.notNow, {}), () => t("notNowToast", { po: card.purchaseOrderNumber }));
+  const dismiss = () => act(() => post(SUPPLIER_REPLY_ROUTES.dismiss, { reason, ...(note.trim() ? { note: note.trim() } : {}) }), () => t("dismissedToast", { po: card.purchaseOrderNumber }));
+
+  const lineExtras = (line: SupplierReplyLine | undefined) => {
+    if (!line) return null;
+    return (
+      <>
+        {line.readAs ? <div className="text-[11px]" style={{ color: A.sub }} data-testid="supplier-reply-read-as">{t("readAs", { phrase: line.readAs.phrase, date: day(line.readAs.date), from: day(line.readAs.from) })}</div> : null}
+        {line.parts?.length ? <div className="text-[11px]" style={{ color: A.sub }} data-testid="supplier-reply-split">{t("split", { parts: line.parts.map((part) => (part.quantity === null ? t("partNoQty", { date: day(part.date) }) : t("part", { qty: qty(part.quantity, line.unit), date: day(part.date) }))).join("; ") })}</div> : null}
+      </>
+    );
+  };
+
+  return (
+    <section className="rounded-lg border bg-white p-3 text-xs" data-testid="supplier-reply-card" data-state={card.state} data-reading={card.readingStatus}>
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-sm font-semibold" style={{ color: A.label }}>{t("title")}</span>
+        <span style={{ color: A.sub }}>· {card.purchaseOrderNumber}{card.supplierName ? ` · ${card.supplierName}` : ""} · {t("received", { date: day(card.receivedOn) })} · {t(card.source === "email" ? "emailed" : "pasted")}</span>
+      </div>
+
+      {card.instructionsIgnored ? <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-amber-800" role="note" data-testid="supplier-reply-instructions-ignored">{t("instructionsIgnored")}</p> : null}
+
+      {/* What the card says the reply is. */}
+      {open && isOutage(card) ? <p className="mt-2 rounded-md bg-slate-50 px-2 py-1" data-testid="supplier-reply-outage">{t(`outage_${card.readingStatus}` as SupplierReplyCopyKey)}</p> : null}
+      {open && !isOutage(card) && card.state === "needs_you" ? <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-amber-800" data-testid="supplier-reply-needs-you">{t("needsYou")}</p> : null}
+      {card.state === "nothing_to_record" ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-nothing">{t("nothing")}</p> : null}
+      {card.state === "recorded" && card.decision ? <p className="mt-2 text-emerald-700" data-testid="supplier-reply-recorded">{card.decision.editedLines ? t("recordedEdited", { date: day(card.decision.decidedAt.slice(0, 10)), n: card.decision.editedLines }) : t("recorded", { date: day(card.decision.decidedAt.slice(0, 10)) })}</p> : null}
+      {card.state === "not_recorded" && card.decision ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-not-recorded">{t("notRecorded", { date: day(card.decision.decidedAt.slice(0, 10)), reason: card.decision.reason ? t(`dismiss_${card.decision.reason}` as SupplierReplyCopyKey) : "—" })}{card.decision.note ? ` ${card.decision.note}` : ""}</p> : null}
+      {card.state === "superseded" ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-superseded">{t("superseded")}</p> : null}
+      {open && card.notNowUntil ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-set-aside">{t("setAside", { date: day(card.notNowUntil) })}</p> : null}
+
+      {/* The proposal: each line now and proposed, with the sentence it came from (#363 §4.6). */}
+      {card.state === "proposed" && !editing && proposedLines.length ? (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full min-w-[480px] text-xs" data-testid="supplier-reply-proposal">
+            <thead><tr style={{ color: A.sub }}><th className="py-1 pr-3 text-left font-medium">{t("line")}</th><th className="py-1 pr-3 text-left font-medium">{t("now")}</th><th className="py-1 text-left font-medium">{t("proposed")}</th></tr></thead>
+            <tbody>
+              {proposedLines.map((line, index) => (
+                <tr key={line.purchaseOrderLineId || index} className="border-t align-top" data-testid="supplier-reply-line" data-outcome={line.outcome}>
+                  <td className="py-1.5 pr-3"><div className="font-medium">{lineName(line)}</div><div style={{ color: A.sub }}>{t("left", { qty: qty(line.remaining, line.unit) })}</div></td>
+                  <td className="whitespace-nowrap py-1.5 pr-3">{day(line.currentDate)}{late(line.overdueDays) ? <div className="text-red-700">{late(line.overdueDays)}</div> : null}</td>
+                  <td className="py-1.5">
+                    {line.outcome === "confirmed" ? <span style={{ color: A.sub }}>{t("confirms")}</span> : <span className="font-semibold" data-testid="supplier-reply-proposed-date">{day(line.proposedDate)}</span>}
+                    {line.quote ? <div className="mt-0.5 italic" style={{ color: A.gray1 }}>“{line.quote}”</div> : null}
+                    {lineExtras(line)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{t("reasonNote")}</p>
+        </div>
+      ) : null}
+
+      {/* The manual form: needs you, an outage, or Edit. */}
+      {formOpen ? (
+        <div className={`mt-2 grid gap-3 ${manual ? "md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" : ""}`}>
+          <div className="space-y-2" data-testid="supplier-reply-form">
+            {card.formLines.map((formLine) => {
+              const lineId = formLine.purchaseOrderLineId || "";
+              const line = byLine.get(lineId);
+              return (
+                <div key={lineId} className="rounded-md bg-slate-50 p-2" data-testid="supplier-reply-form-line" data-line={lineId}>
+                  <div className="font-medium">{lineName(formLine)} <span className="font-normal" style={{ color: A.sub }}>· {t("left", { qty: qty(formLine.remaining, formLine.unit) })}</span></div>
+                  <div style={{ color: A.sub }}>{t("now")}: {day(formLine.currentDate)}{late(formLine.overdueDays) ? <span className="text-red-700"> · {late(formLine.overdueDays)}</span> : null}</div>
+                  {line?.issue && line.outcome === "needs_you" ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
+                  {line?.quote && (line.dateKind === "vague" || line.outcome === "needs_you") ? <div className="italic" style={{ color: A.gray1 }}>{t("vagueSaid", { quote: line.quote })}</div> : null}
+                  {line?.readings?.length === 2 ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5" data-testid="supplier-reply-readings">
+                      <span>{t("ambiguous")}</span>
+                      {line.readings.map((reading) => <button key={reading} type="button" disabled={!card.canDecide} className={BUTTON.secondary} aria-pressed={values[lineId] === reading} onClick={() => setValues({ ...values, [lineId]: reading })}>{t("useReading", { date: day(reading) })}</button>)}
+                    </div>
+                  ) : null}
+                  {lineExtras(line)}
+                  {card.canDecide ? (
+                    <label className="mt-1 flex items-center gap-2">
+                      <span>{t("promisedDate")}</span>
+                      <input type="date" aria-label={`${t("promisedDate")} · ${lineName(formLine)}`} className="rounded border px-1 py-0.5" value={values[lineId] || ""} onChange={(event) => setValues({ ...values, [lineId]: event.target.value })} />
+                    </label>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+          {manual ? <ReplyText card={card} segments={segments} showQuoted={showQuoted} setShowQuoted={setShowQuoted} t={t} /> : null}
+        </div>
+      ) : null}
+
+      {/* Lines not used, and what the reply mentions that is not recorded here. */}
+      {open && droppedLines.length ? (
+        <div className="mt-2" data-testid="supplier-reply-not-used">
+          <span style={{ color: A.sub }}>{t("notUsed")}</span>
+          <ul className="ml-4 list-disc">{droppedLines.map((line, index) => <li key={index}>{lineName(line)}{line.issue ? ` — ${t(`issue_${line.issue}` as SupplierReplyCopyKey)}` : ""}{line.quote ? ` (“${line.quote}”)` : ""}</li>)}</ul>
+        </div>
+      ) : null}
+      {card.flags.length ? (
+        <div className="mt-2" data-testid="supplier-reply-flags">
+          <span style={{ color: A.sub }}>{t("alsoMentioned")}</span>
+          <ul className="ml-4 list-disc">{card.flags.map((flag, index) => <li key={index} data-flag={flag.kind}><span className="font-medium">{t(`flag_${flag.kind}` as SupplierReplyCopyKey)}</span> (“{flag.quote}”){flag.orderNumber ? ` · ${flag.orderNumber}` : ""}</li>)}</ul>
+        </div>
+      ) : null}
+
+      {/* The reply itself, when the form does not already show it beside the dates. */}
+      {!(formOpen && manual) ? (
+        <div className="mt-2">
+          <button type="button" className="flex items-center gap-1 font-medium" style={{ color: A.gray1 }} aria-expanded={showReply} data-testid="supplier-reply-toggle" onClick={() => setShowReply(!showReply)}>
+            {showReply ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}{t(showReply ? "hideReply" : "showReply")}
+          </button>
+          {showReply ? <ReplyText card={card} segments={segments} showQuoted={showQuoted} setShowQuoted={setShowQuoted} t={t} /> : null}
+        </div>
+      ) : null}
+
+      {/* The buttons: only for someone who may change the order (card.canDecide). */}
+      {open && card.canDecide ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2" data-testid="supplier-reply-actions">
+          {card.state === "proposed" && !editing && proposedLines.some((line) => line.outcome === "proposed") ? <button type="button" disabled={busy} className={BUTTON.primary} data-testid="supplier-reply-record" onClick={() => void recordProposal()}>{t("record")}</button> : null}
+          {formOpen ? <button type="button" disabled={busy} className={BUTTON.primary} data-testid="supplier-reply-record-form" onClick={() => void recordForm()}>{t("recordThese")}</button> : null}
+          {card.state === "proposed" && !manual ? <button type="button" disabled={busy} className={BUTTON.secondary} data-testid="supplier-reply-edit" aria-pressed={editing} onClick={() => { setEditing(!editing); setValues(formStart(card)); setMessage(null); }}>{t(editing ? "cancel" : "edit")}</button> : null}
+          <div className="flex gap-2 sm:ml-auto">
+            <button type="button" disabled={busy} className={BUTTON.secondary} data-testid="supplier-reply-not-now" onClick={() => void notNow()}>{t("notNow")}</button>
+            <button type="button" disabled={busy} className={BUTTON.secondary} aria-expanded={dismissing} data-testid="supplier-reply-dont-record" onClick={() => setDismissing(!dismissing)}>{t("dontRecord")} ▾</button>
+          </div>
+        </div>
+      ) : null}
+      {open && !card.canDecide ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-view-only">{t("viewOnly")}</p> : null}
+      {open && card.canDecide && dismissing ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-slate-50 p-2" data-testid="supplier-reply-dismiss-form">
+          <label className="flex items-center gap-1">
+            <span>{t("dismissReason")}</span>
+            <select className="rounded border px-1 py-0.5" value={reason} onChange={(event) => setReason(event.target.value as SupplierReplyDismissReason)}>
+              {DISMISS_REASONS.map((code) => <option key={code} value={code}>{t(`dismiss_${code}` as SupplierReplyCopyKey)}</option>)}
+            </select>
+          </label>
+          <input className="min-w-48 flex-1 rounded border px-2 py-0.5" maxLength={SUPPLIER_REPLY_NOTE_LIMIT} aria-label={t("notePlaceholder")} placeholder={t("notePlaceholder")} value={note} onChange={(event) => setNote(event.target.value)} />
+          <button type="button" disabled={busy || !dismissReady(reason, note)} className={BUTTON.primary} data-testid="supplier-reply-dismiss-save" onClick={() => void dismiss()}>{t("save")}</button>
+          <button type="button" className={BUTTON.secondary} onClick={() => setDismissing(false)}>{t("cancel")}</button>
+        </div>
+      ) : null}
+      {message ? <p className="mt-2" style={{ color: A.sub }} role="status" data-testid="supplier-reply-message">{message}</p> : null}
+    </section>
+  );
+}
+
+// The reply as kept on the order, with the supplier's sentences marked. The
+// quoted earlier message is hidden, never read, and shown only on request.
+function ReplyText({ card, segments, showQuoted, setShowQuoted, t }: {
+  card: SupplierReplyCardData;
+  segments: Array<{ text: string; marked: boolean }>;
+  showQuoted: boolean;
+  setShowQuoted: (value: boolean) => void;
+  t: (key: SupplierReplyCopyKey, values?: Record<string, string | number>) => string;
+}) {
+  return (
+    <div className="mt-1" data-testid="supplier-reply-text">
+      <div className="text-[11px] font-medium" style={{ color: A.sub }}>{t("reply")}</div>
+      <p className="mt-0.5 whitespace-pre-wrap rounded-md border bg-white p-2 leading-relaxed">
+        {segments.map((segment, index) => (segment.marked ? <mark key={index} className="rounded bg-amber-100 px-0.5" data-testid="supplier-reply-marked">{segment.text}</mark> : <span key={index}>{segment.text}</span>))}
+      </p>
+      {card.quotedTextHidden ? (
+        <div className="mt-1 text-[11px]" style={{ color: A.sub }} data-testid="supplier-reply-quoted">
+          {t("quotedHidden")}
+          {card.quotedText ? <button type="button" className="ml-2 font-medium text-blue-600" aria-expanded={showQuoted} onClick={() => setShowQuoted(!showQuoted)}>{t(showQuoted ? "hideQuoted" : "showQuoted")}</button> : null}
+          {showQuoted && card.quotedText ? <><p className="mt-1">{t("quotedNote")}</p><p className="mt-0.5 whitespace-pre-wrap rounded-md bg-slate-50 p-2" data-testid="supplier-reply-quoted-text">{card.quotedText}</p></> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
