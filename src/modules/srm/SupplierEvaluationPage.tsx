@@ -228,13 +228,17 @@ export default function SupplierEvaluationPage() {
           </div>
         ) : (
           <div className={tableScrollClass} ref={listTableCardsRef}>
-            <table className={`w-full min-w-[1160px] text-left ${tableBodyTextClass}`} data-testid="supplier-evaluation-table">
+            {/* The table is sized to fit the card on a 1366 px screen and wider:
+                the Business owner header wraps, the name column is capped at
+                170 px and the six figure columns are tighter. Wider than the
+                card, the sticky Actions column would cover the Tier column. */}
+            <table className={`w-full min-w-[1040px] text-left ${tableBodyTextClass}`} data-testid="supplier-evaluation-table">
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
                   <th className={`${thClass} sticky left-0 z-20 bg-white align-bottom`} style={{ color: A.gray1 }}>{t("Supplier code")}</th>
                   <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Supplier name")}</th>
-                  <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Business owner")}</th>
-                  {METRIC_HEADERS.map((label) => <th key={label} title={METRIC_HEADER_TIPS[label] ? t(METRIC_HEADER_TIPS[label]) : undefined} className={`${thClass} align-bottom !whitespace-normal min-w-[84px] max-w-[120px] text-right`} style={{ color: A.gray1 }}>{t(label)}</th>)}
+                  <th className={`${thClass} align-bottom !whitespace-normal max-w-[104px]`} style={{ color: A.gray1 }}>{t("Business owner")}</th>
+                  {METRIC_HEADERS.map((label) => <th key={label} title={METRIC_HEADER_TIPS[label] ? t(METRIC_HEADER_TIPS[label]) : undefined} className={`${thClass} align-bottom !whitespace-normal !px-3 min-w-[72px] max-w-[120px] text-right`} style={{ color: A.gray1 }}>{t(label)}</th>)}
                   <th className={`${thClass} align-bottom`} style={{ color: A.gray1 }}>{t("Tier")}</th>
                   {canEdit && <th className={`${thClass} sticky right-0 z-20 bg-white align-bottom`} style={{ color: A.gray1 }}>{t("Actions")}</th>}
                 </tr>
@@ -248,17 +252,17 @@ export default function SupplierEvaluationPage() {
                         <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                           <EntityLink kind="supplier" id={row.id} className={tableLinkClass}>{row.supplierCode}</EntityLink>
                         </td>
-                        <td className={`${tdNameClass} max-w-[220px]`} title={row.supplierName}>
+                        <td className={`${tdNameClass} max-w-[170px]`} title={row.supplierName}>
                           <div className="truncate font-medium" style={{ color: A.label }}>{row.supplierName}</div>
                           {row.status !== "active" && <div className="mt-0.5"><StatusChip label={t(STATUS_LABEL[row.status])} tone={statusToneOf(row.status)} /></div>}
                         </td>
                         <td className={tdNowrapClass} style={{ color: A.sub }}>{row.businessOwner?.name || "—"}</td>
-                        <td className={tdNumericRightClass}>{spendCell(insight)}</td>
-                        <td className={tdNumericRightClass}>{count(insight?.openPos)}</td>
-                        <td className={tdNumericRightClass}>{count(insight?.overduePos)}</td>
-                        <td className={tdNumericRightClass}>{onTimeCell(insight)}</td>
-                        <td className={tdNumericRightClass}>{otifCell(insight)}</td>
-                        <td className={tdNumericRightClass}>{count(insight?.openIssues)}</td>
+                        <td className={`${tdNumericRightClass} !px-3`}>{spendCell(insight)}</td>
+                        <td className={`${tdNumericRightClass} !px-3`}>{count(insight?.openPos)}</td>
+                        <td className={`${tdNumericRightClass} !px-3`}>{count(insight?.overduePos)}</td>
+                        <td className={`${tdNumericRightClass} !px-3`}>{onTimeCell(insight)}</td>
+                        <td className={`${tdNumericRightClass} !px-3`}>{otifCell(insight)}</td>
+                        <td className={`${tdNumericRightClass} !px-3`}>{count(insight?.openIssues)}</td>
                         <td className={tdNowrapClass} title={row.tierReason || undefined}>
                           <TierChip tier={row.tier} short />
                           {tierReviewPrompted(row.tier, insight) && <div className="mt-0.5 text-[11px]" style={{ color: A.orange }} data-testid="supplier-tier-review-prompt" title={t("Tier 1, with on time or OTIF below 80% over the last 90 days. Tiers are set by your team: this is only a prompt to review.")}>{t("Review tier?")}</div>}

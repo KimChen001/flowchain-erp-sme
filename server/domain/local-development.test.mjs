@@ -50,3 +50,18 @@ test('governed report applies supported Top N values and distinguishes no record
   const zero = buildGovernedReport({ purchaseOrders: [{ id: 'PO-ZERO', createdAt: '2026-06-01', totalAmount: 0, status: 'closed' }] }, { subject: 'procurement', comparison: 'none' })
   assert.equal(zero.kpis.find((metric) => metric.id === 'purchase_order_amount').dataStatus, 'numeric_zero')
 })
+
+// The driver lets a host or hostaddr query parameter override the URL's
+// host: postgresql://u:p@127.0.0.1/db?host=prod.example.com connects to
+// prod.example.com (pg-connection-string), so it is not a local URL.
+test('a local database URL cannot point elsewhere through its query string', () => {
+  assert.equal(isLocalDatabaseUrl('postgresql://u:p@127.0.0.1/db?host=prod.example.com'), false)
+  assert.equal(isLocalDatabaseUrl('postgresql://u:p@localhost:5432/db?hostaddr=10.0.0.5'), false)
+  assert.equal(isLocalDatabaseUrl('postgresql://u:p@localhost/db?HOST=prod.example.com'), false)
+  assert.equal(localDevelopmentEnabled({ NODE_ENV: 'development', FLOWCHAIN_DEV_LOCAL: 'true', DATABASE_URL: 'postgresql://u:p@127.0.0.1/db?host=prod.example.com' }), false)
+  // Local URLs, with ordinary parameters, still are.
+  assert.equal(isLocalDatabaseUrl('postgresql://u:p@127.0.0.1:5432/db?schema=public&sslmode=disable'), true)
+  assert.equal(isLocalDatabaseUrl('postgres://u:p@[::1]:5432/db'), true)
+  assert.equal(isLocalDatabaseUrl('postgresql://u:p@db.example.com/db'), false)
+  assert.equal(isLocalDatabaseUrl('mysql://u:p@127.0.0.1/db'), false)
+})

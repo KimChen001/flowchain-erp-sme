@@ -1,9 +1,16 @@
 import { URL } from 'node:url'
 
+// A PostgreSQL URL on this machine. The driver (pg-connection-string) lets a
+// `host` or `hostaddr` query parameter override the URL's host, so
+// postgresql://u:p@127.0.0.1/db?host=prod.example.com connects to
+// prod.example.com: a URL with either is not local, whatever its host says.
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
 export function isLocalDatabaseUrl(value = '') {
   try {
     const url = new URL(String(value))
-    return url.protocol.startsWith('postgres') && ['localhost', '127.0.0.1', '::1'].includes(url.hostname)
+    if (!url.protocol.startsWith('postgres')) return false
+    if ([...url.searchParams.keys()].some((key) => ['host', 'hostaddr'].includes(key.toLowerCase()))) return false
+    return LOCAL_HOSTS.has(url.hostname)
   } catch {
     return false
   }
